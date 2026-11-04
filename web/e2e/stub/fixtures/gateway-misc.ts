@@ -40,7 +40,7 @@ import {
   ROOM_LOANS,
   LENDABLE_ROOMS,
 } from "./misc-school";
-import { byId, GROUPS, NEXT_YEAR, ROOM_TYPES, STUDENTS, YEAR } from "./world";
+import { byId, GROUP_LIST, GROUPS, HALF_LIST, NEXT_YEAR, ROOM_TYPES, STUDENTS, YEAR } from "./world";
 import { addDays, THIS_MONDAY } from "./calendar";
 import { weekOf } from "./gateway-public";
 
@@ -91,6 +91,47 @@ export const miscRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/publications/state", ({ query }) => {
     const year = yearOf(query.get("academicYearId"));
     return year ? draftState(year) : notFound(NO_YEAR);
+  }),
+  /*
+   * Massåtgärder's dry run on Klasser (src/common/bulk.ts): what deleting the
+   * ticked groups would take. A POST that writes nothing; the stub answers
+   * only the dry run, since the browser suites never delete. A class takes
+   * its halves along, and the figures are made up but named, so the dialog
+   * draws each of its lists.
+   */
+  route("POST", "/api/v1/student-groups/bulk-delete", ({ body }) => {
+    const { ids, dryRun } = body as { ids: string[]; dryRun?: boolean };
+    if (dryRun !== true) return new Reply(405, { message: "The stub answers only a dry run." });
+    const known = new Set([...GROUP_LIST, ...HALF_LIST].map((group) => group.id));
+    const halves = HALF_LIST.filter((half) => ids.includes(half.halfOfId ?? "") && !ids.includes(half.id)).length;
+    return {
+      applied: false,
+      dryRun: true,
+      done: ids.filter((id) => known.has(id)),
+      refused: ids
+        .filter((id) => !known.has(id))
+        .map((id) => ({ id, code: "BULK_ROW_NOT_FOUND", message: "Raden finns inte längre." })),
+      consequences: {
+        halves,
+        homePupils: 3 * ids.length,
+        successors: 0,
+        memberships: 0,
+        requirements: 4 * ids.length,
+        masterLessons: 10 * ids.length,
+        sharedLessons: 0,
+        calendarLessons: 30 * ids.length,
+        attendanceMarks: 0,
+        lessonLogs: 0,
+        availabilityConstraints: 0,
+        lunchSittings: 0,
+        calendarBreaks: 0,
+        timplanCredits: 0,
+        publicLinks: 0,
+        enrolments: 3 * ids.length,
+        mentorDuties: 0,
+        fromSource: 0,
+      },
+    };
   }),
   // A POST that writes nothing: the dry run behind the review dialog.
   route("POST", "/api/v1/publications/preview", ({ body }) => {

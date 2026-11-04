@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
-import { lockingRead, type LockedTable } from './utils/locking-read';
+import { lockingRead, rawSql, type LockedTable } from './utils/locking-read';
+import { recordedReads } from './utils/recorded-reads';
 
 /**
  * The surfaces outside the admin's planning work: the guardian portal, teacher
@@ -484,6 +485,281 @@ describe('Portal and platform surfaces (e2e)', () => {
         // from is not the next one's.
         delete (harness.tx as Record<string, unknown>)['$queryRaw'];
       }
+    });
+
+    // Massåtgärder: the pupils' list acts on a selection in one call. Each
+    // handler is reached by an administrator's request (the area gates are in
+    // admin-areas.e2e-spec.ts).
+    describe('bulk actions on pupils (Massåtgärder)', () => {
+      // Sorts after STUDENT_ID: the report lists ids in id order.
+      const OTHER_ID = 'a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a5a5';
+      const CLASS_ID = '4c4c4c4c-4c4c-4c4c-8c4c-4c4c4c4c4c4c';
+      const LOGIN = '9a9a9a9a-9a9a-4a9a-8a9a-9a9a9a9a9a9a';
+      const DELETE = '/api/v1/users/students/bulk-delete';
+      const UPDATE = '/api/v1/users/students/bulk-update';
+      const post = (path: string, body: unknown) =>
+        request(http()).post(path).set('x-test-user', admin()).send(body as object);
+      const manyIds = (count: number) => Array.from({ length: count }, () => randomUUID());
+
+      /*
+       * A bulk statement answers with the rows it wrote, here every row its
+       * `id in` names: writeAll tries the rows one by one when the count
+       * falls short. Reset after, since the harness outlives the test.
+       */
+      const writesEveryRowNamed = ({ where }: { where?: { id?: { in?: string[] } } }) =>
+        Promise.resolve({ count: where?.id?.in?.length ?? 0 });
+      beforeEach(() => {
+        harness.tx['user']!['updateMany']!.mockImplementation(writesEveryRowNamed);
+        harness.tx['user']!['deleteMany']!.mockImplementation(writesEveryRowNamed);
+      });
+      afterEach(() => {
+        harness.tx['user']!['updateMany']!.mockReset();
+        harness.tx['user']!['deleteMany']!.mockReset();
+      });
+      const pupil = (id: string, overrides: Record<string, unknown> = {}) => ({
+        id,
+        role: 'STUDENT',
+        studentGroupId: null,
+        isActive: true,
+        pseudonymisedAt: null,
+        authId: LOGIN,
+        invitedAt: null,
+        ss12000Id: null,
+        ...overrides,
+      });
+
+      /**
+       * The raw statements the bulk calls send: the locking read of the rows
+       * (answered with `rows`, whole), the mentors' catch-up (nobody to tell)
+       * and the question whether another school holds a login (nobody does).
+       * The auto-vivifying tx hands back a model proxy for `$queryRaw`, and a
+       * proxy is not callable.
+       */
+      const givenRows = (rows: Record<string, unknown>[], counts: Record<string, number> = {}) =>
+        Object.assign(harness.tx, {
+          $queryRaw: jest.fn((...call: unknown[]) => {
+            const sql = rawSql(call);
+            if (sql.includes('app.leave_requests_tell_new_mentors')) return Promise.resolve([]);
+            if (sql.includes('app.login_is_held_elsewhere')) return Promise.resolve([{ held: false }]);
+            // The inventory's counts (src/common/removal-inventory.ts), by table and first key column.
+            const count = /^SELECT count\(\*\)::int AS n FROM "(\w+)" WHERE "(\w+)"/.exec(sql);
+            if (count) return Promise.resolve([{ n: counts[`${count[1]}.${count[2]}`] ?? 0 }]);
+            const ids = call[1] as string[];
+            return Promise.resolve(rows.filter((row) => ids.includes(row['id'] as string)));
+          }),
+        });
+
+      afterEach(() => {
+        // The harness outlives the test, and the table these rows answered
+        // from is not the next one's.
+        delete (harness.tx as Record<string, unknown>)['$queryRaw'];
+      });
+
+      it('answers a dry-run delete 200 with the report and the counts, which it records as reads', async () => {
+        givenRows([pupil(STUDENT_ID, { invitedAt: new Date('2026-08-01T00:00:00Z'), ss12000Id: 'ss-1' })], {
+          'StudentGroupMembers.studentId': 5,
+          'StudentEnrollments.studentId': 6,
+          'GuardianStudents.studentId': 3,
+          'AbsenceReports.studentId': 20,
+          'LeaveRequests.studentId': 2,
+          'AttendanceRecords.studentId': 400,
+          'CalendarLessonStudents.studentId': 7,
+          'TimplanStatements.studentId': 1,
+          'UserRoleChanges.userId': 1,
+        });
+        harness.tx['user']!['findMany']!.mockResolvedValueOnce([
+          { id: STUDENT_ID, invitedAt: new Date('2026-08-01T00:00:00Z'), ss12000Id: 'ss-1' },
+        ]);
+
+        const response = await post(DELETE, { ids: [STUDENT_ID], dryRun: true }).expect(200);
+
+        expect(response.body).toEqual({
+          applied: false,
+          dryRun: true,
+          done: [STUDENT_ID],
+          refused: [],
+          consequences: {
+            memberships: 5,
+            enrolments: 6,
+            guardianLinks: 3,
+            absenceReports: 20,
+            leaveRequests: 2,
+            attendanceMarks: 400,
+            lessonParticipations: 7,
+            teachingTimeStatements: 1,
+            otherRows: 1,
+            otherLinks: 0,
+            logins: 1,
+            fromSource: 1,
+          },
+        });
+        expect(recordedReads(harness.tx).map((read) => read.kind)).toEqual([
+          'ROSTER',
+          'GUARDIANS',
+          'ABSENCE_REPORTS',
+          'LEAVE_REQUESTS',
+          'ATTENDANCE',
+          'TEACHING_TIME',
+        ]);
+        // A dry run removes no login, then or later.
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(harness.supabase.deleteUser).not.toHaveBeenCalled();
+      });
+
+      it('deletes the selection and, once it has committed, the logins of the invited', async () => {
+        givenRows([
+          pupil(STUDENT_ID, { invitedAt: new Date('2026-08-01T00:00:00Z') }),
+          pupil(OTHER_ID, { authId: '9b9b9b9b-9b9b-4b9b-8b9b-9b9b9b9b9b9b', invitedAt: null }),
+        ]);
+
+        const response = await post(DELETE, { ids: [OTHER_ID, STUDENT_ID], dryRun: false }).expect(200);
+
+        expect(response.body).toEqual({ applied: true, dryRun: false, done: [STUDENT_ID, OTHER_ID], refused: [] });
+        expect(harness.tx['user']!['deleteMany']).toHaveBeenCalledWith({ where: { id: { in: [STUDENT_ID, OTHER_ID] } } });
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+        // The invited pupil’s login only: the other was never contacted.
+        expect(harness.supabase.deleteUser.mock.calls).toEqual([[LOGIN]]);
+      });
+
+      it('refuses what is no pupil in the report, 200, and deletes nothing at the provider', async () => {
+        givenRows([pupil(STUDENT_ID, { invitedAt: new Date('2026-08-01T00:00:00Z') }), pupil(GUARDIAN_ID, { role: 'GUARDIAN' })]);
+
+        const response = await post(DELETE, { ids: [STUDENT_ID, GUARDIAN_ID, ROOM_ID], dryRun: false }).expect(200);
+
+        expect(response.body).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [STUDENT_ID],
+          refused: [
+            {
+              id: ROOM_ID,
+              code: 'BULK_ROW_NOT_FOUND',
+              message: 'Raden finns inte längre, eller får inte ändras härifrån.',
+            },
+            {
+              id: GUARDIAN_ID,
+              code: 'NOT_A_STUDENT',
+              message: 'Raden är ingen elev. Lärare, administratörer och vårdnadshavare ändras och tas bort en i taget.',
+            },
+          ],
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(harness.supabase.deleteUser).not.toHaveBeenCalled();
+      });
+
+      it('moves the selection to a class and answers 200 applied with the report', async () => {
+        givenRows([pupil(STUDENT_ID), pupil(OTHER_ID)]);
+        harness.tx['studentGroup']!['findUnique']!.mockResolvedValueOnce({ kind: 'CLASS' });
+
+        const response = await post(UPDATE, {
+          ids: [OTHER_ID, STUDENT_ID],
+          changes: { studentGroupId: CLASS_ID },
+          dryRun: false,
+        }).expect(200);
+
+        expect(response.body).toEqual({ applied: true, dryRun: false, done: [STUDENT_ID, OTHER_ID], refused: [] });
+        expect(harness.tx['user']!['updateMany']).toHaveBeenCalledWith({
+          where: { id: { in: [STUDENT_ID, OTHER_ID] } },
+          data: { studentGroupId: CLASS_ID },
+        });
+        // Ids only in the answer: no read to record.
+        expect(recordedReads(harness.tx)).toEqual([]);
+      });
+
+      it('takes an upper-case class as the database has it, lower case: a pupil already in it is not moved again', async () => {
+        givenRows([pupil(STUDENT_ID, { studentGroupId: CLASS_ID }), pupil(OTHER_ID)]);
+        harness.tx['studentGroup']!['findUnique']!.mockResolvedValueOnce({ kind: 'CLASS' });
+
+        const response = await post(UPDATE, {
+          ids: [OTHER_ID, STUDENT_ID],
+          changes: { studentGroupId: CLASS_ID.toUpperCase() },
+          dryRun: false,
+        }).expect(200);
+
+        expect(response.body).toMatchObject({ applied: true, done: [STUDENT_ID, OTHER_ID] });
+        expect(harness.tx['user']!['updateMany']).toHaveBeenCalledWith({
+          where: { id: { in: [OTHER_ID] } },
+          data: { studentGroupId: CLASS_ID },
+        });
+      });
+
+      it('sets the status on a dry run and answers what would be done', async () => {
+        givenRows([pupil(STUDENT_ID), pupil(OTHER_ID, { isActive: false })]);
+
+        const response = await post(UPDATE, { ids: [STUDENT_ID, OTHER_ID], changes: { isActive: false }, dryRun: true }).expect(200);
+
+        expect(response.body).toEqual({ applied: false, dryRun: true, done: [STUDENT_ID, OTHER_ID], refused: [] });
+        // Only the pupil who is active is written (and rolled back).
+        expect(harness.tx['user']!['updateMany']).toHaveBeenCalledWith({
+          where: { id: { in: [STUDENT_ID] } },
+          data: { isActive: false },
+        });
+      });
+
+      it('refuses a pseudonymised pupil made active in the report, 200, and a teaching group as a home class with 400', async () => {
+        givenRows([pupil(STUDENT_ID), pupil(OTHER_ID, { pseudonymisedAt: new Date('2026-10-21T01:10:00Z'), isActive: false })]);
+
+        const report = await post(UPDATE, { ids: [STUDENT_ID, OTHER_ID], changes: { isActive: true }, dryRun: false }).expect(200);
+        expect(report.body).toMatchObject({
+          applied: false,
+          done: [STUDENT_ID],
+          refused: [{ id: OTHER_ID, code: 'USER_IS_PSEUDONYMISED' }],
+        });
+
+        harness.tx['studentGroup']!['findUnique']!.mockResolvedValueOnce({ kind: 'TEACHING_GROUP' });
+        const refused = await post(UPDATE, { ids: [STUDENT_ID], changes: { studentGroupId: CLASS_ID }, dryRun: false }).expect(400);
+        expect(refused.body).toMatchObject({ code: 'STUDENT_HOME_GROUP_NOT_A_CLASS' });
+      });
+
+      it('takes 500 ids, the most a call may name', async () => {
+        givenRows([]);
+
+        const response = await post(DELETE, { ids: manyIds(500), dryRun: false }).expect(200);
+
+        expect(response.body.refused).toHaveLength(500);
+      });
+
+      it.each([
+        ['501 ids', { ids: manyIds(501), dryRun: false }],
+        ['no ids', { ids: [], dryRun: false }],
+        ['an id that is no uuid', { ids: ['karin.ek@example.com'], dryRun: false }],
+        ['a dryRun that is not a boolean', { ids: [STUDENT_ID], dryRun: 1 }],
+        ['a dryRun that is null', { ids: [STUDENT_ID], dryRun: null }],
+        ['no dryRun', { ids: [STUDENT_ID] }],
+        ['a field it does not know', { ids: [STUDENT_ID], dryRun: false, includeStaff: true }],
+      ])('refuses a bulk delete with %s, before any transaction', async (_what, body) => {
+        await post(DELETE, body).expect(400);
+        expect(harness.prisma.withRls).not.toHaveBeenCalled();
+        expect(harness.tx['user']!['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['501 ids', { ids: manyIds(501), changes: { isActive: false }, dryRun: false }],
+        ['an id that is no uuid', { ids: ['karin'], changes: { isActive: false }, dryRun: false }],
+        ['no changes', { ids: [STUDENT_ID], dryRun: false }],
+        ['changes that name nothing', { ids: [STUDENT_ID], changes: {}, dryRun: false }],
+        ['a class that is no uuid', { ids: [STUDENT_ID], changes: { studentGroupId: '7A' }, dryRun: false }],
+        ['a status that is no boolean', { ids: [STUDENT_ID], changes: { isActive: 'false' }, dryRun: false }],
+        ['a role, which only one person at a time may be given', { ids: [STUDENT_ID], changes: { role: 'TEACHER' }, dryRun: false }],
+        ['a field a bulk update may not set', { ids: [STUDENT_ID], changes: { email: 'a@example.com' }, dryRun: false }],
+        ['no dryRun', { ids: [STUDENT_ID], changes: { isActive: false } }],
+      ])('refuses a bulk update with %s, before any transaction', async (_what, body) => {
+        await post(UPDATE, body).expect(400);
+        expect(harness.prisma.withRls).not.toHaveBeenCalled();
+        expect(harness.tx['user']!['updateMany']).not.toHaveBeenCalled();
+      });
+
+      it('denies a teacher both routes', async () => {
+        for (const path of [DELETE, UPDATE]) {
+          await request(http())
+            .post(path)
+            .set('x-test-user', teacher())
+            .send({ ids: [STUDENT_ID], changes: { isActive: false } })
+            .expect(403);
+        }
+        expect(harness.prisma.withRls).not.toHaveBeenCalled();
+      });
     });
   });
 

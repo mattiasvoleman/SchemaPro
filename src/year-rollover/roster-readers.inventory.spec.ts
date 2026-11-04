@@ -116,6 +116,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
  * and a reader that started reading it without anybody deciding so would mix
  * a recorded year with a present one.
  */
+// Not listed, since it names the table only as a constant: a bulk delete's
+// dry run counts the segments that go with its groups or pupils by key
+// (src/common/removal-inventory.ts, StudentEnrollments), a figure with no
+// roster and no basis.
 const ENROLLED: Record<string, string> = {
   'src/resources/student-groups.service.ts': 'a class with history keeps its läsår: counted before a year change (409 STUDENT_GROUP_HAS_ENROLMENT_HISTORY)',
   'src/timplan/timplan-coverage.service.ts':

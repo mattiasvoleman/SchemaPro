@@ -168,6 +168,26 @@ test("a class half names its class on Klasser, and Placera elever names each pup
   expect((await scanBothSchemes(page, "class halves open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
 });
 
+test("ticking classes shows the selection bar, and Ta bort's dialog says what goes and what goes with it, and passes axe open", async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const misses = await open(page, { url: "/sv/admin/groups", persona: "admin" }, baseURL!);
+  // 7A by its box, then 7B with Space from the keyboard, as a screen reader user would.
+  await page.getByRole("checkbox", { name: "Markera 7A", exact: true }).check();
+  await page.getByRole("checkbox", { name: "Markera 7B", exact: true }).focus();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("status").filter({ hasText: "markerade" })).toHaveText(/^2 markerade av \d+ klasser och grupper som visas$/);
+  await page.getByRole("button", { name: "Ta bort", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Ta bort 2 klasser och grupper?" });
+  await expect(dialog.getByRole("button", { name: "Ta bort 2" })).toBeVisible();
+  await settle(page);
+  expect(misses, MISSES).toEqual([]);
+  await expectAriaBaseline(dialog, "admin-massval");
+  expect((await scanBothSchemes(page, "bulk delete open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+});
+
 test("the school's decision on attendance for integrations names its state, its decider and what never leaves, and passes axe open", async ({
   page,
   baseURL,

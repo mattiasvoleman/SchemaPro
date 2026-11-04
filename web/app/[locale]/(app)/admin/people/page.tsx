@@ -75,6 +75,17 @@ const DutiesCard = lazy(() =>
     default: module.DutiesCard,
   })),
 );
+/*
+ * Massåtgärder on the pupils' rows, fetched on the first click of Redigera or
+ * Ta bort in the selection bar and mounted only while open, as the work-time
+ * dialog above.
+ */
+const StudentsBulkDialogs = lazy(() =>
+  import("./students-bulk-dialogs").then((module) => ({ default: module.StudentsBulkDialogs })),
+);
+import type { BulkMode } from "./students-bulk-dialogs";
+import { useBulkSelection } from "@/lib/bulk-selection";
+import { BulkSelectionBar, SelectAllCheckbox, SelectRowCheckbox } from "@/components/bulk/bulk-selection";
 import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv-export";
 import { profileDecides, profileWrites, type AdminProfile } from "@/lib/admin-areas";
 import { useAdministrators } from "@/lib/admin-role-queries";
@@ -583,6 +594,20 @@ export default function PeoplePage() {
     ]);
   }, [people, filter, search, groups]);
 
+  /*
+   * Massval over the pupils the search and the tab show (lib/bulk-selection.ts):
+   * the bulk routes are the pupils' (src/users/users.service.ts), so only a
+   * pupil's row has a box, and "Markera alla" ticks the pupils shown.
+   */
+  const shownStudents = useMemo(
+    () => filtered.filter((person) => person.role === "STUDENT").map((person) => person.id),
+    [filtered],
+  );
+  const selection = useBulkSelection(shownStudents);
+  const [bulkMode, setBulkMode] = useState<BulkMode | null>(null);
+  /** The register's columns: a box first for a profile that writes it. */
+  const columns = COLUMNS + (writesPeople ? 1 : 0);
+
   /**
    * Active people who have never been contacted — what "invite all" targets.
    *
@@ -973,6 +998,16 @@ export default function PeoplePage() {
           <TableCard caption={t("tableCaption")}>
             <TableHeader>
               <TableRow>
+                {writesPeople ? (
+                  <TableHead data-writes="PERSONAL" className="w-10">
+                    <SelectAllCheckbox
+                      entity="students"
+                      state={selection.header}
+                      shown={shownStudents.length}
+                      onToggle={selection.toggleAll}
+                    />
+                  </TableHead>
+                ) : null}
                 <TableHead>{tCommon("name")}</TableHead>
                 <TableHead>{t("email")}</TableHead>
                 <TableHead>{t("role")}</TableHead>
@@ -988,14 +1023,25 @@ export default function PeoplePage() {
                 // school without people: said in the table, under the filters
                 // that caused it.
                 <TableRow>
-                  <TableCell colSpan={COLUMNS} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={columns} className="py-8 text-center text-muted-foreground">
                     {t("noMatch")}
                   </TableCell>
                 </TableRow>
               ) : null}
               {filtered.map((person) => (
                 <Fragment key={person.id}>
-                <TableRow>
+                <TableRow data-state={selection.isTicked(person.id) ? "selected" : undefined}>
+                  {writesPeople ? (
+                    <TableCell data-writes="PERSONAL">
+                      {person.role === "STUDENT" ? (
+                        <SelectRowCheckbox
+                          name={`${person.firstName} ${person.lastName}`}
+                          checked={selection.isTicked(person.id)}
+                          onToggle={(extend) => selection.toggle(person.id, extend)}
+                        />
+                      ) : null}
+                    </TableCell>
+                  ) : null}
                   <TableCell className="font-medium">
                     <button
                       type="button"
@@ -1052,7 +1098,7 @@ export default function PeoplePage() {
                 </TableRow>
                 {expandedId === person.id ? (
                   <TableRow id={`person-detail-${person.id}`} className="bg-muted/40 hover:bg-muted/40">
-                    <TableCell colSpan={COLUMNS} className="py-3">
+                    <TableCell colSpan={columns} className="py-3">
                       <PersonDetail
                         person={person}
                         homeClass={groupName(person.studentGroupId)}
@@ -1083,8 +1129,37 @@ export default function PeoplePage() {
               ))}
             </TableBody>
           </TableCard>
+          {writesPeople ? (
+            <BulkSelectionBar
+              entity="students"
+              count={selection.ticked.length}
+              shown={shownStudents.length}
+              onClear={selection.clear}
+              onEdit={() => setBulkMode("edit")}
+              onDelete={() => setBulkMode("delete")}
+              writes="PERSONAL"
+            />
+          ) : null}
         </>
       )}
+
+      {bulkMode ? (
+        <Suspense fallback={null}>
+          <StudentsBulkDialogs
+            mode={bulkMode}
+            ids={selection.ticked}
+            people={people ?? []}
+            groups={groups ?? []}
+            years={years ?? []}
+            activeYearId={activeYearId}
+            onClose={() => setBulkMode(null)}
+            onDeleted={() => {
+              setBulkMode(null);
+              selection.clear();
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

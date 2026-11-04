@@ -110,6 +110,51 @@ describe('Administrator profiles and areas (e2e)', () => {
     expect(harness.tx['room']!['create']).not.toHaveBeenCalled();
   });
 
+  it("refuses the planner the pupils' bulk routes and the expedition the groups', by area, and lets the profile that owns each through (Massåtgärder)", async () => {
+    const pupils = ['/api/v1/users/students/bulk-delete', '/api/v1/users/students/bulk-update'];
+    const groups = ['/api/v1/student-groups/bulk-delete', '/api/v1/student-groups/bulk-update'];
+    // The delete takes no changes (an unknown field is a 400), the update needs them.
+    const bodyOf = (path: string) =>
+      path.endsWith('bulk-delete')
+        ? { ids: [USER_ID], dryRun: true }
+        : { ids: [USER_ID], changes: path.includes('/users/') ? { isActive: false } : { gradeLevel: 7 }, dryRun: true };
+
+    // Dry runs too: they do the write and roll it back, so the profile that
+    // may not write may not ask in this way either.
+    for (const path of pupils) {
+      const refused = await request(http()).post(path).set('x-test-user', as('SCHEMALAGGARE')).send(bodyOf(path)).expect(403);
+      expect(refused.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+      expect(refused.body.detail).toBe(
+        'Schemaläggare ändrar inte personal. Personal ändras av rektor, en fullständig administratör eller expeditionen.',
+      );
+    }
+    for (const path of groups) {
+      const refused = await request(http()).post(path).set('x-test-user', as('EXPEDITION')).send(bodyOf(path)).expect(403);
+      expect(refused.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+      expect(refused.body.detail).toMatch(/^Expedition ändrar inte planering\. Planering ändras av rektor/);
+    }
+    // Refused before anything is read or written.
+    expect(harness.prisma.withRls).not.toHaveBeenCalled();
+    expect(harness.tx['user']!['updateMany']).not.toHaveBeenCalled();
+    expect(harness.tx['studentGroup']!['updateMany']).not.toHaveBeenCalled();
+
+    // The owner of each area reaches the handler: rows that are not there are a 200 report.
+    Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
+    try {
+      for (const path of pupils) {
+        const reported = await request(http()).post(path).set('x-test-user', as('EXPEDITION')).send(bodyOf(path)).expect(200);
+        expect(reported.body).toMatchObject({ applied: false, dryRun: true, refused: [{ id: USER_ID, code: 'BULK_ROW_NOT_FOUND' }] });
+      }
+    } finally {
+      delete (harness.tx as Record<string, unknown>)['$queryRaw'];
+    }
+    for (const path of groups) {
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValueOnce([]);
+      const reported = await request(http()).post(path).set('x-test-user', as('SCHEMALAGGARE')).send(bodyOf(path)).expect(200);
+      expect(reported.body).toMatchObject({ applied: false, dryRun: true, refused: [{ id: USER_ID, code: 'BULK_ROW_NOT_FOUND' }] });
+    }
+  });
+
   it('leaves a decision to rektor: the dataskydd decision and a post', async () => {
     for (const profile of ['SCHEMALAGGARE', 'EXPEDITION']) {
       const decision = await request(http())

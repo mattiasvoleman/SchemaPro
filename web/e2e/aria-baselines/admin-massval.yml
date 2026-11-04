@@ -1,0 +1,25 @@
+- dialog "Ta bort 2 klasser och grupper?":
+  - heading "Ta bort 2 klasser och grupper?" [level=2]
+  - paragraph: Läs vad som tas bort och vad som försvinner med det innan du bekräftar.
+  - region "2 klasser och grupper tas bort":
+    - heading "2 klasser och grupper tas bort" [level=3]
+    - list "2 klasser och grupper tas bort":
+      - listitem: 7A
+      - listitem: 7B
+  - region "Med dem försvinner också":
+    - heading "Med dem försvinner också" [level=3]
+    - list:
+      - listitem: 2 halvklasser som hör till klasserna
+      - listitem: 8 timplansposter
+      - listitem: 20 lektioner i grundschemat
+      - listitem: 60 lektioner i kalendern, även passerade
+      - listitem: "Det som hänger på lektionerna, timplansposterna och reglerna: deltagare och lärare på lektionerna, vikarieuppdrag och vikarieanteckningar, inställda lektioner, andra gruppers plats på lektionerna, delad lärartid och uppdragspass"
+  - region "Finns kvar men tappar kopplingen":
+    - heading "Finns kvar men tappar kopplingen" [level=3]
+    - list:
+      - listitem: 6 elever blir utan klass
+      - listitem: 6 avsnitt i elevernas klasshistorik tappar klassen
+  - paragraph: Åtgärden kan inte ångras.
+  - button "Avbryt"
+  - button "Ta bort 2"
+  - button "Stäng"

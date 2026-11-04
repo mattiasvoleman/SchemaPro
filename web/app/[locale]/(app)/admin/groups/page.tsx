@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { CalendarRange, Pencil, Plus, Split, Trash2, Upload, UserPlus, Users } from "lucide-react";
@@ -22,6 +22,9 @@ import {
 import type { StudentGroup } from "@/lib/types";
 import { GROUP_WRITE_KEYS } from "@/lib/projected-rosters";
 import { SchoolUnitsCard } from "./school-units-card";
+import type { BulkMode } from "./groups-bulk-dialogs";
+import { useBulkSelection } from "@/lib/bulk-selection";
+import { BulkSelectionBar, SelectAllCheckbox, SelectRowCheckbox } from "@/components/bulk/bulk-selection";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -58,6 +61,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+
+/*
+ * Massåtgärder's dialogs, fetched on the first click of Redigera or Ta bort in
+ * the selection bar and mounted only while open, as the people page mounts
+ * its work-time dialog: nothing of them is in the page's first load.
+ */
+const GroupsBulkDialogs = lazy(() =>
+  import("./groups-bulk-dialogs").then((module) => ({ default: module.GroupsBulkDialogs })),
+);
 
 interface GroupForm {
   name: string;
@@ -223,6 +235,14 @@ export default function GroupsPage() {
       ...(memberNames.get(group.id) ?? []).map((member) => member.name),
     ]);
   }, [groups, kindFilter, search, yearNames, memberNames]);
+
+  /*
+   * Massval over the rows the search and the tab show (lib/bulk-selection.ts):
+   * "Markera alla" ticks those, and a row a new search hides is let go of.
+   */
+  const visibleIds = useMemo(() => visibleGroups.map((group) => group.id), [visibleGroups]);
+  const selection = useBulkSelection(visibleIds);
+  const [bulkMode, setBulkMode] = useState<BulkMode | null>(null);
 
   /** A new group goes into the active läsår unless the dialog is told otherwise. */
   const defaultYearId = years.find((year) => year.isActive)?.id ?? years[0]?.id ?? "";
@@ -487,6 +507,14 @@ export default function GroupsPage() {
           <TableCard caption={t("tableCaption")}>
             <TableHeader>
               <TableRow>
+                <TableHead data-writes="PLANERING" className="w-10">
+                  <SelectAllCheckbox
+                    entity="groups"
+                    state={selection.header}
+                    shown={visibleGroups.length}
+                    onToggle={selection.toggleAll}
+                  />
+                </TableHead>
                 <TableHead>{tCommon("name")}</TableHead>
                 <TableHead>{t("year")}</TableHead>
                 <TableHead className="text-right">{tCommon("students")}</TableHead>
@@ -496,15 +524,23 @@ export default function GroupsPage() {
             <TableBody>
               {visibleGroups.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                     {t("noMatch")}
                   </TableCell>
                 </TableRow>
               ) : null}
               {visibleGroups.map((group) => {
                 const matched = matchingMembers(group.id);
+                const ticked = selection.isTicked(group.id);
                 return (
-                  <TableRow key={group.id}>
+                  <TableRow key={group.id} data-state={ticked ? "selected" : undefined}>
+                    <TableCell data-writes="PLANERING">
+                      <SelectRowCheckbox
+                        name={group.name}
+                        checked={ticked}
+                        onToggle={(extend) => selection.toggle(group.id, extend)}
+                      />
+                    </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{group.name}</span>
@@ -560,8 +596,33 @@ export default function GroupsPage() {
               })}
             </TableBody>
           </TableCard>
+          <BulkSelectionBar
+            entity="groups"
+            count={selection.ticked.length}
+            shown={visibleGroups.length}
+            onClear={selection.clear}
+            onEdit={() => setBulkMode("edit")}
+            onDelete={() => setBulkMode("delete")}
+            writes="PLANERING"
+          />
         </>
       )}
+
+      {bulkMode ? (
+        <Suspense fallback={null}>
+          <GroupsBulkDialogs
+            mode={bulkMode}
+            ids={selection.ticked}
+            groups={groups ?? []}
+            subjects={subjects ?? []}
+            onClose={() => setBulkMode(null)}
+            onDeleted={() => {
+              setBulkMode(null);
+              selection.clear();
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       <SchoolUnitsCard classes={activeClasses} numbering={activeYear?.gradeNumbering} />
 

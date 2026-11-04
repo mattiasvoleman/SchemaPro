@@ -1056,6 +1056,102 @@
     gruppen ersätta, men gruppen finns kvar.
   </p>
 
+  <h4 id="massval">Markera flera — ändra eller ta bort på en gång</h4>
+  <p>
+    Varje rad i listan har en kryssruta. Kryssrutan i tabellhuvudet markerar
+    <strong>alla rader som visas</strong>, alltså de som sökningen och fliken
+    tar fram just nu. Listan har inga sidor, så det som visas är allt som
+    matchar. Söker du på <em>2025/2026</em> och markerar alla har du förra
+    läsårets grupper och inga andra. Håll ned <span class="ui">Skift</span>
+    och klicka för att markera alla rader mellan två klick. Kryssrutorna nås
+    med tabbtangenten och kryssas med mellanslag.
+  </p>
+  <p>
+    Markeringen följer det du ser. Ändrar du sökningen eller fliken släpps de
+    rader som inte längre visas, så det du ändrar eller tar bort står alltid
+    på skärmen. Så länge något är markerat står en rad längst ned på skärmen.
+    Den säger hur många som är markerade av hur många som visas, och har
+    knapparna <span class="ui">Avmarkera</span>,
+    <span class="ui">Redigera</span> och <span class="ui">Ta bort</span>.
+    Högst 500 rader åt gången, eftersom allt sparas eller tas bort i ett enda
+    steg. Har skolan fler kan du söka fram en klass eller en årskurs i taget.
+    Raden säger det innan du kan välja Redigera eller Ta bort.
+  </p>
+  <p>
+    <strong>Redigera</strong> sätter samma värde på alla markerade. För
+    klasser och grupper är det <span class="ui">Årskurs</span>, och när bara
+    undervisningsgrupper är markerade även
+    <span class="ui">Ersätter ämne</span> (se Ersättande grupper ovan). En
+    klass halvor följer med till den nya årskursen, och skolenheten följer
+    årskursen. Har de markerade olika värden står fältet på
+    <span class="ui">Olika värden</span>. Det lämnas då som det är på varje
+    rad tills du väljer ett värde, och bara de fält du ändrar sparas. Namn och
+    sort ändras en rad i taget. Läsåret byts med läsårsrullningen (8.1), och
+    en grupps lärare sätts på timplansposterna (4.2).
+  </p>
+  <p>
+    <strong>Ta bort</strong> kontrollerar först vad som skulle hända och visar
+    det innan något tas bort. Kontrollen räknar utan att ta bort något, så den
+    hindrar ingen annan, till exempel en lärare som registrerar närvaro för
+    någon av eleverna, och tar ett ögonblick även för hundratals rader.
+    Dialogen visar vilka rader som tas bort och vad som försvinner med dem.
+    För klasser och grupper räknas allt som hänger på dem:
+  </p>
+  <ul>
+    <li>halvklasserna som hör till klasserna;</li>
+    <li>medlemskap i grupperna;</li>
+    <li>timplansposter och tillgodoräknanden i timplanen;</li>
+    <li>lektioner, luncher och tillgänglighetsregler i grundschemat;</li>
+    <li>lektioner i kalendern, även passerade, med närvaron och
+      lektionsloggarna på dem, och kalenderns raster och luncher;</li>
+    <li>publika schemalänkar till grupperna, som slutar fungera;</li>
+    <li>det som hänger på lektionerna, timplansposterna och reglerna:
+      deltagare och lärare på lektionerna, vikarieuppdrag och
+      vikarieanteckningar, inställda lektioner, andra gruppers plats på
+      lektionerna, delad lärartid och uppdragspass. Det står utan antal.</li>
+  </ul>
+  <p>
+    Dialogen visar också vad som finns kvar men tappar kopplingen. Det gäller
+    elever som blir utan klass, avsnitt i klasshistoriken och mentorsuppdrag
+    som tappar klassen. Det gäller också gemensamma lektioner som tappar
+    gruppen och klasser i nästa läsår som tappar sin föregångare. Det står
+    <em>Inget annat hänger på dem</em> bara när ingenting av detta finns.
+    Kommer en grupp från elevregistret (SS12000) står det också, eftersom
+    nästa synkronisering kan lägga till den igen.
+  </p>
+  <p>
+    Samma regler gäller som när du ändrar eller tar bort en rad i taget, och
+    allt sker i ett enda steg: antingen går hela ändringen igenom eller inget
+    av den. Kan någon rad inte ändras eller tas bort listas den med skälet, till
+    exempel en klass som inte kan ersätta ett ämne eller en rad som någon
+    annan just har tagit bort. Då sparas inget, och knappen
+    <span class="ui">Spara för de … andra</span> eller
+    <span class="ui">Ta bort de … andra</span> gör det för resten. Det är
+    alltså du som bestämmer att resten ska gå, med listan framför dig. Hindras
+    en rad först när den ska tas bort, av något kontrollen inte kunde se, tas
+    inget bort. Raden står då kvar i listan med det skälet, och knappen gäller
+    de andra.
+  </p>
+  <p>
+    Att ta bort många elever tar längre tid än kontrollen. Varje elev söks
+    upp i all närvaro som finns sparad, och med flera års närvaro tar hundra
+    elever runt tio sekunder. Tar ändringen mer än en minut avbryts den, och
+    ingenting sparas eller tas bort. Dialogen säger det, och då tar du bort
+    färre åt gången. Säger dialogen i stället att servern är upptagen har
+    inte heller något sparats, och då räcker det att försöka igen om en
+    stund.
+  </p>
+  <p>
+    När du bekräftar räknar Rastra Schema om det som följer med. Har något
+    tillkommit sedan dialogen öppnades som hör till raderna själva, till
+    exempel en lektion, en elev i klassen eller en publik länk, tas inget
+    bort. Dialogen visar de nya siffrorna, och du bekräftar igen. Detsamma
+    gäller om någon annan under tiden har tagit bort en av raderna, eller
+    ändrat den så att den inte längre kan ändras eller tas bort. Närvaro och
+    lektionsloggar som skrivs på en lektion som redan fanns, i samma stund som
+    du bekräftar, följer med lektionen utan att räknas om.
+  </p>
+
   <h3><span class="num">3.5</span>Personer och inbjudningar</h3>
   <p>
     Lägg upp lärare, elever och vårdnadshavare. Varje elev måste tillhöra en
@@ -1150,6 +1246,46 @@
     båda delarna och skriver dessutom tjänsterna. En läsare ser personerna,
     deras behörigheter och uppdrag och elevernas vårdnadshavare men ändrar
     inget av det.
+  </p>
+  <p>
+    <strong>Flera elever på en gång.</strong> Elevernas rader har kryssrutor
+    som fungerar som på klasslistan (se <em>Markera flera</em> i 3.4).
+    Kryssrutan i tabellhuvudet markerar alla elever som sökningen och fliken
+    visar. Lärare, administratörer och vårdnadshavare har ingen kryssruta. De
+    ändras och tas bort en i taget, där varje rads egna regler kan sägas.
+    <span class="ui">Redigera</span> byter <span class="ui">Klass</span> för
+    de markerade eleverna eller sätter <span class="ui">Status</span> till
+    aktiv eller inaktiv. En elev som byter klass lämnar den gamla klassens
+    halvklasser.
+  </p>
+  <p>
+    <span class="ui">Ta bort</span> räknar det som försvinner med eleverna och
+    som en administratör ser:
+  </p>
+  <ul>
+    <li>medlemskap i undervisningsgrupper och klasshistorik;</li>
+    <li>platser som namngiven elev på enskilda lektioner;</li>
+    <li>kopplingar till vårdnadshavare (vårdnadshavarna finns kvar);</li>
+    <li>frånvaroanmälningar, ledighetsansökningar och närvaro;</li>
+    <li>utdrag över undervisningstid;</li>
+    <li>de inbjudnas inloggningar;</li>
+    <li>övriga uppgifter, till exempel rollhistoriken, som ett antal.</li>
+  </ul>
+  <p>
+    En inloggning som används på en annan skola finns kvar. Det som hör till
+    elevernas egna konton räknas inte, eftersom ingen administratör ser det.
+    Det gäller notiser, notisinställningar, enheter för pushnotiser och
+    kalenderprenumerationer, också vårdnadshavarnas prenumerationer på
+    eleverna. Dialogen nämner det i stället varje gång, så för elever står det
+    aldrig att inget annat hänger på dem.
+  </p>
+  <p>
+    Vill du behålla elevens historik gör du eleven inaktiv i stället.
+    Kontrollen räknar elevernas grupper, vårdnadshavare, frånvaro, ledighet,
+    närvaro och undervisningstid. Därför står den i läsloggen (7.4) som en
+    läsning av de uppgifterna, även om du stänger dialogen utan att ta bort
+    något. Kryssrutorna visas för dem som ändrar personerna: expeditionen,
+    rektor och en fullständig administratör.
   </p>
   <p>
     Har skolan ett elevregister som stöder SS12000 kan personerna hämtas

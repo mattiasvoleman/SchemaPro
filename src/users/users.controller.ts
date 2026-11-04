@@ -20,7 +20,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { UsersService, type PersonView, type UserCounts } from './users.service';
-import { CreateUserDto, InviteUsersDto, UpdateUserDto } from './dto/user.dto';
+import { BulkDeleteDto } from '../common/bulk';
+import { BulkUpdateStudentsDto, CreateUserDto, InviteUsersDto, UpdateUserDto } from './dto/user.dto';
 
 @Controller('api/v1/users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -66,6 +67,24 @@ export class UsersController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   inviteMany(@Body() dto: InviteUsersDto, @CurrentUser() user: AuthenticatedUser) {
     return this.users.inviteMany(dto.userIds, user);
+  }
+
+  /**
+   * Massåtgärder: many pupils removed at once, all or nothing; with dryRun,
+   * what would go, what would not and why, and what goes with them. Pupils
+   * only. Answers 200 with the report either way (src/common/bulk.ts).
+   */
+  @Post('students/bulk-delete')
+  @HttpCode(HttpStatus.OK)
+  bulkRemoveStudents(@Body() dto: BulkDeleteDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.users.bulkRemoveStudents(dto, user);
+  }
+
+  /** Massåtgärder: a class or a status set on many pupils at once, all or nothing. */
+  @Post('students/bulk-update')
+  @HttpCode(HttpStatus.OK)
+  bulkUpdateStudents(@Body() dto: BulkUpdateStudentsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.users.bulkUpdateStudents(dto, user);
   }
 
   /** The school's administrators with their profile and HR-läs. */

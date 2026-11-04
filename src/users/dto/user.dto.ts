@@ -1,4 +1,5 @@
 import { AdminProfile, UserRole } from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -7,11 +8,14 @@ import {
   IsEmail,
   IsEnum,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
+import { BulkIdsDto, lowerCaseId } from '../../common/bulk';
 
 export class CreateUserDto {
   @IsEnum(UserRole)
@@ -114,4 +118,28 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   hrRead?: boolean;
+}
+
+/**
+ * Massåtgärder: what may be set on many pupils at once, each field only when
+ * sent: the home class (null: no class) and the status. Validated as
+ * UpdateUserDto validates them.
+ */
+export class BulkStudentChangesDto {
+  @lowerCaseId
+  @IsOptional()
+  @IsUUID('4')
+  studentGroupId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
+/** Many pupils, and the fields to set on every one of them (src/common/bulk.ts). */
+export class BulkUpdateStudentsDto extends BulkIdsDto {
+  @IsObject()
+  @ValidateNested()
+  @Type(() => BulkStudentChangesDto)
+  changes!: BulkStudentChangesDto;
 }

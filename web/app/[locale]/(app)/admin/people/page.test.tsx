@@ -180,6 +180,19 @@ vi.mock("@/lib/staffing-queries", () => ({
   }),
 }));
 
+/**
+ * Massåtgärder's dialogs, which the page fetches on the first click of
+ * Redigera or Ta bort: a stand-in saying what it was opened with
+ * (students-bulk-dialogs.test.tsx tests the real ones).
+ */
+vi.mock("./students-bulk-dialogs", () => ({
+  StudentsBulkDialogs: ({ mode, ids }: { mode: string; ids: string[] }) => (
+    <div role="dialog" aria-label={`bulk-${mode}`}>
+      {ids.join(",")}
+    </div>
+  ),
+}));
+
 vi.mock("@/components/import/csv-import-dialog", () => ({
   CsvImportDialog: () => null,
 }));
@@ -196,11 +209,12 @@ vi.mock("next-intl", () => ({
   },
 }));
 
+/** The name, in the cell after the row's selection box (Massval). */
 const rowNames = () =>
   screen
     .getAllByRole("row")
     .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[0]?.textContent ?? "");
+    .map((row) => within(row).getAllByRole("cell")[1]?.textContent ?? "");
 
 /**
  * The search is a labelled type=search field (a searchbox) since the 2026-10-11
@@ -1060,6 +1074,66 @@ describe("People page", () => {
  * (`import type` and `export type` are erased and do not count, `import()`
  * is the lazy edge and is not followed) must be neither of the two.
  */
+describe("Massval: ticking pupils and acting on them", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.myProfile = undefined;
+  });
+
+  const status = () => screen.getByRole("status");
+
+  it("gives a box to each pupil's row and to nobody else's", () => {
+    render(<PeoplePage />);
+    expect(screen.getByRole("checkbox", { name: "selectRow(Alma Berg)" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "selectRow(Nils Ek)" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "selectRow(Karin Ek)" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "selectRow(Rita Nilsson)" })).not.toBeInTheDocument();
+  });
+
+  it("ticks the pupils shown with the header box, and says so", async () => {
+    const user = userEvent.setup();
+    render(<PeoplePage />);
+    await user.click(screen.getByRole("checkbox", { name: "selectAll(students|2)" }));
+    expect(status()).toHaveTextContent("selected(students|2|2)");
+    await user.type(searchBox(), "Alma");
+    expect(status()).toHaveTextContent("selected(students|1|1)");
+  });
+
+  it("offers nothing to tick on the teachers' tab", async () => {
+    const user = userEvent.setup();
+    render(<PeoplePage />);
+    await user.click(screen.getByRole("tab", { name: "TEACHER" }));
+    expect(screen.getByRole("checkbox", { name: "selectAll(students|0)" })).toBeDisabled();
+  });
+
+  it("opens Redigera and Ta bort with the ticked pupils", async () => {
+    const user = userEvent.setup();
+    render(<PeoplePage />);
+    await user.click(screen.getByRole("checkbox", { name: "selectRow(Nils Ek)" }));
+    await user.click(screen.getByRole("button", { name: "delete" }));
+    expect(await screen.findByRole("dialog", { name: "bulk-delete" })).toHaveTextContent("st-2");
+  });
+
+  it("gives a profile that does not write the register no boxes and no bar (Roller i skolan)", () => {
+    state.myProfile = "SCHEMALAGGARE";
+    render(<PeoplePage />);
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    // The register still reads: the name is the first cell.
+    expect(within(screen.getAllByRole("row")[1]!).getAllByRole("cell")[0]).toHaveTextContent(/\w+ \w+/);
+  });
+
+  it("marks the boxes and the bar with personal", async () => {
+    const user = userEvent.setup();
+    render(<PeoplePage />);
+    const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+    const box = screen.getByRole("checkbox", { name: "selectRow(Alma Berg)" });
+    expect(writes(box)).toBe("PERSONAL");
+    await user.click(box);
+    expect(writes(screen.getByRole("button", { name: "edit" }))).toBe("PERSONAL");
+  });
+});
+
 describe("what the register loads before the Arbetstid dialog is opened", () => {
   const WEB = path.resolve(__dirname, "../../../../..");
   const PAGE = "app/[locale]/(app)/admin/people/page.tsx";
@@ -1112,6 +1186,23 @@ describe("what the register loads before the Arbetstid dialog is opened", () => 
     expect(page).toContain(SUMMARY);
     expect(page).toContain("lib/work-rule-queries.ts");
     expect(page.filter((file) => FORM.includes(file))).toEqual([]);
+  });
+
+  it("reaches none of Massåtgärder's dialogs or calls from either list, only the boxes and the bar", () => {
+    const BULK_LAZY = [
+      "components/bulk/bulk-dialogs.tsx",
+      "lib/bulk-api.ts",
+      "app/[locale]/(app)/admin/people/students-bulk-dialogs.tsx",
+      "app/[locale]/(app)/admin/groups/groups-bulk-dialogs.tsx",
+    ];
+    for (const entry of [PAGE, "app/[locale]/(app)/admin/groups/page.tsx"]) {
+      const page = reachable(entry);
+      expect(page).toContain("components/bulk/bulk-selection.tsx");
+      expect(page).toContain("lib/bulk-selection.ts");
+      expect(page.filter((file) => BULK_LAZY.includes(file))).toEqual([]);
+    }
+    // And the shared hooks file every admin route takes whole stays without them.
+    expect(reachable("lib/queries.ts").filter((file) => BULK_LAZY.includes(file))).toEqual([]);
   });
 
   it("draws the summary from a module that imports nothing of the form's", () => {

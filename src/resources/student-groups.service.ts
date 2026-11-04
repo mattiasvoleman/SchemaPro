@@ -6,7 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import type { Prisma, StudentGroup } from '@prisma/client';
+import type { Prisma, PrismaClient, StudentGroup } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
@@ -14,7 +14,22 @@ import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError, studentGroupHasEnrolmentHistory } from '../common/utils/prisma-errors';
+import {
+  assertSomeChange,
+  bulkTransaction,
+  notFound,
+  refusalOf,
+  runBulk,
+  uniqueIds,
+  writeAll,
+  type BulkDeleteDto,
+  type BulkRefusal,
+  type BulkResult,
+} from '../common/bulk';
+import { GROUP_KEYS, countByKind, grownSince, type GroupKeyKind } from '../common/removal-inventory';
+import { holdTheSchoolsPeople, lockGroups, lockHomePupils } from '../common/lock-order';
 import type {
+  BulkUpdateStudentGroupsDto,
   CreateStudentGroupDto,
   PlaceHalvesDto,
   SetGroupMembersDto,
@@ -44,17 +59,70 @@ async function assertMayReplace(
   subjectId: string | null | undefined,
 ): Promise<void> {
   if (!subjectId) return;
-  if (group.kind !== 'TEACHING_GROUP' || group.halfOfId !== null) {
-    throw new BadRequestException({
-      message:
-        group.kind === 'TEACHING_GROUP'
-          ? 'En halvklass är en del av klassen och kan inte ersätta klassens lektioner i ett ämne.'
-          : 'En klass är elevernas hemklass och kan inte ersätta sina egna lektioner i ett ämne. Gör en undervisningsgrupp för SvA.',
-      code: REPLACING_GROUP_NOT_A_TEACHING_GROUP,
-    });
-  }
+  const refusal = replaceRefusal(group);
+  if (refusal) throw refusal;
+  await assertSubjectIsTheSchools(tx, subjectId);
+}
+
+/** Why `group` may not replace a subject (Ersättande grupper), or null when it may. */
+function replaceRefusal(group: { kind: string; halfOfId: string | null }): BadRequestException | null {
+  if (group.kind === 'TEACHING_GROUP' && group.halfOfId === null) return null;
+  return new BadRequestException({
+    message:
+      group.kind === 'TEACHING_GROUP'
+        ? 'En halvklass är en del av klassen och kan inte ersätta klassens lektioner i ett ämne.'
+        : 'En klass är elevernas hemklass och kan inte ersätta sina egna lektioner i ett ämne. Gör en undervisningsgrupp för SvA.',
+    code: REPLACING_GROUP_NOT_A_TEACHING_GROUP,
+  });
+}
+
+async function assertSubjectIsTheSchools(tx: Prisma.TransactionClient, subjectId: string): Promise<void> {
   const subject = await tx.subject.findUnique({ where: { id: subjectId }, select: { id: true } });
   if (!subject) throw new BadRequestException('replacesSubjectId: ämnet finns inte i skolan.');
+}
+
+/**
+ * What goes with a bulk delete of groups: every key to StudentGroups in the
+ * catalogue, counted (GROUP_KEYS in src/common/removal-inventory.ts), plus
+ * two kinds a level down that a reader needs to know go: the attendance
+ * marks and the lesson logs on the groups' calendar lessons. A delete of one
+ * group takes the same rows, unsaid. Counts only, none naming a pupil, so
+ * the dry run is no read in the läslogg's sense: the attendance marks are a
+ * figure over the groups' lessons, as the attendance summary is.
+ *
+ * Counted over the named groups and the halves a named class takes with it.
+ */
+export interface GroupRemovalConsequences extends Record<GroupKeyKind, number> {
+  /** Attendance marks on the groups' calendar lessons, which go with them. */
+  attendanceMarks: number;
+  /** Lesson logs (klassbok entries) on those lessons, which go with them. */
+  lessonLogs: number;
+  /** Groups linked to the school's SS12000 source, which its next sync may add again. */
+  fromSource: number;
+}
+
+async function groupRemovalConsequences(
+  tx: Prisma.TransactionClient,
+  groups: { id: string; ss12000Id: string | null }[],
+): Promise<GroupRemovalConsequences> {
+  const named = groups.map((group) => group.id);
+  // A half the call names goes as itself, not with its class; a successor the
+  // call deletes too loses nothing it keeps.
+  const halves = await tx.studentGroup.findMany({
+    where: { halfOfId: { in: named }, id: { notIn: named } },
+    select: { id: true },
+  });
+  const all = [...named, ...halves.map((half) => half.id)];
+  const byKey = await countByKind(tx as PrismaClient, GROUP_KEYS, all, ['halves', 'successors']);
+  const inGroups = { studentGroupId: { in: all } };
+  return {
+    ...byKey,
+    halves: halves.length,
+    successors: await tx.studentGroup.count({ where: { predecessorId: { in: all }, id: { notIn: all } } }),
+    attendanceMarks: await tx.attendanceRecord.count({ where: { calendarLesson: inGroups } }),
+    lessonLogs: await tx.lessonLog.count({ where: { calendarLesson: inGroups } }),
+    fromSource: groups.filter((group) => group.ss12000Id !== null).length,
+  };
 }
 
 /**
@@ -243,14 +311,28 @@ export class StudentGroupsService {
    * A new årskurs may so bring a pending leave request within the
    * delegation (Mentorns ledighetsbeslut), and the update then tells the
    * mentors it gives a request, once each, in its own transaction.
+   *
+   * The rows it writes are held first, in the one order (lock-order.ts):
+   * the group; with an årskurs a class's halves, and then its pupils, whose
+   * class history the årskurs rewrites (StudentEnrollments_enrollment_grade);
+   * and with a kind or a läsår a half's class, which the trigger
+   * StudentGroups_half_is_of_a_class then holds FOR SHARE. The edit dialog
+   * sends both with every save.
    */
   async update(
     id: string,
     dto: UpdateStudentGroupDto,
     user: AuthenticatedUser,
   ): Promise<StudentGroup> {
+    const schoolId = requireSchoolId(user);
     try {
       return await this.prisma.withRls(user, async (tx) => {
+        await holdTheSchoolsPeople(tx, schoolId);
+        await lockGroups(tx, [id], 'NO KEY UPDATE', {
+          halves: dto.gradeLevel !== undefined,
+          classes: dto.kind !== undefined || dto.academicYearId !== undefined,
+        });
+        if (dto.gradeLevel !== undefined) await lockHomePupils(tx, [id], 'SHARE');
         if (dto.academicYearId !== undefined) {
           const current = await tx.studentGroup.findUnique({
             where: { id },
@@ -293,12 +375,207 @@ export class StudentGroupsService {
     }
   }
 
+  /**
+   * The group, and what its delete writes: its halves, which go with a
+   * class, and next year's groups it is the predecessor of (SET NULL), held
+   * FOR UPDATE in the one order (lock-order.ts) before the delete. Unheld,
+   * the delete took the class first and its halves and successors only as
+   * the cascade reached them, against a bulk write that holds them in id
+   * order.
+   */
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
+    const schoolId = requireSchoolId(user);
     try {
-      await this.prisma.withRls(user, (tx) =>
-        tx.studentGroup.delete({ where: { id } }),
+      await this.prisma.withRls(user, async (tx) => {
+        await holdTheSchoolsPeople(tx, schoolId);
+        await lockGroups(tx, [id], 'UPDATE', { halves: true, successors: true });
+        await tx.studentGroup.delete({ where: { id } });
+      });
+    } catch (error) {
+      rethrowPrismaError(error);
+    }
+  }
+
+  /**
+   * Massåtgärder: an årskurs or an "Ersätter ämne" for many groups at once,
+   * all or nothing (src/common/bulk.ts), under update()'s rules for the
+   * fields it takes: a subject is replaced only by a teaching group that is
+   * not a half (the same refusal, row by row) and only by one of the
+   * school's subjects (asked once), and a class's new årskurs is its halves'
+   * and may give a mentor a leave request (told once, after every row).
+   *
+   * Not the name (one per year), the kind (a class's pupils are its home
+   * pupils, a teaching group's its members) or the läsår (where a group's
+   * timplan, lessons and class history live; moving years is the rollover's).
+   *
+   * A row whose fields already hold the values is judged but not written:
+   * an UPDATE moves updatedAt, which the SS12000 sync reads as a local edit
+   * (LOCAL_EDIT_SINCE_LAST_SYNC), and twenty classes already in åk 7 were
+   * not edited by being in the selection.
+   *
+   * The rows are held FOR NO KEY UPDATE before they are judged, in the one
+   * order (lock-order.ts): the groups in id order, a class's halves among
+   * them when an årskurs is sent, then the classes' pupils. A kind or a
+   * half judged is the one written, and two calls over the same groups queue.
+   * NO KEY: rows written to the groups meanwhile (their keys' KEY SHARE) do
+   * not wait on it.
+   */
+  async bulkUpdate(dto: BulkUpdateStudentGroupsDto, user: AuthenticatedUser): Promise<BulkResult> {
+    assertSomeChange(dto.changes);
+    const schoolId = requireSchoolId(user);
+    const ids = uniqueIds(dto.ids);
+    const { gradeLevel, replacesSubjectId } = dto.changes;
+    const dryRun = dto.dryRun === true;
+    const data = {
+      ...(gradeLevel !== undefined ? { gradeLevel } : {}),
+      ...(replacesSubjectId !== undefined ? { replacesSubjectId } : {}),
+    };
+    try {
+      return await runBulk(
+        bulkTransaction(this.prisma, user),
+        dryRun,
+        async (tx) => {
+          await holdTheSchoolsPeople(tx, schoolId);
+          await lockGroups(tx, ids, 'NO KEY UPDATE', { halves: gradeLevel !== undefined });
+          if (gradeLevel !== undefined) await lockHomePupils(tx, ids, 'SHARE');
+          const found = await tx.studentGroup.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, kind: true, halfOfId: true, gradeLevel: true, replacesSubjectId: true },
+          });
+          const byId = new Map(found.map((group) => [group.id, group]));
+          const refused: BulkRefusal[] = [];
+          const judged: typeof found = [];
+          for (const id of ids) {
+            const group = byId.get(id);
+            const why = group && replacesSubjectId ? replaceRefusal(group) : null;
+            const refusal = !group ? notFound(id) : why ? refusalOf(id, why) : null;
+            if (refusal) refused.push(refusal);
+            else if (group) judged.push(group);
+          }
+          if (replacesSubjectId && judged.length > 0) await assertSubjectIsTheSchools(tx, replacesSubjectId);
+          const moving = judged.filter(
+            (group) =>
+              (gradeLevel !== undefined && group.gradeLevel !== gradeLevel) ||
+              (replacesSubjectId !== undefined && group.replacesSubjectId !== replacesSubjectId),
+          );
+          const classes = new Set(judged.filter((group) => group.kind === 'CLASS').map((group) => group.id));
+          refused.push(
+            ...(await writeAll(
+              tx,
+              moving.map((group) => group.id),
+              (rows) => tx.studentGroup.updateMany({ where: { id: { in: rows } }, data }),
+              (id) => tx.studentGroup.update({ where: { id }, data }),
+            )),
+          );
+          // update() carries the årskurs to a class's halves whenever it is
+          // sent, also when the class already had it: a half left behind is
+          // brought along. Every class judged, then, not only those moving,
+          // and only the halves that do not already hold it.
+          if (gradeLevel !== undefined && classes.size > 0 && refused.length === 0) {
+            await tx.studentGroup.updateMany({
+              where: {
+                halfOfId: { in: [...classes] },
+                ...(gradeLevel === null
+                  ? { gradeLevel: { not: null } }
+                  : { OR: [{ gradeLevel: null }, { gradeLevel: { not: gradeLevel } }] }),
+              },
+              data: { gradeLevel },
+            });
+          }
+          if (this.notifications && gradeLevel !== undefined && moving.length > 0 && !dryRun && refused.length === 0) {
+            await tellNewMentors(this.notifications, tx, schoolId);
+          }
+          const refusedIds = new Set(refused.map((refusal) => refusal.id));
+          return { done: judged.map((group) => group.id).filter((id) => !refusedIds.has(id)), refused };
+        },
       );
     } catch (error) {
+      if (error instanceof HttpException) throw error;
+      rethrowPrismaError(error);
+    }
+  }
+
+  /**
+   * Massåtgärder: many groups deleted at once, all or nothing
+   * (src/common/bulk.ts), as remove() deletes one: the database takes what
+   * hangs on each and empties what only names it, every key told in
+   * GROUP_KEYS (src/common/removal-inventory.ts). The dry run counts them
+   * (GroupRemovalConsequences) without deleting, so the confirmation can say
+   * them: a group's delete is judged by nothing but whether the row is there
+   * for the caller, which the read answers.
+   *
+   * THE CONFIRMATION BINDS THE COUNTS. The real call carries the dry run's
+   * counts back (`expected`) and counts again in its own transaction, after
+   * the rows are locked: a kind that grew meanwhile (a lesson written, a
+   * pupil placed) refuses the call with the new counts (`consequencesGrew`),
+   * nothing deleted, so the dialog can show them and ask again.
+   *
+   * THE ROWS ARE LOCKED FOR UPDATE in the one order (lock-order.ts): the
+   * named groups, the halves a named class takes along and the groups whose
+   * predecessor goes (SET NULL), in id order. A row written to them
+   * meanwhile takes its key's KEY SHARE and waits for the delete, so what was
+   * counted of the keys to them is what goes. Not a level down: an attendance
+   * mark or a lesson log written meanwhile on a lesson already there holds
+   * the lesson's key, not the group's, and goes with the lesson uncounted.
+   * Halves go first when tried one by one: a class takes its halves with it,
+   * and its half tried after it would not be found.
+   */
+  async bulkRemove(
+    dto: BulkDeleteDto,
+    user: AuthenticatedUser,
+  ): Promise<BulkResult<GroupRemovalConsequences>> {
+    const schoolId = requireSchoolId(user);
+    const ids = uniqueIds(dto.ids);
+    const transaction = bulkTransaction(this.prisma, user);
+    const judge = async (tx: PrismaClient) => {
+      const found = await tx.studentGroup.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, halfOfId: true, ss12000Id: true },
+      });
+      const present = new Set(found.map((group) => group.id));
+      return { found, refused: ids.filter((id) => !present.has(id)).map(notFound) };
+    };
+    try {
+      if (dto.dryRun === true) {
+        return await transaction(async (tx) => {
+          const { found, refused } = await judge(tx);
+          return {
+            applied: false,
+            dryRun: true,
+            done: found.map((group) => group.id).sort(),
+            refused,
+            consequences: await groupRemovalConsequences(tx, found),
+          };
+        });
+      }
+      return await runBulk(transaction, false, async (tx) => {
+        await holdTheSchoolsPeople(tx, schoolId);
+        await lockGroups(tx, ids, 'UPDATE', { halves: true, successors: true });
+        const { found, refused } = await judge(tx);
+        if (dto.expected) {
+          const counts = await groupRemovalConsequences(tx, found);
+          const consequencesGrew = grownSince(dto.expected, { ...counts });
+          if (consequencesGrew.length > 0) {
+            return { done: found.map((group) => group.id).sort(), refused, consequences: counts, consequencesGrew };
+          }
+        }
+        const order = [
+          ...found.filter((group) => group.halfOfId !== null),
+          ...found.filter((group) => group.halfOfId === null),
+        ].map((group) => group.id);
+        refused.push(
+          ...(await writeAll(
+            tx,
+            order,
+            (rows) => tx.studentGroup.deleteMany({ where: { id: { in: rows } } }),
+            (id) => tx.studentGroup.delete({ where: { id } }),
+          )),
+        );
+        const refusedIds = new Set(refused.map((refusal) => refusal.id));
+        return { done: ids.filter((id) => !refusedIds.has(id)), refused };
+      });
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
       rethrowPrismaError(error);
     }
   }
@@ -372,6 +649,7 @@ export class StudentGroupsService {
     const schoolId = requireSchoolId(user);
     try {
       return await this.prisma.withRls(user, async (tx) => {
+        await holdTheSchoolsPeople(tx, schoolId);
         await lockClassForSplit(tx, classId);
         return splitLockedClass(tx, schoolId, classId, dto.names);
       });
@@ -403,7 +681,11 @@ export class StudentGroupsService {
    * The class is held FOR NO KEY UPDATE first, as split holds it: two
    * placements of one class saved at the same moment would each delete what
    * it saw and both insert, leaving a placement neither sent. The second
-   * waits, and then replaces the first's.
+   * waits, and then replaces the first's. Its halves with it, in the one
+   * order (src/common/lock-order.ts): every group row first, in id order,
+   * then the pupils. Held by the membership rows' key alone, a half was
+   * reached after the pupils, against a delete that holds the half and then
+   * empties the class's pupils.
    */
   async placeHalves(
     classId: string,
@@ -413,7 +695,8 @@ export class StudentGroupsService {
     const schoolId = requireSchoolId(user);
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        await tx.$queryRaw`SELECT 1 FROM "StudentGroups" WHERE "id" = ${classId}::uuid FOR NO KEY UPDATE`;
+        await holdTheSchoolsPeople(tx, schoolId);
+        await lockGroups(tx, [classId], 'NO KEY UPDATE', { halves: true });
         const theClass = await tx.studentGroup.findUnique({
           where: { id: classId },
           select: { id: true, name: true, predecessorId: true, halves: { select: { id: true } } },
@@ -462,6 +745,10 @@ export class StudentGroupsService {
   /**
    * Replace the group's teaching membership with exactly `studentIds`.
    *
+   * The group is held FOR KEY SHARE, as its membership rows' key holds it,
+   * before the pupils (src/common/lock-order.ts): a delete of the group
+   * holds it and then empties its class's pupils.
+   *
    * Validated against the tenant inside the SAME RLS transaction that writes:
    * every id must be an ACTIVE STUDENT the caller can see. Ids that fail that
    * test are rejected as a 400 naming the offenders rather than silently
@@ -477,6 +764,8 @@ export class StudentGroupsService {
     const unique = [...new Set(dto.studentIds)];
     try {
       return await this.prisma.withRls(user, async (tx) => {
+        await holdTheSchoolsPeople(tx, schoolId);
+        await lockGroups(tx, [groupId], 'KEY SHARE');
         const group = await tx.studentGroup.findUnique({
           where: { id: groupId },
           select: { id: true, halfOf: { select: { id: true, name: true, predecessorId: true } } },
