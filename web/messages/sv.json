@@ -4661,6 +4661,42 @@
         "subjectsUnmapped": "{stageTitle}: inget av elevens ämnen har en nationell ämneskod ({planned} planerat), så ingen nationell jämförelse görs."
       }
     },
+    "plannedPupils": {
+      "title": "{count, plural, one {# elev i klassen} other {Alla # elever i klassen}}",
+      "hint": "Varje elevs planerade tid, ämne för ämne, utan schema: vad timplanen kräver, vad eleven får av klassens och sina grupper, och skillnaden. Siffrorna är samma som i tabellen ovan, elev för elev. Under mål är markerat med minustecken och gul text.",
+      "searchLabel": "Sök elev i klassen",
+      "shown": "Visar {shown} av {total} elever",
+      "noMatch": "Ingen elev i klassen matchar sökningen.",
+      "empty": "Klassen har inga elever i läsåret.",
+      "loadFailed": "Klassens elever kunde inte hämtas",
+      "loadFailedHint": "Tabellen ovan påverkas inte. Försök igen om en stund.",
+      "retry": "Försök igen",
+      "pupilCaption": "Planerad tid för {pupil}, ämne för ämne",
+      "underBadge": "{count, plural, one {# ämne under mål} other {# ämnen under mål}}",
+      "onTarget": "Inget ämne under mål",
+      "noLines": "Eleven har varken mål eller poster i läsåret.",
+      "columnSubject": "Ämne",
+      "columnTarget": "Mål min/v",
+      "columnPlanned": "Får min/v",
+      "columnDelta": "Skillnad",
+      "sourcesLabel": "Kommer från",
+      "deltaUnder": "{minutes} min/v under målet",
+      "deltaOver": "{minutes} min/v över målet",
+      "deltaMet": "på målet",
+      "noTarget": "inget mål",
+      "noSources": "Ingen post når eleven",
+      "source": "{group} ({kind}) {minutes} min",
+      "sourceBare": "{group} {minutes} min",
+      "sourceNamed": "{subject}: {group} ({kind}) {minutes} min",
+      "sourceNamedBare": "{subject}: {group} {minutes} min",
+      "kind": {
+        "class": "klass",
+        "half": "halvklass",
+        "teaching": "undervisningsgrupp",
+        "replacing": "ersättande grupp"
+      },
+      "classAlsoUnder": "Klassens egen rad ligger också under mål."
+    },
     "noYearAction": "Till läsåren",
     "peopleFailed": "Elevernas namn kunde inte hämtas",
     "peopleFailedHint": "Täckningen räknas ändå, men eleverna står som ”okänd elev” tills sidan laddas om."

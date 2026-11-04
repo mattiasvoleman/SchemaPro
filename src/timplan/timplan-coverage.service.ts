@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import { Role } from '../auth/enums/role.enum';
@@ -10,8 +10,10 @@ import {
   computePlannedCoverage,
   type PlannedCoverage,
   type PlannedCoverageInput,
+  type PlannedPupil,
   type PlannedPupilInput,
   type PlannedVerdict,
+  type PupilLine,
 } from '../common/timplan-planned';
 import {
   computeScheduledCoverage,
@@ -26,7 +28,7 @@ import {
   type DeliveredVerdict,
 } from '../common/timplan-delivered';
 import { todayInZone } from '../common/utils/time';
-import type { TimplanCoverageQueryDto } from './dto/timplan-coverage.dto';
+import type { TimplanCoverageQueryDto, TimplanPlannedPupilsQueryDto } from './dto/timplan-coverage.dto';
 import { describeDeliveredVerdict } from './timplan-delivered-messages';
 import { readGrundschema } from '../publication/published-grundschema';
 import { readDeliveredRows } from './timplan-delivered.sql';
@@ -101,6 +103,26 @@ export function pupilsNamedBy(coverage: {
   );
 }
 
+/** One line of a pupil's planned timplan, with its difference from the target. */
+export interface PlannedPupilFigure extends PupilLine {
+  /** Planned less target; null where the plan has no target for the line. */
+  deltaMinutesPerWeek: number | null;
+}
+
+/** One pupil of the drilled class: every line, not only the lines of a finding. */
+export interface PlannedClassPupil extends Omit<PlannedPupil, 'lines'> {
+  lines: PlannedPupilFigure[];
+}
+
+/** The planned layer's per-class pupil read: ids only, the page names them. */
+export interface PlannedClassPupilsResponse {
+  academicYearId: string;
+  layer: 'planned';
+  studentGroupId: string;
+  gradeLevel: number | null;
+  pupils: PlannedClassPupil[];
+}
+
 @Injectable()
 export class TimplanCoverageService {
   constructor(private readonly prisma: PrismaService) {}
@@ -141,6 +163,59 @@ export class TimplanCoverageService {
         ...verdict,
         message: describePlannedVerdict(verdict),
       })),
+    };
+  }
+
+  /**
+   * The planned layer's drill-down, one class at a time: every pupil of the
+   * class with every line — target, planned, the difference, the status and
+   * the sources (the groups and subjects the minutes come from) — where the
+   * overview lists only the pupils with a finding of their own. A pupil who
+   * is short because the class is short is in the overview's `below` count and
+   * nowhere else; this is where they can be read.
+   *
+   * The same read and the same arithmetic as planned(): readPlannedInput under
+   * the caller's RLS in one transaction, then computePlannedCoverage with the
+   * class as drillGroupId, so a line's min / median / max and `below` in the
+   * overview are these pupils' figures (timplan-planned.drill.spec.ts). The
+   * overview stays small because the pupils are fetched when a class is opened.
+   *
+   * SCHOOL_ADMIN only — the controller says so, and the service says it again,
+   * since a teacher's coverage strips every pupil figure and this answer is
+   * nothing else. Pupil ids only, as everywhere; the läslogg records every
+   * pupil the answer names (TEACHING_TIME).
+   */
+  async plannedPupils(query: TimplanPlannedPupilsQueryDto, user: AuthenticatedUser): Promise<PlannedClassPupilsResponse> {
+    requireSchoolId(user);
+    if (user.role !== Role.SCHOOL_ADMIN) {
+      throw new ForbiddenException('Elevernas planerade tid läses av administratören.');
+    }
+    const read = await this.prisma.withRls(user, async (tx) => {
+      const input = await readPlannedInput(tx, user, query.academicYearId, true);
+      if (!input) return 'NO_YEAR' as const;
+      const group = input.groups.find((entry) => entry.id === query.studentGroupId && entry.kind === 'CLASS');
+      if (!group) return 'NO_CLASS' as const;
+      const computed = computePlannedCoverage({ ...input, drillGroupId: group.id });
+      const pupils = (computed.pupils ?? [])
+        .filter((pupil) => pupil.homeGroupId === group.id)
+        .map((pupil) => ({
+          ...pupil,
+          lines: pupil.lines.map((line) => ({
+            ...line,
+            deltaMinutesPerWeek:
+              line.targetMinutesPerWeek === null ? null : line.plannedMinutesPerWeek - line.targetMinutesPerWeek,
+          })),
+        }));
+      await recordRead(tx, 'TEACHING_TIME', pupilsNamedBy({ pupils, verdicts: [] }), user.channel);
+      return { gradeLevel: group.gradeLevel, pupils };
+    });
+    if (read === 'NO_YEAR') throw new NotFoundException('Läsåret finns inte.');
+    if (read === 'NO_CLASS') throw new NotFoundException('Klassen finns inte i läsåret.');
+    return {
+      academicYearId: query.academicYearId,
+      layer: 'planned',
+      studentGroupId: query.studentGroupId,
+      ...read,
     };
   }
 

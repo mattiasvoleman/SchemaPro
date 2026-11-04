@@ -4661,6 +4661,42 @@
         "subjectsUnmapped": "{stageTitle}: none of the pupil's subjects has a national subject code ({planned} planned), so no national comparison is made."
       }
     },
+    "plannedPupils": {
+      "title": "{count, plural, one {# pupil in the class} other {All # pupils in the class}}",
+      "hint": "Each pupil's planned time, subject by subject, without a timetable: what the timplan requires, what the pupil gets from the class and their groups, and the difference. The figures are those of the table above, pupil by pupil. Below target is marked with a minus sign and amber text.",
+      "searchLabel": "Search pupil in the class",
+      "shown": "Showing {shown} of {total} pupils",
+      "noMatch": "No pupil in the class matches the search.",
+      "empty": "The class has no pupils in the year.",
+      "loadFailed": "The class's pupils could not be loaded",
+      "loadFailedHint": "The table above is not affected. Try again in a moment.",
+      "retry": "Try again",
+      "pupilCaption": "Planned time for {pupil}, subject by subject",
+      "underBadge": "{count, plural, one {# subject below target} other {# subjects below target}}",
+      "onTarget": "No subject below target",
+      "noLines": "The pupil has neither targets nor entries in the year.",
+      "columnSubject": "Subject",
+      "columnTarget": "Target min/wk",
+      "columnPlanned": "Gets min/wk",
+      "columnDelta": "Difference",
+      "sourcesLabel": "Comes from",
+      "deltaUnder": "{minutes} min/wk below the target",
+      "deltaOver": "{minutes} min/wk above the target",
+      "deltaMet": "on target",
+      "noTarget": "no target",
+      "noSources": "No entry reaches the pupil",
+      "source": "{group} ({kind}) {minutes} min",
+      "sourceBare": "{group} {minutes} min",
+      "sourceNamed": "{subject}: {group} ({kind}) {minutes} min",
+      "sourceNamedBare": "{subject}: {group} {minutes} min",
+      "kind": {
+        "class": "class",
+        "half": "half class",
+        "teaching": "teaching group",
+        "replacing": "replacing group"
+      },
+      "classAlsoUnder": "The class's own line is also below target."
+    },
     "noYearAction": "To school years",
     "peopleFailed": "The pupils’ names could not be loaded",
     "peopleFailedHint": "The coverage is still counted, but the pupils show as “unknown pupil” until the page is reloaded."

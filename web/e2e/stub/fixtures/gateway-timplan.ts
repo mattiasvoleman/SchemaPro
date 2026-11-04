@@ -1,5 +1,5 @@
 import { Reply, route, type GatewayRoute } from "../gateway-routes";
-import { plannedCoverage, teachingTimeCard } from "./timplan-coverage";
+import { plannedClassPupils, plannedCoverage, teachingTimeCard } from "./timplan-coverage";
 import { NATIONAL_TIMPLANS } from "./timplan-national";
 import { CHECKS, CREDITS, PLAN_LIST, PLANS, YEAR_TIMPLANS } from "./timplan-plans";
 import { GUARDIAN_LINKS, NEXT_YEAR, YEAR } from "./world";
@@ -32,6 +32,16 @@ export const timplanRoutes: GatewayRoute[] = [
     const layer = query.get("layer") ?? "planned";
     if (layer === "planned") return plannedCoverage(yearId);
     return new Reply(404, undefined, { miss: true });
+  }),
+
+  // "Visa alla elever": one class's pupils on the planned layer. An admin's
+  // read; the gateway refuses every other role the route.
+  route("GET", "/api/v1/timplan-coverage/planned/pupils", ({ person, query }) => {
+    if (!person) return new Reply(401, { message: "Inte inloggad." });
+    if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
+    const yearId = query.get("academicYearId") ?? "";
+    if (!KNOWN_YEARS.has(yearId)) return notFound("Läsåret");
+    return plannedClassPupils(yearId, query.get("studentGroupId") ?? "") ?? notFound("Klassen");
   }),
 
   // Delade lektioner: the world shares no post, so every year answers none
