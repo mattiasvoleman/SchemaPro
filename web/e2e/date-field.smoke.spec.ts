@@ -1,5 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
+import { addDays } from "./stub/fixtures/calendar";
+import { YEAR } from "./stub/fixtures/world";
 
 /**
  * The date field's calendar, where it opens: inside a dialog, in the right
@@ -88,6 +90,11 @@ for (const size of VIEWPORTS) {
     const { dialog, misses } = await openBreakDialog(page, baseURL!, size);
 
     for (const field of ["Första dagen", "Sista dagen"]) {
+      // A day two months into the fixture läsår, so the calendar opens there
+      // and the month after it is the läsår's too, whatever day the suite runs.
+      // Opened on today, a run in June would step into July, past the läsår's
+      // last day: every day disabled, and nothing for the keyboard to land on.
+      await dialog.getByRole("textbox", { name: field }).fill(addDays(YEAR.startDate, 60));
       const trigger = dialog.getByRole("button", { name: `Öppna kalender för ${field}` });
       await trigger.click();
       const calendar = page.getByRole("dialog", { name: "Välj datum" });
