@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Role } from '../auth/enums/role.enum';
 import {
   createPrismaMock,
@@ -327,6 +327,169 @@ describe('TimplanCoverageService', () => {
     const answer = await service.planned({ academicYearId: YEAR_ID }, testUser());
     expect(tx.localTimplan.findMany).not.toHaveBeenCalled();
     expect(answer.groups).toEqual([]);
+  });
+});
+
+describe('TimplanCoverageService, planned pupils (one class at a time)', () => {
+  let service: TimplanCoverageService;
+  let tx: TxMock;
+  let prisma: PrismaMock;
+
+  beforeEach(() => {
+    tx = createTxMock();
+    prisma = createPrismaMock(tx);
+    service = new TimplanCoverageService(prisma as unknown as PrismaService);
+    // 8A is on target in Matematik (3 x 60 of 180); Spanska 8 gives Anna her
+    // 90 minutes and Bo none. Anna has no finding of her own, Bo has one, and
+    // the visitor is a member of Spanska 8 whose home class is not this year's.
+    tx.academicYear.findUnique.mockResolvedValue({
+      startDate: new Date('2026-08-17T00:00:00.000Z'),
+      endDate: new Date('2027-06-11T00:00:00.000Z'),
+    });
+    tx.academicYearTimplan.findMany.mockResolvedValue([{ gradeLevel: 8, localTimplanId: PLAN_ID }]);
+    tx.localTimplan.findMany.mockResolvedValue([
+      {
+        id: PLAN_ID,
+        name: 'Grundskolan 2024',
+        status: 'DECIDED',
+        entries: [
+          { subjectId: SPA, gradeLevel: 8, minutesPerWeek: 90 },
+          { subjectId: MA, gradeLevel: 8, minutesPerWeek: 180 },
+        ],
+        nationalVersion: { appliesFromCohortTerm: 'HT2024' },
+      },
+    ]);
+    tx.subject.findMany.mockResolvedValue([
+      { id: SPA, name: 'Spanska', nationalCode: 'M2', countsTowardTimplan: true },
+      { id: MA, name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true },
+    ]);
+    tx.studentGroup.findMany.mockResolvedValue([
+      { id: CLASS_ID, name: '8A', kind: 'CLASS', gradeLevel: 8 },
+      { id: GROUP_ID, name: 'Spanska 8', kind: 'TEACHING_GROUP', gradeLevel: null },
+    ]);
+    tx.teachingRequirement.findMany.mockResolvedValue([
+      { id: 'f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1', studentGroupId: CLASS_ID, subjectId: MA, lessonsPerWeek: 3, minutesPerLesson: 60, recurrence: 'ALL_WEEKS', startDate: null, endDate: null },
+      { id: 'f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2', studentGroupId: GROUP_ID, subjectId: SPA, lessonsPerWeek: 3, minutesPerLesson: 30, recurrence: 'ALL_WEEKS', startDate: null, endDate: null },
+    ]);
+    tx.user.findMany.mockResolvedValue([
+      { id: ANNA, studentGroupId: CLASS_ID },
+      { id: BO, studentGroupId: CLASS_ID },
+    ]);
+    tx.studentGroupMember.findMany.mockResolvedValue([
+      { studentId: ANNA, studentGroupId: GROUP_ID },
+      { studentId: VISITOR, studentGroupId: GROUP_ID },
+    ]);
+  });
+
+  const ask = (user = testUser({ channel: 'WEB' }), studentGroupId = CLASS_ID) =>
+    service.plannedPupils({ academicYearId: YEAR_ID, studentGroupId }, user);
+
+  it('gives the admin every pupil of the class with every line: target, planned, difference, status and sources', async () => {
+    const answer = await ask();
+
+    expect(answer).toMatchObject({ academicYearId: YEAR_ID, layer: 'planned', studentGroupId: CLASS_ID, gradeLevel: 8 });
+    expect(answer.pupils.map((pupil) => pupil.pupilId)).toEqual([ANNA, BO]);
+    const [anna, bo] = answer.pupils;
+    // Anna has no finding of her own and is not in the overview's list; here she is.
+    expect(anna!.lines).toEqual([
+      expect.objectContaining({
+        subjectIds: [MA],
+        targetMinutesPerWeek: 180,
+        plannedMinutesPerWeek: 180,
+        deltaMinutesPerWeek: 0,
+        status: 'MET',
+        sources: [{ studentGroupId: CLASS_ID, subjectId: MA, minutesPerWeek: 180 }],
+      }),
+      expect.objectContaining({
+        subjectIds: [SPA],
+        targetMinutesPerWeek: 90,
+        plannedMinutesPerWeek: 90,
+        deltaMinutesPerWeek: 0,
+        status: 'MET',
+        sources: [{ studentGroupId: GROUP_ID, subjectId: SPA, minutesPerWeek: 90 }],
+      }),
+    ]);
+    expect(bo!.lines[1]).toMatchObject({
+      subjectIds: [SPA],
+      targetMinutesPerWeek: 90,
+      plannedMinutesPerWeek: 0,
+      deltaMinutesPerWeek: -90,
+      status: 'UNDER',
+      sources: [],
+    });
+    expect(answer.pupils.every((pupil) => pupil.homeGroupId === CLASS_ID)).toBe(true);
+    // Not the overview's document: no group, cell or verdict rides along.
+    expect(Object.keys(answer).sort()).toEqual(['academicYearId', 'gradeLevel', 'layer', 'pupils', 'studentGroupId']);
+  });
+
+  it('is the overview’s figures, pupil by pupil: the overview lists Bo alone and counts one below', async () => {
+    const overview = await service.planned({ academicYearId: YEAR_ID }, testUser());
+    const answer = await ask();
+
+    expect(overview.pupils?.map((pupil) => pupil.pupilId)).toEqual([BO]);
+    const spanska = overview.groups[0]!.lines.find((line) => line.subjectIds.includes(SPA))!;
+    expect(spanska.pupils).toEqual({ min: 0, median: 45, max: 90, below: 1 });
+    const planned = answer.pupils.map(
+      (pupil) => pupil.lines.find((line) => line.subjectIds.includes(SPA))!.plannedMinutesPerWeek,
+    );
+    expect(planned).toEqual([90, 0]);
+    expect(answer.pupils.filter((pupil) => pupil.lines.some((line) => line.status === 'UNDER'))).toHaveLength(
+      overview.pupilsBelowTarget!,
+    );
+  });
+
+  it('reads under the caller’s RLS in one transaction, as the overview does, and names no pupil', async () => {
+    const answer = await ask();
+
+    expect(prisma.withRls).toHaveBeenCalledTimes(1);
+    expect(tx.user.findMany).toHaveBeenCalledWith({
+      where: { studentGroupId: { in: [CLASS_ID] }, role: 'STUDENT', isActive: true },
+      select: { id: true, studentGroupId: true },
+    });
+    // Ids, never names: the page names them from the roster it already reads.
+    const text = JSON.stringify(answer);
+    expect(text).not.toMatch(/firstName|lastName|email/);
+    // A member of Spanska 8 whose home class is not this year's is in no class.
+    expect(text).not.toContain(VISITOR);
+  });
+
+  it('records the pupils it names as TEACHING_TIME, all of the class and no one else', async () => {
+    await ask(testUser({ channel: 'APP' }));
+
+    expect(recordedReads(tx)).toEqual([{ kind: 'TEACHING_TIME', channel: 'APP', ids: [ANNA, BO] }]);
+  });
+
+  it('refuses a teacher, reads nothing and records nothing', async () => {
+    await expect(ask(testUser({ role: Role.TEACHER }))).rejects.toThrow(ForbiddenException);
+
+    expect(prisma.withRls).not.toHaveBeenCalled();
+    expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+    expect(recordedReads(tx)).toEqual([]);
+  });
+
+  it('404s a year RLS hides, and reads nothing else', async () => {
+    tx.academicYear.findUnique.mockResolvedValue(null);
+
+    await expect(ask()).rejects.toThrow(new NotFoundException('Läsåret finns inte.'));
+    expect(tx.teachingRequirement.findMany).not.toHaveBeenCalled();
+    expect(recordedReads(tx)).toEqual([]);
+  });
+
+  it('404s a group that is not a class of the year, a teaching group included, and records nothing', async () => {
+    for (const studentGroupId of [GROUP_ID, 'c9c9c9c9-c9c9-4c9c-8c9c-c9c9c9c9c9c9']) {
+      await expect(ask(testUser(), studentGroupId)).rejects.toThrow(new NotFoundException('Klassen finns inte i läsåret.'));
+    }
+    expect(recordedReads(tx)).toEqual([]);
+  });
+
+  it('answers a class with no one in it with an empty list, not a 404', async () => {
+    tx.user.findMany.mockResolvedValue([]);
+    tx.studentGroupMember.findMany.mockResolvedValue([]);
+
+    const answer = await ask();
+
+    expect(answer.pupils).toEqual([]);
+    expect(recordedReads(tx)).toEqual([]);
   });
 });
 

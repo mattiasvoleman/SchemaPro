@@ -415,6 +415,11 @@ describe('the roster-reader inventory', () => {
       // running year, so a year two steps ahead answering R6's 409 there is
       // the same answer the old vikarie PATCH gives.
       //
+      // Planerat mot timplan's pupil read for one class
+      // (TimplanCoverageController.plannedPupils) reads the year's rosters as
+      // the overview does and answers for one class, so it answers the 409 the
+      // overview does for the same year.
+      //
       // Schemaförslag reaches a basis where Generera does: its start asks
       // rostersOfYear as POST jobs does, and its check and apply rebuild
       // Generera's fetch (prepareSchedule), so a year two steps ahead answers
@@ -454,6 +459,7 @@ describe('the roster-reader inventory', () => {
         'TeachingRequirementsController.splitByTerm',
         'TeachingRequirementsController.update',
         'TimplanCoverageController.get',
+        'TimplanCoverageController.plannedPupils',
         'YearRolloverController.rosters',
       ]);
     });

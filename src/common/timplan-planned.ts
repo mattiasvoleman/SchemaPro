@@ -248,6 +248,13 @@ export interface PlannedCoverageInput {
   /** False for a TEACHER's read: no pupil figure and no pupil verdict leaves. */
   includePupils: boolean;
   /**
+   * The drill-down: every pupil of this class is listed with every line, not
+   * only the lines of a finding of their own, so a pupil who is short because
+   * the class is short can be read too. The other classes are listed as
+   * before. Ignored without includePupils.
+   */
+  drillGroupId?: string | null;
+  /**
    * Where `pupils` came from: absent for the rosters as every roster reader
    * reads them (projected-rosters.ts); 'ENROLLMENT' for a past year read from
    * the class history (timplan P4), whose rosters are that year's own.
@@ -371,7 +378,8 @@ export interface PlannedCoverage {
   /**
    * The drill-down: pupils with a finding of their OWN — below target where
    * their class is not already flagged, or double planned — each with just
-   * those lines and where their minutes come from.
+   * those lines and where their minutes come from. With drillGroupId, every
+   * pupil of that class, with every line.
    */
   pupils: PlannedPupil[] | null;
   pupilCount: number;
@@ -940,7 +948,9 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
   // ---- Pupils: the list and their verdicts.
   const listed: PlannedPupil[] = [];
   let pupilsBelow = 0;
+  const drill = input.includePupils ? (input.drillGroupId ?? null) : null;
   for (const classId of classes) {
+    const drilled = drill === classId;
     const group = groupsById.get(classId)!;
     const flagged = flaggedClassLines.get(classId)!;
     // The one shape in which a subject reaching a pupil from the home class
@@ -1151,7 +1161,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
             });
           }
         }
-        if (!ownFinding && doubles.length === 0 && alternatives.length === 0) continue;
+        if (!ownFinding && doubles.length === 0 && alternatives.length === 0 && !drilled) continue;
         lines.push({
           key: draft.key,
           alternativeCode: draft.alternativeCode,
@@ -1166,7 +1176,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
         });
       }
       if (isBelow) pupilsBelow += 1;
-      if (lines.length > 0) {
+      if (lines.length > 0 || drilled) {
         listed.push({ pupilId: result.pupil.id, homeGroupId: classId, gradeLevel: result.grade, lines });
       }
     }
