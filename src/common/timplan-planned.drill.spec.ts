@@ -15,10 +15,10 @@ import {
  * THE DRILL-DOWN IS THE OVERVIEW'S PUPILS, NOT A SECOND COMPUTATION. A line's
  * min / median / max and `below` in the overview are figures over the class's
  * pupils; the drill-down lists those pupils line by line. So for every class of
- * every fixture case (54 of them: halves, replacing groups, the alternatives,
- * the parts of a national subject, dated rows, a rolled year's rosters) the
- * figures re-derived from the drilled pupils must equal the overview's, and
- * nothing else in the answer may move.
+ * every fixture case with pupils (48 of the 54: halves, replacing groups, the
+ * alternatives, the parts of a national subject, dated rows, a rolled year's
+ * rosters) the figures re-derived from the drilled pupils must equal the
+ * overview's, and nothing else in the answer may move.
  */
 
 interface FixtureCase {
