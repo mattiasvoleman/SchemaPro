@@ -17,8 +17,10 @@
 // second is time on another line: hemkunskap swapped with slöjd gives each
 // pupil slöjd in the half's other period, on top of the class's own slöjd
 // post. The timplan counts both — per pupil and per line, a line being the
-// school subject, or the alternative SV_SVA / M2 — so the dialog shows the
-// lines, and proposes how far the class's own post in the other subject can
+// school subject, the alternative SV_SVA / M2, or the parts of one national
+// subject (Textilslöjd and Trä- och metallslöjd are Slöjd's SL) — so the
+// dialog shows the lines, and proposes how far the class's own post in the
+// other subject can
 // come down with no half under its target (classPostReduction). The class's
 // slöjd and the half's are one planning there, not double planned: the
 // timplan reads the swap's shape, and the dialog says double planning only
@@ -27,6 +29,7 @@
 import {
   computePlannedCoverage,
   type PlannedCoverage,
+  type PlannedLine,
   type PlannedPlan,
   type PlannedRequirement,
 } from "@/lib/timplan-planned";
@@ -67,7 +70,7 @@ export interface HalvesSplit {
 
 /** One line as a pupil of one half reads it. */
 export interface HalfLine {
-  /** The timplan's line ('subject:<id>' or 'alt:<code>'); null for a subject it does not count. */
+  /** The timplan's line ('subject:<id>', 'alt:<code>' or 'national:<code>'); null for a subject it does not count. */
   key: string | null;
   subjectIds: string[];
   /** The plan's minutes for the line in the class's årskurs; null for none. */
@@ -158,14 +161,38 @@ function coverageOf(sources: HalvesTimplanSources, split: HalvesSplit, half: 0 |
   });
 }
 
+/**
+ * Whether `subjectId` is on the class's `line`: one of the subjects it lists,
+ * or a part of the same national subject. The class's line lists the subjects
+ * of its own posts and of the plan's entries, so a part only the halves read
+ * (textilslöjd beside a Slöjd entry) is on it by its code.
+ */
+function onLine(line: PlannedLine, subjectId: string, codes: ReadonlyMap<string, string | null>): boolean {
+  return (
+    line.subjectIds.includes(subjectId) ||
+    (line.nationalCode !== undefined && codes.get(subjectId) === line.nationalCode)
+  );
+}
+
 /** The lines `subjectIds` are on, as one pupil reads them in a coverage of one pupil. */
-function linesOf(coverage: PlannedCoverage, classId: string, subjectIds: readonly string[]): HalfLine[] {
+function linesOf(
+  coverage: PlannedCoverage,
+  classId: string,
+  subjectIds: readonly string[],
+  codes: ReadonlyMap<string, string | null>,
+): HalfLine[] {
   const summary = coverage.groups.find((group) => group.studentGroupId === classId);
   const doubles = coverage.verdicts.filter((verdict) => verdict.code === "TIMPLAN_PUPIL_DOUBLE_PLANNED");
   const lines: HalfLine[] = [];
   for (const subjectId of subjectIds) {
-    const line = summary?.lines.find((candidate) => candidate.subjectIds.includes(subjectId));
-    if (line && lines.some((seen) => seen.key === line.key)) continue;
+    const line = summary?.lines.find((candidate) => onLine(candidate, subjectId, codes));
+    const seen = line ? lines.find((entry) => entry.key === line.key) : undefined;
+    if (line && seen) {
+      // A second part of a national line the split touches is named on the
+      // line it shares, not drawn as a second line.
+      if (line.nationalCode !== undefined && !seen.subjectIds.includes(subjectId)) seen.subjectIds.push(subjectId);
+      continue;
+    }
     if (!line) {
       // No target and no class minutes on it (or a subject the timplan does
       // not count): the timplan has nothing to judge the line against.
@@ -181,7 +208,11 @@ function linesOf(coverage: PlannedCoverage, classId: string, subjectIds: readonl
     ];
     lines.push({
       key: line.key,
-      subjectIds: line.subjectIds,
+      // A part the class has no post or entry in is named after the line's own subjects.
+      subjectIds:
+        line.nationalCode !== undefined && !line.subjectIds.includes(subjectId)
+          ? [...line.subjectIds, subjectId]
+          : [...line.subjectIds],
       target: line.targetMinutesPerWeek,
       planned: line.targetMinutesPerWeek === null ? null : (line.pupils?.min ?? null),
       doubleFrom,
@@ -189,6 +220,14 @@ function linesOf(coverage: PlannedCoverage, classId: string, subjectIds: readonl
   }
   return lines;
 }
+
+/** The national code of each subject the timplan counts, to find the parts of one national subject. */
+const codesOf = (sources: HalvesTimplanSources): Map<string, string | null> =>
+  new Map(
+    sources.subjects
+      .filter((subject) => subject.countsTowardTimplan !== false)
+      .map((subject) => [subject.id, subject.nationalCode ?? null]),
+  );
 
 /**
  * Each half's lines: the post's subject's first, then each chosen subject's,
@@ -204,7 +243,10 @@ export function halvesTimplan(sources: HalvesTimplanSources, split: HalvesSplit,
   return {
     kind: "lines",
     gradeLevel: grade,
-    halves: coverages.map((coverage) => linesOf(coverage, split.theClass.id, subjectIds)) as [HalfLine[], HalfLine[]],
+    halves: coverages.map((coverage) => linesOf(coverage, split.theClass.id, subjectIds, codesOf(sources))) as [
+      HalfLine[],
+      HalfLine[],
+    ],
   };
 }
 
@@ -255,8 +297,9 @@ export function classPostReduction(
     const asked = { ...split, adjusted: week ? { requirementId: post.id, week } : null };
     return ([0, 1] as const).map((half) => coverageOf(sources, asked, half));
   };
+  const codes = codesOf(sources);
   const judged = (week: UniformLessons | null) =>
-    coveragesOf(week).map((coverage) => linesOf(coverage, split.theClass.id, [otherSubjectId])[0]!);
+    coveragesOf(week).map((coverage) => linesOf(coverage, split.theClass.id, [otherSubjectId], codes)[0]!);
   const now = judged(null);
   const target = now[0]!.target;
   if (target === null || target <= 0) return null;
@@ -271,7 +314,7 @@ export function classPostReduction(
   );
   for (const week of candidates) {
     const coverages = coveragesOf(week);
-    const lines = coverages.map((coverage) => linesOf(coverage, split.theClass.id, [otherSubjectId])[0]!);
+    const lines = coverages.map((coverage) => linesOf(coverage, split.theClass.id, [otherSubjectId], codes)[0]!);
     if (lines.every((line) => line.planned !== null && line.planned >= target)) {
       const classLine = coverages[0]!.groups
         .find((group) => group.studentGroupId === split.theClass.id)

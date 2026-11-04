@@ -557,13 +557,18 @@ function CoverageCell({ view, subjectName }: { view: CoverageCellView; subjectNa
       ? t("tagPupils")
       : cell.alternativeCode !== null && tone !== "under" && tone !== "unplanned"
         ? t("tagAlternative")
-        : delta !== null && delta !== 0
-          ? signedMinutes(delta)
-          : null;
+        : cell.nationalCode !== undefined && tone !== "under" && tone !== "unplanned"
+          ? t("tagParts")
+          : delta !== null && delta !== 0
+            ? signedMinutes(delta)
+            : null;
+  // A part of a national line is read by its line, as its delta and tone are:
+  // a part the plan has no entry for has no target of its own to read out.
+  const national = cell.nationalCode !== undefined;
   const values = {
     subject: subjectName,
-    planned: cell.plannedMinutesPerWeek,
-    target: cell.targetMinutesPerWeek ?? 0,
+    planned: national ? line.plannedMinutesPerWeek : cell.plannedMinutesPerWeek,
+    target: (national ? line.targetMinutesPerWeek : cell.targetMinutesPerWeek) ?? 0,
     deficit: delta === null ? 0 : -delta,
     surplus: delta ?? 0,
   };
@@ -643,6 +648,9 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
                   {subjectNames(line.subjectIds)}
                   {line.alternativeCode !== null ? (
                     <span className="ml-1 text-xs font-normal text-muted-foreground">{t("together")}</span>
+                  ) : null}
+                  {line.nationalCode !== undefined ? (
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">{t("partsTogether")}</span>
                   ) : null}
                 </th>
                 <td className="py-1.5 pr-3 text-right tabular-nums">{line.targetMinutesPerWeek ?? "—"}</td>

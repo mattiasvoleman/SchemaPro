@@ -250,7 +250,8 @@ describe("hemkunskap swapped with slöjd over the terms", () => {
     const lines = coverage.groups[0]!.lines.filter((line) => line.key !== "subject:ma");
     expect(lines.map((line) => [line.key, line.status, line.pupils])).toEqual([
       ["subject:hk", "PUPILS", { min: 32, median: 35, max: 38, below: 0 }],
-      ["subject:sl", "PUPILS", { min: 82, median: 85, max: 88, below: 0 }],
+      // Slöjd, textilslöjd and trä- och metallslöjd share SLJ: one national line.
+      ["national:SLJ", "PUPILS", { min: 82, median: 85, max: 88, below: 0 }],
     ]);
   });
 
@@ -307,7 +308,7 @@ describe("what there is to judge", () => {
     // Slöjd has 6A's post, so the line is there, with no target to read.
     expect(result.halves[0].map((line) => [line.key, line.target, line.planned])).toEqual([
       ["subject:hk", 30, 32],
-      ["subject:sl", null, null],
+      ["national:SLJ", null, null],
     ]);
     expect(classPostReduction(sources([{ subjectId: "hk", minutesPerWeek: 30 }]), swap(TERMS), "sl")).toBeNull();
   });
@@ -369,9 +370,12 @@ describe("what there is to judge", () => {
     });
   });
 
-  it("keeps the slöjd swap of #215 as it was: each pupil reads its two subjects of the line in a term each", () => {
+  it("reads the slöjd swap of #215 as one line: a pupil reads textil in a term and trä in the other, and the plan naming both at 60 is a target of 120", () => {
     // 7A's slöjd 2 × 60 into textilslöjd and trä- och metallslöjd, the plan
-    // naming the two. The class's pace stays, and each line is its term.
+    // naming the two. The class's pace stays, and each term is its half of
+    // the line: a pupil gets 55 + 65 of the 60 + 60 the plan asks for,
+    // where read one part at a time the autumn's half was 5 short of the
+    // textil target and 5 over the trä.
     const slojd = post("r-sl", "sl", 2, 60);
     const split = swap(TERMS, ["tx", "tm"], "swapWithinLine", [slojd], slojd);
     expect(split.rows[0]).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 60 });
@@ -383,18 +387,44 @@ describe("what there is to judge", () => {
       split,
       "sl",
     );
-    expect(linesOf(result)).toEqual([
-      [
-        ["sl", null, null],
-        ["tx", 55, 60],
-        ["tm", 65, 60],
-      ],
-      [
-        ["sl", null, null],
-        ["tx", 65, 60],
-        ["tm", 55, 60],
-      ],
+    expect(linesOf(result)).toEqual([[["tx/tm/sl", 120, 120]], [["tx/tm/sl", 120, 120]]]);
+  });
+
+  it("finds the line of a part only the halves read by its national code, the plan naming Slöjd alone", () => {
+    // 7A's textilslöjd 2 × 60 swapped with trä- och metallslöjd, the plan's
+    // entry on Slöjd, which 7A has no post in: the class's line lists Slöjd and
+    // not the two parts, and the dialog still judges both on it.
+    const textil = post("r-tx", "tx", 2, 60);
+    const split = swap(TERMS, ["tx", "tm"], "swapWithinLine", [textil], textil);
+    const result = halvesTimplan(sources([{ subjectId: "sl", minutesPerWeek: 120 }]), split, "tx");
+    if (result.kind !== "lines") throw new Error(result.kind);
+    expect(result.halves.map((lines) => lines.map((line) => [line.key, line.subjectIds, line.target, line.planned]))).toEqual([
+      [["national:SLJ", ["sl", "tx", "tm"], 120, 120]],
+      [["national:SLJ", ["sl", "tx", "tm"], 120, 120]],
     ]);
+  });
+
+  it("leaves a subject the timplan does not count off the national line, though it has the code", () => {
+    // Slöjdverkstad is SLJ too and counts toward nothing: it has no line to
+    // be put on, and does not get Slöjd's target.
+    const textil = post("r-tx", "tx", 2, 60);
+    const split = swap(TERMS, ["tx", "slv"], "swapWithinLine", [textil], textil);
+    const withVerkstad: HalvesTimplanSources = {
+      ...sources([{ subjectId: "sl", minutesPerWeek: 120 }]),
+      subjects: [...SUBJECTS, { id: "slv", name: "Slöjdverkstad", nationalCode: "SLJ", countsTowardTimplan: false }],
+    };
+    const result = halvesTimplan(withVerkstad, split, "tx");
+    if (result.kind !== "lines") throw new Error(result.kind);
+    expect(result.halves[0].map((line) => [line.key, line.subjectIds, line.target])).toEqual([
+      ["national:SLJ", ["sl", "tx"], 120],
+      [null, ["slv"], null],
+    ]);
+  });
+
+  it("proposes nothing for the part of a line whose own entry is absent when no class post is there to bring down", () => {
+    const textil = post("r-tx", "tx", 2, 60);
+    const split = swap(TERMS, ["tx", "tm"], "swapWithinLine", [textil], textil);
+    expect(classPostReduction(sources([{ subjectId: "sl", minutesPerWeek: 120 }]), split, "tm")).toBeNull();
   });
 
   it("reads the halves the class has by their own ids", () => {

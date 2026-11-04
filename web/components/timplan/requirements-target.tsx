@@ -194,9 +194,12 @@ type Translate = (key: string, values?: Record<string, string | number>) => stri
  * two numbers and their verdict have to be said here or to nobody.
  */
 export function cellSentence(t: Translate, cell: TargetCellView, input: PlannedCoverageInput): string {
+  // A part of a national line is read by its line, as its delta and tone are:
+  // a part the plan has no entry for has no target of its own to read, and
+  // would be read out as "40 of 0 minutes" (Textilslöjd under a Slöjd entry).
   const values = {
-    planned: cell.planned,
-    target: cell.target ?? 0,
+    planned: cell.national ? cell.linePlanned : cell.planned,
+    target: (cell.national ? cell.lineTarget : cell.target) ?? 0,
     deficit: cell.delta === null ? 0 : -cell.delta,
     surplus: cell.delta ?? 0,
   };
@@ -220,7 +223,7 @@ export function cellSentence(t: Translate, cell: TargetCellView, input: PlannedC
   const subjects = cell.partnerSubjectIds
     .map((id) => input.subjects.find((subject) => subject.id === id)?.name ?? "")
     .join(", ");
-  return `${main} ${t("target.cellTogether", { subjects })}`;
+  return `${main} ${t(cell.national ? "target.cellParts" : "target.cellTogether", { subjects })}`;
 }
 
 const TONE: Record<TargetTone, string> = {
@@ -244,9 +247,9 @@ export function targetCellClass(tone: TargetTone): string {
 /**
  * "160 / 180" over "−20": planned and target in min/vecka, then the line's
  * difference when there is one. A line on target prints no second row, so the
- * eye finds the cells that differ. An alternative's cell and a class taught
- * in groups say so in words instead, since their own two numbers are not the
- * whole story.
+ * eye finds the cells that differ. An alternative's cell, a part of a national
+ * subject and a class taught in groups say so in words instead, since their own
+ * two numbers are not the whole story.
  */
 export function TargetCellBody({ cell, badge }: { cell: TargetCellView; badge?: string | null }) {
   const t = useTranslations("requirements");
@@ -255,9 +258,11 @@ export function TargetCellBody({ cell, badge }: { cell: TargetCellView; badge?: 
       ? t("target.tagPupils")
       : cell.alternative && cell.tone !== "under" && cell.tone !== "unplanned"
         ? t("target.tagAlternative")
-        : cell.delta !== null && cell.delta !== 0
-          ? signed(cell.delta)
-          : null;
+        : cell.national && cell.tone !== "under" && cell.tone !== "unplanned"
+          ? t("target.tagParts")
+          : cell.delta !== null && cell.delta !== 0
+            ? signed(cell.delta)
+            : null;
   return (
     <>
       <span className="text-sm font-semibold tabular-nums">
@@ -469,7 +474,7 @@ export function TargetHint({
       if (hint.partnerSubjectIds.length > 0) {
         const names = new Map(input.subjects.map((subject) => [subject.id, subject.name]));
         sentences.push(
-          t("target.hintTogether", {
+          t(hint.national ? "target.hintParts" : "target.hintTogether", {
             subjects: hint.partnerSubjectIds.map((id) => names.get(id) ?? "").join(", "),
           }),
         );

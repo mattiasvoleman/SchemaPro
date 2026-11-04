@@ -24,6 +24,10 @@ const S = {
   SPA: id(5),
   TY: id(6),
   MENT: id(7),
+  SL: id(8),
+  TX: id(9),
+  TM: id(10),
+  SLV: id(11),
 };
 const SUBJECTS: PlannedSubject[] = [
   { id: S.MA, name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true },
@@ -33,6 +37,12 @@ const SUBJECTS: PlannedSubject[] = [
   { id: S.SPA, name: 'Spanska', nationalCode: 'M2', countsTowardTimplan: true },
   { id: S.TY, name: 'Tyska', nationalCode: 'M2', countsTowardTimplan: true },
   { id: S.MENT, name: 'Mentorstid', nationalCode: null, countsTowardTimplan: false },
+  // The slöjd of a school that divides it: one national subject, three school subjects.
+  { id: S.SL, name: 'Slöjd', nationalCode: 'SL', countsTowardTimplan: true },
+  { id: S.TX, name: 'Textilslöjd', nationalCode: 'SL', countsTowardTimplan: true },
+  { id: S.TM, name: 'Trä- och metallslöjd', nationalCode: 'SL', countsTowardTimplan: true },
+  // Another school subject with the code, which the timplan does not count.
+  { id: S.SLV, name: 'Slöjdverkstad', nationalCode: 'SL', countsTowardTimplan: false },
 ];
 const PLAN = id(100);
 const DRAFT = id(101);
@@ -347,6 +357,207 @@ describe('computePlannedCoverage', () => {
       expect(coverage.verdicts.map((v) => [v.code, v.pupilId])).toEqual([['TIMPLAN_PUPIL_UNDERPLANNED', other.id]]);
       // Svenska and SvA are two subjects: reading both is not double planning.
       expect(coverage.verdicts.some((v) => v.code === 'TIMPLAN_PUPIL_DOUBLE_PLANNED')).toBe(false);
+    });
+  });
+
+  describe('the parts of a national subject', () => {
+    const SLOJD_PLAN = (target: number) => plan([[S.SL, 7, target]]);
+
+    it('sums the entries of the parts, where the alternatives take the highest', () => {
+      const c = group('7A');
+      const coverage = computePlannedCoverage(
+        input({
+          plans: [plan([[S.SL, 7, 20], [S.TX, 7, 25], [S.TM, 7, 30]])],
+          groups: [c],
+          requirements: [req(c, S.TX, 1, 60), req(c, S.TM, 1, 15)],
+        }),
+      );
+      const line = lineOf(coverage, c.id, 'national:SL');
+      expect(line).toMatchObject({
+        alternativeCode: null,
+        nationalCode: 'SL',
+        subjectIds: [S.SL, S.TX, S.TM],
+        targetMinutesPerWeek: 75,
+        plannedMinutesPerWeek: 75,
+        status: 'MET',
+      });
+      // The cells keep each subject's own entry and rows, and share the line's status.
+      expect(coverage.cells.map((cell) => [cell.subjectId, cell.targetMinutesPerWeek, cell.plannedMinutesPerWeek, cell.nationalCode])).toEqual([
+        [S.SL, 20, 0, 'SL'],
+        [S.TX, 25, 60, 'SL'],
+        [S.TM, 30, 15, 'SL'],
+      ]);
+      // The class total counts the line once, at the sum.
+      expect(coverage.groups[0]!.targetMinutesPerWeek).toBe(75);
+      expect(coverage.groups[0]!.linesWithTarget).toBe(1);
+    });
+
+    it('reads the rows of a part against an entry on another part', () => {
+      const c = group('7A');
+      const coverage = computePlannedCoverage(
+        input({ plans: [SLOJD_PLAN(65)], groups: [c], requirements: [req(c, S.TX, 1, 40)] }),
+      );
+      expect(lineOf(coverage, c.id, 'national:SL')).toMatchObject({
+        subjectIds: [S.SL, S.TX],
+        targetMinutesPerWeek: 65,
+        plannedMinutesPerWeek: 40,
+        status: 'UNDER',
+      });
+      expect(coverage.verdicts.map((verdict) => [verdict.code, verdict.subjectIds, verdict.params.subjectName])).toEqual([
+        ['TIMPLAN_GROUP_UNDERPLANNED', [S.SL, S.TX], 'Slöjd / Textilslöjd'],
+      ]);
+    });
+
+    it('keys the line by the code of the school, the same for every class and pupil', () => {
+      const a = group('7A');
+      const b = group('7B');
+      const coverage = computePlannedCoverage(
+        input({
+          plans: [SLOJD_PLAN(65)],
+          groups: [a, b],
+          // 7A has a post in Slöjd alone, 7B in Textilslöjd alone.
+          requirements: [req(a, S.SL, 1, 65), req(b, S.TX, 1, 65)],
+          pupils: [pupil(a), pupil(b)],
+        }),
+      );
+      expect(coverage.groups.map((g) => g.lines.map((l) => l.key))).toEqual([['national:SL'], ['national:SL']]);
+      expect(coverage.groups.map((g) => g.lines[0]!.status)).toEqual(['MET', 'MET']);
+    });
+
+    it('leaves a subject whose code no other counted subject carries on its own line, and a subject the timplan does not count out of one', () => {
+      const c = group('7A');
+      const coverage = computePlannedCoverage(
+        input({
+          plans: [plan([[S.SL, 7, 65], [S.MA, 7, 180]])],
+          // Slöjdverkstad shares SL but does not count: Slöjd is alone on its code.
+          subjects: SUBJECTS.filter((s) => s.id !== S.TX && s.id !== S.TM),
+          groups: [c],
+          requirements: [req(c, S.SL, 1, 65), req(c, S.SLV, 1, 40), req(c, S.MA, 3, 60)],
+        }),
+      );
+      expect(coverage.groups[0]!.lines.map((l) => [l.key, l.nationalCode, l.subjectIds])).toEqual([
+        [`subject:${S.MA}`, undefined, [S.MA]],
+        [`subject:${S.SL}`, undefined, [S.SL]],
+      ]);
+      expect(coverage.cells.find((cell) => cell.subjectId === S.SL)).not.toHaveProperty('nationalCode');
+    });
+
+    it('does not mistake the alternatives for parts: SV_SVA and M2 keep their own kind and the highest target, whichever entry comes first', () => {
+      const c = group('7A');
+      for (const entries of [[S.SV, S.SVA], [S.SVA, S.SV]]) {
+        const coverage = computePlannedCoverage(
+          input({
+            plans: [plan([[entries[0]!, 7, 260], [entries[1]!, 7, 200]])],
+            groups: [c],
+            requirements: [req(c, S.SV, 4, 65)],
+          }),
+        );
+        const line = lineOf(coverage, c.id, 'alt:SV_SVA');
+        expect(line).toMatchObject({ alternativeCode: 'SV_SVA', targetMinutesPerWeek: 260 });
+        expect(line).not.toHaveProperty('nationalCode');
+      }
+    });
+
+    describe('in the halves of a class', () => {
+      // 7A's halves read textil and trä in turn, the class has no slöjd post of its own.
+      const AUTUMN = { startDate: null, endDate: '2027-01-03' };
+      const SPRING = { startDate: '2027-01-04', endDate: null };
+      const setup = (rows: (c: PlannedGroup, h1: PlannedGroup, h2: PlannedGroup) => PlannedRequirement[]) => {
+        const c = group('7A');
+        const h1: PlannedGroup = { ...group('7A:1', 'TEACHING_GROUP', 7), halfOfId: c.id };
+        const h2: PlannedGroup = { ...group('7A:2', 'TEACHING_GROUP', 7), halfOfId: c.id };
+        const pupils = [pupil(c, [h1]), pupil(c, [h2])];
+        const coverage = computePlannedCoverage(
+          input({
+            year: { startDate: '2026-08-18', endDate: '2027-06-10' },
+            plans: [SLOJD_PLAN(60)],
+            groups: [c, h1, h2],
+            requirements: rows(c, h1, h2),
+            pupils,
+          }),
+        );
+        return { c, h1, h2, pupils, coverage };
+      };
+
+      it('counts the halves as carriers of the line and each pupil’s two parts as one: 28 + 32 of 60', () => {
+        const { c, h1, h2, coverage } = setup((_c, a, b) => [
+          req(a, S.TX, 1, 60, AUTUMN),
+          req(a, S.TM, 1, 60, SPRING),
+          req(b, S.TM, 1, 60, AUTUMN),
+          req(b, S.TX, 1, 60, SPRING),
+        ]);
+        expect(lineOf(coverage, c.id, 'national:SL')).toMatchObject({
+          status: 'PUPILS',
+          plannedMinutesPerWeek: 0,
+          covered: true,
+          teachingGroupIds: [h1.id, h2.id],
+          pupils: { min: 60, median: 60, max: 60, below: 0 },
+        });
+        // Neither pupil reads the same part from two groups, nor two alternatives.
+        expect(coverage.verdicts).toEqual([]);
+        expect(coverage.pupils).toEqual([]);
+      });
+
+      it('lists a pupil who is short on the line on their own, with the part they read as the source', () => {
+        const { c, coverage } = setup((_c, a, b) => [
+          req(a, S.TX, 1, 60, AUTUMN),
+          req(a, S.TM, 1, 60, SPRING),
+          req(b, S.TM, 1, 60, AUTUMN),
+        ]);
+        expect(coverage.pupilsBelowTarget).toBe(1);
+        expect(lineOf(coverage, c.id, 'national:SL').pupils).toEqual({ min: 28, median: 44, max: 60, below: 1 });
+        expect(coverage.pupils).toEqual([
+          expect.objectContaining({
+            lines: [
+              expect.objectContaining({
+                key: 'national:SL',
+                nationalCode: 'SL',
+                subjectIds: [S.SL, S.TM],
+                status: 'UNDER',
+                plannedMinutesPerWeek: 28,
+                sources: [expect.objectContaining({ subjectId: S.TM, minutesPerWeek: 28 })],
+              }),
+            ],
+          }),
+        ]);
+      });
+
+      it('still calls the same part from two groups double planned, as a part and not as a line', () => {
+        const { coverage } = setup((c, a) => [req(c, S.TM, 1, 30), req(a, S.TM, 1, 30)]);
+        const doubles = coverage.verdicts.filter((verdict) => verdict.code === 'TIMPLAN_PUPIL_DOUBLE_PLANNED');
+        expect(doubles.map((verdict) => [verdict.subjectIds, verdict.alternativeCode])).toEqual([[[S.TM], undefined]]);
+      });
+
+      it('does not call two different parts from the class and a half double planned', () => {
+        const { coverage } = setup((c, a) => [req(c, S.TX, 1, 30), req(a, S.TM, 1, 30)]);
+        expect(coverage.verdicts.filter((verdict) => verdict.code === 'TIMPLAN_PUPIL_DOUBLE_PLANNED')).toEqual([]);
+      });
+
+      it('keeps the swap of two subjects exempt when the subject the class keeps is a part of a line', () => {
+        // 7A keeps trä 2 × 25, the halves read hemkunskap and trä in turn: the
+        // class’s trä and the half’s are one planning, as with slöjd itself.
+        const c = group('7A');
+        const h1: PlannedGroup = { ...group('7A:1', 'TEACHING_GROUP', 7), halfOfId: c.id };
+        const h2: PlannedGroup = { ...group('7A:2', 'TEACHING_GROUP', 7), halfOfId: c.id };
+        const HKK = id(40);
+        const coverage = computePlannedCoverage(
+          input({
+            plans: [SLOJD_PLAN(65)],
+            subjects: [...SUBJECTS, { id: HKK, name: 'Hem- och konsumentkunskap', nationalCode: 'HKK', countsTowardTimplan: true }],
+            groups: [c, h1, h2],
+            requirements: [
+              req(c, S.TM, 2, 25),
+              req(h1, HKK, 1, 70, AUTUMN),
+              req(h1, S.TM, 1, 70, SPRING),
+              req(h2, S.TM, 1, 70, AUTUMN),
+              req(h2, HKK, 1, 70, SPRING),
+            ],
+            pupils: [pupil(c, [h1]), pupil(c, [h2])],
+          }),
+        );
+        expect(coverage.verdicts.filter((verdict) => verdict.code === 'TIMPLAN_PUPIL_DOUBLE_PLANNED')).toEqual([]);
+        expect(lineOf(coverage, c.id, 'national:SL').pupils!.min).toBeGreaterThanOrEqual(65);
+      });
     });
   });
 

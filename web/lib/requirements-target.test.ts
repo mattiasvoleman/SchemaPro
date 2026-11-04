@@ -209,6 +209,9 @@ describe("buildTargetView", () => {
       delta: 5,
       tone: "met",
       alternative: false,
+      national: false,
+      linePlanned: 180,
+      lineTarget: 175,
       partnerSubjectIds: [],
     });
     expect(view.cell("g-7a", "s-bi")).toMatchObject({ planned: 40, target: 60, delta: -20, tone: "under" });
@@ -222,6 +225,9 @@ describe("buildTargetView", () => {
       delta: 0,
       tone: "met",
       alternative: true,
+      national: false,
+      linePlanned: 180,
+      lineTarget: 180,
       partnerSubjectIds: ["s-sv"],
     });
   });
@@ -313,6 +319,7 @@ describe("draftHint", () => {
       minutesPerLesson: 60,
       lessonLengths: [],
       partnerSubjectIds: [],
+      national: false,
       carriedBy: [],
     });
   });
@@ -452,6 +459,96 @@ describe("ersättande grupper in Mål mode", () => {
     // And with SvA7 an ordinary group, the Svenska warning stands as before.
     expect(draftHint(targetInput({ ...carried, groups }), "g-7a", "s-sv", fields())).toMatchObject({
       carriedBy: ["g-sva7"],
+    });
+  });
+});
+
+describe("the parts of a national subject", () => {
+  // Slöjd, Textilslöjd and Trä- och metallslöjd are all SL: one line in 7A,
+  // the plan's 65 on Slöjd alone, the class's own post in textil, and trä in
+  // the class's two halves.
+  const parts: TargetSources = {
+    ...sources,
+    subjects: [
+      ...subjects,
+      { id: "s-sl", name: "Slöjd", nationalCode: "SL", countsTowardTimplan: true },
+      { id: "s-tx", name: "Textilslöjd", nationalCode: "SL", countsTowardTimplan: true },
+      { id: "s-tm", name: "Trä- och metallslöjd", nationalCode: "SL", countsTowardTimplan: true },
+    ],
+    groups: [
+      ...groups,
+      { id: "g-7a1", name: "7A:1", kind: "TEACHING_GROUP" as const, gradeLevel: 7, halfOfId: "g-7a" },
+      { id: "g-7a2", name: "7A:2", kind: "TEACHING_GROUP" as const, gradeLevel: 7, halfOfId: "g-7a" },
+    ],
+    plans: [
+      { ...plans[0]!, entries: [...plans[0]!.entries, { subjectId: "s-sl", gradeLevel: 7, minutesPerWeek: 65 }] },
+      plans[1]!,
+    ],
+    requirements: [
+      ...requirements,
+      row("r-tx7", "g-7a", "s-tx", 1, 40),
+      row("r-tm7a", "g-7a1", "s-tm", 2, 40),
+      row("r-tm7b", "g-7a2", "s-tm", 2, 40),
+    ],
+    memberships: [
+      { studentId: "u-1", studentGroupId: "g-7a1" },
+      { studentId: "u-2", studentGroupId: "g-7a2" },
+    ],
+  };
+  const view = buildTargetView(computePlannedCoverage(targetInput(parts)), parts.plans);
+
+  it("reads a cell of any part on the line, with the line's delta and its other parts named", () => {
+    // 7A's own rows: textil 40 of the 65, the halves carry the rest for both pupils.
+    expect(view.cell("g-7a", "s-tx")).toEqual({
+      planned: 40,
+      target: null,
+      delta: -25,
+      tone: "pupils",
+      alternative: false,
+      national: true,
+      // The line's figures: 7A's textil 40 of the Slöjd entry of 65.
+      linePlanned: 40,
+      lineTarget: 65,
+      partnerSubjectIds: ["s-sl"],
+    });
+    expect(view.cell("g-7a", "s-sl")).toMatchObject({
+      planned: 0,
+      target: 65,
+      delta: -25,
+      tone: "pupils",
+      national: true,
+      partnerSubjectIds: ["s-tx"],
+    });
+    // Trä- och metallslöjd is only in the halves: the class has no cell for it.
+    expect(view.cell("g-7a", "s-tm")).toBeNull();
+  });
+
+  it("totals each column on its own cells, which add up to the class's one line", () => {
+    expect(view.subjectTotals.get("s-sl")).toMatchObject({ planned: 0, target: 65, countedWith: null });
+    expect(view.subjectTotals.get("s-tx")).toMatchObject({ planned: 40, target: null, countedWith: null });
+    const line = view.summary("g-7a")!.lines.find((entry) => entry.nationalCode === "SL")!;
+    expect(line).toMatchObject({ key: "national:SL", targetMinutesPerWeek: 65, plannedMinutesPerWeek: 40 });
+  });
+
+  it("judges a new post on the national line though the plan has no entry on its own subject", () => {
+    const hint = draftHint(targetInput(parts), "g-7a", "s-tx", fields({ lessonsPerWeek: "1", minutesPerLesson: "40" }));
+    expect(hint).toMatchObject({
+      kind: "target",
+      target: 65,
+      planned: 40,
+      delta: -25,
+      national: true,
+      partnerSubjectIds: ["s-sl"],
+    });
+  });
+
+  it("says the halves carry the line when a class post would give their pupils the time twice", () => {
+    // 7A's own textil post taken away: its pupils read trä in the halves, so a
+    // textil post on the class is time on the line they already have.
+    const without: TargetSources = { ...parts, requirements: parts.requirements.filter((entry) => entry.id !== "r-tx7") };
+    expect(draftHint(targetInput(without), "g-7a", "s-tx", fields({ lessonsPerWeek: "1", minutesPerLesson: "40" }))).toMatchObject({
+      national: true,
+      carriedBy: ["g-7a1", "g-7a2"],
     });
   });
 });

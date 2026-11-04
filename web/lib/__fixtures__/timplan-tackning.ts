@@ -40,3 +40,7 @@ export const EMPTY_PLAN = "åk 3 attached to a plan that gives it no minutes";
 export const TWO_ALTERNATIVES = "a pupil on two språkval rosters";
 /** Unplanned, under and over in one class (7B). */
 export const MIXED = "unplanned, underplanned and overplanned";
+/** A plan with an entry on each part of slöjd: four åk 5 classes, one national line each. */
+export const NATIONAL_ENTRIES = "national: a plan with an entry on each part";
+/** Åk 7 where 7A keeps a trä post and the plan's 65 is on Slöjd alone: the trä cell has no entry of its own. */
+export const NATIONAL_NO_OWN_ENTRY = "national: åk 7 with the class keeping";
