@@ -620,4 +620,37 @@ describe("the children of an ämnesgrupp", () => {
       partnerSubjectIds: ["s-bio", "s-fys", "s-no"],
     });
   });
+
+  describe("when the plan names the children", () => {
+    // Biologi 60 and Kemi 60: each is a line of its own, as before the roll-up.
+    const named: TargetSources = {
+      ...children,
+      plans: [
+        {
+          ...plans[0]!,
+          entries: [
+            ...plans[0]!.entries,
+            { subjectId: "s-bio", gradeLevel: 7, minutesPerWeek: 60 },
+            { subjectId: "s-kem", gradeLevel: 7, minutesPerWeek: 60 },
+          ],
+        },
+        plans[1]!,
+      ],
+      // 7A: Biologi 1 × 30 and Fysik 1 × 30, no Kemi.
+      requirements: [...requirements, row("r-bio7", "g-7a", "s-bio", 1, 30), row("r-fys7", "g-7a", "s-fys", 1, 30)],
+    };
+    const namedView = buildTargetView(computePlannedCoverage(targetInput(named)), named.plans);
+
+    it("reads Biologi and Kemi as lines of their own: Kemi is unplanned, and Fysik, which the plan does not name, is the group's", () => {
+      expect(namedView.cell("g-7a", "s-bio")).toMatchObject({ planned: 30, target: 60, delta: -30, tone: "under", national: false, partnerSubjectIds: [] });
+      expect(namedView.cell("g-7a", "s-kem")).toMatchObject({ planned: 0, target: 60, delta: -60, tone: "unplanned", national: false });
+      // Fysik is on NO's line, with the group's own subject, which has no entry here.
+      expect(namedView.cell("g-7a", "s-fys")).toMatchObject({ planned: 30, target: null, national: true, tone: "none", partnerSubjectIds: [] });
+    });
+
+    it("judges a new Kemi post against Kemi’s own 60", () => {
+      const hint = draftHint(targetInput(named), "g-7a", "s-kem", fields({ lessonsPerWeek: "1", minutesPerLesson: "60" }));
+      expect(hint).toMatchObject({ kind: "target", target: 60, planned: 60, delta: 0, status: "MET", national: false, partnerSubjectIds: [] });
+    });
+  });
 });

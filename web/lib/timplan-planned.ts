@@ -12,9 +12,10 @@
 // What the numbers mean — the standardvecka weight at the årskurs of whoever
 // is judged, whole minutes compared with the integer target, Svenska/SvA and
 // språkval as one line met at the highest target, the parts of one national
-// subject (Slöjd, Textilslöjd, Trä- och metallslöjd) and the children of an
-// ämnesgrupp (Biologi, Fysik, Kemi under NO) as one line met at the SUM of
-// their entries, OVER only past one lesson of
+// subject (Slöjd, Textilslöjd, Trä- och metallslöjd) as one line met at the
+// SUM of their entries, the children of an ämnesgrupp (Biologi, Fysik, Kemi
+// under NO) the plan does not name as one line with the group, a child it
+// does name on its own line, OVER only past one lesson of
 // surplus, a class whose teaching groups reach at least half of its pupils
 // judged through them, a pupil verdict only where the class's own does not
 // already say it, pupil ids and never names — is argued in the gateway file's
@@ -160,11 +161,11 @@ export interface PlannedLine {
   key: string;
   alternativeCode: string | null;
   /**
-   * The top national code of a line made of the parts of one national subject
-   * or the children of an ämnesgrupp (key 'national:<code>': SL for the
-   * slöjd's parts, NO for Biologi, Fysik and Kemi; see Lines in
-   * src/common/timplan-planned.ts). Absent on every other line, so a line
-   * that is not one reads as it did before the kind existed.
+   * The code a line of parts is keyed on (key 'national:<code>'): SL for the
+   * parts of slöjd, NO for the children of NO the plan does not name (with the
+   * group's own subject), BI for the subjects of a child the plan names; see
+   * Lines in src/common/timplan-planned.ts. Absent on every other line, so a
+   * line that is not one reads as it did before the kind existed.
    */
   nationalCode?: string;
   subjectIds: string[];
@@ -184,7 +185,7 @@ export interface PlannedCell {
   studentGroupId: string;
   subjectId: string;
   alternativeCode: string | null;
-  /** The top code of a national line the subject is a part of (BI → NO); absent otherwise. */
+  /** The code of the national line the subject is a part of (see PlannedLine); absent otherwise. */
   nationalCode?: string;
   /** The subject's own entry for the årskurs; null when the plan has none. */
   targetMinutesPerWeek: number | null;
@@ -426,33 +427,52 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     rowsByGroup.set(row.studentGroupId, list);
   }
 
-  // The top codes that more than one counted subject rolls up to: the school
-  // divides one national subject into parts (SL on Slöjd, Textilslöjd and
-  // Trä- och metallslöjd) or one ämnesgrupp into its children (NO on Biologi,
-  // Fysik and Kemi). The alternatives share theirs too and are keyed first,
-  // below. Read from the counted subjects of the school and not from what a
-  // class has rows or a target in, so a class and its pupils key the same
-  // line the same way.
-  const sharedCodes = new Set<string>();
-  const seenCodes = new Set<string>();
-  for (const subject of subjects.values()) {
-    const code = nationalTopOf(subject);
-    if (code === null) continue;
-    if (seenCodes.has(code)) sharedCodes.add(code);
-    seenCodes.add(code);
+  // Which line a subject is on. A line is the school's one national subject in
+  // parts (SL on Slöjd, Textilslöjd and Trä- och metallslöjd) or one ämnesgrupp
+  // in its children (NO on Biologi, Fysik and Kemi) when more than one counted
+  // subject is keyed on the same code, and the alternatives are keyed first.
+  // Which code a subject is keyed on depends on the årskurs's plan: a child of
+  // an ämnesgrupp the plan NAMES (an entry of at least a minute on a subject
+  // with its code) is keyed on its own code, as any subject is, and one it does
+  // not name is keyed on the group's, with the group's own subject. Read from
+  // the counted subjects of the school and the plan's entries, and not from
+  // what a class has rows in, so a class and its pupils key the same line the
+  // same way; the keys are per set of targets, which is per årskurs.
+  interface LineKey {
+    key: string;
+    alternativeCode: string | null;
+    nationalCode: string | null;
   }
-
-  const lineKeyOf = (
-    subjectId: string,
-  ): { key: string; alternativeCode: string | null; nationalCode: string | null } => {
-    const subject = subjects.get(subjectId);
-    const code = subject === undefined ? null : nationalTopOf(subject);
-    if (code !== null && TIMPLAN_ALTERNATIVE_CODES.includes(code)) {
-      return { key: altKey(code), alternativeCode: code, nationalCode: null };
+  const isChild = (subject: PlannedSubject): boolean =>
+    subject.nationalCode !== null && nationalTopOf(subject) !== subject.nationalCode;
+  const keyers = new Map<Map<string, number> | null, (subjectId: string) => LineKey>();
+  const keyerFor = (targets: Map<string, number> | null): ((subjectId: string) => LineKey) => {
+    let keyer = keyers.get(targets);
+    if (keyer) return keyer;
+    const named = new Set<string>();
+    for (const [subjectId, minutes] of targets ?? []) {
+      const subject = subjects.get(subjectId);
+      if (minutes > 0 && subject !== undefined && isChild(subject)) named.add(subject.nationalCode!);
     }
-    return code !== null && sharedCodes.has(code)
-      ? { key: nationalKey(code), alternativeCode: null, nationalCode: code }
-      : { key: subjectKey(subjectId), alternativeCode: null, nationalCode: null };
+    const keyedOn = (subject: PlannedSubject): string | null =>
+      isChild(subject) && named.has(subject.nationalCode!) ? subject.nationalCode : nationalTopOf(subject);
+    const sharing = new Map<string, number>();
+    for (const subject of subjects.values()) {
+      const code = keyedOn(subject);
+      if (code !== null) sharing.set(code, (sharing.get(code) ?? 0) + 1);
+    }
+    keyer = (subjectId) => {
+      const subject = subjects.get(subjectId);
+      const code = subject === undefined ? null : keyedOn(subject);
+      if (code !== null && TIMPLAN_ALTERNATIVE_CODES.includes(code)) {
+        return { key: altKey(code), alternativeCode: code, nationalCode: null };
+      }
+      return code !== null && (sharing.get(code) ?? 0) > 1
+        ? { key: nationalKey(code), alternativeCode: null, nationalCode: code }
+        : { key: subjectKey(subjectId), alternativeCode: null, nationalCode: null };
+    };
+    keyers.set(targets, keyer);
+    return keyer;
   };
 
   /** Lines for one årskurs from its targets and the rows that reach it. */
@@ -462,8 +482,9 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     grade: number | null,
   ): Map<string, LineDraft> => {
     const lines = new Map<string, LineDraft>();
+    const keyOf = keyerFor(targets);
     const lineFor = (subjectId: string): LineDraft => {
-      const { key, alternativeCode, nationalCode } = lineKeyOf(subjectId);
+      const { key, alternativeCode, nationalCode } = keyOf(subjectId);
       let line = lines.get(key);
       if (!line) {
         line = {
@@ -586,7 +607,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           ? []
           : reaching
               .filter((row) => row.studentGroupId === classId && !rows.includes(row))
-              .map((row) => lineKeyOf(row.subjectId).key),
+              .map((row) => keyerFor(targets)(row.subjectId).key),
       );
       results.push({ pupil, grade, teachingGroupIds: own, lines: buildLines(targets, rows, grade), perSource, classTakenOff, rows });
     }
@@ -696,7 +717,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
       const target = draft.target;
       const carriedBy = [...carriers]
         .filter((id) =>
-          (rowsByGroup.get(id) ?? []).some((row) => lineKeyOf(row.subjectId).key === draft.key),
+          (rowsByGroup.get(id) ?? []).some((row) => keyerFor(targets)(row.subjectId).key === draft.key),
         )
         .sort(groupOrder);
       // Pupils of the class a carrying group reaches: the class stops being

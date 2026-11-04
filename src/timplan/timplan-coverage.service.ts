@@ -503,7 +503,7 @@ export async function readPlannedInput(
  * the school's subjects, the year's groups, timplansposter and lov. Shared by
  * readPlannedInput (which adds the rosters) and the stage totals (timplan P4,
  * whose rosters are the class history's), so both read the same rows in the
- * same statements. Five or six statements in the caller's transaction.
+ * same statements. Six or seven statements in the caller's transaction.
  */
 export async function readPlannedRows(
   tx: Prisma.TransactionClient,
@@ -527,18 +527,23 @@ export async function readPlannedRows(
             nationalVersion: { select: { appliesFromCohortTerm: true } },
           },
         });
-  // The ämnesgrupp of each subject's national code (BI under NO, GE under SO),
-  // through the relation so it is no statement of its own: a line is keyed on
-  // the top code, as P1's and Stadium's cells are (common/timplan-planned.ts).
   const subjectRows = await tx.subject.findMany({
-    select: {
-      id: true,
-      name: true,
-      nationalCode: true,
-      countsTowardTimplan: true,
-      nationalSubject: { select: { parentCode: true } },
-    },
+    select: { id: true, name: true, nationalCode: true, countsTowardTimplan: true },
   });
+  // The ämnesgrupp of each national code that has one (BI under NO, GE under
+  // SO), one more statement: the children only, seven rows of a reference
+  // table, which P1 and Stadium read in full beside this. A line is keyed on
+  // the top code (common/timplan-planned.ts). Prisma reads a relation in a
+  // second statement of its own here, so naming the relation in the subjects'
+  // select would cost the same and hide it.
+  const parentOf = new Map(
+    (
+      await tx.nationalSubject.findMany({
+        where: { parentCode: { not: null } },
+        select: { code: true, parentCode: true },
+      })
+    ).map((row) => [row.code, row.parentCode]),
+  );
   const groups = await tx.studentGroup.findMany({
     where: { academicYearId },
     select: { id: true, name: true, kind: true, gradeLevel: true, replacesSubjectId: true, halfOfId: true },
@@ -579,10 +584,10 @@ export async function readPlannedRows(
     attachments,
     // The parent on the subjects that have one only, as the groups' fields
     // below: every other subject reaches the modules as it always did.
-    subjects: subjectRows.map(({ nationalSubject, ...subject }) => ({
-      ...subject,
-      ...(nationalSubject?.parentCode ? { parentCode: nationalSubject.parentCode } : {}),
-    })),
+    subjects: subjectRows.map((subject) => {
+      const parentCode = subject.nationalCode === null ? undefined : parentOf.get(subject.nationalCode);
+      return parentCode ? { ...subject, parentCode } : subject;
+    }),
     // Ersättande grupper: the subject a teaching group's members leave, on the
     // groups that replace one (common/replacing-groups.ts) — the pupil lines
     // of P2, layer 2, P3 and P4 apply THE RULE with it — and the class of a

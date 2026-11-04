@@ -655,29 +655,63 @@ describe('computePlannedCoverage', () => {
       expect(coverage.verdicts).toEqual([]);
     });
 
-    it('reads the plan’s entries on the children alone as their sum', () => {
+    it('keeps a child the plan names on its own line, as before the roll-up: Kemi asked for and not planned is unplanned', () => {
+      // The plan names the children, Biologi 60, Fysik 60, Kemi 60 (P1's own
+      // form). A class with Biologi 2 × 60 and Fysik 1 × 60 and no Kemi was
+      // 180 of 180 MET when the three were one line.
       const c = group('7A');
       const coverage = computePlannedCoverage(
         withGroups({
-          plans: [plan([[BI, 7, 30], [FY, 7, 30], [KE, 7, 25]])],
+          plans: [plan([[BI, 7, 60], [FY, 7, 60], [KE, 7, 60]])],
           groups: [c],
-          requirements: [req(c, BI, 1, 60)],
+          requirements: [req(c, BI, 2, 60), req(c, FY, 1, 60)],
         }),
       );
-      // Biologi 60 alone meets the sum 85? No: 60 of 85, short by 25.
-      expect(lineOf(coverage, c.id, 'national:NO')).toMatchObject({
-        subjectIds: [BI, FY, KE],
-        targetMinutesPerWeek: 85,
-        plannedMinutesPerWeek: 60,
-        status: 'UNDER',
-      });
+      expect(coverage.groups[0]!.lines.map((l) => [l.key, l.nationalCode, l.targetMinutesPerWeek, l.plannedMinutesPerWeek, l.status])).toEqual([
+        [`subject:${BI}`, undefined, 60, 120, 'OVER'],
+        [`subject:${FY}`, undefined, 60, 60, 'MET'],
+        [`subject:${KE}`, undefined, 60, 0, 'UNPLANNED'],
+      ]);
       expect(coverage.verdicts.map((verdict) => [verdict.code, verdict.params.subjectName])).toEqual([
-        ['TIMPLAN_GROUP_UNDERPLANNED', 'Biologi / Fysik / Kemi'],
+        ['TIMPLAN_GROUP_UNPLANNED', 'Kemi'],
+        ['TIMPLAN_GROUP_OVERPLANNED', 'Biologi'],
+      ]);
+      expect(coverage.cells.map((cell) => [cell.subjectId, cell.targetMinutesPerWeek, cell.plannedMinutesPerWeek])).toEqual([
+        [BI, 60, 120],
+        [FY, 60, 60],
+        [KE, 60, 0],
+      ]);
+      expect(coverage.cells.every((cell) => !('nationalCode' in cell))).toBe(true);
+    });
+
+    it('holds a child the plan names to its own entry and the others to the group’s: NO 90 beside Biologi 30', () => {
+      const c = group('7A');
+      const coverage = computePlannedCoverage(
+        withGroups({
+          plans: [plan([[NO, 7, 90], [BI, 7, 30]])],
+          groups: [c],
+          // Biologi's post is held to Biologi's 30; Fysik and Kemi go to NO's 90.
+          requirements: [req(c, BI, 1, 30), req(c, FY, 1, 45), req(c, KE, 1, 45)],
+        }),
+      );
+      expect(coverage.groups[0]!.lines.map((l) => [l.key, l.nationalCode, l.subjectIds, l.targetMinutesPerWeek, l.plannedMinutesPerWeek, l.status])).toEqual([
+        [`subject:${BI}`, undefined, [BI], 30, 30, 'MET'],
+        ['national:NO', 'NO', [FY, KE, NO], 90, 90, 'MET'],
+      ]);
+      const short = computePlannedCoverage(
+        withGroups({
+          plans: [plan([[NO, 7, 90], [BI, 7, 30]])],
+          groups: [c],
+          requirements: [req(c, BI, 3, 30)],
+        }),
+      );
+      expect(short.groups[0]!.lines.map((l) => [l.key, l.targetMinutesPerWeek, l.plannedMinutesPerWeek, l.status])).toEqual([
+        [`subject:${BI}`, 30, 90, 'OVER'],
+        ['national:NO', 90, 0, 'UNPLANNED'],
       ]);
     });
 
-    it('reads an entry on the group beside entries on its children as their sum, as P1 sums its cell', () => {
-      // NO 90 and Biologi 30, Fysik 30, Kemi 30: 180 in P1’s NO cell, 180 here.
+    it('is the group’s alone when the plan names every child: NO 90 with Biologi, Fysik and Kemi 30 is four lines, as before the roll-up', () => {
       const c = group('7A');
       const coverage = computePlannedCoverage(
         withGroups({
@@ -686,29 +720,88 @@ describe('computePlannedCoverage', () => {
           requirements: [req(c, NO, 1, 90), req(c, BI, 1, 30), req(c, FY, 1, 30)],
         }),
       );
-      expect(lineOf(coverage, c.id, 'national:NO')).toMatchObject({
-        targetMinutesPerWeek: 180,
-        plannedMinutesPerWeek: 150,
-        status: 'UNDER',
-      });
-      // …and met once the Kemi post is there, whichever subject carries the minutes.
-      const met = computePlannedCoverage(
-        withGroups({
-          plans: [plan([[NO, 7, 90], [BI, 7, 30], [FY, 7, 30], [KE, 7, 30]])],
-          groups: [c],
-          requirements: [req(c, BI, 1, 90), req(c, FY, 1, 45), req(c, KE, 1, 45)],
-        }),
-      );
-      expect(lineOf(met, c.id, 'national:NO')).toMatchObject({ targetMinutesPerWeek: 180, plannedMinutesPerWeek: 180, status: 'MET' });
+      expect(coverage.groups[0]!.lines.map((l) => [l.key, l.nationalCode, l.targetMinutesPerWeek, l.plannedMinutesPerWeek, l.status])).toEqual([
+        [`subject:${BI}`, undefined, 30, 30, 'MET'],
+        [`subject:${FY}`, undefined, 30, 30, 'MET'],
+        [`subject:${KE}`, undefined, 30, 0, 'UNPLANNED'],
+        // The group's own subject is alone on its line: it keeps 'subject:<id>'.
+        [`subject:${NO}`, undefined, 90, 90, 'MET'],
+      ]);
     });
 
-    it('does not judge a child’s minimum: Kemi with no post is on a line met by Biologi and Fysik', () => {
-      // P1 holds each child to the lydelse’s printed minimum on the plan’s
-      // entries; this module compares posts with the plan’s line.
+    it('sums two subjects of a child the plan names, as #249 sums two of one code: Biologi and Biologi fördjupning', () => {
+      const BIF = id(30);
       const c = group('7A');
       const coverage = computePlannedCoverage(
         withGroups({
-          plans: [plan([[BI, 7, 30], [FY, 7, 30], [KE, 7, 30]])],
+          plans: [plan([[BI, 7, 60]])],
+          subjects: [...SUBJECTS, ...GROUP_SUBJECTS, { id: BIF, name: 'Biologi fördjupning', nationalCode: 'BI', parentCode: 'NO', countsTowardTimplan: true }],
+          groups: [c],
+          requirements: [req(c, BI, 1, 30), req(c, BIF, 1, 30)],
+        }),
+      );
+      expect(coverage.groups[0]!.lines.map((l) => [l.key, l.nationalCode, l.subjectIds, l.targetMinutesPerWeek, l.plannedMinutesPerWeek, l.status])).toEqual([
+        ['national:BI', 'BI', [BI, BIF], 60, 60, 'MET'],
+      ]);
+      // Unnamed, the same two are the group's.
+      const rolled = computePlannedCoverage(
+        withGroups({
+          plans: [plan([[NO, 7, 60]])],
+          subjects: [...SUBJECTS, ...GROUP_SUBJECTS, { id: BIF, name: 'Biologi fördjupning', nationalCode: 'BI', parentCode: 'NO', countsTowardTimplan: true }],
+          groups: [c],
+          requirements: [req(c, BI, 1, 30), req(c, BIF, 1, 30)],
+        }),
+      );
+      expect(rolled.groups[0]!.lines.map((l) => [l.key, l.nationalCode, l.targetMinutesPerWeek, l.plannedMinutesPerWeek])).toEqual([
+        ['national:NO', 'NO', 60, 60],
+      ]);
+    });
+
+    it('reads the same children as the group’s in one årskurs and as their own in another, by what each årskurs’s plan names', () => {
+      const a = group('7A');
+      const b = group('8A', 'CLASS', 8);
+      const coverage = computePlannedCoverage(
+        withGroups({
+          plans: [plan([[NO, 7, 90], [BI, 8, 60], [FY, 8, 30]])],
+          attachments: [
+            { gradeLevel: 7, localTimplanId: PLAN },
+            { gradeLevel: 8, localTimplanId: PLAN },
+          ],
+          groups: [a, b],
+          requirements: [req(a, BI, 1, 45), req(a, FY, 1, 45), req(b, BI, 1, 60), req(b, FY, 1, 30)],
+          pupils: [pupil(a), pupil(b)],
+        }),
+      );
+      expect(coverage.groups.map((g) => g.lines.map((l) => [l.key, l.targetMinutesPerWeek, l.plannedMinutesPerWeek, l.status]))).toEqual([
+        [['national:NO', 90, 90, 'MET']],
+        [
+          [`subject:${BI}`, 60, 60, 'MET'],
+          [`subject:${FY}`, 30, 30, 'MET'],
+        ],
+      ]);
+      // The pupils of 8A are read on the same lines as their class.
+      expect(coverage.verdicts).toEqual([]);
+    });
+
+    it('does not read an entry of no minutes as naming the child', () => {
+      const c = group('7A');
+      const coverage = computePlannedCoverage(
+        withGroups({
+          plans: [plan([[NO, 7, 90], [KE, 7, 0]])],
+          groups: [c],
+          requirements: [req(c, BI, 1, 45), req(c, FY, 1, 45)],
+        }),
+      );
+      expect(lineOf(coverage, c.id, 'national:NO')).toMatchObject({ subjectIds: [BI, FY, KE, NO], targetMinutesPerWeek: 90, plannedMinutesPerWeek: 90, status: 'MET' });
+    });
+
+    it('does not judge a child’s minimum under a plan that states the group alone: Kemi with no post is on a line met by Biologi and Fysik', () => {
+      // P1 holds each child to the minimum its lydelse prints; this module
+      // compares the posts with the plan's line.
+      const c = group('7A');
+      const coverage = computePlannedCoverage(
+        withGroups({
+          plans: [plan([[NO, 7, 90]])],
           groups: [c],
           requirements: [req(c, BI, 1, 60), req(c, FY, 1, 30)],
           pupils: [pupil(c)],
@@ -742,7 +835,7 @@ describe('computePlannedCoverage', () => {
       const b = group('8A', 'CLASS', 8);
       const coverage = computePlannedCoverage(
         withGroups({
-          plans: [plan([[NO, 4, 60], [BI, 8, 90]])],
+          plans: [plan([[NO, 4, 60], [NO, 8, 90]])],
           attachments: [
             { gradeLevel: 4, localTimplanId: PLAN },
             { gradeLevel: 8, localTimplanId: PLAN },
@@ -777,7 +870,7 @@ describe('computePlannedCoverage', () => {
       const c = group('7A');
       const coverage = computePlannedCoverage(
         withGroups({
-          plans: [plan([[BI, 7, 30], [FY, 7, 30], [S.SV, 7, 200], [S.SVA, 7, 200]])],
+          plans: [plan([[NO, 7, 60], [S.SV, 7, 200], [S.SVA, 7, 200]])],
           groups: [c],
           requirements: [req(c, BI, 1, 30), req(c, FY, 1, 30), req(c, S.SV, 4, 50)],
         }),
@@ -852,6 +945,55 @@ describe('computePlannedCoverage', () => {
               }),
             ],
           }),
+        ]);
+      });
+    });
+
+    describe('under a plan that names the children', () => {
+      it('lets teaching groups carry a named child’s own line: Kemi 60 read by every pupil from a group is PUPILS, not unplanned', () => {
+        const c = group('7A');
+        const kemi = group('Kemi 7', 'TEACHING_GROUP', null);
+        const coverage = computePlannedCoverage(
+          withGroups({
+            plans: [plan([[KE, 7, 60]])],
+            groups: [c, kemi],
+            requirements: [req(kemi, KE, 1, 60)],
+            pupils: [pupil(c, [kemi]), pupil(c, [kemi])],
+          }),
+        );
+        expect(lineOf(coverage, c.id, `subject:${KE}`)).toMatchObject({
+          status: 'PUPILS',
+          teachingGroupIds: [kemi.id],
+          pupils: { min: 60, max: 60, below: 0 },
+        });
+        expect(coverage.verdicts).toEqual([]);
+      });
+
+      it('lists an ersättande grupp’s pupil short on the child’s line on their own, the class’s Kemi taken off them', () => {
+        // The plan names Kemi 60; 7A gives Kemi 1 × 30, so the class is UNDER
+        // and says so. 7A-val replaces Kemi (its pupil reads matematik there):
+        // that pupil's 0 of 60 is their own finding and listed, where the other
+        // pupil's 30 of 60 is the class's and only counted.
+        const c = group('7A');
+        const val = { ...group('7A-val', 'TEACHING_GROUP', null), replacesSubjectId: KE };
+        const coverage = computePlannedCoverage(
+          withGroups({
+            plans: [plan([[KE, 7, 60]])],
+            groups: [c, val],
+            requirements: [req(c, KE, 1, 30), req(val, S.MA, 1, 30)],
+            pupils: [pupil(c, [val]), pupil(c)],
+          }),
+        );
+        expect(lineOf(coverage, c.id, `subject:${KE}`)).toMatchObject({ status: 'UNDER', pupils: { min: 0, max: 30, below: 2 } });
+        expect(coverage.pupilsBelowTarget).toBe(2);
+        expect(coverage.pupils).toEqual([
+          expect.objectContaining({
+            lines: [expect.objectContaining({ key: `subject:${KE}`, status: 'UNDER', plannedMinutesPerWeek: 0 })],
+          }),
+        ]);
+        expect(coverage.verdicts.map((verdict) => [verdict.code, verdict.subjectIds])).toEqual([
+          ['TIMPLAN_GROUP_UNDERPLANNED', [KE]],
+          ['TIMPLAN_PUPIL_UNDERPLANNED', [KE]],
         ]);
       });
     });
