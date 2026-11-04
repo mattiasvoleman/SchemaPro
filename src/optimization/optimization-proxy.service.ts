@@ -1744,7 +1744,13 @@ export class OptimizationProxyService {
       for (const [realId, anonId] of map) realByAnon.set(anonId, realId);
     }
     const teacherOfPost = maps.dayLimitTeacherIds ?? new Map<string, string>();
-    const summaryParams = this.namedParams(conflicts.summaryParams ?? {}, maps);
+    // A summary that echoes a year does so in the läsår's own numbering too,
+    // like the lines under it (yearGrades).
+    const summaryParams = yearGrades(
+      conflicts.summaryCode,
+      this.namedParams(conflicts.summaryParams ?? {}, maps),
+      maps,
+    );
     const summaryBearsDays = isDaysBearing(conflicts.summaryCode);
     return {
       // A days-bearing sentence leaves without its figure: see work-days.ts.
@@ -4663,6 +4669,12 @@ const CLASS_SPAN_CODES = new Set([
   'ROOM_LOCK_LEAVES_NO_ROOM',
   'RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT',
   'RAST_DEMANDS_MORE_LESSONS_THAN_FIT_BEFORE_IT',
+  // A year's least week (week_load.py): `grades` is the year the entries of the
+  // count were sent for, read off their classes' spans like the rest.
+  'DEMAND_YEAR_WEEK_SHORT',
+  'TEACHER_SHARED_BY_PARALLEL_GROUPS',
+  'TIGHT_WEEK_LOAD',
+  'TIGHT_WEEK_TIMEOUT',
 ]);
 
 /**
