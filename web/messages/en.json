@@ -6697,7 +6697,8 @@
       "BULK_ROW_TAKEN": "Would clash with another row that already has the same values.",
       "BULK_ROW_REFERENCE_GONE": "Would point at something that no longer exists.",
       "STUDENT_HOME_GROUP_NOT_A_CLASS": "A student's home class must be a class. Add the student to a teaching group under Members instead.",
-      "BULK_TIMED_OUT": "It took too long, so nothing was changed. Try fewer at a time."
+      "BULK_TIMED_OUT": "It took too long, so nothing was changed. Try fewer at a time.",
+      "BULK_BUSY": "The server is busy right now, so nothing was changed. Try again in a moment."
     },
     "groupFields": {
       "gradeLevel": "Grade",

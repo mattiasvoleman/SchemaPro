@@ -165,6 +165,17 @@ describe("BulkDeleteDialog", () => {
     expect(screen.getByRole("button", { name: "deleteCount(3)" })).toBeEnabled();
   });
 
+  it("says a delete that found the server busy in the reader's language, and keeps the list to try again", async () => {
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(report({ done: ["a", "b", "c"], consequences: { halves: 0 } }))
+      .mockRejectedValueOnce(new ApiError(503, "Servern är upptagen just nu.", "BULK_BUSY"));
+    open(remove);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "deleteCount(3)" }));
+    expect(await screen.findByText("refusal.BULK_BUSY")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "deleteCount(3)" })).toBeEnabled();
+  });
+
   it("deletes nothing when what goes with the rows grew since the check, and shows the new counts to be confirmed again", async () => {
     const remove = vi
       .fn()

@@ -48,6 +48,7 @@ const KNOWN_REFUSALS = [
   "USER_HAS_BOOKED_PASS_COVERS",
   "STUDENT_HOME_GROUP_NOT_A_CLASS",
   "BULK_TIMED_OUT",
+  "BULK_BUSY",
 ] as const;
 
 const known = (code: string | null | undefined): code is (typeof KNOWN_REFUSALS)[number] =>

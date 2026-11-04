@@ -3,9 +3,11 @@ import {
   ConflictException,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
+  BULK_BUSY,
   BULK_ROW_NOT_FOUND,
   BULK_ROW_REFERENCE_GONE,
   BULK_ROW_TAKEN,
@@ -301,8 +303,24 @@ describe('bulkTransaction', () => {
     expect(sent).toEqual([`SELECT set_config('statement_timeout', ?, true) ["${BULK_TIMEOUT_MS}"]`]);
   });
 
+  // Prisma's own sentences for its P2028s (TransactionManagerError), as 7.10 writes them.
+  const transactionError = (message: string) =>
+    new Prisma.PrismaClientKnownRequestError(`Transaction API error: ${message}`, {
+      code: 'P2028',
+      clientVersion: Prisma.prismaVersion.client,
+    });
+  const expired = transactionError(
+    `A query cannot be executed on an expired transaction. The timeout for this transaction was ${BULK_TIMEOUT_MS} ms, however ${BULK_TIMEOUT_MS + 12} ms passed since the start of the transaction. Consider increasing the interactive transaction timeout or doing less work in the transaction.`,
+  );
+  const rolledBack = transactionError(
+    'Transaction already closed: A query cannot be executed on a transaction that was rolled back.',
+  );
+  const neverStarted = transactionError('Unable to start a transaction in the given time.');
+
   it.each([
-    ['Prisma’s expired transaction (P2028)', prismaError('P2028')],
+    ['Prisma’s expired transaction (P2028)', expired],
+    ['a query after Prisma rolled the expired transaction back (P2028)', rolledBack],
+    ['a P2028 of any other sentence', prismaError('P2028')],
     ['the statement the database cancelled (57014)', driverError('57014')],
   ])('answers %s as 409 BULK_TIMED_OUT: nothing written, fewer at a time', async (_what, failure) => {
     const { prisma } = withRls(failure);
@@ -314,6 +332,18 @@ describe('bulkTransaction', () => {
       code: BULK_TIMED_OUT,
       message: expect.stringContaining('ingenting sparades'),
     });
+  });
+
+  it('answers a transaction that never started, the pool full for maxWait, as 503 BULK_BUSY: nothing written, try again soon', async () => {
+    const { prisma } = withRls(neverStarted);
+
+    const error = await bulkTransaction(prisma, 'user')(() => Promise.resolve(null)).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ServiceUnavailableException);
+    const response = (error as ServiceUnavailableException).getResponse() as { code: string; message: string };
+    expect(response).toMatchObject({ code: BULK_BUSY, message: expect.stringContaining('ingenting sparades') });
+    expect(response.message).toContain('om en stund');
+    expect(response.message).not.toContain('färre');
   });
 
   it('passes any other failure on as it is: a deadlock, another driver error', async () => {

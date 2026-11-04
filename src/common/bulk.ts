@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, HttpException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsObject, IsOptional, IsUUID } from 'class-validator';
@@ -62,6 +68,13 @@ export const BULK_TIMEOUT_MS = 60_000;
 
 /** A call that ran out of BULK_TIMEOUT_MS. Nothing was written. */
 export const BULK_TIMED_OUT = 'BULK_TIMED_OUT';
+
+/**
+ * A call whose transaction could not start: every connection of the pool
+ * was taken for as long as Prisma waits for one (maxWait). Nothing was
+ * written, and fewer rows would not have helped; a moment later may.
+ */
+export const BULK_BUSY = 'BULK_BUSY';
 
 /**
  * The problem code of a row that is not there, or not the caller's to change
@@ -287,6 +300,9 @@ export async function writeAll(
  * the database's statement_timeout. A call that runs out of either (P2028
  * from Prisma, 57014 from the database) is a 409 BULK_TIMED_OUT saying that
  * nothing was written and to try fewer rows at a time, rather than a 500.
+ * A call whose transaction never started (P2028 too, for a full pool) is a
+ * 503 BULK_BUSY saying to try again in a moment: fewer rows would wait for
+ * a connection just as long.
  */
 export function bulkTransaction<U>(
   prisma: { withRls<T>(user: U, fn: (tx: PrismaClient) => Promise<T>, options?: { timeoutMs?: number }): Promise<T> },
@@ -303,19 +319,32 @@ export function bulkTransaction<U>(
         { timeoutMs: BULK_TIMEOUT_MS },
       );
     } catch (error) {
-      if (ranOutOfTime(error)) throw bulkTimedOut();
+      const out = outOfTime(error);
+      if (out === 'never started') throw bulkBusy();
+      if (out === 'ran out') throw bulkTimedOut();
       throw error;
     }
   };
 }
 
-/** P2028 (Prisma's transaction expired) or 57014 (the statement cancelled by statement_timeout). */
-export function ranOutOfTime(error: unknown): boolean {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-  if (error.code === 'P2028') return true;
+/**
+ * Prisma's message for a transaction that found no connection within
+ * maxWait (TransactionManagerError, P2028). Every other P2028 is a
+ * transaction that started: expired, or closed by its timeout.
+ */
+const NEVER_STARTED = 'Unable to start a transaction in the given time';
+
+/**
+ * How a call ran out of time, if it did: 'never started' (P2028 with
+ * NEVER_STARTED), 'ran out' (any other P2028, Prisma's transaction expired,
+ * or 57014, the statement cancelled by statement_timeout), or null.
+ */
+export function outOfTime(error: unknown): 'never started' | 'ran out' | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  if (error.code === 'P2028') return error.message.includes(NEVER_STARTED) ? 'never started' : 'ran out';
   const cause = (error.meta as { driverAdapterError?: { cause?: { originalCode?: unknown } } } | undefined)
     ?.driverAdapterError?.cause;
-  return cause?.originalCode === '57014';
+  return cause?.originalCode === '57014' ? 'ran out' : null;
 }
 
 function bulkTimedOut(): ConflictException {
@@ -323,6 +352,13 @@ function bulkTimedOut(): ConflictException {
     message: `Ändringen tog längre tid än ${BULK_TIMEOUT_MS / 1000} sekunder, så ingenting sparades. Försök med färre rader åt gången.`,
     code: BULK_TIMED_OUT,
     params: { seconds: BULK_TIMEOUT_MS / 1000 },
+  });
+}
+
+function bulkBusy(): ServiceUnavailableException {
+  return new ServiceUnavailableException({
+    message: 'Servern är upptagen just nu, så ingenting sparades. Försök igen om en stund.',
+    code: BULK_BUSY,
   });
 }
 
