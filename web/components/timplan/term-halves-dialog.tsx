@@ -147,7 +147,14 @@ export interface TermHalvesDialogProps {
   requirement: TeachingRequirement | null;
   /** The year's groups: the class and its halves are found among them. */
   groups: readonly { id: string; name: string; halfOfId?: string | null; gradeLevel?: number | null }[];
-  subjects: readonly { id: string; name: string; nationalCode?: string | null; countsTowardTimplan?: boolean }[];
+  subjects: readonly {
+    id: string;
+    name: string;
+    nationalCode?: string | null;
+    /** The ämnesgrupp of the code, where there is one (withParentCodes): the timplan's lines roll up to it. */
+    parentCode?: string | null;
+    countsTowardTimplan?: boolean;
+  }[];
   /**
    * The year's timplansposter, for what each half gets against the timplan:
    * the class's other posts (its slöjd, when hemkunskap is swapped with

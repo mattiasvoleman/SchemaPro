@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AMNESGRUPPER,
   coverageCase,
   EMPTY_PLAN,
   LANGUAGES,
@@ -149,6 +150,27 @@ describe("TimplanCoveragePage", () => {
     expect(within(line).getByText("partsTogether")).toBeInTheDocument();
     // An alternative's "together" is not said of parts: they add up, not stand in for one another.
     expect(within(line).queryByText("together")).not.toBeInTheDocument();
+  });
+
+  it("tags the children of NO and SO as parts of their group’s line, a line each", async () => {
+    // 8A meets NO 90 on Biologi and Kemi (45 + 45) and SO 120 on four children
+    // (30 each): every cell of both lines is a part and says so. 8B is short on
+    // NO (Fysik 60), whose cells show the line’s difference instead, and over
+    // on SO.
+    state.case = coverageCase(AMNESGRUPPER) as typeof state.case;
+    const user = userEvent.setup();
+    render(<TimplanCoveragePage />);
+    const met = screen.getByRole("row", { name: /8A/ });
+    // Biologi, Kemi and NO’s own cell, then Geografi, Historia, Religionskunskap, Samhällskunskap and SO’s.
+    expect(within(met).getAllByText("tagParts")).toHaveLength(8);
+    const short = screen.getByRole("row", { name: /8B/ });
+    expect(within(short).getAllByText("tagParts")).toHaveLength(5);
+    expect(within(short).getAllByText("−30")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: /8A/ }));
+    const section = screen.getByRole("region", { name: "8A" });
+    const lines = within(section).getAllByRole("row", { name: /Biologi|Geografi/ });
+    expect(lines).toHaveLength(2);
+    for (const line of lines) expect(within(line).getByText("partsTogether")).toBeInTheDocument();
   });
 
   it("reads a part the plan has no entry for by its line, not as '50 of 0 minutes'", () => {

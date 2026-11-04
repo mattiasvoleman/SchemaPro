@@ -552,3 +552,72 @@ describe("the parts of a national subject", () => {
     });
   });
 });
+
+describe("the children of an ämnesgrupp", () => {
+  // The plan's NO of 90 in 7A, and the class's posts on Biologi and Fysik: the
+  // subjects carry the ämnesgrupp of their national code (withParentCodes), so
+  // the three are one line, 'national:NO', as the gateway reads them.
+  const children: TargetSources = {
+    ...sources,
+    subjects: [
+      ...subjects,
+      { id: "s-no", name: "Naturorienterande ämnen", nationalCode: "NO", countsTowardTimplan: true },
+      { id: "s-bio", name: "Biologi", nationalCode: "BI", parentCode: "NO", countsTowardTimplan: true },
+      { id: "s-fys", name: "Fysik", nationalCode: "FY", parentCode: "NO", countsTowardTimplan: true },
+      { id: "s-kem", name: "Kemi", nationalCode: "KE", parentCode: "NO", countsTowardTimplan: true },
+    ],
+    plans: [
+      { ...plans[0]!, entries: [...plans[0]!.entries, { subjectId: "s-no", gradeLevel: 7, minutesPerWeek: 90 }] },
+      plans[1]!,
+    ],
+    requirements: [...requirements, row("r-bio7", "g-7a", "s-bio", 1, 30), row("r-fys7", "g-7a", "s-fys", 1, 30)],
+  };
+  const view = buildTargetView(computePlannedCoverage(targetInput(children)), children.plans);
+
+  it("hands the module the ämnesgrupp on the subjects that have one only", () => {
+    const input = targetInput(children);
+    expect(input.subjects.filter((entry) => entry.parentCode !== undefined).map((entry) => [entry.id, entry.parentCode])).toEqual([
+      ["s-bio", "NO"],
+      ["s-fys", "NO"],
+      ["s-kem", "NO"],
+    ]);
+    expect(input.subjects.find((entry) => entry.id === "s-no")).not.toHaveProperty("parentCode");
+    // Without it the subjects reach the module as they always did.
+    expect(targetInput(sources).subjects.every((entry) => !("parentCode" in entry))).toBe(true);
+  });
+
+  it("reads the cell of a child and of the group on the one line, with the others named", () => {
+    expect(view.cell("g-7a", "s-bio")).toEqual({
+      planned: 30,
+      target: null,
+      delta: -30,
+      tone: "under",
+      alternative: false,
+      national: true,
+      linePlanned: 60,
+      lineTarget: 90,
+      partnerSubjectIds: ["s-fys", "s-no"],
+    });
+    expect(view.cell("g-7a", "s-no")).toMatchObject({ planned: 0, target: 90, delta: -30, national: true, partnerSubjectIds: ["s-bio", "s-fys"] });
+    // Kemi has no post and no entry in 7A: no cell.
+    expect(view.cell("g-7a", "s-kem")).toBeNull();
+  });
+
+  it("totals the class on the line once: the posts of the children add up under the group’s 90", () => {
+    const line = view.summary("g-7a")!.lines.find((entry) => entry.nationalCode === "NO")!;
+    expect(line).toMatchObject({ key: "national:NO", targetMinutesPerWeek: 90, plannedMinutesPerWeek: 60, subjectIds: ["s-bio", "s-fys", "s-no"] });
+  });
+
+  it("judges a new post in Kemi on the line though the plan has no entry on Kemi", () => {
+    const hint = draftHint(targetInput(children), "g-7a", "s-kem", fields({ lessonsPerWeek: "1", minutesPerLesson: "30" }));
+    expect(hint).toMatchObject({
+      kind: "target",
+      target: 90,
+      planned: 90,
+      delta: 0,
+      status: "MET",
+      national: true,
+      partnerSubjectIds: ["s-bio", "s-fys", "s-no"],
+    });
+  });
+});

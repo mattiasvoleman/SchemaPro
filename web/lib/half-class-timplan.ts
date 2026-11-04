@@ -18,7 +18,8 @@
 // pupil slöjd in the half's other period, on top of the class's own slöjd
 // post. The timplan counts both — per pupil and per line, a line being the
 // school subject, the alternative SV_SVA / M2, or the parts of one national
-// subject (Textilslöjd and Trä- och metallslöjd are Slöjd's SL) — so the
+// subject (Textilslöjd and Trä- och metallslöjd are Slöjd's SL; Biologi and
+// Kemi are children of the ämnesgrupp NO) — so the
 // dialog shows the lines, and proposes how far the class's own post in the
 // other subject can
 // come down with no half under its target (classPostReduction). The class's
@@ -28,6 +29,7 @@
 
 import {
   computePlannedCoverage,
+  nationalTopOf,
   type PlannedCoverage,
   type PlannedLine,
   type PlannedPlan,
@@ -44,7 +46,14 @@ export interface HalvesTimplanSources {
   closures: ClosedRange[];
   plans: PlannedPlan[];
   attachments: { gradeLevel: number; localTimplanId: string }[];
-  subjects: readonly { id: string; name: string; nationalCode?: string | null; countsTowardTimplan?: boolean }[];
+  subjects: readonly {
+    id: string;
+    name: string;
+    nationalCode?: string | null;
+    /** The ämnesgrupp of the code (BI → NO), where the subject has one: withParentCodes. */
+    parentCode?: string | null;
+    countsTowardTimplan?: boolean;
+  }[];
 }
 
 /** A stored post, as far as the timplan reads it. */
@@ -143,6 +152,7 @@ function coverageOf(sources: HalvesTimplanSources, split: HalvesSplit, half: 0 |
       id: subject.id,
       name: subject.name,
       nationalCode: subject.nationalCode ?? null,
+      ...(subject.parentCode ? { parentCode: subject.parentCode } : {}),
       countsTowardTimplan: subject.countsTowardTimplan ?? true,
     })),
     groups: [
@@ -165,7 +175,9 @@ function coverageOf(sources: HalvesTimplanSources, split: HalvesSplit, half: 0 |
  * Whether `subjectId` is on the class's `line`: one of the subjects it lists,
  * or a part of the same national subject. The class's line lists the subjects
  * of its own posts and of the plan's entries, so a part only the halves read
- * (textilslöjd beside a Slöjd entry) is on it by its code.
+ * (textilslöjd beside a Slöjd entry, kemi beside a NO entry) is on it by its
+ * top code (the line's nationalCode, which a child of an ämnesgrupp shares
+ * with its group).
  */
 function onLine(line: PlannedLine, subjectId: string, codes: ReadonlyMap<string, string | null>): boolean {
   return (
@@ -221,12 +233,12 @@ function linesOf(
   return lines;
 }
 
-/** The national code of each subject the timplan counts, to find the parts of one national subject. */
+/** The top national code of each subject the timplan counts, to find the parts of one national subject. */
 const codesOf = (sources: HalvesTimplanSources): Map<string, string | null> =>
   new Map(
     sources.subjects
       .filter((subject) => subject.countsTowardTimplan !== false)
-      .map((subject) => [subject.id, subject.nationalCode ?? null]),
+      .map((subject) => [subject.id, nationalTopOf({ nationalCode: subject.nationalCode ?? null, parentCode: subject.parentCode })]),
   );
 
 /**

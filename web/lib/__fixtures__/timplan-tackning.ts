@@ -44,3 +44,5 @@ export const MIXED = "unplanned, underplanned and overplanned";
 export const NATIONAL_ENTRIES = "national: a plan with an entry on each part";
 /** Åk 7 where 7A keeps a trä post and the plan's 65 is on Slöjd alone: the trä cell has no entry of its own. */
 export const NATIONAL_NO_OWN_ENTRY = "national: åk 7 with the class keeping";
+/** Åk 8 with the plan’s NO 90 and SO 120 met on the children (8A), short on NO and over on SO (8B): two national lines per class. */
+export const AMNESGRUPPER = "ämnesgrupp: åk 8 — NO 90 and SO 120 are two lines";

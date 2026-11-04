@@ -69,7 +69,14 @@ export interface TargetSources {
   closures: ClosedRange[];
   attachments: { gradeLevel: number; localTimplanId: string }[];
   plans: PlannedPlan[];
-  subjects: Pick<Subject, "id" | "name" | "nationalCode" | "countsTowardTimplan">[];
+  /**
+   * With the ämnesgrupp of the national code on the subjects that have one
+   * (withParentCodes in lib/national-subjects.ts): without it the children of
+   * NO and SO are lines of their own, as they were.
+   */
+  subjects: (Pick<Subject, "id" | "name" | "nationalCode" | "countsTowardTimplan"> & {
+    parentCode?: string | null;
+  })[];
   /**
    * The picked läsår's groups only: two years may both own a "7A". With
    * replacesSubjectId (useGroups selects it), so a pupil of an ersättande
@@ -116,6 +123,8 @@ export function targetInput(sources: TargetSources): PlannedCoverageInput {
       id: subject.id,
       name: subject.name,
       nationalCode: subject.nationalCode ?? null,
+      // Only on a subject that has one, as the gateway's reader hands it in.
+      ...(subject.parentCode ? { parentCode: subject.parentCode } : {}),
       countsTowardTimplan: subject.countsTowardTimplan ?? true,
     })),
     groups: sources.groups.map((group) => ({
@@ -182,8 +191,9 @@ export interface TargetCellView {
   alternative: boolean;
   /**
    * Part of a national line: one of the parts the school divides a national
-   * subject into (Textilslöjd beside Slöjd). The cell shows its own minutes
-   * and its own entry, and the delta is the line, where the parts add up.
+   * subject into (Textilslöjd beside Slöjd), or a child of an ämnesgrupp
+   * (Biologi, Fysik and Kemi beside NO). The cell shows its own minutes and
+   * its own entry, and the delta is the line, where the parts add up.
    */
   national: boolean;
   /**

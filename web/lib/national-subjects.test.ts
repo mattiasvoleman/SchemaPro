@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sectionNationalSubjects } from "./national-subjects";
+import { sectionNationalSubjects, withParentCodes } from "./national-subjects";
 import type { NationalSubject } from "./types";
 
 const subject = (
@@ -85,5 +85,35 @@ describe("sectionNationalSubjects", () => {
 
   it("returns no sections for an empty list", () => {
     expect(sectionNationalSubjects([])).toEqual([]);
+  });
+});
+
+describe("withParentCodes", () => {
+  const school = [
+    { id: "s-bio", name: "Biologi", nationalCode: "BI" as string | null },
+    { id: "s-no", name: "Naturorienterande ämnen", nationalCode: "NO" as string | null },
+    { id: "s-ma", name: "Matematik", nationalCode: "MA" as string | null },
+    { id: "s-men", name: "Mentorstid", nationalCode: null as string | null },
+    { id: "s-gone", name: "Gammalt", nationalCode: "ZZ" as string | null },
+  ];
+
+  it("puts the ämnesgrupp on the subjects whose code is a child of one, and nothing on the rest", () => {
+    const joined = withParentCodes(school, SEEDED);
+    expect(joined.map((entry) => [entry.id, entry.parentCode])).toEqual([
+      ["s-bio", "NO"],
+      ["s-no", undefined],
+      ["s-ma", undefined],
+      ["s-men", undefined],
+      ["s-gone", undefined],
+    ]);
+    // A subject with no group is handed back as it was, not copied with an undefined field.
+    expect(joined[1]).toBe(school[1]);
+    expect(joined[3]).toBe(school[3]);
+    expect(joined[0]).toEqual({ ...school[0], parentCode: "NO" });
+  });
+
+  it("leaves every subject as it is while the list has no groups, or is empty", () => {
+    expect(withParentCodes(school, [])).toEqual(school);
+    expect(withParentCodes(school, [subject("BI", "Biologi")])).toEqual(school);
   });
 });

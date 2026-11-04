@@ -421,6 +421,40 @@ describe("what there is to judge", () => {
     ]);
   });
 
+  it("finds a child of an ämnesgrupp on the group’s line by its top code, the plan naming NO alone", () => {
+    // 6A’s biologi 2 × 60 swapped with kemi, the plan’s entry on NO, which 6A
+    // has no post in: Biologi (BI) and Kemi (KE) are children of NO, and the
+    // line is national:NO, found by the top code and not by the child’s own.
+    const biologi = post("r-bi", "bi", 2, 60);
+    const split = swap(TERMS, ["bi", "ke"], "swapWithinLine", [biologi], biologi);
+    const groups: HalvesTimplanSources = {
+      ...sources([{ subjectId: "no", minutesPerWeek: 120 }]),
+      subjects: [
+        ...SUBJECTS,
+        { id: "no", name: "Naturorienterande ämnen", nationalCode: "NO" },
+        { id: "bi", name: "Biologi", nationalCode: "BI", parentCode: "NO" },
+        { id: "ke", name: "Kemi", nationalCode: "KE", parentCode: "NO" },
+      ],
+    };
+    const result = halvesTimplan(groups, split, "bi");
+    if (result.kind !== "lines") throw new Error(result.kind);
+    expect(result.halves.map((lines) => lines.map((line) => [line.key, line.subjectIds, line.target, line.planned]))).toEqual([
+      [["national:NO", ["no", "bi", "ke"], 120, 120]],
+      [["national:NO", ["no", "bi", "ke"], 120, 120]],
+    ]);
+    // Without the group on the subjects neither child is on a line the plan has an entry for: nothing to judge.
+    const flat = halvesTimplan(
+      { ...groups, subjects: groups.subjects.map(({ parentCode: _parentCode, ...subject }) => subject) },
+      split,
+      "bi",
+    );
+    if (flat.kind !== "lines") throw new Error(flat.kind);
+    expect(flat.halves[0].map((line) => [line.key, line.subjectIds, line.target])).toEqual([
+      [null, ["bi"], null],
+      [null, ["ke"], null],
+    ]);
+  });
+
   it("proposes nothing for the part of a line whose own entry is absent when no class post is there to bring down", () => {
     const textil = post("r-tx", "tx", 2, 60);
     const split = swap(TERMS, ["tx", "tm"], "swapWithinLine", [textil], textil);
