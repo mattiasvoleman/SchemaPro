@@ -527,8 +527,17 @@ export async function readPlannedRows(
             nationalVersion: { select: { appliesFromCohortTerm: true } },
           },
         });
-  const subjects = await tx.subject.findMany({
-    select: { id: true, name: true, nationalCode: true, countsTowardTimplan: true },
+  // The ämnesgrupp of each subject's national code (BI under NO, GE under SO),
+  // through the relation so it is no statement of its own: a line is keyed on
+  // the top code, as P1's and Stadium's cells are (common/timplan-planned.ts).
+  const subjectRows = await tx.subject.findMany({
+    select: {
+      id: true,
+      name: true,
+      nationalCode: true,
+      countsTowardTimplan: true,
+      nationalSubject: { select: { parentCode: true } },
+    },
   });
   const groups = await tx.studentGroup.findMany({
     where: { academicYearId },
@@ -568,7 +577,12 @@ export async function readPlannedRows(
       tioarig: lydelseIsTioarig(nationalVersion.appliesFromCohortTerm),
     })),
     attachments,
-    subjects,
+    // The parent on the subjects that have one only, as the groups' fields
+    // below: every other subject reaches the modules as it always did.
+    subjects: subjectRows.map(({ nationalSubject, ...subject }) => ({
+      ...subject,
+      ...(nationalSubject?.parentCode ? { parentCode: nationalSubject.parentCode } : {}),
+    })),
     // Ersättande grupper: the subject a teaching group's members leave, on the
     // groups that replace one (common/replacing-groups.ts) — the pupil lines
     // of P2, layer 2, P3 and P4 apply THE RULE with it — and the class of a

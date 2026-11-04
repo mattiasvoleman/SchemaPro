@@ -12,8 +12,9 @@
 // What the numbers mean — the standardvecka weight at the årskurs of whoever
 // is judged, whole minutes compared with the integer target, Svenska/SvA and
 // språkval as one line met at the highest target, the parts of one national
-// subject (Slöjd, Textilslöjd, Trä- och metallslöjd) as one line met at the
-// SUM of their entries, OVER only past one lesson of
+// subject (Slöjd, Textilslöjd, Trä- och metallslöjd) and the children of an
+// ämnesgrupp (Biologi, Fysik, Kemi under NO) as one line met at the SUM of
+// their entries, OVER only past one lesson of
 // surplus, a class whose teaching groups reach at least half of its pupils
 // judged through them, a pupil verdict only where the class's own does not
 // already say it, pupil ids and never names — is argued in the gateway file's
@@ -62,6 +63,14 @@ export interface PlannedSubject {
   id: string;
   name: string;
   nationalCode: string | null;
+  /**
+   * The ämnesgrupp the subject's nationalCode is a child of
+   * (NationalSubject.parentCode: BI, FY and KE → NO, GE, HI, RE and SH → SO).
+   * Absent or null when the code has none, which is every code but those
+   * seven and every input made before the field existed; the readers leave it
+   * out then.
+   */
+  parentCode?: string | null;
   countsTowardTimplan: boolean;
 }
 
@@ -151,10 +160,11 @@ export interface PlannedLine {
   key: string;
   alternativeCode: string | null;
   /**
-   * The national code of a line made of the parts of one national subject
-   * (key 'national:<code>'; see Lines in src/common/timplan-planned.ts). Absent
-   * on every other line, so a line that is not one reads as it did before the
-   * kind existed.
+   * The top national code of a line made of the parts of one national subject
+   * or the children of an ämnesgrupp (key 'national:<code>': SL for the
+   * slöjd's parts, NO for Biologi, Fysik and Kemi; see Lines in
+   * src/common/timplan-planned.ts). Absent on every other line, so a line
+   * that is not one reads as it did before the kind existed.
    */
   nationalCode?: string;
   subjectIds: string[];
@@ -174,7 +184,7 @@ export interface PlannedCell {
   studentGroupId: string;
   subjectId: string;
   alternativeCode: string | null;
-  /** The code of a national line the subject is a part of; absent otherwise. */
+  /** The top code of a national line the subject is a part of (BI → NO); absent otherwise. */
   nationalCode?: string;
   /** The subject's own entry for the årskurs; null when the plan has none. */
   targetMinutesPerWeek: number | null;
@@ -283,6 +293,17 @@ const byName = (a: string, b: string): number => a.localeCompare(b, "sv");
 
 /** Minutes → hours to the tenth. */
 const hours = (minutes: number): number => Math.round(minutes / 6) / 10;
+
+/**
+ * The national code a subject's minutes roll up under: the ämnesgrupp its
+ * code is a child of, else the code itself — P1's nationalCellOf `top`
+ * (timplan-coverage.ts), the cell the statute states the hours of. Null for a
+ * subject outside the national timplan. The web reads a line's parts by it too
+ * (half-class-timplan.ts).
+ */
+export function nationalTopOf(subject: Pick<PlannedSubject, "nationalCode" | "parentCode">): string | null {
+  return subject.nationalCode === null ? null : (subject.parentCode ?? subject.nationalCode);
+}
 
 const subjectKey = (id: string): string => `subject:${id}`;
 const altKey = (code: string): string => `alt:${code}`;
@@ -405,16 +426,17 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     rowsByGroup.set(row.studentGroupId, list);
   }
 
-  // The national codes that more than one counted subject carries: the school
+  // The top codes that more than one counted subject rolls up to: the school
   // divides one national subject into parts (SL on Slöjd, Textilslöjd and
-  // Trä- och metallslöjd). The alternatives share theirs too and are keyed
-  // first, below. Read from the counted subjects of the school and not from
-  // what a class has rows or a target in, so a class and its pupils key the
-  // same line the same way.
+  // Trä- och metallslöjd) or one ämnesgrupp into its children (NO on Biologi,
+  // Fysik and Kemi). The alternatives share theirs too and are keyed first,
+  // below. Read from the counted subjects of the school and not from what a
+  // class has rows or a target in, so a class and its pupils key the same
+  // line the same way.
   const sharedCodes = new Set<string>();
   const seenCodes = new Set<string>();
   for (const subject of subjects.values()) {
-    const code = subject.nationalCode;
+    const code = nationalTopOf(subject);
     if (code === null) continue;
     if (seenCodes.has(code)) sharedCodes.add(code);
     seenCodes.add(code);
@@ -423,7 +445,8 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
   const lineKeyOf = (
     subjectId: string,
   ): { key: string; alternativeCode: string | null; nationalCode: string | null } => {
-    const code = subjects.get(subjectId)?.nationalCode ?? null;
+    const subject = subjects.get(subjectId);
+    const code = subject === undefined ? null : nationalTopOf(subject);
     if (code !== null && TIMPLAN_ALTERNATIVE_CODES.includes(code)) {
       return { key: altKey(code), alternativeCode: code, nationalCode: null };
     }
@@ -462,7 +485,8 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
       const line = lineFor(subjectId);
       // The alternatives are read one OR the other, so the highest entry is
       // the line, the parts of a national subject are read together, so
-      // theirs add up. A line of one subject is the same figure either way.
+      // theirs add up — an ämnesgrupp's entry and its children's too, as P1
+      // sums its cell. A line of one subject is the same figure either way.
       line.target =
         line.alternativeCode !== null ? Math.max(line.target ?? 0, minutes) : (line.target ?? 0) + minutes;
     }

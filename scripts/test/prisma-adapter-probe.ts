@@ -2094,9 +2094,63 @@ async function runChecks(
       'MET',
     );
 
-    // Deleting the year takes its groups, rows and attachments; then the plan goes.
+    // Ämnesgrupper through the real adapter, under RLS: Biologi (BI) and Fysik
+    // (FY) are children of NO in NationalSubjects, and readPlannedRows takes
+    // the parent through the Subject → NationalSubject relation in the same
+    // statement. A plan's NO of 60 in åk 8 is met by 30 + 30 on the children,
+    // one 'national:NO' line (it read UNPLANNED 60 of 0 beside two NO_TARGET
+    // lines when a line was a school subject or one national code).
+    const natureGroup = await subjects.create({ name: `${MARKER} p2-no`, nationalCode: 'NO' } as never, admin);
+    const biologi = await subjects.create({ name: `${MARKER} p2-bi`, nationalCode: 'BI' } as never, admin);
+    const fysik = await subjects.create({ name: `${MARKER} p2-fy`, nationalCode: 'FY' } as never, admin);
+    const groupPlan = await timplans.create(
+      { name: `${MARKER} p2 no`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskola2028VersionId },
+      admin,
+    );
+    await timplans.replaceEntries(
+      groupPlan.id,
+      { entries: [{ subjectId: natureGroup.id, gradeLevel: 8, minutesPerWeek: 60 }] },
+      admin,
+    );
+    await timplans.decide(groupPlan.id, { decisionNote: MARKER }, admin);
+    await yearTimplans.replace(
+      year.id,
+      {
+        timplans: [
+          { gradeLevel: 7, localTimplanId: plan.id },
+          { gradeLevel: 8, localTimplanId: groupPlan.id },
+        ],
+      },
+      admin,
+    );
+    const class8 = (
+      await owner.query<{ id: string }>(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+         VALUES ($1, $2, $3 || ' 8A', 'CLASS', 8, now()) RETURNING id`,
+        [fixture.schoolId, year.id, MARKER],
+      )
+    ).rows[0].id;
+    await api.withRls(admin, (tx) =>
+      tx.teachingRequirement.createMany({
+        data: [biologi, fysik].map((subjectRow) => ({
+          schoolId: fixture.schoolId,
+          academicYearId: year.id,
+          subjectId: subjectRow.id,
+          studentGroupId: class8,
+          lessonsPerWeek: 1,
+          minutesPerLesson: 30,
+        })),
+      }),
+    );
+    const grouped = (await coverage.planned({ academicYearId: year.id }, admin)).groups
+      .find((group) => group.studentGroupId === class8)
+      ?.lines.map((entry) => [entry.key, entry.nationalCode, entry.subjectIds.length, entry.targetMinutesPerWeek, entry.plannedMinutesPerWeek, entry.status]);
+    assert.deepEqual(grouped, [['national:NO', 'NO', 3, 60, 60, 'MET']]);
+
+    // Deleting the year takes its groups, rows and attachments; then the plans go.
     await years.remove(year.id, admin);
     await timplans.remove(plan.id, admin);
+    await timplans.remove(groupPlan.id, admin);
   });
 
   // ---- (u2) lektionslängder: the schema's first array column, through the real adapter
