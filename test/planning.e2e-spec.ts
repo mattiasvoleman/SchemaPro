@@ -4876,6 +4876,30 @@ describe('Planning surface (e2e)', () => {
         expect(overview.body.groups[0].lines[0].pupils).toEqual({ min: 120, median: 120, max: 120, below: 1 });
       });
 
+      it('reads the ids in capitals as in lower case, as the overview’s query does', async () => {
+        // The pipe lower-cases both ids: the service compares the class id as
+        // a string, so a capital would be "no such class". A class id with
+        // letters in it, since the fixture ids above are all digits.
+        const CLASS_AB = 'abcdefab-abcd-4bcd-8bcd-abcdefabcdef';
+        givenTheYear();
+        harness.tx['studentGroup']!['findMany']!.mockResolvedValue([{ id: CLASS_AB, name: '7A', kind: 'CLASS', gradeLevel: 7 }]);
+        harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+          { id: TYPE_ID, studentGroupId: CLASS_AB, subjectId: SUBJECT_ID, lessonsPerWeek: 2, minutesPerLesson: 60, recurrence: 'ALL_WEEKS', startDate: null, endDate: null },
+        ]);
+        harness.tx['user']!['findMany']!.mockResolvedValue([{ id: STUDENT_ID, studentGroupId: CLASS_AB }]);
+        const url = (year: string, group: string) =>
+          `/api/v1/timplan-coverage/planned/pupils?academicYearId=${year}&studentGroupId=${group}`;
+
+        const lower = await request(http()).get(url(YEAR_ID, CLASS_AB)).set('x-test-user', admin()).expect(200);
+        const capitals = await request(http())
+          .get(url(YEAR_ID.toUpperCase(), CLASS_AB.toUpperCase()))
+          .set('x-test-user', admin())
+          .expect(200);
+
+        expect(capitals.body).toEqual(lower.body);
+        expect(capitals.body).toMatchObject({ studentGroupId: CLASS_AB, pupils: [{ pupilId: STUDENT_ID }] });
+      });
+
       it('stops a teacher, a pupil and a guardian at the guard, before anything is read', async () => {
         givenTheYear();
         for (const role of ['TEACHER', 'STUDENT', 'GUARDIAN']) {

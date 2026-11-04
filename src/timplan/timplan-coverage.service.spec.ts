@@ -491,6 +491,82 @@ describe('TimplanCoverageService, planned pupils (one class at a time)', () => {
     expect(answer.pupils).toEqual([]);
     expect(recordedReads(tx)).toEqual([]);
   });
+
+  it('holds the class’s pupils alone: a pupil of another class with a finding of their own is neither in the answer nor in the läslogg', async () => {
+    // The module lists every other class as the overview does, with their
+    // pupils who have a finding of their own, and only this service's filter
+    // keeps those out of one class's answer. 8B is on target, and Cia gets
+    // Matematik from 8B and from Mat extra both: double planned, her own.
+    const B8 = 'c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3';
+    const EXTRA = 'c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5';
+    const CIA = 'e4e4e4e4-e4e4-4e4e-8e4e-e4e4e4e4e4e4';
+    tx.studentGroup.findMany.mockResolvedValue([
+      { id: CLASS_ID, name: '8A', kind: 'CLASS', gradeLevel: 8 },
+      { id: B8, name: '8B', kind: 'CLASS', gradeLevel: 8 },
+      { id: GROUP_ID, name: 'Spanska 8', kind: 'TEACHING_GROUP', gradeLevel: null },
+      { id: EXTRA, name: 'Mat extra', kind: 'TEACHING_GROUP', gradeLevel: null },
+    ]);
+    const post = (id: string, studentGroupId: string, subjectId: string, lessonsPerWeek: number, minutesPerLesson: number) => ({
+      id, studentGroupId, subjectId, lessonsPerWeek, minutesPerLesson, recurrence: 'ALL_WEEKS', startDate: null, endDate: null,
+    });
+    tx.teachingRequirement.findMany.mockResolvedValue([
+      post('f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1', CLASS_ID, MA, 3, 60),
+      post('f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2', GROUP_ID, SPA, 3, 30),
+      post('f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f3f3', B8, MA, 3, 60),
+      post('f4f4f4f4-f4f4-4f4f-8f4f-f4f4f4f4f4f4', B8, SPA, 3, 30),
+      post('f5f5f5f5-f5f5-4f5f-8f5f-f5f5f5f5f5f5', EXTRA, MA, 1, 60),
+    ]);
+    tx.user.findMany.mockResolvedValue([
+      { id: ANNA, studentGroupId: CLASS_ID },
+      { id: BO, studentGroupId: CLASS_ID },
+      { id: CIA, studentGroupId: B8 },
+    ]);
+    tx.studentGroupMember.findMany.mockResolvedValue([
+      { studentId: ANNA, studentGroupId: GROUP_ID },
+      { studentId: CIA, studentGroupId: EXTRA },
+    ]);
+
+    const overview = await service.planned({ academicYearId: YEAR_ID }, testUser());
+    expect(overview.pupils?.map((pupil) => pupil.pupilId)).toEqual(expect.arrayContaining([CIA]));
+
+    const answer = await ask(testUser({ channel: 'WEB' }), CLASS_ID);
+
+    expect(answer.pupils.map((pupil) => pupil.pupilId)).toEqual([ANNA, BO]);
+    expect(answer.pupils.every((pupil) => pupil.homeGroupId === CLASS_ID)).toBe(true);
+    expect(recordedReads(tx).at(-1)?.ids).toEqual([ANNA, BO]);
+    expect(JSON.stringify(answer)).not.toContain(CIA);
+  });
+
+  describe('a past year with class history (timplan P4)', () => {
+    const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+
+    it('lists the pupils the history places in the class and not a straggler, as many as the overview counts', async () => {
+      tx.academicYear.findUnique.mockResolvedValue({
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+        isActive: false,
+        predecessorId: null,
+      });
+      tx.academicYear.findFirst.mockResolvedValue({ startDate: new Date('2027-08-16T00:00:00.000Z') });
+      // Anna and Bo sat in 8A all year (a pupil who has left the school since
+      // is still counted: the history says where they sat). The visitor was
+      // placed in 8A the day after the year ended, so sat a day of it never.
+      tx.studentEnrollment.findMany.mockResolvedValue([
+        { studentId: ANNA, studentGroupId: CLASS_ID, validFrom: day('2026-08-17'), validTo: day('2027-06-12') },
+        { studentId: BO, studentGroupId: CLASS_ID, validFrom: day('2026-08-17'), validTo: day('2027-06-12') },
+        { studentId: VISITOR, studentGroupId: CLASS_ID, validFrom: day('2027-06-12'), validTo: day('2027-08-16') },
+      ]);
+
+      const overview = await service.planned({ academicYearId: YEAR_ID }, testUser());
+      const answer = await ask();
+
+      // Not today's rosters: no home read by class, in either read.
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+      expect(answer.pupils.map((pupil) => pupil.pupilId)).toEqual([ANNA, BO]);
+      expect(answer.pupils).toHaveLength(overview.groups[0]!.pupilCount);
+      expect(recordedReads(tx).at(-1)?.ids).toEqual([ANNA, BO]);
+    });
+  });
 });
 
 describe('TimplanCoverageService, layer 2 (schemalagt mot planerat)', () => {
