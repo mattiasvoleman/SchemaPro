@@ -237,6 +237,31 @@ describe("PlannedClassPupils", () => {
     expect(within(bo).getAllByText("Klassens egen rad ligger också under mål.")).toHaveLength(1);
   });
 
+  it.each([
+    ["UNDER", true],
+    ["UNPLANNED", true],
+    ["PUPILS", false],
+    ["MET", false],
+    ["OVER", false],
+    ["NO_TARGET", false],
+  ] as const)(
+    "tells a short class from a short group by the class's own line: %s says so is %s",
+    (status, said) => {
+      state.query = { data: answer([BO]) };
+      show({ classLines: [classLine(`subject:${MA}`, status), classLine("alt:M2", "PUPILS")] });
+      const bo = screen.getByRole("table", { name: "Planerad tid för Bo Andersson, ämne för ämne" });
+      // Bo is under in Matematik and in Spanska; the class's Spanska line is carried by groups and never says it.
+      expect(within(bo).queryAllByText("Klassens egen rad ligger också under mål.")).toHaveLength(said ? 1 : 0);
+    },
+  );
+
+  it("says nothing of the class for a line the class has no row for", () => {
+    // A subject only the pupil reads (a half's hemkunskap): the class has no such line.
+    state.query = { data: answer([BO]) };
+    show({ classLines: [] });
+    expect(screen.queryByText("Klassens egen rad ligger också under mål.")).not.toBeInTheDocument();
+  });
+
   it("reads a line with no target as a line to read, not to judge", () => {
     state.query = {
       data: answer([pupil("p-bo", [figure(`subject:${MA}`, [MA], null, 80, [{ studentGroupId: CLASS_ID, subjectId: MA, minutesPerWeek: 80 }])])]),

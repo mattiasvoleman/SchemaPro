@@ -737,7 +737,9 @@ function ClassDrillDown({
                 ? t("plannedPupils.title", { count: summary.pupilCount })
                 : t("pupilsTitle", { count: row.pupils.length })}
             </h3>
-            <Button size="sm" variant="outline" aria-pressed={showAll} onClick={() => setShowAll((on) => !on)}>
+            {/* The name says what pressing it does, so it carries no aria-pressed:
+                both together read "Visa bara elever …, intryckt" as the opposite of the view. */}
+            <Button size="sm" variant="outline" onClick={() => setShowAll((on) => !on)}>
               {showAll ? t("showOwnPupils") : t("showAllPupils")}
             </Button>
           </div>

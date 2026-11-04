@@ -76,6 +76,27 @@ describe("the planned layer's drill-down agrees with the overview, in the mirror
     },
   );
 
+  it("lists a pupil with no line at all rather than leaving them out", () => {
+    // No plan and no post: nobody has a line, and the overview lists nobody.
+    const A8 = "00000000-0000-4000-8000-000000000301";
+    const input: PlannedCoverageInput = {
+      year: { startDate: "2026-08-17", endDate: "2027-06-11" },
+      closures: [],
+      plans: [],
+      attachments: [],
+      subjects: [],
+      groups: [{ id: A8, name: "8A", kind: "CLASS", gradeLevel: 8 }],
+      requirements: [],
+      pupils: [1, 2].map((n) => ({ id: `00000000-0000-4000-8000-00000000040${n}`, homeGroupId: A8, groupIds: [] })),
+      includePupils: true,
+    };
+    expect(computePlannedCoverage(input).pupils).toEqual([]);
+    expect((computePlannedCoverage({ ...input, drillGroupId: A8 }).pupils ?? []).map((pupil) => [pupil.pupilId, pupil.lines])).toEqual([
+      ["00000000-0000-4000-8000-000000000401", []],
+      ["00000000-0000-4000-8000-000000000402", []],
+    ]);
+  });
+
   it("lists a pupil who is short because the class is short, whom the overview only counts", () => {
     // 8A plans Matematik 120 of 180: all three pupils are under, the class says so, none has a finding of their own.
     const MA = "00000000-0000-4000-8000-000000000101";

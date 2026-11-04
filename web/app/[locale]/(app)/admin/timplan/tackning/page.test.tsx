@@ -37,7 +37,7 @@ const state = vi.hoisted(() => ({
   case: null as unknown as { input: { groups: unknown[]; subjects: unknown[] }; response: TimplanCoverageResponse },
   asked: [] as (string | null)[],
   tabFails: false,
-  panelFails: false,
+  panelImportFails: false,
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -101,11 +101,19 @@ vi.mock("@/components/timplan/coverage-stage-tab", () => ({
 }));
 // "Visa alla elever" is its own file with its own test
 // (components/timplan/coverage-planned-pupils.test.tsx); here only what the
-// page hands it and what it does when the chunk does not arrive.
+// page hands it and what it does when the chunk does not arrive. A chunk that
+// does not arrive is an import() that rejects, and React.lazy keeps the
+// rejection: the module's export throws once when the page reads it, as a
+// deploy between the page's load and the click would make the import do. The
+// page's lazy is made when the page module loads and keeps what it first got,
+// so the test that needs a first read loads a fresh page (vi.resetModules).
 vi.mock("@/components/timplan/coverage-planned-pupils", () => ({
-  PlannedClassPupils: (props: { yearId: string; classId: string; classLines: unknown[]; groups: unknown[]; people: unknown[] }) => {
-    if (state.panelFails) throw new Error("Loading chunk failed");
-    return (
+  get PlannedClassPupils() {
+    if (state.panelImportFails) {
+      state.panelImportFails = false;
+      throw new Error("Failed to fetch dynamically imported module");
+    }
+    return (props: { yearId: string; classId: string; classLines: unknown[]; groups: unknown[]; people: unknown[] }) => (
       <p>
         planned-pupils {props.yearId} {props.classId} lines:{props.classLines.length} groups:{props.groups.length} people:{props.people.length}
       </p>
@@ -226,7 +234,8 @@ describe("TimplanCoveragePage", () => {
     await user.click(screen.getByRole("button", { name: /8A/ }));
     const section = screen.getByRole("region", { name: "8A" });
     const toggle = within(section).getByRole("button", { name: "showAllPupils" });
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    // Named for what pressing it does, so it is no toggle button as well: both read as the opposite of the view.
+    expect(toggle).not.toHaveAttribute("aria-pressed");
     expect(within(section).getByText("pupilsTitle(3)")).toBeInTheDocument();
     expect(within(section).queryByText(/^planned-pupils/)).not.toBeInTheDocument();
 
@@ -237,7 +246,7 @@ describe("TimplanCoveragePage", () => {
     expect(within(section).queryByText("pupilsTitle(3)")).not.toBeInTheDocument();
     expect(within(section).queryByText("Bo Andersson")).not.toBeInTheDocument();
     const back = within(section).getByRole("button", { name: "showOwnPupils" });
-    expect(back).toHaveAttribute("aria-pressed", "true");
+    expect(back).not.toHaveAttribute("aria-pressed");
 
     await user.click(back);
     expect(within(section).getByText("pupilsTitle(3)")).toBeInTheDocument();
@@ -253,28 +262,32 @@ describe("TimplanCoveragePage", () => {
     expect(await screen.findByText(/^planned-pupils y-1/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /5B/ }));
     const section = screen.getByRole("region", { name: "5B" });
-    expect(within(section).getByRole("button", { name: "showAllPupils" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(section).getByRole("button", { name: "showAllPupils" })).toBeInTheDocument();
     expect(screen.queryByText(/^planned-pupils/)).not.toBeInTheDocument();
   });
 
   it("says the pupils' panel could not load when its chunk fails, keeps the class, and fetches afresh on retry", async () => {
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
-    state.panelFails = true;
+    state.panelImportFails = true;
     try {
+      vi.resetModules();
+      const { default: FreshPage } = await import("./page");
       const user = userEvent.setup();
-      render(<TimplanCoveragePage />);
+      render(<FreshPage />);
       await user.click(screen.getByRole("button", { name: /8A/ }));
       const section = screen.getByRole("region", { name: "8A" });
       await user.click(within(section).getByRole("button", { name: "showAllPupils" }));
       expect(await within(section).findByText("plannedPupils.loadFailed")).toBeInTheDocument();
       // The class table is still there, and the way back to the default list.
       expect(within(section).getByRole("row", { name: /Matematik/ })).toBeInTheDocument();
-      state.panelFails = false;
+      expect(within(section).getByRole("button", { name: "showOwnPupils" })).toBeInTheDocument();
+      // The retry makes a new lazy: the old one holds the rejection, and a retry
+      // that reused it would fail again with the chunk there.
       await user.click(within(section).getByRole("button", { name: "plannedPupils.retry" }));
       expect(await within(section).findByText(/^planned-pupils y-1/)).toBeInTheDocument();
       expect(within(section).queryByText("plannedPupils.loadFailed")).not.toBeInTheDocument();
     } finally {
-      state.panelFails = false;
+      state.panelImportFails = false;
       quiet.mockRestore();
     }
   });
