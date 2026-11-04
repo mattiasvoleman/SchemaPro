@@ -955,7 +955,7 @@
       "codeTitle": "Subjects without the same national code",
       "codeDiffers": "{subject} does not have the same national code as {post} ({code}). Create curriculum entries will then not see that the halves take the class's {post}, and the curriculum's national rows will not count {subject} as {code}.",
       "codeMissingOnPost": "{post} has no national code, so Create curriculum entries will not see that the halves' {subject} is taken instead of the class's {post}. Give the subjects the same national code.",
-      "codeSwapOwn": "{subject} has another national code than {post}. In the swap, the halves' minutes in {subject} count on the curriculum row for {code}, together with the class's own entries there, as the rows against the curriculum show.",
+      "codeSwapOwn": "{subject} has another national code than {post}. In the swap, the halves' minutes in {subject} count on the curriculum row for {row}, together with the class's own entries there, as the rows against the curriculum show.",
       "codeSwapMissing": "{subject} has no national code. The dialog then counts it as a subject of its own beside {post}, and the curriculum's national rows count the halves' minutes in it as the school's own choice. Give the subject a code under Subjects: the same as {post}'s if the halves take {post} in it, and the class's pace is enough.",
       "codeAction": "Open Subjects",
       "generatorNote": "The second period's block takes the first period's times, so the halves have their lessons at the same times all year: generation gives each entry of the second period the times and room the first period's entry in its subject got. Lock one block with Lock block, or drag its card, in the master timetable and the other follows (see the manual, 4.2).",

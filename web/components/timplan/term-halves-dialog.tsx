@@ -96,6 +96,7 @@ import {
   type UniformLessons,
 } from "@/lib/half-class-periods";
 import {
+  childOnOwnLine,
   classPostReduction,
   halvesTimplan,
   type HalfLine,
@@ -516,7 +517,11 @@ function TermHalvesForm({
     if (subject.id === otherSubjectId) {
       return code === null
         ? { text: t("codeSwapMissing", { subject: subject.name, post: postSubject }), asks: true }
-        : { text: t("codeSwapOwn", { subject: subject.name, post: postSubject, code }), asks: false };
+        : {
+            // The row its minutes count on: the group's, or its own where the plan names it.
+            text: t("codeSwapOwn", { subject: subject.name, post: postSubject, row: childOnOwnLine(timplan, subject) ? subject.name : code }),
+            asks: false,
+          };
     }
     return postCode === null
       ? { text: t("codeMissingOnPost", { subject: subject.name, post: postSubject }), asks: true }

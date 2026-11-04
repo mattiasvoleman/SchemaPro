@@ -432,6 +432,28 @@ const namedChildReplaced = (): PlannedCoverageInput => {
   );
 };
 
+/**
+ * The line is the group's whichever subject makes it. The plan has no entry on
+ * NO (only Matematik), 7A plans Biologi and Fysik at 1 × 30: their line is
+ * 'national:NO', its code is NO and not Biologi's BI, and it has no target.
+ */
+const groupLineOfChildren = (): PlannedCoverageInput => {
+  reset();
+  const c7A = theClass('7A', 7);
+  return yearOf([7], ALL, [c7A], [post(c7A, S.BI, 1, 30), post(c7A, S.FY, 1, 30)], [], planOf([S.MA, 7, 100]));
+};
+
+/**
+ * An entry of one minute names the child, the least that does. The plan has NO
+ * 90 and Kemi 1: 7A's Biologi and Fysik at 45 each meet NO, and Kemi, named, is
+ * its own line and unplanned.
+ */
+const entryOfOneMinute = (): PlannedCoverageInput => {
+  reset();
+  const c7A = theClass('7A', 7);
+  return yearOf([7], ALL, [c7A], [post(c7A, S.BI, 1, 45), post(c7A, S.FY, 1, 45)], [], planOf([S.NO, 7, 90], [S.KE, 7, 1]));
+};
+
 const added: { name: string; input: PlannedCoverageInput }[] = [
   {
     name: `${PREFIX} åk 7 — a target of 90 on NO is met by Biologi, Fysik and Kemi at 1 × 30 each (7A) and short with Biologi alone (7B): one line, national:NO, and no NO_TARGET beside it`,
@@ -472,6 +494,14 @@ const added: { name: string; input: PlannedCoverageInput }[] = [
   {
     name: `${PREFIX} an ersättande grupp on a child the plan names takes the pupil off the class's Kemi, and the 0 of 60 is theirs while the class's 30 of 60 is the class's`,
     input: namedChildReplaced(),
+  },
+  {
+    name: `${PREFIX} the group's line is NO whichever subject makes it — no entry on NO, Biologi and Fysik at 1 × 30: national:NO with the code NO and no target`,
+    input: groupLineOfChildren(),
+  },
+  {
+    name: `${PREFIX} an entry of one minute names the child — NO 90 and Kemi 1: Biologi and Fysik meet NO, and Kemi is a line of its own, unplanned`,
+    input: entryOfOneMinute(),
   },
   {
     name: `${PREFIX} NO taught as one subject in åk 4 and as its children in åk 8 is one line for both, national:NO, with the plan's 60 and 90 on NO`,

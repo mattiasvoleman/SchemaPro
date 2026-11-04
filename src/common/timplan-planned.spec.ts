@@ -783,6 +783,41 @@ describe('computePlannedCoverage', () => {
       expect(coverage.verdicts).toEqual([]);
     });
 
+    it('keys the line on the group’s code when its first subject is a child: no entry on NO, posts on Biologi and Fysik', () => {
+      // The line takes its first subject's code if it is not told otherwise:
+      // with no entry on NO the children make it, and its code is still NO.
+      const c = group('7A');
+      const coverage = computePlannedCoverage(
+        withGroups({
+          plans: [plan([[S.MA, 7, 100]])],
+          groups: [c],
+          requirements: [req(c, BI, 1, 30), req(c, FY, 1, 30)],
+        }),
+      );
+      expect(lineOf(coverage, c.id, 'national:NO')).toMatchObject({
+        nationalCode: 'NO',
+        subjectIds: [BI, FY],
+        targetMinutesPerWeek: null,
+        status: 'NO_TARGET',
+      });
+      expect(coverage.cells.filter((cell) => cell.subjectId !== S.MA).map((cell) => cell.nationalCode)).toEqual(['NO', 'NO']);
+    });
+
+    it('names a child by an entry of one minute, the least there is', () => {
+      const c = group('7A');
+      const coverage = computePlannedCoverage(
+        withGroups({
+          plans: [plan([[NO, 7, 90], [KE, 7, 1]])],
+          groups: [c],
+          requirements: [req(c, BI, 1, 45), req(c, FY, 1, 45)],
+        }),
+      );
+      expect(coverage.groups[0]!.lines.map((l) => [l.key, l.targetMinutesPerWeek, l.plannedMinutesPerWeek, l.status])).toEqual([
+        ['national:NO', 90, 90, 'MET'],
+        [`subject:${KE}`, 1, 0, 'UNPLANNED'],
+      ]);
+    });
+
     it('does not read an entry of no minutes as naming the child', () => {
       const c = group('7A');
       const coverage = computePlannedCoverage(

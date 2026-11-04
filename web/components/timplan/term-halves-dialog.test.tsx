@@ -1042,3 +1042,60 @@ describe("the teachers' order", () => {
     expect(state.post.mock.calls[0]![1].subjects[0]).toEqual({ subjectId: "s-tx", teacherId: "t-anna", coTeacherId: null });
   });
 });
+
+/**
+ * The sentence about where the swap's other subject counts says the row the
+ * timplan really draws it on: its ämnesgrupp's, or its own where the plan
+ * names it.
+ */
+describe("a child of an ämnesgrupp swapped in for a hemkunskap post", () => {
+  const LOV = [
+    { startDate: "2026-10-26", endDate: "2026-10-30" },
+    { startDate: "2026-12-21", endDate: "2027-01-08" },
+  ];
+  const withKemi = [
+    { id: "s-hk", name: "Hemkunskap", nationalCode: "HKK" },
+    { id: "s-no", name: "Naturorienterande ämnen", nationalCode: "NO" },
+    { id: "s-ke", name: "Kemi", nationalCode: "KE", parentCode: "NO" },
+  ];
+  const hemkunskap = post({ id: "r-hk", subjectId: "s-hk", studentGroupId: "g-6a", lessonsPerWeek: 1, minutesPerLesson: 30 });
+  const givenPlan = (entries: { subjectId: string; minutesPerWeek: number }[]) =>
+    state.get.mockImplementation(async (path: string) =>
+      path === "/api/v1/academic-years/y1/timplans"
+        ? [{ gradeLevel: 6, localTimplanId: "p-6", planName: "Lokal timplan", planStatus: "DECIDED" }]
+        : {
+            id: "p-6",
+            name: "Lokal timplan",
+            status: "DECIDED",
+            entries: entries.map((entry) => ({ ...entry, gradeLevel: 6 })),
+          },
+    );
+  const swapInKemi = async () => {
+    const { user } = renderDialog({
+      requirement: hemkunskap,
+      subjects: withKemi,
+      groups: [{ id: "g-6a", name: "6A", halfOfId: null, gradeLevel: 6 }],
+      gradeSpans: new Map([["g-6a", { min: 6, max: 6 }]]),
+      closures: LOV,
+      posts: [hemkunskap],
+    });
+    await user.click(screen.getByRole("combobox", { name: "periodsLabel" }));
+    await user.click(screen.getByRole("option", { name: "preset.terms" }));
+    await user.click(screen.getByRole("combobox", { name: "autumnSubject(6A:2)" }));
+    await user.click(screen.getByRole("option", { name: "Kemi" }));
+  };
+
+  it("says NO's row when the plan states NO", async () => {
+    givenPlan([{ subjectId: "s-hk", minutesPerWeek: 30 }, { subjectId: "s-no", minutesPerWeek: 60 }]);
+    await swapInKemi();
+
+    expect(await screen.findByText("codeSwapOwn(Kemi|Hemkunskap|NO)")).toBeInTheDocument();
+  });
+
+  it("says Kemi's own row when the plan names Kemi", async () => {
+    givenPlan([{ subjectId: "s-hk", minutesPerWeek: 30 }, { subjectId: "s-ke", minutesPerWeek: 60 }]);
+    await swapInKemi();
+
+    expect(await screen.findByText("codeSwapOwn(Kemi|Hemkunskap|Kemi)")).toBeInTheDocument();
+  });
+});

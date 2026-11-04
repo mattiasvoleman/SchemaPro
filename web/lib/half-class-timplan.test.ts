@@ -500,6 +500,19 @@ describe("what there is to judge", () => {
       expect(lines).toEqual([[["national:BI", 120, 120]], [["national:BI", 120, 120]]]);
     });
 
+    it("draws a child the plan names on its own line beside the group’s line its code would also reach: NO 120 with Biologi 30", () => {
+      // The line that lists the subject is found before the one its code
+      // reaches, so Biologi, named, is not put on NO's.
+      const { lines } = drawn(groupSubjects, [
+        { subjectId: "no", minutesPerWeek: 120 },
+        { subjectId: "bi", minutesPerWeek: 30 },
+      ]);
+      expect(lines[0]!.map(([key, target]) => [key, target])).toEqual([
+        ["subject:bi", 30],
+        ["national:NO", 120],
+      ]);
+    });
+
     it("draws each child on its own line under a plan that names them, the group’s line not taking either", () => {
       const { lines } = drawn(groupSubjects, [
         { subjectId: "bi", minutesPerWeek: 60 },

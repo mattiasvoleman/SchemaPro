@@ -269,6 +269,20 @@ export function halvesTimplan(sources: HalvesTimplanSources, split: HalvesSplit,
   };
 }
 
+/**
+ * Whether the timplan draws a child of an ämnesgrupp on a line of its own
+ * because the plan names it (Kemi 60), and not on its group's (NO). False for
+ * any other subject, and while there are no lines to read.
+ */
+export function childOnOwnLine(
+  timplan: HalvesTimplan | null,
+  subject: { id: string; nationalCode?: string | null; parentCode?: string | null },
+): boolean {
+  if (timplan?.kind !== "lines" || !subject.nationalCode || !subject.parentCode) return false;
+  const line = timplan.halves[0].find((candidate) => candidate.subjectIds.includes(subject.id));
+  return line?.key != null && line.key !== `national:${subject.parentCode}`;
+}
+
 /** What the class's own post in the swap's other subject can come down to. */
 export interface PostReduction {
   requirementId: string;
