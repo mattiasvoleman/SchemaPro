@@ -6696,7 +6696,8 @@
       "USER_HAS_BOOKED_PASS_COVERS": "En vikarie är inbokad för ett rastvaktspass, första gången {date}. Ångra besluten på vikarietavlan först.",
       "BULK_ROW_TAKEN": "Skulle krocka med en annan rad som redan har samma värden.",
       "BULK_ROW_REFERENCE_GONE": "Skulle peka på något som inte längre finns.",
-      "STUDENT_HOME_GROUP_NOT_A_CLASS": "En elevs hemklass måste vara en klass. Lägg eleven i en undervisningsgrupp under Medlemmar i stället."
+      "STUDENT_HOME_GROUP_NOT_A_CLASS": "En elevs hemklass måste vara en klass. Lägg eleven i en undervisningsgrupp under Medlemmar i stället.",
+      "BULK_TIMED_OUT": "Det tog för lång tid, så ingenting ändrades. Försök med färre åt gången."
     },
     "groupFields": {
       "gradeLevel": "Årskurs",
@@ -6724,6 +6725,7 @@
       "availabilityConstraints": "{count, plural, one {# tillgänglighetsregel} other {# tillgänglighetsregler}}",
       "timplanCredits": "{count, plural, one {# tillgodoräknande} other {# tillgodoräknanden}} i timplanen",
       "publicLinks": "{count, plural, one {# publik schemalänk, som slutar fungera} other {# publika schemalänkar, som slutar fungera}}",
+      "below": "Det som hänger på lektionerna, timplansposterna och reglerna: deltagare och lärare på lektionerna, vikarieuppdrag och vikarieanteckningar, inställda lektioner, andra gruppers plats på lektionerna, delad lärartid och uppdragspass",
       "successors": "{count, plural, one {# klass} other {# klasser}} i nästa läsår tappar kopplingen till sin föregångare"
     },
     "studentFields": {

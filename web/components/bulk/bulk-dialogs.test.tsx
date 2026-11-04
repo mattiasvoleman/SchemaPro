@@ -117,23 +117,52 @@ describe("BulkDeleteDialog", () => {
     expect(screen.getByRole("button", { name: "deleteCount(3)" })).toBeInTheDocument();
   });
 
-  it("deletes nothing when the real call meets a refusal the dry run did not, and shows how it stands now", async () => {
+  it("deletes nothing when the real call meets a refusal the dry run did not, lists it with the delete's reason, and asks the rest afresh", async () => {
     const remove = vi
       .fn()
       .mockResolvedValueOnce(report({ done: ["a", "b", "c"], consequences: { halves: 0 } }))
-      .mockResolvedValueOnce(report({ dryRun: false, done: ["a", "c"], refused: [{ id: "b", code: "BULK_ROW_NOT_FOUND", message: "x" }] }))
-      .mockResolvedValueOnce(report({ done: ["a", "c"], refused: [{ id: "b", code: "BULK_ROW_NOT_FOUND", message: "x" }], consequences: { halves: 0 } }));
+      .mockResolvedValueOnce(report({ dryRun: false, done: ["a", "c"], refused: [{ id: "b", code: "BULK_ROW_REFERENCE_GONE", message: "x" }] }))
+      .mockResolvedValueOnce(report({ done: ["a", "c"], consequences: { halves: 1 } }));
     const { onDeleted } = open(remove);
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "deleteCount(3)" }));
     expect(await screen.findByText("changedMeanwhile")).toBeInTheDocument();
+    // The dry run deletes nothing and could not foresee it: the row is not
+    // asked again, and stays listed with the reason the delete gave.
     expect(remove.mock.calls.map((call) => call[0])).toEqual([
       { ids: ["a", "b", "c"], dryRun: true },
       { ids: ["a", "b", "c"], dryRun: false, expected: { halves: 0 } },
-      { ids: ["a", "b", "c"], dryRun: true },
+      { ids: ["a", "c"], dryRun: true },
     ]);
+    expect(refusalLine("7B")).toBe("7B: refusal.BULK_ROW_REFERENCE_GONE");
+    expect(screen.getByText("1 halvklasser")).toBeInTheDocument();
     expect(onDeleted).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "deleteOthers(2)" })).toBeInTheDocument();
+  });
+
+  it("asks no dry run when the delete refused every row, and offers nothing to delete", async () => {
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(report({ done: ["a"], consequences: { halves: 0 } }))
+      .mockResolvedValueOnce(report({ dryRun: false, done: [], refused: [{ id: "a", code: "BULK_ROW_NOT_FOUND", message: "x" }] }));
+    render(
+      <BulkDeleteDialog entity="groups" ids={["a"]} nameOf={nameOf} remove={remove} describe={describeCounts} onClose={vi.fn()} onDeleted={vi.fn()} />,
+    );
+    await userEvent.setup().click(await screen.findByRole("button", { name: "deleteCount(1)" }));
+    expect(await screen.findByText("nothingToDelete")).toBeInTheDocument();
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(refusalLine("7A")).toBe("7A: refusal.BULK_ROW_NOT_FOUND");
+  });
+
+  it("says a delete that ran out of time in the reader's language, and keeps the list to try again", async () => {
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(report({ done: ["a", "b", "c"], consequences: { halves: 0 } }))
+      .mockRejectedValueOnce(new ApiError(409, "Det tog för lång tid.", "BULK_TIMED_OUT"));
+    open(remove);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "deleteCount(3)" }));
+    expect(await screen.findByText("refusal.BULK_TIMED_OUT")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "deleteCount(3)" })).toBeEnabled();
   });
 
   it("deletes nothing when what goes with the rows grew since the check, and shows the new counts to be confirmed again", async () => {

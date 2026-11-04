@@ -2,7 +2,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { StudentRemovalConsequences } from "@/lib/bulk-api";
 import type { AcademicYear, Person, StudentGroup } from "@/lib/types";
+import en from "@/messages/en.json";
+import sv from "@/messages/sv.json";
 import { STUDENT_BULK_KEYS, StudentsBulkDialogs, describeStudentRemoval } from "./students-bulk-dialogs";
 
 // Echo the key and its values, so assertions read against stable text.
@@ -104,6 +107,25 @@ describe("describeStudentRemoval", () => {
 
   it("names the pupils' accounts even when nothing else is counted: the list is never all there is", () => {
     expect(describeStudentRemoval(t, none)).toMatchObject({ goes: ["studentConsequences.accounts"], exhaustive: false });
+  });
+
+  /*
+   * Every kind a pupil's dry run answers has its line in the messages (held
+   * by src/common/removal-inventory.spec.ts), and every line there is said
+   * when its kind is counted. The two without a count are said always.
+   */
+  const counted = Object.keys(sv.bulk.studentConsequences).filter((key) => key !== "accounts" && key !== "deactivateInstead");
+
+  it.each([
+    ["sv", sv],
+    ["en", en],
+  ])("has the same lines in %s", (_locale, messages) => {
+    expect(Object.keys(messages.bulk.studentConsequences).sort()).toEqual(Object.keys(sv.bulk.studentConsequences).sort());
+  });
+
+  it.each(counted)("says %s whenever it is counted", (kind) => {
+    const shown = describeStudentRemoval(t, { ...none, [kind]: 2 } as StudentRemovalConsequences);
+    expect([...shown.goes, ...shown.loses]).toContain(`studentConsequences.${kind}(2)`);
   });
 });
 

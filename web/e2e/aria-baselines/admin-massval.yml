@@ -13,6 +13,7 @@
       - listitem: 8 timplansposter
       - listitem: 20 lektioner i grundschemat
       - listitem: 60 lektioner i kalendern, även passerade
+      - listitem: "Det som hänger på lektionerna, timplansposterna och reglerna: deltagare och lärare på lektionerna, vikarieuppdrag och vikarieanteckningar, inställda lektioner, andra gruppers plats på lektionerna, delad lärartid och uppdragspass"
   - region "Finns kvar men tappar kopplingen":
     - heading "Finns kvar men tappar kopplingen" [level=3]
     - list:

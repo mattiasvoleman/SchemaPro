@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +47,7 @@ const KNOWN_REFUSALS = [
   "USER_IS_PSEUDONYMISED",
   "USER_HAS_BOOKED_PASS_COVERS",
   "STUDENT_HOME_GROUP_NOT_A_CLASS",
+  "BULK_TIMED_OUT",
 ] as const;
 
 const known = (code: string | null | undefined): code is (typeof KNOWN_REFUSALS)[number] =>
@@ -139,11 +140,27 @@ export function BulkDeleteDialog<Consequences>({
   const [changed, setChanged] = useState(false);
   const [busy, setBusy] = useState<"checking" | "deleting" | null>("checking");
 
+  /** Rows the delete itself refused, which no dry run foresaw: listed with its reasons from then on. */
+  const refusedAtTheDelete = useRef<BulkRefusal[]>([]);
+
+  /**
+   * The dry run: what goes, what goes with it, and what would not go and
+   * why. It deletes nothing and judges by the checks; a row the delete
+   * itself then refused is left out of the next one and listed with the
+   * delete's reason, so the button never offers it for the database to
+   * refuse again.
+   */
   const check = async () => {
     setBusy("checking");
     setFailed(null);
+    const refusedNow = new Set(refusedAtTheDelete.current.map((refusal) => refusal.id));
+    const asked = ids.filter((id) => !refusedNow.has(id));
     try {
-      setReport(await remove({ ids, dryRun: true }));
+      const dry: BulkResult<Consequences> =
+        asked.length > 0
+          ? await remove({ ids: asked, dryRun: true })
+          : { applied: false, dryRun: true, done: [], refused: [] };
+      setReport({ ...dry, refused: [...dry.refused, ...refusedAtTheDelete.current] });
     } catch (error) {
       // No list beside a failed check: a button under an old one would
       // delete what the reader can no longer see is still so.
@@ -164,7 +181,9 @@ export function BulkDeleteDialog<Consequences>({
    * Deletes the rows the check named, with its counts: the gateway counts
    * again and deletes nothing when a kind grew (consequencesGrew), answering
    * the new counts, which the dialog shows to be confirmed again. A refusal
-   * found only now (a row changed meanwhile) is asked afresh with a dry run.
+   * found only now (a row changed meanwhile, or one the database refused)
+   * deletes nothing either: the rest is asked afresh with a dry run, and the
+   * refused rows are listed with the delete's reasons.
    */
   const confirm = async () => {
     if (!report) return;
@@ -189,6 +208,7 @@ export function BulkDeleteDialog<Consequences>({
       setBusy(null);
       return;
     }
+    refusedAtTheDelete.current = [...refusedAtTheDelete.current, ...result.refused];
     await check();
   };
 

@@ -6696,7 +6696,8 @@
       "USER_HAS_BOOKED_PASS_COVERS": "A substitute is booked for a break-duty shift, first on {date}. Undo the decisions on the cover board first.",
       "BULK_ROW_TAKEN": "Would clash with another row that already has the same values.",
       "BULK_ROW_REFERENCE_GONE": "Would point at something that no longer exists.",
-      "STUDENT_HOME_GROUP_NOT_A_CLASS": "A student's home class must be a class. Add the student to a teaching group under Members instead."
+      "STUDENT_HOME_GROUP_NOT_A_CLASS": "A student's home class must be a class. Add the student to a teaching group under Members instead.",
+      "BULK_TIMED_OUT": "It took too long, so nothing was changed. Try fewer at a time."
     },
     "groupFields": {
       "gradeLevel": "Grade",
@@ -6724,6 +6725,7 @@
       "availabilityConstraints": "{count, plural, one {# availability rule} other {# availability rules}}",
       "timplanCredits": "{count, plural, one {# credit} other {# credits}} in the curriculum",
       "publicLinks": "{count, plural, one {# public timetable link, which stops working} other {# public timetable links, which stop working}}",
+      "below": "What hangs on the lessons, the timetable plan rows and the rules: the lessons' participants and teachers, substitute assignments and substitute notes, cancelled lessons, other groups' places on the lessons, shared teacher time and duty slots",
       "successors": "{count, plural, one {# class} other {# classes}} in next school year lose the link to their predecessor"
     },
     "studentFields": {

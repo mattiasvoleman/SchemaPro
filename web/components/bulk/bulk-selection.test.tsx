@@ -95,6 +95,13 @@ describe("BulkSelectionBar", () => {
     expect(container.firstElementChild).toHaveAttribute("data-writes", "PERSONAL");
   });
 
+  it(`offers Redigera and Ta bort for exactly ${BULK_MAX} rows, the most one call takes`, () => {
+    bar(BULK_MAX);
+    expect(screen.queryByText(`tooMany(${BULK_MAX})`)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "edit" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "delete" })).toBeEnabled();
+  });
+
   it(`refuses Redigera and Ta bort over ${BULK_MAX} rows, and says why`, () => {
     bar(BULK_MAX + 1);
     expect(screen.getByText(`tooMany(${BULK_MAX})`)).toBeInTheDocument();

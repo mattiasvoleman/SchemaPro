@@ -2,8 +2,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { GroupRemovalConsequences } from "@/lib/bulk-api";
 import type { StudentGroup } from "@/lib/types";
-import { GROUP_BULK_KEYS, GroupsBulkDialogs, describeGroupRemoval } from "./groups-bulk-dialogs";
+import en from "@/messages/en.json";
+import sv from "@/messages/sv.json";
+import { GROUP_BELOW_PARENTS, GROUP_BULK_KEYS, GroupsBulkDialogs, describeGroupRemoval } from "./groups-bulk-dialogs";
 
 // Echo the key and its values, so assertions read against stable text.
 vi.mock("next-intl", () => ({
@@ -107,6 +110,8 @@ describe("describeGroupRemoval", () => {
         "groupConsequences.requirements(9)",
         "groupConsequences.attendanceMarks(120)",
         "groupConsequences.publicLinks(1)",
+        // The requirements' shared teacher time, said without a number.
+        "groupConsequences.below(undefined)",
       ],
       loses: ["groupConsequences.homePupils(20)", "groupConsequences.enrolments(20)", "groupConsequences.successors(1)"],
       notes: [],
@@ -116,6 +121,36 @@ describe("describeGroupRemoval", () => {
 
   it("says when groups come from the SS12000 source, which may add them again", () => {
     expect(describeGroupRemoval(t, { ...none, fromSource: 3 }).notes).toEqual(["fromSource(3)"]);
+  });
+
+  /*
+   * The gateway's kinds reach the dialog through the messages: its spec
+   * (src/common/removal-inventory.spec.ts) holds every kind a dry run answers
+   * to a line in bulk.groupConsequences, and these hold every line there to
+   * the dialog. A kind counted but not listed would make the list say
+   * "nothing else" with rows going unsaid.
+   */
+  const kinds = Object.keys(sv.bulk.groupConsequences).filter((key) => key !== "below");
+
+  it.each([
+    ["sv", sv],
+    ["en", en],
+  ])("has the same lines in %s", (_locale, messages) => {
+    expect(Object.keys(messages.bulk.groupConsequences).sort()).toEqual(Object.keys(sv.bulk.groupConsequences).sort());
+  });
+
+  it.each(kinds)("says %s whenever it is counted", (kind) => {
+    const shown = describeGroupRemoval(t, { ...none, [kind]: 2 } as GroupRemovalConsequences);
+    expect([...shown.goes, ...shown.loses]).toContain(`groupConsequences.${kind}(2)`);
+  });
+
+  it.each(GROUP_BELOW_PARENTS)("says what hangs a level down whenever %s is counted, without a number", (kind) => {
+    expect(describeGroupRemoval(t, { ...none, [kind]: 1 }).goes).toContain("groupConsequences.below(undefined)");
+  });
+
+  it("says nothing of a level down when no row with rows below it goes", () => {
+    const others = Object.fromEntries(kinds.filter((kind) => !(GROUP_BELOW_PARENTS as readonly string[]).includes(kind)).map((kind) => [kind, 1]));
+    expect(describeGroupRemoval(t, { ...none, ...others }).goes).not.toContain("groupConsequences.below(undefined)");
   });
 });
 

@@ -113,10 +113,28 @@ export function GroupsBulkDialogs({
 }
 
 /**
+ * The kinds whose rows have rows of their own below them (GROUP_BELOW_PARENTS
+ * in src/common/removal-inventory.ts, which its spec holds to this list): the
+ * lessons' participants, teachers and substitute assignments, other groups'
+ * places on them, a requirement's shared teacher time, a credit's
+ * cancellations, a rule's duty slots. Said as one line, without a number,
+ * whenever one of these is counted.
+ */
+export const GROUP_BELOW_PARENTS = [
+  "calendarLessons",
+  "masterLessons",
+  "requirements",
+  "timplanCredits",
+  "availabilityConstraints",
+] as const;
+
+/**
  * The lines the delete dialog shows for a group's consequences; a count of 0
  * says nothing. Every key to a group is counted (GROUP_KEYS in
- * src/common/removal-inventory.ts, held to the catalogue), so the list is
- * exhaustive and "nothing else depends on them" may be said when it is empty.
+ * src/common/removal-inventory.ts, held to the catalogue), and what hangs a
+ * level down is counted or said by the line below (GROUP_BELOW), so the
+ * list is exhaustive and "nothing else depends on them" may be said when it
+ * is empty.
  */
 export function describeGroupRemoval(
   t: (key: string, values: Record<string, number>) => string,
@@ -125,20 +143,23 @@ export function describeGroupRemoval(
   const lines = (keys: (keyof GroupRemovalConsequences)[]) =>
     keys.filter((key) => consequences[key] > 0).map((key) => t(`groupConsequences.${key}`, { count: consequences[key] }));
   return {
-    goes: lines([
-      "halves",
-      "memberships",
-      "requirements",
-      "masterLessons",
-      "calendarLessons",
-      "attendanceMarks",
-      "lessonLogs",
-      "lunchSittings",
-      "calendarBreaks",
-      "availabilityConstraints",
-      "timplanCredits",
-      "publicLinks",
-    ]),
+    goes: [
+      ...lines([
+        "halves",
+        "memberships",
+        "requirements",
+        "masterLessons",
+        "calendarLessons",
+        "attendanceMarks",
+        "lessonLogs",
+        "lunchSittings",
+        "calendarBreaks",
+        "availabilityConstraints",
+        "timplanCredits",
+        "publicLinks",
+      ]),
+      ...(GROUP_BELOW_PARENTS.some((key) => consequences[key] > 0) ? [t("groupConsequences.below", {})] : []),
+    ],
     loses: lines(["homePupils", "enrolments", "mentorDuties", "sharedLessons", "successors"]),
     notes: consequences.fromSource > 0 ? [t("fromSource", { count: consequences.fromSource })] : [],
     exhaustive: true,
