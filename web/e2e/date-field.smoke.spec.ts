@@ -114,10 +114,14 @@ for (const size of VIEWPORTS) {
       const calendar = page.getByRole("dialog", { name: "Välj datum" });
       await expect(calendar).toBeVisible();
 
-      expect(await visibility(calendar), `${field}: the calendar is inside the window and nothing clips it`).toEqual({
-        insideWindow: true,
-        cornersOnTop: [true, true, true, true],
-      });
+      // Polled, not read once. Radix's DismissableLayer renders the calendar
+      // with `pointer-events: none` inside a modal dialog until it has
+      // registered itself, one React scheduler task after the click, and a hit
+      // test read in that gap misses all four corners. CI's slower runners
+      // landed in it (two flaky runs on d19b8f51); a person's click cannot.
+      await expect
+        .poll(() => visibility(calendar), { message: `${field}: the calendar is inside the window and nothing clips it` })
+        .toEqual({ insideWindow: true, cornersOnTop: [true, true, true, true] });
       expect(
         await calendar.evaluate((element) => element.scrollHeight > element.clientHeight),
         `${field}: the calendar scrolls only in a window lower than itself`,
