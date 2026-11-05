@@ -1308,17 +1308,18 @@
     <tbody>
       <tr><td class="k">amnen.csv</td><td>namn; kod; farg; salstyp; nationell_kod; undervisningstid</td><td>Endast namnet krävs. <em>nationell_kod</em> är timplanens kod (MA, SV_SVA, KE …) eller tom för ett ämne utanför timplanen; en okänd kod avvisar raden. <em>undervisningstid</em> skrivs <em>ja</em> eller <em>nej</em>, tom betyder ja. Kan även exporteras — se 3.2.</td></tr>
       <tr><td class="k">salstyper.csv</td><td>namn</td><td>En typ per rad, t.ex. <em>Textilslöjd</em>. Gäller hela skolan, inte ett enskilt läsår.</td></tr>
-      <tr><td class="k">klasser.csv</td><td>namn; arskurs; typ; halvklass_av; ersatter_amne</td><td>Läsårets grupper. <em>typ</em> är <em>klass</em> eller <em>undervisningsgrupp</em>, tom betyder klass. <em>halvklass_av</em> är klassen en halvklass hör till (3.4) och <em>ersatter_amne</em> ämnet en undervisningsgrupp ersätter, med kod eller namn. En fil med bara namn och årskurs läses som förut. Importeras före eleverna — de hänvisar till klassnamnen.</td></tr>
-      <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost; tjanst_procent; nedsattning_procent; avtal; signatur</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5. De fyra sista kolumnerna är tjänsten för det aktiva läsåret och får lämnas tomma. Procent skrivs med decimalkomma, t.ex. <em>66,667</em>.</td></tr>
-      <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas. Lämna cellen tom för en elev som inte har någon klass än.</td></tr>
+      <tr><td class="k">salar.csv</td><td>namn; kod; salstyp; kapacitet; lagsta_arskurs; hogsta_arskurs; byggnad; vaning</td><td>Under <span class="path">Grunddata › Salar</span>. Endast namnet krävs. Salstypen anges med namn och måste finnas — importera salstyperna först. En våning under mark skrivs med minus, t.ex. <em>-1</em>. Skolområde och om salen kräver godkännande ställs in på salen.</td></tr>
+      <tr><td class="k">klasser.csv</td><td>namn; arskurs; typ; halvklass_av; ersatter_amne</td><td>Läsårets grupper. <em>typ</em> är <em>klass</em> eller <em>undervisningsgrupp</em>, tom betyder klass. <em>halvklass_av</em> är klassen en halvklass hör till (3.4): en klass delas i två halvor, så filen har två rader per delad klass, och en klass som redan är delad får inga fler. <em>ersatter_amne</em> är ämnet en undervisningsgrupp ersätter, med kod eller namn. En fil med bara namn och årskurs läses som förut. Importeras före eleverna — de hänvisar till klassnamnen.</td></tr>
+      <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost; telefon; tjanst_procent; nedsattning_procent; avtal; signatur</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5. De fyra sista kolumnerna är tjänsten för det aktiva läsåret och får lämnas tomma. Procent skrivs med decimalkomma, t.ex. <em>66,667</em>. Saknar du HR-läs exporteras tjänsten tom, eftersom procenten inte visas för dig.</td></tr>
+      <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; telefon; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas. Lämna cellen tom för en elev som inte har någon klass än; förhandsvisningen och rapporten säger hur många som skapas utan klass, eftersom importen inte kan ge dem en klass i efterhand.</td></tr>
       <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas. En halvklass (3.4) tar bara klassens egna elever och varje elev i en halva i taget. En rad som bryter mot det avvisas med elevens och halvans namn, och de andra raderna läses ändå in.</td></tr>
       <tr><td class="k">uppdrag.csv</td><td>larare_epost; typ; benamning; minuter_per_vecka; raknas_som_undervisning; amne; grupp; fran; till; anteckning</td><td>Importeras under <span class="path">Grunddata › Personer</span>, till det aktiva läsåret. Samma lärare, typ och benämning en gång till uppdaterar uppdraget i stället för att dubblera det. <em>fran</em> och <em>till</em> är uppdragets datum (åååå-mm-dd, inom läsåret); tomt betyder läsårets egen gräns. Tid i schemat blockeras inte via fil — det görs på uppdraget, se 4.3.</td></tr>
     </tbody>
   </table>
   <p>
-    Ordningen är alltså: <strong>salstyper → ämnen → klasser → elever och
-    lärare → undervisningsgrupper</strong>. Salstyperna först, eftersom både
-    salarna och ämnena väljer bland dem. Efter varje uppladdning visas en rapport:
+    Ordningen är alltså: <strong>salstyper → salar och ämnen → klasser →
+    elever och lärare → undervisningsgrupper</strong>. Salstyperna först,
+    eftersom både salarna och ämnena väljer bland dem. Efter varje uppladdning visas en rapport:
     hur många rader som skapades, hur många som hoppades över och vilka rader
     som innehöll fel. Rader som redan finns hoppas över — det är därför
     riskfritt att rätta felen i filen och ladda upp samma fil igen.
@@ -1327,8 +1328,8 @@
     <span class="label">Exportera lika gärna som importera</span>
     <p>
       Varje lista har också en knapp <span class="ui">Exportera CSV</span>:
-      ämnen, salstyper, klasser och grupper, undervisningsgrupper, lärare,
-      behörigheter, uppdrag och elever. Exporten skriver samma kolumner som
+      ämnen, salar, salstyper, klasser och grupper, undervisningsgrupper,
+      lärare, behörigheter, uppdrag och elever. Exporten skriver samma kolumner som
       importen läser, så arbetsgången
       <em>exportera → redigera i Excel → ladda upp igen</em> fungerar rakt av.
       Klasser, grupper och uppdrag exporteras för det aktiva läsåret, som är
@@ -1345,8 +1346,24 @@
     <p>
       Spara filen i Excel som <em>CSV (semikolonavgränsad)</em> eller
       <em>CSV UTF-8</em> — importen läser båda, och å, ä och ö följer med.
-      Felrapporten anger rad och kolumn; rad 1 är första raden under
-      rubrikerna, alltså rad 2 i Excel.
+      Är filen inte UTF-8 säger förhandsvisningen vilken kodning den lästes
+      som. <em>Unicode-text</em> och <em>CSV (MS-DOS)</em> läses inte; spara
+      då om filen. Felrapporten anger rad och kolumn, med raderna räknade som
+      i Excel: rubrikraden är rad 1.
+    </p>
+    <p>
+      Excel gör om vissa värden när en CSV-fil öppnas med dubbelklick: ett
+      klassnamn som <em>3/4</em> eller <em>1-2</em> blir ett datum, och ett
+      telefonnummer som <em>0701234567</em> tappar sin inledande nolla. Sparas
+      filen igen följer det ändrade värdet med. Öppna filen hellre med
+      <span class="ui">Data › Från text/CSV</span> och välj <em>Text</em> för
+      de kolumnerna.
+    </p>
+    <p>
+      En export flyttar det som filerna har kolumner för. Mellan två skolor
+      följer därför inte timplanspostens block, delade timmar och egen
+      fördelning med, och inte heller vårdnadshavare och deras koppling till
+      eleverna, som saknar fil.
     </p>
   </div>
 

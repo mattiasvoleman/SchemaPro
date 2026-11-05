@@ -13,8 +13,9 @@ import fixture from './__fixtures__/csv-cell-rules.json';
  * class-validator says, which also catches a class-validator or validator
  * upgrade that changes an answer.
  *
- * The fixture was GENERATED from class-validator (the script is in the
- * commit message); regenerate it rather than editing a case by hand.
+ * The fixture is GENERATED from class-validator by
+ * scripts/test/generate-csv-cell-rules.cjs; regenerate it after an upgrade
+ * rather than editing a case by hand.
  */
 describe('the import cell rules agree with class-validator', () => {
   it('reaches valid and invalid cases of every rule', () => {
