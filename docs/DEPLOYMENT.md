@@ -233,7 +233,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `SS12000_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that runs scheduled syncs and marks stale and expired runs, and the 1-minute tick that delivers v2.0 subscription notices and purges old tombstones and delivery rows. A school's sync runs at night only once its admin turns the schedule on, and auto-applies only once the admin turns that on too; a notice goes out only once a consumer has registered a subscription |
 | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | recommended `15` (Railway's own default is `0`): the seconds between SIGTERM and SIGKILL when a deploy replaces the instance. On SIGTERM the API marks a Schemaförslag run that was solving as interrupted, stops taking requests, lets the ones in flight finish, and only then closes its database pool. With `0` it is killed before any of that: the run is left to its lease (about three minutes), and a request in flight is cut off as before |
 | `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions |
-| `COVER_REQUESTS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that ends the open vikarieförfrågningar whose time is out (`EXPIRED`). A question past its time cannot be answered whether or not it has run; the tick only settles the stored status and frees the lesson for a new question |
+| `COVER_REQUESTS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that settles the open vikarieförfrågningar: the ones whose time is out end `EXPIRED` and the administrator who asked is told nobody said yes, the ones whose lesson or absence went away end `CLOSED` and the colleagues they waited on are told. A question past its time cannot be answered whether or not it has run; the tick settles the stored status, frees the lesson for a new question and tells who it concerns |
 | `GALLRING_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of the nightly gallring. A school's run starts at 03:00 its local time, once a night, and only for the kinds its admin has given a period on `/admin/dataskydd`; a school that has decided nothing loses nothing |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
@@ -894,6 +894,100 @@ Walk the full product loop once, in order:
   JOIN "TeacherAbsences" a ON a."id" = c."absenceId" WHERE c."endsAt" > now()
   AND (a."status" <> 'ACTIVE' OR NOT (c."startsAt" < a."endsAt" AND
   c."endsAt" > a."startsAt")) ORDER BY 1, 2;`
+- **Vikariefrågan**: 20270102090000 adds the `NotificationType` values
+  `COVER_REQUESTED`, `COVER_REQUEST_ACCEPTED` and `COVER_REQUEST_CLOSED` and
+  the `RetentionDataType` value `COVER_REQUESTS` and nothing else (a value
+  cannot be used in the transaction that adds it, so it is a file of its own:
+  never run the two files in one `psql -1`). 20270102091000 adds the tables
+  `CoverRequests`, `CoverRequestLessons`, `CoverRequestRecipients` and
+  `CoverConfirmations` with 15 policies, the triggers that let a request end
+  once, the functions `app.cover_request_sender`, `app.cover_confirm`,
+  `app.cover_my_passes`, `app.cover_requests_settle` and
+  `app.cover_request_is_open` (executable by `app_authenticated` alone), and `app.gallring_due` and `app.gallring_purge`
+  again with the new kind. No existing row is touched and no existing table
+  gains a column. The new keys and triggers take `Schools`, `Users`,
+  `TeacherAbsences`, `CalendarLessons` and `TeacherAbsenceCovers` in SHARE
+  ROW EXCLUSIVE, NOWAIT, together in a loop: reads and foreign-key checks go
+  on, writes to the five wait for the file (about 50 ms once the locks are
+  taken), and if all five are not free at once in 30 s it stops with nothing
+  changed in the second file (`prisma migrate resolve --rolled-back
+  20270102091000_en_vikarieforfragan_gar_till_kollegor_och_den_forsta_som_tackar_ja_far_uppdraget`,
+  then deploy again). NOWAIT never queues, so it does not make an autovacuum
+  give way: a long one on any of the five tables keeps the loop spinning for
+  the 30 s. Look first (below). The API before the release knows none of the
+  objects and writes no notice of the new types, so it keeps working between
+  the migration and the deploy. **The migration goes in first, then the
+  merge**, outside an SS12000 sync window.
+  **Before the migration**, as the owner: `SHOW server_version` is the 17.x
+  production runs; `prisma migrate status` lists exactly the two new
+  migrations as pending; `SELECT to_regclass('"CoverRequests"')` is NULL and
+  `SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE
+  t.typname IN ('NotificationType', 'RetentionDataType') AND e.enumlabel LIKE
+  'COVER_REQ%'` returns no row; and no session sits idle in a transaction that
+  holds one of the five tables, nor an autovacuum worker on them (`SELECT pid,
+  backend_type, state, now() - xact_start AS age, left(query, 70) FROM
+  pg_stat_activity WHERE datname = current_database() AND (backend_type =
+  'autovacuum worker' OR xact_start < now() - interval '3 seconds') ORDER BY
+  age DESC`). **Gallring:** `SELECT proname, md5(prosrc) FROM pg_proc WHERE
+  pronamespace = 'app'::regnamespace AND proname IN ('gallring_due',
+  'gallring_purge')` must show the bodies of the migration before: the second
+  file replaces both functions whole, so a release that has restated them
+  since (Frånvarobevakning's 20261231090100 does) must have its branch in
+  20270102091000's bodies, or its findings are no longer purged.
+  **After it, before the merge:** both migrations are applied;
+  `SELECT count(*) FROM pg_policies WHERE tablename IN ('CoverRequests',
+  'CoverRequestLessons', 'CoverRequestRecipients', 'CoverConfirmations')` is
+  15; `app_authenticated` holds SELECT, INSERT and UPDATE on the requests and
+  the recipients and SELECT and INSERT on the lines and the confirmations,
+  nothing else (no MAINTAIN), and `anon` and `authenticated` nothing at all;
+  the five functions answer `app_authenticated` alone (`SELECT
+  has_function_privilege('anon', 'app.cover_request_sender(uuid)', 'EXECUTE'),
+  has_function_privilege('authenticated', 'app.cover_request_sender(uuid)',
+  'EXECUTE')` is false, false); as the API's role without a login `SELECT *
+  FROM app.cover_requests_settle()` answers no row.
+  **After the merge:** `GET /api/v1/cover/board` answers `requests: []` and
+  `confirmations: []`; `JobRuns` gets a row for `cover-requests` within five
+  minutes of the new instance serving, its counts `{"expired": 0,
+  "notNeeded": 0}` while no question has been asked; `/admin/dataskydd` lists
+  *Vikarieförfrågningar* as *Ej beslutat*. Then, with two accounts in a test
+  school: ask two teachers, let one say yes, and the other is told it is
+  taken. Look in the log for `Cover notices failed` and `nobody was told`.
+  **Settling:** every five minutes the job ends the open questions whose time
+  is out (`EXPIRED`, and the administrator who asked is told that nobody said
+  yes) and the ones whose lesson was cancelled, whose absence was taken back
+  or shortened past the lesson, or whose absent teacher left the lesson
+  (`CLOSED`, and the colleagues it still waited on are told it is no longer
+  needed). `COVER_REQUESTS_BACKGROUND=off` stops both; a question past its
+  time still cannot be answered (the database refuses the yes), and gallring
+  removes one that stands open after its time ran out once it is older than the
+  school's period.
+  **Notices** say how many lessons and from when, and that the answer is in
+  Rastra: never subject, group or room, in the push, the e-mail's subject line
+  and text, the inbox row or the web's bell, and never who is away.
+  **Rolling it back:** the migrations stay, and the API before the release
+  never reads the new tables. Prisma's client throws on a read that selects an
+  enum column from a row holding a value it does not know: a notice of the new
+  types makes the person's inbox read fail, an opt-out of one makes
+  `GET /notification-preferences` a 500, and a school's decision about
+  *Vikarieförfrågningar* breaks the dataskydd page. Before rolling back past
+  the release, as the owner, delete those rows (the colleagues lose the inbox
+  notices about their questions, the school is asked to decide again when the
+  release returns; the questions themselves stay in the tables). A retention
+  decision is append-only, so its guard is switched off for the one statement
+  and on again in the same transaction:
+  `BEGIN; DELETE FROM "Notifications" WHERE "type"::text IN ('COVER_REQUESTED',
+  'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED'); DELETE FROM
+  "NotificationOptOuts" WHERE "type"::text IN ('COVER_REQUESTED',
+  'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED'); ALTER TABLE
+  "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_append_only"; DELETE
+  FROM "RetentionDecisions" WHERE "dataType"::text = 'COVER_REQUESTS'; ALTER
+  TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_append_only";
+  COMMIT;`. Count them first (`SELECT count(*) FROM "Notifications" WHERE
+  "type"::text LIKE 'COVER\_REQUEST%'` and the like for the other two); the
+  rows written while the release is live are the ones to remove, and the
+  rollback should not be done while a school is asking. What a rollback
+  changes: nobody can ask or answer a question, the vikarie's tap is gone, and
+  the questions and confirmations already made stay in the tables unread.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
