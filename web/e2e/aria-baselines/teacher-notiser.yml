@@ -26,6 +26,9 @@
         - link "Ledighet":
           - /url: /sv/teacher/ledighet
       - listitem:
+        - link "Frånvarobevakning":
+          - /url: /sv/teacher/absence-watch
+      - listitem:
         - link "Min kalenderprenumeration":
           - /url: /sv/calendar-feed
   - link "Tillgänglighetsredogörelse":
@@ -68,5 +71,8 @@
       - listitem:
         - text: Beslut om lokalbokning
         - switch "Beslut om lokalbokning"
+      - listitem:
+        - text: Frånvarosammanställning
+        - switch "Frånvarosammanställning" [checked]
 - region "Meddelanden alt+T"
 - alert

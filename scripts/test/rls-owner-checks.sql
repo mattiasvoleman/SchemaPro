@@ -559,3 +559,304 @@ BEGIN
   RAISE NOTICE 'fk-index: % keys to a person table asked, each served by an index, none left to a Seq Scan, 2 answered by a partial index', asked;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 305-309 on the owner's side: Frånvarobevakning (20261231090100).
+--
+-- What rls-policies.sql cannot ask: the findings' own constraints (no role
+-- writes the table), the periods a digest is due for (they hang on the date
+-- the switch went on, which a trigger stamps), the mentor rule held to the
+-- leave decision's, and gallring's reach over the findings.
+-- ---------------------------------------------------------------------------
+
+-- The helpers the owner's sections share (temporary, as the ones in rls-policies.sql).
+CREATE FUNCTION pg_temp.fbo_refuses(p_sql text, p_constraint text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE p_sql;
+  RAISE EXCEPTION 'frånvarobevakning: accepted: %', p_sql;
+EXCEPTION WHEN check_violation OR unique_violation THEN
+  IF position(p_constraint IN SQLERRM) = 0 THEN
+    RAISE EXCEPTION 'frånvarobevakning: % was refused, but not by %: %', p_sql, p_constraint, SQLERRM;
+  END IF;
+END $$;
+CREATE FUNCTION pg_temp.fbo_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'frånvarobevakning %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+
+-- 305o: the findings' constraints, the keys and the indexes.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-franvarobevakning-school');
+  p1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'fb-p2@example.invalid');
+  lim uuid := gen_random_uuid();
+  idx text;
+  upd text;
+BEGIN
+  -- Each of these must be refused, by its constraint.
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes")
+    VALUES (%L, %L, %L, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-10', '2026-09-09', 60, 600)$f$, school, p1, lim), 'days_are_ordered');
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "clearedOn", "absentMinutes", "recordedMinutes")
+    VALUES (%L, %L, %L, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-10', '2026-09-12', '2026-09-09', 60, 600)$f$, school, p1, lim), 'days_are_ordered');
+  -- A share has minutes, none of them above the recorded ones, and no streak.
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes")
+    VALUES (%L, %L, %L, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-10', '2026-09-10', 601, 600)$f$, school, p1, lim), 'a_kind_has_its_figures');
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes")
+    VALUES (%L, %L, %L, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-10', '2026-09-10', 0, 0)$f$, school, p1, lim), 'a_kind_has_its_figures');
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes", "streakDays")
+    VALUES (%L, %L, %L, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-10', '2026-09-10', 60, 600, 3)$f$, school, p1, lim), 'a_kind_has_its_figures');
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn")
+    VALUES (%L, %L, %L, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-10', '2026-09-10')$f$, school, p1, lim), 'a_kind_has_its_figures');
+  -- A run has its days, at least the limit's, and no minutes.
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, "consecutiveDays", "firstCrossedOn", "lastSeenOn", "streakDays")
+    VALUES (%L, %L, %L, 'REKTOR', 'CONSECUTIVE', 'ALL', 3, '2026-09-10', '2026-09-10', 2)$f$, school, p1, lim), 'a_kind_has_its_figures');
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, "consecutiveDays", "firstCrossedOn", "lastSeenOn", "streakDays", "absentMinutes", "recordedMinutes")
+    VALUES (%L, %L, %L, 'REKTOR', 'CONSECUTIVE', 'ALL', 3, '2026-09-10', '2026-09-10', 3, 60, 600)$f$, school, p1, lim), 'a_kind_has_its_figures');
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, "consecutiveDays", "firstCrossedOn", "lastSeenOn")
+    VALUES (%L, %L, %L, 'REKTOR', 'CONSECUTIVE', 'ALL', 3, '2026-09-10', '2026-09-10')$f$, school, p1, lim), 'a_kind_has_its_figures');
+
+  -- One open finding per limit and pupil; a closed one beside it, and another pupil's, are fine.
+  INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes")
+  VALUES (school, p1, lim, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-10', '2026-09-10', 60, 600);
+  PERFORM pg_temp.fbo_refuses(format($f$INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes")
+    VALUES (%L, %L, %L, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-11', '2026-09-11', 60, 600)$f$, school, p1, lim), 'one_open_key');
+  INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "clearedOn", "absentMinutes", "recordedMinutes")
+  VALUES (school, p1, lim, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-08-10', '2026-08-12', '2026-08-13', 60, 600);
+  INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes")
+  VALUES (school, p2, lim, 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-10', '2026-09-10', 60, 600);
+
+  -- A pupil from another school is not a pupil of this one: the key is (id, school).
+  BEGIN
+    INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes")
+    SELECT school, u.id, gen_random_uuid(), 'MENTOR', 'SHARE', 'ALL', 10, 14, '2026-09-10', '2026-09-10', 60, 600
+      FROM "Users" u JOIN "Schools" s ON s.id = u."schoolId" AND s.slug = 'rls-franvarobevakning-annan' WHERE u.role = 'STUDENT';
+    RAISE EXCEPTION 'frånvarobevakning 305o: a finding of this school names a pupil of another';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+
+  -- The key to the pupil is the person's removal: it cascades, and an index leads with the pupil.
+  SELECT confdeltype::text, confupdtype::text INTO idx, upd
+    FROM pg_constraint WHERE conrelid = 'public."AbsenceWatchFindings"'::regclass AND conname = 'AbsenceWatchFindings_studentId_schoolId_fkey';
+  IF idx IS DISTINCT FROM 'c' THEN RAISE EXCEPTION 'frånvarobevakning 305o: the pupil key does not cascade (%)', idx; END IF;
+  IF NOT EXISTS (
+       SELECT 1 FROM pg_index i
+        WHERE i.indrelid = 'public."AbsenceWatchFindings"'::regclass
+          AND (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = i.indrelid AND a.attnum = i.indkey[0]) = 'studentId'
+          AND (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = i.indrelid AND a.attnum = i.indkey[1]) = 'schoolId') THEN
+    RAISE EXCEPTION 'frånvarobevakning 305o: no index leads with the key to the pupil, so removing a person scans the findings';
+  END IF;
+  -- The limit is no key: a finding outlives it.
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public."AbsenceWatchFindings"'::regclass AND contype = 'f' AND confrelid = 'public."AbsenceWatchLimits"'::regclass) THEN
+    RAISE EXCEPTION 'frånvarobevakning 305o: the finding has a key to the limit, which a removed limit would take with it';
+  END IF;
+  DELETE FROM "Users" WHERE id = p2;
+  IF EXISTS (SELECT 1 FROM "AbsenceWatchFindings" WHERE "studentId" = p2) THEN
+    RAISE EXCEPTION 'frånvarobevakning 305o: a removed pupil''s finding stayed';
+  END IF;
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "studentId" = p1) <> 2 THEN RAISE EXCEPTION 'frånvarobevakning 305o: another pupil''s findings went'; END IF;
+
+  -- The switch carries a date when it is on (a check the trigger always meets).
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public."AbsenceWatchSettings"'::regclass AND conname = 'AbsenceWatchSettings_on_has_a_date') THEN
+    RAISE EXCEPTION 'frånvarobevakning 305o: a switch can be on without a date';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 308o: which periods are due, to the day. The date the switch went on is the
+-- trigger's, so the trigger is held off (session_replication_role) and the
+-- owner writes it. Weeks run Monday to Sunday; a month is the last whole one.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-franvarobevakning-school');
+  got text;
+BEGIN
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled, "enabledOn", "mentorCadence", "rektorCadence", "kansliCadence", "guardianCadence")
+  VALUES (school, true, '2026-09-10', 'WEEKLY', 'WEEKLY', 'MONTHLY', 'MONTHLY');
+  -- Mentors and rektor weekly, kansli and guardians monthly. Kansli has no limit: nothing due for it.
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES
+    (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14), (school, 'REKTOR', 'SHARE', 'INVALID', 10, 14), (school, 'GUARDIAN', 'SHARE', 'INVALID', 10, 14);
+
+  -- Monday the 14th: the week of the 7th to the 13th, and September for nobody yet (August ended before the switch).
+  PERFORM pg_temp.fbo_expect('Monday 09-14', (SELECT string_agg(recipient_group || ' ' || period_start || ' ' || period_end, '; ' ORDER BY recipient_group::text) FROM app.absence_watch_digest_due(school, '2026-09-14')),
+    'MENTOR 2026-09-07 2026-09-13; REKTOR 2026-09-07 2026-09-13');
+  -- Sunday the 13th: the week is not over, the last whole one ended the 6th, before the switch.
+  PERFORM pg_temp.fbo_expect('Sunday 09-13', (SELECT count(*)::text FROM app.absence_watch_digest_due(school, '2026-09-13')), '0');
+  -- Tuesday the 15th: still the same week's, until it is written.
+  PERFORM pg_temp.fbo_expect('Tuesday 09-15', (SELECT string_agg(recipient_group || ' ' || period_end, '; ' ORDER BY recipient_group::text) FROM app.absence_watch_digest_due(school, '2026-09-15')),
+    'MENTOR 2026-09-13; REKTOR 2026-09-13');
+  INSERT INTO "AbsenceWatchDigests" ("schoolId", "recipientGroup", "periodStart", "periodEnd", recipients, pupils) VALUES (school, 'MENTOR', '2026-09-07', '2026-09-13', 1, 1);
+  PERFORM pg_temp.fbo_expect('written', (SELECT string_agg(recipient_group::text, ';') FROM app.absence_watch_digest_due(school, '2026-09-15')), 'REKTOR');
+  PERFORM pg_temp.fbo_expect('next Monday', (SELECT string_agg(recipient_group || ' ' || period_start || ' ' || period_end, '; ' ORDER BY recipient_group::text) FROM app.absence_watch_digest_due(school, '2026-09-21')),
+    'MENTOR 2026-09-14 2026-09-20; REKTOR 2026-09-14 2026-09-20');
+  -- The month: the first of October asks for September, for the guardians, and the middle of October for the same.
+  PERFORM pg_temp.fbo_expect('1 Oct', (SELECT string_agg(recipient_group || ' ' || period_start || ' ' || period_end, '; ' ORDER BY recipient_group::text) FROM app.absence_watch_digest_due(school, '2026-10-01') WHERE recipient_group = 'GUARDIAN'),
+    'GUARDIAN 2026-09-01 2026-09-30');
+  PERFORM pg_temp.fbo_expect('15 Oct', (SELECT string_agg(recipient_group || ' ' || period_start || ' ' || period_end, '; ') FROM app.absence_watch_digest_due(school, '2026-10-15') WHERE recipient_group = 'GUARDIAN'),
+    'GUARDIAN 2026-09-01 2026-09-30');
+  -- The last day of the month asks for the month before: the month has not ended.
+  PERFORM pg_temp.fbo_expect('30 Sep', (SELECT count(*)::text FROM app.absence_watch_digest_due(school, '2026-09-30') WHERE recipient_group = 'GUARDIAN'), '0');
+  -- Kansli has no limit: never due, whatever the day.
+  PERFORM pg_temp.fbo_expect('kansli', (SELECT count(*)::text FROM app.absence_watch_digest_due(school, '2026-10-15') WHERE recipient_group = 'KANSLI'), '0');
+  -- A limit gives the group a digest.
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (school, 'KANSLI', 'CONSECUTIVE', 'ALL', 3);
+  PERFORM pg_temp.fbo_expect('kansli with a limit', (SELECT period_start || ' ' || period_end FROM app.absence_watch_digest_due(school, '2026-10-15') WHERE recipient_group = 'KANSLI'), '2026-09-01 2026-09-30');
+  -- The switch on the 13th, a Sunday: the week of the 7th to the 13th ended that day and is due; on the 14th as well.
+  UPDATE "AbsenceWatchSettings" SET "enabledOn" = '2026-09-13';
+  DELETE FROM "AbsenceWatchDigests";
+  PERFORM pg_temp.fbo_expect('switch on the Sunday', (SELECT count(*)::text FROM app.absence_watch_digest_due(school, '2026-09-14') WHERE recipient_group IN ('MENTOR', 'REKTOR')), '2');
+  UPDATE "AbsenceWatchSettings" SET "enabledOn" = '2026-09-14';
+  PERFORM pg_temp.fbo_expect('switch on the Monday', (SELECT count(*)::text FROM app.absence_watch_digest_due(school, '2026-09-14')), '0');
+  PERFORM pg_temp.fbo_expect('switch on the Monday, a week on', (SELECT period_start || ' ' || period_end FROM app.absence_watch_digest_due(school, '2026-09-21') WHERE recipient_group = 'MENTOR'), '2026-09-14 2026-09-20');
+  -- A week over the new year, and the months over it and over a leap day.
+  UPDATE "AbsenceWatchSettings" SET "enabledOn" = '2025-01-01', "guardianCadence" = 'MONTHLY';
+  PERFORM pg_temp.fbo_expect('new year week', (SELECT period_start || ' ' || period_end FROM app.absence_watch_digest_due(school, '2026-01-05') WHERE recipient_group = 'MENTOR'), '2025-12-29 2026-01-04');
+  PERFORM pg_temp.fbo_expect('new year month', (SELECT period_start || ' ' || period_end FROM app.absence_watch_digest_due(school, '2026-01-01') WHERE recipient_group = 'GUARDIAN'), '2025-12-01 2025-12-31');
+  PERFORM pg_temp.fbo_expect('february', (SELECT period_start || ' ' || period_end FROM app.absence_watch_digest_due(school, '2026-03-01') WHERE recipient_group = 'GUARDIAN'), '2026-02-01 2026-02-28');
+  PERFORM pg_temp.fbo_expect('leap february', (SELECT period_start || ' ' || period_end FROM app.absence_watch_digest_due(school, '2028-03-01') WHERE recipient_group = 'GUARDIAN'), '2028-02-01 2028-02-29');
+  -- The weeks of the summer-time switches are seven calendar days all the same.
+  PERFORM pg_temp.fbo_expect('spring week', (SELECT period_start || ' ' || period_end FROM app.absence_watch_digest_due(school, '2026-03-30') WHERE recipient_group = 'MENTOR'), '2026-03-23 2026-03-29');
+  PERFORM pg_temp.fbo_expect('fall week', (SELECT period_start || ' ' || period_end FROM app.absence_watch_digest_due(school, '2026-10-26') WHERE recipient_group = 'MENTOR'), '2026-10-19 2026-10-25');
+  -- Off: nothing is due, and the school is not on the job's list.
+  PERFORM pg_temp.fbo_expect('listed', (SELECT count(*)::text FROM app.absence_watch_schools() s WHERE s = school), '1');
+  UPDATE "AbsenceWatchSettings" SET enabled = false;
+  PERFORM pg_temp.fbo_expect('off', (SELECT count(*)::text FROM app.absence_watch_digest_due(school, '2026-10-15')), '0');
+  PERFORM pg_temp.fbo_expect('not listed', (SELECT count(*)::text FROM app.absence_watch_schools() s WHERE s = school), '0');
+END $$;
+ROLLBACK;
+
+-- 309o: gallring. The findings go with the attendance they are counted from:
+-- under ATTENDANCE, by the day they were last seen, in the same batch.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-franvarobevakning-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-franvarobevakning-annan');
+  admin uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'fb-full@example.invalid');
+  p1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'fb-p1@example.invalid');
+  p3 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'fb-p3@example.invalid');
+  po uuid := (SELECT id FROM "Users" WHERE "schoolId" = other AND email = 'fb-annan-p@example.invalid');
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  run uuid;
+  n integer;
+  counts jsonb;
+  tbls text[];
+BEGIN
+  -- Findings last seen at three ages, here and at the school with no decision.
+  INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "clearedOn", "absentMinutes", "recordedMinutes") VALUES
+    (school, p1, gen_random_uuid(), 'MENTOR', 'SHARE', 'ALL', 10, 14, today - 900, today - 890, today - 889, 60, 600),
+    (school, p3, gen_random_uuid(), 'MENTOR', 'SHARE', 'ALL', 10, 14, today - 400, today - 395, today - 394, 60, 600),
+    (school, p1, gen_random_uuid(), 'GUARDIAN', 'SHARE', 'ALL', 10, 14, today - 40, today - 30, NULL, 60, 600),
+    (other, po, gen_random_uuid(), 'MENTOR', 'SHARE', 'ALL', 10, 14, today - 900, today - 890, today - 889, 60, 600);
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (school, 'ATTENDANCE', 'PURGE_AFTER', 12, 'AW 309', admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+
+  -- What is due, as the one predicate answers it: the two old findings of this school and nothing of the other's.
+  SELECT array_agg(DISTINCT d.tbl) INTO tbls FROM app.gallring_due(school, 'ATTENDANCE', today - 365, today) d;
+  IF tbls IS DISTINCT FROM ARRAY['AbsenceWatchFindings'] THEN
+    RAISE EXCEPTION 'frånvarobevakning 309o: the kinds due are % (the school''s attendance was planted by no one here)', tbls;
+  END IF;
+  IF (SELECT count(*) FROM app.gallring_due(school, 'ATTENDANCE', today - 365, today) d WHERE d.tbl = 'AbsenceWatchFindings') <> 2 THEN
+    RAISE EXCEPTION 'frånvarobevakning 309o: not the two findings last seen before the cutoff are due';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.gallring_due(school, 'ABSENCE_REPORTS', today - 365, today) d WHERE d.tbl = 'AbsenceWatchFindings')
+     OR EXISTS (SELECT 1 FROM app.gallring_due(school, 'NOTIFICATIONS', today - 365, today) d WHERE d.tbl = 'AbsenceWatchFindings') THEN
+    RAISE EXCEPTION 'frånvarobevakning 309o: the findings are due under another kind than ATTENDANCE';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.gallring_due(other, 'ATTENDANCE', today - 365, today) d WHERE d.tbl = 'AbsenceWatchFindings'
+              AND d.id IN (SELECT id FROM "AbsenceWatchFindings" WHERE "schoolId" = school)) THEN
+    RAISE EXCEPTION 'frånvarobevakning 309o: a school''s findings are due under another school''s run';
+  END IF;
+
+  -- The night: the old ones go, the one seen thirty days ago stays, the other school's stay.
+  run := app.gallring_begin(school, now());
+  LOOP
+    n := app.gallring_purge(run, 'ATTENDANCE', 1);
+    EXIT WHEN n = 0;
+  END LOOP;
+  PERFORM app.gallring_finish(run, '{}', now());
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "schoolId" = school) <> 1
+     OR NOT EXISTS (SELECT 1 FROM "AbsenceWatchFindings" WHERE "schoolId" = school AND "recipientGroup" = 'GUARDIAN') THEN
+    RAISE EXCEPTION 'frånvarobevakning 309o: gallring left % findings of the school, not the one seen 30 days ago', (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "schoolId" = school);
+  END IF;
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "schoolId" = other) <> 1 THEN
+    RAISE EXCEPTION 'frånvarobevakning 309o: a school with no decision lost its findings';
+  END IF;
+  SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
+  IF (counts ->> 'ATTENDANCE')::integer <> 2 THEN
+    RAISE EXCEPTION 'frånvarobevakning 309o: the run counts % rows under ATTENDANCE, not the two findings', counts ->> 'ATTENDANCE';
+  END IF;
+
+  -- The batch is shared with the attendance: with a budget of one the run is not complete until nothing is left.
+  INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "clearedOn", "absentMinutes", "recordedMinutes") VALUES
+    (school, p1, gen_random_uuid(), 'MENTOR', 'SHARE', 'ALL', 10, 14, today - 800, today - 790, today - 789, 60, 600),
+    (school, p3, gen_random_uuid(), 'MENTOR', 'SHARE', 'ALL', 10, 14, today - 800, today - 790, today - 789, 60, 600);
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'ATTENDANCE', 1) <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 309o: a batch of one took more or less than one finding'; END IF;
+  IF (SELECT (complete ->> 'ATTENDANCE')::boolean FROM "GallringRuns" WHERE id = run) THEN
+    RAISE EXCEPTION 'frånvarobevakning 309o: a full batch said nothing was left';
+  END IF;
+  IF app.gallring_purge(run, 'ATTENDANCE', 1) <> 1 OR app.gallring_purge(run, 'ATTENDANCE', 1) <> 0 THEN
+    RAISE EXCEPTION 'frånvarobevakning 309o: the second finding was not taken in the next batch';
+  END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+
+  -- KEEP stops it at once.
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, reference, "decidedById", "decidedAt")
+  VALUES (school, 'ATTENDANCE', 'KEEP', 'AW 309 keep', admin, now() - interval '1 hour');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "clearedOn", "absentMinutes", "recordedMinutes")
+  VALUES (school, p1, gen_random_uuid(), 'MENTOR', 'SHARE', 'ALL', 10, 14, today - 800, today - 790, today - 789, 60, 600);
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'ATTENDANCE', 100) <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 309o: a school that keeps its attendance lost a finding'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+END $$;
+ROLLBACK;
+
+-- 306o: the mentor rule is the leave decision's, for every pupil of the school: the
+-- list a digest is built from and the one question the policy asks give the same mentors.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-franvarobevakning-school');
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  pupil uuid;
+  mine uuid[];
+  theirs uuid[];
+  seen integer := 0;
+BEGIN
+  FOR pupil IN SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' LOOP
+    mine := ARRAY(SELECT mentor_id FROM app.absence_watch_mentees(school, today) WHERE student_id = pupil ORDER BY 1);
+    theirs := ARRAY(SELECT DISTINCT m FROM app.leave_mentors(school, pupil, today, today) m ORDER BY 1);
+    IF mine IS DISTINCT FROM theirs THEN
+      RAISE EXCEPTION 'frånvarobevakning 306o: the mentors of % are % by the digest''s rule and % by the leave decision''s', pupil, mine, theirs;
+    END IF;
+    seen := seen + cardinality(mine);
+  END LOOP;
+  IF seen <> 4 THEN RAISE EXCEPTION 'frånvarobevakning 306o: % mentor links in the school, not the four of its active pupils', seen; END IF;
+  -- A duty that has ended, or has not begun, mentors nobody; a duty of the other school's year is not this school's.
+  UPDATE "TeacherDuties" SET "validTo" = today - 1 WHERE "schoolId" = school AND label = 'Mentor 7A';
+  IF EXISTS (SELECT 1 FROM app.absence_watch_mentees(school, today) m JOIN "Users" u ON u.id = m.mentor_id WHERE u.email = 'fb-m1@example.invalid') THEN
+    RAISE EXCEPTION 'frånvarobevakning 306o: a duty that ended yesterday still mentors';
+  END IF;
+  UPDATE "TeacherDuties" SET "validTo" = NULL, "validFrom" = today + 1 WHERE "schoolId" = school AND label = 'Mentor 7A';
+  IF EXISTS (SELECT 1 FROM app.absence_watch_mentees(school, today) m JOIN "Users" u ON u.id = m.mentor_id WHERE u.email = 'fb-m1@example.invalid') THEN
+    RAISE EXCEPTION 'frånvarobevakning 306o: a duty that begins tomorrow already mentors';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM app.absence_watch_mentees(school, today + 1) m JOIN "Users" u ON u.id = m.mentor_id WHERE u.email = 'fb-m1@example.invalid') THEN
+    RAISE EXCEPTION 'frånvarobevakning 306o: a duty that begins tomorrow does not mentor tomorrow';
+  END IF;
+  -- The deactivated teacher who once mentored 7A is no mentor.
+  IF EXISTS (SELECT 1 FROM app.absence_watch_mentees(school, today) m JOIN "Users" u ON u.id = m.mentor_id WHERE u.email = 'fb-t4@example.invalid') THEN
+    RAISE EXCEPTION 'frånvarobevakning 306o: a deactivated teacher mentors';
+  END IF;
+END $$;
+ROLLBACK;

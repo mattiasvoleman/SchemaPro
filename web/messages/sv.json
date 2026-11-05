@@ -220,7 +220,8 @@
     "myLeave": "Ledighet",
     "calendarFeed": "Min kalenderprenumeration",
     "calendarFeeds": "Kalenderprenumeration",
-    "classBook": "Klassbok"
+    "classBook": "Klassbok",
+    "absenceWatch": "Frånvarobevakning"
   },
   "dashboard": {
     "title": "Översikt",
@@ -2326,7 +2327,9 @@
     "supervisionCoverWithdrawn": "Rastvaktspasset är avbokat: {area} den {when}–{end}. Du behöver inte ta det.",
     "leaveApprovedByMentor": "Ledighet för {student} ({from} – {to}) beviljades av mentorn.",
     "leaveRejectedByMentor": "Ledighet för {student} ({from} – {to}) avslogs av mentorn.",
-    "unreadMarker": "Oläst."
+    "unreadMarker": "Oläst.",
+    "absenceWatchDigest": "Frånvarosammanställning {from} – {to}: {open, plural, =0 {ingen elev är över en gräns} one {# elev är över en gräns} other {# elever är över en gräns}}, {crossed, plural, =0 {ingen passerade en gräns} one {# passerade en gräns} other {# passerade en gräns}} under perioden. Se Frånvarobevakning.",
+    "absenceWatchDigestGuardian": "Frånvarosammanställning {from} – {to}: {open, plural, =0 {{crossed, plural, one {ett av dina barn har} other {# av dina barn har}} kommit under en gräns för frånvaro igen} one {ett av dina barn har frånvaro över en gräns som skolan har satt} other {# av dina barn har frånvaro över en gräns som skolan har satt}}. Se Frånvarobevakning."
   },
   "integrations": {
     "title": "Integrationer",
@@ -5681,7 +5684,8 @@
       "LESSON_COVER_WITHDRAWN": "Avbokade vikariepass",
       "LEAVE_REQUESTED": "Ledighetsansökningar att besluta om",
       "SUPERVISION_COVER": "Rastvaktspass som vikarie",
-      "SUPERVISION_COVER_WITHDRAWN": "Avbokade rastvaktspass"
+      "SUPERVISION_COVER_WITHDRAWN": "Avbokade rastvaktspass",
+      "ABSENCE_WATCH_DIGEST": "Frånvarosammanställning"
     },
     "loadFailed": "Dina val kunde inte hämtas",
     "loadFailedHint": "Inget har ändrats i vad som skickas till dig. Ladda om sidan om en stund."
@@ -6805,6 +6809,146 @@
       "otherRows": "{count, plural, one {# annan uppgift} other {# andra uppgifter}} om eleverna, till exempel rollhistorik",
       "otherLinks": "{count, plural, one {# uppgift} other {# uppgifter}} som eleverna gjorde finns kvar utan deras namn",
       "accounts": "Det som hör till elevernas egna konton och som ingen administratör ser: notiser, notisinställningar, enheter för pushnotiser och kalenderprenumerationer, också vårdnadshavarnas prenumerationer på eleverna"
+    }
+  },
+  "absenceWatch": {
+    "title": "Frånvarobevakning",
+    "subtitle": "Sätt gränser för frånvaro, bestäm vilka som får veta när en elev passerar en, och se vilka elever som har gjort det.",
+    "teacherSubtitle": "Eleverna i klasser där du är mentor som har passerat en gräns som skolan har satt för mentorer.",
+    "guardianSubtitle": "Här ser du om något av dina barn har passerat en gräns som skolan har satt för frånvaro.",
+    "loadFailed": "Frånvarobevakningen kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund.",
+    "group": {
+      "MENTOR": "Mentor",
+      "REKTOR": "Rektor",
+      "KANSLI": "Kansli",
+      "GUARDIAN": "Vårdnadshavare"
+    },
+    "basis": {
+      "VALID": "giltig frånvaro",
+      "INVALID": "ogiltig frånvaro",
+      "ALL": "all frånvaro"
+    },
+    "basisOption": {
+      "VALID": "Giltig frånvaro",
+      "INVALID": "Ogiltig frånvaro",
+      "ALL": "All frånvaro"
+    },
+    "kind": {
+      "SHARE": "Andel av de registrerade minuterna",
+      "CONSECUTIVE": "Skoldagar i följd"
+    },
+    "cadence": {
+      "WEEKLY": "Varje vecka",
+      "MONTHLY": "Varje månad"
+    },
+    "limit": {
+      "SHARE": "{percent} % {basis} av de registrerade minuterna över {days, plural, one {# dag} other {# dagar}}",
+      "CONSECUTIVE": "{days, plural, one {# skoldag} other {# skoldagar}} i följd med {basis}"
+    },
+    "settings": {
+      "title": "Bevakningen",
+      "description": "Bevakningen är avstängd tills du slår på den. När den är på räknar Rastra varje natt vilka elever som har passerat en gräns, och mottagarna får en sammanställning varje vecka eller månad. Sammanställningarna innehåller bara antal, aldrig namn eller anledning. Vilka eleverna är syns bara här i Rastra Schema, bakom inloggningen.",
+      "switchLabel": "Frånvarobevakning",
+      "offHint": "Av. Inga elever räknas och inga sammanställningar skickas.",
+      "onHint": "På. Eleverna räknas varje natt.",
+      "onSince": "På sedan {date}. Eleverna räknas varje natt.",
+      "turnedOn": "Frånvarobevakningen är på.",
+      "turnedOff": "Frånvarobevakningen är av.",
+      "noLimitsTitle": "Inga gränser är satta",
+      "noLimitsBody": "Bevakningen är på, men ingen elev räknas förrän du lägger till en gräns nedan.",
+      "cadenceTitle": "Hur ofta sammanställningen skickas",
+      "cadenceHint": "Per mottagargrupp. Sammanställningen skickas bara till den som har något att få veta, och var och en kan stänga av e-post och push under Notiser.",
+      "cadenceSaved": "Sparat för {group}."
+    },
+    "limits": {
+      "title": "Gränser",
+      "description": "Mottagargruppen får veta när en elev passerar en av sina gränser. En skola har högst en gräns per mottagargrupp, slag och grund. En ny eller ändrad gräns räknas in vid nästa nattkörning.",
+      "add": "Lägg till gräns",
+      "caption": "Skolans gränser för frånvaro",
+      "group": "Mottagare",
+      "limit": "Gräns",
+      "actions": "Åtgärder",
+      "emptyTitle": "Inga gränser ännu",
+      "emptyBody": "Lägg till en gräns, till exempel 10 % ogiltig frånvaro över 14 dagar, för den som ska få veta.",
+      "added": "Gränsen är tillagd.",
+      "updated": "Gränsen är ändrad.",
+      "removed": "Gränsen är borttagen.",
+      "removeTitle": "Ta bort gränsen för {group}?",
+      "removeBody": "{limit}. Elever som har passerat den räknas som under gränsen från i dag, och ingen får en ny sammanställning om den."
+    },
+    "form": {
+      "addTitle": "Lägg till gräns",
+      "addBody": "Välj vem som ska få veta, vad som räknas och hur mycket.",
+      "editTitle": "Ändra gräns",
+      "editBody": "Du kan ändra siffrorna. För en annan mottagare, ett annat slag eller en annan grund lägger du till en ny gräns.",
+      "group": "Mottagare",
+      "kind": "Slag av gräns",
+      "basis": "Vilken frånvaro som räknas",
+      "fixedHint": "Mottagare, slag och grund går inte att ändra på en gräns som finns.",
+      "percent": "Andel av de registrerade minuterna (%)",
+      "windowDays": "Antal dagar att räkna över",
+      "consecutiveDays": "Antal skoldagar i följd",
+      "rangeHint": "Ett heltal från {min} till {max}.",
+      "range": "Ange ett heltal från {min} till {max}.",
+      "preview": "{group} får veta när en elev har {limit}.",
+      "exists": "Det finns redan en gräns för {group} med det slaget och den grunden. Ändra den som finns i stället.",
+      "failed": "Gränsen kunde inte sparas"
+    },
+    "findings": {
+      "title": {
+        "admin": "Elever som har passerat en gräns",
+        "mentor": "Dina mentorselever över en gräns",
+        "guardian": "Dina barn"
+      },
+      "description": {
+        "admin": "Eleverna räknas om varje natt, med gränserna ovan. Att öppna listan skrivs i läsloggen.",
+        "mentor": "Listan räknas om varje natt. Att öppna den skrivs i läsloggen.",
+        "guardian": "Listan räknas om varje natt, med de gränser skolan har satt för vårdnadshavare."
+      },
+      "recent": "Visa även de som kommit under gränsen",
+      "groupFilter": "Mottagare",
+      "allGroups": "Alla mottagargrupper",
+      "caption": "Elever som har passerat en gräns för frånvaro",
+      "student": "Elev",
+      "class": "Klass",
+      "group": "Mottagare",
+      "limit": "Gräns",
+      "figures": "Mätetal",
+      "since": "Läge",
+      "nameHidden": "Namnet kan inte visas",
+      "share": "{absent} av {recorded} minuter ({percent} %)",
+      "minutesOnly": "{absent} minuter",
+      "streak": "{days, plural, one {# skoldag} other {# skoldagar}} i följd",
+      "measured": "Mätt {date}",
+      "openSince": "Över gränsen sedan {date}",
+      "clearedSince": "Under gränsen sedan {date}",
+      "wasOverSince": "Var över gränsen sedan {date}",
+      "summaryOpen": "{count, plural, =0 {Ingen elev är över en gräns.} one {# elev är över en gräns.} other {# elever är över en gräns.}}",
+      "summaryCleared": "{count, plural, =0 {Ingen har kommit under gränsen igen.} other {# har kommit under gränsen igen.}}",
+      "emptyOffTitle": "Bevakningen är avstängd",
+      "emptyOffBody": "Slå på den under Bevakningen ovan, så räknas eleverna varje natt.",
+      "emptyGroupTitle": "Ingen i den här mottagargruppen",
+      "emptyGroupBody": "Välj en annan mottagargrupp, eller alla.",
+      "emptyRecentTitle": "Inga fynd de senaste {days} dagarna",
+      "empty": {
+        "admin": {
+          "title": "Ingen elev har passerat en gräns",
+          "body": "Eleverna räknas varje natt. En ny eller ändrad gräns syns här nästa morgon."
+        },
+        "mentor": {
+          "title": "Ingen av dina mentorselever har passerat en gräns",
+          "body": "Här visas eleverna i klasser där du är mentor så fort någon passerar en gräns som skolan har satt för mentorer."
+        },
+        "guardian": {
+          "title": "Inget av dina barn har passerat en gräns",
+          "body": "Om ett av dina barn passerar en gräns som skolan har satt för frånvaro visas det här, med sedan när."
+        }
+      },
+      "truncatedTitle": "Listan är avkortad",
+      "truncatedBody": "Fler än {count} fynd stämde, och de äldsta visas inte.",
+      "loadFailed": "Listan kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund."
     }
   }
 }
