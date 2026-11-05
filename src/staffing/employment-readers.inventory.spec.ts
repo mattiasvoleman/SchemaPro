@@ -93,6 +93,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'POST',
     why: 'whether a pool member has a post at all (STAFF or POOL); a period never removes a post',
   },
+  'src/schedule-exchange/exchange.service.ts': {
+    basis: 'POST',
+    why: 'the signature a teacher is matched on in a timetable file and written as in one: the base row’s alone (userId and signature), so a period never changes it',
+  },
   'src/publication/public-links.service.ts': {
     basis: 'POST',
     why: 'whether a teacher has a signature, which is the base row’s alone',

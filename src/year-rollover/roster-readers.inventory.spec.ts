@@ -420,6 +420,12 @@ describe('the roster-reader inventory', () => {
       // the overview does and answers for one class, so it answers the 409 the
       // overview does for the same year.
       //
+      // Schema som fil: the preview of an import, and its apply, hold each row
+      // to the clash rule of a hand edit (MasterLessonsService.findConflicts),
+      // which reads pupils through the year's basis, and read each group's
+      // years for the frames, the raster and the lunch. The export reads the
+      // lessons only and so asks for no basis.
+      //
       // Schemaförslag reaches a basis where Generera does: its start asks
       // rostersOfYear as POST jobs does, and its check and apply rebuild
       // Generera's fetch (prepareSchedule), so a year two steps ahead answers
@@ -450,6 +456,8 @@ describe('the roster-reader inventory', () => {
         'PublicationsController.preview',
         'PublicationsController.publish',
         'ScbFileController.file',
+        'ScheduleExchangeController.apply',
+        'ScheduleExchangeController.preview',
         'StaffingLoadController.delivered',
         'StaffingLoadController.load',
         'StaffingLoadController.suggestTeachers',

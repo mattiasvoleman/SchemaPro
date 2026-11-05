@@ -96,7 +96,8 @@ export interface ImportResult {
 
 interface Loaded {
   ctx: PlanContext;
-  basis: RosterBasis;
+  /** What the pupils' basis and each group's years are read from (rostersOf). */
+  year: { isActive: boolean; predecessorId: string | null };
   schoolId: string;
   schoolName: string;
   mode: PublishMode;
@@ -165,7 +166,7 @@ export class ScheduleExchangeService {
   ): Promise<RenderedFile> {
     if (!EXCHANGE_FORMATS.includes(format)) throw new BadRequestException('Okänt format.');
     return this.prisma.withRls(user, async (tx) => {
-      const loaded = await this.load(tx, user, academicYearId);
+      const loaded = await this.load(tx, academicYearId);
       const doc = documentOf(loaded.schoolName, loaded.ctx, loaded.blocksById);
       const teacherIds = new Set<string>();
       for (const l of loaded.ctx.existing) for (const id of [l.teacherId, l.coTeacherId]) if (id) teacherIds.add(id);
@@ -253,7 +254,8 @@ export class ScheduleExchangeService {
         code: 'IMPORT_UNREADABLE',
       });
     }
-    const loaded = await this.load(tx, user, dto.academicYearId);
+    const loaded = await this.load(tx, dto.academicYearId);
+    const basis = await this.rostersOf(tx, user, loaded);
     const { ctx } = loaded;
     const idx = indexContext(ctx);
     const rows: PlanRow[] = [];
@@ -330,7 +332,7 @@ export class ScheduleExchangeService {
       const fake = dayLessonOf(r, `import:${i}`);
       const conflicts = await this.masterLessons.findConflicts(
         tx,
-        loaded.basis,
+        basis,
         { id: null, academicYearId: ctx.year.id, studentGroupId: r.group.id, subjectId: r.subject.id },
         {
           dayOfWeek: r.day,
@@ -624,7 +626,29 @@ export class ScheduleExchangeService {
     return year;
   }
 
-  private async load(tx: PrismaClient, user: AuthenticatedUser, academicYearId: string): Promise<Loaded> {
+  /**
+   * The pupils' basis for the year (projected-rosters.ts: a year two steps
+   * ahead is refused with R6's 409) and, from it, the years each group holds
+   * in NIOARIG, which the frames, the raster and the lunch are stated in. Only
+   * the import asks: an export reads the lessons alone.
+   */
+  private async rostersOf(tx: PrismaClient, user: AuthenticatedUser, loaded: Loaded): Promise<RosterBasis> {
+    const { ctx } = loaded;
+    const basis = await rostersOfYear(tx, user, ctx.year.id, loaded.year);
+    const read = await loadRosters(
+      tx,
+      basis,
+      ctx.groups.map((g) => g.id),
+      ctx.groups,
+    );
+    for (const g of ctx.groups) {
+      const span = toNioarigSpan(gradeSpanOf(read, [g.id]), ctx.year.numbering);
+      if (span) ctx.spans.set(g.id, span);
+    }
+    return basis;
+  }
+
+  private async load(tx: PrismaClient, academicYearId: string): Promise<Loaded> {
     const year = await this.readYear(tx, academicYearId);
     const [groups, subjects, rooms, users, employments, lessons, frames, rasts, lunch, servings, sittings, requirements, blocks] =
       await Promise.all([
@@ -682,19 +706,6 @@ export class ScheduleExchangeService {
         tx.teachingBlock.findMany({ where: { academicYearId }, select: { id: true, name: true } }),
       ]);
 
-    const basis = await rostersOfYear(tx, user, academicYearId, year);
-    const rosters = await loadRosters(
-      tx,
-      basis,
-      groups.map((g) => g.id),
-      groups,
-    );
-    const spans = new Map<string, { min: number; max: number }>();
-    for (const g of groups) {
-      const span = toNioarigSpan(gradeSpanOf(rosters, [g.id]), year.gradeNumbering ?? 'NIOARIG');
-      if (span) spans.set(g.id, span);
-    }
-
     const signature = new Map(employments.map((e) => [e.userId, (e.signature ?? '').trim() || null]));
     const participants = new Map<string, string[]>();
     for (const l of lessons) participants.set(l.id, l.participants.map((p) => p.studentId));
@@ -749,11 +760,11 @@ export class ScheduleExchangeService {
         blockId: r.blockId,
       })),
       blocks,
-      spans,
+      spans: new Map(),
     };
     return {
       ctx,
-      basis,
+      year: { isActive: year.isActive, predecessorId: year.predecessorId },
       schoolId: year.schoolId,
       schoolName: year.school.name,
       mode: await publishModeOf(tx, year.schoolId),
