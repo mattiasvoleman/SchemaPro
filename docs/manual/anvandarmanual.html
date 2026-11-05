@@ -5445,6 +5445,10 @@
     för klassens elever</em>: det är då ditt val om dessa elever ska vara
     frånvarande från den eller inte. Förhandsgranskningen varnar också när en
     ansvarig lärare har en lektion med en annan klass samtidigt.
+    Vilka grupper som ställs in avgörs när aktiviteten skapas och varje gång du
+    öppnar <span class="ui">Ändra</span>, inte däremellan: en grupp som tillkommer
+    senare, eller en elev som byter klass, ändrar ingenting förrän du öppnar
+    <span class="ui">Ändra</span>, som räknar om urvalet och visar vad som flyttas.
   </p>
   <p>
     <strong>Täckning.</strong> Ersättningslektionen räknas som hållen tid för
@@ -5453,7 +5457,11 @@
     ersättningslektionens ämne inte gör det; de är skolans skrivna beslut om
     vilka ämnen dagen räknas i. De ställda lektionerna är förlorad tid som förut
     (<em>Inställd – avbokning</em>) tills en tillgodoräkning täcker dem, och en
-    ersättningslektion utan lärare är det också.
+    ersättningslektion utan lärare är det också. Ersättningslektionens hela
+    längd räknas, från första start till sista slut och alltså med lunch och
+    håltimmar, som hållen tid för varje ansvarig lärare, ledande och biträdande,
+    och en elev som markeras frånvarande från den är frånvarande hela den tiden.
+    Det syns i personalens avstämning.
   </p>
   <p>
     <strong>Publicering.</strong> En aktivitet verkar på kalendern som den är.
@@ -5461,7 +5469,15 @@
     påfyllning skriver in i aktivitetens dagar ställs in som de övriga, och
     ersättningslektionen för klassen och dagen följer med. Ersättningslektionerna
     har ingen masterlektion, så en publicering, en ändring i grundschemat eller
-    ett förkastat utkast rör dem aldrig; bara aktiviteten gör det.
+    ett förkastat utkast rör dem aldrig; bara aktiviteten gör det. En lektion
+    som kommer in i aktivitetens dagar på något annat sätt än genom en
+    publicering, till exempel en lektion som flyttas till en av dagarna, ställs
+    in direkt. Ser du ändå <em>N lektioner har tillkommit i aktivitetens dagar
+    och är inte inställda än</em> på raden, tar <span class="ui">Tillämpa igen</span>
+    dem: de ställs in, ersättningslektionerna följer med och de berörda får en
+    notis. Lägger du in ett lov efter aktiviteten skrivs ingen ersättningslektion
+    på lovdagen, och raderas en klass som aktiviteten nämner kan aktiviteten
+    fortfarande ändras, utan den klassen.
   </p>
   <p>
     <strong>Ändra och ta bort.</strong> <span class="ui">Ändra</span> visar vad
@@ -5475,7 +5491,10 @@
     kvar som den hölls, tillsammans med de lektioner den ersatte, eftersom de
     annars skulle ligga bredvid den. En aktivitet tas bort en gång. Avbokningen
     en aktivitet äger syns inte under <span class="path">Drift › Avbokning</span>
-    och tas bara tillbaka med aktiviteten.
+    och tas bara tillbaka med aktiviteten. Har ersättningslektionen för en dag
+    redan hållits och du ändrar aktiviteten så att dagen inte längre ingår, står
+    den lektionen kvar, och de lektioner den ersatte förblir inställda, som när
+    du tar bort aktiviteten.
   </p>
   <p>
     <strong>Besked.</strong> Som standard får eleverna, deras vårdnadshavare och
@@ -5483,7 +5502,10 @@
     lärare får i e-posten också veta vilka klasser hen ansvarar för. Det är
     samma notis som en avbokning skickar. Tas aktiviteten bort, eller sätts
     lektioner tillbaka vid en ändring, får de berörda en notis om de lektioner som
-    blir av. Förhandsgranskningen säger hur många som nås.
+    blir av. Förhandsgranskningen säger hur många som nås. Elever som går på en
+    inställd lektion tillsammans med en klass som aktiviteten inte gäller, och
+    deras vårdnadshavare, får beskedet att lektionerna är inställda, utan att det
+    sägs att något ersätter dem: ingen ersättningslektion finns för dem.
   </p>
 
   <h3><span class="num">6.6</span>Närvaro</h3>
