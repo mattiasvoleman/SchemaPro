@@ -23,7 +23,7 @@ import {
   FamilyReadsService,
   type AbsenceReportView,
   type ChildView,
-  type GuardianExportRow,
+  type GuardianExport,
   type GuardianLinkView,
 } from './family-reads.service';
 import { FamilyScheduleService, type FamilySchedule } from './family-schedule.service';
@@ -91,12 +91,13 @@ export class FamilyController {
 
   /**
    * Every active guardian link of the school as the rows of
-   * vardnadshavare.csv. Every profile reads it, as it reads one pupil's
-   * guardians above, and it is recorded as read.
+   * vardnadshavare.csv, but those where the pupil or the guardian has a
+   * protected identity, which are counted (heldOut). Every profile reads it,
+   * as it reads one pupil's guardians above, and it is recorded as read.
    */
   @Get('guardian-links/export')
   @Roles(Role.SCHOOL_ADMIN)
-  guardianExport(@CurrentUser() user: AuthenticatedUser): Promise<GuardianExportRow[]> {
+  guardianExport(@CurrentUser() user: AuthenticatedUser): Promise<GuardianExport> {
     return this.reads.guardianExport(user);
   }
 

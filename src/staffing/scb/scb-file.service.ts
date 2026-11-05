@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user
 import { recordRead } from '../../access-log/access-log';
 import { PrismaService } from '../../database/prisma.service';
 import { requireSchoolId } from '../../common/utils/request-context';
+import { markedIds } from '../../users/person-protections';
 import { todayInZone, zonedTimeToUtc } from '../../common/utils/time';
 import { addDays } from '../../common/year-rollover';
 import { dayOf } from '../duty-dates';
@@ -62,7 +63,17 @@ import {
 export class ScbFileService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async build(academicYearId: string, user: AuthenticatedUser, now: Date = new Date()): Promise<ScbFile> {
+  /**
+   * The file, and how many of the teachers it names the school has marked
+   * as having a protected identity (skyddad identitet, 20270107090000). SCB
+   * is to have every teacher, so the file keeps them; the page says how many
+   * there are, so the school handles the file as protected.
+   */
+  async build(
+    academicYearId: string,
+    user: AuthenticatedUser,
+    now: Date = new Date(),
+  ): Promise<ScbFile & { protectedInFile: number }> {
     const schoolId = requireSchoolId(user);
     if (!readsHr(user)) {
       throw new ForbiddenException({
@@ -194,6 +205,9 @@ export class ScbFileService {
         absences,
       });
 
+      const marks = await markedIds(tx, schoolId);
+      const protectedInFile = named.filter((userId) => marks.has(userId)).length;
+
       await recordRead(tx, 'EMPLOYMENT', named, user.channel);
       await recordRead(tx, 'PEOPLE', named, user.channel);
       await recordRead(
@@ -202,7 +216,7 @@ export class ScbFileService {
         named.filter((userId) => longAbsenceOf(absences, userId, matdatum) !== undefined),
         user.channel,
       );
-      return file;
+      return { ...file, protectedInFile };
     });
   }
 }

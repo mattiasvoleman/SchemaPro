@@ -60,9 +60,11 @@
 --   * The run stays as minimal as before. The sync's change that sets or
 --     lifts a mark (entity PROTECTION, below) names its person only in its
 --     after, which the minimisation nulls; a finished run says how many
---     marks it set or lifted, never whose. The minimisation itself is not
---     touched: a change's before, after and protectedIdentity are nulled as
---     they were.
+--     marks it set or lifted, never whose. A CHECK holds it there
+--     (Ss12000SyncChanges_a_mark_names_its_person_in_after_alone): such a
+--     change has no externalId and no localId, the columns the minimisation
+--     keeps. The minimisation itself is not touched: a change's before,
+--     after and protectedIdentity are nulled as they were.
 --
 -- The alternative, asking the register when a file is written, was
 -- rejected: it reaches only the people the sync has linked, makes every
@@ -118,8 +120,12 @@
 -- The two keys take Users and Schools in SHARE ROW EXCLUSIVE, which blocks
 -- writes to them (not reads, and not the KEY SHARE a key check takes) for
 -- the length of the file; the new table is empty, so the keys validate
--- nothing. A request writes both in one transaction (a pupil's row and the
--- school's), so they are taken together, NOWAIT, in a loop: a refusal rolls
+-- nothing. The CHECK takes Ss12000SyncChanges in ACCESS EXCLUSIVE, and is
+-- added NOT VALID: no row before this file can be a PROTECTION change, so
+-- there is nothing to scan, and every row written or updated from now on is
+-- judged. A request writes Users and Schools in one transaction (a pupil's
+-- row and the school's), and an apply writes Users and then
+-- Ss12000SyncChanges, so the three are taken together, NOWAIT, in a loop: a refusal rolls
 -- the subtransaction back with whatever it got and tries again 50 ms later;
 -- it never waits while it holds a lock, and no request queues behind it.
 -- After 30 s it stops with nothing changed: prisma migrate resolve
@@ -137,10 +143,11 @@ BEGIN
     BEGIN
       LOCK TABLE "Schools" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
       LOCK TABLE "Users" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+      LOCK TABLE "Ss12000SyncChanges" IN ACCESS EXCLUSIVE MODE NOWAIT;
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Schools and Users were not free at once in 30 s: nothing is changed. Run: npx prisma migrate resolve --rolled-back 20270107090000_skolan_minns_att_en_person_har_skyddad_identitet, then deploy again';
+        RAISE EXCEPTION 'Schools, Users and Ss12000SyncChanges were not free at once in 30 s: nothing is changed. Run: npx prisma migrate resolve --rolled-back 20270107090000_skolan_minns_att_en_person_har_skyddad_identitet, then deploy again';
       END IF;
       PERFORM pg_sleep(0.05);
     END;
@@ -368,8 +375,14 @@ COMMENT ON FUNCTION app.gallring_pseudonymise(uuid, uuid[]) IS
   'Locks the rows of p_users in the run''s school, then pseudonymises those still due: name, e-mail, phone, SS12000 id and login replaced; their tjänster''s signature and note, and their rastvaktspass'' notes, cleared; their guardian links, push devices, notification opt-outs, all their own notices (whatever NOTIFICATIONS says) and their mark of a protected identity removed. Returns how many it pseudonymised.';
 
 -- ---------------------------------------------------------------------------
--- The sync's change that sets or lifts a mark. Not used in this file: a
--- value added to an enum may not be used in the transaction that adds it.
+-- The sync's change that sets or lifts a mark. A value added to an enum may
+-- not be used in the transaction that adds it, so the CHECK compares the
+-- value's text, which names no enum member.
 -- ---------------------------------------------------------------------------
 
 ALTER TYPE "Ss12000ChangeEntity" ADD VALUE 'PROTECTION';
+
+ALTER TABLE "Ss12000SyncChanges"
+    ADD CONSTRAINT "Ss12000SyncChanges_a_mark_names_its_person_in_after_alone"
+    CHECK ("entity"::text <> 'PROTECTION' OR ("op" IN ('ADD', 'END') AND "externalId" IS NULL AND "localId" IS NULL))
+    NOT VALID;

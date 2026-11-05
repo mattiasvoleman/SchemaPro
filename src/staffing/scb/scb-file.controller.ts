@@ -33,7 +33,7 @@ export class ScbFileController {
   file(
     @Query('academicYearId', new ParseUUIDPipe({ version: '4' })) academicYearId: string,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<ScbFile> {
+  ): Promise<ScbFile & { protectedInFile: number }> {
     return this.scb.build(academicYearId, user);
   }
 }

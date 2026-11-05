@@ -8,6 +8,7 @@ import { HUVUDMAN_NO_SCHOOL } from '../src/auth/huvudman.guard';
 import { READS_ONLY_KEY } from '../src/auth/huvudman-reader';
 import { ROLES_KEY } from '../src/auth/decorators/roles.decorator';
 import { createTestApp, type TestHarness } from './utils/test-app';
+import { FILE_ROUTE, PEOPLE_ROUTES, peopleRouteOf } from '../src/common/people-files';
 
 /**
  * Whole-graph guard invariants.
@@ -100,6 +101,24 @@ describe('Route guard coverage (e2e)', () => {
     expect(controllers.size).toBeGreaterThanOrEqual(20);
     expect(controllers).toContain('ImportController');
     expect(controllers).toContain('RoomTypesController');
+  });
+
+  // Skyddad identitet (20270107090000): a route that answers a file or a feed
+  // naming people is decided, by name, in src/common/people-files.ts: held
+  // out, kept and counted, or why it names no pupil. A new one fails here.
+  it('decides every route that hands out a file or a feed of people, for a protected identity', () => {
+    const files = routes.filter((route) => FILE_ROUTE.test(route.full));
+    expect(files.length).toBeGreaterThanOrEqual(10);
+    const undecided = files.filter((route) => peopleRouteOf(route.verb, route.full) === null);
+    expect(undecided.map((route) => `${route.verb} ${route.full} (${route.controller}.${route.method})`)).toEqual([]);
+    // And no decision outlives its route.
+    const gone = Object.keys(PEOPLE_ROUTES).filter((key) => {
+      const [verb, path] = key.split(' ');
+      return path!.endsWith('/*')
+        ? !files.some((route) => route.verb === verb && route.full.startsWith(path!.slice(0, -1)))
+        : !files.some((route) => `${route.verb} ${route.full}` === key);
+    });
+    expect(gone).toEqual([]);
   });
 
   it('gates every route behind @Roles unless it is explicitly @Public', () => {
