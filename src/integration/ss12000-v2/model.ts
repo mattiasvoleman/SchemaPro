@@ -12,6 +12,7 @@ import {
   type GroupRow,
   type LessonRow,
   type SchoolSlice,
+  type SecurityMarking,
   type UnitRow,
   type UserRow,
   type Version,
@@ -25,7 +26,13 @@ import type { Scope } from './scopes';
  * output against s1-provider.generated.ts); an optional property is written
  * only when SchemaPro holds a value for it.
  *
- * NEVER EMITTED: civicNo, birthDate, sex, securityMarking, personStatus,
+ * securityMarking (20270111090000): the register's kind of protection on the
+ * sync's mark, on a Person, and on a reference to a person only with the
+ * person's name (expandReferenceNames), which S1's Meta.modified leaves out;
+ * for a linked person alone (an address match may be another person); never
+ * for a mark by hand, never "Ingen", nothing once the mark is lifted.
+ *
+ * NEVER EMITTED: civicNo, birthDate, sex, personStatus,
  * addresses, phoneNumbers, photo, externalIdentifiers, middleName;
  * eduPersonPrincipalNames (A1.9: S1 defines it as "spårbar, persistent och
  * globalt unik", and an email that can change and be reused is none of
@@ -45,6 +52,7 @@ export interface Reach {
 export interface Ref {
   id: string;
   displayName?: string;
+  securityMarking?: SecurityMarking;
 }
 
 export interface Meta {
@@ -267,6 +275,7 @@ export class Model {
     years: { id: string; startDate: Date; endDate: Date; isActive: boolean; gradeNumbering?: GradeNumbering }[],
     readonly activeYearId: string | null,
     readonly types: Awaited<ReturnType<SchoolSlice['schoolTypes']>>,
+    private readonly markings: ReadonlyMap<string, SecurityMarking>,
   ) {
     this.usersById = new Map(users.map((user) => [user.id, user]));
     this.groupsById = new Map(groups.map((group) => [group.id, group]));
@@ -274,7 +283,7 @@ export class Model {
   }
 
   static async load(slice: SchoolSlice, reach: Reach): Promise<Model> {
-    const [school, identity, units, users, groups, years, employments, links, types] = await inTurn(
+    const [school, identity, units, users, groups, years, employments, links, types, markings] = await inTurn(
       () => slice.school(),
       () => slice.identity(),
       () => slice.units(),
@@ -284,6 +293,8 @@ export class Model {
       () => slice.employments(),
       () => slice.dutyLinks(),
       () => slice.schoolTypes(),
+      // Read only for a key that reads persons: no other learns who is protected.
+      () => (reach.scopes.has('persons.read') ? slice.securityMarkings() : Promise.resolve(new Map<string, SecurityMarking>())),
     );
     // Guardians are emitted, referenced and named only for a key with
     // responsibles.read; to every other key they do not exist.
@@ -299,7 +310,7 @@ export class Model {
       links,
     });
     const active = years.find((year) => year.isActive) ?? null;
-    return new Model(slice, reach, ids, school, visible, groups, years, active?.id ?? null, types);
+    return new Model(slice, reach, ids, school, visible, groups, years, active?.id ?? null, types, markings);
   }
 
   can(scope: Scope): boolean {
@@ -325,11 +336,21 @@ export class Model {
     return (academicYearId ? this.yearsById.get(academicYearId)?.gradeNumbering : undefined) ?? 'NIOARIG';
   }
 
+  /**
+   * S1's securityMarking for an emitted person: the register's kind on the
+   * sync's mark, for a key that reads persons; nothing otherwise.
+   */
+  securityMarking(userId: string): { securityMarking?: SecurityMarking } {
+    const marking = this.can('persons.read') ? this.markings.get(userId) : undefined;
+    return marking ? { securityMarking: marking } : {};
+  }
+
+  /** A reference to a person; its name and marking with expandReferenceNames, for a key that reads persons. */
   personRef(userId: string): Ref | null {
     const id = this.ids.person(userId);
     const user = this.usersById.get(userId);
     if (!id || !user) return null;
-    return this.reach.names && this.can('persons.read') ? { id, displayName: personName(user) } : { id };
+    return this.reach.names && this.can('persons.read') ? { id, displayName: personName(user), ...this.securityMarking(userId) } : { id };
   }
 
   groupRef(groupId: string): Ref | null {

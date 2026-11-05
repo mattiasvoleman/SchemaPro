@@ -84,6 +84,10 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   writes the pupils in the order of the roster it was sent, so it queues
  *   behind an apply but is not ordered against a write that holds pupils in
  *   id order.
+ *   Step 1 alone: PersonProtectionsService.set and remove. A mark's insert
+ *   or delete holds the person's row by its key and, for the sync's mark
+ *   with a kind, the person's SS12000 version row (20270111090000), which an
+ *   apply that links or marks the person holds from its own write.
  *   None: the term halves' split, which holds the year and one class and no
  *   Users row beyond the keys it references, so it waits on nothing an apply
  *   holds; and the apply, which takes step 1 exclusively (local-slice.ts).

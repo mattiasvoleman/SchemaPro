@@ -17,12 +17,15 @@ import { Button } from "@/components/ui/button";
  * which stands beside the register's until an administrator removes it; for
  * those who decide, removing the marks. A marked person is kept out of every
  * file of people Rastra writes (lib/people-files.ts), but not out of what the
- * systems the school connected read over SS12000: the text says so.
+ * systems the school connected read over SS12000, which get the register's
+ * marking with the person (20270111090000) and nothing for a mark by hand:
+ * the text says so.
  *
  * Read for the opened person alone (GET /api/v1/person-protections/:userId),
  * never with the page, and recorded in the läslogg as a read of that person
- * and of those its history names. Never which protection: the school does
- * not store it.
+ * and of those its history names. Never which protection: the register's
+ * kind is kept for the connected systems alone, and the API does not answer
+ * it here.
  */
 
 type Source = "SS12000" | "MANUAL";

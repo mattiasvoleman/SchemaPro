@@ -423,7 +423,62 @@ describe('applyChanges: the mark of a protected identity (20270107090000)', () =
     const outcome = await run([add, stray]);
     expect(outcome.applied).toEqual([add.id]);
     expect(outcome.skipped).toEqual([{ id: stray.id, code: 'SS12000_DEPENDENCY_NOT_APPLIED', entity: 'PROTECTION', externalId: null }]);
-    expect(marked()).toEqual([{ userId: loc(1), schoolId: SCHOOL, source: 'SS12000' }]);
+    expect(marked()).toEqual([{ userId: loc(1), schoolId: SCHOOL, source: 'SS12000', kind: null }]);
+  });
+
+  it('writes the register\'s kind with each mark the sync makes, from the person change or the ADD (20270111090000)', async () => {
+    tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }]);
+    const create = change({
+      entity: 'PERSON', op: 'CREATE', externalId: ext(5), protectedIdentity: true,
+      after: { role: 'STUDENT', firstName: 'S', lastName: 'P', email: 's5@skola.se', protectionKind: 'SKYDDAD_FOLKBOKFORING' },
+    });
+    const link = change({ entity: 'PERSON', op: 'LINK', externalId: ext(2), localId: loc(2), protectedIdentity: true, after: { ss12000Id: ext(2), protectionKind: 'SEKRETESSMARKERING' } });
+    const add = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(1), userLocalId: loc(1), kind: 'SKYDDAD_FOLKBOKFORING' } });
+    // A kind the diff never writes is no kind.
+    const odd = change({ entity: 'PERSON', op: 'RELINK', externalId: ext(3), localId: loc(3), protectedIdentity: true, after: { protectionKind: 'Ingen' } });
+    await run([create, link, add, odd]);
+    const created = (tx.user.createMany.mock.calls[0]![0].data as Array<{ id: string; ss12000Id: string }>).find((row) => row.ss12000Id === ext(5))!;
+    expect(Object.fromEntries(marked().map((row) => [row['userId'], row['kind']]))).toEqual({
+      [created.id]: 'SKYDDAD_FOLKBOKFORING', [loc(2)]: 'SEKRETESSMARKERING', [loc(1)]: 'SKYDDAD_FOLKBOKFORING', [loc(3)]: null,
+    });
+  });
+
+  it('gives the mark the register\'s kind when it links or relinks the person, also one set before on the address with none (review of #265, N3)', async () => {
+    const link = change({ entity: 'PERSON', op: 'LINK', externalId: ext(2), localId: loc(2), protectedIdentity: true, after: { ss12000Id: ext(2), protectionKind: 'SKYDDAD_FOLKBOKFORING' } });
+    const relink = change({ entity: 'PERSON', op: 'RELINK', externalId: ext(3), localId: loc(3), protectedIdentity: true, after: { protectionKind: 'SEKRETESSMARKERING' } });
+    // A link not made: its mark keeps no kind.
+    const notMade = change({ entity: 'PERSON', op: 'LINK', externalId: ext(4), localId: loc(4), protectedIdentity: true, after: { protectionKind: 'SKYDDAD_FOLKBOKFORING' } });
+    tx.user.updateMany.mockImplementation(async (args: { where: { id?: string } }) => ({ count: args.where.id === loc(4) ? 0 : 1 }));
+    await run([link, relink, notMade]);
+    expect(tx.personProtection.updateMany.mock.calls.map(([args]) => args)).toEqual(
+      expect.arrayContaining([
+        { where: { schoolId: SCHOOL, userId: { in: [loc(2)] }, source: 'SS12000' }, data: { kind: 'SKYDDAD_FOLKBOKFORING' } },
+        { where: { schoolId: SCHOOL, userId: { in: [loc(3)] }, source: 'SS12000' }, data: { kind: 'SEKRETESSMARKERING' } },
+      ]),
+    );
+    expect(JSON.stringify(tx.personProtection.updateMany.mock.calls)).not.toContain(loc(4));
+    // After the mark is written, so a mark the same apply makes gets it too.
+    expect(tx.personProtection.createMany.mock.invocationCallOrder[0]).toBeLessThan(tx.personProtection.updateMany.mock.invocationCallOrder[0]!);
+  });
+
+  it('PROTECTION UPDATE gives the sync\'s mark the register\'s kind, and skips a mark removed since the diff', async () => {
+    tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }, { id: loc(2), ss12000Id: ext(2) }]);
+    tx.personProtection.findMany.mockResolvedValue([{ userId: loc(1) }]);
+    const kept = change({ entity: 'PROTECTION', op: 'UPDATE', after: { personExternalId: ext(1), userLocalId: loc(1), kind: 'SKYDDAD_FOLKBOKFORING' } });
+    const gone = change({ entity: 'PROTECTION', op: 'UPDATE', after: { personExternalId: ext(2), userLocalId: loc(2), kind: 'SKYDDAD_FOLKBOKFORING' } });
+    const stray = change({ entity: 'PROTECTION', op: 'UPDATE', after: { personExternalId: ext(9), userLocalId: loc(1), kind: null } });
+    const outcome = await run([kept, gone, stray]);
+    expect(tx.personProtection.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.personProtection.updateMany).toHaveBeenCalledWith({
+      where: { schoolId: SCHOOL, userId: { in: [loc(1), loc(2)] }, source: 'SS12000' },
+      data: { kind: 'SKYDDAD_FOLKBOKFORING' },
+    });
+    expect(outcome.applied).toEqual([kept.id]);
+    expect(outcome.skipped.map((s) => [s.id, s.code])).toEqual([
+      [stray.id, 'SS12000_DEPENDENCY_NOT_APPLIED'],
+      [gone.id, 'SS12000_TARGET_CHANGED'],
+    ]);
+    expect(tx.personProtection.createMany).not.toHaveBeenCalled();
   });
 
   it('PROTECTION END lifts only a mark the sync wrote', async () => {
@@ -455,7 +510,7 @@ describe('applyChanges: the mark of a protected identity (20270107090000)', () =
       [moved.id, 'SS12000_DEPENDENCY_NOT_APPLIED'],
       [plain.id, 'SS12000_DEPENDENCY_NOT_APPLIED'],
     ]);
-    expect(marked()).toEqual([{ userId: loc(2), schoolId: SCHOOL, source: 'SS12000' }]);
+    expect(marked()).toEqual([{ userId: loc(2), schoolId: SCHOOL, source: 'SS12000', kind: null }]);
     expect(tx.user.findMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL, id: { in: [loc(2), loc(3), loc(5)] } }, select: { id: true, email: true } });
   });
 

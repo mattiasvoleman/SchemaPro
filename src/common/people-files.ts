@@ -87,8 +87,9 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
     rule: 'INTEGRATION',
     why:
       'The SS12000 providers (v1, v2.0) answer the systems the school connected with a key, under an agreement, for the pupils ' +
-      'they serve: a pupil left out would lose their lessons and attendance there. SS12000 carries the marking itself ' +
-      '(securityMarking), which needs the kind of protection, which Rastra does not store. Not filtered in this release.',
+      'they serve: a pupil left out would lose their lessons and attendance there. v2.0 passes the register\'s marking on ' +
+      '(securityMarking, 20270111090000) so the system can protect the person: the sync\'s kind on Person, and on a reference ' +
+      'with the name; nothing for a mark by hand. v1 has no field for it.',
   },
   'POST /ss12000/*': {
     rule: 'INTEGRATION',
