@@ -345,6 +345,21 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-schedule-exchange.ts
 
+      # Hela skolans data (K5, 20270110090000): two schools, each with people,
+      # lessons, attendance, absence, leave and notices, and an export ordered
+      # at one of them, built by the job as the ordering administrator, stored
+      # in pieces, fetched and read with the system's unzip: not one row or
+      # address of the other school in any file, a protected pupil and
+      # teacher in none, who may order, one order in hand, a fetch recorded in
+      # the läslogg before the first byte, a file that expires, a stale job
+      # taken over, and a registerutdrag of a pupil with a guardian, of a
+      # protected pupil and of a teacher. It removes both schools.
+      - name: Whole-school export probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-school-export.ts
+
       # Huvudman (20261212090000): every GET a school administrator reaches,
       # through the real gateway and this database, as the roller school's
       # own läsare and as the huvudman's reader with that school chosen. Each

@@ -1,0 +1,1965 @@
+{
+ "cases": [
+  {
+   "name": "serializeCsv: every awkward cell",
+   "builder": "serializeCsv",
+   "args": [
+    [
+     "a",
+     "b"
+    ],
+    [
+     [
+      "Andersson",
+      "Andersson"
+     ],
+     [
+      "=HYPERLINK(\"http://x\"&A1)",
+      "=HYPERLINK(\"http://x\"&A1)"
+     ],
+     [
+      "+46 70 123 45 67",
+      "+46 70 123 45 67"
+     ],
+     [
+      "-12,5",
+      "-12,5"
+     ],
+     [
+      "-5",
+      "-5"
+     ],
+     [
+      "@home",
+      "@home"
+     ],
+     [
+      "'=quoted",
+      "'=quoted"
+     ],
+     [
+      "''@x",
+      "''@x"
+     ],
+     [
+      "  =lead",
+      "  =lead"
+     ],
+     [
+      "\t=tab",
+      "\t=tab"
+     ],
+     [
+      "Idrott; hälsa",
+      "Idrott; hälsa"
+     ],
+     [
+      "säg \"hej\"",
+      "säg \"hej\""
+     ],
+     [
+      "två\r\nrader",
+      "två\r\nrader"
+     ],
+     [
+      "",
+      ""
+     ],
+     [
+      "åäö ÅÄÖ é ñ",
+      "åäö ÅÄÖ é ñ"
+     ]
+    ]
+   ],
+   "expected": "﻿a;b\r\nAndersson;Andersson\r\n\"'=HYPERLINK(\"\"http://x\"\"&A1)\";\"'=HYPERLINK(\"\"http://x\"\"&A1)\"\r\n'+46 70 123 45 67;'+46 70 123 45 67\r\n-12,5;-12,5\r\n-5;-5\r\n'@home;'@home\r\n''=quoted;''=quoted\r\n'''@x;'''@x\r\n'  =lead;'  =lead\r\n'\t=tab;'\t=tab\r\n\"Idrott; hälsa\";\"Idrott; hälsa\"\r\n\"säg \"\"hej\"\"\";\"säg \"\"hej\"\"\"\r\n\"två\r\nrader\";\"två\r\nrader\"\r\n;\r\nåäö ÅÄÖ é ñ;åäö ÅÄÖ é ñ\r\n"
+  },
+  {
+   "name": "serializeCsv: only a header",
+   "builder": "serializeCsv",
+   "args": [
+    [
+     "a",
+     "b"
+    ],
+    []
+   ],
+   "expected": "﻿a;b\r\n"
+  },
+  {
+   "name": "roomTypesToCsv",
+   "builder": "roomTypesToCsv",
+   "args": [
+    [
+     {
+      "id": "rt1",
+      "name": "Gymnastiksal"
+     },
+     {
+      "id": "rt2",
+      "name": "NO-sal; stor"
+     }
+    ]
+   ],
+   "expected": "﻿namn\r\nGymnastiksal\r\n\"NO-sal; stor\"\r\n"
+  },
+  {
+   "name": "roomTypesToCsv: none",
+   "builder": "roomTypesToCsv",
+   "args": [
+    []
+   ],
+   "expected": "﻿namn\r\n"
+  },
+  {
+   "name": "subjectsToCsv",
+   "builder": "subjectsToCsv",
+   "args": [
+    [
+     {
+      "id": "s1",
+      "name": "Matematik",
+      "code": "MA",
+      "color": "#aabbcc",
+      "requiredRoomTypeId": null,
+      "nationalCode": "GRGRMAT01",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s2",
+      "name": "Idrott; hälsa",
+      "code": null,
+      "color": null,
+      "requiredRoomTypeId": "rt1",
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s3",
+      "name": "Elevens val",
+      "code": "  ",
+      "color": null,
+      "requiredRoomTypeId": "rt2",
+      "nationalCode": null,
+      "countsTowardTimplan": false
+     },
+     {
+      "id": "s4",
+      "name": "=Formelämne",
+      "code": "+X",
+      "color": null,
+      "requiredRoomTypeId": null,
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     }
+    ],
+    {
+     "rt1": "Gymnastiksal",
+     "rt2": "NO-sal; stor"
+    }
+   ],
+   "expected": "﻿namn;kod;farg;salstyp;nationell_kod;undervisningstid\r\nMatematik;MA;#aabbcc;;GRGRMAT01;ja\r\n\"Idrott; hälsa\";;;Gymnastiksal;;ja\r\nElevens val;  ;;\"NO-sal; stor\";;nej\r\n'=Formelämne;'+X;;;;ja\r\n"
+  },
+  {
+   "name": "roomsToCsv",
+   "builder": "roomsToCsv",
+   "args": [
+    [
+     {
+      "name": "Sal 1",
+      "code": "S1",
+      "capacity": 30,
+      "roomTypeId": "rt1",
+      "minGradeLevel": 1,
+      "maxGradeLevel": 9,
+      "building": "A",
+      "floor": 1
+     },
+     {
+      "name": "Sal =2",
+      "code": null,
+      "capacity": null,
+      "roomTypeId": null,
+      "minGradeLevel": null,
+      "maxGradeLevel": null,
+      "building": null,
+      "floor": null
+     },
+     {
+      "name": "Sal; tre",
+      "code": "S3",
+      "capacity": 0,
+      "roomTypeId": "rt2",
+      "minGradeLevel": null,
+      "maxGradeLevel": 9
+     },
+     {
+      "name": "Okänd typ",
+      "code": "S4",
+      "capacity": 12,
+      "roomTypeId": "rtX",
+      "minGradeLevel": 1,
+      "maxGradeLevel": 3,
+      "building": "B",
+      "floor": -1
+     }
+    ],
+    [
+     {
+      "id": "rt1",
+      "name": "Gymnastiksal"
+     },
+     {
+      "id": "rt2",
+      "name": "NO-sal; stor"
+     }
+    ]
+   ],
+   "expected": "﻿namn;kod;salstyp;kapacitet;lagsta_arskurs;hogsta_arskurs;byggnad;vaning\r\nSal 1;S1;Gymnastiksal;30;1;9;A;1\r\nSal =2;;;;;;;\r\n\"Sal; tre\";S3;\"NO-sal; stor\";0;;9;;\r\n"
+  },
+  {
+   "name": "classesToCsv",
+   "builder": "classesToCsv",
+   "args": [
+    [
+     {
+      "id": "g1",
+      "name": "7A",
+      "kind": "CLASS",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g2",
+      "name": "7A halva 1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "g1",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g3",
+      "name": "Elevens val 8",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 8,
+      "halfOfId": null,
+      "replacesSubjectId": "s3"
+     },
+     {
+      "id": "g4",
+      "name": "Fk",
+      "kind": "CLASS",
+      "gradeLevel": 0,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g5",
+      "name": "Utan klass",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null,
+      "halfOfId": null,
+      "replacesSubjectId": "s1"
+     },
+     {
+      "id": "g6",
+      "name": "Föräldralös halva",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "gX",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g7",
+      "name": "Okänt ämne",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": "sX"
+     }
+    ],
+    [
+     {
+      "id": "s1",
+      "name": "Matematik",
+      "code": "MA",
+      "color": "#aabbcc",
+      "requiredRoomTypeId": null,
+      "nationalCode": "GRGRMAT01",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s2",
+      "name": "Idrott; hälsa",
+      "code": null,
+      "color": null,
+      "requiredRoomTypeId": "rt1",
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s3",
+      "name": "Elevens val",
+      "code": "  ",
+      "color": null,
+      "requiredRoomTypeId": "rt2",
+      "nationalCode": null,
+      "countsTowardTimplan": false
+     },
+     {
+      "id": "s4",
+      "name": "=Formelämne",
+      "code": "+X",
+      "color": null,
+      "requiredRoomTypeId": null,
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     }
+    ]
+   ],
+   "expected": "﻿namn;arskurs;typ;halvklass_av;ersatter_amne\r\n7A;7;klass;;\r\n7A halva 1;7;undervisningsgrupp;7A;\r\nElevens val 8;8;undervisningsgrupp;;Elevens val\r\nFk;0;klass;;\r\nUtan klass;;undervisningsgrupp;;MA\r\n"
+  },
+  {
+   "name": "teachersToCsv: with posts",
+   "builder": "teachersToCsv",
+   "args": [
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ],
+    {
+     "t1": {
+      "employmentPercent": 100,
+      "reductionPercent": 0,
+      "contractKind": "FERIE",
+      "signature": "KEK"
+     },
+     "t2": {
+      "employmentPercent": 66.667,
+      "reductionPercent": 12.5,
+      "contractKind": "SEMESTER",
+      "signature": null
+     },
+     "t4": {
+      "employmentPercent": null,
+      "reductionPercent": null,
+      "contractKind": "FERIE",
+      "signature": "ASA"
+     }
+    }
+   ],
+   "expected": "﻿fornamn;efternamn;epost;telefon;tjanst_procent;nedsattning_procent;avtal;signatur\r\nKarin;Ek;karin.ek@skola.se;070-123 45 67;100;;ferie;KEK\r\n'=Nils;Berg;nils@skola.se;;66,667;12,5;semester;\r\nÅsa;Öberg;asa@skola.se;-12,5;;;;\r\n"
+  },
+  {
+   "name": "teachersToCsv: without posts",
+   "builder": "teachersToCsv",
+   "args": [
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ],
+    null
+   ],
+   "expected": "﻿fornamn;efternamn;epost;telefon;tjanst_procent;nedsattning_procent;avtal;signatur\r\nKarin;Ek;karin.ek@skola.se;070-123 45 67;;;;\r\n'=Nils;Berg;nils@skola.se;;;;;\r\nÅsa;Öberg;asa@skola.se;-12,5;;;;\r\n"
+  },
+  {
+   "name": "teacherQualificationsToCsv",
+   "builder": "teacherQualificationsToCsv",
+   "args": [
+    [
+     {
+      "userId": "t1",
+      "subjectId": "s1",
+      "minGradeLevel": 4,
+      "maxGradeLevel": 9,
+      "kind": "BEHORIG"
+     },
+     {
+      "userId": "t1",
+      "subjectId": "s2",
+      "minGradeLevel": 1,
+      "maxGradeLevel": 6,
+      "kind": "LEGITIMATION"
+     },
+     {
+      "userId": "t2",
+      "subjectId": "s3",
+      "minGradeLevel": 7,
+      "maxGradeLevel": 9,
+      "kind": "TILLATEN"
+     },
+     {
+      "userId": "t3",
+      "subjectId": "s1",
+      "minGradeLevel": 4,
+      "maxGradeLevel": 9,
+      "kind": "BEHORIG"
+     },
+     {
+      "userId": "tX",
+      "subjectId": "s1",
+      "minGradeLevel": 4,
+      "maxGradeLevel": 9,
+      "kind": "BEHORIG"
+     },
+     {
+      "userId": "t1",
+      "subjectId": "sX",
+      "minGradeLevel": 4,
+      "maxGradeLevel": 9,
+      "kind": "BEHORIG"
+     }
+    ],
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ],
+    [
+     {
+      "id": "s1",
+      "name": "Matematik",
+      "code": "MA",
+      "color": "#aabbcc",
+      "requiredRoomTypeId": null,
+      "nationalCode": "GRGRMAT01",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s2",
+      "name": "Idrott; hälsa",
+      "code": null,
+      "color": null,
+      "requiredRoomTypeId": "rt1",
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s3",
+      "name": "Elevens val",
+      "code": "  ",
+      "color": null,
+      "requiredRoomTypeId": "rt2",
+      "nationalCode": null,
+      "countsTowardTimplan": false
+     },
+     {
+      "id": "s4",
+      "name": "=Formelämne",
+      "code": "+X",
+      "color": null,
+      "requiredRoomTypeId": null,
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     }
+    ]
+   ],
+   "expected": "﻿larare_epost;amne;fran_arskurs;till_arskurs;behorighet\r\nkarin.ek@skola.se;MA;4;9;behörig\r\nkarin.ek@skola.se;\"Idrott; hälsa\";1;6;legitimation\r\nnils@skola.se;Elevens val;7;9;tillåten\r\n"
+  },
+  {
+   "name": "studentsToCsv",
+   "builder": "studentsToCsv",
+   "args": [
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ],
+    {
+     "g1": "7A",
+     "g2": "7A halva 1",
+     "g3": "Elevens val 8",
+     "g4": "Fk",
+     "g5": "Utan klass",
+     "g6": "Föräldralös halva",
+     "g7": "Okänt ämne"
+    }
+   ],
+   "expected": "﻿fornamn;efternamn;epost;telefon;klass\r\nAlma;Sjö;alma@skola.se;;7A\r\nNoah;Sjö;noah@skola.se;+46701234567;\r\n"
+  },
+  {
+   "name": "membershipsToCsv",
+   "builder": "membershipsToCsv",
+   "args": [
+    [
+     {
+      "id": "g1",
+      "name": "7A",
+      "kind": "CLASS",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g2",
+      "name": "7A halva 1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "g1",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g3",
+      "name": "Elevens val 8",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 8,
+      "halfOfId": null,
+      "replacesSubjectId": "s3"
+     },
+     {
+      "id": "g4",
+      "name": "Fk",
+      "kind": "CLASS",
+      "gradeLevel": 0,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g5",
+      "name": "Utan klass",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null,
+      "halfOfId": null,
+      "replacesSubjectId": "s1"
+     },
+     {
+      "id": "g6",
+      "name": "Föräldralös halva",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "gX",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g7",
+      "name": "Okänt ämne",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": "sX"
+     }
+    ],
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ],
+    [
+     {
+      "studentGroupId": "g1",
+      "studentId": "p1"
+     },
+     {
+      "studentGroupId": "g2",
+      "studentId": "p1"
+     },
+     {
+      "studentGroupId": "g2",
+      "studentId": "p3"
+     },
+     {
+      "studentGroupId": "g3",
+      "studentId": "p2"
+     },
+     {
+      "studentGroupId": "gX",
+      "studentId": "p2"
+     },
+     {
+      "studentGroupId": "g1",
+      "studentId": "pX"
+     }
+    ]
+   ],
+   "expected": "﻿grupp;epost\r\n7A;alma@skola.se\r\n7A halva 1;alma@skola.se\r\nElevens val 8;noah@skola.se\r\n"
+  },
+  {
+   "name": "teacherDutiesToCsv",
+   "builder": "teacherDutiesToCsv",
+   "args": [
+    [
+     {
+      "userId": "t1",
+      "kind": "MENTORSKAP",
+      "label": "Mentor 7A",
+      "minutesPerWeek": 60,
+      "countsAsTeaching": false,
+      "subjectId": null,
+      "studentGroupId": "g1",
+      "validFrom": null,
+      "validTo": null,
+      "note": null
+     },
+     {
+      "userId": "t1",
+      "kind": "AMNESANSVAR",
+      "label": "Ämnesansvar; MA",
+      "minutesPerWeek": 60,
+      "countsAsTeaching": true,
+      "subjectId": "s1",
+      "studentGroupId": null,
+      "validFrom": "2026-08-17T00:00:00.000Z",
+      "validTo": "2027-06-11",
+      "note": "Hela året"
+     },
+     {
+      "userId": "t2",
+      "kind": "APT_KONFERENS",
+      "label": "=Apt",
+      "minutesPerWeek": 60,
+      "countsAsTeaching": false,
+      "subjectId": null,
+      "studentGroupId": null,
+      "validFrom": null,
+      "validTo": null,
+      "note": null
+     },
+     {
+      "userId": "t3",
+      "kind": "MENTORSKAP",
+      "label": "Mentor 7A",
+      "minutesPerWeek": 60,
+      "countsAsTeaching": false,
+      "subjectId": null,
+      "studentGroupId": "g1",
+      "validFrom": null,
+      "validTo": null,
+      "note": null
+     },
+     {
+      "userId": "tX",
+      "kind": "MENTORSKAP",
+      "label": "Mentor 7A",
+      "minutesPerWeek": 60,
+      "countsAsTeaching": false,
+      "subjectId": null,
+      "studentGroupId": "g1",
+      "validFrom": null,
+      "validTo": null,
+      "note": null
+     },
+     {
+      "userId": "t1",
+      "kind": "MENTORSKAP",
+      "label": "Mentor 7A",
+      "minutesPerWeek": 60,
+      "countsAsTeaching": false,
+      "subjectId": "sX",
+      "studentGroupId": "g1",
+      "validFrom": null,
+      "validTo": null,
+      "note": null
+     },
+     {
+      "userId": "t1",
+      "kind": "MENTORSKAP",
+      "label": "Mentor 7A",
+      "minutesPerWeek": 60,
+      "countsAsTeaching": false,
+      "subjectId": null,
+      "studentGroupId": "gX",
+      "validFrom": null,
+      "validTo": null,
+      "note": null
+     }
+    ],
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ],
+    [
+     {
+      "id": "s1",
+      "name": "Matematik",
+      "code": "MA",
+      "color": "#aabbcc",
+      "requiredRoomTypeId": null,
+      "nationalCode": "GRGRMAT01",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s2",
+      "name": "Idrott; hälsa",
+      "code": null,
+      "color": null,
+      "requiredRoomTypeId": "rt1",
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s3",
+      "name": "Elevens val",
+      "code": "  ",
+      "color": null,
+      "requiredRoomTypeId": "rt2",
+      "nationalCode": null,
+      "countsTowardTimplan": false
+     },
+     {
+      "id": "s4",
+      "name": "=Formelämne",
+      "code": "+X",
+      "color": null,
+      "requiredRoomTypeId": null,
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     }
+    ],
+    [
+     {
+      "id": "g1",
+      "name": "7A",
+      "kind": "CLASS",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g2",
+      "name": "7A halva 1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "g1",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g3",
+      "name": "Elevens val 8",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 8,
+      "halfOfId": null,
+      "replacesSubjectId": "s3"
+     },
+     {
+      "id": "g4",
+      "name": "Fk",
+      "kind": "CLASS",
+      "gradeLevel": 0,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g5",
+      "name": "Utan klass",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null,
+      "halfOfId": null,
+      "replacesSubjectId": "s1"
+     },
+     {
+      "id": "g6",
+      "name": "Föräldralös halva",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "gX",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g7",
+      "name": "Okänt ämne",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": "sX"
+     }
+    ]
+   ],
+   "expected": "﻿larare_epost;typ;benamning;minuter_per_vecka;raknas_som_undervisning;amne;grupp;fran;till;anteckning\r\nkarin.ek@skola.se;mentorskap;Mentor 7A;60;nej;;7A;;;\r\nkarin.ek@skola.se;ämnesansvar;\"Ämnesansvar; MA\";60;ja;MA;;2026-08-17;2027-06-11;Hela året\r\nnils@skola.se;apt/konferens;'=Apt;60;nej;;;;;\r\n"
+  },
+  {
+   "name": "requirementsToCsv",
+   "builder": "requirementsToCsv",
+   "args": [
+    [
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s1",
+      "teacherId": "t1",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s2",
+      "teacherId": "t2",
+      "coTeacherId": "t1",
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 5,
+      "minutesAfter": 10,
+      "teacherLoadPercent": 50,
+      "coTeacherLoadPercent": 150,
+      "recurrence": "ODD_WEEKS",
+      "startDate": "2026-08-17",
+      "endDate": "2026-12-18"
+     },
+     {
+      "studentGroupId": "g2",
+      "subjectId": "s1",
+      "teacherId": null,
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "EVEN_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s1",
+      "teacherId": "t3",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s1",
+      "teacherId": "tX",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "gX",
+      "subjectId": "s1",
+      "teacherId": "t1",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "sX",
+      "teacherId": "t1",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     }
+    ],
+    [
+     {
+      "id": "g1",
+      "name": "7A",
+      "kind": "CLASS",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g2",
+      "name": "7A halva 1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "g1",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g3",
+      "name": "Elevens val 8",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 8,
+      "halfOfId": null,
+      "replacesSubjectId": "s3"
+     },
+     {
+      "id": "g4",
+      "name": "Fk",
+      "kind": "CLASS",
+      "gradeLevel": 0,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g5",
+      "name": "Utan klass",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null,
+      "halfOfId": null,
+      "replacesSubjectId": "s1"
+     },
+     {
+      "id": "g6",
+      "name": "Föräldralös halva",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "gX",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g7",
+      "name": "Okänt ämne",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": "sX"
+     }
+    ],
+    [
+     {
+      "id": "s1",
+      "name": "Matematik",
+      "code": "MA",
+      "color": "#aabbcc",
+      "requiredRoomTypeId": null,
+      "nationalCode": "GRGRMAT01",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s2",
+      "name": "Idrott; hälsa",
+      "code": null,
+      "color": null,
+      "requiredRoomTypeId": "rt1",
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s3",
+      "name": "Elevens val",
+      "code": "  ",
+      "color": null,
+      "requiredRoomTypeId": "rt2",
+      "nationalCode": null,
+      "countsTowardTimplan": false
+     },
+     {
+      "id": "s4",
+      "name": "=Formelämne",
+      "code": "+X",
+      "color": null,
+      "requiredRoomTypeId": null,
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     }
+    ],
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ]
+   ],
+   "expected": "﻿grupp;amne;lektioner_per_vecka;minuter_per_lektion;minuter_fore;minuter_efter;larare;medlarare;veckor;fran;till;larare_procent;medlarare_procent\r\n7A;MA;3;60;0;0;karin.ek@skola.se;;alla;;;100;100\r\n7A;\"Idrott; hälsa\";3;60;5;10;nils@skola.se;karin.ek@skola.se;udda;2026-08-17;2026-12-18;50;150\r\n7A halva 1;MA;3;60;0;0;;;jamna;;;100;100\r\n"
+  },
+  {
+   "name": "requirementsToCsv: a split post adds the column",
+   "builder": "requirementsToCsv",
+   "args": [
+    [
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s1",
+      "teacherId": "t1",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s2",
+      "teacherId": "t2",
+      "coTeacherId": "t1",
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 5,
+      "minutesAfter": 10,
+      "teacherLoadPercent": 50,
+      "coTeacherLoadPercent": 150,
+      "recurrence": "ODD_WEEKS",
+      "startDate": "2026-08-17",
+      "endDate": "2026-12-18"
+     },
+     {
+      "studentGroupId": "g2",
+      "subjectId": "s1",
+      "teacherId": null,
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "EVEN_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s1",
+      "teacherId": "t3",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s1",
+      "teacherId": "tX",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "gX",
+      "subjectId": "s1",
+      "teacherId": "t1",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "sX",
+      "teacherId": "t1",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s1",
+      "teacherId": "t1",
+      "coTeacherId": null,
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 80,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null,
+      "lessonLengths": [
+       80,
+       40
+      ]
+     },
+     {
+      "studentGroupId": "g1",
+      "subjectId": "s2",
+      "teacherId": "t1",
+      "coTeacherId": null,
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "minutesBefore": 0,
+      "minutesAfter": 0,
+      "teacherLoadPercent": 100,
+      "coTeacherLoadPercent": 100,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null,
+      "lessonLengths": [
+       60,
+       60,
+       30
+      ]
+     }
+    ],
+    [
+     {
+      "id": "g1",
+      "name": "7A",
+      "kind": "CLASS",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g2",
+      "name": "7A halva 1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "g1",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g3",
+      "name": "Elevens val 8",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 8,
+      "halfOfId": null,
+      "replacesSubjectId": "s3"
+     },
+     {
+      "id": "g4",
+      "name": "Fk",
+      "kind": "CLASS",
+      "gradeLevel": 0,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g5",
+      "name": "Utan klass",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null,
+      "halfOfId": null,
+      "replacesSubjectId": "s1"
+     },
+     {
+      "id": "g6",
+      "name": "Föräldralös halva",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "gX",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g7",
+      "name": "Okänt ämne",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": "sX"
+     }
+    ],
+    [
+     {
+      "id": "s1",
+      "name": "Matematik",
+      "code": "MA",
+      "color": "#aabbcc",
+      "requiredRoomTypeId": null,
+      "nationalCode": "GRGRMAT01",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s2",
+      "name": "Idrott; hälsa",
+      "code": null,
+      "color": null,
+      "requiredRoomTypeId": "rt1",
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s3",
+      "name": "Elevens val",
+      "code": "  ",
+      "color": null,
+      "requiredRoomTypeId": "rt2",
+      "nationalCode": null,
+      "countsTowardTimplan": false
+     },
+     {
+      "id": "s4",
+      "name": "=Formelämne",
+      "code": "+X",
+      "color": null,
+      "requiredRoomTypeId": null,
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     }
+    ],
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ]
+   ],
+   "expected": "﻿grupp;amne;lektioner_per_vecka;minuter_per_lektion;minuter_fore;minuter_efter;larare;medlarare;veckor;fran;till;larare_procent;medlarare_procent;lektionslangder\r\n7A;MA;3;60;0;0;karin.ek@skola.se;;alla;;;100;100;\r\n7A;\"Idrott; hälsa\";3;60;5;10;nils@skola.se;karin.ek@skola.se;udda;2026-08-17;2026-12-18;50;150;\r\n7A halva 1;MA;3;60;0;0;;;jamna;;;100;100;\r\n7A;MA;2;80;0;0;karin.ek@skola.se;;alla;;;100;100;1x80+1x40\r\n7A;\"Idrott; hälsa\";3;60;0;0;karin.ek@skola.se;;alla;;;100;100;2x60+1x30\r\n"
+  },
+  {
+   "name": "guardiansToCsv",
+   "builder": "guardiansToCsv",
+   "args": [
+    [
+     {
+      "firstName": "Gun",
+      "lastName": "Berg",
+      "email": "gun@skola.se",
+      "phone": "070-123 45 67",
+      "studentEmail": "alma@skola.se"
+     },
+     {
+      "firstName": "Gun",
+      "lastName": "Berg",
+      "email": "gun@skola.se",
+      "phone": null,
+      "studentEmail": "noah@skola.se"
+     },
+     {
+      "firstName": "=Pär",
+      "lastName": "Sjö",
+      "email": "par@skola.se",
+      "phone": "-12,5",
+      "studentEmail": "noah@skola.se"
+     }
+    ]
+   ],
+   "expected": "﻿fornamn;efternamn;epost;telefon;elev_epost\r\nGun;Berg;gun@skola.se;070-123 45 67;alma@skola.se\r\nGun;Berg;gun@skola.se;;noah@skola.se\r\n'=Pär;Sjö;par@skola.se;-12,5;noah@skola.se\r\n"
+  },
+  {
+   "name": "timplanToCsv",
+   "builder": "timplanToCsv",
+   "args": [
+    [
+     {
+      "subjectId": "s2",
+      "gradeLevel": 0,
+      "minutesPerWeek": 60,
+      "note": null
+     },
+     {
+      "subjectId": "s1",
+      "gradeLevel": 3,
+      "minutesPerWeek": 235,
+      "note": "Skolans val; extra"
+     },
+     {
+      "subjectId": "s1",
+      "gradeLevel": 1,
+      "minutesPerWeek": 236,
+      "note": null
+     },
+     {
+      "subjectId": "s3",
+      "gradeLevel": 8,
+      "minutesPerWeek": 40,
+      "note": "=Notering"
+     },
+     {
+      "subjectId": "sX",
+      "gradeLevel": 8,
+      "minutesPerWeek": 40,
+      "note": null
+     }
+    ],
+    [
+     {
+      "id": "s1",
+      "name": "Matematik",
+      "code": "MA",
+      "color": "#aabbcc",
+      "requiredRoomTypeId": null,
+      "nationalCode": "GRGRMAT01",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s2",
+      "name": "Idrott; hälsa",
+      "code": null,
+      "color": null,
+      "requiredRoomTypeId": "rt1",
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "s3",
+      "name": "Elevens val",
+      "code": "  ",
+      "color": null,
+      "requiredRoomTypeId": "rt2",
+      "nationalCode": null,
+      "countsTowardTimplan": false
+     },
+     {
+      "id": "s4",
+      "name": "=Formelämne",
+      "code": "+X",
+      "color": null,
+      "requiredRoomTypeId": null,
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     }
+    ]
+   ],
+   "expected": "﻿amne;arskurs;minuter_per_vecka;notering\r\nMA;1;236;\r\nMA;3;235;\"Skolans val; extra\"\r\n\"Idrott; hälsa\";F;60;\r\nElevens val;8;40;'=Notering\r\n"
+  }
+ ]
+}

@@ -1,0 +1,523 @@
+/**
+ * Hela skolans data against a real database, as the API role under RLS,
+ * through the real services (round 9, K5).
+ *
+ *   DATABASE_URL='postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4' \
+ *   PROBE_OWNER_URL='postgresql://postgres:postgres_local@localhost:5432/schemapro' \
+ *   npx ts-node --transpile-only scripts/test/probe-school-export.ts
+ *
+ * The jest specs cover the rules with the database faked; this is what they
+ * cannot see: row security on every read the build makes, the unique key that
+ * allows one order in hand, the job's lease, the pieces stored and read back,
+ * the läslogg row a fetch writes, and a zip the system's unzip accepts.
+ *
+ * TWO SCHOOLS. A and B are built here, each with its own people, groups,
+ * lessons, attendance, absence, leave and notices, and B has the same e-mail
+ * address as one of A's. An export ordered at A is built, fetched and read:
+ *
+ *   (k-a)  it holds A's rows and not one of B's: every id and every address
+ *          of B is searched for in every file of the archive, and every row
+ *          of every table of B is counted against A's file;
+ *   (k-b)  the archive is a zip the system's unzip accepts, the manifest's
+ *          SHA-256 of each file is the file's, and the stored pieces are the
+ *          file the row says;
+ *   (k-c)  a marked person (skyddad identitet) is in no file, nor any row
+ *          about them, and a protected recorder is a blank cell, counted;
+ *   (k-d)  who may order: rektor and a full administrator; a schemaläggare,
+ *          the expedition and a läsare are refused by the gateway, and their
+ *          own insert is refused by the row-level security;
+ *   (k-e)  one order in hand per school, and no fourth in a day;
+ *   (k-f)  the fetch is recorded in the läslogg before the first byte, per
+ *          kind, and is time-limited: past its expiry the pieces cannot be
+ *          read, the job deletes them, and the order says EXPIRED;
+ *   (k-g)  an order whose person has been demoted since is FAILED, and an
+ *          export withdrawn while it runs stops writing;
+ *   (k-h)  a RUNNING export whose heartbeat is stale is taken over and
+ *          built again from nothing;
+ *   (k-i)  a registerutdrag of a pupil with their guardian is the same files for two persons: the
+ *          pupil's rows and the guardian's and no other pupil's, none of B's, a protected related
+ *          person held out and counted, a protected person's own extract with no one else, a
+ *          teacher's with the post and the lessons, and each recorded in the läslogg;
+ *   (k-j)  who may ask for one: the same two profiles, and not across schools.
+ *
+ * Cleans up after itself: the two schools (everything in them goes with them).
+ * The läslogg rows a fetch leaves are append-only and go with their school.
+ */
+import { strict as assert } from 'node:assert';
+import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PrismaClient } from '@prisma/client';
+import { Role } from '../../src/auth/enums/role.enum';
+import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
+import { createPgAdapter } from '../../src/database/pool-config';
+import { PrismaService } from '../../src/database/prisma.service';
+import { FamilyReadsService } from '../../src/family/family-reads.service';
+import type { NotificationsService } from '../../src/notifications/notifications.service';
+import type { RealtimeService } from '../../src/realtime/realtime.service';
+import { ScheduleExchangeService } from '../../src/schedule-exchange/exchange.service';
+import { SchoolExportJob } from '../../src/school-export/school-export.job';
+import { SubjectAccessService } from '../../src/school-export/subject-access.service';
+import { WITHOUT_SCHOOL_COLUMN, tableFiles } from '../../src/school-export/person-tables';
+import { MAX_ORDERS_PER_DAY, SchoolExportService } from '../../src/school-export/school-export.service';
+
+type Owner = PrismaClient;
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Set ${name}.`);
+  return value;
+}
+
+let failures = 0;
+async function check(label: string, body: () => Promise<void>): Promise<void> {
+  try {
+    await body();
+    console.log(`ok   ${label}`);
+  } catch (error) {
+    failures += 1;
+    console.error(`FAIL ${label}\n     ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+  }
+}
+
+const time = (date: string, hhmm: string) => new Date(`${date}T${hhmm}:00.000Z`);
+
+interface Built {
+  schoolId: string;
+  slug: string;
+  yearId: string;
+  admins: Record<'FULL' | 'REKTOR' | 'SCHEMALAGGARE' | 'EXPEDITION' | 'LASARE', AuthenticatedUser>;
+  teacher: string;
+  students: Array<{ id: string; email: string }>;
+  guardians: Array<{ id: string; email: string }>;
+  /** Every id and address a file of the other school must never contain. */
+  tokens: string[];
+  counts: { attendance: number; absences: number; leaves: number; notices: number };
+}
+
+const PROFILES = ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION', 'LASARE'] as const;
+
+/** A school with a class, people, lessons a fortnight back and the rows the export holds. */
+async function makeSchool(owner: Owner, label: 'A' | 'B', tag: string, students: number): Promise<Built> {
+  const slug = `k5-${label.toLowerCase()}-${tag}`;
+  const school = await owner.school.create({ data: { name: `Probeskola ${label} ${tag}`, slug, timezone: 'Europe/Stockholm' } });
+  const year = await owner.academicYear.create({
+    data: { schoolId: school.id, name: `2026/27-${label}`, startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11'), gradeNumbering: 'NIOARIG', isActive: true },
+  });
+  const email = (name: string) => `${name}@${slug}.example.com`;
+  const person = (name: string, role: 'SCHOOL_ADMIN' | 'TEACHER' | 'STUDENT' | 'GUARDIAN', extra: Record<string, unknown> = {}) =>
+    owner.user.create({
+      data: { schoolId: school.id, authId: randomUUID(), role, firstName: name, lastName: `Efternamn${label}`, email: email(name.toLowerCase()), ...extra },
+    });
+
+  const admins = {} as Built['admins'];
+  const tokens: string[] = [slug];
+  for (const profile of PROFILES) {
+    const row = await person(`Admin${profile}`, 'SCHOOL_ADMIN', { adminProfile: profile, hrRead: profile === 'FULL' || profile === 'REKTOR' });
+    admins[profile] = { authId: row.authId, role: Role.SCHOOL_ADMIN, userId: row.id, schoolId: school.id, adminProfile: profile, hrRead: row.hrRead, channel: 'OTHER' };
+    tokens.push(row.id, row.email);
+  }
+  const roomType = await owner.roomType.create({ data: { schoolId: school.id, name: `Klassrum ${label}` } });
+  const subject = await owner.subject.create({ data: { schoolId: school.id, name: `Matematik ${label}`, code: `MA${label}`, requiredRoomTypeId: roomType.id } });
+  const group = await owner.studentGroup.create({
+    data: { schoolId: school.id, academicYearId: year.id, name: `7${label}`, kind: 'CLASS', gradeLevel: 7 },
+  });
+  const teacher = await person('Lärare', 'TEACHER');
+  await owner.teacherEmployment.create({
+    data: { schoolId: school.id, userId: teacher.id, academicYearId: year.id, employmentPercent: 100, reductionPercent: 0, contractKind: 'FERIE', signature: `LA${label}` },
+  });
+  tokens.push(teacher.id, teacher.email);
+
+  const kids: Built['students'] = [];
+  const guardians: Built['guardians'] = [];
+  for (let i = 1; i <= students; i += 1) {
+    // School B's first pupil has the SAME address as school A's: the address key is per school.
+    const row = await person(`Elev${i}`, 'STUDENT', { studentGroupId: group.id });
+    const guardian = await person(`Vardnadshavare${i}`, 'GUARDIAN');
+    await owner.guardianStudent.create({ data: { schoolId: school.id, guardianId: guardian.id, studentId: row.id } });
+    kids.push({ id: row.id, email: row.email });
+    guardians.push({ id: guardian.id, email: guardian.email });
+    tokens.push(row.id, guardian.id);
+  }
+  await owner.studentGroupMember.createMany({ data: kids.map((kid) => ({ schoolId: school.id, studentGroupId: group.id, studentId: kid.id })) });
+  await owner.teachingRequirement.create({
+    data: { schoolId: school.id, academicYearId: year.id, studentGroupId: group.id, subjectId: subject.id, teacherId: teacher.id, lessonsPerWeek: 2, minutesPerLesson: 60 },
+  });
+
+  let attendance = 0;
+  const days = ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'];
+  const statuses = ['PRESENT', 'ABSENT', 'LATE', 'EXCUSED'] as const;
+  for (const day of days) {
+    const lesson = await owner.calendarLesson.create({
+      data: { schoolId: school.id, subjectId: subject.id, studentGroupId: group.id, date: new Date(day), startsAt: time(day, '07:00'), endsAt: time(day, '08:00') },
+    });
+    tokens.push(lesson.id);
+    await owner.attendanceRecord.createMany({
+      data: kids.map((kid, index) => ({
+        schoolId: school.id, calendarLessonId: lesson.id, studentId: kid.id, status: statuses[(index + days.indexOf(day)) % 4]!,
+        recordedById: teacher.id, recordedAt: time(day, '07:05'), note: index === 0 ? `Anteckning ${label}` : null,
+      })),
+    });
+    attendance += kids.length;
+  }
+  for (const [index, kid] of kids.entries()) {
+    await owner.absenceReport.create({
+      data: { schoolId: school.id, studentId: kid.id, reportedById: guardians[index]!.id, date: new Date('2026-10-05'), type: 'SICK', note: `Sjuk ${label}${index}` },
+    });
+  }
+  await owner.leaveRequest.create({
+    data: {
+      schoolId: school.id, studentId: kids[0]!.id, requestedById: guardians[0]!.id, startDate: new Date('2026-11-02'), endDate: new Date('2026-11-03'),
+      reason: `Släktbesök ${label}`, status: 'APPROVED', decidedById: admins.FULL.userId!, decidedAt: time('2026-10-20', '09:00'), decidedAs: 'ADMIN',
+    },
+  });
+  for (const guardian of guardians) {
+    await owner.notification.create({ data: { schoolId: school.id, userId: guardian.id, type: 'LEAVE_DECIDED', meta: { note: `Notis ${label}` } } });
+  }
+  return {
+    schoolId: school.id, slug, yearId: year.id, admins, teacher: teacher.id, students: kids, guardians,
+    tokens: [...tokens, ...kids.map((kid) => kid.email), ...guardians.map((g) => g.email)],
+    counts: { attendance, absences: kids.length, leaves: 1, notices: guardians.length },
+  };
+}
+
+/** Reads every file of a zip into memory with the system's unzip (which checks every CRC). */
+function unzip(bytes: Buffer): { dir: string; files: Map<string, Buffer> } {
+  const dir = mkdtempSync(join(tmpdir(), 'k5-probe-'));
+  writeFileSync(join(dir, 'x.zip'), bytes);
+  const test = execFileSync('unzip', ['-t', join(dir, 'x.zip')], { encoding: 'utf8' });
+  assert.match(test, /No errors detected/, 'the system unzip accepts the archive');
+  execFileSync('unzip', ['-o', '-q', join(dir, 'x.zip'), '-d', join(dir, 'out')]);
+  const files = new Map<string, Buffer>();
+  const walk = (base: string, prefix: string) => {
+    for (const name of readdirSync(base)) {
+      const path = join(base, name);
+      if (statSync(path).isDirectory()) walk(path, `${prefix}${name}/`);
+      else files.set(`${prefix}${name}`, readFileSync(path));
+    }
+  };
+  walk(join(dir, 'out'), '');
+  return { dir, files };
+}
+
+async function fetchFile(service: SchoolExportService, id: string, user: AuthenticatedUser): Promise<Buffer> {
+  const opened = await service.openFile(id, user);
+  const parts: Buffer[] = [];
+  for await (const piece of opened.pieces()) parts.push(piece);
+  const bytes = Buffer.concat(parts);
+  assert.equal(bytes.length, opened.byteSize, 'the pieces add up to the length the row says');
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), opened.sha256, "the SHA-256 is the file's");
+  return bytes;
+}
+
+async function runJobUntilIdle(job: SchoolExportJob): Promise<void> {
+  for (let pass = 0; pass < 4; pass += 1) await job.tick();
+}
+
+const csvLines = (buffer: Buffer | undefined): string[] =>
+  (buffer?.toString('utf8') ?? '').replace(/^﻿/, '').split('\r\n').filter((line) => line !== '');
+
+async function main(): Promise<void> {
+  const owner = new PrismaClient({ adapter: createPgAdapter(requiredEnv('PROBE_OWNER_URL')) });
+  const previous = process.env['DATABASE_URL'];
+  const api = new PrismaService();
+  process.env['DATABASE_URL'] = previous;
+  const realtime = { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService;
+  const masterLessons = new MasterLessonsService(api, realtime, {} as NotificationsService);
+  const exchange = new ScheduleExchangeService(api, realtime, masterLessons);
+  const family = new FamilyReadsService(api);
+  const service = new SchoolExportService(api);
+  const job = new SchoolExportJob(api, family, exchange);
+  const access = new SubjectAccessService(api);
+
+  const tag = randomUUID().slice(0, 8);
+  const cleanup: Array<() => Promise<void>> = [];
+  try {
+    const a = await makeSchool(owner, 'A', tag, 6);
+    const b = await makeSchool(owner, 'B', tag, 4);
+    cleanup.push(async () => void (await owner.school.deleteMany({ where: { id: { in: [a.schoolId, b.schoolId] } } })));
+    // The same address in both schools: the key is per school. B's person is not A's, so A's file holds the address
+    // for A's person only, and B's id for it is searched for like any other of B's tokens.
+    await owner.user.update({ where: { id: b.students[0]!.id }, data: { email: a.students[0]!.email } });
+
+    // A's pupil 2 has a protected identity; its recorder is a protected teacher in an extra lesson.
+    const protectedPupil = a.students[1]!;
+    await owner.personProtection.create({ data: { userId: protectedPupil.id, schoolId: a.schoolId, source: 'MANUAL' } });
+    const protectedTeacher = await owner.user.create({
+      data: { schoolId: a.schoolId, authId: randomUUID(), role: 'TEACHER', firstName: 'Skyddad', lastName: 'Lärare', email: `skyddad@${a.slug}.example.com` },
+    });
+    await owner.personProtection.create({ data: { userId: protectedTeacher.id, schoolId: a.schoolId, source: 'MANUAL' } });
+    const someAttendance = await owner.attendanceRecord.findFirstOrThrow({ where: { schoolId: a.schoolId, studentId: a.students[2]!.id } });
+    await owner.attendanceRecord.update({ where: { id: someAttendance.id }, data: { recordedById: protectedTeacher.id } });
+
+    let first!: { id: string; bytes: Buffer; files: Map<string, Buffer> };
+
+    await check('(k-a) an order by a full administrator is built into a file of A and not one row of B', async () => {
+      const order = await service.order(a.admins.FULL);
+      assert.equal(order.status, 'QUEUED');
+      await runJobUntilIdle(job);
+      const [row] = (await service.list(a.admins.FULL)).filter((o) => o.id === order.id);
+      assert.equal(row!.status, 'READY', `the export is READY (was ${row!.status} ${row!.errorClass ?? ''})`);
+      assert.equal(row!.fetchable, true);
+      const bytes = await fetchFile(service, order.id, a.admins.FULL);
+      const { dir, files } = unzip(bytes);
+      cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
+      first = { id: order.id, bytes, files };
+      if (process.env['PROBE_KEEP_ZIP']) writeFileSync(process.env['PROBE_KEEP_ZIP'], bytes);
+      for (const [name, content] of files) {
+        const text = content.toString('utf8');
+        for (const token of b.tokens) assert.ok(!text.includes(token), `${name} holds B's ${token}`);
+      }
+      // A's rows, all of them, as the tables hold them.
+      assert.equal(csvLines(files.get('data/narvaro.csv')).length - 1, a.counts.attendance - 5 /* the protected pupil's five */);
+      assert.equal(csvLines(files.get('data/franvaroanmalningar.csv')).length - 1, a.counts.absences - 1);
+      assert.equal(csvLines(files.get('data/ledigheter.csv')).length - 1, 1);
+      assert.equal(csvLines(files.get('data/notiser.csv')).length - 1, a.counts.notices);
+      for (const name of ['csv/amnen.csv', 'csv/elever.csv', 'csv/larare.csv', 'csv/klasser.csv', 'csv/salstyper.csv', 'csv/timplansposter.csv', 'README.txt', 'FORMAT.md', 'manifest.json']) {
+        assert.ok(files.has(name), `the archive holds ${name}`);
+      }
+    });
+
+    await check("(k-b) the manifest's SHA-256 is each file's, and the export's row says what the archive holds", async () => {
+      const manifest = JSON.parse(first.files.get('manifest.json')!.toString('utf8')) as { files: Array<{ path: string; sha256: string; byte: number }> };
+      for (const entry of manifest.files) {
+        const content = first.files.get(entry.path);
+        assert.ok(content, `${entry.path} is in the archive`);
+        assert.equal(createHash('sha256').update(content).digest('hex'), entry.sha256, `${entry.path}'s SHA-256`);
+        assert.equal(content.length, entry.byte, `${entry.path}'s length`);
+      }
+      const row = await owner.schoolExport.findUniqueOrThrow({ where: { id: first.id } });
+      assert.equal(Number(row.byteSize), first.bytes.length);
+      assert.equal(await owner.schoolExportChunk.count({ where: { exportId: first.id } }), row.chunkCount);
+    });
+
+    await check('(k-c) a marked person is in no file, and a protected recorder is a counted blank', async () => {
+      for (const [name, content] of first.files) {
+        const text = content.toString('utf8');
+        assert.ok(!text.includes(protectedPupil.id) && !text.includes(protectedPupil.email), `${name} names the protected pupil`);
+        assert.ok(!text.includes(protectedTeacher.id) && !text.includes(protectedTeacher.email), `${name} names the protected teacher`);
+      }
+      const manifest = JSON.parse(first.files.get('manifest.json')!.toString('utf8')) as {
+        heldOut: { skyddadIdentitetPersoner: number; kopplingar: number };
+        files: Array<{ path: string; utelamnadeRader?: number; tommaCeller?: number }>;
+      };
+      assert.equal(manifest.heldOut.skyddadIdentitetPersoner, 2);
+      assert.equal(manifest.heldOut.kopplingar, 1, "the protected pupil's guardian link");
+      const narvaro = manifest.files.find((f) => f.path === 'data/narvaro.csv')!;
+      assert.equal(narvaro.utelamnadeRader, 5);
+      assert.equal(narvaro.tommaCeller, 1, 'one mark recorded by the protected teacher');
+      const row = await owner.schoolExport.findUniqueOrThrow({ where: { id: first.id } });
+      assert.deepEqual(row.heldOut, { people: 2, links: 1 });
+    });
+
+    await check('(k-d) a schemaläggare, the expedition and a läsare cannot order; rektor can', async () => {
+      for (const profile of ['SCHEMALAGGARE', 'EXPEDITION', 'LASARE'] as const) {
+        await assert.rejects(() => service.order(a.admins[profile]), /Hela skolans data hämtas/, `${profile} is refused by the service`);
+        await assert.rejects(() => service.list(a.admins[profile]), /Hela skolans data hämtas/);
+        // And by the row security alone, past the gateway:
+        await assert.rejects(
+          () => api.withRls(a.admins[profile], (tx) => tx.schoolExport.create({ data: { schoolId: a.schoolId, requestedById: a.admins[profile].userId! } })),
+          `${profile}'s own insert is refused by the arms`,
+        );
+        const seen = await api.withRls(a.admins[profile], (tx) => tx.schoolExport.count());
+        assert.equal(seen, 0, `${profile} reads no export`);
+        const pieces = await api.withRls(a.admins[profile], (tx) => tx.schoolExportChunk.count());
+        assert.equal(pieces, 0, `${profile} reads no piece`);
+      }
+      // Rektor decides: may order, and may fetch the full administrator's file.
+      const bytes = await fetchFile(service, first.id, a.admins.REKTOR);
+      assert.equal(bytes.length, first.bytes.length);
+      // Not B's administrator: B sees none of A's.
+      assert.equal((await service.list(b.admins.FULL)).length, 0, "B's administrator lists none of A's orders");
+      await assert.rejects(() => service.openFile(first.id, b.admins.FULL), /finns inte/);
+    });
+
+    await check('(k-e) one order in hand per school, and no fourth in a day', async () => {
+      const second = await service.order(a.admins.REKTOR);
+      await assert.rejects(() => service.order(a.admins.FULL), /pågår redan/);
+      await runJobUntilIdle(job);
+      const third = await service.order(a.admins.FULL);
+      await runJobUntilIdle(job);
+      assert.ok(third.id && second.id);
+      await assert.rejects(() => service.order(a.admins.FULL), (error: { status?: number }) => error.status === 429);
+      assert.equal(MAX_ORDERS_PER_DAY, 3);
+    });
+
+    await check('(k-f) a fetch is recorded in the läslogg before the first byte, and the file is time-limited', async () => {
+      const before = await owner.personalDataAccess.count({ where: { schoolId: a.schoolId, actorId: a.admins.REKTOR.userId! } });
+      const second = (await service.list(a.admins.FULL)).find((o) => o.id !== first.id && o.fetchable)!;
+      const opened = await service.openFile(second.id, a.admins.REKTOR);
+      const rows = await owner.personalDataAccess.findMany({ where: { schoolId: a.schoolId, actorId: a.admins.REKTOR.userId! } });
+      assert.ok(rows.length > before, 'the open itself wrote läslogg rows, before any piece was read');
+      const kinds = new Set(rows.map((row) => row.kind));
+      for (const kind of ['PEOPLE', 'ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'GUARDIANS']) assert.ok(kinds.has(kind as never), `${kind} is recorded`);
+      const attendanceRow = rows.find((row) => row.kind === 'ATTENDANCE')!;
+      assert.ok(!attendanceRow.subjectIds.includes(protectedPupil.id), 'a marked person is not named in the record');
+      assert.ok(attendanceRow.subjectIds.includes(a.students[0]!.id), 'an unmarked pupil is');
+      void opened;
+      // Past its time: the pieces cannot be read, even before the job runs.
+      await owner.$executeRaw`UPDATE "SchoolExports" SET "expiresAt" = clock_timestamp() - interval '1 minute' WHERE "id" = ${second.id}::uuid`;
+      await assert.rejects(() => service.openFile(second.id, a.admins.FULL), /gått ut/);
+      const readable = await api.withRls(a.admins.FULL, (tx) => tx.schoolExportChunk.count({ where: { exportId: second.id } }));
+      assert.equal(readable, 0, 'the row security hides the pieces of an expired file');
+      assert.ok((await owner.schoolExportChunk.count({ where: { exportId: second.id } })) > 0, 'still stored until the job runs');
+      await job.tick();
+      assert.equal(await owner.schoolExportChunk.count({ where: { exportId: second.id } }), 0, 'the job deleted the pieces');
+      const row = await owner.schoolExport.findUniqueOrThrow({ where: { id: second.id } });
+      assert.equal(row.status, 'EXPIRED');
+      assert.equal(row.readAbout, null, 'and the list of persons');
+    });
+
+    await check('(k-g) an order by someone demoted since fails; an export withdrawn while it runs stops', async () => {
+      // Make room under the day's limit without touching the others: delete the oldest finished orders as the owner.
+      await owner.schoolExport.deleteMany({ where: { schoolId: a.schoolId, id: { not: first.id } } });
+      const order = await service.order(a.admins.REKTOR);
+      await owner.user.update({ where: { id: a.admins.REKTOR.userId! }, data: { adminProfile: 'EXPEDITION' } });
+      await runJobUntilIdle(job);
+      const row = await owner.schoolExport.findUniqueOrThrow({ where: { id: order.id } });
+      assert.equal(row.status, 'FAILED');
+      assert.equal(row.errorClass, 'RequesterGone');
+      assert.equal(await owner.schoolExportChunk.count({ where: { exportId: order.id } }), 0);
+      await owner.user.update({ where: { id: a.admins.REKTOR.userId! }, data: { adminProfile: 'REKTOR' } });
+
+      // Withdrawn while running: the heartbeat finds the row gone.
+      await owner.schoolExport.deleteMany({ where: { schoolId: a.schoolId, id: { not: first.id } } });
+      const withdrawn = await service.order(a.admins.FULL);
+      const [claim] = await owner.$queryRaw<Array<{ export_id: string; school_id: string; user_id: string; auth_id: string; admin_profile: 'FULL'; hr_read: boolean; attempt: number }>>`
+        SELECT * FROM app.school_export_claim(interval '3 minutes')`;
+      assert.equal(claim!.export_id, withdrawn.id);
+      await service.withdraw(withdrawn.id, a.admins.FULL);
+      await assert.rejects(() => job.build(claim!), /no longer this job/);
+      assert.equal(await owner.schoolExportChunk.count({ where: { exportId: withdrawn.id } }), 0);
+    });
+
+    await check("(k-h) a RUNNING export whose heartbeat is stale is taken over and built again", async () => {
+      await owner.schoolExport.deleteMany({ where: { schoolId: a.schoolId, id: { not: first.id } } });
+      const order = await service.order(a.admins.FULL);
+      const [claim] = await owner.$queryRaw<Array<{ export_id: string }>>`SELECT * FROM app.school_export_claim(interval '3 minutes')`;
+      assert.equal(claim!.export_id, order.id);
+      await owner.$executeRaw`SELECT app.school_export_put(${order.id}::uuid, 0, ${Buffer.from('half a file')}::bytea)`;
+      // Fresh heartbeat: nobody else takes it. Stale: the next claim does, and starts from nothing.
+      const [none] = await owner.$queryRaw<Array<{ export_id: string }>>`SELECT * FROM app.school_export_claim(interval '3 minutes')`;
+      assert.equal(none, undefined);
+      await owner.$executeRaw`UPDATE "SchoolExports" SET "heartbeatAt" = clock_timestamp() - interval '10 minutes' WHERE "id" = ${order.id}::uuid`;
+      await runJobUntilIdle(job);
+      const row = await owner.schoolExport.findUniqueOrThrow({ where: { id: order.id } });
+      assert.equal(row.status, 'READY');
+      assert.equal(row.attempts, 2);
+      const bytes = await fetchFile(service, order.id, a.admins.FULL);
+      assert.ok(!bytes.includes(Buffer.from('half a file')));
+    });
+
+    await check('(k-i0) every table an extract dumps exists, has a schoolId unless listed, and an administrator reads it', async () => {
+      const rows = await owner.$queryRaw<Array<{ table: string; school: boolean; grant: boolean }>>`
+        SELECT c.relname AS "table", bool_or(a.attname = 'schoolId') AS school,
+               has_table_privilege('app_authenticated', c.oid, 'SELECT') AS "grant"
+          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+          JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+         WHERE c.relname = ANY(${tableFiles().map((file) => file.table)}::text[]) AND c.relkind = 'r'
+         GROUP BY c.relname, c.oid`;
+      const have = new Map(rows.map((row) => [row.table, row]));
+      for (const file of tableFiles()) {
+        const row = have.get(file.table);
+        assert.ok(row, `${file.table} is a table`);
+        assert.ok(row.grant, `the API role reads ${file.table}`);
+        assert.equal(row.school, !WITHOUT_SCHOOL_COLUMN.has(file.table), `${file.table}'s schoolId column against WITHOUT_SCHOOL_COLUMN`);
+        // The columns the dump asks for are columns.
+        const columns = await owner.$queryRaw<Array<{ name: string }>>`
+          SELECT attname AS name FROM pg_attribute WHERE attrelid = ${`public."${file.table}"`}::regclass AND attnum > 0 AND NOT attisdropped`;
+        const names = new Set(columns.map((column) => column.name));
+        for (const column of file.dump.columns) assert.ok(names.has(column), `${file.table}.${column} is a column`);
+        for (const [column, parent, parentColumn] of file.dump.through ?? []) {
+          assert.ok(names.has(column), `${file.table}.${column} is a column`);
+          const parentNames = await owner.$queryRaw<Array<{ name: string }>>`
+            SELECT attname AS name FROM pg_attribute WHERE attrelid = ${`public."${parent}"`}::regclass AND attnum > 0 AND NOT attisdropped`;
+          assert.ok(parentNames.some((p) => p.name === parentColumn), `${parent}.${parentColumn} is a column`);
+        }
+      }
+    });
+
+    await check('(k-i) a registerutdrag is the same files for the person, and a protected person is held out', async () => {
+      const readLines = (files: Map<string, Buffer>, name: string) => csvLines(files.get(name));
+      const extract = async (who: AuthenticatedUser, personId: string, withRelated: boolean) => {
+        const answer = await access.extract(who, personId, withRelated);
+        const { dir, files } = unzip(Buffer.from(answer.contentBase64, 'base64'));
+        cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
+        return { answer, files };
+      };
+      // Pupil 1 with their guardian.
+      const pupil = a.students[0]!;
+      const guardian = a.guardians[0]!;
+      const one = await extract(a.admins.FULL, pupil.id, true);
+      assert.equal(one.answer.relatedIncluded, 1);
+      assert.equal(one.answer.subjectIsMarked, false);
+      assert.deepEqual(readLines(one.files, 'data/personer.csv').slice(1).map((line) => line.split(';')[0]).sort(), [guardian.id, pupil.id].sort());
+      assert.equal(readLines(one.files, 'data/narvaro.csv').length - 1, 5, "the pupil's five marks");
+      assert.equal(readLines(one.files, 'data/kopplingar.csv').length - 1, 1);
+      assert.equal(readLines(one.files, 'data/ledigheter.csv').length - 1, 1, 'the leave the guardian asked for');
+      assert.equal(readLines(one.files, 'data/notiser.csv').length - 1, 1, "the guardian's notice");
+      assert.ok(one.files.has('data/person/studentgroupmembers.csv'), "the pupil's membership is a table of its own");
+      for (const [name, content] of one.files) {
+        const text = content.toString('utf8');
+        for (const token of b.tokens) assert.ok(!text.includes(token), `${name} holds B's ${token}`);
+        for (const other of a.students.slice(2)) assert.ok(!text.includes(other.id), `${name} holds another pupil of A: ${other.id}`);
+      }
+      // Without the guardian: one person.
+      const alone = await extract(a.admins.REKTOR, pupil.id, false);
+      assert.equal(alone.answer.relatedIncluded, 0);
+      assert.equal(readLines(alone.files, 'data/personer.csv').length - 1, 1);
+
+      // A protected pupil's own extract: their rows, no guardian, no one else, and it says so.
+      const own = await extract(a.admins.FULL, protectedPupil.id, true);
+      assert.equal(own.answer.subjectIsMarked, true);
+      assert.equal(own.answer.relatedIncluded, 0);
+      assert.equal(readLines(own.files, 'data/personer.csv').length - 1, 1);
+      assert.equal(readLines(own.files, 'data/narvaro.csv').length - 1, 5, "the protected pupil's own marks are theirs");
+      assert.match(own.files.get('README.txt')!.toString('utf8'), /Personen har en markering för skyddad identitet/);
+      assert.ok(own.files.has('data/person/personprotections.csv'), 'the mark itself is data about them');
+
+      // A marked guardian is held out of the pupil's extract and counted.
+      const pupil4 = a.students[3]!;
+      const guardian4 = a.guardians[3]!;
+      await owner.personProtection.create({ data: { userId: guardian4.id, schoolId: a.schoolId, source: 'MANUAL' } });
+      cleanup.push(async () => void (await owner.personProtection.deleteMany({ where: { userId: guardian4.id } })));
+      const held = await extract(a.admins.FULL, pupil4.id, true);
+      assert.equal(held.answer.relatedHeldOut, 1);
+      assert.equal(held.answer.relatedIncluded, 0);
+      for (const [name, content] of held.files) assert.ok(!content.toString('utf8').includes(guardian4.id), `${name} names the protected guardian`);
+
+      // A teacher's extract holds the post and the requirement.
+      const teacher = await extract(a.admins.FULL, a.teacher, false);
+      assert.ok(teacher.files.has('data/person/teacheremployments.csv'));
+      assert.ok(teacher.files.has('data/person/teachingrequirements.csv'));
+      assert.match(teacher.files.get('data/person/teacheremployments.csv')!.toString('utf8'), /employmentPercent/);
+      const rowsAbout = await owner.personalDataAccess.count({ where: { schoolId: a.schoolId, actorId: a.admins.FULL.userId!, kind: 'EMPLOYMENT', subjectIds: { has: a.teacher } } });
+      assert.ok(rowsAbout >= 1, "the extract of the teacher's post is recorded as a read of EMPLOYMENT about them");
+    });
+
+    await check('(k-j) only those who decide ask for one, and only about their own school', async () => {
+      for (const profile of ['SCHEMALAGGARE', 'EXPEDITION', 'LASARE'] as const) {
+        await assert.rejects(() => access.extract(a.admins[profile], a.students[0]!.id, false), /lämnas ut av rektor/, `${profile} is refused`);
+      }
+      await assert.rejects(() => access.extract(b.admins.FULL, a.students[0]!.id, false), /finns inte/, "B's administrator cannot see A's person");
+      await assert.rejects(() => access.extract(a.admins.FULL, randomUUID(), false), /finns inte/);
+    });
+  } finally {
+    for (const undo of cleanup.reverse()) await undo().catch((error) => console.error('cleanup:', error));
+    await owner.$disconnect();
+    await api.$disconnect();
+  }
+  if (failures > 0) {
+    console.error(`\n${failures} check(s) failed.`);
+    process.exit(1);
+  }
+  console.log('\nAll school-export checks passed.');
+}
+
+void main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

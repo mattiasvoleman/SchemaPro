@@ -68,6 +68,11 @@ export interface GallringConfig {
   background: boolean;
 }
 
+export interface SchoolExportConfig {
+  /** The whole-school export's 30-second job (SCHOOL_EXPORT_BACKGROUND, default on). */
+  background: boolean;
+}
+
 export interface CoverRequestsConfig {
   /** The 5-minute settling of vikarieförfrågningar (COVER_REQUESTS_BACKGROUND, default on). */
   background: boolean;
@@ -112,6 +117,7 @@ export interface Configuration {
   push: PushConfig;
   ss12000: Ss12000Config;
   gallring: GallringConfig;
+  schoolExport: SchoolExportConfig;
   coverRequests: CoverRequestsConfig;
   absenceWatch: AbsenceWatchConfig;
   candidates: CandidatesConfig;
@@ -176,6 +182,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     gallring: {
       background: env.GALLRING_BACKGROUND !== 'off',
+    },
+    schoolExport: {
+      background: env.SCHOOL_EXPORT_BACKGROUND !== 'off',
     },
     coverRequests: {
       background: env.COVER_REQUESTS_BACKGROUND !== 'off',

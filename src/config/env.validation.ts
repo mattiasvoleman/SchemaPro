@@ -218,6 +218,15 @@ export class EnvironmentVariables {
   GALLRING_BACKGROUND: string = 'on';
 
   /**
+   * The whole-school export's job (src/school-export/school-export.job.ts):
+   * every 30 s it takes the oldest order, if any, and builds its file. `on`
+   * unless set to `off`; the test setup turns it off. With no order it is one
+   * query and one expiry check a pass.
+   */
+  @IsIn(['on', 'off'])
+  SCHOOL_EXPORT_BACKGROUND: string = 'on';
+
+  /**
    * The settling of vikarieförfrågningar (src/cover/cover-requests.job.ts). `on`
    * unless set to `off`; the test setup turns it off. A request past its time
    * cannot be answered either way: the job settles the stored status.

@@ -57,6 +57,7 @@ import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
 import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
+import { SchoolExportModule } from '../../src/school-export/school-export.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
 import { HuvudmanModule } from '../../src/huvudman/huvudman.module';
 import { AccessLogModule } from '../../src/access-log/access-log.module';
@@ -177,6 +178,8 @@ export const FEATURE_MODULES = [
   // Without JobsModule: GallringJob takes the runner as @Optional and
   // registers nothing, so the controller is routed and no timer starts.
   GallringModule,
+  // Hela skolans data: its job is @Optional on the runner and the setup turns it off, as the gallring's.
+  SchoolExportModule,
   // Frånvarobevakning's job is @Optional on the runner too, and the setup turns it off.
   AbsenceWatchModule,
   SignInModule,

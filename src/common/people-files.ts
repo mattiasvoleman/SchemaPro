@@ -40,7 +40,7 @@ export interface PeopleRoute {
  * itself (@Res), whatever its path.
  */
 export const FILE_ROUTE =
-  /\/export\b|scb-file|\/print\/|class-book|^\/public\/v1\/(calendar-feeds|timetables)\/|^\/ss12000\/|^\/api\/v1\/access-log$|\.(csv|tsv|txt|xlsx?|ics|pdf|zip|xml)$/i;
+  /\/export\b|\/subject-access\b|scb-file|\/print\/|class-book|^\/public\/v1\/(calendar-feeds|timetables)\/|^\/ss12000\/|^\/api\/v1\/access-log$|\.(csv|tsv|txt|xlsx?|ics|pdf|zip|xml)$/i;
 
 /**
  * Keyed `VERB /path` as the routing table has it; a key ending in `/*` holds
@@ -50,6 +50,17 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
   'GET /api/v1/guardian-links/export': {
     rule: 'HOLDS_OUT',
     why: 'vardnadshavare.csv: a link where the pupil or the guardian is marked is held out, and counted (heldOut).',
+  },
+  'GET /api/v1/school-exports/:id/file': {
+    rule: 'HOLDS_OUT',
+    why:
+      'Hela skolans data: the zip holds out every marked person and every row about one (the build reads the marks first; the manifest counts them, ' +
+      'heldOut). Fetched only by rektor and a full administrator, and recorded in the läslogg before the first byte.',
+  },
+  'POST /api/v1/school-exports/subject-access': {
+    rule: 'ONE_PERSON',
+    why:
+      'Registerutdrag (GDPR art. 15): one person\'s own data, the person themselves included if marked, and no other marked person (held out and counted).',
   },
   'GET /api/v1/staffing/scb-file': {
     rule: 'KEEPS_AND_SAYS',

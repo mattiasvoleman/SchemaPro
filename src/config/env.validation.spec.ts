@@ -102,6 +102,7 @@ describe('validateEnv', () => {
       ['the tick off', { SS12000_BACKGROUND: 'off' }],
       ['the gallring tick off', { GALLRING_BACKGROUND: 'off' }],
       ['the absence watch tick off', { ABSENCE_WATCH_BACKGROUND: 'off' }],
+      ['the whole-school export job off', { SCHOOL_EXPORT_BACKGROUND: 'off' }],
       ['the loopback override under NODE_ENV=test', { NODE_ENV: 'test', SS12000_ALLOW_INSECURE_LOCAL: '1' }],
       ['empty values', { INTEGRATION_SECRETS_KEY: '', SS12000_ALLOW_INSECURE_LOCAL: '' }],
     ])('accepts %s', (_label, extra) => {
@@ -114,6 +115,7 @@ describe('validateEnv', () => {
       ['a tick mode it does not know', { SS12000_BACKGROUND: 'maybe' }, /SS12000_BACKGROUND/],
       ['a gallring mode it does not know', { GALLRING_BACKGROUND: 'yes' }, /GALLRING_BACKGROUND/],
       ['an absence watch mode it does not know', { ABSENCE_WATCH_BACKGROUND: 'yes' }, /ABSENCE_WATCH_BACKGROUND/],
+      ['a school export mode it does not know', { SCHOOL_EXPORT_BACKGROUND: 'yes' }, /SCHOOL_EXPORT_BACKGROUND/],
       ['the loopback override outside NODE_ENV=test', { NODE_ENV: 'production', SS12000_ALLOW_INSECURE_LOCAL: '1' }, /SS12000_ALLOW_INSECURE_LOCAL/],
     ])('refuses %s, naming it and never echoing the value', (_label, extra, name) => {
       let message = '';

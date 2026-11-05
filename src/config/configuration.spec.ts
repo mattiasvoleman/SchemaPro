@@ -103,6 +103,12 @@ describe('loadConfiguration', () => {
     expect(loadConfiguration(env({ GALLRING_BACKGROUND: 'on' })).gallring.background).toBe(true);
   });
 
+  it('turns the whole-school export job off only for SCHOOL_EXPORT_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ SCHOOL_EXPORT_BACKGROUND: 'off' })).schoolExport.background).toBe(false);
+    expect(loadConfiguration(env({ SCHOOL_EXPORT_BACKGROUND: 'on' })).schoolExport.background).toBe(true);
+    expect(loadConfiguration(env({})).schoolExport.background).toBe(true);
+  });
+
   it('turns the absence watch tick off only for ABSENCE_WATCH_BACKGROUND=off', () => {
     expect(loadConfiguration(env({ ABSENCE_WATCH_BACKGROUND: 'off' })).absenceWatch.background).toBe(false);
     expect(loadConfiguration(env({ ABSENCE_WATCH_BACKGROUND: 'on' })).absenceWatch.background).toBe(true);
