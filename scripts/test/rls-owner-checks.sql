@@ -342,3 +342,220 @@ BEGIN
   END;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 291: en borttagen person hittar sina rader i ett index, på
+-- ägarsidan (20261220090000).
+--
+-- Removing a Users or HuvudmanMembers row makes Postgres look, in every table
+-- with a foreign key to it, for the rows that name it (to null them, remove
+-- them or refuse the removal with). The lookup is an equality on the key's
+-- columns, and with no index it reads the table once for each person removed,
+-- which is what took the bulk removal of pupils past its time over a school's
+-- attendance. So:
+--
+--   1. the twenty-four indexes the migration adds exist, are valid and have
+--      the columns, and for the partial one the predicate, it gives them;
+--   2. every foreign key to a person table has an index that serves the
+--      lookup: one that starts with the person's column, or whose first
+--      columns are the key's own in any order (an equality on each is
+--      answered by it whichever comes first), full or partial WHERE the
+--      person's column is not NULL (the lookup's equality implies it). A key
+--      added later without one fails here, named;
+--   3. the planner, asked for the lookup's plan (the statement ri_triggers.c
+--      issues, generic, with sequential scans switched off), never answers
+--      with a Seq Scan, and, given a copy of PersonalDataAccess that is empty
+--      and has only the one partial index (built from the real index's own
+--      definition), takes that index for each of its two keys: the proof that
+--      a partial index whose predicate the lookup implies is used. The copy,
+--      not the live table: with several indexes to choose between, the
+--      planner's pick follows the table's statistics (a läslogg of a single
+--      actor, a thousand rows or more, is read through another index, and
+--      nothing is wrong with either), so a check that the live table's pick is
+--      the partial index fails on a development database and proves nothing
+--      about the predicate.
+--
+-- Run as the owner: the policies of the API's role add predicates of their
+-- own, and the lookup Postgres makes for a foreign key sees none of them.
+-- The count of keys asked has a floor, so a catalogue read that found none
+-- cannot pass.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  want record;
+  got record;
+  fk record;
+  line text;
+  plan text;
+  where_sql text;
+  types text;
+  nulls text;
+  key_cols text;
+  person_col text;
+  expected_index text;
+  probe_def text;
+  asked int := 0;
+  answered_by_partial int := 0;
+  unled text[] := '{}';
+  bare text[] := '{}';
+  wrong text[] := '{}';
+BEGIN
+  -- 1. The twenty-four indexes.
+  FOR want IN
+    SELECT * FROM (VALUES
+      ('AttendanceRecords',            'AttendanceRecords_recordedById_idx',                      ARRAY['recordedById'],                 NULL),
+      ('AbsenceReports',               'AbsenceReports_reportedById_idx',                         ARRAY['reportedById'],                 NULL),
+      ('LeaveRequests',                'LeaveRequests_requestedById_idx',                         ARRAY['requestedById'],                NULL),
+      ('LeaveRequests',                'LeaveRequests_decidedById_idx',                           ARRAY['decidedById'],                  NULL),
+      ('LeaveRequests',                'LeaveRequests_referredById_idx',                          ARRAY['referredById'],                 NULL),
+      ('RoomBookings',                 'RoomBookings_decidedById_idx',                            ARRAY['decidedById'],                  NULL),
+      ('DevicePushTokens',             'DevicePushTokens_userId_schoolId_idx',                    ARRAY['userId', 'schoolId'],           NULL),
+      ('PersonalDataAccess',           'PersonalDataAccess_huvudmanMemberId_idx',                 ARRAY['huvudmanMemberId'],             '("huvudmanMemberId" IS NOT NULL)'),
+      ('AttendanceSharingDecisions',   'AttendanceSharingDecisions_decidedById_schoolId_idx',     ARRAY['decidedById', 'schoolId'],      NULL),
+      ('HuvudmanApiKeys',              'HuvudmanApiKeys_createdById_huvudmanId_idx',              ARRAY['createdById', 'huvudmanId'],    NULL),
+      ('HuvudmanSchoolEvents',         'HuvudmanSchoolEvents_byMemberId_huvudmanId_idx',          ARRAY['byMemberId', 'huvudmanId'],     NULL),
+      ('HuvudmanSchoolEvents',         'HuvudmanSchoolEvents_byUserId_schoolId_idx',              ARRAY['byUserId', 'schoolId'],         NULL),
+      ('HuvudmanSchoolRequests',       'HuvudmanSchoolRequests_requestedById_huvudmanId_idx',     ARRAY['requestedById', 'huvudmanId'],  NULL),
+      ('HuvudmanSchools',              'HuvudmanSchools_requestedById_huvudmanId_idx',            ARRAY['requestedById', 'huvudmanId'],  NULL),
+      ('HuvudmanSchools',              'HuvudmanSchools_acceptedById_schoolId_idx',               ARRAY['acceptedById', 'schoolId'],     NULL),
+      ('LeaveDelegationDecisions',     'LeaveDelegationDecisions_decidedById_schoolId_idx',       ARRAY['decidedById', 'schoolId'],      NULL),
+      ('LocalTimplans',                'LocalTimplans_decidedByUserId_schoolId_idx',              ARRAY['decidedByUserId', 'schoolId'],  NULL),
+      ('LocalTimplans',                'LocalTimplans_gradeSpanSetByUserId_schoolId_idx',         ARRAY['gradeSpanSetByUserId', 'schoolId'], NULL),
+      ('MasterLessons',                'MasterLessons_coTeacherId_schoolId_idx',                  ARRAY['coTeacherId', 'schoolId'],      NULL),
+      ('RetentionDecisions',           'RetentionDecisions_decidedById_schoolId_idx',             ARRAY['decidedById', 'schoolId'],      NULL),
+      ('RoomLoans',                    'RoomLoans_decidedById_ownerSchoolId_idx',                 ARRAY['decidedById', 'ownerSchoolId'], NULL),
+      ('RoomLoans',                    'RoomLoans_requestedById_borrowerSchoolId_idx',            ARRAY['requestedById', 'borrowerSchoolId'], NULL),
+      ('TeacherDuties',                'TeacherDuties_userId_schoolId_idx',                       ARRAY['userId', 'schoolId'],           NULL),
+      ('TeachingRequirements',         'TeachingRequirements_coTeacherId_schoolId_idx',           ARRAY['coTeacherId', 'schoolId'],      NULL)
+    ) v(tbl, idx, cols, pred)
+  LOOP
+    SELECT i.indrelid = to_regclass(format('public.%I', want.tbl)) AS on_table,
+           i.indisvalid AND i.indisready AS usable,
+           am.amname AS method,
+           (SELECT array_agg(a.attname::text ORDER BY k.ord)
+              FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum) AS cols,
+           pg_get_expr(i.indpred, i.indrelid) AS pred
+      INTO got
+      FROM pg_class c
+      JOIN pg_index i ON i.indexrelid = c.oid
+      JOIN pg_am am ON am.oid = c.relam
+     WHERE c.oid = to_regclass(format('public.%I', want.idx));
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'fk-index: % on % does not exist', want.idx, want.tbl;
+    END IF;
+    IF NOT (got.on_table AND got.usable AND got.method = 'btree') THEN
+      RAISE EXCEPTION 'fk-index: % is not a valid btree index on % (%)', want.idx, want.tbl, got;
+    END IF;
+    IF got.cols IS DISTINCT FROM want.cols THEN
+      RAISE EXCEPTION 'fk-index: % is on % where % was meant', want.idx, got.cols, want.cols;
+    END IF;
+    IF got.pred IS DISTINCT FROM want.pred THEN
+      RAISE EXCEPTION 'fk-index: % has the predicate % where % was meant', want.idx, got.pred, want.pred;
+    END IF;
+  END LOOP;
+
+  -- 2 and 3. Every key to a person table: an index that leads with the person's
+  -- column, and the plan of the lookup.
+  PERFORM set_config('plan_cache_mode', 'force_generic_plan', true);
+  PERFORM set_config('enable_seqscan', 'off', true);
+  FOR fk IN
+    SELECT c.conrelid, c.conkey, cl.relname AS tbl,
+           (SELECT c.conkey[i]
+              FROM generate_subscripts(c.conkey, 1) i
+             WHERE (SELECT a.attname FROM pg_attribute a
+                     WHERE a.attrelid = c.confrelid AND a.attnum = c.confkey[i]) = 'id') AS person_attnum
+      FROM pg_constraint c
+      JOIN pg_class cl ON cl.oid = c.conrelid
+      JOIN pg_namespace ns ON ns.oid = cl.relnamespace AND ns.nspname = 'public'
+     WHERE c.contype = 'f'
+       AND c.confrelid IN (to_regclass('public."Users"'), to_regclass('public."HuvudmanMembers"'))
+     ORDER BY cl.relname, c.conname
+  LOOP
+    SELECT string_agg(format('$%s = x.%I', u.ord, a.attname), ' AND ' ORDER BY u.ord),
+           string_agg(format_type(a.atttypid, a.atttypmod), ',' ORDER BY u.ord),
+           string_agg('NULL', ',' ORDER BY u.ord),
+           string_agg(a.attname::text, ',' ORDER BY u.ord),
+           max(a.attname::text) FILTER (WHERE a.attnum = fk.person_attnum)
+      INTO where_sql, types, nulls, key_cols, person_col
+      FROM unnest(fk.conkey) WITH ORDINALITY u(attnum, ord)
+      JOIN pg_attribute a ON a.attrelid = fk.conrelid AND a.attnum = u.attnum;
+    asked := asked + 1;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_index i
+       WHERE i.indrelid = fk.conrelid AND i.indisvalid AND i.indisready AND i.indexprs IS NULL
+         AND (i.indpred IS NULL OR pg_get_expr(i.indpred, i.indrelid) = format('(%I IS NOT NULL)', person_col))
+         AND ((i.indkey::int2[])[0] = fk.person_attnum
+              OR (i.indnkeyatts >= cardinality(fk.conkey)
+                  AND (SELECT array_agg(k ORDER BY k) FROM unnest((i.indkey::int2[])[0:cardinality(fk.conkey) - 1]) k)
+                    = (SELECT array_agg(k ORDER BY k) FROM unnest(fk.conkey) k)))
+    ) THEN
+      unled := unled || format('%s(%s)', fk.tbl, key_cols);
+    END IF;
+
+    EXECUTE format('PREPARE fk_index_lookup(%s) AS SELECT 1 FROM ONLY %I x WHERE %s FOR KEY SHARE OF x',
+                   types, fk.tbl, where_sql);
+    plan := '';
+    FOR line IN EXECUTE format('EXPLAIN EXECUTE fk_index_lookup(%s)', nulls) LOOP
+      plan := plan || line || E'\n';
+    END LOOP;
+    DEALLOCATE fk_index_lookup;
+    IF plan ~ 'Seq Scan' THEN
+      bare := bare || format('%s(%s)', fk.tbl, key_cols);
+    END IF;
+
+    -- The two partial indexes of the läslogg: the planner must take them, asked
+    -- of an empty copy of the table with that one index on it (see 3 above), so
+    -- that the answer is the same on every database whatever the table holds.
+    expected_index := CASE fk.tbl || '(' || key_cols || ')'
+      WHEN 'PersonalDataAccess(huvudmanMemberId)' THEN 'PersonalDataAccess_huvudmanMemberId_idx'
+      WHEN 'PersonalDataAccess(actorId,schoolId)' THEN 'PersonalDataAccess_actorId_kind_at_idx'
+    END;
+    IF expected_index IS NOT NULL THEN
+      probe_def := replace(pg_get_indexdef(to_regclass(format('public.%I', expected_index))),
+                           ' ON public."PersonalDataAccess" ', ' ON pg_temp.fk_index_probe ');
+      IF probe_def IS NULL THEN
+        wrong := wrong || format('%s(%s): %s does not exist', fk.tbl, key_cols, expected_index);
+      ELSIF probe_def NOT LIKE '% ON pg_temp.fk_index_probe %' THEN
+        RAISE EXCEPTION 'fk-index: the definition of % could not be moved to the probe table (%)', expected_index, probe_def;
+      ELSE
+        EXECUTE 'CREATE TEMP TABLE fk_index_probe (LIKE "PersonalDataAccess")';
+        EXECUTE probe_def;
+        EXECUTE format('PREPARE fk_index_probe_lookup(%s) AS SELECT 1 FROM ONLY pg_temp.fk_index_probe x WHERE %s FOR KEY SHARE OF x',
+                       types, where_sql);
+        plan := '';
+        FOR line IN EXECUTE format('EXPLAIN EXECUTE fk_index_probe_lookup(%s)', nulls) LOOP
+          plan := plan || line || E'\n';
+        END LOOP;
+        DEALLOCATE fk_index_probe_lookup;
+        DROP TABLE pg_temp.fk_index_probe;
+        IF position(expected_index IN plan) = 0 OR plan ~ 'Seq Scan' THEN
+          wrong := wrong || format('%s(%s) is not answered by %s, alone on an empty copy of the table', fk.tbl, key_cols, expected_index);
+        ELSE
+          answered_by_partial := answered_by_partial + 1;
+        END IF;
+      END IF;
+    END IF;
+  END LOOP;
+
+  IF asked < 60 THEN
+    RAISE EXCEPTION 'fk-index: only % keys to a person table were asked, the catalogue holds more than 60', asked;
+  END IF;
+  IF cardinality(unled) > 0 THEN
+    RAISE EXCEPTION 'fk-index: removing a person has no index to find the rows of % with (give each key one: a plain index on its columns, the person''s first)', unled;
+  END IF;
+  IF cardinality(bare) > 0 THEN
+    RAISE EXCEPTION 'fk-index: removing a person reads the whole of % (no index of any kind answers the lookup)', bare;
+  END IF;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'fk-index: %', wrong;
+  END IF;
+  IF answered_by_partial <> 2 THEN
+    RAISE EXCEPTION 'fk-index: % of the 2 keys with a partial index were answered by it', answered_by_partial;
+  END IF;
+  RAISE NOTICE 'fk-index: % keys to a person table asked, each served by an index, none left to a Seq Scan, 2 answered by a partial index', asked;
+END $$;
+ROLLBACK;

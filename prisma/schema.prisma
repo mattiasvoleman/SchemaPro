@@ -723,6 +723,9 @@ model RoomLoan {
   @@index([borrowerSchoolId, status])
   @@index([roomId])
   @@index([localRoomId])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([decidedById, ownerSchoolId])
+  @@index([requestedById, borrowerSchoolId])
   @@map("RoomLoans")
 }
 
@@ -993,6 +996,9 @@ model LocalTimplan {
   @@unique([schoolId, name])
   /// The target of the composite keys entries and copies use; see User.
   @@unique([id, schoolId])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([decidedByUserId, schoolId])
+  @@index([gradeSpanSetByUserId, schoolId])
   @@map("LocalTimplans")
 }
 
@@ -1900,6 +1906,8 @@ model TeachingRequirement {
   @@index([schoolId])
   @@index([teacherId])
   @@index([blockId])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([coTeacherId, schoolId])
   @@map("TeachingRequirements")
 }
 
@@ -2068,6 +2076,8 @@ model MasterLesson {
   @@index([studentGroupId, dayOfWeek])
   @@index([teacherId, dayOfWeek])
   @@index([roomId, dayOfWeek])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([coTeacherId, schoolId])
   @@map("MasterLessons")
 }
 
@@ -2342,6 +2352,9 @@ model AttendanceRecord {
   @@index([schoolId, id])
   /// SS12000's incremental /attendances: the records created after the cursor (20261114090150).
   @@index([schoolId, createdAt])
+  /// Removing a person looks for the marks they recorded (SET NULL): a scan of the
+  /// whole table for each person without this (20261220090000).
+  @@index([recordedById])
   @@map("AttendanceRecords")
 }
 
@@ -2593,6 +2606,8 @@ model AbsenceReport {
 
   @@index([schoolId, date])
   @@index([studentId, date])
+  /// Removing a guardian removes the reports they made (20261220090000).
+  @@index([reportedById])
   @@map("AbsenceReports")
 }
 
@@ -2628,6 +2643,10 @@ model LeaveRequest {
   @@index([studentId, startDate])
   /// Gallring's predicate (20261021110000).
   @@index([schoolId, endDate])
+  /// Removing a person finds the requests they made, decided and referred (20261220090000).
+  @@index([requestedById])
+  @@index([decidedById])
+  @@index([referredById])
   @@map("LeaveRequests")
 }
 
@@ -2666,6 +2685,8 @@ model RoomBooking {
   @@index([roomId, startsAt])
   @@index([bookedById, startsAt])
   @@index([schoolId, status, createdAt])
+  /// Removing a person finds the bookings they decided (20261220090000).
+  @@index([decidedById])
   @@map("RoomBookings")
 }
 
@@ -2825,6 +2846,9 @@ model DevicePushToken {
   revokedReason String?
 
   @@unique([id, schoolId])
+  /// Removing a person removes their devices (20261220090000). The live-token index
+  /// is partial, and a partial index cannot answer the key's lookup of every token.
+  @@index([userId, schoolId])
   @@map("DevicePushTokens")
 }
 
@@ -3315,6 +3339,8 @@ model TeacherDuty {
   @@index([schoolId, academicYearId, userId])
   /// "Who holds MENTORSKAP for this class": the mentor lookup and the class's SET NULL.
   @@index([schoolId, studentGroupId, kind])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([userId, schoolId])
   @@map("TeacherDuties")
 }
 
@@ -4446,6 +4472,8 @@ model AttendanceSharingDecision {
   committedAt DateTime? @db.Timestamptz(6)
 
   @@index([schoolId, decidedAt(sort: Desc)])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([decidedById, schoolId])
   @@map("AttendanceSharingDecisions")
 }
 
@@ -4467,6 +4495,8 @@ model LeaveDelegationDecision {
   decidedAt           DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
 
   @@index([schoolId, decidedAt(sort: Desc)])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([decidedById, schoolId])
   @@map("LeaveDelegationDecisions")
 }
 
@@ -4543,6 +4573,8 @@ model RetentionDecision {
   decidedAt   DateTime              @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
 
   @@index([schoolId, dataType, decidedAt(sort: Desc)])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([decidedById, schoolId])
   @@map("RetentionDecisions")
 }
 
@@ -4602,6 +4634,11 @@ model PersonalDataAccess {
   /// integration read (apiKeyId is then NULL); NULL once the key is deleted.
   huvudmanApiKeyId String? @db.Uuid
 
+  // Not visible here, and load-bearing: a partial index on huvudmanMemberId
+  // (WHERE it is not NULL, 20261220090000) is what lets removing a huvudman's
+  // member find the reads they made without a scan of the whole log. Nearly
+  // every row has none, so a full index would hold a NULL entry per read.
+  // Prisma cannot express it; actorId's is the same kind (20261212090100).
   @@index([subjectIds], type: Gin)
   @@index([schoolId, at])
   @@map("PersonalDataAccess")
@@ -4727,6 +4764,9 @@ model HuvudmanSchool {
   huvudman Huvudman @relation(fields: [huvudmanId], references: [id], onDelete: Restrict)
 
   @@index([huvudmanId])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([requestedById, huvudmanId])
+  @@index([acceptedById, schoolId])
   @@map("HuvudmanSchools")
 }
 
@@ -4742,6 +4782,8 @@ model HuvudmanSchoolRequest {
 
   @@unique([schoolId, huvudmanId])
   @@index([huvudmanId])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([requestedById, huvudmanId])
   @@map("HuvudmanSchoolRequests")
 }
 
@@ -4760,6 +4802,9 @@ model HuvudmanSchoolEvent {
 
   @@index([schoolId, at])
   @@index([huvudmanId, at])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([byMemberId, huvudmanId])
+  @@index([byUserId, schoolId])
   @@map("HuvudmanSchoolEvents")
 }
 
@@ -4781,5 +4826,7 @@ model HuvudmanApiKey {
   huvudman Huvudman @relation(fields: [huvudmanId], references: [id], onDelete: Cascade)
 
   @@index([huvudmanId])
+  /// Removing a person finds the rows that name them (20261220090000).
+  @@index([createdById, huvudmanId])
   @@map("HuvudmanApiKeys")
 }
