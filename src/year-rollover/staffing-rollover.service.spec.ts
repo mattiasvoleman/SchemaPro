@@ -57,6 +57,14 @@ describe('StaffingRolloverService — preview', () => {
     expect(world.calls[world.calls.length - 1]).toMatchObject({ method: '$executeRaw' });
   });
 
+  it('takes no lock: the preview is a read, and the people lock is the execute’s', async () => {
+    const { world, service, yearB } = await rolledWithoutStaffing();
+    await service.preview(yearB, admin);
+    // The one raw execute a preview sends is the läslogg's write.
+    expect(world.calls.filter((call) => call.sql?.includes('advisory'))).toEqual([]);
+    expect(world.calls.filter((call) => call.model === '$queryRaw' && / FOR (SHARE|KEY SHARE|NO KEY UPDATE|UPDATE)$/.test(call.sql ?? ''))).toEqual([]);
+  });
+
   it('404s a year RLS hides, and 409s a year nobody rolled into (the never-rolls case)', async () => {
     const { service } = await rolledWithoutStaffing();
     await expect(service.preview('99999999-9999-4999-8999-999999999999', admin)).rejects.toBeInstanceOf(NotFoundException);
@@ -111,6 +119,24 @@ describe('StaffingRolloverService — execute', () => {
       values: [`Users:${IDS.school}`],
     });
     expect(world.calls.findIndex((call) => call.model === '$queryRaw')).toBeGreaterThan(0);
+  });
+
+  it('waits for the lock to be granted before it reads or locks anything, and sends nothing meanwhile', async () => {
+    const { world, service, yearB } = await rolledWithoutStaffing();
+    const preview = await service.preview(yearB, admin);
+    world.calls.length = 0;
+    let grant!: () => void;
+    const granted = new Promise<void>((resolve) => (grant = resolve));
+    world.afterExecuteRaw = (call) => (call.sql?.includes('pg_advisory_xact_lock_shared') ? granted : undefined);
+
+    const running = service.execute(yearB, preview.planHash, admin);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(world.calls).toHaveLength(1);
+    grant();
+    await running;
+
+    expect(world.calls.length).toBeGreaterThan(1);
   });
 
   it('writes into the target only, inserts only, with the groups found through predecessorId, and a second run writes nothing', async () => {

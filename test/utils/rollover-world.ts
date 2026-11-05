@@ -558,6 +558,12 @@ export interface RolloverWorld {
   tx: PrismaClient;
   /** Answers a $queryRaw; the default returns the year's bounds for a year read and [] otherwise. */
   queryRaw: (sql: string, values: unknown[]) => unknown[];
+  /**
+   * Awaited by a $executeRaw after it is recorded, before it answers: a spec
+   * holds one statement (an advisory lock) back and sees what is sent while it
+   * is pending. Unset, the statement answers at once.
+   */
+  afterExecuteRaw?: (call: RecordedCall) => Promise<unknown> | undefined;
 }
 
 export function givenRolloverWorld(
@@ -795,7 +801,9 @@ export function givenRolloverWorld(
           const strings = isSql ? (first as { strings: readonly string[] }).strings : (first as TemplateStringsArray);
           const values = isSql ? (first as { values: unknown[] }).values : rest;
           const sql = strings.join('?').replace(/\s+/g, ' ').trim();
-          calls.push({ model: '$executeRaw', method: '$executeRaw', args: null, sql, values });
+          const call: RecordedCall = { model: '$executeRaw', method: '$executeRaw', args: null, sql, values };
+          calls.push(call);
+          await world.afterExecuteRaw?.(call);
           return 0;
         };
       }

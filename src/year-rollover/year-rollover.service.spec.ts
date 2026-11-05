@@ -2530,12 +2530,73 @@ describe('YearRolloverService — the school’s people lock, shared and first',
 
   it('the previews are reads and take no lock', async () => {
     const { world, service } = setup();
+    // The calls are cleared before each preview, so what is asserted is what
+    // that preview sent, and the list is not empty because it read nothing.
+    world.calls.length = 0;
     const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    expect(preview.blocking).toBe(false);
+    expect(world.calls.length).toBeGreaterThan(0);
+    expect(world.calls.filter((call) => call.sql?.includes('advisory'))).toEqual([]);
+    expect(world.calls.filter((call) => call.sql?.includes('FOR SHARE'))).toEqual([]);
+
     const { result } = await previewAndExecute(world, service);
     world.calls.length = 0;
     await service.previewActivation(result.academicYear.id, admin, AFTER);
-    expect(preview.blocking).toBe(false);
+    expect(world.calls.length).toBeGreaterThan(0);
     expect(world.calls.filter((call) => call.sql?.includes('advisory'))).toEqual([]);
     expect(world.calls.filter((call) => call.model === '$queryRaw')).toEqual([]);
+  });
+
+  describe('waits for the lock to be granted: nothing is read or locked while it is waited for', () => {
+    /** The people lock is held back until the returned function grants it. */
+    const holdTheLock = (world: RolloverWorld) => {
+      let grant!: () => void;
+      const granted = new Promise<void>((resolve) => (grant = resolve));
+      world.afterExecuteRaw = (call) => (call.sql === PEOPLE_LOCK ? granted : undefined);
+      return grant;
+    };
+    const turns = async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+
+    it.each([
+      ['without tjänster', {}],
+      ['with tjänster', { carryStaffing: true }],
+    ])('the rollover %s', async (_label, option) => {
+      const { world, service } = setup(staffingRows());
+      const options = { ...OPTIONS, ...option };
+      const preview = await service.previewRollover(IDS.yearA, options, admin);
+      const dto: ExecuteRolloverDto = { ...options, graduatingGradeLevel: preview.graduatingGradeLevel as number, planHash: preview.planHash };
+      world.calls.length = 0;
+      const grant = holdTheLock(world);
+
+      const running = service.executeRollover(IDS.yearA, dto, admin);
+      await turns();
+      expect(world.calls).toHaveLength(1);
+      lockIs(world.calls[0]);
+      grant();
+      await running;
+
+      expect(world.calls.length).toBeGreaterThan(1);
+    });
+
+    it('the activation', async () => {
+      const { world, service } = setup();
+      const { result } = await previewAndExecute(world, service);
+      const yearB = result.academicYear.id;
+      const preview = await service.previewActivation(yearB, admin, AFTER);
+      world.calls.length = 0;
+      const grant = holdTheLock(world);
+
+      const running = service.executeActivation(yearB, { planHash: preview.planHash }, admin, AFTER);
+      await turns();
+      expect(world.calls).toHaveLength(1);
+      lockIs(world.calls[0]);
+      grant();
+      await running;
+
+      expect(world.calls.length).toBeGreaterThan(1);
+    });
   });
 });
