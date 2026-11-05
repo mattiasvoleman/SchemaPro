@@ -76,11 +76,12 @@
 --   _insert, crisis_pupils_admin_select / _insert
 --       the same readers and writers; the writes only while the alarm's lists
 --       are unsealed, which is the transaction that starts it.
---   crisis_calls_teacher_select, crisis_call_teachers_own_select,
+--   crisis_calls_teacher_select, crisis_call_teachers_teacher_select,
 --   crisis_pupils_teacher_select
---       a TEACHER the calls they answer for, their own row among the
---       teachers, and the pupils on those calls: their group and nothing
---       else, while the alarm is open and for an hour after.
+--       a TEACHER the calls they answer for, the teachers who answer for them
+--       with them (so the phone can say who else has the group), and the pupils
+--       on those calls: their group and nothing else, while the alarm is open
+--       and for an hour after.
 --   crisis_reports_admin_select / _insert
 --       the administration reads every mark, and marks for any group (those
 --       who may start an alarm).
@@ -754,11 +755,11 @@ BEGIN
         FOR SELECT TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
                AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
-    CREATE POLICY "crisis_call_teachers_own_select" ON "CrisisCallTeachers"
+    CREATE POLICY "crisis_call_teachers_teacher_select" ON "CrisisCallTeachers"
         FOR SELECT TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
                AND (select app.current_user_role()) = 'TEACHER'
-               AND "teacherId" = (select app.current_user_id())
+               AND app.crisis_answers_for("callId")
                AND app.crisis_call_window_open("callId"));
     CREATE POLICY "crisis_call_teachers_admin_insert" ON "CrisisCallTeachers"
         FOR INSERT TO "app_authenticated"
@@ -900,7 +901,7 @@ BEGIN
                  ('CrisisCalls', 'crisis_calls_teacher_select', 'SELECT'),
                  ('CrisisCalls', 'crisis_calls_admin_insert', 'INSERT'),
                  ('CrisisCallTeachers', 'crisis_call_teachers_admin_select', 'SELECT'),
-                 ('CrisisCallTeachers', 'crisis_call_teachers_own_select', 'SELECT'),
+                 ('CrisisCallTeachers', 'crisis_call_teachers_teacher_select', 'SELECT'),
                  ('CrisisCallTeachers', 'crisis_call_teachers_admin_insert', 'INSERT'),
                  ('CrisisPupils', 'crisis_pupils_admin_select', 'SELECT'),
                  ('CrisisPupils', 'crisis_pupils_teacher_select', 'SELECT'),
@@ -918,8 +919,6 @@ BEGIN
                                          ELSE '%current_user_role()%= ''TEACHER''::"UserRole"%' END
                          AND e LIKE CASE
                                       WHEN p.policyname = 'crisis_alarms_teacher_select' THEN '%crisis_window_open(%'
-                                      WHEN p.policyname = 'crisis_call_teachers_own_select'
-                                        THEN '%"teacherId" = ( SELECT app.current_user_id() AS current_user_id)%crisis_call_window_open(%'
                                       WHEN p.policyname LIKE '%\_teacher\_%' ESCAPE '\' THEN '%crisis_answers_for(%crisis_call_window_open(%'
                                       ELSE '%' END)
                   FROM unnest(ARRAY[p.qual, p.with_check]) e

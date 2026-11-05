@@ -86,6 +86,7 @@
       <li><span>6.10 Notiser, e-post och push</span><span class="dots"></span><span class="pg" data-pg="s610"></span></li>
       <li><span>6.11 Lektionslogg och klassbok</span><span class="dots"></span><span class="pg" data-pg="s611"></span></li>
       <li><span>6.12 Frånvarobevakning</span><span class="dots"></span><span class="pg" data-pg="s612"></span></li>
+      <li><span>6.13 Krisläge: larm vid utrymning och inrymning</span><span class="dots"></span><span class="pg" data-pg="s613"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -6304,6 +6305,135 @@
     </p>
   </div>
 
+  <h3 id="s613"><span class="num">6.13</span>Krisläge: larm vid utrymning och inrymning</h3>
+  <p>
+    <span class="path">Drift › Krisläge</span> startar ett upprop när huset ska
+    tömmas (<strong>utrymning</strong>) eller när alla ska vara kvar där de är
+    (<strong>inrymning</strong>). Larmet utgår från schemat: varje lärare får
+    den grupp som står på hens schema just nu, och prickar av vilka som finns,
+    vilka som saknas och vilka som redan var frånvarande. Du ser hur det går
+    medan det pågår, och efteråt finns ett protokoll med tider och vem som
+    rapporterade vad.
+  </p>
+  <div class="note">
+    <span class="label">Krisläget ersätter inte skolans larm</span>
+    <p>
+      Det är en hjälp att räkna elever, inte ett brandlarm. Utrymningsplanen,
+      larmet och samlingsplatserna är skolans egna. Öva med
+      <strong>övning</strong>, aldrig genom att starta ett skarpt larm för att se
+      hur det ser ut.
+    </p>
+  </div>
+
+  <h4>Vem som får starta</h4>
+  <p>
+    Rektor och fullständig administratör får alltid starta ett larm. Vilka
+    andra profiler som får det bestämmer den som beslutar under
+    <span class="path">Krisläge › Inställningar</span>: som förval schemaläggare
+    och expedition. Läsare, lärare, elever och vårdnadshavare kan inte starta
+    ett larm. Databasen håller samma regel, så ett fel i en sida kan inte ge en
+    annan roll rätten. Under samma inställningar väljer skolan om
+    <strong>vårdnadshavarna får veta efteråt</strong> att ett skarpt larm har
+    varit (se nedan). Förvalet är nej.
+  </p>
+
+  <h4>Starta, och vad som händer då</h4>
+  <ol>
+    <li>Välj <span class="ui">Utrymning</span> eller <span class="ui">Inrymning</span>
+      och <span class="ui">Övning</span> eller <span class="ui">Skarpt larm</span>,
+      och bekräfta. Ett skarpt larm kräver ett extra tryck.</li>
+    <li>Rastra tar listorna ur schemat <em>i det ögonblick du trycker</em>.
+      Varje elev hamnar hos den lektion som pågår. Är det rast hamnar eleven hos
+      den lektion hen är på väg till, om det är högst två timmar till den och
+      eleven har haft lektion tidigare samma dag, så att läraren som ska möta
+      klassen räknar den. Lektioner som är inställda, till exempel av en
+      schemabrytande aktivitet, räknas inte; ersättningslektionen räknas som
+      vilken lektion som helst.</li>
+    <li>Läraren på listan är den som kalendern säger. En vikarie som tavlan eller
+      en vikariefråga har satt på lektionen står redan där i stället för den
+      frånvarande. En lärare som är borta just nu tas inte med: finns ingen som
+      ersätter hen står gruppen med texten <em>ingen lärare</em>, och du eller
+      någon i ledningen markerar den.</li>
+    <li>Elever som registret för dagen eller en anmälan eller beviljad ledighet
+      redan säger är frånvarande står som <em>frånvarande sedan tidigare</em>
+      och behöver ingen markering. Registret gäller först: en elev som anmälts
+      men står som närvarande på en senare lektion räknas som närvarande.</li>
+    <li>All personal utom du får en notis om att ett larm (eller en övning)
+      pågår. Notisen och pushen säger bara det: aldrig en elev, en grupp, en
+      plats eller vilken sorts larm. Den går fram oavsett vad personen har
+      valt att få, eftersom en lärare som aldrig fick veta är värre än en
+      avstängd signal.</li>
+  </ol>
+  <p>
+    Listorna ändras inte efteråt. Går en elev eller lärare in i en grupp under
+    larmets gång syns det inte på listan; ledningen markerar eleven direkt.
+  </p>
+
+  <h4>Under larmet</h4>
+  <p>
+    Sidan visar hur många grupper som är klara, hur många elever som är
+    funna, saknade, ännu inte rapporterade och frånvarande sedan tidigare, och
+    hur många lärare som har svarat. Under räknarna står <strong>lärarna som
+    inte har svarat</strong> och <strong>eleverna som saknas eller inte är
+    rapporterade</strong>, och sedan varje grupp med sina lärare och sin
+    elevlista. Sidan uppdateras löpande. Du kan markera
+    en elev som <em>finns</em> eller <em>saknas</em> åt en grupp, till exempel
+    när ingen lärare svarar för den eller när läraren inte når nätet; det
+    protokollförs som att ledningen rapporterade åt gruppen. En grupp är klar
+    när varje elev som inte var frånvarande sedan tidigare har en markering. Om
+    en elev har markerats av två personer gäller den senaste markeringen.
+  </p>
+  <p>
+    Det kan pågå ett skarpt larm och en övning samtidigt, men aldrig två av
+    samma slag. Startar du ett skarpt larm avbryts en övning som pågår. Ett larm
+    som ingen avslutat avslutas av Rastra efter 12 timmar (en övning efter 3).
+  </p>
+
+  <h4>Avsluta</h4>
+  <p>
+    <span class="ui">Avsluta larmet</span> frågar efter en valfri anteckning
+    (högst 300 tecken, till exempel <em>Falsklarm i hus B</em>; skriv inga namn
+    på elever) och varnar om elever fortfarande saknas eller inte är
+    rapporterade. Personalen får en notis om att larmet är över. Lärarnas
+    telefoner kan skicka markeringar i en timme till (de märks <em>sena</em> i
+    protokollet), men inte längre. Är det ett skarpt larm och skolan har valt
+    det, får vårdnadshavarna till eleverna på listorna en notis om att skolan
+    har haft ett larm och att det är avslutat. De får inget om någon elev.
+  </p>
+
+  <h4>Protokollet</h4>
+  <p>
+    <span class="path">Krisläge › Protokoll</span> listar skolans larm, skarpa
+    larm och övningar var för sig. Ett larm visar grupperna, vem som svarade för
+    dem, varje elevs status och en tidslinje med varje markering: när den
+    gjordes, vem som gjorde den och om ledningen gjorde den åt gruppen eller om
+    den kom efter att larmet avslutats. Protokollet kan hämtas som
+    <strong>CSV</strong> (samma format som skolans övriga CSV-filer: UTF-8,
+    semikolon, öppnas rätt i Excel) och skrivas ut som <strong>PDF</strong>. Elever
+    med skyddad identitet (6.7) står inte vid namn i filen eller på utskriften:
+    de är räknade, och sidan säger hur många. Varje öppning av ett protokoll
+    skrivs i läsloggen (7.4).
+  </p>
+
+  <h4>Hur länge sparas det?</h4>
+  <p>
+    Övningar och skarpa larm gallras var för sig (7.4) och ingenting gallras
+    förrän skolan har bestämt en period för respektive slag. Ett skarpt larm kan
+    vara ett protokoll skolan vill spara länge; en övning behöver ofta inte
+    sparas lika länge. Ett larm som fortfarande pågår gallras aldrig.
+  </p>
+  <div class="note">
+    <span class="label">Vad listan inte vet</span>
+    <p>
+      En elev vars lektion är inställd och som inte har någon annan lektion
+      kring tillfället står på ingen lista: skolan vet inte att hen är i huset.
+      Står en elev på två lektioner samtidigt räknas hen på den som kommer först.
+      Lärare som just nu inte har någon grupp får veta att ett larm pågår men
+      svarar inte för någon. Lista därför alltid även personal och besökare på
+      skolans vanliga sätt.
+    </p>
+  </div>
+
 </section>
 
 <!-- ============================ 7 ============================ -->
@@ -6884,6 +7014,8 @@
       <tr><td class="k">Frånvaroorsaker</td><td>Orsaken på lärarfrånvaro som slutade före gränsdagen. I listorna står det <span class="ui">Gallrad</span>.</td><td>Frånvaron och vikariebesluten, så att vikarietimmar och lön stämmer.</td></tr>
       <tr><td class="k">Läslogg</td><td>Läsningar i läsloggen (se nedan) före gränsdagen.</td><td>—</td></tr>
       <tr><td class="k">Vikarieförfrågningar</td><td>Avslutade förfrågningar om vikarie som avslutades före gränsdagen, med vilka lektioner de gällde och vem som tillfrågades och svarade, och vikariernas bekräftelser av pass från före gränsdagen. En fråga som fortfarande står öppen gallras aldrig.</td><td>Vikariebesluten och vikariepassen, så att vikarietimmar och lön stämmer. Rättvisan visar bara de förfrågningar som finns kvar.</td></tr>
+      <tr><td class="k">Krisläge: övningar</td><td>Övningar som avslutades före gränsdagen, med grupperna, lärarna, eleverna och varje markering.</td><td>—</td></tr>
+      <tr><td class="k">Krisläge: skarpa larm</td><td>Skarpa larm som avslutades före gränsdagen, med allt som hör till dem. Ett larm som pågår gallras aldrig.</td><td>—</td></tr>
       <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort, utom när en annan skola fortfarande använder den (2.3); då är det bara den här skolans uppgift om personen som pseudonymiseras. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur och anteckning tas bort från personens tjänster.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur och anteckning; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
     </tbody>
   </table>

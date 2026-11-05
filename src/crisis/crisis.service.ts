@@ -201,6 +201,10 @@ export class CrisisService {
           code: CRISIS_NOT_YOURS,
         });
       }
+      // One alarm of each mode at a time. Asked first, so the answer can name the alarm that is going: a
+      // statement that fails in a transaction ends it, and the unique index below answers only a race.
+      const going = await tx.crisisAlarm.findFirst({ where: { schoolId, mode: dto.mode, endedAt: null }, select: { id: true } });
+      if (going) throw alarmOpen(dto.mode, going.id);
       // The transaction's time is the alarm's start and the moment the lists are taken at.
       const at = (await tx.$queryRaw<{ now: Date }[]>(Prisma.sql`SELECT now() AS now`))[0]!.now;
       if (dto.mode === 'LIVE') {
@@ -217,13 +221,9 @@ export class CrisisService {
       try {
         alarm = await tx.crisisAlarm.create({ data: { schoolId, kind: dto.kind, mode: dto.mode } });
       } catch (error) {
+        // Another administrator started one in the same moment: the unique index answers the second.
         if (sqlStateOf(error) === '23505' || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) {
-          const open = await tx.crisisAlarm.findFirst({ where: { schoolId, mode: dto.mode, endedAt: null }, select: { id: true } });
-          throw new ConflictException({
-            message: dto.mode === 'LIVE' ? 'Ett skarpt larm pågår redan.' : 'En övning pågår redan.',
-            code: CRISIS_ALARM_OPEN,
-            alarmId: open?.id ?? null,
-          });
+          throw alarmOpen(dto.mode, null);
         }
         throw error;
       }
@@ -733,6 +733,15 @@ export class CrisisService {
 
 function notFound(): NotFoundException {
   return new NotFoundException({ message: 'Larmet finns inte.', code: CRISIS_ALARM_NOT_FOUND });
+}
+
+/** The alarm that is going is in `params`, the one member of a coded refusal the global filter lets through. */
+function alarmOpen(mode: 'LIVE' | 'DRILL', alarmId: string | null): ConflictException {
+  return new ConflictException({
+    message: mode === 'LIVE' ? 'Ett skarpt larm pågår redan.' : 'En övning pågår redan.',
+    code: CRISIS_ALARM_OPEN,
+    ...(alarmId ? { params: { alarmId } } : {}),
+  });
 }
 
 function ended409(): ConflictException {
