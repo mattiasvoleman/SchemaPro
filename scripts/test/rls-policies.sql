@@ -20148,6 +20148,10 @@ INSERT INTO area_profiles (profile, writes, decides) VALUES
   ('LASARE', '{}', false);
 INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('AbsenceReports', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('AbsenceWatchDigests', '{}', '{}', '{}', '{}'),
+  ('AbsenceWatchFindings', '{}', '{}', '{}', '{}'),
+  ('AbsenceWatchLimits', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('AbsenceWatchSettings', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('AcademicYearTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('AcademicYears', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('AttendanceRecords', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
@@ -31158,7 +31162,8 @@ ROLLBACK;
 -- (pg_stat_xact_all_tables), or is one of the gateway's jobs below and
 -- writes no more than the same call writes with no principal at all. The
 -- jobs (gallring, the job runner, push receipts, the candidates' sweep,
--- SS12000 housekeeping and delivery) ask for no principal and no route
+-- SS12000 housekeeping and delivery, and the absence watch's count and
+-- digest, Frånvarobevakning) ask for no principal and no route
 -- calls them: the reader gets nothing through them that an empty session
 -- would not. They are named rather than inferred from the writes, since
 -- which of them write depends on the arguments a call happens to get; a
@@ -31189,6 +31194,7 @@ DECLARE
   wrong text[] := '{}';
   writes_by_design constant text[] := ARRAY['app.personal_data_read'];
   job_functions constant text[] := ARRAY[
+    'app.absence_watch_digest', 'app.absence_watch_evaluate',
     'app.gallring_begin', 'app.gallring_claim_person', 'app.gallring_departed_due', 'app.gallring_finish',
     'app.gallring_pseudonymise', 'app.gallring_purge',
     'app.job_claim_finished', 'app.job_claim_nightly', 'app.job_run_settled',
@@ -36666,5 +36672,1166 @@ BEGIN
   IF n <> 0 THEN
     RAISE EXCEPTION 'span: % local timplan(s) from another school visible', n;
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 305-308: Frånvarobevakning (20261231090100).
+--
+-- Gränser per skola och mottagargrupp, ett nattligt jobb som räknar vilka
+-- elever som passerat dem, och en vecko- eller månadssammanställning. The
+-- school is rls-franvarobevakning-school (fixtures: …d10000000001 and on), a
+-- full administrator, rektor, expedition, schemaläggare and läsare, two
+-- mentors, a teacher without a class, a deactivated one who once mentored 7A,
+-- four pupils and a deactivated fifth, three guardians, and a second school
+-- of its own. Lessons and marks are planted by each section, on fixed past
+-- days (the Monday 2026-09-14 is where the weeks start) inside its own
+-- transaction, so nothing ages and nothing stays.
+--
+--   305  the tables: defaults, the checks on a limit, the switch's date, what
+--        turning it off or removing a limit closes
+--   306  the count: window edges, exact thresholds, LATE, UNKNOWN, CANCELLED,
+--        a replacement lesson, giltig and ogiltig apart, days in a row across
+--        a weekend and an empty day, the summer-time Mondays, the lifecycle
+--   307  who reads: the arms, role by role, and who writes
+--   308  the digest: the recipients per group, the counts, once per period
+--   (on the owner's side, in rls-owner-checks.sql: 305o the findings' own constraints,
+--   306o the mentor rule held to the leave decision's, 308o which periods are due,
+--   309o gallring over the findings)
+-- ---------------------------------------------------------------------------
+
+-- The helpers the sections share. Temporary, so they die with the session.
+CREATE FUNCTION pg_temp.fb_as(p_auth text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_auth)::text, true)
+$$;
+
+-- One pupil's day: a lesson of p_mins minutes for each status, planted the way
+-- the register does (a lesson and the pupil's mark on it). The lessons start at
+-- 08:00 local time and follow each other ten minutes apart.
+CREATE FUNCTION pg_temp.fb_plant(p_subject uuid, p_group uuid, p_student uuid, p_day date, p_statuses text[],
+                                 p_lesson "LessonStatus" DEFAULT 'SCHEDULED', p_mins integer DEFAULT 60)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  i integer;
+  l uuid;
+  s uuid := app.current_school_id();
+  first_start timestamptz := (p_day + time '08:00') AT TIME ZONE 'Europe/Stockholm';
+BEGIN
+  FOR i IN 1..cardinality(p_statuses) LOOP
+    INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+    VALUES (s, p_subject, p_group, p_day,
+            first_start + (i - 1) * (p_mins + 10) * interval '1 minute',
+            first_start + (i - 1) * (p_mins + 10) * interval '1 minute' + p_mins * interval '1 minute',
+            p_lesson, now())
+    RETURNING id INTO l;
+    INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+    VALUES (s, l, p_student, p_statuses[i]::"AttendanceStatus", now());
+  END LOOP;
+END $$;
+
+-- n lessons a day on each of the weekdays from p_from to p_to, all with p_status.
+CREATE FUNCTION pg_temp.fb_weekdays(p_subject uuid, p_group uuid, p_student uuid, p_from date, p_to date, p_status text, p_n integer DEFAULT 1)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  d date;
+BEGIN
+  FOR d IN SELECT g::date FROM generate_series(p_from, p_to, interval '1 day') g WHERE extract(isodow FROM g) < 6 LOOP
+    PERFORM pg_temp.fb_plant(p_subject, p_group, p_student, d, array_fill(p_status, ARRAY[p_n]));
+  END LOOP;
+END $$;
+
+-- The school's findings as one readable text: pupil, group, kind, basis, the
+-- days and the figures. Read as the administrator.
+CREATE FUNCTION pg_temp.fb_findings() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(
+           substr(u.email, 4, 2) || ' ' || f."recipientGroup" || ' ' || f.kind || ' ' || f.basis
+             || ' ' || f."firstCrossedOn" || ' ' || f."lastSeenOn" || ' ' || coalesce(f."clearedOn"::text, '-')
+             || ' ' || coalesce(f."absentMinutes"::text || '/' || f."recordedMinutes"::text, f."streakDays"::text || 'd'),
+           E'\n' ORDER BY u.email, f."recipientGroup"::text, f.kind::text, f.basis::text, f."firstCrossedOn"), '')
+    FROM "AbsenceWatchFindings" f JOIN "Users" u ON u.id = f."studentId"
+$$;
+
+-- A statement a CHECK or a unique index must refuse, by the constraint's name.
+CREATE FUNCTION pg_temp.fb_refuses(p_sql text, p_constraint text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE p_sql;
+  RAISE EXCEPTION 'frånvarobevakning: accepted: %', p_sql;
+EXCEPTION WHEN check_violation OR unique_violation THEN
+  IF position(p_constraint IN SQLERRM) = 0 THEN
+    RAISE EXCEPTION 'frånvarobevakning: % was refused, but not by %: %', p_sql, p_constraint, SQLERRM;
+  END IF;
+END $$;
+
+-- A statement the caller is refused: a missing privilege, a policy's check, or an
+-- UPDATE or DELETE that no policy lets reach a row.
+CREATE FUNCTION pg_temp.fb_denied(p_sql text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+BEGIN
+  EXECUTE p_sql;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF p_sql ~* '^(UPDATE|DELETE)' AND n = 0 THEN RETURN; END IF;
+  RAISE EXCEPTION 'frånvarobevakning: not denied (% rows): %', n, p_sql;
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+
+CREATE FUNCTION pg_temp.fb_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'frånvarobevakning %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 305: the tables and what their triggers do.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  s record;
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  lim uuid;
+  p1 uuid;
+  subj uuid;
+  ka uuid;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'frånvarobevakning 305: expected the full administrator'; END IF;
+
+  -- No row: off, as for every school before this migration.
+  IF EXISTS (SELECT 1 FROM "AbsenceWatchSettings") THEN RAISE EXCEPTION 'frånvarobevakning 305: the school starts with a switch'; END IF;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId") VALUES (school);
+  SELECT * INTO s FROM "AbsenceWatchSettings";
+  IF s.enabled OR s."enabledOn" IS NOT NULL OR s."mentorCadence" <> 'WEEKLY' OR s."rektorCadence" <> 'WEEKLY'
+     OR s."kansliCadence" <> 'WEEKLY' OR s."guardianCadence" <> 'MONTHLY' THEN
+    RAISE EXCEPTION 'frånvarobevakning 305: the defaults are off, no date, weekly for staff and monthly for guardians: %', s;
+  END IF;
+  -- Turning it on dates the switch with the school's own day; a writer's date is the trigger's.
+  UPDATE "AbsenceWatchSettings" SET enabled = true, "enabledOn" = '2020-01-01';
+  SELECT * INTO s FROM "AbsenceWatchSettings";
+  IF NOT s.enabled OR s."enabledOn" IS DISTINCT FROM today THEN
+    RAISE EXCEPTION 'frånvarobevakning 305: turning it on set enabledOn to %, not %', s."enabledOn", today;
+  END IF;
+  UPDATE "AbsenceWatchSettings" SET "mentorCadence" = 'MONTHLY', "enabledOn" = '2020-01-01';
+  IF (SELECT "enabledOn" FROM "AbsenceWatchSettings") IS DISTINCT FROM today THEN
+    RAISE EXCEPTION 'frånvarobevakning 305: another change moved the date the switch went on';
+  END IF;
+  BEGIN
+    UPDATE "AbsenceWatchSettings" SET enabled = true, "enabledOn" = NULL;
+    IF (SELECT "enabledOn" FROM "AbsenceWatchSettings") IS NULL THEN RAISE EXCEPTION 'frånvarobevakning 305: an enabled switch without a date'; END IF;
+  END;
+  -- One row per school (the key), and the school's own.
+  BEGIN
+    INSERT INTO "AbsenceWatchSettings" ("schoolId") VALUES (school);
+    RAISE EXCEPTION 'frånvarobevakning 305: a second switch for the school was accepted';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "AbsenceWatchSettings" ("schoolId") VALUES (gen_random_uuid());
+    RAISE EXCEPTION 'frånvarobevakning 305: a switch for another school was accepted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- Off and on again: the date is today's, and an off switch keeps the old date.
+  UPDATE "AbsenceWatchSettings" SET enabled = false;
+  IF (SELECT "enabledOn" FROM "AbsenceWatchSettings") IS DISTINCT FROM today THEN RAISE EXCEPTION 'frånvarobevakning 305: turning it off cleared the date'; END IF;
+
+  -- A limit: both kinds, both ends of every range, and the figures each kind lacks.
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES
+    (school, 'MENTOR', 'SHARE', 'INVALID', 1, 7), (school, 'MENTOR', 'SHARE', 'VALID', 100, 60);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES
+    (school, 'MENTOR', 'CONSECUTIVE', 'INVALID', 2), (school, 'MENTOR', 'CONSECUTIVE', 'ALL', 30);
+  IF (SELECT count(*) FROM "AbsenceWatchLimits") <> 4 THEN RAISE EXCEPTION 'frånvarobevakning 305: the limits at both ends were not all accepted'; END IF;
+  DELETE FROM "AbsenceWatchLimits";
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (app.current_school_id(), ''MENTOR'', ''SHARE'', ''ALL'', 0, 14)', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (app.current_school_id(), ''MENTOR'', ''SHARE'', ''ALL'', 101, 14)', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (app.current_school_id(), ''MENTOR'', ''SHARE'', ''ALL'', 10, 6)', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (app.current_school_id(), ''MENTOR'', ''SHARE'', ''ALL'', 10, 61)', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent) VALUES (app.current_school_id(), ''MENTOR'', ''SHARE'', ''ALL'', 10)', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "windowDays") VALUES (app.current_school_id(), ''MENTOR'', ''SHARE'', ''ALL'', 14)', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays", "consecutiveDays") VALUES (app.current_school_id(), ''MENTOR'', ''SHARE'', ''ALL'', 10, 14, 3)', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (app.current_school_id(), ''MENTOR'', ''CONSECUTIVE'', ''ALL'', 1)', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (app.current_school_id(), ''MENTOR'', ''CONSECUTIVE'', ''ALL'', 31)', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis) VALUES (app.current_school_id(), ''MENTOR'', ''CONSECUTIVE'', ''ALL'')', 'a_kind_has_its_figures');
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays", percent) VALUES (app.current_school_id(), ''MENTOR'', ''CONSECUTIVE'', ''ALL'', 3, 10)', 'a_kind_has_its_figures');
+
+  -- One limit per group, kind and basis; the same figures for another group are another limit.
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays")
+  VALUES (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14) RETURNING id INTO lim;
+  PERFORM pg_temp.fb_refuses('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (app.current_school_id(), ''MENTOR'', ''SHARE'', ''INVALID'', 20, 30)', 'one_per_group_kind_basis');
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES
+    (school, 'REKTOR', 'SHARE', 'INVALID', 10, 14), (school, 'MENTOR', 'SHARE', 'VALID', 10, 14);
+  -- A limit keeps its group, kind and basis; its figures change.
+  UPDATE "AbsenceWatchLimits" SET percent = 15, "windowDays" = 28 WHERE id = lim;
+  BEGIN
+    UPDATE "AbsenceWatchLimits" SET "recipientGroup" = 'KANSLI' WHERE id = lim;
+    RAISE EXCEPTION 'frånvarobevakning 305: a limit changed group';
+  EXCEPTION WHEN SQLSTATE 'AW409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AbsenceWatchLimits" SET basis = 'ALL' WHERE id = lim;
+    RAISE EXCEPTION 'frånvarobevakning 305: a limit changed basis';
+  EXCEPTION WHEN SQLSTATE 'AW409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AbsenceWatchLimits" SET kind = 'CONSECUTIVE', percent = NULL, "windowDays" = NULL, "consecutiveDays" = 3 WHERE id = lim;
+    RAISE EXCEPTION 'frånvarobevakning 305: a limit changed kind';
+  EXCEPTION WHEN SQLSTATE 'AW409' THEN NULL;
+  END;
+  DELETE FROM "AbsenceWatchLimits" WHERE "recipientGroup" IN ('REKTOR') OR basis = 'VALID';
+END $$;
+
+-- Removing a limit closes its open findings at once, and so does turning the
+-- bevakning off; the findings are then still there, closed.
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  lim uuid := (SELECT id FROM "AbsenceWatchLimits" WHERE "recipientGroup" = 'MENTOR');
+  lim2 uuid;
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 305', 'FB305', now()) RETURNING id INTO subj;
+  PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-14', '2026-09-18', 'ABSENT');
+  UPDATE "AbsenceWatchSettings" SET enabled = true;
+  IF (SELECT opened FROM app.absence_watch_evaluate(school, '2026-09-20')) <> 1 THEN
+    RAISE EXCEPTION 'frånvarobevakning 305: the planted absence was not found';
+  END IF;
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 305: no open finding'; END IF;
+  DELETE FROM "AbsenceWatchLimits" WHERE id = lim;
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 0
+     OR (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NOT NULL) <> 1 THEN
+    RAISE EXCEPTION 'frånvarobevakning 305: removing the limit did not close its finding at once';
+  END IF;
+  -- The finding says what the pupil passed, though the limit is gone.
+  IF (SELECT percent FROM "AbsenceWatchFindings") <> 15 THEN RAISE EXCEPTION 'frånvarobevakning 305: the finding lost the limit it carries'; END IF;
+
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays")
+  VALUES (school, 'KANSLI', 'SHARE', 'INVALID', 10, 14) RETURNING id INTO lim2;
+  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 305: the new limit found nobody'; END IF;
+  UPDATE "AbsenceWatchSettings" SET enabled = false;
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 0 THEN
+    RAISE EXCEPTION 'frånvarobevakning 305: turning the bevakning off left a finding open in a view nothing feeds';
+  END IF;
+  -- An off school is not counted: nothing opens, whatever is planted.
+  IF (SELECT opened + kept + closed + pupils FROM app.absence_watch_evaluate(school, '2026-09-20')) <> 0 THEN
+    RAISE EXCEPTION 'frånvarobevakning 305: a school with the bevakning off was counted';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 306: the count.
+--
+-- Weeks start on Monday 2026-09-14. A pupil's lessons are 60 minutes; one
+-- lesson is 60 of the figures below. The window of 14 days ending on
+-- Sunday 2026-09-27 is Monday 2026-09-14 to the 27th, both ends in.
+-- ---------------------------------------------------------------------------
+
+-- 306a: the window's edges and the threshold, to the minute. The count is as of
+-- Thursday 2026-09-24, so the window of 14 days is Friday the 11th to the 24th,
+-- both ends in, and the day outside it is the Thursday before, a school day too.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  kb uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7B');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+  p3 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid');
+  p4 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p4@example.invalid');
+  r record;
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306', 'FB306', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  -- A second limit, wider and never reached (nothing here is giltig), so the days before the
+  -- 14-day window are read all the same and it is the limit's own window that leaves them out.
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES
+    (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14), (school, 'KANSLI', 'SHARE', 'VALID', 100, 60);
+
+  -- P1: ten lessons in the window, one of them the window's first day (the 11th), absent:
+  -- 60 of 600 is 10 %, and the limit is reached at 10.
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-11', ARRAY['ABSENT']);
+  PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-14', '2026-09-24', 'PRESENT');
+  -- P2: ten lessons present in the window, and two absences the Thursday before it: the window is
+  -- 14 days, and with the 10th in it 120 of 720 would be 16.7 %.
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-10', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-11', ARRAY['PRESENT']);
+  PERFORM pg_temp.fb_weekdays(subj, ka, p2, '2026-09-14', '2026-09-24', 'PRESENT');
+  -- P3: ten lessons present and the window's last day absent once: 60 of 660 is 9.09 %.
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-11', ARRAY['PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_weekdays(subj, kb, p3, '2026-09-14', '2026-09-23', 'PRESENT');
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-24', ARRAY['ABSENT']);
+  -- P4: the same with a second absence on the last day: 120 of 720, 16.67 %.
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-11', ARRAY['PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_weekdays(subj, kb, p4, '2026-09-14', '2026-09-23', 'PRESENT');
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-24', ARRAY['ABSENT', 'ABSENT']);
+
+  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-24');
+  IF r.opened <> 2 OR r.kept <> 0 OR r.closed <> 0 OR r.pupils <> 4 THEN
+    RAISE EXCEPTION 'frånvarobevakning 306a: opened %, kept %, closed %, pupils %', r.opened, r.kept, r.closed, r.pupils;
+  END IF;
+  PERFORM pg_temp.fb_expect('306a', pg_temp.fb_findings(),
+    E'p1 MENTOR SHARE INVALID 2026-09-24 2026-09-24 - 60/600\n' ||
+    E'p4 MENTOR SHARE INVALID 2026-09-24 2026-09-24 - 120/720');
+
+  -- A day on (the 25th) loses the window's first day: P1's absence is out and the
+  -- finding closes on the day it was found gone; P4 loses two present lessons and is
+  -- kept at 120 of 600; and P3, whose 60 of 660 became 60 of 540, is over the limit and opens.
+  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-25');
+  IF r.opened <> 1 OR r.kept <> 1 OR r.closed <> 1 THEN
+    RAISE EXCEPTION 'frånvarobevakning 306a: the 25th: opened %, kept %, closed %', r.opened, r.kept, r.closed;
+  END IF;
+  PERFORM pg_temp.fb_expect('306a, a day on', pg_temp.fb_findings(),
+    E'p1 MENTOR SHARE INVALID 2026-09-24 2026-09-24 2026-09-25 60/600\n' ||
+    E'p3 MENTOR SHARE INVALID 2026-09-25 2026-09-25 - 60/540\n' ||
+    E'p4 MENTOR SHARE INVALID 2026-09-24 2026-09-25 - 120/600');
+END $$;
+ROLLBACK;
+
+-- 306b: LATE is 15 minutes, capped at the lesson; UNKNOWN is nothing; a lesson
+-- that was cancelled is no absence whatever was marked on it; a replacement
+-- lesson, another class's, counts as any lesson.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  kb uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7B');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+  p3 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid');
+  p4 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p4@example.invalid');
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306b', 'FB306B', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14);
+
+  -- P1: four late arrivals of ten lessons, 15 of 60 each: 60 of 600.
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-15', ARRAY['LATE', 'LATE', 'LATE', 'LATE']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-16', ARRAY['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
+  -- ... and five lessons nobody registered: with them in the denominator it would be 60 of 900.
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-17', array_fill('UNKNOWN'::text, ARRAY[5]));
+  -- P2: one late arrival to a 10-minute lesson is 10 minutes, not 15: 10 of 100 is 10 %.
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-15', ARRAY['LATE'], 'SCHEDULED', 10);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-16', ARRAY['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT'], 'SCHEDULED', 10);
+  -- P3: ten lessons present and ten that were never registered: UNKNOWN is in neither figure. Five absences on a CANCELLED lesson, as well.
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-15', array_fill('PRESENT'::text, ARRAY[10]));
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-16', array_fill('UNKNOWN'::text, ARRAY[10]));
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-17', array_fill('ABSENT'::text, ARRAY[5]), 'CANCELLED');
+  -- P4: the absence is in a lesson of another class (a replacement lesson, a friluftsdag's) and a COMPLETED lesson counts too.
+  PERFORM pg_temp.fb_plant(subj, ka, p4, '2026-09-15', ARRAY['ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-16', ARRAY['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT'], 'COMPLETED');
+  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  PERFORM pg_temp.fb_expect('306b', pg_temp.fb_findings(),
+    E'p1 MENTOR SHARE INVALID 2026-09-20 2026-09-20 - 60/600\n' ||
+    E'p2 MENTOR SHARE INVALID 2026-09-20 2026-09-20 - 10/100\n' ||
+    E'p4 MENTOR SHARE INVALID 2026-09-20 2026-09-20 - 60/600');
+  -- A lesson that was rescheduled is not held either.
+  UPDATE "CalendarLessons" SET status = 'RESCHEDULED' WHERE "studentGroupId" = ka
+     AND id IN (SELECT "calendarLessonId" FROM "AttendanceRecords" WHERE "studentId" = p4);
+  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  IF EXISTS (SELECT 1 FROM "AbsenceWatchFindings" WHERE "studentId" = p4 AND "clearedOn" IS NULL)
+     OR NOT EXISTS (SELECT 1 FROM "AbsenceWatchFindings" WHERE "studentId" = p4 AND "clearedOn" IS NOT NULL) THEN
+    RAISE EXCEPTION 'frånvarobevakning 306b: a rescheduled lesson still counted as absence: %', pg_temp.fb_findings();
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 306c: giltig and ogiltig frånvaro each by themselves, and together.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+  p3 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid');
+  p4 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p4@example.invalid');
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306c', 'FB306C', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES
+    (school, 'MENTOR', 'SHARE', 'VALID', 20, 14), (school, 'REKTOR', 'SHARE', 'INVALID', 20, 14), (school, 'KANSLI', 'SHARE', 'ALL', 30, 14);
+  -- P1: two of ten excused (20 % giltig). P2: two of ten absent (20 % ogiltig). P3: two and two,
+  -- 20 % of each kind and 40 % in all: over the giltig and the ogiltig limits, and over the one for all.
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-15', ARRAY['EXCUSED', 'EXCUSED', 'PRESENT', 'PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-16', ARRAY['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-15', ARRAY['ABSENT', 'ABSENT', 'PRESENT', 'PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-16', ARRAY['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p3, '2026-09-15', ARRAY['EXCUSED', 'EXCUSED', 'ABSENT', 'ABSENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p3, '2026-09-16', ARRAY['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
+  -- P4: five late arrivals of ten lessons: 75 minutes of ogiltig absence (12.5 %), none giltig, and under all three limits.
+  PERFORM pg_temp.fb_plant(subj, ka, p4, '2026-09-15', ARRAY['LATE', 'LATE', 'LATE', 'LATE', 'LATE']);
+  PERFORM pg_temp.fb_plant(subj, ka, p4, '2026-09-16', ARRAY['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
+  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  PERFORM pg_temp.fb_expect('306c', pg_temp.fb_findings(),
+    E'p1 MENTOR SHARE VALID 2026-09-20 2026-09-20 - 120/600\n' ||
+    E'p2 REKTOR SHARE INVALID 2026-09-20 2026-09-20 - 120/600\n' ||
+    E'p3 KANSLI SHARE ALL 2026-09-20 2026-09-20 - 240/600\n' ||
+    E'p3 MENTOR SHARE VALID 2026-09-20 2026-09-20 - 120/600\n' ||
+    E'p3 REKTOR SHARE INVALID 2026-09-20 2026-09-20 - 120/600');
+END $$;
+ROLLBACK;
+
+-- 306d: days in a row. Friday 2026-09-25 is cancelled for everybody below
+-- (a lov or a cancelled day leaves no registered lesson), and the week-end
+-- falls between the Friday and the Monday.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  kb uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7B');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+  p3 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid');
+  p4 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p4@example.invalid');
+  p5 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p5@example.invalid');
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306d', 'FB306D', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (school, 'REKTOR', 'CONSECUTIVE', 'ALL', 3);
+
+  -- P1: Wed, Thu, Fri, Mon, all day absent, after a Tuesday present: four days across the week-end.
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-22', ARRAY['PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-23', ARRAY['ABSENT', 'EXCUSED']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-24', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-25', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-28', ARRAY['ABSENT', 'ABSENT']);
+  -- P2: Thu and Fri absent, and back on the Monday: no run is going.
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-23', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-24', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-25', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-28', ARRAY['PRESENT', 'PRESENT']);
+  -- P3: Thu, Fri and a Monday of which one lesson of two was attended: not a day of absence.
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-24', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-25', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-28', ARRAY['ABSENT', 'PRESENT']);
+  -- P4: Wed, Thu and Mon absent, and a Friday whose lessons were cancelled with absences marked on them
+  -- and whose other two nobody registered: the Friday is nothing, the run is three.
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-23', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-24', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-25', ARRAY['ABSENT', 'ABSENT'], 'CANCELLED');
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-25', ARRAY['UNKNOWN', 'UNKNOWN']);
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-28', ARRAY['ABSENT', 'ABSENT']);
+  -- P5 is deactivated: four absent days count for nobody.
+  PERFORM pg_temp.fb_plant(subj, ka, p5, '2026-09-22', ARRAY['ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p5, '2026-09-23', ARRAY['ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p5, '2026-09-24', ARRAY['ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p5, '2026-09-28', ARRAY['ABSENT']);
+
+  PERFORM app.absence_watch_evaluate(school, '2026-09-28');
+  -- The run reaches three on the third day of it, the 25th for P1 and the 28th for P4.
+  PERFORM pg_temp.fb_expect('306d', pg_temp.fb_findings(),
+    E'p1 REKTOR CONSECUTIVE ALL 2026-09-25 2026-09-28 - 4d\n' ||
+    E'p4 REKTOR CONSECUTIVE ALL 2026-09-28 2026-09-28 - 3d');
+  -- A run that ended more than seven days ago is not a run going: the 6th of October.
+  PERFORM app.absence_watch_evaluate(school, '2026-10-06');
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 0 THEN
+    RAISE EXCEPTION 'frånvarobevakning 306d: a run whose last day is eight days old is still open: %', pg_temp.fb_findings();
+  END IF;
+  -- Seven days is going (the 5th of October is the 28th plus seven; the 4th would be six).
+  PERFORM app.absence_watch_evaluate(school, '2026-10-05');
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 2 THEN
+    RAISE EXCEPTION 'frånvarobevakning 306d: a run whose last day is seven days old was dropped: %', pg_temp.fb_findings();
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 306e: giltig and ogiltig days in a row each by themselves.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  kb uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7B');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+  p3 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid');
+  p4 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p4@example.invalid');
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306e', 'FB306E', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES
+    (school, 'MENTOR', 'CONSECUTIVE', 'VALID', 2), (school, 'REKTOR', 'CONSECUTIVE', 'INVALID', 2), (school, 'KANSLI', 'CONSECUTIVE', 'ALL', 3);
+  -- P1: a Tuesday present and a giltig Wednesday and Thursday: two days of giltig absence, and two are not three.
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-22', ARRAY['PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-23', ARRAY['EXCUSED', 'EXCUSED']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-24', ARRAY['EXCUSED', 'EXCUSED']);
+  -- P2: Tuesday giltig, Wednesday and Thursday ogiltig: two ogiltiga days, and three of absence in all.
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-22', ARRAY['EXCUSED', 'EXCUSED']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-23', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-24', ARRAY['ABSENT', 'ABSENT']);
+  -- P3 and P4: a day that is half absence is no day of absence, under either basis by itself. P3 is
+  -- ogiltig on the Wednesday and half so on the Thursday, P4 giltig on the Wednesday and half so on the Thursday.
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-23', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-24', ARRAY['ABSENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-23', ARRAY['EXCUSED', 'EXCUSED']);
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-24', ARRAY['EXCUSED', 'PRESENT']);
+  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  PERFORM pg_temp.fb_expect('306e', pg_temp.fb_findings(),
+    E'p1 MENTOR CONSECUTIVE VALID 2026-09-24 2026-09-25 - 2d\n' ||
+    E'p2 KANSLI CONSECUTIVE ALL 2026-09-24 2026-09-25 - 3d\n'  ||
+    E'p2 REKTOR CONSECUTIVE INVALID 2026-09-24 2026-09-25 - 2d');
+END $$;
+ROLLBACK;
+
+-- 306f: the lifecycle. A finding opens once, is kept by the next count and
+-- closes on the day the pupil is under; the run of a second absence opens a
+-- new one and leaves the closed one as it was. A count of the same day again
+-- changes nothing. A day that has not passed, or a school that is not, is refused.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  lim uuid;
+  r record;
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306f', 'FB306F', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays")
+  VALUES (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14) RETURNING id INTO lim;
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-15', ARRAY['ABSENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-16', '2026-09-22', 'PRESENT');
+
+  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-22');
+  IF r.opened <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 306f: opened %', r.opened; END IF;
+  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-22');
+  IF r.opened <> 0 OR r.kept <> 1 OR r.closed <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 306f: the same day twice: opened %, kept %, closed %', r.opened, r.kept, r.closed; END IF;
+  -- The next day it holds: found on the 22nd, seen on the 23rd.
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-23', ARRAY['ABSENT']);
+  PERFORM app.absence_watch_evaluate(school, '2026-09-23');
+  PERFORM pg_temp.fb_expect('306f, kept', pg_temp.fb_findings(), E'p1 MENTOR SHARE INVALID 2026-09-22 2026-09-23 - 120/660');
+  -- The limit is raised to 20: the finding no longer holds and closes; the limit's figures were updated.
+  UPDATE "AbsenceWatchLimits" SET percent = 20 WHERE id = lim;
+  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-23');
+  IF r.closed <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 306f: a raised limit left the finding open'; END IF;
+  -- Lowered again: a new finding, and the closed one is as it was.
+  UPDATE "AbsenceWatchLimits" SET percent = 10 WHERE id = lim;
+  PERFORM app.absence_watch_evaluate(school, '2026-09-24');
+  PERFORM pg_temp.fb_expect('306f, again', pg_temp.fb_findings(),
+    E'p1 MENTOR SHARE INVALID 2026-09-22 2026-09-23 2026-09-23 120/660\n' ||
+    E'p1 MENTOR SHARE INVALID 2026-09-24 2026-09-24 - 120/660');
+  -- A figure edited while the finding stays is shown as the limit stands now.
+  UPDATE "AbsenceWatchLimits" SET percent = 11, "windowDays" = 28 WHERE id = lim;
+  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  IF (SELECT percent || '/' || "windowDays" FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> '11/28' THEN
+    RAISE EXCEPTION 'frånvarobevakning 306f: an edited limit did not reach its finding';
+  END IF;
+
+  -- A day that has not passed is refused: today's lessons are not over.
+  BEGIN
+    PERFORM app.absence_watch_evaluate(school, (now() AT TIME ZONE 'Europe/Stockholm')::date);
+    RAISE EXCEPTION 'frånvarobevakning 306f: today was counted';
+  EXCEPTION WHEN SQLSTATE 'AW400' THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.absence_watch_evaluate(school, (now() AT TIME ZONE 'Europe/Stockholm')::date + 1);
+    RAISE EXCEPTION 'frånvarobevakning 306f: tomorrow was counted';
+  EXCEPTION WHEN SQLSTATE 'AW400' THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.absence_watch_evaluate(gen_random_uuid(), '2026-09-22');
+    RAISE EXCEPTION 'frånvarobevakning 306f: a school that does not exist was counted';
+  EXCEPTION WHEN SQLSTATE 'AW404' THEN NULL;
+  END;
+  -- Yesterday is the latest that counts, in the school's own dates.
+  PERFORM app.absence_watch_evaluate(school, (now() AT TIME ZONE 'Europe/Stockholm')::date - 1);
+END $$;
+ROLLBACK;
+
+-- 306g: the Mondays of the summer-time switches. Spring forward is Sunday
+-- 2026-03-29 and fall back Sunday 2026-10-25. A 60-minute lesson is 60 minutes
+-- on the Monday after, though the offset moved; the lesson's day is the local
+-- date; the window's days are local dates.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306g', 'FB306G', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (school, 'MENTOR', 'SHARE', 'INVALID', 25, 7);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (school, 'REKTOR', 'CONSECUTIVE', 'ALL', 2);
+  -- Spring: the Friday before and the Monday after. 1 absent of 4: 25 %, reached.
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-03-27', ARRAY['PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-03-30', ARRAY['ABSENT', 'PRESENT']);
+  -- A lesson's minutes are its elapsed time: one from 01:30 to 03:30 on the night the clock
+  -- jumps from 02:00 to 03:00 is 60 minutes, not the 120 that the wall clock shows.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, subj, ka, '2026-03-29', ('2026-03-29 01:30'::timestamp AT TIME ZONE 'Europe/Stockholm'),
+          ('2026-03-29 03:30'::timestamp AT TIME ZONE 'Europe/Stockholm'), now());
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  SELECT school, id, (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid'), 'ABSENT', now() FROM "CalendarLessons" WHERE date = '2026-03-29';
+  PERFORM pg_temp.fb_plant(subj, ka, (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid'), '2026-03-30', ARRAY['PRESENT']);
+  -- Fall: Friday and Monday absent all day across the extra hour.
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-10-23', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-10-26', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM app.absence_watch_evaluate(school, '2026-03-30');
+  PERFORM pg_temp.fb_expect('306g, spring', pg_temp.fb_findings(),
+    E'p1 MENTOR SHARE INVALID 2026-03-30 2026-03-30 - 60/240\n' ||
+    E'p3 MENTOR SHARE INVALID 2026-03-30 2026-03-30 - 60/120');
+  PERFORM app.absence_watch_evaluate(school, '2026-10-26');
+  PERFORM pg_temp.fb_expect('306g, fall', pg_temp.fb_findings(),
+    E'p1 MENTOR SHARE INVALID 2026-03-30 2026-03-30 2026-10-26 60/240\n' ||
+    E'p2 MENTOR SHARE INVALID 2026-10-26 2026-10-26 - 240/240\n' ||
+    E'p2 REKTOR CONSECUTIVE ALL 2026-10-26 2026-10-26 - 2d\n' ||
+    E'p3 MENTOR SHARE INVALID 2026-03-30 2026-03-30 2026-10-26 60/120');
+END $$;
+ROLLBACK;
+
+-- 306h: the first day of the window with no wider limit to widen the lookback: the
+-- one limit's 14 days are all that is read, and the 11th is in them, the 10th is not.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306h', 'FB306H', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-11', ARRAY['ABSENT']);
+  PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-14', '2026-09-24', 'PRESENT');
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-10', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_weekdays(subj, ka, p2, '2026-09-11', '2026-09-24', 'PRESENT');
+  PERFORM app.absence_watch_evaluate(school, '2026-09-24');
+  PERFORM pg_temp.fb_expect('306h', pg_temp.fb_findings(), E'p1 MENTOR SHARE INVALID 2026-09-24 2026-09-24 - 60/600');
+END $$;
+ROLLBACK;
+
+-- 306i: a lov is no day and breaks no run. The school's höstlov (the week of
+-- 2026-09-28 to 10-02, planted as the calendar has it, with no lesson in it)
+-- lies between a pupil's Thursday and Friday and the Monday after it: three
+-- school days in a row, and a share counted over the days that had lessons.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306i', 'FB306I', now()) RETURNING id INTO subj;
+  INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, kind, "startDate", "endDate", "updatedAt")
+  SELECT school, y.id, 'Höstlov', 'HOLIDAY', '2026-09-28', '2026-10-02', now() FROM "AcademicYears" y WHERE y."isActive";
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (school, 'REKTOR', 'CONSECUTIVE', 'ALL', 3);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (school, 'MENTOR', 'SHARE', 'INVALID', 50, 14);
+  -- P1: absent the Thursday and Friday before the lov and the Monday after it.
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-24', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-25', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-10-05', ARRAY['ABSENT', 'ABSENT']);
+  -- P2: present the same days, absent on the Friday before and the Monday after only: two days, and a half.
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-24', ARRAY['PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-25', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-10-05', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM app.absence_watch_evaluate(school, '2026-10-05');
+  -- The 14 days ending the 5th have six lessons of P1's, all absent, and the run is three days that reach over the lov.
+  PERFORM pg_temp.fb_expect('306i', pg_temp.fb_findings(),
+    E'p1 MENTOR SHARE INVALID 2026-10-05 2026-10-05 - 360/360\n' ||
+    E'p1 REKTOR CONSECUTIVE ALL 2026-10-05 2026-10-05 - 3d\n' ||
+    E'p2 MENTOR SHARE INVALID 2026-10-05 2026-10-05 - 240/360');
+END $$;
+ROLLBACK;
+
+-- 306j: absence that is going on. A share over a window of 60 days is a finding only
+-- while the pupil's latest registered day is at most seven days old, as a run's is:
+-- at the end of a term nobody is still over a limit in July.
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+  p3 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid');
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306j', 'FB306J', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (school, 'MENTOR', 'SHARE', 'INVALID', 10, 60);
+  -- Counted as of Friday 2026-09-25. P1's last registered day is Friday the 18th, seven days
+  -- before; P2's is Thursday the 17th, eight days before; P3's was in the middle of August.
+  PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-14', '2026-09-18', 'ABSENT');
+  PERFORM pg_temp.fb_weekdays(subj, ka, p2, '2026-09-14', '2026-09-17', 'ABSENT');
+  PERFORM pg_temp.fb_weekdays(subj, ka, p3, '2026-08-17', '2026-08-21', 'ABSENT');
+  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  PERFORM pg_temp.fb_expect('306j', pg_temp.fb_findings(), E'p1 MENTOR SHARE INVALID 2026-09-25 2026-09-25 - 300/300');
+  -- And when school starts again a pupil who is absent from the first day is found at once, while
+  -- P1, who has not been registered for twelve days, is closed:
+  PERFORM pg_temp.fb_weekdays(subj, ka, p2, '2026-09-28', '2026-09-29', 'ABSENT');
+  PERFORM app.absence_watch_evaluate(school, '2026-09-30');
+  PERFORM pg_temp.fb_expect('306j, back', pg_temp.fb_findings(),
+    E'p1 MENTOR SHARE INVALID 2026-09-25 2026-09-25 2026-09-30 300/300\n' ||
+    E'p2 MENTOR SHARE INVALID 2026-09-30 2026-09-30 - 360/360');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 307: who reads and who writes.
+--
+-- One set of findings, over both schools:
+--   P1 (7A): MENTOR, GUARDIAN and REKTOR findings
+--   P3 (7B): MENTOR and GUARDIAN findings
+--   P4 (7B): a MENTOR finding (16.7 %, under the guardians' 20 %)
+--   P2 (7A): none
+--   the other school's pupil: a MENTOR and a GUARDIAN finding
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  kb uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7B');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+  p3 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid');
+  p4 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p4@example.invalid');
+BEGIN
+  PERFORM set_config('app.test_fb_school', school::text, true);
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 307', 'FB307', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES
+    (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14), (school, 'GUARDIAN', 'SHARE', 'INVALID', 20, 14);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (school, 'REKTOR', 'CONSECUTIVE', 'ALL', 2);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-23', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-24', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-23', ARRAY['PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-23', ARRAY['ABSENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-23', ARRAY['ABSENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
+  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  PERFORM pg_temp.fb_expect('307 school', pg_temp.fb_findings(),
+    E'p1 GUARDIAN SHARE INVALID 2026-09-25 2026-09-25 - 240/240\n' ||
+    E'p1 MENTOR SHARE INVALID 2026-09-25 2026-09-25 - 240/240\n' ||
+    E'p1 REKTOR CONSECUTIVE ALL 2026-09-24 2026-09-25 - 2d\n' ||
+    E'p3 GUARDIAN SHARE INVALID 2026-09-25 2026-09-25 - 60/120\n' ||
+    E'p3 MENTOR SHARE INVALID 2026-09-25 2026-09-25 - 60/120\n' ||
+    E'p4 MENTOR SHARE INVALID 2026-09-25 2026-09-25 - 60/360');
+END $$;
+
+-- The other school's administrator plants its own.
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000031');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  k9 uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB9A');
+  po uuid := (SELECT id FROM "Users" WHERE email = 'fb-annan-p@example.invalid');
+BEGIN
+  IF school = current_setting('app.test_fb_school')::uuid THEN RAISE EXCEPTION 'frånvarobevakning 307: the other administrator is at the first school'; END IF;
+  PERFORM set_config('app.test_fb_other', school::text, true);
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 307 annan', 'FB307A', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES
+    (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14), (school, 'GUARDIAN', 'SHARE', 'INVALID', 10, 14);
+  PERFORM pg_temp.fb_plant(subj, k9, po, '2026-09-23', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  IF (SELECT count(*) FROM "AbsenceWatchFindings") <> 2 THEN RAISE EXCEPTION 'frånvarobevakning 307: the other school''s findings'; END IF;
+END $$;
+
+CREATE FUNCTION pg_temp.fb_sees(p_auth text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  seen text;
+BEGIN
+  PERFORM pg_temp.fb_as(p_auth);
+  SELECT coalesce(string_agg(substr(u.email, 4, 2) || ' ' || f."recipientGroup", ', ' ORDER BY u.email, f."recipientGroup"::text), '')
+    INTO seen
+    FROM "AbsenceWatchFindings" f JOIN "Users" u ON u.id = f."studentId";
+  RETURN seen;
+END $$;
+
+-- (A join to Users is under row security too: a pupil the reader cannot read
+-- would drop out of the text above, so every text is read beside a count.)
+CREATE FUNCTION pg_temp.fb_count(p_auth text) RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE
+  n integer;
+BEGIN
+  PERFORM pg_temp.fb_as(p_auth);
+  SELECT count(*) INTO n FROM "AbsenceWatchFindings";
+  RETURN n;
+END $$;
+
+DO $$
+DECLARE
+  who record;
+BEGIN
+  -- Every administrator reads every finding of the school, and none of the other's.
+  FOR who IN SELECT * FROM (VALUES ('full', '0001'), ('rektor', '0002'), ('expedition', '0003'), ('schemaläggare', '0004'), ('läsare', '0005')) v(name, auth) LOOP
+    IF pg_temp.fb_count('00000000-0000-4000-8000-d1000000' || who.auth) <> 6 THEN
+      RAISE EXCEPTION 'frånvarobevakning 307: the % reads % findings, not the 6 of the school', who.name, pg_temp.fb_count('00000000-0000-4000-8000-d1000000' || who.auth);
+    END IF;
+  END LOOP;
+  PERFORM pg_temp.fb_expect('307 admin', pg_temp.fb_sees('00000000-0000-4000-8000-d10000000001'),
+    'p1 GUARDIAN, p1 MENTOR, p1 REKTOR, p3 GUARDIAN, p3 MENTOR, p4 MENTOR');
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000031') <> 2 THEN
+    RAISE EXCEPTION 'frånvarobevakning 307: the other school''s administrator reads % findings, not its 2', pg_temp.fb_count('00000000-0000-4000-8000-d10000000031');
+  END IF;
+
+  -- A mentor reads the MENTOR findings of their own class and nothing else.
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000006') <> 1 OR pg_temp.fb_count('00000000-0000-4000-8000-d10000000007') <> 2 THEN
+    RAISE EXCEPTION 'frånvarobevakning 307: the mentors read % and % findings, not 1 and 2', pg_temp.fb_count('00000000-0000-4000-8000-d10000000006'), pg_temp.fb_count('00000000-0000-4000-8000-d10000000007');
+  END IF;
+  PERFORM pg_temp.fb_expect('307 mentor of 7A', pg_temp.fb_sees('00000000-0000-4000-8000-d10000000006'), 'p1 MENTOR');
+  PERFORM pg_temp.fb_expect('307 mentor of 7B', pg_temp.fb_sees('00000000-0000-4000-8000-d10000000007'), 'p3 MENTOR, p4 MENTOR');
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000008') <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 307: a teacher without a class reads findings'; END IF;
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000009') <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 307: a deactivated mentor reads findings'; END IF;
+  -- The other school's mentor reads their own class's, not this school's.
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000034') <> 1 THEN
+    RAISE EXCEPTION 'frånvarobevakning 307: the other school''s mentor reads % findings, not their one', pg_temp.fb_count('00000000-0000-4000-8000-d10000000034');
+  END IF;
+
+  -- A guardian reads the GUARDIAN findings of their own child.
+  PERFORM pg_temp.fb_expect('307 guardian of P1', pg_temp.fb_sees('00000000-0000-4000-8000-d10000000021'), 'p1 GUARDIAN');
+  PERFORM pg_temp.fb_expect('307 guardian of P2 and P3', pg_temp.fb_sees('00000000-0000-4000-8000-d10000000022'), 'p3 GUARDIAN');
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000021') <> 1 OR pg_temp.fb_count('00000000-0000-4000-8000-d10000000022') <> 1 THEN
+    RAISE EXCEPTION 'frånvarobevakning 307: a guardian reads findings of a child who is not theirs';
+  END IF;
+  -- P4 has a MENTOR finding only: their guardian reads nothing.
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000023') <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 307: a guardian reads a finding that is the mentor''s'; END IF;
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000033') <> 1 THEN
+    RAISE EXCEPTION 'frånvarobevakning 307: the other school''s guardian reads % findings, not their child''s one', pg_temp.fb_count('00000000-0000-4000-8000-d10000000033');
+  END IF;
+
+  -- A pupil reads none, not their own; nor does a login that is nobody, or no login.
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000011') <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 307: a pupil reads findings'; END IF;
+  IF pg_temp.fb_count('00000000-0000-4000-8000-d10000000099') <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 307: an unknown login reads findings'; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF (SELECT count(*) FROM "AbsenceWatchFindings") <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 307: no principal reads findings'; END IF;
+END $$;
+
+-- Nobody writes a finding or the ledger, not even the full administrator. The
+-- switch and the limits are Drift's: every profile that writes Drift writes
+-- them and the läsare does not; no teacher or guardian reads or writes either.
+DO $$
+DECLARE
+  who record;
+  school uuid;
+  mine uuid := current_setting('app.test_fb_school')::uuid;
+  other uuid := current_setting('app.test_fb_other')::uuid;
+  suffix text;
+BEGIN
+  FOR who IN SELECT * FROM (VALUES ('full', '0001', true), ('rektor', '0002', true), ('expedition', '0003', true),
+                                   ('schemaläggare', '0004', true), ('läsare', '0005', false)) v(name, auth, writes) LOOP
+    PERFORM pg_temp.fb_as('00000000-0000-4000-8000-d1000000' || who.auth);
+    school := app.current_school_id();
+    PERFORM pg_temp.fb_denied(format('INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays", "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes") VALUES (%L, gen_random_uuid(), gen_random_uuid(), ''MENTOR'', ''SHARE'', ''ALL'', 10, 14, current_date, current_date, 1, 10)', school));
+    PERFORM pg_temp.fb_denied('UPDATE "AbsenceWatchFindings" SET "clearedOn" = current_date');
+    PERFORM pg_temp.fb_denied('DELETE FROM "AbsenceWatchFindings"');
+    PERFORM pg_temp.fb_denied(format('INSERT INTO "AbsenceWatchDigests" ("schoolId", "recipientGroup", "periodStart", "periodEnd", recipients, pupils) VALUES (%L, ''MENTOR'', current_date, current_date, 0, 0)', school));
+    PERFORM pg_temp.fb_denied('UPDATE "AbsenceWatchDigests" SET recipients = 9');
+    PERFORM pg_temp.fb_denied('DELETE FROM "AbsenceWatchDigests"');
+    PERFORM pg_temp.fb_denied('DELETE FROM "AbsenceWatchSettings"');
+    -- The limit and the switch: the läsare is refused, the others are given.
+    BEGIN
+      INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (school, 'KANSLI', 'CONSECUTIVE', 'VALID', 9);
+      IF NOT who.writes THEN RAISE EXCEPTION 'frånvarobevakning 307: the % wrote a limit', who.name; END IF;
+      DELETE FROM "AbsenceWatchLimits" WHERE "recipientGroup" = 'KANSLI' AND basis = 'VALID';
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF who.writes THEN RAISE EXCEPTION 'frånvarobevakning 307: the % was refused a limit', who.name; END IF;
+    END;
+    BEGIN
+      UPDATE "AbsenceWatchSettings" SET "guardianCadence" = 'WEEKLY' WHERE "schoolId" = school;
+      IF NOT who.writes THEN RAISE EXCEPTION 'frånvarobevakning 307: the % changed the switch', who.name; END IF;
+      UPDATE "AbsenceWatchSettings" SET "guardianCadence" = 'MONTHLY' WHERE "schoolId" = school;
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF who.writes THEN RAISE EXCEPTION 'frånvarobevakning 307: the % was refused the switch', who.name; END IF;
+    END;
+    IF (SELECT count(*) FROM "AbsenceWatchLimits") <> 3 THEN RAISE EXCEPTION 'frånvarobevakning 307: the % does not read the three limits', who.name; END IF;
+    IF (SELECT count(*) FROM "AbsenceWatchSettings") <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 307: the % does not read the switch', who.name; END IF;
+    -- And a limit of the other school's is not theirs to write.
+    PERFORM pg_temp.fb_denied(format('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (%L, ''KANSLI'', ''CONSECUTIVE'', ''VALID'', 9)', other));
+  END LOOP;
+  -- The other school's administrator: its own two limits, and this school's are not theirs.
+  PERFORM pg_temp.fb_as('00000000-0000-4000-8000-d10000000031');
+  IF (SELECT count(*) FROM "AbsenceWatchLimits") <> 2 OR (SELECT count(*) FROM "AbsenceWatchSettings") <> 1 THEN
+    RAISE EXCEPTION 'frånvarobevakning 307: the other school''s administrator reads this school''s limits or switch';
+  END IF;
+  PERFORM pg_temp.fb_denied(format('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (%L, ''KANSLI'', ''CONSECUTIVE'', ''VALID'', 9)', mine));
+  PERFORM pg_temp.fb_denied(format('UPDATE "AbsenceWatchSettings" SET enabled = false WHERE "schoolId" = %L', mine));
+  PERFORM pg_temp.fb_denied(format('DELETE FROM "AbsenceWatchLimits" WHERE "schoolId" = %L', mine));
+  -- Teachers, guardians and a pupil read neither table, the ledger or the switch, and write none.
+  FOREACH suffix IN ARRAY ARRAY['0006', '0008', '0021', '0011'] LOOP
+    PERFORM pg_temp.fb_as('00000000-0000-4000-8000-d1000000' || suffix);
+    IF (SELECT count(*) FROM "AbsenceWatchLimits") <> 0 OR (SELECT count(*) FROM "AbsenceWatchSettings") <> 0
+       OR (SELECT count(*) FROM "AbsenceWatchDigests") <> 0 THEN
+      RAISE EXCEPTION 'frånvarobevakning 307: …% reads the school''s limits, switch or ledger', suffix;
+    END IF;
+    PERFORM pg_temp.fb_denied(format('INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (%L, ''KANSLI'', ''CONSECUTIVE'', ''VALID'', 9)', mine));
+    PERFORM pg_temp.fb_denied(format('INSERT INTO "AbsenceWatchSettings" ("schoolId") VALUES (%L)', other));
+    PERFORM pg_temp.fb_denied(format('UPDATE "AbsenceWatchSettings" SET enabled = false WHERE "schoolId" = %L', mine));
+    PERFORM pg_temp.fb_denied('DELETE FROM "AbsenceWatchLimits"');
+  END LOOP;
+END $$;
+
+-- PostgREST's roles reach none of the four tables and none of the functions:
+-- authenticated is tried, and the catalogue is asked for anon, service_role and
+-- PUBLIC (the API's role cannot become anon, so a catalogue answer is the proof).
+DO $$
+DECLARE
+  stmt text;
+  tbl text;
+  fn text;
+  r text;
+  bad text;
+BEGIN
+  SET LOCAL ROLE authenticated;
+  FOREACH stmt IN ARRAY ARRAY[
+    'SELECT count(*) FROM "AbsenceWatchSettings"', 'SELECT count(*) FROM "AbsenceWatchLimits"',
+    'SELECT count(*) FROM "AbsenceWatchFindings"', 'SELECT count(*) FROM "AbsenceWatchDigests"',
+    'DELETE FROM "AbsenceWatchFindings"', 'DELETE FROM "AbsenceWatchLimits"',
+    'SELECT app.absence_watch_evaluate(gen_random_uuid(), current_date - 1)',
+    'SELECT * FROM app.absence_watch_schools()',
+    'SELECT app.absence_watch_is_mentor_of(gen_random_uuid())',
+    'SELECT * FROM app.absence_watch_mentees(gen_random_uuid(), current_date)',
+    'SELECT * FROM app.absence_watch_digest_due(gen_random_uuid(), current_date)',
+    'SELECT * FROM app.absence_watch_digest_plan(gen_random_uuid(), ''MENTOR'', current_date, current_date, current_date)',
+    'SELECT * FROM app.absence_watch_digest(gen_random_uuid(), ''MENTOR'', current_date, current_date, current_date)'
+  ] LOOP
+    BEGIN
+      EXECUTE stmt;
+      RAISE EXCEPTION 'frånvarobevakning 307: authenticated was allowed to run %', stmt;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+
+  FOREACH tbl IN ARRAY ARRAY['AbsenceWatchSettings', 'AbsenceWatchLimits', 'AbsenceWatchFindings', 'AbsenceWatchDigests'] LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+      IF has_table_privilege(r, format('public.%I', tbl), 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+        RAISE EXCEPTION 'frånvarobevakning 307: % holds a privilege on %', r, tbl;
+      END IF;
+    END LOOP;
+    IF has_table_privilege('service_role', format('public.%I', tbl), 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+      RAISE EXCEPTION 'frånvarobevakning 307: service_role writes %', tbl;
+    END IF;
+    IF has_table_privilege('app_authenticated', format('public.%I', tbl), 'TRUNCATE, REFERENCES, TRIGGER') THEN
+      RAISE EXCEPTION 'frånvarobevakning 307: the API role truncates, references or triggers %', tbl;
+    END IF;
+  END LOOP;
+  -- What the API's role holds: the findings and the ledger are read, the switch is read and written but not deleted, the limits are all four.
+  IF NOT has_table_privilege('app_authenticated', 'public."AbsenceWatchFindings"', 'SELECT')
+     OR has_table_privilege('app_authenticated', 'public."AbsenceWatchFindings"', 'INSERT, UPDATE, DELETE')
+     OR NOT has_table_privilege('app_authenticated', 'public."AbsenceWatchDigests"', 'SELECT')
+     OR has_table_privilege('app_authenticated', 'public."AbsenceWatchDigests"', 'INSERT, UPDATE, DELETE')
+     OR has_table_privilege('app_authenticated', 'public."AbsenceWatchSettings"', 'DELETE')
+     OR NOT has_table_privilege('app_authenticated', 'public."AbsenceWatchSettings"', 'SELECT')
+     OR NOT has_table_privilege('app_authenticated', 'public."AbsenceWatchSettings"', 'INSERT')
+     OR NOT has_table_privilege('app_authenticated', 'public."AbsenceWatchSettings"', 'UPDATE')
+     OR NOT has_table_privilege('app_authenticated', 'public."AbsenceWatchLimits"', 'SELECT')
+     OR NOT has_table_privilege('app_authenticated', 'public."AbsenceWatchLimits"', 'INSERT')
+     OR NOT has_table_privilege('app_authenticated', 'public."AbsenceWatchLimits"', 'UPDATE')
+     OR NOT has_table_privilege('app_authenticated', 'public."AbsenceWatchLimits"', 'DELETE') THEN
+    RAISE EXCEPTION 'frånvarobevakning 307: the API role holds other privileges than the migration gives it';
+  END IF;
+
+  -- The functions: PUBLIC and PostgREST's roles hold none; the API's role holds
+  -- the six it calls and not the mentee list or the triggers' bodies.
+  FOR fn, bad IN
+    SELECT p.oid::regprocedure::text,
+           concat_ws(',',
+             CASE WHEN has_function_privilege('anon', p.oid, 'EXECUTE') THEN 'anon' END,
+             CASE WHEN has_function_privilege('authenticated', p.oid, 'EXECUTE') THEN 'authenticated' END,
+             CASE WHEN has_function_privilege('service_role', p.oid, 'EXECUTE') THEN 'service_role' END,
+             CASE WHEN EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE a.grantee = 0) THEN 'PUBLIC' END)
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'app' AND p.proname LIKE 'absence\_watch\_%'
+  LOOP
+    IF bad <> '' THEN RAISE EXCEPTION 'frånvarobevakning 307: % may be run by %', fn, bad; END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.absence_watch_is_mentor_of(uuid)', 'app.absence_watch_schools()', 'app.absence_watch_evaluate(uuid, date)',
+                            'app.absence_watch_digest_due(uuid, date)', 'app.absence_watch_digest_plan(uuid, "AbsenceWatchGroup", date, date, date)',
+                            'app.absence_watch_digest(uuid, "AbsenceWatchGroup", date, date, date)'] LOOP
+    IF NOT has_function_privilege('app_authenticated', fn::regprocedure, 'EXECUTE') THEN
+      RAISE EXCEPTION 'frånvarobevakning 307: the API role cannot run %', fn;
+    END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.absence_watch_mentees(uuid, date)', 'app.absence_watch_settings_stamp()', 'app.absence_watch_settings_stop()',
+                            'app.absence_watch_limits_stamp()', 'app.absence_watch_limits_removed()'] LOOP
+    IF has_function_privilege('app_authenticated', fn::regprocedure, 'EXECUTE') THEN
+      RAISE EXCEPTION 'frånvarobevakning 307: the API role can run %, which is the owner''s', fn;
+    END IF;
+  END LOOP;
+
+  -- Every policy on the four tables is the API role's alone.
+  SELECT string_agg(tablename || '.' || policyname, ', ') INTO bad
+    FROM pg_policies WHERE schemaname = 'public' AND tablename LIKE 'AbsenceWatch%' AND roles <> ARRAY['app_authenticated']::name[];
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'frånvarobevakning 307: policies not for app_authenticated alone: %', bad; END IF;
+  SELECT string_agg(policyname, ', ' ORDER BY policyname) INTO bad FROM pg_policies WHERE schemaname = 'public' AND tablename = 'AbsenceWatchFindings';
+  IF bad <> 'absence_watch_findings_admin_select, absence_watch_findings_guardian_select, absence_watch_findings_mentor_select' THEN
+    RAISE EXCEPTION 'frånvarobevakning 307: the findings have the arms %, not the three read arms', bad;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 308: the digest.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  subj uuid;
+  ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
+  kb uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7B');
+  p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+  p3 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid');
+  p4 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p4@example.invalid');
+  p5 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p5@example.invalid');
+  r record;
+  got text;
+  n integer;
+  texts text := '';
+  -- The mentors are the day's: the digest's own day is today, though the weeks are old.
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 308', 'FB308', now()) RETURNING id INTO subj;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES
+    (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14), (school, 'GUARDIAN', 'SHARE', 'INVALID', 10, 14),
+    (school, 'REKTOR', 'SHARE', 'INVALID', 10, 14), (school, 'KANSLI', 'SHARE', 'INVALID', 10, 14);
+  -- Over the week of 2026-09-21 to 27: P1 (7A) absent all week, P3 (7B) absent on
+  -- the Tuesday, P2 (7A) present, and P5 (7A), who is deactivated, absent all
+  -- week. P4 (7B) was absent on the Friday the 11th: over the limits when the
+  -- 20th was counted and back under in the count of the 27th, whose window
+  -- starts on the 14th: crossed the week before, not open now.
+  PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-21', '2026-09-25', 'ABSENT', 2);
+  PERFORM pg_temp.fb_weekdays(subj, ka, p2, '2026-09-21', '2026-09-25', 'PRESENT', 2);
+  PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-22', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_weekdays(subj, kb, p3, '2026-09-23', '2026-09-25', 'PRESENT', 2);
+  PERFORM pg_temp.fb_weekdays(subj, ka, p5, '2026-09-21', '2026-09-25', 'ABSENT', 2);
+  PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-11', ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_weekdays(subj, kb, p4, '2026-09-14', '2026-09-18', 'PRESENT', 2);
+  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "studentId" = p4 AND "clearedOn" IS NULL) <> 4 THEN
+    RAISE EXCEPTION 'frånvarobevakning 308: P4 was not over all four limits on the 20th: %', pg_temp.fb_findings();
+  END IF;
+  PERFORM app.absence_watch_evaluate(school, '2026-09-27');
+  IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "studentId" = p4 AND "clearedOn" = '2026-09-27') <> 4
+     OR (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "studentId" <> p4 AND "clearedOn" IS NULL) <> 8 THEN
+    RAISE EXCEPTION 'frånvarobevakning 308: after the 27th: %', pg_temp.fb_findings();
+  END IF;
+
+  -- The digests of Monday the 28th, for the week of the 21st: who hears what.
+  -- open_n are the pupils over a limit now, crossed_n those whose crossing was
+  -- in the period, student_ids the pupils the digest rests on.
+  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n || ' ' || cardinality(p.student_ids), ', ' ORDER BY p.email)
+            FROM app.absence_watch_digest_plan(school, 'MENTOR', '2026-09-21', '2026-09-27', today) p);
+  PERFORM pg_temp.fb_expect('308 mentors', got, 'm1 1/1 1, m2 1/1 1');
+  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
+            FROM app.absence_watch_digest_plan(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today) p);
+  PERFORM pg_temp.fb_expect('308 guardians', got, 'g1 1/1, g2 1/1');
+  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
+            FROM app.absence_watch_digest_plan(school, 'REKTOR', '2026-09-21', '2026-09-27', today) p);
+  PERFORM pg_temp.fb_expect('308 rektor', got, 'fu 2/2, re 2/2');
+  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
+            FROM app.absence_watch_digest_plan(school, 'KANSLI', '2026-09-21', '2026-09-27', today) p);
+  PERFORM pg_temp.fb_expect('308 kansli', got, 'ex 2/2');
+  -- The week before: P4 crossed in it and is not open now, and two are open.
+  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
+            FROM app.absence_watch_digest_plan(school, 'KANSLI', '2026-09-14', '2026-09-20', today) p);
+  PERFORM pg_temp.fb_expect('308 kansli, the week before', got, 'ex 2/1');
+
+  -- Written once: the ledger says so, and the second call writes nothing.
+  FOR r IN SELECT * FROM app.absence_watch_digest(school, 'MENTOR', '2026-09-21', '2026-09-27', today) LOOP
+    n := coalesce(n, 0) + 1;
+    texts := texts || ' ' || r.meta::text;
+    IF r.email !~ '^fb-m[12]@' THEN RAISE EXCEPTION 'frånvarobevakning 308: a notice for %', r.email; END IF;
+  END LOOP;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'frånvarobevakning 308: the mentors'' digest wrote % notices, not 2', n; END IF;
+  SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'MENTOR', '2026-09-21', '2026-09-27', today);
+  IF n <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 308: the second call wrote % notices', n; END IF;
+  -- The read log has a row for each mentor, written with the notices: ATTENDANCE,
+  -- the mentor the reader, the pupil of their plan the subject, channel OTHER.
+  got := (SELECT string_agg(substr(m.email, 4, 2) || '>' || (SELECT string_agg(substr(s.email, 4, 2), ',' ORDER BY s.email) FROM "Users" s WHERE s.id = ANY (a."subjectIds"))
+                            || '/' || a."readSize" || ' ' || a.channel || ' ' || a."actorRole", '; ' ORDER BY m.email, a."at")
+            FROM "PersonalDataAccess" a JOIN "Users" m ON m.id = a."actorId" WHERE a.kind = 'ATTENDANCE' AND a.channel = 'OTHER');
+  PERFORM pg_temp.fb_expect('308 log', got, 'm1>p1/1 OTHER TEACHER; m2>p3/1 OTHER TEACHER');
+  IF (SELECT recipients || '/' || pupils FROM "AbsenceWatchDigests" WHERE "recipientGroup" = 'MENTOR') <> '2/2' THEN
+    RAISE EXCEPTION 'frånvarobevakning 308: the ledger counts %', (SELECT recipients || '/' || pupils FROM "AbsenceWatchDigests" WHERE "recipientGroup" = 'MENTOR');
+  END IF;
+  -- The notice is a count and a period: no pupil, no name, no minutes, no reason.
+  IF texts ~* '(Elev|studentId|reason|anledning|minutes|[0-9a-f]{8}-[0-9a-f]{4}-)' THEN
+    RAISE EXCEPTION 'frånvarobevakning 308: a notice names more than a count and a period: %', texts;
+  END IF;
+  IF texts !~ '"open": 1' OR texts !~ '"crossed": 1' OR texts !~ '"group": "MENTOR"' OR texts !~ '"periodEnd": "2026-09-27"' THEN
+    RAISE EXCEPTION 'frånvarobevakning 308: the notice is not group, period, open and crossed: %', texts;
+  END IF;
+  -- Another period of the same group is another digest, and another group's is its own.
+  SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'MENTOR', '2026-09-14', '2026-09-20', today);
+  IF n <> 2 THEN RAISE EXCEPTION 'frånvarobevakning 308: the week before wrote % notices, not 2 (the two mentors hear of P4 and of the open ones)', n; END IF;
+  -- ... and its log rows leave out what the same reader has from the last quarter-hour: M1's
+  -- pupil was in the first digest, and M2 is logged for P4 only, though P3 and P4 are 2 of the read.
+  got := (SELECT string_agg(substr(m.email, 4, 2) || '>' || (SELECT string_agg(substr(s.email, 4, 2), ',' ORDER BY s.email) FROM "Users" s WHERE s.id = ANY (a."subjectIds"))
+                            || '/' || a."readSize", '; ' ORDER BY m.email, a."at")
+            FROM "PersonalDataAccess" a JOIN "Users" m ON m.id = a."actorId" WHERE a.kind = 'ATTENDANCE' AND a.channel = 'OTHER');
+  PERFORM pg_temp.fb_expect('308 log, the week before', got, 'm1>p1/1; m2>p3/1; m2>p4/2');
+  SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'REKTOR', '2026-09-21', '2026-09-27', today);
+  IF n <> 2 THEN RAISE EXCEPTION 'frånvarobevakning 308: rektor''s digest wrote % notices, not 2', n; END IF;
+  -- The administrators read the pupils, none of them themselves.
+  got := (SELECT string_agg(substr(m.email, 4, 2) || '>' || (SELECT string_agg(substr(s.email, 4, 2), ',' ORDER BY s.email) FROM "Users" s WHERE s.id = ANY (a."subjectIds"))
+                            || '/' || a."readSize" || ' ' || a."actorRole", '; ' ORDER BY m.email)
+            FROM "PersonalDataAccess" a JOIN "Users" m ON m.id = a."actorId" WHERE a.kind = 'ATTENDANCE' AND a.channel = 'OTHER' AND m.role = 'SCHOOL_ADMIN');
+  PERFORM pg_temp.fb_expect('308 log, administrators', got, 'fu>p1,p3/2 SCHOOL_ADMIN; re>p1,p3/2 SCHOOL_ADMIN');
+
+  -- A pupil who has left is told of to nobody: P3 is deactivated, and the mentor of 7B, P3's
+  -- guardian and the administrators hear of the others only.
+  UPDATE "Users" SET "isActive" = false WHERE id = p3;
+  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
+            FROM app.absence_watch_digest_plan(school, 'MENTOR', '2026-09-21', '2026-09-27', today) p);
+  PERFORM pg_temp.fb_expect('308 a pupil who left, mentors', got, 'm1 1/1');
+  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
+            FROM app.absence_watch_digest_plan(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today) p);
+  PERFORM pg_temp.fb_expect('308 a pupil who left, guardians', got, 'g1 1/1');
+  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
+            FROM app.absence_watch_digest_plan(school, 'REKTOR', '2026-09-21', '2026-09-27', today) p);
+  PERFORM pg_temp.fb_expect('308 a pupil who left, rektor', got, 'fu 1/1, re 1/1');
+
+  -- With the bevakning off, nothing is written and no ledger row; nobody has anything open.
+  UPDATE "AbsenceWatchSettings" SET enabled = false;
+  SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today);
+  IF n <> 0 OR EXISTS (SELECT 1 FROM "AbsenceWatchDigests" WHERE "recipientGroup" = 'GUARDIAN') THEN
+    RAISE EXCEPTION 'frånvarobevakning 308: a school that is off had a digest written';
+  END IF;
+  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
+            FROM app.absence_watch_digest_plan(school, 'REKTOR', '2026-09-21', '2026-09-27', today) p);
+  PERFORM pg_temp.fb_expect('308 off', got, 'fu 0/1, re 0/1');
 END $$;
 ROLLBACK;
