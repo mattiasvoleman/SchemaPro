@@ -57,30 +57,35 @@ export type ImportKind =
   | "roomTypes"
   | "requirements"
   | "teacherQualifications"
-  | "teacherDuties";
+  | "teacherDuties"
+  | "rooms";
 
-interface CsvTemplate {
+interface CsvFile {
   filename: string;
   /** ASCII-safe headers — diacritics in headers are the #1 encoding casualty. */
   headers: string[];
-  exampleRows: string[][];
 }
 
-export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
+/**
+ * Each file's name and header, which the exports write. The example rows of
+ * the downloadable templates are lib/csv.ts's CSV_EXAMPLES: only the import
+ * dialog, loaded at the click, ever writes them, and here they shipped with
+ * every page that has an export button.
+ */
+export const CSV_TEMPLATES: Record<ImportKind, CsvFile> = {
   subjects: {
     filename: "amnen.csv",
     headers: ["namn", "kod", "farg", "salstyp", "nationell_kod", "undervisningstid"],
-    exampleRows: [
-      ["Matematik", "MA", "#4f46e5", "", "MA", "ja"],
-      ["Textilslöjd", "SLTX", "#db2777", "Textilslöjd", "SL", "ja"],
-      // The row the flag exists for: no national code, and not teaching time.
-      ["Mentorstid", "MT", "#64748b", "", "", "nej"],
-    ],
+  },
+  rooms: {
+    filename: "salar.csv",
+    // The sal as the Salar page has it, the room type by name as amnen.csv
+    // names it; the skolområde and "kräver godkännande" are set on the page.
+    headers: ["namn", "kod", "salstyp", "kapacitet", "lagsta_arskurs", "hogsta_arskurs", "byggnad", "vaning"],
   },
   roomTypes: {
     filename: "salstyper.csv",
     headers: ["namn"],
-    exampleRows: [["Hemkunskapssal"], ["Trä- och metallslöjd"], ["Textilslöjd"]],
   },
   classes: {
     filename: "klasser.csv",
@@ -88,11 +93,6 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
     // ersatter_amne may be left out, and a file of namn and arskurs is the
     // class list it always was.
     headers: ["namn", "arskurs", "typ", "halvklass_av", "ersatter_amne"],
-    exampleRows: [
-      ["7A", "7", "klass", "", ""],
-      ["7A:1", "7", "undervisningsgrupp", "7A", ""],
-      ["SvA7", "7", "undervisningsgrupp", "", "SVA"],
-    ],
   },
   teachers: {
     filename: "larare.csv",
@@ -108,14 +108,11 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
       "fornamn",
       "efternamn",
       "epost",
+      "telefon",
       "tjanst_procent",
       "nedsattning_procent",
       "avtal",
       "signatur",
-    ],
-    exampleRows: [
-      ["Karin", "Ek", "karin.ek@example.com", "100", "", "ferie", "KEK"],
-      ["Bo", "Alm", "bo.alm@example.com", "", "", "", ""],
     ],
   },
   teacherQualifications: {
@@ -126,11 +123,6 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
     // and TILLÅTEN a rektor's decision — so the column is required and the
     // template shows all three words.
     headers: ["larare_epost", "amne", "fran_arskurs", "till_arskurs", "behorighet"],
-    exampleRows: [
-      ["karin.ek@example.com", "MA", "7", "9", "legitimation"],
-      ["karin.ek@example.com", "NO", "7", "9", "behörig"],
-      ["bo.alm@example.com", "SLTX", "1", "9", "tillåten"],
-    ],
   },
   teacherDuties: {
     filename: "uppdrag.csv",
@@ -154,24 +146,14 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
       "till",
       "anteckning",
     ],
-    exampleRows: [
-      ["karin.ek@example.com", "mentorskap", "Mentor 7B", "90", "nej", "", "7B", "", "", ""],
-      ["karin.ek@example.com", "apt", "APT", "120", "nej", "", "", "", "", ""],
-      ["bo.alm@example.com", "ämnesansvar", "Ämnesansvar slöjd", "60", "ja", "SLTX", "", "", "", ""],
-    ],
   },
   students: {
     filename: "elever.csv",
-    headers: ["fornamn", "efternamn", "epost", "klass"],
-    exampleRows: [["Alma", "Berg", "alma.berg@example.com", "7A"]],
+    headers: ["fornamn", "efternamn", "epost", "telefon", "klass"],
   },
   teachingGroups: {
     filename: "undervisningsgrupper.csv",
     headers: ["grupp", "epost"],
-    exampleRows: [
-      ["Ma71", "alma.berg@example.com"],
-      ["Sv73", "alma.berg@example.com"],
-    ],
   },
   requirements: {
     filename: "timplansposter.csv",
@@ -201,36 +183,6 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
       // length, which the pupils sit through in full either way.
       "larare_procent",
       "medlarare_procent",
-    ],
-    // The examples exist to show the columns nobody guesses right. Row two is
-    // 120 minutes on ODD weeks with a second teacher — the slöjd/hemkunskap
-    // shape, where a group reads a long pass every other week; row three is a
-    // subject read for one term only, which is what the date pair is for; row
-    // four is the idrott the minute pair exists for, ten minutes of ombyte
-    // before and twenty of dusch after, which are minutes OUTSIDE the 60 the
-    // same row teaches in. A template of identical "alla veckor, hela läsåret,
-    // noll minuter" rows would teach an administrator that the last five
-    // columns are decoration. Row two is also the one row whose medlärare is
-    // charged half: two teachers in one slöjdsal, counted as one and a half.
-    exampleRows: [
-      ["7A", "MA", "3", "60", "0", "0", "karin.ek@example.com", "", "alla", "", "", "100", "100"],
-      [
-        "Sl71",
-        "SLTX",
-        "1",
-        "120",
-        "0",
-        "0",
-        "karin.ek@example.com",
-        "bo.alm@example.com",
-        "udda",
-        "",
-        "",
-        "100",
-        "50",
-      ],
-      ["7A", "SV", "2", "45", "0", "0", "", "", "alla", "2026-01-12", "2026-03-27", "100", "100"],
-      ["7A", "IDH", "2", "60", "10", "20", "karin.ek@example.com", "", "alla", "", "", "100", "100"],
     ],
   },
 };
@@ -286,11 +238,6 @@ export function serializeCsv(headers: string[], rows: string[][]): string {
   return BOM + lines.join("\r\n") + "\r\n";
 }
 
-export function templateCsvContent(kind: ImportKind): string {
-  const template = CSV_TEMPLATES[kind];
-  return serializeCsv(template.headers, template.exampleRows);
-}
-
 /** Hands the browser a finished CSV file under the given name. */
 export function downloadCsv(filename: string, content: string): void {
   const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
@@ -298,19 +245,6 @@ export function downloadCsv(filename: string, content: string): void {
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-export function downloadTemplate(kind: ImportKind): void {
-  const template = CSV_TEMPLATES[kind];
-  const blob = new Blob([templateCsvContent(kind)], {
-    type: "text/csv;charset=utf-8",
-  });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = template.filename;
   anchor.click();
   URL.revokeObjectURL(url);
 }
@@ -411,6 +345,44 @@ export function roomTypesToCsv(roomTypes: { name: string }[]): string {
  * class, or a group whose subject, the lists cannot name is left out rather
  * than written as something else.
  */
+/**
+ * The school's salar, the room type by NAME (what the importer resolves), a
+ * room whose type the loaded list cannot name left out rather than written
+ * as a room of no type.
+ */
+export function roomsToCsv(
+  rooms: {
+    name: string;
+    code: string | null;
+    capacity: number | null;
+    roomTypeId: string | null;
+    minGradeLevel: number | null;
+    maxGradeLevel: number | null;
+    building?: string | null;
+    floor?: number | null;
+  }[],
+  roomTypes: { id: string; name: string }[],
+): string {
+  const typeName = new Map(roomTypes.map((type) => [type.id, type.name]));
+  const text = (value: number | string | null | undefined) => (value === null || value === undefined ? "" : String(value));
+  const rows: string[][] = [];
+  for (const room of rooms) {
+    const type = room.roomTypeId ? typeName.get(room.roomTypeId) : "";
+    if (type === undefined) continue;
+    rows.push([
+      room.name,
+      text(room.code),
+      type,
+      text(room.capacity),
+      text(room.minGradeLevel),
+      text(room.maxGradeLevel),
+      text(room.building),
+      text(room.floor),
+    ]);
+  }
+  return serializeCsv(CSV_TEMPLATES.rooms.headers, rows);
+}
+
 export function classesToCsv(
   groups: {
     id: string;
@@ -451,7 +423,15 @@ export function classesToCsv(
  * a date (12 May). The mapper takes both.
  */
 export function teachersToCsv(
-  people: { id?: string; role: string; firstName: string; lastName: string; email: string; isActive?: boolean }[],
+  people: {
+    id?: string;
+    role: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string | null;
+    isActive?: boolean;
+  }[],
   employmentOf?: (userId: string) =>
     | {
         /** Null when hidden from this reader (Roller i skolan): the cell is left empty. */
@@ -467,12 +447,18 @@ export function teachersToCsv(
     people
       .filter((person) => person.role === "TEACHER" && isActivePerson(person))
       .map((person) => {
-        const post = person.id !== undefined ? employmentOf?.(person.id) : undefined;
+        const found = person.id !== undefined ? employmentOf?.(person.id) : undefined;
+        // A reader without HR-läs gets the post with its percentages hidden
+        // and its avtal and signatur shown; written so, the row said "avtal
+        // without tjanst_procent", which the import refuses. Such a post is
+        // written as no post at all, which the import leaves alone.
+        const post = found && found.employmentPercent !== null ? found : undefined;
         return [
           person.firstName,
           person.lastName,
           person.email,
-          post && post.employmentPercent !== null ? decimalComma(post.employmentPercent) : "",
+          person.phone ?? "",
+          post ? decimalComma(post.employmentPercent!) : "",
           post && (post.reductionPercent ?? 0) > 0 ? decimalComma(post.reductionPercent!) : "",
           post ? CONTRACT_WORD[post.contractKind] : "",
           post?.signature ?? "",
@@ -526,6 +512,7 @@ export function studentsToCsv(
     firstName: string;
     lastName: string;
     email: string;
+    phone?: string | null;
     studentGroupId: string | null;
     isActive?: boolean;
   }[],
@@ -539,6 +526,7 @@ export function studentsToCsv(
         person.firstName,
         person.lastName,
         person.email,
+        person.phone ?? "",
         className(person.studentGroupId),
       ]),
   );

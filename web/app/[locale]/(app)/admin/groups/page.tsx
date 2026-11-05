@@ -426,15 +426,24 @@ export default function GroupsPage() {
                 // The active läsår's, which is the year the import writes
                 // into: every year's groups made a file that put last year's
                 // classes and groups into this one.
+                // Each waits for the lists it is built from (the timplan's
+                // rule): a group replacing a subject the list has not
+                // brought is left out, and so is every member without
+                // `people`. No active year, no file: there is no year to
+                // read it back into.
                 {
                   kind: "classes",
                   build: () => classesToCsv(activeGroups, subjects ?? []),
-                  empty: activeGroups.length === 0,
+                  empty: activeGroups.length === 0 || subjects === undefined,
                 },
                 {
                   kind: "teachingGroups",
                   build: () => membershipsToCsv(activeGroups, people ?? [], memberships ?? []),
-                  empty: !memberships || memberships.length === 0,
+                  empty:
+                    !memberships ||
+                    memberships.length === 0 ||
+                    activeYear === undefined ||
+                    people === undefined,
                 },
               ]}
             />

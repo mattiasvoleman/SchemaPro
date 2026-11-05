@@ -21,6 +21,7 @@ import {
   mapClassRows,
   mapMembershipRows,
   mapRequirementRows,
+  mapRoomRows,
   mapRoomTypeRows,
   mapStudentRows,
   mapSubjectRows,
@@ -31,6 +32,7 @@ import {
   parseCsv,
   requirementsToCsv,
   roomTypesToCsv,
+  roomsToCsv,
   studentsToCsv,
   subjectsToCsv,
   teacherQualificationsToCsv,
@@ -91,7 +93,9 @@ function readBack(
   bytes: Uint8Array,
   mapper: (parsed: ParsedCsv) => { rows: unknown[]; errors: unknown[] },
 ): { rows: unknown[]; errors: unknown[] } {
-  return mapper(parseCsv(decodeCsvBytes(bytes)));
+  const decoded = decodeCsvBytes(bytes);
+  expect(decoded.problem).toBeNull();
+  return mapper(parseCsv(decoded.text));
 }
 
 // ---------------------------------------------------------------------------
@@ -115,15 +119,16 @@ const groups = [
   { id: "g-7a", name: "7A", kind: "CLASS", gradeLevel: 7, halfOfId: null, replacesSubjectId: null },
   { id: "g-7b", name: "7B", kind: "CLASS", gradeLevel: 7, halfOfId: null, replacesSubjectId: null },
   { id: "g-7b1", name: "7B grupp 1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7b", replacesSubjectId: null },
+  { id: "g-7b2", name: "7B grupp 2", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7b", replacesSubjectId: null },
   { id: "g-ma71", name: "Ma71", kind: "TEACHING_GROUP", gradeLevel: null, halfOfId: null, replacesSubjectId: null },
   { id: "g-stod", name: "Sv-stöd 7", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: null, replacesSubjectId: null },
   { id: "g-sva", name: "SvA 7", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: null, replacesSubjectId: "s-sv" },
 ];
 const people = [
-  { id: "t-karin", role: "TEACHER", firstName: "Karin", lastName: "Andersson", email: "karin.andersson@skola.se", studentGroupId: null },
+  { id: "t-karin", role: "TEACHER", firstName: "Karin", lastName: "Andersson", email: "karin.andersson@skola.se", phone: "+46 70 123 45 67", studentGroupId: null },
   { id: "t-asa", role: "TEACHER", firstName: "Åsa", lastName: "Öberg-Ek", email: "asa.oberg@skola.se", studentGroupId: null },
   { id: "t-erik", role: "TEACHER", firstName: "Erik", lastName: "Johansson", email: "erik.johansson@skola.se", studentGroupId: null },
-  { id: "p-noah", role: "STUDENT", firstName: "Noah", lastName: "Sjö", email: "noah.sjö.7b@skola.se", studentGroupId: "g-7b" },
+  { id: "p-noah", role: "STUDENT", firstName: "Noah", lastName: "Sjö", email: "noah.sjö.7b@skola.se", phone: "070-123 45 67", studentGroupId: "g-7b" },
   { id: "p-elsa", role: "STUDENT", firstName: "Elsa", lastName: "Berg", email: "elsa.berg.7a@skola.se", studentGroupId: "g-7a" },
   { id: "p-osten", role: "STUDENT", firstName: "Östen", lastName: "Åberg-Ärlig", email: "osten.aberg@skola.se", studentGroupId: null },
   { id: "p-dash", role: "STUDENT", firstName: "-Lisa", lastName: "=Lund", email: "lisa.lund@skola.se", studentGroupId: "g-7a" },
@@ -181,7 +186,22 @@ const requirements = [
 // Per kind: the export as the page builds it, and what must come back
 // ---------------------------------------------------------------------------
 
+const rooms = [
+  { name: "Sal A1", code: "A1", capacity: 30, roomTypeId: null, minGradeLevel: 7, maxGradeLevel: 9, building: "Hus A", floor: 1 },
+  { name: "Slöjdsal; trä", code: "SL1", capacity: 16, roomTypeId: "rt-tm", minGradeLevel: null, maxGradeLevel: null, building: "Hus B", floor: -1 },
+  { name: "Labbet", code: null, capacity: null, roomTypeId: "rt-lab", minGradeLevel: 4, maxGradeLevel: 9, building: null, floor: null },
+];
+
 const KINDS = {
+  rooms: {
+    csv: () => roomsToCsv(rooms, roomTypes),
+    read: mapRoomRows,
+    expected: [
+      { name: "Sal A1", code: "A1", roomType: null, capacity: 30, minGradeLevel: 7, maxGradeLevel: 9, building: "Hus A", floor: 1 },
+      { name: "Slöjdsal; trä", code: "SL1", roomType: "Trä- och metallslöjd", capacity: 16, minGradeLevel: null, maxGradeLevel: null, building: "Hus B", floor: -1 },
+      { name: "Labbet", code: null, roomType: "Laborationssal", capacity: null, minGradeLevel: 4, maxGradeLevel: 9, building: null, floor: null },
+    ],
+  },
   roomTypes: {
     csv: () => roomTypesToCsv(roomTypes),
     read: mapRoomTypeRows,
@@ -208,17 +228,20 @@ const KINDS = {
     expected: [
       { name: "7A", gradeLevel: 7, kind: "CLASS" },
       { name: "7B", gradeLevel: 7, kind: "CLASS" },
-      { name: "7B grupp 1", gradeLevel: 7, kind: "TEACHING_GROUP", halfOf: "7B" },
       { name: "Ma71", kind: "TEACHING_GROUP" },
       { name: "Sv-stöd 7", gradeLevel: 7, kind: "TEACHING_GROUP" },
       { name: "SvA 7", gradeLevel: 7, kind: "TEACHING_GROUP", replacesSubject: "SV" },
+      // The halves last, after every class, so a batch cut never leaves a
+      // half before its class; each keeps its row number.
+      { name: "7B grupp 1", gradeLevel: 7, kind: "TEACHING_GROUP", halfOf: "7B" },
+      { name: "7B grupp 2", gradeLevel: 7, kind: "TEACHING_GROUP", halfOf: "7B" },
     ],
   },
   teachers: {
     csv: () => teachersToCsv(people, (id) => employments.get(id)),
     read: mapTeacherRows,
     expected: [
-      { firstName: "Karin", lastName: "Andersson", email: "karin.andersson@skola.se", employmentPercent: 100, contractKind: "FERIE", signature: "KAN" },
+      { firstName: "Karin", lastName: "Andersson", email: "karin.andersson@skola.se", phone: "+46 70 123 45 67", employmentPercent: 100, contractKind: "FERIE", signature: "KAN" },
       { firstName: "Åsa", lastName: "Öberg-Ek", email: "asa.oberg@skola.se", employmentPercent: 66.667, reductionPercent: 12.5, contractKind: "SEMESTER", signature: "ÅSÖ" },
       { firstName: "Erik", lastName: "Johansson", email: "erik.johansson@skola.se", employmentPercent: 80, contractKind: "FERIE" },
     ],
@@ -227,11 +250,11 @@ const KINDS = {
     csv: () => studentsToCsv(people, (id) => groups.find((group) => group.id === id)?.name ?? ""),
     read: mapStudentRows,
     expected: [
-      { firstName: "Noah", lastName: "Sjö", email: "noah.sjö.7b@skola.se", className: "7B" },
-      { firstName: "Elsa", lastName: "Berg", email: "elsa.berg.7a@skola.se", className: "7A" },
-      { firstName: "Östen", lastName: "Åberg-Ärlig", email: "osten.aberg@skola.se", className: null },
+      { firstName: "Noah", lastName: "Sjö", email: "noah.sjö.7b@skola.se", phone: "070-123 45 67", className: "7B" },
+      { firstName: "Elsa", lastName: "Berg", email: "elsa.berg.7a@skola.se", phone: null, className: "7A" },
+      { firstName: "Östen", lastName: "Åberg-Ärlig", email: "osten.aberg@skola.se", phone: null, className: null },
       // The formula guard's apostrophe is written out and read away again.
-      { firstName: "-Lisa", lastName: "=Lund", email: "lisa.lund@skola.se", className: "7A" },
+      { firstName: "-Lisa", lastName: "=Lund", email: "lisa.lund@skola.se", phone: null, className: "7A" },
     ],
   },
   teachingGroups: {
@@ -317,7 +340,7 @@ describe("the files themselves", () => {
   it("write a post's percentages with a decimal comma, as Swedish Excel reads and saves a number", () => {
     // 12.5 is a date (12 May) to a Swedish Excel; 12,5 is the number.
     const line = KINDS.teachers.csv().split("\r\n").find((row) => row.startsWith("Åsa"));
-    expect(line).toBe("Åsa;Öberg-Ek;asa.oberg@skola.se;66,667;12,5;semester;ÅSÖ");
+    expect(line).toBe("Åsa;Öberg-Ek;asa.oberg@skola.se;;66,667;12,5;semester;ÅSÖ");
   });
 
   it("write the timplan's ombyte columns in Swedish like their neighbours", () => {
@@ -395,6 +418,40 @@ describe("the files themselves", () => {
     expect(names(teacherDutiesToCsv([...duties, { ...duties[0]!, userId: "t-gone" }], everyone, subjects, groups))).toEqual(
       names(KINDS.teacherDuties.csv()),
     );
+  });
+
+  it("write no post for a reader the percentages are hidden from, rather than half a post the import refuses", () => {
+    // Without HR-läs the post arrives with its percentages null and its avtal
+    // and signatur shown; written so ("…;;;ferie;KAN") the import answered
+    // "avtal eller signatur utan tjanst_procent".
+    const hidden = (id: string) =>
+      id === "t-karin" ? { employmentPercent: null, reductionPercent: null, contractKind: "FERIE" as const, signature: "KAN" } : undefined;
+    const file = teachersToCsv(people, hidden);
+
+    expect(file.split("\r\n").find((row) => row.startsWith("Karin"))).toBe(
+      "Karin;Andersson;karin.andersson@skola.se;'+46 70 123 45 67;;;;",
+    );
+    const { rows, errors } = mapTeacherRows(parseCsv(file));
+    expect(errors).toEqual([]);
+    expect(rows[0]).toStrictEqual({
+      firstName: "Karin",
+      lastName: "Andersson",
+      email: "karin.andersson@skola.se",
+      phone: "+46 70 123 45 67",
+    });
+  });
+
+  it("leave out a timplanspost whose teacher is deactivated, which the import would refuse", () => {
+    const gone = { id: "t-gone", role: "TEACHER", firstName: "Gun", lastName: "Gone", email: "gun@skola.se", isActive: false };
+    const file = requirementsToCsv(
+      [...requirements, requirement({ subjectId: "s-sv", teacherId: "t-gone" }), requirement({ subjectId: "s-mt", coTeacherId: "t-gone" })],
+      groups,
+      subjects,
+      [...people, gone],
+    );
+
+    expect(file).not.toContain("gun@skola.se");
+    expect(mapRequirementRows(parseCsv(file)).rows).toStrictEqual(KINDS.requirements.expected);
   });
 
   it("write uppdrag dates as days even when the gateway answers a timestamp", () => {
