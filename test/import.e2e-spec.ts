@@ -956,6 +956,11 @@ describe('CSV import (e2e)', () => {
         .expect(400);
       expect(JSON.stringify(malformed.body)).toContain('studentEmail');
       await post(harness, 'guardians').send({ rows: [] }).expect(400);
+      // A name of only blanks is no name; the service used to trim it to ''.
+      const blank = await post(harness, 'guardians')
+        .send({ rows: [{ ...guardian, firstName: '   ', studentEmail: 'alma@example.com' }] })
+        .expect(400);
+      expect(JSON.stringify(blank.body)).toContain('firstName');
       await post(harness, 'guardians')
         .send({ rows: [{ ...guardian, studentEmail: 'alma@example.com', phone: '0'.repeat(41) }] })
         .expect(400);

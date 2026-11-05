@@ -511,6 +511,17 @@ describe('ImportGuardianRowDto \u2014 a v\u00E5rdnadshavare file\u2019s row', ()
     await expect(errorsOf(row({ phone: '7'.repeat(40) }))).resolves.toEqual([]);
   });
 
+  it('refuses a name of only blanks, and trims one that has letters (the service trimmed an empty one to \'\')', async () => {
+    await expect(errorsOf(row({ firstName: '   ' }))).resolves.toEqual(['firstName']);
+    await expect(errorsOf(row({ lastName: '\t  ' }))).resolves.toEqual(['lastName']);
+    const trimmed = plainToInstance(ImportGuardianRowDto, row({ firstName: '  Gun ', lastName: ' Berg  ' }));
+    expect([trimmed.firstName, trimmed.lastName]).toEqual(['Gun', 'Berg']);
+    await expect(validate(trimmed)).resolves.toEqual([]);
+    // 120 is counted after the trim, as the column will hold it.
+    await expect(errorsOf(row({ firstName: ` ${'x'.repeat(120)} ` }))).resolves.toEqual([]);
+    await expect(errorsOf(row({ firstName: 7 }))).resolves.toEqual(['firstName']);
+  });
+
   it('caps a file at 500 rows, like the people files, and takes at least one', async () => {
     expect((await file({ rows: Array.from({ length: 500 }, () => row()) })).length).toBe(0);
     expect((await file({ rows: Array.from({ length: 501 }, () => row()) })).map((e) => e.property)).toEqual(['rows']);

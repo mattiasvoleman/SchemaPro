@@ -212,7 +212,7 @@ vi.mock("@/components/import/csv-import-dialog", () => ({
   CsvImportDialog: () => null,
 }));
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }));
 
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
@@ -465,6 +465,36 @@ describe("People page", () => {
       await user.click(guardianEntry());
 
       await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("vardnadshavare.csv", "FILEN"));
+    });
+
+    it("warns, once the file is handed over, that it may name pupils with protected personal data", async () => {
+      state.withGuardian = true;
+      guardiansCsvFor.mockResolvedValue("FILEN");
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(guardianEntry());
+
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("vardnadshavare.csv", "FILEN"));
+      expect(toast.warning).toHaveBeenCalledWith("protectedWarning", expect.anything());
+    });
+
+    it("warns the same on elever.csv, which carries every pupil's name, address and class, and on no other file", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.students" }));
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("elever.csv", expect.any(String)));
+      expect(toast.warning).toHaveBeenCalledTimes(1);
+
+      vi.mocked(toast.warning).mockClear();
+      downloadCsv.mockClear();
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.teachers" }));
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("larare.csv", expect.any(String)));
+      expect(toast.warning).not.toHaveBeenCalled();
     });
 
     it("says so, and downloads nothing, when there is no link to export", async () => {

@@ -20,6 +20,8 @@ import {
   mapTeacherRows,
   decodeCsvBytes,
   fileProblems,
+  guardianDetailsThatDiffer,
+  namesWithQuestionMarks,
   parseCsv,
   type CsvEncoding,
   type ImportKind,
@@ -128,7 +130,13 @@ interface FilePreview {
   legacyEncoding: string | null;
   /** Pupils of a students file with an empty klass cell, who are created without a class. */
   withoutClass: number;
+  /** What the school may want to look at before importing, by row; none of it stops the import. */
+  warnings: FileWarning[];
 }
+
+type FileWarning =
+  | { kind: "questionMarkInName"; row: number; name: string }
+  | { kind: "guardianDetailsDiffer"; row: number; first: number; email: string };
 
 export interface CsvImportDialogProps {
   /** Which import kinds this page offers (first one is preselected). */
@@ -211,6 +219,24 @@ export function CsvImportDialog({
     const decoded = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
     const parsed = parseCsv(decoded.text);
     const mapped = MAPPERS[kind](parsed);
+    const warnings: FileWarning[] = [];
+    if (decoded.problem === null) {
+      // A name Excel wrote a "?" in, which only a file that is not UTF-8 can hold.
+      if (decoded.encoding !== "utf-8") {
+        for (const found of namesWithQuestionMarks(mapped.rows, mapped.rowNumbers)) {
+          warnings.push({ kind: "questionMarkInName", ...found });
+        }
+      }
+      if (kind === "guardians") {
+        for (const found of guardianDetailsThatDiffer(
+          mapped.rows as Parameters<typeof guardianDetailsThatDiffer>[0],
+          mapped.rowNumbers,
+        )) {
+          warnings.push({ kind: "guardianDetailsDiffer", ...found });
+        }
+      }
+      warnings.sort((a, b) => a.row - b.row);
+    }
     setReport(null);
     setPreview({
       fileName: file.name,
@@ -228,6 +254,7 @@ export function CsvImportDialog({
         decoded.problem === null && decoded.encoding !== "utf-8" ? ENCODING_NAME[decoded.encoding] : null,
       withoutClass:
         kind === "students" ? mapped.rows.filter((row) => row.className === null).length : 0,
+      warnings,
     });
   };
 
@@ -399,7 +426,11 @@ export function CsvImportDialog({
                   and not discovered afterwards. */}
               {overwriteNotice}
               {kind === "guardians" ? (
-                <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">{t("guardiansNotice")}</p>
+                <div className="space-y-2 rounded-md bg-muted px-3 py-2 text-sm text-foreground">
+                  <p>{t("guardiansNotice")}</p>
+                  {/* The school does not store which pupils have a protected identity, so the file cannot leave them out. */}
+                  <p>{t("protectedNotice")}</p>
+                </div>
               ) : null}
 
               <div className="space-y-2">
@@ -451,6 +482,25 @@ export function CsvImportDialog({
                     <p className="text-sm text-foreground">
                       {t("withoutClass", { count: preview.withoutClass })}
                     </p>
+                  ) : null}
+                  {preview.warnings.length > 0 ? (
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">{t("fileWarnings")}</p>
+                      <p className="text-sm text-muted-foreground">{t("rowNumbering")}</p>
+                      <ul className="max-h-40 space-y-1 overflow-y-auto text-sm text-foreground">
+                        {preview.warnings.map((warning, index) => (
+                          <li key={`${warning.kind}-${warning.row}-${index}`}>
+                            {warning.kind === "questionMarkInName"
+                              ? t("questionMarkInName", { row: warning.row, name: warning.name })
+                              : t("guardianDetailsDiffer", {
+                                  row: warning.row,
+                                  first: warning.first,
+                                  email: warning.email,
+                                })}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   ) : null}
                   {preview.previewRows.length > 0 ? (
                     <div className="max-h-56 overflow-auto rounded-md border">

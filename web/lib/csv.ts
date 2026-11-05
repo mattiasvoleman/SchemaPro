@@ -530,6 +530,63 @@ export function mapGuardianRows(parsed: ParsedCsv): MappedRows<{
 }
 
 /**
+ * Rows whose name holds a "?" in a file that was not UTF-8.
+ *
+ * Excel writes "?" for a character the file's code page lacks — Łukasz comes
+ * back as ?ukasz in Windows-1252 and Mac Roman — and nothing in the file says
+ * so. The import would save that as the person's name, so the preview says it
+ * per row. Only a name is asked: an address or a class may hold a "?" for real.
+ * A file read as UTF-8 is not asked; there a "?" was typed.
+ */
+export function namesWithQuestionMarks(
+  rows: Array<Record<string, unknown>>,
+  rowNumbers: number[],
+): Array<{ row: number; name: string }> {
+  const found: Array<{ row: number; name: string }> = [];
+  rows.forEach((row, index) => {
+    const names = [row.firstName, row.lastName].filter((name): name is string => typeof name === "string");
+    if (names.some((name) => name.includes("?"))) {
+      found.push({ row: rowNumbers[index] ?? index + 2, name: names.join(" ") });
+    }
+  });
+  return found;
+}
+
+/**
+ * Guardian rows that give an address already on an earlier row other details.
+ *
+ * A guardian of two pupils is two rows with the same first four cells, and
+ * the gateway makes the person once, from the first row; a later row's name
+ * and phone are not used, and a guardian who exists is not changed at all.
+ * Two parents sharing one address look the same in the file as one parent
+ * with a typo, so the preview names the rows where the later one says
+ * something else. A phone is only "something else" when the later row has one
+ * and it differs: an empty cell loses nothing.
+ */
+export function guardianDetailsThatDiffer(
+  rows: Array<{ firstName: string; lastName: string; email: string; phone: string | null }>,
+  rowNumbers: number[],
+): Array<{ row: number; first: number; email: string }> {
+  const firstOf = new Map<string, { row: number; at: (typeof rows)[number] }>();
+  const found: Array<{ row: number; first: number; email: string }> = [];
+  rows.forEach((row, index) => {
+    const line = rowNumbers[index] ?? index + 2;
+    const key = row.email.trim().toLowerCase();
+    const first = firstOf.get(key);
+    if (first === undefined) {
+      firstOf.set(key, { row: line, at: row });
+      return;
+    }
+    const other =
+      row.firstName !== first.at.firstName ||
+      row.lastName !== first.at.lastName ||
+      (row.phone !== null && row.phone !== first.at.phone);
+    if (other) found.push({ row: line, first: first.row, email: row.email });
+  });
+  return found;
+}
+
+/**
  * One row of larare.csv after mapping — ImportTeacherRowDto's shape.
  *
  * The post fields are PRESENT ONLY WHEN THE CELL HAS SOMETHING IN IT. A file

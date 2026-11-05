@@ -967,6 +967,8 @@ export default function PeoplePage() {
                   // reject on the way back in.
                   build: () => studentsToCsv(people ?? [], exportClassName),
                   empty: !people?.some((person) => person.role === "STUDENT") || groups === undefined,
+                  // Every pupil is in it, whether or not they have a protected identity.
+                  protectedWarning: true,
                 },
                 {
                   kind: "guardians",
@@ -985,6 +987,7 @@ export default function PeoplePage() {
                         return null;
                       }),
                   empty: !people?.some((person) => person.role === "GUARDIAN" && person.isActive),
+                  protectedWarning: true,
                 },
               ]}
             />

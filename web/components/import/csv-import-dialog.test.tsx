@@ -482,6 +482,8 @@ describe("CsvImportDialog import", () => {
       await switchKind(user, "guardians");
 
       expect(screen.getByText("guardiansNotice")).toBeInTheDocument();
+      // Said beside it: the file may name pupils whose protected identity the school has not stored.
+      expect(screen.getByText("protectedNotice")).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "downloadTemplate" }));
       expect(mockDownloadTemplate).toHaveBeenCalledWith("guardians");
     });
@@ -911,6 +913,94 @@ describe("CsvImportDialog with files as schools save them", () => {
     await waitFor(() => expect(mockPost).toHaveBeenCalled());
     expect(mockPost.mock.calls[0]?.[1]).toMatchObject({
       rows: [{ firstName: "Östen", lastName: "Åberg", email: "osten@example.com", className: "7Ä" }],
+    });
+  });
+
+  describe("warnings in the preview, which do not stop the import", () => {
+    /** A file in the code page Excel writes: one byte a character, "?" where the page has none. */
+    const windows1252 = (text: string) =>
+      new File([Uint8Array.from([...text].map((char) => (char.charCodeAt(0) < 256 ? char.charCodeAt(0) : 0x3f)))], "elever.csv", {
+        type: "text/csv",
+      });
+    const GUARDIAN_HEADER = "fornamn;efternamn;epost;telefon;elev_epost\r\n";
+    const warningRows = () => screen.queryAllByText(/^(questionMarkInName|guardianDetailsDiffer)\(/);
+
+    it("names a row whose name has a ? in a file that was not UTF-8, where Excel lacked the character (Łukasz)", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+
+      await user.upload(
+        screen.getByLabelText("chooseFile"),
+        windows1252("fornamn;efternamn;epost;klass\r\nŁukasz;Ek;lukasz@example.com;7A\r\nÅsa;Berg;asa@example.com;7A\r\n"),
+      );
+
+      await screen.findByText("rowsReady(count=2)");
+      expect(screen.getByText("fileWarnings")).toBeInTheDocument();
+      expect(screen.getByText("questionMarkInName(row=2|name=?ukasz Ek)")).toBeInTheDocument();
+      expect(warningRows()).toHaveLength(1);
+      // A warning, not an error: the school may mean it.
+      expect(screen.queryByText("mappingErrors")).toBeNull();
+      expect(importButton()).toBeEnabled();
+    });
+
+    it("says nothing of a ? in a file read as UTF-8, where it was typed", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+
+      await uploadCsv(user, BOM + "fornamn;efternamn;epost;klass\r\nLukasz?;Ek;lukasz@example.com;7A\r\n");
+
+      await screen.findByText("rowsReady(count=1)");
+      expect(screen.queryByText("fileWarnings")).toBeNull();
+    });
+
+    it("asks only the names: a ? in a class or an address is not a lost character", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+
+      await user.upload(
+        screen.getByLabelText("chooseFile"),
+        windows1252("fornamn;efternamn;epost;klass\r\nÅsa;Berg;asa@example.com;7A?\r\n"),
+      );
+
+      await screen.findByText("rowsReady(count=1)");
+      expect(warningRows()).toHaveLength(0);
+    });
+
+    it("names a guardian address that a later row gives other details, and which row applies", async () => {
+      const user = userEvent.setup();
+      renderDialog({ kinds: ["guardians"] });
+
+      await uploadCsv(
+        user,
+        BOM +
+          GUARDIAN_HEADER +
+          "Anna;Ek;anna@example.com;070-1;alma@example.com\r\n" +
+          "Annika;Ek;ANNA@example.com;070-1;bo@example.com\r\n" +
+          "Anna;Ek;anna@example.com;;cleo@example.com\r\n" +
+          "Anna;Ek;anna@example.com;070-2;dan@example.com\r\n",
+      );
+
+      await screen.findByText("rowsReady(count=4)");
+      // Row 3 has another first name, row 5 another phone; row 4 says the same with a phone left out.
+      expect(screen.getByText("guardianDetailsDiffer(row=3|first=2|email=ANNA@example.com)")).toBeInTheDocument();
+      expect(screen.getByText("guardianDetailsDiffer(row=5|first=2|email=anna@example.com)")).toBeInTheDocument();
+      expect(warningRows()).toHaveLength(2);
+      expect(importButton()).toBeEnabled();
+    });
+
+    it("is quiet about a guardian of two pupils whose rows agree", async () => {
+      const user = userEvent.setup();
+      renderDialog({ kinds: ["guardians"] });
+
+      await uploadCsv(
+        user,
+        BOM +
+          GUARDIAN_HEADER +
+          "Anna;Ek;anna@example.com;070-1;alma@example.com\r\nAnna;Ek;anna@example.com;070-1;bo@example.com\r\n",
+      );
+
+      await screen.findByText("rowsReady(count=2)");
+      expect(screen.queryByText("fileWarnings")).toBeNull();
     });
   });
 

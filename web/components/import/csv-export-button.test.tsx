@@ -1,9 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CsvExportButton } from "./csv-export-button";
 
 const downloadCsv = vi.hoisted(() => vi.fn());
+
+vi.mock("sonner", () => ({ toast: { warning: vi.fn(), error: vi.fn() } }));
 
 vi.mock("@/lib/csv-export", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/csv-export")>()),
@@ -96,5 +99,97 @@ describe("CsvExportButton", () => {
 
     expect(screen.getByRole("button", { name: "exportButton" })).toBeDisabled();
     expect(build).not.toHaveBeenCalled();
+  });
+
+  describe("while a file is being built", () => {
+    /** A builder that answers when the test says so, as one that reads the gateway at the click does. */
+    const slow = () => {
+      let answer!: (file: string | null) => void;
+      const build = vi.fn(() => new Promise<string | null>((resolve) => (answer = resolve)));
+      return { build, answer: (file: string | null) => answer(file) };
+    };
+
+    it("reads once for a double click on the button, downloads one file, and is disabled until it is done", async () => {
+      const { build, answer } = slow();
+      const user = userEvent.setup();
+      render(<CsvExportButton exports={[{ kind: "guardians", build }]} />);
+      const button = screen.getByRole("button", { name: "exportButton" });
+
+      await user.dblClick(button);
+      expect(build).toHaveBeenCalledTimes(1);
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("aria-busy", "true");
+
+      answer("FILEN");
+      await waitFor(() => expect(button).toBeEnabled());
+      expect(downloadCsv).toHaveBeenCalledTimes(1);
+      expect(downloadCsv).toHaveBeenCalledWith("vardnadshavare.csv", "FILEN");
+      expect(button).toHaveAttribute("aria-busy", "false");
+    });
+
+    it("refuses a second export from the menu until the first is done", async () => {
+      const { build, answer } = slow();
+      const user = userEvent.setup();
+      render(
+        <CsvExportButton
+          exports={[
+            { kind: "guardians", build },
+            { kind: "students", build: () => "ELEVER" },
+          ]}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "exportButton" }));
+      await user.click(screen.getByRole("menuitem", { name: "kinds.guardians" }));
+      expect(screen.getByRole("button", { name: "exportButton" })).toBeDisabled();
+
+      answer("FILEN");
+      await waitFor(() => expect(screen.getByRole("button", { name: "exportButton" })).toBeEnabled());
+      await user.click(screen.getByRole("button", { name: "exportButton" }));
+      await user.click(screen.getByRole("menuitem", { name: "kinds.students" }));
+      expect(downloadCsv.mock.calls.map((call) => call[1])).toEqual(["FILEN", "ELEVER"]);
+    });
+
+    it("is free again when the builder fails, so a retry is possible", async () => {
+      const failing = vi.fn().mockRejectedValueOnce(new Error("HTTP 500")).mockResolvedValue("FILEN");
+      const user = userEvent.setup();
+      render(<CsvExportButton exports={[{ kind: "guardians", build: failing }]} />);
+      const button = screen.getByRole("button", { name: "exportButton" });
+      // The rejection is the builder's to report (the page's builders catch their own); here it is unhandled.
+      const unhandled = vi.fn();
+      process.on("unhandledRejection", unhandled);
+
+      await user.click(button);
+      await waitFor(() => expect(button).toBeEnabled());
+      await user.click(button);
+
+      await waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("vardnadshavare.csv", "FILEN"));
+      process.off("unhandledRejection", unhandled);
+    });
+  });
+
+  describe("a file that may name a pupil with protected personal data", () => {
+    it("says so once the file has been handed over, and not before", async () => {
+      const user = userEvent.setup();
+      render(<CsvExportButton exports={[{ kind: "students", build: () => "ELEVER", protectedWarning: true }]} />);
+
+      expect(toast.warning).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "exportButton" }));
+
+      expect(downloadCsv).toHaveBeenCalledWith("elever.csv", "ELEVER");
+      expect(toast.warning).toHaveBeenCalledTimes(1);
+      expect(toast.warning).toHaveBeenCalledWith("protectedWarning", expect.objectContaining({ duration: expect.any(Number) }));
+    });
+
+    it("says nothing for a file that has no such pupils in it, or when nothing was downloaded", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<CsvExportButton exports={[{ kind: "roomTypes", build: () => "SALSTYPER" }]} />);
+      await user.click(screen.getByRole("button", { name: "exportButton" }));
+      expect(toast.warning).not.toHaveBeenCalled();
+
+      rerender(<CsvExportButton exports={[{ kind: "students", build: () => null, protectedWarning: true }]} />);
+      await user.click(screen.getByRole("button", { name: "exportButton" }));
+      expect(toast.warning).not.toHaveBeenCalled();
+    });
   });
 });

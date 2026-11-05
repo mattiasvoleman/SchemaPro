@@ -116,11 +116,17 @@ export class ImportStudentsDto extends ImportFileRowsDto {
  * has no relation type and no dates for a link, so the file carries none.
  */
 export class ImportGuardianRowDto {
+  /**
+   * Trimmed before it is judged, so a name of only blanks is empty and refused
+   * (the service trims too, and wrote an empty name for it).
+   */
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
   firstName!: string;
 
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
