@@ -13,6 +13,7 @@ import { assertAdministratorMay } from '../auth/roles.guard';
 import { PrismaService } from '../database/prisma.service';
 import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
+import { holdTheSchoolsPeople } from '../common/lock-order';
 import { requireSchoolId } from '../common/utils/request-context';
 import { classHalfRefusal, listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { todayInZone } from '../common/utils/time';
@@ -91,7 +92,8 @@ export interface ActivationResult {
  * Läsårsrullning (rollover) and the activation of the year it creates.
  *
  * ROLLOVER: a preview that writes nothing and returns a plan and its hash,
- * then an execute that takes the hash back. The execute locks the source
+ * then an execute that takes the hash back. The execute holds the school's
+ * people lock (shared), locks the source
  * year (FOR SHARE, as every period writer does) and its groups (FOR SHARE, in
  * id order), reads everything again, plans again, and refuses a plan that is
  * blocked (400 naming the field or the row) or differs from the preview (409
@@ -99,9 +101,10 @@ export interface ActivationResult {
  * one transaction: nothing in the source year is changed.
  *
  * ACTIVATION: the same shape. The preview says who moves where; the execute
- * locks the year (FOR NO KEY UPDATE, as the year PATCH does), the chain's
- * groups and the pupils it will move, re-plans and compares, hands over the
- * active flag and moves the planned pupils by id.
+ * holds the school's people lock (shared), locks the year (FOR NO KEY UPDATE,
+ * as the year PATCH does), the chain's groups and the pupils it will move,
+ * re-plans and compares, hands over the active flag and moves the planned
+ * pupils by id.
  *
  * Every refusal is a code the web translates, with a Swedish message that
  * names the year, the group or the lov. Logs carry ids and counts, never a
@@ -184,7 +187,13 @@ export class YearRolloverService {
       const result = await this.prisma.withRls(
         user,
         async (tx) => {
-          // The year first, as every period writer reads it (FOR SHARE): a
+          // The school's people lock before any row (src/common/lock-order.ts):
+          // the groups below are held FOR SHARE, and the rows after them (a
+          // half's members, whom the member trigger holds FOR SHARE; with
+          // tjänster the staff) wait for an SS12000 apply that holds them and
+          // waits for these groups.
+          await holdTheSchoolsPeople(tx, schoolId);
+          // The year, as every period writer reads it (FOR SHARE): a
           // year PATCH moving its dates, or an activation, waits for this
           // transaction, and this one for theirs.
           const bounds = await readYearBoundsForShare(tx, sourceYearId);
@@ -298,6 +307,11 @@ export class YearRolloverService {
       const result = await this.prisma.withRls(
         user,
         async (tx) => {
+          // The school's people lock before any row (src/common/lock-order.ts),
+          // as every write that holds groups and then pupils takes it: the
+          // groups below are held FOR SHARE and the pupils after them wait for
+          // an SS12000 apply that holds the pupils and waits for the groups.
+          await holdTheSchoolsPeople(tx, schoolId);
           // The year, as the year PATCH locks it: a second activation, a
           // PATCH {isActive} or a rollover of this year (FOR SHARE) waits.
           const [locked] = await tx.$queryRaw<{ id: string }[]>`

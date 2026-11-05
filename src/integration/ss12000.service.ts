@@ -4,6 +4,7 @@ import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { askNewMentors, leaveNoticeEntries, type LeaveNoticeRow } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
+import { holdTheSchoolsPeople } from '../common/lock-order';
 import { keptByOf, lessonPupils, replacedSubjectOf, replacingBySubject, yearsOf } from '../common/replacing-groups';
 import { readGrundschema, type PublishedMaster } from '../publication/published-grundschema';
 import { dayOf } from '../staffing/duty-dates';
@@ -606,6 +607,13 @@ export class Ss12000Service {
     }
     let told: LeaveNoticeRow[] = [];
     const result = await this.prisma.withServicePrincipal(schoolId, async (tx) => {
+      // The school's people lock, shared, before any row (src/common/lock-order.ts):
+      // the roster writes a pupil's row after pupil's row in the order it was
+      // sent, while an SS12000 apply holds every pupil of the school in the
+      // table's order and then the groups, so each could hold the row the
+      // other waits for. The pupils themselves are still taken in the order of
+      // the roster, against a bulk write that takes them in id order.
+      await holdTheSchoolsPeople(tx, schoolId);
       const activeYear = await tx.academicYear.findFirst({
         where: { schoolId, isActive: true },
         select: { id: true, predecessorId: true, graduatingGradeLevel: true },

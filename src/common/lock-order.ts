@@ -1,9 +1,10 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 
 /*
- * ONE ORDER FOR A SCHOOL'S GROUPS AND PUPILS. Every write that holds rows of
+ * ONE ORDER FOR A SCHOOL'S GROUPS AND PUPILS. The writes that hold rows of
  * StudentGroups and Users (klasser, undervisningsgrupper, halvklasser,
- * elever), one row or many, takes them in this order:
+ * elever), one row or many, take them in this order (the list at the end
+ * says which writes, and which steps of it each takes):
  *
  *   1. the school's people lock, shared (holdTheSchoolsPeople);
  *   2. every group row it will write or lock, in one statement, in id order
@@ -49,9 +50,34 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  * The SS12000 apply locks every pupil of the school and then every group,
  * in the tables' order, under the same school lock held alone
  * (local-slice.ts), as a guardian's calendar feed holds it shared
- * (20261112091000). So does every write that takes its locks here: no apply
- * runs between their row locks. The rollover, the year's activation and the
- * term halves take their row locks without it.
+ * (20261112091000). A write that takes the lock first runs wholly before or
+ * wholly after an apply: no apply runs between its row locks. Without it, a
+ * write that holds rows in an order of its own while an apply holds them in
+ * the tables' order deadlocks against it, and did in every forced overlap
+ * measured: the year's activation, the rollover and the carry of tjänster
+ * (80 of 80 each), the CSV import of the members of halves and the legacy
+ * roster import (20 of 20 each, in two layouts).
+ *
+ * WHO TAKES WHAT, as the code stands.
+ *   Steps 1 to 3: student-groups.service (update, remove, bulkUpdate,
+ *   bulkRemove, split, placeHalves, setMembers), users.service (update when
+ *   the class changes, bulkUpdateStudents, bulkRemoveStudents) and
+ *   ImportService.importMemberships, whose pupils placed in a half are held
+ *   in id order before the members are inserted, as the member trigger would
+ *   otherwise hold them in the order of the file.
+ *   Step 1, and a year's groups FOR SHARE in id order as their own step 2: the
+ *   rollover, the year's activation and the carry of tjänster. Each holds a
+ *   year's groups and then rows of Users (the activation's pupils, a half's
+ *   members the member trigger holds FOR SHARE, the staff of a carry), which
+ *   an apply holds while it waits for those groups.
+ *   Step 1 alone: Ss12000Service.importPersons, the legacy roster import. It
+ *   writes the pupils in the order of the roster it was sent, so it queues
+ *   behind an apply but is not ordered against a write that holds pupils in
+ *   id order.
+ *   None: the term halves' split, which holds the year and one class and no
+ *   Users row beyond the keys it references, so it waits on nothing an apply
+ *   holds; and the apply, which takes step 1 exclusively (local-slice.ts).
+ * A new write that holds rows of both tables belongs on this list.
  */
 
 /** Step 1: the school's people lock, shared. First in its transaction, before any row lock. */
@@ -110,4 +136,22 @@ export async function lockHomePupils(tx: PrismaClient, groupIds: readonly string
   if (groupIds.length === 0) return;
   await tx.$executeRaw(Prisma.sql`
     SELECT 1 FROM "Users" WHERE "studentGroupId" = ANY(${[...groupIds]}::uuid[]) ORDER BY "id" FOR ${Prisma.raw(lock)}`);
+}
+
+/**
+ * Step 3 for pupils named by id: their rows FOR SHARE, in id order, in one
+ * statement, before a write touches a membership row. A class change takes the
+ * pupil's row first and the memberships after (the Users trigger leaves the
+ * old class's halves); a placement that deleted a pupil's half row and only
+ * then met the pupil's row (the member trigger reads it FOR SHARE) would take
+ * them the other way round, and the two could deadlock. Held first, a class
+ * change waits for the placement or the placement for it, and either sees the
+ * other's commit. The member trigger takes its pupils in the order the rows
+ * are inserted: a write that inserts members in the order of a file held
+ * them in the file's order, against a bulk write that holds pupils in id order.
+ */
+export async function holdPupils(tx: PrismaClient, pupils: Iterable<string>): Promise<void> {
+  const ids = [...pupils].sort();
+  if (ids.length === 0) return;
+  await tx.$queryRaw`SELECT 1 FROM "Users" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR SHARE`;
 }

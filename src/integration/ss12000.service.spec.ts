@@ -8,6 +8,7 @@ import {
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { recordedReads } from '../../test/utils/recorded-reads';
+import { rawSql } from '../../test/utils/locking-read';
 import { PUPIL_LIST, lessonNamed, pupilNamed, WITH_SVA, WITHOUT, type PupilListSchool } from '../../test/utils/pupil-list';
 import { Ss12000Service } from './ss12000.service';
 import { dutyStretchId } from './ss12000-v2/ids';
@@ -908,6 +909,54 @@ describe('Ss12000Service', () => {
         expect.any(Function),
       );
       expect(prisma.withSystemTransaction).not.toHaveBeenCalled();
+    });
+
+    describe('the school’s people lock, shared (src/common/lock-order.ts)', () => {
+      const PEOPLE_LOCK = 'SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))';
+      const turns = async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+      };
+
+      it('takes it first, before the year, a pupil or a group is read, and before any row is written', async () => {
+        arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+
+        await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', givenName: 'Karin' }]);
+
+        const [first] = tx.$executeRaw.mock.calls;
+        expect(rawSql(first)).toBe(PEOPLE_LOCK);
+        expect((first[0] as { values: unknown[] }).values).toEqual([`Users:${SCHOOL_ID}`]);
+        expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.academicYear.findFirst.mock.invocationCallOrder[0]);
+        expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.user.findFirst.mock.invocationCallOrder[0]);
+        expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.user.update.mock.invocationCallOrder[0]);
+      });
+
+      it('waits for the lock to be granted before it reads anything', async () => {
+        arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+        let grant!: () => void;
+        tx.$executeRaw.mockImplementationOnce(() => new Promise((resolve) => (grant = () => resolve(0))));
+
+        const running = service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', givenName: 'Karin' }]);
+        await turns();
+        expect(tx.academicYear.findFirst).not.toHaveBeenCalled();
+        expect(tx.user.findFirst).not.toHaveBeenCalled();
+        grant();
+        await running;
+
+        expect(tx.user.update).toHaveBeenCalled();
+      });
+
+      it('takes it once, however many persons the roster carries', async () => {
+        arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+
+        await service.importPersons(SCHOOL_ID, [
+          { email: 'karin@example.test', givenName: 'Karin' },
+          { email: 'nils@example.test', givenName: 'Nils' },
+          { email: 'eva@example.test', givenName: 'Eva' },
+        ]);
+
+        expect(tx.$executeRaw.mock.calls.filter((call) => rawSql(call) === PEOPLE_LOCK)).toHaveLength(1);
+      });
     });
 
     it('rejects an empty batch before opening a transaction', async () => {

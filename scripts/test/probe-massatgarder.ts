@@ -27,7 +27,16 @@
  *        order, rather than holding the class and deadlocking;
  *   mv5  a delete's dry run holds no row lock: it answers while another
  *        transaction holds a pupil's and a class's key, as a teacher's
- *        attendance insert and a lesson's insert do.
+ *        attendance insert and a lesson's insert do;
+ *   mv7  the year's activation, the rollover (with and without tjänster), the
+ *        carry of tjänster into a rolled year, the CSV import of the members
+ *        of halves and the legacy SS12000 roster import take the school's
+ *        people lock, shared, before any row: against an SS12000 apply's lock
+ *        statements (the lock exclusively, every pupil, then every group)
+ *        each waits for that lock, holding nothing, and neither side is
+ *        aborted. Without it each held the year's groups FOR SHARE, or a
+ *        pupil, and waited for a pupil or a member the apply held, which
+ *        waited for what it held.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -47,9 +56,13 @@ import {
   type OnDelete,
 } from '../../src/common/removal-inventory';
 import { WRITE_CONFLICT } from '../../src/common/utils/prisma-errors';
+import { ImportService } from '../../src/import/import.service';
+import { Ss12000Service } from '../../src/integration/ss12000.service';
 import { StudentGroupsService } from '../../src/resources/student-groups.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { UsersService } from '../../src/users/users.service';
+import { StaffingRolloverService } from '../../src/year-rollover/staffing-rollover.service';
+import { YearRolloverService } from '../../src/year-rollover/year-rollover.service';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
 
@@ -58,7 +71,8 @@ export function massvalSlug(marker: string): string {
 }
 
 export async function sweepMassvalSchool(owner: Client, marker: string): Promise<void> {
-  await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [massvalSlug(marker)]);
+  // The school itself and the schools of mv7 (<marker>-massval-<path>), each with a year or two.
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 OR starts_with(slug, $1 || '-')`, [massvalSlug(marker)]);
 }
 
 const ON_DELETE: Record<string, OnDelete> = { c: 'CASCADE', n: 'SET NULL', r: 'RESTRICT' };
@@ -396,6 +410,160 @@ export async function massvalChecks(owner: Client, api: PrismaService, marker: s
         assert.equal(classes.consequences?.halves, 1);
       } finally {
         await held.query('ROLLBACK');
+      }
+    });
+
+    await check('(mv7) the year’s activation, the rollover, the carry of tjänster and the two imports of pupils wait for an SS12000 apply’s people lock first, holding nothing, and neither side is aborted', async () => {
+      // A school of its own per path: the activation hands the active flag over and moves pupils, the rollover adds a year.
+      const rolled = async (label: string, options: { nextYear: boolean }) => {
+        const school = await one<{ id: string }>(
+          `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+          [`${marker} massval ${label}`, `${massvalSlug(marker)}-${label}`],
+        );
+        const yearOf = (name: string, from: string, to: string, active: boolean, predecessor: string | null) =>
+          one<{ id: string }>(
+            `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "predecessorId", "updatedAt")
+             VALUES ($1, $2, $3::date, $4::date, $5, 'NIOARIG', $6, now()) RETURNING id`,
+            [school.id, name, from, to, active, predecessor],
+          );
+        const source = await yearOf('mv7 källa', '2093-08-17', '2094-06-12', true, null);
+        const next = options.nextYear ? await yearOf('mv7 mål', '2094-06-13', '2095-06-12', false, source.id) : null;
+        const user = async (role: string, name: string, groupId: string | null = null) =>
+          one<{ id: string; authId: string; email: string }>(
+            `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+             VALUES ($1, $2, $3, 'Mv7', $4::"UserRole", gen_random_uuid(), true, $5, now()) RETURNING id, "authId", email`,
+            [school.id, `${marker}-mv7-${label}-${name}@example.invalid`, name, role, groupId],
+          );
+        const admin7 = await user('SCHOOL_ADMIN', 'admin');
+        const teacher = await user('TEACHER', 'teacher');
+        await owner.query(
+          `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES ($1, $2, $3, 100, now())`,
+          [school.id, teacher.id, source.id],
+        );
+        const groupIn = (yearId: string, name: string, grade: number, extra: { half?: string; predecessor?: string } = {}) =>
+          one<{ id: string }>(
+            `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "predecessorId", "updatedAt")
+             VALUES ($1, $2, $3, $4::"StudentGroupKind", $5, $6, $7, now()) RETURNING id`,
+            [school.id, yearId, name, extra.half ? 'TEACHING_GROUP' : 'CLASS', grade, extra.half ?? null, extra.predecessor ?? null],
+          );
+        const klass = await groupIn(source.id, 'MV7A', 7);
+        const half = await groupIn(source.id, 'MV7A:1', 7, { half: klass.id });
+        if (next) await groupIn(next.id, 'MV8A', 8, { predecessor: klass.id });
+        const pupils = [await user('STUDENT', 'p1', klass.id), await user('STUDENT', 'p2', klass.id)];
+        await owner.query(`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)`, [
+          school.id,
+          half.id,
+          pupils[0]!.id,
+        ]);
+        const principal: AuthenticatedUser = {
+          authId: admin7.authId,
+          role: Role.SCHOOL_ADMIN,
+          userId: admin7.id,
+          schoolId: school.id,
+          channel: 'WEB',
+          adminProfile: 'FULL',
+          hrRead: true,
+        };
+        return { schoolId: school.id, sourceId: source.id, nextId: next?.id ?? null, klass: klass.id, half: half.id, pupils, principal };
+      };
+      type Rolled = Awaited<ReturnType<typeof rolled>>;
+      const rollover = new YearRolloverService(api);
+      const carry = new StaffingRolloverService(api);
+      const imports = new ImportService(api, users);
+      const roster = new Ss12000Service(api);
+      const request = (world: Rolled, extra: object = {}) => ({
+        name: `mv7 ${randomUUID().slice(0, 8)}`,
+        startDate: '2094-08-16',
+        endDate: '2095-06-11',
+        graduatingGradeLevel: 9,
+        groups: [
+          { sourceGroupId: world.klass, outcome: 'PROMOTE' as const },
+          { sourceGroupId: world.half, outcome: 'PROMOTE' as const },
+        ],
+        carryTeachingGroups: true,
+        carryTeachingGroupMembers: true,
+        ...extra,
+      });
+      const afterTheYear = { today: '2094-08-20' };
+      // Each path as [fixture, what it prepares outside the race, the call that races].
+      const paths: [string, { nextYear: boolean }, (world: Rolled) => Promise<() => Promise<unknown>>][] = [
+        ['the year’s activation', { nextYear: true }, async (world) => {
+          const preview = await rollover.previewActivation(world.nextId!, world.principal, afterTheYear);
+          return () => rollover.executeActivation(world.nextId!, { planHash: preview.planHash }, world.principal, afterTheYear);
+        }],
+        ['the rollover without tjänster', { nextYear: false }, async (world) => {
+          const body = request(world);
+          const preview = await rollover.previewRollover(world.sourceId, body, world.principal);
+          return () => rollover.executeRollover(world.sourceId, { ...body, planHash: preview.planHash }, world.principal);
+        }],
+        ['the rollover with tjänster', { nextYear: false }, async (world) => {
+          const body = request(world, { carryStaffing: true });
+          const preview = await rollover.previewRollover(world.sourceId, body, world.principal);
+          return () => rollover.executeRollover(world.sourceId, { ...body, planHash: preview.planHash }, world.principal);
+        }],
+        ['the carry of tjänster into a rolled year', { nextYear: false }, async (world) => {
+          const body = request(world);
+          const preview = await rollover.previewRollover(world.sourceId, body, world.principal);
+          const done = await rollover.executeRollover(world.sourceId, { ...body, planHash: preview.planHash }, world.principal);
+          const plan = await carry.preview(done.academicYear.id, world.principal);
+          return () => carry.execute(done.academicYear.id, plan.planHash, world.principal);
+        }],
+        // The second pupil is not yet in the half: placing her wakes the member trigger, which holds her row FOR SHARE.
+        ['the CSV import of the members of halves', { nextYear: false }, async (world) => {
+          const file = { academicYearId: world.sourceId, rows: world.pupils.map((pupil) => ({ email: pupil.email, groupName: 'MV7A:1' })) };
+          return () => imports.importMemberships(file, world.principal);
+        }],
+        ['the legacy SS12000 roster import', { nextYear: false }, async (world) => {
+          const persons = world.pupils.map((pupil, index) => ({ email: pupil.email, givenName: `Mv7 ${index}` }));
+          return () => roster.importPersons(world.schoolId, persons);
+        }],
+      ];
+
+      for (const [index, [name, options, prepare]] of paths.entries()) {
+        const world = await rolled(`mv7-${index}`, options);
+        const run = await prepare(world);
+        // The apply's statements (local-slice.ts, readLocalSlice with lock), on the owner's connection: the people
+        // lock exclusively, every pupil of the school; then, once the path waits, every group and the rest.
+        const applyPid = (await one<{ pid: number }>(`SELECT pg_backend_pid() AS pid`)).pid;
+        let applyError: unknown = null;
+        let waitedFor: string | null = null;
+        let pending: Promise<unknown> | null = null;
+        let settled = false;
+        await owner.query('BEGIN');
+        try {
+          await owner.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`Users:${world.schoolId}`]);
+          await owner.query(`SELECT 1 FROM "Users" WHERE "schoolId" = $1::uuid FOR NO KEY UPDATE`, [world.schoolId]);
+          pending = run().then(
+            () => ((settled = true), null),
+            (error: unknown) => ((settled = true), error),
+          );
+          // Decided by what the database says, not by a sleep: a backend this transaction is blocking.
+          for (let polls = 0; polls < 1000 && !settled && waitedFor === null; polls += 1) {
+            const blocked = await owner.query<{ wait_event: string | null }>(
+              `SELECT wait_event FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))`,
+              [applyPid],
+            );
+            waitedFor = blocked.rows[0]?.wait_event ?? null;
+            if (waitedFor === null) await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          try {
+            for (const table of ['StudentGroups', 'GuardianStudents', 'StudentGroupMembers', 'Ss12000DutyLinks']) {
+              await owner.query(`SELECT 1 FROM "${table}" WHERE "schoolId" = $1::uuid FOR NO KEY UPDATE`, [world.schoolId]);
+            }
+          } catch (error) {
+            applyError = error;
+          }
+        } finally {
+          await owner.query(applyError ? 'ROLLBACK' : 'COMMIT').catch(() => owner.query('ROLLBACK'));
+        }
+        const refusal = await pending;
+        assert.equal(applyError, null, `${name}: the apply was aborted: ${String(applyError)}`);
+        assert.equal(refusal, null, `${name} failed: ${String(refusal)}`);
+        assert.equal(
+          waitedFor,
+          'advisory',
+          `${name} waited on ${String(waitedFor)}: it held rows of the school before it held the people lock`,
+        );
       }
     });
   } finally {

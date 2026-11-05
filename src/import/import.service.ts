@@ -18,6 +18,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { assertAdministratorMay } from '../auth/roles.guard';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { holdPupils, holdTheSchoolsPeople } from '../common/lock-order';
 import { decidedTimplanConflict, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from '../resources/academic-year-bounds';
@@ -1121,6 +1122,11 @@ export class ImportService {
     schoolId: string,
   ): Promise<ImportReport> {
     return this.prisma.withRls(user, async (tx) => {
+      // The school's people lock, shared, before any row (src/common/lock-order.ts):
+      // each member of a half wakes StudentGroupMembers_in_the_class, which holds
+      // the pupil FOR SHARE, row after row, while an SS12000 apply holds every
+      // pupil of the school and then the groups.
+      await holdTheSchoolsPeople(tx, schoolId);
       const report: ImportReport = { created: 0, skipped: 0, errors: [] };
 
       // Students by email — the identifier a school's group lists carry.
@@ -1167,6 +1173,8 @@ export class ImportService {
       }
 
       const memberships: { studentGroupId: string; studentId: string }[] = [];
+      // The pupils the member trigger will hold: those placed in a half.
+      const inHalves = new Set<string>();
       for (const [index, row] of dto.rows.entries()) {
         const studentId = studentByEmail.get(row.email.toLowerCase());
         if (!studentId) {
@@ -1201,6 +1209,7 @@ export class ImportService {
             continue;
           }
           placedIn.set(`${theClass.id}:${studentId}`, half.id);
+          inHalves.add(studentId);
         }
         if (!groupId) {
           const created = await tx.studentGroup.create({
@@ -1223,6 +1232,9 @@ export class ImportService {
       }
 
       if (memberships.length > 0) {
+        // In id order, as every write that holds pupils takes them, and not in
+        // the order of the file the trigger would meet them in.
+        await holdPupils(tx, inHalves);
         const { count } = await tx.studentGroupMember.createMany({
           data: memberships.map((membership) => ({ schoolId, ...membership })),
           skipDuplicates: true,
