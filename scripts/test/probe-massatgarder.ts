@@ -28,13 +28,15 @@
  *   mv5  a delete's dry run holds no row lock: it answers while another
  *        transaction holds a pupil's and a class's key, as a teacher's
  *        attendance insert and a lesson's insert do;
- *   mv7  the year's activation, the rollover (with and without tjänster) and
- *        the carry of tjänster into a rolled year take the school's people
- *        lock, shared, before any row: against an SS12000 apply's lock
+ *   mv7  the year's activation, the rollover (with and without tjänster), the
+ *        carry of tjänster into a rolled year, the CSV import of the members
+ *        of halves and the legacy SS12000 roster import take the school's
+ *        people lock, shared, before any row: against an SS12000 apply's lock
  *        statements (the lock exclusively, every pupil, then every group)
  *        each waits for that lock, holding nothing, and neither side is
- *        aborted. Without it each held the year's groups FOR SHARE and waited
- *        for a pupil or a member the apply held, which waited for the groups.
+ *        aborted. Without it each held the year's groups FOR SHARE, or a
+ *        pupil, and waited for a pupil or a member the apply held, which
+ *        waited for what it held.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -54,6 +56,8 @@ import {
   type OnDelete,
 } from '../../src/common/removal-inventory';
 import { WRITE_CONFLICT } from '../../src/common/utils/prisma-errors';
+import { ImportService } from '../../src/import/import.service';
+import { Ss12000Service } from '../../src/integration/ss12000.service';
 import { StudentGroupsService } from '../../src/resources/student-groups.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { UsersService } from '../../src/users/users.service';
@@ -409,7 +413,7 @@ export async function massvalChecks(owner: Client, api: PrismaService, marker: s
       }
     });
 
-    await check('(mv7) the year’s activation, the rollover and the carry of tjänster wait for an SS12000 apply’s people lock first, holding nothing, and neither side is aborted', async () => {
+    await check('(mv7) the year’s activation, the rollover, the carry of tjänster and the two imports of pupils wait for an SS12000 apply’s people lock first, holding nothing, and neither side is aborted', async () => {
       // A school of its own per path: the activation hands the active flag over and moves pupils, the rollover adds a year.
       const rolled = async (label: string, options: { nextYear: boolean }) => {
         const school = await one<{ id: string }>(
@@ -425,9 +429,9 @@ export async function massvalChecks(owner: Client, api: PrismaService, marker: s
         const source = await yearOf('mv7 källa', '2093-08-17', '2094-06-12', true, null);
         const next = options.nextYear ? await yearOf('mv7 mål', '2094-06-13', '2095-06-12', false, source.id) : null;
         const user = async (role: string, name: string, groupId: string | null = null) =>
-          one<{ id: string; authId: string }>(
+          one<{ id: string; authId: string; email: string }>(
             `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
-             VALUES ($1, $2, $3, 'Mv7', $4::"UserRole", gen_random_uuid(), true, $5, now()) RETURNING id, "authId"`,
+             VALUES ($1, $2, $3, 'Mv7', $4::"UserRole", gen_random_uuid(), true, $5, now()) RETURNING id, "authId", email`,
             [school.id, `${marker}-mv7-${label}-${name}@example.invalid`, name, role, groupId],
           );
         const admin7 = await user('SCHOOL_ADMIN', 'admin');
@@ -465,6 +469,8 @@ export async function massvalChecks(owner: Client, api: PrismaService, marker: s
       type Rolled = Awaited<ReturnType<typeof rolled>>;
       const rollover = new YearRolloverService(api);
       const carry = new StaffingRolloverService(api);
+      const imports = new ImportService(api, users);
+      const roster = new Ss12000Service(api);
       const request = (world: Rolled, extra: object = {}) => ({
         name: `mv7 ${randomUUID().slice(0, 8)}`,
         startDate: '2094-08-16',
@@ -501,6 +507,15 @@ export async function massvalChecks(owner: Client, api: PrismaService, marker: s
           const done = await rollover.executeRollover(world.sourceId, { ...body, planHash: preview.planHash }, world.principal);
           const plan = await carry.preview(done.academicYear.id, world.principal);
           return () => carry.execute(done.academicYear.id, plan.planHash, world.principal);
+        }],
+        // The second pupil is not yet in the half: placing her wakes the member trigger, which holds her row FOR SHARE.
+        ['the CSV import of the members of halves', { nextYear: false }, async (world) => {
+          const file = { academicYearId: world.sourceId, rows: world.pupils.map((pupil) => ({ email: pupil.email, groupName: 'MV7A:1' })) };
+          return () => imports.importMemberships(file, world.principal);
+        }],
+        ['the legacy SS12000 roster import', { nextYear: false }, async (world) => {
+          const persons = world.pupils.map((pupil, index) => ({ email: pupil.email, givenName: `Mv7 ${index}` }));
+          return () => roster.importPersons(world.schoolId, persons);
         }],
       ];
 
