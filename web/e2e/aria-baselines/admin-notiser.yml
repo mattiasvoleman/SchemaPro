@@ -94,6 +94,9 @@
         - link "Avbokning":
           - /url: /sv/admin/cancellations
       - listitem:
+        - link "Aktiviteter":
+          - /url: /sv/admin/activities
+      - listitem:
         - link "Ledighetsansökningar":
           - /url: /sv/admin/leave
       - listitem:

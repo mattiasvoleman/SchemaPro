@@ -287,6 +287,7 @@ describe("AppShell navigation", () => {
       "nav.teacherAbsence",
       "nav.coverBoard",
       "nav.cancellations",
+      "nav.activities",
       "nav.leaveRequests",
       "nav.roomBookings",
       "nav.reports",

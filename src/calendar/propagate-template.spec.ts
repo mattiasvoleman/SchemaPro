@@ -76,6 +76,50 @@ describe('propagateTemplateChange', () => {
     expect(result).toEqual({ moved: 1, removed: 0, cancelled: 0, movedIds: [], lostDayOperations: [] });
   });
 
+  it("'update' applies the avbokningar and activities in force to the days it moved a row onto (S7), when told the year", async () => {
+    tx.calendarLesson.findMany.mockResolvedValue([
+      { id: 'r1', date: day('2026-10-13') },
+      { id: 'r2', date: day('2026-10-20') },
+    ]);
+    await propagateTemplateChange(tx as unknown as PrismaClient, before, after, {
+      timezone: 'Europe/Stockholm',
+      schoolId: 'school',
+      academicYearId: 'year',
+      now: NOW,
+    });
+    // Tuesday 13 and 20 October, moved a day: onto the 14th and the 21st.
+    expect(tx.cancellationBatch.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { academicYearId: 'year', reversedAt: null, fromDate: { lte: day('2026-10-21') }, toDate: { gte: day('2026-10-14') } },
+      }),
+    );
+  });
+
+  it("'update' asks nothing of a row that stays on its day (a new teacher, a new hour)", async () => {
+    tx.calendarLesson.findMany.mockResolvedValue([{ id: 'r1', date: day('2026-10-13') }]);
+    await propagateTemplateChange(tx as unknown as PrismaClient, before, { ...after, dayOfWeek: before.dayOfWeek }, {
+      timezone: 'Europe/Stockholm',
+      schoolId: 'school',
+      academicYearId: 'year',
+      now: NOW,
+    });
+    expect(tx.calendarLesson.update).toHaveBeenCalled();
+    expect(tx.cancellationBatch.findMany).not.toHaveBeenCalled();
+  });
+
+  it("'update' applies nothing without the year, nor when no row moved", async () => {
+    tx.calendarLesson.findMany.mockResolvedValue([{ id: 'r1', date: day('2026-10-13') }]);
+    await propagateTemplateChange(tx as unknown as PrismaClient, before, after, { timezone: 'Europe/Stockholm', schoolId: 'school', now: NOW });
+    tx.calendarLesson.findMany.mockResolvedValue([]);
+    await propagateTemplateChange(tx as unknown as PrismaClient, before, after, {
+      timezone: 'Europe/Stockholm',
+      schoolId: 'school',
+      academicYearId: 'year',
+      now: NOW,
+    });
+    expect(tx.cancellationBatch.findMany).not.toHaveBeenCalled();
+  });
+
   it("'publish' asks only the rows inside the range", async () => {
     await run('publish');
     expect(tx.calendarLesson.findMany.mock.calls[0]![0].where.date).toEqual({ gte: day('2026-10-13'), lte: day('2026-10-31') });

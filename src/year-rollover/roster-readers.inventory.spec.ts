@@ -57,6 +57,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'CURRENT',
     why: 'whether a share link answers: app.public_timetable counts a teaching group’s active members as they are, so the list asks the same',
   },
+  'src/publication/activity-replacements.ts': {
+    basis: 'CURRENT',
+    why: 'which teaching groups lie wholly inside the classes an activity names (their pupils are away with the class); the lessons it cancels are this term’s, and the rosters it plans by come from lesson-roster.ts',
+  },
   'src/year-rollover/activation-plan.ts': { basis: 'SOURCE', why: 'what the projection and the activation are computed from' },
   'src/year-rollover/rollover-source.ts': {
     basis: 'SOURCE',

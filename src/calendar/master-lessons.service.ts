@@ -864,6 +864,7 @@ export class MasterLessonsService {
           : await propagateTemplateChange(tx, lesson, updated, {
               timezone: lesson.school.timezone,
               schoolId: lesson.school.id,
+              academicYearId: lesson.academicYearId,
             });
 
       // The ämnesfördelning, asked of the week as the PATCH leaves it. A
@@ -1347,6 +1348,7 @@ export class MasterLessonsService {
             : await propagateTemplateChange(tx, lesson, updated, {
                 timezone: lesson.school.timezone,
                 schoolId: lesson.school.id,
+                academicYearId: lesson.academicYearId,
               });
         propagatedLessons += moved;
         removedCalendarLessons += removed;

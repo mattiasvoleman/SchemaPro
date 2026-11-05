@@ -109,23 +109,45 @@ function spanOf(first: string, last: string): string {
   return first === last ? `den ${from}` : `mellan ${from} och ${to}`;
 }
 
+/**
+ * What the digest says when an activity sent it (schemabrytande aktivitet):
+ * the cancelled lessons are replaced, and a teacher responsible for a class
+ * is told which. Notices, pushes and the in-app list are the same kind as the
+ * avbokning's; only the e-mail has room for the rest.
+ */
+export interface ActivityWording {
+  /** A teacher's classes and groups, by person: "Du är ansvarig för 7A". */
+  responsible: ReadonlyMap<string, readonly string[]>;
+  /**
+   * People whose lessons are cancelled but not replaced (a pupil in a joint
+   * lesson whose class is not in the activity, and the guardians of such
+   * pupils): their notice says the lessons are cancelled and promises nothing.
+   */
+  plain?: ReadonlySet<string>;
+}
+
 /** The digest's e-mail, in Swedish: the batch's name, the person's count and days. */
 export function digestEmail(
   name: string,
   share: { count: number; first: string; last: string },
   reversed: boolean,
+  activity?: { responsibleFor: readonly string[]; plain?: boolean },
 ): { subject: string; body: string } {
   const lessons = share.count === 1 ? 'En lektion' : `${share.count} lektioner`;
   const span = spanOf(share.first, share.last);
+  const responsible =
+    activity && activity.responsibleFor.length > 0
+      ? `\n\nDu är ansvarig för ${activity.responsibleFor.join(', ')}${reversed ? ' under aktiviteten' : ''}.`
+      : '';
   if (reversed) {
     return {
-      subject: `Avbokningen är ångrad: ${name}`,
-      body: `Avbokningen ${name} är ångrad. ${lessons} ${span} blir av som planerat.\n\nSe schemat i Rastra Schema.`,
+      subject: activity ? `Aktiviteten är borttagen: ${name}` : `Avbokningen är ångrad: ${name}`,
+      body: `${activity ? 'Aktiviteten' : 'Avbokningen'} ${name} är ${activity ? 'borttagen' : 'ångrad'}. ${lessons} ${span} blir av som planerat.${responsible}\n\nSe schemat i Rastra Schema.`,
     };
   }
   return {
     subject: `Inställda lektioner: ${name}`,
-    body: `${name}: ${lessons} ${span} ${share.count === 1 ? 'är inställd' : 'är inställda'}.\n\nSe schemat i Rastra Schema.`,
+    body: `${name}: ${lessons} ${span} ${share.count === 1 ? 'är inställd' : 'är inställda'}${activity && !activity.plain ? ' och ersätts av aktiviteten' : ''}.${responsible}\n\nSe schemat i Rastra Schema.`,
   };
 }
 
@@ -141,13 +163,27 @@ export async function sendDigest(
   batch: { id: string; name: string },
   audience: DigestAudience,
   reversed: boolean,
+  activity?: ActivityWording,
 ): Promise<number> {
-  const groups = new Map<string, { count: number; first: string; last: string; userIds: string[] }>();
+  const groups = new Map<
+    string,
+    { count: number; first: string; last: string; userIds: string[]; responsibleFor: readonly string[]; plain: boolean }
+  >();
   for (const [userId, share] of audience.people) {
-    const key = `${share.lessons.size}|${share.first}|${share.last}`;
+    const responsibleFor = activity?.responsible.get(userId) ?? [];
+    const plain = activity?.plain?.has(userId) ?? false;
+    const key = `${share.lessons.size}|${share.first}|${share.last}|${responsibleFor.join(',')}|${plain}`;
     const group = groups.get(key);
     if (group) group.userIds.push(userId);
-    else groups.set(key, { count: share.lessons.size, first: share.first, last: share.last, userIds: [userId] });
+    else
+      groups.set(key, {
+        count: share.lessons.size,
+        first: share.first,
+        last: share.last,
+        userIds: [userId],
+        responsibleFor,
+        plain,
+      });
   }
   let told = 0;
   for (const group of groups.values()) {
@@ -162,8 +198,14 @@ export async function sendDigest(
         startDate: group.first,
         endDate: group.last,
         reversed,
+        ...(activity ? { activity: true } : {}),
       },
-      email: digestEmail(batch.name, group, reversed),
+      email: digestEmail(
+        batch.name,
+        group,
+        reversed,
+        activity ? { responsibleFor: group.responsibleFor, plain: group.plain } : undefined,
+      ),
     });
   }
   return told;

@@ -126,6 +126,8 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/teacher-absence": "DRIFT",
   "/admin/cover": "DRIFT",
   "/admin/cancellations": "DRIFT",
+  // Schemabrytande aktivitet: an avbokning it owns, so Drift's as that is.
+  "/admin/activities": "DRIFT",
   "/admin/leave": "DRIFT",
   "/admin/room-bookings": "DRIFT",
   "/admin/reports": "DRIFT",

@@ -159,6 +159,14 @@ describe('PublicationsService (DIRECT)', () => {
     expect(outcome.publication.validFrom).toBe('2026-10-12');
   });
 
+  it('takes the publication lock shared before it reads anything, so that an activity settling after its commit waits for it', async () => {
+    await service.publish({ academicYearId: YEAR_ID }, testUser());
+    const sql = tx.$queryRaw.mock.calls.map(([query]) => String((query as { sql?: string }).sql));
+    expect(sql.filter((text) => text.includes('enter_grundschema_write'))).toHaveLength(1);
+    expect(sql.some((text) => text.includes('enter_publication'))).toBe(false);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.masterLesson.findMany.mock.invocationCallOrder[0]);
+  });
+
   it("starts a dateless publish on the school's today, which UTC has not reached at 00:30", async () => {
     // 00:30 on Monday 12 October in Stockholm (CEST), still Sunday 11 in UTC.
     jest.setSystemTime(new Date('2026-10-11T22:30:00Z'));
@@ -380,6 +388,21 @@ describe('PublicationsService (DIRECT)', () => {
       // No REFUSE set: the gates are not even asked.
       expect(coverage.scheduled).not.toHaveBeenCalled();
       expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
+    });
+
+    it('takes the lock first and applies the bulk avbokningar and activities in force to what it wrote (S7)', async () => {
+      tx.cancellationBatch.findMany.mockResolvedValue([]);
+      await service.legacyPublish({ academicYearId: YEAR_ID }, testUser());
+      const sql = tx.$queryRaw.mock.calls.map(([query]) => String((query as { sql?: string }).sql));
+      expect(sql[0]).toContain('enter_grundschema_write');
+      expect(tx.cancellationBatch.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ academicYearId: YEAR_ID, reversedAt: null }),
+        }),
+      );
+      expect(tx.cancellationBatch.findMany.mock.invocationCallOrder[0]).toBeGreaterThan(
+        (calendar.materialise as jest.Mock).mock.invocationCallOrder[0],
+      );
     });
 
     it('is refused only by a check the school set to REFUSE', async () => {

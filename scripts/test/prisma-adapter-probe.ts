@@ -141,6 +141,8 @@ import { ss12000NarvaroChecks, sweepSs12000NarvaroSchool } from './probe-ss12000
 import { scheduleCandidateChecks } from './probe-schedule-candidates';
 import { sweepTioarigSchool, tioarigChecks } from './probe-tioarig';
 import { lessonLogChecks, sweepLessonLogSchool } from './probe-lesson-log';
+import { scheduleActivityChecks, sweepScheduleActivitySchool } from './probe-schemabrytande';
+import { scheduleActivityPublicationChecks, sweepScheduleActivityPublicationSchools } from './probe-schemabrytande-publication';
 import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
@@ -5497,8 +5499,16 @@ async function runChecks(
           // gate is open the teachers' caps and their posts' limits are a
           // statement each, and the week one more once a teacher has either
           // ((ld-d)).
-          'PATCH a drag': 24,
-          'PATCH a drag back beside 8A': 28,
+          // +1 each since the schemabrytande aktivitet (20270101090000): the
+          // rows the drag moves to another day may land on a day a bulk
+          // avbokning or an activity holds, where a publish would have
+          // cancelled them with the rest (S7), so the edit asks which
+          // unreversed batches overlap the days it moved rows to — one
+          // indexed SELECT on CancellationBatches, empty for a school that
+          // has made none. A PATCH that moves no row to another day (the new
+          // teacher above, a new hour) asks nothing.
+          'PATCH a drag': 25,
+          'PATCH a drag back beside 8A': 29,
           'place a meal': 7,
           // +1 since Tjänstens perioder (20261022120000): the year has posts,
           // so the load read asks for their periods (one indexed SELECT); a
@@ -5917,6 +5927,8 @@ async function runChecks(
   await scheduleCandidateChecks(owner, api, MARKER, check, open, appUrl);
   await tioarigChecks(owner, api, MARKER, check);
   await lessonLogChecks(owner, api, MARKER, check);
+  await scheduleActivityChecks(owner, api, MARKER, check);
+  await scheduleActivityPublicationChecks(owner, api, MARKER, check);
   await rastvaktChecks(owner, api, MARKER, check);
   await elevlistanChecks(owner, api, MARKER, check);
   await massvalChecks(owner, api, MARKER, check);
@@ -6406,6 +6418,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepTioarigSchool(owner, MARKER);
   // Lektionslogg's school, likewise.
   await sweepLessonLogSchool(owner, MARKER);
+  await sweepScheduleActivitySchool(owner, MARKER);
+  await sweepScheduleActivityPublicationSchools(owner, MARKER);
   await sweepRastvaktSchool(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
   await sweepElevlistanSchool(owner, MARKER);

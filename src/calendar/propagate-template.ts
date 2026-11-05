@@ -10,6 +10,7 @@ import {
   type PublishDaysContext,
 } from './publish-days';
 import { PUBLISH_NOTE_ROOM_UNAVAILABLE, PUBLISH_NOTE_TEACHER_UNAVAILABLE } from './calendar.service';
+import { reapplyActiveBatches } from '../publication/cancellation-batches.service';
 
 /**
  * THE ONE RULE BY WHICH A TEMPLATE CHANGE MOVES THE CALENDAR.
@@ -93,6 +94,15 @@ export interface TemplateAfter {
 export interface PropagateOptions {
   timezone: string;
   schoolId: string;
+  /**
+   * 'update': the year the template belongs to. A row it moves onto a day that
+   * a bulk avbokning or a schemabrytande aktivitet still holds is cancelled
+   * with the rest (S7, as a publish does), instead of standing there as an
+   * ordinary lesson in the middle of the activity. Left out, nothing is
+   * re-applied. One SELECT on CancellationBatches when a row changed day, and
+   * none when none did (a new teacher, a new room, a new hour).
+   */
+  academicYearId?: string;
   mode?: 'update' | 'publish';
   /** 'publish': the rows dated in [from, to] only. */
   range?: { from: string; to: string };
@@ -206,6 +216,7 @@ export async function propagateTemplateChange(
   const endHHMM = toHHMM(after.endTime);
   const stale: string[] = [];
   const movedIds: string[] = [];
+  const landedOn: string[] = [];
   const lostDayOperations: LostDayOperation[] = [];
   let moved = 0;
   let cancelled = 0;
@@ -288,6 +299,8 @@ export async function propagateTemplateChange(
         },
       });
       moved++;
+      // Only a row that changes day can land on one an avbokning holds.
+      if (dateString !== calendarLesson.date.toISOString().slice(0, 10)) landedOn.push(dateString);
 
       // Keep the LEAD teacher assignment in sync with the template — except
       // on a lesson a vikarie has been assigned to. assignSubstitute replaced
@@ -397,6 +410,11 @@ export async function propagateTemplateChange(
   // above, so they are already future, SCHEDULED and attendance-free.
   if (stale.length > 0) {
     await tx.calendarLesson.deleteMany({ where: { id: { in: stale } } });
+  }
+
+  if (landedOn.length > 0 && options.academicYearId) {
+    landedOn.sort();
+    await reapplyActiveBatches(tx, schoolId, options.academicYearId, landedOn[0], landedOn[landedOn.length - 1], timezone);
   }
 
   return { moved, removed: stale.length, cancelled, movedIds, lostDayOperations };
