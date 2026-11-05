@@ -1106,6 +1106,75 @@ describe('ImportService', () => {
 
       expect(tx.studentGroupMember.findMany).not.toHaveBeenCalled();
     });
+
+    describe('the school’s people lock, shared, and the pupils in id order (src/common/lock-order.ts)', () => {
+      const PEOPLE_LOCK = 'SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))';
+      const HOLD_PUPILS = 'SELECT 1 FROM "Users" WHERE "id" = ANY(?::uuid[]) ORDER BY "id" FOR SHARE';
+      /** The pupil holds sent with $queryRaw, in order. */
+      const pupilHolds = () => tx.$queryRaw.mock.calls.filter((call) => /FOR SHARE/.test(rawSql(call)));
+      const turns = async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+      };
+
+      it('takes the lock first, before it reads a pupil or a group', async () => {
+        arrangeHalves();
+
+        await service.importMemberships(rows(['7A:1', 'alma@example.com']), testUser());
+
+        const [first] = tx.$executeRaw.mock.calls;
+        expect(rawSql(first)).toBe(PEOPLE_LOCK);
+        expect((first[0] as { values: unknown[] }).values).toEqual([`Users:${testUser().schoolId}`]);
+        expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.user.findMany.mock.invocationCallOrder[0]);
+        expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.studentGroup.findMany.mock.invocationCallOrder[0]);
+      });
+
+      it('waits for the lock to be granted before it reads anything', async () => {
+        arrangeHalves();
+        let grant!: () => void;
+        tx.$executeRaw.mockImplementationOnce(() => new Promise((resolve) => (grant = () => resolve(0))));
+
+        const running = service.importMemberships(rows(['7A:1', 'alma@example.com']), testUser());
+        await turns();
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+        grant();
+        await running;
+
+        expect(tx.user.findMany).toHaveBeenCalled();
+      });
+
+      it('takes it for a file that names no one it can place, too', async () => {
+        await service.importMemberships(rows(['Ma71', 'ghost@example.com']), testUser());
+
+        expect(rawSql(tx.$executeRaw.mock.calls[0])).toBe(PEOPLE_LOCK);
+        expect(tx.studentGroupMember.createMany).not.toHaveBeenCalled();
+      });
+
+      it('holds the pupils placed in a half FOR SHARE, once, in id order whatever the order of the file, before the members are inserted', async () => {
+        arrangeHalves();
+
+        await service.importMemberships(
+          rows(['7A:1', 'bo@example.com'], ['7A:2', 'alma@example.com'], ['7A:1', 'eva@example.com']),
+          testUser(),
+        );
+
+        // Eva is of another class: she is told so by row, and not held.
+        expect(pupilHolds().map((call) => [rawSql(call), call.slice(1)])).toEqual([[HOLD_PUPILS, [[STUDENT_ID, BO]]]]);
+        const [hold] = tx.$queryRaw.mock.invocationCallOrder.filter((_, index) => /FOR SHARE/.test(rawSql(tx.$queryRaw.mock.calls[index])));
+        expect(hold).toBeLessThan(tx.studentGroupMember.createMany.mock.invocationCallOrder[0]);
+      });
+
+      it('holds no pupil of a group that is no half: the member trigger does not wake', async () => {
+        tx.user.findMany.mockResolvedValue([{ id: STUDENT_ID, email: 'alma@example.com', studentGroupId: GROUP_7A }]);
+        arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: 'Ma71', halfOfId: null, predecessorId: null }]);
+        tx.studentGroupMember.createMany.mockResolvedValue({ count: 1 });
+
+        await service.importMemberships(rows(['Ma71', 'alma@example.com']), testUser());
+
+        expect(tx.studentGroupMember.createMany).toHaveBeenCalledTimes(1);
+        expect(pupilHolds()).toEqual([]);
+      });
+    });
   });
 
   describe('importMemberships: matching and side effects', () => {

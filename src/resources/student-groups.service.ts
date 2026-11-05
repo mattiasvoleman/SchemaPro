@@ -27,7 +27,7 @@ import {
   type BulkResult,
 } from '../common/bulk';
 import { GROUP_KEYS, countByKind, grownSince, type GroupKeyKind } from '../common/removal-inventory';
-import { holdTheSchoolsPeople, lockGroups, lockHomePupils } from '../common/lock-order';
+import { holdPupils, holdTheSchoolsPeople, lockGroups, lockHomePupils } from '../common/lock-order';
 import type {
   BulkUpdateStudentGroupsDto,
   CreateStudentGroupDto,
@@ -145,21 +145,6 @@ async function pupilsOfTheClass(
     select: { id: true },
   });
   return new Set(rows.map((row) => row.id));
-}
-
-/**
- * The pupils' rows FOR SHARE, in id order, before a placement touches a
- * membership row. A class change takes the pupil's row first and the
- * memberships after (the Users trigger leaves the old class's halves); a
- * placement that deleted a pupil's half row and only then met the pupil's
- * row (the member trigger reads it FOR SHARE) would take them the other way
- * round, and the two could deadlock. Held first, a class change waits for
- * the placement or the placement for it, and either sees the other's commit.
- */
-async function holdPupils(tx: Prisma.TransactionClient, pupils: Iterable<string>): Promise<void> {
-  const ids = [...pupils].sort();
-  if (ids.length === 0) return;
-  await tx.$queryRaw`SELECT 1 FROM "Users" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR SHARE`;
 }
 
 function pupilsNotInClass(count: number, className: string): BadRequestException {
