@@ -589,6 +589,12 @@ async function roundTripOf(
     assert.equal(same.summary.refused, 0, JSON.stringify(same.rows.find((r) => r.action === 'REFUSED')));
     assert.equal(same.canApply, true);
 
+    // The posts that had a lesson to export: each of them must come back below.
+    const laidKeys = new Set(
+      (await owner.masterLesson.findMany({ where: { academicYearId: school.yearId }, select: { studentGroupId: true, subjectId: true } })).map(
+        (l) => `${l.studentGroupId}|${l.subjectId}`,
+      ),
+    );
     await wipeLessons(owner, school.yearId);
     if (options.withPosts) {
       await owner.teachingRequirement.deleteMany({ where: { academicYearId: school.yearId } });
@@ -605,8 +611,11 @@ async function roundTripOf(
       const key = (r: { studentGroupId: string; subjectId: string }) => `${r.studentGroupId}|${r.subjectId}`;
       const got = new Map(derived.map((r) => [key(r), r]));
       for (const was of posts) {
+        // A post with no lesson placed (the clash rule left it over) has nothing to derive from;
+        // every other post must be derived back, so a derivation that drops one fails here.
+        if (!laidKeys.has(key(was))) continue;
         const now = got.get(key(was));
-        if (!now) continue; // A post with no lesson placed (the clash rule left it over) has nothing to derive from.
+        assert.ok(now, `no post for ${key(was)} (${format})`);
         assert.equal(now.lessonsPerWeek <= was.lessonsPerWeek, true);
         assert.equal(now.minutesPerLesson, was.minutesPerLesson, `minutes of ${key(was)}`);
         assert.equal(now.recurrence, was.recurrence, `weeks of ${key(was)}`);
