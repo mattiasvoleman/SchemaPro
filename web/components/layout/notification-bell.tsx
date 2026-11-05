@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { Link } from "@/i18n/navigation";
+import { Link, useRouter } from "@/i18n/navigation";
 import { useProfile } from "@/components/profile-context";
 
 interface NotificationRow {
@@ -33,7 +33,10 @@ interface NotificationRow {
     | "CANCELLATION_DIGEST"
     | "LEAVE_REQUESTED"
     | "SUPERVISION_COVER"
-    | "SUPERVISION_COVER_WITHDRAWN";
+    | "SUPERVISION_COVER_WITHDRAWN"
+    | "COVER_REQUESTED"
+    | "COVER_REQUEST_CLOSED"
+    | "COVER_REQUEST_ACCEPTED";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -47,10 +50,18 @@ interface NotificationRow {
 /** The newest notices the bell reads. A full page may hide more unread behind it. */
 const NOTICE_LIMIT = 20;
 
+/** Where a notice leads (Vikariefrågan): the colleague to the question, the administrator to the board. */
+const HREF: Partial<Record<NotificationRow["type"], string>> = {
+  COVER_REQUESTED: "/teacher/franvaro",
+  COVER_REQUEST_CLOSED: "/teacher/franvaro",
+  COVER_REQUEST_ACCEPTED: "/admin/cover",
+};
+
 export function NotificationBell() {
   const t = useTranslations("notifications");
   const queryClient = useQueryClient();
   const { profile } = useProfile();
+  const router = useRouter();
 
   const { data: notifications } = useQuery({
     queryKey: ["notifications"],
@@ -90,6 +101,8 @@ export function NotificationBell() {
   const render = (entry: NotificationRow): string => {
     const meta = entry.meta ?? {};
     const str = (key: string) => String(meta[key] ?? "");
+    // Most notices name the lesson's time; the ones that do not never read it.
+    const when = new Date(str("startsAt")).toLocaleString();
     switch (entry.type) {
       case "ABSENCE_UNREPORTED":
         return t("absenceUnreported", {
@@ -117,17 +130,17 @@ export function NotificationBell() {
       case "LESSON_CANCELLED":
         return t("lessonCancelled", {
           subject: str("subjectName"),
-          when: new Date(str("startsAt")).toLocaleString(),
+          when,
         });
       case "LESSON_REINSTATED":
         return t("lessonReinstated", {
           subject: str("subjectName"),
-          when: new Date(str("startsAt")).toLocaleString(),
+          when,
         });
       case "LESSON_SUPERVISED_STUDY":
         return t("lessonSupervisedStudy", {
           subject: str("subjectName"),
-          when: new Date(str("startsAt")).toLocaleString(),
+          when,
         });
       case "CANCELLATION_DIGEST": {
         // One per person per avbokning: how many of their lessons, and the
@@ -145,7 +158,6 @@ export function NotificationBell() {
       case "LESSON_COVER_WITHDRAWN": {
         // The substitute's own notice (`cover: true`) and its withdrawal name
         // the group and room; neither says whom they replace, or why.
-        const when = new Date(str("startsAt")).toLocaleString();
         const own = { subject: str("subjectName"), when, group: str("groupName"), room: str("roomName") };
         if (entry.type === "LESSON_COVER_WITHDRAWN") return t("lessonCoverWithdrawn", own);
         return meta.cover === true ? t("lessonSubstituteCover", own) : t("lessonSubstitute", { subject: own.subject, when });
@@ -162,6 +174,16 @@ export function NotificationBell() {
         };
         return t(entry.type === "SUPERVISION_COVER" ? "supervisionCover" : "supervisionCoverWithdrawn", pass);
       }
+      case "COVER_REQUESTED":
+      case "COVER_REQUEST_CLOSED":
+      case "COVER_REQUEST_ACCEPTED":
+        // Vikariefrågan: when and how many, and the name of whoever said yes; never whose lessons or why.
+        return t(`cover.${entry.type}`, {
+          when,
+          count: Number(meta.lessonCount ?? 0),
+          reason: str("reason"),
+          name: str("acceptedByName"),
+        });
       case "TEACHER_ABSENCE_REPORTED": {
         // Who and when; the reason is never in a notice. Whole days end at
         // the midnight after the last day, which is said as that last day.
@@ -175,14 +197,14 @@ export function NotificationBell() {
       case "LESSON_ROOM_CHANGED":
         return t("lessonRoomChanged", {
           subject: str("subjectName"),
-          when: new Date(str("startsAt")).toLocaleString(),
+          when,
         });
       case "SCHEDULE_CHANGED":
         return t("scheduleChanged", { subject: str("subjectName") });
       case "ROOM_BOOKING_DECIDED":
         return t(
           str("status") === "APPROVED" ? "roomBookingApproved" : "roomBookingRejected",
-          { room: str("roomName"), when: new Date(str("startsAt")).toLocaleString() },
+          { room: str("roomName"), when },
         );
       default:
         // A type added after this build (the gateway's enum grows first): a
@@ -252,7 +274,12 @@ export function NotificationBell() {
             (notifications ?? []).map((entry) => (
               <DropdownMenuItem
                 key={entry.id}
-                onSelect={(event) => event.preventDefault()}
+                onSelect={(event) => {
+                  // A notice with a page to go to closes the menu and goes there; the rest stay to be read.
+                  const href = HREF[entry.type];
+                  if (href) router.push(href);
+                  else event.preventDefault();
+                }}
                 className={cn(
                   "block rounded-none border-b px-3 py-2.5 text-sm last:border-b-0",
                   entry.readAt === null && "bg-accent/40",

@@ -183,6 +183,8 @@ beforeEach(() => {
   get.mockImplementation(async (path: string) => {
     if (path.startsWith("/api/v1/cover/board")) return BOARD;
     if (path.startsWith("/api/v1/cover/counter")) return { date: DATE, rows: [] };
+    if (path.startsWith("/api/v1/cover/fairness")) return { from: DATE, to: DATE, rows: [] };
+    if (path === "/api/v1/retention/purged-before") return [];
     if (path.includes("/candidates")) return CANDIDATES;
     throw new Error(`unexpected GET ${path}`);
   });
@@ -273,6 +275,8 @@ describe("Vikarietavla", () => {
     get.mockImplementation(async (path: string) => {
       if (path.startsWith("/api/v1/cover/board")) throw new ApiError(500, "boom");
       if (path.startsWith("/api/v1/cover/counter")) return { date: DATE, rows: [] };
+      if (path.startsWith("/api/v1/cover/fairness")) return { from: DATE, to: DATE, rows: [] };
+      if (path === "/api/v1/retention/purged-before") return [];
       throw new Error(`unexpected GET ${path}`);
     });
     renderBoard();
@@ -523,6 +527,8 @@ describe("an absent rastvakt's passes (Rastvakt i vardagen)", () => {
     get.mockImplementation(async (path: string) => {
       if (path.startsWith("/api/v1/cover/board")) return WITH_PASS;
       if (path.startsWith("/api/v1/cover/counter")) return { date: DATE, rows: [] };
+      if (path.startsWith("/api/v1/cover/fairness")) return { from: DATE, to: DATE, rows: [] };
+      if (path === "/api/v1/retention/purged-before") return [];
       if (path === `/api/v1/cover/supervision/s-gard/${DATE}/candidates`) {
         return {
           shiftId: "s-gard",

@@ -32,7 +32,10 @@ export type NotificationTypeName =
   | "CANCELLATION_DIGEST"
   | "LEAVE_REQUESTED"
   | "SUPERVISION_COVER"
-  | "SUPERVISION_COVER_WITHDRAWN";
+  | "SUPERVISION_COVER_WITHDRAWN"
+  | "COVER_REQUESTED"
+  | "COVER_REQUEST_CLOSED"
+  | "COVER_REQUEST_ACCEPTED";
 
 export interface NotificationPreference {
   type: NotificationTypeName;

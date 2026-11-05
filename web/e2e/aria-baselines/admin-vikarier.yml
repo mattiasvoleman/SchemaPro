@@ -115,3 +115,16 @@
           - cell "David Berg"
           - cell "0"
           - cell "1"
+  - region "Rättvisa":
+    - heading "Rättvisa" [level=2]
+    - text: Hur ofta varje kollega har fått en vikarieförfrågan och hur hen har svarat. Bara de som har fått en förfrågan syns. Från
+    - textbox "Från":
+      - /placeholder: åååå-mm-dd
+      - text: <datum>
+    - button "Öppna kalender för Från"
+    - text: Till
+    - textbox "Till":
+      - /placeholder: åååå-mm-dd
+      - text: <datum>
+    - button "Öppna kalender för Till"
+    - paragraph: Ingen har fått en vikarieförfrågan under perioden.

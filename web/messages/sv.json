@@ -2326,7 +2326,12 @@
     "supervisionCoverWithdrawn": "Rastvaktspasset är avbokat: {area} den {when}–{end}. Du behöver inte ta det.",
     "leaveApprovedByMentor": "Ledighet för {student} ({from} – {to}) beviljades av mentorn.",
     "leaveRejectedByMentor": "Ledighet för {student} ({from} – {to}) avslogs av mentorn.",
-    "unreadMarker": "Oläst."
+    "unreadMarker": "Oläst.",
+    "cover": {
+      "COVER_REQUESTED": "Kan du vikariera? {count, plural, one {En lektion} other {# lektioner}} från {when}.",
+      "COVER_REQUEST_CLOSED": "{reason, select, TAKEN {Förfrågan om vikariepass från {when} är tillsatt: en kollega tackade ja först.} other {Förfrågan om vikariepass från {when} är tillbakadragen. Du behöver inte svara.}}",
+      "COVER_REQUEST_ACCEPTED": "{name} har tackat ja till {count, plural, one {lektionen} other {de # lektionerna}} från {when}."
+    }
   },
   "integrations": {
     "title": "Integrationer",
@@ -5646,6 +5651,97 @@
     "writeNote": "Skriv notis till vikarien",
     "editNote": "Ändra notisen till vikarien"
   },
+  "coverRequests": {
+    "ask": "Fråga kollegor",
+    "askSelected": "Fråga kollegor ({count})",
+    "askLimit": "Högst {max} lektioner i en förfrågan",
+    "title": "Fråga kollegor",
+    "body": "Kollegorna du väljer får en förfrågan. Den första som tackar ja får {count, plural, one {lektionen} other {alla lektionerna}}, och det publiceras i schemat. De andra får veta att den är tillsatt. Ingen orsak till frånvaron skickas.",
+    "lessonsLabel": "{count, plural, one {Lektionen} other {Lektionerna}} i förfrågan",
+    "colleaguesLabel": "Kollegor att fråga",
+    "chooseHint": "Välj en eller flera. Listan är rankad som när du tillsätter en vikarie, och ingen i den bryter mot en hård regel.",
+    "limit": "Högst {max} kollegor i en förfrågan.",
+    "notAll": "Kan inte alla lektionerna",
+    "empty": "Ingen kollega kan ta {count, plural, one {lektionen} other {alla lektionerna}} utan att bryta mot en regel. Tillsätt en vikarie direkt på tavlan, eller välj färre lektioner.",
+    "loadFailed": "Kollegorna kunde inte hämtas",
+    "loadFailedHint": "Ingen förfrågan är skickad. Stäng och försök igen om en stund.",
+    "expiryLabel": "Frågan gäller",
+    "expiry": {
+      "30": "30 minuter",
+      "60": "1 timme",
+      "120": "2 timmar",
+      "START": "{count, plural, one {Tills lektionen börjar} other {Tills första lektionen börjar}}"
+    },
+    "send": "Skicka förfrågan",
+    "sendCount": "Skicka till {count, plural, one {# kollega} other {# kollegor}}",
+    "sent": "Förfrågan är skickad till {count, plural, one {# kollega} other {# kollegor}}",
+    "withdraw": "Dra tillbaka",
+    "withdrawTitle": "Dra tillbaka förfrågan?",
+    "withdrawBody": "Kollegorna som inte har svarat får veta att de inte behöver svara. Lektionerna behöver fortfarande vikarie.",
+    "withdrawn": "Förfrågan är tillbakadragen",
+    "stateOpen": "Fråga skickad till {asked, plural, one {# kollega} other {# kollegor}}{declined, plural, =0 {} other { (# har tackat nej)}}",
+    "until": "Gäller till {time}",
+    "stateAccepted": "Tillsatt via förfrågan",
+    "stateExpired": "Gick ut",
+    "stateWithdrawn": "Återkallad",
+    "stateClosed": "Avslutad",
+    "confirmed": "Bekräftad av vikarien",
+    "notConfirmed": "Inte bekräftad",
+    "teacherTitle": "Vikarieförfrågningar",
+    "teacherBody": "Skolledningen frågar om du kan ta ett eller flera pass. Den första som tackar ja får dem.",
+    "teacherLoadFailed": "Dina vikarieförfrågningar kunde inte hämtas",
+    "teacherLoadFailedHint": "Ingenting har ändrats. Ladda om sidan om en stund.",
+    "yes": "{count, plural, one {Ja, jag tar den} other {Ja, jag tar dem}}",
+    "no": "Nej",
+    "answerBy": "Svara senast {time}",
+    "cancelledLesson": "Inställd",
+    "accepted": "Tack! {count, plural, one {Lektionen är din.} other {Alla # lektionerna är dina.}}",
+    "declined": "Du har tackat nej.",
+    "state": {
+      "OPEN": "Väntar på ditt svar",
+      "ACCEPTED_BY_ME": "Du tackade ja",
+      "DECLINED_BY_ME": "Du tackade nej",
+      "TAKEN": "Redan tillsatt av en kollega",
+      "WITHDRAWN": "Återkallad",
+      "EXPIRED": "Gick ut",
+      "CLOSED": "Behövs inte längre"
+    },
+    "confirm": "Bekräfta",
+    "confirmedBadge": "Bekräftad",
+    "confirmedToast": "Tack, passet är bekräftat.",
+    "errors": {
+      "COVER_REQUEST_LESSON_CANCELLED": "Lektionen är inställd och går inte att fråga om.",
+      "COVER_REQUEST_LESSON_COVERED": "Lektionen har redan en vikarie eller är ordnad på annat sätt.",
+      "COVER_REQUEST_LESSON_STARTED": "Lektionen har redan börjat eller börjar inom en minut. Tillsätt en vikarie direkt på tavlan.",
+      "COVER_REQUEST_EXISTS": "Det finns redan en öppen förfrågan för lektionen. Dra tillbaka den först.",
+      "COVER_REQUEST_RECIPIENT_RULE": "En av kollegorna kan inte ta lektionen utan att bryta mot en regel. Välj andra kollegor.",
+      "COVER_REQUEST_RECIPIENT_INVALID": "Bara aktiva lärare i skolan kan få en förfrågan, och inte den som själv är frånvarande.",
+      "COVER_REQUEST_ENDED": "Förfrågan är redan avslutad. Tavlan är uppdaterad.",
+      "COVER_REQUEST_TAKEN": "Uppdraget är redan tillsatt: en kollega hann tacka ja före dig.",
+      "COVER_REQUEST_GONE": "Förfrågan är avslutad: den har gått ut, dragits tillbaka eller tillsatts på annat sätt.",
+      "COVER_REQUEST_ANSWERED": "Du har redan svarat på förfrågan.",
+      "COVER_REQUEST_NOT_FOUND": "Förfrågan finns inte, eller gäller inte dig.",
+      "COVER_REQUEST_SENDER_GONE": "Den som skickade förfrågan kan inte längre tillsätta uppdraget. Hör av dig till expeditionen.",
+      "COVER_REQUEST_RULE": "Du kan inte ta uppdraget: det skulle bryta mot en regel för vikarier.",
+      "COVER_PASS_NOT_FOUND": "Passet är inte ditt att bekräfta."
+    }
+  },
+  "coverFairness": {
+    "title": "Rättvisa",
+    "body": "Hur ofta varje kollega har fått en vikarieförfrågan och hur hen har svarat. Bara de som har fått en förfrågan syns.",
+    "from": "Från",
+    "to": "Till",
+    "name": "Namn",
+    "received": "Fått förfrågan",
+    "accepted": "Tackat ja",
+    "declined": "Tackat nej",
+    "unanswered": "Obesvarat",
+    "caption": "Förfrågningar per kollega {from}–{to}, flest först",
+    "empty": "Ingen har fått en vikarieförfrågan under perioden.",
+    "periodInvalid": "Välj en period på högst ett år, med från-dagen först.",
+    "loadFailed": "Rättvisan kunde inte hämtas",
+    "loadFailedHint": "Förfrågningar och svar är inte ändrade. Ladda om sidan om en stund."
+  },
   "notificationSettings": {
     "typeOther": "Andra notiser",
     "title": "Notiser",
@@ -5675,7 +5771,10 @@
       "LESSON_COVER_WITHDRAWN": "Avbokade vikariepass",
       "LEAVE_REQUESTED": "Ledighetsansökningar att besluta om",
       "SUPERVISION_COVER": "Rastvaktspass som vikarie",
-      "SUPERVISION_COVER_WITHDRAWN": "Avbokade rastvaktspass"
+      "SUPERVISION_COVER_WITHDRAWN": "Avbokade rastvaktspass",
+      "COVER_REQUESTED": "Förfrågningar om vikariepass",
+      "COVER_REQUEST_CLOSED": "Förfrågningar som tillsatts eller dragits tillbaka",
+      "COVER_REQUEST_ACCEPTED": "Kollegor som tackat ja till min förfrågan"
     },
     "loadFailed": "Dina val kunde inte hämtas",
     "loadFailedHint": "Inget har ändrats i vad som skickas till dig. Ladda om sidan om en stund."
@@ -5718,6 +5817,10 @@
       "ACCESS_LOG": {
         "name": "Läslogg",
         "body": "Vem som har läst andra personers uppgifter, och när. Läsningar före gränsdagen gallras."
+      },
+      "COVER_REQUESTS": {
+        "name": "Vikarieförfrågningar",
+        "body": "Avslutade förfrågningar om vikarie, med vilka lektioner de gällde och vem som tillfrågades och svarade, och vikariernas bekräftelser av pass, som avslutades före gränsdagen. En fråga som står öppen gallras aldrig. Vikariebesluten och vikariepassen finns kvar, så att vikarietimmar och lön stämmer."
       },
       "DEPARTED_PEOPLE": {
         "name": "Slutade personer",
@@ -5931,7 +6034,8 @@
     "NOTIFICATIONS": "Notiser före {date} är gallrade enligt skolans beslut.",
     "CHANGE_LOGS": "Historik före {date} är gallrad enligt skolans beslut.",
     "ABSENCE_REASONS": "Orsaker till frånvaro som slutade före {date} är gallrade enligt skolans beslut.",
-    "ACCESS_LOG": "Läsningar före {date} är gallrade enligt skolans beslut."
+    "ACCESS_LOG": "Läsningar före {date} är gallrade enligt skolans beslut.",
+    "COVER_REQUESTS": "Vikarieförfrågningar som avslutades före {date} är gallrade enligt skolans beslut."
   },
   "leaveInbox": {
     "alreadyDecided": "Ansökan är redan beslutad. Listan är uppdaterad.",
