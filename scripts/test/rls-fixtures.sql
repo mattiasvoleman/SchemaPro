@@ -3145,6 +3145,30 @@ BEGIN
   SELECT id, m, 'MANUAL' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
 END $$;
 
+-- The matrix school's whole-school export (20270110090000), so the role matrix
+-- (section 116) has a row of SchoolExports and a piece to probe. A READY file
+-- is fetchable for a while, so the row is planted afresh each run (a reused
+-- database would otherwise find it expired and the pieces unreadable).
+DO $$
+DECLARE
+  m uuid;
+  admin uuid;
+  e uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL THEN
+    RETURN;
+  END IF;
+  SELECT id INTO admin FROM "Users" WHERE "schoolId" = m AND role = 'SCHOOL_ADMIN' AND "adminProfile" = 'FULL' ORDER BY email LIMIT 1;
+  DELETE FROM "SchoolExports" WHERE "schoolId" = m;
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById", status, "requestedAt", "startedAt", "heartbeatAt", "finishedAt", "expiresAt",
+                               attempts, "byteSize", "chunkCount", sha256, files, "heldOut", "readAbout")
+  VALUES (m, admin, 'READY', now() - interval '1 hour', now() - interval '1 hour', now() - interval '59 minutes', now() - interval '58 minutes',
+          now() + interval '71 hours', 1, 5, 1, repeat('0', 64), '[]'::jsonb, '{"people":0,"links":0}'::jsonb, '{}'::jsonb)
+  RETURNING id INTO e;
+  INSERT INTO "SchoolExportChunks" ("exportId", seq, "schoolId", bytes) VALUES (e, 0, m, '\x0102030405'::bytea);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

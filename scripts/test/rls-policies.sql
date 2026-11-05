@@ -2857,7 +2857,13 @@ BEGIN
        -- gateway the sender's login with each request it ended, so the
        -- colleagues, or the sender, are told as the sender is told a yes. It
        -- takes no caller at all: refused to anybody with a login (section 317).
-       ('app', 'cover_requests_settle')
+       ('app', 'cover_requests_settle'),
+       -- Hela skolans data (20270110090000): the job's claim hands the gateway
+       -- the login of the deciding administrator who ordered an export, so the
+       -- file is built AS them under row-level security. It resolves no
+       -- caller and takes none: the API role alone may run it, and it names
+       -- the login of a person the order itself names (sections 355 and 357).
+       ('app', 'school_export_claim')
      );
   IF unexpected IS NOT NULL THEN
     RAISE EXCEPTION 'functions read "authId" without being named in section 10: % (resolve the caller through app.current_user_id())', unexpected;
@@ -20227,6 +20233,8 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('ScheduleChangeLogs', '{SCHEMALAGGNING}', '{}', '{}', '{}'),
   ('ScheduleVersions', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
   ('SchoolBreaks', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('SchoolExportChunks', '{}', '{}', '{}', '{DECIDES}'),
+  ('SchoolExports', '{DECIDES}', '{}', '{DECIDES}', '{DECIDES}'),
   ('SchoolSignInMethods', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
   ('SchoolTravelTimes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('SchoolUnits', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -20304,6 +20312,7 @@ DECLARE
   outcome text;
   refusal text;
   holds boolean;
+  reads boolean;
   expected bigint;
   cmd text;
   gate_list text[];
@@ -20432,6 +20441,14 @@ BEGIN
         ELSE
           -- A delete's arm has only USING, so a refused delete finds no row.
           refusal := CASE cmd WHEN 'delete' THEN 'none' ELSE 'refused' END;
+          -- An insert here copies a row of the table, which a profile that does not read the table
+          -- (a table with readers of its own: the whole-school export, 20270110090000) cannot see:
+          -- it has nothing to copy, and the arm's refusal is proved by that table's own sections.
+          SELECT cardinality(g.rd) = 0 OR bool_or(CASE gl WHEN 'DECIDES' THEN p.decides ELSE gl = ANY (p.writes) END)
+            INTO reads
+            FROM area_profiles p LEFT JOIN unnest(g.rd) gl ON true
+           WHERE p.profile = principals[i][2];
+          IF cmd = 'insert' AND NOT reads THEN refusal := 'none'; END IF;
           SELECT bool_or(CASE gl WHEN 'DECIDES' THEN p.decides ELSE gl = ANY (p.writes) END) INTO holds
             FROM area_profiles p, unnest(gate_list) gl
            WHERE p.profile = principals[i][2];
@@ -41022,5 +41039,533 @@ BEGIN
   PERFORM pg_temp.sk_refuses(format($q$UPDATE "Ss12000SyncChanges" SET after = '{"userLocalId": "x"}' WHERE "runId" = %L AND entity = 'PROTECTION'$q$,
                                     current_setting('app.test_rls344_run')),
                              'SS409', 'a finished run''s mark named again');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 355: hela skolans data i katalogen (K5, 20270110090000). Two
+-- tables with their columns, keys and checks; the unique index that lets one
+-- order be in hand per school; the four arms and no other, none for a
+-- PostgREST role; the API's role may insert two columns and nothing is
+-- updated; the six functions of the job are SECURITY DEFINER with a fixed
+-- search_path and executable by the API's role alone; the trigger that names
+-- whoever orders. PG 17's MAINTAIN is the owner's alone.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  cols text;
+  n integer;
+  r text;
+  t text;
+  f text;
+  def text;
+BEGIN
+  SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum) INTO cols
+    FROM pg_attribute a WHERE a.attrelid = 'public."SchoolExports"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  IF cols IS DISTINCT FROM 'id:uuid,schoolId:uuid,requestedById:uuid,status:"SchoolExportStatus",requestedAt:timestamp(6) with time zone,startedAt:timestamp(6) with time zone,heartbeatAt:timestamp(6) with time zone,finishedAt:timestamp(6) with time zone,expiresAt:timestamp(6) with time zone,attempts:integer,byteSize:bigint,chunkCount:integer,sha256:text,files:jsonb,heldOut:jsonb,readAbout:jsonb,errorClass:text' THEN
+    RAISE EXCEPTION 'export 355: SchoolExports has the columns %', cols;
+  END IF;
+  SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum) INTO cols
+    FROM pg_attribute a WHERE a.attrelid = 'public."SchoolExportChunks"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  IF cols IS DISTINCT FROM 'exportId:uuid,seq:integer,schoolId:uuid,bytes:bytea' THEN
+    RAISE EXCEPTION 'export 355: SchoolExportChunks has the columns %', cols;
+  END IF;
+
+  -- Row security is on, and the arms are the four, for the API's role alone.
+  IF (SELECT count(*) FROM pg_class WHERE oid IN ('public."SchoolExports"'::regclass, 'public."SchoolExportChunks"'::regclass) AND relrowsecurity) <> 2 THEN
+    RAISE EXCEPTION 'export 355: row security is not on for both tables';
+  END IF;
+  SELECT string_agg(tablename || '.' || policyname || ':' || cmd || ':' || roles::text, ',' ORDER BY tablename, policyname) INTO def
+    FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('SchoolExports', 'SchoolExportChunks');
+  IF def IS DISTINCT FROM 'SchoolExportChunks.school_export_chunks_select:SELECT:{app_authenticated},SchoolExports.school_exports_delete:DELETE:{app_authenticated},SchoolExports.school_exports_insert:INSERT:{app_authenticated},SchoolExports.school_exports_select:SELECT:{app_authenticated}' THEN
+    RAISE EXCEPTION 'export 355: the arms are %', def;
+  END IF;
+
+  -- Privileges: select and delete the orders, insert two columns, update nothing, read the pieces.
+  IF NOT (has_table_privilege('app_authenticated', 'public."SchoolExports"', 'SELECT') AND has_table_privilege('app_authenticated', 'public."SchoolExports"', 'DELETE')) THEN
+    RAISE EXCEPTION 'export 355: the API role cannot select and delete its orders';
+  END IF;
+  FOREACH t IN ARRAY ARRAY['UPDATE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+    IF has_table_privilege('app_authenticated', 'public."SchoolExports"', t) OR has_table_privilege('app_authenticated', 'public."SchoolExportChunks"', t) THEN
+      RAISE EXCEPTION 'export 355: the API role holds % on an export table', t;
+    END IF;
+  END LOOP;
+  IF has_table_privilege('app_authenticated', 'public."SchoolExports"', 'INSERT') THEN
+    RAISE EXCEPTION 'export 355: the API role may insert every column of SchoolExports';
+  END IF;
+  SELECT string_agg(a.attname, ',' ORDER BY a.attnum) INTO cols
+    FROM pg_attribute a
+   WHERE a.attrelid = 'public."SchoolExports"'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+     AND has_column_privilege('app_authenticated', 'public."SchoolExports"', a.attname, 'INSERT');
+  IF cols IS DISTINCT FROM 'schoolId,requestedById' THEN
+    RAISE EXCEPTION 'export 355: the API role may insert the columns %, not the school and the person', cols;
+  END IF;
+  IF has_any_column_privilege('app_authenticated', 'public."SchoolExports"', 'UPDATE') OR has_any_column_privilege('app_authenticated', 'public."SchoolExportChunks"', 'UPDATE')
+     OR has_any_column_privilege('app_authenticated', 'public."SchoolExportChunks"', 'INSERT') THEN
+    RAISE EXCEPTION 'export 355: the API role may write a column of the pieces or update an order';
+  END IF;
+  IF has_table_privilege('app_authenticated', 'public."SchoolExportChunks"', 'DELETE') OR NOT has_table_privilege('app_authenticated', 'public."SchoolExportChunks"', 'SELECT') THEN
+    RAISE EXCEPTION 'export 355: the API role reads the pieces and deletes none';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      FOREACH t IN ARRAY ARRAY['public."SchoolExports"', 'public."SchoolExportChunks"'] LOOP
+        IF has_any_column_privilege(r, t, 'SELECT') OR has_any_column_privilege(r, t, 'INSERT') OR has_any_column_privilege(r, t, 'UPDATE') OR has_table_privilege(r, t, 'DELETE') THEN
+          RAISE EXCEPTION 'export 355: % holds a privilege on %', r, t;
+        END IF;
+      END LOOP;
+    END IF;
+  END LOOP;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND (has_table_privilege(r, 'public."SchoolExports"', 'MAINTAIN') OR has_table_privilege(r, 'public."SchoolExportChunks"', 'MAINTAIN')) THEN
+        RAISE EXCEPTION 'export 355: % holds MAINTAIN on an export table', r;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- Keys: the school cascades; the person is set null on the person's column alone; the pieces follow their export.
+  SELECT count(*) INTO n FROM pg_constraint c
+   WHERE c.conrelid = 'public."SchoolExports"'::regclass AND c.contype = 'f' AND c.confrelid = 'public."Schools"'::regclass AND c.confdeltype = 'c';
+  IF n <> 1 THEN RAISE EXCEPTION 'export 355: SchoolExports does not cascade with its school'; END IF;
+  SELECT count(*) INTO n FROM pg_constraint c
+   WHERE c.conrelid = 'public."SchoolExports"'::regclass AND c.contype = 'f' AND c.confrelid = 'public."Users"'::regclass AND c.confdeltype = 'n'
+     AND c.confdelsetcols = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'public."SchoolExports"'::regclass AND attname = 'requestedById')];
+  IF n <> 1 THEN RAISE EXCEPTION 'export 355: the person key is not SET NULL on requestedById alone'; END IF;
+  SELECT count(*) INTO n FROM pg_constraint c
+   WHERE c.conrelid = 'public."SchoolExportChunks"'::regclass AND c.contype = 'f' AND c.confrelid = 'public."SchoolExports"'::regclass AND c.confdeltype = 'c';
+  IF n <> 1 THEN RAISE EXCEPTION 'export 355: the pieces do not cascade with their export'; END IF;
+  FOREACH f IN ARRAY ARRAY['SchoolExports_attempts_are_few', 'SchoolExports_ready_has_its_file', 'SchoolExports_sha256_is_hex', 'SchoolExports_error_is_a_class',
+                           'SchoolExports_failed_names_its_class', 'SchoolExports_keeps_for_at_most_fourteen_days', 'SchoolExportChunks_seq_is_counted_from_zero',
+                           'SchoolExportChunks_a_piece_is_small'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = f AND contype = 'c') THEN RAISE EXCEPTION 'export 355: the check % is missing', f; END IF;
+  END LOOP;
+  SELECT pg_get_indexdef(i.indexrelid) INTO def FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = 'SchoolExports_one_in_hand_per_school';
+  IF def IS NULL OR def NOT LIKE 'CREATE UNIQUE INDEX%("schoolId")%QUEUED%RUNNING%' THEN
+    RAISE EXCEPTION 'export 355: the index that allows one order in hand is %', def;
+  END IF;
+  SELECT attstorage::text INTO def FROM pg_attribute WHERE attrelid = 'public."SchoolExportChunks"'::regclass AND attname = 'bytes';
+  IF def <> 'e' THEN RAISE EXCEPTION 'export 355: the pieces are stored %, not EXTERNAL (a zip does not compress twice)', def; END IF;
+
+  -- Functions: definer, a fixed search_path, executable by the API role and by nobody the PUBLIC covers.
+  FOREACH f IN ARRAY ARRAY['school_export_claim', 'school_export_heartbeat', 'school_export_put', 'school_export_finish', 'school_export_fail', 'school_export_expire'] LOOP
+    SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+     WHERE s.nspname = 'app' AND p.proname = f AND p.prosecdef AND p.proconfig::text LIKE '%search_path=%public%pg_temp%'
+       AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE') AND NOT has_function_privilege('anon', p.oid, 'EXECUTE');
+    IF n <> 1 THEN RAISE EXCEPTION 'export 355: app.% is not a definer with a fixed search_path run by the API role alone', f; END IF;
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'SchoolExports_name_the_orderer' AND tgrelid = 'public."SchoolExports"'::regclass AND tgtype & 2 = 2 AND tgtype & 4 = 4) THEN
+    RAISE EXCEPTION 'export 355: the trigger that names the orderer is not a BEFORE INSERT trigger on SchoolExports';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 356: vem som beställer och läser. Rektor and a full administrator
+-- (those who decide) order for their own school in their own name, read its
+-- orders and withdraw them; no other profile, no teacher, pupil or guardian
+-- does any of it, and each reads nothing: not an order, not a piece. The
+-- statement cannot name another person or another state, nor another school.
+-- The other school's administrator orders and reads its own, none of this
+-- school's. PostgREST's role is refused all of it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.se_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'export: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.se_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  who text;
+  mine uuid;
+  theirs uuid;
+  piece uuid;
+  n bigint;
+  orderer uuid;
+  other_admin uuid;
+  rektor uuid;
+  full_admin uuid;
+BEGIN
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  full_admin := app.current_user_id();
+  IF school IS NULL OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-skyddad-school' THEN
+    RAISE EXCEPTION 'export 356: the full administrator is not in rls-skyddad-school; fixtures did not run';
+  END IF;
+  rektor := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-e50000000002');
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  other_admin := app.current_user_id();
+
+  -- The administrators who decide order in their own name, whatever the statement says.
+  FOREACH who IN ARRAY ARRAY['01', '02'] LOOP
+    PERFORM pg_temp.se_as('00000000-0000-4000-8000-e500000000' || who);
+    orderer := app.current_user_id();
+    INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, CASE WHEN who = '01' THEN rektor ELSE full_admin END) RETURNING id INTO mine;
+    SELECT count(*) INTO n FROM "SchoolExports" WHERE id = mine AND "requestedById" = orderer AND status = 'QUEUED' AND "schoolId" = school;
+    IF n <> 1 THEN RAISE EXCEPTION 'export 356: …% did not order in their own name as QUEUED', who; END IF;
+    SELECT count(*) INTO n FROM "SchoolExports";
+    IF n < 1 THEN RAISE EXCEPTION 'export 356: …% reads no order of the school', who; END IF;
+    DELETE FROM "SchoolExports" WHERE id = mine;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'export 356: …% could not withdraw their order', who; END IF;
+    PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (%L, %L)$q$, other, orderer),
+                               '42501', format('…%s ordering in another school', who));
+    PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById", status) VALUES (%L, %L, 'READY')$q$, school, orderer),
+                               '42501', format('…%s ordering a file that is READY', who));
+    PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById", "byteSize") VALUES (%L, %L, 1)$q$, school, orderer),
+                               '42501', format('…%s ordering with a size', who));
+    PERFORM pg_temp.se_refuses(format($q$UPDATE "SchoolExports" SET status = 'READY' WHERE "schoolId" = %L$q$, school), '42501', format('…%s updating an order', who));
+    PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExportChunks" ("exportId", seq, "schoolId", bytes) VALUES (gen_random_uuid(), 0, %L, '\x00')$q$, school),
+                               '42501', format('…%s writing a piece', who));
+  END LOOP;
+
+  -- Plant one finished file as the full administrator, through the job's functions (section 357 proves them).
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, rektor) RETURNING id INTO mine;
+  PERFORM export_id FROM app.school_export_claim(interval '3 minutes') WHERE export_id = mine;
+  IF NOT FOUND THEN RAISE EXCEPTION 'export 356: the claim did not take the planted order (is another export queued in the database?)'; END IF;
+  PERFORM app.school_export_put(mine, 0, '\x0102030405'::bytea);
+  PERFORM app.school_export_finish(mine, 5, 1, repeat('a', 64), '[]'::jsonb, '{"people":0,"links":0}'::jsonb, '{}'::jsonb, interval '72 hours');
+  PERFORM set_config('app.test_rls356_export', mine::text, true);
+
+  -- The other school orders and reads its own; this school's it neither sees nor withdraws.
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000031');
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (other, other_admin) RETURNING id INTO theirs;
+  SELECT count(*) INTO n FROM "SchoolExports" WHERE "schoolId" = school;
+  IF n <> 0 THEN RAISE EXCEPTION 'export 356: the other school reads % of this school''s orders', n; END IF;
+  SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "schoolId" = school;
+  IF n <> 0 THEN RAISE EXCEPTION 'export 356: the other school reads % of this school''s pieces', n; END IF;
+  DELETE FROM "SchoolExports" WHERE id = mine;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'export 356: the other school withdrew this school''s order'; END IF;
+  SELECT count(*) INTO n FROM "SchoolExports" WHERE id = theirs;
+  IF n <> 1 THEN RAISE EXCEPTION 'export 356: the other school cannot read its own order'; END IF;
+
+  -- The decisions read the pieces of a finished file; nobody else does, nor reads the order.
+  FOREACH who IN ARRAY ARRAY['01', '02'] LOOP
+    PERFORM pg_temp.se_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = mine;
+    IF n <> 1 THEN RAISE EXCEPTION 'export 356: …% reads % pieces of the finished file, not one', who, n; END IF;
+  END LOOP;
+  FOREACH who IN ARRAY ARRAY['03', '04', '05', '06', '07', '11', '12', '21', '22'] LOOP
+    PERFORM pg_temp.se_as('00000000-0000-4000-8000-e500000000' || who);
+    IF app.current_user_role() IS NULL THEN RAISE EXCEPTION 'export 356: …% did not resolve as a person of the school', who; END IF;
+    SELECT (SELECT count(*) FROM "SchoolExports") + (SELECT count(*) FROM "SchoolExportChunks") INTO n;
+    IF n <> 0 THEN RAISE EXCEPTION 'export 356: % …% reads % orders or pieces', app.current_user_role(), who, n; END IF;
+    PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (%L, %L)$q$, school, app.current_user_id()),
+                               '42501', format('%s …%s ordering', app.current_user_role(), who));
+    DELETE FROM "SchoolExports" WHERE "schoolId" = school;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'export 356: % …% withdrew % orders', app.current_user_role(), who, n; END IF;
+  END LOOP;
+  PERFORM set_config('app.test_rls356_school', school::text, true);
+  PERFORM set_config('app.test_rls356_piece_export', mine::text, true);
+END $$;
+
+-- PostgREST's role, as the full administrator: no grant at all.
+SELECT pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.se_refuses('SELECT count(*) FROM "SchoolExports"', '42501', 'PostgREST''s read of the orders');
+  PERFORM pg_temp.se_refuses('SELECT count(*) FROM "SchoolExportChunks"', '42501', 'PostgREST''s read of the pieces');
+  PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId") VALUES (%L)$q$, current_setting('app.test_rls356_school')), '42501', 'PostgREST''s order');
+  PERFORM pg_temp.se_refuses('SELECT app.school_export_claim(interval ''3 minutes'')', '42501', 'PostgREST''s claim');
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 357: jobbets funktioner. The claim takes the oldest order that is
+-- QUEUED, or RUNNING with a heartbeat past the lease, and says whose login
+-- built it; a taken-over export starts with no pieces; a piece is written to
+-- an export that is being built and to no other, in its own school; the file
+-- is finished only when the pieces are counted and summed to what the job
+-- says and is kept at most fourteen days; a failed build leaves no piece; an
+-- expired file loses its pieces and its list of persons. A person who has
+-- been demoted since the order fails it ('RequesterGone').
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.se_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'export: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.se_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  full_id uuid;
+  e uuid;
+  e2 uuid;
+  c record;
+  n bigint;
+  s text;
+BEGIN
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  full_id := app.current_user_id();
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
+
+  PERFORM pg_temp.se_refuses('SELECT app.school_export_claim(interval ''5 seconds'')', 'SS409', 'a lease of five seconds');
+  PERFORM pg_temp.se_refuses('SELECT app.school_export_claim(interval ''2 hours'')', 'SS409', 'a lease of two hours');
+  SELECT * INTO c FROM app.school_export_claim(interval '3 minutes');
+  IF c.export_id IS DISTINCT FROM e OR c.school_id IS DISTINCT FROM school OR c.user_id IS DISTINCT FROM full_id
+     OR c.auth_id IS DISTINCT FROM '00000000-0000-4000-8000-e50000000001'::uuid OR c.admin_profile IS DISTINCT FROM 'FULL' OR c.attempt <> 1 THEN
+    RAISE EXCEPTION 'export 357: the claim returned % for the order of the full administrator', c;
+  END IF;
+  SELECT status::text, attempts INTO s, n FROM "SchoolExports" WHERE id = e;
+  IF s <> 'RUNNING' OR n <> 1 THEN RAISE EXCEPTION 'export 357: the claimed order is % after % attempts', s, n; END IF;
+  -- Nothing else to take: the order is running with a fresh heartbeat.
+  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
+  IF FOUND THEN RAISE EXCEPTION 'export 357: a second claim took an order with a fresh heartbeat'; END IF;
+  IF NOT app.school_export_heartbeat(e) THEN RAISE EXCEPTION 'export 357: the heartbeat of a running export said it was not'; END IF;
+
+  -- Pieces: counted from zero, to a running export only, small, and in the export's own school.
+  PERFORM app.school_export_put(e, 0, '\x010203'::bytea);
+  PERFORM app.school_export_put(e, 1, '\x0405'::bytea);
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 0, '\x01'::bytea)$q$, e), '23505', 'a piece written twice');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, -1, '\x01'::bytea)$q$, e), '23514', 'a piece before the first');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 2, ''::bytea)$q$, e), '23514', 'an empty piece');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 2, decode(repeat('00', 4194305), 'hex'))$q$, e), '23514', 'a piece over 4 MiB');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 0, '\x01'::bytea)$q$, gen_random_uuid()), 'SS409', 'a piece of an export that is not');
+  -- Finish: counted against the pieces, kept at most fourteen days, once.
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 3, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a finish naming three pieces of two');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 6, 2, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a finish naming six bytes of five');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '15 days')$q$, e), 'SS409', 'a file kept fifteen days');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '0 seconds')$q$, e), 'SS409', 'a file kept no time');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, 'not hex', '[]', '{}', '{}', interval '72 hours')$q$, e), '23514', 'a checksum that is not a SHA-256');
+  PERFORM app.school_export_finish(e, 5, 2, repeat('a', 64), '[{"path":"x","rows":1,"bytes":1}]'::jsonb, '{"people":1,"links":0}'::jsonb, '{"PEOPLE":["x"]}'::jsonb, interval '72 hours');
+  SELECT status::text INTO s FROM "SchoolExports" WHERE id = e;
+  IF s <> 'READY' THEN RAISE EXCEPTION 'export 357: the finished export is %', s; END IF;
+  -- Its two pieces are the export's own, in its school, and readable now that the file is READY.
+  SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e AND "schoolId" = school;
+  IF n <> 2 THEN RAISE EXCEPTION 'export 357: % pieces are stored in the export''s school, not two', n; END IF;
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a second finish');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 2, '\x01'::bytea)$q$, e), 'SS409', 'a piece of a finished file');
+  IF app.school_export_heartbeat(e) THEN RAISE EXCEPTION 'export 357: a finished export still has a heartbeat'; END IF;
+  SELECT count(*) INTO n FROM "SchoolExports" WHERE id = e AND "byteSize" = 5 AND "chunkCount" = 2 AND "expiresAt" > now() + interval '71 hours' AND "expiresAt" < now() + interval '73 hours';
+  IF n <> 1 THEN RAISE EXCEPTION 'export 357: the finished export does not say 5 bytes in 2 pieces kept 72 hours'; END IF;
+
+  -- A failed build leaves no piece, and names its class; a class that is a message becomes 'Error'.
+  DELETE FROM "SchoolExports" WHERE id = e;
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
+  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
+  PERFORM app.school_export_put(e, 0, '\x01'::bytea);
+  PERFORM app.school_export_fail(e, 'ECONNRESET');
+  SELECT status::text || ':' || "errorClass" INTO s FROM "SchoolExports" WHERE id = e;
+  IF s <> 'FAILED:ECONNRESET' THEN RAISE EXCEPTION 'export 357: the failed export is %', s; END IF;
+  DELETE FROM "SchoolExports" WHERE id = e;
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
+  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
+  PERFORM app.school_export_fail(e, 'a message with spaces: person@example.com');
+  SELECT "errorClass" INTO s FROM "SchoolExports" WHERE id = e;
+  IF s <> 'Error' THEN RAISE EXCEPTION 'export 357: an error that is a message was stored as %', s; END IF;
+  DELETE FROM "SchoolExports" WHERE id = e;
+
+  -- A file kept a second expires: its pieces and its list of persons go, the order stays as EXPIRED.
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
+  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
+  PERFORM app.school_export_put(e, 0, '\x01'::bytea);
+  PERFORM app.school_export_finish(e, 1, 1, repeat('b', 64), '[]'::jsonb, '{}'::jsonb, '{"PEOPLE":["x"]}'::jsonb, interval '1 second');
+  PERFORM pg_sleep(1.2);
+  PERFORM pg_temp.se_refuses('SELECT app.school_export_expire(interval ''1 day'')', 'SS409', 'a ledger of one day');
+  SELECT expired INTO n FROM app.school_export_expire(interval '13 months');
+  IF n < 1 THEN RAISE EXCEPTION 'export 357: expire counted % expired files', n; END IF;
+  SELECT status::text || ':' || coalesce("readAbout"::text, 'null') INTO s FROM "SchoolExports" WHERE id = e;
+  IF s <> 'EXPIRED:null' THEN RAISE EXCEPTION 'export 357: the expired order is %', s; END IF;
+  DELETE FROM "SchoolExports" WHERE id = e;
+
+  -- A person demoted since the order: the claim fails it, and names why.
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000002');
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, app.current_user_id()) RETURNING id INTO e;
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  -- The full administrator demotes the rektor to the expedition (a decision: a decider may).
+  UPDATE "Users" SET "adminProfile" = 'EXPEDITION' WHERE "authId" = '00000000-0000-4000-8000-e50000000002';
+  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
+  IF FOUND THEN RAISE EXCEPTION 'export 357: the order of a demoted administrator was claimed'; END IF;
+  SELECT status::text || ':' || "errorClass" INTO s FROM "SchoolExports" WHERE id = e;
+  IF s <> 'FAILED:RequesterGone' THEN RAISE EXCEPTION 'export 357: the demoted administrator''s order is %', s; END IF;
+  DELETE FROM "SchoolExports" WHERE id = e;
+
+  -- A RUNNING export whose heartbeat is older than the lease is taken over, with no pieces, as the second attempt.
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
+  PERFORM 1 FROM app.school_export_claim(interval '10 seconds');
+  PERFORM app.school_export_put(e, 0, '\x01'::bytea);
+  PERFORM pg_sleep(10.5);
+  SELECT * INTO c FROM app.school_export_claim(interval '10 seconds');
+  IF c.export_id IS DISTINCT FROM e OR c.attempt <> 2 THEN RAISE EXCEPTION 'export 357: the stale export was claimed as %', c; END IF;
+  -- It starts from nothing: a finish that names the half file's piece is refused, one that names none is whole.
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 1, 1, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a finish naming the piece of the attempt that was taken over');
+  PERFORM app.school_export_finish(e, 0, 0, repeat('a', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 358: tidsgränsen och nycklarna. A file is readable while it is
+-- READY and before its expiry and not otherwise: a file still being built,
+-- a failed one, and one past its time show the deciders no piece even before
+-- the job deletes them. Withdrawing an order takes its pieces. A removed
+-- person leaves the order with its school and no one named.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.se_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  full_id uuid;
+  rektor uuid;
+  e uuid;
+  n bigint;
+  v text;
+BEGIN
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  full_id := app.current_user_id();
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
+  PERFORM 1 FROM app.school_export_claim(interval '3 minutes') WHERE export_id = e;
+  IF NOT FOUND THEN RAISE EXCEPTION 'export 358: the claim did not take the order (is another export queued in the database?)'; END IF;
+  PERFORM app.school_export_put(e, 0, '\x0a0b'::bytea);
+
+  SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
+  IF n <> 0 THEN RAISE EXCEPTION 'export 358: a file still being built shows % pieces', n; END IF;
+
+  PERFORM app.school_export_finish(e, 2, 1, repeat('c', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '2 seconds');
+  SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
+  IF n <> 1 THEN RAISE EXCEPTION 'export 358: a fresh file shows % pieces, not one', n; END IF;
+
+  PERFORM pg_sleep(2.2);
+  SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
+  IF n <> 0 THEN RAISE EXCEPTION 'export 358: a file past its time shows % pieces before the job has run', n; END IF;
+  SELECT count(*) INTO n FROM "SchoolExports" WHERE id = e AND status = 'READY';
+  IF n <> 1 THEN RAISE EXCEPTION 'export 358: the order of an expired file is not read as READY until the job has run'; END IF;
+
+  -- Withdrawing takes the pieces; a fresh file's pieces are read until then.
+  DELETE FROM "SchoolExports" WHERE id = e;
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
+  PERFORM 1 FROM app.school_export_claim(interval '3 minutes') WHERE export_id = e;
+  PERFORM app.school_export_put(e, 0, '\x0a'::bytea);
+  PERFORM app.school_export_finish(e, 1, 1, repeat('c', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
+  SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
+  IF n <> 1 THEN RAISE EXCEPTION 'export 358: a fresh file shows % pieces', n; END IF;
+  DELETE FROM "SchoolExports" WHERE id = e;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
+  IF n <> 0 THEN RAISE EXCEPTION 'export 358: a withdrawn order left % pieces', n; END IF;
+
+  -- A removed person: the order stays with its school, naming no one. The rektor orders; the full administrator removes the rektor.
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000002');
+  rektor := app.current_user_id();
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, rektor) RETURNING id INTO e;
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  DELETE FROM "Users" WHERE id = rektor;
+  SELECT "schoolId"::text || ':' || coalesce("requestedById"::text, 'null') INTO v FROM "SchoolExports" WHERE id = e;
+  IF v IS DISTINCT FROM school::text || ':null' THEN RAISE EXCEPTION 'export 358: after the person was removed the order says %', v; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 359: en beställning i taget. The school with an order QUEUED or
+-- RUNNING is refused a second (23505), whoever places it; a finished or a
+-- failed order is not in hand; another school is not held back. The ledger
+-- is kept at least thirty days.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.se_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'export: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.se_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  full_id uuid;
+  rektor uuid;
+  other_admin uuid;
+  e uuid;
+  n bigint;
+BEGIN
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  other_admin := app.current_user_id();
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000002');
+  rektor := app.current_user_id();
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  full_id := app.current_user_id();
+
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
+  PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (%L, %L)$q$, school, full_id), '23505', 'a second order while one is QUEUED');
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000002');
+  PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (%L, %L)$q$, school, rektor), '23505', 'rektor ordering while the full administrator''s is QUEUED');
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  PERFORM 1 FROM app.school_export_claim(interval '3 minutes') WHERE export_id = e;
+  PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (%L, %L)$q$, school, full_id), '23505', 'a second order while one is RUNNING');
+
+  -- Failed, then finished: not in hand.
+  PERFORM app.school_export_fail(e, 'Error');
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
+  PERFORM 1 FROM app.school_export_claim(interval '3 minutes') WHERE export_id = e;
+  PERFORM app.school_export_put(e, 0, '\x01'::bytea);
+  PERFORM app.school_export_finish(e, 1, 1, repeat('d', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id);
+  SELECT count(*) INTO n FROM "SchoolExports" WHERE "schoolId" = school AND status IN ('QUEUED', 'RUNNING');
+  IF n <> 1 THEN RAISE EXCEPTION 'export 359: % orders are in hand, not one', n; END IF;
+
+  -- Another school is not held back by this school's order in hand.
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000031');
+  INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (other, other_admin);
+  PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (%L, %L)$q$, other, other_admin), '23505', 'the other school''s second order');
 END $$;
 ROLLBACK;

@@ -238,6 +238,8 @@ model School {
   /// Skyddad identitet (20270107090000): the school's marks of its protected people, and who set or removed them.
   personProtections       PersonProtection[] @relation("PersonProtectionSchool")
   personProtectionEvents  PersonProtectionEvent[] @relation("PersonProtectionEventSchool")
+  schoolExports           SchoolExport[]
+  schoolExportChunks      SchoolExportChunk[]
   studentGroups           StudentGroup[]
   teachingRequirements    TeachingRequirement[]
   teachingRequirementShares TeachingRequirementShare[]
@@ -5215,4 +5217,72 @@ model AbsenceWatchDigest {
 
   @@id([schoolId, recipientGroup, periodEnd])
   @@map("AbsenceWatchDigests")
+}
+
+/// Where a whole-school export is in the job (20270110090000): ordered,
+/// being built, a file ready to fetch, failed, or a file that has expired.
+enum SchoolExportStatus {
+  QUEUED
+  RUNNING
+  READY
+  FAILED
+  EXPIRED
+}
+
+/// Whole-school export (K5, 20270110090000): one order for a zip of the
+/// school's data, the job's lease on it and, once built, what the file is.
+/// Ordered, read and withdrawn by the administrators who decide; moved
+/// through its states by the app.school_export_* functions alone. The key to
+/// the person who ordered (requestedById, schoolId -> Users, SET NULL on the
+/// person alone) is written in the migration only, as every composite person
+/// key with SET NULL is.
+model SchoolExport {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String             @db.Uuid
+  requestedById String?            @db.Uuid
+  /// The database's default, not Prisma's: the API role may insert two columns of this table and no more.
+  status        SchoolExportStatus @default(dbgenerated("'QUEUED'::\"SchoolExportStatus\""))
+  requestedAt   DateTime           @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  startedAt     DateTime?          @db.Timestamptz(6)
+  heartbeatAt   DateTime?          @db.Timestamptz(6)
+  finishedAt    DateTime?          @db.Timestamptz(6)
+  /// When the file stops being readable. At most 14 days after finishedAt; the job asks for three.
+  expiresAt     DateTime?          @db.Timestamptz(6)
+  attempts      Int                @default(dbgenerated("0"))
+  byteSize      BigInt?
+  chunkCount    Int?
+  /// SHA-256 of the zip, hex.
+  sha256        String?
+  /// What each part of the file holds: [{ path, rows, bytes }], and how it was made. No person's data.
+  files         Json?
+  /// How many marked persons (skyddad identitet) the file leaves out: { people, links }.
+  heldOut       Json?
+  /// The persons the file holds rows about, per läslogg kind, for the download's record. Cleared on expiry.
+  readAbout     Json?
+  /// An error class as the logs have it, never a message.
+  errorClass    String?
+
+  school School               @relation(fields: [schoolId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  chunks SchoolExportChunk[]
+
+  @@unique([id, schoolId])
+  @@index([status, requestedAt])
+  @@index([schoolId, requestedAt])
+  @@map("SchoolExports")
+}
+
+/// The zip in pieces of at most 4 MiB, written once by app.school_export_put
+/// while the export is RUNNING and gone when it expires or is withdrawn.
+model SchoolExportChunk {
+  exportId String @db.Uuid
+  seq      Int
+  schoolId String @db.Uuid
+  bytes    Bytes
+
+  export SchoolExport @relation(fields: [exportId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  school School       @relation(fields: [schoolId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([exportId, seq])
+  @@index([schoolId])
+  @@map("SchoolExportChunks")
 }
