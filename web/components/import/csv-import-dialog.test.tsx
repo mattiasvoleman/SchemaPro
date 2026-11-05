@@ -466,6 +466,94 @@ describe("CsvImportDialog import", () => {
     );
   });
 
+  describe("vårdnadshavare", () => {
+    const GUARDIANS_CSV =
+      BOM +
+      "fornamn;efternamn;epost;telefon;elev_epost\r\n" +
+      "Gun;Berg;gun@example.com;070-123 45 67;alma@example.com\r\n" +
+      "Gun;Berg;gun@example.com;070-123 45 67;nils@example.com\r\n" +
+      "Gert;Ek;gert@example.com;;ghost@example.com\r\n";
+
+    it("says before the file is chosen what a row is and what an existing guardian keeps", async () => {
+      const user = userEvent.setup();
+      renderDialog({ kinds: ["students", "guardians"] });
+
+      expect(screen.queryByText("guardiansNotice")).toBeNull();
+      await switchKind(user, "guardians");
+
+      expect(screen.getByText("guardiansNotice")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "downloadTemplate" }));
+      expect(mockDownloadTemplate).toHaveBeenCalledWith("guardians");
+    });
+
+    it("posts the rows to /import/guardians with no läsår, the file's own row numbers, and refreshes a pupil's guardians", async () => {
+      mockPost.mockResolvedValue({ created: 1, skipped: 0, linked: 2, errors: [] });
+      const user = userEvent.setup();
+      const { invalidateSpy } = renderDialog({ kinds: ["guardians"] });
+
+      await uploadCsv(user, GUARDIANS_CSV, "vardnadshavare.csv");
+      await screen.findByText("rowsReady(count=3)");
+      await user.click(importButton());
+
+      await waitFor(() => expect(mockPost).toHaveBeenCalled());
+      expect(mockPost).toHaveBeenCalledWith("/api/v1/import/guardians", {
+        rows: [
+          { firstName: "Gun", lastName: "Berg", email: "gun@example.com", phone: "070-123 45 67", studentEmail: "alma@example.com" },
+          { firstName: "Gun", lastName: "Berg", email: "gun@example.com", phone: "070-123 45 67", studentEmail: "nils@example.com" },
+          { firstName: "Gert", lastName: "Ek", email: "gert@example.com", phone: null, studentEmail: "ghost@example.com" },
+        ],
+        rowNumbers: [2, 3, 4],
+      });
+      await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["studentGuardians"] }));
+      await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["people"] }));
+    });
+
+    it("sums up the guardians made, the links added and the rows that were there, and lists the row the gateway refused", async () => {
+      mockPost.mockResolvedValue({
+        created: 1,
+        skipped: 0,
+        linked: 2,
+        errors: [{ row: 4, message: 'Kolumnen "elev_epost": ingen elev har e-postadressen "ghost@example.com".' }],
+      });
+      const user = userEvent.setup();
+      renderDialog({ kinds: ["guardians"] });
+
+      await uploadCsv(user, GUARDIANS_CSV, "vardnadshavare.csv");
+      await screen.findByText("rowsReady(count=3)");
+      await user.click(importButton());
+
+      expect(await screen.findByText("resultSummaryGuardians(created=1|linked=2|skipped=0)")).toBeInTheDocument();
+      expect(screen.getByText(/rowError\(row=4\|message=Kolumnen "elev_epost"/)).toBeInTheDocument();
+    });
+
+    it("refuses a row whose pupil address is no address before anything is sent", async () => {
+      const user = userEvent.setup();
+      renderDialog({ kinds: ["guardians"] });
+
+      await uploadCsv(
+        user,
+        `${BOM}fornamn;efternamn;epost;telefon;elev_epost\r\nGun;Berg;gun@example.com;;Alma Berg\r\n`,
+        "vardnadshavare.csv",
+      );
+
+      expect(await screen.findByText('Rad 2: elev_epost "Alma Berg" är inte en e-postadress. Skriv den som namn@skolan.se.')).toBeInTheDocument();
+      expect(importButton()).toBeDisabled();
+      expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("needs no läsår: a school without an active one can import its guardians", async () => {
+      supabaseState.years = [];
+      const user = userEvent.setup();
+      renderDialog({ kinds: ["guardians"] });
+
+      await uploadCsv(user, GUARDIANS_CSV, "vardnadshavare.csv");
+      await screen.findByText("rowsReady(count=3)");
+
+      expect(screen.queryByText("noActiveYear")).toBeNull();
+      expect(importButton()).toBeEnabled();
+    });
+  });
+
   it("renders the report's per-row errors", async () => {
     mockPost.mockResolvedValue({
       created: 1,

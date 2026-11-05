@@ -58,7 +58,8 @@ export type ImportKind =
   | "requirements"
   | "teacherQualifications"
   | "teacherDuties"
-  | "rooms";
+  | "rooms"
+  | "guardians";
 
 interface CsvFile {
   filename: string;
@@ -154,6 +155,13 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvFile> = {
   teachingGroups: {
     filename: "undervisningsgrupper.csv",
     headers: ["grupp", "epost"],
+  },
+  guardians: {
+    filename: "vardnadshavare.csv",
+    // One row per link, the guardian's four cells as elever.csv has a pupil's
+    // and the pupil by address (elev_epost). A guardian of two pupils is two
+    // rows. The link has no type and no dates, so the file has no column for them.
+    headers: ["fornamn", "efternamn", "epost", "telefon", "elev_epost"],
   },
   requirements: {
     filename: "timplansposter.csv",

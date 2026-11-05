@@ -825,7 +825,7 @@ export default function PeoplePage() {
    */
   // The imports this profile writes: the register personal's, behörigheter and uppdrag planering's.
   const importKinds = [
-    ...(writesPeople ? (["students", "teachers"] as const) : []),
+    ...(writesPeople ? (["students", "teachers", "guardians"] as const) : []),
     ...(writesPlanning ? (["teacherQualifications", "teacherDuties"] as const) : []),
   ];
 
@@ -967,6 +967,24 @@ export default function PeoplePage() {
                   // reject on the way back in.
                   build: () => studentsToCsv(people ?? [], exportClassName),
                   empty: !people?.some((person) => person.role === "STUDENT") || groups === undefined,
+                },
+                {
+                  kind: "guardians",
+                  // Read and built at the click: the page holds no links, and
+                  // sits close to its bundle budget. The gateway lists the
+                  // school's links in one read that the läslogg records.
+                  build: () =>
+                    import("@/lib/guardians-csv-export")
+                      .then(async ({ guardiansCsvFor }) => {
+                        const file = await guardiansCsvFor();
+                        if (file === null) toast.info(tCsvImport("noGuardianLinks"));
+                        return file;
+                      })
+                      .catch(() => {
+                        toast.error(tCommon("error"));
+                        return null;
+                      }),
+                  empty: !people?.some((person) => person.role === "GUARDIAN" && person.isActive),
                 },
               ]}
             />

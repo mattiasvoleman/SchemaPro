@@ -14,6 +14,7 @@ import {
   decodeCsvBytes,
   fileProblems,
   mapClassRows,
+  mapGuardianRows,
   mapMembershipRows,
   mapRequirementRows,
   mapRoomRows,
@@ -29,6 +30,71 @@ import { mapTimplanRows } from "@/lib/timplan-csv";
 
 const file = (...lines: string[]) => parseCsv(`﻿${lines.join("\r\n")}\r\n`);
 const LONG_61 = "x".repeat(61);
+
+describe("vardnadshavare.csv", () => {
+  const HEADER = "fornamn;efternamn;epost;telefon;elev_epost";
+  const guardians = (...lines: string[]) => mapGuardianRows(file(HEADER, ...lines));
+
+  it.each([
+    [
+      "a pupil written as a name instead of an address",
+      "Gun;Berg;gun@skola.se;;Alma Berg",
+      'Rad 2: elev_epost "Alma Berg" är inte en e-postadress. Skriv den som namn@skolan.se.',
+    ],
+    ["a pupil address missing", "Gun;Berg;gun@skola.se;070-123 45 67;", 'Rad 2: kolumnen "elev_epost" är tom.'],
+    [
+      "a guardian address without a domain",
+      "Gun;Berg;gun@;;alma@skola.se",
+      'Rad 2: epost "gun@" är inte en e-postadress. Skriv den som namn@skolan.se.',
+    ],
+    ["a guardian address missing", "Gun;Berg;;;alma@skola.se", 'Rad 2: kolumnen "epost" är tom.'],
+    ["a first name missing", ";Berg;gun@skola.se;;alma@skola.se", 'Rad 2: kolumnen "fornamn" är tom.'],
+    [
+      "a phone number longer than the column",
+      `Gun;Berg;gun@skola.se;${"7".repeat(41)};alma@skola.se`,
+      "Rad 2: telefon är 41 tecken lång, men får vara högst 40.",
+    ],
+  ])("refuses %s, by row and column", (_case, line, message) => {
+    expect(guardians(line)).toEqual({ rows: [], errors: [{ row: 2, message }], rowNumbers: [] });
+  });
+
+  it("names the columns the file lacks as the template spells them", () => {
+    const { rows, errors } = mapGuardianRows(file("fornamn;efternamn;epost", "Gun;Berg;gun@skola.se"));
+
+    expect(rows).toEqual([]);
+    expect(errors).toEqual([
+      { row: 0, message: "Kolumner saknas: elev_epost. Ladda ner mallen och utgå från den." },
+    ]);
+  });
+
+  it("names the row the problem is on, and keeps the rows around it", () => {
+    const { rows, errors, rowNumbers } = guardians(
+      "Gun;Berg;gun@skola.se;;alma@skola.se",
+      "Gert;Berg;gert@skola.se;;bo@skola",
+      "Gun;Berg;gun@skola.se;;bo@skola.se",
+    );
+
+    expect(errors).toEqual([
+      { row: 3, message: 'Rad 3: elev_epost "bo@skola" är inte en e-postadress. Skriv den som namn@skolan.se.' },
+    ]);
+    expect(rows.map((row) => row.studentEmail)).toEqual(["alma@skola.se", "bo@skola.se"]);
+    expect(rowNumbers).toEqual([2, 4]);
+  });
+
+  it("posts a phone nobody wrote as null, and reads the pupil column under the spellings a school uses", () => {
+    for (const header of ["elev_epost", "Elev e-post", "ELEVEPOST", "Elevens e-post", "student_email"]) {
+      const { rows, errors } = mapGuardianRows(file(`fornamn;efternamn;epost;telefon;${header}`, "Gun;Berg;gun@skola.se;;alma@skola.se"));
+      expect(errors).toEqual([]);
+      expect(rows).toEqual([{ firstName: "Gun", lastName: "Berg", email: "gun@skola.se", phone: null, studentEmail: "alma@skola.se" }]);
+    }
+  });
+
+  it("does not take the guardian's own address for the pupil's, in a file where only the pupil column is named otherwise", () => {
+    // "epost" is the guardian; a file with an "elev" column alone has no pupil address.
+    const { errors } = mapGuardianRows(file("fornamn;efternamn;epost;elev", "Gun;Berg;gun@skola.se;alma@skola.se"));
+    expect(errors).toEqual([{ row: 0, message: "Kolumner saknas: elev_epost. Ladda ner mallen och utgå från den." }]);
+  });
+});
 
 describe("cells the gateway would refuse are refused here, by row and column", () => {
   it.each([

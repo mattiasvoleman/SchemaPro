@@ -10,6 +10,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { ImportService } from './import.service';
 import {
   ImportGroupsDto,
+  ImportGuardiansDto,
   ImportMembershipsDto,
   ImportRequirementsDto,
   ImportRoomTypesDto,
@@ -45,6 +46,17 @@ export class ImportController {
   @Area('PERSONAL')
   importStudents(@Body() dto: ImportStudentsDto, @CurrentUser() user: AuthenticatedUser) {
     return this.imports.importStudents(dto, user);
+  }
+
+  /**
+   * Vårdnadshavare and their link to a pupil, one row per link. PERSONAL like
+   * the people imports and the link on the people page, which it writes the
+   * same way (origin MANUAL).
+   */
+  @Post('guardians')
+  @Area('PERSONAL')
+  importGuardians(@Body() dto: ImportGuardiansDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.imports.importGuardians(dto, user);
   }
 
   @Post('groups')

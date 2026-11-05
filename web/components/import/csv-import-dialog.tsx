@@ -8,6 +8,7 @@ import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import {
   downloadTemplate,
   mapClassRows,
+  mapGuardianRows,
   mapMembershipRows,
   mapRequirementRows,
   mapRoomRows,
@@ -75,6 +76,7 @@ const MAPPERS: Record<
   }
 > = {
   students: mapStudentRows,
+  guardians: mapGuardianRows,
   teachers: mapTeacherRows,
   classes: mapClassRows,
   teachingGroups: mapMembershipRows,
@@ -294,16 +296,22 @@ export function CsvImportDialog({
                 must say so.
               */}
               <p className="text-sm font-medium">
-                {report.updated === undefined
-                  ? t("resultSummary", {
+                {report.linked !== undefined
+                  ? t("resultSummaryGuardians", {
                       created: report.created,
+                      linked: report.linked,
                       skipped: report.skipped,
                     })
-                  : t("resultSummaryUpdated", {
-                      created: report.created,
-                      updated: report.updated,
-                      skipped: report.skipped,
-                    })}
+                  : report.updated === undefined
+                    ? t("resultSummary", {
+                        created: report.created,
+                        skipped: report.skipped,
+                      })
+                    : t("resultSummaryUpdated", {
+                        created: report.created,
+                        updated: report.updated,
+                        skipped: report.skipped,
+                      })}
               </p>
               {overwriteNotice}
               {report.errors.length > 0 ? (
@@ -390,6 +398,9 @@ export function CsvImportDialog({
               {/* Above the file picker, so it is read before a file is picked
                   and not discovered afterwards. */}
               {overwriteNotice}
+              {kind === "guardians" ? (
+                <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">{t("guardiansNotice")}</p>
+              ) : null}
 
               <div className="space-y-2">
                 <Label htmlFor="csv-import-file">{t("chooseFile")}</Label>

@@ -1748,6 +1748,12 @@ export interface ImportReport {
    * see IMPORT_UPDATES_ROWS below.
    */
   updated?: number;
+  /**
+   * Links between a guardian and a pupil the upload wrote. Only the guardian
+   * import answers it; there `created` is the guardians made and `skipped`
+   * the rows whose link was there already.
+   */
+  linked?: number;
   /** The file's rows as Excel numbers them, when the dialog posted them; else 1-based positions. */
   errors: { row: number; message: string }[];
   /**
@@ -1778,6 +1784,7 @@ const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
   requirements: "/api/v1/import/requirements",
   teacherQualifications: "/api/v1/import/teacher-qualifications",
   teacherDuties: "/api/v1/import/teacher-duties",
+  guardians: "/api/v1/import/guardians",
 };
 
 /** Kinds whose payload carries the academic year the rows belong to. */
@@ -1805,6 +1812,8 @@ export const IMPORT_NEEDS_YEAR: Record<ImportKind, boolean> = {
   // An uppdrag is per läsår, like the post it sits beside: Mentor 7B is a
   // different 7B next year.
   teacherDuties: true,
+  // A guardian and the link to a pupil are not per läsår.
+  guardians: false,
 };
 
 /** Result of inviting one person. */
@@ -1997,6 +2006,8 @@ export const IMPORT_MAX_ROWS: Record<ImportKind, number> = {
   teacherQualifications: 2000,
   // ImportTeacherDutiesDto's: eighty teachers with five uppdrag each is 400.
   teacherDuties: 2000,
+  // ImportGuardiansDto's: a row can make a person, as the people files' rows can.
+  guardians: 500,
 };
 
 /**
@@ -2028,6 +2039,8 @@ export const IMPORT_UPDATES_ROWS: Record<ImportKind, boolean> = {
   teacherQualifications: true,
   // Identified by teacher, typ and benämning; a changed row is updated.
   teacherDuties: true,
+  // A guardian who exists gets the link and nothing else, and a link is there or not.
+  guardians: false,
 };
 
 /**
@@ -2081,6 +2094,9 @@ export async function importCsvInBatches({
       if (typeof report?.updated === "number") {
         merged.updated = (merged.updated ?? 0) + report.updated;
       }
+      if (typeof report?.linked === "number") {
+        merged.linked = (merged.linked ?? 0) + report.linked;
+      }
       // Row numbers come back as the file's when they were posted, and
       // 1-based within the batch otherwise; shift only those.
       const shift = rowNumbers ? 0 : offset;
@@ -2124,6 +2140,8 @@ export function useImportCsv() {
     mutationFn: importCsvInBatches,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["people"] });
+      // The guardians a pupil's row opens: vardnadshavare.csv links them.
+      void queryClient.invalidateQueries({ queryKey: ["studentGuardians"] });
       void queryClient.invalidateQueries({ queryKey: ["groups"] });
       void queryClient.invalidateQueries({ queryKey: ["groupMemberships"] });
       void queryClient.invalidateQueries({ queryKey: ["groupMembers"] });

@@ -680,7 +680,7 @@
     "loadFailed": "Personerna kunde inte hämtas",
     "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan saknar både personal och elever. Inget har ändrats; ladda om sidan för att försöka igen.",
     "emptyTitle": "Inga personer ännu",
-    "emptyHint": "Lägg till lärare, elever och vårdnadshavare en i taget, eller importera lärare och elever från en CSV-fil.",
+    "emptyHint": "Lägg till lärare, elever och vårdnadshavare en i taget, eller importera dem från en CSV-fil.",
     "searchLabel": "Sök på namn, e-post eller klass",
     "noMatch": "Ingen person matchar sökningen och rollen du valt",
     "tableCaption": "Skolans personer med e-post, roll, klass, status och inbjudan. Varje namn kan fällas ut med klass, grupper och tjänst.",
@@ -2877,7 +2877,8 @@
       "requirements": "Timplansposter",
       "teacherQualifications": "Behörigheter",
       "teacherDuties": "Uppdrag",
-      "rooms": "Salar"
+      "rooms": "Salar",
+      "guardians": "Vårdnadshavare"
     },
     "downloadTemplate": "Ladda ner mall",
     "chooseFile": "Välj fil",
@@ -2889,6 +2890,9 @@
     "importing": "Importerar…",
     "resultSummary": "{created} skapade, {skipped} överhoppade",
     "resultSummaryUpdated": "{created} skapade, {updated} uppdaterade, {skipped} överhoppade",
+    "resultSummaryGuardians": "{created} vårdnadshavare skapade, {linked, plural, one {# koppling tillagd} other {# kopplingar tillagda}}, {skipped} fanns redan",
+    "guardiansNotice": "En rad är en koppling mellan en vårdnadshavare och en elev: elevens e-postadress står i kolumnen elev_epost, och eleven måste finnas och vara aktiv. En vårdnadshavare som inte finns skapas utan inbjudan. En som finns får bara kopplingen, så namn och telefon ändras inte.",
+    "noGuardianLinks": "Det finns inga kopplingar mellan vårdnadshavare och elever att exportera.",
     "updatesNotDeletes": "Importen lägger till nya rader och uppdaterar dem som redan finns. Rader du tagit bort ur filen tas INTE bort ur timplansposterna, och en kolumn som saknas i filen lämnas orörd. Men en TOM cell i en kolumn filen har betyder att fältet töms — så här tar du bort en lärare eller en period. Ta bort en hel post genom att klicka på den i tabellen.",
     "rowErrors": "Fel per rad",
     "rowError": "Rad {row}: {message}",

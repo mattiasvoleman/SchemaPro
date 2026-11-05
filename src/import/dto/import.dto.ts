@@ -109,6 +109,48 @@ export class ImportStudentsDto extends ImportFileRowsDto {
   rows!: ImportStudentRowDto[];
 }
 
+/**
+ * One row of vardnadshavare.csv: a guardian and ONE pupil they are guardian
+ * of, the pupil by e-mail address as every other file names a pupil. A
+ * guardian of two pupils is two rows with the same first four cells. The model
+ * has no relation type and no dates for a link, so the file carries none.
+ */
+export class ImportGuardianRowDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  firstName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  lastName!: string;
+
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+
+  /** As the person form takes it (CreateUserDto): text, up to 40 characters; an empty cell posts null. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string | null;
+
+  /** The pupil's own address in the school: an active pupil, or the row is an error. */
+  @IsEmail()
+  @MaxLength(254)
+  studentEmail!: string;
+}
+
+export class ImportGuardiansDto extends ImportFileRowsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => ImportGuardianRowDto)
+  rows!: ImportGuardianRowDto[];
+}
+
 export class ImportTeacherRowDto {
   @IsString()
   @IsNotEmpty()
@@ -924,6 +966,13 @@ export interface ImportReport {
    * the file carries a post.
    */
   updated?: number;
+  /**
+   * Links between a guardian and a pupil that the upload wrote. Only the
+   * guardian import answers it: there `created` counts the guardians made and
+   * `skipped` the rows whose link was already there, so a row for a guardian
+   * who exists is neither of them but a link.
+   */
+  linked?: number;
   /** 1-based DATA row numbers (the header row is not counted). */
   errors: { row: number; message: string }[];
   /**

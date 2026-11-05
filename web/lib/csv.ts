@@ -76,6 +76,11 @@ export const CSV_EXAMPLES: Record<ImportKind, string[][]> = {
     ["bo.alm@example.com", "ämnesansvar", "Ämnesansvar slöjd", "60", "ja", "SLTX", "", "", "", ""],
   ],
   students: [["Alma", "Berg", "alma.berg@example.com", "", "7A"]],
+  // A guardian of two pupils is two rows, the first four cells the same.
+  guardians: [
+    ["Gun", "Berg", "gun.berg@example.com", "070-123 45 67", "alma.berg@example.com"],
+    ["Gun", "Berg", "gun.berg@example.com", "070-123 45 67", "bo.berg@example.com"],
+  ],
   teachingGroups: [
     ["Ma71", "alma.berg@example.com"],
     ["Sv73", "alma.berg@example.com"],
@@ -370,7 +375,7 @@ function mapRows<T>(
         {
           row: 0,
           message: `Kolumner saknas: ${missing
-            .map(({ aliases }) => aliases[0])
+            .map(({ field, aliases }) => FIELD_LABELS[field] ?? aliases[0])
             .join(", ")}. Ladda ner mallen och utgå från den.`,
         },
       ],
@@ -414,6 +419,7 @@ const FIELD_LABELS: Record<string, string> = {
   lastName: "efternamn",
   email: "epost",
   phone: "telefon",
+  studentEmail: "elev_epost",
   className: "klass",
   name: "namn",
   gradeLevel: "arskurs",
@@ -476,6 +482,49 @@ export function mapStudentRows(parsed: ParsedCsv): MappedRows<{
       email: row.email!,
       phone: row.phone || null,
       className: row.className || null,
+    })),
+  };
+}
+
+/**
+ * Guardian rows: a guardian and one pupil of theirs, the pupil by address
+ * (elev_epost). The pupil's address is required and checked as an address
+ * here, for the reason every cell is: ImportGuardianRowDto's @IsEmail would
+ * otherwise refuse the whole file with one sentence that names no row. That
+ * the pupil exists, is active and is a pupil is the gateway's to say, per row.
+ */
+export function mapGuardianRows(parsed: ParsedCsv): MappedRows<{
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string | null;
+  studentEmail: string;
+}> {
+  const mapped = mapRows(
+    parsed,
+    [
+      { field: "firstName", aliases: ["fornamn", "firstname"], required: true, rule: NAME },
+      { field: "lastName", aliases: ["efternamn", "lastname"], required: true, rule: NAME },
+      { field: "email", aliases: ["epost", "email", "epostadress"], required: true, rule: EMAIL },
+      { field: "phone", aliases: PHONE_ALIASES, required: false, rule: PHONE },
+      {
+        field: "studentEmail",
+        // normalizeHeader strips the underscore: "elev_epost" reads "elevepost".
+        aliases: ["elevepost", "elevensepost", "elevemail", "studentemail", "pupilemail"],
+        required: true,
+        rule: EMAIL,
+      },
+    ],
+    requiredMessage,
+  );
+  return {
+    ...mapped,
+    rows: mapped.rows.map((row) => ({
+      firstName: row.firstName!,
+      lastName: row.lastName!,
+      email: row.email!,
+      phone: row.phone || null,
+      studentEmail: row.studentEmail!,
     })),
   };
 }
