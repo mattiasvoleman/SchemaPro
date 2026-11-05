@@ -143,6 +143,8 @@ const ADMIN_NAV: NavSection[] = [
       { labelKey: "publishing", href: "/admin/publishing", icon: CalendarRange },
       // Kalenderprenumeration, per audience: Publicering's icon, already in the shell.
       { labelKey: "calendarFeeds", href: "/admin/calendar-feeds", icon: CalendarRange },
+      // The same schedule leaving as a file (and a file coming in): Publicering's icon again.
+      { labelKey: "scheduleExchange", href: "/admin/schedule-exchange", icon: CalendarRange },
     ],
   },
   {

@@ -117,6 +117,8 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/generate": "SCHEMALAGGNING",
   "/admin/timetable": "SCHEMALAGGNING",
   "/admin/gaps": "SCHEMALAGGNING",
+  // Schema som fil: the export only reads, the import writes the grundschema and the posts it implies.
+  "/admin/schedule-exchange": "SCHEMALAGGNING",
   "/admin/publishing": "PUBLICERING",
   // Kalenderprenumeration's switches are PublicationSettings, Publicering's.
   "/admin/calendar-feeds": "PUBLICERING",

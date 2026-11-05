@@ -220,7 +220,8 @@
     "myLeave": "Ledighet",
     "calendarFeed": "Min kalenderprenumeration",
     "calendarFeeds": "Kalenderprenumeration",
-    "classBook": "Klassbok"
+    "classBook": "Klassbok",
+    "scheduleExchange": "Schema som fil"
   },
   "dashboard": {
     "title": "Översikt",
@@ -6800,5 +6801,130 @@
       "otherLinks": "{count, plural, one {# uppgift} other {# uppgifter}} som eleverna gjorde finns kvar utan deras namn",
       "accounts": "Det som hör till elevernas egna konton och som ingen administratör ser: notiser, notisinställningar, enheter för pushnotiser och kalenderprenumerationer, också vårdnadshavarnas prenumerationer på eleverna"
     }
+  },
+  "scheduleExchange": {
+    "title": "Schema som fil",
+    "subtitle": "Grundschemat som tabell, Untis- eller aSc-fil, och tillbaka in som låsta lektioner",
+    "intro": "Exporten läser grundschemat, alltså det som Generera skriver och som du publicerar; i en skola som publicerar via utkast är det utkastet. Importen skapar nya låsta lektioner med härledda timplansposter och ändrar aldrig en lektion som redan finns. Inget skrivs förrän du har läst förhandsvisningen.",
+    "yearLabel": "Läsår",
+    "formats": {
+      "TABLE_CSV": {
+        "name": "Tabell, CSV",
+        "hint": "En rad per lektion, semikolonavgränsad i UTF-8. Öppnas i Excel och går att läsa tillbaka."
+      },
+      "TABLE_XLSX": {
+        "name": "Tabell, Excel",
+        "hint": "Samma tabell som en Excel-fil (.xlsx), med rubrikraden fryst."
+      },
+      "UNTIS_GPU": {
+        "name": "Untis, GPU-filer",
+        "hint": "GPU001 (schemat) och GPU002 (lektionerna) i en zip, med tid i minuter."
+      },
+      "ASC_XML": {
+        "name": "aSc Timetables, XML",
+        "hint": "En XML-fil med klasser, lärare, salar, lektioner och kort."
+      }
+    },
+    "export": {
+      "title": "Exportera",
+      "description": "Hämta schemat i det format som det andra systemet läser.",
+      "summary": "{count, plural, one {# lektion} other {# lektioner}} i läsåret {year}; {parked, plural, =0 {inga på brickan} one {# på brickan lämnas utanför} other {# på brickan lämnas utanför}}.",
+      "draft": "Skolan publicerar via utkast, så filen innehåller utkastet.",
+      "direct": "Skolan publicerar direkt, så filen innehåller det publicerade grundschemat.",
+      "noSignature": "{count, plural, one {# lärare saknar signatur} other {# lärare saknar signatur}}. De får en förkortning som görs av namnet; i Untis- och aSc-filerna känns den inte igen vid import, så lägg in signaturer först om filen ska tillbaka hit.",
+      "download": "Hämta",
+      "failed": "Filen gick inte att hämta."
+    },
+    "import": {
+      "title": "Importera",
+      "description": "Läs in en fil som låsta lektioner. Rader som inte går att placera nämns vid namn, och då skrivs ingenting.",
+      "file": "Fil (för Untis: GPU001 och GPU002, eller en zip)",
+      "format": "Format",
+      "chooseFormat": "Välj format",
+      "preview": "Förhandsgranska",
+      "unknownFormat": "Formatet gick inte att avgöra av filnamnen. Välj det själv.",
+      "tooLarge": "Filen är för stor: högst {size} kB tas emot.",
+      "planChanged": "Schemat eller filen har ändrats sedan förhandsvisningen. Förhandsgranska igen.",
+      "previewFailed": "Filen gick inte att förhandsgranska.",
+      "applyFailed": "Importen gick inte att skriva.",
+      "done": "Skrev {created, plural, one {# lektion} other {# lektioner}}, {posts, plural, one {# timplanspost} other {# timplansposter}} och {blocks, plural, one {# block} other {# block}}. {unchanged, plural, =0 {} one {# lektion fanns redan.} other {# lektioner fanns redan.}}",
+      "periods": "Tidsraster (en period per rad)",
+      "periodsHint": "Untis skriver ingen fil med sitt tidsraster. En fil från Untis som bara har periodnummer behöver det här, som \"1 08:10-09:10\". Filer som Rastra har skrivit behöver det inte."
+    },
+    "preview": {
+      "okTitle": "Importen går att skriva",
+      "blockedTitle": "Importen skriver ingenting förrän raderna nedan är rättade",
+      "summary": "{rows, plural, one {# rad} other {# rader}}: {create} nya, {unchanged} finns redan, {refused} går inte att placera, {unreadable} oläsliga rader. {notInFile} lektioner i skolan finns inte i filen och rörs inte.",
+      "notes": "Så här lästes filen",
+      "unreadable": "{count, plural, one {# rad gick inte att läsa} other {# rader gick inte att läsa}}",
+      "rows": "Rader",
+      "onlyRefused": "Visa bara de som inte går att placera",
+      "ref": "Rad",
+      "lesson": "Lektion",
+      "result": "Resultat",
+      "refused": "Avvisad",
+      "action": {
+        "CREATE": "Ny",
+        "UNCHANGED": "Finns redan",
+        "REFUSED": "Avvisad"
+      },
+      "more": "{count} rader till visas inte här.",
+      "warnings": "{count, plural, one {# varning} other {# varningar}}",
+      "warning": {
+        "OUTSIDE_SOLVER_DAY": "Lektionen {start}–{end} ligger utanför schemamotorns dag 08:00–18:00.",
+        "NO_GRADE_FOR_RULES": "{group} har ingen känd årskurs, så ramtider och raster kontrollerades inte för den.",
+        "REQ_WINDOWS_DIFFER": "{post}: lektionerna har olika veckomönster eller perioder, och en timplanspost kan bara ange ett. Ingen post härleddes.",
+        "REQ_TOO_MANY_LENGTHS": "{post}: lektionerna har fler olika längder än en timplanspost rymmer. Ingen post härleddes.",
+        "REQ_LENGTH_OUT_OF_RANGE": "{post}: en lektion är kortare än 15 eller längre än 240 minuter, vilket en timplanspost inte rymmer. Ingen post härleddes.",
+        "REQ_TEACHERS_DIFFER": "{post}: lektionerna har olika lärare ({teachers}). Posten får den vanligaste; fördela de andra som delade lektioner.",
+        "REQ_DIFFERS_FROM_POST": "{post}: timplansposten säger {post_shape} minuter, schemats lektioner är {lessons}. Posten ändrades inte.",
+        "REQ_CO_TEACHERS_DIFFER": "{post}: medlärare finns inte på alla lektioner. Posten fick ingen medlärare.",
+        "BLOCK_MEMBERS_DIFFER": "Blocket {block}: posternas lektioner och veckor stämmer inte överens, så posterna lades utan block."
+      },
+      "posts": "{count, plural, one {# timplanspost skapas} other {# timplansposter skapas}}",
+      "postsHint": "Härledda ur lektionerna. En timplanspost som redan finns ändras inte.",
+      "newBlocks": "Nya block: {names}.",
+      "apply": "{count, plural, one {Skriv in # lektion} other {Skriv in # lektioner}}"
+    },
+    "change": {
+      "grupp": "grupp",
+      "ämne": "ämne",
+      "tid": "tid",
+      "lärare": "lärare",
+      "sal": "sal",
+      "veckomönster": "veckomönster",
+      "period": "period",
+      "ytterligare klasser": "ytterligare klasser"
+    },
+    "refusal": {
+      "UNKNOWN_GROUP": "Klassen eller gruppen {name} finns inte i läsåret.",
+      "UNKNOWN_SUBJECT": "Ämnet {name} finns inte i skolan.",
+      "AMBIGUOUS_SUBJECT": "Ämnet {name} finns {count} gånger i skolan. Ange ämneskod eller id.",
+      "UNKNOWN_TEACHER": "Läraren {key} finns inte: varken signaturen eller e-postadressen hör till en lärare i läsåret.",
+      "AMBIGUOUS_TEACHER": "Läraren {key} kan vara flera personer.",
+      "TEACHER_INACTIVE": "Läraren {key} är inte aktiv.",
+      "TEACHER_KEYS_DISAGREE": "Signatur, e-post och id för {key} pekar på olika personer.",
+      "SAME_TEACHER_TWICE": "Läraren {key} står både som lärare och medlärare.",
+      "UNKNOWN_ROOM": "Salen {name} finns inte i skolan.",
+      "AMBIGUOUS_ROOM": "Salen {name} finns {count} gånger.",
+      "ID_NAME_MISMATCH": "Id:t hör till {id}, men namnet är {name} ({kind}). Ta bort id-cellen eller rätta namnet.",
+      "DAY_OUTSIDE_SCHOOL_WEEK": "{day} ligger utanför skolveckan måndag–fredag.",
+      "BAD_TIME": "Tiden {start}–{end} är ingen lektionstid; slut måste vara efter start.",
+      "OFF_GRID": "Tiden {start}–{end} ligger inte på femminutersrastret som schemamotorn räknar i.",
+      "PERIOD_REVERSED": "Perioden {from}–{to} slutar före den börjar.",
+      "PERIOD_OUTSIDE_YEAR": "Perioden {from}–{to} ligger utanför läsåret {year}.",
+      "OUTSIDE_FRAME": "{closed, select, yes {{group} har ingen undervisningstid på den dagen enligt ramtiderna.} other {{group}: lektionen {start}–{end} ligger utanför ramtiden {frameStart}–{frameEnd}.}}",
+      "IN_RAST": "{group}: lektionen ligger över rasten {rast} ({start}–{end}).",
+      "ON_LUNCH_SITTING": "{group}: lektionen ligger över gruppens lunch {start}–{end}.",
+      "NO_ROOM_FOR_LUNCH": "{group} får inte {minutes} minuter ledigt för lunch {day} {start}–{end} med den här lektionen.",
+      "DUPLICATE_ROW": "Samma lektion står redan på {first}.",
+      "EXISTS_DIFFERENT": "Skolan har redan {lesson}, men med annan {changes}. Importen ändrar inga befintliga lektioner: ta bort eller ändra lektionen i schemat först.",
+      "CLASH_TEACHER": "Läraren är redan upptagen: {with}.",
+      "CLASH_ROOM": "Salen är redan bokad: {with}.",
+      "CLASH_GROUP": "Klassen eller gruppen (eller elever i den) är redan upptagen: {with}.",
+      "CLASH_AVAILABILITY": "Tiden är markerad som otillgänglig för läraren, salen eller gruppen."
+    },
+    "loadFailed": "Uppgifterna kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats."
   }
 }

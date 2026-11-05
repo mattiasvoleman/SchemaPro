@@ -220,7 +220,8 @@
     "myLeave": "Leave",
     "calendarFeed": "My calendar subscription",
     "calendarFeeds": "Calendar subscriptions",
-    "classBook": "Class book"
+    "classBook": "Class book",
+    "scheduleExchange": "Schedule as a file"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -6800,5 +6801,130 @@
       "otherLinks": "{count, plural, one {# record} other {# records}} the students made stay, without their name",
       "accounts": "What belongs to the students' own accounts, which no administrator sees: notices, notice settings, devices for push notices and calendar subscriptions, the guardians' subscriptions to the students included"
     }
+  },
+  "scheduleExchange": {
+    "title": "Schedule as a file",
+    "subtitle": "The base timetable as a table, an Untis or aSc file, and back in as locked lessons",
+    "intro": "The export reads the base timetable (grundschema): what Generera writes and what you publish; in a school that publishes through a draft it is the draft. The import creates new locked lessons with derived timplan posts and never changes a lesson that already exists. Nothing is written until you have read the preview.",
+    "yearLabel": "School year",
+    "formats": {
+      "TABLE_CSV": {
+        "name": "Table, CSV",
+        "hint": "One row per lesson, semicolon-separated UTF-8. Opens in Excel and can be read back."
+      },
+      "TABLE_XLSX": {
+        "name": "Table, Excel",
+        "hint": "The same table as an Excel file (.xlsx), header row frozen."
+      },
+      "UNTIS_GPU": {
+        "name": "Untis, GPU files",
+        "hint": "GPU001 (the timetable) and GPU002 (the lessons) in one zip, with times in minutes."
+      },
+      "ASC_XML": {
+        "name": "aSc Timetables, XML",
+        "hint": "One XML file with classes, teachers, rooms, lessons and cards."
+      }
+    },
+    "export": {
+      "title": "Export",
+      "description": "Download the timetable in the format the other system reads.",
+      "summary": "{count, plural, one {# lesson} other {# lessons}} in {year}; {parked, plural, =0 {none on the tray} one {# on the tray is left out} other {# on the tray are left out}}.",
+      "draft": "The school publishes through a draft, so the file holds the draft.",
+      "direct": "The school publishes directly, so the file holds the published base timetable.",
+      "noSignature": "{count, plural, one {# teacher has no signature} other {# teachers have no signature}}. They get a short name made from their name; the Untis and aSc files will not recognise it on import, so add signatures first if the file is to come back here.",
+      "download": "Download",
+      "failed": "The file could not be downloaded."
+    },
+    "import": {
+      "title": "Import",
+      "description": "Read a file in as locked lessons. Rows that cannot be placed are named, and then nothing is written.",
+      "file": "File (for Untis: GPU001 and GPU002, or a zip)",
+      "format": "Format",
+      "chooseFormat": "Choose format",
+      "preview": "Preview",
+      "unknownFormat": "The file names did not show the format. Choose it yourself.",
+      "tooLarge": "The file is too large: at most {size} kB is accepted.",
+      "planChanged": "The timetable or the file has changed since the preview. Preview again.",
+      "previewFailed": "The file could not be previewed.",
+      "applyFailed": "The import could not be written.",
+      "done": "Wrote {created, plural, one {# lesson} other {# lessons}}, {posts, plural, one {# timplan post} other {# timplan posts}} and {blocks, plural, one {# block} other {# blocks}}. {unchanged, plural, =0 {} one {# lesson already existed.} other {# lessons already existed.}}",
+      "periods": "Time grid (one period per line)",
+      "periodsHint": "Untis writes no file with its time grid. A file from Untis that has only period numbers needs it here, as \"1 08:10-09:10\". Files Rastra has written do not."
+    },
+    "preview": {
+      "okTitle": "The import can be written",
+      "blockedTitle": "The import writes nothing until the rows below are corrected",
+      "summary": "{rows, plural, one {# row} other {# rows}}: {create} new, {unchanged} already exist, {refused} cannot be placed, {unreadable} unreadable lines. {notInFile} lessons in the school are not in the file and are left alone.",
+      "notes": "How the file was read",
+      "unreadable": "{count, plural, one {# line could not be read} other {# lines could not be read}}",
+      "rows": "Rows",
+      "onlyRefused": "Show only those that cannot be placed",
+      "ref": "Row",
+      "lesson": "Lesson",
+      "result": "Result",
+      "refused": "Refused",
+      "action": {
+        "CREATE": "New",
+        "UNCHANGED": "Already exists",
+        "REFUSED": "Refused"
+      },
+      "more": "{count} more rows are not shown here.",
+      "warnings": "{count, plural, one {# warning} other {# warnings}}",
+      "warning": {
+        "OUTSIDE_SOLVER_DAY": "The lesson {start}–{end} is outside the engine's day, 08:00–18:00.",
+        "NO_GRADE_FOR_RULES": "{group} has no known year, so frame times and breaks were not checked for it.",
+        "REQ_WINDOWS_DIFFER": "{post}: the lessons have different week patterns or periods, and a timplan post can state only one. No post was derived.",
+        "REQ_TOO_MANY_LENGTHS": "{post}: the lessons have more different lengths than a timplan post holds. No post was derived.",
+        "REQ_LENGTH_OUT_OF_RANGE": "{post}: a lesson is shorter than 15 or longer than 240 minutes, which a timplan post cannot hold. No post was derived.",
+        "REQ_TEACHERS_DIFFER": "{post}: the lessons have different teachers ({teachers}). The post gets the most common one; assign the others as shared lessons.",
+        "REQ_DIFFERS_FROM_POST": "{post}: the timplan post says {post_shape} minutes, the timetable's lessons are {lessons}. The post was not changed.",
+        "REQ_CO_TEACHERS_DIFFER": "{post}: a co-teacher is not on every lesson. The post got no co-teacher.",
+        "BLOCK_MEMBERS_DIFFER": "Block {block}: the posts' lessons and weeks do not agree, so the posts were made without the block."
+      },
+      "posts": "{count, plural, one {# timplan post is created} other {# timplan posts are created}}",
+      "postsHint": "Derived from the lessons. A timplan post that already exists is not changed.",
+      "newBlocks": "New blocks: {names}.",
+      "apply": "{count, plural, one {Write # lesson} other {Write # lessons}}"
+    },
+    "change": {
+      "grupp": "group",
+      "ämne": "subject",
+      "tid": "time",
+      "lärare": "teacher",
+      "sal": "room",
+      "veckomönster": "week pattern",
+      "period": "period",
+      "ytterligare klasser": "additional classes"
+    },
+    "refusal": {
+      "UNKNOWN_GROUP": "The class or group {name} does not exist in this school year.",
+      "UNKNOWN_SUBJECT": "The subject {name} does not exist in the school.",
+      "AMBIGUOUS_SUBJECT": "The subject {name} exists {count} times in the school. State the subject code or id.",
+      "UNKNOWN_TEACHER": "The teacher {key} does not exist: neither the signature nor the e-mail address belongs to a teacher of this school year.",
+      "AMBIGUOUS_TEACHER": "The teacher {key} could be several people.",
+      "TEACHER_INACTIVE": "The teacher {key} is not active.",
+      "TEACHER_KEYS_DISAGREE": "The signature, e-mail and id of {key} point at different people.",
+      "SAME_TEACHER_TWICE": "The teacher {key} is both teacher and co-teacher.",
+      "UNKNOWN_ROOM": "The room {name} does not exist in the school.",
+      "AMBIGUOUS_ROOM": "The room {name} exists {count} times.",
+      "ID_NAME_MISMATCH": "The id belongs to {id}, but the name is {name} ({kind}). Remove the id cell or correct the name.",
+      "DAY_OUTSIDE_SCHOOL_WEEK": "{day} is outside the school week, Monday to Friday.",
+      "BAD_TIME": "The time {start}–{end} is no lesson time; the end must be after the start.",
+      "OFF_GRID": "The time {start}–{end} is not on the five-minute grid the engine counts in.",
+      "PERIOD_REVERSED": "The period {from}–{to} ends before it begins.",
+      "PERIOD_OUTSIDE_YEAR": "The period {from}–{to} is outside the school year {year}.",
+      "OUTSIDE_FRAME": "{closed, select, yes {{group} has no teaching time on that day according to the frame times.} other {{group}: the lesson {start}–{end} is outside the frame time {frameStart}–{frameEnd}.}}",
+      "IN_RAST": "{group}: the lesson overlaps the break {rast} ({start}–{end}).",
+      "ON_LUNCH_SITTING": "{group}: the lesson overlaps the group's lunch {start}–{end}.",
+      "NO_ROOM_FOR_LUNCH": "{group} would not have {minutes} free minutes for lunch on {day} {start}–{end} with this lesson.",
+      "DUPLICATE_ROW": "The same lesson is already on {first}.",
+      "EXISTS_DIFFERENT": "The school already has {lesson}, but with a different {changes}. The import changes no existing lesson: delete or edit the lesson in the timetable first.",
+      "CLASH_TEACHER": "The teacher is already busy: {with}.",
+      "CLASH_ROOM": "The room is already booked: {with}.",
+      "CLASH_GROUP": "The class or group (or pupils in it) is already busy: {with}.",
+      "CLASH_AVAILABILITY": "The time is marked unavailable for the teacher, the room or the group."
+    },
+    "loadFailed": "The data could not be loaded",
+    "loadFailedHint": "Nothing has changed."
   }
 }

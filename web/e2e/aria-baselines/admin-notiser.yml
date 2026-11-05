@@ -76,6 +76,9 @@
       - listitem:
         - link "Kalenderprenumeration":
           - /url: /sv/admin/calendar-feeds
+      - listitem:
+        - link "Schema som fil":
+          - /url: /sv/admin/schedule-exchange
     - text: Drift
     - list "Drift":
       - listitem:
