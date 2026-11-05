@@ -5,7 +5,7 @@ import { lessonsToTable, tableToLessons } from './lesson-table';
 import { listSafeChanges, readUntisGpu, writeUntisGpu, type UntisPeriod } from './untis-gpu';
 import { readAscXml, writeAscXml } from './asc-xml';
 import { readZip, writeZip } from './zip';
-import { EXCHANGE_ZIP_LIMITS, MAX_EXCHANGE_BYTES, minutesOfClock, type ExchangeDocument, type ParsedExchange } from './exchange-model';
+import { EXCHANGE_ZIP_LIMITS, MAX_EXCHANGE_BYTES, MAX_UPLOAD_BYTES, minutesOfClock, type ExchangeDocument, type ParsedExchange } from './exchange-model';
 import { redactPersonalNumbers } from './file-safety';
 
 /**
@@ -36,8 +36,25 @@ export function fileStem(yearName: string): string {
   return `rastra-schema-${safe || 'lasar'}`;
 }
 
-/** The document as one downloadable file. Untis is three files, so it is a zip of them. */
+/**
+ * The document as one downloadable file. Untis is three files, so it is a zip of them.
+ * A file too large to be read back here says so in its notes, with what to do.
+ */
 export function renderExport(format: ExchangeFormat, doc: ExchangeDocument): RenderedFile {
+  const file = renderFile(format, doc);
+  if (file.body.length > MAX_UPLOAD_BYTES) {
+    const kb = Math.round(file.body.length / 1024);
+    const limit = Math.round(MAX_UPLOAD_BYTES / 1024);
+    const advice =
+      format === 'TABLE_CSV'
+        ? 'Hämta tabellen som Excel i stället: den är betydligt mindre och läses in igen.'
+        : 'Ett annat format kan vara mindre, eller så får schemat läsas in i delar.';
+    file.notes.push(`Filen är ${kb} kB. Rastra tar emot högst ${limit} kB vid inläsning (1 MB per anrop, och filen skickas som text), så den här filen kan läsas av andra program men inte in hit igen. ${advice}`);
+  }
+  return file;
+}
+
+function renderFile(format: ExchangeFormat, doc: ExchangeDocument): RenderedFile {
   const stem = fileStem(doc.year.name);
   switch (format) {
     case 'TABLE_CSV':

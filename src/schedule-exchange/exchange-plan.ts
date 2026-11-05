@@ -525,6 +525,9 @@ export function resolveLesson(
   const block = lesson.block?.trim() ? lesson.block.trim() : null;
   if (block !== null && [...block].length > MAX_BLOCK_NAME) {
     refusals.push(refusal('BAD_BLOCK_NAME', { length: [...block].length, max: MAX_BLOCK_NAME }, `Blocknamnet är ${[...block].length} tecken; ett block får heta högst ${MAX_BLOCK_NAME}.`));
+  } else if (block !== null && /[\u0000-\u001f\u007f-\u009f]/.test(block)) {
+    // A line break or another control character in a name that is stored and shown in a list.
+    refusals.push(refusal('BAD_BLOCK_NAME', { length: [...block].length, max: MAX_BLOCK_NAME }, 'Blocknamnet innehåller radbrytningar eller andra styrtecken och används inte.'));
   } else if (block !== null && hasPersonalNumber(block)) {
     refusals.push(refusal('BAD_BLOCK_NAME', { length: [...block].length, max: MAX_BLOCK_NAME }, 'Blocknamnet liknar ett personnummer och används inte. Rastra tar inte emot personnummer.'));
   }

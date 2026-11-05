@@ -1,7 +1,8 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { BadRequestException } from '@nestjs/common';
 import { smallSchoolDocument, highSchoolDocument } from './__fixtures__/documents';
 import { MAX_EXCHANGE_BYTES } from './exchange-model';
+import { MAX_UPLOAD_BYTES } from './exchange-model';
 import { decodeText, fileStem, parsePeriods, readUpload, renderExport, EXCHANGE_FORMATS, type ExchangeFormat } from './exchange-files';
 import { readZip } from './zip';
 
@@ -25,6 +26,46 @@ describe('renderExport and readUpload', () => {
     expect(() => renderExport('TABLE_XLSX', doc)).toThrow(expect.objectContaining({ response: expect.objectContaining({ code: 'EXPORT_XLSX_TOO_LARGE' }) }));
     // The same table is fine as a CSV.
     expect(renderExport('TABLE_CSV', doc).body.length).toBeGreaterThan(0);
+  });
+
+  it('says in a note when a file is too large to be read back here, and what to do', () => {
+    const doc = smallSchoolDocument();
+    // 5 000 lessons of a school with 30 classes, 8 subjects, 10 rooms and 40 teachers: only the lesson's own id is its own.
+    const pick = (ids: string[], i: number) => ids[i % ids.length]!;
+    const groups = Array.from({ length: 30 }, () => randomUUID());
+    const subjects = Array.from({ length: 8 }, () => randomUUID());
+    const rooms = Array.from({ length: 10 }, () => randomUUID());
+    const teachers = Array.from({ length: 40 }, () => randomUUID());
+    doc.lessons = Array.from({ length: 5000 }, (_v, i) => ({
+      ...doc.lessons[0]!,
+      day: (i % 5) + 1,
+      start: `${String(8 + (i % 8)).padStart(2, '0')}:00`,
+      end: `${String(9 + (i % 8)).padStart(2, '0')}:00`,
+      ids: { lesson: randomUUID(), group: pick(groups, i), subject: pick(subjects, i), room: pick(rooms, i), extraGroups: [] },
+      teachers: [{ short: `T${i % 40}`, name: `Lärare ${i % 40}`, email: `l${i % 40}@skolan.example`, id: pick(teachers, i) }],
+    }));
+    const csv = renderExport('TABLE_CSV', doc);
+    expect(csv.body.length).toBeGreaterThan(MAX_UPLOAD_BYTES);
+    expect(csv.notes).toHaveLength(1);
+    expect(csv.notes[0]).toMatch(/^Filen är \d+ kB\. Rastra tar emot högst 700 kB vid inläsning/);
+    expect(csv.notes[0]).toContain('Excel');
+    // The Excel file is a fraction of it, fits, and comes back.
+    const xlsx = renderExport('TABLE_XLSX', doc);
+    expect(xlsx.body.length).toBeLessThan(MAX_UPLOAD_BYTES);
+    expect(xlsx.notes).toEqual([]);
+    expect(readUpload('TABLE_XLSX', [{ name: 'a.xlsx', bytes: xlsx.body }]).lessons).toHaveLength(5000);
+  });
+
+  it('points a format with no Excel twin at the general remedy', () => {
+    const doc = smallSchoolDocument();
+    doc.lessons = Array.from({ length: 3000 }, (_v, i) => ({ ...doc.lessons[0]!, ids: { lesson: randomUUID() }, day: (i % 5) + 1, start: `${String(8 + (i % 8)).padStart(2, '0')}:00`, end: `${String(9 + (i % 8)).padStart(2, '0')}:00`, room: `Sal ${randomBytes(100).toString('hex')}` }));
+    const asc = renderExport('ASC_XML', doc);
+    expect(asc.body.length).toBeGreaterThan(MAX_UPLOAD_BYTES);
+    expect(asc.notes.at(-1)).toContain('Ett annat format');
+  });
+
+  it('says nothing about size for a file that fits', () => {
+    for (const format of EXCHANGE_FORMATS) expect(renderExport(format, smallSchoolDocument()).notes.filter((n) => n.startsWith('Filen är'))).toEqual([]);
   });
 
   it('carries the Untis writer’s notes out with the file, and none for the other formats', () => {

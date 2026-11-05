@@ -188,6 +188,18 @@ export const MAX_EXCHANGE_LESSONS = 5000;
 export const MAX_EXCHANGE_BYTES = 8 * 1024 * 1024;
 
 /**
+ * The largest file the upload takes: 700 KiB, because the page sends it as
+ * base64 inside a JSON body and the gateway takes 1 MB of body
+ * (common/http-defaults.ts MAX_BODY_SIZE, which no route may exceed: the body is
+ * read before the guards ask who sent it). 700 KiB is 933 kB of base64 and a
+ * little JSON round it. The page's own copy is MAX_UPLOAD_BYTES in
+ * web/lib/schedule-exchange.ts. An export larger than this cannot be read back
+ * (the second review of PR #256, L2: a CSV of 5 000 lessons is 906 kB), so the
+ * export says so with the file.
+ */
+export const MAX_UPLOAD_BYTES = 700 * 1024;
+
+/**
  * What a zip that holds an exchange file may unpack to. The generic limits of
  * zip.ts (32 MB an entry, 64 MB in all) are for a zip of anything; a file here
  * is read as text only up to MAX_EXCHANGE_BYTES, so a zip that unpacks to more

@@ -6,8 +6,7 @@ import { PrismaService } from '../database/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { enterGrundschemaWrite, publishModeOf, type PublishMode } from '../publication/publish-mode';
-import { lockYearForGrundschemaEdit, scheduleBusy } from '../optimization/regeneration-lock';
-import { isLockTimeout } from '../publication/publish-mode';
+import { lockYearForRegeneration } from '../optimization/regeneration-lock';
 import { MasterLessonsService, type DayLesson } from '../calendar/master-lessons.service';
 import { ConflictReads } from '../calendar/conflict-reads';
 import { loadRosters, gradeSpanOf } from '../optimization/room-eligibility';
@@ -212,13 +211,17 @@ export class ScheduleExchangeService {
       async (tx) => {
         const schoolId = requireSchoolId(user);
         const mode = await enterGrundschemaWrite(tx, schoolId);
-        await lockYearForGrundschemaEdit(tx, dto.academicYearId);
-        // The shared lock above only keeps a rewrite of the year out; it lets two applies of
-        // one file run side by side, and both then planned the same CREATEs and both wrote
-        // them (two of four tries in the review of PR #256, H5). This one is exclusive, so
-        // the second apply plans after the first has committed, finds the lessons, and
-        // answers IMPORT_PLAN_CHANGED. Taken after the shared lock and before the plan.
-        await lockYearForImport(tx, dto.academicYearId);
+        // The year's EXCLUSIVE regeneration lock, the one Generera's write and a version restore take,
+        // straight after the publication lock and in that order (regeneration-lock.ts): for at most
+        // 5 s, then 409 SCHEDULE_BUSY. Exclusive for two reasons, found by the reviews of PR #256.
+        // Two applies of one file ran side by side under the shared lock a hand edit takes and both
+        // wrote their CREATEs (H5): now the second plans after the first has committed, finds the
+        // lessons and answers IMPORT_PLAN_CHANGED. And a hand edit that came in during an import
+        // was let in, saw none of what the import had yet to write, and put a second lesson in the
+        // class's slot (M3 of the second review): now it waits, and answers SCHEDULE_BUSY if the
+        // import takes longer than that. Taken before anything is read, so the plan is of the
+        // year as it stays until commit.
+        await lockYearForRegeneration(tx, dto.academicYearId);
         const plan = await this.plan(tx, user, dto, true);
         if (plan.fingerprint !== dto.fingerprint) {
           throw new ConflictException({
@@ -809,25 +812,6 @@ export class ScheduleExchangeService {
 }
 
 // ---------------------------------------------------------------------------
-
-/**
- * The year's import lock, exclusive and waited for at most 5 s (then 409
- * SCHEDULE_BUSY), the transaction's own lock_timeout put back after it so the
- * apply's later row waits stay as they were. Its own key: only an apply of an
- * import takes it, after the shared edit lock and before anything is read, so
- * it cannot cycle with a writer that takes the regeneration lock exclusively.
- */
-async function lockYearForImport(tx: PrismaClient, academicYearId: string): Promise<void> {
-  try {
-    const [setting] = await tx.$queryRaw<{ previous: string }[]>`SELECT current_setting('lock_timeout') AS "previous"`;
-    await tx.$executeRaw`SELECT set_config('lock_timeout', '5s', true)`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('schedule-exchange-apply'), hashtext(${academicYearId}::uuid::text))`;
-    await tx.$executeRaw`SELECT set_config('lock_timeout', ${setting?.previous ?? '0'}, true)`;
-  } catch (error) {
-    if (isLockTimeout(error)) throw scheduleBusy();
-    throw error;
-  }
-}
 
 function timeOf(minutes: number): Date {
   return new Date(Date.UTC(1970, 0, 1, Math.floor(minutes / 60), minutes % 60));

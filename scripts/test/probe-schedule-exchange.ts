@@ -510,7 +510,7 @@ async function hogstadiumChecks(owner: Owner, api: PrismaService, exchange: Sche
   await refusalChecks(owner, exchange, school);
   await roleChecks(owner, exchange, school);
   await reviewChecks(owner, api, exchange, masterLessons, school, original, tag, cleanup);
-  await bigFileChecks(owner, exchange, tag, cleanup);
+  await bigFileChecks(owner, exchange, masterLessons, tag, cleanup);
 }
 
 /**
@@ -1014,7 +1014,11 @@ async function reviewChecks(
 
   // ---- Personnummer -------------------------------------------------------
   await check('(x-e) a personnummer in any column is in no answer, and is not stored as a block’s name', async () => {
-    const forms = ['19800101-1234', '8001011234', '198001011234', '800101-1234', '19800181-1234', 'Anna Berg 19800101-1234', '(800101-1234)', '19800101 - 1234'];
+    const forms = [
+      '19800101-1234', '8001011234', '198001011234', '800101-1234', '19800181-1234', 'Anna Berg 19800101-1234', '(800101-1234)', '19800101 - 1234',
+      // The second review: other separators, no-break and invisible characters, line breaks, fullwidth digits, the date written as a date.
+      '800101.1234', '800101/1234', '800101\u00a01234', '800101\n1234', '800101\u200b1234', '\uff18\uff10\uff10\uff11\uff10\uff11\uff0d\uff11\uff12\uff13\uff14', '1980-01-01-1234', '8 0 0 1 0 1 1 2 3 4',
+    ];
     const columns = ['Klass/grupp', 'Ämne', 'Lärare', 'Sal', 'Dag', 'Start', 'Block', 'Veckomönster', 'Från'];
     const base = ['7B', 'Svenska', 'Tis', '15:00', '16:00', 'BLU', 'A102', '', '', ''];
     const header = ['Klass/grupp', 'Ämne', 'Dag', 'Start', 'Slut', 'Lärare', 'Sal', 'Block', 'Veckomönster', 'Från'];
@@ -1025,12 +1029,20 @@ async function reviewChecks(
         const csv = Buffer.from(writeCsv([header, row]), 'utf8');
         const plan = await exchange.preview({ academicYearId: school.yearId, format: 'TABLE_CSV', files: [{ name: 'pn.csv', bytes: csv }] }, school.admin);
         const answer = JSON.stringify(plan);
-        assert.ok(!hasPersonalNumber(answer) && !/1234/.test(answer), `the answer to ${JSON.stringify(form)} in ${column} holds the number`);
+        assert.ok(!hasPersonalNumber(answer) && !/1234/.test(answer) && !/\uff11\uff12\uff13\uff14/.test(answer), `the answer to ${JSON.stringify(form)} in ${column} holds the number`);
         assert.equal(plan.canApply, false, `${column}: a row with a number in it was applicable`);
       }
     }
     const names = await owner.teachingBlock.findMany({ where: { academicYearId: school.yearId } });
     assert.ok(names.every((b) => !hasPersonalNumber(b.name)), 'a block is named like a personnummer');
+    // And the Block column on its own, which is the one that is STORED: the spellings that would pass a narrow filter.
+    const blockHeader = ['Klass/grupp', 'Ämne', 'Dag', 'Start', 'Slut', 'Block'];
+    for (const form of forms) {
+      const csv = Buffer.from(writeCsv([blockHeader, ['7B', 'Svenska', 'Fre', '13:00', '14:00', `Val ${form}`]]), 'utf8');
+      const plan = await exchange.preview({ academicYearId: school.yearId, format: 'TABLE_CSV', files: [{ name: 'b.csv', bytes: csv }] }, school.admin);
+      assert.equal(plan.canApply, false, `a block named ${JSON.stringify(form)} could be applied`);
+    }
+    assert.equal(await owner.teachingBlock.count({ where: { academicYearId: school.yearId, name: { contains: '1234' } } }), 0);
   });
 
   await check('(x-e) a block name the database would refuse is a refusal of the row, not a 500', async () => {
@@ -1059,7 +1071,7 @@ async function reviewChecks(
  * the year's lock and a connection for the whole of it. Checked with a bound
  * far above what it takes on a loaded machine and far below what it took.
  */
-async function bigFileChecks(owner: Owner, exchange: ScheduleExchangeService, tag: string, cleanup: Array<() => Promise<void>>): Promise<void> {
+async function bigFileChecks(owner: Owner, exchange: ScheduleExchangeService, masterLessons: MasterLessonsService, tag: string, cleanup: Array<() => Promise<void>>): Promise<void> {
   let school: School | undefined;
   await check('(x-f) a school with 125 classes is made', async () => {
     const row = await owner.school.create({ data: { name: `Probe stor skola ${tag}`, slug: `probe-s0-big-${tag}`, timezone: 'Europe/Stockholm' } });
@@ -1120,6 +1132,26 @@ async function bigFileChecks(owner: Owner, exchange: ScheduleExchangeService, ta
     const plan = await exchange.preview({ academicYearId: big.yearId, format: 'TABLE_CSV', files }, big.admin);
     assert.equal(plan.summary.unchanged, 5000);
     assert.equal(plan.summary.create, 0);
+  });
+  await check('(x-f) a hand edit made while an import is written waits for it and does not double-book', async () => {
+    await owner.masterLesson.deleteMany({ where: { academicYearId: big.yearId } });
+    const plan = await exchange.preview({ academicYearId: big.yearId, format: 'TABLE_CSV', files }, big.admin);
+    const klass = await owner.studentGroup.findFirstOrThrow({ where: { academicYearId: big.yearId, name: 'Z001' } });
+    const subject = await owner.subject.findFirstOrThrow({ where: { schoolId: big.schoolId, name: 'Bild' } });
+    const importing = exchange.apply({ academicYearId: big.yearId, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, big.admin);
+    // Settled either way, so the import's own failure is not swallowed by the edit's.
+    const imported = importing.then(() => 'ok' as const, (error: unknown) => error);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    // The file also lays Z001 on Monday 08:00-09:00 (with another subject): the edit's slot is the import's.
+    const edited = await masterLessons
+      .create({ academicYearId: big.yearId, subjectId: subject.id, studentGroupId: klass.id, dayOfWeek: 1, startTime: '08:00', endTime: '09:00' } as never, big.admin)
+      .then(() => 'created' as const, (error: unknown) => error);
+    assert.equal(await imported, 'ok', 'the import did not go through');
+    assert.notEqual(edited, 'created', 'the hand edit was let in beside the import');
+    const code = (edited as { response?: { code?: string } }).response?.code;
+    assert.ok(code === 'SCHEDULE_BUSY' || edited instanceof ConflictException, `the hand edit was answered ${String(code ?? edited)}`);
+    const there = await owner.masterLesson.count({ where: { academicYearId: big.yearId, studentGroupId: klass.id, dayOfWeek: 1, startTime: time('08:00') } });
+    assert.equal(there, 1, `${there} lessons in one slot`);
   });
 }
 

@@ -8,6 +8,7 @@ import { writeXlsx } from './xlsx';
 import { documentOf, IMPORT_HAS_REFUSALS, IMPORT_PLAN_CHANGED, ScheduleExchangeService } from './exchange.service';
 import { indexContext, type PlanContext } from './exchange-plan';
 import * as exchangeFiles from './exchange-files';
+import { hasPersonalNumber } from './file-safety';
 
 jest.mock('../year-rollover/projected-rosters', () => ({ rostersOfYear: jest.fn().mockResolvedValue({ kind: 'CURRENT' }) }));
 jest.mock('../optimization/room-eligibility', () => ({
@@ -21,12 +22,12 @@ jest.mock('../publication/publish-mode', () => ({
 }));
 jest.mock('../optimization/regeneration-lock', () => ({
   ...jest.requireActual('../optimization/regeneration-lock'),
-  lockYearForGrundschemaEdit: jest.fn().mockResolvedValue(undefined),
+  lockYearForRegeneration: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('../access-log/access-log', () => ({ ...jest.requireActual('../access-log/access-log'), recordRead: jest.fn().mockResolvedValue(undefined) }));
 
 import { enterGrundschemaWrite, publishModeOf } from '../publication/publish-mode';
-import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
+import { lockYearForRegeneration, scheduleBusy } from '../optimization/regeneration-lock';
 import { recordRead } from '../access-log/access-log';
 
 const SCHOOL = 'school-1';
@@ -414,6 +415,16 @@ describe('ScheduleExchangeService.preview, what is written as the file says it (
     expect(plan.canApply).toBe(false);
   });
 
+  it('refuses a block name with a line break or another control character, which would be stored and listed as it is', async () => {
+    const { service } = world();
+    for (const block of ['Språk\nval', 'Språk\tval', 'Språk\u0000val', 'Språk\u0085val']) {
+      const plan = await preview(service, [base({ block })]);
+      expect({ block, codes: plan.rows[0]!.refusals.map((x) => x.code) }).toEqual({ block, codes: ['BAD_BLOCK_NAME'] });
+    }
+    // An ordinary name, åäö and spaces inside included, is fine.
+    expect((await preview(service, [base({ block: 'Språkval åk 7' })])).canApply).toBe(true);
+  });
+
   it('takes a block of exactly 80 characters, counted as the database counts them', async () => {
     const { service } = world();
     expect((await preview(service, [base({ block: 'å'.repeat(80) })])).canApply).toBe(true);
@@ -447,6 +458,30 @@ describe('ScheduleExchangeService.preview, what is written as the file says it (
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('hands back a fingerprint and ids exactly as they are made, however their digits fall (M1 of the second review)', async () => {
+    // A fingerprint is 32 hexadecimal digits, and one in 300 holds ten to twelve digits in a row that read
+    // as a date: the last door rewrote such a one, and the apply then refused its own preview (400).
+    const { service } = world({ lessons: [masterRow()] });
+    const seen = new Set<string>();
+    let flagged = 0;
+    for (let i = 0; i < 3_000; i += 1) {
+      const start = 480 + (i % 60) * 5;
+      const hh = String(Math.floor(start / 60)).padStart(2, '0');
+      const mm = String(start % 60).padStart(2, '0');
+      const end = start + 5 + Math.floor(i / 60) * 5;
+      const plan = await preview(service, [base({ day: (i % 5) + 1, start: `${hh}:${mm}`, end: `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}` })]);
+      expect(plan.fingerprint).toMatch(/^[0-9a-f]{32}$/);
+      seen.add(plan.fingerprint);
+      if (hasPersonalNumber(plan.fingerprint)) flagged += 1;
+      for (const row of plan.rows) {
+        if (row.existingId) expect(row.existingId).toMatch(/^[0-9a-f-]{1,36}$/);
+      }
+    }
+    expect(seen.size).toBeGreaterThan(2_000);
+    // The premise: some of these fingerprints do read as a number to the filter, and came back untouched.
+    expect(flagged).toBeGreaterThan(0);
   });
 
   it('does not echo a personnummer in the message of a file that cannot be read at all', async () => {
@@ -565,40 +600,34 @@ describe('ScheduleExchangeService.apply', () => {
     expect(tx.teachingBlock.create).not.toHaveBeenCalled();
   });
 
-  describe('the year’s import lock (H5 of the review)', () => {
-    const statements = (calls: unknown[][]): string[] => calls.map((c) => (c[0] as string[]).join('?'));
-
-    it('takes an exclusive lock of its own after the shared edit lock and before it reads anything', async () => {
+  describe('the year’s regeneration lock (H5 and M3 of the reviews)', () => {
+    it('takes the exclusive lock after the publication lock and before it reads anything', async () => {
       const { service, tx, files, plan } = await applied([base()]);
       const order: string[] = [];
-      (lockYearForGrundschemaEdit as jest.Mock).mockImplementationOnce(async () => void order.push('edit lock'));
-      tx.$executeRaw.mockImplementation(async (strings: string[]) => void order.push(strings.join('?').includes('pg_advisory_xact_lock') ? 'import lock' : 'setting'));
+      (enterGrundschemaWrite as jest.Mock).mockImplementationOnce(async () => {
+        order.push('publication lock');
+        return 'DIRECT';
+      });
+      (lockYearForRegeneration as jest.Mock).mockImplementationOnce(async () => void order.push('regeneration lock'));
       tx.academicYear.findUnique.mockImplementation(async () => {
         order.push('read');
         return { id: YEAR, schoolId: SCHOOL, name: '2026/2027', startDate: date('2026-08-17'), endDate: date('2027-06-11'), isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG', school: { name: 'x' } };
       });
       await service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user);
-      expect(order.indexOf('edit lock')).toBeLessThan(order.indexOf('import lock'));
-      expect(order.indexOf('import lock')).toBeLessThan(order.indexOf('read'));
-      const all = statements(tx.$executeRaw.mock.calls);
-      expect(all.some((sql) => sql.includes("hashtext('schedule-exchange-apply')"))).toBe(true);
+      expect(order.slice(0, 3)).toEqual(['publication lock', 'regeneration lock', 'read']);
+      expect(lockYearForRegeneration).toHaveBeenLastCalledWith(tx, YEAR);
     });
 
-    it('waits at most five seconds for it, then puts the transaction’s own setting back', async () => {
+    it('is the only year lock it takes: no shared lock that the exclusive one would have to wait out', async () => {
       const { service, tx, files, plan } = await applied([base()]);
-      tx.$queryRaw.mockResolvedValue([{ previous: '15s' }]);
       await service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user);
-      const sql = tx.$executeRaw.mock.calls.map((c) => ({ text: (c[0] as string[]).join('?'), values: c.slice(1) }));
-      expect(sql[0]!.text).toContain("set_config('lock_timeout', '5s', true)");
-      expect(sql[2]!.text).toContain("set_config('lock_timeout', ");
-      expect(sql[2]!.values).toEqual(['15s']);
+      // Nothing of its own: the lock is the regeneration lock's, and no advisory key is taken here.
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
     });
 
-    it('answers 409 SCHEDULE_BUSY, writing nothing, when the other apply still holds it after five seconds', async () => {
+    it('answers 409 SCHEDULE_BUSY, writing nothing, when a rewrite or another import holds the year for five seconds', async () => {
       const { service, tx, files, plan } = await applied([base()]);
-      tx.$executeRaw
-        .mockResolvedValueOnce(1)
-        .mockRejectedValueOnce(new Error('canceling statement due to lock timeout'));
+      (lockYearForRegeneration as jest.Mock).mockRejectedValueOnce(scheduleBusy());
       const attempt = service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user);
       await expect(attempt).rejects.toBeInstanceOf(ConflictException);
       await expect(attempt).rejects.toMatchObject({ response: { code: 'SCHEDULE_BUSY' } });
@@ -606,8 +635,8 @@ describe('ScheduleExchangeService.apply', () => {
     });
 
     it('lets any other failure of the lock through as it is', async () => {
-      const { service, tx, files, plan } = await applied([base()]);
-      tx.$executeRaw.mockResolvedValueOnce(1).mockRejectedValueOnce(new Error('connection reset'));
+      const { service, files, plan } = await applied([base()]);
+      (lockYearForRegeneration as jest.Mock).mockRejectedValueOnce(new Error('connection reset'));
       await expect(service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user)).rejects.toThrow('connection reset');
     });
 

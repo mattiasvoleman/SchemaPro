@@ -6840,7 +6840,11 @@
       läraren inte längre är aktiv; en <em>ny</em> lektion med en inaktiv
       lärare vägras. Trycker två personer <span class="ui">Skriv in</span> på
       samma fil samtidigt skrivs den en gång: den andra får veta att schemat
-      har ändrats och förhandsgranskar igen.</li>
+      har ändrats och förhandsgranskar igen. Medan en import skrivs är
+      läsårets schema låst för andra ändringar, som när Generera sparar: en
+      lektion som flyttas eller läggs för hand väntar upp till fem sekunder och
+      får annars beskedet att schemat skrivs om just nu. Försök igen en stund
+      senare.</li>
     <li><strong>Lektionerna blir låsta</strong> och hör inte till Generera, så
       en ny körning lägger det som återstår runt dem (5.2).</li>
     <li><strong>Timplansposterna härleds.</strong> För varje klass och ämne som
@@ -6857,7 +6861,9 @@
       personnummer, samordningsnummer eller liknande läses inte, sparas inte
       och visas inte; förhandsvisningen säger att kolumnen hoppades över. Står
       något som <em>ser ut</em> som ett personnummer eller samordningsnummer
-      (hela eller inne i en längre text, med eller utan streck) i en kolumn
+      (hela eller inne i en längre text, med streck, plus, punkt, snedstreck,
+      mellanslag eller radbrytning mellan siffrorna, eller skrivet som ett
+      datum) i en kolumn
       som <em>läses</em>, till exempel i <em>Lärare</em> eller <em>Block</em>,
       läses den raden inte alls: förhandsvisningen säger vilken rad och vilken
       kolumn, men återger aldrig numret. Rastra Schema behöver bara signatur,
@@ -6876,8 +6882,13 @@
   <div class="note">
     <span class="label">Storlek och det som saknas</span>
     <p>
-      En fil får vara högst cirka 700 kB (omkring 2 500 lektioner) och en
-      import högst 5 000 lektioner. Skolans <em>egna</em> filer från Skola24
+      En fil som läses in får vara högst 700 kB, eftersom Rastra Schema
+      tar emot högst 1 MB per anrop och filen skickas som text. Det rymmer
+      omkring 3 800 lektioner som CSV (id-kolumnerna tar plats) och mer än
+      5 000 som Excel, och en import är högst 5 000 lektioner. Blir en
+      export större än 700 kB säger sidan det när filen hämtas: den går att
+      öppna i andra program men inte läsa in hit igen, och för tabellen är
+      Excel-filen betydligt mindre. Skolans <em>egna</em> filer från Skola24
       läser Rastra Schema inte ännu: de saknar öppen beskrivning. Delade
       lektioner (flera lärare på en post) härleds inte; tjänstefördelningens
       varna- eller vägra-regler (4.3) körs inte för de poster importen gör, så
