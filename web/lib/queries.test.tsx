@@ -1905,6 +1905,8 @@ describe("useImportCsv", () => {
   // surface went stale.
   const importKeys = [
     ["people"],
+    // The guardians a pupil's row opens, which vardnadshavare.csv links.
+    ["studentGuardians"],
     ["groups"],
     ["groupMemberships"],
     ["groupMembers"],

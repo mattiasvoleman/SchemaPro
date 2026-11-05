@@ -477,6 +477,52 @@ describe('CSV import (e2e)', () => {
       );
     });
 
+    it('imports guardians with their links, as vardnadshavare.csv posts them, uninvited and on the file’s own rows', async () => {
+      const ALMA = 'aaaaaaa1-0000-4000-8000-000000000001';
+      const GUN = 'bbbbbbb1-0000-4000-8000-000000000003';
+      harness.tx['user']!['findMany']!.mockImplementation((args: { where: { id?: unknown } }) =>
+        Promise.resolve(
+          args.where.id === undefined
+            ? [{ id: ALMA, email: 'alma@example.com', role: 'STUDENT', isActive: true }]
+            : [{ id: ALMA }],
+        ),
+      );
+      harness.tx['user']!['createManyAndReturn']!.mockResolvedValue([{ id: GUN, email: 'gun@example.com' }]);
+      harness.tx['guardianStudent']!['createMany']!.mockResolvedValue({ count: 1 });
+
+      const response = await post(harness, 'guardians')
+        .send({
+          rows: [
+            { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.com', phone: '070-123 45 67', studentEmail: 'alma@example.com' },
+            { firstName: 'Åke', lastName: 'Ek', email: 'ake@example.com', phone: null, studentEmail: 'ghost@example.com' },
+          ],
+          rowNumbers: [2, 3],
+        })
+        .expect(201);
+
+      expect(response.body).toEqual({
+        created: 1,
+        skipped: 0,
+        linked: 1,
+        errors: [
+          {
+            row: 3,
+            message:
+              'Kolumnen "elev_epost": ingen elev har e-postadressen "ghost@example.com". Eleven måste finnas i skolan och vara aktiv. Importera eleverna först, eller rätta adressen.',
+          },
+        ],
+      });
+      expect(harness.supabase.inviteUser).not.toHaveBeenCalled();
+      const { data } = harness.tx['user']!['createManyAndReturn']!.mock.calls[0]?.[0] as {
+        data: { schoolId: string; role: string; invitedAt: Date | null; phone: string | null }[];
+      };
+      expect(data).toEqual([expect.objectContaining({ schoolId: SCHOOL_ID, role: 'GUARDIAN', invitedAt: null, phone: '070-123 45 67' })]);
+      expect(harness.tx['guardianStudent']!['createMany']!).toHaveBeenCalledWith({
+        data: [{ schoolId: SCHOOL_ID, guardianId: GUN, studentId: ALMA, origin: 'MANUAL' }],
+        skipDuplicates: true,
+      });
+    });
+
     it('imports teaching-group memberships', async () => {
       harness.tx['studentGroup']!['findMany']!.mockResolvedValue([
         { id: GROUP_ID, name: 'Ma71' },
@@ -901,6 +947,29 @@ describe('CSV import (e2e)', () => {
       await post(harness, 'teachers').send({ rows }).expect(400);
     });
 
+    it('rejects a guardian row without a pupil address, or with one that is no address, naming the field, before the handler', async () => {
+      const guardian = { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.com' };
+      const missing = await post(harness, 'guardians').send({ rows: [guardian] }).expect(400);
+      expect(JSON.stringify(missing.body)).toContain('studentEmail');
+      const malformed = await post(harness, 'guardians')
+        .send({ rows: [{ ...guardian, studentEmail: 'not-an-email' }] })
+        .expect(400);
+      expect(JSON.stringify(malformed.body)).toContain('studentEmail');
+      await post(harness, 'guardians').send({ rows: [] }).expect(400);
+      // A name of only blanks is no name; the service used to trim it to ''.
+      const blank = await post(harness, 'guardians')
+        .send({ rows: [{ ...guardian, firstName: '   ', studentEmail: 'alma@example.com' }] })
+        .expect(400);
+      expect(JSON.stringify(blank.body)).toContain('firstName');
+      await post(harness, 'guardians')
+        .send({ rows: [{ ...guardian, studentEmail: 'alma@example.com', phone: '0'.repeat(41) }] })
+        .expect(400);
+      await post(harness, 'guardians')
+        .send({ schoolId: 'some-other-school', rows: [{ ...guardian, studentEmail: 'alma@example.com' }] })
+        .expect(400);
+      expect(harness.tx['guardianStudent']!['createMany']!).not.toHaveBeenCalled();
+    });
+
     it('rejects a malformed email, naming the field', async () => {
       const response = await post(harness, 'teachers')
         .send({ rows: [{ firstName: 'A', lastName: 'B', email: 'not-an-email' }] })
@@ -1068,6 +1137,7 @@ describe('CSV import (e2e)', () => {
           'subjects',
           'teachers',
           'students',
+          'guardians',
           'groups',
           'room-types',
           'rooms',
@@ -1095,6 +1165,31 @@ describe('CSV import (e2e)', () => {
 
       expect(response.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
       expect(harness.tx['room']!['create']!).not.toHaveBeenCalled();
+    });
+
+    it('refuses the planner the guardian import, which is PERSONAL like the people imports and the link on the people page, and writes nothing', async () => {
+      const response = await request(harness.app.getHttpServer())
+        .post('/api/v1/import/guardians')
+        .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE' } as never))
+        .send({ rows: [{ firstName: 'Gun', lastName: 'Ek', email: 'gun@example.com', studentEmail: 'alma@example.com' }] })
+        .expect(403);
+
+      expect(response.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+      expect(harness.tx['user']!['createManyAndReturn']!).not.toHaveBeenCalled();
+      expect(harness.tx['guardianStudent']!['createMany']!).not.toHaveBeenCalled();
+    });
+
+    it('lets the expedition, who writes the roster, import guardians', async () => {
+      harness.tx['user']!['findMany']!.mockResolvedValue([]);
+
+      // Past the guard to the handler: the pupil is not there, so the row is an error, not a 403.
+      const response = await request(harness.app.getHttpServer())
+        .post('/api/v1/import/guardians')
+        .set('x-test-user', asUser({ adminProfile: 'EXPEDITION' } as never))
+        .send({ rows: [{ firstName: 'Gun', lastName: 'Ek', email: 'gun@example.com', studentEmail: 'alma@example.com' }] })
+        .expect(201);
+
+      expect(response.body).toMatchObject({ created: 0, linked: 0, errors: [{ row: 1 }] });
     });
 
     it('403s a school admin with no school on the principal', async () => {

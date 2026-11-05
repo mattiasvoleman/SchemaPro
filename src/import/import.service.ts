@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -47,6 +48,7 @@ import {
 import { staffingSentence } from '../staffing/staffing-checks';
 import type {
   ImportGroupsDto,
+  ImportGuardiansDto,
   ImportMembershipsDto,
   ImportReport,
   ImportWarning,
@@ -148,6 +150,59 @@ const swedishRows = (rows: readonly number[]): string =>
 
 /** The warning a pupil created without a class carries (importStudents). */
 export const STUDENT_WITHOUT_CLASS = 'IMPORT_STUDENT_WITHOUT_CLASS';
+
+/** The two address columns of vardnadshavare.csv, as the template spells them, for the sentences about a cell. */
+const GUARDIAN_FILE_GUARDIAN_COLUMN = 'epost';
+const GUARDIAN_FILE_PUPIL_COLUMN = 'elev_epost';
+
+/** A person the guardian file names by an address. */
+type GuardianFileHolder = { id: string; role: string; isActive: boolean };
+
+const ROLE_WORD: Record<string, string> = {
+  STUDENT: 'en elev',
+  TEACHER: 'en lärare',
+  SCHOOL_ADMIN: 'en administratör',
+  GUARDIAN: 'en vårdnadshavare',
+};
+
+const noPupilWith = (address: string): string =>
+  `Kolumnen "${GUARDIAN_FILE_PUPIL_COLUMN}": ingen elev har e-postadressen "${address}". Eleven måste finnas i skolan och vara aktiv. Importera eleverna först, eller rätta adressen.`;
+
+/**
+ * Who a guardian file's address names, judged for the role the column wants:
+ * the person, a sentence saying why not, or null when nobody holds it (a
+ * guardian the file makes; for a pupil the caller says so). The address is
+ * matched without regard to case, so two people can hold it.
+ */
+function guardianFileHolder(
+  held: GuardianFileHolder[] | undefined,
+  column: string,
+  address: string,
+  role: 'STUDENT' | 'GUARDIAN',
+): { id: string } | { problem: string } | null {
+  if (held === undefined) return null;
+  if (held.length > 1) {
+    return {
+      problem: `Kolumnen "${column}": e-postadressen "${address}" finns på mer än en person i skolan, så det går inte att avgöra vem som avses. Rätta det under Personer.`,
+    };
+  }
+  const person = held[0]!;
+  if (person.role !== role) {
+    return {
+      problem: `Kolumnen "${column}": "${address}" tillhör ${ROLE_WORD[person.role] ?? 'en annan person'}, inte ${ROLE_WORD[role]}. ${
+        role === 'STUDENT'
+          ? 'Skriv elevens egen e-postadress.'
+          : 'En person har en roll i skolan, så vårdnadshavaren behöver en egen adress.'
+      }`,
+    };
+  }
+  if (!person.isActive) {
+    return {
+      problem: `Kolumnen "${column}": ${role === 'STUDENT' ? 'eleven' : 'vårdnadshavaren'} med e-postadressen "${address}" är inte aktiv. Aktivera personen under Personer, eller ta bort raden.`,
+    };
+  }
+  return { id: person.id };
+}
 
 /** A row's 1-based position in the posted `rows`, as the row the file has it on. */
 type FileRow = (position: number) => number;
@@ -1007,6 +1062,184 @@ export class ImportService {
         params: {},
         message: 'Eleven skapades utan klass. Ge eleven en klass under Personer.',
       }));
+    }
+    return report;
+  }
+
+  /**
+   * Vårdnadshavare and their link to a pupil: one row per link, the pupil by
+   * e-mail address inside the school, as a membership file names one.
+   *
+   * A guardian the school does not have is created, uninvited like every
+   * person an import makes (invitedAt null, a placeholder login nobody can
+   * sign in with): the school invites separately, from Personer. One who
+   * exists, by e-mail address and in any spelling of its case, only gets the
+   * link: the file never changes a name or a phone number, so a person's
+   * updatedAt stays as the school last wrote it (the SS12000 sync reads a
+   * newer one as a local edit). A link that is there is "finns redan"
+   * (skipped), as is the second row of a pair in one file.
+   *
+   * THE PUPIL MUST EXIST AND BE ACTIVE, and the address must be a pupil's: a
+   * row whose pupil is missing, inactive, someone else's role or ambiguous is
+   * an error naming the column, and writes nothing for that row, not even a
+   * guardian. A guardian address that is held by an inactive guardian or by
+   * another role is an error likewise: the file does not reactivate a person
+   * or give one a second role.
+   *
+   * A SCHOOL WHOSE PEOPLE COME FROM SS12000 gets what a link made by hand on
+   * the people page gets, and nothing here needs to know about the source.
+   * The link is MANUAL, never SS12000, and the
+   * file never writes ss12000Id (a trigger refuses it); a sync matches a
+   * guardian this file made to the source's by e-mail address and proposes a
+   * LINK, never a second person, and treats a pair that is already linked as
+   * linked. It never deletes a link, so one the source does not name stays.
+   * The file cannot hold back a pupil with a protected identity, because the
+   * school does not store which they are (the sync's mark goes with its run
+   * and is never kept on the person); the link on the people page has the
+   * same reach. What keeps it from an apply is the lock, the school's people
+   * lock shared and first (src/common/lock-order.ts): the apply takes it alone,
+   * so one of them runs wholly before the other.
+   *
+   * After the lock, the pupils and the existing guardians the rows name are
+   * held FOR SHARE in id order, in one statement, and read again: what a row
+   * was judged by a moment ago may have changed, and what is held cannot
+   * until this commits. A pupil deactivated since is not linked, and none is
+   * deleted between the judgement and the insert.
+   */
+  async importGuardians(dto: ImportGuardiansDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importGuardiansByPosition(dto, user), line);
+  }
+
+  private async importGuardiansByPosition(dto: ImportGuardiansDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const schoolId = requireSchoolId(user);
+    try {
+      return await this.prisma.withRls(user, (tx) => this.importGuardianRows(tx, dto, schoolId));
+    } catch (error) {
+      // A person or a link committing in between is the database's to refuse
+      // (409), the rows having been judged above as it judges them.
+      if (error instanceof HttpException) throw error;
+      rethrowPrismaError(error);
+    }
+  }
+
+  private async importGuardianRows(tx: PrismaClient, dto: ImportGuardiansDto, schoolId: string): Promise<ImportReport> {
+    // Step 1, before any row is read or locked.
+    await holdTheSchoolsPeople(tx, schoolId);
+    const report: ImportReport = { created: 0, skipped: 0, linked: 0, errors: [] };
+    const key = (email: string) => email.trim().toLowerCase();
+
+    // Everyone the file names by address, whatever their role and state: a row
+    // about an address that is someone else's must say whose.
+    const known = await tx.user.findMany({
+      where: {
+        email: {
+          in: [...new Set(dto.rows.flatMap((row) => [key(row.email), key(row.studentEmail)]))],
+          // Matched at the query, as the memberships are: the column stores
+          // an address as it was typed at invite time.
+          mode: 'insensitive',
+        },
+      },
+      select: { id: true, email: true, role: true, isActive: true },
+    });
+    const holders = new Map<string, GuardianFileHolder[]>();
+    for (const person of known) holders.set(key(person.email), [...(holders.get(key(person.email)) ?? []), person]);
+
+    interface Judged {
+      position: number;
+      row: ImportGuardiansDto['rows'][number];
+      guardianKey: string;
+      studentId: string;
+      guardianId: string | null;
+    }
+    const judged: Judged[] = [];
+    for (const [index, row] of dto.rows.entries()) {
+      const position = index + 1;
+      const student = guardianFileHolder(holders.get(key(row.studentEmail)), GUARDIAN_FILE_PUPIL_COLUMN, row.studentEmail.trim(), 'STUDENT');
+      if (student === null) {
+        report.errors.push({ row: position, message: noPupilWith(row.studentEmail.trim()) });
+        continue;
+      }
+      if ('problem' in student) {
+        report.errors.push({ row: position, message: student.problem });
+        continue;
+      }
+      const guardian = guardianFileHolder(holders.get(key(row.email)), GUARDIAN_FILE_GUARDIAN_COLUMN, row.email.trim(), 'GUARDIAN');
+      if (guardian !== null && 'problem' in guardian) {
+        report.errors.push({ row: position, message: guardian.problem });
+        continue;
+      }
+      judged.push({ position, row, guardianKey: key(row.email), studentId: student.id, guardianId: guardian?.id ?? null });
+    }
+
+    // Step 3: the pupils and the guardians already there, held in id order in
+    // one statement, then read again: what a row was judged by a moment ago
+    // may have changed, and what is held cannot change until this commits.
+    const involved = [...new Set(judged.flatMap((entry) => [entry.studentId, ...(entry.guardianId ? [entry.guardianId] : [])]))];
+    await holdPupils(tx, involved);
+    const active = new Set(
+      involved.length === 0
+        ? []
+        : (await tx.user.findMany({ where: { id: { in: involved }, isActive: true }, select: { id: true } })).map((person) => person.id),
+    );
+    const standing: Judged[] = [];
+    for (const entry of judged) {
+      if (!active.has(entry.studentId) || (entry.guardianId !== null && !active.has(entry.guardianId))) {
+        report.errors.push({
+          row: entry.position,
+          message: 'Eleven eller vårdnadshavaren ändrades medan filen lästes in och är inte längre aktiv. Läs in filen igen.',
+        });
+        continue;
+      }
+      standing.push(entry);
+    }
+
+    // The guardians the file makes: once per address, from its first row.
+    const toMake = new Map<string, Judged['row']>();
+    for (const entry of standing) {
+      if (entry.guardianId === null && !toMake.has(entry.guardianKey)) toMake.set(entry.guardianKey, entry.row);
+    }
+    const made = new Map<string, string>();
+    if (toMake.size > 0) {
+      const inserted = await tx.user.createManyAndReturn({
+        data: [...toMake.values()].map((row) => ({
+          schoolId,
+          // A placeholder that matches no login, as UsersService.create gives
+          // a person nobody has invited.
+          authId: randomUUID(),
+          invitedAt: null,
+          role: 'GUARDIAN' as const,
+          firstName: row.firstName.trim(),
+          lastName: row.lastName.trim(),
+          email: row.email.trim(),
+          phone: row.phone?.trim() || null,
+        })),
+        skipDuplicates: true,
+        select: { id: true, email: true },
+      });
+      for (const person of inserted) made.set(key(person.email), person.id);
+      report.created = inserted.length;
+    }
+
+    const pairs = new Map<string, { schoolId: string; guardianId: string; studentId: string; origin: 'MANUAL' }>();
+    let rowsLinkable = 0;
+    for (const entry of standing) {
+      const guardianId = entry.guardianId ?? made.get(entry.guardianKey);
+      if (guardianId === undefined) {
+        report.errors.push({
+          row: entry.position,
+          message: `Kolumnen "${GUARDIAN_FILE_GUARDIAN_COLUMN}": vårdnadshavaren med e-postadressen "${entry.row.email.trim()}" kunde inte skapas, eftersom en annan person hann få adressen. Läs in filen igen.`,
+        });
+        continue;
+      }
+      rowsLinkable += 1;
+      pairs.set(`${guardianId}|${entry.studentId}`, { schoolId, guardianId, studentId: entry.studentId, origin: 'MANUAL' });
+    }
+    if (pairs.size > 0) {
+      const { count } = await tx.guardianStudent.createMany({ data: [...pairs.values()], skipDuplicates: true });
+      report.linked = count;
+      // A row whose pair was there before, or stood twice in the file.
+      report.skipped = rowsLinkable - count;
     }
     return report;
   }

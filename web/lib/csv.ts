@@ -76,6 +76,11 @@ export const CSV_EXAMPLES: Record<ImportKind, string[][]> = {
     ["bo.alm@example.com", "ämnesansvar", "Ämnesansvar slöjd", "60", "ja", "SLTX", "", "", "", ""],
   ],
   students: [["Alma", "Berg", "alma.berg@example.com", "", "7A"]],
+  // A guardian of two pupils is two rows, the first four cells the same.
+  guardians: [
+    ["Gun", "Berg", "gun.berg@example.com", "070-123 45 67", "alma.berg@example.com"],
+    ["Gun", "Berg", "gun.berg@example.com", "070-123 45 67", "bo.berg@example.com"],
+  ],
   teachingGroups: [
     ["Ma71", "alma.berg@example.com"],
     ["Sv73", "alma.berg@example.com"],
@@ -370,7 +375,7 @@ function mapRows<T>(
         {
           row: 0,
           message: `Kolumner saknas: ${missing
-            .map(({ aliases }) => aliases[0])
+            .map(({ field, aliases }) => FIELD_LABELS[field] ?? aliases[0])
             .join(", ")}. Ladda ner mallen och utgå från den.`,
         },
       ],
@@ -414,6 +419,7 @@ const FIELD_LABELS: Record<string, string> = {
   lastName: "efternamn",
   email: "epost",
   phone: "telefon",
+  studentEmail: "elev_epost",
   className: "klass",
   name: "namn",
   gradeLevel: "arskurs",
@@ -478,6 +484,106 @@ export function mapStudentRows(parsed: ParsedCsv): MappedRows<{
       className: row.className || null,
     })),
   };
+}
+
+/**
+ * Guardian rows: a guardian and one pupil of theirs, the pupil by address
+ * (elev_epost). The pupil's address is required and checked as an address
+ * here, for the reason every cell is: ImportGuardianRowDto's @IsEmail would
+ * otherwise refuse the whole file with one sentence that names no row. That
+ * the pupil exists, is active and is a pupil is the gateway's to say, per row.
+ */
+export function mapGuardianRows(parsed: ParsedCsv): MappedRows<{
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string | null;
+  studentEmail: string;
+}> {
+  const mapped = mapRows(
+    parsed,
+    [
+      { field: "firstName", aliases: ["fornamn", "firstname"], required: true, rule: NAME },
+      { field: "lastName", aliases: ["efternamn", "lastname"], required: true, rule: NAME },
+      { field: "email", aliases: ["epost", "email", "epostadress"], required: true, rule: EMAIL },
+      { field: "phone", aliases: PHONE_ALIASES, required: false, rule: PHONE },
+      {
+        field: "studentEmail",
+        // normalizeHeader strips the underscore: "elev_epost" reads "elevepost".
+        aliases: ["elevepost", "elevensepost", "elevemail", "studentemail", "pupilemail"],
+        required: true,
+        rule: EMAIL,
+      },
+    ],
+    requiredMessage,
+  );
+  return {
+    ...mapped,
+    rows: mapped.rows.map((row) => ({
+      firstName: row.firstName!,
+      lastName: row.lastName!,
+      email: row.email!,
+      phone: row.phone || null,
+      studentEmail: row.studentEmail!,
+    })),
+  };
+}
+
+/**
+ * Rows whose name holds a "?" in a file that was not UTF-8.
+ *
+ * Excel writes "?" for a character the file's code page lacks — Łukasz comes
+ * back as ?ukasz in Windows-1252 and Mac Roman — and nothing in the file says
+ * so. The import would save that as the person's name, so the preview says it
+ * per row. Only a name is asked: an address or a class may hold a "?" for real.
+ * A file read as UTF-8 is not asked; there a "?" was typed.
+ */
+export function namesWithQuestionMarks(
+  rows: Array<Record<string, unknown>>,
+  rowNumbers: number[],
+): Array<{ row: number; name: string }> {
+  const found: Array<{ row: number; name: string }> = [];
+  rows.forEach((row, index) => {
+    const names = [row.firstName, row.lastName].filter((name): name is string => typeof name === "string");
+    if (names.some((name) => name.includes("?"))) {
+      found.push({ row: rowNumbers[index] ?? index + 2, name: names.join(" ") });
+    }
+  });
+  return found;
+}
+
+/**
+ * Guardian rows that give an address already on an earlier row other details.
+ *
+ * A guardian of two pupils is two rows with the same first four cells, and
+ * the gateway makes the person once, from the first row; a later row's name
+ * and phone are not used, and a guardian who exists is not changed at all.
+ * Two parents sharing one address look the same in the file as one parent
+ * with a typo, so the preview names the rows where the later one says
+ * something else. A phone is only "something else" when the later row has one
+ * and it differs: an empty cell loses nothing.
+ */
+export function guardianDetailsThatDiffer(
+  rows: Array<{ firstName: string; lastName: string; email: string; phone: string | null }>,
+  rowNumbers: number[],
+): Array<{ row: number; first: number; email: string }> {
+  const firstOf = new Map<string, { row: number; at: (typeof rows)[number] }>();
+  const found: Array<{ row: number; first: number; email: string }> = [];
+  rows.forEach((row, index) => {
+    const line = rowNumbers[index] ?? index + 2;
+    const key = row.email.trim().toLowerCase();
+    const first = firstOf.get(key);
+    if (first === undefined) {
+      firstOf.set(key, { row: line, at: row });
+      return;
+    }
+    const other =
+      row.firstName !== first.at.firstName ||
+      row.lastName !== first.at.lastName ||
+      (row.phone !== null && row.phone !== first.at.phone);
+    if (other) found.push({ row: line, first: first.row, email: row.email });
+  });
+  return found;
 }
 
 /**

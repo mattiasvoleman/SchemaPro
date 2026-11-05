@@ -57,6 +57,9 @@ const people = [
   person("a-1", "Rita", "Nilsson", "SCHOOL_ADMIN", null, "2026-08-01T10:00:00.000Z"),
 ];
 
+/** The same school with Gun, Almas guardian, for the tests of the guardians export. */
+const peopleAndAGuardian = [...people, person("gu-1", "Gun", "Berg", "GUARDIAN", null)];
+
 /** Alma takes Ma71 on top of her home class; Nils takes nothing extra. */
 const memberships = [{ studentId: "st-1", studentGroupId: "g-ma71" }];
 
@@ -93,15 +96,27 @@ const state = vi.hoisted(() => ({
     | undefined,
   administratorsFailed: false,
   roleChanges: [] as unknown[],
+  /** Whether the school has an active guardian, who is what makes the guardians export available. */
+  withGuardian: false,
 }));
 
-const { saveEmployment, createPerson, updatePerson, unlinkGuardian, inviteOne } = vi.hoisted(() => ({
-  saveEmployment: vi.fn(),
-  createPerson: vi.fn(),
-  updatePerson: vi.fn(),
-  unlinkGuardian: vi.fn(),
-  inviteOne: vi.fn(),
+const { saveEmployment, createPerson, updatePerson, unlinkGuardian, inviteOne, downloadCsv, guardiansCsvFor } =
+  vi.hoisted(() => ({
+    saveEmployment: vi.fn(),
+    createPerson: vi.fn(),
+    updatePerson: vi.fn(),
+    unlinkGuardian: vi.fn(),
+    inviteOne: vi.fn(),
+    downloadCsv: vi.fn(),
+    guardiansCsvFor: vi.fn(),
+  }));
+
+// The download itself and the module read at the click, the one thing the guardians export adds.
+vi.mock("@/lib/csv-export", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/csv-export")>()),
+  downloadCsv,
 }));
+vi.mock("@/lib/guardians-csv-export", () => ({ guardiansCsvFor }));
 
 // The working-time rules have a module of their own, for the bundle.
 vi.mock("@/lib/work-rule-queries", () => ({
@@ -113,7 +128,7 @@ vi.mock("@/lib/work-rule-queries", () => ({
 }));
 
 vi.mock("@/lib/queries", () => ({
-  usePeople: () => ({ data: people, isLoading: false }),
+  usePeople: () => ({ data: state.withGuardian ? peopleAndAGuardian : people, isLoading: false }),
   useGroups: () => ({ data: groups }),
   useGroupMemberships: () => ({ data: memberships }),
   useAcademicYears: () => ({
@@ -197,7 +212,7 @@ vi.mock("@/components/import/csv-import-dialog", () => ({
   CsvImportDialog: () => null,
 }));
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }));
 
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
@@ -242,6 +257,7 @@ describe("People page", () => {
     state.administrators = new Map();
     state.administratorsFailed = false;
     state.roleChanges = [];
+    state.withGuardian = false;
     updatePerson.mockResolvedValue(undefined);
     saveEmployment.mockResolvedValue(undefined);
     unlinkGuardian.mockResolvedValue(undefined);
@@ -422,6 +438,92 @@ describe("People page", () => {
     await user.type(searchBox(), "alma");
     expect(screen.getByText("inviteAll(1)")).toBeInTheDocument();
   });
+
+  describe("vardnadshavare.csv", () => {
+    const openExports = async (user: ReturnType<typeof userEvent.setup>) =>
+      user.click(screen.getByRole("button", { name: "exportButton" }));
+    const guardianEntry = () => screen.getByRole("menuitem", { name: "kinds.guardians" });
+
+    it("is in the export menu, disabled while the school has no active guardian", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+
+      expect(guardianEntry()).toHaveAttribute("data-disabled");
+    });
+
+    it("reads the links at the click and downloads them as vardnadshavare.csv", async () => {
+      state.withGuardian = true;
+      guardiansCsvFor.mockResolvedValue("FILEN");
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      // Nothing is read until the entry is chosen: the page holds no links.
+      expect(guardiansCsvFor).not.toHaveBeenCalled();
+      await user.click(guardianEntry());
+
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("vardnadshavare.csv", "FILEN"));
+    });
+
+    it("warns, once the file is handed over, that it may name pupils with protected personal data", async () => {
+      state.withGuardian = true;
+      guardiansCsvFor.mockResolvedValue("FILEN");
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(guardianEntry());
+
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("vardnadshavare.csv", "FILEN"));
+      expect(toast.warning).toHaveBeenCalledWith("protectedWarning", expect.anything());
+    });
+
+    it("warns the same on elever.csv, which carries every pupil's name, address and class, and on no other file", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.students" }));
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("elever.csv", expect.any(String)));
+      expect(toast.warning).toHaveBeenCalledTimes(1);
+
+      vi.mocked(toast.warning).mockClear();
+      downloadCsv.mockClear();
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.teachers" }));
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("larare.csv", expect.any(String)));
+      expect(toast.warning).not.toHaveBeenCalled();
+    });
+
+    it("says so, and downloads nothing, when there is no link to export", async () => {
+      state.withGuardian = true;
+      guardiansCsvFor.mockResolvedValue(null);
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(guardianEntry());
+
+      await vi.waitFor(() => expect(toast.info).toHaveBeenCalledWith("noGuardianLinks"));
+      expect(downloadCsv).not.toHaveBeenCalled();
+    });
+
+    it("says an error, and downloads nothing, when the links could not be read", async () => {
+      state.withGuardian = true;
+      guardiansCsvFor.mockRejectedValue(new Error("HTTP 500"));
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(guardianEntry());
+
+      await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith("error"));
+      expect(downloadCsv).not.toHaveBeenCalled();
+    });
+  });
+
   describe("clicking a person's name", () => {
     /*
      * Anchored. The row's action buttons name the person too — "Ändra arbetstid

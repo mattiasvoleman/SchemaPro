@@ -51,6 +51,18 @@ export interface GuardianLinkView {
   guardian: { id: string; firstName: string; lastName: string; email: string };
 }
 
+/**
+ * One row of vardnadshavare.csv: a guardian and one pupil of theirs, the
+ * pupil by address as the import reads it back.
+ */
+export interface GuardianExportRow {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string | null;
+  studentEmail: string;
+}
+
 /** The newest this many: what the web and the app read directly before, each one at most. */
 export const FAMILY_READ_LIMIT = 200;
 
@@ -166,6 +178,54 @@ export class FamilyReadsService {
         await recordRead(tx, 'GUARDIANS', [query.studentId, ...links.map((link) => link.guardianId)], user.channel);
       }
       return links;
+    });
+  }
+
+  /**
+   * GET /api/v1/guardian-links/export: every link of the school between an
+   * active guardian and an active pupil, written as the rows of
+   * vardnadshavare.csv. A person of another role, or an inactive one, is not
+   * in it: the import answers with an error for such a row.
+   *
+   * The response names guardians and pupils with their contact details and
+   * says who is whose guardian, so it is two records, PEOPLE and GUARDIANS
+   * (the kinds of access-log.ts), about everyone in it.
+   *
+   * It holds back no pupil. The school does not store which pupils have a
+   * protected identity: the SS12000 sync marks them in its diff, which is
+   * emptied when the run ends, and nothing else on a person says it.
+   */
+  async guardianExport(user: AuthenticatedUser): Promise<GuardianExportRow[]> {
+    return this.prisma.withRls(user, async (tx) => {
+      const links = await tx.guardianStudent.findMany({
+        where: {
+          guardian: { role: 'GUARDIAN', isActive: true },
+          student: { role: 'STUDENT', isActive: true },
+        },
+        select: {
+          guardianId: true,
+          studentId: true,
+          guardian: { select: { firstName: true, lastName: true, email: true, phone: true } },
+          student: { select: { email: true } },
+        },
+        orderBy: [
+          { guardian: { lastName: 'asc' } },
+          { guardian: { firstName: 'asc' } },
+          { guardianId: 'asc' },
+          { student: { email: 'asc' } },
+          { studentId: 'asc' },
+        ],
+      });
+      const everyone = links.flatMap((link) => [link.guardianId, link.studentId]);
+      await recordRead(tx, 'PEOPLE', everyone, user.channel);
+      await recordRead(tx, 'GUARDIANS', everyone, user.channel);
+      return links.map((link) => ({
+        firstName: link.guardian.firstName,
+        lastName: link.guardian.lastName,
+        email: link.guardian.email,
+        phone: link.guardian.phone,
+        studentEmail: link.student.email,
+      }));
     });
   }
 }

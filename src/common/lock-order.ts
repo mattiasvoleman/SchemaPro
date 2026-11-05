@@ -65,6 +65,11 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   ImportService.importMemberships, whose pupils placed in a half are held
  *   in id order before the members are inserted, as the member trigger would
  *   otherwise hold them in the order of the file.
+ *   Steps 1 and 3: ImportService.importGuardians. It holds no group. The
+ *   pupils its rows name, and the guardians that already exist, are held in
+ *   one id-ordered statement (holdPupils) before the new guardians and the
+ *   links are inserted, since a link's two keys would otherwise take them in
+ *   the order of the file.
  *   Steps 1 and 2: ImportService.importGroups when the file has halves. It
  *   holds the existing classes the halves name FOR NO KEY UPDATE in id order,
  *   as split holds its class, before it inserts any group: a half's insert

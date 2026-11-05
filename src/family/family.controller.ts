@@ -23,6 +23,7 @@ import {
   FamilyReadsService,
   type AbsenceReportView,
   type ChildView,
+  type GuardianExportRow,
   type GuardianLinkView,
 } from './family-reads.service';
 import { FamilyScheduleService, type FamilySchedule } from './family-schedule.service';
@@ -86,6 +87,17 @@ export class FamilyController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<GuardianLinkView[]> {
     return this.reads.guardianLinks(query, user);
+  }
+
+  /**
+   * Every active guardian link of the school as the rows of
+   * vardnadshavare.csv. Every profile reads it, as it reads one pupil's
+   * guardians above, and it is recorded as read.
+   */
+  @Get('guardian-links/export')
+  @Roles(Role.SCHOOL_ADMIN)
+  guardianExport(@CurrentUser() user: AuthenticatedUser): Promise<GuardianExportRow[]> {
+    return this.reads.guardianExport(user);
   }
 
   @Post('guardian-links')

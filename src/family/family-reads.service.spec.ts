@@ -193,4 +193,67 @@ describe('FamilyReadsService', () => {
       expect(recordedReads(tx)).toEqual([]);
     });
   });
+
+  describe('guardianExport', () => {
+    const link = (guardianId: string, studentId: string, guardianEmail: string, studentEmail: string, phone: string | null = null) => ({
+      guardianId,
+      studentId,
+      guardian: { firstName: 'Gun', lastName: 'Ek', email: guardianEmail, phone },
+      student: { email: studentEmail },
+    });
+
+    it('answers the file’s columns, one row per link, and nothing else of a pupil than the address', async () => {
+      tx.guardianStudent.findMany.mockResolvedValue([
+        link(GUARDIAN_ID, CHILD_A, 'gun@example.test', 'alva@example.test', '070-123 45 67'),
+        link(GUARDIAN_ID, CHILD_B, 'gun@example.test', 'bo@example.test'),
+      ]);
+
+      await expect(service.guardianExport(testUser({ channel: 'WEB' }))).resolves.toEqual([
+        { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.test', phone: '070-123 45 67', studentEmail: 'alva@example.test' },
+        { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.test', phone: null, studentEmail: 'bo@example.test' },
+      ]);
+      const [query] = tx.guardianStudent.findMany.mock.calls[0] as [{ select: { student: { select: object } } }];
+      expect(query.select.student.select).toEqual({ email: true });
+    });
+
+    it('takes only active people of the roles the import takes back, and puts them in a fixed order', async () => {
+      await service.guardianExport(testUser());
+
+      expect(tx.guardianStudent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            guardian: { role: 'GUARDIAN', isActive: true },
+            student: { role: 'STUDENT', isActive: true },
+          },
+          orderBy: [
+            { guardian: { lastName: 'asc' } },
+            { guardian: { firstName: 'asc' } },
+            { guardianId: 'asc' },
+            { student: { email: 'asc' } },
+            { studentId: 'asc' },
+          ],
+        }),
+      );
+    });
+
+    it('records everyone in it as PEOPLE and as GUARDIANS, in the read’s transaction', async () => {
+      tx.guardianStudent.findMany.mockResolvedValue([
+        link(GUARDIAN_ID, CHILD_A, 'gun@example.test', 'alva@example.test'),
+        link(OTHER_GUARDIAN, CHILD_A, 'gert@example.test', 'alva@example.test'),
+      ]);
+
+      await service.guardianExport(testUser({ channel: 'WEB' }));
+
+      expect(recordedReads(tx)).toEqual([
+        { kind: 'PEOPLE', channel: 'WEB', ids: [GUARDIAN_ID, CHILD_A, OTHER_GUARDIAN] },
+        { kind: 'GUARDIANS', channel: 'WEB', ids: [GUARDIAN_ID, CHILD_A, OTHER_GUARDIAN] },
+      ]);
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+    });
+
+    it('records nothing for a school with no links: the read named nobody', async () => {
+      await expect(service.guardianExport(testUser())).resolves.toEqual([]);
+      expect(recordedReads(tx)).toEqual([]);
+    });
+  });
 });

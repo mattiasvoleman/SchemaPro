@@ -3995,6 +3995,375 @@ describe('ImportService', () => {
  * is rektor's or a full administrator's. The expedition, who writes the
  * roster, imports the people alone, and a file with posts is refused whole.
  */
+describe('ImportService, guardians', () => {
+  const SCHOOL = testUser().schoolId!;
+  const PEOPLE_LOCK = 'SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))';
+  const HOLD_PUPILS = 'SELECT 1 FROM "Users" WHERE "id" = ANY(?::uuid[]) ORDER BY "id" FOR SHARE';
+  // In id order: ALMA < BO < GUN < ID_OF_NEW.
+  const ALMA = 'aaaaaaa1-0000-4000-8000-000000000001';
+  const BO = 'aaaaaaa2-0000-4000-8000-000000000002';
+  const GUN = 'bbbbbbb1-0000-4000-8000-000000000003';
+  const NEW_GUARDIAN = 'ccccccc1-0000-4000-8000-000000000004';
+  const NEW_GUARDIAN_2 = 'ccccccc2-0000-4000-8000-000000000005';
+
+  let tx: TxMock;
+  let prisma: PrismaMock;
+  let users: { create: jest.Mock };
+  let service: ImportService;
+
+  const row = (email: string, studentEmail: string, extra: Record<string, unknown> = {}) => ({
+    firstName: 'Gun',
+    lastName: 'Ek',
+    email,
+    phone: null,
+    studentEmail,
+    ...extra,
+  });
+  const alma = { id: ALMA, email: 'alma@example.com', role: 'STUDENT', isActive: true };
+  const bo = { id: BO, email: 'bo@example.com', role: 'STUDENT', isActive: true };
+  const gun = { id: GUN, email: 'Gun@Example.com', role: 'GUARDIAN', isActive: true };
+
+  /**
+   * The people the address lookup finds, and which of the held ones are still
+   * active when they are read again under the lock.
+   */
+  const arrange = (found: unknown[], stillActive?: string[]) => {
+    tx.user.findMany.mockImplementation((args: { where: { id?: unknown } }) =>
+      Promise.resolve(
+        args.where.id === undefined
+          ? found
+          : (stillActive ?? (found as { id: string }[]).map((person) => person.id)).map((id) => ({ id })),
+      ),
+    );
+    tx.user.createManyAndReturn.mockImplementation((args: { data: { email: string }[] }) =>
+      Promise.resolve(args.data.map((person, index) => ({ id: [NEW_GUARDIAN, NEW_GUARDIAN_2][index], email: person.email }))),
+    );
+    tx.guardianStudent.createMany.mockImplementation((args: { data: unknown[] }) =>
+      Promise.resolve({ count: args.data.length }),
+    );
+  };
+  const rowsOf = (...rows: ReturnType<typeof row>[]) => ({ rows });
+
+  beforeEach(() => {
+    tx = createTxMock();
+    prisma = createPrismaMock(tx);
+    users = { create: jest.fn() };
+    service = new ImportService(prisma as unknown as PrismaService, users as unknown as UsersService);
+  });
+
+  it('makes a guardian the school does not have, uninvited, and links them to the pupil', async () => {
+    arrange([alma]);
+
+    const report = await service.importGuardians(
+      rowsOf(row('gun@example.com', 'alma@example.com', { firstName: ' Gun ', phone: ' 070-123 45 67 ' })),
+      testUser(),
+    );
+
+    expect(report).toEqual({ created: 1, skipped: 0, linked: 1, errors: [] });
+    const [{ data, skipDuplicates }] = tx.user.createManyAndReturn.mock.calls[0] as [
+      { data: Record<string, unknown>[]; skipDuplicates: boolean },
+    ];
+    expect(skipDuplicates).toBe(true);
+    expect(data).toEqual([
+      {
+        schoolId: SCHOOL,
+        authId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+        // Nobody is contacted: the placeholder login matches no identity.
+        invitedAt: null,
+        role: 'GUARDIAN',
+        firstName: 'Gun',
+        lastName: 'Ek',
+        email: 'gun@example.com',
+        phone: '070-123 45 67',
+      },
+    ]);
+    // Through the transaction that holds the lock, not UsersService.create (a transaction of its own).
+    expect(users.create).not.toHaveBeenCalled();
+    expect(tx.guardianStudent.createMany).toHaveBeenCalledWith({
+      data: [{ schoolId: SCHOOL, guardianId: NEW_GUARDIAN, studentId: ALMA, origin: 'MANUAL' }],
+      skipDuplicates: true,
+    });
+  });
+
+  it('gives a guardian who exists only the link: found without regard to case, and never written over', async () => {
+    arrange([alma, gun]);
+
+    const report = await service.importGuardians(
+      rowsOf(row('GUN@example.COM', 'ALMA@example.com', { firstName: 'Another', lastName: 'Name', phone: '1' })),
+      testUser(),
+    );
+
+    expect(report).toEqual({ created: 0, skipped: 0, linked: 1, errors: [] });
+    expect(tx.user.createManyAndReturn).not.toHaveBeenCalled();
+    expect(tx.user.update).not.toHaveBeenCalled();
+    expect(tx.user.updateMany).not.toHaveBeenCalled();
+    expect(tx.guardianStudent.createMany).toHaveBeenCalledWith({
+      data: [{ schoolId: SCHOOL, guardianId: GUN, studentId: ALMA, origin: 'MANUAL' }],
+      skipDuplicates: true,
+    });
+    // The addresses are looked up at the query, lower-cased, whatever their case.
+    expect(tx.user.findMany.mock.calls[0]![0]).toEqual({
+      where: { email: { in: ['gun@example.com', 'alma@example.com'], mode: 'insensitive' } },
+      select: { id: true, email: true, role: true, isActive: true },
+    });
+  });
+
+  it('says "finns redan" for a link that is there and for a pair that stands twice in the file', async () => {
+    arrange([alma, bo, gun]);
+    tx.guardianStudent.createMany.mockResolvedValue({ count: 1 });
+
+    const report = await service.importGuardians(
+      rowsOf(
+        row('gun@example.com', 'alma@example.com'),
+        row('gun@example.com', 'bo@example.com'),
+        row('gun@example.com', 'bo@example.com'),
+      ),
+      testUser(),
+    );
+
+    // Three rows, two distinct pairs, one of which the database already held.
+    const [{ data }] = tx.guardianStudent.createMany.mock.calls[0] as [{ data: unknown[] }];
+    expect(data).toHaveLength(2);
+    expect(report).toEqual({ created: 0, skipped: 2, linked: 1, errors: [] });
+  });
+
+  it('makes a guardian of two pupils once, from the first row, and links both', async () => {
+    arrange([alma, bo]);
+
+    const report = await service.importGuardians(
+      rowsOf(
+        row('gun@example.com', 'alma@example.com', { firstName: 'Gun' }),
+        row('gun@example.com', 'bo@example.com', { firstName: 'Gunilla' }),
+      ),
+      testUser(),
+    );
+
+    expect(report).toEqual({ created: 1, skipped: 0, linked: 2, errors: [] });
+    const [{ data }] = tx.user.createManyAndReturn.mock.calls[0] as [{ data: { firstName: string }[] }];
+    expect(data).toHaveLength(1);
+    expect(data[0]!.firstName).toBe('Gun');
+    expect(tx.guardianStudent.createMany.mock.calls[0]![0].data).toEqual([
+      expect.objectContaining({ guardianId: NEW_GUARDIAN, studentId: ALMA }),
+      expect.objectContaining({ guardianId: NEW_GUARDIAN, studentId: BO }),
+    ]);
+  });
+
+  describe('a row that cannot be written is an error naming the column, and writes nothing, not even a guardian', () => {
+    const run = async (found: unknown[], file: ReturnType<typeof row>) => {
+      arrange(found);
+      const report = await service.importGuardians(rowsOf(file), testUser());
+      expect(tx.user.createManyAndReturn).not.toHaveBeenCalled();
+      expect(tx.guardianStudent.createMany).not.toHaveBeenCalled();
+      expect(report).toMatchObject({ created: 0, skipped: 0, linked: 0 });
+      return report.errors;
+    };
+
+    it('a pupil the school does not have', async () => {
+      expect(await run([], row('gun@example.com', 'ghost@example.com'))).toEqual([
+        {
+          row: 1,
+          message:
+            'Kolumnen "elev_epost": ingen elev har e-postadressen "ghost@example.com". Eleven måste finnas i skolan och vara aktiv. Importera eleverna först, eller rätta adressen.',
+        },
+      ]);
+    });
+
+    it('a pupil who is not active', async () => {
+      expect(await run([{ ...alma, isActive: false }], row('gun@example.com', 'alma@example.com'))).toEqual([
+        {
+          row: 1,
+          message:
+            'Kolumnen "elev_epost": eleven med e-postadressen "alma@example.com" är inte aktiv. Aktivera personen under Personer, eller ta bort raden.',
+        },
+      ]);
+    });
+
+    it('a pupil address that is a teacher’s, with whose it is', async () => {
+      const errors = await run([{ ...alma, role: 'TEACHER' }], row('gun@example.com', 'alma@example.com'));
+      expect(errors[0]!.message).toBe(
+        'Kolumnen "elev_epost": "alma@example.com" tillhör en lärare, inte en elev. Skriv elevens egen e-postadress.',
+      );
+    });
+
+    it('an address two people share, for the pupil as for the guardian', async () => {
+      const errors = await run([alma, { ...alma, id: BO, email: 'ALMA@example.com' }], row('gun@example.com', 'alma@example.com'));
+      expect(errors[0]!.message).toContain('Kolumnen "elev_epost": e-postadressen "alma@example.com" finns på mer än en person i skolan');
+      arrange([alma, gun, { ...gun, id: NEW_GUARDIAN, email: 'GUN@example.com' }]);
+      const report = await service.importGuardians(rowsOf(row('gun@example.com', 'alma@example.com')), testUser());
+      expect(report.errors[0]!.message).toContain('Kolumnen "epost": e-postadressen "gun@example.com" finns på mer än en person');
+    });
+
+    it('a guardian address that is a pupil’s or a teacher’s: one role in the school', async () => {
+      const errors = await run([alma, { ...bo, role: 'TEACHER' }], row('bo@example.com', 'alma@example.com'));
+      expect(errors[0]!.message).toBe(
+        'Kolumnen "epost": "bo@example.com" tillhör en lärare, inte en vårdnadshavare. En person har en roll i skolan, så vårdnadshavaren behöver en egen adress.',
+      );
+    });
+
+    it('a guardian who is not active: the file reactivates nobody', async () => {
+      const errors = await run([alma, { ...gun, isActive: false }], row('gun@example.com', 'alma@example.com'));
+      expect(errors[0]!.message).toBe(
+        'Kolumnen "epost": vårdnadshavaren med e-postadressen "gun@example.com" är inte aktiv. Aktivera personen under Personer, eller ta bort raden.',
+      );
+    });
+  });
+
+  it('writes the rows that can be written and names the others by the line they have in the file', async () => {
+    arrange([alma]);
+
+    const report = await service.importGuardians(
+      {
+        rowNumbers: [2, 3, 7],
+        rows: [row('gun@example.com', 'alma@example.com'), row('x@example.com', 'ghost@example.com'), row('y@example.com', 'nobody@example.com')],
+      },
+      testUser(),
+    );
+
+    expect(report).toMatchObject({ created: 1, linked: 1 });
+    expect(report.errors.map((error) => error.row)).toEqual([3, 7]);
+    expect(tx.user.createManyAndReturn.mock.calls[0]![0].data).toHaveLength(1);
+  });
+
+  it('refuses a rowNumbers list of another length', async () => {
+    await expect(service.importGuardians({ rowNumbers: [2], rows: [row('a@b.se', 'c@d.se'), row('e@f.se', 'g@h.se')] }, testUser())).rejects.toThrow(
+      'rowNumbers: ett radnummer per rad i rows.',
+    );
+  });
+
+  describe('the school’s people lock, shared, and the pupils in id order (src/common/lock-order.ts)', () => {
+    /** The pupil holds sent with $queryRaw, in order. */
+    const holds = () => tx.$queryRaw.mock.calls.filter((call) => /FOR SHARE/.test(rawSql(call)));
+
+    it('takes the lock first, before it reads anybody', async () => {
+      arrange([alma]);
+
+      await service.importGuardians(rowsOf(row('gun@example.com', 'alma@example.com')), testUser());
+
+      const [first] = tx.$executeRaw.mock.calls;
+      expect(rawSql(first)).toBe(PEOPLE_LOCK);
+      expect((first[0] as { values: unknown[] }).values).toEqual([`Users:${SCHOOL}`]);
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.user.findMany.mock.invocationCallOrder[0]!);
+    });
+
+    it('waits for the lock to be granted before it reads anything', async () => {
+      arrange([alma]);
+      let grant!: () => void;
+      tx.$executeRaw.mockImplementationOnce(() => new Promise((resolve) => (grant = () => resolve(0))));
+
+      const running = service.importGuardians(rowsOf(row('gun@example.com', 'alma@example.com')), testUser());
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+      grant();
+      await running;
+
+      expect(tx.user.findMany).toHaveBeenCalled();
+    });
+
+    it('holds the pupils and the guardians that exist once, in id order whatever the order of the file, before it writes', async () => {
+      arrange([bo, alma, gun]);
+
+      await service.importGuardians(
+        rowsOf(row('gun@example.com', 'bo@example.com'), row('gun@example.com', 'alma@example.com')),
+        testUser(),
+      );
+
+      expect(holds().map((call) => [rawSql(call), call.slice(1)])).toEqual([[HOLD_PUPILS, [[ALMA, BO, GUN]]]]);
+      const hold = tx.$queryRaw.mock.invocationCallOrder[0]!;
+      expect(hold).toBeLessThan(tx.guardianStudent.createMany.mock.invocationCallOrder[0]!);
+    });
+
+    it('holds them before the guardians it makes are inserted', async () => {
+      arrange([alma]);
+
+      await service.importGuardians(rowsOf(row('gun@example.com', 'alma@example.com')), testUser());
+
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.user.createManyAndReturn.mock.invocationCallOrder[0]!);
+    });
+
+    it('takes the lock for a file where no row can be written, and holds nobody', async () => {
+      arrange([]);
+
+      await service.importGuardians(rowsOf(row('gun@example.com', 'ghost@example.com')), testUser());
+
+      expect(rawSql(tx.$executeRaw.mock.calls[0])).toBe(PEOPLE_LOCK);
+      expect(holds()).toEqual([]);
+    });
+
+    it('reads the held people again: a pupil deactivated since the first read is not linked, and its guardian is not made', async () => {
+      arrange([alma, bo], [BO]);
+
+      const report = await service.importGuardians(
+        rowsOf(row('gun@example.com', 'alma@example.com'), row('ida@example.com', 'bo@example.com')),
+        testUser(),
+      );
+
+      expect(report).toMatchObject({ created: 1, linked: 1 });
+      expect(report.errors).toEqual([
+        {
+          row: 1,
+          message: 'Eleven eller vårdnadshavaren ändrades medan filen lästes in och är inte längre aktiv. Läs in filen igen.',
+        },
+      ]);
+      expect(tx.user.createManyAndReturn.mock.calls[0]![0].data).toEqual([expect.objectContaining({ email: 'ida@example.com' })]);
+      expect(tx.guardianStudent.createMany.mock.calls[0]![0].data).toEqual([
+        expect.objectContaining({ studentId: BO }),
+      ]);
+    });
+
+    it('reads a guardian who is no longer active the same way', async () => {
+      arrange([alma, gun], [ALMA]);
+
+      const report = await service.importGuardians(rowsOf(row('gun@example.com', 'alma@example.com')), testUser());
+
+      expect(report.errors).toHaveLength(1);
+      expect(tx.guardianStudent.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  it('names a guardian another writer got the address for first, instead of linking nobody', async () => {
+    arrange([alma]);
+    tx.user.createManyAndReturn.mockResolvedValue([]);
+
+    const report = await service.importGuardians(rowsOf(row('gun@example.com', 'alma@example.com')), testUser());
+
+    expect(report).toMatchObject({ created: 0, linked: 0, skipped: 0 });
+    expect(report.errors[0]!.message).toContain('Kolumnen "epost": vårdnadshavaren med e-postadressen "gun@example.com" kunde inte skapas');
+    expect(tx.guardianStudent.createMany).not.toHaveBeenCalled();
+  });
+
+  it('accounts for every row: linked + skipped + errors', async () => {
+    arrange([alma, bo, gun]);
+    tx.guardianStudent.createMany.mockResolvedValue({ count: 2 });
+    const file = [
+      row('gun@example.com', 'alma@example.com'), // a link, new
+      row('gun@example.com', 'bo@example.com'), // a link, new
+      row('gun@example.com', 'bo@example.com'), // the same pair again
+      row('gun@example.com', 'ghost@example.com'), // an error
+    ];
+
+    const report = await service.importGuardians(rowsOf(...file), testUser());
+
+    expect((report.linked ?? 0) + report.skipped + report.errors.length).toBe(file.length);
+  });
+
+  it('answers a conflict the database finds as a 409, not a 500', async () => {
+    arrange([alma]);
+    tx.guardianStudent.createMany.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('fk', { code: 'P2003', clientVersion: 'x' }),
+    );
+
+    await expect(service.importGuardians(rowsOf(row('gun@example.com', 'alma@example.com')), testUser())).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('403s a principal without a school before it touches the database', async () => {
+    await expect(service.importGuardians(rowsOf(row('a@b.se', 'c@d.se')), schoolless())).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.withRls).not.toHaveBeenCalled();
+  });
+});
+
 describe('ImportService, teachers with posts', () => {
   const withRls = jest.fn();
   const users = { create: jest.fn() };
