@@ -114,7 +114,8 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
     case 'COVER_REQUESTED':
     case 'COVER_REQUEST_ACCEPTED':
     case 'COVER_REQUEST_CLOSED': {
-      // Vikariefrågan: the lessons asked for and when, never who is away or
+      // Vikariefrågan: how many lessons and from when, never which lesson
+      // (the inbox is read on a lock screen as a push is), who is away or
       // why (no cover notice carries either). The count is the request's
       // lessons; a notice from a gateway that did not say counts one.
       const count = Math.max(1, Math.trunc(Number(meta['lessonCount'])) || 1);
@@ -122,17 +123,20 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
         return t('coverRequests.notice.accepted', { name: str('acceptedByName') || t('common.noValue'), when: when('startsAt'), count });
       }
       if (entry.type === 'COVER_REQUEST_CLOSED') {
-        return t(meta['reason'] === 'WITHDRAWN' ? 'coverRequests.notice.closedWithdrawn' : 'coverRequests.notice.closedTaken', {
-          when: when('startsAt'),
-          count,
-        });
+        const reason = meta['reason'];
+        const key =
+          reason === 'WITHDRAWN'
+            ? 'coverRequests.notice.closedWithdrawn'
+            : reason === 'NOT_NEEDED'
+              ? 'coverRequests.notice.closedNotNeeded'
+              : reason === 'UNANSWERED'
+                ? 'coverRequests.notice.closedUnanswered'
+                : 'coverRequests.notice.closedTaken';
+        return t(key, { when: when('startsAt'), count });
       }
-      const lessons: unknown = meta['lessons'];
-      const first = (Array.isArray(lessons) ? lessons[0] : undefined) as Record<string, unknown> | undefined;
-      const lesson = [first?.['subjectName'], first?.['groupName'], first?.['roomName']]
-        .filter((part): part is string => typeof part === 'string' && part !== '')
-        .join(', ');
-      return t('coverRequests.notice.requested', { lesson, when: when('startsAt'), until: when('expiresAt'), count });
+      // How many and from when, as the push and the web's bell say it: the
+      // lesson itself (subject, group, room) is on the card behind the login.
+      return t('coverRequests.notice.requested', { when: when('startsAt'), until: when('expiresAt'), count });
     }
     default:
       return t('notifications.text.fallback');

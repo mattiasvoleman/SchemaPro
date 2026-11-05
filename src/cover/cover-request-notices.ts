@@ -5,17 +5,26 @@ import { readNoticeLessons, swedishWhen, type NoticeLesson } from './cover-notic
 /**
  * WHAT A COLLEAGUE IS TOLD ABOUT A REQUEST, AND NOTHING ABOUT WHY.
  *
- * A request names the lessons (subject, group, room, start) and until when it
- * can be answered. It never names the absent teacher, the reason or the other
- * colleagues asked: it is about the colleague's own day. The e-mail is in
- * Swedish on the school's clock; the push says only that a question waits and
- * when (push-messages.ts), because a lock screen is read by whoever is near.
+ * A notice says how many lessons and from when, and that the answer is in
+ * Rastra. It names no subject, group or room, in the e-mail's subject line
+ * and text, in the inbox row's meta or in the push: a subject line is shown
+ * on a lock screen as a push is, and with the absent teacher's week known
+ * the three would say who is away. It never names the absent teacher, the
+ * reason or the other colleagues asked either. The lessons themselves are
+ * read behind the login, on the card in Rastra, which has to show them for
+ * the colleague to decide. The e-mail is in Swedish on the school's clock.
  *
- * Three kinds:
+ * Three types:
  *   COVER_REQUESTED          to each colleague asked.
- *   COVER_REQUEST_CLOSED     to each colleague asked who did not get it:
- *                            meta.reason TAKEN (another said yes first) or
- *                            WITHDRAWN (the school took the question back).
+ *   COVER_REQUEST_CLOSED     meta.reason says which end:
+ *                              TAKEN       another said yes first,
+ *                              WITHDRAWN   the school took the question back,
+ *                              NOT_NEEDED  the absence or the lesson went away
+ *                                          while the question stood
+ *                            to each colleague asked who did not get it; and
+ *                              UNANSWERED  the time ran out with nobody saying
+ *                                          yes
+ *                            to the administrator who asked.
  *   COVER_REQUEST_ACCEPTED   to the administrator who asked: who took it.
  *
  * Sent after the writing transaction has committed, in a transaction of its
@@ -34,18 +43,19 @@ function lessonsOf(context: RequestNoticeContext, known: Map<string, NoticeLesso
     .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime() || a.id.localeCompare(b.id));
 }
 
+/** A lesson in a notice's meta: which and when, never what it is about. */
 function lessonMeta(lesson: NoticeLesson): Record<string, unknown> {
-  return {
-    lessonId: lesson.id,
-    startsAt: lesson.startsAt.toISOString(),
-    subjectName: lesson.subjectName,
-    groupName: lesson.groupName,
-    roomName: lesson.roomName,
-  };
+  return { lessonId: lesson.id, startsAt: lesson.startsAt.toISOString() };
 }
 
-function lineOf(lesson: NoticeLesson, timezone: string): string {
-  return `${lesson.subjectName}, ${lesson.groupName}, ${lesson.roomName}, ${swedishWhen(lesson.startsAt, timezone)}`;
+/** "en lektion" / "3 lektioner", for the e-mails' text. */
+function lessonsIn(count: number): string {
+  return count === 1 ? 'en lektion' : `${count} lektioner`;
+}
+
+/** "ett vikariepass" / "3 vikariepass". */
+function passesIn(count: number): string {
+  return count === 1 ? 'ett vikariepass' : `${count} vikariepass`;
 }
 
 /** The question, to the colleagues asked. */
@@ -77,10 +87,10 @@ export async function sendRequested(
       lessons: lessons.map(lessonMeta),
     },
     email: {
-      subject: `Vikariefråga: ${first.subjectName} ${swedishWhen(first.startsAt, args.timezone)}${lessons.length > 1 ? ` m.fl.` : ''}`,
+      subject: `Vikariefråga ${swedishWhen(first.startsAt, args.timezone)}`,
       body:
-        `Kan du vikariera? ${lessons.map((lesson) => lineOf(lesson, args.timezone)).join('; ')}. ` +
-        `Svara senast ${until}. Den som tackar ja först får uppdraget. Du svarar i Rastra.`,
+        `Kan du vikariera ${lessonsIn(lessons.length)} från ${swedishWhen(first.startsAt, args.timezone)}? ` +
+        `Svara i Rastra senast ${until}. Den som tackar ja först får uppdraget.`,
     },
   });
 }
@@ -112,13 +122,16 @@ export async function sendAccepted(
       acceptedByName: args.acceptedByName,
     },
     email: {
-      subject: `Vikarie tillsatt: ${first.subjectName} ${swedishWhen(first.startsAt, args.timezone)}`,
+      subject: `Vikarie tillsatt ${swedishWhen(first.startsAt, args.timezone)}`,
       body:
-        `${args.acceptedByName} har tackat ja till ${lessons.length === 1 ? 'vikariepasset' : `${lessons.length} vikariepass`}: ` +
-        `${lessons.map((lesson) => lineOf(lesson, args.timezone)).join('; ')}. Uppdraget är publicerat på schemat.`,
+        `${args.acceptedByName} har tackat ja till ${passesIn(lessons.length)} från ${swedishWhen(first.startsAt, args.timezone)}. ` +
+        `Uppdraget är publicerat på schemat.`,
     },
   });
 }
+
+/** Why a question ended for a colleague who did not get it. */
+export type ClosedReason = 'TAKEN' | 'WITHDRAWN' | 'NOT_NEEDED';
 
 /** The end of the question, to the colleagues who did not get it. */
 export async function sendClosed(
@@ -129,14 +142,28 @@ export async function sendClosed(
     timezone: string;
     context: RequestNoticeContext;
     recipientIds: readonly string[];
-    reason: 'TAKEN' | 'WITHDRAWN';
+    reason: ClosedReason;
   },
 ): Promise<void> {
   const known = await readNoticeLessons(tx, args.context.lessonIds);
   const lessons = lessonsOf(args.context, known);
   const first = lessons[0];
   if (!first || args.recipientIds.length === 0) return;
-  const taken = args.reason === 'TAKEN';
+  const when = swedishWhen(first.startsAt, args.timezone);
+  const text = {
+    TAKEN: {
+      subject: `Uppdraget är tillsatt ${when}`,
+      body: `Vikariefrågan om ${lessonsIn(lessons.length)} från ${when} är redan tillsatt av en kollega. Tack för att du ville hjälpa till.`,
+    },
+    WITHDRAWN: {
+      subject: `Vikariefrågan är återkallad ${when}`,
+      body: `Vikariefrågan om ${lessonsIn(lessons.length)} från ${when} är återkallad. Du behöver inte svara.`,
+    },
+    NOT_NEEDED: {
+      subject: `Vikariefrågan behövs inte längre ${when}`,
+      body: `Vikariefrågan om ${lessonsIn(lessons.length)} från ${when} behövs inte längre: frånvaron eller lektionen finns inte kvar. Du behöver inte svara.`,
+    },
+  }[args.reason];
   await notifications.notifyUsers(tx, {
     schoolId: args.schoolId,
     userIds: [...args.recipientIds],
@@ -148,13 +175,40 @@ export async function sendClosed(
       reason: args.reason,
       lessons: lessons.map(lessonMeta),
     },
+    email: text,
+  });
+}
+
+/**
+ * The time ran out and nobody said yes: said to the administrator who asked,
+ * in the same type as the colleagues' end of it (COVER_REQUEST_CLOSED, reason
+ * UNANSWERED), so the sender does not have to look at the board to find out
+ * that the lessons still need somebody.
+ */
+export async function sendUnanswered(
+  notifications: NotificationsService,
+  tx: PrismaClient,
+  args: { schoolId: string; timezone: string; context: RequestNoticeContext; senderId: string },
+): Promise<void> {
+  const known = await readNoticeLessons(tx, args.context.lessonIds);
+  const lessons = lessonsOf(args.context, known);
+  const first = lessons[0];
+  if (!first) return;
+  const when = swedishWhen(first.startsAt, args.timezone);
+  await notifications.notifyUsers(tx, {
+    schoolId: args.schoolId,
+    userIds: [args.senderId],
+    type: 'COVER_REQUEST_CLOSED',
+    meta: {
+      requestId: args.context.requestId,
+      startsAt: first.startsAt.toISOString(),
+      lessonCount: lessons.length,
+      reason: 'UNANSWERED',
+      lessons: lessons.map(lessonMeta),
+    },
     email: {
-      subject: taken
-        ? `Uppdraget är tillsatt: ${first.subjectName} ${swedishWhen(first.startsAt, args.timezone)}`
-        : `Vikariefrågan är återkallad: ${first.subjectName} ${swedishWhen(first.startsAt, args.timezone)}`,
-      body: taken
-        ? `Uppdraget ${lessons.map((lesson) => lineOf(lesson, args.timezone)).join('; ')} är redan tillsatt av en kollega. Tack för att du ville hjälpa till.`
-        : `Frågan om ${lessons.map((lesson) => lineOf(lesson, args.timezone)).join('; ')} är återkallad. Du behöver inte svara.`,
+      subject: `Ingen har tackat ja ${when}`,
+      body: `Ingen kollega tackade ja till vikariefrågan om ${lessonsIn(lessons.length)} från ${when} innan den gick ut. Passen behöver fortfarande en vikarie: fråga fler kollegor eller tillsätt någon på vikarietavlan i Rastra.`,
     },
   });
 }

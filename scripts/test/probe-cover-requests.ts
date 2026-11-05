@@ -34,7 +34,22 @@
  *   cr-h  a no is a no, once;
  *   cr-i  the vikarie's tap: unconfirmed, confirmed and idempotent, nobody
  *         else's to tap, and gone when the decision goes to another;
- *   cr-j  the fairness view counts what the database holds.
+ *   cr-j  the fairness view counts what the database holds, a question that
+ *         can still be answered not among the unanswered;
+ *   cr-k  the job's pass: a question whose lesson was cancelled, whose absence
+ *         was taken back or shortened, or whose absent teacher left the lesson
+ *         ends CLOSED and the colleagues it still waited on are told it is no
+ *         longer needed (and nobody else); one that ran out unanswered ends
+ *         EXPIRED and the sender is told; grounds gone come before time out;
+ *         a sender who can no longer place a vikarie is told nothing; none of
+ *         the notices names a subject, a group or a room;
+ *   cr-l  a yes and a no from the same colleague in the same moment: one wins,
+ *         the other is told they have answered, never that the question is
+ *         missing;
+ *   cr-m  lines and recipients are added to an open request only;
+ *   cr-n  a sender deactivated, or made a teacher, between the lookup and the
+ *         placement is said as that (COVER_REQUEST_SENDER_GONE), not as a 500,
+ *         and nothing is placed.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -160,7 +175,7 @@ export async function coverRequestsChecks(owner: Client, api: PrismaService, mar
     const dayOf = async (offset: number): Promise<string> =>
       (await one<{ d: string }>(`SELECT (current_date + 2 + $1::int)::text AS d`, [offset])).d;
     /** A one-hour lesson of the absent teacher `offset` days on at `hour` (UTC; Stockholm is one or two hours on). */
-    const lesson = async (offset: number, hour: number): Promise<string> => {
+    const lesson = async (offset: number, hour: number, teacherId: string = absent.id): Promise<string> => {
       const date = await dayOf(offset);
       const id = (
         await one<{ id: string }>(
@@ -169,7 +184,7 @@ export async function coverRequestsChecks(owner: Client, api: PrismaService, mar
           [s, subject, group, date, hour],
         )
       ).id;
-      await owner.query(`INSERT INTO "CalendarLessonTeachers" ("calendarLessonId", "teacherId", "schoolId", role) VALUES ($1, $2, $3, 'LEAD')`, [id, absent.id, s]);
+      await owner.query(`INSERT INTO "CalendarLessonTeachers" ("calendarLessonId", "teacherId", "schoolId", role) VALUES ($1, $2, $3, 'LEAD')`, [id, teacherId, s]);
       return id;
     };
 
@@ -433,6 +448,9 @@ export async function coverRequestsChecks(owner: Client, api: PrismaService, mar
           [s, admin.id],
         )
       ).id;
+      // On firm ground (a lesson of the absent teacher, the absence active): it ran out, nothing else.
+      await owner.query(`INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES ($1, $2, $3, $4)`, [s, stale, absence, await lesson(19, 6)]);
+      await owner.query(`INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES ($1, $2, $3)`, [s, stale, t[3]!.id]);
       const job = new CoverRequestsJob(requests);
       await job.tick();
       assert.equal((await requestOf(stale)).status, 'EXPIRED');
@@ -504,22 +522,214 @@ export async function coverRequestsChecks(owner: Client, api: PrismaService, mar
       const today = new Date().toISOString().slice(0, 10);
       const from = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
       const fair = await requests.fairness(from, today, asAdmin);
-      const truth = await rows<{ userId: string; received: number; accepted: number; declined: number }>(
+      const truth = await rows<{ userId: string; received: number; accepted: number; declined: number; waiting: number }>(
         `SELECT x."userId", count(*)::int AS received,
                 count(*) FILTER (WHERE x.answer = 'ACCEPTED')::int AS accepted,
-                count(*) FILTER (WHERE x.answer = 'DECLINED')::int AS declined
+                count(*) FILTER (WHERE x.answer = 'DECLINED')::int AS declined,
+                count(*) FILTER (WHERE x.answer = 'PENDING' AND r.status = 'OPEN')::int AS waiting
            FROM "CoverRequestRecipients" x JOIN "CoverRequests" r ON r.id = x."requestId"
           WHERE x."schoolId" = $1 GROUP BY x."userId" ORDER BY x."userId"`,
         [s],
       );
+      // A question that can still be answered is received, and neither answered nor left unanswered.
       assert.deepEqual(
         fair.rows.map((r) => [r.userId, r.received, r.accepted, r.declined, r.received - r.accepted - r.declined - r.unanswered]),
-        truth.map((r) => [r.userId, r.received, r.accepted, r.declined, 0]),
+        truth.map((r) => [r.userId, r.received, r.accepted, r.declined, r.waiting]),
       );
       assert.ok(fair.rows.some((r) => r.accepted > 0) && fair.rows.some((r) => r.declined > 0) && fair.rows.some((r) => r.unanswered > 0));
       // One of the read is recorded: whom the view named.
       const read = await rows(`SELECT 1 FROM "PersonalDataAccess" WHERE "schoolId" = $1 AND kind = 'EMPLOYMENT' AND "actorId" = $2`, [s, admin.id]);
       assert.ok(read.length > 0);
+    });
+
+    /** Every notice the question wrote, whoever got it: for "nobody was told" and "told nothing of the lessons". */
+    const noticesAbout = (requestId: string) =>
+      rows<{ userId: string; type: string; meta: Record<string, unknown> }>(
+        `SELECT "userId", type::text AS type, meta FROM "Notifications" WHERE "schoolId" = $1 AND meta ->> 'requestId' = $2 ORDER BY "createdAt", "userId"`,
+        [s, requestId],
+      );
+    const namesNothing = (value: unknown) => {
+      const text = JSON.stringify(value);
+      assert.ok(!/Cr Matematik|Cr 7A|subjectName|groupName|roomName/.test(text), `a notice names the lesson: ${text}`);
+    };
+    /** A question inserted as the owner, with the clock of the writer's choosing: `endsIn` before now is a question that ran out. */
+    const plantRequest = async (senderId: string, lessonId: string, absenceId: string, recipients: string[], expiredAgoMinutes: number | null): Promise<string> => {
+      const id = (
+        await one<{ id: string }>(
+          expiredAgoMinutes === null
+            ? `INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES ($1, $2, now() + interval '1 hour') RETURNING id`
+            : `INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "createdAt", "expiresAt")
+               VALUES ($1, $2, now() - make_interval(mins => ${Number(expiredAgoMinutes) + 60}), now() - make_interval(mins => ${Number(expiredAgoMinutes)})) RETURNING id`,
+          [s, senderId],
+        )
+      ).id;
+      await owner.query(`INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES ($1, $2, $3, $4)`, [s, id, absenceId, lessonId]);
+      for (const userId of recipients) {
+        await owner.query(`INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES ($1, $2, $3)`, [s, id, userId]);
+      }
+      return id;
+    };
+
+    await check('(cr-k) the job’s pass ends a question whose grounds are gone and tells the colleagues it still waited on; a question that ran out unanswered is told to the sender; none names the lesson', async () => {
+      const job = new CoverRequestsJob(requests);
+      const cases: Array<[string, (c: { lesson: string; absence: string; teacher: string }) => Promise<unknown>]> = [
+        ['the lesson is cancelled', (c) => owner.query(`UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'EVENT' WHERE id = $1`, [c.lesson])],
+        ['the absence is taken back', (c) => owner.query(`UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now() WHERE id = $1`, [c.absence])],
+        [
+          'the absence is shortened to before the lesson',
+          (c) => owner.query(`UPDATE "TeacherAbsences" SET "endsAt" = (SELECT "startsAt" - interval '1 hour' FROM "CalendarLessons" WHERE id = $2) WHERE id = $1`, [c.absence, c.lesson]),
+        ],
+        ['the absent teacher is no longer on the lesson', (c) => owner.query(`DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1 AND "teacherId" = $2`, [c.lesson, c.teacher])],
+      ];
+      let index = 0;
+      for (const [what, mutate] of cases) {
+        index += 1;
+        const teacher = await person('TEACHER', `borta${index}`);
+        const lessonId = await lesson(20 + index, 6, teacher.id);
+        const absenceId = (
+          await one<{ id: string }>(
+            `INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt") VALUES ($1, $2, now() - interval '1 day', now() + interval '90 days') RETURNING id`,
+            [s, teacher.id],
+          )
+        ).id;
+        const sent = await requests.create({ lessons: [{ lessonId, absenceId }], recipientIds: [t[0]!.id, t[1]!.id, t[2]!.id] }, asAdmin);
+        await requests.decline(sent.id, asTeacher(t[2]!));
+        // Firm ground: the pass leaves it be.
+        await job.tick();
+        assert.equal((await requestOf(sent.id)).status, 'OPEN', `${what}: a question on firm ground ended`);
+
+        await mutate({ lesson: lessonId, absence: absenceId, teacher: teacher.id });
+        await job.tick();
+        const ended = await requestOf(sent.id);
+        assert.deepEqual([ended.status, ended.open], ['CLOSED', 0], `${what}: the question was not closed and its lesson freed`);
+
+        const told = await noticesAbout(sent.id);
+        const closed = told.filter((n) => n.type === 'COVER_REQUEST_CLOSED');
+        // The two who had not answered are told it is no longer needed; the one who said no, and the sender, are not.
+        assert.deepEqual(
+          closed.map((n) => [n.userId, n.meta['reason']]).sort(),
+          [[t[0]!.id, 'NOT_NEEDED'], [t[1]!.id, 'NOT_NEEDED']].sort(),
+          `${what}: wrong colleagues told`,
+        );
+        assert.ok(!told.some((n) => n.userId === admin.id && n.type === 'COVER_REQUEST_CLOSED'), `${what}: the sender was told of a question taken from them`);
+        namesNothing(told);
+        assert.deepEqual((await requests.mine(asTeacher(t[0]!))).requests.filter((r) => r.id === sent.id).map((r) => r.state), ['CLOSED']);
+        await assert.rejects(requests.accept(sent.id, asTeacher(t[0]!)), (e: unknown) => codeOf(e) === 'COVER_REQUEST_GONE');
+        // And the lesson is free for a new question, when it is a lesson at all.
+        assert.equal((await rows(`SELECT 1 FROM "CoverRequestLessons" WHERE "requestId" = $1 AND open`, [sent.id])).length, 0);
+      }
+
+      // It ran out and nobody said yes: the sender is told, in the colleagues' own type, and the colleagues are not.
+      const lonely = await plantRequest(admin.id, await lesson(30, 6), absence, [t[0]!.id, t[1]!.id], 5);
+      await job.tick();
+      assert.equal((await requestOf(lonely)).status, 'EXPIRED');
+      const lonelyNotices = await noticesAbout(lonely);
+      assert.deepEqual(lonelyNotices.map((n) => [n.userId, n.type, n.meta['reason']]), [[admin.id, 'COVER_REQUEST_CLOSED', 'UNANSWERED']]);
+      assert.equal(lonelyNotices[0]!.meta['lessonCount'], 1);
+      namesNothing(lonelyNotices);
+      // The same pass again tells nobody twice.
+      await job.tick();
+      assert.equal((await noticesAbout(lonely)).length, 1);
+
+      // Grounds gone come before time out.
+      const lateTeacher = await person('TEACHER', 'borta-sent');
+      const lateLesson = await lesson(31, 6, lateTeacher.id);
+      const lateAbsence = (
+        await one<{ id: string }>(
+          `INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt") VALUES ($1, $2, now() - interval '1 day', now() + interval '90 days') RETURNING id`,
+          [s, lateTeacher.id],
+        )
+      ).id;
+      const both = await plantRequest(admin.id, lateLesson, lateAbsence, [t[0]!.id], 5);
+      await owner.query(`UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'EVENT' WHERE id = $1`, [lateLesson]);
+      await job.tick();
+      assert.equal((await requestOf(both)).status, 'CLOSED');
+      assert.deepEqual((await noticesAbout(both)).map((n) => [n.userId, n.meta['reason']]), [[t[0]!.id, 'NOT_NEEDED']]);
+
+      // A sender who can no longer place a vikarie (read-only now): the question ends all the same, and nobody is told.
+      const reader = await person('SCHOOL_ADMIN', 'lasare', 'LASARE');
+      const orphan = await plantRequest(reader.id, await lesson(32, 6), absence, [t[0]!.id], 5);
+      await job.tick();
+      assert.equal((await requestOf(orphan)).status, 'EXPIRED');
+      assert.deepEqual(await noticesAbout(orphan), []);
+    });
+
+    await check('(cr-l) a yes and a no from the same colleague in the same moment: one wins, and the other is told they have answered', async () => {
+      let yesWon = 0;
+      let noWon = 0;
+      for (let round = 0; round < 12; round += 1) {
+        const l = await lesson(40 + round, 6);
+        const sent = await requests.create({ lessons: [{ lessonId: l, absenceId: absence }], recipientIds: [t[4]!.id, t[5]!.id] }, asAdmin);
+        const me = asTeacher(t[4]!);
+        const lag = [0, 4, 12, 25][round % 4]!;
+        const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+        // The yes goes first in half the rounds and the no in the other half, with a little jitter either way.
+        const yes = (round < 6 ? pause(0) : pause(lag)).then(() => raced.requests.accept(sent.id, me)).then(() => 'yes' as const, (e: unknown) => String(codeOf(e)));
+        const no = (round < 6 ? pause(lag) : pause(0)).then(() => raced.requests.decline(sent.id, me)).then(() => 'no' as const, (e: unknown) => String(codeOf(e)));
+        const [a, b] = await Promise.all([yes, no]);
+        const row = await requestOf(sent.id);
+        const answer = (await one<{ answer: string }>(`SELECT answer::text FROM "CoverRequestRecipients" WHERE "requestId" = $1 AND "userId" = $2`, [sent.id, t[4]!.id])).answer;
+        if (a === 'yes') {
+          assert.equal(b, 'COVER_REQUEST_ANSWERED', `round ${round}: the no beside a yes was told ${b}`);
+          assert.deepEqual([row.status, answer, await substitutesOf(l)], ['ACCEPTED', 'ACCEPTED', [t[4]!.id]], `round ${round}`);
+          yesWon += 1;
+        } else {
+          assert.deepEqual([a, b], ['COVER_REQUEST_ANSWERED', 'no'], `round ${round}: the yes beside a no was told ${a}`);
+          assert.deepEqual([row.status, answer, await substitutesOf(l)], ['OPEN', 'DECLINED', []], `round ${round}`);
+          noWon += 1;
+          await requests.withdraw(sent.id, asAdmin);
+        }
+      }
+      assert.equal(yesWon + noWon, 12);
+    });
+
+    await check('(cr-m) lines and recipients are added to an open request only', async () => {
+      const l = await lesson(55, 6);
+      const sent = await requests.create({ lessons: [{ lessonId: l, absenceId: absence }], recipientIds: [t[0]!.id] }, asAdmin);
+      await requests.withdraw(sent.id, asAdmin);
+      const other = await lesson(56, 6);
+      await assert.rejects(api.withRls(asAdmin, (tx) => tx.coverRequestLesson.create({ data: { schoolId: s, requestId: sent.id, absenceId: absence, calendarLessonId: other } })));
+      await assert.rejects(api.withRls(asAdmin, (tx) => tx.coverRequestRecipient.create({ data: { schoolId: s, requestId: sent.id, userId: t[1]!.id } })));
+      assert.equal((await rows(`SELECT 1 FROM "CoverRequestLessons" WHERE "requestId" = $1`, [sent.id])).length, 1);
+      assert.equal((await rows(`SELECT 1 FROM "CoverRequestRecipients" WHERE "requestId" = $1`, [sent.id])).length, 1);
+      // The refused line did not hold the other lesson against a new question.
+      const fresh = await requests.create({ lessons: [{ lessonId: other, absenceId: absence }], recipientIds: [t[0]!.id] }, asAdmin);
+      await requests.withdraw(fresh.id, asAdmin);
+    });
+
+    await check('(cr-n) a sender deactivated, or made a teacher, between the lookup and the placement is said as that, and nothing is placed', async () => {
+      const changes: Array<[string, string]> = [
+        ['deactivated', `UPDATE "Users" SET "isActive" = false WHERE id = $1`],
+        ['made a teacher', `UPDATE "Users" SET role = 'TEACHER'::"UserRole", "adminProfile" = NULL WHERE id = $1`],
+      ];
+      let index = 0;
+      for (const [what, change] of changes) {
+        index += 1;
+        const sender = await person('SCHOOL_ADMIN', `avsandare${index}`, 'FULL');
+        const l = await lesson(60 + index, 6);
+        const sent = await requests.create({ lessons: [{ lessonId: l, absenceId: absence }], recipientIds: [t[0]!.id] }, asAdminOf(sender));
+        // The sender changes after the colleague's lookup has answered who they are and before the placement opens.
+        let transactions = 0;
+        const shim = new Proxy(api, {
+          get(target, property) {
+            const value = Reflect.get(target, property, target) as unknown;
+            if (property === 'withRls') {
+              return async (...args: unknown[]) => {
+                const result = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+                transactions += 1;
+                if (transactions === 1) await owner.query(change, [sender.id]);
+                return result;
+              };
+            }
+            return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+          },
+        }) as PrismaService;
+        const { requests: shimmed } = build(shim);
+        await assert.rejects(shimmed.accept(sent.id, asTeacher(t[0]!)), (e: unknown) => codeOf(e) === 'COVER_REQUEST_SENDER_GONE', `${what}: the sender's change was not said as that`);
+        assert.equal((await requestOf(sent.id)).status, 'OPEN', what);
+        assert.deepEqual(await substitutesOf(l), [], what);
+        assert.equal((await one<{ answer: string }>(`SELECT answer::text FROM "CoverRequestRecipients" WHERE "requestId" = $1 AND "userId" = $2`, [sent.id, t[0]!.id])).answer, 'PENDING', what);
+      }
     });
   } finally {
     await racer.$disconnect().catch(() => undefined);

@@ -2329,7 +2329,7 @@
     "unreadMarker": "Unread.",
     "cover": {
       "COVER_REQUESTED": "Can you substitute? {count, plural, one {One lesson} other {# lessons}} from {when}.",
-      "COVER_REQUEST_CLOSED": "{reason, select, TAKEN {The request to substitute from {when} is filled: a colleague said yes first.} other {The request to substitute from {when} is withdrawn. You need not answer.}}",
+      "COVER_REQUEST_CLOSED": "{reason, select, TAKEN {The request to substitute from {when} is filled: a colleague said yes first.} NOT_NEEDED {The request to substitute from {when} is no longer needed. You need not answer.} UNANSWERED {Nobody said yes to the request from {when}. The lessons still need a substitute.} other {The request to substitute from {when} is withdrawn. You need not answer.}}",
       "COVER_REQUEST_ACCEPTED": "{name} said yes to {count, plural, one {the lesson} other {the # lessons}} from {when}."
     }
   },
@@ -5774,7 +5774,7 @@
       "SUPERVISION_COVER": "Break duty as a substitute",
       "SUPERVISION_COVER_WITHDRAWN": "Withdrawn break duties",
       "COVER_REQUESTED": "Requests to substitute",
-      "COVER_REQUEST_CLOSED": "Requests filled or withdrawn",
+      "COVER_REQUEST_CLOSED": "Requests filled, withdrawn or run out unanswered",
       "COVER_REQUEST_ACCEPTED": "Colleagues who said yes to my request"
     },
     "loadFailed": "Your choices could not be loaded",

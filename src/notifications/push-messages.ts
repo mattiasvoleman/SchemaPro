@@ -20,7 +20,8 @@ import type { NotificationKind } from './notifications.service';
  *
  * TEACHER_ABSENCE_REPORTED has no text here: it is never pushed. A request
  * to cover (COVER_REQUESTED) says when, never which lesson or who is away; the
- * end of one (COVER_REQUEST_CLOSED) is pushed as TAKEN or WITHDRAWN. An
+ * end of one (COVER_REQUEST_CLOSED) is pushed as TAKEN, WITHDRAWN or
+ * NOT_NEEDED to the colleagues and as UNANSWERED to the administrator. An
  * avbokning digest (CANCELLATION_DIGEST) says how many of the person's
  * lessons and over which days, never the avbokning's name ("Prao åk 9" is
  * free text the admin typed); its reversal is a kind of its own.
@@ -46,7 +47,9 @@ export type PushKind =
   | 'LESSON_SUBSTITUTE_COVER'
   | 'CANCELLATION_DIGEST_REVERSED'
   | 'COVER_REQUEST_TAKEN'
-  | 'COVER_REQUEST_WITHDRAWN';
+  | 'COVER_REQUEST_WITHDRAWN'
+  | 'COVER_REQUEST_NOT_NEEDED'
+  | 'COVER_REQUEST_UNANSWERED';
 
 export interface PushText {
   title: string;
@@ -182,6 +185,18 @@ const SV: Record<PushKind, Template> = {
     bare: 'En vikariefråga är indragen. Du behöver inte svara.',
     many: '{count} vikariefrågor är indragna. Du behöver inte svara.',
   },
+  COVER_REQUEST_NOT_NEEDED: {
+    title: 'Vikariefrågan behövs inte',
+    one: 'Frågan om passet {when} behövs inte längre. Du behöver inte svara.',
+    bare: 'En vikariefråga behövs inte längre. Du behöver inte svara.',
+    many: '{count} vikariefrågor behövs inte längre. Du behöver inte svara.',
+  },
+  COVER_REQUEST_UNANSWERED: {
+    title: 'Ingen har tackat ja',
+    one: 'Ingen har tackat ja till passet {when}.',
+    bare: 'Ingen har tackat ja till en vikariefråga.',
+    many: 'Ingen har tackat ja till {count} vikariefrågor.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lektioner blir av',
     one: ({ lessons }) =>
@@ -308,6 +323,18 @@ const EN: Record<PushKind, Template> = {
     bare: 'A cover request is withdrawn.',
     many: '{count} cover requests are withdrawn.',
   },
+  COVER_REQUEST_NOT_NEEDED: {
+    title: 'Cover request not needed',
+    one: 'The question about the lesson {when} is no longer needed. You need not answer.',
+    bare: 'A cover request is no longer needed. You need not answer.',
+    many: '{count} cover requests are no longer needed. You need not answer.',
+  },
+  COVER_REQUEST_UNANSWERED: {
+    title: 'Nobody said yes',
+    one: 'Nobody said yes to the lesson {when}.',
+    bare: 'Nobody said yes to a cover request.',
+    many: 'Nobody said yes to {count} cover requests.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lessons back on',
     one: ({ lessons }) =>
@@ -326,7 +353,13 @@ export function pushKindOf(type: NotificationKind, meta: Record<string, unknown>
   if (type === 'TEACHER_ABSENCE_REPORTED') return null;
   if (type === 'LESSON_SUBSTITUTE' && meta['cover'] === true) return 'LESSON_SUBSTITUTE_COVER';
   if (type === 'CANCELLATION_DIGEST' && meta['reversed'] === true) return 'CANCELLATION_DIGEST_REVERSED';
-  if (type === 'COVER_REQUEST_CLOSED') return meta['reason'] === 'WITHDRAWN' ? 'COVER_REQUEST_WITHDRAWN' : 'COVER_REQUEST_TAKEN';
+  if (type === 'COVER_REQUEST_CLOSED') {
+    const reason = meta['reason'];
+    if (reason === 'WITHDRAWN') return 'COVER_REQUEST_WITHDRAWN';
+    if (reason === 'NOT_NEEDED') return 'COVER_REQUEST_NOT_NEEDED';
+    if (reason === 'UNANSWERED') return 'COVER_REQUEST_UNANSWERED';
+    return 'COVER_REQUEST_TAKEN';
+  }
   return type;
 }
 

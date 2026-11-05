@@ -19,7 +19,7 @@ import { pairsStatement, toBoardItem, type BoardItem, type PairRow } from './cov
 import { asDay, dayBounds, readPersonDays, schoolTimezone } from './cover-context';
 import { lockLessons, lockTeachers } from './cover-decisions';
 import { COVER_PASS_NOT_FOUND, mapCoverErrors, rethrowCoverError, sqlStateOf } from './cover-errors';
-import { sendAccepted, sendClosed, sendRequested, type RequestNoticeContext } from './cover-request-notices';
+import { sendAccepted, sendClosed, sendRequested, sendUnanswered, type RequestNoticeContext } from './cover-request-notices';
 import { requestSelect, toBoardRequest, type BoardRequest } from './cover-request-reads';
 import { ownYesBreaksRule, recipientBreaksRule } from './cover-request-rules';
 import { hardFindings, maskFindings, type CoverTarget, type PersonLesson, type RuleFinding } from './cover-rules';
@@ -100,7 +100,11 @@ export interface FairnessRow {
   received: number;
   accepted: number;
   declined: number;
-  /** Asked and never answered: taken by another, withdrawn, expired or just not answered. */
+  /**
+   * Asked and never answered: taken by another, withdrawn, expired or just
+   * not answered. A question still open is not counted here, however many
+   * hours it has stood: it can still be answered ("received" holds it).
+   */
   unanswered: number;
 }
 
@@ -118,6 +122,22 @@ interface LockedRequest {
   expiresAt: Date;
   requestedByUserId: string | null;
   now: Date;
+}
+
+/** One request the job's pass ended, and who sent it while they can still place a vikarie. */
+interface SettledRow {
+  requestId: string;
+  schoolId: string;
+  outcome: 'EXPIRED' | 'NOT_NEEDED';
+  senderId: string | null;
+  senderAuthId: string | null;
+  senderProfile: AuthenticatedUser['adminProfile'] | null;
+  senderHrRead: boolean | null;
+}
+
+export interface SettleCounts {
+  expired: number;
+  notNeeded: number;
 }
 
 interface AcceptOutcome {
@@ -348,13 +368,21 @@ export class CoverRequestsService {
         where: { request: { createdAt } },
         _count: { _all: true },
       });
+      // The questions that can still be answered: asked, so received, but not
+      // yet left unanswered.
+      const waiting = await tx.coverRequestRecipient.groupBy({
+        by: ['userId'],
+        where: { answer: 'PENDING', request: { createdAt, status: 'OPEN' } },
+        _count: { _all: true },
+      });
+      const stillOpen = new Map(waiting.map((group) => [group.userId, group._count._all]));
       const rows = new Map<string, FairnessRow>();
       for (const group of grouped) {
         const row = rows.get(group.userId) ?? { userId: group.userId, received: 0, accepted: 0, declined: 0, unanswered: 0 };
         row.received += group._count._all;
         if (group.answer === 'ACCEPTED') row.accepted += group._count._all;
         else if (group.answer === 'DECLINED') row.declined += group._count._all;
-        else row.unanswered += group._count._all;
+        else row.unanswered += group._count._all - (stillOpen.get(group.userId) ?? 0);
         rows.set(group.userId, row);
       }
       const sorted = [...rows.values()].sort((a, b) => a.userId.localeCompare(b.userId));
@@ -513,11 +541,12 @@ export class CoverRequestsService {
       .write(principal, (tx) => this.acceptInTransaction(tx, principal, requestId, me))
       .catch((error: unknown) => {
         // The sender was found a moment ago. A request that is now invisible to
-        // them, or a write their claims no longer allow, means they were removed
-        // or lost Drift in between: said as that, not as a missing request or an
-        // absence's setting.
+        // them, or a write their claims no longer allow, means they were removed,
+        // deactivated or lost Drift in between: said as that, not as a missing
+        // request, an absence's setting or the publication lock's PB403 (their
+        // claims name no school any more, so the lock is nobody's to take).
         const code = (error as { getResponse?: () => { code?: string } }).getResponse?.().code;
-        if (code === 'ABSENCE_SELF_REPORT_OFF') throw senderGone();
+        if (code === 'ABSENCE_SELF_REPORT_OFF' || sqlStateOf(error) === 'PB403') throw senderGone();
         throw error;
       });
     await this.cover.afterCommit(principal, outcome.effects);
@@ -545,7 +574,10 @@ export class CoverRequestsService {
       select: { absenceId: true, calendarLessonId: true },
       orderBy: [{ calendarLessonId: 'asc' }, { absenceId: 'asc' }],
     });
-    if (lines.length === 0) throw gone();
+    // A request always has its lessons. None visible to the sender's claims
+    // means the sender can no longer see the request at all (a role changed to
+    // teacher since the lookup): theirs to place no more, not a request gone.
+    if (lines.length === 0) throw senderGone();
     const pairs = lines.map((line) => ({ absenceId: line.absenceId, lessonId: line.calendarLessonId }));
     await lockLessons(tx, pairs.map((pair) => pair.lessonId));
     // THE LOCK THAT MAKES THE FIRST YES THE ONLY ONE: any number of colleagues
@@ -561,10 +593,18 @@ export class CoverRequestsService {
     if (request.status !== 'OPEN' || request.expiresAt.getTime() <= request.now.getTime()) throw gone();
     if (request.requestedByUserId !== principal.userId) throw senderGone();
 
-    const mine = await tx.coverRequestRecipient.findFirst({
-      where: { requestId, userId: teacherId },
-      select: { answer: true },
-    });
+    // The colleague's own row, locked: a no from the same person in the same
+    // moment (a declined card and a yes on another device) updates it without
+    // taking the request's row, so the yes must wait for it, and read what is
+    // there after, to answer "you have answered already" and not leave it to
+    // the database's refusal of an ACCEPTED over a DECLINED. Last in the lock
+    // order: the no takes nothing but this row.
+    const mine = (
+      await tx.$queryRaw<{ answer: CoverRecipientAnswer }[]>(Prisma.sql`
+        SELECT "answer" FROM "CoverRequestRecipients"
+         WHERE "requestId" = ${requestId}::uuid AND "userId" = ${teacherId}::uuid
+           FOR UPDATE`)
+    )[0];
     if (!mine) throw new NotFoundException({ message: 'Förfrågan finns inte, eller gäller inte dig.', code: 'COVER_REQUEST_NOT_FOUND' });
     if (mine.answer !== 'PENDING') {
       throw new ConflictException({ message: 'Du har redan svarat på förfrågan.', code: 'COVER_REQUEST_ANSWERED' });
@@ -678,12 +718,65 @@ export class CoverRequestsService {
     await send().catch(() => this.logger.error(`${label} failed twice: nobody was told`));
   }
 
-  /** The nightly job: the open requests whose time is out. */
-  async expire(): Promise<number> {
+  /**
+   * The job's pass (app.cover_requests_settle): the open requests whose time
+   * is out end EXPIRED, and the ones whose absence or lesson went away end
+   * CLOSED. Whoever it concerns is then told, as the administrator who sent
+   * the request, whom the database names while they can still place a vikarie:
+   * the sender when nobody said yes in time, the colleagues who were not
+   * answered when the question is no longer needed. A notice that cannot be
+   * written is logged and never fails the pass; the request is ended and
+   * stays ended whether or not anybody was told.
+   */
+  async settle(): Promise<SettleCounts> {
     const rows = await this.prisma.withDeliveryService((tx) =>
-      tx.$queryRaw<{ n: number }[]>(Prisma.sql`SELECT app.cover_requests_expire() AS n`),
+      tx.$queryRaw<SettledRow[]>(Prisma.sql`SELECT * FROM app.cover_requests_settle()`),
     );
-    return Number(rows[0]?.n ?? 0);
+    const counts: SettleCounts = { expired: 0, notNeeded: 0 };
+    for (const row of rows) {
+      if (row.outcome === 'EXPIRED') counts.expired += 1;
+      else counts.notNeeded += 1;
+      await this.tellSettled(row);
+    }
+    return counts;
+  }
+
+  private async tellSettled(row: SettledRow): Promise<void> {
+    const label = `Cover request settle notices [request=${row.requestId}, outcome=${row.outcome}]`;
+    if (!row.senderId || !row.senderAuthId) {
+      this.logger.warn(`${label}: the sender can no longer place a vikarie, nobody was told`);
+      return;
+    }
+    const principal: AuthenticatedUser = {
+      authId: row.senderAuthId,
+      role: Role.SCHOOL_ADMIN,
+      userId: row.senderId,
+      schoolId: row.schoolId,
+      ...(row.senderProfile ? { adminProfile: row.senderProfile, hrRead: row.senderHrRead === true } : {}),
+    };
+    let lessonIds: string[] = [];
+    await this.tellOnce(label, () =>
+      this.prisma.withRls(principal, async (tx) => {
+        const timezone = await schoolTimezone(tx, row.schoolId);
+        const lines = await tx.coverRequestLesson.findMany({ where: { requestId: row.requestId }, select: { calendarLessonId: true } });
+        lessonIds = lines.map((line) => line.calendarLessonId);
+        const context: RequestNoticeContext = { requestId: row.requestId, lessonIds };
+        if (row.outcome === 'EXPIRED') {
+          await sendUnanswered(this.notifications, tx, { schoolId: row.schoolId, timezone, context, senderId: row.senderId! });
+          return;
+        }
+        // The colleagues the question still waits on; those who said no need no word.
+        const pending = await tx.coverRequestRecipient.findMany({ where: { requestId: row.requestId, answer: 'PENDING' }, select: { userId: true } });
+        await sendClosed(this.notifications, tx, {
+          schoolId: row.schoolId,
+          timezone,
+          context,
+          recipientIds: pending.map((recipient) => recipient.userId),
+          reason: 'NOT_NEEDED',
+        });
+      }),
+    );
+    this.broadcast(row.schoolId, lessonIds, principal);
   }
 
   // ---------------------------------------------------------------------

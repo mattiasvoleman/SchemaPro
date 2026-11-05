@@ -50,7 +50,10 @@ interface NotificationRow {
 /** The newest notices the bell reads. A full page may hide more unread behind it. */
 const NOTICE_LIMIT = 20;
 
-/** Where a notice leads (Vikariefrågan): the colleague to the question, the administrator to the board. */
+/**
+ * Where a notice leads (Vikariefrågan): the colleague to the question, the
+ * administrator to the board (also for a question that ran out unanswered).
+ */
 const HREF: Partial<Record<NotificationRow["type"], string>> = {
   COVER_REQUESTED: "/teacher/franvaro",
   COVER_REQUEST_CLOSED: "/teacher/franvaro",
@@ -276,7 +279,7 @@ export function NotificationBell() {
                 key={entry.id}
                 onSelect={(event) => {
                   // A notice with a page to go to closes the menu and goes there; the rest stay to be read.
-                  const href = HREF[entry.type];
+                  const href = entry.meta?.reason === "UNANSWERED" ? "/admin/cover" : HREF[entry.type];
                   if (href) router.push(href);
                   else event.preventDefault();
                 }}

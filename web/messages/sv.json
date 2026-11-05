@@ -2329,7 +2329,7 @@
     "unreadMarker": "Oläst.",
     "cover": {
       "COVER_REQUESTED": "Kan du vikariera? {count, plural, one {En lektion} other {# lektioner}} från {when}.",
-      "COVER_REQUEST_CLOSED": "{reason, select, TAKEN {Förfrågan om vikariepass från {when} är tillsatt: en kollega tackade ja först.} other {Förfrågan om vikariepass från {when} är tillbakadragen. Du behöver inte svara.}}",
+      "COVER_REQUEST_CLOSED": "{reason, select, TAKEN {Förfrågan om vikariepass från {when} är tillsatt: en kollega tackade ja först.} NOT_NEEDED {Förfrågan om vikariepass från {when} behövs inte längre. Du behöver inte svara.} UNANSWERED {Ingen har tackat ja till vikariefrågan från {when}. Passen behöver fortfarande en vikarie.} other {Förfrågan om vikariepass från {when} är tillbakadragen. Du behöver inte svara.}}",
       "COVER_REQUEST_ACCEPTED": "{name} har tackat ja till {count, plural, one {lektionen} other {de # lektionerna}} från {when}."
     }
   },
@@ -5774,7 +5774,7 @@
       "SUPERVISION_COVER": "Rastvaktspass som vikarie",
       "SUPERVISION_COVER_WITHDRAWN": "Avbokade rastvaktspass",
       "COVER_REQUESTED": "Förfrågningar om vikariepass",
-      "COVER_REQUEST_CLOSED": "Förfrågningar som tillsatts eller dragits tillbaka",
+      "COVER_REQUEST_CLOSED": "Förfrågningar som tillsatts, dragits tillbaka eller gått ut utan svar",
       "COVER_REQUEST_ACCEPTED": "Kollegor som tackat ja till min förfrågan"
     },
     "loadFailed": "Dina val kunde inte hämtas",

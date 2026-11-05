@@ -2740,10 +2740,12 @@ END $$;
 DO $$
 DECLARE
   l uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-laslogg-school');
-  admin uuid; t122 uuid; t126 uuid; lesson uuid; absence uuid; absence2 uuid;
+  admin uuid; t122 uuid; t126 uuid; lesson uuid; absence uuid; absence2 uuid; absence3 uuid;
   r_old uuid := 'c0000000-0000-4000-8000-0000000d4001';
   r_new uuid := 'c0000000-0000-4000-8000-0000000d4002';
   r_open uuid := 'c0000000-0000-4000-8000-0000000d4003';
+  -- Still OPEN, though its time ran out 13 months ago: the job that ends it was off.
+  r_stale uuid := 'c0000000-0000-4000-8000-0000000d4004';
 BEGIN
   IF l IS NULL THEN
     RAISE EXCEPTION 'rls-fixtures: the läslogg school is missing for the cover requests';
@@ -2766,16 +2768,21 @@ BEGIN
   INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", status, "withdrawnAt", "createdAt", "updatedAt")
   VALUES (l, t126, now() - interval '15 months', now() - interval '15 months' + interval '1 day', 'WITHDRAWN', now() - interval '15 months', now() - interval '15 months', now())
   RETURNING id INTO absence2;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", status, "withdrawnAt", "createdAt", "updatedAt")
+  VALUES (l, t126, now() - interval '16 months', now() - interval '16 months' + interval '1 day', 'WITHDRAWN', now() - interval '16 months', now() - interval '16 months', now())
+  RETURNING id INTO absence3;
 
   INSERT INTO "CoverRequests" (id, "schoolId", "requestedByUserId", status, "createdAt", "expiresAt", "closedAt")
   VALUES (r_old, l, admin, 'EXPIRED', now() - interval '13 months' - interval '1 hour', now() - interval '13 months', now() - interval '13 months'),
          (r_new, l, admin, 'EXPIRED', now() - interval '11 months' - interval '1 hour', now() - interval '11 months', now() - interval '11 months');
   INSERT INTO "CoverRequests" (id, "schoolId", "requestedByUserId", status, "createdAt", "expiresAt")
-  VALUES (r_open, l, admin, 'OPEN', now() - interval '1 hour', now() + interval '10 years');
+  VALUES (r_open, l, admin, 'OPEN', now() - interval '1 hour', now() + interval '10 years'),
+         (r_stale, l, admin, 'OPEN', now() - interval '13 months' - interval '1 hour', now() - interval '13 months');
   INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId", open)
-  VALUES (l, r_old, absence, lesson, false), (l, r_new, absence, lesson, false), (l, r_open, absence2, lesson, true);
+  VALUES (l, r_old, absence, lesson, false), (l, r_new, absence, lesson, false), (l, r_open, absence2, lesson, true),
+         (l, r_stale, absence3, lesson, true);
   INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId")
-  VALUES (l, r_old, t122), (l, r_new, t122), (l, r_open, t122);
+  VALUES (l, r_old, t122), (l, r_new, t122), (l, r_open, t122), (l, r_stale, t122);
 
   -- A confirmation 13 months old needs the decision it confirms.
   INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers", "substituteId", "decidedAt")

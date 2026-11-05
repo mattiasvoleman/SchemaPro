@@ -174,28 +174,28 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Prao åk 9 is undone: 12 lessons go ahead as planned (19 Oct – 23 Oct).',
   ],
   [
-    'COVER_REQUESTED, one lesson, with the time to answer by',
+    'COVER_REQUESTED, one lesson, with the time to answer by (no subject, group or room)',
     row('COVER_REQUESTED', {
       requestId: 'r-1',
       startsAt: at,
       lessonCount: 1,
       expiresAt: '2026-10-13T07:30:00.000Z',
-      lessons: [{ lessonId: 'l-1', startsAt: at, subjectName: 'Matematik', groupName: '7A', roomName: 'B204' }],
+      lessons: [{ lessonId: 'l-1', startsAt: at }],
     }),
-    'Kan du vikariera? Matematik, 7A, B204 (tis 13 okt 08:00). Svara senast tis 13 okt 07:30.',
-    'Can you cover? Matematik, 7A, B204 (Tue 13 Oct 08:00). Answer by Tue 13 Oct 07:30.',
+    'Kan du vikariera en lektion från tis 13 okt 08:00? Svara senast tis 13 okt 07:30.',
+    'Can you cover a lesson from Tue 13 Oct 08:00? Answer by Tue 13 Oct 07:30.',
   ],
   [
-    'COVER_REQUESTED, a lesson without a room',
+    'COVER_REQUESTED, a notice written before the lessons were left out of it',
     row('COVER_REQUESTED', {
       requestId: 'r-1',
       startsAt: at,
       lessonCount: 1,
       expiresAt: '2026-10-13T07:30:00.000Z',
-      lessons: [{ lessonId: 'l-1', startsAt: at, subjectName: 'Matematik', groupName: '7A', roomName: null }],
+      lessons: [{ lessonId: 'l-1', startsAt: at, subjectName: 'Matematik', groupName: '7A', roomName: '—' }],
     }),
-    'Kan du vikariera? Matematik, 7A (tis 13 okt 08:00). Svara senast tis 13 okt 07:30.',
-    'Can you cover? Matematik, 7A (Tue 13 Oct 08:00). Answer by Tue 13 Oct 07:30.',
+    'Kan du vikariera en lektion från tis 13 okt 08:00? Svara senast tis 13 okt 07:30.',
+    'Can you cover a lesson from Tue 13 Oct 08:00? Answer by Tue 13 Oct 07:30.',
   ],
   [
     'COVER_REQUESTED, several lessons',
@@ -204,7 +204,7 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
       startsAt: at,
       lessonCount: 3,
       expiresAt: '2026-10-13T07:30:00.000Z',
-      lessons: [{ lessonId: 'l-1', startsAt: at, subjectName: 'Matematik', groupName: '7A', roomName: 'B204' }],
+      lessons: [{ lessonId: 'l-1', startsAt: at }],
     }),
     'Kan du vikariera 3 lektioner från tis 13 okt 08:00? Svara senast tis 13 okt 07:30.',
     'Can you cover 3 lessons from Tue 13 Oct 08:00? Answer by Tue 13 Oct 07:30.',
@@ -234,6 +234,30 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'The request about 4 cover lessons from Tue 13 Oct 08:00 is withdrawn.',
   ],
   [
+    'COVER_REQUEST_CLOSED, no longer needed',
+    row('COVER_REQUEST_CLOSED', { requestId: 'r-1', startsAt: at, lessonCount: 1, reason: 'NOT_NEEDED', lessons: [] }),
+    'Förfrågan om vikariepasset tis 13 okt 08:00 behövs inte längre.',
+    'The request about the cover lesson Tue 13 Oct 08:00 is no longer needed.',
+  ],
+  [
+    'COVER_REQUEST_CLOSED, no longer needed, several lessons',
+    row('COVER_REQUEST_CLOSED', { requestId: 'r-1', startsAt: at, lessonCount: 2, reason: 'NOT_NEEDED', lessons: [] }),
+    'Förfrågan om 2 vikariepass från tis 13 okt 08:00 behövs inte längre.',
+    'The request about 2 cover lessons from Tue 13 Oct 08:00 is no longer needed.',
+  ],
+  [
+    'COVER_REQUEST_CLOSED, nobody said yes (to the administrator who asked)',
+    row('COVER_REQUEST_CLOSED', { requestId: 'r-1', startsAt: at, lessonCount: 1, reason: 'UNANSWERED', lessons: [] }),
+    'Ingen har tackat ja till vikariepasset tis 13 okt 08:00. Det behöver fortfarande en vikarie.',
+    'Nobody said yes to the cover lesson Tue 13 Oct 08:00. It still needs a substitute.',
+  ],
+  [
+    'COVER_REQUEST_CLOSED, nobody said yes, several lessons',
+    row('COVER_REQUEST_CLOSED', { requestId: 'r-1', startsAt: at, lessonCount: 3, reason: 'UNANSWERED', lessons: [] }),
+    'Ingen har tackat ja till de 3 vikariepassen från tis 13 okt 08:00. De behöver fortfarande en vikarie.',
+    'Nobody said yes to the 3 cover lessons from Tue 13 Oct 08:00. They still need a substitute.',
+  ],
+  [
     'COVER_REQUEST_ACCEPTED, to the administrator who asked',
     row('COVER_REQUEST_ACCEPTED', { requestId: 'r-1', startsAt: at, lessonCount: 1, acceptedByName: 'Anna Lind' }),
     'Anna Lind har tackat ja till vikariepasset tis 13 okt 08:00.',
@@ -260,7 +284,7 @@ describe('notificationText', () => {
 
   it('words a cover notice from a gateway that said no count, no lessons and no name', () => {
     expect(notificationText(row('COVER_REQUESTED', { startsAt: at, expiresAt: '2026-10-13T07:30:00.000Z' }), translatorFor('sv'), 'sv')).toBe(
-      'Kan du vikariera?  (tis 13 okt 08:00). Svara senast tis 13 okt 07:30.',
+      'Kan du vikariera en lektion från tis 13 okt 08:00? Svara senast tis 13 okt 07:30.',
     );
     expect(notificationText(row('COVER_REQUEST_CLOSED', { startsAt: at }), translatorFor('en'), 'en')).toBe(
       'The cover lesson Tue 13 Oct 08:00 is already filled by a colleague.',
@@ -273,12 +297,23 @@ describe('notificationText', () => {
   it('never names whom a cover request replaces, nor a reason, whatever the meta carries', () => {
     for (const type of ['COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'COVER_REQUEST_ACCEPTED'] as const) {
       const text = notificationText(
-        row(type, { startsAt: at, lessonCount: 1, reason: 'TAKEN', absentTeacherName: 'Berit Frånvarande', absenceReason: 'Sjuk' }),
+        row(type, {
+          startsAt: at,
+          lessonCount: 1,
+          reason: 'TAKEN',
+          absentTeacherName: 'Berit Frånvarande',
+          absenceReason: 'Sjuk',
+          lessons: [{ lessonId: 'l-1', startsAt: at, subjectName: 'Matematik', groupName: '7A', roomName: 'B204' }],
+        }),
         translatorFor('sv'),
         'sv',
       );
       expect(text).not.toContain('Berit');
       expect(text).not.toContain('Sjuk');
+      // Nor which lesson: the inbox is read on a lock screen as a push is.
+      expect(text).not.toContain('Matematik');
+      expect(text).not.toContain('7A');
+      expect(text).not.toContain('B204');
     }
   });
 

@@ -19,11 +19,13 @@ import type { NotificationKind } from './notifications.service';
  * listed, both always sent.
  *
  * Vikariefrågan (D4): a teacher is asked to cover (COVER_REQUESTED) and told
- * when the lesson went to somebody else or the question was taken back
- * (COVER_REQUEST_CLOSED); the administrator who asked is told who said yes
- * (COVER_REQUEST_ACCEPTED). All three are choices: the in-app row is always
- * written, and a colleague who would rather not be pushed still finds the
- * question in the app.
+ * when the lesson went to somebody else, the question was taken back or the
+ * absence went away (COVER_REQUEST_CLOSED); the administrator who asked is
+ * told who said yes (COVER_REQUEST_ACCEPTED) and, in the same type as the
+ * colleagues' end of it, that the time ran out with nobody saying yes
+ * (COVER_REQUEST_CLOSED, reason UNANSWERED). All three are choices: the in-app
+ * row is always written, and a colleague who would rather not be pushed still
+ * finds the question in the app.
  */
 
 export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
@@ -77,7 +79,7 @@ export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = 
   GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
   TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED'],
-  SCHOOL_ADMIN: [...STAFF, 'COVER_REQUEST_ACCEPTED'],
+  SCHOOL_ADMIN: [...STAFF, 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED'],
 };
 
 /**

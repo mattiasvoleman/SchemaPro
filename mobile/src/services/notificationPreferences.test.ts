@@ -47,7 +47,7 @@ describe('notification preferences', () => {
   });
 
   it('names the three cover-request types the gateway offers by role, in both languages', () => {
-    // TEACHER gets the question and its end, SCHOOL_ADMIN the answer (TYPES_BY_ROLE).
+    // TEACHER gets the question and its end, SCHOOL_ADMIN the answer and, in the end's own type, that nobody said yes (TYPES_BY_ROLE).
     expect(
       (['COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'COVER_REQUEST_ACCEPTED'] as const).map((type) => [
         preferenceLabel(translatorFor('sv'), type, true),
@@ -55,7 +55,10 @@ describe('notification preferences', () => {
       ]),
     ).toEqual([
       ['Förfrågningar om att vikariera', 'Requests to cover a lesson'],
-      ['Vikarieförfrågningar som tillsatts eller dragits tillbaka', 'Cover requests that were filled or withdrawn'],
+      [
+        'Vikarieförfrågningar som tillsatts, dragits tillbaka eller gått ut utan svar',
+        'Cover requests that were filled, withdrawn or ran out unanswered',
+      ],
       ['Svar på dina vikarieförfrågningar', 'Answers to your cover requests'],
     ]);
   });

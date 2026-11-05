@@ -7,18 +7,24 @@ import { CoverRequestsService } from './cover-requests.service';
 /** The job's name in the runner and in JobRuns. */
 export const COVER_REQUESTS_JOB = 'cover-requests';
 /**
- * How often the open requests whose time is out are ended. A request past its
- * expiresAt cannot be answered whether or not this has run (the database
- * refuses the yes, the board and the colleague's list read it as expired);
- * the job only settles the stored status and frees the lesson for a new
- * request, which creating one also does for its own lessons.
+ * How often the open requests are settled. A request past its expiresAt
+ * cannot be answered whether or not this has run (the database refuses the
+ * yes, the board and the colleague's list read it as expired), and one whose
+ * lesson was cancelled or whose absence was taken back is refused when it is
+ * answered; the job settles the stored status, frees the lessons for a new
+ * request (creating one also does it for its own lessons), and tells who it
+ * concerns: the sender when nobody said yes in time, the colleagues the
+ * question still waited on when it is no longer needed.
  */
 export const COVER_REQUESTS_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
- * Ends the open vikarieförfrågningar whose time is out (app.cover_requests_expire,
- * 20270102091000), a job of the JobRunner. Off when COVER_REQUESTS_BACKGROUND=off
- * (the test setup). Never throws; each pass is counted in JobRuns.
+ * Settles the open vikarieförfrågningar (app.cover_requests_settle,
+ * 20270102091000): ends the ones whose time is out or whose grounds are gone,
+ * a job of the JobRunner. Off when COVER_REQUESTS_BACKGROUND=off (the test
+ * setup); gallring then still removes a request nobody can answer any more
+ * once it is older than the cutoff. Never throws; each pass is counted in
+ * JobRuns.
  */
 @Injectable()
 export class CoverRequestsJob implements OnModuleInit, OnModuleDestroy {
@@ -45,13 +51,15 @@ export class CoverRequestsJob implements OnModuleInit, OnModuleDestroy {
     if (this.running) return this.running;
     const started = new Date();
     this.running = this.requests
-      .expire()
-      .then((expired) => {
-        if (expired > 0) this.logger.log(`Cover requests expired [count=${expired}]`);
-        this.jobs?.settled(COVER_REQUESTS_JOB, started, { ok: true, counts: { expired } });
+      .settle()
+      .then((counts) => {
+        if (counts.expired + counts.notNeeded > 0) {
+          this.logger.log(`Cover requests settled [expired=${counts.expired}, notNeeded=${counts.notNeeded}]`);
+        }
+        this.jobs?.settled(COVER_REQUESTS_JOB, started, { ok: true, counts: { ...counts } });
       })
       .catch((error: unknown) => {
-        this.logger.warn(`Cover request expiry failed [${errorName(error)}]`);
+        this.logger.warn(`Cover request settling failed [${errorName(error)}]`);
         this.jobs?.settled(COVER_REQUESTS_JOB, started, { ok: false, error: errorName(error) });
       })
       .finally(() => {

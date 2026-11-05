@@ -257,7 +257,7 @@ export const en: Messages = {
       SUPERVISION_COVER: 'Break duty as a substitute',
       SUPERVISION_COVER_WITHDRAWN: 'Withdrawn break duties',
       COVER_REQUESTED: 'Requests to cover a lesson',
-      COVER_REQUEST_CLOSED: 'Cover requests that were filled or withdrawn',
+      COVER_REQUEST_CLOSED: 'Cover requests that were filled, withdrawn or ran out unanswered',
       COVER_REQUEST_ACCEPTED: 'Answers to your cover requests',
     },
     logout: 'Log out',
@@ -325,7 +325,7 @@ export const en: Messages = {
     passConfirmA11y: 'Confirm the cover lesson {subject}, {when}',
     passConfirmedA11y: 'The cover lesson {subject}, {when} is confirmed',
     notice: {
-      requested_one: 'Can you cover? {lesson} ({when}). Answer by {until}.',
+      requested_one: 'Can you cover a lesson from {when}? Answer by {until}.',
       requested_other: 'Can you cover {count} lessons from {when}? Answer by {until}.',
       accepted_one: '{name} has said yes to the cover lesson {when}.',
       accepted_other: '{name} has said yes to {count} cover lessons from {when}.',
@@ -333,6 +333,10 @@ export const en: Messages = {
       closedTaken_other: '{count} cover lessons from {when} are already filled by a colleague.',
       closedWithdrawn_one: 'The request about the cover lesson {when} is withdrawn.',
       closedWithdrawn_other: 'The request about {count} cover lessons from {when} is withdrawn.',
+      closedNotNeeded_one: 'The request about the cover lesson {when} is no longer needed.',
+      closedNotNeeded_other: 'The request about {count} cover lessons from {when} is no longer needed.',
+      closedUnanswered_one: 'Nobody said yes to the cover lesson {when}. It still needs a substitute.',
+      closedUnanswered_other: 'Nobody said yes to the {count} cover lessons from {when}. They still need a substitute.',
     },
   },
 };

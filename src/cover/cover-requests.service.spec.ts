@@ -7,7 +7,7 @@ import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { RealtimeService } from '../realtime/realtime.service';
 import * as context from './cover-context';
-import { COVER_REQUEST_RULE, RULE_PHRASES, rulesInWords } from './cover-request-rules';
+import { ABOUT_THE_COLLEAGUE, COVER_REQUEST_RULE, RULE_PHRASES, TO_THE_COLLEAGUE, rulesInWords } from './cover-request-rules';
 import {
   COVER_REQUEST_EXISTS,
   COVER_REQUEST_LESSON_CANCELLED,
@@ -20,7 +20,7 @@ import {
 } from './cover-requests.service';
 import { toBoardRequest } from './cover-request-reads';
 import { Prisma } from '@prisma/client';
-import type { PersonDay } from './cover-rules';
+import type { HardRuleCode, PersonDay } from './cover-rules';
 import { CoverService } from './cover.service';
 
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
@@ -66,6 +66,8 @@ describe('CoverRequestsService', () => {
   let pairRows: Record<string, unknown>[];
   let locked: Record<string, unknown> | null;
   let sender: Record<string, unknown>[];
+  /** The asked colleague's own row, as the locking read of a yes finds it. */
+  let mine: { answer: string }[];
 
   const teacher = testUser({ userId: BO, role: Role.TEACHER, schoolId: SCHOOL });
   const admin = testUser({ userId: ADMIN, role: Role.SCHOOL_ADMIN, schoolId: SCHOOL });
@@ -131,6 +133,7 @@ describe('CoverRequestsService', () => {
     pairRows = [pairRow()];
     locked = null;
     sender = [{ userId: ADMIN, authId: ADMIN_AUTH, adminProfile: 'FULL', hrRead: false }];
+    mine = [{ answer: 'PENDING' }];
     jest.spyOn(context, 'readPersonDays').mockImplementation(async () => ({
       days,
       employments: new Map(),
@@ -142,6 +145,7 @@ describe('CoverRequestsService', () => {
       const text = sqlOf(statement);
       if (text.includes('app.cover_request_sender')) return sender;
       if (text.includes('FROM "CoverRequests"') && text.includes('FOR UPDATE')) return locked ? [locked] : [];
+      if (text.includes('FROM "CoverRequestRecipients"') && text.includes('FOR UPDATE')) return mine;
       if (text.includes('"TeacherAbsences"')) return pairRows;
       return [];
     });
@@ -207,7 +211,14 @@ describe('CoverRequestsService', () => {
       expect(options.userIds).toEqual([ANNA, BO]);
       // The lesson and the time, never who is away or why.
       expect(JSON.stringify(options.meta)).not.toContain(ABSENT);
-      expect(options.email.body).toContain('Svara senast');
+      // How many and from when, and that the answer is in Rastra: no subject, group or room in the
+      // e-mail's subject or text, nor in the inbox row's meta (a lock screen shows a subject line).
+      expect(options.email.subject).toMatch(/^Vikariefråga \S/);
+      expect(options.email.body).toMatch(/^Kan du vikariera en lektion från .+\? Svara i Rastra senast /);
+      for (const text of [options.email.subject, options.email.body, JSON.stringify(options.meta)]) {
+        expect(text).not.toMatch(/subjectName|groupName|roomName|Matematik|7A/);
+      }
+      expect(options.meta.lessons).toEqual([{ lessonId: LESSON, startsAt: expect.any(String) }]);
       expect(realtime.notifyCoverBoardChanged).toHaveBeenCalled();
     });
 
@@ -250,7 +261,7 @@ describe('CoverRequestsService', () => {
       const body = await bodyOf(service.create(dto(), admin));
       expect(body['code']).toBe('COVER_REQUEST_RECIPIENT_RULE');
       expect(body['message']).toContain('Bo Karlsson');
-      expect(body['message']).toContain(RULE_PHRASES.DAILY_CAP);
+      expect(body['message']).toContain(RULE_PHRASES.DAILY_CAP(ABOUT_THE_COLLEAGUE));
       expect(body['params']).toMatchObject({ userId: BO, lessonId: LESSON, rules: 'DAILY_CAP' });
       expect(tx.coverRequest.create).not.toHaveBeenCalled();
     });
@@ -342,7 +353,6 @@ describe('CoverRequestsService', () => {
 
     beforeEach(() => {
       locked = open();
-      tx.coverRequestRecipient.findFirst.mockResolvedValue({ answer: 'PENDING' });
       tx.coverRequestLesson.findMany.mockResolvedValue([{ absenceId: ABSENCE, calendarLessonId: LESSON }]);
       tx.coverRequestRecipient.findMany.mockResolvedValue([{ userId: ANNA }]);
       jest.spyOn(cover, 'decideInTransaction').mockResolvedValue({
@@ -448,10 +458,38 @@ describe('CoverRequestsService', () => {
       expect(await codeOf(service.accept(REQUEST, teacher))).toBe('COVER_REQUEST_SENDER_GONE');
     });
 
+    it('says the sender is gone, not 500, when they are deactivated between the lookup and the write (the publication lock, PB403)', async () => {
+      const lockNotYours = Object.assign(new Error('PUBLICATION_LOCK_NOT_YOURS'), {
+        code: 'P2010',
+        clientVersion: 'test',
+        meta: { driverAdapterError: { cause: { originalCode: 'PB403' } } },
+      });
+      Object.setPrototypeOf(lockNotYours, Prisma.PrismaClientKnownRequestError.prototype);
+      // The first statement of the placement is the lock, and it is what refuses.
+      jest.spyOn(cover, 'write').mockRejectedValue(lockNotYours);
+      expect(await codeOf(service.accept(REQUEST, teacher))).toBe('COVER_REQUEST_SENDER_GONE');
+      expect(tx.coverRequest.update).not.toHaveBeenCalled();
+    });
+
+    it('says the sender is gone, not that the request has ended, when it is invisible to their claims (a role changed to teacher)', async () => {
+      tx.coverRequestLesson.findMany.mockResolvedValue([]);
+      expect(await codeOf(service.accept(REQUEST, teacher))).toBe('COVER_REQUEST_SENDER_GONE');
+      expect(tx.coverRequest.update).not.toHaveBeenCalled();
+    });
+
+    it('reads the colleague\'s own row FOR UPDATE, after the request row: a no from the same person in the same moment is waited for', async () => {
+      await service.accept(REQUEST, teacher);
+      const queries = tx.$queryRaw.mock.calls.map(([statement], index) => ({ text: sqlOf(statement), order: tx.$queryRaw.mock.invocationCallOrder[index]! }));
+      const requestLock = queries.find((query) => query.text.includes('FROM "CoverRequests"') && query.text.includes('FOR UPDATE'))!;
+      const ownRow = queries.find((query) => query.text.includes('FROM "CoverRequestRecipients"') && query.text.includes('FOR UPDATE'))!;
+      expect(ownRow).toBeDefined();
+      expect(requestLock.order).toBeLessThan(ownRow.order);
+    });
+
     it('refuses a colleague who has answered, and one who was never asked', async () => {
-      tx.coverRequestRecipient.findFirst.mockResolvedValue({ answer: 'DECLINED' });
+      mine = [{ answer: 'DECLINED' }];
       expect(await codeOf(service.accept(REQUEST, teacher))).toBe('COVER_REQUEST_ANSWERED');
-      tx.coverRequestRecipient.findFirst.mockResolvedValue(null);
+      mine = [];
       expect(await codeOf(service.accept(REQUEST, teacher))).toBe('COVER_REQUEST_NOT_FOUND');
     });
 
@@ -475,7 +513,7 @@ describe('CoverRequestsService', () => {
       days.set(BO, freeDay(BO, { dailyCapMinutes: 30 }));
       const body = await bodyOf(service.accept(REQUEST, teacher));
       expect(body['code']).toBe(COVER_REQUEST_RULE);
-      expect(body['message']).toContain(RULE_PHRASES.DAILY_CAP);
+      expect(body['message']).toContain(RULE_PHRASES.DAILY_CAP(TO_THE_COLLEAGUE));
       expect(body['params']).toMatchObject({ lessonId: LESSON, rules: 'DAILY_CAP' });
       expect(tx.coverRequest.update).not.toHaveBeenCalled();
       expect(cover.decideInTransaction).not.toHaveBeenCalled();
@@ -539,19 +577,99 @@ describe('CoverRequestsService', () => {
     });
   });
 
+  describe('settle: the job\'s pass', () => {
+    const SENDER_ROW = { senderId: ADMIN, senderAuthId: ADMIN_AUTH, senderProfile: 'FULL', senderHrRead: false };
+    const settled = (rows: Record<string, unknown>[]) =>
+      tx.$queryRaw.mockImplementation(async (statement: unknown) => {
+        const text = sqlOf(statement);
+        if (text.includes('app.cover_requests_settle')) return rows;
+        return [];
+      });
+
+    beforeEach(() => {
+      tx.coverRequestLesson.findMany.mockResolvedValue([{ calendarLessonId: LESSON }]);
+      tx.coverRequestRecipient.findMany.mockResolvedValue([{ userId: ANNA }]);
+    });
+
+    it('does nothing and tells nobody when no request is due', async () => {
+      settled([]);
+      expect(await service.settle()).toEqual({ expired: 0, notNeeded: 0 });
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+    });
+
+    it('tells the sender, as the sender, that nobody said yes in time: type CLOSED, reason UNANSWERED, no lesson named', async () => {
+      settled([{ requestId: REQUEST, schoolId: SCHOOL, outcome: 'EXPIRED', ...SENDER_ROW }]);
+      expect(await service.settle()).toEqual({ expired: 1, notNeeded: 0 });
+
+      expect(prisma.withRls.mock.calls[0]![0]).toMatchObject({ authId: ADMIN_AUTH, role: 'SCHOOL_ADMIN', userId: ADMIN, schoolId: SCHOOL, adminProfile: 'FULL' });
+      const [, options] = notifications.notifyUsers.mock.calls[0]!;
+      expect(options).toMatchObject({ type: 'COVER_REQUEST_CLOSED', userIds: [ADMIN], schoolId: SCHOOL });
+      expect(options.meta).toMatchObject({ requestId: REQUEST, reason: 'UNANSWERED', lessonCount: 1 });
+      for (const text of [options.email.subject, options.email.body, JSON.stringify(options.meta)]) {
+        expect(text).not.toMatch(/subjectName|groupName|roomName|Matematik|7A/);
+      }
+      expect(options.email.subject).toMatch(/^Ingen har tackat ja /);
+      // The pending colleagues are not told a thing about a question that merely ran out.
+      expect(tx.coverRequestRecipient.findMany).not.toHaveBeenCalled();
+    });
+
+    it('tells the colleagues the question still waited on, and only them, that it is no longer needed', async () => {
+      settled([{ requestId: REQUEST, schoolId: SCHOOL, outcome: 'NOT_NEEDED', ...SENDER_ROW }]);
+      expect(await service.settle()).toEqual({ expired: 0, notNeeded: 1 });
+
+      expect(tx.coverRequestRecipient.findMany).toHaveBeenCalledWith({
+        where: { requestId: REQUEST, answer: 'PENDING' },
+        select: { userId: true },
+      });
+      const [, options] = notifications.notifyUsers.mock.calls[0]!;
+      expect(options).toMatchObject({ type: 'COVER_REQUEST_CLOSED', userIds: [ANNA] });
+      expect(options.meta.reason).toBe('NOT_NEEDED');
+      expect(options.email.subject).toMatch(/^Vikariefrågan behövs inte längre /);
+      expect(options.email.body).toContain('Du behöver inte svara');
+      expect(realtime.notifyCoverBoardChanged).toHaveBeenCalled();
+    });
+
+    it('ends the request and logs, without telling anybody, when the sender can no longer place a vikarie', async () => {
+      settled([{ requestId: REQUEST, schoolId: SCHOOL, outcome: 'NOT_NEEDED', senderId: null, senderAuthId: null, senderProfile: null, senderHrRead: null }]);
+      expect(await service.settle()).toEqual({ expired: 0, notNeeded: 1 });
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+    });
+
+    it('goes on with the next request when the notices of one fail twice', async () => {
+      settled([
+        { requestId: REQUEST, schoolId: SCHOOL, outcome: 'EXPIRED', ...SENDER_ROW },
+        { requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', schoolId: SCHOOL, outcome: 'EXPIRED', ...SENDER_ROW },
+      ]);
+      notifications.notifyUsers.mockRejectedValueOnce(new Error('pool')).mockRejectedValueOnce(new Error('pool')).mockResolvedValue(1);
+      expect(await service.settle()).toEqual({ expired: 2, notNeeded: 0 });
+      expect(notifications.notifyUsers).toHaveBeenCalledTimes(3);
+    });
+  });
+
   describe('fairness', () => {
     it('counts each colleague\'s received, yes, no and unanswered, and records the read', async () => {
-      tx.coverRequestRecipient.groupBy.mockResolvedValue([
-        { userId: ANNA, answer: 'ACCEPTED', _count: { _all: 2 } },
-        { userId: ANNA, answer: 'DECLINED', _count: { _all: 1 } },
-        { userId: ANNA, answer: 'PENDING', _count: { _all: 4 } },
-        { userId: BO, answer: 'PENDING', _count: { _all: 3 } },
-      ]);
+      tx.coverRequestRecipient.groupBy
+        .mockResolvedValueOnce([
+          { userId: ANNA, answer: 'ACCEPTED', _count: { _all: 2 } },
+          { userId: ANNA, answer: 'DECLINED', _count: { _all: 1 } },
+          { userId: ANNA, answer: 'PENDING', _count: { _all: 4 } },
+          { userId: BO, answer: 'PENDING', _count: { _all: 3 } },
+        ])
+        // Of the pending ones, the questions that can still be answered.
+        .mockResolvedValueOnce([
+          { userId: ANNA, _count: { _all: 1 } },
+          { userId: BO, _count: { _all: 3 } },
+        ]);
       const result = await service.fairness('2026-09-01', '2026-09-30', admin);
+      // A question still open is received, and neither yes nor no nor left unanswered yet.
       expect(result.rows).toEqual([
-        { userId: ANNA, received: 7, accepted: 2, declined: 1, unanswered: 4 },
-        { userId: BO, received: 3, accepted: 0, declined: 0, unanswered: 3 },
+        { userId: ANNA, received: 7, accepted: 2, declined: 1, unanswered: 3 },
+        { userId: BO, received: 3, accepted: 0, declined: 0, unanswered: 0 },
       ]);
+      expect(tx.coverRequestRecipient.groupBy.mock.calls[1]![0]).toMatchObject({
+        by: ['userId'],
+        where: { answer: 'PENDING', request: { status: 'OPEN' } },
+      });
       // Work behaviour of named people, read as the cover counter is.
       expect(recordedReads(tx).map((read) => [read.kind, read.ids])).toEqual([['EMPLOYMENT', [ANNA, BO]]]);
     });
@@ -619,15 +737,38 @@ describe('what a colleague sees of a request', () => {
 });
 
 describe('the rules in words', () => {
+  const finding = (code: HardRuleCode) => ({ code, params: {} });
+
   it('joins them as a sentence and has a phrase for every hard rule', () => {
-    expect(rulesInWords([{ code: 'BUSY_LESSON', params: {} }])).toBe(RULE_PHRASES.BUSY_LESSON);
-    expect(
-      rulesInWords([
-        { code: 'BUSY_LESSON', params: {} },
-        { code: 'DAILY_CAP', params: {} },
-        { code: 'LUNCH', params: {} },
-      ]),
-    ).toBe(`${RULE_PHRASES.BUSY_LESSON}, ${RULE_PHRASES.DAILY_CAP} och ${RULE_PHRASES.LUNCH}`);
-    expect(Object.values(RULE_PHRASES).every((phrase) => phrase.length > 0)).toBe(true);
+    const them = ABOUT_THE_COLLEAGUE;
+    expect(rulesInWords([finding('BUSY_LESSON')], them)).toBe(RULE_PHRASES.BUSY_LESSON(them));
+    expect(rulesInWords([finding('BUSY_LESSON'), finding('DAILY_CAP'), finding('LUNCH')], them)).toBe(
+      `${RULE_PHRASES.BUSY_LESSON(them)}, ${RULE_PHRASES.DAILY_CAP(them)} och ${RULE_PHRASES.LUNCH(them)}`,
+    );
+    for (const voice of [TO_THE_COLLEAGUE, ABOUT_THE_COLLEAGUE]) {
+      expect(Object.values(RULE_PHRASES).every((phrase) => phrase(voice).length > 0)).toBe(true);
+    }
+  });
+
+  it('speaks to the colleague as "du" and about them as "hen", in the order of a subordinate clause', () => {
+    // "eftersom du …" and "…, som …": the negation and "redan" stand before the verb,
+    // and no plural "de" or main-clause "skulle inte" is left over from the other voice.
+    const all = Object.keys(RULE_PHRASES) as HardRuleCode[];
+    const you = all.map((code) => RULE_PHRASES[code](TO_THE_COLLEAGUE)).join(' | ');
+    const they = all.map((code) => RULE_PHRASES[code](ABOUT_THE_COLLEAGUE)).join(' | ');
+    expect(you).toContain('att du inte kan då');
+    expect(you).toContain('inte skulle få din lunch');
+    expect(you).toContain('inte har angett att du kan arbeta då');
+    expect(they).toContain('att hen inte kan då');
+    expect(they).toContain('inte skulle få sin lunch');
+    expect(they).toContain('inte har angett att hen kan arbeta då');
+    for (const text of [you, they]) {
+      expect(text).toContain('redan undervisar på lektionen');
+      expect(text).toContain('inte är en aktiv lärare');
+      expect(text).not.toMatch(/\bde\b/);
+      expect(text).not.toContain('skulle inte');
+      expect(text).not.toContain('undervisar redan');
+      expect(text).not.toContain('är inte en');
+    }
   });
 });

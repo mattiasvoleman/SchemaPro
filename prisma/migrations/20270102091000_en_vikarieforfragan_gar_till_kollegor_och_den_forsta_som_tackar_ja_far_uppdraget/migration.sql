@@ -37,9 +37,11 @@
 -- (app.cover_request_closes_on_decision), so no writer of a decision, the
 -- cover board, the old assign page, Fördela dagen or anything added later,
 -- can leave a request open that cannot be answered. A lesson cancelled
--- another way (an avbokning, a schemabrytande aktivitet) is not a decision
--- of this table; the gateway refuses such a request when it is answered,
--- and the nightly expiry closes it.
+-- another way (an avbokning, a schemabrytande aktivitet), an absence taken
+-- back or shortened so that it no longer reaches the lesson, are not
+-- decisions of this table; the gateway refuses such a request when it is
+-- answered, and the job's pass (app.cover_requests_settle, every five
+-- minutes) closes it and tells the colleagues it is no longer needed.
 --
 -- ## One open request per lesson
 --
@@ -85,8 +87,8 @@
 -- app.cover_confirm, which writes the teacher's own confirmation and nobody
 -- else's. A vikarie cannot read the decisions (they name the absent
 -- colleague), so app.cover_my_passes answers what they need of them: their
--- own passes ahead and whether each is confirmed. app.cover_requests_expire
--- is the nightly job's, called with no login.
+-- own passes ahead and whether each is confirmed. app.cover_requests_settle
+-- is the job's, called with no login.
 --
 -- ## Every key
 --
@@ -176,7 +178,7 @@ CREATE TABLE "CoverRequests" (
 CREATE UNIQUE INDEX "CoverRequests_id_schoolId_key" ON "CoverRequests"("id", "schoolId");
 -- The board's window and the fairness view's period, newest first.
 CREATE INDEX "CoverRequests_schoolId_createdAt_idx" ON "CoverRequests"("schoolId", "createdAt");
--- The nightly expiry: the open requests, and nothing else.
+-- The job's pass: the open requests, and nothing else.
 CREATE INDEX "CoverRequests_open_expiresAt_idx" ON "CoverRequests"("expiresAt") WHERE "status" = 'OPEN';
 -- Gallring's predicate (COVER_REQUESTS): the closed requests of a school.
 CREATE INDEX "CoverRequests_schoolId_closedAt_idx" ON "CoverRequests"("schoolId", "closedAt") WHERE "closedAt" IS NOT NULL;
@@ -651,29 +653,87 @@ $$;
 COMMENT ON FUNCTION app.cover_my_passes(timestamptz, timestamptz) IS
   'The calling TEACHER''s SCHEDULED passes in the window that a cover decision gave them, with the time they confirmed (null while any is unconfirmed).';
 
--- The nightly expiry: the open requests whose time is out. Called by the job
--- with no principal, as the push receipts are; answers a count.
-CREATE FUNCTION app.cover_requests_expire() RETURNS integer
+-- Whether request p_request is open in the caller's school: what the arms that
+-- add a line or a colleague to a request ask. A function and not a subquery on
+-- CoverRequests, because that table's recipient arm reads the recipients, whose
+-- insert arm would then read the requests again: Postgres refuses such a ring
+-- at plan time (42P17, infinite recursion in policy). Another school's request
+-- is not open to the caller, and the answer says nothing else of it.
+CREATE FUNCTION app.cover_request_is_open(p_request uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT EXISTS (SELECT 1 FROM "CoverRequests" r
+                  WHERE r."id" = p_request AND r."status" = 'OPEN' AND r."schoolId" = app.current_school_id())
+$$;
+
+COMMENT ON FUNCTION app.cover_request_is_open(uuid) IS
+  'True when request p_request is OPEN and belongs to the caller''s school. The insert arms of CoverRequestLessons and CoverRequestRecipients ask it, so a line or a colleague is added to an open request only.';
+
+-- The job's pass over the open requests, called with no principal as the push
+-- receipts are: the ones whose time is out end EXPIRED, and the ones whose
+-- grounds are gone end CLOSED. A request has lost its grounds when one of its
+-- lines no longer is a lesson to cover: the lesson is cancelled, the absence
+-- is taken back, the absence no longer reaches the lesson (shortened, or the
+-- lesson moved), the absent teacher is no longer on the lesson, or the
+-- request has no line left. A decision of the board closes its request by
+-- trigger already, and a yes ends it. A request a yes holds is skipped (it
+-- ends by that yes, or the next pass finds it), so the job never waits on a
+-- lock behind the first yes. Grounds gone come before time out: a question
+-- that ran out the same hour as the absence was taken back is said to have
+-- been taken back.
+--
+-- Answers one row per request ended, with the administrator who sent it when
+-- they still are one who can place a vikarie (an active SCHOOL_ADMIN writing
+-- Drift, else NULLs): the gateway tells the colleagues, or the sender, as
+-- that administrator, as it places a yes (app.cover_request_sender).
+CREATE FUNCTION app.cover_requests_settle()
+RETURNS TABLE ("requestId" uuid, "schoolId" uuid, "outcome" text,
+               "senderId" uuid, "senderAuthId" uuid, "senderProfile" "AdminProfile", "senderHrRead" boolean)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-DECLARE
-  n integer;
 BEGIN
   IF app.current_user_id() IS NOT NULL THEN
-    RAISE EXCEPTION 'COVER_REQUEST_EXPIRY_IS_THE_JOBS' USING ERRCODE = 'CR403';
+    RAISE EXCEPTION 'COVER_REQUEST_SETTLING_IS_THE_JOBS' USING ERRCODE = 'CR403';
   END IF;
-  -- A request a yes holds is skipped: it ends by that yes, or the next pass
-  -- finds it, and the job never waits on a lock behind the first yes.
-  UPDATE "CoverRequests" SET "status" = 'EXPIRED'
-   WHERE "id" IN (SELECT q."id" FROM "CoverRequests" q
-                   WHERE q."status" = 'OPEN' AND q."expiresAt" <= clock_timestamp()
-                   ORDER BY q."id" FOR UPDATE SKIP LOCKED);
-  GET DIAGNOSTICS n = ROW_COUNT;
-  RETURN n;
+  RETURN QUERY
+  WITH cand AS (
+    SELECT q."id",
+           (NOT EXISTS (SELECT 1 FROM "CoverRequestLessons" x WHERE x."requestId" = q."id")
+            OR EXISTS (SELECT 1
+                         FROM "CoverRequestLessons" x
+                         JOIN "CalendarLessons" l ON l."id" = x."calendarLessonId"
+                         JOIN "TeacherAbsences" a ON a."id" = x."absenceId"
+                        WHERE x."requestId" = q."id"
+                          AND (l."status" = 'CANCELLED'
+                               OR a."status" <> 'ACTIVE'
+                               OR NOT (l."startsAt" < a."endsAt" AND l."endsAt" > a."startsAt")
+                               OR NOT EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t
+                                               WHERE t."calendarLessonId" = l."id" AND t."teacherId" = a."userId")))) AS unfounded
+      FROM "CoverRequests" q
+     WHERE q."status" = 'OPEN'
+  ), due AS (
+    SELECT q."id", o.unfounded
+      FROM "CoverRequests" q
+      JOIN cand o ON o."id" = q."id"
+     WHERE q."status" = 'OPEN' AND (o.unfounded OR q."expiresAt" <= clock_timestamp())
+     ORDER BY q."id" FOR UPDATE OF q SKIP LOCKED
+  ), ended AS (
+    UPDATE "CoverRequests" c
+       SET "status" = CASE WHEN d.unfounded THEN 'CLOSED'::"CoverRequestStatus" ELSE 'EXPIRED'::"CoverRequestStatus" END
+      FROM due d
+     WHERE c."id" = d."id" AND c."status" = 'OPEN'
+    RETURNING c."id" AS rid, c."schoolId" AS sid, c."requestedByUserId" AS uid, d.unfounded
+  )
+  SELECT e.rid, e.sid, CASE WHEN e.unfounded THEN 'NOT_NEEDED' ELSE 'EXPIRED' END,
+         u."id", u."authId", u."adminProfile", u."hrRead"
+    FROM ended e
+    LEFT JOIN "Users" u
+      ON u."id" = e.uid AND u."schoolId" = e.sid AND u."isActive" AND u."role" = 'SCHOOL_ADMIN'
+     AND 'DRIFT' = ANY (app.admin_profile_writes(u."adminProfile"))
+   ORDER BY e.rid;
 END
 $$;
 
-COMMENT ON FUNCTION app.cover_requests_expire() IS
-  'Ends the open requests whose expiresAt has passed (EXPIRED) in every school, skipping any a yes holds; answers how many. Refused (CR403) to anybody with a login.';
+COMMENT ON FUNCTION app.cover_requests_settle() IS
+  'Ends the open requests in every school: EXPIRED when expiresAt has passed, CLOSED (outcome NOT_NEEDED) when a line is no longer a lesson to cover; skips any a yes holds; answers one row per request with the administrator who sent it, or NULLs when they can no longer place a vikarie. Refused (CR403) to anybody with a login.';
 
 -- ---------------------------------------------------------------------------
 -- Row-level security and grants. See the preamble.
@@ -731,7 +791,8 @@ BEGIN
         FOR INSERT TO "app_authenticated"
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-                    AND (select app.current_user_may('DRIFT', true)));
+                    AND (select app.current_user_may('DRIFT', true))
+                    AND app.cover_request_is_open("requestId"));
 
     -- CoverRequestRecipients
     CREATE POLICY "cover_request_recipients_admin_select" ON "CoverRequestRecipients"
@@ -747,7 +808,8 @@ BEGIN
         FOR INSERT TO "app_authenticated"
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-                    AND (select app.current_user_may('DRIFT', true)));
+                    AND (select app.current_user_may('DRIFT', true))
+                    AND app.cover_request_is_open("requestId"));
     CREATE POLICY "cover_request_recipients_admin_update" ON "CoverRequestRecipients"
         FOR UPDATE TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
@@ -796,7 +858,8 @@ BEGIN
     GRANT EXECUTE ON FUNCTION app.cover_request_sender(uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.cover_confirm(uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.cover_my_passes(timestamptz, timestamptz) TO "app_authenticated";
-    GRANT EXECUTE ON FUNCTION app.cover_requests_expire() TO "app_authenticated";
+    GRANT EXECUTE ON FUNCTION app.cover_requests_settle() TO "app_authenticated";
+    GRANT EXECUTE ON FUNCTION app.cover_request_is_open(uuid) TO "app_authenticated";
   END IF;
 
   FOREACH t IN ARRAY ARRAY['CoverRequests', 'CoverRequestLessons', 'CoverRequestRecipients', 'CoverConfirmations'] LOOP
@@ -819,7 +882,7 @@ BEGIN
   END LOOP;
 
   -- The functions answer the API's role alone.
-  FOREACH t IN ARRAY ARRAY['app.cover_request_sender(uuid)', 'app.cover_confirm(uuid)', 'app.cover_my_passes(timestamptz, timestamptz)', 'app.cover_requests_expire()'] LOOP
+  FOREACH t IN ARRAY ARRAY['app.cover_request_sender(uuid)', 'app.cover_confirm(uuid)', 'app.cover_my_passes(timestamptz, timestamptz)', 'app.cover_requests_settle()', 'app.cover_request_is_open(uuid)'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', t);
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
       IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
@@ -903,7 +966,9 @@ $$;
 -- plus the one branch marked "vikarieförfrågningar". A request goes once it
 -- has ended and its end is before the cutoff (the school's local midnight),
 -- with its lessons and its recipients; a confirmation goes once it is that
--- old. An OPEN request is never due: it ends first.
+-- old. An OPEN request is due only once its time ran out before the cutoff
+-- (the job that ends it is off or has stopped: a request nobody can answer
+-- any more is not kept for ever); one that can still be answered never is.
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION app.gallring_due(p_school uuid, p_type "RetentionDataType", p_before date, p_today date)
@@ -957,7 +1022,8 @@ LANGUAGE sql STABLE AS $$
   SELECT 'CoverRequests', q."id"
     FROM school, "public"."CoverRequests" q
    WHERE p_type = 'COVER_REQUESTS' AND q."schoolId" = school."id"
-     AND q."status" <> 'OPEN' AND q."closedAt" < school.before_at
+     AND ((q."status" <> 'OPEN' AND q."closedAt" < school.before_at)
+          OR (q."status" = 'OPEN' AND q."expiresAt" < school.before_at))
   UNION ALL
   SELECT 'CoverConfirmations', c."id"
     FROM school, "public"."CoverConfirmations" c

@@ -465,6 +465,7 @@ describe("NotificationBell inbox", () => {
         notif({ type: "COVER_REQUESTED", meta: { requestId: "r-1", startsAt, expiresAt: "2026-10-14T07:30:00.000Z", lessonCount: 2 } }),
         notif({ type: "COVER_REQUEST_CLOSED", meta: { requestId: "r-1", startsAt, lessonCount: 2, reason: "TAKEN" } }),
         notif({ type: "COVER_REQUEST_ACCEPTED", meta: { requestId: "r-1", startsAt, lessonCount: 2, acceptedByName: "Bo Ek" } }),
+        notif({ type: "COVER_REQUEST_CLOSED", meta: { requestId: "r-2", startsAt, lessonCount: 1, reason: "UNANSWERED" } }),
         notif({ meta: { subjectName: "Biologi" } }),
       ]),
     );
@@ -485,7 +486,11 @@ describe("NotificationBell inbox", () => {
     await user.click(bellButton());
     await user.click(screen.getByText(`cover.COVER_REQUEST_ACCEPTED(when=${when}|count=2|reason=|name=Bo Ek)`));
     expect(router.push).toHaveBeenLastCalledWith("/admin/cover");
-    expect(router.push).toHaveBeenCalledTimes(3);
+    // A question that ran out unanswered is said to the administrator who asked: it leads to the board.
+    await user.click(bellButton());
+    await user.click(screen.getByText(`cover.COVER_REQUEST_CLOSED(when=${when}|count=1|reason=UNANSWERED|name=)`));
+    expect(router.push).toHaveBeenLastCalledWith("/admin/cover");
+    expect(router.push).toHaveBeenCalledTimes(4);
   });
 
   it("leaves the menu open and goes nowhere on a notice that has no page of its own", async () => {

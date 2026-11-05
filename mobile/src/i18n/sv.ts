@@ -261,7 +261,7 @@ export const sv = {
       SUPERVISION_COVER: 'Rastvaktspass som vikarie',
       SUPERVISION_COVER_WITHDRAWN: 'Avbokade rastvaktspass',
       COVER_REQUESTED: 'Förfrågningar om att vikariera',
-      COVER_REQUEST_CLOSED: 'Vikarieförfrågningar som tillsatts eller dragits tillbaka',
+      COVER_REQUEST_CLOSED: 'Vikarieförfrågningar som tillsatts, dragits tillbaka eller gått ut utan svar',
       COVER_REQUEST_ACCEPTED: 'Svar på dina vikarieförfrågningar',
     },
     logout: 'Logga ut',
@@ -329,7 +329,7 @@ export const sv = {
     passConfirmA11y: 'Bekräfta vikariepasset {subject}, {when}',
     passConfirmedA11y: 'Vikariepasset {subject}, {when} är bekräftat',
     notice: {
-      requested_one: 'Kan du vikariera? {lesson} ({when}). Svara senast {until}.',
+      requested_one: 'Kan du vikariera en lektion från {when}? Svara senast {until}.',
       requested_other: 'Kan du vikariera {count} lektioner från {when}? Svara senast {until}.',
       accepted_one: '{name} har tackat ja till vikariepasset {when}.',
       accepted_other: '{name} har tackat ja till {count} vikariepass från {when}.',
@@ -337,6 +337,10 @@ export const sv = {
       closedTaken_other: '{count} vikariepass från {when} är redan tillsatta av en kollega.',
       closedWithdrawn_one: 'Förfrågan om vikariepasset {when} är återkallad.',
       closedWithdrawn_other: 'Förfrågan om {count} vikariepass från {when} är återkallad.',
+      closedNotNeeded_one: 'Förfrågan om vikariepasset {when} behövs inte längre.',
+      closedNotNeeded_other: 'Förfrågan om {count} vikariepass från {when} behövs inte längre.',
+      closedUnanswered_one: 'Ingen har tackat ja till vikariepasset {when}. Det behöver fortfarande en vikarie.',
+      closedUnanswered_other: 'Ingen har tackat ja till de {count} vikariepassen från {when}. De behöver fortfarande en vikarie.',
     },
   },
 } as const;
