@@ -57,5 +57,10 @@ describe("every file the web hands out is decided for a protected identity", () 
     expect(DOWNLOADS.test("const url = URL.createObjectURL(blob);")).toBe(true);
     expect(DOWNLOADS.test("doc.save(name)")).toBe(true);
     expect(DOWNLOADS.test("const downloads = 3;")).toBe(false);
+    // The review's two that got past the first scan (#263, L4), and paper.
+    expect(DOWNLOADS.test('window.open("data:text/csv;charset=utf-8," + encodeURIComponent(file))')).toBe(true);
+    expect(DOWNLOADS.test("anchor.download = 'elever.csv';")).toBe(true);
+    expect(DOWNLOADS.test("const blob = new Blob([file]);")).toBe(true);
+    expect(DOWNLOADS.test("onClick={() => window.print()}")).toBe(true);
   });
 });

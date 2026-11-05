@@ -1241,19 +1241,34 @@
   </p>
   <p id="skyddad-identitet">
     <strong>Skyddad identitet.</strong> Fäll ut personens rad för att se om
-    personen är markerad med skyddad identitet, och varifrån markeringen
-    kommer: från elevregistret (7.2) eller satt för hand. Rektor, en
-    fullständig administratör och expeditionen markerar och tar bort
-    markeringen med knappen på raden; övriga administratörer ser den. En
-    markerad person finns inte i filerna Rastra Schema skriver om personer
-    (3.6, 6.9): inte i elevfilen, lärarfilen, vårdnadshavarfilen eller
-    närvarorapporten, och inte heller i en rad som nämner personen. Rastra
-    Schema sparar bara att skyddet finns, aldrig vilket skydd det är
-    (sekretessmarkering eller skyddad folkbokföring). Lärare, elever och
-    vårdnadshavare ser inte markeringen. Tar du bort en markering som kommer
+    personen är markerad med skyddad identitet, varifrån markeringen kommer
+    (från elevregistret, 7.2, eller satt för hand), och vem som satt eller
+    tagit bort en markering och när. Rektor, en fullständig administratör och
+    expeditionen markerar för hand. Bara rektor och en fullständig
+    administratör tar bort markeringarna, eftersom det är ett beslut att lyfta
+    ett skydd. Övriga administratörer ser markeringen. En markerad person
+    finns inte i filerna Rastra Schema skriver om personer (3.6, 6.9): inte i
+    elevfilen, lärarfilen, vårdnadshavarfilen eller närvarorapporten, och
+    inte heller i en rad som nämner personen. Rastra Schema sparar bara att
+    skyddet finns, aldrig vilket skydd det är (sekretessmarkering eller
+    skyddad folkbokföring). Lärare, elever och vårdnadshavare ser inte
+    markeringen. En markering för hand står kvar tills en administratör tar
+    bort den, också om registret senare säger att personen inte är skyddad;
+    markera därför för hand också en person som registret redan markerat, om
+    du vill att skyddet ska stå kvar. Tar du bort en markering som kommer
     från registret sätts den igen vid nästa synk, så länge registret har kvar
     skyddet. Markeringen försvinner med personen, och när gallringen
-    pseudonymiserar en person som slutat (7.4).
+    pseudonymiserar en person som slutat (7.4); historiken gallras med
+    skolans ändringsloggar.
+  </p>
+  <p>
+    <strong>Andra system får personen som förut.</strong> Markeringen
+    hindrar inte de system skolan anslutit via SS12000 (7.3): de får den
+    markerade personen med namn, e-post, grupper och vårdnadshavare som
+    vanligt, och utan någon markering. Rastra Schema skickar inte vidare att
+    personen är skyddad, eftersom SS12000 bara kan säga vilket skydd det är,
+    och det sparas inte. Den som ansluter ett system som läser personer får
+    själv se till att det hanterar skyddade personer.
   </p>
   <p>
     Sidan visar varje profil det den ändrar. Expeditionen lägger upp och
@@ -1363,7 +1378,11 @@
       vårdnadshavaren är markerad, och timplansfilen en post vars lärare är
       markerad. När filen hämtas står det hur många som hölls utanför. Den
       som har skyddad identitet men inte är markerad finns med, så markera
-      personen innan du delar en fil.
+      personen innan du delar en fil. Lärare med skyddad identitet finns
+      däremot kvar med namn i schemafilerna (7.7), i schemat som iCal och PDF,
+      i utskrifterna, i kalenderprenumerationerna och, om skolan visar
+      lärarnas namn, i Schemavisaren (7.1); dölj en sådan lärare under
+      <span class="path">Publicering</span> för de publika scheman.
       På sidor som rymmer två listor — klasser och undervisningsgrupper, eller
       lärare och elever — frågar knappen vilken fil du vill ha.
     </p>
@@ -6509,15 +6528,18 @@
   </p>
   <ul>
     <li>Ändringar för en person med <strong>skyddad identitet</strong> i
-      registret. Markeringen själv är undantaget: en person som redan är
-      kopplad och som registret skyddar markeras (<span class="ui">Skyddad
-      identitet</span>, förvald, och natten gör den också), och den som du
-      kryssar i att skapa eller koppla markeras med det. Säger registret
-      <em>Ingen</em> för en person som synken markerat föreslås att
-      markeringen tas bort; det är förvalt men görs aldrig av natten, och
-      bara vid en full synk. En markering du satt för hand tar synken aldrig
-      bort. Rastra Schema sparar bara att skyddet finns, aldrig vilket
-      (3.6).</li>
+      registret. Markeringen själv är undantaget: en person som registret
+      skyddar markeras (<span class="ui">Skyddad identitet</span>, förvald,
+      och natten gör den också), både den som redan är kopplad och den som
+      finns i Rastra Schema utan att vara kopplad men har samma e-postadress
+      (inskriven för hand, inläst från fil eller importerad tidigare), också
+      om du väntar med kopplingen. Är det inte samma person, ändra
+      e-postadressen. Den du kryssar i att skapa markeras med det. Säger
+      registret <em>Ingen</em> för en person som synken markerat föreslås att
+      markeringen tas bort. Det är inte förvalt, natten gör det aldrig, och det
+      föreslås bara vid en full synk; kryssa i det när du vill lyfta skyddet.
+      En markering du satt för hand tar synken aldrig bort. Rastra Schema
+      sparar bara att skyddet finns, aldrig vilket (3.6).</li>
     <li>En ändrad <strong>e-postadress</strong> för någon som redan är
       inbjuden. Personen loggar in med den gamla adressen tills du skickar
       inbjudan igen. Då flyttar personens egen inloggning till den nya, och

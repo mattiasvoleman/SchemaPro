@@ -32,9 +32,14 @@ export interface PeopleFile {
   why: string;
 }
 
-/** What a download looks like in the source. */
+/**
+ * What a download or a print looks like in the source: the app's own
+ * primitives, a blob or data: URL handed to a link, a link given a file name,
+ * and the browser's print (a page put on paper leaves the system as a file
+ * does).
+ */
 export const DOWNLOADS =
-  /\b(downloadCsv|downloadIcs|downloadScbText|downloadScbCsv|saveBase64|downloadTemplate)\(|URL\.createObjectURL\(|\bdoc\.save\(/;
+  /\b(downloadCsv|downloadIcs|downloadScbText|downloadScbCsv|saveBase64|downloadTemplate)\(|URL\.createObjectURL\(|\bdoc\.save\(|\.download\s*=|["'`]data:|new Blob\(|window\.print\(/;
 
 /** The export button's kinds that name people: built from the unmarked only. */
 export const PEOPLE_KINDS = [
@@ -78,6 +83,31 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     files: "timetable.ics, timetable.pdf",
     rule: "NAMES_STAFF",
     why: "Names the lesson's teachers; pupils only as a count.",
+  },
+  "app/[locale]/(app)/admin/timetable/page.tsx": {
+    files: "the timetable printed (Skriv ut)",
+    rule: "NAMES_STAFF",
+    why: "The week on paper: teachers, groups as names, pupils only as a count.",
+  },
+  "app/[locale]/(app)/admin/publishing/print/page.tsx": {
+    files: "the print set (Utskrift)",
+    rule: "NAMES_STAFF",
+    why: "The gateway's print set (GET /print/timetables), without a teacher hidden from public timetables; no pupil.",
+  },
+  "components/lesson-log/class-book-page.tsx": {
+    files: "the klassbok printed",
+    rule: "NAMES_STAFF",
+    why: "Teachers by name, pupils only as a count (GET /lesson-logs/class-book).",
+  },
+  "components/staffing/uppdragsbeskrivning.tsx": {
+    files: "a teacher's uppdragsbeskrivning printed",
+    rule: "ONE_PERSON",
+    why: "One teacher's own post, printed for that teacher.",
+  },
+  "components/timetable-sheet/print-week-button.tsx": {
+    files: "a week printed",
+    rule: "ONE_PERSON",
+    why: "The signed-in person's own week, or a guardian's child's.",
   },
   "app/[locale]/(app)/admin/dataskydd/access-log-csv.ts": {
     files: "lasningar-<namn>-<datum>.csv",

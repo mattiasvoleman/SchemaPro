@@ -1197,7 +1197,7 @@ export default function PeoplePage() {
                       <div className="mt-3 space-y-3">
                         <Suspense fallback={null}>
                           <RoleHistory userId={person.id} />
-                          <ProtectedIdentity userId={person.id} writes={writesPeople} />
+                          <ProtectedIdentity userId={person.id} writes={writesPeople} decides={profileDecides(myProfile)} />
                         </Suspense>
                       </div>
                     </TableCell>

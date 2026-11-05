@@ -2905,8 +2905,8 @@
     "noGuardianLinks": "Det finns inga kopplingar mellan vårdnadshavare och elever att exportera.",
     "keptProtected": "{count, plural, one {En person i filen har skyddad identitet. Den finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.} other {# personer i filen har skyddad identitet. De finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.}}",
     "heldOut": {
-      "people": "{count, plural, =0 {Ingen hölls utanför filen: ingen av dem är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En person med skyddad identitet hölls utanför filen, och varje rad som nämner personen.} other {# personer med skyddad identitet hölls utanför filen, och varje rad som nämner någon av dem.}}",
-      "links": "{count, plural, =0 {Ingen koppling hölls utanför filen: ingen elev eller vårdnadshavare i den är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En koppling hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet.} other {# kopplingar hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet.}}"
+      "people": "{count, plural, =0 {Ingen hölls utanför filen: ingen av dem är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En person med skyddad identitet hölls utanför filen, och varje rad som nämner personen. Den som har skyddad identitet men inte är markerad under Personer finns med.} other {# personer med skyddad identitet hölls utanför filen, och varje rad som nämner någon av dem. Den som har skyddad identitet men inte är markerad under Personer finns med.}}",
+      "links": "{count, plural, =0 {Ingen koppling hölls utanför filen: ingen elev eller vårdnadshavare i den är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En koppling hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} other {# kopplingar hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.}}"
     },
     "protectedNotice": "Importen markerar ingen som skyddad. Har en person i filen skyddad identitet, markera personen under Personer, så hålls den utanför filerna Rastra skriver.",
     "fileWarnings": "Att kontrollera före importen",
@@ -7372,15 +7372,32 @@
   },
   "protectedIdentity": {
     "title": "Skyddad identitet",
-    "none": "Inte markerad.",
-    "fromRegister": "Markerad. Markeringen kommer från elevregistret (SS12000).",
-    "byHand": "Markerad för hand.",
+    "state": {
+      "none": "Inte markerad.",
+      "fromRegister": "Markerad. Markeringen kommer från elevregistret (SS12000).",
+      "byHand": "Markerad för hand.",
+      "both": "Markerad för hand och av elevregistret (SS12000)."
+    },
     "explain": "En markerad person finns inte i filerna Rastra skriver om personer, som elever.csv, vardnadshavare.csv och närvarorapporten. Vilket skydd personen har sparas inte.",
-    "registerOwns": "Tar du bort markeringen sätts den igen vid nästa synk, så länge registret har kvar skyddet.",
+    "integrations": "System som skolan anslutit via SS12000 får personen som förut, utan markering.",
+    "registerOwns": "Markeringen följer registret: säger registret Ingen föreslår synken att den tas bort. En markering för hand står kvar tills en administratör tar bort den.",
     "set": "Markera skyddad identitet",
-    "remove": "Ta bort markeringen",
+    "setAlongside": "Markera för hand också",
+    "remove": "Ta bort markeringarna",
     "marked": "Personen är markerad med skyddad identitet.",
-    "unmarked": "Markeringen är borttagen.",
-    "loadFailed": "Markeringen kunde inte läsas."
+    "unmarked": "Markeringarna är borttagna.",
+    "loadFailed": "Markeringen kunde inte läsas.",
+    "historyTitle": "Historik för markeringen",
+    "nobody": "Rastra (synken eller gallringen)",
+    "event": {
+      "ADDED": {
+        "MANUAL": "markerad för hand av {who}",
+        "SS12000": "markerad från registret av {who}"
+      },
+      "REMOVED": {
+        "MANUAL": "markeringen för hand borttagen av {who}",
+        "SS12000": "registrets markering borttagen av {who}"
+      }
+    }
   }
 }

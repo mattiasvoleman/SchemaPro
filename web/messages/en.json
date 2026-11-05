@@ -2905,8 +2905,8 @@
     "noGuardianLinks": "There are no links between guardians and pupils to export.",
     "keptProtected": "{count, plural, one {One person in the file has a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.} other {# people in the file have a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.}}",
     "heldOut": {
-      "people": "{count, plural, =0 {Nobody was kept out of the file: none of them is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One person with a protected identity was kept out of the file, and every row naming them.} other {# people with a protected identity were kept out of the file, and every row naming any of them.}}",
-      "links": "{count, plural, =0 {No link was kept out of the file: no pupil or guardian in it is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One link was kept out of the file, because the pupil or the guardian has a protected identity.} other {# links were kept out of the file, because the pupil or the guardian has a protected identity.}}"
+      "people": "{count, plural, =0 {Nobody was kept out of the file: none of them is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One person with a protected identity was kept out of the file, and every row naming them. Anyone with a protected identity who is not marked under People is in it.} other {# people with a protected identity were kept out of the file, and every row naming any of them. Anyone with a protected identity who is not marked under People is in it.}}",
+      "links": "{count, plural, =0 {No link was kept out of the file: no pupil or guardian in it is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One link was kept out of the file, because the pupil or the guardian has a protected identity. Anyone with a protected identity who is not marked under People is in it.} other {# links were kept out of the file, because the pupil or the guardian has a protected identity. Anyone with a protected identity who is not marked under People is in it.}}"
     },
     "protectedNotice": "The import marks nobody as protected. If a person in the file has a protected identity, mark them under People, and they are kept out of the files Rastra writes.",
     "fileWarnings": "To check before importing",
@@ -7372,15 +7372,32 @@
   },
   "protectedIdentity": {
     "title": "Protected identity",
-    "none": "Not marked.",
-    "fromRegister": "Marked. The mark comes from the pupil register (SS12000).",
-    "byHand": "Marked by hand.",
+    "state": {
+      "none": "Not marked.",
+      "fromRegister": "Marked. The mark comes from the pupil register (SS12000).",
+      "byHand": "Marked by hand.",
+      "both": "Marked by hand and by the pupil register (SS12000)."
+    },
     "explain": "A marked person is not in the files Rastra writes about people, such as elever.csv, vardnadshavare.csv and the attendance report. Which protection the person has is not stored.",
-    "registerOwns": "If you remove the mark, the next sync sets it again for as long as the register keeps the protection.",
+    "integrations": "Systems the school connected over SS12000 get the person as before, without a mark.",
+    "registerOwns": "The mark follows the register: when the register says Ingen, the sync proposes removing it. A mark by hand stays until an administrator removes it.",
     "set": "Mark protected identity",
-    "remove": "Remove the mark",
+    "setAlongside": "Mark by hand as well",
+    "remove": "Remove the marks",
     "marked": "The person is marked as having a protected identity.",
-    "unmarked": "The mark is removed.",
-    "loadFailed": "The mark could not be read."
+    "unmarked": "The marks are removed.",
+    "loadFailed": "The mark could not be read.",
+    "historyTitle": "History of the mark",
+    "nobody": "Rastra (the sync or gallring)",
+    "event": {
+      "ADDED": {
+        "MANUAL": "marked by hand by {who}",
+        "SS12000": "marked from the register by {who}"
+      },
+      "REMOVED": {
+        "MANUAL": "the mark by hand removed by {who}",
+        "SS12000": "the register's mark removed by {who}"
+      }
+    }
   }
 }
