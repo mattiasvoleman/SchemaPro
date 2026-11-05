@@ -12,11 +12,11 @@
  * Project definitions and the coverage gate live in jest.base.js, which
  * jest.mutation.config.js reuses.
  */
-const { globals, unit, e2e, coverage } = require('./jest.base');
+const { globals, unit, e2e, openapi, coverage } = require('./jest.base');
 
 module.exports = {
   rootDir: __dirname,
   ...globals,
   ...coverage,
-  projects: [unit, e2e],
+  projects: [unit, e2e, openapi],
 };

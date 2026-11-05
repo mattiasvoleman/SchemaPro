@@ -1,0 +1,10 @@
+{
+  // The `openapi` Jest project's own: the @nestjs/swagger plugin reads the
+  // types of the DTOs' properties, and needs a program to ask (the isolated
+  // per-file transpile of test/tsconfig.json has none). Diagnostics are off in
+  // the transform (jest.base.js); `npm run typecheck:test` is what checks types.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "isolatedModules": false
+  }
+}

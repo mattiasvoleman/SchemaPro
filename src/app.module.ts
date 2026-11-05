@@ -43,6 +43,7 @@ import { AbsenceWatchModule } from './absence-watch/absence-watch.module';
 import { GallringModule } from './gallring/gallring.module';
 import { SchoolExportModule } from './school-export/school-export.module';
 import { AccessLogModule } from './access-log/access-log.module';
+import { OpenApiModule } from './openapi/openapi.module';
 import { SchoolUnitsModule } from './school-units/school-units.module';
 import { HuvudmanModule } from './huvudman/huvudman.module';
 import { SitesModule } from './sites/sites.module';
@@ -146,6 +147,7 @@ import type { ThrottleConfig } from './config/configuration';
     SchoolExportModule,
     AbsenceWatchModule,
     AccessLogModule,
+    OpenApiModule,
     SchoolUnitsModule,
     HuvudmanModule,
     SitesModule,

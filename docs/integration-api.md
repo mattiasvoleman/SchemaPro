@@ -1117,6 +1117,80 @@ the browser refuses says so. Each key lists its subscriptions
 *Pausa* / *Återuppta* (`POST /:id/subscriptions/:sid/pause|resume`). Revoking
 a key asks first.
 
+## The administration API (`/api/v1`) and its OpenAPI document
+
+Everything above is the SS12000 side: `/ss12000/v1` and `/ss12000/v2.0`, reached
+with an integration key. The gateway has a second surface, `/api/v1`, which
+Rastra's own web and app use and which a school's administrator signs in to. It
+is described in an **OpenAPI 3 document**, generated from the gateway's
+controllers and DTO classes (`@nestjs/swagger`, no hand-written spec, no
+Swagger UI).
+
+**Where it is.**
+
+- `GET /api/v1/openapi.json`, for a signed-in administrator of a school: any
+  profile, the läsare (`LASARE`) too, and the huvudman's reader at a school.
+  Teachers, pupils, guardians, a huvudman's member with no school chosen, an
+  integration key and a caller with no login are refused (403, or 401 without
+  a login). The document is built once per process and served as the same
+  bytes every time.
+- `docs/api/openapi.json` in this repository: the same document, committed,
+  two-space indented, with no timestamp, host or environment in it, so a pull
+  request that changes the API shows the change in the file.
+
+**How it is generated and kept in step.** `nest build` runs the
+`@nestjs/swagger` plugin named in `nest-cli.json`, which reads each DTO's
+properties and its class-validator decorators (bounds, formats, enums,
+required) off the TypeScript types: no controller or DTO carries a decorator for
+the document. `src/openapi/` turns what the library derives into the document
+(only `/api/v1`; the `X-School-Id` header and the common errors on every
+operation; `x-roles`, `x-admin-write` and `x-rate-limit` read from `@Roles`,
+`@Area`/`@Decides` and `@Throttle`; paths typed by the pipes on them; a route
+that answers a file described as one). To refresh the committed file after a
+change to a route, a DTO or a role:
+
+```bash
+npm run openapi:generate   # rewrites docs/api/openapi.json
+```
+
+The `openapi` Jest project (`npm run test:openapi`, part of `npm test`) fails
+with the missing `VERB /path` when a route under `/api/v1` is not in the
+document, when the document has an operation that is no route, when the
+committed file differs from what the code generates, and when the document is
+not a valid OpenAPI 3.0 document. It runs apart from the unit and e2e projects
+because the plugin needs a type checker. The built application
+(`dist/`, from `nest build`) produces the same bytes as the test.
+
+**What it does not cover.**
+
+- The SS12000 providers `/ss12000/v1` and `/ss12000/v2.0`: they are keyed with
+  `X-API-Key`, and are described in this file (v2.0 follows the standard's own
+  OpenAPI, SIS TK450). An integration key is **not** accepted on `/api/v1`.
+- The public routes under `/public/v1` (the Schemavisaren, calendar feeds, the
+  lookup of a domain's sign-in method) and the `/health` probes.
+- Response bodies are described as JSON objects: most routes return the
+  database's rows or a service's summary, which have no class to read a schema
+  from. Request bodies and query parameters, which are DTO classes, are
+  described in full. The two bodies typed inline in
+  `IntegrationKeysController` carry an `@ApiBody` (the only hand-written
+  schemas).
+- The mobile app's own helpers (device registration, push) are routes under
+  `/api/v1` like the rest, and are in the document.
+
+**What to tell an IT department that asks about the API.** The administration
+API is the one the web and the app use; it is authenticated with the person's
+own login (a Supabase JWT as a Bearer token, plus `X-School-Id` when the login
+has roles at several schools), not with a shared key, and everything a person
+may do is bounded by their role and, for an administrator, their profile. It is
+rate limited (120 requests a minute per address by default, tighter on some
+routes), every read of personal data is written to the läslogg, errors are
+RFC 7807, ids are UUIDs and dates ISO 8601. A system that needs data from the
+school without a person's login uses the SS12000 provider and an integration
+key, which is scoped to one school and to the scopes the administrator ticked;
+that is the contract in the rest of this file. The OpenAPI document is the
+reference for the first: generated from the code, so it describes the routes
+as they are, not as a separate text says they are.
+
 ## Security model
 
 **A key resolves to one school.** `IntegrationKeyGuard` hashes the

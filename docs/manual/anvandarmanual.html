@@ -6852,6 +6852,23 @@
     notiser.
   </p>
 
+  <h4>API-beskrivning för skolans IT-avdelning (OpenAPI)</h4>
+  <p>
+    API-nycklar gäller bara SS12000-gränssnitten. Rastra Schemas övriga API,
+    det som webben och appen själva använder, nås med personens egen
+    inloggning och inte med en nyckel. Frågar skolans IT-avdelning hur det ser
+    ut finns det beskrivet i ett <strong>OpenAPI-dokument</strong>: varje
+    anrop, vad det tar emot, vilka roller och administratörsprofiler som får
+    göra det, och hur fel och hastighetsgränser ser ut. Skolans
+    administratörer, alla profiler och även läsaren, hämtar det med sin
+    inloggning från <code>/api/v1/openapi.json</code> på Rastra Schemas
+    API-adress. Samma dokument finns som filen
+    <code>docs/api/openapi.json</code> i Rastras kodförråd. Det beskriver inte
+    SS12000-gränssnitten (7.2, 7.3) eller de publika sidorna
+    (Schemavisaren, 7.1, och kalenderprenumerationen, 7.6), och det skapas ur
+    koden, så det följer med varje version.
+  </p>
+
   <h3 id="s74"><span class="num">7.4</span>Dataskydd och gallring</h3>
   <p>
     Skolan får inte spara personuppgifter längre än de behövs. Hur länge
