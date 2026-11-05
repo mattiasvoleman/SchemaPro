@@ -1185,8 +1185,8 @@ describe('personnummer anywhere in a field', () => {
 
   describe('what a message quotes of the file', () => {
     it('is control: a number in the shape the filter does not know gets past it, which is why the message must not quote it', () => {
-      expect(hasPersonalNumber('1980.01.01-1234')).toBe(false);
-      expect(hasPersonalNumber('19800101.1234')).toBe(false);
+      expect(hasPersonalNumber('1980:01:01#1234')).toBe(false);
+      expect(hasPersonalNumber('19800101#1234')).toBe(false);
     });
 
     it('quotes a short value as it is', () => {
@@ -1201,7 +1201,7 @@ describe('personnummer anywhere in a field', () => {
     });
 
     it('does not quote a value with ten digits or more, however they are separated, in any message that quotes the file', () => {
-      const odd = '1980.01.01-1234';
+      const odd = '1980:01:01#1234';
       const grid: UntisPeriod[] = [{ number: 1, start: '08:30', end: '09:15' }];
       const cases: Array<[string, string, ReturnType<typeof readUntisGpu>]> = [
         ['Tag', 'GPU_BAD_DAY', readUntisGpu({ gpu001: text(`1,"8A","ABE","Matematik","A101","${odd}",510,00:45`) })],
@@ -1225,7 +1225,7 @@ describe('personnummer anywhere in a field', () => {
     it('does not quote such a value in the note on a group text that is left alone either', () => {
       const parsed = readUntisGpu({
         gpu001: text(row001('1', '7A', 'FAL', 'Slöjd', 'Slöjdsalen', '2')),
-        gpu002: text(row002({ 1: '1', 5: '7A', 6: 'FAL', 7: 'Slöjd', 12: 'Grupp 1980.01.01-1234' })),
+        gpu002: text(row002({ 1: '1', 5: '7A', 6: 'FAL', 7: 'Slöjd', 12: 'Grupp 1980:01:01#1234' })),
       });
       expect(parsed.problems).toEqual([]);
       expect(countNotes(parsed.notes, '[siffror utelämnade]')).toBe(1);
@@ -1234,9 +1234,9 @@ describe('personnummer anywhere in a field', () => {
 
     it('sees the digits of a number that starts before the cut or after a run of blanks, and leaves a long text with digits far out alone', () => {
       const tag = (value: string): string => readUntisGpu({ gpu001: text(`1,"8A","ABE","Matematik","A101","${value}",510,00:45`) }).problems[0]!.message;
-      expect(tag(`${'x'.repeat(35)}1980.01.01-1234`)).toContain('[siffror utelämnade]');
-      expect(tag(`x${' '.repeat(1000)}1980.01.01-1234`)).toContain('[siffror utelämnade]');
-      const farOut = tag(`${'x'.repeat(60)}1980.01.01-1234`);
+      expect(tag(`${'x'.repeat(35)}1980:01:01#1234`)).toContain('[siffror utelämnade]');
+      expect(tag(`x${' '.repeat(1000)}1980:01:01#1234`)).toContain('[siffror utelämnade]');
+      const farOut = tag(`${'x'.repeat(60)}1980:01:01#1234`);
       expect(farOut).toContain(`”${'x'.repeat(40)}…”`);
       expect(farOut).not.toMatch(/1980|1234/);
     });

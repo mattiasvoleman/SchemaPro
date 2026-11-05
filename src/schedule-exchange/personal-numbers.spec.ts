@@ -47,8 +47,42 @@ const FORMS: Record<string, string> = {
   'parentes "(ÅÅMMDD-NNNN)"': '(800101-1234)',
   'med mellanslag "ÅÅÅÅMMDD - NNNN"': '19800101 - 1234',
 };
-/** Any digit run of any form: the dates and the last four. */
-const DIGITS = /1980[- ]?01[- ]?01|8001(01|81)|800101|1234/;
+/** Any digit run of any form: the dates and the last four, whatever stands between them. */
+const DIGITS = /1980\D{0,3}01\D{0,3}01|8001\D{0,3}(01|81)|800101|1234/;
+
+/**
+ * The spellings the second review of PR #256 found outside the first shape:
+ * other separators, invisible and no-break characters, line breaks, fullwidth
+ * digits, spaces between digits, and the date written as a date. The control
+ * characters (a line break, a tab) cannot sit inside a field of a DIF line, so
+ * the Untis block takes only the ones that can.
+ */
+const MORE_FORMS: Record<string, string> = {
+  'mellanslag mellan datum och nummer': '19800101 1234',
+  'hårt blanksteg': '800101\u00a01234',
+  'smalt hårt blanksteg': '800101\u202f1234',
+  'tre mellanslag': '800101   1234',
+  punkt: '800101.1234',
+  snedstreck: '800101/1234',
+  understreck: '800101_1234',
+  'minustecken U+2212': '800101\u22121234',
+  'nollbreddstecken': '800101\u200b1234',
+  'mjukt bindestreck': '800101\u00ad1234',
+  'fullbreddssiffror': '\uff18\uff10\uff10\uff11\uff10\uff11\uff0d\uff11\uff12\uff13\uff14',
+  'siffror åtskilda av mellanslag': '8 0 0 1 0 1 1 2 3 4',
+  'ÅÅÅÅ MM DD NNNN': '1980 01 01 1234',
+  'ÅÅÅÅ-MM-DD-NNNN': '1980-01-01-1234',
+  'ÅÅÅÅ-MM-DD NNNN': '1980-01-01 1234',
+  'ÅÅ-MM-DD-NNNN': '80-01-01-1234',
+  'ord direkt före och efter': 'abc8001011234xyz',
+  'i en anteckning': 'Se anteckning: 19800101-1234 (vikarie)',
+};
+const CONTROL_FORMS: Record<string, string> = {
+  radbrytning: '800101\n1234',
+  CRLF: '800101\r\n1234',
+  'radbrytning efter streck': '19800101-\n1234',
+  tabb: '800101\t1234',
+};
 
 type Parsed = ReturnType<typeof readUpload>;
 
@@ -177,6 +211,58 @@ describe('no personnummer out of any reader', () => {
       for (const [formName, pn] of Object.entries(FORMS)) {
         const parsed = read(make(pn));
         expect({ form: formName, leaked: leaks(pn, parsed).map((s) => s.slice(0, 120)) }).toEqual({ form: formName, leaked: [] });
+      }
+    });
+  });
+  describe('spellings outside the first shape (the second review)', () => {
+    const tableFields = ['Klass/grupp', 'Ämne', 'Lärare', 'Lärarnamn', 'Lärare e-post', 'Sal', 'Dag', 'Start', 'Slut', 'Från', 'Till', 'Veckomönster', 'Block', 'Längd', 'Ämneskod', 'Medlärare', 'Ytterligare klasser'];
+
+    it.each(tableFields)('the flat table, %s: every spelling makes the row unreadable and is in no answer', (field) => {
+      for (const [formName, pn] of Object.entries({ ...MORE_FORMS, ...CONTROL_FORMS })) {
+        const row = [...base];
+        if (['Lärare', 'Lärarnamn', 'Lärare e-post'].includes(field)) for (const f of ['Lärare', 'Lärarnamn', 'Lärare e-post', 'Lärar-id']) row[col(f)] = '';
+        row[col(field)] = pn;
+        for (const format of ['TABLE_CSV', 'TABLE_XLSX'] as const) {
+          const parsed = upload(format, [header, row]);
+          expect({ format, form: formName, leaked: leaks(pn, parsed).map((x) => x.slice(0, 120)) }).toEqual({ format, form: formName, leaked: [] });
+          expect({ format, form: formName, lessons: parsed.lessons.length }).toEqual({ format, form: formName, lessons: 0 });
+        }
+      }
+    });
+
+    it('the block column, which is stored, takes none of them', () => {
+      for (const [formName, pn] of Object.entries({ ...MORE_FORMS, ...CONTROL_FORMS })) {
+        const row = [...base];
+        row[col('Block')] = pn;
+        const parsed = upload('TABLE_CSV', [header, row]);
+        expect({ form: formName, lessons: parsed.lessons.map((l) => l.block) }).toEqual({ form: formName, lessons: [] });
+      }
+    });
+
+    it('Untis, in the fields a DIF line can hold', () => {
+      const files = writeUntisGpu(doc);
+      const lines001 = files.gpu001.split('\r\n');
+      for (const [formName, pn] of Object.entries(MORE_FORMS)) {
+        for (const at of [1, 2, 3, 4]) {
+          const l1 = [...lines001];
+          const f = l1[0]!.split(',');
+          f[at] = `"${pn}"`;
+          l1[0] = f.join(',');
+          const parsed = readUpload('UNTIS_GPU', [{ name: 'GPU001.TXT', bytes: Buffer.from(l1.join('\r\n')) }, { name: 'GPU002.TXT', bytes: Buffer.from(files.gpu002) }]);
+          expect({ form: formName, at, leaked: leaks(pn, parsed).map((x) => x.slice(0, 120)) }).toEqual({ form: formName, at, leaked: [] });
+        }
+      }
+    });
+
+    it('aSc, in a name that is copied into a lesson', () => {
+      const xml = writeAscXml(doc);
+      for (const [formName, pn] of Object.entries({ ...MORE_FORMS, ...CONTROL_FORMS })) {
+        const escaped = pn.replace(/\r/g, '&#13;').replace(/\n/g, '&#10;').replace(/\t/g, '&#9;');
+        for (const element of ['class', 'subject', 'classroom']) {
+          const evil = xml.replace(new RegExp(`(<${element} [^>]*?name=")[^"]*(")`), `$1${escaped}$2`);
+          const parsed = readUpload('ASC_XML', [{ name: 'a.xml', bytes: Buffer.from(evil, 'utf8') }]);
+          expect({ form: formName, element, leaked: leaks(pn, parsed).map((x) => x.slice(0, 120)) }).toEqual({ form: formName, element, leaked: [] });
+        }
       }
     });
   });

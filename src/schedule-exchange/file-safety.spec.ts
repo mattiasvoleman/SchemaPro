@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { MAX_PROBLEMS, MAX_QUOTE, ProblemLog, REDACTED, excerpt, hasPersonalNumber, redactPersonalNumbers, scrubPersonalNumbers } from './file-safety';
 
 describe('file-safety', () => {
@@ -18,6 +19,34 @@ describe('file-safety', () => {
       ['in parentheses', '(800101-1234)'],
       ['in a longer text', 'Matematik; lärare 800101-1234; sal A101'],
       ['at the end of a sentence', 'Se 8001011234.'],
+      // The second review of PR #256: spellings outside the first shape.
+      ['a no-break space between', '800101\u00a01234'],
+      ['a narrow no-break space between', '800101\u202f1234'],
+      ['a line break between', '800101\n1234'],
+      ['a CRLF between', '800101\r\n1234'],
+      ['a line break after the hyphen', '19800101-\n1234'],
+      ['three spaces between', '800101   1234'],
+      ['a tab between', '800101\t1234'],
+      ['a dot between', '800101.1234'],
+      ['a slash between', '800101/1234'],
+      ['an underscore between', '800101_1234'],
+      ['a zero-width space between', '800101\u200b1234'],
+      ['a zero-width space inside the date', '8001\u200b011234'],
+      ['a soft hyphen between', '800101\u00ad1234'],
+      ['a minus sign between', '800101\u22121234'],
+      ['a figure dash between', '800101\u20121234'],
+      ['fullwidth digits and hyphen', '\uff18\uff10\uff10\uff11\uff10\uff11\uff0d\uff11\uff12\uff13\uff14'],
+      ['a space between every digit', '8 0 0 1 0 1 1 2 3 4'],
+      ['a space between every group', '1980 01 01 1234'],
+      ['a space between the groups of two digits', '80 01 01 1234'],
+      ['two spaces round the hyphen', '800101  -  1234'],
+      ['the date form with a hyphen', '1980-01-01-1234'],
+      ['the date form with a space', '1980-01-01 1234'],
+      ['the two-digit date form', '80-01-01-1234'],
+      ['the date form with a samordningsnummer day', '1980-01-81-1234'],
+      ['a plus after spaces', '800101 + 1234'],
+      ['next to letters', 'abc8001011234xyz'],
+      ['in a note', 'Se anteckning: 19800101-1234 (vikarie)'],
     ];
     it.each(numbers)('sees %s', (_label, text) => {
       expect(hasPersonalNumber(text)).toBe(true);
@@ -38,6 +67,20 @@ describe('file-safety', () => {
       ['nine digits', '800101123'],
       ['thirteen digits', '1980010112345'],
       ['empty', ''],
+      ['a period with an en dash', '2026-08-17\u20132026-12-18'],
+      ['a period with a hyphen', '2026-08-17-2026-12-18'],
+      ['a period with a space', '2026-08-17 2026-12-18'],
+      ['a period with dots', '2026.08.17-2026.12.18'],
+      ['a date and a time', '2026-08-17 08:10'],
+      ['a compact date', '20260817'],
+      ['two times', '08:10 09:10'],
+      ['a block name with a number', 'Block 1234'],
+      ['a block name with a year', 'Val 2026 1'],
+      ['a room', 'A101'],
+      ['a code', '0810'],
+      ['a long digit run that is no date', '9999999999999'],
+      ['a month 13 in the date form', '1980-13-01-1234'],
+      ['a day 32 in the date form', '1980-01-32-1234'],
     ];
     it.each(notNumbers)('does not see %s', (_label, text) => {
       expect(hasPersonalNumber(text)).toBe(false);
@@ -56,6 +99,33 @@ describe('file-safety', () => {
         redactPersonalNumbers(text);
         expect(Date.now() - started).toBeLessThan(1500);
       }
+    });
+  });
+
+  describe('redactPersonalNumbers, in whatever spelling the number was written', () => {
+    it.each([
+      ['a no-break space', 'Anna 800101\u00a01234 klar'],
+      ['a line break', 'Anna 800101\n1234 klar'],
+      ['a dot', 'Anna 800101.1234 klar'],
+      ['fullwidth digits', 'Anna \uff18\uff10\uff10\uff11\uff10\uff11\uff0d\uff11\uff12\uff13\uff14 klar'],
+      ['the date form', 'Anna 1980-01-01-1234 klar'],
+      ['spaced digits', 'Anna 8 0 0 1 0 1 1 2 3 4 klar'],
+      ['a zero-width space', 'Anna 800101\u200b1234 klar'],
+    ])('cuts out %s and keeps the words round it', (_label, text) => {
+      expect(redactPersonalNumbers(text)).toBe(`Anna ${REDACTED} klar`);
+    });
+
+    it('cuts out a number that is the whole text, and two in one text', () => {
+      expect(redactPersonalNumbers('800101.1234')).toBe(REDACTED);
+      expect(redactPersonalNumbers('800101.1234 och 19800101\n1234')).toBe(`${REDACTED} och ${REDACTED}`);
+    });
+
+    it('leaves a period alone', () => {
+      expect(redactPersonalNumbers('2026-08-17-2026-12-18')).toBe('2026-08-17-2026-12-18');
+    });
+
+    it('leaves what it does not cut exactly as written, characters that look like spaces included', () => {
+      expect(redactPersonalNumbers('Sal\u00a0A101 och 800101\u00a01234')).toBe(`Sal\u00a0A101 och ${REDACTED}`);
     });
   });
 
@@ -110,6 +180,27 @@ describe('file-safety', () => {
     it('returns a clean value as it is, not a copy', () => {
       const clean = { a: ['x', { b: 'y' }], c: 1 };
       expect(scrubPersonalNumbers(clean)).toBe(clean);
+    });
+
+    it('lets ids and fingerprints be, whatever digits they happen to hold', () => {
+      // 198001011234 is a valid shape, and a UUID or a hash may carry it by chance.
+      const uuid = '3f6c942b-35e4-432e-99be-198001011234';
+      const fingerprint = '198001011234abcdef0123456789abcd';
+      expect(hasPersonalNumber(uuid) || hasPersonalNumber(fingerprint)).toBe(true);
+      const out = scrubPersonalNumbers({ fingerprint, rows: [{ existingId: uuid, label: 'Anna 800101-1234' }], ids: [uuid.toUpperCase()] });
+      expect(out.fingerprint).toBe(fingerprint);
+      expect(out.rows[0]!.existingId).toBe(uuid);
+      expect(out.ids[0]).toBe(uuid.toUpperCase());
+      expect(out.rows[0]!.label).toBe(`Anna ${REDACTED}`);
+    });
+
+    it('never rewrites a random id or fingerprint: a thousand of each, every digit string a plan can hold', () => {
+      for (let i = 0; i < 3_000; i += 1) {
+        const id = randomUUID();
+        const fingerprint = createHash('sha256').update(`${i}${id}`).digest('hex').slice(0, 32);
+        const out = scrubPersonalNumbers({ id, fingerprint, nested: { ids: [id], fp: fingerprint } });
+        expect(out).toEqual({ id, fingerprint, nested: { ids: [id], fp: fingerprint } });
+      }
     });
 
     it('lets a Date through', () => {

@@ -36,6 +36,24 @@
  * unreadable row with a plain message; the other error costs a personnummer in
  * a database.
  *
+ * SPELLINGS (CHOICE, the second review of PR #256). People write the same
+ * number with a hyphen, a plus, a dot, a slash, an underscore, a no-break or
+ * a narrow space, a tab, a line break, a zero-width character, an en dash or
+ * a minus sign between the date and the last four, with fullwidth digits,
+ * with spaces between the groups ("1980 01 01 1234") or between every digit,
+ * and with the date written the way a date is ("1980-01-01-1234"). The text is
+ * FOLDED first, one character to one character so that a match in the folded
+ * text is the same place in the text it came from: fullwidth digits to
+ * digits, every space-like and invisible character to a space, every dash-like
+ * character and '.', '/', '_' to a hyphen. Then the shape is looked for in the
+ * folded text. Redaction cuts the original at the folded match, so a number is
+ * removed in whatever spelling it was written.
+ *
+ * What the date form must NOT catch is a period: "2026-08-17-2026-12-18" and
+ * "2026-08-17 2026-12-18" are the school year's dates, and an aSc term is named
+ * with them. A date followed by four digits is a number only when those four
+ * digits do not begin another date.
+ *
  * Source of the shape: Skatteverket, "Personnummer" and "Samordningsnummer"
  * (skatteverket.se), and SKV 704 for the format of the number.
  */
@@ -50,25 +68,50 @@ export const MAX_PROBLEMS = 500;
 /** The marker a redacted number is replaced with. */
 export const REDACTED = '[personnummer]';
 
-/**
- * Not preceded and not followed by a digit; at most two spaces either side of
- * the separator (the hyphen is often written with spaces around it, or an
- * en dash by a word processor). Every quantifier is bounded, so the cost is
- * linear in the text.
- */
-const SHAPE = /(?<!\d)(?:\d{2})?\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]|6[1-9]|[78]\d|9[01])[ \t]{0,2}[-+‐-―−]?[ \t]{0,2}\d{4}(?!\d)/;
+/** A space between two digits is allowed anywhere in a number; one at most, so the cost stays linear. */
+const SP = ' ?';
+/** The month: 01-12. */
+const MONTH = `(?:0${SP}[1-9]|1${SP}[0-2])`;
+/** The day: 01-31, or 61-91 for a samordningsnummer. */
+const DAY = `(?:0${SP}[1-9]|[12]${SP}\\d|3${SP}[01]|6${SP}[1-9]|[78]${SP}\\d|9${SP}[01])`;
+/** The compact form: [YY]YYMMDD, up to eight spaces, hyphens or pluses, NNNN. Not preceded and not followed by a digit. */
+const COMPACT = `(?<!\\d)(?:\\d${SP}\\d${SP})?\\d${SP}\\d${SP}${MONTH}${SP}${DAY}[ +\\-]{0,8}\\d${SP}\\d${SP}\\d${SP}\\d(?!\\d)`;
+/** The date form: [YY]YY-MM-DD, a hyphen or a space, NNNN, and those four digits do not begin another date. */
+const ISO = `(?<!\\d)(?:\\d{2}|\\d{4})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01]|6[1-9]|[78]\\d|9[01])[- ]\\d{4}(?!\\d)(?!-\\d{2}-\\d{2})`;
+const SHAPE = new RegExp(`${COMPACT}|${ISO}`);
 const SHAPE_ALL = new RegExp(SHAPE.source, 'g');
 
-/** True when the text holds a personnummer or a samordningsnummer, whole or as a part. */
-export function hasPersonalNumber(text: string | null | undefined): boolean {
-  if (!text || text.length < 10) return false;
-  return SHAPE.test(text);
+/**
+ * The text as the shape is looked for in it: the same length, character for
+ * character. Fullwidth digits become digits; whitespace of every kind and the
+ * invisible characters (soft hyphen, zero-width space, joiners, direction
+ * marks, the byte order mark) become a space; every dash-like character, and
+ * '.', '/' and '_', become a hyphen.
+ */
+function fold(text: string): string {
+  return text
+    .replace(/[\uff10-\uff19]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xff10 + 0x30))
+    .replace(/[\s\u00ad\u200b-\u200f\u2060\ufeff]/g, ' ')
+    .replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d./_]/g, '-');
 }
 
-/** The text with every personnummer-shaped part replaced by REDACTED. */
+/** True when the text holds a personnummer or a samordningsnummer, whole or as a part, in any of the spellings above. */
+export function hasPersonalNumber(text: string | null | undefined): boolean {
+  if (!text || text.length < 10) return false;
+  return SHAPE.test(fold(text));
+}
+
+/** The text with every personnummer-shaped part replaced by REDACTED, whatever its spelling. */
 export function redactPersonalNumbers(text: string): string {
   if (text.length < 10) return text;
-  return text.replace(SHAPE_ALL, REDACTED);
+  const folded = fold(text);
+  let out = '';
+  let from = 0;
+  for (const found of folded.matchAll(SHAPE_ALL)) {
+    out += text.slice(from, found.index) + REDACTED;
+    from = found.index + found[0].length;
+  }
+  return from === 0 ? text : out + text.slice(from);
 }
 
 /**
@@ -90,8 +133,18 @@ export function scrubPersonalNumbers<T>(value: T): T {
   return scrub(value, 0) as T;
 }
 
+/**
+ * A value that is an id or a fingerprint: a UUID, or 32 hexadecimal digits
+ * (the plan's fingerprint). Random ones have ten to twelve digits in a row
+ * that read as a date (a UUID one time in 600, a fingerprint one in 300), so
+ * the last door lets them be; they are made by Rastra, never taken from a file,
+ * and the page sends them back as they are. Rewriting one made an apply
+ * refuse its own preview's fingerprint (the second review of PR #256, M1).
+ */
+const STRUCTURAL_ID = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i;
+
 function scrub(value: unknown, depth: number): unknown {
-  if (typeof value === 'string') return redactPersonalNumbers(value);
+  if (typeof value === 'string') return STRUCTURAL_ID.test(value) ? value : redactPersonalNumbers(value);
   if (value === null || typeof value !== 'object' || depth > 12) return value;
   if (Array.isArray(value)) {
     let changed = false;
@@ -109,8 +162,9 @@ function scrub(value: unknown, depth: number): unknown {
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
     const scrubbed = scrub(item, depth + 1);
     if (scrubbed !== item) changed = true;
-    next[redactPersonalNumbers(key)] = scrubbed;
-    if (redactPersonalNumbers(key) !== key) changed = true;
+    const safeKey = redactPersonalNumbers(key);
+    next[safeKey] = scrubbed;
+    if (safeKey !== key) changed = true;
   }
   return changed ? next : value;
 }
