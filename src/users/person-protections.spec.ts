@@ -47,7 +47,7 @@ describe('PersonProtectionsService', () => {
   });
 
   it('answers one person\'s marks and who set or removed them, newest first, and records the person and those it names', async () => {
-    tx.user.findFirst.mockResolvedValue({ id: PUPIL });
+    tx.user.findFirst.mockResolvedValue({ id: PUPIL, ss12000Id: null });
     tx.personProtection.findMany.mockResolvedValue([{ source: 'MANUAL' }]);
     tx.personProtectionEvent.findMany.mockResolvedValue([
       { action: 'ADDED', source: 'MANUAL', actorId: ACTOR, at },
@@ -57,6 +57,7 @@ describe('PersonProtectionsService', () => {
     await expect(service.one(PUPIL, admin)).resolves.toEqual({
       userId: PUPIL,
       sources: ['MANUAL'],
+      linked: false,
       events: [
         { action: 'ADDED', source: 'MANUAL', actorName: 'Rita Rektor', at: at.toISOString() },
         { action: 'REMOVED', source: 'SS12000', actorName: null, at: at.toISOString() },
@@ -69,10 +70,10 @@ describe('PersonProtectionsService', () => {
   });
 
   it('marks a person by hand with a row of the administrator\'s own, beside any the sync wrote', async () => {
-    tx.user.findFirst.mockResolvedValue({ id: PUPIL });
+    tx.user.findFirst.mockResolvedValue({ id: PUPIL, ss12000Id: '77777777-7777-4777-8777-777777777777' });
     tx.personProtection.findMany.mockResolvedValue([{ source: 'MANUAL' }, { source: 'SS12000' }]);
-    await expect(service.set(PUPIL, admin)).resolves.toMatchObject({ userId: PUPIL, sources: ['MANUAL', 'SS12000'] });
-    expect(tx.user.findFirst).toHaveBeenCalledWith({ where: { id: PUPIL, schoolId: SCHOOL }, select: { id: true } });
+    await expect(service.set(PUPIL, admin)).resolves.toMatchObject({ userId: PUPIL, sources: ['MANUAL', 'SS12000'], linked: true });
+    expect(tx.user.findFirst).toHaveBeenCalledWith({ where: { id: PUPIL, schoolId: SCHOOL }, select: { id: true, ss12000Id: true } });
     expect(tx.personProtection.createMany).toHaveBeenCalledWith({
       data: [{ userId: PUPIL, schoolId: SCHOOL, source: 'MANUAL' }],
       skipDuplicates: true,
@@ -89,7 +90,7 @@ describe('PersonProtectionsService', () => {
   });
 
   it('removes the person\'s marks, the sync\'s and an administrator\'s, within the school', async () => {
-    tx.user.findFirst.mockResolvedValue({ id: PUPIL });
+    tx.user.findFirst.mockResolvedValue({ id: PUPIL, ss12000Id: null });
     await expect(service.remove(PUPIL, admin)).resolves.toMatchObject({ userId: PUPIL, sources: [] });
     expect(tx.personProtection.deleteMany).toHaveBeenCalledWith({ where: { userId: PUPIL, schoolId: SCHOOL } });
   });

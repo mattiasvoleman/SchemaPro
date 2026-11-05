@@ -305,25 +305,32 @@ export async function applyChanges(
       if (userId) marking.add(userId);
     }
   }
-  // A person matched by address and not linked (after.byAddress) is marked
-  // by the local row the diff matched, whether or not its LINK is applied:
-  // marking only keeps a person out of files, so this is the one change
-  // that may name a local row the source id does not reach. The row must
-  // still be the school's.
-  const byAddress = of('PROTECTION', 'ADD').filter((change) => !personOf('personExternalId')(change) && change.after?.['byAddress'] === true);
-  const addressed = new Set(
-    byAddress.length === 0
-      ? []
-      : (
-          await tx.user.findMany({
-            where: { schoolId, id: { in: byAddress.map((change) => str(change.after?.['userLocalId'])).filter((id): id is string => id !== null) } },
-            select: { id: true },
-          })
-        ).map((user) => user.id),
+  // A person matched by address and not linked (after.byAddress) is marked,
+  // or a mark so made lifted, by the local row the diff matched, whether or
+  // not its LINK is applied: marking only keeps a person out of files, so
+  // this is the one change that may name a local row the source id does
+  // not reach. The row must still be the school's, and an ADD's row must
+  // still have the address it was matched by.
+  const viaAddress = [...of('PROTECTION', 'ADD'), ...of('PROTECTION', 'END')].filter(
+    (change) => !personOf('personExternalId')(change) && change.after?.['byAddress'] === true,
   );
-  for (const change of of('PROTECTION', 'ADD')) {
+  const addressRows = new Map(
+    (viaAddress.length === 0
+      ? []
+      : await tx.user.findMany({
+          where: { schoolId, id: { in: [...new Set(viaAddress.map((change) => str(change.after?.['userLocalId'])).filter((id): id is string => id !== null))] } },
+          select: { id: true, email: true },
+        })
+    ).map((user) => [user.id, user.email.trim().toLowerCase()] as const),
+  );
+  const byAddress = (change: StoredChange): string | null => {
     const local = str(change.after?.['userLocalId']);
-    const userId = personOf('personExternalId')(change) ?? (change.after?.['byAddress'] === true && local && addressed.has(local) ? local : null);
+    if (change.after?.['byAddress'] !== true || !local || !addressRows.has(local)) return null;
+    const email = str(change.after?.['email']);
+    return email === null || addressRows.get(local) === email ? local : null;
+  };
+  for (const change of of('PROTECTION', 'ADD')) {
+    const userId = personOf('personExternalId')(change) ?? byAddress(change);
     if (!userId) {
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
       continue;
@@ -339,7 +346,7 @@ export async function applyChanges(
   }
   const lifting = new Map<string, StoredChange>();
   for (const change of of('PROTECTION', 'END')) {
-    const userId = personOf('personExternalId')(change);
+    const userId = personOf('personExternalId')(change) ?? byAddress(change);
     if (!userId) {
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
       continue;

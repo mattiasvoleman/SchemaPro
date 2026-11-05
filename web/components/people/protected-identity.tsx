@@ -11,7 +11,9 @@ import { Button } from "@/components/ui/button";
 /**
  * Skyddad identitet on a person's opened row (20270107090000): whether the
  * school has marked the person, where each mark comes from, who set or
- * removed one and when; and, for whoever writes Personal, a mark by hand,
+ * removed one and when, and whether the register's mark was made on an
+ * address match (the row is not linked), with what to do if that is the
+ * wrong person; and, for whoever writes Personal, a mark by hand,
  * which stands beside the register's until an administrator removes it; for
  * those who decide, removing the marks. A marked person is kept out of every
  * file of people Rastra writes (lib/people-files.ts), but not out of what the
@@ -28,6 +30,8 @@ type Source = "SS12000" | "MANUAL";
 interface ProtectionView {
   userId: string;
   sources: Source[];
+  /** Linked to the register; the sync's mark on a row that is not was made on an address match. */
+  linked: boolean;
   events: Array<{ action: "ADDED" | "REMOVED"; source: Source; actorName: string | null; at: string }>;
 }
 
@@ -75,6 +79,7 @@ export function ProtectedIdentity({ userId, writes, decides }: { userId: string;
           <p>{t(`state.${state}`)}</p>
           <p className="text-muted-foreground">{t("explain")}</p>
           <p className="text-muted-foreground">{t("integrations")}</p>
+          {fromRegister && !data.linked ? <p>{t("byAddress")}</p> : null}
           {fromRegister && !byHand ? <p className="text-muted-foreground">{t("registerOwns")}</p> : null}
           {data.events.length > 0 ? (
             <ul className="space-y-0.5" aria-label={t("historyTitle")}>

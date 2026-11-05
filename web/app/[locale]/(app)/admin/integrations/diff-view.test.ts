@@ -171,6 +171,16 @@ describe("reading a change", () => {
     });
     const end = change({ entity: "PROTECTION", op: "END", after: { personExternalId: "ext-x", userLocalId: "u-bo" } });
     expect(readChange(end, new Map(), (id) => (id === "u-bo" ? "Bo Ek" : null)).detail?.key).toBe("protectionEnd");
+    // Matched by address: the local row the mark lands on, by its own name.
+    const names = (id: string) => (id === "u-lisa" ? "Lisa Lund" : null);
+    const byAddress = readChange(
+      change({ entity: "PROTECTION", op: "ADD", after: { personExternalId: "ext-x", userLocalId: "u-lisa", byAddress: true } }),
+      new Map([["ext-x", "Skyddad Elev"]]),
+      names,
+    );
+    expect(byAddress).toEqual({ subject: "Lisa Lund", detail: { key: "protectionAddByAddress", values: {} } });
+    const lift = change({ entity: "PROTECTION", op: "END", after: { personExternalId: null, userLocalId: "u-lisa", byAddress: true } });
+    expect(readChange(lift, new Map(), names)).toEqual({ subject: "Lisa Lund", detail: { key: "protectionEndByAddress", values: {} } });
     // Minimised: no after, no id, so nobody.
     expect(readChange(change({ entity: "PROTECTION", op: "ADD" }), new Map(), () => "Bo Ek").subject).toBeNull();
     expect(unknownSubjectKey("PROTECTION")).toBe("unknownPerson");

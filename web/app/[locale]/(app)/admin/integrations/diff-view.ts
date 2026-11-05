@@ -251,9 +251,15 @@ export function readChange(
     case "PROTECTION": {
       // Skyddad identitet (20270107090000): the school's mark set (ADD) or
       // lifted (END). The person is named in after alone, which a finished
-      // run no longer has: its rows then name nobody.
-      const subject = byExternal(after?.["personExternalId"]) ?? byLocal(after?.["userLocalId"]);
-      return { subject, detail: { key: change.op === "END" ? "protectionEnd" : "protectionAdd", values: {} } };
+      // run no longer has: its rows then name nobody. A mark the run matched
+      // by address (byAddress) lands on the local row, which may not be the
+      // register's person: that row is the subject, by its own name.
+      const byAddress = after?.["byAddress"] === true;
+      const subject = byAddress
+        ? (byLocal(after?.["userLocalId"]) ?? byExternal(after?.["personExternalId"]))
+        : (byExternal(after?.["personExternalId"]) ?? byLocal(after?.["userLocalId"]));
+      const key = change.op === "END" ? "protectionEnd" : "protectionAdd";
+      return { subject, detail: { key: byAddress ? `${key}ByAddress` : key, values: {} } };
     }
     case "ORGANISATION": {
       // A skolenhet (SchoolUnits): created, linked or updated from the

@@ -25,6 +25,10 @@ import { makeTestTls } from './utils/test-tls';
  *   F5 a pupil typed in by hand whom the register protects is marked by the
  *      night, though the link waits for the administrator (M2);
  *   F7 a new protected pupil ticked to be created is marked with it;
+ *   N1 (round 2) a row with the protected pupil's address but another name is
+ *      proposed unticked and never marked at night; a mark an administrator
+ *      removed does not come back; once the address is corrected the sync
+ *      proposes lifting the mark, unticked, and a tick lifts it for good;
  *   F8 no finished run, log line or count names a protected person;
  *   and the history says who set and removed each mark (M3).
  *
@@ -40,6 +44,7 @@ const ORG = 'aaaaaaaa-6300-4000-8000-000000000001';
 const P1 = 'bbbbbbbb-6300-4000-8000-000000000001';
 const P2 = 'bbbbbbbb-6300-4000-8000-000000000002';
 const P3 = 'bbbbbbbb-6300-4000-8000-000000000003';
+const P4 = 'bbbbbbbb-6300-4000-8000-000000000004';
 const T1 = 'dddddddd-6300-4000-8000-000000000001';
 const C7A = 'eeeeeeee-6300-4000-8000-00000000007a';
 const D1 = 'ffffffff-6300-4000-8000-000000000001';
@@ -90,6 +95,13 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
   const protectionChanges = (runId: string) =>
     all<{ op: string; selected: boolean; auto: boolean; applied: boolean; id: string }>(
       `SELECT op::text, selected, "autoApplicable" AS auto, applied, id FROM "Ss12000SyncChanges" WHERE "runId" = $1 AND entity = 'PROTECTION' ORDER BY seq`,
+      [runId],
+    );
+  /** The run's marks matched on an address alone, by their code: a finished run keeps no after. */
+  const addressChanges = (runId: string) =>
+    all<{ op: string; selected: boolean; auto: boolean; applied: boolean; code: string; id: string }>(
+      `SELECT op::text, selected, "autoApplicable" AS auto, applied, "conflictCode" AS code, id FROM "Ss12000SyncChanges"
+        WHERE "runId" = $1 AND entity = 'PROTECTION' AND "conflictCode" LIKE 'PROTECTION\\_ADDRESS\\_%' ORDER BY seq`,
       [runId],
     );
   const world = (p1: string, extra: unknown[] = []) => {
@@ -247,6 +259,68 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
     expect(await marksOf((await userOf(P3)).id)).toEqual(['SS12000']);
   });
 
+  it('N1: a row with the address but another name is proposed unticked, never marked at night, and a removed mark stays removed', async () => {
+    // Lisa holds the address the register now gives a protected pupil, Sara.
+    const lisa = (await one<{ id: string }>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+       VALUES ($1, 'delad@ekskolan.example', 'Lisa', 'Lund', 'STUDENT', gen_random_uuid(), true, now() - interval '1 day') RETURNING id`,
+      [school],
+    )).id;
+    const sara = s1Pupil(P4, 'Sara', 'Skydd', 'delad@ekskolan.example', ORG, { securityMarking: 'Sekretessmarkering' });
+    const p2 = s1Pupil(P2, 'Hand', 'Skriven', 'p2.hand@ekskolan.example', ORG, { securityMarking: 'Skyddad folkbokföring' });
+    const p3 = s1Pupil(P3, 'Ny', 'Skyddad', 'p3.ny@ekskolan.example', ORG, { securityMarking: 'Sekretessmarkering' });
+    world('Ingen', [p2, p3, sara]);
+
+    let run = await night();
+    expect(run.status).toBe('APPLIED');
+    expect(await addressChanges(run.id)).toEqual([
+      expect.objectContaining({ op: 'ADD', selected: false, auto: false, applied: false, code: 'PROTECTION_ADDRESS_NAME_DIFFERS' }),
+    ]);
+    expect(await marksOf(lisa)).toEqual([]);
+    // The pupil typed in by hand, same address and name, keeps her mark (F5).
+    expect(await marksOf(handTyped)).toEqual(['SS12000']);
+
+    // An administrator ticks it (the wrong person), and one who decides removes it again.
+    run = await manual();
+    const [add] = await addressChanges(run.id);
+    await sync.apply(admin, run.id, { basisHash: run.basisHash, select: [add!.id] });
+    expect(await marksOf(lisa)).toEqual(['SS12000']);
+    await marks.remove(lisa, admin);
+    run = await night();
+    expect(await addressChanges(run.id)).toEqual([expect.objectContaining({ op: 'ADD', applied: false })]);
+    expect(await marksOf(lisa)).toEqual([]);
+  });
+
+  it('N1: once the address is corrected the sync proposes lifting a mark it made on it, unticked; ticked, it stays lifted', async () => {
+    const lisa = (await one<{ id: string }>(`SELECT id FROM "Users" WHERE "schoolId" = $1 AND "firstName" = 'Lisa'`, [school])).id;
+    let run = await manual();
+    const [add] = await addressChanges(run.id);
+    await sync.apply(admin, run.id, { basisHash: run.basisHash, select: [add!.id] });
+    expect(await marksOf(lisa)).toEqual(['SS12000']);
+
+    // The school corrects Lisa's address, as the manual says.
+    await owner.query(`UPDATE "Users" SET email = 'lisa.lund@ekskolan.example' WHERE id = $1`, [lisa]);
+    run = await manual();
+    expect(await addressChanges(run.id)).toEqual([
+      expect.objectContaining({ op: 'END', selected: false, auto: false, applied: false, code: 'PROTECTION_ADDRESS_NO_LONGER_MATCHES' }),
+    ]);
+    await sync.apply(admin, run.id, { basisHash: run.basisHash });
+    expect(await marksOf(lisa)).toEqual(['SS12000']);
+    run = await night();
+    expect(await addressChanges(run.id)).toEqual([expect.objectContaining({ op: 'END', applied: false })]);
+    expect(await marksOf(lisa)).toEqual(['SS12000']);
+
+    run = await manual();
+    const [end] = await addressChanges(run.id);
+    await sync.apply(admin, run.id, { basisHash: run.basisHash, select: [end!.id] });
+    expect(await marksOf(lisa)).toEqual([]);
+    run = await night();
+    expect(await addressChanges(run.id)).toEqual([]);
+    expect(await protectionChanges(run.id)).toEqual([]);
+    expect(await marksOf(lisa)).toEqual([]);
+    expect(await marksOf(handTyped)).toEqual(['SS12000']);
+  });
+
   it('F8: no finished run, log line or count names a protected person', async () => {
     const held = await one<{ n: number }>(
       `SELECT count(*)::int AS n FROM "Ss12000SyncChanges" c JOIN "Ss12000SyncRuns" r ON r.id = c."runId"
@@ -255,8 +329,8 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
       [school],
     );
     expect(held.n).toBe(0);
-    expect(lines.filter((line) => /Pia|Skriven|Skyddad folk|p1\.ett|p2\.hand|p3\.ny/.test(line))).toEqual([]);
+    expect(lines.filter((line) => /Pia|Skriven|Skyddad folk|p1\.ett|p2\.hand|p3\.ny|Sara|delad@/.test(line))).toEqual([]);
     const runs = JSON.stringify(await all(`SELECT counts, errors FROM "Ss12000SyncRuns" WHERE "schoolId" = $1`, [school]));
-    for (const id of [P1, P2, P3]) expect(runs).not.toContain(id);
+    for (const id of [P1, P2, P3, P4]) expect(runs).not.toContain(id);
   });
 });

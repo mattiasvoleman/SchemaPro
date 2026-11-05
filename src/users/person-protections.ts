@@ -49,6 +49,13 @@ export interface PersonProtectionView {
   userId: string;
   /** The person is marked while this is not empty. */
   sources: ProtectionSource[];
+  /**
+   * Whether the person's row is linked to the register (Users.ss12000Id).
+   * The sync's mark on a row that is not was made on an address match (and
+   * the names agreeing): the page says so, and what to do if it is the wrong
+   * person.
+   */
+  linked: boolean;
   events: ProtectionEventView[];
 }
 
@@ -91,8 +98,8 @@ export class PersonProtectionsService {
   async one(userId: string, user: AuthenticatedUser): Promise<PersonProtectionView> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
-      await this.person(tx, userId, schoolId);
-      const view = await this.view(tx, userId, schoolId);
+      const linked = await this.person(tx, userId, schoolId);
+      const view = await this.view(tx, userId, schoolId, linked);
       await recordRead(tx, 'PEOPLE', [userId, ...view.actorIds], user.channel);
       return view.view;
     });
@@ -105,9 +112,9 @@ export class PersonProtectionsService {
   async set(userId: string, user: AuthenticatedUser): Promise<PersonProtectionView> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
-      await this.person(tx, userId, schoolId);
+      const linked = await this.person(tx, userId, schoolId);
       await tx.personProtection.createMany({ data: [{ userId, schoolId, source: 'MANUAL' }], skipDuplicates: true });
-      return (await this.view(tx, userId, schoolId)).view;
+      return (await this.view(tx, userId, schoolId, linked)).view;
     });
   }
 
@@ -119,18 +126,25 @@ export class PersonProtectionsService {
   async remove(userId: string, user: AuthenticatedUser): Promise<PersonProtectionView> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
-      await this.person(tx, userId, schoolId);
+      const linked = await this.person(tx, userId, schoolId);
       await tx.personProtection.deleteMany({ where: { userId, schoolId } });
-      return (await this.view(tx, userId, schoolId)).view;
+      return (await this.view(tx, userId, schoolId, linked)).view;
     });
   }
 
-  private async person(tx: PrismaClient, userId: string, schoolId: string): Promise<void> {
-    const person = await tx.user.findFirst({ where: { id: userId, schoolId }, select: { id: true } });
+  /** The school's person, and whether the row is linked to the register; 404 otherwise. */
+  private async person(tx: PrismaClient, userId: string, schoolId: string): Promise<boolean> {
+    const person = await tx.user.findFirst({ where: { id: userId, schoolId }, select: { id: true, ss12000Id: true } });
     if (!person) throw new NotFoundException({ message: 'Personen finns inte.', code: 'PERSON_NOT_FOUND' });
+    return person.ss12000Id !== null;
   }
 
-  private async view(tx: PrismaClient, userId: string, schoolId: string): Promise<{ view: PersonProtectionView; actorIds: string[] }> {
+  private async view(
+    tx: PrismaClient,
+    userId: string,
+    schoolId: string,
+    linked: boolean,
+  ): Promise<{ view: PersonProtectionView; actorIds: string[] }> {
     const [marks, events] = await Promise.all([
       tx.personProtection.findMany({ where: { userId, schoolId }, select: { source: true }, orderBy: { source: 'asc' } }),
       tx.personProtectionEvent.findMany({
@@ -150,6 +164,7 @@ export class PersonProtectionsService {
       view: {
         userId,
         sources: marks.map((mark) => mark.source),
+        linked,
         events: events.map((event) => ({
           action: event.action,
           source: event.source,

@@ -2696,7 +2696,9 @@
         "unitCodeHolder": "Skolenhetskod {code} finns redan på {holder}",
         "unitMismatch": "Årskurs {grade}: {local} här, {source} i registret",
         "protectionAdd": "Markeras med skyddad identitet: registret skyddar personen, som hålls utanför filerna Rastra skriver.",
-        "protectionEnd": "Markeringen tas bort: registret säger nu Ingen."
+        "protectionEnd": "Markeringen tas bort: registret säger nu Ingen.",
+        "protectionAddByAddress": "Markeras med skyddad identitet: en skyddad person i registret har samma e-postadress som den här raden, som inte är kopplad till registret.",
+        "protectionEndByAddress": "Markeringen tas bort: synken satte den på e-postadressen, och ingen skyddad person i registret har den adressen längre."
       },
       "changesLoadFailed": "Ändringarna kunde inte hämtas"
     },
@@ -2744,6 +2746,7 @@
       "SS12000_DEPENDENCY_NOT_APPLIED": "Hoppades över: ändringen den bygger på valdes inte.",
       "SS12000_TARGET_CHANGED": "Hoppades över: raden hade ändrats i Rastra Schema.",
       "SS12000_HALF_MEMBER_NOT_IN_CLASS": "Hoppades över: eleven går inte i halvklassens klass, eller står redan i klassens andra halva.",
+      "SS12000_PROTECTION_NOT_LIFTED": "Hoppades över: markeringen kunde inte tas bort, så personen hålls fortfarande utanför filerna.",
       "STALE": "Körningen avbröts (servern startades om) och markerades som misslyckad.",
       "EXPIRED": "Diffen granskades inte inom 30 dagar och kastades.",
       "REVIEW_PENDING": "Nattens synk hoppades över eftersom en manuell diff väntar på granskning.",
@@ -2761,6 +2764,9 @@
       "PERSON_NO_EMAIL": "Registret har ingen användbar e-postadress för personen.",
       "PERSON_AMBIGUOUS_MATCH": "Adressen passar flera personer, så ingen kopplas automatiskt.",
       "PERSON_MATCHES_INACTIVE": "Adressen tillhör en avaktiverad person. Koppla och återaktivera bara om det är samma människa.",
+      "PROTECTION_ADDRESS_NAME_DIFFERS": "Bara e-postadressen stämmer: personen i registret har ett annat namn. Adresser återanvänds, så markeringen görs bara om du väljer den. Välj den om det är samma människa.",
+      "PROTECTION_ADDRESS_AMBIGUOUS": "Flera personer i Rastra Schema har registrets adress, så ingen markeras automatiskt. Välj markeringen för den som är samma människa.",
+      "PROTECTION_ADDRESS_NO_LONGER_MATCHES": "Raden är inte kopplad till registret, och ingen skyddad person där har dess adress längre, till exempel för att adressen rättats. Välj borttagningen om personen inte har skyddad identitet.",
       "PERSON_ADMIN_UNTOUCHED": "En administratör kopplas men ändras aldrig av en synk.",
       "PERSON_MULTIPLE_ROLES": "Personen har flera roller i registret; Rastra Schema ger en roll per person.",
       "DUTY_ROLE_REVIEW": "Tjänsten skulle ge en lärarinloggning med åtkomst till elevers uppgifter. Välj den bara om det är rätt.",
@@ -7380,6 +7386,7 @@
     },
     "explain": "En markerad person finns inte i filerna Rastra skriver om personer, som elever.csv, vardnadshavare.csv och närvarorapporten. Vilket skydd personen har sparas inte.",
     "integrations": "System som skolan anslutit via SS12000 får personen som förut, utan markering.",
+    "byAddress": "Personen är inte kopplad till registret: markeringen sattes för att en skyddad person i registret har samma e-postadress. Är det fel person: rätta e-postadressen och ta bort markeringen. Nästa fullständiga synk föreslår också att den tas bort när ingen skyddad person har adressen längre.",
     "registerOwns": "Markeringen följer registret: säger registret Ingen föreslår synken att den tas bort. En markering för hand står kvar tills en administratör tar bort den.",
     "set": "Markera skyddad identitet",
     "setAlongside": "Markera för hand också",

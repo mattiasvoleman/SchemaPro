@@ -2696,7 +2696,9 @@
         "unitCodeHolder": "School unit code {code} is already on {holder}",
         "unitMismatch": "Grade {grade}: {local} here, {source} in the register",
         "protectionAdd": "Marked as having a protected identity: the register protects the person, who is kept out of the files Rastra writes.",
-        "protectionEnd": "The mark is lifted: the register now says Ingen."
+        "protectionEnd": "The mark is lifted: the register now says Ingen.",
+        "protectionAddByAddress": "Marked as having a protected identity: a protected person in the register has the same e-mail address as this row, which is not linked to the register.",
+        "protectionEndByAddress": "The mark is lifted: the sync set it on the e-mail address, and no protected person in the register has that address any more."
       },
       "changesLoadFailed": "The changes could not be loaded"
     },
@@ -2744,6 +2746,7 @@
       "SS12000_DEPENDENCY_NOT_APPLIED": "Skipped: the change it depends on was not chosen.",
       "SS12000_TARGET_CHANGED": "Skipped: the row had changed in Rastra timetable.",
       "SS12000_HALF_MEMBER_NOT_IN_CLASS": "Skipped: the pupil is not in the class of the half, or is already in the class's other half.",
+      "SS12000_PROTECTION_NOT_LIFTED": "Skipped: the mark could not be lifted, so the person is still kept out of the files.",
       "STALE": "The run was interrupted (the server restarted) and marked as failed.",
       "EXPIRED": "The diff was not reviewed within 30 days and was discarded.",
       "REVIEW_PENDING": "The nightly sync was skipped because a manual diff is waiting for review.",
@@ -2761,6 +2764,9 @@
       "PERSON_NO_EMAIL": "The register has no usable email address for the person.",
       "PERSON_AMBIGUOUS_MATCH": "The address fits several people, so nobody is linked automatically.",
       "PERSON_MATCHES_INACTIVE": "The address belongs to a deactivated person. Link and reactivate only if it is the same human being.",
+      "PROTECTION_ADDRESS_NAME_DIFFERS": "Only the e-mail address agrees: the person in the register has another name. Addresses are reused, so the mark is made only if you select it. Select it if it is the same person.",
+      "PROTECTION_ADDRESS_AMBIGUOUS": "Several people in Rastra Schema have the register's address, so nobody is marked automatically. Select the mark for the one who is the same person.",
+      "PROTECTION_ADDRESS_NO_LONGER_MATCHES": "The row is not linked to the register, and no protected person there has its address any more, for example because the address was corrected. Select the lift if the person has no protected identity.",
       "PERSON_ADMIN_UNTOUCHED": "An administrator is linked but never changed by a sync.",
       "PERSON_MULTIPLE_ROLES": "The person has several roles in the register; Rastra timetable gives each person one role.",
       "DUTY_ROLE_REVIEW": "The duty would give a teacher sign-in with access to pupils' data. Choose it only if that is right.",
@@ -7380,6 +7386,7 @@
     },
     "explain": "A marked person is not in the files Rastra writes about people, such as elever.csv, vardnadshavare.csv and the attendance report. Which protection the person has is not stored.",
     "integrations": "Systems the school connected over SS12000 get the person as before, without a mark.",
+    "byAddress": "The person is not linked to the register: the mark was set because a protected person in the register has the same e-mail address. If it is the wrong person: correct the e-mail address and remove the mark. The next full sync also proposes lifting it once no protected person has the address.",
     "registerOwns": "The mark follows the register: when the register says Ingen, the sync proposes removing it. A mark by hand stays until an administrator removes it.",
     "set": "Mark protected identity",
     "setAlongside": "Mark by hand as well",

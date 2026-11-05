@@ -1282,7 +1282,11 @@
     markera därför för hand också en person som registret redan markerat, om
     du vill att skyddet ska stå kvar. Tar du bort en markering som kommer
     från registret sätts den igen vid nästa synk, så länge registret har kvar
-    skyddet. Markeringen försvinner med personen, och när gallringen
+    skyddet. Är personen inte kopplad till registret säger raden att
+    registrets markering sattes på e-postadressen (7.2). Är det fel person,
+    rätta e-postadressen och ta bort markeringen; nästa fulla synk föreslår
+    också att den tas bort när ingen skyddad person i registret har adressen
+    längre. Markeringen försvinner med personen, och när gallringen
     pseudonymiserar en person som slutat (7.4); historiken gallras med
     skolans ändringsloggar.
   </p>
@@ -6557,13 +6561,19 @@
       skyddar markeras (<span class="ui">Skyddad identitet</span>, förvald,
       och natten gör den också), både den som redan är kopplad och den som
       finns i Rastra Schema utan att vara kopplad men har samma e-postadress
-      (inskriven för hand, inläst från fil eller importerad tidigare), också
-      om du väntar med kopplingen. Är det inte samma person, ändra
-      e-postadressen. Den du kryssar i att skapa markeras med det. Säger
-      registret <em>Ingen</em> för en person som synken markerat föreslås att
-      markeringen tas bort. Det är inte förvalt, natten gör det aldrig, och det
-      föreslås bara vid en full synk; kryssa i det när du vill lyfta skyddet.
-      En markering du satt för hand tar synken aldrig bort. Rastra Schema
+      och samma för- och efternamn (inskriven för hand, inläst från fil eller
+      importerad tidigare), också om du väntar med kopplingen. Stämmer bara
+      adressen, eller har flera personer i Rastra Schema adressen, föreslås
+      markeringen men är inte förvald och görs inte på natten: adresser
+      återanvänds, så kryssa i den bara för den som är samma människa. Är det
+      inte samma person, ändra e-postadressen. Den du kryssar i att skapa
+      markeras med det. Säger registret <em>Ingen</em> för en person som
+      synken markerat, eller har ingen skyddad person i registret längre
+      adressen till en okopplad person som synken markerat på adressen (till
+      exempel för att adressen rättats), föreslås att markeringen tas bort.
+      Det är inte förvalt, natten gör det aldrig, och det föreslås bara vid en
+      full synk; kryssa i det när du vill lyfta skyddet. En markering du satt
+      för hand tar synken aldrig bort. Rastra Schema
       sparar bara att skyddet finns, aldrig vilket (3.6).</li>
     <li>En ändrad <strong>e-postadress</strong> för någon som redan är
       inbjuden. Personen loggar in med den gamla adressen tills du skickar

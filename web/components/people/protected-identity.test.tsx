@@ -13,7 +13,7 @@ vi.mock("@/components/profile-context", () => ({ useProfile: () => ({ school: { 
 
 const PUPIL = "11111111-1111-4111-8111-111111111111";
 const PATH = `/api/v1/person-protections/${PUPIL}`;
-const view = (sources: string[], events: unknown[] = []) => ({ userId: PUPIL, sources, events });
+const view = (sources: string[], events: unknown[] = [], linked = true) => ({ userId: PUPIL, sources, linked, events });
 
 function renderMark(writes: boolean, decides: boolean) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -56,6 +56,20 @@ describe("Skyddad identitet on a person's row", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Markera för hand också" }));
     expect(await screen.findByText("Markerad för hand och av elevregistret (SS12000).")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Markera/ })).toBeNull();
+  });
+
+  it("says when the register's mark was made on an address match, and what to do if it is the wrong person (#263, N1)", async () => {
+    api.get.mockResolvedValue(view(["SS12000"], [], false));
+    renderMark(true, true);
+    expect(await screen.findByText(/en skyddad person i registret har samma e-postadress/)).toBeInTheDocument();
+    expect(screen.getByText(/Är det fel person: rätta e-postadressen och ta bort markeringen/)).toBeInTheDocument();
+  });
+
+  it("says nothing of an address match for a linked person, or for a mark by hand alone", async () => {
+    api.get.mockResolvedValue(view(["SS12000"]));
+    renderMark(true, true);
+    expect(await screen.findByText("Markerad. Markeringen kommer från elevregistret (SS12000).")).toBeInTheDocument();
+    expect(screen.queryByText(/samma e-postadress/)).toBeNull();
   });
 
   it("lets only those who decide remove the marks (#263, L11)", async () => {

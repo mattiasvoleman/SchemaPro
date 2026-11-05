@@ -42,17 +42,23 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  *    or the one local row the run matches by address and proposes to LINK or
  *    RELINK (after.byAddress), whether or not the link is made: a person
  *    typed in by hand, read from a file or imported before the register
- *    protected them is marked by the first run that finds them. It names the
+ *    protected them is marked by the first run that finds them. By address
+ *    it is automatic only when the given and family names agree too; else,
+ *    and for each of two rows sharing the address, it is proposed
+ *    deselected with a code (PROTECTION_ADDRESS_NAME_DIFFERS,
+ *    PROTECTION_ADDRESS_AMBIGUOUS), since addresses are reused. It names the
  *    person in its after alone (the minimisation nulls it): externalId and
  *    localId stay empty, so a finished run says how many marks it set, never
  *    whose. A person this apply creates, links or relinks is marked by the
  *    apply with that change too (apply.ts);
  *  - a mark the sync wrote (source SS12000), for a linked person a FULL run
- *    reads as "Ingen" wherever it names them and as nothing else:
- *    PROTECTION END, deselected and never automatic, so the defaults never
- *    lift a protection. An absent marking is not "Ingen", an INCREMENTAL run
- *    may not read the record (a child's) that still marks the person, and an
- *    administrator's mark is theirs: the sync lifts only its own row.
+ *    reads as "Ingen" wherever it names them and as nothing else, or for an
+ *    unlinked row no protected source person reaches by address any more
+ *    (PROTECTION_ADDRESS_NO_LONGER_MATCHES): PROTECTION END, deselected and
+ *    never automatic, so the defaults never lift a protection. An absent
+ *    marking is not "Ingen", an INCREMENTAL run may not read the record (a
+ *    child's) that still marks the person, and an administrator's mark is
+ *    theirs: the sync lifts only its own row.
  *
  * DEACTIVATE, of a linked person only: a FULL run that no longer finds them
  * (a pupil not returned by the enrolment fetch, staff with no active duty, a
@@ -251,6 +257,15 @@ export function pickEmail(person: S1Person, role: LocalRole): string | null {
   return EMAIL.test(chosen) && chosen.length <= 254 ? chosen : null;
 }
 
+/** A name as compared: NFC, trimmed, single-spaced, case-folded. */
+const nameKey = (value: string | null | undefined): string =>
+  (value ?? '').normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('sv');
+
+/** Whether a local row and a source person have the same given and family name. */
+function sameName(local: { firstName: string; lastName: string }, person: S1Person): boolean {
+  return nameKey(local.firstName) === nameKey(person.givenName) && nameKey(local.lastName) === nameKey(person.familyName);
+}
+
 function dutyClass(roles: DutyRole[]): 'TEACHING' | 'REVIEW' | 'NON_TEACHING' {
   if (roles.some((role) => TEACHING_DUTY_ROLES.includes(role))) return 'TEACHING';
   if (roles.some((role) => REVIEW_DUTY_ROLES.includes(role))) return 'REVIEW';
@@ -407,6 +422,10 @@ export function computeDiff(input: DiffInput): DiffResult {
   // Persons: create, link, update, reactivate
   // ---------------------------------------------------------------------
   const plans = new Map<string, Plan>();
+  // A protected source person the run matches by address to a local row it
+  // does not link (yet): the mark's ground (see PROTECTED IDENTITY above).
+  const addressMatches = new Map<string, { localId: string; email: string; sameName: boolean }>();
+  const ambiguousMatches = new Map<string, { localIds: string[]; email: string }>();
   for (const user of local.users) if (user.ss12000Id) plans.set(user.ss12000Id, { localId: user.id, role: user.role, linked: true });
 
   const inScope = [...persons.values()]
@@ -510,6 +529,7 @@ export function computeDiff(input: DiffInput): DiffResult {
       }
       if (matches.length > 1 || (claims.get(email) ?? 0) > 1) {
         note('PERSON', 'CONFLICT', 'PERSON_AMBIGUOUS_MATCH', person.id, null, { email, role: primary, ...display }, isProt);
+        if (isProt) ambiguousMatches.set(person.id, { localIds: matches.map((u) => u.id), email });
         continue;
       }
       const match = matches[0]!;
@@ -518,6 +538,7 @@ export function computeDiff(input: DiffInput): DiffResult {
         note('PERSON', 'CONFLICT', 'PERSON_ROLE_MISMATCH', person.id, match.id, { email, role: primary, localRole: match.role, ...display }, isProt);
         continue;
       }
+      if (isProt) addressMatches.set(person.id, { localId: match.id, email, sameName: sameName(match, person) });
       if (!match.isActive) {
         push({
           entity: 'PERSON', op: 'RELINK', externalId: person.id, localId: match.id,
@@ -926,25 +947,62 @@ export function computeDiff(input: DiffInput): DiffResult {
   // The sync's own mark: a person may hold an administrator's beside it,
   // which the sync neither needs nor touches.
   const syncMarked = new Set((local.protections ?? []).filter((m) => m.source === 'SS12000').map((m) => m.userId));
-  const mark = (op: 'ADD' | 'END', ext: string, userId: string, byAddress: boolean) =>
+  const mark = (
+    op: 'ADD' | 'END',
+    ext: string | null,
+    userId: string,
+    address: { email?: string; code: string | null } | null,
+  ) => {
+    // An ADD only keeps a person out of files: selected and made at night,
+    // unless a code says the address alone is the ground. An END lifts a
+    // protection: never by default, never at night.
+    const automatic = op === 'ADD' && !address?.code;
     push({
       entity: 'PROTECTION', op, externalId: null, localId: null,
-      before: null, after: { personExternalId: ext, userLocalId: userId, ...(byAddress ? { byAddress: true } : {}) },
-      // An ADD only keeps a person out of files: selected and made at night.
-      // An END lifts a protection: never by default, never at night.
-      conflictCode: null, selected: op === 'ADD', autoApplicable: op === 'ADD', protectedIdentity: false,
+      before: null,
+      after: {
+        personExternalId: ext, userLocalId: userId,
+        ...(address ? { byAddress: true, ...(address.email ? { email: address.email } : {}) } : {}),
+      },
+      conflictCode: address?.code ?? null, selected: automatic, autoApplicable: automatic, protectedIdentity: false,
     });
+  };
+  // Every local row a protected source person reaches by address in this run.
+  const addressed = new Set<string>();
   for (const ext of [...protectedIds].sort()) {
-    // The person linked, or the one row the run matched by address (a LINK
-    // or RELINK it proposes): marked whether or not the link is made, since
-    // a person typed in by hand or read from a file is in Rastra all the same.
-    const plan = plans.get(ext);
-    if (plan?.localId && !syncMarked.has(plan.localId)) mark('ADD', ext, plan.localId, !plan.linked);
+    const linked = usersByExt.get(ext);
+    if (linked) {
+      if (!syncMarked.has(linked.id)) mark('ADD', ext, linked.id, null);
+      continue;
+    }
+    // The one row the run matched by address (a LINK or RELINK it proposes):
+    // marked whether or not the link is made, since a person typed in by
+    // hand or read from a file is in Rastra all the same; at night only when
+    // the names agree too, since an address is reused (a sibling, a former
+    // pupil). Two rows with the address: each proposed, none automatic.
+    const match = addressMatches.get(ext);
+    if (match) {
+      addressed.add(match.localId);
+      if (!syncMarked.has(match.localId)) {
+        mark('ADD', ext, match.localId, { email: match.email, code: match.sameName ? null : 'PROTECTION_ADDRESS_NAME_DIFFERS' });
+      }
+      continue;
+    }
+    for (const localId of ambiguousMatches.get(ext)?.localIds ?? []) {
+      addressed.add(localId);
+      if (!syncMarked.has(localId)) mark('ADD', ext, localId, { email: ambiguousMatches.get(ext)!.email, code: 'PROTECTION_ADDRESS_AMBIGUOUS' });
+    }
   }
   if (full) {
     for (const user of local.users) {
-      if (!user.ss12000Id || !syncMarked.has(user.id)) continue;
-      if (saidIngen.has(user.ss12000Id) && !protectedIds.has(user.ss12000Id)) mark('END', user.ss12000Id, user.id, false);
+      if (!syncMarked.has(user.id)) continue;
+      if (user.ss12000Id) {
+        if (saidIngen.has(user.ss12000Id) && !protectedIds.has(user.ss12000Id)) mark('END', user.ss12000Id, user.id, null);
+      } else if (!addressed.has(user.id)) {
+        // Marked by address, and no protected source person has the address
+        // any more (it was corrected, or the person left the register).
+        mark('END', null, user.id, { code: 'PROTECTION_ADDRESS_NO_LONGER_MATCHES' });
+      }
     }
   }
 

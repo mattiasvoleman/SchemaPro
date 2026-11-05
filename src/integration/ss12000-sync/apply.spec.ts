@@ -434,22 +434,39 @@ describe('applyChanges: the mark of a protected identity (20270107090000)', () =
     expect(tx.personProtection.deleteMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL, userId: { in: [loc(1)] }, source: 'SS12000' } });
   });
 
-  it('PROTECTION ADD by address marks the local row the diff matched, unlinked, if the row is still the school\'s', async () => {
+  it('PROTECTION ADD by address marks the local row the diff matched, unlinked, if the row is still the school\'s with that address', async () => {
     tx.user.findMany.mockImplementation(async (args: { where: { ss12000Id?: unknown; id?: { in: string[] } } }) =>
-      args.where.id ? args.where.id.in.filter((id) => id === loc(2)).map((id) => ({ id })) : [],
+      args.where.id
+        ? args.where.id.in
+            .filter((id) => id === loc(2) || id === loc(5))
+            .map((id) => ({ id, email: id === loc(2) ? 'S2@skola.se ' : 'annan@skola.se' }))
+        : [],
     );
-    const ours = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(2), userLocalId: loc(2), byAddress: true } });
-    const gone = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(3), userLocalId: loc(3), byAddress: true } });
+    const ours = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(2), userLocalId: loc(2), byAddress: true, email: 's2@skola.se' } });
+    const gone = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(3), userLocalId: loc(3), byAddress: true, email: 's3@skola.se' } });
+    // The row's address changed since the diff: not the person it matched.
+    const moved = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(5), userLocalId: loc(5), byAddress: true, email: 's5@skola.se' } });
     // Without byAddress a local id is never trusted.
     const plain = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(4), userLocalId: loc(2) } });
-    const outcome = await run([ours, gone, plain]);
+    const outcome = await run([ours, gone, moved, plain]);
     expect(outcome.applied).toEqual([ours.id]);
     expect(outcome.skipped.map((s) => [s.id, s.code])).toEqual([
       [gone.id, 'SS12000_DEPENDENCY_NOT_APPLIED'],
+      [moved.id, 'SS12000_DEPENDENCY_NOT_APPLIED'],
       [plain.id, 'SS12000_DEPENDENCY_NOT_APPLIED'],
     ]);
     expect(marked()).toEqual([{ userId: loc(2), schoolId: SCHOOL, source: 'SS12000' }]);
-    expect(tx.user.findMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL, id: { in: [loc(2), loc(3)] } }, select: { id: true } });
+    expect(tx.user.findMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL, id: { in: [loc(2), loc(3), loc(5)] } }, select: { id: true, email: true } });
+  });
+
+  it('PROTECTION END by address lifts the sync\'s mark on the unlinked row it names, and only the sync\'s', async () => {
+    tx.user.findMany.mockImplementation(async (args: { where: { id?: { in: string[] } } }) =>
+      args.where.id ? [{ id: loc(2), email: 'lisa@skola.se' }] : [],
+    );
+    const end = change({ entity: 'PROTECTION', op: 'END', after: { personExternalId: null, userLocalId: loc(2), byAddress: true } });
+    const outcome = await run([end]);
+    expect(outcome.applied).toEqual([end.id]);
+    expect(tx.personProtection.deleteMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL, userId: { in: [loc(2)] }, source: 'SS12000' } });
   });
 
   it('PROTECTION END the database did not let through (only those who decide lift a mark) is skipped, not counted as made', async () => {
