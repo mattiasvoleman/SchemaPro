@@ -158,6 +158,7 @@ const ADMIN_NAV: NavSection[] = [
       // and a morning starts with cover, not with planning a cancellation.
       // The lov's icon — the nearest thing to it.
       { labelKey: "cancellations", href: "/admin/cancellations", icon: CalendarOff },
+      { labelKey: "activities", href: "/admin/activities", icon: CalendarRange },
       { labelKey: "leaveRequests", href: "/admin/leave", icon: ClipboardCheck },
       { labelKey: "roomBookings", href: "/admin/room-bookings", icon: MapPin },
       { labelKey: "reports", href: "/admin/reports", icon: BarChart3 },

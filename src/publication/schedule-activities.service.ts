@@ -109,6 +109,7 @@ export interface ActivityPreview {
 
 export interface ScheduleActivityView {
   id: string;
+  academicYearId: string;
   batchId: string;
   name: string;
   description: string | null;
@@ -123,7 +124,10 @@ export interface ScheduleActivityView {
   replacementSubject: { id: string; name: string; countsTowardTimplan: boolean } | null;
   cancelled: number;
   replacementLessons: number;
+  /** The credit rows the activity has written (a day × a subject × a target). */
   credits: number;
+  /** What each named subject is credited per day: the lines a change sends again. */
+  creditLines: Array<{ subjectId: string; minutes: number }>;
   teachers: Array<{ studentGroupId: string; teacherId: string; role: 'LEAD' | 'ASSISTANT' }>;
   notifies: boolean;
   createdAt: string;
@@ -954,16 +958,26 @@ export class ScheduleActivitiesService {
         })
       ).map((subject) => [subject.id, subject]),
     );
-    const credits = await tx.cancellationBatchCredit.groupBy({
-      by: ['batchId'],
+    const linked = await tx.cancellationBatchCredit.findMany({
       where: { batchId: { in: rows.map((row) => row.batchId) } },
-      _count: { _all: true },
+      select: { batchId: true, credit: { select: { subjectId: true, minutes: true, date: true } } },
     });
-    const creditCount = new Map(credits.map((entry) => [entry.batchId, entry._count._all]));
+    const creditCount = new Map<string, number>();
+    // Per subject, the latest day's minutes: a change rewrites the days ahead, and the latest is the school's current word.
+    const latest = new Map<string, Map<string, { date: Date; minutes: number }>>();
+    for (const entry of linked) {
+      creditCount.set(entry.batchId, (creditCount.get(entry.batchId) ?? 0) + 1);
+      if (entry.credit.subjectId === null) continue;
+      const bySubject = latest.get(entry.batchId) ?? new Map<string, { date: Date; minutes: number }>();
+      const known = bySubject.get(entry.credit.subjectId);
+      if (!known || entry.credit.date > known.date) bySubject.set(entry.credit.subjectId, { date: entry.credit.date, minutes: entry.credit.minutes });
+      latest.set(entry.batchId, bySubject);
+    }
     return rows.map((row) => {
       const subject = subjects.get(row.replacementSubjectId) ?? null;
       return {
         id: row.id,
+        academicYearId: row.academicYearId,
         batchId: row.batchId,
         name: row.batch.name,
         description: row.description,
@@ -979,6 +993,9 @@ export class ScheduleActivitiesService {
         cancelled: row.batch.cancelled,
         replacementLessons: row._count.lessons,
         credits: creditCount.get(row.batchId) ?? 0,
+        creditLines: [...(latest.get(row.batchId) ?? new Map()).entries()]
+          .map(([subjectId, entry]) => ({ subjectId, minutes: entry.minutes }))
+          .sort((a, b) => a.subjectId.localeCompare(b.subjectId)),
         teachers: row.teachers.map((teacher) => ({
           studentGroupId: teacher.studentGroupId,
           teacherId: teacher.teacherId,

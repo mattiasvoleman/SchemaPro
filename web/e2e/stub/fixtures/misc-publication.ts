@@ -15,6 +15,7 @@ import type {
   ReversePreview,
   ValiditySegment,
 } from "../../../lib/publication-types";
+import type { ScheduleActivity } from "../../../lib/schedule-activity-types";
 import type { AcademicYear, MasterLesson } from "../../../lib/types";
 import { KIND, uid } from "../sessions";
 import { addDays, isoWeekday, mondayOf, NOW, stockholmInstant, THIS_MONDAY, TODAY } from "./calendar";
@@ -413,6 +414,68 @@ export const CANCELLATION_BATCHES: CancellationBatch[] = [
     reinstated: 3,
     skippedRoomTaken: 1,
   }),
+];
+
+/**
+ * Aktiviteter (schemabrytande aktivitet): the friluftsdag above as an activity,
+ * which owns its avbokning and put a lesson that carries attendance in its place,
+ * and a prao week that was taken away again. Reads only, as the suites scan pages.
+ */
+export const SCHEDULE_ACTIVITIES: ScheduleActivity[] = [
+  {
+    id: uid(KIND.misc, 9141),
+    academicYearId: YEAR.id,
+    batchId: CANCELLATION_BATCHES[1]!.id,
+    name: "Friluftsdag åk 7",
+    description: "Ta med matsäck och kläder efter väder.",
+    fromDate: FRILUFTSDAG,
+    toDate: FRILUFTSDAG,
+    startTime: null,
+    endTime: null,
+    scope: "GRADES",
+    minGradeLevel: 7,
+    maxGradeLevel: 7,
+    scopeGroupIds: [],
+    replacementSubject: { id: uid(KIND.misc, 9142), name: "Temadag", countsTowardTimplan: false },
+    cancelled: 6,
+    replacementLessons: 1,
+    credits: 1,
+    creditLines: [{ subjectId: SUBJECTS.idh.id, minutes: 300 }],
+    teachers: [{ studentGroupId: GROUPS.g7A.id, teacherId: TEACHERS.anna.id, role: "LEAD" }],
+    notifies: true,
+    createdAt: stockholmInstant(addDays(FRILUFTSDAG, -7), "11:25"),
+    createdByUserId: ADMIN.id,
+    removedAt: null,
+    reinstated: 0,
+    doubleCounts: false,
+  },
+  {
+    id: uid(KIND.misc, 9143),
+    academicYearId: YEAR.id,
+    batchId: uid(KIND.misc, 9144),
+    name: "Prao 8A",
+    description: null,
+    fromDate: PRAO_FROM,
+    toDate: inYear(addDays(PRAO_FROM, 4)),
+    startTime: null,
+    endTime: null,
+    scope: "GROUPS",
+    minGradeLevel: null,
+    maxGradeLevel: null,
+    scopeGroupIds: [GROUPS.g8A.id],
+    replacementSubject: null,
+    cancelled: 0,
+    replacementLessons: 0,
+    credits: 0,
+    creditLines: [],
+    teachers: [],
+    notifies: false,
+    createdAt: ago(5, "09:00"),
+    createdByUserId: ADMIN.id,
+    removedAt: ago(4, "08:00"),
+    reinstated: 1,
+    doubleCounts: false,
+  },
 ];
 
 export const reversePreview = (batch: CancellationBatch): ReversePreview => ({
