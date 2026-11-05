@@ -187,10 +187,20 @@ async function lay(
   school: School,
   where: { studentGroup?: { gradeLevel?: number } } = {},
 ): Promise<{ placed: number; unplaced: number }> {
-  const posts = await owner.teachingRequirement.findMany({
-    where: { academicYearId: school.yearId, ...where },
-    orderBy: [{ studentGroupId: 'asc' }, { subjectId: 'asc' }],
-  });
+  // In name order, not id order: the probe's groups get fresh ids every run, and
+  // an id order lays a different timetable each time, so which post the clash
+  // rule leaves without a lesson moved from run to run.
+  const posts = (
+    await owner.teachingRequirement.findMany({
+      where: { academicYearId: school.yearId, ...where },
+      include: { studentGroup: { select: { name: true } }, subject: { select: { name: true } } },
+    })
+  ).sort(
+    (a, b) =>
+      a.studentGroup.name.localeCompare(b.studentGroup.name, 'sv') ||
+      a.subject.name.localeCompare(b.subject.name, 'sv') ||
+      a.id.localeCompare(b.id),
+  );
   const rooms = await owner.room.findMany({ where: { schoolId: school.schoolId }, orderBy: { name: 'asc' } });
   let placed = 0;
   let unplaced = 0;
@@ -466,6 +476,13 @@ async function seedSchoolChecks(owner: Owner, exchange: ScheduleExchangeService,
   // The posts deleted as well: the import derives them back, equal to the school's own.
   await check('(x-a) the posts derived from the lessons are the posts the school had', async () => {
     const files = await bytesOf('TABLE_CSV', exchange, yearId, school.admin);
+    // A post the clash rule left without a single lesson is in no row of the
+    // file, so there is nothing to derive it from; every other post must come back.
+    const laidKeys = new Set(
+      (await owner.masterLesson.findMany({ where: { academicYearId: yearId }, select: { studentGroupId: true, subjectId: true } })).map(
+        (l) => `${l.studentGroupId}|${l.subjectId}`,
+      ),
+    );
     await wipeLessons(owner, yearId);
     await owner.teachingRequirement.deleteMany({ where: { academicYearId: yearId } });
     await owner.teachingBlock.deleteMany({ where: { academicYearId: yearId } });
@@ -478,6 +495,7 @@ async function seedSchoolChecks(owner: Owner, exchange: ScheduleExchangeService,
     for (const original of posts) {
       const got = byKey.get(key(original));
       if (original.teacherId === null && !got) continue;
+      if (!laidKeys.has(key(original))) continue;
       assert.ok(got, `no post for ${key(original)}`);
       // The lessons the seed school's post asked for were all placed, or the post says fewer.
       assert.ok(got.lessonsPerWeek <= original.lessonsPerWeek, 'more lessons than the post asked for');
@@ -571,6 +589,12 @@ async function roundTripOf(
     assert.equal(same.summary.refused, 0, JSON.stringify(same.rows.find((r) => r.action === 'REFUSED')));
     assert.equal(same.canApply, true);
 
+    // The posts that had a lesson to export: each of them must come back below.
+    const laidKeys = new Set(
+      (await owner.masterLesson.findMany({ where: { academicYearId: school.yearId }, select: { studentGroupId: true, subjectId: true } })).map(
+        (l) => `${l.studentGroupId}|${l.subjectId}`,
+      ),
+    );
     await wipeLessons(owner, school.yearId);
     if (options.withPosts) {
       await owner.teachingRequirement.deleteMany({ where: { academicYearId: school.yearId } });
@@ -587,8 +611,11 @@ async function roundTripOf(
       const key = (r: { studentGroupId: string; subjectId: string }) => `${r.studentGroupId}|${r.subjectId}`;
       const got = new Map(derived.map((r) => [key(r), r]));
       for (const was of posts) {
+        // A post with no lesson placed (the clash rule left it over) has nothing to derive from;
+        // every other post must be derived back, so a derivation that drops one fails here.
+        if (!laidKeys.has(key(was))) continue;
         const now = got.get(key(was));
-        if (!now) continue; // A post with no lesson placed (the clash rule left it over) has nothing to derive from.
+        assert.ok(now, `no post for ${key(was)} (${format})`);
         assert.equal(now.lessonsPerWeek <= was.lessonsPerWeek, true);
         assert.equal(now.minutesPerLesson, was.minutesPerLesson, `minutes of ${key(was)}`);
         assert.equal(now.recurrence, was.recurrence, `weeks of ${key(was)}`);
