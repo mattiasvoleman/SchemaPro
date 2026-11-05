@@ -187,10 +187,20 @@ async function lay(
   school: School,
   where: { studentGroup?: { gradeLevel?: number } } = {},
 ): Promise<{ placed: number; unplaced: number }> {
-  const posts = await owner.teachingRequirement.findMany({
-    where: { academicYearId: school.yearId, ...where },
-    orderBy: [{ studentGroupId: 'asc' }, { subjectId: 'asc' }],
-  });
+  // In name order, not id order: the probe's groups get fresh ids every run, and
+  // an id order lays a different timetable each time, so which post the clash
+  // rule leaves without a lesson moved from run to run.
+  const posts = (
+    await owner.teachingRequirement.findMany({
+      where: { academicYearId: school.yearId, ...where },
+      include: { studentGroup: { select: { name: true } }, subject: { select: { name: true } } },
+    })
+  ).sort(
+    (a, b) =>
+      a.studentGroup.name.localeCompare(b.studentGroup.name, 'sv') ||
+      a.subject.name.localeCompare(b.subject.name, 'sv') ||
+      a.id.localeCompare(b.id),
+  );
   const rooms = await owner.room.findMany({ where: { schoolId: school.schoolId }, orderBy: { name: 'asc' } });
   let placed = 0;
   let unplaced = 0;
@@ -466,6 +476,13 @@ async function seedSchoolChecks(owner: Owner, exchange: ScheduleExchangeService,
   // The posts deleted as well: the import derives them back, equal to the school's own.
   await check('(x-a) the posts derived from the lessons are the posts the school had', async () => {
     const files = await bytesOf('TABLE_CSV', exchange, yearId, school.admin);
+    // A post the clash rule left without a single lesson is in no row of the
+    // file, so there is nothing to derive it from; every other post must come back.
+    const laidKeys = new Set(
+      (await owner.masterLesson.findMany({ where: { academicYearId: yearId }, select: { studentGroupId: true, subjectId: true } })).map(
+        (l) => `${l.studentGroupId}|${l.subjectId}`,
+      ),
+    );
     await wipeLessons(owner, yearId);
     await owner.teachingRequirement.deleteMany({ where: { academicYearId: yearId } });
     await owner.teachingBlock.deleteMany({ where: { academicYearId: yearId } });
@@ -478,6 +495,7 @@ async function seedSchoolChecks(owner: Owner, exchange: ScheduleExchangeService,
     for (const original of posts) {
       const got = byKey.get(key(original));
       if (original.teacherId === null && !got) continue;
+      if (!laidKeys.has(key(original))) continue;
       assert.ok(got, `no post for ${key(original)}`);
       // The lessons the seed school's post asked for were all placed, or the post says fewer.
       assert.ok(got.lessonsPerWeek <= original.lessonsPerWeek, 'more lessons than the post asked for');
