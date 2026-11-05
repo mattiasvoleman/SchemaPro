@@ -6,7 +6,7 @@ import { isoWeekday, timeToString } from '../calendar/publish-days';
 import { effectiveSegments } from './publication-validity';
 import { snapshotRanges } from './published-grundschema';
 import { publishModeOf } from './publish-mode';
-import type { SelectionCandidate, SelectionRule } from './cancellation-selection';
+import { selectLessons, type SelectionCandidate, type SelectionRule } from './cancellation-selection';
 import type { CancellationSelectionDto } from './dto/cancellation-batch.dto';
 import type { DigestLesson } from './cancellation-digest';
 import type { ReversePreview } from './cancellation-batches.service';
@@ -225,6 +225,26 @@ export function creditTargetsOf(
     return selection.groupIds.map((studentGroupId) => ({ studentGroupId, minGradeLevel: null, maxGradeLevel: null }));
   }
   return [{ studentGroupId: null, minGradeLevel: selection.minGradeLevel, maxGradeLevel: selection.maxGradeLevel }];
+}
+
+/**
+ * The lessons a batch's selection takes now that it does not hold yet: what a
+ * publish, a refill or a moved lesson has put into its days since. Never an
+ * activity's replacement lesson, which stands in the cancelled ones' place.
+ */
+export async function pendingLessons(tx: PrismaClient, row: BatchRow, timezone: string): Promise<SelectionCandidate[]> {
+  const selection = storedSelection(row);
+  const rows = await tx.calendarLesson.findMany({
+    where: {
+      studentGroup: { is: { academicYearId: selection.academicYearId } },
+      date: { gte: day(selection.fromDate), lte: day(selection.toDate) },
+      batchLessons: { none: { batchId: row.id } },
+      activityLinks: { none: {} },
+    },
+    select: CANDIDATE_SELECT,
+    orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
+  });
+  return selectLessons(rows.map(toCandidate), ruleOf(selection, timezone, new Date())).matched;
 }
 
 /** Cancels the rows into the batch, keeping each one's note to give back. */

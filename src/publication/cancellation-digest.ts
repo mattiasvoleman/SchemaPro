@@ -118,6 +118,12 @@ function spanOf(first: string, last: string): string {
 export interface ActivityWording {
   /** A teacher's classes and groups, by person: "Du är ansvarig för 7A". */
   responsible: ReadonlyMap<string, readonly string[]>;
+  /**
+   * People whose lessons are cancelled but not replaced (a pupil in a joint
+   * lesson whose class is not in the activity, and the guardians of such
+   * pupils): their notice says the lessons are cancelled and promises nothing.
+   */
+  plain?: ReadonlySet<string>;
 }
 
 /** The digest's e-mail, in Swedish: the batch's name, the person's count and days. */
@@ -125,7 +131,7 @@ export function digestEmail(
   name: string,
   share: { count: number; first: string; last: string },
   reversed: boolean,
-  activity?: { responsibleFor: readonly string[] },
+  activity?: { responsibleFor: readonly string[]; plain?: boolean },
 ): { subject: string; body: string } {
   const lessons = share.count === 1 ? 'En lektion' : `${share.count} lektioner`;
   const span = spanOf(share.first, share.last);
@@ -141,7 +147,7 @@ export function digestEmail(
   }
   return {
     subject: `Inställda lektioner: ${name}`,
-    body: `${name}: ${lessons} ${span} ${share.count === 1 ? 'är inställd' : 'är inställda'}${activity ? ' och ersätts av aktiviteten' : ''}.${responsible}\n\nSe schemat i Rastra Schema.`,
+    body: `${name}: ${lessons} ${span} ${share.count === 1 ? 'är inställd' : 'är inställda'}${activity && !activity.plain ? ' och ersätts av aktiviteten' : ''}.${responsible}\n\nSe schemat i Rastra Schema.`,
   };
 }
 
@@ -161,11 +167,12 @@ export async function sendDigest(
 ): Promise<number> {
   const groups = new Map<
     string,
-    { count: number; first: string; last: string; userIds: string[]; responsibleFor: readonly string[] }
+    { count: number; first: string; last: string; userIds: string[]; responsibleFor: readonly string[]; plain: boolean }
   >();
   for (const [userId, share] of audience.people) {
     const responsibleFor = activity?.responsible.get(userId) ?? [];
-    const key = `${share.lessons.size}|${share.first}|${share.last}|${responsibleFor.join(',')}`;
+    const plain = activity?.plain?.has(userId) ?? false;
+    const key = `${share.lessons.size}|${share.first}|${share.last}|${responsibleFor.join(',')}|${plain}`;
     const group = groups.get(key);
     if (group) group.userIds.push(userId);
     else
@@ -175,6 +182,7 @@ export async function sendDigest(
         last: share.last,
         userIds: [userId],
         responsibleFor,
+        plain,
       });
   }
   let told = 0;
@@ -192,7 +200,12 @@ export async function sendDigest(
         reversed,
         ...(activity ? { activity: true } : {}),
       },
-      email: digestEmail(batch.name, group, reversed, activity ? { responsibleFor: group.responsibleFor } : undefined),
+      email: digestEmail(
+        batch.name,
+        group,
+        reversed,
+        activity ? { responsibleFor: group.responsibleFor, plain: group.plain } : undefined,
+      ),
     });
   }
   return told;

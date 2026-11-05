@@ -84,6 +84,16 @@ export class ScheduleActivitiesController {
     return this.activities.update(id, dto, user);
   }
 
+  @Post(':id/reapply')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  reapply(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.activities.reapply(id, user);
+  }
+
   @Post(':id/remove/preview')
   @HttpCode(HttpStatus.OK)
   removePreview(

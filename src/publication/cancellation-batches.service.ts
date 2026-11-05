@@ -38,6 +38,7 @@ import {
   day,
   digestLessonOf,
   digestLessonsOf,
+  pendingLessons,
   reversePlan,
   reversed,
   ruleOf,
@@ -505,18 +506,7 @@ export async function reapplyInTransaction(
   timezone: string,
 ): Promise<{ ids: string[]; replacements?: SyncResult }> {
   const selection = storedSelection(row);
-  const rows = await tx.calendarLesson.findMany({
-    where: {
-      studentGroup: { is: { academicYearId: selection.academicYearId } },
-      date: { gte: day(selection.fromDate), lte: day(selection.toDate) },
-      batchLessons: { none: { batchId: row.id } },
-      // Never an activity's replacement lesson: it stands in the cancelled ones' place.
-      activityLinks: { none: {} },
-    },
-    select: CANDIDATE_SELECT,
-    orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
-  });
-  const { matched } = selectLessons(rows.map(toCandidate), ruleOf(selection, timezone, new Date()));
+  const matched = await pendingLessons(tx, row, timezone);
   if (matched.length === 0) return { ids: [] };
   const added = await cancelInto(tx, schoolId, row.id, selection, matched);
   await tx.cancellationBatch.update({ where: { id: row.id }, data: { cancelled: { increment: added } } });

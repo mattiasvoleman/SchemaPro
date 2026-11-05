@@ -121,4 +121,29 @@ describe('the avbokning digest', () => {
     expect(calls.filter((call) => call !== teacher).every((call) => !call.email.body.includes('ansvarig'))).toBe(true);
     expect(calls.reduce((sum, call) => sum + call.userIds.length, 0)).toBe(7);
   });
+
+  it('promises no replacement to the people whose lessons nothing replaces', async () => {
+    expect(
+      digestEmail('Friluftsdag åk 7', { count: 2, first: '2026-11-10', last: '2026-11-11' }, false, { responsibleFor: [], plain: true }),
+    ).toEqual({
+      subject: 'Inställda lektioner: Friluftsdag åk 7',
+      body: 'Friluftsdag åk 7: 2 lektioner mellan 10 nov och 11 nov är inställda.\n\nSe schemat i Rastra Schema.',
+    });
+
+    const notifyUsers = jest.fn(async (_tx: unknown, options: { userIds: string[] }) => options.userIds.length);
+    const notifications = { notifyUsers } as unknown as NotificationsService;
+    const audience = await digestAudience(client(), lessons);
+    // Ada and her guardian have nothing replacing the lessons; the rest do.
+    await sendDigest(notifications, client(), 'school', { id: 'batch', name: 'Friluftsdag' }, audience, false, {
+      responsible: new Map(),
+      plain: new Set(['ada', 'g1']),
+    });
+    const calls = notifyUsers.mock.calls.map(
+      ([, options]) => options as unknown as { userIds: string[]; email: { body: string } },
+    );
+    const said = (call: { email: { body: string } }) => call.email.body.includes('ersätts av aktiviteten');
+    const plain = calls.filter((call) => !said(call)).flatMap((call) => call.userIds).sort();
+    expect(plain).toEqual(['ada', 'g1']);
+    expect(calls.filter(said).flatMap((call) => call.userIds)).not.toContain('ada');
+  });
 });

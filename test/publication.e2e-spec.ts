@@ -753,6 +753,7 @@ describe('Publicering (e2e)', () => {
       ['GET', `/api/v1/schedule-activities?academicYearId=${YEAR_ID}`],
       ['POST', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666/preview'],
       ['PATCH', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666'],
+      ['POST', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666/reapply'],
       ['POST', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666/remove/preview'],
       ['POST', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666/remove'],
       ['GET', `/api/v1/public-links?academicYearId=${YEAR_ID}`],

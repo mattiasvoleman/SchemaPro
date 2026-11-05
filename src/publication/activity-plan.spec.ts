@@ -1,10 +1,12 @@
 import {
   cancelledNoteOf,
+  closedDaysOf,
   expandNamedGroups,
   noteOf,
   ownersOf,
   planReplacements,
   teacherClashes,
+  uncoveredPupilIds,
   uncoveredPupils,
   type GroupFacts,
   type PlanLesson,
@@ -167,6 +169,14 @@ describe('the replacement lesson of a class and day', () => {
     ]);
   });
 
+  it('writes nothing for a day the class is off school (a lov entered after the activity), and keeps its other days', () => {
+    const plan = planReplacements(
+      [lesson('tue', '2026-11-10', '08:00', '08:45', ['a1']), lesson('wed', '2026-11-11', '08:00', '08:45', ['a1', 'b1'])],
+      [{ ...classA, closed: new Set(['2026-11-11']) }, classB],
+    );
+    expect(plan.map((entry) => `${entry.date} ${entry.groupId}`)).toEqual(['2026-11-10 7A', '2026-11-11 7B']);
+  });
+
   it('writes nothing for a class with nobody in it, and is in date then group order', () => {
     const plan = planReplacements(
       [lesson('x', '2026-11-11', '08:00', '08:45', ['a1', 'b1']), lesson('y', '2026-11-10', '08:00', '08:45', ['a1', 'b1'])],
@@ -185,6 +195,38 @@ describe('the pupils nothing replaces', () => {
     expect(uncoveredPupils(lessons, [owner('7A', ['a1'])])).toBe(2);
     expect(uncoveredPupils(lessons, [owner('7A', ['a1']), owner('7C', ['c1', 'c2'])])).toBe(0);
     expect(uncoveredPupils([], [owner('7A', ['a1'])])).toBe(0);
+  });
+
+  it('names them', () => {
+    const lessons = [lesson('l1', '2026-11-10', '08:00', '08:45', ['a1', 'c1']), lesson('l2', '2026-11-10', '09:00', '09:45', ['c2'])];
+    expect([...uncoveredPupilIds(lessons, [owner('7A', ['a1'])])].sort()).toEqual(['c1', 'c2']);
+  });
+});
+
+describe('the days a class is off school', () => {
+  const lov = (from: string, to: string, min: number | null = null, max: number | null = null) => ({
+    startDate: at(`${from}T00:00:00.000Z`),
+    endDate: at(`${to}T00:00:00.000Z`),
+    minGradeLevel: min,
+    maxGradeLevel: max,
+  });
+
+  it('is the days of the window a break covers, a lov that began before it included', () => {
+    const closed = closedDaysOf([lov('2026-10-30', '2026-11-10')], 7, '2026-11-09', '2026-11-13');
+    expect([...closed]).toEqual(['2026-11-09', '2026-11-10']);
+  });
+
+  it('reads a break for some years as the group’s årskurs: inside it, outside it, and a group with none', () => {
+    const studiedag = [lov('2026-11-10', '2026-11-10', 7, 9)];
+    expect(closedDaysOf(studiedag, 8, '2026-11-09', '2026-11-13').size).toBe(1);
+    expect(closedDaysOf(studiedag, 6, '2026-11-09', '2026-11-13').size).toBe(0);
+    // A group that cannot be shown to be inside the span keeps its lesson.
+    expect(closedDaysOf(studiedag, null, '2026-11-09', '2026-11-13').size).toBe(0);
+    expect(closedDaysOf([lov('2026-11-10', '2026-11-10')], null, '2026-11-09', '2026-11-13').size).toBe(1);
+  });
+
+  it('is empty without a break', () => {
+    expect(closedDaysOf([], 7, '2026-11-09', '2026-11-13').size).toBe(0);
   });
 });
 

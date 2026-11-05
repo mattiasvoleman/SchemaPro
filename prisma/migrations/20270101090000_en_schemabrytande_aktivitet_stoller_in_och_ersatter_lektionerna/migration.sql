@@ -73,7 +73,9 @@
 -- ## Lås
 --
 -- De främmande nycklarna tar SHARE ROW EXCLUSIVE på de tabeller de pekar på,
--- bland dem Users och CalendarLessons. Låsen tas NOWAIT och tillsammans i en
+-- bland dem Users och CalendarLessons. StudentGroups är inte bland dem: ingen
+-- nyckel pekar dit (en klass raderas hur som helst den nämns, se removal-
+-- inventory), så ingen förfrågan behöver vänta på den. Låsen tas NOWAIT och tillsammans i en
 -- slinga med 30 sekunders tak, som de migreringar gör som rör heta tabeller:
 -- ingen förfrågan köar bakom migreringen, och den väntar aldrig medan den
 -- håller ett lås. Efter 30 sekunders nekanden stannar den utan att ha gjort
@@ -87,7 +89,7 @@ BEGIN
   PERFORM set_config('lock_timeout', '5s', true);
   LOOP
     BEGIN
-      LOCK TABLE "Schools", "AcademicYears", "Users", "StudentGroups", "Subjects", "CalendarLessons",
+      LOCK TABLE "Schools", "AcademicYears", "Users", "Subjects", "CalendarLessons",
                  "CancellationBatches" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
       EXIT;
     EXCEPTION WHEN lock_not_available THEN

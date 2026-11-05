@@ -1,3 +1,5 @@
+import { breakCoversGroup, breakDaysOf, type PublishBreak } from '../calendar/publish-days';
+
 /*
  * SCHEMABRYTANDE AKTIVITET: WHAT REPLACES WHAT, as pure functions.
  *
@@ -128,6 +130,12 @@ export interface PlanLesson {
 export interface PlanOwner {
   groupId: string;
   pupils: ReadonlySet<string>;
+  /**
+   * The school-local days the owner is off school (a lov, a studiedag for its
+   * årskurs). A lesson that was cancelled on such a day was cancelled before
+   * the lov was entered; the class is not at school, so nothing replaces it.
+   */
+  closed?: ReadonlySet<string>;
 }
 
 export interface PlannedReplacement {
@@ -157,6 +165,7 @@ export function planReplacements(lessons: readonly PlanLesson[], owners: readonl
   for (const owner of owners) {
     if (owner.pupils.size === 0) continue;
     for (const [date, list] of byDate) {
+      if (owner.closed?.has(date)) continue;
       const mine = list.filter((lesson) => intersects(lesson.pupils, owner.pupils));
       if (mine.length === 0) continue;
       out.push({
@@ -172,12 +181,34 @@ export function planReplacements(lessons: readonly PlanLesson[], owners: readonl
 }
 
 /** Pupils on a cancelled lesson whom no owner holds: their lesson is gone and nothing replaces it. */
-export function uncoveredPupils(lessons: readonly PlanLesson[], owners: readonly PlanOwner[]): number {
+export function uncoveredPupilIds(lessons: readonly PlanLesson[], owners: readonly PlanOwner[]): Set<string> {
   const held = new Set<string>();
   for (const owner of owners) for (const pupil of owner.pupils) held.add(pupil);
   const loose = new Set<string>();
   for (const lesson of lessons) for (const pupil of lesson.pupils) if (!held.has(pupil)) loose.add(pupil);
-  return loose.size;
+  return loose;
+}
+
+export const uncoveredPupils = (lessons: readonly PlanLesson[], owners: readonly PlanOwner[]): number =>
+  uncoveredPupilIds(lessons, owners).size;
+
+/**
+ * The days of [from, to] a group of this årskurs is off school: the breaks
+ * that cover it (publish-days.ts' rule, the one materialisation applies, so
+ * a lov that keeps a lesson from being published also keeps a replacement
+ * lesson from being written).
+ */
+export function closedDaysOf(
+  breaks: readonly PublishBreak[],
+  gradeLevel: number | null,
+  from: string,
+  to: string,
+): Set<string> {
+  const closed = new Set<string>();
+  for (const [date, entries] of breakDaysOf(breaks, from, to)) {
+    if (entries.some((entry) => breakCoversGroup(entry, gradeLevel))) closed.add(date);
+  }
+  return closed;
 }
 
 /** The text a replacement lesson carries for the pupils: the activity's name, and what it says about the day. */

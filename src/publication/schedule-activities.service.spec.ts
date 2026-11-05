@@ -174,6 +174,8 @@ describe('ScheduleActivitiesService', () => {
   let world: {
     candidates: unknown[];
     owned: unknown[];
+    /** What the selection would take now that the avbokning does not hold yet. */
+    pending: unknown[];
     continuing: unknown[];
     digestRows: unknown[];
     ownerPupils: Record<string, string[]>;
@@ -210,6 +212,7 @@ describe('ScheduleActivitiesService', () => {
     world = {
       candidates: free,
       owned: owned(['l1', '2026-11-09'], ['l2', '2026-11-10']),
+      pending: [],
       continuing: [],
       digestRows: [],
       ownerPupils: { [G7A]: ['p1', 'p2'], [G7B]: ['p3'] },
@@ -233,7 +236,9 @@ describe('ScheduleActivitiesService', () => {
       endDate: day('2027-06-11'),
       school: { timezone: 'Europe/Stockholm' },
     });
-    tx.studentGroup.count.mockImplementation(async ({ where }) => new Set(where.id.in).size);
+    tx.studentGroup.count.mockImplementation(
+      async ({ where }) => new Set((where.id.in as string[]).filter((id) => world.groups.some((group) => group.id === id))).size,
+    );
     tx.studentGroup.findMany.mockImplementation(async () => world.groups);
     tx.studentGroupMember.findMany.mockResolvedValue(MEMBERS);
     tx.subject.findUnique.mockImplementation(async ({ where }) => SUBJECTS[where.id] ?? null);
@@ -245,11 +250,13 @@ describe('ScheduleActivitiesService', () => {
     tx.calendarLesson.findMany.mockImplementation(async ({ where }) => {
       if (where.OR) return world.candidates;
       if (where.status === 'SCHEDULED') return world.continuing;
-      if (where.batchLessons) return world.owned;
+      if (where.batchLessons?.some) return world.owned;
+      if (where.batchLessons?.none) return world.pending;
       if (where.id?.in) return world.digestRows;
       return [];
     });
     tx.calendarLesson.updateMany.mockImplementation(async ({ where }) => ({ count: where?.id?.in?.length ?? 0 }));
+    tx.calendarLesson.deleteMany.mockImplementation(async ({ where }) => ({ count: where?.id?.in?.length ?? 0 }));
     tx.calendarLesson.create
       .mockResolvedValueOnce({ id: 'repl-1' })
       .mockResolvedValueOnce({ id: 'repl-2' })
@@ -546,7 +553,7 @@ describe('ScheduleActivitiesService', () => {
         expect.objectContaining({ counts: { pupils: 1, guardians: 0, teachers: 1 } }),
         false,
       ]);
-      expect(digest.mock.calls[0][6]).toEqual({ responsible: new Map([[T1, ['7A']]]) });
+      expect(digest.mock.calls[0][6]).toEqual({ responsible: new Map([[T1, ['7A']]]), plain: new Set() });
 
       expect(realtime.notifyLessonsChanged).toHaveBeenCalledWith(tx, ['l1', 'l2', 'repl-1', 'repl-2']);
       expect(realtime.notifyCoverBoardChanged).toHaveBeenCalledWith(SCHOOL, '2026-11-09', '2026-11-10');
@@ -647,6 +654,225 @@ describe('ScheduleActivitiesService', () => {
     });
   });
 
+  describe('the days a class is off school', () => {
+    it('plans no replacement lesson for a lov entered after the activity', async () => {
+      tx.schoolBreak.findMany.mockResolvedValue([
+        { startDate: day('2026-11-10'), endDate: day('2026-11-10'), minGradeLevel: null, maxGradeLevel: null },
+      ]);
+      const preview = await service.preview(selection(), user);
+      expect(preview.replacementLessons).toBe(1);
+      expect(preview.classes[0]).toMatchObject({ days: 1, firstDate: '2026-11-09', lastDate: '2026-11-09' });
+    });
+  });
+
+  describe('what is waiting', () => {
+    it('counts the lessons that have come into the activity’s days since it was made', async () => {
+      world.pending = [lesson('p1', '2026-11-10'), lesson('p2', '2026-11-10')];
+      expect((await service.list(YEAR, user))[0].addedSince).toBe(2);
+    });
+
+    it('counts nothing, and asks nothing, for an activity that is removed, reversed or over', async () => {
+      world.pending = [lesson('p1', '2026-11-10')];
+      for (const row of [
+        activityRow({ removedAt: NOW }),
+        activityRow({}, { reversedAt: NOW }),
+        activityRow({}, { toDate: day('2026-11-04') }),
+      ]) {
+        world.activity = row;
+        tx.calendarLesson.findMany.mockClear();
+        expect((await service.list(YEAR, user))[0].addedSince).toBe(0);
+        expect(tx.calendarLesson.findMany).not.toHaveBeenCalled();
+      }
+    });
+  });
+
+  describe('apply again', () => {
+    function arrived() {
+      world.pending = [lesson('p1', '2026-11-10', { startsAt: instant('2026-11-10T12:00'), endsAt: instant('2026-11-10T13:00') })];
+      world.owned = owned(['l1', '2026-11-09'], ['l2', '2026-11-10'], ['p1', '2026-11-10']);
+      world.digestRows = [{ id: 'p1', date: day('2026-11-10'), subjectId: MA, studentGroupId: G7A, extraGroups: [] }];
+    }
+
+    it('cancels what has come into the days, lets the replacement lessons follow, and tells those it touches', async () => {
+      arrived();
+      const result = await service.reapply(ACTIVITY, user);
+
+      expect(result.added).toBe(1);
+      expect(tx.cancellationBatchLesson.createMany).toHaveBeenCalledWith({
+        data: [{ batchId: BATCH, calendarLessonId: 'p1', schoolId: SCHOOL, previousNote: null }],
+      });
+      expect(tx.cancellationBatch.update).toHaveBeenCalledWith({ where: { id: BATCH }, data: { cancelled: { increment: 1 } } });
+      expect(tx.calendarLesson.create).toHaveBeenCalled();
+      expect(digest).toHaveBeenCalledTimes(1);
+      expect(digest.mock.calls[0][5]).toBe(false);
+      expect(digest.mock.calls[0][6]).toEqual({ responsible: new Map([[T1, ['7A']]]), plain: new Set() });
+      expect(realtime.notifyLessonsChanged.mock.calls[0][1]).toEqual(expect.arrayContaining(['p1']));
+      expect(realtime.notifyCoverBoardChanged).toHaveBeenCalledWith(SCHOOL, '2026-11-09', '2026-11-10');
+      expect(result.activity.id).toBe(ACTIVITY);
+    });
+
+    it('still lets the replacement lessons follow when there is nothing new to cancel, and tells nobody', async () => {
+      const result = await service.reapply(ACTIVITY, user);
+      expect(result.added).toBe(0);
+      expect(tx.cancellationBatchLesson.createMany).not.toHaveBeenCalled();
+      expect(tx.scheduleActivityLesson.findMany).toHaveBeenCalled();
+      expect(digest).not.toHaveBeenCalled();
+    });
+
+    it('tells nobody when the activity told nobody', async () => {
+      arrived();
+      world.activity = activityRow({}, { notifies: false });
+      expect((await service.reapply(ACTIVITY, user)).added).toBe(1);
+      expect(digest).not.toHaveBeenCalled();
+    });
+
+    it('refuses an activity that is not there, removed, or whose avbokning was reversed', async () => {
+      world.activity = null;
+      await expect(service.reapply(ACTIVITY, user)).rejects.toBeInstanceOf(NotFoundException);
+      world.activity = activityRow({ removedAt: NOW });
+      expect(await code(service.reapply(ACTIVITY, user))).toBe(ACTIVITY_REMOVED);
+      world.activity = activityRow({}, { reversedAt: NOW });
+      expect(await code(service.reapply(ACTIVITY, user))).toBe('CANCELLATION_REVERSED');
+    });
+  });
+
+  describe('beside a publish in a DIRECT school', () => {
+    const queries = () =>
+      tx.$queryRaw.mock.calls.map(([query]) => String((query as { sql?: string }).sql ?? query));
+    const locks = () =>
+      queries().flatMap((sql) => (sql.includes('enter_publication') ? ['exclusive'] : sql.includes('enter_grundschema_write') ? ['shared'] : []));
+
+    it('applies the selection once more after the commit, holding the lock exclusively, to what a publish wrote meanwhile', async () => {
+      world.pending = [lesson('late', '2026-11-12')];
+      await service.create(create(), user);
+      expect(locks()).toEqual(['shared', 'exclusive']);
+      // The main transaction cancelled l1 and l2; the pass cancelled what the publish left.
+      const batches = tx.cancellationBatchLesson.createMany.mock.calls.map(([args]) => args.data.map((row: { calendarLessonId: string }) => row.calendarLessonId));
+      expect(batches).toEqual([['l1', 'l2'], ['late']]);
+      expect(realtime.notifyLessonsChanged.mock.calls.at(-1)?.[1]).toEqual(expect.arrayContaining(['late']));
+    });
+
+    it('does so after a change too', async () => {
+      world.candidates = world.owned.map((entry) =>
+        lesson((entry as { id: string }).id, asDate(entry), { status: 'CANCELLED', batchLessons: [{ batchId: BATCH }] }),
+      );
+      await service.update(ACTIVITY, create({ credits: [], teachers: [] }), user);
+      expect(locks()).toEqual(['shared', 'exclusive']);
+    });
+
+    it('does not in a DRAFT school, where the exclusive publish already orders the two', async () => {
+      tx.$queryRaw.mockResolvedValue([{ mode: 'DRAFT' }]);
+      await service.create(create(), user);
+      expect(locks()).toEqual(['shared']);
+    });
+
+    it('leaves the activity made when the pass cannot run, and says so in the log', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      tx.$queryRaw.mockImplementation(async (query: unknown) => {
+        if (String((query as { sql?: string }).sql).includes('enter_publication')) throw new Error('lock timeout');
+        return [];
+      });
+      await expect(service.create(create(), user)).resolves.toMatchObject({ cancelled: 2 });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('apply again'));
+    });
+
+    it('does nothing for an activity removed between its commit and the pass', async () => {
+      world.pending = [lesson('late', '2026-11-12')];
+      // The synchronisation in the main transaction finds it; the pass, after the commit, does not.
+      tx.scheduleActivity.findFirst.mockResolvedValueOnce(world.activity).mockResolvedValue(null);
+      await service.create(create(), user);
+      expect(tx.cancellationBatchLesson.createMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a class that has been deleted since', () => {
+    function heldAsBefore() {
+      world.candidates = world.owned.map((entry) =>
+        lesson((entry as { id: string }).id, asDate(entry), { status: 'CANCELLED', batchLessons: [{ batchId: BATCH }] }),
+      );
+    }
+
+    it('is left out when the activity is changed, with its teachers, instead of refusing the change for good', async () => {
+      heldAsBefore();
+      await service.update(
+        ACTIVITY,
+        create({
+          groupIds: [G7A, 'deleted-class'],
+          credits: [],
+          teachers: [
+            { studentGroupId: G7A, teacherId: T1 },
+            { studentGroupId: 'deleted-class', teacherId: T2 },
+          ],
+        }),
+        user,
+      );
+      expect(tx.scheduleActivity.update.mock.calls[0][0].data.scopeGroupIds).toEqual([G7A]);
+      expect(tx.scheduleActivityTeacher.createMany.mock.calls[0][0].data).toEqual([
+        { studentGroupId: G7A, teacherId: T1, role: 'LEAD', activityId: ACTIVITY, schoolId: SCHOOL },
+      ]);
+    });
+
+    it('is left out of the preview of a change too', async () => {
+      heldAsBefore();
+      const preview = await service.updatePreview(ACTIVITY, selection({ groupIds: [G7A, 'deleted-class'], credits: [] }), user);
+      expect(preview.classes.map((entry) => entry.groupId)).toEqual([G7A]);
+    });
+
+    it('leaves nothing to change when every class of the selection is gone', async () => {
+      heldAsBefore();
+      expect(await code(service.update(ACTIVITY, create({ groupIds: ['deleted-class'], credits: [], teachers: [] }), user))).toBe(
+        'CANCELLATION_SCOPE',
+      );
+    });
+
+    it('is still refused in a new activity', async () => {
+      expect(await code(service.preview(selection({ groupIds: [G7A, 'deleted-class'] }), user))).toBe('CANCELLATION_SCOPE');
+    });
+  });
+
+  describe('the notice to those nothing replaces', () => {
+    it('promises no replacement to a pupil in a joint lesson whose class is outside the activity, nor to a guardian of such pupils only', async () => {
+      world.lessonPupils = { l1: ['p1', 'stray'] };
+      audienceOf.mockImplementation(async () => {
+        const share = { lessons: new Set(['l1']), first: '2026-11-09', last: '2026-11-09' };
+        return {
+          people: new Map([
+            ['p1', share],
+            ['stray', share],
+            ['g-stray', share],
+            ['g-both', share],
+          ]),
+          counts: { pupils: 2, guardians: 2, teachers: 0 },
+        };
+      });
+      tx.guardianStudent.findMany.mockImplementation(async ({ where }) =>
+        where.studentId
+          ? [{ guardianId: 'g-stray' }, { guardianId: 'g-both' }]
+          : [
+              { guardianId: 'g-stray', studentId: 'stray' },
+              { guardianId: 'g-both', studentId: 'stray' },
+              { guardianId: 'g-both', studentId: 'p1' },
+            ],
+      );
+      await service.create(create(), user);
+      expect(digest.mock.calls[0][6]).toMatchObject({ plain: new Set(['stray', 'g-stray']) });
+    });
+
+    it('asks nothing when every pupil is held by a class', async () => {
+      await service.create(create(), user);
+      expect(tx.guardianStudent.findMany).not.toHaveBeenCalled();
+    });
+
+    it('does not look further when none of the guardians is on the notice', async () => {
+      world.lessonPupils = { l1: ['p1', 'stray'] };
+      tx.guardianStudent.findMany.mockResolvedValue([{ guardianId: 'not-told' }]);
+      await service.create(create(), user);
+      // Only the guardians of the pupils nothing replaces were asked for, never their other children.
+      expect(tx.guardianStudent.findMany).toHaveBeenCalled();
+      expect(tx.guardianStudent.findMany.mock.calls.every(([args]) => args.where.studentId !== undefined)).toBe(true);
+    });
+  });
+
   describe('a change', () => {
     /** Friluftsdag 9–10 Nov becomes Utedag 9 Nov only: 10 Nov comes back, a third lesson on the 9th is taken. */
     function shrink() {
@@ -696,6 +922,31 @@ describe('ScheduleActivitiesService', () => {
       const preview = await service.updatePreview(ACTIVITY, change(), user);
       expect(preview.change).toEqual({ released: 1, taken: 1 });
       expect(preview.matched).toBe(2);
+    });
+
+    it('does not put back a lesson that a replacement lesson that was held stands for (a removal’s rule)', async () => {
+      shrink();
+      // 7A's replacement lesson on 10 Nov has begun: l2 stays cancelled with it.
+      world.owned = owned(['l1', '2026-11-09'], ['l2', '2026-11-10'], ['l3', '2026-11-09']);
+      world.scheduleLessons = [
+        {
+          studentGroupId: G7A,
+          date: day('2026-11-10'),
+          calendarLesson: { id: 'r-held', startsAt: instant('2026-11-05T07:00'), _count: { attendanceRecords: 0 } },
+        },
+      ];
+      expect((await service.updatePreview(ACTIVITY, change(), user)).change).toEqual({ released: 0, taken: 1 });
+      tx.calendarLesson.updateMany.mockClear();
+
+      const result = await service.update(ACTIVITY, change(), user);
+
+      expect(result).toMatchObject({ released: 0, taken: 1 });
+      expect(tx.calendarLesson.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'SCHEDULED' }) }),
+      );
+      expect(tx.cancellationBatchLesson.deleteMany).not.toHaveBeenCalled();
+      // It is still told of what is newly cancelled, and of nothing coming back.
+      expect(digest).toHaveBeenCalledTimes(1);
     });
 
     it('puts back what it no longer takes, takes what is new, and writes the rest again', async () => {
@@ -899,7 +1150,9 @@ describe('ScheduleActivitiesService', () => {
         where: { id: { in: ['l2'] }, status: 'CANCELLED', cancelCause: 'EVENT' },
         data: { status: 'SCHEDULED', cancelCause: null, note: null },
       });
-      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['r-ahead'] } } });
+      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ['r-ahead'] }, startsAt: { gt: NOW }, attendanceRecords: { none: {} } },
+      });
       expect(tx.timplanCredit.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['c1', 'c2'] } } });
       expect(tx.cancellationBatch.update).toHaveBeenCalledWith({
         where: { id: BATCH },
@@ -927,6 +1180,12 @@ describe('ScheduleActivitiesService', () => {
       expect(tx.timplanCredit.deleteMany).not.toHaveBeenCalled();
       expect(digest).not.toHaveBeenCalled();
       expect(realtime.notifyLessonsChanged).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 when a register was saved on a replacement lesson after the plan was read, and removes nothing', async () => {
+      lessons();
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
+      expect(await code(service.remove(ACTIVITY, user))).toBe('CANCELLATION_STALE');
     });
 
     it('is done once: an activity already removed answers 409', async () => {

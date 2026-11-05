@@ -25,7 +25,7 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { carryDraft, draftWindow } from './draft-publish';
 import { reapplyActiveBatches } from './cancellation-batches.service';
 import { readDraftMasters, snapshotMasters, snapshotSittings, type PublishedMaster } from './published-grundschema';
-import { enterPublication } from './publish-mode';
+import { enterGrundschemaWrite, enterPublication } from './publish-mode';
 import {
   DEFAULT_GATE_POLICY,
   GATE_POLICY_KEYS,
@@ -655,6 +655,8 @@ export class PublicationsService {
       this.prisma.withRls(
         user,
         async (tx): Promise<Attempt> => {
+          // The first statement, as every grundschema writer's (publish-mode.ts).
+          await enterGrundschemaWrite(tx, schoolId);
           const year = await this.requireYear(tx, dto.academicYearId);
           const window = publishWindow(year, dto);
           let gates: GateItem[] = [];
@@ -668,6 +670,9 @@ export class PublicationsService {
             if (gateVerdict(gates).refused) throw new Rollback<Attempt>({ kind: 'refused', gates, context });
           }
           const result = await this.calendar.materialise(tx, schoolId, dto);
+          // A bulk avbokning or an activity still in force takes what this
+          // materialised into its days (S7), as POST /publications does.
+          await reapplyActiveBatches(tx, schoolId, year.id, result.fromDate, result.toDate, year.timezone);
           await tx.timetablePublication.create({
             data: {
               schoolId,
@@ -776,6 +781,14 @@ export class PublicationsService {
         })
       ).map((row) => row.calendarLessonId);
     } else {
+      // The shared side, which no other writer waits for: only the exclusive
+      // holders do. A schemabrytande aktivitet settles after it commits by
+      // taking the exclusive lock for one short pass (schedule-activities
+      // .service.ts), and that pass has to wait for a DIRECT publish still
+      // open beside the activity, or it would not see the lessons that publish
+      // writes into the activity's days and the activity would leave them
+      // standing. A publish that starts after the pass sees the activity.
+      await enterGrundschemaWrite(tx, schoolId);
       window = publishWindow(year, { fromDate: dto.validFrom, toDate: dto.validTo });
     }
     const lessons = await readGateLessons(tx, dto.academicYearId);

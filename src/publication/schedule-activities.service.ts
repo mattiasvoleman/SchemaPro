@@ -8,7 +8,7 @@ import { calendarLessonRosters } from '../calendar/lesson-roster';
 import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { checkScope, createCreditInTransaction } from '../timplan/timplan-credits.service';
-import { enterGrundschemaWrite } from './publish-mode';
+import { enterGrundschemaWrite, enterPublication } from './publish-mode';
 import {
   inScope,
   inWindow,
@@ -32,6 +32,7 @@ import {
   day,
   digestLessonOf,
   digestLessonsOf,
+  pendingLessons,
   reversePlan,
   ruleOf,
   stale,
@@ -41,12 +42,13 @@ import {
   type BatchRow,
   type StoredSelection,
 } from './cancellation-core';
-import { digestAudience, sendDigest, type DigestAudience } from './cancellation-digest';
+import { digestAudience, sendDigest, type DigestAudience, type DigestLesson } from './cancellation-digest';
 import {
   expandNamedGroups,
   cancelledNoteOf,
   teacherClashes,
   type GroupFacts,
+  type PlanOwner,
   type PlannedReplacement,
   type ScopeRule,
 } from './activity-plan';
@@ -56,10 +58,11 @@ import {
   ownersWithPupils,
   planOf,
   syncReplacementsInTransaction,
+  type ActivityWindow,
   type ReplacedLesson,
   type SyncResult,
 } from './activity-replacements';
-import type { BatchLessonView } from './cancellation-batches.service';
+import { reapplyInTransaction, type BatchLessonView } from './cancellation-batches.service';
 import type { CreateScheduleActivityDto, ScheduleActivitySelectionDto } from './dto/schedule-activity.dto';
 
 export const ACTIVITY_SUBJECT = 'ACTIVITY_SUBJECT';
@@ -136,6 +139,12 @@ export interface ScheduleActivityView {
   reinstated: number;
   /** The subject counts toward the timplan now: the day's minutes would be counted twice. */
   doubleCounts: boolean;
+  /**
+   * Ordinary lessons that have come into the activity's days since it was made
+   * (a publish, a refill, a moved lesson) and that it has not cancelled: what
+   * "Tillämpa igen" takes. 0 for an activity that is removed or over.
+   */
+  addedSince: number;
 }
 
 export interface RemovePreview {
@@ -190,11 +199,19 @@ interface Evaluation {
   take: SelectionCandidate[];
   /** On a change: the lessons it holds, as the new selection reads them. */
   keep: SelectionCandidate[];
-  /** On a change: the lessons it puts back. */
+  /** On a change: the lessons the new description no longer takes. */
   drop: SelectionCandidate[];
+  /** Of those, the ones it puts back: not those a replacement lesson that was held stands for (heldReplacements). */
+  release: SelectionCandidate[];
   plan: PlannedReplacement[];
+  planOwners: PlanOwner[];
+  /** Pupils on a cancelled lesson whom no class of the activity holds. */
+  uncoveredIds: ReadonlySet<string>;
   ownerNames: Map<string, string>;
 }
+
+/** What the digest needs to know of the plan. */
+type PlanFacts = Pick<Evaluation, 'plan' | 'planOwners' | 'uncoveredIds' | 'ownerNames'>;
 
 /**
  * SCHEMABRYTANDE AKTIVITET: an avbokning and what takes its place.
@@ -242,7 +259,7 @@ export class ScheduleActivitiesService {
     const done = await this.prisma.withRls(
       user,
       async (tx) => {
-        await enterGrundschemaWrite(tx, schoolId);
+        const mode = await enterGrundschemaWrite(tx, schoolId);
         const evaluation = await this.evaluate(tx, checked, null);
         if (dto.expectedDigest && dto.expectedDigest !== evaluation.preview.digest) throw stale();
         if (evaluation.take.length === 0) {
@@ -292,7 +309,7 @@ export class ScheduleActivitiesService {
         const synced = await syncReplacementsInTransaction(tx, schoolId, batch.id);
         await tx.cancellationBatch.update({ where: { id: batch.id }, data: { cancelled: take.length } });
         if (checked.notify) {
-          const audience = await this.audienceOf(tx, take, checked, evaluation.plan, evaluation.ownerNames);
+          const audience = await this.audienceOf(tx, take.map(digestLessonOf), checked.teachers, evaluation);
           await sendDigest(
             this.notifications,
             tx,
@@ -300,15 +317,24 @@ export class ScheduleActivitiesService {
             { id: batch.id, name: effective.name },
             audience.audience,
             false,
-            { responsible: audience.responsible },
+            { responsible: audience.responsible, plain: audience.plain },
           );
         }
-        return { id: activity.id, take, synced, credits, range: { from: effective.fromDate, to: effective.toDate } };
+        return {
+          id: activity.id,
+          batchId: batch.id,
+          mode,
+          take,
+          synced,
+          credits,
+          range: { from: effective.fromDate, to: effective.toDate },
+        };
       },
       { timeoutMs: 120_000 },
     );
     await this.broadcast(user, [...done.take.map((lesson) => lesson.id), ...done.synced.created]);
     this.boardChanged(schoolId, done.range.from, done.range.to);
+    if (done.mode === 'DIRECT') await this.settleDirect(user, schoolId, done.batchId);
     this.logger.log(
       `Schedule activity created [activity=${done.id}, cancelled=${done.take.length}, replacements=${done.synced.created.length}, credits=${done.credits}]`,
     );
@@ -352,19 +378,21 @@ export class ScheduleActivitiesService {
     const done = await this.prisma.withRls(
       user,
       async (tx) => {
-        await enterGrundschemaWrite(tx, schoolId);
+        const mode = await enterGrundschemaWrite(tx, schoolId);
         const activity = await this.requireActivity(tx, id);
-        const checked = check(dto, dto.notify ?? activity.batch.notifies);
-        const evaluation = await this.evaluate(tx, checked, activity);
+        const evaluation = await this.evaluate(tx, check(dto, dto.notify ?? activity.batch.notifies), activity);
         if (dto.expectedDigest && dto.expectedDigest !== evaluation.preview.digest) throw stale();
-        const { effective, take, drop, today, timezone } = evaluation;
+        // What is written is what was evaluated: a class that has been deleted since is not in it.
+        const { checked, effective, take, release, today, timezone } = evaluation;
         const batchId = activity.batchId;
         const row = activity.batch;
 
-        // 1. Put back what the new description no longer takes.
+        // 1. Put back what the new description no longer takes, except the
+        // lessons a replacement lesson that was held stands for: they stay
+        // cancelled with it, as in a removal (heldReplacements).
         let reinstated: Array<{ id: string }> = [];
-        if (drop.length > 0) {
-          const plan = await reversePlan(tx, schoolId, row, timezone, { only: new Set(drop.map((lesson) => lesson.id)) });
+        if (release.length > 0) {
+          const plan = await reversePlan(tx, schoolId, row, timezone, { only: new Set(release.map((lesson) => lesson.id)) });
           await applyReinstatement(tx, 'EVENT', plan);
           const gone = [...plan.reinstate.map((lesson) => lesson.id), ...plan.templateMoved.map((entry) => entry.lessonId)];
           if (gone.length > 0) {
@@ -439,9 +467,10 @@ export class ScheduleActivitiesService {
         // cancelled, and what comes back.
         if (checked.notify) {
           if (take.length > 0) {
-            const audience = await this.audienceOf(tx, take, checked, evaluation.plan, evaluation.ownerNames);
+            const audience = await this.audienceOf(tx, take.map(digestLessonOf), checked.teachers, evaluation);
             await sendDigest(this.notifications, tx, schoolId, { id: batchId, name: effective.name }, audience.audience, false, {
               responsible: audience.responsible,
+              plain: audience.plain,
             });
           }
           if (reinstated.length > 0) {
@@ -457,6 +486,8 @@ export class ScheduleActivitiesService {
           }
         }
         return {
+          mode,
+          batchId,
           take,
           reinstated,
           synced,
@@ -476,8 +507,90 @@ export class ScheduleActivitiesService {
       ...done.synced.updated,
     ]);
     this.boardChanged(schoolId, done.range.from, done.range.to);
+    if (done.mode === 'DIRECT') await this.settleDirect(user, schoolId, done.batchId);
     const view = await this.prisma.withRls(user, async (tx) => this.viewById(tx, id));
     return { activity: view, released: done.reinstated.length, taken: done.take.length };
+  }
+
+  /**
+   * "Tillämpa igen": the activity's selection run over the calendar as it is
+   * now, so a lesson published, refilled or moved into its days since is
+   * cancelled with the rest and the replacement lessons follow it. The people
+   * it newly touches are told, as a change tells them, when the activity told
+   * anybody.
+   */
+  async reapply(id: string, user: AuthenticatedUser): Promise<{ activity: ScheduleActivityView; added: number }> {
+    const schoolId = requireSchoolId(user);
+    const done = await this.prisma.withRls(
+      user,
+      async (tx) => {
+        await enterGrundschemaWrite(tx, schoolId);
+        const activity = await this.requireActivity(tx, id);
+        const { timezone } = await yearOf(tx, activity.academicYearId, null);
+        const added = await reapplyInTransaction(tx, schoolId, activity.batch, timezone);
+        // Nothing new to cancel can still leave a replacement lesson to correct (a lov entered since).
+        const synced = added.replacements ?? (await syncReplacementsInTransaction(tx, schoolId, activity.batchId));
+        if (added.ids.length > 0 && activity.batch.notifies) {
+          const audience = await this.audienceOf(
+            tx,
+            await digestLessonsOf(tx, added.ids.map((lessonId) => ({ id: lessonId }))),
+            activity.teachers as Checked['teachers'],
+            await this.currentPlan(tx, activity),
+          );
+          await sendDigest(
+            this.notifications,
+            tx,
+            schoolId,
+            { id: activity.batchId, name: activity.batch.name },
+            audience.audience,
+            false,
+            { responsible: audience.responsible, plain: audience.plain },
+          );
+        }
+        return { ids: added.ids, synced, range: { from: asDay(activity.batch.fromDate), to: asDay(activity.batch.toDate) } };
+      },
+      { timeoutMs: 120_000 },
+    );
+    await this.broadcast(user, [...done.ids, ...done.synced.created, ...done.synced.updated]);
+    this.boardChanged(schoolId, done.range.from, done.range.to);
+    const view = await this.prisma.withRls(user, async (tx) => this.viewById(tx, id));
+    return { activity: view, added: done.ids.length };
+  }
+
+  /**
+   * A DIRECT school's publish takes the publication lock shared, as the
+   * activity's own transaction does, so the two run side by side: a lesson
+   * that publish writes into the activity's days after the activity read
+   * them is not cancelled by either (the publish does not see an activity
+   * that has not committed, the activity did not see the lesson). So once
+   * the activity has committed, one short pass takes the lock EXCLUSIVELY,
+   * which waits for every publish still open, and applies the selection again
+   * to what they left. A publish that starts after the pass sees the
+   * activity. In DRAFT the exclusive publish already orders the two.
+   *
+   * Best effort: the activity is made whatever this answers; a pass that could
+   * not run leaves its lessons to "Tillämpa igen", which the activity's
+   * `addedSince` points at.
+   */
+  private async settleDirect(user: AuthenticatedUser, schoolId: string, batchId: string): Promise<void> {
+    try {
+      const settled = await this.prisma.withRls(
+        user,
+        async (tx) => {
+          await enterPublication(tx, schoolId);
+          const activity = await tx.scheduleActivity.findFirst({ where: { batchId, removedAt: null }, select: ACTIVITY_SELECT });
+          if (!activity || activity.batch.reversedAt !== null) return { ids: [] as string[] };
+          const { timezone } = await yearOf(tx, activity.academicYearId, null);
+          return reapplyInTransaction(tx, schoolId, activity.batch, timezone);
+        },
+        { timeoutMs: 60_000 },
+      );
+      await this.broadcast(user, [...settled.ids, ...(settled.replacements?.created ?? []), ...(settled.replacements?.updated ?? [])]);
+    } catch (error) {
+      this.logger.warn(
+        `Schedule activity left to "apply again" [batch=${batchId}]: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   async removePreview(id: string, user: AuthenticatedUser): Promise<RemovePreview> {
@@ -520,7 +633,14 @@ export class ScheduleActivitiesService {
         const plan = await this.removalPlan(tx, schoolId, activity);
         await applyReinstatement(tx, 'EVENT', plan.reversal);
         if (plan.deletable.length > 0) {
-          await tx.calendarLesson.deleteMany({ where: { id: { in: plan.deletable } } });
+          // The guard again in the statement: a register saved since the plan
+          // was read would go with the lesson (AttendanceRecords cascade). A
+          // lesson that has begun or gained one is history now, and the
+          // plan, which put its class's lessons back beside it, no longer holds.
+          const { count } = await tx.calendarLesson.deleteMany({
+            where: { id: { in: plan.deletable }, startsAt: { gt: new Date() }, attendanceRecords: { none: {} } },
+          });
+          if (count !== plan.deletable.length) throw stale();
         }
         if (plan.creditIds.length > 0) await tx.timplanCredit.deleteMany({ where: { id: { in: plan.creditIds } } });
         const now = new Date();
@@ -575,6 +695,24 @@ export class ScheduleActivitiesService {
 
   /** What removing would do: the lessons to put back, and the replacement lessons that go. */
   private async removalPlan(tx: PrismaClient, schoolId: string, activity: ActivityRow) {
+    const { links, deletable, stay } = await this.heldReplacements(tx, activity);
+    const linked = await tx.cancellationBatchLesson.findMany({ where: { batchId: activity.batchId }, select: { calendarLessonId: true } });
+    const only = new Set(linked.map((row) => row.calendarLessonId).filter((lessonId) => !stay.has(lessonId)));
+    const { timezone, today } = await yearOf(tx, activity.academicYearId, null);
+    const reversal = await reversePlan(tx, schoolId, activity.batch, timezone, { only });
+    const creditIds = await futureCreditIds(tx, activity.batchId, today, true);
+    return { reversal, deletable, keptReplacements: links.length - deletable.length, creditIds };
+  }
+
+  /**
+   * The replacement lessons ahead and without a register (they can go), and
+   * the cancelled lessons that a replacement lesson that was HELD stands for
+   * (`stay`). A day that began, or carries attendance, is the record of a
+   * day held; putting the class's later lessons of that day back beside it
+   * would give the class two lessons at once, so they stay cancelled with it.
+   * A removal and a change both ask, so that they agree.
+   */
+  private async heldReplacements(tx: PrismaClient, activity: ActivityRow) {
     const now = new Date();
     const links = await tx.scheduleActivityLesson.findMany({
       where: { activityId: activity.id },
@@ -591,24 +729,37 @@ export class ScheduleActivitiesService {
     const deletable = links.filter((row) => !history(row)).map((row) => row.calendarLesson.id);
     const keptKeys = new Set(links.filter(history).map((row) => `${row.studentGroupId}|${asDay(row.date)}`));
 
-    // The lessons a kept replacement stands for stay cancelled with it.
-    const groups = await loadGroupFacts(tx, activity.academicYearId);
-    const rule: ScopeRule = scopeRuleOf(activity);
     const stay = new Set<string>();
     if (keptKeys.size > 0) {
-      const owned = await ownedLessons(tx, activity.batchId);
-      const { planOwners } = await ownersWithPupils(tx, rule, groups, activity.replacementSubjectId);
-      const { plan } = await planOf(tx, owned, planOwners);
+      const { plan } = await this.currentPlan(tx, activity);
       for (const entry of plan) {
         if (keptKeys.has(`${entry.groupId}|${entry.date}`)) for (const lessonId of entry.lessonIds) stay.add(lessonId);
       }
     }
-    const linked = await tx.cancellationBatchLesson.findMany({ where: { batchId: activity.batchId }, select: { calendarLessonId: true } });
-    const only = new Set(linked.map((row) => row.calendarLessonId).filter((lessonId) => !stay.has(lessonId)));
-    const { timezone, today } = await yearOf(tx, activity.academicYearId, null);
-    const reversal = await reversePlan(tx, schoolId, activity.batch, timezone, { only });
-    const creditIds = await futureCreditIds(tx, activity.batchId, today, true);
-    return { reversal, deletable, keptReplacements: links.length - deletable.length, creditIds };
+    return { links, deletable, stay };
+  }
+
+  /** The plan the activity's cancelled lessons make now, as it is stored. */
+  private async currentPlan(tx: PrismaClient, activity: ActivityRow) {
+    const groups = await loadGroupFacts(tx, activity.academicYearId);
+    const { owners, planOwners } = await ownersWithPupils(
+      tx,
+      scopeRuleOf(activity),
+      groups,
+      activity.replacementSubjectId,
+      windowOf(activity),
+    );
+    const owned = await ownedLessons(tx, activity.batchId);
+    const planned =
+      owned.length === 0
+        ? { plan: [] as PlannedReplacement[], uncoveredIds: new Set<string>() as ReadonlySet<string> }
+        : await planOf(tx, owned, planOwners);
+    return {
+      plan: planned.plan,
+      planOwners,
+      uncoveredIds: planned.uncoveredIds,
+      ownerNames: new Map(owners.map((owner) => [owner.id, owner.name])),
+    };
   }
 
   /**
@@ -616,15 +767,20 @@ export class ScheduleActivitiesService {
    * lessons it takes and (on a change) holds and puts back, and what the
    * administrator should read before saying yes.
    */
-  private async evaluate(tx: PrismaClient, checked: Checked, activity: ActivityRow | null): Promise<Evaluation> {
-    const named = checked.named;
+  private async evaluate(tx: PrismaClient, requested: Checked, activity: ActivityRow | null): Promise<Evaluation> {
     // An activity belongs to its läsår for good: its lessons, credits and teachers are that year's.
-    if (activity && activity.academicYearId !== named.academicYearId) {
+    if (activity && activity.academicYearId !== requested.named.academicYearId) {
       throw new BadRequestException({
         message: 'academicYearId: en aktivitet byter inte läsår. Ta bort den och gör en ny.',
         code: CANCELLATION_SCOPE,
       });
     }
+    const groups = await loadGroupFacts(tx, requested.named.academicYearId);
+    // A class deleted since the activity was made is no longer in the year: an
+    // activity that names it (the form sends back what the activity stores)
+    // is changed without it rather than refused for it for good.
+    const checked = activity ? withoutRemovedGroups(requested, groups) : requested;
+    const named = checked.named;
     const { timezone, today } = await yearOf(tx, named.academicYearId, named);
     const now = new Date();
 
@@ -661,7 +817,6 @@ export class ScheduleActivitiesService {
     }
 
     // The groups: which the cancellation takes, which get a replacement lesson.
-    const groups = await loadGroupFacts(tx, named.academicYearId);
     let effective = named;
     const expandedGroups: Array<{ id: string; name: string }> = [];
     if (named.scope === 'GROUPS') {
@@ -708,6 +863,9 @@ export class ScheduleActivitiesService {
       inScope(candidate, rule) === true;
     const keep = heldCandidates.filter(geometric);
     const drop = heldCandidates.filter((candidate) => !geometric(candidate));
+    // What a held replacement lesson stands for is not put back (a removal's rule).
+    const stay = activity ? (await this.heldReplacements(tx, activity)).stay : new Set<string>();
+    const release = drop.filter((candidate) => !stay.has(candidate.id));
     const heldIds = new Set(heldRows.map((row) => row.id));
     const free = lessonRows.filter((row) => !heldIds.has(row.id)).map((row) => toCandidate(row as Parameters<typeof toCandidate>[0]));
     const outcome = selectLessons(
@@ -717,10 +875,17 @@ export class ScheduleActivitiesService {
     const take = outcome.matched;
 
     // The plan: a replacement lesson per owner and day for every lesson the activity holds after the change.
-    const { owners, planOwners } = await ownersWithPupils(tx, scopeRuleOfChecked(named), groups, checked.replacementSubjectId);
+    const { owners, planOwners } = await ownersWithPupils(tx, scopeRuleOfChecked(named), groups, checked.replacementSubjectId, {
+      academicYearId: named.academicYearId,
+      from: effective.fromDate,
+      to: effective.toDate,
+    });
     const ownerNames = new Map(owners.map((owner) => [owner.id, owner.name]));
     const replaced: ReplacedLesson[] = [...keep, ...take].map(replacedOf);
-    const { plan, uncovered } = replaced.length === 0 ? { plan: [], uncovered: 0 } : await planOf(tx, replaced, planOwners);
+    const { plan, uncovered, uncoveredIds } =
+      replaced.length === 0
+        ? { plan: [] as PlannedReplacement[], uncovered: 0, uncoveredIds: new Set<string>() as ReadonlySet<string> }
+        : await planOf(tx, replaced, planOwners);
 
     // Teachers: only for owners, only for teachers.
     const people = await tx.user.findMany({
@@ -782,7 +947,12 @@ export class ScheduleActivitiesService {
     }
 
     const taken = [...keep, ...take];
-    const reached = await this.audienceOf(tx, take, checked, plan, ownerNames);
+    const reached = await this.audienceOf(tx, take.map(digestLessonOf), checked.teachers, {
+      plan,
+      planOwners,
+      uncoveredIds,
+      ownerNames,
+    });
     const digest = createHash('sha256')
       .update(
         JSON.stringify([
@@ -793,7 +963,7 @@ export class ScheduleActivitiesService {
           checked.credits.map((credit) => [credit.subjectId, credit.minutes]).sort(),
           checked.replacementSubjectId,
           checked.description,
-          drop.map((lesson) => lesson.id).sort(),
+          release.map((lesson) => lesson.id).sort(),
         ]),
       )
       .digest('hex');
@@ -813,13 +983,13 @@ export class ScheduleActivitiesService {
       ...(activity
         ? {
             change: {
-              released: drop.filter((lesson) => lesson.startsAt > now && lesson.attendance === 0).length,
+              released: release.filter((lesson) => lesson.startsAt > now && lesson.attendance === 0).length,
               taken: take.length,
             },
           }
         : {}),
     };
-    return { preview, checked, effective, timezone, today, groups, take, keep, drop, plan, ownerNames };
+    return { preview, checked, effective, timezone, today, groups, take, keep, drop, release, plan, planOwners, uncoveredIds, ownerNames };
   }
 
   /** Lessons that go on for pupils of the activity's classes (a group with pupils from other classes too). */
@@ -906,20 +1076,18 @@ export class ScheduleActivitiesService {
     }));
   }
 
-  /** The digest's audience, with the responsible teachers who teach nothing that was cancelled added. */
-  private async audienceOf(
-    tx: PrismaClient,
-    lessons: readonly SelectionCandidate[],
-    checked: Checked,
-    plan: readonly PlannedReplacement[],
-    ownerNames: ReadonlyMap<string, string>,
-  ) {
-    const audience = await digestAudience(tx, lessons.map(digestLessonOf));
-    const responsible = responsibleOf(checked, ownerNames);
+  /**
+   * The digest's audience, with the responsible teachers who teach nothing that
+   * was cancelled added, and the people the notice must not promise a
+   * replacement (`plain`).
+   */
+  private async audienceOf(tx: PrismaClient, lessons: readonly DigestLesson[], teachers: Checked['teachers'], facts: PlanFacts) {
+    const audience = await digestAudience(tx, lessons);
+    const responsible = responsibleOf(teachers, facts.ownerNames);
     const byGroup = new Map<string, PlannedReplacement[]>();
-    for (const entry of plan) byGroup.set(entry.groupId, [...(byGroup.get(entry.groupId) ?? []), entry]);
+    for (const entry of facts.plan) byGroup.set(entry.groupId, [...(byGroup.get(entry.groupId) ?? []), entry]);
     const dayOf = new Map(lessons.map((lesson) => [lesson.id, lesson.date]));
-    for (const teacher of checked.teachers) {
+    for (const teacher of teachers) {
       const share = audience.people.get(teacher.teacherId);
       if (share) continue;
       const mine = (byGroup.get(teacher.studentGroupId) ?? []).flatMap((entry) => entry.lessonIds).filter((id) => dayOf.has(id));
@@ -928,7 +1096,35 @@ export class ScheduleActivitiesService {
       audience.people.set(teacher.teacherId, { lessons: new Set(mine), first: dates[0], last: dates[dates.length - 1] });
       audience.counts.teachers++;
     }
-    return { audience: audience as DigestAudience, responsible };
+    return { audience: audience as DigestAudience, responsible, plain: await this.plainRecipients(tx, audience, facts) };
+  }
+
+  /**
+   * Pupils whose lesson is cancelled but whom no class of the activity holds
+   * (a joint lesson with a class outside it), and the guardians none of whose
+   * children is held by one: the notice tells them the lessons are cancelled
+   * and does not say that something replaces them.
+   */
+  private async plainRecipients(tx: PrismaClient, audience: DigestAudience, facts: PlanFacts): Promise<Set<string>> {
+    const plain = new Set<string>();
+    if (facts.uncoveredIds.size === 0) return plain;
+    for (const pupil of facts.uncoveredIds) if (audience.people.has(pupil)) plain.add(pupil);
+    const links = await tx.guardianStudent.findMany({
+      where: { studentId: { in: [...facts.uncoveredIds] } },
+      select: { guardianId: true },
+    });
+    const guardians = [...new Set(links.map((link) => link.guardianId))].filter((id) => audience.people.has(id));
+    if (guardians.length === 0) return plain;
+    const planned = new Set(facts.plan.map((entry) => entry.groupId));
+    const held = new Set<string>();
+    for (const owner of facts.planOwners) if (planned.has(owner.groupId)) for (const pupil of owner.pupils) held.add(pupil);
+    const children = await tx.guardianStudent.findMany({
+      where: { guardianId: { in: guardians } },
+      select: { guardianId: true, studentId: true },
+    });
+    const withHeldChild = new Set(children.filter((child) => held.has(child.studentId)).map((child) => child.guardianId));
+    for (const guardian of guardians) if (!withHeldChild.has(guardian)) plain.add(guardian);
+    return plain;
   }
 
   private async requireActivity(tx: PrismaClient, id: string): Promise<ActivityRow> {
@@ -973,6 +1169,19 @@ export class ScheduleActivitiesService {
       if (!known || entry.credit.date > known.date) bySubject.set(entry.credit.subjectId, { date: entry.credit.date, minutes: entry.credit.minutes });
       latest.set(entry.batchId, bySubject);
     }
+    // What an activity that is in force has waiting: lessons that came into its days after it was made.
+    const zones = new Map<string, { timezone: string; today: string }>();
+    const waiting = new Map<string, number>();
+    for (const row of rows) {
+      if (row.removedAt !== null || row.batch.reversedAt !== null) continue;
+      let zone = zones.get(row.academicYearId);
+      if (!zone) {
+        zone = await yearOf(tx, row.academicYearId, null);
+        zones.set(row.academicYearId, zone);
+      }
+      if (asDay(row.batch.toDate) < zone.today) continue;
+      waiting.set(row.id, (await pendingLessons(tx, row.batch, zone.timezone)).length);
+    }
     return rows.map((row) => {
       const subject = subjects.get(row.replacementSubjectId) ?? null;
       return {
@@ -1007,6 +1216,7 @@ export class ScheduleActivitiesService {
         removedAt: row.removedAt ? row.removedAt.toISOString() : null,
         reinstated: row.batch.reinstated,
         doubleCounts: subject?.countsTowardTimplan === true,
+        addedSince: waiting.get(row.id) ?? 0,
       };
     });
   }
@@ -1107,6 +1317,35 @@ const scopeRuleOf = (activity: ActivityRow): ScopeRule => ({
   groupIds: activity.scopeGroupIds,
 });
 
+/** The days an activity covers, to find the lov inside them. */
+const windowOf = (activity: ActivityRow): ActivityWindow => ({
+  academicYearId: activity.academicYearId,
+  from: asDay(activity.batch.fromDate),
+  to: asDay(activity.batch.toDate),
+});
+
+/**
+ * An existing activity's request without the classes and groups that are no
+ * longer in the year: ScheduleActivities.scopeGroupIds and the teachers'
+ * studentGroupId are not foreign keys (a class is deleted whatever names it),
+ * so the activity keeps naming one, and the form sends it back. Only an
+ * activity's own request is cleaned this way; a new one naming a group the
+ * year does not have is refused (yearOf).
+ */
+function withoutRemovedGroups(checked: Checked, groups: readonly GroupFacts[]): Checked {
+  const exists = new Set(groups.map((group) => group.id));
+  const groupIds = checked.named.groupIds.filter((id) => exists.has(id));
+  const teachers = checked.teachers.filter((teacher) => exists.has(teacher.studentGroupId));
+  if (groupIds.length === checked.named.groupIds.length && teachers.length === checked.teachers.length) return checked;
+  if (checked.named.scope === 'GROUPS' && groupIds.length === 0) {
+    throw new BadRequestException({
+      message: 'groupIds: alla klasser och grupper i urvalet är borttagna ur läsåret. Ta bort aktiviteten och gör en ny.',
+      code: CANCELLATION_SCOPE,
+    });
+  }
+  return { ...checked, named: { ...checked.named, groupIds }, teachers };
+}
+
 const replacedOf = (candidate: SelectionCandidate): ReplacedLesson => ({
   id: candidate.id,
   date: day(candidate.date),
@@ -1127,9 +1366,9 @@ const viewOfCandidate = (lesson: SelectionCandidate): BatchLessonView => ({
 });
 
 /** Each responsible teacher's classes, by name, for the digest's e-mail. */
-function responsibleOf(checked: Checked, ownerNames: ReadonlyMap<string, string>): Map<string, string[]> {
+function responsibleOf(teachers: Checked['teachers'], ownerNames: ReadonlyMap<string, string>): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  for (const teacher of checked.teachers) {
+  for (const teacher of teachers) {
     const name = ownerNames.get(teacher.studentGroupId);
     if (!name) continue;
     out.set(teacher.teacherId, [...(out.get(teacher.teacherId) ?? []), name].sort((a, b) => a.localeCompare(b, 'sv')));

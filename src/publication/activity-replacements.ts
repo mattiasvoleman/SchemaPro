@@ -2,10 +2,11 @@ import type { PrismaClient } from '@prisma/client';
 import { calendarLessonRosters, rostersOf } from '../calendar/lesson-roster';
 import { asDay, day } from './cancellation-core';
 import {
+  closedDaysOf,
   noteOf,
   ownersOf,
   planReplacements,
-  uncoveredPupils,
+  uncoveredPupilIds,
   type GroupFacts,
   type PlanLesson,
   type PlanOwner,
@@ -62,12 +63,17 @@ export async function loadGroupFacts(tx: PrismaClient, academicYearId: string): 
   }));
 }
 
-/** For each teaching group, the home class of each of its members (the expansion's test). */
+/**
+ * For each teaching group, the home class of each of its ACTIVE pupils (the
+ * expansion's test). A pupil who has left is on no roster (the roster reader
+ * asks for active pupils), so a group that only they tie to another class is
+ * wholly inside the named ones all the same.
+ */
 export async function memberHomes(tx: PrismaClient, groupIds: readonly string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   if (groupIds.length === 0) return out;
   const rows = await tx.studentGroupMember.findMany({
-    where: { studentGroupId: { in: [...groupIds] } },
+    where: { studentGroupId: { in: [...groupIds] }, student: { role: 'STUDENT', isActive: true } },
     select: { studentGroupId: true, student: { select: { studentGroupId: true } } },
   });
   for (const row of rows) {
@@ -90,12 +96,23 @@ export interface ReplacedLesson {
   extraGroups: ReadonlyArray<{ studentGroupId: string }>;
 }
 
-/** The owners with their pupils, for a replacement subject. */
+/** The days an activity covers, to find the lov inside them. */
+export interface ActivityWindow {
+  academicYearId: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * The owners with their pupils, for a replacement subject, and (when the
+ * activity's days are given) the days each of them is off school.
+ */
 export async function ownersWithPupils(
   tx: PrismaClient,
   rule: ScopeRule,
   groups: readonly GroupFacts[],
   replacementSubjectId: string,
+  window?: ActivityWindow,
 ): Promise<{ owners: GroupFacts[]; planOwners: PlanOwner[] }> {
   const owners = ownersOf(rule, groups);
   const rosters = await rostersOf(
@@ -103,7 +120,24 @@ export async function ownersWithPupils(
     owners.map((owner) => ({ subjectId: replacementSubjectId, groupIds: [owner.id], participantIds: [] })),
     { pupils: 'ACTIVE' },
   );
-  return { owners, planOwners: owners.map((owner, index) => ({ groupId: owner.id, pupils: rosters[index] })) };
+  const breaks = window
+    ? await tx.schoolBreak.findMany({
+        where: {
+          academicYearId: window.academicYearId,
+          startDate: { lte: day(window.to) },
+          endDate: { gte: day(window.from) },
+        },
+        select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
+      })
+    : [];
+  return {
+    owners,
+    planOwners: owners.map((owner, index) => ({
+      groupId: owner.id,
+      pupils: rosters[index],
+      ...(window && breaks.length > 0 ? { closed: closedDaysOf(breaks, owner.gradeLevel, window.from, window.to) } : {}),
+    })),
+  };
 }
 
 /** The plan for these cancelled lessons and owners. */
@@ -111,7 +145,13 @@ export async function planOf(
   tx: PrismaClient,
   lessons: readonly ReplacedLesson[],
   planOwners: readonly PlanOwner[],
-): Promise<{ plan: PlannedReplacement[]; planLessons: PlanLesson[]; uncovered: number }> {
+): Promise<{
+  plan: PlannedReplacement[];
+  planLessons: PlanLesson[];
+  /** How many pupils on a cancelled lesson no owner holds, and who they are. */
+  uncovered: number;
+  uncoveredIds: ReadonlySet<string>;
+}> {
   const rosters = await calendarLessonRosters(
     tx,
     lessons.map((lesson) => ({
@@ -129,10 +169,12 @@ export async function planOf(
     endsAt: lesson.endsAt,
     pupils: rosters.get(lesson.id) ?? new Set<string>(),
   }));
+  const uncovered = uncoveredPupilIds(planLessons, planOwners);
   return {
     plan: planReplacements(planLessons, planOwners),
     planLessons,
-    uncovered: uncoveredPupils(planLessons, planOwners),
+    uncovered: uncovered.size,
+    uncoveredIds: uncovered,
   };
 }
 
@@ -166,7 +208,7 @@ export async function syncReplacementsInTransaction(
       description: true,
       scopeGroupIds: true,
       batch: {
-        select: { name: true, cause: true, scope: true, minGradeLevel: true, maxGradeLevel: true },
+        select: { name: true, cause: true, scope: true, minGradeLevel: true, maxGradeLevel: true, fromDate: true, toDate: true },
       },
       teachers: { select: { studentGroupId: true, teacherId: true, role: true } },
     },
@@ -189,7 +231,11 @@ export async function syncReplacementsInTransaction(
     maxGradeLevel: activity.batch.maxGradeLevel,
     groupIds: activity.scopeGroupIds,
   };
-  const { planOwners } = await ownersWithPupils(tx, rule, groups, activity.replacementSubjectId);
+  const { planOwners } = await ownersWithPupils(tx, rule, groups, activity.replacementSubjectId, {
+    academicYearId: activity.academicYearId,
+    from: asDay(activity.batch.fromDate),
+    to: asDay(activity.batch.toDate),
+  });
   const { plan } = owned.length === 0 ? { plan: [] as PlannedReplacement[] } : await planOf(tx, owned, planOwners);
 
   const existing = await tx.scheduleActivityLesson.findMany({
@@ -272,8 +318,14 @@ export async function syncReplacementsInTransaction(
       result.kept.push(lesson.id);
       continue;
     }
-    await tx.calendarLesson.delete({ where: { id: lesson.id } });
-    result.deleted.push(lesson.id);
+    // The guard again in the statement: a register saved since the read above
+    // would go with the lesson (AttendanceRecords cascade), so a lesson that
+    // began or gained attendance in between is kept.
+    const { count } = await tx.calendarLesson.deleteMany({
+      where: { id: lesson.id, startsAt: { gt: now }, attendanceRecords: { none: {} } },
+    });
+    if (count === 1) result.deleted.push(lesson.id);
+    else result.kept.push(lesson.id);
   }
   return result;
 }

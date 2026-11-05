@@ -40,7 +40,15 @@ const activity = (overrides: Record<string, unknown> = {}) => ({
   replacementSubjectId: SUBJECT,
   description: 'Vandring',
   scopeGroupIds: ['g7a', 'g7b'],
-  batch: { name: 'Friluftsdag', cause: 'EVENT', scope: 'GROUPS', minGradeLevel: null, maxGradeLevel: null },
+  batch: {
+    name: 'Friluftsdag',
+    cause: 'EVENT',
+    scope: 'GROUPS',
+    minGradeLevel: null,
+    maxGradeLevel: null,
+    fromDate: day('2026-11-09'),
+    toDate: day('2026-11-10'),
+  },
   teachers: [
     { studentGroupId: 'g7a', teacherId: 't1', role: 'LEAD' },
     { studentGroupId: 'g7a', teacherId: 't2', role: 'ASSISTANT' },
@@ -110,6 +118,7 @@ describe('replacement lessons of an activity', () => {
     jest.useFakeTimers().setSystemTime(NOW);
     tx = createTxMock();
     tx.calendarLesson.create.mockResolvedValue({ id: 'new-lesson' });
+    tx.calendarLesson.deleteMany.mockResolvedValue({ count: 1 });
   });
 
   afterEach(() => {
@@ -131,6 +140,15 @@ describe('replacement lessons of an activity', () => {
     it('asks nothing for no groups', async () => {
       expect(await memberHomes(client(), [])).toEqual(new Map());
       expect(tx.studentGroupMember.findMany).not.toHaveBeenCalled();
+    });
+
+    it('asks for active pupils only: a pupil who has left ties no group to another class', async () => {
+      await memberHomes(client(), ['sp']);
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { studentGroupId: { in: ['sp'] }, student: { role: 'STUDENT', isActive: true } },
+        }),
+      );
     });
 
     it("gives each teaching group the home class of its members, 'none' for a pupil with no class", async () => {
@@ -167,6 +185,36 @@ describe('replacement lessons of an activity', () => {
       );
     });
 
+    it('reads the days each owner is off school from the breaks inside the activity', async () => {
+      world({ ownerPupils: { g7a: ['p1'], g7b: ['p3'] } });
+      const rule: ScopeRule = { scope: 'GROUPS', minGradeLevel: null, maxGradeLevel: null, groupIds: ['g7a', 'g7b'] };
+      const lessons: GroupFacts[] = [CLASSES[0], { ...CLASSES[1], gradeLevel: 8 }];
+      tx.schoolBreak.findMany.mockResolvedValue([
+        // Studiedag for åk 7 only, and a lov for the whole school one day later.
+        { startDate: day('2026-11-09'), endDate: day('2026-11-09'), minGradeLevel: 7, maxGradeLevel: 7 },
+        { startDate: day('2026-11-10'), endDate: day('2026-11-10'), minGradeLevel: null, maxGradeLevel: null },
+      ]);
+      const { planOwners } = await ownersWithPupils(client(), rule, lessons, SUBJECT, {
+        academicYearId: 'year',
+        from: '2026-11-09',
+        to: '2026-11-10',
+      });
+      expect(planOwners.map((owner) => [owner.groupId, [...(owner.closed ?? [])]])).toEqual([
+        ['g7a', ['2026-11-09', '2026-11-10']],
+        ['g7b', ['2026-11-10']],
+      ]);
+      expect(tx.schoolBreak.findMany).toHaveBeenCalledWith({
+        where: { academicYearId: 'year', startDate: { lte: day('2026-11-10') }, endDate: { gte: day('2026-11-09') } },
+        select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
+      });
+    });
+
+    it('asks for no breaks without the activity\'s days', async () => {
+      world({});
+      await ownersWithPupils(client(), { scope: 'GROUPS', minGradeLevel: null, maxGradeLevel: null, groupIds: ['g7a'] }, CLASSES, SUBJECT);
+      expect(tx.schoolBreak.findMany).not.toHaveBeenCalled();
+    });
+
     it('plans a lesson per class and day, and counts the pupils no class holds', async () => {
       world({ lessonPupils: { a: ['p1'], b: ['p9'] } });
       const lessons = [cancelled('a', '2026-11-09T08:00', '2026-11-09T09:00'), cancelled('b', '2026-11-09T10:00', '2026-11-09T11:00')];
@@ -176,12 +224,13 @@ describe('replacement lessons of an activity', () => {
         CLASSES,
         SUBJECT,
       );
-      const { plan, planLessons, uncovered } = await planOf(client(), lessons, planOwners);
+      const { plan, planLessons, uncovered, uncoveredIds } = await planOf(client(), lessons, planOwners);
       expect(plan).toEqual([
         { groupId: 'g7a', date: '2026-11-09', startsAt: instant('2026-11-09T08:00'), endsAt: instant('2026-11-09T09:00'), lessonIds: ['a'] },
       ]);
       expect(planLessons.map((lesson) => lesson.id)).toEqual(['a', 'b']);
       expect(uncovered).toBe(1);
+      expect([...uncoveredIds]).toEqual(['p9']);
     });
 
     it('reads a lesson with no roster as nobody', async () => {
@@ -254,6 +303,19 @@ describe('replacement lessons of an activity', () => {
       const result = await sync();
       expect(result.created).toEqual(['n-a', 'n-b']);
       expect(tx.calendarLesson.create.mock.calls[0][0].data).toMatchObject({ note: 'Friluftsdag', teachers: { create: [] } });
+    });
+
+    it('writes no lesson for a day the class is off school, though the lessons cancelled that day are still there', async () => {
+      world({
+        owned: [cancelled('a', '2026-11-09T08:00', '2026-11-09T09:00'), cancelled('b', '2026-11-10T08:00', '2026-11-10T09:00')],
+        lessonPupils: { a: ['p1'], b: ['p1'] },
+      });
+      tx.schoolBreak.findMany.mockResolvedValue([
+        { startDate: day('2026-11-10'), endDate: day('2026-11-10'), minGradeLevel: null, maxGradeLevel: null },
+      ]);
+      expect((await sync()).created).toEqual(['new-lesson']);
+      expect(tx.calendarLesson.create).toHaveBeenCalledTimes(1);
+      expect(tx.calendarLesson.create.mock.calls[0][0].data.date).toEqual(day('2026-11-09'));
     });
 
     it('gives a day that has begun no replacement after the fact', async () => {
@@ -365,9 +427,18 @@ describe('replacement lessons of an activity', () => {
     it('deletes a lesson ahead that no cancelled lesson needs any more', async () => {
       world({ owned: [], existing: [written()] });
       expect(await sync()).toEqual({ created: [], updated: [], deleted: ['r1'], kept: [] });
-      expect(tx.calendarLesson.delete).toHaveBeenCalledWith({ where: { id: 'r1' } });
+      // With the guard in the statement, so that a register saved since the read goes nowhere.
+      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+        where: { id: 'r1', startsAt: { gt: NOW }, attendanceRecords: { none: {} } },
+      });
       // Nothing cancelled, so nothing was asked of the rosters of lessons.
       expect(lessonRosters).not.toHaveBeenCalled();
+    });
+
+    it('keeps a lesson whose register was saved between the read and the delete', async () => {
+      world({ owned: [], existing: [written()] });
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
+      expect(await sync()).toEqual({ created: [], updated: [], deleted: [], kept: ['r1'] });
     });
 
     it('keeps a lesson that no cancelled lesson needs if it has begun or carries attendance', async () => {
@@ -379,7 +450,7 @@ describe('replacement lessons of an activity', () => {
         ],
       });
       expect(await sync()).toEqual({ created: [], updated: [], deleted: [], kept: ['began', 'held'] });
-      expect(tx.calendarLesson.delete).not.toHaveBeenCalled();
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
     });
   });
 });
