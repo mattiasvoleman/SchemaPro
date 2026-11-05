@@ -75,6 +75,7 @@ describe('loadConfiguration', () => {
       gallring: { background: true },
       // Unset: the settling of vikarieförfrågningar ticks.
       coverRequests: { background: true },
+      crisis: { background: true },
       // Unset: the nightly absence watch ticks (and watches no school until its administrator turns it on).
       absenceWatch: { background: true },
       // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
@@ -91,6 +92,11 @@ describe('loadConfiguration', () => {
     expect(on.background).toBe(false);
     expect(loadConfiguration(env({ SS12000_ALLOW_INSECURE_LOCAL: '1' })).ss12000.allowInsecureLocal).toBe(false);
     expect(loadConfiguration(env({ NODE_ENV: NodeEnv.Test, SS12000_ALLOW_INSECURE_LOCAL: '1' })).ss12000.allowInsecureLocal).toBe(true);
+  });
+
+  it('turns the look at open alarms off only for CRISIS_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ CRISIS_BACKGROUND: 'off' })).crisis.background).toBe(false);
+    expect(loadConfiguration(env({ CRISIS_BACKGROUND: 'on' })).crisis.background).toBe(true);
   });
 
   it('turns the vikarieförfrågningar expiry off only for COVER_REQUESTS_BACKGROUND=off', () => {

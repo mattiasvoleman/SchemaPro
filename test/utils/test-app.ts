@@ -49,6 +49,7 @@ import { TimplanModule } from '../../src/timplan/timplan.module';
 import { YearRolloverModule } from '../../src/year-rollover/year-rollover.module';
 import { PublicationModule } from '../../src/publication/publication.module';
 import { CoverModule } from '../../src/cover/cover.module';
+import { CrisisModule } from '../../src/crisis/crisis.module';
 import { SignInModule } from '../../src/sign-in/sign-in.module';
 import { SchoolUnitsModule } from '../../src/school-units/school-units.module';
 import { SitesModule } from '../../src/sites/sites.module';
@@ -169,6 +170,7 @@ export const FEATURE_MODULES = [
   PublicationModule,
   CalendarFeedModule,
   CoverModule,
+  CrisisModule,
   SchoolUnitsModule,
   SitesModule,
   SharingModule,

@@ -17,11 +17,13 @@ import { huvudmanReaderOf } from '../auth/huvudman-reader';
 import { SCHOOL_HEADER, closedSchoolsOf, schoolChoiceOf } from '../auth/school-choice';
 import {
   COVER_BOARD_UPDATED_EVENT,
+  CRISIS_UPDATED_EVENT,
   LESSON_UPDATED_EVENT,
   MASTER_TIMETABLE_UPDATED_EVENT,
   TIMETABLE_PRESENCE_EVENT,
   type CalendarLessonUpdatedPayload,
   type CoverBoardUpdatedPayload,
+  type CrisisUpdatedPayload,
   type TimetablePeer,
 } from './realtime.types';
 
@@ -291,6 +293,15 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
    */
   emitCoverBoardUpdated(schoolId: string, payload: CoverBoardUpdatedPayload): void {
     this.server.to(`admin:${schoolId}`).emit(COVER_BOARD_UPDATED_EVENT, payload);
+  }
+
+  /**
+   * An alarm changed: to the staff room when it started or ended, to the
+   * school's admins when a mark came in. An id and a time, nothing more
+   * (CrisisUpdatedPayload).
+   */
+  emitCrisisUpdated(schoolId: string, payload: CrisisUpdatedPayload, audience: 'staff' | 'admin'): void {
+    this.server.to(`${audience}:${schoolId}`).emit(CRISIS_UPDATED_EVENT, payload);
   }
 
   /**

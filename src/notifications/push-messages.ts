@@ -29,6 +29,11 @@ import type { NotificationKind } from './notifications.service';
  * A summary of absence (ABSENCE_WATCH_DIGEST) says that there is one, and
  * not how many pupils it counts or which: the count is data about pupils.
  *
+ * An alarm (CRISIS_ALARM, Krisläge) says that an alarm is going, and that it is
+ * an exercise when it is: no kind of alarm, no pupil, group or place, and no
+ * time (the phone shows when the push arrived). Its end and the notice to the
+ * guardians afterwards (CRISIS_GUARDIAN_AFTER) say as little.
+ *
  * Within one transaction a person gets one push per kind; with more than one
  * notice the body is the plural ("3 lektioner är inställda.").
  *
@@ -52,7 +57,9 @@ export type PushKind =
   | 'COVER_REQUEST_TAKEN'
   | 'COVER_REQUEST_WITHDRAWN'
   | 'COVER_REQUEST_NOT_NEEDED'
-  | 'COVER_REQUEST_UNANSWERED';
+  | 'COVER_REQUEST_UNANSWERED'
+  | 'CRISIS_ALARM_DRILL'
+  | 'CRISIS_ENDED_DRILL';
 
 export interface PushText {
   title: string;
@@ -206,6 +213,36 @@ const SV: Record<PushKind, Template> = {
     bare: 'Du har en ny frånvarosammanställning. Öppna appen för att se mer.',
     many: 'Du har en ny frånvarosammanställning. Öppna appen för att se mer.',
   },
+  CRISIS_ALARM: {
+    title: 'Larm pågår',
+    one: 'Ett larm pågår. Öppna appen och räkna din grupp.',
+    bare: 'Ett larm pågår. Öppna appen och räkna din grupp.',
+    many: 'Ett larm pågår. Öppna appen och räkna din grupp.',
+  },
+  CRISIS_ALARM_DRILL: {
+    title: 'Övning pågår',
+    one: 'En övning pågår. Öppna appen och räkna din grupp.',
+    bare: 'En övning pågår. Öppna appen och räkna din grupp.',
+    many: 'En övning pågår. Öppna appen och räkna din grupp.',
+  },
+  CRISIS_ENDED: {
+    title: 'Larmet är över',
+    one: 'Larmet är avslutat.',
+    bare: 'Larmet är avslutat.',
+    many: 'Larmet är avslutat.',
+  },
+  CRISIS_ENDED_DRILL: {
+    title: 'Övningen är över',
+    one: 'Övningen är avslutad.',
+    bare: 'Övningen är avslutad.',
+    many: 'Övningen är avslutad.',
+  },
+  CRISIS_GUARDIAN_AFTER: {
+    title: 'Larm på skolan',
+    one: 'Skolan har haft ett larm. Det är avslutat. Läs mer i appen.',
+    bare: 'Skolan har haft ett larm. Det är avslutat. Läs mer i appen.',
+    many: 'Skolan har haft ett larm. Det är avslutat. Läs mer i appen.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lektioner blir av',
     one: ({ lessons }) =>
@@ -350,6 +387,36 @@ const EN: Record<PushKind, Template> = {
     bare: 'You have a new absence summary. Open the app to see more.',
     many: 'You have a new absence summary. Open the app to see more.',
   },
+  CRISIS_ALARM: {
+    title: 'Alarm going',
+    one: 'An alarm is going. Open the app and count your group.',
+    bare: 'An alarm is going. Open the app and count your group.',
+    many: 'An alarm is going. Open the app and count your group.',
+  },
+  CRISIS_ALARM_DRILL: {
+    title: 'Drill going',
+    one: 'A drill is going. Open the app and count your group.',
+    bare: 'A drill is going. Open the app and count your group.',
+    many: 'A drill is going. Open the app and count your group.',
+  },
+  CRISIS_ENDED: {
+    title: 'The alarm is over',
+    one: 'The alarm has ended.',
+    bare: 'The alarm has ended.',
+    many: 'The alarm has ended.',
+  },
+  CRISIS_ENDED_DRILL: {
+    title: 'The drill is over',
+    one: 'The drill has ended.',
+    bare: 'The drill has ended.',
+    many: 'The drill has ended.',
+  },
+  CRISIS_GUARDIAN_AFTER: {
+    title: 'Alarm at the school',
+    one: 'The school has had an alarm. It has ended. Read more in the app.',
+    bare: 'The school has had an alarm. It has ended. Read more in the app.',
+    many: 'The school has had an alarm. It has ended. Read more in the app.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lessons back on',
     one: ({ lessons }) =>
@@ -368,6 +435,8 @@ export function pushKindOf(type: NotificationKind, meta: Record<string, unknown>
   if (type === 'TEACHER_ABSENCE_REPORTED') return null;
   if (type === 'LESSON_SUBSTITUTE' && meta['cover'] === true) return 'LESSON_SUBSTITUTE_COVER';
   if (type === 'CANCELLATION_DIGEST' && meta['reversed'] === true) return 'CANCELLATION_DIGEST_REVERSED';
+  if (type === 'CRISIS_ALARM' && meta['mode'] === 'DRILL') return 'CRISIS_ALARM_DRILL';
+  if (type === 'CRISIS_ENDED' && meta['mode'] === 'DRILL') return 'CRISIS_ENDED_DRILL';
   if (type === 'COVER_REQUEST_CLOSED') {
     const reason = meta['reason'];
     if (reason === 'WITHDRAWN') return 'COVER_REQUEST_WITHDRAWN';

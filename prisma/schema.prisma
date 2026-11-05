@@ -109,6 +109,12 @@ enum NotificationType {
   COVER_REQUEST_CLOSED
   /// A week's or month's count of pupils over the school's absence limits: only numbers, to a mentor, rektor, kansli or guardian (20261231090000).
   ABSENCE_WATCH_DIGEST
+  /// An alarm is going: to the school's staff, saying only that (never a pupil, a group or a place) (20270109090000).
+  CRISIS_ALARM
+  /// The alarm is over: to the school's staff (20270109090000).
+  CRISIS_ENDED
+  /// After a real alarm, when the school chose to tell the guardians: that it happened and ended, nothing of any pupil (20270109090000).
+  CRISIS_GUARDIAN_AFTER
 }
 
 /// A decision on an absent rastvakt's pass (20261210090000).
@@ -4332,6 +4338,182 @@ model CoverConfirmation {
 }
 
 // -----------------------------------------------------------------------------
+// Krisläge (F2, 20270109091000): a roll call for utrymning and inrymning that
+// starts from the timetable. The alarm, the snapshot of who stands before which
+// group when it starts, the teachers' marks and the guardians' notice are the
+// migration's; Prisma knows the columns. Nothing is updated by a gateway
+// arm: a mark is appended to CrisisReports and the triggers keep CrisisPupils,
+// CrisisCalls and CrisisCallTeachers current. The keys, CHECKs, guards and the
+// RLS (sections 350-354) live in the migration.
+// -----------------------------------------------------------------------------
+
+enum CrisisAlarmKind {
+  /// Everyone out: the groups gather and are counted at their assembly point.
+  EVACUATION
+  /// Everyone in: the groups are counted where they are.
+  LOCKDOWN
+}
+
+enum CrisisAlarmMode {
+  /// A real alarm.
+  LIVE
+  /// An exercise: kept apart and gallrad under CRISIS_DRILLS.
+  DRILL
+}
+
+/// Why a group is on the list and who answers for it: the lesson that was going
+/// on, or, in a break, the one the group goes to next.
+enum CrisisCallBasis {
+  LESSON
+  NEXT_LESSON
+}
+
+enum CrisisPupilState {
+  FOUND
+  MISSING
+}
+
+/// How the school lets the alarm be started and whether it tells the guardians
+/// afterwards. One row per school; no row = the defaults. Decided by those who decide.
+model CrisisSettings {
+  schoolId             String         @id @db.Uuid
+  /// The administrator profiles that may start an alarm; those who decide always may.
+  startProfiles        AdminProfile[] @default([FULL, REKTOR, SCHEMALAGGARE, EXPEDITION])
+  /// After a real alarm: tell the guardians of the pupils on the lists that it happened and ended.
+  notifyGuardiansAfter Boolean        @default(false)
+  createdAt            DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("CrisisSettings")
+}
+
+/// One alarm. startedAt is the transaction's time (the database stamps it), and
+/// what hangs on the alarm can be written until the transaction that started it seals it.
+model CrisisAlarm {
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId            String          @db.Uuid
+  kind                CrisisAlarmKind
+  mode                CrisisAlarmMode
+  startedAt           DateTime        @default(now()) @db.Timestamptz(6)
+  /// SET NULL when the person is removed.
+  startedByUserId     String?         @db.Uuid
+  endedAt             DateTime?       @db.Timestamptz(6)
+  endedByUserId       String?         @db.Uuid
+  /// The job ended it: it had stood open longer than an alarm can.
+  autoEnded           Boolean         @default(false)
+  /// What the administrator wrote when ending it; at most 300 characters (CHECK).
+  endNote             String?
+  /// When the guardians were told (at most once).
+  guardiansNotifiedAt DateTime?       @db.Timestamptz(6)
+  /// The lists (calls, teachers, pupils) are final: set once, by the transaction that wrote them.
+  listsSealedAt       DateTime?       @db.Timestamptz(6)
+
+  calls   CrisisCall[]
+  reports CrisisReport[]
+
+  @@unique([id, schoolId])
+  @@index([schoolId, startedAt])
+  @@index([startedByUserId, schoolId])
+  @@index([endedByUserId, schoolId])
+  @@map("CrisisAlarms")
+}
+
+/// One group on the list: the lesson it was in (or goes to), by name as it was.
+model CrisisCall {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String          @db.Uuid
+  alarmId          String          @db.Uuid
+  /// Null once the lesson or the group is gone; the names below stay.
+  calendarLessonId String?         @db.Uuid
+  basis            CrisisCallBasis
+  groupName        String
+  subjectName      String
+  roomName         String?
+  lessonStartsAt   DateTime        @db.Timestamptz(6)
+  lessonEndsAt     DateTime        @db.Timestamptz(6)
+  /// Every pupil who was not absent before has been marked; stamped by the database.
+  completedAt      DateTime?       @db.Timestamptz(6)
+
+  alarm    CrisisAlarm         @relation(fields: [alarmId], references: [id], onDelete: Cascade)
+  teachers CrisisCallTeacher[]
+  pupils   CrisisPupil[]
+
+  @@unique([id, schoolId])
+  @@unique([id, alarmId])
+  @@index([alarmId, schoolId])
+  @@index([calendarLessonId, schoolId])
+  @@map("CrisisCalls")
+}
+
+/// A teacher who answers for the group, and when they first reported on it.
+model CrisisCallTeacher {
+  id         String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String                @db.Uuid
+  callId     String                @db.Uuid
+  /// SET NULL when the person is removed.
+  teacherId  String?               @db.Uuid
+  role       TeacherAssignmentRole @default(LEAD)
+  answeredAt DateTime?             @db.Timestamptz(6)
+
+  call CrisisCall @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@unique([callId, teacherId])
+  @@index([teacherId, schoolId])
+  @@index([callId, schoolId])
+  @@map("CrisisCallTeachers")
+}
+
+/// A pupil on a list. state is the latest mark (by time), kept by the trigger on CrisisReports.
+model CrisisPupil {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId          String            @db.Uuid
+  alarmId           String            @db.Uuid
+  callId            String            @db.Uuid
+  studentId         String            @db.Uuid
+  /// Absent before the alarm: from the register of the day (ATTENDANCE) or a report or leave (REPORTED).
+  priorAbsentSource String?
+  state             CrisisPupilState?
+  stateAt           DateTime?         @db.Timestamptz(6)
+  stateByUserId     String?           @db.Uuid
+
+  call CrisisCall @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@unique([alarmId, studentId])
+  @@unique([callId, studentId])
+  @@index([callId, schoolId])
+  @@index([studentId, schoolId])
+  @@index([stateByUserId, schoolId])
+  @@map("CrisisPupils")
+}
+
+/// Every mark ever made, appended and never changed: who marked which pupil as
+/// found or missing, when the phone says, and when the gateway got it.
+model CrisisReport {
+  id         String           @id @db.Uuid
+  schoolId   String           @db.Uuid
+  alarmId    String           @db.Uuid
+  callId     String           @db.Uuid
+  studentId  String           @db.Uuid
+  state      CrisisPupilState
+  /// When the mark was made, by the sender's clock, held between the alarm's start and receivedAt.
+  at         DateTime         @db.Timestamptz(6)
+  receivedAt DateTime         @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  /// Stamped by the database from the login; SET NULL when the person is removed.
+  byUserId   String?          @db.Uuid
+  /// Not one of the group's teachers: the administration reported for the group.
+  onBehalf   Boolean          @default(false)
+  /// Received after the alarm had ended.
+  late       Boolean          @default(false)
+
+  alarm CrisisAlarm @relation(fields: [alarmId], references: [id], onDelete: Cascade)
+
+  @@index([alarmId, schoolId, at])
+  @@index([callId, studentId])
+  @@index([byUserId, schoolId])
+  @@map("CrisisReports")
+}
+
+// -----------------------------------------------------------------------------
 // SS12000 consumer: the school's source, its run log and its diff
 // (20261014090000-20261014110000). SIS TK450 SS12000 OpenAPI 2.1.0.
 // Composite keys, CHECKs, guards and RLS live in the migrations.
@@ -4690,6 +4872,10 @@ enum RetentionDataType {
   ACCESS_LOG
   /// Vikarieförfrågningar and the vikarie's confirmations (20270102090000).
   COVER_REQUESTS
+  /// Krisläge, the drills (övningar): alarms with mode DRILL and what hangs on them (20270109090000).
+  CRISIS_DRILLS
+  /// Krisläge, the real alarms (skarpa larm): kept as the school decides (20270109090000).
+  CRISIS_ALARMS
 }
 
 /// PURGE_AFTER `months`; KEEP (bevaras); UNDECIDED (back to ej beslutat).

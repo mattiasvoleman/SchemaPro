@@ -50,6 +50,7 @@ process.env['GALLRING_BACKGROUND'] = 'off';
 // The vikarieförfrågningar's settling (src/cover/cover-requests.job.ts): no
 // 5-minute tick in tests; a spec drives CoverRequestsJob.tick itself.
 process.env['COVER_REQUESTS_BACKGROUND'] = 'off';
+process.env['CRISIS_BACKGROUND'] = 'off';
 // The nightly absence watch (src/absence-watch): no tick in tests either; a
 // spec drives AbsenceWatchJob.tick itself.
 process.env['ABSENCE_WATCH_BACKGROUND'] = 'off';

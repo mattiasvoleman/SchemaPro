@@ -263,6 +263,17 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   CoverRequestLessons: just('DRIFT', 'insert'),
   CoverRequestRecipients: just('DRIFT', 'insert', 'update'),
   CoverRequests: just('DRIFT', 'insert', 'update'),
+  // Krisläge (20270109091000): an alarm is started and ended by those who write
+  // Drift and whom the school let start one (app.crisis_may_start, a narrower
+  // question than the area, held in section 351); its lists are written once, in
+  // the alarm's own transaction, and a mark is appended. Nothing is changed or
+  // deleted by an arm: the lists follow the marks by trigger, and gallring removes
+  // an alarm with everything on it.
+  CrisisAlarms: just('DRIFT', 'insert', 'update'),
+  CrisisCallTeachers: just('DRIFT', 'insert'),
+  CrisisCalls: just('DRIFT', 'insert'),
+  CrisisPupils: just('DRIFT', 'insert'),
+  CrisisReports: just('DRIFT', 'insert'),
   RoomBookings: only('DRIFT'),
   SubstituteAvailabilities: only('DRIFT'),
   SubstitutePoolMembers: only('DRIFT'),
@@ -298,6 +309,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // integrations rests on the school's konsekvensbedömning, like gallring
   // and sharing tjänst % (SS12000-närvaro, 20261114090000).
   AttendanceSharingDecisions: just('DECIDES', 'insert'),
+  // Krisläge: who may start an alarm and whether the guardians are told is a
+  // decision (20270109091000).
+  CrisisSettings: just('DECIDES', 'insert', 'update'),
   LeaveDelegationDecisions: just('DECIDES', 'insert'),
   RetentionDecisions: just('DECIDES', 'insert'),
   TeacherEmploymentPeriods: only('DECIDES'),

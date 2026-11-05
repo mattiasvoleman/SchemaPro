@@ -25,7 +25,10 @@ export type NotificationKind =
   | 'COVER_REQUESTED'
   | 'COVER_REQUEST_ACCEPTED'
   | 'COVER_REQUEST_CLOSED'
-  | 'ABSENCE_WATCH_DIGEST';
+  | 'ABSENCE_WATCH_DIGEST'
+  | 'CRISIS_ALARM'
+  | 'CRISIS_ENDED'
+  | 'CRISIS_GUARDIAN_AFTER';
 
 
 /** Where a transaction's outbox is kept (PrismaService.commitLocal). */
