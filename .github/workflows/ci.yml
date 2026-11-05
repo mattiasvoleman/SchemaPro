@@ -334,6 +334,17 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/prisma-adapter-probe.ts
 
+      # Schemat som tabell och i öppna format (round 9, S0): the demo school's
+      # and a högstadium's laid timetable out as CSV, Excel, Untis and aSc and
+      # back in through the real services under row security, the refusals by
+      # name, and what a läsare may do. It lays its lessons with the product's
+      # own clash rule and removes everything it wrote.
+      - name: Schedule exchange probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-schedule-exchange.ts
+
       # Huvudman (20261212090000): every GET a school administrator reaches,
       # through the real gateway and this database, as the roller school's
       # own läsare and as the huvudman's reader with that school chosen. Each

@@ -9,6 +9,7 @@ import type { PrismaClient, Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { weeksCanOverlap } from './lesson-recurrence';
+import type { ConflictReads } from './conflict-reads';
 import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -316,7 +317,7 @@ export const BLOCK_CARD_STALE = 'BLOCK_CARD_STALE';
 export const NOT_A_BLOCK_CARD = 'NOT_A_BLOCK_CARD';
 
 /** A lesson the clash scan holds a candidate against: one of its day, or one moved with it. */
-interface DayLesson {
+export interface DayLesson {
   id: string;
   teacherId: string | null;
   coTeacherId: string | null;
@@ -2035,6 +2036,8 @@ export class MasterLessonsService {
      * rollover keeps as history, takes nobody off this year's svenska.
      */
     replacing: { subjectIds: readonly string[]; academicYearId: string } | null = null,
+    /** An import's read-through cache (conflict-reads.ts); a hand edit passes none and reads as ever. */
+    reads: ConflictReads | null = null,
   ): Promise<{
     membersOf: Map<string, Set<string>>;
     halves: GroupHalf[];
@@ -2047,18 +2050,20 @@ export class MasterLessonsService {
     if (groupIds.size === 0) return { membersOf, halves: [], replaced: new Map(), kept: new Set() };
     const asked = [...groupIds];
     const select = { id: true, halfOfId: true, replacesSubjectId: true, academicYearId: true, kind: true } as const;
-    const read = await tx.studentGroup.findMany({
-      where: {
-        OR: [
-          { id: { in: asked } },
-          { halfOfId: { in: asked } },
-          ...(replacing && subjectIds.length > 0
-            ? [{ replacesSubjectId: { in: [...subjectIds] }, academicYearId: replacing.academicYearId }]
-            : []),
-        ],
-      },
-      select,
-    });
+    const read = reads
+      ? await reads.groupsInPlay(tx, asked, replacing)
+      : await tx.studentGroup.findMany({
+          where: {
+            OR: [
+              { id: { in: asked } },
+              { halfOfId: { in: asked } },
+              ...(replacing && subjectIds.length > 0
+                ? [{ replacesSubjectId: { in: [...subjectIds] }, academicYearId: replacing.academicYearId }]
+                : []),
+            ],
+          },
+          select,
+        });
     const replaced = replacedSubjectOf(
       read.filter(
         (group) =>
@@ -2071,7 +2076,11 @@ export class MasterLessonsService {
     const classes = [...new Set(read.flatMap((group) => (group.halfOfId ? [group.halfOfId] : [])))];
     const unread = classes.filter((classId) => !groupIds.has(classId));
     const siblings =
-      unread.length > 0 ? await tx.studentGroup.findMany({ where: { halfOfId: { in: unread } }, select }) : [];
+      unread.length === 0
+        ? []
+        : reads
+          ? await reads.halvesOfClasses(tx, unread)
+          : await tx.studentGroup.findMany({ where: { halfOfId: { in: unread } }, select });
     const halves = [...read, ...siblings.filter((group) => !known.has(group.id))].filter(
       (group) => group.halfOfId !== null,
     );
@@ -2091,13 +2100,15 @@ export class MasterLessonsService {
     // they would pair both halves with every group they were in for good:
     // a 409 on a move the board and the generator allow, and no way to
     // clear it.
-    const [homeClass, teachingGroups] = await Promise.all([
-      readHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, ids),
-      tx.studentGroupMember.findMany({
-        where: { studentGroupId: { in: ids }, student: { role: 'STUDENT', isActive: true } },
-        select: { studentId: true, studentGroupId: true },
-      }),
-    ]);
+    const { home: homeClass, teaching: teachingGroups } = reads
+      ? await reads.pupilsOf(tx, basis, ids)
+      : await Promise.all([
+          readHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, ids),
+          tx.studentGroupMember.findMany({
+            where: { studentGroupId: { in: ids }, student: { role: 'STUDENT', isActive: true } },
+            select: { studentId: true, studentGroupId: true },
+          }),
+        ]).then(([home, teaching]) => ({ home, teaching }));
     for (const pupil of homeClass) {
       if (pupil.studentGroupId) add(pupil.studentGroupId, pupil.id);
     }
@@ -2158,7 +2169,13 @@ export class MasterLessonsService {
     );
   }
 
-  private async findConflicts(
+  /**
+   * Public since the timetable import (Schemat som tabell, schedule-exchange):
+   * it holds a whole file's lessons to this one rule, one lesson at a time,
+   * with the lessons already accepted from the file as `options.alongside`.
+   * It only reads; the callers decide what a clash means.
+   */
+  async findConflicts(
     tx: PrismaClient,
     /** The year's roster basis: every pupil read below is read through it. */
     basis: RosterBasis,
@@ -2192,8 +2209,17 @@ export class MasterLessonsService {
      * where they go (`alongside`), so the card is held against the rest of
      * the week and its members against each other, as one move.
      */
-    options: { excludeIds?: readonly string[]; alongside?: readonly DayLesson[] } = {},
+    options: {
+      excludeIds?: readonly string[];
+      alongside?: readonly DayLesson[];
+      /**
+       * An import's cache of the school's facts (conflict-reads.ts): the same
+       * reads, answered once for the whole file. Absent for a hand edit.
+       */
+      reads?: ConflictReads;
+    } = {},
   ): Promise<MasterLessonConflict[]> {
+    const reads = options.reads ?? null;
     const conflicts: MasterLessonConflict[] = [];
     const candidateTeachers = [candidate.teacherId, candidate.coTeacherId ?? null]
       .filter((id): id is string => Boolean(id));
@@ -2213,7 +2239,7 @@ export class MasterLessonsService {
       }
     }
 
-    const sameDay = await tx.masterLesson.findMany({
+    const readSameDay = () => tx.masterLesson.findMany({
       where: {
         academicYearId: lesson.academicYearId,
         dayOfWeek: candidate.dayOfWeek,
@@ -2246,6 +2272,12 @@ export class MasterLessonsService {
         participants: { select: { studentId: true } },
       },
     });
+    const sameDay = reads
+      ? await reads.once(
+          `sameDay|${lesson.academicYearId}|${candidate.dayOfWeek}|${[...new Set([...(lesson.id ? [lesson.id] : []), ...(options.excludeIds ?? [])])].sort().join(',')}`,
+          readSameDay,
+        )
+      : await readSameDay();
 
     const candidateWeeks = {
       recurrence: candidate.recurrence ?? 'ALL_WEEKS',
@@ -2270,7 +2302,9 @@ export class MasterLessonsService {
     const buffers =
       others.length === 0
         ? new Map<string, PupilBuffer>()
-        : await this.pupilBuffersOf(tx, lesson.academicYearId);
+        : reads
+          ? await reads.once(`buffers|${lesson.academicYearId}`, () => this.pupilBuffersOf(tx, lesson.academicYearId))
+          : await this.pupilBuffersOf(tx, lesson.academicYearId);
     /**
      * One buffer for a lesson: the WIDEST before and the WIDEST after among the
      * requirements of the classes attending it, for this subject.
@@ -2369,10 +2403,16 @@ export class MasterLessonsService {
             ...candidateGroups,
             ...clashing.flatMap(groupsAttending),
           ]);
-    const { membersOf, halves, replaced, kept } = await this.rosterOf(tx, basis, groupsInPlay, {
-      subjectIds: [...new Set([lesson.subjectId, ...clashing.map((other) => other.subjectId)])],
-      academicYearId: lesson.academicYearId,
-    });
+    const { membersOf, halves, replaced, kept } = await this.rosterOf(
+      tx,
+      basis,
+      groupsInPlay,
+      {
+        subjectIds: [...new Set([lesson.subjectId, ...clashing.map((other) => other.subjectId)])],
+        academicYearId: lesson.academicYearId,
+      },
+      reads,
+    );
     // Ersättande grupper (common/replacing-groups.ts): a replacing group's
     // members are not on its subject's other lessons, so 7A's svenska and
     // SvA7's lessons share no pupil and may sit side by side. A school with
@@ -2611,7 +2651,28 @@ export class MasterLessonsService {
     // wants those minutes held too it can say so by moving the constraint, which
     // is a sentence it already has. Deliberately out of scope here rather than
     // forgotten.
-    const constraints = await tx.availabilityConstraint.findMany({
+    // An import reads the day's constraints once and picks this candidate's resources out of
+    // them; a hand edit asks the database for exactly them. The same three arms, either way.
+    const constraints = reads
+      ? (
+          await reads.once(`constraints|${lesson.academicYearId}|${candidate.dayOfWeek}`, () =>
+            tx.availabilityConstraint.findMany({
+              where: {
+                type: 'UNAVAILABLE',
+                dayOfWeek: candidate.dayOfWeek,
+                date: null,
+                AND: [constraintsOfYear(lesson.academicYearId)],
+              },
+              select: { resourceType: true, startTime: true, endTime: true, userId: true, roomId: true, studentGroupId: true },
+            }),
+          )
+        ).filter(
+          (constraint) =>
+            (constraint.resourceType === 'TEACHER' && constraint.userId !== null && candidateTeachers.includes(constraint.userId)) ||
+            (constraint.resourceType === 'ROOM' && candidate.roomId !== null && constraint.roomId === candidate.roomId) ||
+            (constraint.resourceType === 'STUDENT_GROUP' && constraint.studentGroupId !== null && candidateGroups.has(constraint.studentGroupId)),
+        )
+      : await tx.availabilityConstraint.findMany({
       where: {
         type: 'UNAVAILABLE',
         dayOfWeek: candidate.dayOfWeek,

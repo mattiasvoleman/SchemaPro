@@ -143,6 +143,17 @@ export const miscRoutes: GatewayRoute[] = [
     PUBLIC_LINKS.filter((link) => link.academicYearId === query.get("academicYearId")),
   ),
   route("GET", "/api/v1/teacher-public-labels", () => HIDDEN_TEACHERS),
+  // Schema som fil: what an export of the year would hold. The preview and
+  // the apply are POSTs the browser smoke tests do not press.
+  route("GET", "/api/v1/schedule-exchange/summary", ({ query }) => ({
+    academicYearId: query.get("academicYearId") ?? YEAR.id,
+    yearName: YEAR.name,
+    publishMode: "DIRECT",
+    lessons: 31,
+    parked: 0,
+    teachers: 6,
+    teachersWithoutSignature: 1,
+  })),
   // Kalenderprenumeration: each person's own feeds, as PUBLICATION_SETTINGS
   // has the audiences (teachers and guardians on, pupils off). Anna has her
   // week's, Sara Ella's but not yet Hugo's; the admin none of her own.
