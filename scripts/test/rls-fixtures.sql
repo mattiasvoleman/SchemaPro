@@ -3106,6 +3106,31 @@ BEGIN
     (s1, t2, y, 100, 'SYN', now());
 END $$;
 
+-- The skyddad school's history (20270107090000, section 343): the school has
+-- decided to keep change logs 12 months (two days ago), and one event of its
+-- marks is 13 months old (due) beside the fresh ones the marks above wrote.
+-- Planted once, as the owner, past the history's guard.
+DO $$
+DECLARE
+  s1 uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-skyddad-school');
+  p2 uuid;
+  admin uuid;
+BEGIN
+  IF s1 IS NULL OR EXISTS (SELECT 1 FROM "PersonProtectionEvents" WHERE "schoolId" = s1 AND "at" < now() - interval '1 year') THEN
+    RETURN;
+  END IF;
+  SELECT id INTO p2 FROM "Users" WHERE "schoolId" = s1 AND email = 'sk-p2@example.invalid';
+  SELECT id INTO admin FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-e50000000001';
+  ALTER TABLE "PersonProtectionEvents" DISABLE TRIGGER "PersonProtectionEvents_written_by_trigger";
+  INSERT INTO "PersonProtectionEvents" ("schoolId", "userId", action, source, "actorId", "at")
+  VALUES (s1, p2, 'REMOVED', 'MANUAL', admin, now() - interval '13 months');
+  ALTER TABLE "PersonProtectionEvents" ENABLE TRIGGER "PersonProtectionEvents_written_by_trigger";
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (s1, 'CHANGE_LOGS', 'PURGE_AFTER', 12, NULL, admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+END $$;
+
 -- The matrix school's mark (20270107090000), so the role matrix (section 116)
 -- has a row of PersonProtections to probe: its second pupil, by hand.
 DO $$

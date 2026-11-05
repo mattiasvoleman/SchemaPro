@@ -21,7 +21,8 @@ import { createTestApp, type TestHarness } from './utils/test-app';
  * P1 and G1 are in no file, nor is G2; the link P2–G2 is held out; T1 is in
  * no file but SCB's, which says how many it keeps. Then the SS12000 sync's
  * own apply marks P4 under the sync principal, and P4 and G3 leave the files
- * too; the administrator's apply of the register's "Ingen" brings them back.
+ * too; a mark by hand beside the sync's stands through the register's
+ * "Ingen", and the administrator's removal brings them back.
  *
  * Runs only with SKYDDAD_DATABASE_URL (the API role's URL of such a
  * database); CI's Database job sets it, the e2e job skips it.
@@ -161,9 +162,21 @@ maybe('Skyddad identitet: a marked pupil and his guardian are in no file (a real
       expect(files['vardnadshavare.csv']!.heldOut).toBe(3);
       const marks = (await mockGet('/api/v1/person-protections')) as Array<{ userId: string; source: string }>;
       expect(marks).toContainEqual({ userId: p4!.id, source: 'SS12000' });
+
+      // A mark by hand beside it stands when the register says "Ingen" (review of #263, L1).
+      await request(http()).put(`/api/v1/person-protections/${p4!.id}`).set('x-test-user', JSON.stringify(admin)).expect(200);
+      const lifted = await prisma.withRls(admin, (tx) => applyChanges(tx, school, [change('END')], new Date()));
+      expect(lifted.skipped).toEqual([]);
+      for (const email of emails('sk-p4', 'sk-g3')) expect({ email, files: named(await everyFile(), email) }).toEqual({ email, files: [] });
+      const view = (await mockGet(`/api/v1/person-protections/${p4!.id}`)) as { sources: string[]; events: Array<{ action: string; source: string }> };
+      expect(view.sources).toEqual(['MANUAL']);
+      expect(view.events.map((event) => `${event.action}:${event.source}`)).toEqual(
+        expect.arrayContaining(['ADDED:SS12000', 'ADDED:MANUAL', 'REMOVED:SS12000']),
+      );
     } finally {
-      // The register says "Ingen": the administrator's apply lifts the sync's mark.
+      // The register says "Ingen" and the administrator removes the mark by hand: P4 is as the fixtures planted her.
       await prisma.withRls(admin, (tx) => applyChanges(tx, school, [change('END')], new Date()));
+      await request(http()).delete(`/api/v1/person-protections/${p4!.id}`).set('x-test-user', JSON.stringify(admin)).expect(200);
     }
     const after = await everyFile();
     expect(after['elever.csv']!.content).toContain('sk-p4@example.invalid');
@@ -174,7 +187,7 @@ maybe('Skyddad identitet: a marked pupil and his guardian are in no file (a real
     const p2 = await prisma.withRls(admin, (tx) => tx.user.findFirst({ where: { schoolId: school, email: 'sk-p2@example.invalid' }, select: { id: true } }));
     const as = (verb: 'put' | 'delete') => request(http())[verb](`/api/v1/person-protections/${p2!.id}`).set('x-test-user', JSON.stringify(admin));
     try {
-      expect((await as('put')).body).toEqual({ userId: p2!.id, source: 'MANUAL' });
+      expect((await as('put')).body).toMatchObject({ userId: p2!.id, sources: ['MANUAL'] });
       const files = await everyFile();
       expect(named(files, 'sk-p2@example.invalid')).toEqual([]);
     } finally {

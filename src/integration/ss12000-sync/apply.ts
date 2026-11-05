@@ -53,10 +53,13 @@ import type { ChangeEntity, ChangeOp } from './diff';
  *   * A person the register marks as protected is never in Rastra unmarked
  *     once the apply has made them: the create, link or relink of such a
  *     person writes the mark (PersonProtections, source SS12000) with it,
- *     and a PROTECTION ADD marks one linked before. A PROTECTION END lifts a
- *     mark the sync wrote, and only such a mark: a MANUAL one is the
- *     administrator's. Both name the person by the source's id, in the
- *     change's after, as a duty link does.
+ *     and a PROTECTION ADD marks one linked before, or the one local row
+ *     the diff matched by address (after.byAddress) whether or not its LINK
+ *     is applied. A PROTECTION END lifts the mark the sync wrote, and only
+ *     that row: an administrator's mark is a row of its own and stands. Both
+ *     name the person by the source's id, in the change's after, as a duty
+ *     link does; an END the database refuses (only those who decide lift a
+ *     mark) is skipped with SS12000_PROTECTION_NOT_LIFTED.
  *
  * Nothing else is deleted: no other statement here removes a row.
  */
@@ -302,8 +305,25 @@ export async function applyChanges(
       if (userId) marking.add(userId);
     }
   }
+  // A person matched by address and not linked (after.byAddress) is marked
+  // by the local row the diff matched, whether or not its LINK is applied:
+  // marking only keeps a person out of files, so this is the one change
+  // that may name a local row the source id does not reach. The row must
+  // still be the school's.
+  const byAddress = of('PROTECTION', 'ADD').filter((change) => !personOf('personExternalId')(change) && change.after?.['byAddress'] === true);
+  const addressed = new Set(
+    byAddress.length === 0
+      ? []
+      : (
+          await tx.user.findMany({
+            where: { schoolId, id: { in: byAddress.map((change) => str(change.after?.['userLocalId'])).filter((id): id is string => id !== null) } },
+            select: { id: true },
+          })
+        ).map((user) => user.id),
+  );
   for (const change of of('PROTECTION', 'ADD')) {
-    const userId = personOf('personExternalId')(change);
+    const local = str(change.after?.['userLocalId']);
+    const userId = personOf('personExternalId')(change) ?? (change.after?.['byAddress'] === true && local && addressed.has(local) ? local : null);
     if (!userId) {
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
       continue;
@@ -317,18 +337,33 @@ export async function applyChanges(
       skipDuplicates: true,
     });
   }
-  const lifting: string[] = [];
+  const lifting = new Map<string, StoredChange>();
   for (const change of of('PROTECTION', 'END')) {
     const userId = personOf('personExternalId')(change);
     if (!userId) {
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
       continue;
     }
-    lifting.push(userId);
-    done(change);
+    lifting.set(userId, change);
   }
-  for (const rows of chunks(lifting.sort())) {
+  for (const rows of chunks([...lifting.keys()].sort())) {
     await tx.personProtection.deleteMany({ where: { schoolId, userId: { in: rows }, source: 'SS12000' } });
+  }
+  // Lifting is a decision: the database lets only those who decide remove a
+  // mark (person_protections_admin_delete). A mark still there was not lifted.
+  const kept = new Set(
+    lifting.size === 0
+      ? []
+      : (
+          await tx.personProtection.findMany({
+            where: { schoolId, userId: { in: [...lifting.keys()] }, source: 'SS12000' },
+            select: { userId: true },
+          })
+        ).map((row) => row.userId),
+  );
+  for (const [userId, change] of lifting) {
+    if (kept.has(userId)) skip(change, 'SS12000_PROTECTION_NOT_LIFTED');
+    else done(change);
   }
 
   // --- class moves (role-guarded; P4's trigger records each) -----------------

@@ -36,17 +36,23 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  * the school's mark that the person is protected (PersonProtections,
  * 20270107090000), never which protection, and the diff keeps it as the
  * register has it:
- *  - a linked person the register marks and Rastra does not: PROTECTION ADD,
- *    selected and automatic, since it only keeps the person out of files.
- *    It names the person in its after alone (the minimisation nulls it):
- *    externalId and localId stay empty, so a finished run says how many
- *    marks it set, never whose. A person this apply creates, links or
- *    relinks is marked by the apply with that change (apply.ts);
+ *  - a person the register marks and the sync has not (an administrator's
+ *    own mark is a row of its own): PROTECTION ADD, selected and automatic,
+ *    since it only keeps the person out of files. That is the linked person,
+ *    or the one local row the run matches by address and proposes to LINK or
+ *    RELINK (after.byAddress), whether or not the link is made: a person
+ *    typed in by hand, read from a file or imported before the register
+ *    protected them is marked by the first run that finds them. It names the
+ *    person in its after alone (the minimisation nulls it): externalId and
+ *    localId stay empty, so a finished run says how many marks it set, never
+ *    whose. A person this apply creates, links or relinks is marked by the
+ *    apply with that change too (apply.ts);
  *  - a mark the sync wrote (source SS12000), for a linked person a FULL run
  *    reads as "Ingen" wherever it names them and as nothing else:
- *    PROTECTION END, selected, never automatic. An absent marking is not
- *    "Ingen", an INCREMENTAL run may not read the record (a child's) that
- *    still marks the person, and a MANUAL mark is the administrator's.
+ *    PROTECTION END, deselected and never automatic, so the defaults never
+ *    lift a protection. An absent marking is not "Ingen", an INCREMENTAL run
+ *    may not read the record (a child's) that still marks the person, and an
+ *    administrator's mark is theirs: the sync lifts only its own row.
  *
  * DEACTIVATE, of a linked person only: a FULL run that no longer finds them
  * (a pupil not returned by the enrolment fetch, staff with no active duty, a
@@ -917,21 +923,28 @@ export function computeDiff(input: DiffInput): DiffResult {
   // ---------------------------------------------------------------------
   // Protected identity: the school's mark (see PROTECTED IDENTITY above)
   // ---------------------------------------------------------------------
-  const marks = new Map((local.protections ?? []).map((mark) => [mark.userId, mark.source]));
-  const mark = (op: 'ADD' | 'END', ext: string, userId: string) =>
+  // The sync's own mark: a person may hold an administrator's beside it,
+  // which the sync neither needs nor touches.
+  const syncMarked = new Set((local.protections ?? []).filter((m) => m.source === 'SS12000').map((m) => m.userId));
+  const mark = (op: 'ADD' | 'END', ext: string, userId: string, byAddress: boolean) =>
     push({
       entity: 'PROTECTION', op, externalId: null, localId: null,
-      before: null, after: { personExternalId: ext, userLocalId: userId },
-      conflictCode: null, selected: true, autoApplicable: op === 'ADD', protectedIdentity: false,
+      before: null, after: { personExternalId: ext, userLocalId: userId, ...(byAddress ? { byAddress: true } : {}) },
+      // An ADD only keeps a person out of files: selected and made at night.
+      // An END lifts a protection: never by default, never at night.
+      conflictCode: null, selected: op === 'ADD', autoApplicable: op === 'ADD', protectedIdentity: false,
     });
   for (const ext of [...protectedIds].sort()) {
-    const linked = usersByExt.get(ext);
-    if (linked && !marks.has(linked.id)) mark('ADD', ext, linked.id);
+    // The person linked, or the one row the run matched by address (a LINK
+    // or RELINK it proposes): marked whether or not the link is made, since
+    // a person typed in by hand or read from a file is in Rastra all the same.
+    const plan = plans.get(ext);
+    if (plan?.localId && !syncMarked.has(plan.localId)) mark('ADD', ext, plan.localId, !plan.linked);
   }
   if (full) {
     for (const user of local.users) {
-      if (!user.ss12000Id || marks.get(user.id) !== 'SS12000') continue;
-      if (saidIngen.has(user.ss12000Id) && !protectedIds.has(user.ss12000Id)) mark('END', user.ss12000Id, user.id);
+      if (!user.ss12000Id || !syncMarked.has(user.id)) continue;
+      if (saidIngen.has(user.ss12000Id) && !protectedIds.has(user.ss12000Id)) mark('END', user.ss12000Id, user.id, false);
     }
   }
 

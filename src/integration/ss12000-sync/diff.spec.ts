@@ -316,11 +316,39 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     expect(result.counts['PROTECTION']).toEqual({ ADD: 1 });
   });
 
-  it('proposes nothing for a person already marked, by the sync or by hand', () => {
-    for (const source of ['SS12000', 'MANUAL'] as const) {
-      const result = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)], protections: [{ userId: loc(1), source }] }));
-      expect(only(result.changes, 'PROTECTION')).toEqual([]);
-    }
+  it('proposes nothing for a person the sync has marked, and its own mark beside an administrator\'s', () => {
+    const synced = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000' }] }));
+    expect(only(synced.changes, 'PROTECTION')).toEqual([]);
+    // The administrator's mark is theirs to lift; the register's is recorded beside it.
+    const byHand = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }] }));
+    expect(only(byHand.changes, 'PROTECTION')).toEqual([expect.objectContaining({ op: 'ADD', selected: true, autoApplicable: true })]);
+  });
+
+  it('marks a person in Rastra but not linked, matched by address, whether or not the link is made (review of #263, M2)', () => {
+    // Typed in by hand, read from a file or imported before the register protected her.
+    const local = slice({ users: [user(1, { email: 's1@skola.se' })] });
+    const result = diff(roster({ people: [marked(1)] }), local);
+    expect(only(result.changes, 'PERSON', 'LINK')).toEqual([expect.objectContaining({ localId: loc(1), selected: false, protectedIdentity: true })]);
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      {
+        entity: 'PROTECTION', op: 'ADD', externalId: null, localId: null,
+        before: null, after: { personExternalId: ext(1), userLocalId: loc(1), byAddress: true },
+        conflictCode: null, selected: true, autoApplicable: true, protectedIdentity: false,
+      },
+    ]);
+    // A deactivated row the run proposes to RELINK, too.
+    const inactive = diff(roster({ people: [marked(1)] }), slice({ users: [user(1, { email: 's1@skola.se', isActive: false })] }));
+    expect(only(inactive.changes, 'PROTECTION')).toEqual([expect.objectContaining({ op: 'ADD', after: expect.objectContaining({ userLocalId: loc(1), byAddress: true }) })]);
+    // Already marked by the sync: nothing more.
+    const done = diff(roster({ people: [marked(1)] }), slice({ users: [user(1, { email: 's1@skola.se' })], protections: [{ userId: loc(1), source: 'SS12000' }] }));
+    expect(only(done.changes, 'PROTECTION')).toEqual([]);
+  });
+
+  it('marks nobody the run cannot match to one row: two rows with the address, or another role', () => {
+    const two = slice({ users: [user(1, { email: 's1@skola.se' }), user(2, { email: 'S1@skola.se' })] });
+    expect(only(diff(roster({ people: [marked(1)] }), two).changes, 'PROTECTION')).toEqual([]);
+    const teacher = slice({ users: [user(1, { email: 's1@skola.se', role: 'TEACHER' })] });
+    expect(only(diff(roster({ people: [marked(1)] }), teacher).changes, 'PROTECTION')).toEqual([]);
   });
 
   it('proposes no PROTECTION for a person not yet linked: their create carries the flag, and the apply marks them with it', () => {
@@ -343,7 +371,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     expect(only(result.changes, 'PROTECTION', 'ADD')).toHaveLength(1);
   });
 
-  it('lifts a mark the sync wrote when a FULL run reads "Ingen" for the person: selected, never at night', () => {
+  it('proposes lifting a mark the sync wrote when a FULL run reads "Ingen" for the person: never by default, never at night', () => {
     const result = diff(
       roster({ people: [pupil(ext(1), 'Ej', 'Skyddad', 's1@skola.se', { securityMarking: 'Ingen' })] }),
       slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000' }] }),
@@ -351,9 +379,17 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     expect(only(result.changes, 'PROTECTION')).toEqual([
       expect.objectContaining({
         op: 'END', externalId: null, localId: null, after: { personExternalId: ext(1), userLocalId: loc(1) },
-        selected: true, autoApplicable: false, protectedIdentity: false,
+        selected: false, autoApplicable: false, protectedIdentity: false,
       }),
     ]);
+  });
+
+  it('proposes lifting the sync\'s own mark also where an administrator\'s stands beside it, which the lift leaves', () => {
+    const result = diff(
+      roster({ people: [pupil(ext(1), 'Ej', 'Skyddad', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }, { userId: loc(1), source: 'SS12000' }] }),
+    );
+    expect(only(result.changes, 'PROTECTION').map((c) => c.op)).toEqual(['END']);
   });
 
   it('never lifts a mark an administrator set', () => {

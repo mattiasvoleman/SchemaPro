@@ -1,6 +1,7 @@
 import { DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
-import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { HEADERS_METADATA, METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
+import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { AREA_KEY, type AreaRequirement } from '../src/auth/decorators/area.decorator';
 import request from 'supertest';
 import { IS_PUBLIC_KEY } from '../src/auth/decorators/public.decorator';
@@ -44,6 +45,8 @@ interface RouteInfo {
   full: string;
   /** @ReadsOnly's reason, on a write verb that only reads (Huvudman). */
   readsOnly: string | undefined;
+  /** Sets Content-Disposition, or writes the response itself (@Res): what a file route does. */
+  writesAFile: boolean;
 }
 
 describe('Route guard coverage (e2e)', () => {
@@ -73,8 +76,13 @@ describe('Route guard coverage (e2e)', () => {
           const own = Reflect.getMetadata(PATH_METADATA, handler) as string | string[] | undefined;
           const ownPath = (Array.isArray(own) ? own[0] : own) ?? '';
           const full = `/${[basePath, ownPath].map((part) => String(part ?? '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/')}`;
+          const headers = (Reflect.getMetadata(HEADERS_METADATA, handler) as Array<{ name: string }> | undefined) ?? [];
+          const args = (Reflect.getMetadata(ROUTE_ARGS_METADATA, cls, name) as Record<string, unknown> | undefined) ?? {};
           return {
             full,
+            writesAFile:
+              headers.some((header) => header.name.toLowerCase() === 'content-disposition') ||
+              Object.keys(args).some((key) => key.startsWith(`${RouteParamtypes.RESPONSE}:`)),
             readsOnly: reflector.getAllAndOverride<string | undefined>(READS_ONLY_KEY, [handler, cls]),
             controller: cls.name,
             method: name,
@@ -107,7 +115,12 @@ describe('Route guard coverage (e2e)', () => {
   // naming people is decided, by name, in src/common/people-files.ts: held
   // out, kept and counted, or why it names no pupil. A new one fails here.
   it('decides every route that hands out a file or a feed of people, for a protected identity', () => {
-    const files = routes.filter((route) => FILE_ROUTE.test(route.full));
+    const files = routes.filter((route) => FILE_ROUTE.test(route.full) || route.writesAFile);
+    // The detection is not vacuous: the two feeds that write their own response are found by it.
+    expect(routes.filter((route) => route.writesAFile).map((route) => route.full).sort()).toEqual(
+      expect.arrayContaining(['/public/v1/calendar-feeds/:file', '/public/v1/timetables/:token']),
+    );
+    expect(FILE_ROUTE.test('/api/v1/person-protections/pupils.csv')).toBe(true);
     expect(files.length).toBeGreaterThanOrEqual(10);
     const undecided = files.filter((route) => peopleRouteOf(route.verb, route.full) === null);
     expect(undecided.map((route) => `${route.verb} ${route.full} (${route.controller}.${route.method})`)).toEqual([]);

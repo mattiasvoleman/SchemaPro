@@ -434,6 +434,33 @@ describe('applyChanges: the mark of a protected identity (20270107090000)', () =
     expect(tx.personProtection.deleteMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL, userId: { in: [loc(1)] }, source: 'SS12000' } });
   });
 
+  it('PROTECTION ADD by address marks the local row the diff matched, unlinked, if the row is still the school\'s', async () => {
+    tx.user.findMany.mockImplementation(async (args: { where: { ss12000Id?: unknown; id?: { in: string[] } } }) =>
+      args.where.id ? args.where.id.in.filter((id) => id === loc(2)).map((id) => ({ id })) : [],
+    );
+    const ours = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(2), userLocalId: loc(2), byAddress: true } });
+    const gone = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(3), userLocalId: loc(3), byAddress: true } });
+    // Without byAddress a local id is never trusted.
+    const plain = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(4), userLocalId: loc(2) } });
+    const outcome = await run([ours, gone, plain]);
+    expect(outcome.applied).toEqual([ours.id]);
+    expect(outcome.skipped.map((s) => [s.id, s.code])).toEqual([
+      [gone.id, 'SS12000_DEPENDENCY_NOT_APPLIED'],
+      [plain.id, 'SS12000_DEPENDENCY_NOT_APPLIED'],
+    ]);
+    expect(marked()).toEqual([{ userId: loc(2), schoolId: SCHOOL, source: 'SS12000' }]);
+    expect(tx.user.findMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL, id: { in: [loc(2), loc(3)] } }, select: { id: true } });
+  });
+
+  it('PROTECTION END the database did not let through (only those who decide lift a mark) is skipped, not counted as made', async () => {
+    tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }]);
+    tx.personProtection.findMany.mockResolvedValue([{ userId: loc(1) }]);
+    const end = change({ entity: 'PROTECTION', op: 'END', after: { personExternalId: ext(1), userLocalId: loc(1) } });
+    const outcome = await run([end]);
+    expect(outcome.applied).toEqual([]);
+    expect(outcome.skipped).toEqual([{ id: end.id, code: 'SS12000_PROTECTION_NOT_LIFTED', entity: 'PROTECTION', externalId: null }]);
+  });
+
   it('writes no mark for a change about a protected person that is not a create, link or relink', async () => {
     tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }]);
     const name = change({ entity: 'PERSON', op: 'UPDATE', externalId: ext(1), localId: loc(1), protectedIdentity: true, after: { firstName: 'A', lastName: 'B' } });

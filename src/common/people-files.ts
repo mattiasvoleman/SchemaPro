@@ -34,8 +34,13 @@ export interface PeopleRoute {
   why: string;
 }
 
-/** A route path that looks like a file or a feed. */
-export const FILE_ROUTE = /\/export\b|scb-file|\/print\/|class-book|^\/public\/v1\/(calendar-feeds|timetables)\/|^\/ss12000\/|^\/api\/v1\/access-log$/;
+/**
+ * A route path that looks like a file or a feed. The route-guards test also
+ * counts a handler that sets Content-Disposition or writes the response
+ * itself (@Res), whatever its path.
+ */
+export const FILE_ROUTE =
+  /\/export\b|scb-file|\/print\/|class-book|^\/public\/v1\/(calendar-feeds|timetables)\/|^\/ss12000\/|^\/api\/v1\/access-log$|\.(csv|tsv|txt|xlsx?|ics|pdf|zip|xml)$/i;
 
 /**
  * Keyed `VERB /path` as the routing table has it; a key ending in `/*` holds

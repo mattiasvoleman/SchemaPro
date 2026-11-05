@@ -23,20 +23,20 @@ describe('PersonProtectionsService', () => {
     tx = createTxMock();
     service = new PersonProtectionsService(createPrismaMock(tx) as unknown as PrismaService);
   });
+  const ACTOR = '66666666-6666-4666-8666-666666666666';
+  const at = new Date('2026-11-05T10:00:00.000Z');
 
-  it('lists the school\'s marks with their source, and records the read of each marked person (PEOPLE)', async () => {
+  it('lists the school\'s marks, a row per source, and records the read of each marked person (PEOPLE)', async () => {
     tx.personProtection.findMany.mockResolvedValue([
+      { userId: PUPIL, source: 'MANUAL' },
       { userId: PUPIL, source: 'SS12000' },
       { userId: OTHER, source: 'MANUAL' },
     ]);
-    await expect(service.list(admin)).resolves.toEqual([
-      { userId: PUPIL, source: 'SS12000' },
-      { userId: OTHER, source: 'MANUAL' },
-    ]);
+    await expect(service.list(admin)).resolves.toHaveLength(3);
     expect(tx.personProtection.findMany).toHaveBeenCalledWith({
       where: { schoolId: SCHOOL },
       select: { userId: true, source: true },
-      orderBy: { userId: 'asc' },
+      orderBy: [{ userId: 'asc' }, { source: 'asc' }],
     });
     expect(readsRecorded(tx)).toEqual([['PEOPLE', 'WEB', [PUPIL, OTHER]]]);
   });
@@ -46,10 +46,32 @@ describe('PersonProtectionsService', () => {
     expect(readsRecorded(tx)).toEqual([]);
   });
 
-  it('marks a person of the school by hand, and a person already marked keeps the mark they have', async () => {
+  it('answers one person\'s marks and who set or removed them, newest first, and records the person and those it names', async () => {
     tx.user.findFirst.mockResolvedValue({ id: PUPIL });
-    tx.personProtection.findFirst.mockResolvedValue({ userId: PUPIL, source: 'SS12000' });
-    await expect(service.set(PUPIL, admin)).resolves.toEqual({ userId: PUPIL, source: 'SS12000' });
+    tx.personProtection.findMany.mockResolvedValue([{ source: 'MANUAL' }]);
+    tx.personProtectionEvent.findMany.mockResolvedValue([
+      { action: 'ADDED', source: 'MANUAL', actorId: ACTOR, at },
+      { action: 'REMOVED', source: 'SS12000', actorId: null, at },
+    ]);
+    tx.user.findMany.mockResolvedValue([{ id: ACTOR, firstName: 'Rita', lastName: 'Rektor' }]);
+    await expect(service.one(PUPIL, admin)).resolves.toEqual({
+      userId: PUPIL,
+      sources: ['MANUAL'],
+      events: [
+        { action: 'ADDED', source: 'MANUAL', actorName: 'Rita Rektor', at: at.toISOString() },
+        { action: 'REMOVED', source: 'SS12000', actorName: null, at: at.toISOString() },
+      ],
+    });
+    expect(tx.personProtectionEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: PUPIL, schoolId: SCHOOL }, orderBy: [{ at: 'desc' }, { id: 'desc' }] }),
+    );
+    expect(readsRecorded(tx)).toEqual([['PEOPLE', 'WEB', [PUPIL, ACTOR]]]);
+  });
+
+  it('marks a person by hand with a row of the administrator\'s own, beside any the sync wrote', async () => {
+    tx.user.findFirst.mockResolvedValue({ id: PUPIL });
+    tx.personProtection.findMany.mockResolvedValue([{ source: 'MANUAL' }, { source: 'SS12000' }]);
+    await expect(service.set(PUPIL, admin)).resolves.toMatchObject({ userId: PUPIL, sources: ['MANUAL', 'SS12000'] });
     expect(tx.user.findFirst).toHaveBeenCalledWith({ where: { id: PUPIL, schoolId: SCHOOL }, select: { id: true } });
     expect(tx.personProtection.createMany).toHaveBeenCalledWith({
       data: [{ userId: PUPIL, schoolId: SCHOOL, source: 'MANUAL' }],
@@ -57,16 +79,18 @@ describe('PersonProtectionsService', () => {
     });
   });
 
-  it('answers 404 for a person the school does not have, and writes nothing', async () => {
+  it('answers 404 for a person the school does not have, and writes and records nothing', async () => {
     await expect(service.set(OTHER, admin)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.remove(OTHER, admin)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.one(OTHER, admin)).rejects.toBeInstanceOf(NotFoundException);
     expect(tx.personProtection.createMany).not.toHaveBeenCalled();
     expect(tx.personProtection.deleteMany).not.toHaveBeenCalled();
+    expect(readsRecorded(tx)).toEqual([]);
   });
 
-  it('removes a mark whichever wrote it, within the school', async () => {
+  it('removes the person\'s marks, the sync\'s and an administrator\'s, within the school', async () => {
     tx.user.findFirst.mockResolvedValue({ id: PUPIL });
-    await expect(service.remove(PUPIL, admin)).resolves.toEqual({ userId: PUPIL, source: null });
+    await expect(service.remove(PUPIL, admin)).resolves.toMatchObject({ userId: PUPIL, sources: [] });
     expect(tx.personProtection.deleteMany).toHaveBeenCalledWith({ where: { userId: PUPIL, schoolId: SCHOOL } });
   });
 });
