@@ -145,6 +145,7 @@ export default function GroupsPage() {
   // The active year's classes, for the skolenheter card's map, and the year's
   // numbering they are placed by.
   const activeYear = years.find((year) => year.isActive);
+  const activeGroups = (groups ?? []).filter((group) => group.academicYearId === activeYear?.id);
   const activeClasses = useMemo(
     () => (groups ?? []).filter((group) => group.kind === "CLASS" && group.academicYearId === activeYear?.id),
     [groups, activeYear?.id],
@@ -422,16 +423,27 @@ export default function GroupsPage() {
           <>
             <CsvExportButton
               exports={[
+                // The active läsår's, which is the year the import writes
+                // into: every year's groups made a file that put last year's
+                // classes and groups into this one.
+                // Each waits for the lists it is built from (the timplan's
+                // rule): a group replacing a subject the list has not
+                // brought is left out, and so is every member without
+                // `people`. No active year, no file: there is no year to
+                // read it back into.
                 {
                   kind: "classes",
-                  build: () => classesToCsv(groups ?? []),
-                  empty: !groups?.some((group) => group.kind === "CLASS"),
+                  build: () => classesToCsv(activeGroups, subjects ?? []),
+                  empty: activeGroups.length === 0 || subjects === undefined,
                 },
                 {
                   kind: "teachingGroups",
-                  build: () =>
-                    membershipsToCsv(groups ?? [], people ?? [], memberships ?? []),
-                  empty: !memberships || memberships.length === 0,
+                  build: () => membershipsToCsv(activeGroups, people ?? [], memberships ?? []),
+                  empty:
+                    !memberships ||
+                    memberships.length === 0 ||
+                    activeYear === undefined ||
+                    people === undefined,
                 },
               ]}
             />

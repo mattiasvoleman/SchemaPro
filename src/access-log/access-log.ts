@@ -8,7 +8,16 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *
  *   PEOPLE                   names and contact details
  *   ROSTER                   who is in a group or on a lesson
- *   ATTENDANCE               attendance marks
+ *   ATTENDANCE               attendance marks, and the findings made of them:
+ *                            the pupils over a limit of Frånvarobevakning
+ *                            (20261231090100), read in the view (with PEOPLE,
+ *                            for the names) and told to a recipient by a
+ *                            digest. A digest cannot call recordRead, which
+ *                            takes its reader from the claims of a request: the
+ *                            one function that writes the notices
+ *                            (app.absence_watch_digest) writes the row, with
+ *                            the recipient as reader and channel OTHER, in the
+ *                            notices' own transaction
  *   ABSENCE_REPORTS          reported absence, with its type and note
  *   LEAVE_REQUESTS           leave requests, with their reason and decision
  *   LEAVE_REASON_AS_MENTOR   a mentor read a leave request's reason (Skoldagen)

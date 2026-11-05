@@ -221,7 +221,8 @@
     "myLeave": "Leave",
     "calendarFeed": "My calendar subscription",
     "calendarFeeds": "Calendar subscriptions",
-    "classBook": "Class book"
+    "classBook": "Class book",
+    "absenceWatch": "Absence watch"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -680,7 +681,7 @@
     "loadFailed": "The people could not be loaded",
     "loadFailedHint": "No list is shown, because an empty one would mean the school has neither staff nor pupils. Nothing has changed; reload the page to try again.",
     "emptyTitle": "No people yet",
-    "emptyHint": "Add teachers, pupils and guardians one at a time, or import them from a CSV file.",
+    "emptyHint": "Add teachers, pupils and guardians one at a time, or import teachers and pupils from a CSV file.",
     "searchLabel": "Search by name, email or class",
     "noMatch": "Nobody matches the search and the role you chose",
     "tableCaption": "The school's people with email, role, class, status and invitation. Each name expands to class, groups and post.",
@@ -2327,7 +2328,9 @@
     "supervisionCoverWithdrawn": "Break duty cancelled: {area} on {when}–{end}. You do not need to take it.",
     "leaveApprovedByMentor": "Leave for {student} ({from} – {to}) was approved by the mentor.",
     "leaveRejectedByMentor": "Leave for {student} ({from} – {to}) was rejected by the mentor.",
-    "unreadMarker": "Unread."
+    "unreadMarker": "Unread.",
+    "absenceWatchDigest": "Absence summary {from} – {to}: {open, plural, =0 {no pupil is over a limit} one {# pupil is over a limit} other {# pupils are over a limit}}, {crossed, plural, =0 {none passed a limit} one {# passed a limit} other {# passed a limit}} in the period. See Absence watch.",
+    "absenceWatchDigestGuardian": "Absence summary {from} – {to}: {open, plural, =0 {{crossed, plural, one {one of your children is} other {# of your children are}} under an absence limit again} one {one of your children has absence over a limit the school has set} other {# of your children have absence over a limit the school has set}}. See Absence watch."
   },
   "integrations": {
     "title": "Integrations",
@@ -2868,13 +2871,14 @@
     "kinds": {
       "students": "Students",
       "teachers": "Teachers",
-      "classes": "Classes",
+      "classes": "Classes and groups",
       "teachingGroups": "Teaching groups",
       "roomTypes": "Room types",
       "subjects": "Subjects",
       "requirements": "Curriculum entries",
       "teacherQualifications": "Teacher qualifications",
-      "teacherDuties": "Duties"
+      "teacherDuties": "Duties",
+      "rooms": "Rooms"
     },
     "downloadTemplate": "Download template",
     "chooseFile": "Choose file",
@@ -2890,7 +2894,12 @@
     "rowErrors": "Errors per row",
     "rowError": "Row {row}: {message}",
     "rowWarnings": "Saved, with a staffing warning",
-    "exportButton": "Export CSV"
+    "exportButton": "Export CSV",
+    "rowNumbering": "Rows are counted as in Excel: the header row is row 1.",
+    "readAs": "The file is not UTF-8 and was read as {encoding}. Check that å, ä and ö look right in the preview.",
+    "withoutClass": "{count, plural, one {# student has no class in the file and is created without one.} other {# students have no class in the file and are created without one.}} The import cannot give them a class afterwards, so fill in the class in the file unless that is intended.",
+    "createdWithoutClass": "{count, plural, one {# student was created without a class.} other {# students were created without a class.}} Give them a class under People.",
+    "rejectedByServer": "The server did not accept the file, because a cell holds a value that cannot be saved. Nothing was imported. Compare the file with the template."
   },
   "grades": {
     "grade": "{grade, plural, =0 {Reception} other {Year #}}"
@@ -5844,7 +5853,8 @@
       "LESSON_COVER_WITHDRAWN": "Withdrawn cover lessons",
       "LEAVE_REQUESTED": "Leave requests to decide",
       "SUPERVISION_COVER": "Break duty as a substitute",
-      "SUPERVISION_COVER_WITHDRAWN": "Withdrawn break duties"
+      "SUPERVISION_COVER_WITHDRAWN": "Withdrawn break duties",
+      "ABSENCE_WATCH_DIGEST": "Absence summary"
     },
     "loadFailed": "Your choices could not be loaded",
     "loadFailedHint": "Nothing has changed in what is sent to you. Reload the page in a moment."
@@ -6968,6 +6978,146 @@
       "otherRows": "{count, plural, one {# other record} other {# other records}} about the students, such as role history",
       "otherLinks": "{count, plural, one {# record} other {# records}} the students made stay, without their name",
       "accounts": "What belongs to the students' own accounts, which no administrator sees: notices, notice settings, devices for push notices and calendar subscriptions, the guardians' subscriptions to the students included"
+    }
+  },
+  "absenceWatch": {
+    "title": "Absence watch",
+    "subtitle": "Set limits for absence, decide who is told when a pupil passes one, and see which pupils have.",
+    "teacherSubtitle": "The pupils in classes where you are the mentor who have passed a limit the school has set for mentors.",
+    "guardianSubtitle": "Here you can see whether any of your children has passed a limit the school has set for absence.",
+    "loadFailed": "The absence watch could not be loaded",
+    "loadFailedHint": "Nothing has changed. Reload the page in a moment.",
+    "group": {
+      "MENTOR": "Mentor",
+      "REKTOR": "Principal",
+      "KANSLI": "Administration",
+      "GUARDIAN": "Guardian"
+    },
+    "basis": {
+      "VALID": "excused absence",
+      "INVALID": "unexcused absence",
+      "ALL": "all absence"
+    },
+    "basisOption": {
+      "VALID": "Excused absence",
+      "INVALID": "Unexcused absence",
+      "ALL": "All absence"
+    },
+    "kind": {
+      "SHARE": "Share of the registered minutes",
+      "CONSECUTIVE": "School days in a row"
+    },
+    "cadence": {
+      "WEEKLY": "Every week",
+      "MONTHLY": "Every month"
+    },
+    "limit": {
+      "SHARE": "{percent}% {basis} of the registered minutes over {days, plural, one {# day} other {# days}}",
+      "CONSECUTIVE": "{days, plural, one {# school day} other {# school days}} in a row with {basis}"
+    },
+    "settings": {
+      "title": "The watch",
+      "description": "The watch is off until you turn it on. When it is on, Rastra counts every night which pupils have passed a limit, and the recipients get a summary every week or month. The summaries hold counts only, never a name or a reason. Who the pupils are is shown only here in Rastra timetable, behind the login.",
+      "switchLabel": "Absence watch",
+      "offHint": "Off. No pupils are counted and no summaries are sent.",
+      "onHint": "On. Pupils are counted every night.",
+      "onSince": "On since {date}. Pupils are counted every night.",
+      "turnedOn": "The absence watch is on.",
+      "turnedOff": "The absence watch is off.",
+      "noLimitsTitle": "No limits are set",
+      "noLimitsBody": "The watch is on, but no pupil is counted until you add a limit below.",
+      "cadenceTitle": "How often the summary is sent",
+      "cadenceHint": "Per recipient group. The summary goes only to those who have something to be told, and everyone can switch off e-mail and push under Notifications.",
+      "cadenceSaved": "Saved for {group}."
+    },
+    "limits": {
+      "title": "Limits",
+      "description": "The recipient group is told when a pupil passes one of its limits. A school has at most one limit per recipient group, kind and basis. A new or changed limit is counted in at the next night's run.",
+      "add": "Add limit",
+      "caption": "The school's limits for absence",
+      "group": "Recipient",
+      "limit": "Limit",
+      "actions": "Actions",
+      "emptyTitle": "No limits yet",
+      "emptyBody": "Add a limit, for example 10% unexcused absence over 14 days, for whoever is to be told.",
+      "added": "The limit is added.",
+      "updated": "The limit is changed.",
+      "removed": "The limit is removed.",
+      "removeTitle": "Remove the limit for {group}?",
+      "removeBody": "{limit}. Pupils who have passed it count as under the limit from today, and no one gets a new summary about it."
+    },
+    "form": {
+      "addTitle": "Add limit",
+      "addBody": "Choose who is to be told, what is counted and how much.",
+      "editTitle": "Change limit",
+      "editBody": "You can change the figures. For another recipient, kind or basis, add a new limit.",
+      "group": "Recipient",
+      "kind": "Kind of limit",
+      "basis": "Which absence is counted",
+      "fixedHint": "The recipient, kind and basis of an existing limit cannot be changed.",
+      "percent": "Share of the registered minutes (%)",
+      "windowDays": "Number of days to count over",
+      "consecutiveDays": "Number of school days in a row",
+      "rangeHint": "A whole number from {min} to {max}.",
+      "range": "Enter a whole number from {min} to {max}.",
+      "preview": "{group} is told when a pupil has {limit}.",
+      "exists": "There is already a limit for {group} of that kind and basis. Change the existing one instead.",
+      "failed": "The limit could not be saved"
+    },
+    "findings": {
+      "title": {
+        "admin": "Pupils who have passed a limit",
+        "mentor": "Your mentees over a limit",
+        "guardian": "Your children"
+      },
+      "description": {
+        "admin": "Pupils are counted again every night, against the limits above. Opening the list is written to the read log.",
+        "mentor": "The list is counted again every night. Opening it is written to the read log.",
+        "guardian": "The list is counted again every night, against the limits the school has set for guardians."
+      },
+      "recent": "Also show those who have come back under the limit",
+      "groupFilter": "Recipient",
+      "allGroups": "All recipient groups",
+      "caption": "Pupils who have passed a limit for absence",
+      "student": "Pupil",
+      "class": "Class",
+      "group": "Recipient",
+      "limit": "Limit",
+      "figures": "Figures",
+      "since": "Status",
+      "nameHidden": "The name cannot be shown",
+      "share": "{absent} of {recorded} minutes ({percent}%)",
+      "minutesOnly": "{absent} minutes",
+      "streak": "{days, plural, one {# school day} other {# school days}} in a row",
+      "measured": "Measured {date}",
+      "openSince": "Over the limit since {date}",
+      "clearedSince": "Under the limit since {date}",
+      "wasOverSince": "Was over the limit since {date}",
+      "summaryOpen": "{count, plural, =0 {No pupil is over a limit.} one {# pupil is over a limit.} other {# pupils are over a limit.}}",
+      "summaryCleared": "{count, plural, =0 {No one has come back under the limit.} other {# have come back under the limit.}}",
+      "emptyOffTitle": "The watch is off",
+      "emptyOffBody": "Turn it on under The watch above, and pupils are counted every night.",
+      "emptyGroupTitle": "No one in this recipient group",
+      "emptyGroupBody": "Choose another recipient group, or all of them.",
+      "emptyRecentTitle": "No findings in the last {days} days",
+      "empty": {
+        "admin": {
+          "title": "No pupil has passed a limit",
+          "body": "Pupils are counted every night. A new or changed limit shows here the next morning."
+        },
+        "mentor": {
+          "title": "None of your mentees has passed a limit",
+          "body": "Pupils in classes where you are the mentor are listed here as soon as one passes a limit the school has set for mentors."
+        },
+        "guardian": {
+          "title": "None of your children has passed a limit",
+          "body": "If one of your children passes a limit the school has set for absence, it shows here, with since when."
+        }
+      },
+      "truncatedTitle": "The list is cut short",
+      "truncatedBody": "More than {count} findings matched, and the oldest are not shown.",
+      "loadFailed": "The list could not be loaded",
+      "loadFailedHint": "Nothing has changed. Reload the page in a moment."
     }
   }
 }

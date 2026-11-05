@@ -454,6 +454,46 @@ describe("NotificationBell inbox", () => {
     expect(screen.getByText(`supervisionCoverWithdrawn(area=Matsalen|when=${when}|end=${end})`)).toBeInTheDocument();
   });
 
+  it("tells the week's or month's count of pupils over a limit as numbers and dates, never a name, a figure of minutes or a reason (Frånvarobevakning)", async () => {
+    const user = userEvent.setup();
+    supabaseState.selectResults.push(
+      ok([
+        notif({
+          type: "ABSENCE_WATCH_DIGEST",
+          meta: {
+            group: "MENTOR",
+            periodStart: "2026-11-02",
+            periodEnd: "2026-11-08",
+            open: 3,
+            crossed: 1,
+            studentName: "Alva Elev",
+            reason: "Sjuk",
+          },
+        }),
+        notif({
+          type: "ABSENCE_WATCH_DIGEST",
+          meta: { group: "GUARDIAN", periodStart: "2026-10-05T00:00:00.000Z", periodEnd: "2026-11-01", open: 1, crossed: 1 },
+        }),
+        notif({ type: "ABSENCE_WATCH_DIGEST", meta: null }),
+      ]),
+    );
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    expect(
+      screen.getByText("absenceWatchDigest(open=3|crossed=1|from=2026-11-02|to=2026-11-08)"),
+    ).toBeInTheDocument();
+    // A guardian's counts are their own children; a date-time is cut to its day.
+    expect(
+      screen.getByText("absenceWatchDigestGuardian(open=1|crossed=1|from=2026-10-05|to=2026-11-01)"),
+    ).toBeInTheDocument();
+    // A notice with no meta is a sentence of zeros, not a crash and not "undefined".
+    expect(screen.getByText("absenceWatchDigest(open=0|crossed=0|from=|to=)")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/Alva|Sjuk/);
+  });
+
   it("says a notice of a type this build does not know as a notice, never an empty line", async () => {
     const user = userEvent.setup();
     supabaseState.selectResults.push(ok([notif({ type: "FROM_A_NEWER_GATEWAY" as BellRow["type"], meta: {} })]));

@@ -101,6 +101,8 @@ enum NotificationType {
   SUPERVISION_COVER
   /// A booked rastvaktspass no longer needed: the decision undone or handed to somebody else (20261210090000).
   SUPERVISION_COVER_WITHDRAWN
+  /// A week's or month's count of pupils over the school's absence limits: only numbers, to a mentor, rektor, kansli or guardian (20261231090000).
+  ABSENCE_WATCH_DIGEST
 }
 
 /// A decision on an absent rastvakt's pass (20261210090000).
@@ -250,6 +252,10 @@ model School {
   optimizationJobs        OptimizationJob[]
   scheduleCandidateRuns   ScheduleCandidateRun[]
   guardianStudents        GuardianStudent[]
+  absenceWatchSettings    AbsenceWatchSetting?
+  absenceWatchLimits      AbsenceWatchLimit[]
+  absenceWatchFindings    AbsenceWatchFinding[]
+  absenceWatchDigests     AbsenceWatchDigest[]
   absenceReports          AbsenceReport[]
   leaveRequests           LeaveRequest[]
   notifications           Notification[]
@@ -404,6 +410,8 @@ model User {
   // Guardian <-> student relations.
   guardianLinks       GuardianStudent[] @relation("GuardianSide")
   studentLinks        GuardianStudent[] @relation("StudentSide")
+  /// The limits this pupil has passed (Frånvarobevakning, 20261231090100).
+  absenceWatchFindings AbsenceWatchFinding[] @relation("AbsenceWatchStudent")
   absenceReports      AbsenceReport[]   @relation("AbsenceStudent")
   reportedAbsences    AbsenceReport[]   @relation("AbsenceReporter")
   leaveRequests       LeaveRequest[]    @relation("LeaveStudent")
@@ -4908,4 +4916,133 @@ model HuvudmanApiKey {
   /// Removing a person finds the rows that name them (20261220090000).
   @@index([createdById, huvudmanId])
   @@map("HuvudmanApiKeys")
+}
+
+// -----------------------------------------------------------------------------
+// Frånvarobevakning (20261231090100)
+// -----------------------------------------------------------------------------
+
+/// Who a limit, and the digest of the pupils over it, is for. A mentor hears
+/// of their own class, rektor and kansli (an administrator with the profile
+/// REKTOR or FULL, and EXPEDITION) of every pupil, a guardian of the own child.
+enum AbsenceWatchGroup {
+  MENTOR
+  REKTOR
+  KANSLI
+  GUARDIAN
+}
+
+/// SHARE: so many percent of the registered minutes over a window of days.
+/// CONSECUTIVE: so many skoldagar in a row.
+enum AbsenceWatchKind {
+  SHARE
+  CONSECUTIVE
+}
+
+/// Which absence a limit counts: giltig (EXCUSED), ogiltig (ABSENT, and 15
+/// minutes of a LATE), or both.
+enum AbsenceWatchBasis {
+  VALID
+  INVALID
+  ALL
+}
+
+enum AbsenceWatchCadence {
+  WEEKLY
+  MONTHLY
+}
+
+/// Whether the school's bevakning is on (off until an administrator who writes
+/// Drift turns it on), and how often each group hears a count. One row per
+/// school. enabledOn is the trigger's: the school's date the switch last went on.
+model AbsenceWatchSetting {
+  schoolId        String              @id @db.Uuid
+  enabled         Boolean             @default(false)
+  enabledOn       DateTime?           @db.Date
+  mentorCadence   AbsenceWatchCadence @default(WEEKLY)
+  rektorCadence   AbsenceWatchCadence @default(WEEKLY)
+  kansliCadence   AbsenceWatchCadence @default(WEEKLY)
+  guardianCadence AbsenceWatchCadence @default(MONTHLY)
+  updatedAt       DateTime            @default(now()) @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@map("AbsenceWatchSettings")
+}
+
+/// One limit of the school: for a group, a kind and a basis, at most one. A
+/// SHARE limit has percent (1..100) and windowDays (7..60), a CONSECUTIVE one
+/// consecutiveDays (2..30); the CHECK says which. No personal data.
+model AbsenceWatchLimit {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String              @db.Uuid
+  recipientGroup  AbsenceWatchGroup
+  kind            AbsenceWatchKind
+  basis           AbsenceWatchBasis
+  percent         Int?                @db.SmallInt
+  windowDays      Int?                @db.SmallInt
+  consecutiveDays Int?                @db.SmallInt
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime            @default(now()) @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  /// One limit per group, kind and basis.
+  @@unique([schoolId, recipientGroup, kind, basis], map: "AbsenceWatchLimits_one_per_group_kind_basis_key")
+  @@map("AbsenceWatchLimits")
+}
+
+/// A pupil who has passed a limit, from the day it was first seen until the
+/// pupil came under it (clearedOn). Written by app.absence_watch_evaluate and
+/// nothing else; read only through the gateway, which records the read. It
+/// carries the limit as it stood when last seen, and minutes or days, never a
+/// reason. Personal data: gallring takes it with the attendance (ATTENDANCE).
+/// Not visible here, and load-bearing: the partial unique index
+/// AbsenceWatchFindings_one_open_key on (limitId, studentId) where clearedOn
+/// is null, and the check constraints that tie the figures to the kind.
+model AbsenceWatchFinding {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String              @db.Uuid
+  studentId       String              @db.Uuid
+  /// The limit the finding was made under; no key, so a finding outlives it.
+  limitId         String              @db.Uuid
+  recipientGroup  AbsenceWatchGroup
+  kind            AbsenceWatchKind
+  basis           AbsenceWatchBasis
+  percent         Int?                @db.SmallInt
+  windowDays      Int?                @db.SmallInt
+  consecutiveDays Int?                @db.SmallInt
+  firstCrossedOn  DateTime            @db.Date
+  lastSeenOn      DateTime            @db.Date
+  clearedOn       DateTime?           @db.Date
+  absentMinutes   Int?
+  recordedMinutes Int?
+  streakDays      Int?                @db.SmallInt
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+
+  school  School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student User   @relation("AbsenceWatchStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  /// Removing a person finds the findings that name them.
+  @@index([studentId, schoolId])
+  /// Gallring's predicate and the school's view.
+  @@index([schoolId, lastSeenOn])
+  @@map("AbsenceWatchFindings")
+}
+
+/// The ledger of written digests: one row per school, group and period end, so
+/// a digest is written once. Counts only.
+model AbsenceWatchDigest {
+  schoolId       String            @db.Uuid
+  recipientGroup AbsenceWatchGroup
+  periodStart    DateTime          @db.Date
+  periodEnd      DateTime          @db.Date
+  composedAt     DateTime          @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  recipients     Int
+  pupils         Int
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@id([schoolId, recipientGroup, periodEnd])
+  @@map("AbsenceWatchDigests")
 }

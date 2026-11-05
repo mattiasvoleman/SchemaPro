@@ -137,6 +137,8 @@ const account = (what: string): Telling<StudentKeyKind> => ({ account: what });
 /** Every key to Users, told for a pupil. */
 export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('AttendanceRecords', ['studentId'], 'CASCADE', { counted: 'attendanceMarks' }),
+  // Frånvarobevakning: the limits a pupil has passed, counted from their attendance.
+  key('AbsenceWatchFindings', ['studentId', 'schoolId'], 'CASCADE', others),
   key('MasterLessonStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'lessonParticipations' }),
   key('CalendarLessonStudents', ['studentId'], 'CASCADE', { counted: 'lessonParticipations' }),
   key('GuardianStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'guardianLinks' }),

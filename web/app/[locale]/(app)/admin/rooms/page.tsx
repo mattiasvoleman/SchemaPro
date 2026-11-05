@@ -7,7 +7,7 @@ import { MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useCrudMutations, useRooms, useRoomTypes } from "@/lib/queries";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
-import { roomTypesToCsv } from "@/lib/csv-export";
+import { roomTypesToCsv, roomsToCsv } from "@/lib/csv-export";
 import { SCHOOL_STAGES, gradeRangeLabel, stageOf } from "@/lib/school-stages";
 import type { Room, RoomType } from "@/lib/types";
 import { Page } from "@/components/layout/page";
@@ -257,6 +257,14 @@ export default function RoomsPage() {
           <>
             <CsvExportButton
               exports={[
+                // The salar themselves, which the button never gave: only the
+                // types. A room's type is written by name, so the file waits
+                // for the types as well as the rooms.
+                {
+                  kind: "rooms",
+                  build: () => roomsToCsv(rooms ?? [], roomTypes ?? []),
+                  empty: !rooms || rooms.length === 0 || roomTypes === undefined,
+                },
                 {
                   kind: "roomTypes",
                   build: () => roomTypesToCsv(roomTypes ?? []),
@@ -560,7 +568,7 @@ export default function RoomsPage() {
       </Dialog>
 
       <LazyCsvImportDialog
-        kinds={["roomTypes"]}
+        kinds={["roomTypes", "rooms"]}
         open={importOpen}
         onOpenChange={setImportOpen}
       />

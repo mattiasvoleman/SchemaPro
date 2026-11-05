@@ -225,6 +225,14 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // Drift: the dated school day. TimplanCredits are here because an
   // avbokning writes them (a friluftsdag that counts as teaching time).
   AbsenceReports: only('DRIFT'),
+  // Frånvarobevakning (20261231090100): the switch and the limits are Drift's, as the
+  // attendance and the leave they count. The findings are written by
+  // app.absence_watch_evaluate and the ledger by app.absence_watch_digest: no
+  // administrator's write reaches either, and the switch is never deleted.
+  AbsenceWatchDigests: readOnly,
+  AbsenceWatchFindings: readOnly,
+  AbsenceWatchLimits: only('DRIFT'),
+  AbsenceWatchSettings: just('DRIFT', 'insert', 'update'),
   AttendanceRecords: only('DRIFT'),
   CalendarLessonGroups: only('DRIFT'),
   CalendarLessonStudents: only('DRIFT'),

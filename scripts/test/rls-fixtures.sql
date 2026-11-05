@@ -2742,6 +2742,141 @@ BEGIN
          (m, hall, a, local_hall, 3, '13:00', '14:00', '2030-08-19', '2031-06-13', 'PENDING', NULL, a_admin, NULL, NULL);
 END $$;
 
+-- Frånvarobevakning (20261231090100), sections 305-309: a school of its own, so
+-- the counting is proved over lessons the sections plant themselves (relative to
+-- today, inside their own transactions) and the people never age.
+--
+--   …d10000000001  FULL                       …d10000000006  M1, mentor of 7A
+--   …d10000000002  REKTOR                     …d10000000007  M2, mentor of 7B
+--   …d10000000003  EXPEDITION                 …d10000000008  T3, no class
+--   …d10000000004  SCHEMALAGGARE              …d10000000009  T4, deactivated, once mentor of 7A
+--   …d10000000005  LASARE
+--   …d10000000011  P1 (7A)   …d10000000012  P2 (7A)   …d10000000013  P3 (7B)
+--   …d10000000014  P4 (7B)   …d10000000015  P5 (7A), deactivated
+--   …d10000000021  G1 (P1)   …d10000000022  G2 (P2 and P3)   …d10000000023  G3 (P4)
+--   …d10000000031  the other school's admin, …32 its pupil, …33 its guardian, …34 its teacher
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  y2 uuid;
+  ka uuid;
+  kb uuid;
+  k2 uuid;
+  u uuid;
+  p2 uuid;
+  p3 uuid;
+  m1 uuid;
+  m2 uuid;
+  t4 uuid;
+  g2 uuid;
+  po uuid;
+  go_ uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-franvarobevakning-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Frånvarobevakning', 'rls-franvarobevakning-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Bevakning', current_date - 700, current_date + 700, true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'FB7A', 7, now()) RETURNING id INTO ka;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'FB7B', 7, now()) RETURNING id INTO kb;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s1, 'fb-full@example.invalid', 'Bevakning', 'Full', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-d10000000001', true, now()),
+    (s1, 'fb-rektor@example.invalid', 'Bevakning', 'Rektor', 'SCHOOL_ADMIN', 'REKTOR', '00000000-0000-4000-8000-d10000000002', true, now()),
+    (s1, 'fb-expedition@example.invalid', 'Bevakning', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-d10000000003', true, now()),
+    (s1, 'fb-schemalaggare@example.invalid', 'Bevakning', 'Schemaläggare', 'SCHOOL_ADMIN', 'SCHEMALAGGARE', '00000000-0000-4000-8000-d10000000004', true, now()),
+    (s1, 'fb-lasare@example.invalid', 'Bevakning', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-d10000000005', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'fb-m1@example.invalid', 'Bevakning', 'Mentor A', 'TEACHER', '00000000-0000-4000-8000-d10000000006', true, now()) RETURNING id INTO m1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'fb-m2@example.invalid', 'Bevakning', 'Mentor B', 'TEACHER', '00000000-0000-4000-8000-d10000000007', true, now()) RETURNING id INTO m2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'fb-t3@example.invalid', 'Bevakning', 'Utan klass', 'TEACHER', '00000000-0000-4000-8000-d10000000008', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'fb-t4@example.invalid', 'Bevakning', 'Slutat mentor', 'TEACHER', '00000000-0000-4000-8000-d10000000009', false, now()) RETURNING id INTO t4;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt") VALUES
+    (s1, m1, y, 'MENTORSKAP', 'Mentor 7A', 60, ka, now()),
+    (s1, m2, y, 'MENTORSKAP', 'Mentor 7B', 60, kb, now()),
+    (s1, t4, y, 'MENTORSKAP', 'Mentor 7A (slutat)', 60, ka, now());
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'fb-p1@example.invalid', 'Bevakning', 'Elev Ett', 'STUDENT', '00000000-0000-4000-8000-d10000000011', true, ka, now()) RETURNING id INTO u;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'fb-p2@example.invalid', 'Bevakning', 'Elev Två', 'STUDENT', '00000000-0000-4000-8000-d10000000012', true, ka, now()) RETURNING id INTO p2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'fb-p3@example.invalid', 'Bevakning', 'Elev Tre', 'STUDENT', '00000000-0000-4000-8000-d10000000013', true, kb, now()) RETURNING id INTO p3;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'fb-p4@example.invalid', 'Bevakning', 'Elev Fyra', 'STUDENT', '00000000-0000-4000-8000-d10000000014', true, kb, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'fb-p5@example.invalid', 'Bevakning', 'Elev Fem', 'STUDENT', '00000000-0000-4000-8000-d10000000015', false, ka, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'fb-g1@example.invalid', 'Bevakning', 'Vårdnadshavare Ett', 'GUARDIAN', '00000000-0000-4000-8000-d10000000021', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'fb-g2@example.invalid', 'Bevakning', 'Vårdnadshavare Två', 'GUARDIAN', '00000000-0000-4000-8000-d10000000022', true, now()) RETURNING id INTO g2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'fb-g3@example.invalid', 'Bevakning', 'Vårdnadshavare Tre', 'GUARDIAN', '00000000-0000-4000-8000-d10000000023', true, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT s1, g."id", p."id"
+    FROM (VALUES ('fb-g1@example.invalid', 'fb-p1@example.invalid'),
+                 ('fb-g2@example.invalid', 'fb-p2@example.invalid'),
+                 ('fb-g2@example.invalid', 'fb-p3@example.invalid'),
+                 ('fb-g3@example.invalid', 'fb-p4@example.invalid')) AS v(guardian, pupil)
+    JOIN "Users" g ON g."schoolId" = s1 AND g."email" = v.guardian
+    JOIN "Users" p ON p."schoolId" = s1 AND p."email" = v.pupil;
+
+  -- The other school: its own admin, class, pupil, guardian and mentor, so a
+  -- finding there can be shown to reach nobody here.
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Frånvarobevakning annan', 'rls-franvarobevakning-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'Bevakning annan', current_date - 700, current_date + 700, true, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s2, y2, 'FB9A', 9, now()) RETURNING id INTO k2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'fb-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-d10000000031', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s2, 'fb-annan-p@example.invalid', 'Annan', 'Elev', 'STUDENT', '00000000-0000-4000-8000-d10000000032', true, k2, now()) RETURNING id INTO po;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'fb-annan-g@example.invalid', 'Annan', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-d10000000033', true, now()) RETURNING id INTO go_;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'fb-annan-m@example.invalid', 'Annan', 'Mentor', 'TEACHER', '00000000-0000-4000-8000-d10000000034', true, now()) RETURNING id INTO m1;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s2, go_, po);
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  VALUES (s2, m1, y2, 'MENTORSKAP', 'Mentor 9A', 60, k2, now());
+END $$;
+
+-- The matrix school's rows for Frånvarobevakning (20261231090100), so the role
+-- matrix (section 116) has a row of each table to probe. Written by the owner:
+-- no role has a write arm on the findings or the ledger.
+DO $$
+DECLARE
+  m uuid;
+  pupil uuid;
+  lim uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "AbsenceWatchSettings" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = m AND role = 'STUDENT' ORDER BY "createdAt", id LIMIT 1;
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (m, true);
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays")
+  VALUES (m, 'MENTOR', 'SHARE', 'INVALID', 10, 14) RETURNING id INTO lim;
+  IF pupil IS NOT NULL THEN
+    INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, percent, "windowDays",
+                                        "firstCrossedOn", "lastSeenOn", "absentMinutes", "recordedMinutes")
+    VALUES (m, pupil, lim, 'MENTOR', 'SHARE', 'INVALID', 10, 14, '2030-09-05', '2030-09-06', 120, 600);
+  END IF;
+  INSERT INTO "AbsenceWatchDigests" ("schoolId", "recipientGroup", "periodStart", "periodEnd", recipients, pupils)
+  VALUES (m, 'MENTOR', '2030-09-02', '2030-09-08', 1, 1);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

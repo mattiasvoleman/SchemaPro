@@ -129,6 +129,7 @@ import { ss12000SyncChecks, sweepSs12000School } from './probe-ss12000-sync';
 import { ss12000ProviderChecks } from './probe-ss12000-provider';
 import { gallringChecks, sweepGallringSchool } from './probe-gallring';
 import { lasloggChecks, sweepLasloggSchool } from './probe-laslogg';
+import { absenceWatchChecks, sweepAbsenceWatchSchool } from './probe-franvarobevakning';
 import { calendarFeedChecks, sweepCalendarFeedSchool } from './probe-calendar-feed';
 import { leaveChecks, sweepLeaveSchool } from './probe-leave';
 import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
@@ -5914,6 +5915,7 @@ async function runChecks(
   await ss12000ProviderChecks(owner, api, MARKER, check);
   await gallringChecks(owner, api, MARKER, check);
   await lasloggChecks(owner, api, MARKER, check);
+  await absenceWatchChecks(owner, api, MARKER, check);
   await calendarFeedChecks(owner, api, MARKER, check);
   await leaveChecks(owner, api, MARKER, check);
   await skolenheterChecks(owner, api, MARKER, check);
@@ -6398,6 +6400,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepGallringSchool(owner, MARKER);
   // The läslogg's school, likewise.
   await sweepLasloggSchool(owner, MARKER);
+  // Frånvarobevakning's school, likewise.
+  await sweepAbsenceWatchSchool(owner, MARKER);
   // Kalenderprenumeration's school, likewise.
   await sweepCalendarFeedSchool(owner, MARKER);
   // Mentorns ledighetsbeslut's two schools, likewise.
