@@ -2867,7 +2867,7 @@
     "kinds": {
       "students": "Students",
       "teachers": "Teachers",
-      "classes": "Classes",
+      "classes": "Classes and groups",
       "teachingGroups": "Teaching groups",
       "roomTypes": "Room types",
       "subjects": "Subjects",
@@ -2889,7 +2889,9 @@
     "rowErrors": "Errors per row",
     "rowError": "Row {row}: {message}",
     "rowWarnings": "Saved, with a staffing warning",
-    "exportButton": "Export CSV"
+    "exportButton": "Export CSV",
+    "rowNumbering": "Row 1 is the first row below the headers, that is row 2 in Excel.",
+    "rejectedByServer": "The server did not accept the file, because a cell holds a value that cannot be saved. Nothing was imported. Compare the file with the template."
   },
   "grades": {
     "grade": "{grade, plural, =0 {Reception} other {Year #}}"

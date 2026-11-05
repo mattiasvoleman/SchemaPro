@@ -791,3 +791,54 @@ describe("CsvImportDialog import failures", () => {
     expect(toast.error).toHaveBeenCalledWith("HTTP 429");
   });
 });
+
+describe("CsvImportDialog with files as schools save them", () => {
+  it("reads a file Excel saved as CSV (semikolonavgränsad), in Windows-1252, with å, ä and ö intact", async () => {
+    mockPost.mockResolvedValue({ created: 1, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog();
+
+    // "Östen;Åberg;osten@example.com;7Ä" in the code page Excel writes: Ö D6, Å C5, Ä C4.
+    const latin1 = (text: string) => Uint8Array.from([...text].map((char) => char.charCodeAt(0)));
+    const file = new File([latin1("fornamn;efternamn;epost;klass\r\nÖsten;Åberg;osten@example.com;7Ä\r\n")], "elever.csv", {
+      type: "text/csv",
+    });
+    await user.upload(screen.getByLabelText("chooseFile"), file);
+
+    await screen.findByText("rowsReady(count=1)");
+    expect(screen.getByText("Östen")).toBeInTheDocument();
+    expect(screen.getByText("7Ä")).toBeInTheDocument();
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(mockPost.mock.calls[0]?.[1]).toMatchObject({
+      rows: [{ firstName: "Östen", lastName: "Åberg", email: "osten@example.com", className: "7Ä" }],
+    });
+  });
+
+  it("says in the reader's language that nothing was imported when the gateway refuses the body", async () => {
+    mockPost.mockRejectedValue(new Error("One or more fields failed validation."));
+    const user = userEvent.setup();
+    renderDialog();
+
+    await uploadCsv(user, STUDENTS_CSV);
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("rejectedByServer"));
+  });
+
+  it("names the row and the column of a cell it will not send, and says how rows are counted", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await uploadCsv(user, BOM + "fornamn;efternamn;epost;klass\r\nAlma;Berg;alma.berg@;7A\r\n");
+
+    expect(
+      await screen.findByText('Rad 1: epost "alma.berg@" är inte en e-postadress. Skriv den som namn@skolan.se.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText("rowNumbering")).toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
+  });
+});
+

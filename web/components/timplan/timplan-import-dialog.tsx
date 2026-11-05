@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
-import { downloadCsv, parseCsv, type RowError } from "@/lib/csv";
+import { decodeCsvBytes, downloadCsv, parseCsv, type RowError } from "@/lib/csv";
 import {
   formatTimplanGrade,
   mapTimplanRows,
@@ -106,7 +106,9 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
   const onFileChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const parsed = parseCsv(await file.text());
+    // Bytes, not file.text(): a file saved in Excel is Windows-1252, and
+    // read as UTF-8 its å, ä and ö would be lost before parsing (decodeCsvBytes).
+    const parsed = parseCsv(decodeCsvBytes(new Uint8Array(await file.arrayBuffer())));
     const mapped = mapTimplanRows(parsed);
     setReport(null);
     setPreview({

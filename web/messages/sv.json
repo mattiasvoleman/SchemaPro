@@ -2867,7 +2867,7 @@
     "kinds": {
       "students": "Elever",
       "teachers": "Lärare",
-      "classes": "Klasser",
+      "classes": "Klasser och grupper",
       "teachingGroups": "Undervisningsgrupper",
       "roomTypes": "Salstyper",
       "subjects": "Ämnen",
@@ -2889,7 +2889,9 @@
     "rowErrors": "Fel per rad",
     "rowError": "Rad {row}: {message}",
     "rowWarnings": "Sparade, med varning från tjänstefördelningen",
-    "exportButton": "Exportera CSV"
+    "exportButton": "Exportera CSV",
+    "rowNumbering": "Rad 1 är första raden under rubrikerna, alltså rad 2 i Excel.",
+    "rejectedByServer": "Servern tog inte emot filen, eftersom en cell har ett värde som inte går att spara. Inget importerades. Jämför filen med mallen."
   },
   "grades": {
     "grade": "{grade, plural, =0 {Förskoleklass} other {Åk #}}"

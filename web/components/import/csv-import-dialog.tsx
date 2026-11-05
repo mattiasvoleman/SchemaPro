@@ -16,6 +16,7 @@ import {
   mapTeacherDutyRows,
   mapTeacherQualificationRows,
   mapTeacherRows,
+  decodeCsvBytes,
   parseCsv,
   type ImportKind,
   type ParsedCsv,
@@ -80,6 +81,16 @@ const MAPPERS: Record<
 };
 
 const PREVIEW_ROWS = 5;
+
+/**
+ * The detail the gateway answers a body its ValidationPipe refuses with
+ * (src/common/filters/http-exception.filter.ts): English, and with no row in
+ * it, since the fields it names sit in a list this client does not read. The
+ * mappers in lib/csv.ts ask the DTOs' own questions first so a file should
+ * never get here; if one does, the reader is told in their language that
+ * nothing was imported, rather than shown a sentence written for a log.
+ */
+const REFUSED_BODY = "One or more fields failed validation.";
 
 interface FilePreview {
   fileName: string;
@@ -169,7 +180,9 @@ export function CsvImportDialog({
   const onFileChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const parsed = parseCsv(await file.text());
+    // Bytes, not file.text(): a file saved in Excel is Windows-1252, and
+    // read as UTF-8 its å, ä and ö would be lost before parsing (decodeCsvBytes).
+    const parsed = parseCsv(decodeCsvBytes(new Uint8Array(await file.arrayBuffer())));
     const mapped = MAPPERS[kind](parsed);
     setReport(null);
     setPreview({
@@ -219,7 +232,8 @@ export function CsvImportDialog({
       });
       setReport(result);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      const message = error instanceof Error ? error.message : tCommon("error");
+      toast.error(message === REFUSED_BODY ? t("rejectedByServer") : message);
     }
   };
 
@@ -258,10 +272,15 @@ export function CsvImportDialog({
               {report.errors.length > 0 ? (
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-destructive">{t("rowErrors")}</p>
+                  <p className="text-sm text-muted-foreground">{t("rowNumbering")}</p>
                   <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-destructive">
                     {report.errors.map((error, index) => (
                       <li key={`${error.row}-${index}`}>
-                        {t("rowError", { row: error.row, message: error.message })}
+                        {t("rowError", {
+                          row: error.row,
+                          // A later batch refused whole lands here (importCsvInBatches).
+                          message: error.message === REFUSED_BODY ? t("rejectedByServer") : error.message,
+                        })}
                       </li>
                     ))}
                   </ul>
@@ -362,6 +381,7 @@ export function CsvImportDialog({
                       <p className="text-sm font-medium text-destructive">
                         {t("mappingErrors")}
                       </p>
+                      <p className="text-sm text-muted-foreground">{t("rowNumbering")}</p>
                       <ul className="max-h-40 space-y-1 overflow-y-auto text-sm text-destructive">
                         {preview.errors.map((error, index) => (
                           <li key={`${error.row}-${index}`}>{error.message}</li>

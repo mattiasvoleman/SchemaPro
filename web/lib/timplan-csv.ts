@@ -151,6 +151,14 @@ export function mapTimplanRows(parsed: ParsedCsv): {
 
     const subject = cell("subject");
     if (subject === "") return fail(`Rad ${rowNumber}: amne saknas.`);
+    // ImportTimplanRowDto's @MaxLength(120), in code points: the page this
+    // module ships with is near its budget, and the one difference from the
+    // DTO's count (lib/csv-cell-rules.ts), an emoji's variation selector, is
+    // not in a subject's name.
+    const length = [...subject].length;
+    if (length > 120) {
+      return fail(`Rad ${rowNumber}: amne är ${length} tecken lång, men får vara högst 120.`);
+    }
 
     const rawGrade = cell("gradeLevel");
     const gradeLevel = parseTimplanGrade(rawGrade);
@@ -174,7 +182,8 @@ export function mapTimplanRows(parsed: ParsedCsv): {
     const row: TimplanImportRow = { subject, gradeLevel, minutesPerWeek };
     if (columnOf.has("note")) {
       const note = cell("note");
-      if (note.length > 500) {
+      // Code points, as the DTO's @MaxCodePoints(500) and the column count.
+      if ([...note].length > 500) {
         return fail(`Rad ${rowNumber}: notering är längre än 500 tecken.`);
       }
       row.note = note;
