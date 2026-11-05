@@ -933,58 +933,150 @@ export class ImportService {
       groups.map((group) => [this.normalizeName(group.name), group.id]),
     );
 
+    // An empty klass cell is a pupil without a class, as the register allows
+    // and the export writes; only a class that is NAMED and missing is an
+    // error, since a misspelt class must not land a pupil outside every class.
     const rows = dto.rows.map((row, index) => {
-      const groupId = groupByName.get(this.normalizeName(row.className));
+      const className = row.className?.trim() ?? '';
+      const groupId = className === '' ? null : groupByName.get(this.normalizeName(className));
       return { ...row, index, studentGroupId: groupId };
     });
 
     const unresolved = rows.filter((row) => row.studentGroupId === undefined);
-    const resolved = rows.filter((row) => row.studentGroupId !== undefined);
+    const resolved = rows
+      .filter((row) => row.studentGroupId !== undefined)
+      .map((row) => ({ ...row, studentGroupId: row.studentGroupId ?? undefined }));
 
     const report = await this.importPeople(resolved, 'STUDENT', user);
     for (const row of unresolved) {
       report.errors.push({
         row: row.index + 1,
-        message: `Klassen "${row.className}" finns inte för det valda läsåret. Importera klasserna först.`,
+        message: `Klassen "${row.className}" finns inte för det valda läsåret. Importera klasserna först, eller lämna kolumnen klass tom.`,
       });
     }
     report.errors.sort((a, b) => a.row - b.row);
     return report;
   }
 
+  /**
+   * The läsår's groups: classes, and — when the file has the `typ` column —
+   * teaching groups, halves of a class and groups that replace a subject.
+   *
+   * Create-only, matched by normalized name within the year, like before. A
+   * file of only namn and arskurs is the class list it always was.
+   *
+   * Two passes, so a half may stand before its class in the file: every row
+   * that is no half first, then the halves, each resolving its class by name
+   * among the year's groups and the ones this file just made. A half is made
+   * as "Dela klassen" makes one (splitLockedClass): a teaching group of the
+   * class's year, in the class's årskurs unless the row names one, with the
+   * class in halfOfId — which the database also holds (HALF_OF_NOT_A_CLASS).
+   * A subject to replace is resolved like every kind's ämne, and only a
+   * teaching group that is no half may replace one, as the groups page says.
+   */
   async importGroups(
     dto: ImportGroupsDto,
     user: AuthenticatedUser,
   ): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
+    try {
+      return await this.importGroupRows(dto, user, schoolId);
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      rethrowPrismaError(error);
+    }
+  }
+
+  private importGroupRows(
+    dto: ImportGroupsDto,
+    user: AuthenticatedUser,
+    schoolId: string,
+  ): Promise<ImportReport> {
     return this.prisma.withRls(user, async (tx) => {
       const existing = await tx.studentGroup.findMany({
         where: { academicYearId: dto.academicYearId },
-        select: { name: true },
+        select: { id: true, name: true, kind: true, gradeLevel: true },
       });
-      const taken = new Set(existing.map((group) => this.normalizeName(group.name)));
+      const byName = new Map(existing.map((group) => [this.normalizeName(group.name), group]));
+      const replaces = dto.rows.some((row) => (row.replacesSubject ?? '').trim() !== '');
+      const subjects = replaces
+        ? await tx.subject.findMany({ select: { id: true, code: true, name: true } })
+        : [];
 
       const report: ImportReport = { created: 0, skipped: 0, errors: [] };
-      for (const row of dto.rows) {
+      const isHalf = (row: (typeof dto.rows)[number]) => (row.halfOf ?? '').trim() !== '';
+      const ordered = [
+        ...[...dto.rows.entries()].filter(([, row]) => !isHalf(row)),
+        ...[...dto.rows.entries()].filter(([, row]) => isHalf(row)),
+      ];
+      for (const [index, row] of ordered) {
+        const rowNumber = index + 1;
         const key = this.normalizeName(row.name);
-        if (taken.has(key)) {
+        if (byName.has(key)) {
           report.skipped += 1; // exists already, or duplicated within the file
           continue;
         }
-        taken.add(key);
-        await tx.studentGroup.create({
+        const kind = row.kind ?? 'CLASS';
+        const halfName = (row.halfOf ?? '').trim();
+        let halfOfId: string | null = null;
+        let gradeLevel = row.gradeLevel ?? null;
+        if (halfName !== '') {
+          const theClass = byName.get(this.normalizeName(halfName));
+          if (!theClass || theClass.kind !== 'CLASS') {
+            report.errors.push({
+              row: rowNumber,
+              message: theClass
+                ? `halvklass_av: "${halfName}" är en undervisningsgrupp. En halvklass är en halva av en klass.`
+                : `halvklass_av: klassen "${halfName}" finns inte för det valda läsåret. Skriv klassen på en egen rad i filen, eller importera klasserna först.`,
+            });
+            continue;
+          }
+          if (kind !== 'TEACHING_GROUP') {
+            report.errors.push({
+              row: rowNumber,
+              message: `typ: en halvklass är en undervisningsgrupp. Skriv "undervisningsgrupp", eller lämna halvklass_av tom.`,
+            });
+            continue;
+          }
+          halfOfId = theClass.id;
+          gradeLevel ??= theClass.gradeLevel;
+        }
+        let replacesSubjectId: string | null = null;
+        const replacedSubject = (row.replacesSubject ?? '').trim();
+        if (replacedSubject !== '') {
+          if (kind !== 'TEACHING_GROUP' || halfOfId !== null) {
+            report.errors.push({
+              row: rowNumber,
+              message:
+                kind !== 'TEACHING_GROUP'
+                  ? 'ersatter_amne: en klass är elevernas hemklass och ersätter inga lektioner. Gör en undervisningsgrupp, eller lämna kolumnen tom.'
+                  : 'ersatter_amne: en halvklass är en del av klassen och ersätter inga lektioner. Lämna kolumnen tom.',
+            });
+            continue;
+          }
+          const subject = this.resolveSubject(subjects, replacedSubject);
+          if ('message' in subject) {
+            report.errors.push({ row: rowNumber, message: `ersatter_amne: ${subject.message}` });
+            continue;
+          }
+          replacesSubjectId = subject.id;
+        }
+        const created = await tx.studentGroup.create({
           data: {
             schoolId,
             academicYearId: dto.academicYearId,
             name: row.name.trim(),
-            // klasser.csv is the class list; the membership file is what
-            // creates teaching groups.
-            kind: 'CLASS',
-            gradeLevel: row.gradeLevel ?? null,
+            kind,
+            gradeLevel,
+            ...(halfOfId ? { halfOfId } : {}),
+            ...(replacesSubjectId ? { replacesSubjectId } : {}),
           },
+          select: { id: true, name: true, kind: true, gradeLevel: true },
         });
+        byName.set(key, created);
         report.created += 1;
       }
+      report.errors.sort((a, b) => a.row - b.row);
       return report;
     });
   }

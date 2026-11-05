@@ -1,5 +1,6 @@
 import {
   LessonRecurrence,
+  StudentGroupKind,
   TeacherContractKind,
   TeacherDutyKind,
   TeacherQualificationKind,
@@ -56,11 +57,18 @@ export class ImportStudentRowDto {
   @MaxLength(254)
   email!: string;
 
-  /** Group NAME as the school writes it (7A) — resolved server-side. */
+  /**
+   * Group NAME as the school writes it (7A) — resolved server-side.
+   *
+   * Optional: a pupil the school has not placed in a class yet is a pupil the
+   * register holds (UsersService.create takes no group), and the people page
+   * exports them with an empty klass cell. Requiring it made that export a
+   * file the import refused on the way back in. An empty cell posts null.
+   */
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(60)
-  className!: string;
+  className?: string | null;
 }
 
 export class ImportStudentsDto {
@@ -155,6 +163,39 @@ export class ImportGroupRowDto {
   @Min(0)
   @Max(12)
   gradeLevel?: number | null;
+
+  /**
+   * CLASS or TEACHING_GROUP, from the file's `typ` column. Absent or null is
+   * CLASS, which is what every klasser.csv was before the column existed.
+   *
+   * The column is there because the groups page exports the läsår's teaching
+   * groups too: a group nobody has been placed in yet (Sv-stöd before the
+   * first pupil) appears in no membership row, and without a row of its own
+   * the timplan rows that name it failed on re-import with "Gruppen finns
+   * inte".
+   */
+  @IsOptional()
+  @IsEnum(StudentGroupKind, { message: 'kind: CLASS eller TEACHING_GROUP.' })
+  kind?: StudentGroupKind | null;
+
+  /**
+   * The class this group is a half of (Halvklasser), by NAME in the same
+   * läsår — a class the file creates or one the year already has. A half is
+   * a teaching group, which the database holds (20261113090000).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  halfOf?: string | null;
+
+  /**
+   * The subject a teaching group replaces for its pupils (Ersättande grupper:
+   * SvA instead of Sv), as the subject's CODE or NAME like every other kind.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  replacesSubject?: string | null;
 }
 
 export class ImportGroupsDto {

@@ -408,6 +408,54 @@ describe('CSV import (e2e)', () => {
         .expect(201);
     });
 
+    it('imports the läsår’s groups with typ, halvklass_av and ersatter_amne through the pipe', async () => {
+      // The body web/lib/csv.ts posts for an exported klasser.csv: a class, a
+      // half of it, a teaching group with no pupils yet and one replacing a subject.
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([]);
+      harness.tx['subject']!['findMany']!.mockResolvedValue([{ id: 'sub-sv', name: 'Svenska', code: 'SV' }]);
+      harness.tx['studentGroup']!['create']!.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ id: `id-${String(data.name)}`, name: data.name, kind: data.kind, gradeLevel: data.gradeLevel }),
+      );
+
+      const response = await post(harness, 'groups')
+        .send({
+          academicYearId: YEAR_ID,
+          rows: [
+            { name: '7B', gradeLevel: 7, kind: 'CLASS' },
+            { name: '7B:1', gradeLevel: 7, kind: 'TEACHING_GROUP', halfOf: '7B' },
+            { name: 'Sv-stöd 7', gradeLevel: 7, kind: 'TEACHING_GROUP' },
+            { name: 'SvA 7', kind: 'TEACHING_GROUP', replacesSubject: 'SV' },
+          ],
+        })
+        .expect(201);
+
+      expect(response.body).toEqual({ created: 4, skipped: 0, errors: [] });
+      const writes = harness.tx['studentGroup']!['create']!.mock.calls.map(
+        (call) => (call[0] as { data: Record<string, unknown> }).data,
+      );
+      expect(writes).toEqual([
+        expect.objectContaining({ name: '7B', kind: 'CLASS' }),
+        expect.objectContaining({ name: 'Sv-stöd 7', kind: 'TEACHING_GROUP', gradeLevel: 7 }),
+        expect.objectContaining({ name: 'SvA 7', replacesSubjectId: 'sub-sv' }),
+        expect.objectContaining({ name: '7B:1', halfOfId: 'id-7B' }),
+      ]);
+    });
+
+    it('imports a pupil without a class, as the people page exports one', async () => {
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([]);
+      harness.tx['user']!['findFirst']!.mockResolvedValue(null);
+      harness.tx['user']!['create']!.mockResolvedValue({ id: 'u-3' });
+
+      const response = await post(harness, 'students')
+        .send({
+          academicYearId: YEAR_ID,
+          rows: [{ firstName: 'Östen', lastName: 'Åberg', email: 'osten@example.com', className: null }],
+        })
+        .expect(201);
+
+      expect(response.body).toEqual({ created: 1, skipped: 0, errors: [] });
+    });
+
     it('imports teaching-group memberships', async () => {
       harness.tx['studentGroup']!['findMany']!.mockResolvedValue([
         { id: GROUP_ID, name: 'Ma71' },
@@ -821,13 +869,19 @@ describe('CSV import (e2e)', () => {
       expect(JSON.stringify(noKind.body)).toContain('rows.0.Behörigheten är LEGITIMATION');
     });
 
-    it('rejects a student row missing its class', async () => {
+    it('rejects a class name longer than the column, and a group typ the enum does not have', async () => {
       await post(harness, 'students')
         .send({
           academicYearId: YEAR_ID,
-          rows: [{ firstName: 'A', lastName: 'B', email: 'a@example.com' }],
+          rows: [{ firstName: 'A', lastName: 'B', email: 'a@example.com', className: 'x'.repeat(61) }],
         })
         .expect(400);
+
+      const kind = await post(harness, 'groups')
+        .send({ academicYearId: YEAR_ID, rows: [{ name: '7A', kind: 'undervisningsgrupp' }] })
+        .expect(400);
+      // The browser folds the Swedish word into the enum; the body never carries it.
+      expect(JSON.stringify(kind.body)).toContain('kind: CLASS eller TEACHING_GROUP');
     });
 
     it('rejects a year that is not a uuid', async () => {

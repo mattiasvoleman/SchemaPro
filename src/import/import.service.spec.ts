@@ -231,6 +231,45 @@ describe('ImportService', () => {
       ]);
       expect(users.create).toHaveBeenCalledTimes(1);
     });
+
+    it('creates a pupil without a class when the klass cell is empty, as the register allows', async () => {
+      // The people page exports a pupil not yet placed in a class with an
+      // empty klass cell; that row must come back as the same pupil.
+      const report = await service.importStudents(
+        {
+          academicYearId: YEAR_ID,
+          rows: [
+            { firstName: 'Östen', lastName: 'Åberg', email: 'osten@example.com', className: null },
+            { firstName: 'Ida', lastName: 'Ek', email: 'ida@example.com', className: '  ' },
+            { firstName: 'Nils', lastName: 'Ahl', email: 'nils@example.com' },
+          ],
+        },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 3, skipped: 0, errors: [] });
+      for (const call of users.create.mock.calls) {
+        expect(call[0]).toEqual(expect.objectContaining({ role: 'STUDENT', studentGroupId: undefined }));
+      }
+    });
+
+    it('still refuses a class that is named and missing, saying the cell may be left empty', async () => {
+      const report = await service.importStudents(
+        {
+          academicYearId: YEAR_ID,
+          rows: [{ firstName: 'Alma', lastName: 'Berg', email: 'alma@example.com', className: '7X' }],
+        },
+        testUser(),
+      );
+
+      expect(report.errors).toEqual([
+        {
+          row: 1,
+          message: 'Klassen "7X" finns inte för det valda läsåret. Importera klasserna först, eller lämna kolumnen klass tom.',
+        },
+      ]);
+      expect(users.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('importGroups', () => {
@@ -260,12 +299,130 @@ describe('ImportService', () => {
           kind: 'CLASS',
           gradeLevel: 7,
         },
+        select: expect.anything(),
       });
       // Only this läsår's classes count as taken: last year's 7B does not make
       // this year's a duplicate.
       expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { academicYearId: YEAR_ID } }),
       );
+    });
+
+    describe('the typ, halvklass_av and ersatter_amne columns', () => {
+      /** Every create answers what it wrote, with an id named after the group. */
+      const echoCreates = () =>
+        tx.studentGroup.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve({ id: `id-${String(data.name)}`, name: data.name, kind: data.kind, gradeLevel: data.gradeLevel }),
+        );
+      const created = () =>
+        tx.studentGroup.create.mock.calls.map(([args]: [{ data: Record<string, unknown> }]) => args.data);
+
+      it('makes a teaching group, and a half of a class the file names AFTER it, in the class’s årskurs', async () => {
+        arrangeRows(tx.studentGroup.findMany, []);
+        echoCreates();
+
+        const report = await service.importGroups(
+          {
+            academicYearId: YEAR_ID,
+            rows: [
+              { name: '7B:1', kind: 'TEACHING_GROUP', halfOf: '7b' },
+              { name: '7B', gradeLevel: 7 },
+              { name: 'Sv-stöd 7', kind: 'TEACHING_GROUP', gradeLevel: 7 },
+            ],
+          },
+          testUser(),
+        );
+
+        expect(report).toEqual({ created: 3, skipped: 0, errors: [] });
+        expect(created()).toEqual([
+          expect.objectContaining({ name: '7B', kind: 'CLASS', gradeLevel: 7 }),
+          expect.objectContaining({ name: 'Sv-stöd 7', kind: 'TEACHING_GROUP', gradeLevel: 7 }),
+          { schoolId: testUser().schoolId, academicYearId: YEAR_ID, name: '7B:1', kind: 'TEACHING_GROUP', gradeLevel: 7, halfOfId: 'id-7B' },
+        ]);
+      });
+
+      it('makes a half of a class the year already has', async () => {
+        arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: '7A', kind: 'CLASS', gradeLevel: 7 }]);
+        echoCreates();
+
+        const report = await service.importGroups(
+          { academicYearId: YEAR_ID, rows: [{ name: '7A:2', kind: 'TEACHING_GROUP', halfOf: '7A', gradeLevel: 7 }] },
+          testUser(),
+        );
+
+        expect(report).toEqual({ created: 1, skipped: 0, errors: [] });
+        expect(created()[0]).toEqual(expect.objectContaining({ halfOfId: GROUP_7A }));
+      });
+
+      it('resolves a replaced subject by code or name, and writes nothing about it when the cell is empty', async () => {
+        arrangeRows(tx.studentGroup.findMany, []);
+        arrangeRows(tx.subject.findMany, [{ id: 'sub-sv', name: 'Svenska', code: 'SV' }]);
+        echoCreates();
+
+        const report = await service.importGroups(
+          {
+            academicYearId: YEAR_ID,
+            rows: [
+              { name: 'SvA 7', kind: 'TEACHING_GROUP', replacesSubject: 'sv' },
+              { name: 'SvA 8', kind: 'TEACHING_GROUP', replacesSubject: 'Svenska' },
+              { name: 'Ma71', kind: 'TEACHING_GROUP', replacesSubject: null },
+            ],
+          },
+          testUser(),
+        );
+
+        expect(report).toEqual({ created: 3, skipped: 0, errors: [] });
+        expect(created().map((data) => data.replacesSubjectId)).toEqual(['sub-sv', 'sub-sv', undefined]);
+      });
+
+      it('reads no subjects for a file that replaces none', async () => {
+        arrangeRows(tx.studentGroup.findMany, []);
+        echoCreates();
+
+        await service.importGroups({ academicYearId: YEAR_ID, rows: [{ name: '7A', gradeLevel: 7 }] }, testUser());
+
+        expect(tx.subject.findMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses, per row and naming the column, what the database or the groups page would refuse', async () => {
+        arrangeRows(tx.studentGroup.findMany, [
+          { id: GROUP_7A, name: '7A', kind: 'CLASS', gradeLevel: 7 },
+          { id: 'id-ma71', name: 'Ma71', kind: 'TEACHING_GROUP', gradeLevel: null },
+        ]);
+        arrangeRows(tx.subject.findMany, [{ id: 'sub-sv', name: 'Svenska', code: 'SV' }]);
+        echoCreates();
+
+        const report = await service.importGroups(
+          {
+            academicYearId: YEAR_ID,
+            rows: [
+              { name: '7X:1', kind: 'TEACHING_GROUP', halfOf: '7X' },
+              { name: 'Ma71:1', kind: 'TEACHING_GROUP', halfOf: 'Ma71' },
+              { name: '7A:1', kind: 'CLASS', halfOf: '7A' },
+              { name: '7C', replacesSubject: 'SV' },
+              { name: '7A:2', kind: 'TEACHING_GROUP', halfOf: '7A', replacesSubject: 'SV' },
+              { name: 'SvA 9', kind: 'TEACHING_GROUP', replacesSubject: 'Tyska' },
+              { name: 'Fine', kind: 'TEACHING_GROUP' },
+            ],
+          },
+          testUser(),
+        );
+
+        expect(report.created).toBe(1);
+        expect(report.errors).toEqual([
+          {
+            row: 1,
+            message:
+              'halvklass_av: klassen "7X" finns inte för det valda läsåret. Skriv klassen på en egen rad i filen, eller importera klasserna först.',
+          },
+          { row: 2, message: 'halvklass_av: "Ma71" är en undervisningsgrupp. En halvklass är en halva av en klass.' },
+          { row: 3, message: 'typ: en halvklass är en undervisningsgrupp. Skriv "undervisningsgrupp", eller lämna halvklass_av tom.' },
+          { row: 4, message: expect.stringMatching(/^ersatter_amne: en klass är elevernas hemklass/) },
+          { row: 5, message: expect.stringMatching(/^ersatter_amne: en halvklass är en del av klassen/) },
+          { row: 6, message: expect.stringMatching(/^ersatter_amne: Ämnet "Tyska" finns inte\./) },
+        ]);
+        expect(created()).toEqual([expect.objectContaining({ name: 'Fine' })]);
+      });
     });
   });
 
@@ -763,6 +920,7 @@ describe('ImportService', () => {
           kind: 'CLASS',
           gradeLevel: null,
         },
+        select: expect.anything(),
       });
     });
 
@@ -1039,6 +1197,7 @@ describe('ImportService', () => {
           kind: 'CLASS',
           gradeLevel: null,
         },
+        select: expect.anything(),
       });
     });
   });
