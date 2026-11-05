@@ -36782,6 +36782,38 @@ BEGIN
   END IF;
 END $$;
 
+-- What a group's digest tells each of its recipients, as 'xx open/crossed' (the two
+-- figures of their notice), asked the only way the API's role may: it holds no EXECUTE on
+-- app.absence_watch_digest_plan, which the digest runs as the owner. So the digest is
+-- written and taken back: the block that raises ends with its writes undone, the ledger,
+-- the read log and the notices among them. A period's digest must therefore not be written
+-- for real before it is asked for. p_pupils adds the pupils each recipient's read log row
+-- names, which only holds for a reader with nothing in the log from the last quarter-hour.
+CREATE FUNCTION pg_temp.fb_would_hear(p_school uuid, p_group "AbsenceWatchGroup", p_start date, p_end date, p_on date,
+                                      p_pupils boolean DEFAULT false)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  heard text;
+  r record;
+BEGIN
+  BEGIN
+    -- The read log is asked in the loop's own statements: what the digest wrote
+    -- is not in the snapshot of the statement that called it.
+    FOR r IN SELECT d.user_id, d.email, d.meta FROM app.absence_watch_digest(p_school, p_group, p_start, p_end, p_on) d ORDER BY d.email LOOP
+      heard := concat_ws(', ', heard,
+                         substr(r.email, 4, 2) || ' ' || (r.meta ->> 'open') || '/' || (r.meta ->> 'crossed')
+                         || CASE WHEN p_pupils
+                                 THEN ' ' || coalesce((SELECT sum(a."readSize") FROM "PersonalDataAccess" a
+                                                        WHERE a."actorId" = r.user_id AND a.kind = 'ATTENDANCE' AND a.channel = 'OTHER'), 0)
+                                 ELSE '' END);
+    END LOOP;
+    RAISE EXCEPTION 'frånvarobevakning: taken back' USING ERRCODE = 'FB000', DETAIL = coalesce(heard, '');
+  EXCEPTION WHEN SQLSTATE 'FB000' THEN
+    GET STACKED DIAGNOSTICS heard = PG_EXCEPTION_DETAIL;
+  END;
+  RETURN heard;
+END $$;
+
 -- ---------------------------------------------------------------------------
 -- Section 305: the tables and what their triggers do.
 -- ---------------------------------------------------------------------------
@@ -37629,6 +37661,9 @@ BEGIN
     END;
   END LOOP;
   SET LOCAL ROLE app_authenticated;
+  -- The plan hands out the recipients' addresses and pupils for any school it is given, and
+  -- only the digest asks for it: the API's role is refused it.
+  PERFORM pg_temp.fb_denied('SELECT * FROM app.absence_watch_digest_plan(gen_random_uuid(), ''MENTOR'', current_date, current_date, current_date)');
 
   FOREACH tbl IN ARRAY ARRAY['AbsenceWatchSettings', 'AbsenceWatchLimits', 'AbsenceWatchFindings', 'AbsenceWatchDigests'] LOOP
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
@@ -37660,7 +37695,7 @@ BEGIN
   END IF;
 
   -- The functions: PUBLIC and PostgREST's roles hold none; the API's role holds
-  -- the six it calls and not the mentee list or the triggers' bodies.
+  -- the five it calls and not the mentee list, the plan or the triggers' bodies.
   FOR fn, bad IN
     SELECT p.oid::regprocedure::text,
            concat_ws(',',
@@ -37674,13 +37709,13 @@ BEGIN
     IF bad <> '' THEN RAISE EXCEPTION 'frånvarobevakning 307: % may be run by %', fn, bad; END IF;
   END LOOP;
   FOREACH fn IN ARRAY ARRAY['app.absence_watch_is_mentor_of(uuid)', 'app.absence_watch_schools()', 'app.absence_watch_evaluate(uuid, date)',
-                            'app.absence_watch_digest_due(uuid, date)', 'app.absence_watch_digest_plan(uuid, "AbsenceWatchGroup", date, date, date)',
-                            'app.absence_watch_digest(uuid, "AbsenceWatchGroup", date, date, date)'] LOOP
+                            'app.absence_watch_digest_due(uuid, date)', 'app.absence_watch_digest(uuid, "AbsenceWatchGroup", date, date, date)'] LOOP
     IF NOT has_function_privilege('app_authenticated', fn::regprocedure, 'EXECUTE') THEN
       RAISE EXCEPTION 'frånvarobevakning 307: the API role cannot run %', fn;
     END IF;
   END LOOP;
-  FOREACH fn IN ARRAY ARRAY['app.absence_watch_mentees(uuid, date)', 'app.absence_watch_settings_stamp()', 'app.absence_watch_settings_stop()',
+  FOREACH fn IN ARRAY ARRAY['app.absence_watch_mentees(uuid, date)', 'app.absence_watch_digest_plan(uuid, "AbsenceWatchGroup", date, date, date)',
+                            'app.absence_watch_settings_stamp()', 'app.absence_watch_settings_stop()',
                             'app.absence_watch_limits_stamp()', 'app.absence_watch_limits_removed()'] LOOP
     IF has_function_privilege('app_authenticated', fn::regprocedure, 'EXECUTE') THEN
       RAISE EXCEPTION 'frånvarobevakning 307: the API role can run %, which is the owner''s', fn;
@@ -37749,25 +37784,28 @@ BEGIN
     RAISE EXCEPTION 'frånvarobevakning 308: after the 27th: %', pg_temp.fb_findings();
   END IF;
 
-  -- The digests of Monday the 28th, for the week of the 21st: who hears what.
-  -- open_n are the pupils over a limit now, crossed_n those whose crossing was
-  -- in the period, student_ids the pupils the digest rests on.
-  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n || ' ' || cardinality(p.student_ids), ', ' ORDER BY p.email)
-            FROM app.absence_watch_digest_plan(school, 'MENTOR', '2026-09-21', '2026-09-27', today) p);
-  PERFORM pg_temp.fb_expect('308 mentors', got, 'm1 1/1 1, m2 1/1 1');
-  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
-            FROM app.absence_watch_digest_plan(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today) p);
-  PERFORM pg_temp.fb_expect('308 guardians', got, 'g1 1/1, g2 1/1');
-  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
-            FROM app.absence_watch_digest_plan(school, 'REKTOR', '2026-09-21', '2026-09-27', today) p);
-  PERFORM pg_temp.fb_expect('308 rektor', got, 'fu 2/2, re 2/2');
-  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
-            FROM app.absence_watch_digest_plan(school, 'KANSLI', '2026-09-21', '2026-09-27', today) p);
-  PERFORM pg_temp.fb_expect('308 kansli', got, 'ex 2/2');
+  -- The digests of Monday the 28th, for the week of the 21st: who hears what. open is the
+  -- pupils over a limit now, crossed those whose crossing was in the period; the last figure
+  -- of the mentors' lines is the pupils their read log row names. Each is asked for before
+  -- its digest is written for real, and taken back (pg_temp.fb_would_hear).
+  PERFORM pg_temp.fb_expect('308 mentors', pg_temp.fb_would_hear(school, 'MENTOR', '2026-09-21', '2026-09-27', today, true), 'm1 1/1 1, m2 1/1 1');
+  PERFORM pg_temp.fb_expect('308 guardians', pg_temp.fb_would_hear(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today), 'g1 1/1, g2 1/1');
+  PERFORM pg_temp.fb_expect('308 rektor', pg_temp.fb_would_hear(school, 'REKTOR', '2026-09-21', '2026-09-27', today), 'fu 2/2, re 2/2');
+  PERFORM pg_temp.fb_expect('308 kansli', pg_temp.fb_would_hear(school, 'KANSLI', '2026-09-21', '2026-09-27', today), 'ex 2/2');
   -- The week before: P4 crossed in it and is not open now, and two are open.
-  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
-            FROM app.absence_watch_digest_plan(school, 'KANSLI', '2026-09-14', '2026-09-20', today) p);
-  PERFORM pg_temp.fb_expect('308 kansli, the week before', got, 'ex 2/1');
+  PERFORM pg_temp.fb_expect('308 kansli, the week before', pg_temp.fb_would_hear(school, 'KANSLI', '2026-09-14', '2026-09-20', today), 'ex 2/1');
+
+  -- A pupil who has left is told of to nobody: P3 is deactivated, and the mentor of 7B, P3's
+  -- guardian and the administrators hear of the others only. P3 is back for the rest.
+  UPDATE "Users" SET "isActive" = false WHERE id = p3;
+  PERFORM pg_temp.fb_expect('308 a pupil who left, mentors', pg_temp.fb_would_hear(school, 'MENTOR', '2026-09-21', '2026-09-27', today), 'm1 1/1');
+  PERFORM pg_temp.fb_expect('308 a pupil who left, guardians', pg_temp.fb_would_hear(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today), 'g1 1/1');
+  PERFORM pg_temp.fb_expect('308 a pupil who left, rektor', pg_temp.fb_would_hear(school, 'REKTOR', '2026-09-21', '2026-09-27', today), 'fu 1/1, re 1/1');
+  UPDATE "Users" SET "isActive" = true WHERE id = p3;
+  -- Taken back means taken back: no ledger row, no notice and no log row is left by the questions above.
+  IF EXISTS (SELECT 1 FROM "AbsenceWatchDigests") OR EXISTS (SELECT 1 FROM "PersonalDataAccess" WHERE kind = 'ATTENDANCE' AND channel = 'OTHER') THEN
+    RAISE EXCEPTION 'frånvarobevakning 308: asking who would hear wrote something that stayed';
+  END IF;
 
   -- Written once: the ledger says so, and the second call writes nothing.
   FOR r IN SELECT * FROM app.absence_watch_digest(school, 'MENTOR', '2026-09-21', '2026-09-27', today) LOOP
@@ -37811,27 +37849,11 @@ BEGIN
             FROM "PersonalDataAccess" a JOIN "Users" m ON m.id = a."actorId" WHERE a.kind = 'ATTENDANCE' AND a.channel = 'OTHER' AND m.role = 'SCHOOL_ADMIN');
   PERFORM pg_temp.fb_expect('308 log, administrators', got, 'fu>p1,p3/2 SCHOOL_ADMIN; re>p1,p3/2 SCHOOL_ADMIN');
 
-  -- A pupil who has left is told of to nobody: P3 is deactivated, and the mentor of 7B, P3's
-  -- guardian and the administrators hear of the others only.
-  UPDATE "Users" SET "isActive" = false WHERE id = p3;
-  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
-            FROM app.absence_watch_digest_plan(school, 'MENTOR', '2026-09-21', '2026-09-27', today) p);
-  PERFORM pg_temp.fb_expect('308 a pupil who left, mentors', got, 'm1 1/1');
-  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
-            FROM app.absence_watch_digest_plan(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today) p);
-  PERFORM pg_temp.fb_expect('308 a pupil who left, guardians', got, 'g1 1/1');
-  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
-            FROM app.absence_watch_digest_plan(school, 'REKTOR', '2026-09-21', '2026-09-27', today) p);
-  PERFORM pg_temp.fb_expect('308 a pupil who left, rektor', got, 'fu 1/1, re 1/1');
-
   -- With the bevakning off, nothing is written and no ledger row; nobody has anything open.
   UPDATE "AbsenceWatchSettings" SET enabled = false;
   SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today);
   IF n <> 0 OR EXISTS (SELECT 1 FROM "AbsenceWatchDigests" WHERE "recipientGroup" = 'GUARDIAN') THEN
     RAISE EXCEPTION 'frånvarobevakning 308: a school that is off had a digest written';
   END IF;
-  got := (SELECT string_agg(substr(p.email, 4, 2) || ' ' || p.open_n || '/' || p.crossed_n, ', ' ORDER BY p.email)
-            FROM app.absence_watch_digest_plan(school, 'REKTOR', '2026-09-21', '2026-09-27', today) p);
-  PERFORM pg_temp.fb_expect('308 off', got, 'fu 0/1, re 0/1');
 END $$;
 ROLLBACK;

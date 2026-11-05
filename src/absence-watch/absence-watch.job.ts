@@ -131,8 +131,9 @@ export class AbsenceWatchJob implements OnModuleInit, OnModuleDestroy {
     const yesterday = isoDay(new Date(localDay.getTime() - 86_400_000));
     const [evaluated] = await this.prisma.withDeliveryService(async (tx) => {
       // The delivery's door gives a statement 5 s; the count reads a school's last
-      // three months of marks (1.5 s for 500 pupils, measured), so it asks for the
-      // most the door's 10 s transaction leaves.
+      // three months of marks (0.3 s for 500 pupils, and about a second on the
+      // night of an influenza wave with twelve run limits, measured), so it asks
+      // for the most the door's 10 s transaction leaves.
       await tx.$executeRaw`SET LOCAL statement_timeout = '9s'`;
       return tx.$queryRaw<Evaluated[]>(
         Prisma.sql`SELECT opened, kept, closed, pupils FROM app.absence_watch_evaluate(${schoolId}::uuid, ${yesterday}::date)`,

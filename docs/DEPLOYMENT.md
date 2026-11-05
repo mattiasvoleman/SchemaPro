@@ -898,8 +898,9 @@ Walk the full product loop once, in order:
   `ABSENCE_WATCH_DIGEST` and nothing else (a value cannot be used in the
   transaction that adds it, so it is a file of its own). 20261231090100 adds
   the tables `AbsenceWatchSettings`, `AbsenceWatchLimits`,
-  `AbsenceWatchFindings` and `AbsenceWatchDigests`, four enums, nine
-  `app.absence_watch_*` functions, the triggers on the switch and the limits,
+  `AbsenceWatchFindings` and `AbsenceWatchDigests`, four enums, eleven
+  `app.absence_watch_*` functions (nine SECURITY DEFINER with a pinned
+  `search_path`, two that run as the caller), the triggers on the switch and the limits,
   and `app.gallring_due` and `app.gallring_purge` again with the findings
   under the ATTENDANCE kind. No existing row is touched and no existing table
   gains a column. The new keys take `Schools` and `Users` in SHARE ROW
@@ -913,7 +914,10 @@ Walk the full product loop once, in order:
   **The bevakning is off for every school** until its administrator turns it
   on (no row in `AbsenceWatchSettings`), so deploying changes nothing a
   school sees. Nothing is sent to anyone until a school has turned it on,
-  given a mottagargrupp a limit, and a whole week or month has passed.
+  given a mottagargrupp a limit, and a week or month has ended on or after the
+  day it was turned on: the first digest comes on the first Monday (or the 1st,
+  for a group on months) after that and can cover a period the bevakning saw
+  only the end of.
   **Before the migration**, as the owner: no `app.absence_watch_%` function and
   no `AbsenceWatch%` table exist (`SELECT count(*) FROM pg_proc WHERE proname
   LIKE 'absence_watch%'` and `SELECT count(*) FROM pg_tables WHERE tablename
@@ -930,7 +934,21 @@ Walk the full product loop once, in order:
   (`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.proname LIKE
   'absence\_watch\_%' AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR
   has_function_privilege('authenticated', p.oid, 'EXECUTE'))` returns no
-  row); `SELECT count(*) FROM "AbsenceWatchSettings"` is 0.
+  row); `SELECT count(*) FROM "AbsenceWatchSettings"` is 0. Also: there are
+  11 functions (`SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid =
+  p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE
+  'absence\_watch\_%'`); no role of the four holds MAINTAIN on the tables
+  (`SELECT count(*) FROM pg_class c, unnest(ARRAY['anon', 'authenticated',
+  'service_role', 'app_authenticated']) r WHERE c.relname LIKE 'AbsenceWatch%'
+  AND c.relkind = 'r' AND has_table_privilege(r, c.oid, 'MAINTAIN')` is 0);
+  `app_authenticated` runs five of the functions and not
+  `app.absence_watch_digest_plan`, which only `app.absence_watch_digest` asks
+  for, as the owner; and both gallring functions carry the findings' branch
+  (`SELECT proname, position('AbsenceWatchFindings' IN prosrc) > 0 FROM pg_proc
+  WHERE pronamespace = 'app'::regnamespace AND proname IN ('gallring_due',
+  'gallring_purge')` is true on both). A later migration that replaces
+  `app.gallring_due` or `app.gallring_purge` has to carry that branch along
+  (the owner checks, section 309o, fail when it does not); ask again after it.
   **After the merge:** `JobRuns` gets a row for `absence-watch` within five
   minutes of the new instance serving (`SELECT job, runs, failures, counts
   FROM "JobRuns" WHERE job = 'absence-watch' ORDER BY day DESC LIMIT 3`),
@@ -942,9 +960,15 @@ Walk the full product loop once, in order:
   time on a school of 500 pupils and a year of attendance (603 000 marks,
   `scripts/bench/absence-watch.sql`) is 0.3 s, a whole night through the
   gateway 0.4–0.65 s on a host under load; the job lifts the delivery door's
-  5 s statement limit to 9 s for the count, so a school several times larger
-  still goes through. A school that fails is counted in `failed` and retried
-  two hours later the same day.
+  5 s statement limit to 9 s for the count. The worst night is an influenza
+  wave, three pupils in ten away on every lesson for seven school days, with a
+  "3 days in a row" limit for each group: the bench's last part counts it in
+  0.4–1.0 s with four such limits and in 1.0–1.1 s with all twelve (a group
+  and a basis each, the most the key allows), the 0.3 s plus about 0.07 s for
+  each run limit. A step reads a pupil's day once for each limit, so the
+  count grows in step with the pupils and the limits and a school several
+  times larger still goes through. A school that fails is counted in `failed`
+  and retried two hours later the same day.
   **Gallring:** the findings follow the school's decision for *Närvaro*
   (`RetentionDataType` ATTENDANCE): by the day each was last seen, in the same
   batches. A school that has decided nothing loses none. A school that purges

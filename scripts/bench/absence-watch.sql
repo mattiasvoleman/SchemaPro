@@ -24,6 +24,13 @@
 -- the four digests (app.absence_watch_digest, whose plan is the recipients of a
 -- group). \timing is on. The first count opens the findings, the second and
 -- third keep them: that is every night after the first.
+--
+-- It ends with the night that is worst for the count, an influenza wave: three
+-- pupils in ten away on every lesson of the last seven school days, and a
+-- "3 school days in a row" limit for each group (then for each group and each
+-- basis, twelve, the most the key allows). A hit is a pupil over a limit, so
+-- the wave makes hundreds of them, and the count must still stay within the
+-- 9 s the job asks of the statement (src/absence-watch/absence-watch.job.ts).
 
 \set ON_ERROR_STOP on
 \timing off
@@ -143,4 +150,41 @@ SELECT 'GUARDIAN' AS g, count(*) AS notices FROM app.absence_watch_digest((SELEC
 SELECT 'REKTOR' AS g, count(*) AS notices FROM app.absence_watch_digest((SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch'), 'REKTOR', current_date - 14, current_date - 1, current_date);
 SELECT 'KANSLI' AS g, count(*) AS notices FROM app.absence_watch_digest((SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch'), 'KANSLI', current_date - 14, current_date - 1, current_date);
 ROLLBACK;
+
+\timing off
+\echo -- an influenza wave: three pupils in ten away on every lesson of the last 7 school days
+BEGIN;
+SET LOCAL session_replication_role = replica;
+UPDATE "AttendanceRecords" a SET status = 'ABSENT'
+  FROM "CalendarLessons" l, "Users" u
+ WHERE a."calendarLessonId" = l.id AND u.id = a."studentId" AND a."schoolId" = l."schoolId"
+   AND l."schoolId" = (SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch')
+   AND abs(hashtext(u.email)) % 10 < 3
+   AND l.date IN (SELECT DISTINCT date FROM "CalendarLessons" WHERE "schoolId" = (SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch') ORDER BY date DESC LIMIT 7);
+SET LOCAL session_replication_role = origin;
+-- Rektor's limit of five becomes three, and the other three groups get one of their own.
+UPDATE "AbsenceWatchLimits" SET "consecutiveDays" = 3
+ WHERE "schoolId" = (SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch') AND kind = 'CONSECUTIVE';
+INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays")
+SELECT s.id, g, 'CONSECUTIVE', 'ALL', 3
+  FROM "Schools" s, unnest(enum_range(NULL::"AbsenceWatchGroup")) g
+ WHERE s.slug = 'bench-absence-watch' AND g <> 'REKTOR';
+COMMIT;
+ANALYZE "AttendanceRecords";
+
+\timing on
+\echo -- the count with four run limits: the first opens the findings, the next two keep them
+SELECT * FROM app.absence_watch_evaluate((SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch'), (now() AT TIME ZONE 'Europe/Stockholm')::date - 1);
+SELECT * FROM app.absence_watch_evaluate((SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch'), (now() AT TIME ZONE 'Europe/Stockholm')::date - 1);
+SELECT * FROM app.absence_watch_evaluate((SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch'), (now() AT TIME ZONE 'Europe/Stockholm')::date - 1);
+\timing off
+INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays")
+SELECT s.id, g, 'CONSECUTIVE', b, 3
+  FROM "Schools" s, unnest(enum_range(NULL::"AbsenceWatchGroup")) g, unnest(enum_range(NULL::"AbsenceWatchBasis")) b
+ WHERE s.slug = 'bench-absence-watch' ON CONFLICT DO NOTHING;
+\timing on
+\echo -- and with a run limit for every group and every basis (12)
+SELECT * FROM app.absence_watch_evaluate((SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch'), (now() AT TIME ZONE 'Europe/Stockholm')::date - 1);
+SELECT * FROM app.absence_watch_evaluate((SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch'), (now() AT TIME ZONE 'Europe/Stockholm')::date - 1);
+SELECT * FROM app.absence_watch_evaluate((SELECT id FROM "Schools" WHERE slug = 'bench-absence-watch'), (now() AT TIME ZONE 'Europe/Stockholm')::date - 1);
 \timing off

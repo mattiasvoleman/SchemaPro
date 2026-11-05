@@ -143,7 +143,7 @@ BEGIN
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Schools and Users were not free at once in 30 s: nothing is changed, run the migration again';
+        RAISE EXCEPTION 'Schools and Users were not free at once in 30 s: nothing is changed. Prisma now holds this migration as failed, so run "prisma migrate resolve --rolled-back 20261231090100_franvarobevakning_med_granser_och_sammanstallningar" and then "prisma migrate deploy" again';
       END IF;
       PERFORM pg_sleep(0.05);
     END;
@@ -558,12 +558,14 @@ BEGIN
       FROM ranked r
      GROUP BY r.limit_id, r.student
   ),
+  -- The day the run reached the limit is a row of ranked: a join, because a subquery
+  -- per pupil over a limit reads all of ranked each time (an influenza wave, with
+  -- hundreds of hits and a hundred thousand rows, took the count past its 9 s).
   consecutive AS (
-    SELECT s.limit_id, s.student, s.len,
-           (SELECT r.day FROM ranked r
-             WHERE r.limit_id = s.limit_id AND r.student = s.student AND r.rn = s.len - c."consecutiveDays" + 1) AS reached_on
+    SELECT s.limit_id, s.student, s.len, r2.day AS reached_on
       FROM streaks s
       JOIN cfg c ON c."id" = s.limit_id
+      JOIN ranked r2 ON r2.limit_id = s.limit_id AND r2.student = s.student AND r2.rn = s.len - c."consecutiveDays" + 1
      WHERE s.len >= c."consecutiveDays" AND s.last_day >= p_as_of - 7
   ),
   hits AS (
@@ -1048,7 +1050,7 @@ COMMENT ON FUNCTION app.absence_watch_evaluate(uuid, date) IS
 COMMENT ON FUNCTION app.absence_watch_digest_due(uuid, date) IS
   'Frånvarobevakning: the groups whose last completed week or month has no digest yet.';
 COMMENT ON FUNCTION app.absence_watch_digest_plan(uuid, "AbsenceWatchGroup", date, date, date) IS
-  'Frånvarobevakning: the recipients of a group''s digest with the counts they would hear and the pupils the digest rests on. Returns no login id.';
+  'Frånvarobevakning: the recipients of a group''s digest with the counts they would hear and the pupils the digest rests on. Returns no login id. Run by app.absence_watch_digest as the owner; the API role holds no EXECUTE on it.';
 COMMENT ON FUNCTION app.absence_watch_digest(uuid, "AbsenceWatchGroup", date, date, date) IS
   'Frånvarobevakning: writes a group''s digest once per period, with a read-log row for each recipient, and answers the notices with the addresses, for the delivery after the commit.';
 
@@ -1077,16 +1079,17 @@ BEGIN
       END IF;
     END LOOP;
   END LOOP;
-  -- The API role runs the policy's question and the job's six calls. The
-  -- trigger functions and the mentee list are the owner's: a trigger needs no
-  -- grant, and the digest functions call the list as the owner.
+  -- The API role runs the policy's question and the job's four calls. The
+  -- trigger functions, the mentee list and the plan are the owner's: a trigger
+  -- needs no grant, and the digest functions call the list and the plan as the
+  -- owner. The gateway never asks for the plan, and the plan answers the
+  -- addresses and the pupils of any school it is given.
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
     FOREACH fn IN ARRAY ARRAY[
       'app.absence_watch_is_mentor_of(uuid)',
       'app.absence_watch_schools()',
       'app.absence_watch_evaluate(uuid, date)',
       'app.absence_watch_digest_due(uuid, date)',
-      'app.absence_watch_digest_plan(uuid, "AbsenceWatchGroup", date, date, date)',
       'app.absence_watch_digest(uuid, "AbsenceWatchGroup", date, date, date)'
     ] LOOP
       EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO "app_authenticated"', fn);
