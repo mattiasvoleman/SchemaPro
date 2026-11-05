@@ -11,7 +11,8 @@
  * TB409 trigger on the posts an import derives, row security on every read and
  * write, and a laid timetable going out and coming back.
  *
- *   (x-a)  THE SEED SCHOOL (demo-skola, after `npm run db:seed`) is laid by the
+ *   (x-a)  THE SEED SCHOOL (demo-skola, after `npm run db:seed`): its classes
+ *          and posts, copied into a läsår of the probe's own, are laid by the
  *          product's own create (the clash scan chooses each lesson's slot),
  *          exported in all four formats and imported back after the lessons
  *          are deleted: the same lessons, for every format, up to what the
@@ -29,8 +30,20 @@
  *          refused by the database, and an export of a teacher's name is a row
  *          in the läslogg.
  *
- * Cleans up after itself: the lessons it laid, the signatures it gave, its own
- * school, and the demo school's posts it deleted and restored.
+ * Independent of what earlier CI steps left in the database. The demo school's
+ * active year is NOT the probe's to wipe: by the time this runs the RLS fixtures
+ * and the adapter probe have put their own rows there (a lesson at 06:10, one
+ * held by a deactivated teacher, one with classes of another year as extra
+ * groups, nine lessons of a made-up subject), and a round trip that deletes a
+ * year's lessons and reads them back would delete those too, and refuse them
+ * on the way in. So (x-a) works in a läsår it creates and drops, and (x-b)
+ * onwards in a school it creates and drops; neither counts on a number of
+ * lessons, teachers or classes the seed or an earlier step happened to leave.
+ *
+ * Cleans up after itself: the läsår and the school it made (everything in them
+ * goes with them) and the change-log rows its writes made in the demo school,
+ * which have no foreign key to the year. The läslogg rows an export leaves are
+ * the audit trail's and append-only, so they stay.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
@@ -107,10 +120,19 @@ async function tuplesOf(owner: Owner, yearId: string, format: ExchangeFormat | n
     owner.subject.findMany({ where: { masterLessons: { some: { academicYearId: yearId } } } }),
     owner.room.findMany(),
   ]);
-  const sig = new Map(employments.map((e) => [e.userId, e.signature]));
-  const group = new Map(groups.map((g) => [g.id, g.name]));
-  const subject = new Map(subjects.map((s) => [s.id, s.name]));
-  const room = new Map(rooms.map((r) => [r.id, r.name]));
+  // A lesson that points outside the year's own groups, teachers and subjects is not one this
+  // probe laid; say so by name rather than comparing an "undefined".
+  const named = <T>(what: string, from: Map<string, T>) => ({
+    get: (id: string): T => {
+      const found = from.get(id);
+      if (found === undefined) throw new Error(`a lesson of the year names a ${what} (${id}) that is not the year's own`);
+      return found;
+    },
+  });
+  const sig = named('teacher', new Map(employments.map((e) => [e.userId, e.signature ?? ''])));
+  const group = named('class or group', new Map(groups.map((g) => [g.id, g.name])));
+  const subject = named('subject', new Map(subjects.map((s) => [s.id, s.name])));
+  const room = named('room', new Map(rooms.map((r) => [r.id, r.name])));
   const carries = format ? CARRIES[format] : new Set(['extra', 'room', 'period']);
   return lessons
     .map((l) =>
@@ -330,7 +352,7 @@ async function main(): Promise<void> {
   const tag = randomUUID().slice(0, 8);
   const cleanup: Array<() => Promise<void>> = [];
   try {
-    await seedSchoolChecks(owner, exchange, masterLessons, cleanup);
+    await seedSchoolChecks(owner, exchange, masterLessons, tag, cleanup);
     await hogstadiumChecks(owner, exchange, masterLessons, tag, cleanup);
   } finally {
     for (const undo of cleanup.reverse()) await undo().catch((error) => console.error('cleanup:', error));
@@ -353,64 +375,93 @@ async function bytesOf(format: ExchangeFormat, exchange: ScheduleExchangeService
   return [{ name: file.filename, bytes: file.body }];
 }
 
-async function seedSchoolChecks(owner: Owner, exchange: ScheduleExchangeService, masterLessons: MasterLessonsService, cleanup: Array<() => Promise<void>>): Promise<void> {
+/**
+ * The seed school's classes and posts in a läsår of the probe's own: same dates
+ * as the active year (nothing forbids two years from overlapping, only one from
+ * being active), the active year's classes, and every post whose teachers are
+ * active, each with the signature the foreign formats join on (the seed gives
+ * its teachers none). Posts naming a deactivated teacher are left out because
+ * no import may place that teacher; that is the rule under test, not the seed's
+ * data. Lessons are the probe's alone to lay.
+ */
+async function copyOfSeedYear(owner: Owner, schoolId: string, source: { id: string; startDate: Date; endDate: Date; gradeNumbering: 'NIOARIG' | 'TIOARIG' }, tag: string): Promise<{ yearId: string }> {
+  const year = await owner.academicYear.create({
+    data: { schoolId, name: `Probe S0 ${tag}`, startDate: source.startDate, endDate: source.endDate, gradeNumbering: source.gradeNumbering, isActive: false },
+  });
+  const classes = await owner.studentGroup.findMany({ where: { academicYearId: source.id }, orderBy: { name: 'asc' } });
+  const group = new Map<string, string>();
+  // A class before its halves: a half points at the class it halves.
+  for (const g of [...classes.filter((c) => !c.halfOfId), ...classes.filter((c) => c.halfOfId)]) {
+    const halfOfId = g.halfOfId ? group.get(g.halfOfId) : undefined;
+    if (g.halfOfId && !halfOfId) continue;
+    const made = await owner.studentGroup.create({
+      data: { schoolId, academicYearId: year.id, name: g.name, kind: g.kind, gradeLevel: g.gradeLevel, ...(halfOfId ? { halfOfId } : {}) },
+    });
+    group.set(g.id, made.id);
+  }
+
+  const active = new Set((await owner.user.findMany({ where: { schoolId, isActive: true }, select: { id: true } })).map((u) => u.id));
+  const signature = new Map<string, string>();
+  const sign = async (userId: string): Promise<void> => {
+    if (signature.has(userId)) return;
+    const short = `PR${signature.size + 1}`;
+    await owner.teacherEmployment.create({ data: { schoolId, userId, academicYearId: year.id, employmentPercent: 100, signature: short } });
+    signature.set(userId, short);
+  };
+  const posts = await owner.teachingRequirement.findMany({ where: { academicYearId: source.id }, orderBy: [{ studentGroupId: 'asc' }, { subjectId: 'asc' }] });
+  for (const post of posts) {
+    const studentGroupId = group.get(post.studentGroupId);
+    const people = [post.teacherId, post.coTeacherId].filter((id): id is string => id !== null);
+    if (!studentGroupId || !people.every((id) => active.has(id))) continue;
+    for (const id of people) await sign(id);
+    // A post of its own, in the copied class, outside any block (a block is the source year's).
+    const { id: _id, createdAt: _created, updatedAt: _updated, academicYearId: _year, studentGroupId: _group, blockId: _block, ...rest } = post;
+    void [_id, _created, _updated, _year, _group, _block];
+    await owner.teachingRequirement.create({ data: { ...rest, academicYearId: year.id, studentGroupId, blockId: null } });
+  }
+  return { yearId: year.id };
+}
+
+async function seedSchoolChecks(owner: Owner, exchange: ScheduleExchangeService, masterLessons: MasterLessonsService, tag: string, cleanup: Array<() => Promise<void>>): Promise<void> {
   const demo = await owner.school.findUnique({ where: { slug: 'demo-skola' } });
   if (!demo) {
     console.log('skip (x-a): no demo-skola (npm run db:seed)');
     return;
   }
-  const year = await owner.academicYear.findFirst({ where: { schoolId: demo.id, isActive: true } });
-  assert.ok(year, 'the demo school’s active year');
-  const school: School = { schoolId: demo.id, yearId: year.id, admin: await adminOf(owner, demo.id) };
-
-  // Signatures: the seed gives its teachers none, and a signature is what the foreign formats join on.
-  const teachers = await owner.user.findMany({ where: { schoolId: demo.id, role: 'TEACHER' }, orderBy: { email: 'asc' } });
-  const signed: string[] = [];
-  for (const [i, t] of teachers.entries()) {
-    const existing = await owner.teacherEmployment.findFirst({ where: { academicYearId: year.id, userId: t.id } });
-    if (existing) {
-      if (!existing.signature) await owner.teacherEmployment.update({ where: { id: existing.id }, data: { signature: `PR${i + 1}` } });
-    } else {
-      const created = await owner.teacherEmployment.create({ data: { schoolId: demo.id, userId: t.id, academicYearId: year.id, employmentPercent: 100, signature: `PR${i + 1}` } });
-      signed.push(created.id);
-    }
-  }
+  const source = await owner.academicYear.findFirst({ where: { schoolId: demo.id, isActive: true } });
+  assert.ok(source, 'the demo school’s active year');
+  const { yearId } = await copyOfSeedYear(owner, demo.id, source, tag);
   cleanup.push(async () => {
-    await owner.teacherEmployment.deleteMany({ where: { id: { in: signed } } });
-    await owner.masterLesson.deleteMany({ where: { academicYearId: year.id } });
+    // The log has no foreign key to the year; the year's own rows go with it.
+    await owner.scheduleChangeLog.deleteMany({ where: { schoolId: demo.id, academicYearId: yearId } });
+    await owner.academicYear.delete({ where: { id: yearId } });
   });
+  const school: School = { schoolId: demo.id, yearId, admin: await adminOf(owner, demo.id) };
 
+  const posts = await owner.teachingRequirement.findMany({ where: { academicYearId: yearId } });
+  const asked = posts.reduce((sum, post) => sum + (post.lessonLengths.length > 0 ? post.lessonLengths.length : post.lessonsPerWeek), 0);
   const laid = await lay(owner, masterLessons, school);
-  const original = await tuplesOf(owner, year.id);
-  await check(`(x-a) the seed school is laid by the clash rule (${laid.placed} lessons, ${laid.unplaced} left over)`, async () => {
-    assert.ok(laid.placed >= 40, `only ${laid.placed} lessons were placed`);
+  const original = await tuplesOf(owner, yearId);
+  await check(`(x-a) the seed school is laid by the clash rule (${laid.placed} of ${asked} lessons, ${laid.unplaced} left over)`, async () => {
+    assert.ok(posts.length > 0, 'the seed school has posts to copy');
+    assert.equal(laid.placed + laid.unplaced, asked, 'every lesson a post asks for was tried');
+    assert.ok(laid.placed >= asked / 2, `only ${laid.placed} of ${asked} lessons were placed`);
     assert.equal(original.length, laid.placed);
   });
-
-  const posts = await owner.teachingRequirement.findMany({ where: { academicYearId: year.id } });
-  const blocks = await owner.teachingBlock.findMany({ where: { academicYearId: year.id } });
-  const restore = async () => {
-    // The posts the import derived have other ids and the same keys: out first, then the school's own back.
-    await owner.teachingRequirement.deleteMany({ where: { academicYearId: year.id } });
-    await owner.teachingBlock.deleteMany({ where: { academicYearId: year.id } });
-    await owner.teachingBlock.createMany({ data: blocks });
-    await owner.teachingRequirement.createMany({ data: posts });
-  };
-  cleanup.push(restore);
 
   for (const format of EXCHANGE_FORMATS) {
     await roundTrip(`(x-a) ${format}`, owner, exchange, school, format, original, { withPosts: false });
   }
   // The posts deleted as well: the import derives them back, equal to the school's own.
   await check('(x-a) the posts derived from the lessons are the posts the school had', async () => {
-    const files = await bytesOf('TABLE_CSV', exchange, year.id, school.admin);
-    await wipeLessons(owner, year.id);
-    await owner.teachingRequirement.deleteMany({ where: { academicYearId: year.id } });
-    await owner.teachingBlock.deleteMany({ where: { academicYearId: year.id } });
-    const plan = await exchange.preview({ academicYearId: year.id, format: 'TABLE_CSV', files }, school.admin);
+    const files = await bytesOf('TABLE_CSV', exchange, yearId, school.admin);
+    await wipeLessons(owner, yearId);
+    await owner.teachingRequirement.deleteMany({ where: { academicYearId: yearId } });
+    await owner.teachingBlock.deleteMany({ where: { academicYearId: yearId } });
+    const plan = await exchange.preview({ academicYearId: yearId, format: 'TABLE_CSV', files }, school.admin);
     assert.equal(plan.canApply, true, JSON.stringify(plan.rows.filter((r) => r.action === 'REFUSED').slice(0, 3)));
-    await exchange.apply({ academicYearId: year.id, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, school.admin);
-    const derived = await owner.teachingRequirement.findMany({ where: { academicYearId: year.id } });
+    await exchange.apply({ academicYearId: yearId, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, school.admin);
+    const derived = await owner.teachingRequirement.findMany({ where: { academicYearId: yearId } });
     const key = (r: { studentGroupId: string; subjectId: string }) => `${r.studentGroupId}|${r.subjectId}`;
     const byKey = new Map(derived.map((r) => [key(r), r]));
     for (const original of posts) {
@@ -467,16 +518,25 @@ async function roundTrip(
     // Whatever happens below, the next format starts from the whole timetable.
     const posts = await owner.teachingRequirement.findMany({ where: { academicYearId: school.yearId } });
     const blocks = await owner.teachingBlock.findMany({ where: { academicYearId: school.yearId } });
+    let failed: unknown;
     try {
       await roundTripOf(owner, exchange, school, format, original, options, posts, blocks);
-    } finally {
+    } catch (error) {
+      failed = error;
+    }
+    try {
       await wipeLessons(owner, school.yearId);
       await owner.teachingRequirement.deleteMany({ where: { academicYearId: school.yearId } });
       await owner.teachingBlock.deleteMany({ where: { academicYearId: school.yearId } });
       await owner.teachingBlock.createMany({ data: blocks, skipDuplicates: true });
       await owner.teachingRequirement.createMany({ data: posts, skipDuplicates: true });
       await restoreFrom(owner, school, original);
+    } catch (error) {
+      // The check's own failure is the one to read; putting the timetable back failing too is told beside it.
+      if (failed === undefined) throw error;
+      console.error(`     (and laying the timetable back for the next format failed: ${error instanceof Error ? error.message : String(error)})`);
     }
+    if (failed !== undefined) throw failed;
   });
 }
 
@@ -653,7 +713,7 @@ async function refusalChecks(owner: Owner, exchange: ScheduleExchangeService, sc
   for (const [label, rows, code] of cases) {
     await check(`(x-c) ${label}`, async () => {
       const p = await plan(rows);
-      assert.ok(codes(p).includes(code), `${code} not in ${JSON.stringify(p.rows[0]!.refusals)}`);
+      assert.ok((codes(p) as string[]).includes(code), `${code} not in ${JSON.stringify(p.rows[0]!.refusals)}`);
       assert.equal(p.canApply, false);
       await assert.rejects(exchange.apply({ academicYearId: school.yearId, format: 'TABLE_CSV', files: csvOf(rows), fingerprint: p.fingerprint }, school.admin), (e: unknown) => (e as { response?: { code?: string } }).response?.code === 'IMPORT_HAS_REFUSALS');
       assert.equal(await owner.masterLesson.count({ where: { academicYearId: school.yearId } }), before, 'the refused import wrote something');
