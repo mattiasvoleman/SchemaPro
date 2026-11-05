@@ -117,6 +117,9 @@ export const ADMIN_NAV: NavSection[] = [
       { labelKey: "publishing", href: "/admin/publishing", icon: CalendarRange },
       // Kalenderprenumeration, per audience: Publicering's icon, already in the shell.
       { labelKey: "calendarFeeds", href: "/admin/calendar-feeds", icon: CalendarRange },
+      // Schema som fil: the grundschema as a table or an Untis or aSc file, and back in as locked
+      // lessons. Last in the phase, after the feeds it is a sibling of; Publicering's icon, already in the shell.
+      { labelKey: "scheduleExchange", href: "/admin/schedule-exchange", icon: CalendarRange },
     ],
   },
   {
