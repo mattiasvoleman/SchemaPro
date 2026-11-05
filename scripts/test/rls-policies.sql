@@ -20203,6 +20203,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('MasterLessons', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
   ('Notifications', '{DRIFT}', '{}', '{}', '{}'),
   ('OptimizationJobs', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('PersonProtections', '{PERSONAL}', '{}', '{PERSONAL}', '{}'),
   ('PersonalDataAccess', '{}', '{}', '{}', '{DECIDES}'),
   ('PublicTimetableLinks', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
   ('PublicationPendingRemovals', '{}', '{}', '{PUBLICERING}', '{}'),

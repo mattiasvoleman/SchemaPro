@@ -263,14 +263,19 @@ describe('computeDiff: persons', () => {
     });
   });
 
-  it('deselects and never auto-applies ANY change touching a protected identity, and stores no marking', () => {
+  it('deselects and never auto-applies ANY change touching a protected identity, and never says which protection', () => {
     const p = pupil(ext(1), 'Skyddad', 'Person', 'sp@skola.se', { securityMarking: 'Skyddad folkbokföring' });
     const result = diff(roster({ people: [p] }), slice({ users: [user(1, { ss12000Id: ext(1), firstName: 'X', email: 'sp@skola.se' })] }));
-    expect(result.changes.length).toBeGreaterThan(0);
-    for (const change of result.changes) {
+    const held = result.changes.filter((change) => change.entity !== 'PROTECTION');
+    expect(held.length).toBeGreaterThan(0);
+    for (const change of held) {
       expect(change).toMatchObject({ selected: false, autoApplicable: false, protectedIdentity: true });
-      expect(JSON.stringify(change)).not.toMatch(/Skyddad folkbokföring|Sekretessmarkering/);
     }
+    // The mark itself is the one change about them that is made, and made at night.
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      expect.objectContaining({ op: 'ADD', selected: true, autoApplicable: true, protectedIdentity: false }),
+    ]);
+    for (const change of result.changes) expect(JSON.stringify(change)).not.toMatch(/Skyddad folkbokföring|Sekretessmarkering/);
   });
 
   it('protects a guardian marked on the pupil\'s PersonReference, too', () => {
@@ -291,6 +296,110 @@ describe('computeDiff: persons', () => {
     const elsewhere = pupil(ext(1), 'A', 'B', 'a@skola.se', { enrolments: [{ organisationId: OTHER_ORG, schoolYear: 7, schoolType: 'GR', startDate: '2026-08-01', endDate: null, cancelled: false }] });
     const cancelled = pupil(ext(2), 'C', 'D', 'c@skola.se', { enrolments: [{ organisationId: ORG, schoolYear: 7, schoolType: 'GR', startDate: '2026-08-01', endDate: null, cancelled: true }] });
     expect(diff(roster({ people: [elsewhere, cancelled] }), slice()).changes).toEqual([]);
+  });
+});
+
+describe('computeDiff: the mark of a protected identity (20270107090000)', () => {
+  const marked = (n: number, patch: Partial<S1Person> = {}) =>
+    pupil(ext(n), 'Skyddad', `Elev${n}`, `s${n}@skola.se`, { securityMarking: 'Sekretessmarkering', ...patch });
+  const linked = (n: number, patch: Partial<LocalUser> = {}) => user(n, { ss12000Id: ext(n), email: `s${n}@skola.se`, ...patch });
+
+  it('marks a linked person the register protects and Rastra does not, naming them in the after alone', () => {
+    const result = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)] }));
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      {
+        entity: 'PROTECTION', op: 'ADD', externalId: null, localId: null,
+        before: null, after: { personExternalId: ext(1), userLocalId: loc(1) },
+        conflictCode: null, selected: true, autoApplicable: true, protectedIdentity: false,
+      },
+    ]);
+    expect(result.counts['PROTECTION']).toEqual({ ADD: 1 });
+  });
+
+  it('proposes nothing for a person already marked, by the sync or by hand', () => {
+    for (const source of ['SS12000', 'MANUAL'] as const) {
+      const result = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)], protections: [{ userId: loc(1), source }] }));
+      expect(only(result.changes, 'PROTECTION')).toEqual([]);
+    }
+  });
+
+  it('proposes no PROTECTION for a person not yet linked: their create carries the flag, and the apply marks them with it', () => {
+    const result = diff(roster({ people: [marked(1)] }), slice());
+    expect(only(result.changes, 'PROTECTION')).toEqual([]);
+    expect(only(result.changes, 'PERSON', 'CREATE')).toEqual([expect.objectContaining({ externalId: ext(1), protectedIdentity: true, selected: false })]);
+  });
+
+  it('marks a linked guardian the register protects only on the child\'s PersonReference', () => {
+    const people = [
+      pupil(ext(1), 'B', 'H', 's1@skola.se', { responsibles: [{ personId: ext(10), securityMarking: 'Skyddad folkbokföring', relationType: 'Vårdnadshavare' }] }),
+    ];
+    const local = slice({ users: [linked(1), user(10, { ss12000Id: ext(10), role: 'GUARDIAN', email: 'g@hem.se' })] });
+    const marks = only(diff(roster({ people }), local).changes, 'PROTECTION');
+    expect(marks.map((c) => [c.op, c.after?.['userLocalId']])).toEqual([['ADD', loc(10)]]);
+  });
+
+  it('marks a value the parser does not know (fails closed), and an unrecognised one is never "Ingen"', () => {
+    const result = diff(roster({ people: [marked(1, { securityMarking: 'UNRECOGNISED' })] }), slice({ users: [linked(1)] }));
+    expect(only(result.changes, 'PROTECTION', 'ADD')).toHaveLength(1);
+  });
+
+  it('lifts a mark the sync wrote when a FULL run reads "Ingen" for the person: selected, never at night', () => {
+    const result = diff(
+      roster({ people: [pupil(ext(1), 'Ej', 'Skyddad', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000' }] }),
+    );
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      expect.objectContaining({
+        op: 'END', externalId: null, localId: null, after: { personExternalId: ext(1), userLocalId: loc(1) },
+        selected: true, autoApplicable: false, protectedIdentity: false,
+      }),
+    ]);
+  });
+
+  it('never lifts a mark an administrator set', () => {
+    const result = diff(
+      roster({ people: [pupil(ext(1), 'Ej', 'Skyddad', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }] }),
+    );
+    expect(only(result.changes, 'PROTECTION')).toEqual([]);
+  });
+
+  it('lifts nothing on an absent marking, in an INCREMENTAL run, or while any reference still marks the person', () => {
+    const marks = [{ userId: loc(1), source: 'SS12000' as const }];
+    const absent = diff(roster({ people: [pupil(ext(1), 'A', 'B', 's1@skola.se', { securityMarking: null })] }), slice({ users: [linked(1)], protections: marks }));
+    expect(only(absent.changes, 'PROTECTION')).toEqual([]);
+
+    const incremental = diff(
+      roster({ mode: 'INCREMENTAL', people: [pupil(ext(1), 'A', 'B', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [linked(1)], protections: marks }),
+    );
+    expect(only(incremental.changes, 'PROTECTION')).toEqual([]);
+
+    // The guardian's own record says Ingen; the child's reference to them does not.
+    const people = [
+      adult(ext(10), 'G', 'H', 'g@hem.se', 'Privat', { securityMarking: 'Ingen' }),
+      pupil(ext(1), 'B', 'H', 's1@skola.se', { responsibles: [{ personId: ext(10), securityMarking: 'Sekretessmarkering', relationType: 'Vårdnadshavare' }] }),
+    ];
+    const guardian = user(10, { ss12000Id: ext(10), role: 'GUARDIAN', email: 'g@hem.se' });
+    const referenced = diff(roster({ people }), slice({ users: [linked(1), guardian], protections: [{ userId: loc(10), source: 'SS12000' }] }));
+    expect(only(referenced.changes, 'PROTECTION')).toEqual([]);
+  });
+
+  it('lifts a linked guardian\'s mark when every reference to them says "Ingen", though their own record is never read', () => {
+    const people = [
+      pupil(ext(1), 'B', 'H', 's1@skola.se', { responsibles: [{ personId: ext(10), securityMarking: 'Ingen', relationType: 'Vårdnadshavare' }] }),
+    ];
+    const guardian = user(10, { ss12000Id: ext(10), role: 'GUARDIAN', email: 'g@hem.se' });
+    const result = diff(roster({ people }), slice({ users: [linked(1), guardian], protections: [{ userId: loc(10), source: 'SS12000' }] }));
+    expect(only(result.changes, 'PROTECTION').map((c) => [c.op, c.after?.['userLocalId']])).toEqual([['END', loc(10)]]);
+  });
+
+  it('lifts nothing for a person no longer linked here', () => {
+    const result = diff(
+      roster({ people: [pupil(ext(1), 'A', 'B', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [user(1, { email: 's1@skola.se' })], protections: [{ userId: loc(1), source: 'SS12000' }] }),
+    );
+    expect(only(result.changes, 'PROTECTION')).toEqual([]);
   });
 });
 

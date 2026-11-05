@@ -32,8 +32,21 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  *
  * PROTECTED IDENTITY. Every change touching a person whose securityMarking
  * (on Person or on a PersonReference) is not "Ingen" is deselected and never
- * auto-applied; the flag goes with the run's minimisation and is never
- * stored on the person.
+ * auto-applied; the flag goes with the run's minimisation. What is kept is
+ * the school's mark that the person is protected (PersonProtections,
+ * 20270107090000), never which protection, and the diff keeps it as the
+ * register has it:
+ *  - a linked person the register marks and Rastra does not: PROTECTION ADD,
+ *    selected and automatic, since it only keeps the person out of files.
+ *    It names the person in its after alone (the minimisation nulls it):
+ *    externalId and localId stay empty, so a finished run says how many
+ *    marks it set, never whose. A person this apply creates, links or
+ *    relinks is marked by the apply with that change (apply.ts);
+ *  - a mark the sync wrote (source SS12000), for a linked person a FULL run
+ *    reads as "Ingen" wherever it names them and as nothing else:
+ *    PROTECTION END, selected, never automatic. An absent marking is not
+ *    "Ingen", an INCREMENTAL run may not read the record (a child's) that
+ *    still marks the person, and a MANUAL mark is the administrator's.
  *
  * DEACTIVATE, of a linked person only: a FULL run that no longer finds them
  * (a pupil not returned by the enrolment fetch, staff with no active duty, a
@@ -87,7 +100,15 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  */
 
 export type LocalRole = 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN' | 'GUARDIAN';
-export type ChangeEntity = 'PERSON' | 'GROUP' | 'CLASS_MEMBERSHIP' | 'GROUP_MEMBERSHIP' | 'RESPONSIBLE' | 'DUTY_LINK' | 'ORGANISATION';
+export type ChangeEntity =
+  | 'PERSON'
+  | 'GROUP'
+  | 'CLASS_MEMBERSHIP'
+  | 'GROUP_MEMBERSHIP'
+  | 'RESPONSIBLE'
+  | 'DUTY_LINK'
+  | 'ORGANISATION'
+  | 'PROTECTION';
 export type ChangeOp = 'CREATE' | 'LINK' | 'RELINK' | 'UPDATE' | 'MOVE' | 'DEACTIVATE' | 'REACTIVATE' | 'ADD' | 'END' | 'CONFLICT' | 'INFO';
 
 export interface LocalUser {
@@ -156,6 +177,8 @@ export interface LocalSlice {
   years: LocalYear[];
   /** The school's skolenheter; absent in a slice read before they existed (treated as none). */
   units?: LocalUnit[];
+  /** The marks of a protected identity (PersonProtections); absent is none. */
+  protections?: Array<{ userId: string; source: 'SS12000' | 'MANUAL' }>;
   lastAppliedAt: Date | null;
 }
 
@@ -314,11 +337,16 @@ export function computeDiff(input: DiffInput): DiffResult {
 
   const guardianOf = new Map<string, Array<{ pupilId: string; relationType: string | null }>>();
   const protectedIds = new Set<string>();
+  // Wherever the source says "Ingen" in so many words: the one ground for
+  // lifting a mark (PROTECTION END), and only with nothing in protectedIds.
+  const saidIngen = new Set<string>();
   for (const person of persons.values()) {
     if (isProtected(person.securityMarking)) protectedIds.add(person.id);
+    if (person.securityMarking === 'Ingen') saidIngen.add(person.id);
     if (!activePupils.has(person.id)) continue;
     for (const responsible of person.responsibles) {
       if (isProtected(responsible.securityMarking)) protectedIds.add(responsible.personId);
+      if (responsible.securityMarking === 'Ingen') saidIngen.add(responsible.personId);
       guardianOf.set(responsible.personId, [
         ...(guardianOf.get(responsible.personId) ?? []),
         { pupilId: person.id, relationType: responsible.relationType },
@@ -326,7 +354,10 @@ export function computeDiff(input: DiffInput): DiffResult {
     }
   }
   for (const group of roster.groups) {
-    for (const membership of group.memberships) if (isProtected(membership.personSecurityMarking)) protectedIds.add(membership.personId);
+    for (const membership of group.memberships) {
+      if (isProtected(membership.personSecurityMarking)) protectedIds.add(membership.personId);
+      if (membership.personSecurityMarking === 'Ingen') saidIngen.add(membership.personId);
+    }
   }
 
   const deletedPersons = new Set(roster.deleted?.persons ?? []);
@@ -880,6 +911,27 @@ export function computeDiff(input: DiffInput): DiffResult {
         conflictCode: null, selected: true, autoApplicable: true,
         protectedIdentity: holder?.ss12000Id ? protectedIds.has(holder.ss12000Id) : false,
       });
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Protected identity: the school's mark (see PROTECTED IDENTITY above)
+  // ---------------------------------------------------------------------
+  const marks = new Map((local.protections ?? []).map((mark) => [mark.userId, mark.source]));
+  const mark = (op: 'ADD' | 'END', ext: string, userId: string) =>
+    push({
+      entity: 'PROTECTION', op, externalId: null, localId: null,
+      before: null, after: { personExternalId: ext, userLocalId: userId },
+      conflictCode: null, selected: true, autoApplicable: op === 'ADD', protectedIdentity: false,
+    });
+  for (const ext of [...protectedIds].sort()) {
+    const linked = usersByExt.get(ext);
+    if (linked && !marks.has(linked.id)) mark('ADD', ext, linked.id);
+  }
+  if (full) {
+    for (const user of local.users) {
+      if (!user.ss12000Id || marks.get(user.id) !== 'SS12000') continue;
+      if (saidIngen.has(user.ss12000Id) && !protectedIds.has(user.ss12000Id)) mark('END', user.ss12000Id, user.id);
     }
   }
 

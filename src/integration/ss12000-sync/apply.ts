@@ -9,9 +9,9 @@ import type { ChangeEntity, ChangeOp } from './diff';
  * in dependency order:
  *
  *   skolenheter (create, link, update) -> groups (create, link, rename) ->
- *   persons (create, link, relink, names, reactivate) -> class moves
- *   -> teaching-group adds -> guardian links -> duty links -> deactivations
- *   -> e-mail addresses
+ *   persons (create, link, relink, names, reactivate) -> marks of a
+ *   protected identity -> class moves -> teaching-group adds -> guardian
+ *   links -> duty links -> deactivations -> e-mail addresses
  *
  * so a pupil created in this apply can be moved into a class created in it,
  * and a guardian linked in it can be linked to a child. A change that
@@ -50,7 +50,15 @@ import type { ChangeEntity, ChangeOp } from './diff';
  *     them (SCHOOL_UNIT_CODE_TAKEN, SCHOOL_UNIT_SPAN_OVERLAP): the unique
  *     index and the span trigger would otherwise fail the whole apply.
  *
- * Nothing is deleted: no statement here removes a row.
+ *   * A person the register marks as protected is never in Rastra unmarked
+ *     once the apply has made them: the create, link or relink of such a
+ *     person writes the mark (PersonProtections, source SS12000) with it,
+ *     and a PROTECTION ADD marks one linked before. A PROTECTION END lifts a
+ *     mark the sync wrote, and only such a mark: a MANUAL one is the
+ *     administrator's. Both name the person by the source's id, in the
+ *     change's after, as a duty link does.
+ *
+ * Nothing else is deleted: no other statement here removes a row.
  */
 export interface StoredChange {
   id: string;
@@ -60,6 +68,8 @@ export interface StoredChange {
   externalId: string | null;
   localId: string | null;
   after: Record<string, unknown> | null;
+  /** The diff's flag, held while the run is DIFF_READY: the change is about a person the register marks as protected. */
+  protectedIdentity: boolean;
 }
 
 export interface ApplyOutcome {
@@ -133,7 +143,11 @@ export async function applyChanges(
   stamp: Date,
 ): Promise<ApplyOutcome> {
   const outcome: ApplyOutcome = { applied: [], skipped: [] };
-  const done = (change: StoredChange) => outcome.applied.push(change.id);
+  const applied = new Set<string>();
+  const done = (change: StoredChange) => {
+    outcome.applied.push(change.id);
+    applied.add(change.id);
+  };
   const skip = (change: StoredChange, code: string) =>
     outcome.skipped.push({ id: change.id, code, entity: change.entity, externalId: change.externalId });
   const of = (entity: ChangeEntity, op: ChangeOp) =>
@@ -278,6 +292,43 @@ export async function applyChanges(
       data: { isActive: true, updatedAt: stamp },
     });
     done(change);
+  }
+
+  // --- marks of a protected identity (20270107090000) --------------------------
+  const marking = new Set<string>();
+  for (const op of ['CREATE', 'LINK', 'RELINK'] as const) {
+    for (const change of of('PERSON', op)) {
+      const userId = change.protectedIdentity && applied.has(change.id) ? userOf(change) : null;
+      if (userId) marking.add(userId);
+    }
+  }
+  for (const change of of('PROTECTION', 'ADD')) {
+    const userId = personOf('personExternalId')(change);
+    if (!userId) {
+      skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
+      continue;
+    }
+    marking.add(userId);
+    done(change);
+  }
+  for (const rows of chunks([...marking].sort())) {
+    await tx.personProtection.createMany({
+      data: rows.map((userId) => ({ userId, schoolId, source: 'SS12000' as const })),
+      skipDuplicates: true,
+    });
+  }
+  const lifting: string[] = [];
+  for (const change of of('PROTECTION', 'END')) {
+    const userId = personOf('personExternalId')(change);
+    if (!userId) {
+      skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
+      continue;
+    }
+    lifting.push(userId);
+    done(change);
+  }
+  for (const rows of chunks(lifting.sort())) {
+    await tx.personProtection.deleteMany({ where: { schoolId, userId: { in: rows }, source: 'SS12000' } });
   }
 
   // --- class moves (role-guarded; P4's trigger records each) -----------------

@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { MeController } from './me.controller';
 import { MySchoolsService } from './my-schools.service';
 import { PerLoginThrottlerGuard } from './per-login-throttler.guard';
+import { PersonProtectionsController } from './person-protections.controller';
+import { PersonProtectionsService } from './person-protections';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 import { SupabaseAdminService } from './supabase-admin.service';
@@ -12,11 +14,12 @@ import { SupabaseAdminService } from './supabase-admin.service';
  * drives RLS role + school resolution. Exports SupabaseAdminService for
  * gallring, which deletes a departed person's login before pseudonymising
  * them. And the signed-in person's own schools, for the school switcher
- * (MeController, Flera skolor per inloggning).
+ * (MeController, Flera skolor per inloggning). And the marks of a protected
+ * identity (PersonProtectionsController, 20270107090000).
  */
 @Module({
-  controllers: [UsersController, MeController],
-  exports: [UsersService, SupabaseAdminService],
-  providers: [UsersService, SupabaseAdminService, MySchoolsService, PerLoginThrottlerGuard],
+  controllers: [UsersController, MeController, PersonProtectionsController],
+  exports: [UsersService, SupabaseAdminService, PersonProtectionsService],
+  providers: [UsersService, SupabaseAdminService, MySchoolsService, PerLoginThrottlerGuard, PersonProtectionsService],
 })
 export class UsersModule {}

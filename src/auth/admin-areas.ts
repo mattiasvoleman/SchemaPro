@@ -276,6 +276,8 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
 
   // Personal: the roster.
   GuardianStudents: only('PERSONAL'),
+  // Skyddad identitet (20270107090000): a mark is set or removed, never changed.
+  PersonProtections: just('PERSONAL', 'insert', 'delete'),
   Users: { insert: ['PERSONAL'], update: ['PERSONAL', 'PLANERING'], delete: ['PERSONAL'] },
 
   // Integrationer: keys, SS12000 and the school's sign-in.

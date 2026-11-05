@@ -52,7 +52,7 @@ export async function readLocalSlice(tx: PrismaClient, schoolId: string, options
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`SchoolUnits:${schoolId}`}, 0))`);
     await tx.$executeRaw(Prisma.sql`SELECT 1 FROM "SchoolUnits" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
   }
-  const [school, users, groups, members, links, dutyLinks, years, deactivations, units] = await Promise.all([
+  const [school, users, groups, members, links, dutyLinks, years, deactivations, units, protections] = await Promise.all([
     tx.school.findFirst({ where: { id: schoolId }, select: { name: true, timezone: true } }),
     tx.user.findMany({
       where: { schoolId },
@@ -98,6 +98,11 @@ export async function readLocalSlice(tx: PrismaClient, schoolId: string, options
       select: { id: true, name: true, code: true, schoolTypes: true, gradeFrom: true, gradeTo: true, ss12000Id: true, updatedAt: true },
       orderBy: { id: 'asc' },
     }),
+    // The marks of a protected identity (20270107090000): what the diff sets
+    // or lifts against. Not in the basis hash: a mark set or removed between
+    // the diff and the apply meets an insert that skips it or a delete that
+    // finds nothing, never a wrong write, and a run is not made stale for it.
+    tx.personProtection.findMany({ where: { schoolId }, select: { userId: true, source: true }, orderBy: { userId: 'asc' } }),
   ]);
   const runIds = [...new Set(deactivations.map((change) => change.runId))];
   const runs = runIds.length
@@ -152,6 +157,7 @@ export async function readLocalSlice(tx: PrismaClient, schoolId: string, options
       ...(year.gradeNumbering === 'TIOARIG' ? { gradeNumbering: year.gradeNumbering } : {}),
     })),
     units: units.map((unit) => ({ ...unit, schoolTypes: [...unit.schoolTypes] })),
+    protections,
     lastAppliedAt: null,
   };
 }

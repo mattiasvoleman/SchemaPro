@@ -16,6 +16,7 @@ const change = (patch: Partial<StoredChange> & Pick<StoredChange, 'entity' | 'op
   externalId: null,
   localId: null,
   after: null,
+  protectedIdentity: false,
   ...patch,
 });
 
@@ -382,18 +383,83 @@ describe('applyChanges: skolenheter', () => {
   });
 });
 
+describe('applyChanges: the mark of a protected identity (20270107090000)', () => {
+  let tx: TxMock;
+  beforeEach(() => {
+    seq = 0;
+    tx = createTxMock();
+    tx.user.updateMany.mockResolvedValue({ count: 1 });
+  });
+  const run = (changes: StoredChange[]) => applyChanges(tx as unknown as PrismaClient, SCHOOL, changes, STAMP);
+  const marked = () => tx.personProtection.createMany.mock.calls.flatMap(([args]) => args.data as Array<Record<string, unknown>>);
+
+  it('marks a protected person the apply creates, links or relinks, with that change and by the row it made', async () => {
+    const create = change({ entity: 'PERSON', op: 'CREATE', externalId: ext(1), protectedIdentity: true, after: { role: 'STUDENT', firstName: 'S', lastName: 'P', email: 's@skola.se' } });
+    const link = change({ entity: 'PERSON', op: 'LINK', externalId: ext(2), localId: loc(2), protectedIdentity: true });
+    const relink = change({ entity: 'PERSON', op: 'RELINK', externalId: ext(3), localId: loc(3), protectedIdentity: true });
+    const plain = change({ entity: 'PERSON', op: 'CREATE', externalId: ext(4), after: { role: 'STUDENT', firstName: 'O', lastName: 'P', email: 'o@skola.se' } });
+    const outcome = await run([create, link, relink, plain]);
+    expect(outcome.applied).toHaveLength(4);
+    const created = (tx.user.createMany.mock.calls[0]![0].data as Array<{ id: string; ss12000Id: string }>).find((row) => row.ss12000Id === ext(1))!;
+    expect(marked().map((row) => row['userId']).sort()).toEqual([created.id, loc(2), loc(3)].sort());
+    expect(marked().every((row) => row['schoolId'] === SCHOOL && row['source'] === 'SS12000')).toBe(true);
+    expect(tx.personProtection.createMany.mock.calls[0]![0].skipDuplicates).toBe(true);
+    // After the person exists: the key needs the row.
+    expect(tx.user.createMany.mock.invocationCallOrder[0]).toBeLessThan(tx.personProtection.createMany.mock.invocationCallOrder[0]!);
+  });
+
+  it('marks nobody whose create or link was not made', async () => {
+    tx.user.updateMany.mockResolvedValue({ count: 0 });
+    const link = change({ entity: 'PERSON', op: 'LINK', externalId: ext(2), localId: loc(2), protectedIdentity: true });
+    const outcome = await run([link]);
+    expect(outcome.skipped.map((s) => s.code)).toEqual(['SS12000_TARGET_CHANGED']);
+    expect(tx.personProtection.createMany).not.toHaveBeenCalled();
+  });
+
+  it('PROTECTION ADD marks a person linked before, resolved by the source id and never by the local id it carries', async () => {
+    tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }]);
+    const add = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(1), userLocalId: loc(99) } });
+    const stray = change({ entity: 'PROTECTION', op: 'ADD', after: { personExternalId: ext(2), userLocalId: loc(2) } });
+    const outcome = await run([add, stray]);
+    expect(outcome.applied).toEqual([add.id]);
+    expect(outcome.skipped).toEqual([{ id: stray.id, code: 'SS12000_DEPENDENCY_NOT_APPLIED', entity: 'PROTECTION', externalId: null }]);
+    expect(marked()).toEqual([{ userId: loc(1), schoolId: SCHOOL, source: 'SS12000' }]);
+  });
+
+  it('PROTECTION END lifts only a mark the sync wrote', async () => {
+    tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }]);
+    const end = change({ entity: 'PROTECTION', op: 'END', after: { personExternalId: ext(1), userLocalId: loc(1) } });
+    const outcome = await run([end]);
+    expect(outcome.applied).toEqual([end.id]);
+    expect(tx.personProtection.deleteMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL, userId: { in: [loc(1)] }, source: 'SS12000' } });
+  });
+
+  it('writes no mark for a change about a protected person that is not a create, link or relink', async () => {
+    tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }]);
+    const name = change({ entity: 'PERSON', op: 'UPDATE', externalId: ext(1), localId: loc(1), protectedIdentity: true, after: { firstName: 'A', lastName: 'B' } });
+    await run([name]);
+    expect(tx.personProtection.createMany).not.toHaveBeenCalled();
+    expect(tx.personProtection.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
 describe('nothing is deleted', () => {
-  it('no statement in the consumer module removes a row', () => {
+  // The one row the consumer removes: a mark of a protected identity the sync
+  // itself wrote, when the register lifts the protection (PROTECTION END).
+  const LIFT = "await tx.personProtection.deleteMany({ where: { schoolId, userId: { in: rows }, source: 'SS12000' } });";
+
+  it('no statement in the consumer module removes a row, but the lift of a mark the sync wrote', () => {
     const dir = __dirname;
     const offenders: string[] = [];
     for (const file of readdirSync(dir).filter((name) => name.endsWith('.ts') && !name.endsWith('.spec.ts'))) {
-      const text = readFileSync(join(dir, file), 'utf8');
+      const text = readFileSync(join(dir, file), 'utf8').split(LIFT).join('');
       // A Prisma model's delete / deleteMany (tx.user.delete, this.prisma.x.deleteMany, ...),
       // or raw SQL. Map and Set deletes (the in-memory token cache) are not rows.
       const prismaDelete = /\b(tx|db|prisma|this\.prisma)\.\w+\.delete(Many)?\s*\(/;
       if (prismaDelete.test(text) || /\bDELETE\s+FROM\b/i.test(text) || /\bTRUNCATE\b/i.test(text)) offenders.push(file);
     }
     expect(offenders).toEqual([]);
+    expect(readFileSync(join(dir, 'apply.ts'), 'utf8').split(LIFT)).toHaveLength(2);
   });
 
   it('would catch one (the grep is not vacuous)', () => {

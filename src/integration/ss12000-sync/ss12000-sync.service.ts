@@ -694,7 +694,8 @@ function localIdIn(value: unknown, key: string): string | null {
  * localId is the Users row of PERSON (names and e-mail before and after),
  * CLASS_MEMBERSHIP and GROUP_MEMBERSHIP (a pupil's class or group: ROSTER)
  * and RESPONSIBLE (the pupil, beside the guardian in before or after:
- * GUARDIANS); a DUTY_LINK's holder is userLocalId (EMPLOYMENT). GROUP and
+ * GUARDIANS); a DUTY_LINK's holder is userLocalId (EMPLOYMENT), and so is a
+ * PROTECTION's person (PEOPLE: that the person is protected). GROUP and
  * ORGANISATION name nobody, and a PERSON CREATE has no Users row yet: the log
  * names Users rows only (app.personal_data_read keeps the school's).
  */
@@ -719,6 +720,9 @@ export function peopleInChanges(
       case 'DUTY_LINK':
         named.EMPLOYMENT.push(...kept(ids('userLocalId')));
         break;
+      case 'PROTECTION':
+        named.PEOPLE.push(...kept(ids('userLocalId')));
+        break;
       default:
         break;
     }
@@ -735,6 +739,7 @@ function storedOf(change: Ss12000SyncChange): StoredChange {
     externalId: change.externalId,
     localId: change.localId,
     after: asObject(change.after),
+    protectedIdentity: change.protectedIdentity,
   };
 }
 

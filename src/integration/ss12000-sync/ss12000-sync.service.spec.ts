@@ -69,7 +69,7 @@ describe('the läslogg of the change review and the provisioning list', () => {
     createdAt: new Date(),
   });
 
-  it('peopleInChanges: each entity under its kind, a guardian and a duty holder from the JSON, and nothing that is not a uuid', () => {
+  it('peopleInChanges: each entity under its kind, a guardian, a duty holder and a marked person from the JSON, and nothing that is not a uuid', () => {
     const named = peopleInChanges([
       change('PERSON', PUPIL, { firstName: 'Ada' }, { firstName: 'Adah' }, 1),
       change('PERSON', null, null, { firstName: 'Ny' }, 2),
@@ -80,9 +80,11 @@ describe('the läslogg of the change review and the provisioning list', () => {
       change('DUTY_LINK', null, { userLocalId: OLD_HOLDER }, { userLocalId: TEACHER }, 7),
       change('GROUP', GROUP, null, { name: '7A' }, 8),
       change('ORGANISATION', SCHOOL, null, {}, 9),
+      // A mark names its person in the after alone (localId stays empty).
+      change('PROTECTION', null, null, { personExternalId: 'e0000001-0000-4000-8000-000000000000', userLocalId: GUARDIAN }, 10),
     ] as never);
     expect(named).toEqual({
-      PEOPLE: [PUPIL],
+      PEOPLE: [PUPIL, GUARDIAN],
       ROSTER: [PUPIL, PUPIL],
       GUARDIANS: [PUPIL, GUARDIAN, PUPIL],
       EMPLOYMENT: [OLD_HOLDER, TEACHER],
