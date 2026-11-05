@@ -8,7 +8,7 @@ import { calendarLessonRosters } from '../calendar/lesson-roster';
 import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { checkScope, createCreditInTransaction } from '../timplan/timplan-credits.service';
-import { enterGrundschemaWrite, enterPublication } from './publish-mode';
+import { enterGrundschemaWrite, tryEnterPublication } from './publish-mode';
 import {
   inScope,
   inWindow,
@@ -71,6 +71,10 @@ export const ACTIVITY_CREDIT_SUBJECT = 'ACTIVITY_CREDIT_SUBJECT';
 export const ACTIVITY_TEACHER = 'ACTIVITY_TEACHER';
 export const ACTIVITY_SCOPE_TOO_WIDE = 'ACTIVITY_SCOPE_TOO_WIDE';
 export const ACTIVITY_REMOVED = 'ACTIVITY_REMOVED';
+
+/** How long the pass after a DIRECT activity waits for the publications open beside it, and how often it asks. */
+const SETTLE_WAIT_MS = 10_000;
+const SETTLE_EVERY_MS = 200;
 
 /** A class or group with a replacement lesson, and who is responsible for it. */
 export interface ActivityClassView {
@@ -564,33 +568,60 @@ export class ScheduleActivitiesService {
    * them is not cancelled by either (the publish does not see an activity
    * that has not committed, the activity did not see the lesson). So once
    * the activity has committed, one short pass takes the lock EXCLUSIVELY,
-   * which waits for every publish still open, and applies the selection again
-   * to what they left. A publish that starts after the pass sees the
+   * which no publish still open can be holding, and applies the selection
+   * again to what they left. A publish that starts after the pass sees the
    * activity. In DRAFT the exclusive publish already orders the two.
    *
-   * Best effort: the activity is made whatever this answers; a pass that could
-   * not run leaves its lessons to "Tillämpa igen", which the activity's
-   * `addedSince` points at.
+   * The pass TRIES for the lock and never stands in the queue: a request
+   * waiting for the exclusive side holds up every shared request after it, so
+   * a long publish with the activity behind it would have given every other
+   * writer in the school a 409 after 5 s. Each try is a transaction of its
+   * own, and the wait between tries holds no connection: a pool of a few
+   * connections, one of them under the publish, would otherwise be
+   * out of connections for the writers the pass is meant to leave alone. Every
+   * 200 ms for at most 10 s.
+   *
+   * Best effort: the activity is made whatever this answers. A pass that
+   * could not run (the publish was open for more than 10 s, or anything else)
+   * leaves its lessons to "Tillämpa igen", and says so: the activity the
+   * caller gets back carries `addedSince`, counted after this, and the log
+   * names the batch.
    */
   private async settleDirect(user: AuthenticatedUser, schoolId: string, batchId: string): Promise<void> {
+    const giveUpAt = Date.now() + SETTLE_WAIT_MS;
     try {
-      const settled = await this.prisma.withRls(
-        user,
-        async (tx) => {
-          await enterPublication(tx, schoolId);
-          const activity = await tx.scheduleActivity.findFirst({ where: { batchId, removedAt: null }, select: ACTIVITY_SELECT });
-          if (!activity || activity.batch.reversedAt !== null) return { ids: [] as string[] };
-          const { timezone } = await yearOf(tx, activity.academicYearId, null);
-          return reapplyInTransaction(tx, schoolId, activity.batch, timezone);
-        },
-        { timeoutMs: 60_000 },
-      );
-      await this.broadcast(user, [...settled.ids, ...(settled.replacements?.created ?? []), ...(settled.replacements?.updated ?? [])]);
+      for (;;) {
+        const settled = await this.prisma.withRls(
+          user,
+          async (tx) => {
+            if (!(await tryEnterPublication(tx, schoolId, { waitMs: 0 }))) return null;
+            const activity = await tx.scheduleActivity.findFirst({ where: { batchId, removedAt: null }, select: ACTIVITY_SELECT });
+            if (!activity || activity.batch.reversedAt !== null) return { ids: [] as string[] };
+            const { timezone } = await yearOf(tx, activity.academicYearId, null);
+            return reapplyInTransaction(tx, schoolId, activity.batch, timezone);
+          },
+          { timeoutMs: 60_000 },
+        );
+        if (settled !== null) {
+          await this.broadcast(user, [...settled.ids, ...(settled.replacements?.created ?? []), ...(settled.replacements?.updated ?? [])]);
+          return;
+        }
+        if (Date.now() >= giveUpAt) {
+          this.logger.warn(`Schedule activity left to "apply again" [batch=${batchId}]: the publication lock was not free in 10 s`);
+          return;
+        }
+        await this.pause(SETTLE_EVERY_MS);
+      }
     } catch (error) {
       this.logger.warn(
         `Schedule activity left to "apply again" [batch=${batchId}]: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  /** The wait between two tries of the settling pass; a test replaces it. */
+  protected pause(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async removePreview(id: string, user: AuthenticatedUser): Promise<RemovePreview> {

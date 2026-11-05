@@ -6,6 +6,7 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import type { RealtimeService } from '../realtime/realtime.service';
 import { createCreditInTransaction } from '../timplan/timplan-credits.service';
 import { digestAudience, sendDigest } from './cancellation-digest';
+import { tryEnterPublication } from './publish-mode';
 import type { CreateScheduleActivityDto, ScheduleActivitySelectionDto } from './dto/schedule-activity.dto';
 import {
   ACTIVITY_CREDIT_SUBJECT,
@@ -30,6 +31,10 @@ jest.mock('./cancellation-digest', () => ({
   digestAudience: jest.fn(),
   sendDigest: jest.fn(),
 }));
+jest.mock('./publish-mode', () => ({
+  ...jest.requireActual('./publish-mode'),
+  tryEnterPublication: jest.fn(),
+}));
 jest.mock('../timplan/timplan-credits.service', () => ({
   ...jest.requireActual('../timplan/timplan-credits.service'),
   createCreditInTransaction: jest.fn(),
@@ -39,6 +44,7 @@ const lessonRosters = calendarLessonRosters as jest.MockedFunction<typeof calend
 const audienceOf = digestAudience as jest.MockedFunction<typeof digestAudience>;
 const digest = sendDigest as jest.MockedFunction<typeof sendDigest>;
 const writeCredit = createCreditInTransaction as jest.MockedFunction<typeof createCreditInTransaction>;
+const tryPublication = tryEnterPublication as jest.MockedFunction<typeof tryEnterPublication>;
 
 const NOW = new Date('2026-11-05T09:00:00.000Z');
 const YEAR = 'year';
@@ -291,6 +297,7 @@ describe('ScheduleActivitiesService', () => {
       return { people, counts: { pupils: people.size, guardians: 0, teachers: 0 } };
     });
     digest.mockResolvedValue(3);
+    tryPublication.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -737,15 +744,17 @@ describe('ScheduleActivitiesService', () => {
   });
 
   describe('beside a publish in a DIRECT school', () => {
-    const queries = () =>
-      tx.$queryRaw.mock.calls.map(([query]) => String((query as { sql?: string }).sql ?? query));
-    const locks = () =>
-      queries().flatMap((sql) => (sql.includes('enter_publication') ? ['exclusive'] : sql.includes('enter_grundschema_write') ? ['shared'] : []));
+    const sharedLock = () =>
+      tx.$queryRaw.mock.calls.filter(([query]) => String((query as { sql?: string }).sql).includes('enter_grundschema_write')).length;
 
     it('applies the selection once more after the commit, holding the lock exclusively, to what a publish wrote meanwhile', async () => {
       world.pending = [lesson('late', '2026-11-12')];
       await service.create(create(), user);
-      expect(locks()).toEqual(['shared', 'exclusive']);
+      expect(sharedLock()).toBe(1);
+      expect(tryPublication).toHaveBeenCalledTimes(1);
+      expect(tryPublication).toHaveBeenCalledWith(tx, SCHOOL, { waitMs: 0 });
+      // Shared first, in the main transaction; the pass after it.
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tryPublication.mock.invocationCallOrder[0]);
       // The main transaction cancelled l1 and l2; the pass cancelled what the publish left.
       const batches = tx.cancellationBatchLesson.createMany.mock.calls.map(([args]) => args.data.map((row: { calendarLessonId: string }) => row.calendarLessonId));
       expect(batches).toEqual([['l1', 'l2'], ['late']]);
@@ -757,23 +766,51 @@ describe('ScheduleActivitiesService', () => {
         lesson((entry as { id: string }).id, asDate(entry), { status: 'CANCELLED', batchLessons: [{ batchId: BATCH }] }),
       );
       await service.update(ACTIVITY, create({ credits: [], teachers: [] }), user);
-      expect(locks()).toEqual(['shared', 'exclusive']);
+      expect(tryPublication).toHaveBeenCalledTimes(1);
     });
 
     it('does not in a DRAFT school, where the exclusive publish already orders the two', async () => {
       tx.$queryRaw.mockResolvedValue([{ mode: 'DRAFT' }]);
       await service.create(create(), user);
-      expect(locks()).toEqual(['shared']);
+      expect(tryPublication).not.toHaveBeenCalled();
     });
 
-    it('leaves the activity made when the pass cannot run, and says so in the log', async () => {
+    it('tries again, holding no connection between the tries, until the publish has finished', async () => {
+      const pauses: number[] = [];
+      (service as unknown as { pause: (ms: number) => Promise<void> }).pause = async (ms) => {
+        pauses.push(ms);
+        jest.setSystemTime(Date.now() + ms);
+      };
+      tryPublication.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true);
+      world.pending = [lesson('late', '2026-11-12')];
+      await service.create(create(), user);
+      expect(tryPublication).toHaveBeenCalledTimes(3);
+      expect(pauses).toEqual([200, 200]);
+      expect(tx.cancellationBatchLesson.createMany.mock.calls.map(([args]) => args.data.length)).toEqual([2, 1]);
+    });
+
+    it('leaves the activity made when a publish was open the whole time, says so in the log, and in the activity it answers with', async () => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-      tx.$queryRaw.mockImplementation(async (query: unknown) => {
-        if (String((query as { sql?: string }).sql).includes('enter_publication')) throw new Error('lock timeout');
-        return [];
-      });
-      await expect(service.create(create(), user)).resolves.toMatchObject({ cancelled: 2 });
+      (service as unknown as { pause: (ms: number) => Promise<void> }).pause = async (ms) => {
+        jest.setSystemTime(Date.now() + ms);
+      };
+      tryPublication.mockResolvedValue(false);
+      world.pending = [lesson('late', '2026-11-12'), lesson('later', '2026-11-12')];
+      const result = await service.create(create(), user);
+      expect(result).toMatchObject({ cancelled: 2 });
+      // 10 s at 200 ms: the first try and fifty more.
+      expect(tryPublication.mock.calls.length).toBeGreaterThanOrEqual(50);
+      // Nothing was cancelled by the pass, and the row says what waits for "Tillämpa igen".
+      expect(tx.cancellationBatchLesson.createMany).toHaveBeenCalledTimes(1);
+      expect(result.activity.addedSince).toBe(2);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('apply again'));
+    });
+
+    it('leaves the activity made when the pass fails, and says so in the log', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      tryPublication.mockRejectedValue(new Error('connection reset'));
+      await expect(service.create(create(), user)).resolves.toMatchObject({ cancelled: 2 });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('connection reset'));
     });
 
     it('does nothing for an activity removed between its commit and the pass', async () => {

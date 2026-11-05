@@ -783,11 +783,12 @@ export class PublicationsService {
     } else {
       // The shared side, which no other writer waits for: only the exclusive
       // holders do. A schemabrytande aktivitet settles after it commits by
-      // taking the exclusive lock for one short pass (schedule-activities
-      // .service.ts), and that pass has to wait for a DIRECT publish still
-      // open beside the activity, or it would not see the lessons that publish
-      // writes into the activity's days and the activity would leave them
-      // standing. A publish that starts after the pass sees the activity.
+      // trying for the exclusive lock for one short pass (schedule-activities
+      // .service.ts, tryEnterPublication), and the pass has to be able to
+      // tell that a DIRECT publish is still open beside the activity, or it
+      // would not see the lessons that publish writes into the activity's days
+      // and the activity would leave them standing. A publish that starts
+      // after the pass sees the activity.
       await enterGrundschemaWrite(tx, schoolId);
       window = publishWindow(year, { fromDate: dto.validFrom, toDate: dto.validTo });
     }

@@ -11,6 +11,11 @@
  *   sa-k  a publish beside the activity's own transaction, in DIRECT and in
  *         DRAFT, the activity first and the publish first: no lesson the
  *         publish wrote into the activity's days is left standing;
+ *   sa-p  a publish held open for seven seconds beside an activity: another
+ *         writer's edit of the grundschema and an ordinary avbokning go through
+ *         within a few seconds instead of waiting in the lock queue behind the
+ *         activity's pass (409 after 5 s), and the pass still cancels what the
+ *         publish wrote once it has finished;
  *   sa-l  a DIRECT master moved onto a day of the activity: the lesson it
  *         moves there is cancelled with the rest, and the replacement lesson
  *         holds it;
@@ -30,8 +35,9 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { CalendarService } from '../../src/calendar/calendar.service';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
+import { CancellationBatchesService } from '../../src/publication/cancellation-batches.service';
 import { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
-import type { PrismaService } from '../../src/database/prisma.service';
+import { PrismaService } from '../../src/database/prisma.service';
 import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import { DraftService } from '../../src/publication/draft.service';
@@ -193,6 +199,21 @@ async function world(owner: Client, api: PrismaService, marker: string, tag: str
 type World = Awaited<ReturnType<typeof world>>;
 
 /**
+ * Another pool on the same database for the writers that must not wait: the
+ * probe's own is two connections (CI's URL), and a publish held open takes one
+ * of them, so the writers beside it would wait for a connection and not for the lock.
+ */
+function widePool(connections: number): PrismaService {
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = (previous ?? '').replace(/connection_limit=\d+/, `connection_limit=${connections}`);
+  try {
+    return new PrismaService();
+  } finally {
+    process.env.DATABASE_URL = previous;
+  }
+}
+
+/**
  * A PrismaService whose first MAIN transaction (a publish's and an activity's
  * carry the 120 s timeout; the reads before them do not) is kept open for
  * `holdMs` after the callback returned.
@@ -347,6 +368,80 @@ export async function scheduleActivityPublicationChecks(owner: Client, api: Pris
         });
       }
     }
+
+    await check('(sa-p) a publish held open beside an activity: other writers are not queued behind the activity’s pass, and the pass still settles', async () => {
+      const w = await world(owner, api, marker, 'p');
+      const matte = await w.subject('Matte', 'APMA', true);
+      const temadag = await w.subject('Temadag', 'APTD', false);
+      const k7a = await w.group('AP7A');
+      const k7b = await w.group('AP7B');
+      const anna = await w.person('TEACHER', 'Anna');
+      await w.person('STUDENT', 'Ella', k7a);
+      await w.person('STUDENT', 'Bea', k7b);
+      const monday = nextMonday(w.today);
+      const tuesday = addDays(monday, 1);
+      const nextTuesday = addDays(monday, 8);
+      const range = { academicYearId: w.yearId, validFrom: monday, validTo: addDays(monday, 13), acknowledgeWarnings: true };
+      await w.master(matte, k7a, anna.userId!, 2, '08:00', '09:00');
+      const masterB = await w.master(matte, k7b, anna.userId!, 2, '09:00', '10:00');
+      await w.publications().publish(range, w.admin);
+      // One more weekly lesson for 7A, still to be published: the long publish writes it.
+      await w.master(matte, k7a, anna.userId!, 2, '13:00', '14:00');
+      const wide = widePool(8);
+      try {
+        const held = holding(api, 7000);
+        const publish = w.publications(held.service).publish(range, w.admin);
+        await held.reached;
+        const body = {
+          academicYearId: w.yearId,
+          name: 'Prov åk 7A',
+          fromDate: tuesday,
+          toDate: nextTuesday,
+          scope: 'GROUPS' as const,
+          groupIds: [k7a],
+          replacementSubjectId: temadag,
+          teachers: [{ studentGroupId: k7a, teacherId: anna.userId!, role: 'LEAD' as const }],
+          notify: false,
+        };
+        const startedAt = Date.now();
+        const activity = w.activities(wide).create(body, w.admin).then(() => Date.now() - startedAt);
+        await sleep(1000);
+        // While the publish is open and the activity is waiting to settle: an edit of the grundschema by hand, and an
+        // ordinary avbokning of the other class. Neither has anything to do with the activity or the publish, and
+        // neither may be made to wait for them (a 409 comes after 5 s of waiting).
+        const edit = (async () => {
+          const at = Date.now();
+          await new MasterLessonsService(wide, realtime, w.quiet).update(masterB, { isLocked: true }, w.admin);
+          return Date.now() - at;
+        })();
+        const batch = (async () => {
+          const at = Date.now();
+          await new CancellationBatchesService(wide, realtime, w.notifications).create(
+            { academicYearId: w.yearId, name: 'Studiedag 7B', cause: 'MANUAL', fromDate: nextTuesday, toDate: nextTuesday, scope: 'GROUPS', groupIds: [k7b] } as never,
+            w.admin,
+          );
+          return Date.now() - at;
+        })();
+        // Everything is awaited before anything is said about it: a check that stops at the first rejection leaves
+        // the publish and the activity running into the school's sweep.
+        const [editResult, batchResult, activityResult, publishResult] = await Promise.allSettled([edit, batch, activity, publish]);
+        for (const [name, result] of [['edit', editResult], ['avbokning', batchResult], ['activity', activityResult], ['publish', publishResult]] as const) {
+          assert.equal(result.status, 'fulfilled', `${name}: ${result.status === 'rejected' ? String(result.reason?.message ?? result.reason).slice(0, 300) : ''}`);
+        }
+        const [editMs, batchMs, activityMs] = [editResult, batchResult, activityResult].map((result) => (result as PromiseFulfilledResult<number>).value);
+        assert.ok(editMs < 4000, `the edit waited ${editMs} ms`);
+        assert.ok(batchMs < 4000, `the avbokning waited ${batchMs} ms`);
+        // The pass waited for the publish and then cancelled what it wrote.
+        assert.ok(activityMs > 5000, `the activity settled after ${activityMs} ms, before the publish had finished`);
+        const late = await w.standing(k7a, tuesday, nextTuesday, '13:00');
+        assert.deepEqual(late.map((row) => row.status), ['CANCELLED', 'CANCELLED']);
+        const [created] = await w.all<{ id: string }>(`SELECT id FROM "ScheduleActivities" WHERE "schoolId" = $1`, [w.s]);
+        assert.equal((await w.activities(wide).list(w.yearId, w.admin)).find((entry) => entry.id === created.id)?.addedSince, 0);
+      } finally {
+        await wide.$disconnect();
+        await w.cleanup();
+      }
+    });
 
     await check('(sa-l) a DIRECT master moved onto a day of the activity: the lesson it moves there is cancelled with the rest and the replacement holds it', async () => {
       const w = await world(owner, api, marker, 'l');
