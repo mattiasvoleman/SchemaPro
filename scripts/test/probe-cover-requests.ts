@@ -49,7 +49,14 @@
  *   cr-m  lines and recipients are added to an open request only;
  *   cr-n  a sender deactivated, or made a teacher, between the lookup and the
  *         placement is said as that (COVER_REQUEST_SENDER_GONE), not as a 500,
- *         and nothing is placed.
+ *         and nothing is placed;
+ *   cr-o  the vikarie is away themself: the absent teacher's row is gone (a
+ *         decision put the vikarie there), the pair is open again on the
+ *         board, a question about it stands through the job's pass and a yes
+ *         to it places the next colleague;
+ *   cr-p  a question that ran out and is swept by a new question about its
+ *         lesson tells its sender that nobody said yes, unless it is the same
+ *         administrator asking again.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -730,6 +737,56 @@ export async function coverRequestsChecks(owner: Client, api: PrismaService, mar
         assert.deepEqual(await substitutesOf(l), [], what);
         assert.equal((await one<{ answer: string }>(`SELECT answer::text FROM "CoverRequestRecipients" WHERE "requestId" = $1 AND "userId" = $2`, [sent.id, t[0]!.id])).answer, 'PENDING', what);
       }
+    });
+
+    await check('(cr-o) the vikarie is away themself: the pair is open again on the board, a question about it stands through the job’s pass, and a yes places the next colleague', async () => {
+      const job = new CoverRequestsJob(requests);
+      const l = await lesson(70, 6);
+      const vik = await person('TEACHER', 'vikarie-borta');
+      await cover.decide(l, { absenceId: absence, kind: 'SUBSTITUTE', substituteId: vik.id, expected: 'OPEN' }, asAdmin);
+      // The absent teacher's row went with the decision.
+      assert.equal(
+        (await rows(`SELECT 1 FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1 AND "teacherId" = $2`, [l, absent.id])).length,
+        0,
+      );
+      // The vikarie falls ill the same day: the board reads the pair as open again.
+      await owner.query(
+        `INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt") VALUES ($1, $2, now() - interval '1 day', now() + interval '90 days')`,
+        [s, vik.id],
+      );
+      const date = await dayOf(70);
+      const pair = (await cover.board(date, date, asAdmin)).items.find((item) => item.lessonId === l && item.absenceId === absence);
+      assert.equal(pair?.status, 'OPEN', 'the board does not read the pair as open again');
+
+      const sent = await requests.create({ lessons: [{ lessonId: l, absenceId: absence }], recipientIds: [t[0]!.id, t[1]!.id] }, asAdmin);
+      await job.tick();
+      assert.equal((await requestOf(sent.id)).status, 'OPEN', 'the job closed a question the board still needs answered');
+      assert.deepEqual((await noticesAbout(sent.id)).filter((n) => n.type === 'COVER_REQUEST_CLOSED'), []);
+      // And the yes is placed: the colleague takes the lesson from the vikarie who is away.
+      await requests.accept(sent.id, asTeacher(t[0]!));
+      assert.equal((await requestOf(sent.id)).status, 'ACCEPTED');
+      assert.ok((await substitutesOf(l)).includes(t[0]!.id));
+    });
+
+    await check('(cr-p) a question that ran out and is swept by a new question tells its sender that nobody said yes, unless it is the same administrator', async () => {
+      const lonely = await lesson(75, 6);
+      const old = await plantRequest(admin2.id, lonely, absence, [t[0]!.id], 5);
+      const fresh = await requests.create({ lessons: [{ lessonId: lonely, absenceId: absence }], recipientIds: [t[1]!.id] }, asAdmin);
+      assert.equal((await requestOf(old)).status, 'EXPIRED');
+      assert.deepEqual(
+        (await noticesAbout(old)).map((n) => [n.userId, n.type, n.meta['reason']]),
+        [[admin2.id, 'COVER_REQUEST_CLOSED', 'UNANSWERED']],
+      );
+      namesNothing(await noticesAbout(old));
+      await requests.withdraw(fresh.id, asAdmin);
+
+      // The administrator who asks again knows already.
+      const again = await lesson(76, 6);
+      const mine = await plantRequest(admin.id, again, absence, [t[0]!.id], 5);
+      const second = await requests.create({ lessons: [{ lessonId: again, absenceId: absence }], recipientIds: [t[1]!.id] }, asAdmin);
+      assert.equal((await requestOf(mine)).status, 'EXPIRED');
+      assert.deepEqual(await noticesAbout(mine), []);
+      await requests.withdraw(second.id, asAdmin);
     });
   } finally {
     await racer.$disconnect().catch(() => undefined);

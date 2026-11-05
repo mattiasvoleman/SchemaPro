@@ -314,8 +314,39 @@ describe('CoverRequestsService', () => {
 
     it('ends an expired request that stands in the way of a new one before it looks', async () => {
       await service.create(dto(), admin);
-      const settle = tx.$executeRaw.mock.calls.map(([statement]) => sqlOf(statement)).find((text) => text.includes("SET \"status\" = 'EXPIRED'"));
+      const settle = tx.$queryRaw.mock.calls.map(([statement]) => sqlOf(statement)).find((text) => text.includes("SET \"status\" = 'EXPIRED'"));
       expect(settle).toBeDefined();
+      expect(settle).toContain('RETURNING');
+    });
+
+    describe('the expired request it sweeps', () => {
+      const OLD = 'dddddddd-dddd-4ddd-8ddd-ddddddddd001';
+      const sweeping = (rows: { id: string; requestedByUserId: string | null }[]) => {
+        const before = tx.$queryRaw.getMockImplementation()!;
+        tx.$queryRaw.mockImplementation(async (statement: unknown) =>
+          sqlOf(statement).includes("SET \"status\" = 'EXPIRED'") ? rows : before(statement),
+        );
+        tx.coverRequestLesson.findMany.mockResolvedValue([{ calendarLessonId: LESSON }]);
+      };
+
+      it('tells its sender that nobody said yes, as the job would have, when another administrator asks again', async () => {
+        sweeping([{ id: OLD, requestedByUserId: BO }]);
+        await service.create(dto(), admin);
+        const unanswered = notifications.notifyUsers.mock.calls.find(([, options]) => options.type === 'COVER_REQUEST_CLOSED');
+        expect(unanswered![1]).toMatchObject({ userIds: [BO], schoolId: SCHOOL });
+        expect(unanswered![1].meta).toMatchObject({ requestId: OLD, reason: 'UNANSWERED', lessonCount: 1 });
+        expect(unanswered![1].email.subject).toMatch(/^Ingen har tackat ja /);
+      });
+
+      it('tells the administrator who asks again nothing: they know, and a request with no sender has nobody to tell', async () => {
+        sweeping([
+          { id: OLD, requestedByUserId: ADMIN },
+          { id: 'dddddddd-dddd-4ddd-8ddd-ddddddddd002', requestedByUserId: null },
+        ]);
+        await service.create(dto(), admin);
+        expect(notifications.notifyUsers.mock.calls.some(([, options]) => options.type === 'COVER_REQUEST_CLOSED')).toBe(false);
+        expect(notifications.notifyUsers.mock.calls.some(([, options]) => options.type === 'COVER_REQUESTED')).toBe(true);
+      });
     });
   });
 
@@ -613,6 +644,22 @@ describe('CoverRequestsService', () => {
       expect(tx.coverRequestRecipient.findMany).not.toHaveBeenCalled();
     });
 
+    it('says "passet" for one lesson and "passen" for several when nobody said yes', async () => {
+      const LESSON2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb02';
+      const lessonRow = (id: string, startsAt: Date) => ({ id, date: new Date('2026-10-14T00:00:00.000Z'), startsAt, studentGroupId: 'grp', roomId: null, subjectId: 'subj' });
+      settled([{ requestId: REQUEST, schoolId: SCHOOL, outcome: 'EXPIRED', ...SENDER_ROW }]);
+      await service.settle();
+      expect(notifications.notifyUsers.mock.calls[0]![1].email.body).toMatch(/Passet behöver fortfarande en vikarie/);
+
+      notifications.notifyUsers.mockClear();
+      tx.coverRequestLesson.findMany.mockResolvedValue([{ calendarLessonId: LESSON }, { calendarLessonId: LESSON2 }]);
+      tx.calendarLesson.findMany.mockResolvedValue([lessonRow(LESSON, START), lessonRow(LESSON2, new Date(START.getTime() + 3_600_000))]);
+      await service.settle();
+      const body = notifications.notifyUsers.mock.calls[0]![1].email.body as string;
+      expect(body).toMatch(/Passen behöver fortfarande en vikarie/);
+      expect(body).toContain('2 lektioner');
+    });
+
     it('tells the colleagues the question still waited on, and only them, that it is no longer needed', async () => {
       settled([{ requestId: REQUEST, schoolId: SCHOOL, outcome: 'NOT_NEEDED', ...SENDER_ROW }]);
       expect(await service.settle()).toEqual({ expired: 0, notNeeded: 1 });
@@ -626,6 +673,8 @@ describe('CoverRequestsService', () => {
       expect(options.meta.reason).toBe('NOT_NEEDED');
       expect(options.email.subject).toMatch(/^Vikariefrågan behövs inte längre /);
       expect(options.email.body).toContain('Du behöver inte svara');
+      // Said no further than that: the mail does not tell why the question is not needed (an absence taken back).
+      expect(options.email.body).not.toMatch(/frånvar|lektionen finns/i);
       expect(realtime.notifyCoverBoardChanged).toHaveBeenCalled();
     });
 

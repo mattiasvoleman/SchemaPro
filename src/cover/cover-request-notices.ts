@@ -161,7 +161,7 @@ export async function sendClosed(
     },
     NOT_NEEDED: {
       subject: `Vikariefrågan behövs inte längre ${when}`,
-      body: `Vikariefrågan om ${lessonsIn(lessons.length)} från ${when} behövs inte längre: frånvaron eller lektionen finns inte kvar. Du behöver inte svara.`,
+      body: `Vikariefrågan om ${lessonsIn(lessons.length)} från ${when} behövs inte längre. Du behöver inte svara.`,
     },
   }[args.reason];
   await notifications.notifyUsers(tx, {
@@ -208,7 +208,7 @@ export async function sendUnanswered(
     },
     email: {
       subject: `Ingen har tackat ja ${when}`,
-      body: `Ingen kollega tackade ja till vikariefrågan om ${lessonsIn(lessons.length)} från ${when} innan den gick ut. Passen behöver fortfarande en vikarie: fråga fler kollegor eller tillsätt någon på vikarietavlan i Rastra.`,
+      body: `Ingen kollega tackade ja till vikariefrågan om ${lessonsIn(lessons.length)} från ${when} innan den gick ut. ${lessons.length === 1 ? 'Passet behöver' : 'Passen behöver'} fortfarande en vikarie: fråga fler kollegor eller tillsätt någon på vikarietavlan i Rastra.`,
     },
   });
 }

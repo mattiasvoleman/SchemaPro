@@ -37286,6 +37286,31 @@ BEGIN
     END IF;
   END LOOP;
 
+  -- The absent teacher's row is gone because a decision of the board put a
+  -- vikarie on the lesson; the vikarie is away themself, so the pair is open
+  -- again on the board and a question about it stands. The pass leaves it be
+  -- (the decision is what tells where the absent teacher went).
+  day := DATE '2098-01-20';
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, subj, grp, day, (day::timestamp AT TIME ZONE 'UTC') + interval '8 hours', (day::timestamp AT TIME ZONE 'UTC') + interval '9 hours', now())
+  RETURNING id INTO l;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (school, t1, day::timestamp AT TIME ZONE 'UTC', (day::timestamp AT TIME ZONE 'UTC') + interval '1 day') RETURNING id INTO a;
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers", "substituteId", "decidedByUserId")
+  VALUES (school, a, l, t1, 'SUBSTITUTE', jsonb_build_array(jsonb_build_object('teacherId', t1, 'role', 'LEAD')), t2, me);
+  -- The decision is made first: it would close a request that already stood.
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 hour') RETURNING id INTO r;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, r, a, l);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, r, t2);
+  IF pg_temp.settled(r, me_auth) <> 'none' OR (SELECT status FROM "CoverRequests" WHERE id = r) <> 'OPEN' THEN
+    RAISE EXCEPTION 'cover requests: the pass closed a question about a pair the board still needs covered (the vikarie is away themself)';
+  END IF;
+  -- With the decision gone and the absent teacher still off the lesson, nothing says where they went.
+  DELETE FROM "TeacherAbsenceCovers" WHERE "absenceId" = a AND "calendarLessonId" = l;
+  IF pg_temp.settled(r, me_auth) <> 'NOT_NEEDED' THEN
+    RAISE EXCEPTION 'cover requests: the pass kept a question about a lesson the absent teacher has left with no decision to say why';
+  END IF;
+
   -- Grounds gone come before time out: a question that ran out in the same
   -- hour as the absence was taken back is said to have been taken back.
   day := DATE '2098-02-01';

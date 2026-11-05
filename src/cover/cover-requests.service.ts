@@ -269,13 +269,16 @@ export class CoverRequestsService {
         );
       }
 
-      // A request the nightly job has not yet settled must not stand in the
-      // way of a new one for the same lesson.
-      await tx.$executeRaw(Prisma.sql`
+      // A request the job has not yet settled must not stand in the way of a
+      // new one for the same lesson. It ran out with nobody saying yes, and
+      // its sender is told so as the job would have told them, unless it is
+      // the administrator asking again, who knows.
+      const swept = await tx.$queryRaw<{ id: string; requestedByUserId: string | null }[]>(Prisma.sql`
         UPDATE "CoverRequests" SET "status" = 'EXPIRED'
          WHERE "status" = 'OPEN' AND "expiresAt" <= clock_timestamp()
            AND "id" IN (SELECT l."requestId" FROM "CoverRequestLessons" l
-                         WHERE l."open" AND l."calendarLessonId" = ANY(${pairs.map((pair) => pair.lessonId)}::uuid[]))`);
+                         WHERE l."open" AND l."calendarLessonId" = ANY(${pairs.map((pair) => pair.lessonId)}::uuid[]))
+        RETURNING "id", "requestedByUserId"`);
       const taken = await tx.coverRequestLesson.findFirst({
         where: { open: true, OR: pairs.map((pair) => ({ absenceId: pair.absenceId, calendarLessonId: pair.lessonId })) },
         select: { requestId: true, calendarLessonId: true },
@@ -305,7 +308,8 @@ export class CoverRequestsService {
         }
         throw error;
       }
-      return { id: request.id, schoolId, timezone, expiresAt, recipientIds, lessonIds: pairs.map((pair) => pair.lessonId) };
+      const unanswered = (swept ?? []).flatMap((row) => (row.requestedByUserId && row.requestedByUserId !== senderId ? [{ requestId: row.id, senderId: row.requestedByUserId }] : []));
+      return { id: request.id, schoolId, timezone, expiresAt, recipientIds, lessonIds: pairs.map((pair) => pair.lessonId), unanswered };
     });
 
     // Told after the commit, in a transaction of its own: a refused write told nobody.
@@ -320,6 +324,19 @@ export class CoverRequestsService {
         });
       }),
     );
+    for (const old of created.unanswered) {
+      await this.tellOnce(`Cover request sweep notices [request=${old.requestId}]`, () =>
+        this.prisma.withRls(user, async (tx) => {
+          const lines = await tx.coverRequestLesson.findMany({ where: { requestId: old.requestId }, select: { calendarLessonId: true } });
+          await sendUnanswered(this.notifications, tx, {
+            schoolId,
+            timezone: created.timezone,
+            context: { requestId: old.requestId, lessonIds: lines.map((line) => line.calendarLessonId) },
+            senderId: old.senderId,
+          });
+        }),
+      );
+    }
     this.broadcast(schoolId, created.lessonIds, user);
     this.logger.log(`Cover request sent [request=${created.id}, lessons=${created.lessonIds.length}, recipients=${created.recipientIds.length}]`);
     return this.viewOf(user, created.id);

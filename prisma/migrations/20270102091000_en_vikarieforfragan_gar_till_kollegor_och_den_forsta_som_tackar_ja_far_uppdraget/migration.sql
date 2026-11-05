@@ -673,9 +673,14 @@ COMMENT ON FUNCTION app.cover_request_is_open(uuid) IS
 -- grounds are gone end CLOSED. A request has lost its grounds when one of its
 -- lines no longer is a lesson to cover: the lesson is cancelled, the absence
 -- is taken back, the absence no longer reaches the lesson (shortened, or the
--- lesson moved), the absent teacher is no longer on the lesson, or the
--- request has no line left. A decision of the board closes its request by
--- trigger already, and a yes ends it. A request a yes holds is skipped (it
+-- lesson moved), the absent teacher is no longer on the lesson with no decision
+-- of the board to say where they went, or the request has no line left. (A
+-- decision that put a vikarie on the lesson takes the absent teacher's row
+-- away; if the vikarie is then away themself the pair is open again on the
+-- board, and a question about it stands: the board's own reading of a pair,
+-- CoverService.readPair, accepts a live pair or one with a decision on an
+-- active absence, and so does this.) A decision of the board closes its
+-- request by trigger already, and a yes ends it. A request a yes holds is skipped (it
 -- ends by that yes, or the next pass finds it), so the job never waits on a
 -- lock behind the first yes. Grounds gone come before time out: a question
 -- that ran out the same hour as the absence was taken back is said to have
@@ -705,8 +710,10 @@ BEGIN
                           AND (l."status" = 'CANCELLED'
                                OR a."status" <> 'ACTIVE'
                                OR NOT (l."startsAt" < a."endsAt" AND l."endsAt" > a."startsAt")
-                               OR NOT EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t
-                                               WHERE t."calendarLessonId" = l."id" AND t."teacherId" = a."userId")))) AS unfounded
+                               OR (NOT EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t
+                                                WHERE t."calendarLessonId" = l."id" AND t."teacherId" = a."userId")
+                                   AND NOT EXISTS (SELECT 1 FROM "TeacherAbsenceCovers" c
+                                                    WHERE c."absenceId" = a."id" AND c."calendarLessonId" = l."id"))))) AS unfounded
       FROM "CoverRequests" q
      WHERE q."status" = 'OPEN'
   ), due AS (

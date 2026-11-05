@@ -942,9 +942,13 @@ Walk the full product loop once, in order:
   nothing else (no MAINTAIN), and `anon` and `authenticated` nothing at all;
   the five functions answer `app_authenticated` alone (`SELECT
   has_function_privilege('anon', 'app.cover_request_sender(uuid)', 'EXECUTE'),
-  has_function_privilege('authenticated', 'app.cover_request_sender(uuid)',
-  'EXECUTE')` is false, false); as the API's role without a login `SELECT *
-  FROM app.cover_requests_settle()` answers no row.
+  has_function_privilege('authenticated', 'app.cover_requests_settle()',
+  'EXECUTE'), has_function_privilege('service_role',
+  'app.cover_request_is_open(uuid)', 'EXECUTE')` is false, false, false, and
+  `has_function_privilege('app_authenticated', 'app.cover_requests_settle()',
+  'EXECUTE')` is true). Do not call `app.cover_requests_settle()` to see: it
+  ends the requests that are due, and the gateway, not the function, tells
+  the people they concern.
   **After the merge:** `GET /api/v1/cover/board` answers `requests: []` and
   `confirmations: []`; `JobRuns` gets a row for `cover-requests` within five
   minutes of the new instance serving, its counts `{"expired": 0,
