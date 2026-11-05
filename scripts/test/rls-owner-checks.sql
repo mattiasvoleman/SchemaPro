@@ -364,9 +364,16 @@ ROLLBACK;
 --      added later without one fails here, named;
 --   3. the planner, asked for the lookup's plan (the statement ri_triggers.c
 --      issues, generic, with sequential scans switched off), never answers
---      with a Seq Scan, and takes the two partial indexes of PersonalDataAccess
---      for their keys: the proof that a partial index whose predicate the
---      lookup implies is used.
+--      with a Seq Scan, and, given a copy of PersonalDataAccess that is empty
+--      and has only the one partial index (built from the real index's own
+--      definition), takes that index for each of its two keys: the proof that
+--      a partial index whose predicate the lookup implies is used. The copy,
+--      not the live table: with several indexes to choose between, the
+--      planner's pick follows the table's statistics (a läslogg of a single
+--      actor, a thousand rows or more, is read through another index, and
+--      nothing is wrong with either), so a check that the live table's pick is
+--      the partial index fails on a development database and proves nothing
+--      about the predicate.
 --
 -- Run as the owner: the policies of the API's role add predicates of their
 -- own, and the lookup Postgres makes for a foreign key sees none of them.
@@ -388,6 +395,7 @@ DECLARE
   key_cols text;
   person_col text;
   expected_index text;
+  probe_def text;
   asked int := 0;
   answered_by_partial int := 0;
   unled text[] := '{}';
@@ -499,16 +507,36 @@ BEGIN
       bare := bare || format('%s(%s)', fk.tbl, key_cols);
     END IF;
 
-    -- The two partial indexes of the läslogg: the planner must take them.
+    -- The two partial indexes of the läslogg: the planner must take them, asked
+    -- of an empty copy of the table with that one index on it (see 3 above), so
+    -- that the answer is the same on every database whatever the table holds.
     expected_index := CASE fk.tbl || '(' || key_cols || ')'
       WHEN 'PersonalDataAccess(huvudmanMemberId)' THEN 'PersonalDataAccess_huvudmanMemberId_idx'
       WHEN 'PersonalDataAccess(actorId,schoolId)' THEN 'PersonalDataAccess_actorId_kind_at_idx'
     END;
     IF expected_index IS NOT NULL THEN
-      IF position(expected_index IN plan) = 0 THEN
-        wrong := wrong || format('%s(%s) is not answered by %s', fk.tbl, key_cols, expected_index);
+      probe_def := replace(pg_get_indexdef(to_regclass(format('public.%I', expected_index))),
+                           ' ON public."PersonalDataAccess" ', ' ON pg_temp.fk_index_probe ');
+      IF probe_def IS NULL THEN
+        wrong := wrong || format('%s(%s): %s does not exist', fk.tbl, key_cols, expected_index);
+      ELSIF probe_def NOT LIKE '% ON pg_temp.fk_index_probe %' THEN
+        RAISE EXCEPTION 'fk-index: the definition of % could not be moved to the probe table (%)', expected_index, probe_def;
       ELSE
-        answered_by_partial := answered_by_partial + 1;
+        EXECUTE 'CREATE TEMP TABLE fk_index_probe (LIKE "PersonalDataAccess")';
+        EXECUTE probe_def;
+        EXECUTE format('PREPARE fk_index_probe_lookup(%s) AS SELECT 1 FROM ONLY pg_temp.fk_index_probe x WHERE %s FOR KEY SHARE OF x',
+                       types, where_sql);
+        plan := '';
+        FOR line IN EXECUTE format('EXPLAIN EXECUTE fk_index_probe_lookup(%s)', nulls) LOOP
+          plan := plan || line || E'\n';
+        END LOOP;
+        DEALLOCATE fk_index_probe_lookup;
+        DROP TABLE pg_temp.fk_index_probe;
+        IF position(expected_index IN plan) = 0 OR plan ~ 'Seq Scan' THEN
+          wrong := wrong || format('%s(%s) is not answered by %s, alone on an empty copy of the table', fk.tbl, key_cols, expected_index);
+        ELSE
+          answered_by_partial := answered_by_partial + 1;
+        END IF;
       END IF;
     END IF;
   END LOOP;
