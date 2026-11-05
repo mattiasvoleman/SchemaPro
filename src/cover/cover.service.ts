@@ -43,6 +43,8 @@ import {
 } from './cover-decisions';
 import { rethrowCoverError } from './cover-errors';
 import { sendNotices, settleNotices } from './cover-notices';
+import { sendClosed } from './cover-request-notices';
+import { readBoardParts, type BoardConfirmation, type BoardRequest } from './cover-request-reads';
 import { passSummaryOf, type PassBoardItem, type PassSummary } from './supervision-board';
 import { readPassBoard } from './supervision-cover-reads';
 import { sendPassNotices, settlePassNotices, type PassNotice } from './supervision-notices';
@@ -94,6 +96,19 @@ export interface CoverEffects {
   warnings: Array<StaffingWarning | CoverWarning>;
   /** A rastvaktspass's vikarier, booked or no longer needed (Rastvakt i vardagen, 20261210090000). */
   passNotices: PassNotice[];
+  /**
+   * The vikarieförfrågningar a SUBSTITUTE decision ended (Vikariefrågan,
+   * 20270102091000): a vikarie put on the lesson by the board settles every
+   * question that asked for it, and the colleagues who had not answered, the
+   * vikarie put there not among them, are told it is taken.
+   */
+  closedRequests: ClosedRequest[];
+}
+
+export interface ClosedRequest {
+  requestId: string;
+  lessonIds: string[];
+  recipientIds: string[];
 }
 
 export interface BoardResponse {
@@ -115,6 +130,14 @@ export interface BoardResponse {
    */
   supervision: PassBoardItem[];
   supervisionSummary: PassSummary;
+  /**
+   * The vikarieförfrågningar that ask for a lesson of the window, and what
+   * each colleague answered (Vikariefrågan, 20270102091000;
+   * cover-request-reads.ts). Ids and answers: never a reason.
+   */
+  requests: BoardRequest[];
+  /** The vikarie's confirmations of the window's passes. */
+  confirmations: BoardConfirmation[];
 }
 
 /** One pair, read inside a write's transaction after its locks. */
@@ -137,6 +160,7 @@ export const emptyEffects = (): CoverEffects => ({
   classNotices: [],
   warnings: [],
   passNotices: [],
+  closedRequests: [],
 });
 
 /**
@@ -206,6 +230,15 @@ export class CoverService {
       );
       const lessonIds = [...new Set(items.map((item) => item.lessonId))];
       const noted = await substituteNotedLessons(tx, lessonIds);
+      const { requests, confirmations } = await readBoardParts(tx, lessonIds, now);
+      // Whom the window's questions went to and what each answered: work
+      // behaviour of named people, read as the counter's figures are.
+      await recordRead(
+        tx,
+        'EMPLOYMENT',
+        requests.flatMap((request) => request.recipients.map((recipient) => recipient.userId)),
+        user.channel,
+      );
       return {
         from,
         to,
@@ -220,6 +253,8 @@ export class CoverService {
         })),
         supervision,
         supervisionSummary: passSummaryOf(supervision),
+        requests,
+        confirmations,
       };
     });
   }
@@ -334,6 +369,27 @@ export class CoverService {
       case 'SUBSTITUTE': {
         if (!args.substituteId) {
           throw new BadRequestException({ message: 'substituteId: vem som vikarierar.', code: COVER_SUBSTITUTE_REQUIRED });
+        }
+        // The questions this decision ends (the trigger on TeacherAbsenceCovers
+        // does it): read before it is written, for the colleagues to be told.
+        const asked = await tx.coverRequestLesson.findMany({
+          where: { open: true, absenceId: absence.id, calendarLessonId: lesson.id },
+          select: {
+            request: {
+              select: {
+                id: true,
+                lessons: { select: { calendarLessonId: true } },
+                recipients: { where: { answer: 'PENDING', userId: { not: args.substituteId } }, select: { userId: true } },
+              },
+            },
+          },
+        });
+        for (const row of asked ?? []) {
+          effects.closedRequests.push({
+            requestId: row.request.id,
+            lessonIds: row.request.lessons.map((line) => line.calendarLessonId),
+            recipientIds: row.request.recipients.map((recipient) => recipient.userId),
+          });
         }
         // The absent row is gone once a decision removed it. If that
         // decision's vikarie still holds the lesson but is away themself
@@ -577,6 +633,16 @@ export class CoverService {
           for (const notice of settleClassNotices(effects.classNotices)) {
             await this.calendarLessons.notifyLessonClass(tx, notice.lessonId, notice.type, notice.teacherIds, timezone);
           }
+          // The colleagues asked who did not get it: it is taken (Vikariefrågan).
+          for (const closed of settleClosedRequests(effects.closedRequests ?? [])) {
+            await sendClosed(this.notifications, tx, {
+              schoolId,
+              timezone,
+              context: { requestId: closed.requestId, lessonIds: closed.lessonIds },
+              recipientIds: closed.recipientIds,
+              reason: 'TAKEN',
+            });
+          }
           await this.realtime.notifyLessonsChanged(tx, [...new Set(effects.lessonIds)]);
         })
         .catch(() => this.logger.warn(`Cover notices failed after commit [lessons=${effects.lessonIds.length}]`));
@@ -662,6 +728,26 @@ export function merge(into: CoverEffects, from: CoverEffects): void {
   into.classNotices.push(...from.classNotices);
   into.warnings.push(...from.warnings);
   into.passNotices.push(...(from.passNotices ?? []));
+  into.closedRequests.push(...(from.closedRequests ?? []));
+}
+
+/** One notice per question, whatever number of its lessons the batch decided. */
+export function settleClosedRequests(closed: readonly ClosedRequest[]): ClosedRequest[] {
+  const byRequest = new Map<string, ClosedRequest>();
+  for (const entry of closed) {
+    const known = byRequest.get(entry.requestId);
+    byRequest.set(
+      entry.requestId,
+      known
+        ? {
+            ...known,
+            lessonIds: [...new Set([...known.lessonIds, ...entry.lessonIds])],
+            recipientIds: [...new Set([...known.recipientIds, ...entry.recipientIds])],
+          }
+        : entry,
+    );
+  }
+  return [...byRequest.values()];
 }
 
 /** One class notice per lesson and kind: two pairs of one lesson covered in a batch tell the class once. */

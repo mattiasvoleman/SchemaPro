@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { ApiError, apiRequest } from './api';
+import { tapTypeOf } from './auth/appGate';
 import { translatorFor } from '../i18n';
 import { loadLocale } from '../i18n/localeStore';
 import type { Locale } from '../i18n/translate';
@@ -288,18 +289,19 @@ export async function startSignedIn(userId: string): Promise<PushOutcome> {
 }
 
 /**
- * A tap on a notification the app has not yet acted on. expo-notifications
- * keeps the last response until it is cleared, so without clearing it every
- * later sign-in or role change in the same process would replay it.
+ * A tap on a notification the app has not yet acted on, as the notice type
+ * its push carried (null when it carried none). expo-notifications keeps the
+ * last response until it is cleared, so without clearing it every later
+ * sign-in or role change in the same process would replay it.
  */
-export function takeLastTap(): boolean {
+export function takeLastTap(): { readonly type: string | null } | null {
   try {
     const response = Notifications.getLastNotificationResponse();
-    if (!response) return false;
+    if (!response) return null;
     Notifications.clearLastNotificationResponse();
-    return true;
+    return { type: tapTypeOf(response) };
   } catch {
-    return false;
+    return null;
   }
 }
 

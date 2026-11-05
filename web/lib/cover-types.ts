@@ -10,6 +10,8 @@
  * candidates, the proposal, the counter and the hours never name one.
  */
 
+import type { BoardConfirmation, BoardRequest } from "@/lib/cover-request-types";
+
 export type CoverStatus = "OPEN" | "COVERED" | "CANCELLED" | "HANDLED";
 export type CoverDecisionKind = "SUBSTITUTE" | "CANCELLED" | "SUPERVISED_STUDY" | "CO_TEACHER";
 export type CoverPersonKind = "STAFF" | "POOL";
@@ -127,6 +129,13 @@ export interface Board {
    */
   supervision?: PassBoardItem[];
   supervisionSummary?: PassSummary;
+  /**
+   * Vikariefrågan (20270102091000): every request asking for a lesson in the
+   * window, in any state, and the vikarie's taps on their passes. Absent from
+   * a gateway before it.
+   */
+  requests?: BoardRequest[];
+  confirmations?: BoardConfirmation[];
 }
 
 export type PassStatus = "OPEN" | "COVERED" | "HANDLED";

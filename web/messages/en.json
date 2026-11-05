@@ -2330,7 +2330,12 @@
     "leaveRejectedByMentor": "Leave for {student} ({from} – {to}) was rejected by the mentor.",
     "unreadMarker": "Unread.",
     "absenceWatchDigest": "Absence summary {from} – {to}: {open, plural, =0 {no pupil is over a limit} one {# pupil is over a limit} other {# pupils are over a limit}}, {crossed, plural, =0 {none passed a limit} one {# passed a limit} other {# passed a limit}} in the period. See Absence watch.",
-    "absenceWatchDigestGuardian": "Absence summary {from} – {to}: {open, plural, =0 {{crossed, plural, one {one of your children is} other {# of your children are}} under an absence limit again} one {one of your children has absence over a limit the school has set} other {# of your children have absence over a limit the school has set}}. See Absence watch."
+    "absenceWatchDigestGuardian": "Absence summary {from} – {to}: {open, plural, =0 {{crossed, plural, one {one of your children is} other {# of your children are}} under an absence limit again} one {one of your children has absence over a limit the school has set} other {# of your children have absence over a limit the school has set}}. See Absence watch.",
+    "cover": {
+      "COVER_REQUESTED": "Can you substitute? {count, plural, one {One lesson} other {# lessons}} from {when}.",
+      "COVER_REQUEST_CLOSED": "{reason, select, TAKEN {The request to substitute from {when} is filled: a colleague said yes first.} NOT_NEEDED {The request to substitute from {when} is no longer needed. You need not answer.} UNANSWERED {Nobody said yes to the request from {when}. {count, plural, one {The lesson still needs} other {The lessons still need}} a substitute.} other {The request to substitute from {when} is withdrawn. You need not answer.}}",
+      "COVER_REQUEST_ACCEPTED": "{name} said yes to {count, plural, one {the lesson} other {the # lessons}} from {when}."
+    }
   },
   "integrations": {
     "title": "Integrations",
@@ -5824,6 +5829,98 @@
     "writeNote": "Write a note to the substitute",
     "editNote": "Change the note to the substitute"
   },
+  "coverRequests": {
+    "ask": "Ask colleagues",
+    "askSelected": "Ask colleagues ({count})",
+    "askLimit": "At most {max} lessons in one request",
+    "title": "Ask colleagues",
+    "body": "The colleagues you choose get a request. The first to say yes gets {count, plural, one {the lesson} other {all the lessons}}, and it is published on the timetable. The others are told it is taken. No reason for the absence is sent.",
+    "lessonsLabel": "{count, plural, one {Lesson} other {Lessons}} in the request",
+    "colleaguesLabel": "Colleagues to ask",
+    "chooseHint": "Choose one or more. The list is ranked as when you assign a substitute, and nobody on it breaks a hard rule.",
+    "limit": "At most {max} colleagues in one request.",
+    "notAll": "Cannot take all the lessons",
+    "empty": "No colleague can take {count, plural, one {the lesson} other {all the lessons}} without breaking a rule. Assign a substitute directly on the board, or choose fewer lessons.",
+    "loadFailed": "The colleagues could not be loaded",
+    "loadFailedHint": "No request has been sent. Close this and try again in a moment.",
+    "expiryLabel": "The request stands for",
+    "expiry": {
+      "30": "30 minutes",
+      "60": "1 hour",
+      "120": "2 hours",
+      "START": "{count, plural, one {Until the lesson starts} other {Until the first lesson starts}}"
+    },
+    "send": "Send request",
+    "sendCount": "Send to {count, plural, one {# colleague} other {# colleagues}}",
+    "sent": "Request sent to {count, plural, one {# colleague} other {# colleagues}}",
+    "withdraw": "Withdraw",
+    "withdrawTitle": "Withdraw the request?",
+    "withdrawBody": "Colleagues who have not answered are told they need not answer. The lessons still need a substitute.",
+    "withdrawn": "The request is withdrawn",
+    "stateOpen": "Request sent to {asked, plural, one {# colleague} other {# colleagues}}{declined, plural, =0 {} other { (# said no)}}",
+    "until": "Open until {time}",
+    "stateAccepted": "Filled through a request",
+    "stateExpired": "Ran out",
+    "stateWithdrawn": "Withdrawn",
+    "stateClosed": "Closed",
+    "confirmed": "Confirmed by the substitute",
+    "notConfirmed": "Not confirmed",
+    "teacherTitle": "Substitute requests",
+    "teacherBody": "The school asks if you can take one or more lessons. The first to say yes gets them.",
+    "teacherLoadFailed": "Your substitute requests could not be loaded",
+    "teacherLoadFailedHint": "Nothing has changed. Reload the page in a moment.",
+    "yes": "{count, plural, one {Yes, I'll take it} other {Yes, I'll take them}}",
+    "no": "No",
+    "answerBy": "Answer by {time}",
+    "cancelledLesson": "Cancelled",
+    "accepted": "Thank you! {count, plural, one {The lesson is yours.} other {All # lessons are yours.}}",
+    "declined": "You said no.",
+    "state": {
+      "OPEN": "Waiting for your answer",
+      "ACCEPTED_BY_ME": "You said yes",
+      "DECLINED_BY_ME": "You said no",
+      "TAKEN": "Already filled by a colleague",
+      "WITHDRAWN": "Withdrawn",
+      "EXPIRED": "Ran out",
+      "CLOSED": "No longer needed"
+    },
+    "confirm": "Confirm",
+    "confirmedBadge": "Confirmed",
+    "confirmedToast": "Thank you, the lesson is confirmed.",
+    "errors": {
+      "COVER_REQUEST_LESSON_CANCELLED": "The lesson is cancelled and cannot be asked about.",
+      "COVER_REQUEST_LESSON_COVERED": "The lesson already has a substitute or has been dealt with in another way.",
+      "COVER_REQUEST_LESSON_TWICE": "Two absent teachers share this lesson. Send one question for each of them.",
+      "COVER_REQUEST_LESSON_STARTED": "The lesson has started or starts within a minute. Assign a substitute directly on the board.",
+      "COVER_REQUEST_EXISTS": "There is already an open request for the lesson. Withdraw it first.",
+      "COVER_REQUEST_RECIPIENT_RULE": "One of the colleagues cannot take the lesson without breaking a rule. Choose other colleagues.",
+      "COVER_REQUEST_RECIPIENT_INVALID": "Only active teachers at the school can be asked, and not the one who is absent.",
+      "COVER_REQUEST_ENDED": "The request has already ended. The board is up to date.",
+      "COVER_REQUEST_TAKEN": "The assignment is already filled: a colleague said yes before you.",
+      "COVER_REQUEST_GONE": "The request has ended: it ran out, was withdrawn or was filled another way.",
+      "COVER_REQUEST_ANSWERED": "You have already answered the request.",
+      "COVER_REQUEST_NOT_FOUND": "The request does not exist, or is not addressed to you.",
+      "COVER_REQUEST_SENDER_GONE": "Whoever sent the request can no longer fill the assignment. Contact the school office.",
+      "COVER_REQUEST_RULE": "You cannot take the assignment: it would break a rule for substitutes.",
+      "COVER_PASS_NOT_FOUND": "That lesson is not yours to confirm."
+    }
+  },
+  "coverFairness": {
+    "title": "Fairness",
+    "body": "How often each colleague has been asked to substitute and how they answered. Only those who have been asked appear.",
+    "from": "From",
+    "to": "To",
+    "name": "Name",
+    "received": "Asked",
+    "accepted": "Said yes",
+    "declined": "Said no",
+    "unanswered": "Unanswered",
+    "caption": "Requests per colleague {from}–{to}, most asked first",
+    "empty": "Nobody was asked to substitute during the period.",
+    "periodInvalid": "Choose a period of at most a year, with the start day first.",
+    "loadFailed": "Fairness could not be loaded",
+    "loadFailedHint": "Requests and answers are unchanged. Reload the page in a moment."
+  },
   "notificationSettings": {
     "typeOther": "Other notifications",
     "title": "Notifications",
@@ -5854,6 +5951,9 @@
       "LEAVE_REQUESTED": "Leave requests to decide",
       "SUPERVISION_COVER": "Break duty as a substitute",
       "SUPERVISION_COVER_WITHDRAWN": "Withdrawn break duties",
+      "COVER_REQUESTED": "Requests to substitute",
+      "COVER_REQUEST_CLOSED": "Requests filled, withdrawn or run out unanswered",
+      "COVER_REQUEST_ACCEPTED": "Colleagues who said yes to my request",
       "ABSENCE_WATCH_DIGEST": "Absence summary"
     },
     "loadFailed": "Your choices could not be loaded",
@@ -5897,6 +5997,10 @@
       "ACCESS_LOG": {
         "name": "Read log",
         "body": "Who has read other people's data, and when. Reads before the cutoff date are purged."
+      },
+      "COVER_REQUESTS": {
+        "name": "Substitute requests",
+        "body": "Ended requests to substitute, with the lessons they were about, who was asked and what they answered, and the substitutes' confirmations of lessons, that ended before the cutoff date. A request that is still open is never purged. The cover decisions and the substitute lessons stay, so substitute hours and pay still add up."
       },
       "DEPARTED_PEOPLE": {
         "name": "People who left",
@@ -6110,7 +6214,8 @@
     "NOTIFICATIONS": "Notices before {date} have been purged under the school's decision.",
     "CHANGE_LOGS": "History before {date} has been purged under the school's decision.",
     "ABSENCE_REASONS": "Reasons for absences that ended before {date} have been purged under the school's decision.",
-    "ACCESS_LOG": "Reads before {date} have been purged under the school’s decision."
+    "ACCESS_LOG": "Reads before {date} have been purged under the school’s decision.",
+    "COVER_REQUESTS": "Substitute requests that ended before {date} have been purged under the school's decision."
   },
   "leaveInbox": {
     "alreadyDecided": "The request has already been decided. The list is up to date.",

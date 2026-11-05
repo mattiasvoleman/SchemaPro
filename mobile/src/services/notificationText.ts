@@ -12,6 +12,9 @@ import type { NotificationRow } from '../types';
  * has always shown behind login: never an absence reason (no notice carries
  * one), and a colleague's absence only to the admins it was written for.
  * Instants are the device's clock in the reader's format (format.ts).
+ *
+ * The three cover-request types (Vikariefrågan) are worded from their meta in
+ * the catalogue's own block, coverRequests.notice.
  */
 export function notificationText(entry: NotificationRow, t: Translate, locale: Locale): string {
   const meta = entry.meta ?? {};
@@ -124,6 +127,33 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
         teacher: str('teacherName') || t('common.noValue'),
         period: from === to ? from : `${from} – ${to}`,
       });
+    }
+    case 'COVER_REQUESTED':
+    case 'COVER_REQUEST_ACCEPTED':
+    case 'COVER_REQUEST_CLOSED': {
+      // Vikariefrågan: how many lessons and from when, never which lesson
+      // (the inbox is read on a lock screen as a push is), who is away or
+      // why (no cover notice carries either). The count is the request's
+      // lessons; a notice from a gateway that did not say counts one.
+      const count = Math.max(1, Math.trunc(Number(meta['lessonCount'])) || 1);
+      if (entry.type === 'COVER_REQUEST_ACCEPTED') {
+        return t('coverRequests.notice.accepted', { name: str('acceptedByName') || t('common.noValue'), when: when('startsAt'), count });
+      }
+      if (entry.type === 'COVER_REQUEST_CLOSED') {
+        const reason = meta['reason'];
+        const key =
+          reason === 'WITHDRAWN'
+            ? 'coverRequests.notice.closedWithdrawn'
+            : reason === 'NOT_NEEDED'
+              ? 'coverRequests.notice.closedNotNeeded'
+              : reason === 'UNANSWERED'
+                ? 'coverRequests.notice.closedUnanswered'
+                : 'coverRequests.notice.closedTaken';
+        return t(key, { when: when('startsAt'), count });
+      }
+      // How many and from when, as the push and the web's bell say it: the
+      // lesson itself (subject, group, room) is on the card behind the login.
+      return t('coverRequests.notice.requested', { when: when('startsAt'), until: when('expiresAt'), count });
     }
     default:
       return t('notifications.text.fallback');

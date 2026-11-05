@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   MoreHorizontal,
+  Send,
   Sparkles,
   Undo2,
   UserCheck,
@@ -21,6 +22,10 @@ import type { MessageLookup } from "@/lib/engine-message";
 import { savedToast } from "@/lib/staffing-warnings";
 import { useGroups, usePeople, useRooms, useSubjects } from "@/lib/queries";
 import { useCoverActions, useCoverBoard, useCoverCounter } from "@/lib/cover-queries";
+import { useCoverRequestActions } from "@/lib/cover-request-queries";
+import { requestErrorText } from "@/lib/cover-request-errors";
+import { MAX_REQUEST_LESSONS, canAskColleagues } from "@/lib/cover-request-view";
+import type { BoardRequest } from "@/lib/cover-request-types";
 import type { BoardItem, BulkInput, CounterRow, CoverDecisionKind } from "@/lib/cover-types";
 import { shiftDate } from "@/lib/cover-absence-form";
 import {
@@ -42,6 +47,8 @@ import {
 import { COVER_STATUS_VARIANT } from "@/lib/status-variants";
 import { isoWeek, toDateString } from "@/lib/utils";
 import { useCoverRealtime } from "./use-cover-realtime";
+import { FairnessPanel } from "./fairness-panel";
+import { RequestNote } from "./request-note";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -82,6 +89,14 @@ const CandidatesDialog = lazy(() =>
 );
 const ProposalDialog = lazy(() =>
   import("./proposal-dialog").then((module) => ({ default: module.ProposalDialog })),
+);
+/*
+ * "Fråga kollegor" (Vikariefrågan) is lazy too, and mounted on the first
+ * click that asks: the ranked colleagues of every lesson it covers, read
+ * only then.
+ */
+const RequestDialog = lazy(() =>
+  import("./request-dialog").then((module) => ({ default: module.RequestDialog })),
 );
 /*
  * An absent rastvakt's passes (Rastvakt i vardagen), lazy too: mounted when
@@ -232,11 +247,14 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
   const t = useTranslations("coverBoard");
   const tStatus = useTranslations("coverStatus");
   const tErrors = useTranslations("coverErrors") as unknown as MessageLookup;
+  const tRequestErrors = useTranslations("coverRequests.errors") as unknown as MessageLookup;
+  const tRequests = useTranslations("coverRequests");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const tDay = useTranslations("dayPlanner");
   const locale = useLocale();
   const tWarnings = chainLookup(tErrors, tEngine);
+  const tRequestLookup = chainLookup(tRequestErrors, tErrors);
 
   const [date, setDate] = useState(() => initialDate ?? toDateString(new Date()));
   const [view, setView] = useState<"day" | "week">(initialView);
@@ -257,11 +275,15 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
   const lookupsFailed =
     peopleQuery.isError || subjectsQuery.isError || groupsQuery.isError || roomsQuery.isError;
   const { decide, undo, bulk } = useCoverActions();
+  const { withdraw } = useCoverRequestActions();
   useCoverRealtime(range);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [candidatesFor, setCandidatesFor] = useState<BoardItem | null>(null);
   const [candidatesMounted, setCandidatesMounted] = useState(false);
+  const [askFor, setAskFor] = useState<BoardItem[] | null>(null);
+  const [askMounted, setAskMounted] = useState(false);
+  const [withdrawing, setWithdrawing] = useState<BoardRequest | null>(null);
   const [proposalOpen, setProposalOpen] = useState(false);
   const [proposalMounted, setProposalMounted] = useState(false);
   const [cancelling, setCancelling] = useState<BoardItem | null>(null);
@@ -303,6 +325,9 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
   );
 
   const items = useMemo(() => board?.items ?? [], [board]);
+  // Vikariefrågan: every request asking for a lesson in the window, and the vikarie's taps.
+  const requests = useMemo(() => board?.requests ?? [], [board]);
+  const confirmations = useMemo(() => board?.confirmations ?? [], [board]);
   const passes = useMemo(() => board?.supervision ?? [], [board]);
   const lessons = useMemo(() => groupByLesson(items), [items]);
   const days = useMemo(() => groupByDate(lessons), [lessons]);
@@ -364,6 +389,20 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
     }
   };
 
+  const runWithdraw = async (request: BoardRequest) => {
+    try {
+      await withdraw.mutateAsync(request.id);
+      toast.success(tRequests("withdrawn"));
+    } catch (error) {
+      toast.error(requestErrorText(tRequestLookup, error, tCommon("error")));
+    }
+  };
+
+  const openAsk = (chosen: BoardItem[]) => {
+    setAskMounted(true);
+    setAskFor(chosen);
+  };
+
   const runBulk = async (action: BulkInput["action"]) => {
     const chosen = bulkItems(action, items, selected, now);
     if (chosen.length === 0) return;
@@ -390,6 +429,8 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
 
   const move = (step: number) => setDate((current) => shiftDate(current, view === "day" ? step : step * 7));
   const busy = decide.isPending || undo.isPending || bulk.isPending;
+  // Fråga kollegor: the chosen pairs a question can be asked about, by the same rules as the dialog's button.
+  const askable = selectedItems.filter((item) => canAskColleagues(item, now, requests));
   const summary = board?.summary;
 
   const dash = <span className="text-muted-foreground">—</span>;
@@ -417,6 +458,15 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
       {item.outsideAbsence ? (
         <span className="block whitespace-normal text-xs text-muted-foreground">{t("outsideAbsence")}</span>
       ) : null}
+      <RequestNote
+        item={item}
+        requests={requests}
+        confirmations={confirmations}
+        now={now}
+        pairName={`${nameOf(item.absentTeacherId)}: ${lessonText(item.lessonId)}`}
+        busy={withdraw.isPending}
+        onWithdraw={setWithdrawing}
+      />
     </>
   );
 
@@ -668,6 +718,19 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
           >
             {t("bulkUndo", { count: eligible("UNDO") })}
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || askable.length === 0 || askable.length > MAX_REQUEST_LESSONS}
+            onClick={() => openAsk(askable)}
+            data-writes="DRIFT"
+          >
+            <Send />
+            {tRequests("askSelected", { count: askable.length })}
+          </Button>
+          {askable.length > MAX_REQUEST_LESSONS ? (
+            <span className="text-xs text-muted-foreground">{tRequests("askLimit", { max: MAX_REQUEST_LESSONS })}</span>
+          ) : null}
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
             {t("bulkClear")}
           </Button>
@@ -758,7 +821,10 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
             </Suspense>
           ) : null}
         </div>
-        <CounterPanel date={date} nameOf={nameOf} />
+        <div className="min-w-0 space-y-4">
+          <CounterPanel date={date} nameOf={nameOf} />
+          <FairnessPanel nameOf={nameOf} />
+        </div>
       </div>
 
       <ConfirmDialog
@@ -805,9 +871,41 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
             pending={decide.isPending}
             onOpenChange={(open) => !open && setCandidatesFor(null)}
             onAssign={(item, substituteId) => void runDecision(item, "SUBSTITUTE", substituteId)}
+            canAsk={candidatesFor ? canAskColleagues(candidatesFor, now, requests) : false}
+            onAskColleagues={(item) => {
+              setCandidatesFor(null);
+              openAsk([item]);
+            }}
           />
         </Suspense>
       ) : null}
+
+      {askMounted ? (
+        <Suspense fallback={null}>
+          <RequestDialog
+            items={askFor}
+            describe={(item) => `${dayText(item.date)} ${lessonText(item.lessonId)} · ${nameOf(item.absentTeacherId)}`}
+            nameOf={nameOf}
+            now={now}
+            onOpenChange={(open) => !open && setAskFor(null)}
+            onSent={() => setSelected(new Set())}
+          />
+        </Suspense>
+      ) : null}
+
+      <ConfirmDialog
+        open={withdrawing !== null}
+        onOpenChange={(open) => !open && setWithdrawing(null)}
+        title={tRequests("withdrawTitle")}
+        description={tRequests("withdrawBody")}
+        confirmLabel={tRequests("withdraw")}
+        loading={withdraw.isPending}
+        onConfirm={() => {
+          const request = withdrawing;
+          setWithdrawing(null);
+          if (request) void runWithdraw(request);
+        }}
+      />
 
       {proposalMounted ? (
         <Suspense fallback={null}>

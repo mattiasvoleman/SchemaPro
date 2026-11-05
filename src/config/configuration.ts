@@ -68,6 +68,11 @@ export interface GallringConfig {
   background: boolean;
 }
 
+export interface CoverRequestsConfig {
+  /** The 5-minute settling of vikarieförfrågningar (COVER_REQUESTS_BACKGROUND, default on). */
+  background: boolean;
+}
+
 export interface AbsenceWatchConfig {
   /** The nightly absence watch (ABSENCE_WATCH_BACKGROUND, default on). */
   background: boolean;
@@ -107,6 +112,7 @@ export interface Configuration {
   push: PushConfig;
   ss12000: Ss12000Config;
   gallring: GallringConfig;
+  coverRequests: CoverRequestsConfig;
   absenceWatch: AbsenceWatchConfig;
   candidates: CandidatesConfig;
 }
@@ -170,6 +176,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     gallring: {
       background: env.GALLRING_BACKGROUND !== 'off',
+    },
+    coverRequests: {
+      background: env.COVER_REQUESTS_BACKGROUND !== 'off',
     },
     absenceWatch: {
       background: env.ABSENCE_WATCH_BACKGROUND !== 'off',

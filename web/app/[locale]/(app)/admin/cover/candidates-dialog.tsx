@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2, Send, Sparkles } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import { useCoverCandidates } from "@/lib/cover-queries";
 import type { BoardItem, Candidate } from "@/lib/cover-types";
@@ -33,6 +33,13 @@ export interface CandidatesDialogProps {
   pending: boolean;
   onOpenChange: (open: boolean) => void;
   onAssign: (item: BoardItem, substituteId: string) => void;
+  /**
+   * "Fråga kollegor" (Vikariefrågan): ask the ranked colleagues instead of
+   * naming one. Offered only when the pair can be asked for (no open
+   * request, the lesson held and not started); the board owns the dialog.
+   */
+  canAsk?: boolean;
+  onAskColleagues?: (item: BoardItem) => void;
 }
 
 /** One candidate's line under their name: the week's and term's covers, and the week's load. */
@@ -69,8 +76,11 @@ export function CandidatesDialog({
   pending,
   onOpenChange,
   onAssign,
+  canAsk = false,
+  onAskColleagues,
 }: CandidatesDialogProps) {
   const t = useTranslations("coverCandidates");
+  const tRequests = useTranslations("coverRequests");
   const tReasons = useTranslations("coverReasons") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const { data, isLoading, isError } = useCoverCandidates(item?.lessonId ?? null);
@@ -217,6 +227,12 @@ export function CandidatesDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
             {tCommon("cancel")}
           </Button>
+          {canAsk && onAskColleagues ? (
+            <Button variant="outline" onClick={() => item && onAskColleagues(item)} disabled={pending} data-writes="DRIFT">
+              <Send />
+              {tRequests("ask")}
+            </Button>
+          ) : null}
           <Button onClick={() => item && pick && onAssign(item, pick)} disabled={!pick || pending} data-writes="DRIFT">
             {pending ? <Loader2 className="animate-spin" /> : <Sparkles />}
             {t("assign")}

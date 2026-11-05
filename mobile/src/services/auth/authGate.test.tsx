@@ -45,7 +45,7 @@ jest.mock('../pushRegistration', () => ({
   ensureAndroidChannel: jest.fn(async () => undefined),
   forgetTap: jest.fn(),
   startSignedIn: jest.fn(async () => undefined),
-  takeLastTap: jest.fn(() => false),
+  takeLastTap: jest.fn((): { type: string | null } | null => null),
 }));
 jest.mock('../../context/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -195,12 +195,13 @@ describe('AuthGate (app/_layout.tsx)', () => {
   });
 
   describe('a tap on a notification', () => {
-    /** The function the app handed expo-notifications to call on a tap. */
-    const tapListener = (): (() => void) => {
+    /** The function the app handed expo-notifications to call on a tap, with the notice type its push carried (none by default). */
+    const tapListener = (type?: string): (() => void) => {
       const calls = jest.mocked(Notifications.addNotificationResponseReceivedListener).mock.calls;
       const listener = calls[calls.length - 1]?.[0];
       if (!listener) throw new Error('no listener was registered');
-      return () => listener({} as never);
+      const response = type ? { notification: { request: { content: { data: { notificationId: 'n-1', type } } } } } : {};
+      return () => listener(response as never);
     };
 
     it.each([
@@ -244,10 +245,39 @@ describe('AuthGate (app/_layout.tsx)', () => {
     });
 
     it('opens the Notiser tab of a tap that launched the app, which arrived before there was a listener', async () => {
-      jest.mocked(takeLastTap).mockReturnValueOnce(true);
+      jest.mocked(takeLastTap).mockReturnValueOnce({ type: null });
       await mount(signedIn('GUARDIAN'), ['(guardian)', 'children']);
       expect(mockPush).toHaveBeenCalledTimes(1);
       expect(mockPush).toHaveBeenCalledWith('/(guardian)/notifications');
+    });
+
+    describe('on a cover question (Vikariefrågan)', () => {
+      it.each(['COVER_REQUESTED', 'COVER_REQUEST_CLOSED'])('opens a teacher\'s Vikarie tab on a %s push', async (type) => {
+        await mount(signedIn('TEACHER'), ['(app)', 'schedule']);
+        await act(async () => tapListener(type)());
+        expect(mockPush).toHaveBeenCalledTimes(1);
+        expect(mockPush).toHaveBeenCalledWith('/(app)/cover-requests');
+        expect(forgetTap).toHaveBeenCalledTimes(1);
+      });
+
+      it('opens the Vikarie tab of a cover push that launched the app', async () => {
+        jest.mocked(takeLastTap).mockReturnValueOnce({ type: 'COVER_REQUESTED' });
+        await mount(signedIn('TEACHER'), ['(app)', 'schedule']);
+        expect(mockPush).toHaveBeenCalledTimes(1);
+        expect(mockPush).toHaveBeenCalledWith('/(app)/cover-requests');
+      });
+
+      it('leaves every other push, and every other role, on its Notiser tab', async () => {
+        await mount(signedIn('TEACHER'), ['(app)', 'schedule']);
+        await act(async () => tapListener('LESSON_SUBSTITUTE')());
+        expect(mockPush).toHaveBeenLastCalledWith('/(app)/notifications');
+        await rerender(signedIn('SCHOOL_ADMIN'));
+        await act(async () => tapListener('COVER_REQUEST_ACCEPTED')());
+        expect(mockPush).toHaveBeenLastCalledWith('/(app)/notifications');
+        // The administrator is not asked: a stray question push still lands on the inbox.
+        await act(async () => tapListener('COVER_REQUESTED')());
+        expect(mockPush).toHaveBeenLastCalledWith('/(app)/notifications');
+      });
     });
   });
 

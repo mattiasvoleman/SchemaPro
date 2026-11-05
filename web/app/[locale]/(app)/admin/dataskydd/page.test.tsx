@@ -75,9 +75,14 @@ describe("/admin/dataskydd", () => {
     expect(screen.getByText("En gallring går inte att ångra i Rastra Schema")).toBeInTheDocument();
     expect(screen.getByText(/Rastra Schema gör ännu inga arkivuttag/)).toBeInTheDocument();
     await screen.findByRole("button", { name: "Ändra gallringsperioden för Närvaro" });
-    for (const name of ["Närvaro", "Frånvaroanmälningar", "Ledighetsansökningar", "Notiser", "Ändringsloggar", "Frånvaroorsaker", "Läslogg", "Slutade personer"]) {
+    for (const name of ["Närvaro", "Frånvaroanmälningar", "Ledighetsansökningar", "Notiser", "Ändringsloggar", "Frånvaroorsaker", "Läslogg", "Vikarieförfrågningar", "Slutade personer"]) {
       expect(within(row(name)).getByText("Ej beslutat")).toBeInTheDocument();
     }
+    // Vikariefrågan: what is purged and what stays, and that an open question never goes.
+    const requests = within(row("Vikarieförfrågningar"));
+    expect(requests.getByText(/vem som tillfrågades och svarade/)).toBeInTheDocument();
+    expect(requests.getByText(/En fråga som står öppen gallras aldrig/)).toBeInTheDocument();
+    expect(requests.getByText(/Vikariebesluten och vikariepassen finns kvar/)).toBeInTheDocument();
     expect(screen.getByText("Ingen gallring har körts än.")).toBeInTheDocument();
     expect(screen.getByText("Inga beslut än. Allt sparas tills ett beslut finns.")).toBeInTheDocument();
   });

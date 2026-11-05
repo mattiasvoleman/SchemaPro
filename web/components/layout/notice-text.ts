@@ -1,0 +1,180 @@
+/**
+ * What the bell says of a notice and where it leads: pure functions of the
+ * row, kept out of notification-bell.tsx. The bell is in the same chunk as
+ * AppShell on every signed-in route, and that module's part of the chunk sits
+ * just under Turbopack's minChunkSize: code added to it splits the chunk in
+ * two, +0.7 to 0.9 KB on every route (see the note in app-shell.tsx). The
+ * words and the links of the notice types are here, where a new type costs
+ * the chunk nothing.
+ */
+
+export interface NotificationRow {
+  id: string;
+  type:
+    | "ABSENCE_UNREPORTED"
+    | "LEAVE_DECIDED"
+    | "LESSON_CANCELLED"
+    | "LESSON_SUBSTITUTE"
+    | "LESSON_ROOM_CHANGED"
+    | "SCHEDULE_CHANGED"
+    | "ROOM_BOOKING_DECIDED"
+    | "TEACHER_ABSENCE_REPORTED"
+    | "LESSON_COVER_WITHDRAWN"
+    | "LESSON_REINSTATED"
+    | "LESSON_SUPERVISED_STUDY"
+    | "CANCELLATION_DIGEST"
+    | "LEAVE_REQUESTED"
+    | "SUPERVISION_COVER"
+    | "SUPERVISION_COVER_WITHDRAWN"
+    | "COVER_REQUESTED"
+    | "COVER_REQUEST_CLOSED"
+    | "COVER_REQUEST_ACCEPTED"
+    | "ABSENCE_WATCH_DIGEST";
+  meta: Record<string, unknown> | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+/** The half of next-intl's translator the texts need, so a test can pass a stub. */
+export type NoticeTranslator = (key: string, values?: Record<string, string | number>) => string;
+
+/**
+ * Where a notice leads (Vikariefrågan): the colleague to the question, the
+ * administrator to the board (also for a question that ran out unanswered).
+ */
+const HREF: Partial<Record<NotificationRow["type"], string>> = {
+  COVER_REQUESTED: "/teacher/franvaro",
+  COVER_REQUEST_CLOSED: "/teacher/franvaro",
+  COVER_REQUEST_ACCEPTED: "/admin/cover",
+};
+
+/** The notice as one sentence, in the reader's language. */
+export function noticeText(entry: NotificationRow, t: NoticeTranslator): string {
+  const meta = entry.meta ?? {};
+  const str = (key: string) => String(meta[key] ?? "");
+  // Most notices name the lesson's time; the ones that do not never read it.
+  const when = new Date(str("startsAt")).toLocaleString();
+  switch (entry.type) {
+    case "ABSENCE_UNREPORTED":
+      return t("absenceUnreported", {
+        student: str("studentName"),
+        subject: str("subjectName"),
+        date: str("date"),
+      });
+    case "LEAVE_DECIDED": {
+      // A mentor's decision says so (20261023091000); an older notice has no decidedAs.
+      const approved = str("status") === "APPROVED";
+      const byMentor = meta.decidedAs === "MENTOR";
+      const key = byMentor
+        ? approved ? "leaveApprovedByMentor" : "leaveRejectedByMentor"
+        : approved ? "leaveApproved" : "leaveRejected";
+      return t(key, { student: str("studentName"), from: str("startDate"), to: str("endDate") });
+    }
+    case "LEAVE_REQUESTED":
+      // To the mentor who decides it: the pupil and the days, never the reason.
+      return t("leaveRequested", {
+        student: str("studentName"),
+        from: str("startDate"),
+        to: str("endDate"),
+        days: Number(meta.schoolDays ?? 0),
+      });
+    case "ABSENCE_WATCH_DIGEST":
+      // Frånvarobevakning: counts and a period, never a pupil, a figure of
+      // minutes or a reason (the e-mail says no more). The guardian's
+      // counts are their own children.
+      return t(meta.group === "GUARDIAN" ? "absenceWatchDigestGuardian" : "absenceWatchDigest", {
+        open: Number(meta.open ?? 0),
+        crossed: Number(meta.crossed ?? 0),
+        from: str("periodStart").slice(0, 10),
+        to: str("periodEnd").slice(0, 10),
+      });
+    case "LESSON_CANCELLED":
+      return t("lessonCancelled", {
+        subject: str("subjectName"),
+        when,
+      });
+    case "LESSON_REINSTATED":
+      return t("lessonReinstated", {
+        subject: str("subjectName"),
+        when,
+      });
+    case "LESSON_SUPERVISED_STUDY":
+      return t("lessonSupervisedStudy", {
+        subject: str("subjectName"),
+        when,
+      });
+    case "CANCELLATION_DIGEST": {
+      // One per person per avbokning: how many of their lessons, and the
+      // days; the reversal says they go ahead after all.
+      const from = str("startDate");
+      const to = str("endDate");
+      const values = {
+        name: str("name"),
+        count: Number(meta.lessonCount ?? 0),
+        span: from === to ? from : `${from} – ${to}`,
+      };
+      return t(meta.reversed === true ? "cancellationDigestReversed" : "cancellationDigest", values);
+    }
+    case "LESSON_SUBSTITUTE":
+    case "LESSON_COVER_WITHDRAWN": {
+      // The substitute's own notice (`cover: true`) and its withdrawal name
+      // the group and room; neither says whom they replace, or why.
+      const own = { subject: str("subjectName"), when, group: str("groupName"), room: str("roomName") };
+      if (entry.type === "LESSON_COVER_WITHDRAWN") return t("lessonCoverWithdrawn", own);
+      return meta.cover === true ? t("lessonSubstituteCover", own) : t("lessonSubstitute", { subject: own.subject, when });
+    }
+    case "SUPERVISION_COVER":
+    case "SUPERVISION_COVER_WITHDRAWN": {
+      // A rastvaktspass the reader takes as vikarie (Rastvakt i vardagen):
+      // the place and the time, never whose pass it is or why.
+      const clock = { hour: "2-digit", minute: "2-digit" } as const;
+      const pass = {
+        area: str("areaName"),
+        when: new Date(str("startsAt")).toLocaleString([], { dateStyle: "short", timeStyle: "short" }),
+        end: new Date(str("endsAt")).toLocaleTimeString([], clock),
+      };
+      return t(entry.type === "SUPERVISION_COVER" ? "supervisionCover" : "supervisionCoverWithdrawn", pass);
+    }
+    case "COVER_REQUESTED":
+    case "COVER_REQUEST_CLOSED":
+    case "COVER_REQUEST_ACCEPTED":
+      // Vikariefrågan: when and how many, and the name of whoever said yes; never whose lessons or why.
+      return t(`cover.${entry.type}`, {
+        when,
+        count: Number(meta.lessonCount ?? 0),
+        reason: str("reason"),
+        name: str("acceptedByName"),
+      });
+    case "TEACHER_ABSENCE_REPORTED": {
+      // Who and when; the reason is never in a notice. Whole days end at
+      // the midnight after the last day, which is said as that last day.
+      const days = meta.wholeDays === true;
+      const at = (iso: string, end: boolean) =>
+        days ? new Date(Date.parse(iso) - (end ? 1 : 0)).toLocaleDateString() : new Date(iso).toLocaleString();
+      const from = at(str("startsAt"), false);
+      const to = at(str("endsAt"), true);
+      return t("teacherAbsenceReported", { teacher: str("teacherName") || "—", period: from === to ? from : `${from} – ${to}` });
+    }
+    case "LESSON_ROOM_CHANGED":
+      return t("lessonRoomChanged", {
+        subject: str("subjectName"),
+        when,
+      });
+    case "SCHEDULE_CHANGED":
+      return t("scheduleChanged", { subject: str("subjectName") });
+    case "ROOM_BOOKING_DECIDED":
+      return t(
+        str("status") === "APPROVED" ? "roomBookingApproved" : "roomBookingRejected",
+        { room: str("roomName"), when },
+      );
+    default:
+      // A type added after this build (the gateway's enum grows first): a
+      // notice, said as one, rather than an empty line in the list.
+      return t("fallback");
+  }
+}
+
+/** The page a notice leads to, or undefined for one that has none of its own. */
+export function noticeHref(entry: NotificationRow): string | undefined {
+  return entry.meta?.reason === "UNANSWERED" ? "/admin/cover" : HREF[entry.type];
+}

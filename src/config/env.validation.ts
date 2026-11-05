@@ -218,6 +218,14 @@ export class EnvironmentVariables {
   GALLRING_BACKGROUND: string = 'on';
 
   /**
+   * The settling of vikarieförfrågningar (src/cover/cover-requests.job.ts). `on`
+   * unless set to `off`; the test setup turns it off. A request past its time
+   * cannot be answered either way: the job settles the stored status.
+   */
+  @IsIn(['on', 'off'])
+  COVER_REQUESTS_BACKGROUND: string = 'on';
+
+  /**
    * The nightly absence watch (src/absence-watch/absence-watch.job.ts). `on`
    * unless set to `off`; the test setup turns it off. A school is watched only
    * when its administrator has turned the bevakning on (off until then), so

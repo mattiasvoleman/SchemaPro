@@ -355,6 +355,9 @@ function boardOf(from: string, to: string): Board {
     notedLessonIds: [...new Set(items.map((item) => item.lessonId))].filter((id) => SUBSTITUTE_NOTES.has(id)).sort(),
     supervision: passes,
     supervisionSummary: passSummaryOf(passes),
+    // Vikariefrågan: the fixture school has asked nobody and nobody has tapped a pass.
+    requests: [],
+    confirmations: [],
   };
 }
 
@@ -561,6 +564,15 @@ export const coverRoutes: GatewayRoute[] = [
     const date = query.get("date");
     return date ? counterOn(date, Date.parse(NOW)) : missing("date");
   }),
+  // Vikariefrågan: the fairness view over a period (src/cover/cover-requests.controller.ts). The
+  // fixture school has asked nobody, so it answers the empty view the page words.
+  route("GET", "/api/v1/cover/fairness", ({ query }) => {
+    const from = query.get("from");
+    const to = query.get("to");
+    return from && to ? { from, to, rows: [] } : missing("from, to");
+  }),
+  // A colleague's own questions and passes; nobody has asked the fixture teacher.
+  route("GET", "/api/v1/cover-requests/mine", () => ({ requests: [], passes: [] })),
   route("GET", "/api/v1/cover/hours", ({ query }) => {
     const from = query.get("from");
     const to = query.get("to");

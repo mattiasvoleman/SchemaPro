@@ -31,12 +31,16 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { CalendarPlus } from "lucide-react";
+import { toast } from "sonner";
 import { useProfile } from "@/components/profile-context";
 import { useGroups, useRooms, useSubjects, useTeacherLessons } from "@/lib/queries";
 import { useAbsenceReasons, useAbsences, useCoverSettings, usePoolMembership } from "@/lib/cover-queries";
 import { DECISION_STATUS, entriesByLesson } from "@/lib/lesson-log";
 import { useHandedOverLessons, useLessonLogEntries } from "@/lib/lesson-log-queries";
 import { Link } from "@/i18n/navigation";
+import type { MessageLookup } from "@/lib/engine-message";
+import { requestErrorText } from "@/lib/cover-request-errors";
+import { useConfirmPass, useMyCover } from "@/lib/my-cover-requests-queries";
 import type { Absence } from "@/lib/cover-types";
 import { absencePeriodText, shiftDate } from "@/lib/cover-absence-form";
 import { reasonName } from "@/lib/cover-view";
@@ -53,6 +57,9 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** A pool member's hours: only a pool member downloads the editor. */
+const CoverRequestsSection = lazy(() =>
+  import("@/components/cover/cover-requests-section").then((module) => ({ default: module.CoverRequestsSection })),
+);
 const AvailabilityEditor = lazy(() =>
   import("@/components/cover/availability-editor").then((module) => ({ default: module.AvailabilityEditor })),
 );
@@ -116,6 +123,12 @@ export default function TeacherCoverPage() {
   const logOf = useMemo(() => entriesByLesson(logEntries), [logEntries]);
   const { data: handedOver } = useHandedOverLessons(today, until);
   const tStatus = useTranslations("coverStatus");
+  // Vikariefrågan: the questions the school asked this teacher, and the passes they hold to confirm.
+  const tRequests = useTranslations("coverRequests");
+  const tRequestErrors = useTranslations("coverRequests.errors") as unknown as MessageLookup;
+  const { data: mine, isError: mineError } = useMyCover();
+  const confirmPass = useConfirmPass();
+  const passOf = useMemo(() => new Map((mine?.passes ?? []).map((pass) => [pass.lessonId, pass])), [mine]);
 
   const [reporting, setReporting] = useState(false);
   const [ending, setEnding] = useState<Absence | null>(null);
@@ -137,6 +150,15 @@ export default function TeacherCoverPage() {
   const time = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", { hour: "2-digit", minute: "2-digit" });
   const timeText = (iso: string) => time.format(new Date(iso));
 
+  const confirm = async (lessonId: string) => {
+    try {
+      await confirmPass.mutateAsync(lessonId);
+      toast.success(tRequests("confirmedToast"));
+    } catch (error) {
+      toast.error(requestErrorText(tRequestErrors, error, tCommon("error")));
+    }
+  };
+
   const open = (action: () => void) => {
     setDialogs(true);
     action();
@@ -157,6 +179,12 @@ export default function TeacherCoverPage() {
         }
       />
 
+      {(mine?.requests.length ?? 0) > 0 || mineError ? (
+        <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+          <CoverRequestsSection requests={mine?.requests ?? []} failed={mineError} />
+        </Suspense>
+      ) : null}
+
       <SectionCard id="teacher-covers" title={t("coversTitle")}>
         {lessonsLoading ? (
           <div aria-busy="true">
@@ -168,7 +196,9 @@ export default function TeacherCoverPage() {
           <p className="text-sm text-muted-foreground">{t("coversEmpty", { weeks: WEEKS_AHEAD })}</p>
         ) : (
           <ul className="divide-y rounded-md border">
-            {covers.map((lesson) => (
+            {covers.map((lesson) => {
+              const pass = passOf.get(lesson.id);
+              return (
               <li key={lesson.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
                 <span className="w-28 capitalize">{dayText(lesson.date)}</span>
                 <span className="w-24 tabular-nums">
@@ -181,13 +211,34 @@ export default function TeacherCoverPage() {
                 <span className="text-muted-foreground">
                   {lesson.roomId ? (roomName.get(lesson.roomId) ?? "—") : t("noRoom")}
                 </span>
+                {/* Vikariefrågan: the one tap that tells the school the pass is read. */}
+                {pass?.confirmedAt ? (
+                  <Badge variant="success" className="ml-auto">
+                    {tRequests("confirmedBadge")}
+                  </Badge>
+                ) : pass ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="ml-auto"
+                    disabled={confirmPass.isPending}
+                    aria-label={tCommon("actionNamed", {
+                      action: tRequests("confirm"),
+                      name: `${subjectName.get(lesson.subjectId) ?? ""} ${dayText(lesson.date)} ${timeText(lesson.startsAt)}`,
+                    })}
+                    onClick={() => void confirm(lesson.id)}
+                  >
+                    {tRequests("confirm")}
+                  </Button>
+                ) : null}
                 {logOf.get(lesson.id)?.substituteNote ? (
                   <p className="w-full whitespace-pre-line rounded-md bg-muted px-3 py-2">
                     <span className="font-medium">{t("noteFromTeacher")}</span> {logOf.get(lesson.id)?.substituteNote}
                   </p>
                 ) : null}
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </SectionCard>

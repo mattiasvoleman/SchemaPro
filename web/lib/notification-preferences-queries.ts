@@ -33,6 +33,9 @@ export type NotificationTypeName =
   | "LEAVE_REQUESTED"
   | "SUPERVISION_COVER"
   | "SUPERVISION_COVER_WITHDRAWN"
+  | "COVER_REQUESTED"
+  | "COVER_REQUEST_CLOSED"
+  | "COVER_REQUEST_ACCEPTED"
   | "ABSENCE_WATCH_DIGEST";
 
 export interface NotificationPreference {

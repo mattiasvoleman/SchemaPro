@@ -2742,6 +2742,98 @@ BEGIN
          (m, hall, a, local_hall, 3, '13:00', '14:00', '2030-08-19', '2031-06-13', 'PENDING', NULL, a_admin, NULL, NULL);
 END $$;
 
+-- Vikariefrågan (20270102091000), the matrix school's rows: one open request
+-- for the lesson its decision is on, to its teacher (unanswered), and the
+-- teacher's confirmation, so the role matrix (section 116) has a row of each
+-- of the four tables to probe. A block of its own, planted once.
+DO $$
+DECLARE
+  m uuid;
+  admin uuid; teacher uuid; cl uuid; absence uuid; req uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "CoverRequests" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT c."calendarLessonId", c."absenceId", c."absentTeacherId" INTO cl, absence, teacher
+    FROM "TeacherAbsenceCovers" c WHERE c."schoolId" = m ORDER BY c."calendarLessonId" LIMIT 1;
+  SELECT id INTO admin FROM "Users" WHERE "schoolId" = m AND role = 'SCHOOL_ADMIN' ORDER BY "authId" LIMIT 1;
+  IF cl IS NULL OR admin IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school has no decision or no administrator for a cover request';
+  END IF;
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt")
+  VALUES (m, admin, now() + interval '10 years') RETURNING id INTO req;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (m, req, absence, cl);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (m, req, teacher);
+  INSERT INTO "CoverConfirmations" ("schoolId", "absenceId", "calendarLessonId", "userId") VALUES (m, absence, cl, teacher);
+END $$;
+
+-- Vikariefrågan (20270102091000), for section 319 (gallring). The läslogg
+-- school has decided to keep vikarieförfrågningar 12 months (two days ago);
+-- it has a request that ended 13 months ago (due), one that ended 11 months
+-- ago (not due), an OPEN one and a confirmation 13 months old. All planted
+-- once, as the owner: 13 and 11 months against 12 do not age past the
+-- cutoff between two runs. Nothing is planted in the gallring school or the
+-- second school: sections 83 and 28 count their absences.
+DO $$
+DECLARE
+  l uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-laslogg-school');
+  admin uuid; t122 uuid; t126 uuid; lesson uuid; absence uuid; absence2 uuid; absence3 uuid;
+  r_old uuid := 'c0000000-0000-4000-8000-0000000d4001';
+  r_new uuid := 'c0000000-0000-4000-8000-0000000d4002';
+  r_open uuid := 'c0000000-0000-4000-8000-0000000d4003';
+  -- Still OPEN, though its time ran out 13 months ago: the job that ends it was off.
+  r_stale uuid := 'c0000000-0000-4000-8000-0000000d4004';
+BEGIN
+  IF l IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the läslogg school is missing for the cover requests';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "CoverRequests" WHERE id = r_old) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO admin FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000121';
+  SELECT id INTO t122 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000122';
+  SELECT id INTO t126 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000126';
+  SELECT id INTO lesson FROM "CalendarLessons" WHERE "schoolId" = l ORDER BY id LIMIT 1;
+  IF admin IS NULL OR t122 IS NULL OR t126 IS NULL OR lesson IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the läslogg school lacks the people or the lesson for the cover requests';
+  END IF;
+
+  -- The absences are long past (and withdrawn), so they overlap no other the suite plants.
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", status, "withdrawnAt", "createdAt", "updatedAt")
+  VALUES (l, t126, now() - interval '14 months', now() - interval '14 months' + interval '1 day', 'WITHDRAWN', now() - interval '14 months', now() - interval '14 months', now())
+  RETURNING id INTO absence;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", status, "withdrawnAt", "createdAt", "updatedAt")
+  VALUES (l, t126, now() - interval '15 months', now() - interval '15 months' + interval '1 day', 'WITHDRAWN', now() - interval '15 months', now() - interval '15 months', now())
+  RETURNING id INTO absence2;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", status, "withdrawnAt", "createdAt", "updatedAt")
+  VALUES (l, t126, now() - interval '16 months', now() - interval '16 months' + interval '1 day', 'WITHDRAWN', now() - interval '16 months', now() - interval '16 months', now())
+  RETURNING id INTO absence3;
+
+  INSERT INTO "CoverRequests" (id, "schoolId", "requestedByUserId", status, "createdAt", "expiresAt", "closedAt")
+  VALUES (r_old, l, admin, 'EXPIRED', now() - interval '13 months' - interval '1 hour', now() - interval '13 months', now() - interval '13 months'),
+         (r_new, l, admin, 'EXPIRED', now() - interval '11 months' - interval '1 hour', now() - interval '11 months', now() - interval '11 months');
+  INSERT INTO "CoverRequests" (id, "schoolId", "requestedByUserId", status, "createdAt", "expiresAt")
+  VALUES (r_open, l, admin, 'OPEN', now() - interval '1 hour', now() + interval '10 years'),
+         (r_stale, l, admin, 'OPEN', now() - interval '13 months' - interval '1 hour', now() - interval '13 months');
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId", open)
+  VALUES (l, r_old, absence, lesson, false), (l, r_new, absence, lesson, false), (l, r_open, absence2, lesson, true),
+         (l, r_stale, absence3, lesson, true);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId")
+  VALUES (l, r_old, t122), (l, r_new, t122), (l, r_open, t122), (l, r_stale, t122);
+
+  -- A confirmation 13 months old needs the decision it confirms.
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers", "substituteId", "decidedAt")
+  VALUES (l, absence, lesson, t126, 'SUBSTITUTE', jsonb_build_array(jsonb_build_object('teacherId', t126, 'role', 'LEAD')), t122, now() - interval '13 months');
+  INSERT INTO "CoverConfirmations" ("schoolId", "absenceId", "calendarLessonId", "userId", "confirmedAt")
+  VALUES (l, absence, lesson, t122, now() - interval '13 months');
+
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (l, 'COVER_REQUESTS', 'PURGE_AFTER', 12, 'DHP 9.1', admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+END $$;
+
 -- Frånvarobevakning (20261231090100), sections 305-309: a school of its own, so
 -- the counting is proved over lessons the sections plant themselves (relative to
 -- today, inside their own transactions) and the people never age.

@@ -167,6 +167,9 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('SupervisionShifts', ['userId', 'schoolId'], 'CASCADE', others),
   key('ScheduleActivityTeachers', ['teacherId', 'schoolId'], 'CASCADE', others),
   key('SupervisionCovers', ['substituteId', 'schoolId'], 'CASCADE', others),
+  // Vikariefrågan (20270102091000): a question they were asked and a pass they confirmed.
+  key('CoverRequestRecipients', ['userId', 'schoolId'], 'CASCADE', others),
+  key('CoverConfirmations', ['userId', 'schoolId'], 'CASCADE', others),
   key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),
   key('Notifications', ['userId'], 'CASCADE', account('notices')),
   key('NotificationOptOuts', ['userId', 'schoolId'], 'CASCADE', account('noticeSettings')),
@@ -200,6 +203,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('LessonLogs', ['writtenById', 'schoolId'], 'SET NULL', kept),
   key('TeachingRequirementShares', ['teacherId', 'schoolId'], 'SET NULL', kept),
   key('SupervisionCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('CoverRequests', ['requestedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('CoverRequests', ['acceptedByUserId', 'schoolId'], 'SET NULL', kept),
   key('HuvudmanSchools', ['acceptedById', 'schoolId'], 'SET NULL', kept),
   key('HuvudmanSchoolEvents', ['byUserId', 'schoolId'], 'SET NULL', kept),
   key('RoomLoans', ['decidedById', 'ownerSchoolId'], 'SET NULL', kept),
@@ -265,6 +270,8 @@ export const GROUP_BELOW: readonly BelowKey<GroupBelowKind>[] = [
   below('CalendarLessons', 'LessonSubstituteNotes', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'PublicationPendingRemovals', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'TeacherAbsenceCovers', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
+  below('CalendarLessons', 'CoverRequestLessons', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
+  below('CalendarLessons', 'CoverConfirmations', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('MasterLessons', 'MasterLessonGroups', ['masterLessonId'], 'CASCADE', onTheLessons),
   below('MasterLessons', 'MasterLessonStudents', ['masterLessonId'], 'CASCADE', onTheLessons),
   below('MasterLessons', 'CalendarLessons', ['masterLessonId'], 'SET NULL', {
@@ -300,6 +307,8 @@ export const STUDENT_BELOW: readonly BelowKey<never>[] = [
   below('SupervisionShifts', 'SupervisionCovers', ['shiftId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherAbsences', 'SupervisionCovers', ['absenceId', 'absentTeacherId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherAbsences', 'TeacherAbsenceCovers', ['absenceId', 'absentTeacherId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  below('TeacherAbsences', 'CoverRequestLessons', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  below('TeacherAbsences', 'CoverConfirmations', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherEmployments', 'TeacherEmploymentPeriods', ['employmentId', 'schoolId', 'userId', 'academicYearId'], 'CASCADE', {
     with: 'otherRows',
   }),

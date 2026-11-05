@@ -159,6 +159,9 @@ export type NotificationType =
   | 'LEAVE_REQUESTED'
   | 'SUPERVISION_COVER'
   | 'SUPERVISION_COVER_WITHDRAWN'
+  | 'COVER_REQUESTED'
+  | 'COVER_REQUEST_ACCEPTED'
+  | 'COVER_REQUEST_CLOSED'
   | 'ABSENCE_WATCH_DIGEST';
 
 export interface NotificationRow {

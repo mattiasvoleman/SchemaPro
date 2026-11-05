@@ -6,6 +6,7 @@ import { usePathname } from "@/i18n/navigation";
 import type { NavSection } from "@/components/layout/app-shell";
 import type { MySchool, Profile, School } from "@/lib/types";
 import { SCHOOL_COOKIE, cookieSchool } from "@/lib/school-choice";
+import { noticeHref, noticeText } from "@/components/layout/notice-text";
 
 interface ProfileContextValue {
   profile: Profile;
@@ -176,3 +177,14 @@ export const STUDENT_NAV: NavSection[] = [
     ],
   },
 ];
+
+/**
+ * What the bell says of a notice and where it leads, handed on from here for
+ * the same reason as the menus above: the bell is in AppShell's part of the
+ * chunk every signed-in route loads, which sits just under Turbopack's
+ * minChunkSize, and the words of twenty notice types are code. Imported from
+ * the bell as a module of its own they stayed in AppShell's part (measured
+ * 2026-11-05, Vikariefrågan after Frånvarobevakning: the chunk split, +0.8 KB
+ * on every route); behind this module they sit with the profile.
+ */
+export { noticeHref, noticeText };

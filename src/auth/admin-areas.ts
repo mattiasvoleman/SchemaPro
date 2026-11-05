@@ -255,6 +255,14 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // administrator reads or writes a note to the substitute.
   LessonLogs: only('DRIFT'),
   Notifications: just('DRIFT', 'insert'),
+  // Vikariefrågan (20270102091000): a request to colleagues, its lessons, its
+  // recipients and the vikarie's confirmations. Drift sends and ends them; a
+  // line and a confirmation are written once, no arm updates them, and no
+  // administrator's arm deletes (gallring and the school's removal do).
+  CoverConfirmations: just('DRIFT', 'insert'),
+  CoverRequestLessons: just('DRIFT', 'insert'),
+  CoverRequestRecipients: just('DRIFT', 'insert', 'update'),
+  CoverRequests: just('DRIFT', 'insert', 'update'),
   RoomBookings: only('DRIFT'),
   SubstituteAvailabilities: only('DRIFT'),
   SubstitutePoolMembers: only('DRIFT'),

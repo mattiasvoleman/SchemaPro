@@ -149,6 +149,33 @@ describe('CoverService', () => {
       expect(realtime.notifyCoverBoardChanged).toHaveBeenCalledWith(SCHOOL, '2026-10-14', '2026-10-14');
     });
 
+    it('a vikarie put on the lesson settles the question that asked for it: the colleagues who had not answered are told it is taken, the vikarie put there is not', async () => {
+      world({ teachers: [{ teacherId: A, role: 'LEAD' }] });
+      tx.coverRequestLesson.findMany.mockResolvedValue([
+        { request: { id: 'req-1', lessons: [{ calendarLessonId: LESSON }, { calendarLessonId: LESSON_B }], recipients: [{ userId: B }, { userId: T }] } },
+      ]);
+
+      await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: S, expected: 'OPEN' }, testUser());
+
+      // Asked for with the chosen vikarie left out (they get the booking instead).
+      expect(tx.coverRequestLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { open: true, absenceId: ABSENCE, calendarLessonId: LESSON } }),
+      );
+      const closed = notifications.notifyUsers.mock.calls.find(([, options]) => options.type === 'COVER_REQUEST_CLOSED');
+      expect(closed).toBeDefined();
+      expect(closed![1].userIds).toEqual([B, T]);
+      expect(closed![1].meta).toMatchObject({ requestId: 'req-1', reason: 'TAKEN', lessonCount: expect.any(Number) });
+    });
+
+    it('a decision that is not a vikarie (självstudier, inställd, medlärare) tells no colleague anything about a question', async () => {
+      world({ teachers: [{ teacherId: A, role: 'LEAD' }, { teacherId: B, role: 'ASSISTANT' }] });
+      tx.coverRequestLesson.findMany.mockResolvedValue([
+        { request: { id: 'req-1', lessons: [{ calendarLessonId: LESSON }], recipients: [{ userId: T }] } },
+      ]);
+      await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'CO_TEACHER', expected: 'OPEN' }, testUser());
+      expect(notifications.notifyUsers.mock.calls.some(([, options]) => options.type === 'COVER_REQUEST_CLOSED')).toBe(false);
+    });
+
     it('a stale SUBSTITUTE decision (its substitute gone) is replaced in place, keeping the rows it removed', async () => {
       world({ teachers: [] }, [decision({ substituteId: T })]);
 
@@ -634,6 +661,79 @@ describe('CoverService', () => {
       expect.objectContaining({ select: { id: true, userId: true, startsAt: true, endsAt: true } }),
     );
     expect(JSON.stringify(board)).not.toMatch(/"reason(Id)?":/);
+  });
+
+  it('the board shows the questions asked about its lessons and what each colleague answered, ids and answers only, and records whom it names', async () => {
+    tx.$queryRaw.mockImplementation((statement: unknown) =>
+      Promise.resolve(
+        noteQuery(statement)
+          ? []
+          : [
+              {
+                absenceId: ABSENCE,
+                absentTeacherId: A,
+                lessonId: LESSON,
+                isLive: true,
+                decisionId: null,
+                decision: null,
+                decidedAt: null,
+                removedTeachers: [],
+                date: '2026-10-14',
+                startsAt: START,
+                endsAt: END,
+                subjectId: 'subj',
+                studentGroupId: 'grp',
+                roomId: null,
+                lessonStatus: 'SCHEDULED',
+                cancelCause: null,
+                absenceStartsAt: new Date('2026-10-13T22:00:00.000Z'),
+                absenceEndsAt: new Date('2026-10-14T22:00:00.000Z'),
+                absenceStatus: 'ACTIVE',
+                teachers: [{ teacherId: A, role: 'LEAD' }],
+                extraGroupIds: [],
+                coveringSubstituteIds: [],
+              },
+            ],
+      ),
+    );
+    tx.teacherAbsence.findMany.mockResolvedValue([]);
+    tx.coverRequest.findMany.mockResolvedValue([
+      {
+        id: 'req-1',
+        status: 'OPEN',
+        createdAt: NOW,
+        expiresAt: new Date(NOW.getTime() + 3_600_000),
+        requestedByUserId: B,
+        acceptedByUserId: null,
+        lessons: [{ absenceId: ABSENCE, calendarLessonId: LESSON }],
+        recipients: [
+          { userId: S, answer: 'PENDING', answeredAt: null },
+          { userId: T, answer: 'DECLINED', answeredAt: NOW },
+        ],
+      },
+    ]);
+    tx.coverConfirmation.findMany.mockResolvedValue([]);
+    const board = await cover.board('2026-10-14', '2026-10-14', testUser({ channel: 'WEB' }));
+    expect(board.requests).toEqual([
+      {
+        id: 'req-1',
+        status: 'OPEN',
+        createdAt: NOW.toISOString(),
+        expiresAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+        requestedByUserId: B,
+        acceptedByUserId: null,
+        pairs: [{ absenceId: ABSENCE, lessonId: LESSON }],
+        recipients: [
+          { userId: S, answer: 'PENDING', answeredAt: null },
+          { userId: T, answer: 'DECLINED', answeredAt: NOW.toISOString() },
+        ],
+      },
+    ]);
+    expect(board.confirmations).toEqual([]);
+    expect(tx.coverRequest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { lessons: { some: { calendarLessonId: { in: [LESSON] } } } } }),
+    );
+    expect(recordedReads(tx)).toContainEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [S, T] });
   });
 
   it('the board records the absent teacher of a pair whose absence has ended too, and an empty board records nothing', async () => {

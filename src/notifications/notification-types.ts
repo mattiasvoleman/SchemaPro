@@ -20,6 +20,15 @@ import type { NotificationKind } from './notifications.service';
  * never gets one. Staff are booked for an absent rastvakt's pass and told when it is off
  * (SUPERVISION_COVER, SUPERVISION_COVER_WITHDRAWN, Rastvakt i vardagen): both
  * listed, both always sent.
+ *
+ * Vikariefrågan (D4): a teacher is asked to cover (COVER_REQUESTED) and told
+ * when the lesson went to somebody else, the question was taken back or the
+ * absence went away (COVER_REQUEST_CLOSED); the administrator who asked is
+ * told who said yes (COVER_REQUEST_ACCEPTED) and, in the same type as the
+ * colleagues' end of it, that the time ran out with nobody saying yes
+ * (COVER_REQUEST_CLOSED, reason UNANSWERED). All three are choices: the in-app
+ * row is always written, and a colleague who would rather not be pushed still
+ * finds the question in the app.
  */
 
 export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
@@ -38,6 +47,9 @@ export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
   'LEAVE_REQUESTED',
   'SUPERVISION_COVER',
   'SUPERVISION_COVER_WITHDRAWN',
+  'COVER_REQUESTED',
+  'COVER_REQUEST_ACCEPTED',
+  'COVER_REQUEST_CLOSED',
   'ABSENCE_WATCH_DIGEST',
 ];
 
@@ -70,8 +82,8 @@ const LESSONS: readonly NotificationKind[] = [
 export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = {
   GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
-  TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST'],
-  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST'],
+  TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED'],
+  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED'],
 };
 
 /**

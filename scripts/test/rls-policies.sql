@@ -2846,7 +2846,18 @@ BEGIN
        -- They resolve no caller: the chosen school is current_school_id()'s
        -- (sections 276 and 279).
        ('app', 'shared_teachers'),
-       ('app', 'shared_teacher_busy')
+       ('app', 'shared_teacher_busy'),
+       -- Vikariefrågan (20270102091000): the sender of a request, answered to
+       -- a colleague who was asked and has not answered, while it is open
+       -- (section 316). The gateway places the vikarie as that administrator;
+       -- it resolves the caller through app.current_user_id() first and names
+       -- nobody else's login.
+       ('app', 'cover_request_sender'),
+       -- The job's pass over the open requests (same migration): hands the
+       -- gateway the sender's login with each request it ended, so the
+       -- colleagues, or the sender, are told as the sender is told a yes. It
+       -- takes no caller at all: refused to anybody with a login (section 317).
+       ('app', 'cover_requests_settle')
      );
   IF unexpected IS NOT NULL THEN
     RAISE EXCEPTION 'functions read "authId" without being named in section 10: % (resolve the caller through app.current_user_id())', unexpected;
@@ -20166,6 +20177,10 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('CancellationBatchCredits', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('CancellationBatchLessons', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('CancellationBatches', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CoverConfirmations', '{DRIFT}', '{}', '{}', '{}'),
+  ('CoverRequestLessons', '{DRIFT}', '{}', '{}', '{}'),
+  ('CoverRequestRecipients', '{DRIFT}', '{DRIFT}', '{}', '{}'),
+  ('CoverRequests', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('CoverSettings', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('FrameTimes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('GallringRuns', '{}', '{}', '{}', '{}'),
@@ -31200,6 +31215,7 @@ DECLARE
     'app.absence_watch_digest', 'app.absence_watch_evaluate',
     'app.gallring_begin', 'app.gallring_claim_person', 'app.gallring_departed_due', 'app.gallring_finish',
     'app.gallring_pseudonymise', 'app.gallring_purge',
+    'app.cover_requests_settle',
     'app.job_claim_finished', 'app.job_claim_nightly', 'app.job_run_settled',
     'app.push_due_receipts', 'app.push_receipts_settled', 'app.push_settle',
     'app.schedule_candidates_sweep',
@@ -36678,6 +36694,836 @@ BEGIN
 END $$;
 ROLLBACK;
 
+
+-- ---------------------------------------------------------------------------
+-- Section 315: vikarieförfrågningarna står i katalogen som migreringen skrev
+-- dem (CoverRequests, CoverRequestLessons, CoverRequestRecipients,
+-- CoverConfirmations, 20270102091000).
+--
+-- Fyra tabeller, 15 armar, ingen DELETE för någon roll, ingenting för
+-- PostgREST:s roller, och sex funktioner som bara API:ts roll får anropa.
+-- Migrationens egen vakt (COVER_REQUEST_REACH) körs när migreringen
+-- läggs på; här står samma sak mot den databas sviten kör mot, och med
+-- tabellernas rättigheter, triggrarna och det partiella unika indexet som
+-- håller en öppen förfrågan per lektion.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  t text;
+  r text;
+  f text;
+  n integer;
+  tables text[] := ARRAY['CoverRequests', 'CoverRequestLessons', 'CoverRequestRecipients', 'CoverConfirmations'];
+  functions text[] := ARRAY['app.cover_request_sender(uuid)', 'app.cover_confirm(uuid)',
+                            'app.cover_my_passes(timestamptz, timestamptz)', 'app.cover_requests_settle()',
+                            'app.cover_request_is_open(uuid)'];
+  src text;
+BEGIN
+  FOREACH t IN ARRAY tables LOOP
+    IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('public.%I', t)::regclass) THEN
+      RAISE EXCEPTION 'cover requests: % has no row-level security', t;
+    END IF;
+    IF NOT (has_table_privilege('app_authenticated', format('public.%I', t), 'SELECT')
+            AND has_table_privilege('app_authenticated', format('public.%I', t), 'INSERT')) THEN
+      RAISE EXCEPTION 'cover requests: the API role lacks a grant on %', t;
+    END IF;
+    -- A line is turned off by its request's trigger and a confirmation is
+    -- written once: no arm updates either, so no UPDATE is granted.
+    IF has_table_privilege('app_authenticated', format('public.%I', t), 'UPDATE') IS DISTINCT FROM (t IN ('CoverRequests', 'CoverRequestRecipients')) THEN
+      RAISE EXCEPTION 'cover requests: the API role''s UPDATE on % is not what the arms say', t;
+    END IF;
+    IF has_table_privilege('app_authenticated', format('public.%I', t), 'DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+      RAISE EXCEPTION 'cover requests: the API role may delete from, truncate, reference or trigger %', t;
+    END IF;
+    FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
+         AND has_table_privilege(r, format('public.%I', t), 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+        RAISE EXCEPTION 'cover requests: % holds a privilege on %', r, t;
+      END IF;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')
+       AND has_table_privilege('service_role', format('public.%I', t), 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+      RAISE EXCEPTION 'cover requests: service_role writes %', t;
+    END IF;
+  END LOOP;
+
+  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables);
+  IF n <> 15 THEN RAISE EXCEPTION 'cover requests: the four tables have % arms, not 15', n; END IF;
+  SELECT count(*) INTO n FROM pg_policies
+   WHERE schemaname = 'public' AND tablename = ANY (tables) AND (roles <> '{app_authenticated}'::name[] OR cmd = 'DELETE' OR cmd = 'ALL');
+  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: % arm(s) reach beyond the API role or delete', n; END IF;
+
+  FOREACH f IN ARRAY functions LOOP
+    IF NOT has_function_privilege('app_authenticated', f, 'EXECUTE') THEN
+      RAISE EXCEPTION 'cover requests: the API role may not execute %', f;
+    END IF;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, f, 'EXECUTE') THEN
+        RAISE EXCEPTION 'cover requests: % may execute %', r, f;
+      END IF;
+    END LOOP;
+    -- PUBLIC (grantee 0) holds nothing either.
+    IF EXISTS (SELECT 1 FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                WHERE p.oid = f::regprocedure AND a.grantee = 0) THEN
+      RAISE EXCEPTION 'cover requests: PUBLIC may execute %', f;
+    END IF;
+    IF NOT (SELECT p.prosecdef AND p.proconfig::text LIKE '%search_path=%' FROM pg_proc p WHERE p.oid = f::regprocedure) THEN
+      RAISE EXCEPTION 'cover requests: % is not a SECURITY DEFINER with a fixed search_path', f;
+    END IF;
+  END LOOP;
+
+  -- One open request per pair is a partial unique index on the lines' open flag.
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'CoverRequestLessons'
+                  AND indexname = 'CoverRequestLessons_one_open_per_pair'
+                  AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%WHERE open%') THEN
+    RAISE EXCEPTION 'cover requests: the partial unique index of open pairs is gone';
+  END IF;
+  -- The triggers that make a request end once and keep the rest in step.
+  FOREACH f IN ARRAY ARRAY['CoverRequests_a_one_way', 'CoverRequests_b_close_lines', 'CoverRequestRecipients_a_narrow',
+                           'TeacherAbsenceCovers_c_closes_requests', 'TeacherAbsenceCovers_d_drops_confirmations',
+                           'TeacherAbsenceCovers_e_drops_confirmations_on_delete'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = f AND NOT tgisinternal AND tgenabled = 'O') THEN
+      RAISE EXCEPTION 'cover requests: the trigger % is missing or disabled', f;
+    END IF;
+  END LOOP;
+  -- Gallring knows the kind, and a school that has decided nothing keeps it.
+  IF NOT EXISTS (SELECT 1 FROM unnest(enum_range(NULL::"RetentionDataType")) k WHERE k::text = 'COVER_REQUESTS') THEN
+    RAISE EXCEPTION 'cover requests: COVER_REQUESTS is not a retention kind';
+  END IF;
+  -- app.gallring_due and app.gallring_purge are replaced whole by every release
+  -- that adds a kind (20261026091000, 20261231090100, 20270102091000), so the
+  -- one that comes last must carry every branch before it: the findings of
+  -- Frånvarobevakning under ATTENDANCE and the requests under COVER_REQUESTS.
+  -- A release that restates them from an older body silently stops purging
+  -- the other's rows. The branches' behaviour is 309o and section 319; this
+  -- is that neither is missing from the bodies in force.
+  SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure;
+  IF src NOT LIKE '%"AbsenceWatchFindings"%' THEN
+    RAISE EXCEPTION 'gallring: app.gallring_due has lost the branch for the absence watch''s findings (Frånvarobevakning, 20261231090100)';
+  END IF;
+  IF src NOT LIKE '%"CoverRequests"%' OR src NOT LIKE '%"CoverConfirmations"%' THEN
+    RAISE EXCEPTION 'gallring: app.gallring_due has lost the branch for the cover requests (Vikariefrågan, 20270102091000)';
+  END IF;
+  SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = 'app.gallring_purge(uuid, "RetentionDataType", integer)'::regprocedure;
+  IF src NOT LIKE '%DELETE FROM "AbsenceWatchFindings"%' THEN
+    RAISE EXCEPTION 'gallring: app.gallring_purge has lost the branch for the absence watch''s findings (Frånvarobevakning, 20261231090100)';
+  END IF;
+  IF src NOT LIKE '%WHEN ''COVER_REQUESTS'' THEN%' OR src NOT LIKE '%DELETE FROM "CoverRequests"%' THEN
+    RAISE EXCEPTION 'gallring: app.gallring_purge has lost the branch for the cover requests (Vikariefrågan, 20270102091000)';
+  END IF;
+END $$;
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 316: vem som ser en förfrågan, och vad en tillfrågad får göra.
+--
+-- The administrator (Drift) sends a request for two lessons to two colleagues
+-- and reads all of it. A colleague asked reads their own question, its
+-- lessons and their own answer row, and nothing of the other colleague's;
+-- a colleague not asked, a pupil, a guardian and the other school's
+-- administrator read none. A colleague writes exactly one thing: their own
+-- "nej", while the question is open, once. Everything else a teacher tries
+-- (a request, a line, a recipient, somebody else's row, a yes, a changed
+-- row) is refused or touches nothing. app.cover_request_sender answers the
+-- sender to a colleague who was asked, while the question stands, and
+-- refuses by SQLSTATE otherwise: CR404, CR411, CR410, CR409 and CR422.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+CREATE FUNCTION pg_temp.refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'cover requests: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  t1 uuid; t2 uuid; t3 uuid; t4 uuid; pupil uuid; guardian uuid;
+  l1 uuid; l2 uuid; a uuid; req uuid; req2 uuid; n bigint;
+BEGIN
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1) ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t3 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1, t2) ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t4 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1, t2, t3) ORDER BY "authId" LIMIT 1;
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO guardian FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND "isActive" ORDER BY "authId" LIMIT 1;
+  IF t4 IS NULL OR pupil IS NULL OR guardian IS NULL THEN
+    RAISE EXCEPTION 'cover requests: the primary school lacks four teachers, a pupil or a guardian';
+  END IF;
+
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT school, (SELECT id FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+         (SELECT id FROM "StudentGroups" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+         DATE '2096-03-01' + k, timestamptz '2096-03-01 08:00 UTC' + k * interval '1 day', timestamptz '2096-03-01 09:00 UTC' + k * interval '1 day', now()
+    FROM generate_series(0, 1) AS k;
+  SELECT id INTO l1 FROM "CalendarLessons" WHERE "schoolId" = school AND date = DATE '2096-03-01';
+  SELECT id INTO l2 FROM "CalendarLessons" WHERE "schoolId" = school AND date = DATE '2096-03-02';
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (school, t1, timestamptz '2096-02-28 00:00 UTC', timestamptz '2096-03-05 00:00 UTC') RETURNING id INTO a;
+
+  -- The administrator sends a request for two lessons to two colleagues.
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 hour') RETURNING id INTO req;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, req, a, l1), (school, req, a, l2);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, req, t2), (school, req, t3);
+  SELECT count(*) INTO n FROM "CoverRequests" WHERE id = req AND status = 'OPEN' AND "closedAt" IS NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover requests: the request is not OPEN'; END IF;
+  SELECT count(*) INTO n FROM "CoverRequestLessons" WHERE "requestId" = req AND open;
+  IF n <> 2 THEN RAISE EXCEPTION 'cover requests: the lessons are not open'; END IF;
+
+  -- What even the administrator is refused: a request born ended, a recipient
+  -- born answered, a delete, a move of the time, a yes from nobody asked.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt", status, "closedAt") VALUES (%L, %L, now() + interval '1 hour', 'EXPIRED', now())$q$, school, me),
+                          'CR400', 'a request born ended');
+  -- In somebody else's name it is stored in the writer's: the sender is the one a yes places a vikarie as.
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, t2, now() + interval '1 hour') RETURNING id INTO req2;
+  IF (SELECT "requestedByUserId" FROM "CoverRequests" WHERE id = req2) <> me THEN
+    RAISE EXCEPTION 'cover requests: a request sent in somebody else''s name kept that name';
+  END IF;
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId", answer, "answeredAt") VALUES (%L, %L, %L, 'ACCEPTED', now())$q$, school, req, t4),
+                          'CR403', 'a recipient born with a yes');
+  PERFORM pg_temp.refuses(format($q$DELETE FROM "CoverRequests" WHERE id = %L$q$, req), '42501', 'a delete of a request');
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET "expiresAt" = "expiresAt" + interval '1 hour' WHERE id = %L$q$, req),
+                          'CR400', 'a request moving its time');
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET status = 'ACCEPTED', "acceptedByUserId" = %L WHERE id = %L$q$, t4, req),
+                          'CR404', 'a yes from somebody not asked');
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET status = 'ACCEPTED' WHERE id = %L$q$, req),
+                          'CR404', 'a yes from nobody');
+
+  -- The administrator reads everything, including both answer rows.
+  SELECT count(*) INTO n FROM "CoverRequestRecipients" WHERE "requestId" = req;
+  IF n <> 2 THEN RAISE EXCEPTION 'cover requests: the administrator reads % recipient row(s), not 2', n; END IF;
+
+  PERFORM set_config('app.test_rls316_req', req::text, true);
+  PERFORM set_config('app.test_rls316_t2', t2::text, true);
+  PERFORM set_config('app.test_rls316_t3', t3::text, true);
+  PERFORM set_config('app.test_rls316_t4', t4::text, true);
+  PERFORM set_config('app.test_rls316_t1', t1::text, true);
+  PERFORM set_config('app.test_rls316_l1', l1::text, true);
+  PERFORM set_config('app.test_rls316_a', a::text, true);
+  PERFORM set_config('app.test_rls316_me_auth', (SELECT "authId"::text FROM "Users" WHERE id = me), true);
+  PERFORM set_config('app.test_rls316_t2_auth', (SELECT "authId"::text FROM "Users" WHERE id = t2), true);
+  PERFORM set_config('app.test_rls316_t3_auth', (SELECT "authId"::text FROM "Users" WHERE id = t3), true);
+  PERFORM set_config('app.test_rls316_t4_auth', (SELECT "authId"::text FROM "Users" WHERE id = t4), true);
+  PERFORM set_config('app.test_rls316_pupil_auth', (SELECT "authId"::text FROM "Users" WHERE id = pupil), true);
+  PERFORM set_config('app.test_rls316_guardian_auth', (SELECT "authId"::text FROM "Users" WHERE id = guardian), true);
+END $$;
+
+-- 316b: the colleague asked (t3) reads their question and nothing of t2's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls316_t3_auth'))::text, true);
+DO $$
+DECLARE
+  req uuid := current_setting('app.test_rls316_req')::uuid;
+  t2 uuid := current_setting('app.test_rls316_t2')::uuid;
+  t3 uuid := current_setting('app.test_rls316_t3')::uuid;
+  n bigint; sender record;
+BEGIN
+  IF app.current_user_role() <> 'TEACHER' OR app.current_user_id() <> t3 THEN
+    RAISE EXCEPTION 'cover requests: expected to be acting as the third teacher';
+  END IF;
+  SELECT count(*) INTO n FROM "CoverRequests" WHERE id = req;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover requests: a colleague asked reads % request(s), not their own', n; END IF;
+  SELECT count(*) INTO n FROM "CoverRequestLessons" WHERE "requestId" = req;
+  IF n <> 2 THEN RAISE EXCEPTION 'cover requests: a colleague asked reads % line(s), not 2', n; END IF;
+  SELECT count(*) INTO n FROM "CoverRequestRecipients" WHERE "requestId" = req;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover requests: a colleague asked reads % answer row(s), not their own', n; END IF;
+  SELECT count(*) INTO n FROM "CoverRequestRecipients" WHERE "userId" = t2;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: a colleague reads another colleague''s answer'; END IF;
+  SELECT count(*) INTO n FROM "CoverConfirmations";
+  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: a colleague with no pass reads % confirmation(s)', n; END IF;
+
+  -- What a colleague is refused.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (%L, %L, now() + interval '1 hour')$q$, app.current_school_id(), t3),
+                          '42501', 'a colleague sending a request');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (%L, %L, %L)$q$, app.current_school_id(), req, t3),
+                          '42501', 'a colleague adding a recipient');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CoverConfirmations" ("schoolId", "absenceId", "calendarLessonId", "userId") VALUES (%L, %L, %L, %L)$q$,
+                                 app.current_school_id(), current_setting('app.test_rls316_a')::uuid, current_setting('app.test_rls316_l1')::uuid, t3),
+                          '42501', 'a colleague writing a confirmation');
+  UPDATE "CoverRequests" SET status = 'ACCEPTED', "acceptedByUserId" = t3 WHERE id = req;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: a colleague changed a request (% row)', n; END IF;
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequestLessons" SET open = false WHERE "requestId" = %L$q$, req), '42501', 'a colleague changing a line');
+  -- A yes written straight to their own row: the guard (a BEFORE trigger, which
+  -- speaks first) and the arm's WITH CHECK both refuse it.
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequestRecipients" SET answer = 'ACCEPTED' WHERE "requestId" = %L AND "userId" = %L$q$, req, t3),
+                          'CR403', 'a yes written by the colleague');
+  UPDATE "CoverRequestRecipients" SET answer = 'DECLINED' WHERE "requestId" = req AND "userId" = t2;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: a colleague declined for another'; END IF;
+
+  -- The sender, to a colleague asked: the administrator who sent it.
+  SELECT * INTO sender FROM app.cover_request_sender(req);
+  IF sender."authId"::text <> current_setting('app.test_rls316_me_auth') OR sender."userId" IS NULL THEN
+    RAISE EXCEPTION 'cover requests: the sender is not the administrator who asked (%)', sender;
+  END IF;
+
+  -- Their own no, once, with the clock the database's.
+  UPDATE "CoverRequestRecipients" SET answer = 'DECLINED', "answeredAt" = timestamptz '2001-01-01' WHERE "requestId" = req AND "userId" = t3;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover requests: a colleague could not decline their own (% row)', n; END IF;
+  SELECT count(*) INTO n FROM "CoverRequestRecipients"
+   WHERE "requestId" = req AND "userId" = t3 AND answer = 'DECLINED' AND "answeredAt" > now() - interval '1 minute';
+  IF n <> 1 THEN RAISE EXCEPTION 'cover requests: the no was not stamped with the database''s clock'; END IF;
+  -- The no keeps the time it was given: the same answer written again moves nothing.
+  UPDATE "CoverRequestRecipients" SET answer = 'DECLINED', "answeredAt" = timestamptz '2001-01-01' WHERE "requestId" = req AND "userId" = t3;
+  SELECT count(*) INTO n FROM "CoverRequestRecipients"
+   WHERE "requestId" = req AND "userId" = t3 AND "answeredAt" > now() - interval '1 minute';
+  IF n <> 1 THEN RAISE EXCEPTION 'cover requests: a colleague who declined moved the time of the no'; END IF;
+  -- Having answered, they are told so and are no longer anybody's yes.
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, req), 'CR411', 'the sender, to a colleague who answered');
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequestRecipients" SET answer = 'PENDING', "answeredAt" = NULL WHERE "requestId" = %L AND "userId" = %L$q$, req, t3),
+                          'CR411', 'a no taken back');
+END $$;
+
+-- 316c: not asked, a pupil, a guardian and the other school: nothing, and not the sender.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls316_t4_auth'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM "CoverRequests") + (SELECT count(*) FROM "CoverRequestLessons")
+       + (SELECT count(*) FROM "CoverRequestRecipients") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: a colleague not asked reads % row(s)', n; END IF;
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, current_setting('app.test_rls316_req')), 'CR404', 'the sender, to a colleague not asked');
+  PERFORM pg_temp.refuses(format($q$SELECT app.cover_confirm(%L)$q$, current_setting('app.test_rls316_l1')), 'CR404', 'a confirmation of a lesson that is not theirs');
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls316_pupil_auth'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM "CoverRequests") + (SELECT count(*) FROM "CoverRequestLessons")
+       + (SELECT count(*) FROM "CoverRequestRecipients") + (SELECT count(*) FROM "CoverConfirmations") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: a pupil reads % row(s)', n; END IF;
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, current_setting('app.test_rls316_req')), 'CR404', 'the sender, to a pupil');
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls316_guardian_auth'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM "CoverRequests") + (SELECT count(*) FROM "CoverRequestLessons")
+       + (SELECT count(*) FROM "CoverRequestRecipients") + (SELECT count(*) FROM "CoverConfirmations") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: a guardian reads % row(s)', n; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM "CoverRequests") + (SELECT count(*) FROM "CoverRequestLessons")
+       + (SELECT count(*) FROM "CoverRequestRecipients") + (SELECT count(*) FROM "CoverConfirmations") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: another school''s administrator reads % row(s)', n; END IF;
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, current_setting('app.test_rls316_req')), 'CR404', 'the sender, to another school');
+END $$;
+
+-- 316d: the question's endings, as the colleague who is still asked (t2) meets them.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  req uuid := current_setting('app.test_rls316_req')::uuid;
+  school uuid := app.current_school_id();
+  n bigint;
+BEGIN
+  -- A sender removed from the request can place nobody (CR422), and the
+  -- request keeps its history; the one the key's SET NULL leaves is this.
+  UPDATE "CoverRequests" SET "requestedByUserId" = NULL WHERE id = req;
+  PERFORM set_config('app.test_rls316_after_sender_null', 'x', true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls316_t2_auth'))::text, true);
+DO $$
+BEGIN
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, current_setting('app.test_rls316_req')), 'CR422', 'the sender of a request whose sender is gone');
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  req uuid := current_setting('app.test_rls316_req')::uuid;
+  t2 uuid := current_setting('app.test_rls316_t2')::uuid;
+BEGIN
+  -- Withdrawn: the colleague asked is told it is gone, and cannot decline into it.
+  UPDATE "CoverRequests" SET status = 'WITHDRAWN' WHERE id = req;
+  IF (SELECT count(*) FROM "CoverRequestLessons" WHERE "requestId" = req AND open) <> 0 THEN
+    RAISE EXCEPTION 'cover requests: a withdrawn request still holds its lessons open';
+  END IF;
+  IF (SELECT "closedAt" FROM "CoverRequests" WHERE id = req) IS NULL THEN
+    RAISE EXCEPTION 'cover requests: a withdrawn request has no end';
+  END IF;
+  PERFORM set_config('app.test_rls316_withdrawn', t2::text, true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls316_t2_auth'))::text, true);
+DO $$
+DECLARE req uuid := current_setting('app.test_rls316_req')::uuid;
+BEGIN
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, req), 'CR410', 'the sender of a withdrawn request');
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequestRecipients" SET answer = 'DECLINED' WHERE "requestId" = %L AND "userId" = %L$q$, req, app.current_user_id()),
+                          'CR412', 'a no to a question that has ended');
+END $$;
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 317: en förfrågan slutar en gång, och det första jaet är det enda.
+--
+-- What the database says by itself of the first yes (the race over real
+-- connections is the adapter probe's, probe-cover-requests.ts): ACCEPTED
+-- needs somebody asked who has not answered (CR404) and a request that has
+-- not expired by the database's clock (CR410); the end is stamped by the
+-- database (closedAt, acceptedAt), closes the lessons for a new request,
+-- and is final (CR412); two open requests never ask for one lesson (23505);
+-- a decision on the lesson ends the request that asks for it (CLOSED); a
+-- colleague answers once (CR411); a yes writes the answer row itself.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+CREATE FUNCTION pg_temp.refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'cover requests: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  t1 uuid; t2 uuid; t3 uuid;
+  l uuid; l3 uuid; a uuid; r1 uuid; r2 uuid; r3 uuid; rx uuid;
+  me_auth text; t2_auth text; t3_auth text;
+  rec "CoverRequests";
+  n bigint;
+BEGIN
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t3 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1, t2) ORDER BY "authId" LIMIT 1;
+  -- The logins, read while this is still the administrator: a teacher reads no one else's.
+  SELECT "authId"::text INTO me_auth FROM "Users" WHERE id = me;
+  SELECT "authId"::text INTO t2_auth FROM "Users" WHERE id = t2;
+  SELECT "authId"::text INTO t3_auth FROM "Users" WHERE id = t3;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, (SELECT id FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+          (SELECT id FROM "StudentGroups" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+          DATE '2097-03-01', timestamptz '2097-03-01 08:00 UTC', timestamptz '2097-03-01 09:00 UTC', now())
+  RETURNING id INTO l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, l, t1, 'LEAD');
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (school, t1, timestamptz '2097-02-28 00:00 UTC', timestamptz '2097-03-05 00:00 UTC') RETURNING id INTO a;
+
+  -- Two requests never ask for one lesson at once.
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 hour') RETURNING id INTO r1;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, r1, a, l);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, r1, t2), (school, r1, t3);
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 hour') RETURNING id INTO r2;
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (%L, %L, %L, %L)$q$, school, r2, a, l),
+                          '23505', 'a second open request for one lesson');
+
+  -- The first yes: the stamps are the database's, whatever the writer says.
+  UPDATE "CoverRequests" SET status = 'ACCEPTED', "acceptedByUserId" = t2, "acceptedAt" = timestamptz '2001-01-01', "closedAt" = timestamptz '2001-01-01' WHERE id = r1;
+  SELECT * INTO rec FROM "CoverRequests" WHERE id = r1;
+  IF rec.status <> 'ACCEPTED' OR rec."acceptedByUserId" <> t2 OR rec."acceptedAt" < now() - interval '1 minute'
+     OR rec."closedAt" <> rec."acceptedAt" THEN
+    RAISE EXCEPTION 'cover requests: the first yes is not stamped by the database (%)', rec;
+  END IF;
+  IF (SELECT count(*) FROM "CoverRequestLessons" WHERE "requestId" = r1 AND open) <> 0 THEN
+    RAISE EXCEPTION 'cover requests: an accepted request still holds its lesson open';
+  END IF;
+  UPDATE "CoverRequestRecipients" SET answer = 'ACCEPTED' WHERE "requestId" = r1 AND "userId" = t2;
+  IF (SELECT "answeredAt" FROM "CoverRequestRecipients" WHERE "requestId" = r1 AND "userId" = t2) IS NULL THEN
+    RAISE EXCEPTION 'cover requests: a yes is not stamped on the answer row';
+  END IF;
+
+  -- The one who said yes asking again is told it is theirs (a lost answer, a second tap).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', t2_auth)::text, true);
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, r1), 'CR413', 'the sender, to the colleague who said yes');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', t3_auth)::text, true);
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, r1), 'CR409', 'the sender, to a colleague who came second');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', me_auth)::text, true);
+
+  -- Lines and recipients are added to an open request only: a line put into an
+  -- ended one would be born open and hold its lesson against every new request.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (%L, %L, %L, %L)$q$, school, r1, a, l),
+                          '42501', 'a line added to a request that has ended');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (%L, %L, %L)$q$, school, r1, t1),
+                          '42501', 'a colleague added to a request that has ended');
+
+  -- The end is final, whoever asks.
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET status = 'ACCEPTED', "acceptedByUserId" = %L WHERE id = %L$q$, t3, r1), 'CR412', 'a second yes');
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET status = 'WITHDRAWN' WHERE id = %L$q$, r1), 'CR412', 'a withdrawal after the yes');
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET status = 'OPEN', "closedAt" = NULL, "acceptedAt" = NULL WHERE id = %L$q$, r1), 'CR412', 'a request reopened');
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequestRecipients" SET answer = 'DECLINED' WHERE "requestId" = %L AND "userId" = %L$q$, r1, t2),
+                          'CR411', 'a yes taken back as a no');
+
+  -- The lesson is free for a new request once the old has ended (r2 is its own).
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, r2, a, l);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, r2, t3);
+
+  -- A yes after the time is out: the database's clock decides, not the writer's.
+  -- On a lesson of its own and on firm ground (the absent teacher is on it, the absence is active),
+  -- so that what ends it is its time and nothing else.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, (SELECT id FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+          (SELECT id FROM "StudentGroups" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+          DATE '2097-03-02', timestamptz '2097-03-02 08:00 UTC', timestamptz '2097-03-02 09:00 UTC', now())
+  RETURNING id INTO l3;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, l3, t1, 'LEAD');
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 second') RETURNING id INTO r3;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, r3, a, l3);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, r3, t3);
+  PERFORM pg_sleep(1.3);
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET status = 'ACCEPTED', "acceptedByUserId" = %L WHERE id = %L$q$, t3, r3), 'CR410', 'a yes after the time is out');
+  -- The job's door has no login: a person who calls it is refused, the job is not.
+  PERFORM pg_temp.refuses($q$SELECT * FROM app.cover_requests_settle()$q$, 'CR403', 'the settling run by a person');
+  PERFORM set_config('request.jwt.claims', '', true);
+  SELECT count(*) INTO n FROM app.cover_requests_settle() s
+   WHERE s."requestId" = r3 AND s."outcome" = 'EXPIRED' AND s."senderId" = me AND s."senderAuthId"::text = me_auth;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', me_auth)::text, true);
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'cover requests: the pass did not answer the request that ran out, with the administrator who sent it';
+  END IF;
+  IF (SELECT status FROM "CoverRequests" WHERE id = r3) <> 'EXPIRED' THEN
+    RAISE EXCEPTION 'cover requests: the pass did not end the request that ran out';
+  END IF;
+  IF (SELECT status FROM "CoverRequests" WHERE id = r2) <> 'OPEN' THEN
+    RAISE EXCEPTION 'cover requests: the pass ended a request that has time left and firm ground';
+  END IF;
+
+  -- A decision on the lesson, made another way, ends the request that asks for it.
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers", "decidedByUserId")
+  VALUES (school, a, l, t1, 'CO_TEACHER', jsonb_build_array(jsonb_build_object('teacherId', t1, 'role', 'LEAD')), me);
+  SELECT * INTO rec FROM "CoverRequests" WHERE id = r2;
+  IF rec.status <> 'CLOSED' OR rec."closedAt" IS NULL OR rec."acceptedAt" IS NOT NULL THEN
+    RAISE EXCEPTION 'cover requests: a decision on the lesson did not close its request (%)', rec;
+  END IF;
+  IF (SELECT count(*) FROM "CoverRequestLessons" WHERE "requestId" = r2 AND open) <> 0 THEN
+    RAISE EXCEPTION 'cover requests: a closed request still holds its lesson open';
+  END IF;
+  -- And a decision on a lesson nobody asked about moves nothing.
+  UPDATE "TeacherAbsenceCovers" SET "decidedAt" = now() WHERE "absenceId" = a AND "calendarLessonId" = l;
+
+  -- A decision's own change closes a request; a key's SET NULL of who decided it
+  -- (a person removed) is no decision on the lesson. r5 asks for the pair the
+  -- decision above is on.
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 hour') RETURNING id INTO rx;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, rx, a, l);
+  UPDATE "TeacherAbsenceCovers" SET "decidedByUserId" = NULL WHERE "absenceId" = a AND "calendarLessonId" = l;
+  IF (SELECT status FROM "CoverRequests" WHERE id = rx) <> 'OPEN' THEN
+    RAISE EXCEPTION 'cover requests: clearing who decided a lesson ended the question about it';
+  END IF;
+  UPDATE "TeacherAbsenceCovers" SET decision = 'SUPERVISED_STUDY', "substituteId" = NULL WHERE "absenceId" = a AND "calendarLessonId" = l;
+  IF (SELECT status FROM "CoverRequests" WHERE id = rx) <> 'CLOSED' THEN
+    RAISE EXCEPTION 'cover requests: a changed decision did not end the question about its lesson';
+  END IF;
+
+  -- A person removed clears their own column and nothing else: the request
+  -- they sent stays, and cannot be answered.
+  DELETE FROM "Users" WHERE id = t2;
+  SELECT * INTO rec FROM "CoverRequests" WHERE id = r1;
+  IF rec."acceptedByUserId" IS NOT NULL OR rec.status <> 'ACCEPTED' OR rec."acceptedAt" IS NULL THEN
+    RAISE EXCEPTION 'cover requests: removing the one who said yes changed more than their column (%)', rec;
+  END IF;
+  IF (SELECT count(*) FROM "CoverRequestRecipients" WHERE "requestId" = r1 AND "userId" = t2) <> 0 THEN
+    RAISE EXCEPTION 'cover requests: a removed person still has an answer row';
+  END IF;
+END $$;
+
+-- 317b: the job's pass ends a request whose grounds are gone (CLOSED, outcome
+-- NOT_NEEDED) and leaves one on firm ground alone; grounds gone come before
+-- time out; a request whose sender is gone is ended all the same.
+CREATE FUNCTION pg_temp.settled(req uuid, back text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE o text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  SELECT s."outcome" INTO o FROM app.cover_requests_settle() s WHERE s."requestId" = req;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', back)::text, true);
+  RETURN coalesce(o, 'none');
+END
+$f$;
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  me_auth text;
+  t1 uuid; t2 uuid;
+  l uuid; a uuid; r uuid; r2 uuid;
+  k integer := 0;
+  kind text;
+  day date;
+  got text;
+  subj uuid := (SELECT id FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1);
+  grp uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = school ORDER BY id LIMIT 1);
+BEGIN
+  SELECT "authId"::text INTO me_auth FROM "Users" WHERE id = me;
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY "authId" LIMIT 1;
+
+  FOREACH kind IN ARRAY ARRAY['cancelled', 'withdrawn', 'shortened', 'teacher_left', 'lesson_removed'] LOOP
+    k := k + 1;
+    day := DATE '2098-01-01' + k;
+    INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+    VALUES (school, subj, grp, day, (day::timestamp AT TIME ZONE 'UTC') + interval '8 hours', (day::timestamp AT TIME ZONE 'UTC') + interval '9 hours', now())
+    RETURNING id INTO l;
+    INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, l, t1, 'LEAD');
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+    VALUES (school, t1, day::timestamp AT TIME ZONE 'UTC', (day::timestamp AT TIME ZONE 'UTC') + interval '1 day') RETURNING id INTO a;
+    INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 hour') RETURNING id INTO r;
+    INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, r, a, l);
+    INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, r, t2);
+
+    IF pg_temp.settled(r, me_auth) <> 'none' OR (SELECT status FROM "CoverRequests" WHERE id = r) <> 'OPEN' THEN
+      RAISE EXCEPTION 'cover requests (%): the pass ended a request on firm ground', kind;
+    END IF;
+
+    IF kind = 'cancelled' THEN
+      UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'EVENT' WHERE id = l;
+    ELSIF kind = 'withdrawn' THEN
+      UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now() WHERE id = a;
+    ELSIF kind = 'shortened' THEN
+      UPDATE "TeacherAbsences" SET "endsAt" = (day::timestamp AT TIME ZONE 'UTC') + interval '6 hours' WHERE id = a;
+    ELSIF kind = 'teacher_left' THEN
+      DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = l AND "teacherId" = t1;
+    ELSE
+      -- The line goes with its lesson (the key's CASCADE): a request with no line left.
+      DELETE FROM "CalendarLessons" WHERE id = l;
+    END IF;
+
+    got := pg_temp.settled(r, me_auth);
+    IF got <> 'NOT_NEEDED' THEN
+      RAISE EXCEPTION 'cover requests (%): the pass answered % for a request whose grounds are gone, not NOT_NEEDED', kind, got;
+    END IF;
+    IF (SELECT status FROM "CoverRequests" WHERE id = r) <> 'CLOSED' OR (SELECT "closedAt" FROM "CoverRequests" WHERE id = r) IS NULL
+       OR (SELECT count(*) FROM "CoverRequestLessons" WHERE "requestId" = r AND open) <> 0 THEN
+      RAISE EXCEPTION 'cover requests (%): the pass did not close the request and free its lessons', kind;
+    END IF;
+    -- Ended once: the next pass finds nothing to do.
+    IF pg_temp.settled(r, me_auth) <> 'none' THEN
+      RAISE EXCEPTION 'cover requests (%): the pass settled a request twice', kind;
+    END IF;
+  END LOOP;
+
+  -- The absent teacher's row is gone because a decision of the board put a
+  -- vikarie on the lesson; the vikarie is away themself, so the pair is open
+  -- again on the board and a question about it stands. The pass leaves it be
+  -- (the decision is what tells where the absent teacher went).
+  day := DATE '2098-01-20';
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, subj, grp, day, (day::timestamp AT TIME ZONE 'UTC') + interval '8 hours', (day::timestamp AT TIME ZONE 'UTC') + interval '9 hours', now())
+  RETURNING id INTO l;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (school, t1, day::timestamp AT TIME ZONE 'UTC', (day::timestamp AT TIME ZONE 'UTC') + interval '1 day') RETURNING id INTO a;
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers", "substituteId", "decidedByUserId")
+  VALUES (school, a, l, t1, 'SUBSTITUTE', jsonb_build_array(jsonb_build_object('teacherId', t1, 'role', 'LEAD')), t2, me);
+  -- The decision is made first: it would close a request that already stood.
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 hour') RETURNING id INTO r;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, r, a, l);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, r, t2);
+  IF pg_temp.settled(r, me_auth) <> 'none' OR (SELECT status FROM "CoverRequests" WHERE id = r) <> 'OPEN' THEN
+    RAISE EXCEPTION 'cover requests: the pass closed a question about a pair the board still needs covered (the vikarie is away themself)';
+  END IF;
+  -- With the decision gone and the absent teacher still off the lesson, nothing says where they went.
+  DELETE FROM "TeacherAbsenceCovers" WHERE "absenceId" = a AND "calendarLessonId" = l;
+  IF pg_temp.settled(r, me_auth) <> 'NOT_NEEDED' THEN
+    RAISE EXCEPTION 'cover requests: the pass kept a question about a lesson the absent teacher has left with no decision to say why';
+  END IF;
+
+  -- Grounds gone come before time out: a question that ran out in the same
+  -- hour as the absence was taken back is said to have been taken back.
+  day := DATE '2098-02-01';
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, subj, grp, day, (day::timestamp AT TIME ZONE 'UTC') + interval '8 hours', (day::timestamp AT TIME ZONE 'UTC') + interval '9 hours', now())
+  RETURNING id INTO l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, l, t1, 'LEAD');
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (school, t1, day::timestamp AT TIME ZONE 'UTC', (day::timestamp AT TIME ZONE 'UTC') + interval '1 day') RETURNING id INTO a;
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 second') RETURNING id INTO r2;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, r2, a, l);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, r2, t2);
+  UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'EVENT' WHERE id = l;
+  PERFORM pg_sleep(1.3);
+  got := pg_temp.settled(r2, me_auth);
+  IF got <> 'NOT_NEEDED' OR (SELECT status FROM "CoverRequests" WHERE id = r2) <> 'CLOSED' THEN
+    RAISE EXCEPTION 'cover requests: a question both out of time and without grounds ended as % / %, not NOT_NEEDED / CLOSED',
+      got, (SELECT status FROM "CoverRequests" WHERE id = r2);
+  END IF;
+
+  -- A sender who is gone (the key's SET NULL) leaves the request ended all the
+  -- same, with nobody to tell it to: the row's sender columns are NULL.
+  day := DATE '2098-03-01';
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, subj, grp, day, (day::timestamp AT TIME ZONE 'UTC') + interval '8 hours', (day::timestamp AT TIME ZONE 'UTC') + interval '9 hours', now())
+  RETURNING id INTO l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, l, t1, 'LEAD');
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (school, t1, day::timestamp AT TIME ZONE 'UTC', (day::timestamp AT TIME ZONE 'UTC') + interval '1 day') RETURNING id INTO a;
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 second') RETURNING id INTO r;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, r, a, l);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, r, t2);
+  UPDATE "CoverRequests" SET "requestedByUserId" = NULL WHERE id = r;
+  PERFORM pg_sleep(1.3);
+  PERFORM set_config('request.jwt.claims', '', true);
+  SELECT count(*) INTO k FROM app.cover_requests_settle() s
+   WHERE s."requestId" = r AND s."outcome" = 'EXPIRED' AND s."senderId" IS NULL AND s."senderAuthId" IS NULL AND s."senderProfile" IS NULL;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', me_auth)::text, true);
+  IF k <> 1 OR (SELECT status FROM "CoverRequests" WHERE id = r) <> 'EXPIRED' THEN
+    RAISE EXCEPTION 'cover requests: a request whose sender is gone was not ended with no sender to tell';
+  END IF;
+END $$;
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 318: vikarien bekräftar sitt pass med ett tryck.
+--
+-- app.cover_confirm writes the caller's own confirmation of a pass a cover
+-- decision gave them and nobody else's; it is idempotent, refuses a lesson
+-- that is not theirs (CR404), one that is over, and one held by somebody
+-- else. A decision handed to another vikarie takes the old confirmation
+-- with it, and an undone decision takes it too. The colleague reads their
+-- own confirmations and nobody's else; app.cover_my_passes answers their
+-- passes and whether they are confirmed, to them alone.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+CREATE FUNCTION pg_temp.refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'cover confirmations: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  t1 uuid; t2 uuid; t3 uuid;
+  l uuid; lpast uuid; a uuid; apast uuid;
+BEGIN
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t3 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1, t2) ORDER BY "authId" LIMIT 1;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT school, (SELECT id FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+         (SELECT id FROM "StudentGroups" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+         d, d + time '08:00', d + time '09:00', now()
+    FROM (VALUES (DATE '2098-03-01'), (DATE '2020-03-02')) AS v(d);
+  SELECT id INTO l FROM "CalendarLessons" WHERE "schoolId" = school AND date = DATE '2098-03-01';
+  SELECT id INTO lpast FROM "CalendarLessons" WHERE "schoolId" = school AND date = DATE '2020-03-02';
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (school, t1, timestamptz '2098-02-28 00:00 UTC', timestamptz '2098-03-05 00:00 UTC') RETURNING id INTO a;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", status, "withdrawnAt")
+  VALUES (school, t1, timestamptz '2020-03-01 00:00 UTC', timestamptz '2020-03-05 00:00 UTC', 'WITHDRAWN', now()) RETURNING id INTO apast;
+  INSERT INTO "CalendarLessonTeachers" ("calendarLessonId", "teacherId", "schoolId", role) VALUES (l, t2, school, 'SUBSTITUTE'), (lpast, t2, school, 'SUBSTITUTE');
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers", "substituteId", "decidedByUserId")
+  VALUES (school, a, l, t1, 'SUBSTITUTE', jsonb_build_array(jsonb_build_object('teacherId', t1, 'role', 'LEAD')), t2, me),
+         (school, apast, lpast, t1, 'SUBSTITUTE', jsonb_build_array(jsonb_build_object('teacherId', t1, 'role', 'LEAD')), t2, me);
+  PERFORM set_config('app.test_rls318_l', l::text, true);
+  PERFORM set_config('app.test_rls318_lpast', lpast::text, true);
+  PERFORM set_config('app.test_rls318_a', a::text, true);
+  PERFORM set_config('app.test_rls318_t2', t2::text, true);
+  PERFORM set_config('app.test_rls318_t3', t3::text, true);
+  PERFORM set_config('app.test_rls318_t2_auth', (SELECT "authId"::text FROM "Users" WHERE id = t2), true);
+  PERFORM set_config('app.test_rls318_t3_auth', (SELECT "authId"::text FROM "Users" WHERE id = t3), true);
+  IF (SELECT count(*) FROM "CoverConfirmations" WHERE "calendarLessonId" = l) <> 0 THEN
+    RAISE EXCEPTION 'cover confirmations: a decision is born confirmed';
+  END IF;
+END $$;
+
+-- 318b: the vikarie (t2).
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls318_t2_auth'))::text, true);
+DO $$
+DECLARE
+  l uuid := current_setting('app.test_rls318_l')::uuid;
+  n integer; passes record; first_at timestamptz;
+BEGIN
+  -- Before the tap: the pass is theirs, and unconfirmed.
+  SELECT count(*) INTO n FROM app.cover_my_passes(now(), now() + interval '200 years');
+  IF n <> 1 THEN RAISE EXCEPTION 'cover confirmations: the vikarie has % pass(es), not the one ahead', n; END IF;
+  SELECT * INTO passes FROM app.cover_my_passes(now(), now() + interval '200 years');
+  IF passes."calendarLessonId" <> l OR passes."confirmedAt" IS NOT NULL THEN
+    RAISE EXCEPTION 'cover confirmations: the pass is not theirs and unconfirmed (%)', passes;
+  END IF;
+  n := app.cover_confirm(l);
+  IF n <> 1 THEN RAISE EXCEPTION 'cover confirmations: the tap confirmed % pass(es)', n; END IF;
+  SELECT "confirmedAt" INTO first_at FROM "CoverConfirmations" WHERE "calendarLessonId" = l;
+  IF first_at IS NULL THEN RAISE EXCEPTION 'cover confirmations: the colleague cannot read their own confirmation'; END IF;
+  -- Again: still one, and the first tap stands.
+  n := app.cover_confirm(l);
+  IF n <> 1 OR (SELECT count(*) FROM "CoverConfirmations" WHERE "calendarLessonId" = l) <> 1
+     OR (SELECT "confirmedAt" FROM "CoverConfirmations" WHERE "calendarLessonId" = l) <> first_at THEN
+    RAISE EXCEPTION 'cover confirmations: a second tap changed something';
+  END IF;
+  SELECT * INTO passes FROM app.cover_my_passes(now(), now() + interval '200 years');
+  IF passes."confirmedAt" IS DISTINCT FROM first_at THEN
+    RAISE EXCEPTION 'cover confirmations: the pass does not say when it was confirmed (%)', passes;
+  END IF;
+  -- A pass already held is not confirmed after the fact.
+  PERFORM pg_temp.refuses(format($q$SELECT app.cover_confirm(%L)$q$, current_setting('app.test_rls318_lpast')), 'CR404', 'a tap on a lesson that is over');
+  PERFORM pg_temp.refuses(format($q$SELECT app.cover_confirm(%L)$q$, gen_random_uuid()), 'CR404', 'a tap on a lesson that does not exist');
+  -- Nothing written by hand.
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverConfirmations" SET "confirmedAt" = now() WHERE "calendarLessonId" = %L$q$, l), '42501', 'an UPDATE of a confirmation');
+END $$;
+
+-- 318c: a colleague who is not the vikarie reads and confirms nothing of theirs.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls318_t3_auth'))::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "CoverConfirmations") <> 0 THEN
+    RAISE EXCEPTION 'cover confirmations: another colleague reads a confirmation';
+  END IF;
+  IF (SELECT count(*) FROM app.cover_my_passes(now() - interval '100 years', now() + interval '200 years')) <> 0 THEN
+    RAISE EXCEPTION 'cover confirmations: another colleague is shown a pass that is not theirs';
+  END IF;
+  PERFORM pg_temp.refuses(format($q$SELECT app.cover_confirm(%L)$q$, current_setting('app.test_rls318_l')), 'CR404', 'a tap on somebody else''s pass');
+END $$;
+
+-- 318d: the decision handed on, and undone.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  l uuid := current_setting('app.test_rls318_l')::uuid;
+  a uuid := current_setting('app.test_rls318_a')::uuid;
+  t3 uuid := current_setting('app.test_rls318_t3')::uuid;
+BEGIN
+  IF (SELECT count(*) FROM "CoverConfirmations" WHERE "calendarLessonId" = l) <> 1 THEN
+    RAISE EXCEPTION 'cover confirmations: the administrator does not read the confirmation';
+  END IF;
+  UPDATE "TeacherAbsenceCovers" SET "substituteId" = t3 WHERE "absenceId" = a AND "calendarLessonId" = l;
+  IF (SELECT count(*) FROM "CoverConfirmations" WHERE "calendarLessonId" = l) <> 0 THEN
+    RAISE EXCEPTION 'cover confirmations: a decision handed to another kept the old vikarie''s confirmation';
+  END IF;
+  UPDATE "TeacherAbsenceCovers" SET "substituteId" = current_setting('app.test_rls318_t2')::uuid WHERE "absenceId" = a AND "calendarLessonId" = l;
+  INSERT INTO "CoverConfirmations" ("schoolId", "absenceId", "calendarLessonId", "userId")
+  VALUES (app.current_school_id(), a, l, current_setting('app.test_rls318_t2')::uuid);
+  DELETE FROM "TeacherAbsenceCovers" WHERE "absenceId" = a AND "calendarLessonId" = l;
+  IF (SELECT count(*) FROM "CoverConfirmations" WHERE "calendarLessonId" = l) <> 0 THEN
+    RAISE EXCEPTION 'cover confirmations: an undone decision kept its confirmation';
+  END IF;
+END $$;
+ROLLBACK;
+
 -- ---------------------------------------------------------------------------
 -- Sections 305-308: Frånvarobevakning (20261231090100).
 --
@@ -36954,6 +37800,79 @@ BEGIN
   -- An off school is not counted: nothing opens, whatever is planted.
   IF (SELECT opened + kept + closed + pupils FROM app.absence_watch_evaluate(school, '2026-09-20')) <> 0 THEN
     RAISE EXCEPTION 'frånvarobevakning 305: a school with the bevakning off was counted';
+  END IF;
+END $$;
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 319: vikarieförfrågningar gallras som skolan bestämt, och bara
+-- skolans (COVER_REQUESTS, 20270102090000 and 20270102091000).
+--
+-- The läslogg school keeps them 12 months (decided two days ago in the
+-- fixtures). The night's purge takes the request that ended 13 months ago
+-- with its lessons and its recipients, and the confirmation of the same age,
+-- and the request that is still OPEN though its time ran out 13 months ago
+-- (the job that ends it was off: nobody can answer it any more); it leaves
+-- the request that ended 11 months ago and the one OPEN with years left. The
+-- run counts the rows and "gallrat före" then answers COVER_REQUESTS. (Another
+-- school's rows are out of the purge's reach by its school predicate; section
+-- 83's gallring school holds none of its own to show it, so this section does
+-- not claim to.)
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls319_school', app.current_school_id()::text, true);
+  IF (SELECT count(*) FROM "CoverRequests" WHERE id = 'c0000000-0000-4000-8000-0000000d4001') <> 1 THEN
+    RAISE EXCEPTION 'cover gallring: the request that ended 13 months ago is not planted';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls319_school')::uuid, clock_timestamp());
+  n integer;
+BEGIN
+  n := app.gallring_purge(run, 'COVER_REQUESTS', 5000);
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'cover gallring: the purge took % row(s), not the ended request, its confirmation and the open one that ran out', n;
+  END IF;
+  n := app.gallring_purge(run, 'COVER_REQUESTS', 5000);
+  IF n <> 0 THEN RAISE EXCEPTION 'cover gallring: a second batch took % more', n; END IF;
+  PERFORM app.gallring_finish(run, '{}', clock_timestamp());
+  PERFORM set_config('app.test_rls319_run', run::text, true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  run "GallringRuns";
+BEGIN
+  IF (SELECT count(*) FROM "CoverRequests" WHERE id = 'c0000000-0000-4000-8000-0000000d4001') <> 0 THEN
+    RAISE EXCEPTION 'cover gallring: the request older than the period is left';
+  END IF;
+  IF (SELECT count(*) FROM "CoverRequests" WHERE id = 'c0000000-0000-4000-8000-0000000d4004') <> 0 THEN
+    RAISE EXCEPTION 'cover gallring: an open request whose time ran out before the period is kept for ever';
+  END IF;
+  IF (SELECT count(*) FROM "CoverRequestLessons" WHERE "requestId" IN ('c0000000-0000-4000-8000-0000000d4001', 'c0000000-0000-4000-8000-0000000d4004'))
+     + (SELECT count(*) FROM "CoverRequestRecipients" WHERE "requestId" IN ('c0000000-0000-4000-8000-0000000d4001', 'c0000000-0000-4000-8000-0000000d4004')) <> 0 THEN
+    RAISE EXCEPTION 'cover gallring: a purged request left its lessons or its recipients';
+  END IF;
+  IF (SELECT count(*) FROM "CoverRequests" WHERE id IN ('c0000000-0000-4000-8000-0000000d4002', 'c0000000-0000-4000-8000-0000000d4003')) <> 2 THEN
+    RAISE EXCEPTION 'cover gallring: the purge took a request inside the period or an open one that can still be answered';
+  END IF;
+  IF (SELECT count(*) FROM "CoverConfirmations" WHERE "confirmedAt" < now() - interval '12 months') <> 0 THEN
+    RAISE EXCEPTION 'cover gallring: a confirmation older than the period is left';
+  END IF;
+  SELECT * INTO run FROM "GallringRuns" WHERE id = current_setting('app.test_rls319_run')::uuid;
+  IF (run.counts ->> 'COVER_REQUESTS')::int IS DISTINCT FROM 3 OR (run.complete ->> 'COVER_REQUESTS')::boolean IS NOT TRUE
+     OR (run.periods ->> 'COVER_REQUESTS')::int IS DISTINCT FROM 12 THEN
+    RAISE EXCEPTION 'cover gallring: the run says %, %, %', run.periods, run.counts, run.complete;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM app.retention_purged_before() WHERE data_type = 'COVER_REQUESTS') THEN
+    RAISE EXCEPTION 'cover gallring: "gallrat före" does not answer COVER_REQUESTS';
   END IF;
 END $$;
 ROLLBACK;

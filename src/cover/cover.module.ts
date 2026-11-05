@@ -7,6 +7,9 @@ import { CoverReportsService } from './cover-reports.service';
 import { CoverSettingsService } from './cover-settings.service';
 import { TeacherAbsencesService } from './teacher-absences.service';
 import { SupervisionCoverService } from './supervision-cover.service';
+import { CoverRequestsAdminController, CoverRequestsTeacherController } from './cover-requests.controller';
+import { CoverRequestsJob } from './cover-requests.job';
+import { CoverRequestsService } from './cover-requests.service';
 
 /**
  * Vikarieplanering: teacher absences, the cover board and its decisions,
@@ -15,10 +18,19 @@ import { SupervisionCoverService } from './supervision-cover.service';
  * Rastvakt i vardagen). Imports CalendarModule for the day operations it builds on
  * (assignInTransaction and its siblings); the decision helpers it shares
  * with them are plain functions (cover-decisions.ts), so there is no cycle.
+ * Vikariefrågan (CoverRequestsService, 20270102091000): a request to chosen
+ * colleagues, the first yes placed as the board places it, and the vikarie's
+ * confirmation.
  */
 @Module({
   imports: [CalendarModule],
-  controllers: [TeacherAbsencesController, TeacherAbsenceReasonsController, CoverController],
+  controllers: [
+    TeacherAbsencesController,
+    TeacherAbsenceReasonsController,
+    CoverController,
+    CoverRequestsAdminController,
+    CoverRequestsTeacherController,
+  ],
   providers: [
     CoverService,
     CoverSuggestionsService,
@@ -26,6 +38,8 @@ import { SupervisionCoverService } from './supervision-cover.service';
     CoverSettingsService,
     TeacherAbsencesService,
     SupervisionCoverService,
+    CoverRequestsService,
+    CoverRequestsJob,
   ],
 })
 export class CoverModule {}

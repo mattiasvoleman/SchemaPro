@@ -7,7 +7,7 @@ import { LocaleProvider, useI18n } from '../src/context/LocaleContext';
 import { NetworkProvider } from '../src/context/NetworkContext';
 import { SyncProvider } from '../src/context/SyncContext';
 import { AppThemeProvider, useAppTheme } from '../src/theme/ThemeContext';
-import { homeOf } from '../src/services/auth/appGate';
+import { homeOf, tapTarget, tapTypeOf } from '../src/services/auth/appGate';
 import {
   ensureAndroidChannel,
   forgetTap,
@@ -60,7 +60,10 @@ function AuthGate(): React.JSX.Element {
 // person's OWN registration if they turned push on (never asking the phone
 // again), in the language stored on the device. The Android channel follows
 // the language. A tap on a notification opens the role's Notiser tab — every
-// role has one — and is then forgotten, so no later sign-in replays it.
+// role has one — except a cover question (COVER_REQUESTED, and its end,
+// COVER_REQUEST_CLOSED), which opens a teacher's Vikarie tab where it is
+// answered (tapTarget); the tap is then forgotten, so no later sign-in
+// replays it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PushBridge(): null {
@@ -83,13 +86,14 @@ function PushBridge(): null {
 
   useEffect(() => {
     if (!userId) return;
-    const open = (): void => router.push(homeOf(role).notifications);
-    const subscription = Notifications.addNotificationResponseReceivedListener(() => {
+    const open = (type: string | null): void => router.push(tapTarget(role, type));
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       forgetTap();
-      open();
+      open(tapTypeOf(response));
     });
     // A tap that launched the app arrived before this listener existed.
-    if (takeLastTap()) open();
+    const launching = takeLastTap();
+    if (launching) open(launching.type);
     return () => subscription.remove();
   }, [userId, role, router]);
 

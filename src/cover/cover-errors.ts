@@ -49,6 +49,13 @@ export const ABSENCE_PERSON_IS_FIXED = 'ABSENCE_PERSON_IS_FIXED';
 export const POOL_MEMBER_MUST_BE_TEACHER = 'POOL_MEMBER_MUST_BE_TEACHER';
 export const COVER_INVALID = 'COVER_INVALID';
 export const COVER_DUPLICATE = 'COVER_DUPLICATE';
+// Vikariefrågan (20270102091000): the database's own refusals, by SQLSTATE.
+export const COVER_REQUEST_NOT_FOUND = 'COVER_REQUEST_NOT_FOUND';
+export const COVER_REQUEST_TAKEN = 'COVER_REQUEST_TAKEN';
+export const COVER_REQUEST_GONE = 'COVER_REQUEST_GONE';
+export const COVER_REQUEST_ANSWERED = 'COVER_REQUEST_ANSWERED';
+export const COVER_REQUEST_SENDER_GONE = 'COVER_REQUEST_SENDER_GONE';
+export const COVER_PASS_NOT_FOUND = 'COVER_PASS_NOT_FOUND';
 
 /** Throws the coded answer for a database refusal, or the error as it was. */
 export function rethrowCoverError(error: unknown): never {
@@ -71,6 +78,31 @@ export function rethrowCoverError(error: unknown): never {
       throw new ConflictException({ message: 'En frånvaro byter inte person.', code: ABSENCE_PERSON_IS_FIXED });
     case 'SP409':
       throw new ConflictException({ message: 'Bara en lärare kan stå i vikariepoolen.', code: POOL_MEMBER_MUST_BE_TEACHER });
+    // Vikariefrågan: app.cover_request_sender, app.cover_confirm and the
+    // triggers of CoverRequests and CoverRequestRecipients.
+    case 'CR404':
+      throw new NotFoundException({ message: 'Förfrågan finns inte, eller gäller inte dig.', code: COVER_REQUEST_NOT_FOUND });
+    case 'CR409':
+      throw new ConflictException({
+        message: 'Uppdraget är redan tillsatt: en kollega hann tacka ja före dig.',
+        code: COVER_REQUEST_TAKEN,
+      });
+    case 'CR410':
+    case 'CR412':
+      throw new ConflictException({
+        message: 'Förfrågan är avslutad: den har gått ut, dragits tillbaka eller tillsatts på annat sätt.',
+        code: COVER_REQUEST_GONE,
+      });
+    case 'CR411':
+      throw new ConflictException({ message: 'Du har redan svarat på förfrågan.', code: COVER_REQUEST_ANSWERED });
+    case 'CR422':
+      throw new ConflictException({
+        message: 'Den som skickade förfrågan kan inte längre tillsätta uppdraget. Hör av dig till expeditionen.',
+        code: COVER_REQUEST_SENDER_GONE,
+      });
+    case 'CR403':
+    case 'CR400':
+      throw new ForbiddenException({ message: 'Svaret på förfrågan kan inte ändras så.', code: COVER_REQUEST_ANSWERED });
     case '42501':
       throw new ForbiddenException({
         message: 'Skolan låter inte lärare registrera sin egen frånvaro.',

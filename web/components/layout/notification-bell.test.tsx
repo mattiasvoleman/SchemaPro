@@ -63,13 +63,16 @@ vi.mock("@/utils/supabase/client", () => ({
 }));
 
 // The signed-in person, whose own rows the inbox reads.
-vi.mock("@/components/profile-context", () => ({
+// The words and links of the notices come from the same module (see the note there), so it is the real one but for the profile.
+vi.mock("@/components/profile-context", async (importActual) => ({
+  ...(await importActual<typeof import("@/components/profile-context")>()),
   useProfile: () => ({ profile: { id: "me-1" }, school: null }),
 }));
 
 // next-intl's Link needs the intl provider; an anchor is what it renders.
 // It forwards every prop and the ref, as next-intl's does, so a Radix item
 // rendered asChild can make it a menu item.
+const router = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("@/i18n/navigation", async () => {
   const { forwardRef } = await import("react");
   const Link = forwardRef<HTMLAnchorElement, React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }>(
@@ -89,7 +92,7 @@ vi.mock("@/i18n/navigation", async () => {
       );
     },
   );
-  return { Link };
+  return { Link, useRouter: () => router };
 });
 
 // Key echo that also surfaces interpolated values, so each notification type's
@@ -159,6 +162,7 @@ const bellButton = () =>
   screen.getByRole("button", { name: /^title/, hidden: true });
 
 beforeEach(() => {
+  router.push.mockClear();
   seq = 0;
   supabaseState.selectResults.length = 0;
   supabaseState.updateResults.length = 0;
@@ -452,6 +456,54 @@ describe("NotificationBell inbox", () => {
 
     expect(screen.getByText(`supervisionCover(area=Skolgården|when=${when}|end=${end})`)).toBeInTheDocument();
     expect(screen.getByText(`supervisionCoverWithdrawn(area=Matsalen|when=${when}|end=${end})`)).toBeInTheDocument();
+  });
+
+  it("tells a colleague of a request and its closing and the administrator of a yes by time, count and name, and takes each to its page (Vikariefrågan)", async () => {
+    const user = userEvent.setup();
+    const startsAt = "2026-10-14T08:00:00.000Z";
+    const when = new Date(startsAt).toLocaleString();
+    supabaseState.selectResults.push(
+      ok([
+        notif({ type: "COVER_REQUESTED", meta: { requestId: "r-1", startsAt, expiresAt: "2026-10-14T07:30:00.000Z", lessonCount: 2 } }),
+        notif({ type: "COVER_REQUEST_CLOSED", meta: { requestId: "r-1", startsAt, lessonCount: 2, reason: "TAKEN" } }),
+        notif({ type: "COVER_REQUEST_ACCEPTED", meta: { requestId: "r-1", startsAt, lessonCount: 2, acceptedByName: "Bo Ek" } }),
+        notif({ type: "COVER_REQUEST_CLOSED", meta: { requestId: "r-2", startsAt, lessonCount: 1, reason: "UNANSWERED" } }),
+        notif({ meta: { subjectName: "Biologi" } }),
+      ]),
+    );
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    const requested = screen.getByText(`cover.COVER_REQUESTED(when=${when}|count=2|reason=|name=)`);
+    expect(screen.getByText(`cover.COVER_REQUEST_CLOSED(when=${when}|count=2|reason=TAKEN|name=)`)).toBeInTheDocument();
+    expect(screen.getByText(`cover.COVER_REQUEST_ACCEPTED(when=${when}|count=2|reason=|name=Bo Ek)`)).toBeInTheDocument();
+
+    await user.click(requested);
+    expect(router.push).toHaveBeenLastCalledWith("/teacher/franvaro");
+    await user.click(bellButton());
+    await user.click(screen.getByText(`cover.COVER_REQUEST_CLOSED(when=${when}|count=2|reason=TAKEN|name=)`));
+    expect(router.push).toHaveBeenLastCalledWith("/teacher/franvaro");
+    await user.click(bellButton());
+    await user.click(screen.getByText(`cover.COVER_REQUEST_ACCEPTED(when=${when}|count=2|reason=|name=Bo Ek)`));
+    expect(router.push).toHaveBeenLastCalledWith("/admin/cover");
+    // A question that ran out unanswered is said to the administrator who asked: it leads to the board.
+    await user.click(bellButton());
+    await user.click(screen.getByText(`cover.COVER_REQUEST_CLOSED(when=${when}|count=1|reason=UNANSWERED|name=)`));
+    expect(router.push).toHaveBeenLastCalledWith("/admin/cover");
+    expect(router.push).toHaveBeenCalledTimes(4);
+  });
+
+  it("leaves the menu open and goes nowhere on a notice that has no page of its own", async () => {
+    const user = userEvent.setup();
+    supabaseState.selectResults.push(ok([notif({ meta: { subjectName: "Biologi" } })]));
+    renderBell();
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+    await user.click(screen.getByText("scheduleChanged(subject=Biologi)"));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(screen.getByText("scheduleChanged(subject=Biologi)")).toBeInTheDocument();
   });
 
   it("tells the week's or month's count of pupils over a limit as numbers and dates, never a name, a figure of minutes or a reason (Frånvarobevakning)", async () => {

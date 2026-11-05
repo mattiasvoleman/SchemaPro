@@ -55,7 +55,8 @@ describe('notification types across the gateway, the web and the app', () => {
   });
 
   it.each(ENUM)('%s is a sentence in the web bell and in the app’s inbox', (type) => {
-    const bell = read('web/components/layout/notification-bell.tsx');
+    // The bell's words and the type union they are written for (notice-text.ts, kept out of the bell's chunk part).
+    const bell = read('web/components/layout/notice-text.ts');
     const app = read('mobile/src/services/notificationText.ts');
     expect(bell).toContain(`| "${type}"`);
     expect(bell).toContain(`case "${type}"`);
