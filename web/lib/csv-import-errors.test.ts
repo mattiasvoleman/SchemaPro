@@ -233,6 +233,21 @@ describe("decodeCsvBytes", () => {
     });
   });
 
+  // granskning-260-r2, R1: Š š Ž ž are letters in Windows-1252 and in
+  // Czech, Slovak and Bosnian-Croatian-Serbian names, and lie on the bytes
+  // where Mac Roman keeps ä, ö and é. Counted as wrong, a class list with
+  // Šehić and Džeko read as Mac Roman (Håkan as HÂkan, Dušan as Duöan).
+  // The reviewer's files, the last with no Swedish letter at all.
+  it.each([
+    ["one-balkan.txt", "Zm9ybmFtbjtlZnRlcm5hbW47ZXBvc3Q7a2xhc3MNCkjla2FuO1N0cvZtO2jla2FuLnN0cvZtQHNrb2xhLnNlOzdBDQrWc3RlbjtBbmRlcnNzb2479nN0ZW4uYW5kZXJzc29uQHNrb2xhLnNlOzdBDQrWc3RlbjtC5GNrO/ZzdGVuLmLkY2tAc2tvbGEuc2U7N0ENCkpvnmU7P3VyaT87am+eZS4/dXJpP0Bza29sYS5zZTs3QQ0KRHWaYW47imtvZGE7ZHWaYW4ummtvZGFAc2tvbGEuc2U7N0ENCkVtaW5hO0hvcnbhdGg7ZW1pbmEuaG9yduF0aEBza29sYS5zZTs3QQ0K", "fornamn;efternamn;epost;klass\r\nHåkan;Ström;håkan.ström@skola.se;7A\r\nÖsten;Andersson;östen.andersson@skola.se;7A\r\nÖsten;Bäck;östen.bäck@skola.se;7A\r\nJože;?uri?;jože.?uri?@skola.se;7A\r\nDušan;Škoda;dušan.škoda@skola.se;7A\r\nEmina;Horváth;emina.horváth@skola.se;7A\r\n"],
+    ["fuzz-enc3 p=0.1,n=10", "Zm9ybmFtbjtlZnRlcm5hbW47ZXBvc3Q7a2xhc3MNCk5vYWg7RXJpa3Nzb247bm9haC5lcmlrc3NvbkBza29sYS5zZTs3QQ0KSWRhO0x1bmQ7aWRhLmx1bmRAc2tvbGEuc2U7N0ENCorhcmthO01pmmk/O5rhcmthLm1pmmk/QHNrb2xhLnNlOzdBDQpLYXJpbjvFYmVyZztrYXJpbi7lYmVyZ0Bza29sYS5zZTs3QQ0KRXJpaztBbmRlcnNzb247ZXJpay5hbmRlcnNzb25Ac2tvbGEuc2U7N0ENCkVsc2E7U2r2YmVyZztlbHNhLnNq9mJlcmdAc2tvbGEuc2U7N0ENCkxhcnM7RXJpa3Nzb247bGFycy5lcmlrc3NvbkBza29sYS5zZTs3QQ0KU29maWE7UGVyc3Nvbjtzb2ZpYS5wZXJzc29uQHNrb2xhLnNlOzdBDQpNaWxvmjtNaZppPzttaWxvmi5taZppP0Bza29sYS5zZTs3QQ0KS2FyaW47S2FybHNzb247a2FyaW4ua2FybHNzb25Ac2tvbGEuc2U7N0ENCg==", "fornamn;efternamn;epost;klass\r\nNoah;Eriksson;noah.eriksson@skola.se;7A\r\nIda;Lund;ida.lund@skola.se;7A\r\nŠárka;Miši?;šárka.miši?@skola.se;7A\r\nKarin;Åberg;karin.åberg@skola.se;7A\r\nErik;Andersson;erik.andersson@skola.se;7A\r\nElsa;Sjöberg;elsa.sjöberg@skola.se;7A\r\nLars;Eriksson;lars.eriksson@skola.se;7A\r\nSofia;Persson;sofia.persson@skola.se;7A\r\nMiloš;Miši?;miloš.miši?@skola.se;7A\r\nKarin;Karlsson;karin.karlsson@skola.se;7A\r\n"],
+    ["fuzz-enc3 p=0.2,n=10", "Zm9ybmFtbjtlZnRlcm5hbW47ZXBvc3Q7a2xhc3MNClRvdmU7TGluZHN0cvZtO3RvdmUubGluZHN0cvZtQHNrb2xhLnNlOzdBDQpIYXNhbjtIYZplaztoYXNhbi5oYZpla0Bza29sYS5zZTs3QQ0KSm9uYXM7TGluZHN0cvZtO2pvbmFzLmxpbmRzdHL2bUBza29sYS5zZTs3QQ0KTWFya287imtvZGE7bWFya28ummtvZGFAc2tvbGEuc2U7N0ENCkpvbmFzO1Nq9mJlcmc7am9uYXMuc2r2YmVyZ0Bza29sYS5zZTs3QQ0KTGlubulhO05pbHNzb247bGlubulhLm5pbHNzb25Ac2tvbGEuc2U7N0ENCo5lbGprbzuKdXN0cjueZWxqa28umnVzdHJAc2tvbGEuc2U7N0ENCkVsdmlyO0hvZJ5pPztlbHZpci5ob2SeaT9Ac2tvbGEuc2U7N0ENCkFtcmE7inVzdHI7YW1yYS6adXN0ckBza29sYS5zZTs3QQ0KTWlsb5o7juFrO21pbG+aLp7ha0Bza29sYS5zZTs3QQ0K", "fornamn;efternamn;epost;klass\r\nTove;Lindström;tove.lindström@skola.se;7A\r\nHasan;Hašek;hasan.hašek@skola.se;7A\r\nJonas;Lindström;jonas.lindström@skola.se;7A\r\nMarko;Škoda;marko.škoda@skola.se;7A\r\nJonas;Sjöberg;jonas.sjöberg@skola.se;7A\r\nLinnéa;Nilsson;linnéa.nilsson@skola.se;7A\r\nŽeljko;Šustr;željko.šustr@skola.se;7A\r\nElvir;Hodži?;elvir.hodži?@skola.se;7A\r\nAmra;Šustr;amra.šustr@skola.se;7A\r\nMiloš;Žák;miloš.žák@skola.se;7A\r\n"],
+    ["fuzz-enc2 n=3,sv=0", "Zm9ybmFtbjtlZnRlcm5hbW47ZXBvc3Q7a2xhc3MNCkpvnmU7imtvZGE7am+eZS6aa29kYUBza29sYS5zZTs3QQ0KiuFya2E7S292YT87muFya2Eua292YT9Ac2tvbGEuc2U7N0ENCkpvnmU7P3VyaT87am+eZS4/dXJpP0Bza29sYS5zZTs3QQ0K", "fornamn;efternamn;epost;klass\r\nJože;Škoda;jože.škoda@skola.se;7A\r\nŠárka;Kova?;šárka.kova?@skola.se;7A\r\nJože;?uri?;jože.?uri?@skola.se;7A\r\n"],
+  ])("reads the reviewer's Windows-1252 file %s, with Balkan names, as Windows-1252", (_file, b64, expected) => {
+    const bytes = Uint8Array.from(atob(b64), (char) => char.charCodeAt(0));
+    expect(decodeCsvBytes(bytes)).toEqual({ text: expected, encoding: "windows-1252", problem: null });
+  });
+
   it("refuses UTF-16 (Excel's Unicode-text) with what to save it as instead", () => {
     const utf16 = hex(`fffe${ascii("namn").split(/(..)/).filter(Boolean).map((byte) => `${byte}00`).join("")}`);
     expect(decodeCsvBytes(utf16)).toMatchObject({ text: "", encoding: "utf-16", problem: expect.stringContaining("CSV UTF-8") });

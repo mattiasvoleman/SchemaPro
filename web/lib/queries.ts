@@ -2145,6 +2145,12 @@ export function useImportCsv() {
       // ranking's figures.
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.unstaffed });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
+      // The catalogues a file can add to: salar.csv on the Salar page (and a
+      // salstyper.csv beside it), amnen.csv on Ämnen. Without these the page
+      // showed the list from before the import for staleTime's 30 s.
+      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: ["roomTypes"] });
+      void queryClient.invalidateQueries({ queryKey: ["subjects"] });
     },
   });
 }

@@ -24,6 +24,11 @@
  * letter with no letter on either side (a dash read as " ñ "), a symbol such
  * as ≈ ÷ ‰ ® ¿ ¾ against a letter (Str÷m, ®rø), a control character, and an
  * accented capital right after a small letter (an ellipsis read as "osvÖ").
+ * Š, š, Ž and ž count as letters: they are Windows-1252's own, in Czech,
+ * Slovak and Bosnian-Croatian-Serbian names (Šehić, Dušan), and counted
+ * against the reading a class list of them read as Mac Roman, Håkan as
+ * HÂkan. A small file of such names and no Swedish letter at all is the
+ * case left that a guess cannot tell, and the preview says which it chose.
  * The higher score wins; a tie, nothing either way, is 1252.
  *
  * Two formats are refused, with what to do instead, rather than read wrongly:
@@ -40,10 +45,10 @@ export type DecodedCsv =
 
 /** Letters a school's names and notes are made of, beyond ASCII; å, ä and ö count twice. */
 const SWEDISH = new Set("åäöÅÄÖ");
-const COMMON = new Set("æøÆØéèëêüÜçñáíóúàòâôîïÉ");
+const COMMON = new Set("æøÆØéèëêüÜçñáíóúàòâôîïÉŠšŽž");
 
 /** What a wrong reading turns letters into; none of it belongs between two letters. */
-const SUSPECT = new Set("≈÷‰ˆ˝¯¿®¾¼½ƒŒœŠšŽžŸ†‡•™¬√∫∆∂∑∏πΩµ¶§¤¦¨´¸˜ˇ˘˙˚˛·‚„ıﬁﬂ◊");
+const SUSPECT = new Set("≈÷‰ˆ˝¯¿®¾¼½ƒ†‡•™¬√∫∆∂∑∏πΩµ¶§¤¦¨´¸˜ˇ˘˙˚˛·‚„ıﬁﬂ◊");
 
 /** Code page 850's upper half as far as letters go (80–A5); the rest reads as U+FFFD. */
 const CP850 =
