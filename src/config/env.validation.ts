@@ -218,6 +218,15 @@ export class EnvironmentVariables {
   GALLRING_BACKGROUND: string = 'on';
 
   /**
+   * The nightly absence watch (src/absence-watch/absence-watch.job.ts). `on`
+   * unless set to `off`; the test setup turns it off. A school is watched only
+   * when its administrator has turned the bevakning on (off until then), so
+   * on does nothing for a school that has not.
+   */
+  @IsIn(['on', 'off'])
+  ABSENCE_WATCH_BACKGROUND: string = 'on';
+
+  /**
    * Schemaförslag (src/optimization/schedule-candidates.service.ts): the solve
    * budget, in seconds, of every candidate, KEEP's included, so the emphases
    * are compared at one budget (the engine takes the smaller of this and its

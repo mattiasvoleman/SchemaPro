@@ -138,6 +138,9 @@ describe('Route guard coverage (e2e)', () => {
     expect(of('UsersController', 'update')).toEqual({ kind: 'area', areas: ['PERSONAL'] });
     expect(of('TeacherEmploymentsController', 'upsert')).toEqual({ kind: 'decides' });
     expect(of('GallringController', 'decide')).toEqual({ kind: 'decides' });
+    // Frånvarobevakning: the switch and the limits are Drift's, the findings are read by three roles.
+    expect(of('AbsenceWatchController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    expect(of('AbsenceWatchController', 'createLimit')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('PublicationsController', 'publish')).toEqual({ kind: 'area', areas: ['PUBLICERING', 'DRIFT'] });
     // Schemaförslag: a run and a discard write the candidate tables alone;
     // an apply replaces the draft as Generera does, which in DIRECT takes
