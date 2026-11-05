@@ -101,6 +101,7 @@ describe('validateEnv', () => {
       ['a 32-byte base64 key and its predecessor', { INTEGRATION_SECRETS_KEY: Buffer.alloc(32, 1).toString('base64'), INTEGRATION_SECRETS_KEY_PREVIOUS: Buffer.alloc(32, 2).toString('base64') }],
       ['the tick off', { SS12000_BACKGROUND: 'off' }],
       ['the gallring tick off', { GALLRING_BACKGROUND: 'off' }],
+      ['the absence watch tick off', { ABSENCE_WATCH_BACKGROUND: 'off' }],
       ['the loopback override under NODE_ENV=test', { NODE_ENV: 'test', SS12000_ALLOW_INSECURE_LOCAL: '1' }],
       ['empty values', { INTEGRATION_SECRETS_KEY: '', SS12000_ALLOW_INSECURE_LOCAL: '' }],
     ])('accepts %s', (_label, extra) => {
@@ -112,6 +113,7 @@ describe('validateEnv', () => {
       ['a key that is not base64', { INTEGRATION_SECRETS_KEY: 'x'.repeat(44) }, /INTEGRATION_SECRETS_KEY/],
       ['a tick mode it does not know', { SS12000_BACKGROUND: 'maybe' }, /SS12000_BACKGROUND/],
       ['a gallring mode it does not know', { GALLRING_BACKGROUND: 'yes' }, /GALLRING_BACKGROUND/],
+      ['an absence watch mode it does not know', { ABSENCE_WATCH_BACKGROUND: 'yes' }, /ABSENCE_WATCH_BACKGROUND/],
       ['the loopback override outside NODE_ENV=test', { NODE_ENV: 'production', SS12000_ALLOW_INSECURE_LOCAL: '1' }, /SS12000_ALLOW_INSECURE_LOCAL/],
     ])('refuses %s, naming it and never echoing the value', (_label, extra, name) => {
       let message = '';

@@ -1,11 +1,12 @@
 "use client";
 
 import { createContext, useContext, useEffect } from "react";
-import { BookOpen, CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, Users, UserX } from "lucide-react";
+import { BarChart3, BookOpen, CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, Users, UserX } from "lucide-react";
 import { usePathname } from "@/i18n/navigation";
 import type { NavSection } from "@/components/layout/app-shell";
 import type { MySchool, Profile, School } from "@/lib/types";
 import { SCHOOL_COOKIE, cookieSchool } from "@/lib/school-choice";
+import { noticeHref, noticeText } from "@/components/layout/notice-text";
 
 interface ProfileContextValue {
   profile: Profile;
@@ -120,7 +121,7 @@ export function ClosedPageGate({ children }: { children: React.ReactNode }) {
  * are here and not in app-shell.tsx for the bundle: that module's part of the
  * signed-in routes' shared chunk sat just under Turbopack's minChunkSize, and
  * this module's part, which pages share, can grow (app-shell.tsx says more). The
- * icons are the admin menu's, already in that chunk.
+ * icons are the admin menu's (components/layout/admin-nav.ts), already in that chunk.
  */
 export const TEACHER_NAV: NavSection[] = [
   {
@@ -143,6 +144,10 @@ export const TEACHER_NAV: NavSection[] = [
       // (20261023091000). The admin's Ledighetsansökningar icon, already in
       // the shell: the same inbox from the mentor's side.
       { labelKey: "myLeave", href: "/teacher/ledighet", icon: ClipboardCheck },
+      // Frånvarobevakning: the mentor's pupils over a limit. Always in the
+      // menu: a teacher who mentors nobody gets an empty list, said kindly.
+      // The admin's Rapporter icon, already in the shell.
+      { labelKey: "absenceWatch", href: "/teacher/absence-watch", icon: BarChart3 },
       { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
     ],
 
@@ -154,6 +159,9 @@ export const GUARDIAN_NAV: NavSection[] = [
     labelKey: null,
     items: [
       { labelKey: "myChildren", href: "/guardian", icon: Users },
+      // Frånvarobevakning: the children over a limit the school set for
+      // guardians. Always in the menu; the list is empty when nothing applies.
+      { labelKey: "absenceWatch", href: "/guardian/absence-watch", icon: BarChart3 },
       { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
     ],
   },
@@ -169,3 +177,14 @@ export const STUDENT_NAV: NavSection[] = [
     ],
   },
 ];
+
+/**
+ * What the bell says of a notice and where it leads, handed on from here for
+ * the same reason as the menus above: the bell is in AppShell's part of the
+ * chunk every signed-in route loads, which sits just under Turbopack's
+ * minChunkSize, and the words of twenty notice types are code. Imported from
+ * the bell as a module of its own they stayed in AppShell's part (measured
+ * 2026-11-05, Vikariefrågan after Frånvarobevakning: the chunk split, +0.8 KB
+ * on every route); behind this module they sit with the profile.
+ */
+export { noticeHref, noticeText };

@@ -69,7 +69,12 @@ export interface GallringConfig {
 }
 
 export interface CoverRequestsConfig {
-  /** The 5-minute expiry of vikarieförfrågningar (COVER_REQUESTS_BACKGROUND, default on). */
+  /** The 5-minute settling of vikarieförfrågningar (COVER_REQUESTS_BACKGROUND, default on). */
+  background: boolean;
+}
+
+export interface AbsenceWatchConfig {
+  /** The nightly absence watch (ABSENCE_WATCH_BACKGROUND, default on). */
   background: boolean;
 }
 
@@ -108,6 +113,7 @@ export interface Configuration {
   ss12000: Ss12000Config;
   gallring: GallringConfig;
   coverRequests: CoverRequestsConfig;
+  absenceWatch: AbsenceWatchConfig;
   candidates: CandidatesConfig;
 }
 
@@ -173,6 +179,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     coverRequests: {
       background: env.COVER_REQUESTS_BACKGROUND !== 'off',
+    },
+    absenceWatch: {
+      background: env.ABSENCE_WATCH_BACKGROUND !== 'off',
     },
     candidates: {
       maxSeconds: env.CANDIDATE_MAX_SECONDS ?? DEFAULT_CANDIDATES_CONFIG.maxSeconds,

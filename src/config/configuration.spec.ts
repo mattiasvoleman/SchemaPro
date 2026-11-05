@@ -73,8 +73,10 @@ describe('loadConfiguration', () => {
       ss12000: { secretsKey: undefined, secretsKeyPrevious: undefined, background: true, allowInsecureLocal: false },
       // Unset: the nightly gallring ticks (and removes nothing until a school decides).
       gallring: { background: true },
-      // Unset: the expiry of vikarieförfrågningar ticks.
+      // Unset: the settling of vikarieförfrågningar ticks.
       coverRequests: { background: true },
+      // Unset: the nightly absence watch ticks (and watches no school until its administrator turns it on).
+      absenceWatch: { background: true },
       // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
       candidates: { maxSeconds: 30, runsMax: 2, solverWorkers: 4, background: true },
     });
@@ -99,6 +101,12 @@ describe('loadConfiguration', () => {
   it('turns the gallring tick off only for GALLRING_BACKGROUND=off', () => {
     expect(loadConfiguration(env({ GALLRING_BACKGROUND: 'off' })).gallring.background).toBe(false);
     expect(loadConfiguration(env({ GALLRING_BACKGROUND: 'on' })).gallring.background).toBe(true);
+  });
+
+  it('turns the absence watch tick off only for ABSENCE_WATCH_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ ABSENCE_WATCH_BACKGROUND: 'off' })).absenceWatch.background).toBe(false);
+    expect(loadConfiguration(env({ ABSENCE_WATCH_BACKGROUND: 'on' })).absenceWatch.background).toBe(true);
+    expect(loadConfiguration(env({})).absenceWatch.background).toBe(true);
   });
 
   it('turns push on only for PUSH_NOTIFICATIONS=expo, with the token when set and the URL without its trailing slash', () => {

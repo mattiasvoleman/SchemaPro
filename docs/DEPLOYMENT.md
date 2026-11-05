@@ -235,6 +235,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions |
 | `COVER_REQUESTS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that settles the open vikarieförfrågningar: the ones whose time is out end `EXPIRED` and the administrator who asked is told nobody said yes, the ones whose lesson or absence went away end `CLOSED` and the colleagues they waited on are told. A question past its time cannot be answered whether or not it has run; the tick settles the stored status, frees the lesson for a new question and tells who it concerns |
 | `GALLRING_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of the nightly gallring. A school's run starts at 03:00 its local time, once a night, and only for the kinds its admin has given a period on `/admin/dataskydd`; a school that has decided nothing loses nothing |
+| `ABSENCE_WATCH_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarobevakning's nightly count. A school's night starts at 05:00 its local time, once a night, and only for a school whose administrator has turned the bevakning on (`/admin/absence-watch`; off for every school until then). The night counts the pupils over the school's limits as of yesterday and, on the first day after a whole week or month, writes the digest of each group that has a limit. Off, nothing is counted or sent and the findings already made stay |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -894,6 +895,108 @@ Walk the full product loop once, in order:
   JOIN "TeacherAbsences" a ON a."id" = c."absenceId" WHERE c."endsAt" > now()
   AND (a."status" <> 'ACTIVE' OR NOT (c."startsAt" < a."endsAt" AND
   c."endsAt" > a."startsAt")) ORDER BY 1, 2;`
+- **Frånvarobevakning**: 20261231090000 adds the `NotificationType` value
+  `ABSENCE_WATCH_DIGEST` and nothing else (a value cannot be used in the
+  transaction that adds it, so it is a file of its own). 20261231090100 adds
+  the tables `AbsenceWatchSettings`, `AbsenceWatchLimits`,
+  `AbsenceWatchFindings` and `AbsenceWatchDigests`, four enums, eleven
+  `app.absence_watch_*` functions (nine SECURITY DEFINER with a pinned
+  `search_path`, two that run as the caller), the triggers on the switch and the limits,
+  and `app.gallring_due` and `app.gallring_purge` again with the findings
+  under the ATTENDANCE kind. No existing row is touched and no existing table
+  gains a column. The new keys take `Schools` and `Users` in SHARE ROW
+  EXCLUSIVE, NOWAIT, together in a loop: reads and foreign-key checks go on,
+  writes to the two wait for the file, and if both are not free at once in
+  30 s it stops with nothing changed (`prisma migrate resolve --rolled-back
+  20261231090100_franvarobevakning_med_granser_och_sammanstallningar`, then
+  deploy again). The API before the release knows none of the objects and
+  writes no notice of the new type, so it keeps working between the
+  migration and the deploy. The migration goes in first, then the merge.
+  **The bevakning is off for every school** until its administrator turns it
+  on (no row in `AbsenceWatchSettings`), so deploying changes nothing a
+  school sees. Nothing is sent to anyone until a school has turned it on,
+  given a mottagargrupp a limit, and a week or month has ended on or after the
+  day it was turned on: the first digest comes on the first Monday (or the 1st,
+  for a group on months) after that and can cover a period the bevakning saw
+  only the end of.
+  **Before the migration**, as the owner: no `app.absence_watch_%` function and
+  no `AbsenceWatch%` table exist (`SELECT count(*) FROM pg_proc WHERE proname
+  LIKE 'absence_watch%'` and `SELECT count(*) FROM pg_tables WHERE tablename
+  LIKE 'AbsenceWatch%'` are both 0), `prisma migrate status` lists exactly the
+  two new migrations as pending, and no session sits idle in a transaction
+  that holds `Users` or `Schools` (`SELECT pid, state, now() - xact_start FROM
+  pg_stat_activity WHERE state = 'idle in transaction'`).
+  **After it, before the merge:** the four tables have row security on and
+  `app_authenticated` holds only SELECT on the findings and the ledger
+  (`SELECT relname, relrowsecurity FROM pg_class WHERE relname LIKE
+  'AbsenceWatch%'`; `SELECT has_table_privilege('app_authenticated',
+  'public."AbsenceWatchFindings"', 'INSERT, UPDATE, DELETE')` is false); none
+  of the functions is executable by `anon`, `authenticated` or PUBLIC
+  (`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.proname LIKE
+  'absence\_watch\_%' AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR
+  has_function_privilege('authenticated', p.oid, 'EXECUTE'))` returns no
+  row); `SELECT count(*) FROM "AbsenceWatchSettings"` is 0. Also: there are
+  11 functions (`SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid =
+  p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE
+  'absence\_watch\_%'`); no role of the four holds MAINTAIN on the tables
+  (`SELECT count(*) FROM pg_class c, unnest(ARRAY['anon', 'authenticated',
+  'service_role', 'app_authenticated']) r WHERE c.relname LIKE 'AbsenceWatch%'
+  AND c.relkind = 'r' AND has_table_privilege(r, c.oid, 'MAINTAIN')` is 0);
+  `app_authenticated` runs five of the functions and not
+  `app.absence_watch_digest_plan`, which only `app.absence_watch_digest` asks
+  for, as the owner; and both gallring functions carry the findings' branch
+  (`SELECT proname, position('AbsenceWatchFindings' IN prosrc) > 0 FROM pg_proc
+  WHERE pronamespace = 'app'::regnamespace AND proname IN ('gallring_due',
+  'gallring_purge')` is true on both). A later migration that replaces
+  `app.gallring_due` or `app.gallring_purge` has to carry that branch along
+  (the owner checks, section 309o, fail when it does not); ask again after it.
+  **After the merge:** `JobRuns` gets a row for `absence-watch` within five
+  minutes of the new instance serving (`SELECT job, runs, failures, counts
+  FROM "JobRuns" WHERE job = 'absence-watch' ORDER BY day DESC LIMIT 3`),
+  its counts `{"schools": 0}` while no school has the switch on, and
+  `GET /health/ready` counts the job under `jobs.scheduled`. The first
+  school to turn it on is counted the next night after 05:00 local time:
+  `opened` is the number of findings, `pupils` the pupils with a registered
+  lesson in the last 90 days, `digests` and `notices` what was written. Count
+  time on a school of 500 pupils and a year of attendance (603 000 marks,
+  `scripts/bench/absence-watch.sql`) is 0.3 s, a whole night through the
+  gateway 0.4–0.65 s on a host under load; the job lifts the delivery door's
+  5 s statement limit to 9 s for the count. The worst night is an influenza
+  wave, three pupils in ten away on every lesson for seven school days, with a
+  "3 days in a row" limit for each group: the bench's last part counts it in
+  0.4–1.0 s with four such limits and in 1.0–1.1 s with all twelve (a group
+  and a basis each, the most the key allows), the 0.3 s plus about 0.07 s for
+  each run limit. A step reads a pupil's day once for each limit, so the
+  count grows in step with the pupils and the limits and a school several
+  times larger still goes through. A school that fails is counted in `failed`
+  and retried two hours later the same day.
+  **Gallring:** the findings follow the school's decision for *Närvaro*
+  (`RetentionDataType` ATTENDANCE): by the day each was last seen, in the same
+  batches. A school that has decided nothing loses none. A school that purges
+  attendance after a period shorter than a limit's window (a 1-month period and a
+  60-day window) is counted over what is left: the count cannot see what gallring
+  took, and the finding still names the window.
+  **Known limit:** the e-mail and the push go to the delivery's in-memory queue
+  after the commit, as every other notice does, so a process that stops between
+  the commit and the send loses them for that period: the inbox notice is
+  written, and the digest's ledger row keeps it from being written again.
+  **Clients from before the release:** the web and the app before it draw the
+  digest notice with their fallback text ("Ny notis" / "Notis") and list it in
+  Settings under its catalogue key, switchable. The digest's e-mail and push
+  carry counts only: no name, no class, no minutes, no reason.
+  **Rolling it back:** the migration stays, and the API before the release
+  never reads the new tables. Prisma's client throws on a read that selects a
+  notice's type from a row holding a value it does not know, and the one such
+  read is the person's opt-outs: a person who switched the digest off while
+  the release was live would make `GET /notification-preferences` a 500 on the
+  API before it. Before rolling back, as the owner, count them; nonzero means
+  delete those rows (the person is asked again when the release returns):
+  `SELECT count(*) FROM "NotificationOptOuts" WHERE "type"::text =
+  'ABSENCE_WATCH_DIGEST';`. What a rollback changes: nobody is counted or sent
+  a digest, the findings made stay in the table unread, and a school that has
+  the bevakning on keeps its switch and limits for the day the release is
+  back. The notices already written stay in people's inboxes.
+
 - **Vikariefrågan**: 20270102090000 adds the `NotificationType` values
   `COVER_REQUESTED`, `COVER_REQUEST_ACCEPTED` and `COVER_REQUEST_CLOSED` and
   the `RetentionDataType` value `COVER_REQUESTS` and nothing else (a value
@@ -930,10 +1033,17 @@ Walk the full product loop once, in order:
   'autovacuum worker' OR xact_start < now() - interval '3 seconds') ORDER BY
   age DESC`). **Gallring:** `SELECT proname, md5(prosrc) FROM pg_proc WHERE
   pronamespace = 'app'::regnamespace AND proname IN ('gallring_due',
-  'gallring_purge')` must show the bodies of the migration before: the second
-  file replaces both functions whole, so a release that has restated them
-  since (Frånvarobevakning's 20261231090100 does) must have its branch in
-  20270102091000's bodies, or its findings are no longer purged.
+  'gallring_purge') ORDER BY 1` must show Frånvarobevakning's bodies
+  (20261231090100): `gallring_due` `2e3255fc6888125eb9b19e766d6fb64c`,
+  `gallring_purge` `f9a0f2398899c414ce239b5c7c018b02`. The second file
+  replaces both functions whole, built on exactly those bodies, so they carry
+  both branches: the findings of the absence watch under ATTENDANCE and the
+  requests under COVER_REQUESTS. Other values mean a release has restated them
+  since: its branch must be carried into 20270102091000's bodies, or its rows
+  are no longer purged (the RLS suite, section 315, fails when a body has
+  lost either branch). After the migration the values are `gallring_due`
+  `07be372dadba42ef4f7f233384306515` and `gallring_purge`
+  `60b2278333a2fb0816b05e022159ee67`.
   **After it, before the merge:** both migrations are applied;
   `SELECT count(*) FROM pg_policies WHERE tablename IN ('CoverRequests',
   'CoverRequestLessons', 'CoverRequestRecipients', 'CoverConfirmations')` is

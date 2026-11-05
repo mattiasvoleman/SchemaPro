@@ -37,6 +37,7 @@ describe('NotificationPreferencesService', () => {
       { type: 'SCHEDULE_CHANGED', enabled: false, required: false },
       { type: 'LEAVE_DECIDED', enabled: true, required: false },
       { type: 'ABSENCE_UNREPORTED', enabled: true, required: true },
+      { type: 'ABSENCE_WATCH_DIGEST', enabled: true, required: false },
     ]);
     // Read by the caller's own id, under their RLS, in one statement.
     expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);

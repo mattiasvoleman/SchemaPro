@@ -969,8 +969,11 @@ END
 $$;
 
 -- ---------------------------------------------------------------------------
--- Gallring: COVER_REQUESTS (20270102090000). Both bodies are 20261026091000's
--- plus the one branch marked "vikarieförfrågningar". A request goes once it
+-- Gallring: COVER_REQUESTS (20270102090000). Both bodies are 20261231090100's
+-- (Frånvarobevakning's, which is 20261026091000's plus the findings under the
+-- ATTENDANCE kind) plus the one branch marked "vikarieförfrågningar", so the
+-- bevakning's findings are still purged; a later release that restates the
+-- functions again must carry both branches. A request goes once it
 -- has ended and its end is before the cutoff (the school's local midnight),
 -- with its lessons and its recipients; a confirmation goes once it is that
 -- old. An OPEN request is due only once its time ran out before the cutoff
@@ -989,6 +992,11 @@ LANGUAGE sql STABLE AS $$
     FROM school, "public"."AttendanceRecords" a
     JOIN "public"."CalendarLessons" l ON l."id" = a."calendarLessonId"
    WHERE p_type = 'ATTENDANCE' AND a."schoolId" = school."id" AND l."date" < p_before
+  UNION ALL
+  -- frånvarobevakning
+  SELECT 'AbsenceWatchFindings', w."id"
+    FROM school, "public"."AbsenceWatchFindings" w
+   WHERE p_type = 'ATTENDANCE' AND w."schoolId" = school."id" AND w."lastSeenOn" < p_before
   UNION ALL
   SELECT 'AbsenceReports', r."id"
     FROM school, "public"."AbsenceReports" r
@@ -1077,6 +1085,14 @@ BEGIN
         SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
          WHERE d."tbl" = 'AttendanceRecords' LIMIT budget);
       GET DIAGNOSTICS n = ROW_COUNT;
+      -- frånvarobevakning
+      IF n < budget THEN
+        DELETE FROM "AbsenceWatchFindings" WHERE "id" IN (
+          SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
+           WHERE d."tbl" = 'AbsenceWatchFindings' LIMIT budget - n);
+        GET DIAGNOSTICS step = ROW_COUNT;
+        n := n + step;
+      END IF;
     WHEN 'ABSENCE_REPORTS' THEN
       DELETE FROM "AbsenceReports" WHERE "id" IN (
         SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d

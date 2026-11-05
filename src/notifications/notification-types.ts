@@ -14,7 +14,10 @@ import type { NotificationKind } from './notifications.service';
  * to decide as the pupil's mentor (LEAVE_REQUESTED, Mentorns ledighetsbeslut);
  * an admin is told of none, as before. TEACHER_ABSENCE_REPORTED is in nobody's
  * list: it never leaves the inbox, so a switch for it would do nothing.
- * Staff are booked for an absent rastvakt's pass and told when it is off
+ * A week's or month's count of pupils over the school's absence limits
+ * (ABSENCE_WATCH_DIGEST, Frånvarobevakning) goes to a mentor, a rektor or
+ * kansli administrator and a guardian, each of whom may switch it off; a pupil
+ * never gets one. Staff are booked for an absent rastvakt's pass and told when it is off
  * (SUPERVISION_COVER, SUPERVISION_COVER_WITHDRAWN, Rastvakt i vardagen): both
  * listed, both always sent.
  *
@@ -47,6 +50,7 @@ export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
   'COVER_REQUESTED',
   'COVER_REQUEST_ACCEPTED',
   'COVER_REQUEST_CLOSED',
+  'ABSENCE_WATCH_DIGEST',
 ];
 
 type ChoosingRole = 'GUARDIAN' | 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN';
@@ -76,10 +80,10 @@ const LESSONS: readonly NotificationKind[] = [
 ];
 
 export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = {
-  GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED'],
+  GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
-  TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED'],
-  SCHOOL_ADMIN: [...STAFF, 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED'],
+  TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED'],
+  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED'],
 };
 
 /**

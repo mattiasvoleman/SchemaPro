@@ -38,6 +38,7 @@ import { TimplanModule } from './timplan/timplan.module';
 import { PublicationModule } from './publication/publication.module';
 import { YearRolloverModule } from './year-rollover/year-rollover.module';
 import { CoverModule } from './cover/cover.module';
+import { AbsenceWatchModule } from './absence-watch/absence-watch.module';
 import { GallringModule } from './gallring/gallring.module';
 import { AccessLogModule } from './access-log/access-log.module';
 import { SchoolUnitsModule } from './school-units/school-units.module';
@@ -139,6 +140,7 @@ import type { ThrottleConfig } from './config/configuration';
     PublicationModule,
     CoverModule,
     GallringModule,
+    AbsenceWatchModule,
     AccessLogModule,
     SchoolUnitsModule,
     HuvudmanModule,

@@ -26,6 +26,9 @@ import type { NotificationKind } from './notifications.service';
  * lessons and over which days, never the avbokning's name ("Prao åk 9" is
  * free text the admin typed); its reversal is a kind of its own.
  *
+ * A summary of absence (ABSENCE_WATCH_DIGEST) says that there is one, and
+ * not how many pupils it counts or which: the count is data about pupils.
+ *
  * Within one transaction a person gets one push per kind; with more than one
  * notice the body is the plural ("3 lektioner är inställda.").
  *
@@ -197,6 +200,12 @@ const SV: Record<PushKind, Template> = {
     bare: 'Ingen har tackat ja till en vikariefråga.',
     many: 'Ingen har tackat ja till {count} vikariefrågor.',
   },
+  ABSENCE_WATCH_DIGEST: {
+    title: 'Frånvaro',
+    one: 'Du har en ny frånvarosammanställning. Öppna appen för att se mer.',
+    bare: 'Du har en ny frånvarosammanställning. Öppna appen för att se mer.',
+    many: 'Du har en ny frånvarosammanställning. Öppna appen för att se mer.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lektioner blir av',
     one: ({ lessons }) =>
@@ -334,6 +343,12 @@ const EN: Record<PushKind, Template> = {
     one: 'Nobody said yes to the lesson {when}.',
     bare: 'Nobody said yes to a cover request.',
     many: 'Nobody said yes to {count} cover requests.',
+  },
+  ABSENCE_WATCH_DIGEST: {
+    title: 'Absence',
+    one: 'You have a new absence summary. Open the app to see more.',
+    bare: 'You have a new absence summary. Open the app to see more.',
+    many: 'You have a new absence summary. Open the app to see more.',
   },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lessons back on',

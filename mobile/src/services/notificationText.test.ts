@@ -269,6 +269,48 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Anna Lind har tackat ja till 3 vikariepass från tis 13 okt 08:00.',
     'Anna Lind has said yes to 3 cover lessons from Tue 13 Oct 08:00.',
   ],
+  [
+    'ABSENCE_WATCH_DIGEST for staff with pupils over a limit, counts only',
+    row('ABSENCE_WATCH_DIGEST', { group: 'MENTOR', periodStart: '2026-11-02', periodEnd: '2026-11-08', open: 3, crossed: 1 }),
+    'Frånvarosammanställning 2 nov – 8 nov: 3 elever är över en av skolans gränser. Passerade en gräns under perioden: 1. Se vilka i Rastra Schema på webben.',
+    'Absence summary 2 Nov – 8 Nov: 3 pupils are over a limit the school has set. Passed a limit in the period: 1. See who in Rastra timetable on the web.',
+  ],
+  [
+    'ABSENCE_WATCH_DIGEST for staff, one pupil',
+    row('ABSENCE_WATCH_DIGEST', { group: 'REKTOR', periodStart: '2026-11-02', periodEnd: '2026-11-08', open: 1, crossed: 0 }),
+    'Frånvarosammanställning 2 nov – 8 nov: 1 elev är över en av skolans gränser. Passerade en gräns under perioden: 0. Se vilka i Rastra Schema på webben.',
+    'Absence summary 2 Nov – 8 Nov: 1 pupil is over a limit the school has set. Passed a limit in the period: 0. See who in Rastra timetable on the web.',
+  ],
+  [
+    'ABSENCE_WATCH_DIGEST for staff when everyone is back under',
+    row('ABSENCE_WATCH_DIGEST', { group: 'KANSLI', periodStart: '2026-11-02', periodEnd: '2026-11-08', open: 0, crossed: 2 }),
+    'Frånvarosammanställning 2 nov – 8 nov: 2 elever passerade en gräns och är under den igen. Se mer i Rastra Schema på webben.',
+    'Absence summary 2 Nov – 8 Nov: 2 pupils passed a limit and are under it again. See more in Rastra timetable on the web.',
+  ],
+  [
+    'ABSENCE_WATCH_DIGEST for a guardian, one child',
+    row('ABSENCE_WATCH_DIGEST', { group: 'GUARDIAN', periodStart: '2026-10-05', periodEnd: '2026-11-01', open: 1, crossed: 1 }),
+    'Frånvarosammanställning 5 okt – 1 nov: ett av dina barn har frånvaro över en gräns som skolan har satt. Se mer i Rastra Schema på webben.',
+    'Absence summary 5 Oct – 1 Nov: one of your children has absence over a limit the school has set. See more in Rastra timetable on the web.',
+  ],
+  [
+    'ABSENCE_WATCH_DIGEST for a guardian, several children',
+    row('ABSENCE_WATCH_DIGEST', { group: 'GUARDIAN', periodStart: '2026-10-05', periodEnd: '2026-11-01', open: 2, crossed: 2 }),
+    'Frånvarosammanställning 5 okt – 1 nov: 2 av dina barn har frånvaro över en gräns som skolan har satt. Se mer i Rastra Schema på webben.',
+    'Absence summary 5 Oct – 1 Nov: 2 of your children have absence over a limit the school has set. See more in Rastra timetable on the web.',
+  ],
+  [
+    'ABSENCE_WATCH_DIGEST for a guardian whose child is back under',
+    row('ABSENCE_WATCH_DIGEST', { group: 'GUARDIAN', periodStart: '2026-10-05', periodEnd: '2026-11-01', open: 0, crossed: 1 }),
+    'Frånvarosammanställning 5 okt – 1 nov: ett av dina barn har kommit under en gräns för frånvaro igen. Se mer i Rastra Schema på webben.',
+    'Absence summary 5 Oct – 1 Nov: one of your children is under an absence limit again. See more in Rastra timetable on the web.',
+  ],
+  [
+    'ABSENCE_WATCH_DIGEST for a guardian whose children are back under',
+    row('ABSENCE_WATCH_DIGEST', { group: 'GUARDIAN', periodStart: '2026-10-05', periodEnd: '2026-11-01', open: 0, crossed: 2 }),
+    'Frånvarosammanställning 5 okt – 1 nov: 2 av dina barn har kommit under en gräns för frånvaro igen. Se mer i Rastra Schema på webben.',
+    'Absence summary 5 Oct – 1 Nov: 2 of your children are under an absence limit again. See more in Rastra timetable on the web.',
+  ],
 ];
 
 describe('notificationText', () => {
@@ -277,9 +319,9 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all eighteen types the gateway writes', () => {
+  it('covers all nineteen types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(18);
+    expect(types.size).toBe(19);
   });
 
   it('words a cover notice from a gateway that said no count, no lessons and no name', () => {
@@ -315,6 +357,30 @@ describe('notificationText', () => {
       expect(text).not.toContain('7A');
       expect(text).not.toContain('B204');
     }
+  });
+
+  it('says a summary of absence in counts and dates only, whatever else the meta holds', () => {
+    const text = notificationText(
+      row('ABSENCE_WATCH_DIGEST', {
+        group: 'MENTOR',
+        periodStart: '2026-11-02',
+        periodEnd: '2026-11-08',
+        open: 2,
+        crossed: 1,
+        studentName: 'Alva Elev',
+        reason: 'Sjuk',
+      }),
+      translatorFor('sv'),
+      'sv',
+    );
+    expect(text).not.toContain('Alva');
+    expect(text).not.toContain('Sjuk');
+  });
+
+  it('survives a summary with no meta', () => {
+    const text = notificationText(row('ABSENCE_WATCH_DIGEST', null), translatorFor('en'), 'en');
+    expect(text).toContain('0 pupils');
+    expect(text).not.toMatch(/undefined|NaN|\{/);
   });
 
   it('never carries a leave request’s reason to the mentor, whatever the meta holds', () => {

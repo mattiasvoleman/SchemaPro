@@ -24,7 +24,8 @@ export type NotificationKind =
   | 'SUPERVISION_COVER_WITHDRAWN'
   | 'COVER_REQUESTED'
   | 'COVER_REQUEST_ACCEPTED'
-  | 'COVER_REQUEST_CLOSED';
+  | 'COVER_REQUEST_CLOSED'
+  | 'ABSENCE_WATCH_DIGEST';
 
 
 /** Where a transaction's outbox is kept (PrismaService.commitLocal). */

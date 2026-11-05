@@ -86,6 +86,23 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
         span: from === to ? from : `${from} – ${to}`,
       });
     }
+    case 'ABSENCE_WATCH_DIGEST': {
+      // Frånvarobevakning: counts and a period, never a pupil, a figure of
+      // minutes or a reason; who the pupils are is read on the web, behind the
+      // login. The guardian's counts are their own children.
+      const open = Number(meta['open'] ?? 0);
+      const crossed = Number(meta['crossed'] ?? 0);
+      const day = (key: string): string => (/^\d{4}-\d{2}-\d{2}/.test(str(key)) ? formatShortDate(str(key).slice(0, 10), locale) : str(key));
+      const span = `${day('periodStart')} – ${day('periodEnd')}`;
+      if (meta['group'] === 'GUARDIAN') {
+        return open > 0
+          ? t('notifications.text.absenceWatchDigestGuardian', { span, count: open })
+          : t('notifications.text.absenceWatchDigestGuardianBack', { span, count: crossed });
+      }
+      return open > 0
+        ? t('notifications.text.absenceWatchDigestOpen', { span, count: open, crossed })
+        : t('notifications.text.absenceWatchDigestBack', { span, count: crossed });
+    }
     case 'LESSON_ROOM_CHANGED':
       return t('notifications.text.lessonRoomChanged', { subject: str('subjectName'), when: when('startsAt') });
     case 'SCHEDULE_CHANGED':
