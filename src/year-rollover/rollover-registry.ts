@@ -746,6 +746,25 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason: 'The credits a batch of the old year handed off.',
   },
   /**
+   * Schemabrytande aktivitet (20270101090000): the avbokning it owns is dated
+   * to its year, and so are its replacement lessons and the teachers named
+   * for that year's classes. The new year has its own activities.
+   */
+  ScheduleActivity: {
+    kind: 'SKIPPED',
+    reason: 'An activity cancelled and replaced dates of the old year; the new year has its own.',
+  },
+  ScheduleActivityTeacher: {
+    kind: 'FOLLOWS',
+    parent: 'ScheduleActivity',
+    reason: 'The teachers named responsible for the old year’s classes during an activity.',
+  },
+  ScheduleActivityLesson: {
+    kind: 'FOLLOWS',
+    parent: 'ScheduleActivity',
+    reason: 'The replacement lessons an activity of the old year wrote.',
+  },
+  /**
    * The public viewer (20261011120000): a share link names a class or a
    * year's index of classes, so it is the old year's; the new year's classes
    * are shared again, by links of their own.

@@ -1486,6 +1486,10 @@ model CancellationBatch {
 
   lessons CancellationBatchLesson[]
   credits CancellationBatchCredit[]
+  /// The schemabrytande aktivitet that owns this avbokning, if one does: at
+  /// most one (UNIQUE "batchId", 20270101090000). A list because Prisma wants
+  /// a composite key's unique set to be the whole (batchId, schoolId).
+  activities ScheduleActivity[]
 
   @@unique([id, schoolId])
   @@index([academicYearId, schoolId, fromDate])
@@ -1521,6 +1525,78 @@ model CancellationBatchCredit {
   @@id([batchId, creditId])
   @@index([schoolId])
   @@map("CancellationBatchCredits")
+}
+
+/// En schemabrytande aktivitet (20270101090000): an avbokning (batchId, which
+/// holds the name, the dates, the window and the selection) plus a replacement
+/// lesson per class and day that carries the attendance. The keys to the
+/// school, year, batch, subject and the two users are composite (id, schoolId)
+/// foreign keys in the migration.
+model ScheduleActivity {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId             String    @db.Uuid
+  academicYearId       String    @db.Uuid
+  batchId              String    @db.Uuid
+  /// A subject that does not count toward the timplan: the minutes arrive as credits.
+  replacementSubjectId String    @db.Uuid
+  /// What the pupils read on the replacement lesson; null or 1..300 characters (CHECK).
+  description          String?
+  /// The classes and groups the administrator named, before the avbokning widened them to halves and wholly contained groups.
+  scopeGroupIds        String[]  @default([]) @db.Uuid
+  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
+  createdByUserId      String?   @db.Uuid
+  updatedAt            DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  removedAt            DateTime? @db.Timestamptz(6)
+  removedByUserId      String?   @db.Uuid
+
+  batch    CancellationBatch          @relation(fields: [batchId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  teachers ScheduleActivityTeacher[]
+  lessons  ScheduleActivityLesson[]
+
+  @@unique([id, schoolId])
+  @@unique([batchId])
+  @@index([schoolId])
+  @@index([academicYearId, schoolId])
+  @@index([replacementSubjectId, schoolId])
+  @@index([createdByUserId, schoolId])
+  @@index([removedByUserId, schoolId])
+  @@map("ScheduleActivities")
+}
+
+/// The teachers responsible for a class or group during an activity: LEAD (at most one) or ASSISTANT.
+model ScheduleActivityTeacher {
+  activityId     String                @db.Uuid
+  studentGroupId String                @db.Uuid
+  teacherId      String                @db.Uuid
+  schoolId       String                @db.Uuid
+  role           TeacherAssignmentRole @default(LEAD)
+
+  activity ScheduleActivity @relation(fields: [activityId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@id([activityId, studentGroupId, teacherId])
+  @@index([studentGroupId, schoolId])
+  @@index([teacherId, schoolId])
+  @@index([schoolId])
+  @@map("ScheduleActivityTeachers")
+}
+
+/// The replacement lessons: one CalendarLesson without a master lesson per group and day.
+model ScheduleActivityLesson {
+  activityId       String   @db.Uuid
+  calendarLessonId String   @db.Uuid
+  studentGroupId   String   @db.Uuid
+  date             DateTime @db.Date
+  schoolId         String   @db.Uuid
+
+  activity       ScheduleActivity @relation(fields: [activityId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  calendarLesson CalendarLesson   @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@id([activityId, calendarLessonId])
+  @@unique([calendarLessonId])
+  @@unique([activityId, studentGroupId, date])
+  @@index([studentGroupId, schoolId])
+  @@index([schoolId])
+  @@map("ScheduleActivityLessons")
 }
 
 /// A shared, revocable link to the public viewer (20261011120000). Only the
@@ -2124,6 +2200,9 @@ model CalendarLesson {
   /// Set while the lesson's template was deleted in a DRAFT school and no publish has settled it.
   pendingRemovals   PublicationPendingRemoval[]
   batchLessons      CancellationBatchLesson[]
+  /// Set when the lesson is an aktivitets ersättningslektion: at most one
+  /// row (UNIQUE "calendarLessonId", 20270101090000).
+  activityLinks     ScheduleActivityLesson[]
   /// The lesson's log and its note to the substitute (Lektionslogg,
   /// 20261203090000): at most one row each (UNIQUE "calendarLessonId" on the
   /// other side). Lists for the composite key's sake, as User.workRules.

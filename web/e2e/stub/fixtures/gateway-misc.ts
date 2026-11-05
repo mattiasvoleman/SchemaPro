@@ -21,6 +21,7 @@ import {
   PUBLICATION_SETTINGS,
   publicationTimeline,
   reversePreview,
+  SCHEDULE_ACTIVITIES,
   SCHEDULE_VERSIONS,
 } from "./misc-publication";
 import {
@@ -212,6 +213,9 @@ export const miscRoutes: GatewayRoute[] = [
     if (batch.reversedAt) return new Reply(409, { statusCode: 409, code: "CANCELLATION_REVERSED", message: "Avbokningen är redan återställd." });
     return reversePreview(batch);
   }),
+
+  // --- Aktiviteter ---------------------------------------------------------------------------
+  route("GET", "/api/v1/schedule-activities", ({ query }) => (query.get("academicYearId") === YEAR.id ? SCHEDULE_ACTIVITIES : [])),
 
   // --- Dataskydd -------------------------------------------------------------------------------
   route("GET", "/api/v1/retention", () => RETENTION_OVERVIEW),
