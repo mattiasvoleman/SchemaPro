@@ -41077,7 +41077,8 @@ BEGIN
     RAISE EXCEPTION 'skyddad 360: the provider''s read is not SECURITY DEFINER, and would read under the caller''s arms';
   END IF;
   SELECT prosrc INTO v FROM pg_proc WHERE oid = 'app.ss12000_security_markings()'::regprocedure;
-  IF v NOT LIKE '%p."schoolId" = app.current_service_school_id()%' OR v NOT LIKE '%p."source" = ''SS12000''%' OR v NOT LIKE '%p."kind" IS NOT NULL%' THEN
+  IF v NOT LIKE '%p."schoolId" = app.current_service_school_id()%' OR v NOT LIKE '%p."source" = ''SS12000''%' OR v NOT LIKE '%p."kind" IS NOT NULL%'
+     OR v NOT LIKE '%u."ss12000Id" IS NOT NULL%' THEN
     RAISE EXCEPTION 'skyddad 360: the provider''s read is %', v;
   END IF;
   IF NOT has_function_privilege('app_authenticated', 'app.ss12000_security_markings()', 'EXECUTE') THEN
@@ -41307,10 +41308,12 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Section 363: vad leverantören läser. The service principal of a school
 -- reads, through app.ss12000_security_markings(), the person and kind of the
--- register's marks of its school with a kind: not a mark by hand (T1, G2),
--- not one without a kind (P3), not another school's. The table itself it
--- reads not at all. With no service principal (a login, the sync, nobody)
--- the function answers nothing.
+-- register's marks of its school with a kind, on a person linked to the
+-- register (P4): not on an unlinked row whatever it holds (P1, T1: the
+-- review of #265, N3), not a mark by hand (T1, G2), not one without a kind
+-- (P3), not another school's. The table itself it reads not at all. With no
+-- service principal (a login, the sync, nobody) the function answers
+-- nothing.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -41322,6 +41325,12 @@ BEGIN
   PERFORM set_config('app.test_rls363_school', school::text, true);
   PERFORM set_config('app.test_rls363_p1', (SELECT id::text FROM "Users" WHERE "schoolId" = school AND email = 'sk-p1@example.invalid'), true);
   PERFORM set_config('app.test_rls363_t1', (SELECT id::text FROM "Users" WHERE "schoolId" = school AND email = 'sk-t1@example.invalid'), true);
+  PERFORM set_config('app.test_rls363_p4', (SELECT id::text FROM "Users" WHERE "schoolId" = school AND email = 'sk-p4@example.invalid' AND "ss12000Id" IS NOT NULL), true);
+  IF current_setting('app.test_rls363_p4', true) IS NULL OR current_setting('app.test_rls363_p4', true) = ''
+     OR (SELECT "ss12000Id" FROM "Users" WHERE id = current_setting('app.test_rls363_p1')::uuid) IS NOT NULL
+     OR (SELECT "ss12000Id" FROM "Users" WHERE id = current_setting('app.test_rls363_t1')::uuid) IS NOT NULL THEN
+    RAISE EXCEPTION 'skyddad 363: the fixtures lack a linked P4, or P1 or T1 is linked';
+  END IF;
   IF (SELECT count(*) FROM app.ss12000_security_markings()) <> 0 THEN
     RAISE EXCEPTION 'skyddad 363: a login reads the provider''s kinds';
   END IF;
@@ -41331,11 +41340,13 @@ DO $$
 BEGIN
   PERFORM set_config('app.test_rls363_other', app.current_school_id()::text, true);
 END $$;
--- The sync gives T1, marked by hand, the register's mark beside it, with a kind.
+-- The sync gives P4 (linked) the register's mark with a kind, and T1 (marked
+-- by hand, unlinked) one beside it with a kind too, as a row might hold.
 SELECT set_config('request.jwt.claims', '', true);
 SELECT set_config('app.sync_school_id', current_setting('app.test_rls363_school'), true);
 INSERT INTO "PersonProtections" ("userId", "schoolId", source, kind)
-VALUES (current_setting('app.test_rls363_t1')::uuid, current_setting('app.test_rls363_school')::uuid, 'SS12000', 'SKYDDAD_FOLKBOKFORING');
+VALUES (current_setting('app.test_rls363_p4')::uuid, current_setting('app.test_rls363_school')::uuid, 'SS12000', 'SKYDDAD_FOLKBOKFORING'),
+       (current_setting('app.test_rls363_t1')::uuid, current_setting('app.test_rls363_school')::uuid, 'SS12000', 'SEKRETESSMARKERING');
 DO $$
 BEGIN
   IF (SELECT count(*) FROM app.ss12000_security_markings()) <> 0 THEN
@@ -41352,9 +41363,8 @@ BEGIN
   SELECT string_agg(m."userId"::text || ':' || coalesce(m.kind::text, 'none'), ',' ORDER BY m."userId"::text) INTO v FROM app.ss12000_security_markings() m;
   IF v IS DISTINCT FROM (
        SELECT string_agg(x.u || ':' || x.k, ',' ORDER BY x.u)
-         FROM (VALUES (current_setting('app.test_rls363_p1'), 'SEKRETESSMARKERING'),
-                      (current_setting('app.test_rls363_t1'), 'SKYDDAD_FOLKBOKFORING')) AS x(u, k)) THEN
-    RAISE EXCEPTION 'skyddad 363: the provider reads %, not P1''s and T1''s register kinds alone', v;
+         FROM (VALUES (current_setting('app.test_rls363_p4'), 'SKYDDAD_FOLKBOKFORING')) AS x(u, k)) THEN
+    RAISE EXCEPTION 'skyddad 363: the provider reads %, not the linked P4''s register kind alone', v;
   END IF;
   SELECT count(*) INTO n FROM "PersonProtections";
   IF n <> 0 THEN RAISE EXCEPTION 'skyddad 363: the service principal reads % marks of the table', n; END IF;
@@ -41364,6 +41374,18 @@ DO $$
 BEGIN
   IF (SELECT count(*) FROM app.ss12000_security_markings()) <> 0 THEN
     RAISE EXCEPTION 'skyddad 363: the other school''s provider reads kinds (it has a mark by hand alone)';
+  END IF;
+END $$;
+-- P4's mark with no kind (a marking not recognised): nothing to read for P4.
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config('app.sync_school_id', current_setting('app.test_rls363_school'), true);
+UPDATE "PersonProtections" SET kind = NULL WHERE "userId" = current_setting('app.test_rls363_p4')::uuid AND source = 'SS12000';
+SELECT set_config('app.sync_school_id', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls363_school'), true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM app.ss12000_security_markings()) <> 0 THEN
+    RAISE EXCEPTION 'skyddad 363: the provider reads % rows, a linked mark with no kind among them', (SELECT count(*) FROM app.ss12000_security_markings());
   END IF;
 END $$;
 SELECT set_config('app.service_school_id', '', true);

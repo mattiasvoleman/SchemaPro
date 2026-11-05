@@ -63,6 +63,7 @@ describe("Skyddad identitet on a person's row", () => {
     renderMark(true, true);
     expect(await screen.findByText(/en skyddad person i registret har samma e-postadress/)).toBeInTheDocument();
     expect(screen.getByText(/Är det fel person: rätta e-postadressen och ta bort markeringen/)).toBeInTheDocument();
+    expect(screen.getByText(/skickas inte vidare till system som skolan anslutit förrän personen är kopplad/)).toBeInTheDocument();
   });
 
   it("says nothing of an address match for a linked person, or for a mark by hand alone", async () => {

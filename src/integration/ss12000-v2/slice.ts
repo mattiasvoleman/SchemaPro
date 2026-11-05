@@ -222,8 +222,9 @@ export class SchoolSlice {
   /**
    * The register's kind of protection on the sync's marks
    * (app.ss12000_security_markings, 20270111090000): user id to S1's
-   * securityMarking. Never a mark by hand; the function gives the service
-   * principal its own school's and nothing else.
+   * securityMarking, for a person linked to the register. Never a mark by
+   * hand, never a row the sync marked on its address alone; the function
+   * gives the service principal its own school's and nothing else.
    */
   readonly securityMarkings = memo(async (): Promise<ReadonlyMap<string, SecurityMarking>> => {
     const rows = await this.tx.$queryRaw<{ userId: string; kind: string }[]>(

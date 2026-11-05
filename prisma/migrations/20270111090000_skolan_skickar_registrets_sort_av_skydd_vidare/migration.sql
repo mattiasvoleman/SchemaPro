@@ -19,10 +19,16 @@
 -- (PersonProtections_a_kind_is_the_registers) holds a mark by hand to NULL.
 -- An administrator's mark is the school's own judgement, often with no
 -- marking at Skatteverket at all, and passing it on as one of the two would
--- state a status nobody gave. NULL also on a row the sync wrote before this
--- file, until the next run that reads the person writes the kind, and for a
--- marking the sync did not recognise (the person is protected all the
--- same; nothing is passed on).
+-- state a status nobody gave. And only for a person linked to the register
+-- (Users.ss12000Id): the sync marks a row it matched by address alone, so
+-- that a pupil typed in by hand stays out of the files, but the address may
+-- be another pupil's, and a legal status about the wrong person must not
+-- leave (the review of #265, N3). Such a mark holds no kind until its link
+-- is made, when the apply writes it; and the provider's read below sends a
+-- kind for a linked person alone, whatever a row holds. NULL also on a row
+-- the sync wrote before this file, until the next run that reads the person
+-- writes the kind, and for a marking the sync did not recognise (the person
+-- is protected all the same; nothing is passed on).
 --
 -- ## Why this keeps what 20270107090000 chose not to keep
 --
@@ -51,8 +57,8 @@
 --     the sync principal read it, nobody else; no new arm reads the table.
 --     The provider (the service principal of an integration key) reads it
 --     through app.ss12000_security_markings() alone: the person and the kind
---     of the sync's marks of its own school, never a mark by hand and never
---     which persons carry one. It sends it where it sends the person
+--     of the sync's marks of its own school, for linked persons, never a
+--     mark by hand and never which persons carry one. It sends it where it sends the person
 --     (scope persons.read), and on a reference to the person only with the
 --     person's name (expandReferenceNames): a key that may not read persons
 --     learns nothing of who is protected.
@@ -65,12 +71,15 @@
 --
 -- The sync reads the kind wherever the register names the person, and keeps
 -- the stronger (Skyddad folkbokföring over Sekretessmarkering) when two
--- places differ: the register is never understated. A mark the sync sets
--- carries the kind (PROTECTION ADD, and a person a CREATE, LINK or RELINK
--- makes or links); a mark the sync holds whose kind is not the register's
--- gets a PROTECTION UPDATE, selected and made at night like an ADD, since it
--- only changes what the connected systems are told, to what the register
--- itself says. Ss12000SyncChanges_a_mark_names_its_person_in_after_alone
+-- places differ: the register is never understated. A mark the sync sets on
+-- a linked person carries the kind (PROTECTION ADD, and a person a CREATE,
+-- LINK or RELINK makes or links, also over a mark set before on the address);
+-- a mark the sync holds whose kind is not the one it should hold gets a
+-- PROTECTION UPDATE, selected and made at night like an ADD, since it only
+-- changes what the connected systems are told, to what the register itself
+-- says. An INCREMENTAL run may not read every place that names the person,
+-- so it only raises a kind; lowering one waits for a FULL run, as a lift
+-- does (the review of #265, L1). Ss12000SyncChanges_a_mark_names_its_person_in_after_alone
 -- therefore admits UPDATE beside ADD and END, still with no externalId and
 -- no localId.
 --
@@ -167,14 +176,16 @@ RETURNS TABLE ("userId" uuid, "kind" "PersonProtectionKind")
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT p."userId", p."kind"
     FROM "PersonProtections" p
+    JOIN "Users" u ON u."id" = p."userId" AND u."schoolId" = p."schoolId"
    WHERE app.current_service_school_id() IS NOT NULL
      AND p."schoolId" = app.current_service_school_id()
      AND p."source" = 'SS12000'
      AND p."kind" IS NOT NULL
+     AND u."ss12000Id" IS NOT NULL
 $$;
 
 COMMENT ON FUNCTION app.ss12000_security_markings() IS
-  'The SS12000 v2.0 provider''s securityMarking: the person and the register''s kind of the sync''s marks of the service principal''s own school (20270111090000). Never a mark by hand, never another school.';
+  'The SS12000 v2.0 provider''s securityMarking: the person and the register''s kind of the sync''s marks of the service principal''s own school, for a person linked to the register (20270111090000). Never a mark by hand, never a row matched by address alone, never another school.';
 
 -- ---------------------------------------------------------------------------
 -- meta.modified: a Person moves when what is sent about it moves

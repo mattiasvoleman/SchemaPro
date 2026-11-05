@@ -7388,7 +7388,7 @@
     },
     "explain": "En markerad person finns inte i filerna Rastra skriver om personer, som elever.csv, vardnadshavare.csv och närvarorapporten. Vilket skydd personen har sparas inte.",
     "integrations": "System som skolan anslutit via SS12000 får registrets markering med personen, så att de kan skydda personen. En markering för hand skickas inte vidare, och vilket skydd det är visas inte här.",
-    "byAddress": "Personen är inte kopplad till registret: markeringen sattes för att en skyddad person i registret har samma e-postadress. Är det fel person: rätta e-postadressen och ta bort markeringen. Nästa fullständiga synk föreslår också att den tas bort när ingen skyddad person har adressen längre.",
+    "byAddress": "Personen är inte kopplad till registret: markeringen sattes för att en skyddad person i registret har samma e-postadress. Är det fel person: rätta e-postadressen och ta bort markeringen. Nästa fullständiga synk föreslår också att den tas bort när ingen skyddad person har adressen längre. Markeringen skickas inte vidare till system som skolan anslutit förrän personen är kopplad.",
     "registerOwns": "Markeringen följer registret: säger registret Ingen föreslår synken att den tas bort. En markering för hand står kvar tills en administratör tar bort den.",
     "set": "Markera skyddad identitet",
     "setAlongside": "Markera för hand också",

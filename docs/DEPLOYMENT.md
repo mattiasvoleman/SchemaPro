@@ -1143,7 +1143,8 @@ Walk the full product loop once, in order:
   two UPDATE arms (`person_protections_sync_update`,
   `person_protections_admin_update`, both for source SS12000) with UPDATE on
   the column `kind` alone for `app_authenticated`, the provider's read
-  `app.ss12000_security_markings()` (EXECUTE for `app_authenticated` only),
+  `app.ss12000_security_markings()` (EXECUTE for `app_authenticated` only;
+  a linked person's marks alone),
   the trigger `PersonProtections_ss12000_versions` that moves a Person's
   version when the kind it is sent with moves, and op UPDATE in
   `Ss12000SyncChanges_a_mark_names_its_person_in_after_alone` (NOT VALID). The

@@ -63,7 +63,9 @@ import type { ChangeEntity, ChangeOp, ProtectionKind } from './diff';
  *     writes carries the register's kind when the change does (after.kind,
  *     after.protectionKind on a person change; 20270111090000), and a
  *     PROTECTION UPDATE gives the sync's mark the register's kind; one gone
- *     since the diff is skipped with SS12000_TARGET_CHANGED.
+ *     since the diff is skipped with SS12000_TARGET_CHANGED. A mark set on
+ *     the address alone holds no kind; the person's LINK or RELINK gives it
+ *     the kind, in the same apply or a later one.
  *
  * Nothing else is deleted: no other statement here removes a row.
  */
@@ -309,10 +311,17 @@ export async function applyChanges(
   // carries one: what the SS12000 provider passes on.
   const marking = new Map<string, ProtectionKind | null>();
   const toMark = (userId: string, kind: ProtectionKind | null) => marking.set(userId, marking.get(userId) ?? kind);
+  // The persons this apply creates, links or relinks: linked now, so their
+  // mark holds the register's kind, also one the sync set before on the
+  // address alone, with none (review of #265, N3).
+  const linkedNow = new Map<string, ProtectionKind | null>();
   for (const op of ['CREATE', 'LINK', 'RELINK'] as const) {
     for (const change of of('PERSON', op)) {
       const userId = change.protectedIdentity && applied.has(change.id) ? userOf(change) : null;
-      if (userId) toMark(userId, kindIn(change.after?.['protectionKind']));
+      if (!userId) continue;
+      const kind = kindIn(change.after?.['protectionKind']);
+      toMark(userId, kind);
+      linkedNow.set(userId, kind);
     }
   }
   // A person matched by address and not linked (after.byAddress) is marked,
@@ -353,6 +362,13 @@ export async function applyChanges(
       data: rows.map((userId) => ({ userId, schoolId, source: 'SS12000' as const, kind: marking.get(userId) ?? null })),
       skipDuplicates: true,
     });
+  }
+  const byKind = new Map<ProtectionKind | null, string[]>();
+  for (const [userId, kind] of linkedNow) byKind.set(kind, [...(byKind.get(kind) ?? []), userId]);
+  for (const [kind, users] of byKind) {
+    for (const rows of chunks(users.sort())) {
+      await tx.personProtection.updateMany({ where: { schoolId, userId: { in: rows }, source: 'SS12000' }, data: { kind } });
+    }
   }
   // The register's kind on a mark the sync holds. A mark gone since the diff
   // (an administrator removed it) is not written again by a change of kind.

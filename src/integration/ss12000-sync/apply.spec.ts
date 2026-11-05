@@ -443,6 +443,24 @@ describe('applyChanges: the mark of a protected identity (20270107090000)', () =
     });
   });
 
+  it('gives the mark the register\'s kind when it links or relinks the person, also one set before on the address with none (review of #265, N3)', async () => {
+    const link = change({ entity: 'PERSON', op: 'LINK', externalId: ext(2), localId: loc(2), protectedIdentity: true, after: { ss12000Id: ext(2), protectionKind: 'SKYDDAD_FOLKBOKFORING' } });
+    const relink = change({ entity: 'PERSON', op: 'RELINK', externalId: ext(3), localId: loc(3), protectedIdentity: true, after: { protectionKind: 'SEKRETESSMARKERING' } });
+    // A link not made: its mark keeps no kind.
+    const notMade = change({ entity: 'PERSON', op: 'LINK', externalId: ext(4), localId: loc(4), protectedIdentity: true, after: { protectionKind: 'SKYDDAD_FOLKBOKFORING' } });
+    tx.user.updateMany.mockImplementation(async (args: { where: { id?: string } }) => ({ count: args.where.id === loc(4) ? 0 : 1 }));
+    await run([link, relink, notMade]);
+    expect(tx.personProtection.updateMany.mock.calls.map(([args]) => args)).toEqual(
+      expect.arrayContaining([
+        { where: { schoolId: SCHOOL, userId: { in: [loc(2)] }, source: 'SS12000' }, data: { kind: 'SKYDDAD_FOLKBOKFORING' } },
+        { where: { schoolId: SCHOOL, userId: { in: [loc(3)] }, source: 'SS12000' }, data: { kind: 'SEKRETESSMARKERING' } },
+      ]),
+    );
+    expect(JSON.stringify(tx.personProtection.updateMany.mock.calls)).not.toContain(loc(4));
+    // After the mark is written, so a mark the same apply makes gets it too.
+    expect(tx.personProtection.createMany.mock.invocationCallOrder[0]).toBeLessThan(tx.personProtection.updateMany.mock.invocationCallOrder[0]!);
+  });
+
   it('PROTECTION UPDATE gives the sync\'s mark the register\'s kind, and skips a mark removed since the diff', async () => {
     tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }, { id: loc(2), ss12000Id: ext(2) }]);
     tx.personProtection.findMany.mockResolvedValue([{ userId: loc(1) }]);

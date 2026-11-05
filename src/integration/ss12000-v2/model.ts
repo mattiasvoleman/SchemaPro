@@ -29,7 +29,8 @@ import type { Scope } from './scopes';
  * securityMarking (20270111090000): the register's kind of protection on the
  * sync's mark, on a Person, and on a reference to a person only with the
  * person's name (expandReferenceNames), which S1's Meta.modified leaves out;
- * never for a mark by hand, never "Ingen", nothing once the mark is lifted.
+ * for a linked person alone (an address match may be another person); never
+ * for a mark by hand, never "Ingen", nothing once the mark is lifted.
  *
  * NEVER EMITTED: civicNo, birthDate, sex, personStatus,
  * addresses, phoneNumbers, photo, externalIdentifiers, middleName;

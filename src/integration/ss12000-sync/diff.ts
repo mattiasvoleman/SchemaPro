@@ -67,8 +67,11 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  *  - a mark the sync holds whose kind is not the register's (or was written
  *    before the school kept it): PROTECTION UPDATE with the register's kind,
  *    selected and automatic, since it only changes what the connected
- *    systems are told, to what the register itself says. A mark by hand
- *    has no kind and is never touched.
+ *    systems are told, to what the register itself says; an INCREMENTAL run
+ *    only raises it. Only a linked person's mark holds a kind: a row matched
+ *    by address is marked with none until its link is made (the apply then
+ *    gives it the kind), since an address may be another person's. A mark
+ *    by hand has no kind and is never touched.
  *
  * DEACTIVATE, of a linked person only: a FULL run that no longer finds them
  * (a pupil not returned by the enrolment fetch, staff with no active duty, a
@@ -341,6 +344,7 @@ export function protectionKindOf(marking: S1Person['securityMarking']): Protecti
 }
 
 const KIND_RANK: Record<ProtectionKind, number> = { SEKRETESSMARKERING: 1, SKYDDAD_FOLKBOKFORING: 2 };
+const rankOf = (kind: ProtectionKind | null): number => (kind ? KIND_RANK[kind] : 0);
 
 /** Of two kinds read for one person in different places, the stronger: the register is never understated. */
 function strongerKind(a: ProtectionKind | null | undefined, b: ProtectionKind | null): ProtectionKind | null {
@@ -1052,6 +1056,7 @@ export function computeDiff(input: DiffInput): DiffResult {
     ext: string | null,
     userId: string,
     address: { email?: string; code: string | null } | null,
+    kind: ProtectionKind | null = null,
   ) => {
     // An ADD only keeps a person out of files: selected and made at night,
     // unless a code says the address alone is the ground. An UPDATE only
@@ -1065,24 +1070,39 @@ export function computeDiff(input: DiffInput): DiffResult {
       before: null,
       after: {
         personExternalId: ext, userLocalId: userId,
-        ...(op !== 'END' && ext ? { kind: kindOf(ext) } : {}),
+        ...(op !== 'END' ? { kind } : {}),
         ...(address ? { byAddress: true, ...(address.email ? { email: address.email } : {}) } : {}),
       },
       conflictCode: address?.code ?? null, selected: automatic, autoApplicable: automatic, protectedIdentity: false,
     });
   };
-  // A mark the sync holds whose kind is not the register's (or was written
-  // before the school kept it): the register's kind, at night.
-  const rekind = (ext: string, userId: string, address: { email?: string } | null) => {
-    if (syncMarked.has(userId) && syncMarked.get(userId) !== kindOf(ext)) mark('UPDATE', ext, userId, address ? { ...address, code: null } : null);
+  // The kind a mark of the sync's holds: the register's for a linked person
+  // alone. A row matched by address is a guess at the person (another pupil
+  // may hold the address): it is marked, which only keeps it out of files,
+  // but it is told to nobody as a legal status until the link is made, when
+  // the apply gives the mark the kind (review of #265, N3).
+  const kindFor = (ext: string, linked: boolean): ProtectionKind | null => (linked ? kindOf(ext) : null);
+  // A mark the sync holds whose kind is not the one it should hold (or was
+  // written before the school kept it): that kind, at night. An INCREMENTAL
+  // run may not read every place that names the person, so it only raises
+  // the register's kind; lowering it, or taking it off, waits for a FULL
+  // run, as a lift does (review of #265, L1). A row no longer linked loses
+  // its kind in any run: nothing is sent for it.
+  const rekind = (ext: string, userId: string, address: { email?: string } | null, linked: boolean) => {
+    if (!syncMarked.has(userId)) return;
+    const held = syncMarked.get(userId) ?? null;
+    const wanted = kindFor(ext, linked);
+    if (held === wanted) return;
+    if (linked && !full && rankOf(wanted) < rankOf(held)) return;
+    mark('UPDATE', ext, userId, address ? { ...address, code: null } : null, wanted);
   };
   // Every local row a protected source person reaches by address in this run.
   const addressed = new Set<string>();
   for (const ext of [...protectedIds].sort()) {
     const linked = usersByExt.get(ext);
     if (linked) {
-      if (!syncMarked.has(linked.id)) mark('ADD', ext, linked.id, null);
-      else rekind(ext, linked.id, null);
+      if (!syncMarked.has(linked.id)) mark('ADD', ext, linked.id, null, kindFor(ext, true));
+      else rekind(ext, linked.id, null, true);
       continue;
     }
     // The one row the run matched by address (a LINK or RELINK it proposes):
@@ -1097,7 +1117,7 @@ export function computeDiff(input: DiffInput): DiffResult {
       if (!syncMarked.has(match.localId)) {
         mark('ADD', ext, match.localId, { email: match.email, code: match.namesAgree ? null : 'PROTECTION_ADDRESS_NAME_DIFFERS' });
       } else {
-        rekind(ext, match.localId, { email: match.email });
+        rekind(ext, match.localId, { email: match.email }, false);
       }
       continue;
     }
@@ -1105,7 +1125,7 @@ export function computeDiff(input: DiffInput): DiffResult {
       addressed.add(localId);
       const email = ambiguousMatches.get(ext)!.email;
       if (!syncMarked.has(localId)) mark('ADD', ext, localId, { email, code: 'PROTECTION_ADDRESS_AMBIGUOUS' });
-      else rekind(ext, localId, { email });
+      else rekind(ext, localId, { email }, false);
     }
   }
   if (full) {

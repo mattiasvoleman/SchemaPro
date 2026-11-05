@@ -439,14 +439,20 @@ responsibleFor.enrolment and groupMembership relations.
 
 **`securityMarking`** (since 20270111090000): `Sekretessmarkering` or
 `Skyddad folkbokföring` on a Person whose protection the school's SS12000 sync
-read from the register; the value is the register's own, the stronger where
-the register names the person in two places with different values. Nothing
-otherwise, and **never `Ingen`**: no field means Rastra passes no marking on,
-not that the person is unprotected. A mark the school set by hand is not
-passed on (it may be the school's own judgement, with no marking behind it),
-nor is a marking the sync did not recognise. When the register lifts the
-marking and the school applies the lift, the field disappears; the old value
-is never sent again. A change of the field moves the Person's
+read from the register, and who is linked to the register; the value is the
+register's own, the stronger where the register names the person in two
+places with different values. Nothing otherwise, and **never `Ingen`**: no
+field means Rastra passes no marking on, not that the person is unprotected.
+A mark the school set by hand is not passed on (it may be the school's own
+judgement, with no marking behind it), nor is a marking the sync did not
+recognise, nor a mark the sync set on a person in Rastra it matched by
+e-mail address but has not linked (the address may be another person's):
+that person is sent with the marking once the link is applied. The field
+follows Rastra's mark, not the register's latest answer: when the register
+says `Ingen`, the old value is sent until the school applies the lift (never
+automatic), and then the field disappears; the old value is never sent
+again. An incremental run only raises the value; a lower one waits for a
+full run. A change of the field moves the Person's
 `meta.modified`. A reference to a person (`responsibles[].person`,
 `groupMemberships[].person`, `Duty.person`, `studentExceptions[].student`,
 `Attendance.student`, `Absence.student`) carries it only with its
