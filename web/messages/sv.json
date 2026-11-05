@@ -680,7 +680,7 @@
     "loadFailed": "Personerna kunde inte hämtas",
     "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan saknar både personal och elever. Inget har ändrats; ladda om sidan för att försöka igen.",
     "emptyTitle": "Inga personer ännu",
-    "emptyHint": "Lägg till lärare, elever och vårdnadshavare en i taget, eller importera dem från en CSV-fil.",
+    "emptyHint": "Lägg till lärare, elever och vårdnadshavare en i taget, eller importera lärare och elever från en CSV-fil.",
     "searchLabel": "Sök på namn, e-post eller klass",
     "noMatch": "Ingen person matchar sökningen och rollen du valt",
     "tableCaption": "Skolans personer med e-post, roll, klass, status och inbjudan. Varje namn kan fällas ut med klass, grupper och tjänst.",
@@ -2875,13 +2875,14 @@
     "kinds": {
       "students": "Elever",
       "teachers": "Lärare",
-      "classes": "Klasser",
+      "classes": "Klasser och grupper",
       "teachingGroups": "Undervisningsgrupper",
       "roomTypes": "Salstyper",
       "subjects": "Ämnen",
       "requirements": "Timplansposter",
       "teacherQualifications": "Behörigheter",
-      "teacherDuties": "Uppdrag"
+      "teacherDuties": "Uppdrag",
+      "rooms": "Salar"
     },
     "downloadTemplate": "Ladda ner mall",
     "chooseFile": "Välj fil",
@@ -2897,7 +2898,12 @@
     "rowErrors": "Fel per rad",
     "rowError": "Rad {row}: {message}",
     "rowWarnings": "Sparade, med varning från tjänstefördelningen",
-    "exportButton": "Exportera CSV"
+    "exportButton": "Exportera CSV",
+    "rowNumbering": "Raderna räknas som i Excel: rubrikraden är rad 1.",
+    "readAs": "Filen är inte UTF-8 och lästes som {encoding}. Kontrollera att å, ä och ö ser rätt ut i förhandsvisningen.",
+    "withoutClass": "{count, plural, one {# elev har ingen klass i filen och skapas utan klass.} other {# elever har ingen klass i filen och skapas utan klass.}} Importen kan inte ge dem en klass i efterhand, så fyll i klass i filen om det inte är meningen.",
+    "createdWithoutClass": "{count, plural, one {# elev skapades utan klass.} other {# elever skapades utan klass.}} Ge dem en klass under Personer.",
+    "rejectedByServer": "Servern tog inte emot filen, eftersom en cell har ett värde som inte går att spara. Inget importerades. Jämför filen med mallen."
   },
   "grades": {
     "grade": "{grade, plural, =0 {Förskoleklass} other {Åk #}}"

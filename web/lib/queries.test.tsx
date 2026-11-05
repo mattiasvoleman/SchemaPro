@@ -1919,7 +1919,24 @@ describe("useImportCsv", () => {
     // a target: the unstaffed list and the cached rankings go stale too.
     ["staffingUnstaffed"],
     ["staffingSuggestions"],
+    // The Salar page's two lists and Ämnen's, which a rooms, room-type or
+    // subject file adds to (granskning-260-r2, N1).
+    ["rooms"],
+    ["roomTypes"],
+    ["subjects"],
   ];
+
+  it("rooms POST /import/rooms with rows only, and the Salar page's lists refetch", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useImportCsv(), { wrapper: harness.wrapper });
+    const rows = [{ name: "Sal A1", code: "A1" }];
+
+    await act(async () => {
+      await result.current.mutateAsync({ kind: "rooms", academicYearId: "y-1", rows, rowNumbers: [2] });
+    });
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/import/rooms", { rows, rowNumbers: [2] });
+    expect(invalidatedKeys(harness)).toEqual(expect.arrayContaining([["rooms"], ["roomTypes"]]));
+  });
 
   it("students POST /import/students with the academic year in the body", async () => {
     const report: ImportReport = { created: 2, skipped: 0, errors: [] };

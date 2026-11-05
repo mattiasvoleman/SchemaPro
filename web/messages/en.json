@@ -680,7 +680,7 @@
     "loadFailed": "The people could not be loaded",
     "loadFailedHint": "No list is shown, because an empty one would mean the school has neither staff nor pupils. Nothing has changed; reload the page to try again.",
     "emptyTitle": "No people yet",
-    "emptyHint": "Add teachers, pupils and guardians one at a time, or import them from a CSV file.",
+    "emptyHint": "Add teachers, pupils and guardians one at a time, or import teachers and pupils from a CSV file.",
     "searchLabel": "Search by name, email or class",
     "noMatch": "Nobody matches the search and the role you chose",
     "tableCaption": "The school's people with email, role, class, status and invitation. Each name expands to class, groups and post.",
@@ -2875,13 +2875,14 @@
     "kinds": {
       "students": "Students",
       "teachers": "Teachers",
-      "classes": "Classes",
+      "classes": "Classes and groups",
       "teachingGroups": "Teaching groups",
       "roomTypes": "Room types",
       "subjects": "Subjects",
       "requirements": "Curriculum entries",
       "teacherQualifications": "Teacher qualifications",
-      "teacherDuties": "Duties"
+      "teacherDuties": "Duties",
+      "rooms": "Rooms"
     },
     "downloadTemplate": "Download template",
     "chooseFile": "Choose file",
@@ -2897,7 +2898,12 @@
     "rowErrors": "Errors per row",
     "rowError": "Row {row}: {message}",
     "rowWarnings": "Saved, with a staffing warning",
-    "exportButton": "Export CSV"
+    "exportButton": "Export CSV",
+    "rowNumbering": "Rows are counted as in Excel: the header row is row 1.",
+    "readAs": "The file is not UTF-8 and was read as {encoding}. Check that å, ä and ö look right in the preview.",
+    "withoutClass": "{count, plural, one {# student has no class in the file and is created without one.} other {# students have no class in the file and are created without one.}} The import cannot give them a class afterwards, so fill in the class in the file unless that is intended.",
+    "createdWithoutClass": "{count, plural, one {# student was created without a class.} other {# students were created without a class.}} Give them a class under People.",
+    "rejectedByServer": "The server did not accept the file, because a cell holds a value that cannot be saved. Nothing was imported. Compare the file with the template."
   },
   "grades": {
     "grade": "{grade, plural, =0 {Reception} other {Year #}}"

@@ -1,0 +1,373 @@
+{
+  "generatedFrom": "class-validator isEmail / isHexColor / maxLength, as the import DTOs call them",
+  "emails": [
+    {
+      "value": "karin.ek@example.com",
+      "valid": true
+    },
+    {
+      "value": "Karin.Ek@Example.COM",
+      "valid": true
+    },
+    {
+      "value": "noah.sjö.7b@demo-skola.example.com",
+      "valid": true
+    },
+    {
+      "value": "åsa.öberg@skola.se",
+      "valid": true
+    },
+    {
+      "value": "elev+7a@skola.se",
+      "valid": true
+    },
+    {
+      "value": "o'brien@skola.se",
+      "valid": true
+    },
+    {
+      "value": "a@b.co",
+      "valid": true
+    },
+    {
+      "value": "a@b.c",
+      "valid": false
+    },
+    {
+      "value": "a@b",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@",
+      "valid": false
+    },
+    {
+      "value": "@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin ek@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@skola .se",
+      "valid": false
+    },
+    {
+      "value": "karin..ek@skola.se",
+      "valid": false
+    },
+    {
+      "value": ".karin@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin.@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@skola..se",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@-skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@skola-.se",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@sko_la.se",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@skola.se.",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@skola.123",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@skola.xn--p1ai",
+      "valid": true
+    },
+    {
+      "value": "karin.ek@skolå.se",
+      "valid": true
+    },
+    {
+      "value": "karin.ek@skola.sé",
+      "valid": true
+    },
+    {
+      "value": "karin@ek@skola.se",
+      "valid": false
+    },
+    {
+      "value": "\"karin ek\"@skola.se",
+      "valid": true
+    },
+    {
+      "value": "\"karin\"ek\"@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin;ek@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin,ek@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin(ek)@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@[192.168.0.1]",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@192.168.0.1",
+      "valid": false
+    },
+    {
+      "value": "Karin Ek <karin.ek@skola.se>",
+      "valid": false
+    },
+    {
+      "value": "",
+      "valid": false
+    },
+    {
+      "value": " ",
+      "valid": false
+    },
+    {
+      "value": " karin.ek@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@skola.se ",
+      "valid": false
+    },
+    {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@skola.se",
+      "valid": true
+    },
+    {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@skola.se",
+      "valid": false
+    },
+    {
+      "value": "öööööööööööööööööööööööööööööööö@skola.se",
+      "valid": true
+    },
+    {
+      "value": "ööööööööööööööööööööööööööööööööö@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.se",
+      "valid": true
+    },
+    {
+      "value": "karin@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.se",
+      "valid": false
+    },
+    {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.se",
+      "valid": true
+    },
+    {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.se",
+      "valid": true
+    },
+    {
+      "value": "karin.ek@ｓkola.se",
+      "valid": false
+    },
+    {
+      "value": "karin ek@skola.se",
+      "valid": false
+    },
+    {
+      "value": "karin.ek@skola.s",
+      "valid": false
+    },
+    {
+      "value": "KARIN@SKOLA.SE",
+      "valid": true
+    },
+    {
+      "value": "karin.ek@sub.skola.example.com",
+      "valid": true
+    },
+    {
+      "value": "elev-7a@skola-ab.se",
+      "valid": true
+    },
+    {
+      "value": "#!$%&'*+-/=?^_`{}|~@skola.se",
+      "valid": true
+    }
+  ],
+  "hexColors": [
+    {
+      "value": "#4f46e5",
+      "valid": true
+    },
+    {
+      "value": "4f46e5",
+      "valid": true
+    },
+    {
+      "value": "#4F46E5",
+      "valid": true
+    },
+    {
+      "value": "#fff",
+      "valid": true
+    },
+    {
+      "value": "fff",
+      "valid": true
+    },
+    {
+      "value": "#ffff",
+      "valid": true
+    },
+    {
+      "value": "#ff00ff80",
+      "valid": true
+    },
+    {
+      "value": "#ff00f",
+      "valid": false
+    },
+    {
+      "value": "#gggggg",
+      "valid": false
+    },
+    {
+      "value": "",
+      "valid": false
+    },
+    {
+      "value": " ",
+      "valid": false
+    },
+    {
+      "value": "#",
+      "valid": false
+    },
+    {
+      "value": "blå",
+      "valid": false
+    },
+    {
+      "value": "rgb(1,2,3)",
+      "valid": false
+    },
+    {
+      "value": "#4f46e5 ",
+      "valid": false
+    },
+    {
+      "value": "##4f46e5",
+      "valid": false
+    },
+    {
+      "value": "#1e3",
+      "valid": true
+    },
+    {
+      "value": "#1e4000",
+      "valid": true
+    }
+  ],
+  "lengths": [
+    {
+      "value": "",
+      "length": 0,
+      "maxLength60": true
+    },
+    {
+      "value": "a",
+      "length": 1,
+      "maxLength60": true
+    },
+    {
+      "value": "7A",
+      "length": 2,
+      "maxLength60": true
+    },
+    {
+      "value": "Åsa",
+      "length": 3,
+      "maxLength60": true
+    },
+    {
+      "value": "Ö",
+      "length": 1,
+      "maxLength60": true
+    },
+    {
+      "value": "é",
+      "length": 2,
+      "maxLength60": true
+    },
+    {
+      "value": "😀",
+      "length": 1,
+      "maxLength60": true
+    },
+    {
+      "value": "👍🏽",
+      "length": 2,
+      "maxLength60": true
+    },
+    {
+      "value": "❤️",
+      "length": 1,
+      "maxLength60": true
+    },
+    {
+      "value": "🇸🇪",
+      "length": 2,
+      "maxLength60": true
+    },
+    {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "length": 60,
+      "maxLength60": true
+    },
+    {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "length": 61,
+      "maxLength60": false
+    },
+    {
+      "value": "öööööööööööööööööööööööööööööööööööööööööööööööööööööööööööö",
+      "length": 60,
+      "maxLength60": true
+    },
+    {
+      "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "length": 30,
+      "maxLength60": true
+    },
+    {
+      "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "length": 31,
+      "maxLength60": true
+    },
+    {
+      "value": "Hem- och konsumentkunskap \"HKK\"; teori",
+      "length": 38,
+      "maxLength60": true
+    }
+  ]
+}

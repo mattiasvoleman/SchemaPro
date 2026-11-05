@@ -18,7 +18,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { assertAdministratorMay } from '../auth/roles.guard';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { holdPupils, holdTheSchoolsPeople } from '../common/lock-order';
+import { holdPupils, holdTheSchoolsPeople, lockGroups } from '../common/lock-order';
 import { decidedTimplanConflict, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from '../resources/academic-year-bounds';
@@ -52,6 +52,7 @@ import type {
   ImportWarning,
   ImportRequirementsDto,
   ImportRoomTypesDto,
+  ImportRoomsDto,
   ImportSubjectsDto,
   ImportStudentsDto,
   ImportTeacherDutiesDto,
@@ -145,6 +146,35 @@ const sameBlockShape = (a: BlockShape, b: BlockShape): boolean =>
 const swedishRows = (rows: readonly number[]): string =>
   rows.length === 1 ? `rad ${rows[0]}` : `raderna ${rows.slice(0, -1).join(', ')} och ${rows[rows.length - 1]}`;
 
+/** The warning a pupil created without a class carries (importStudents). */
+export const STUDENT_WITHOUT_CLASS = 'IMPORT_STUDENT_WITHOUT_CLASS';
+
+/** A row's 1-based position in the posted `rows`, as the row the file has it on. */
+type FileRow = (position: number) => number;
+
+/**
+ * The file's row numbers when the browser posted them (ImportFileRowsDto),
+ * else the position. Every method below counts in positions, as it always
+ * did, and says the file's number wherever a row is named: in `row`, by
+ * inFileRows at the end, and in a sentence about another row ("står redan på
+ * rad 3") through this function, so that both name the line in Excel.
+ */
+function fileRows(dto: { rows: readonly unknown[]; rowNumbers?: number[] }): FileRow {
+  const lines = dto.rowNumbers;
+  if (lines === undefined || lines === null) return (position) => position;
+  if (lines.length !== dto.rows.length) {
+    throw new BadRequestException('rowNumbers: ett radnummer per rad i rows.');
+  }
+  return (position) => lines[position - 1] ?? position;
+}
+
+/** The report with each row named as the file has it, the errors in file order. */
+function inFileRows(report: ImportReport, line: FileRow): ImportReport {
+  report.errors = report.errors.map((error) => ({ ...error, row: line(error.row) })).sort((a, b) => a.row - b.row);
+  if (report.warnings) report.warnings = report.warnings.map((warning) => ({ ...warning, row: line(warning.row) }));
+  return report;
+}
+
 /** A stored post as the held rows are judged against it. */
 type StoredBlockRow = Pick<StoredRequirementValues, keyof BlockShape> & { id: string; blockId: string | null };
 
@@ -182,6 +212,7 @@ async function writeHeldBlocks(
   existing: readonly StoredBlockRow[],
   heldForBlock: ReadonlyMap<string, readonly HeldBlockRow[]>,
   academicYearId: string,
+  line: FileRow,
 ): Promise<void> {
   const blocks = await tx.teachingBlock.findMany({
     where: { academicYearId },
@@ -248,7 +279,7 @@ async function writeHeldBlocks(
         const changerBlocks = [...new Set(changers.map((entry) => entry.current.blockId!))].map(
           (blockId) => `"${nameOf.get(blockId) ?? ''}"`,
         );
-        const changerRows = changers.map((entry) => entry.rowNumber);
+        const changerRows = changers.map((entry) => line(entry.rowNumber));
         for (const entry of writtenRows) {
           const own = entry.current.blockId!;
           if (!changesLessons(entry)) {
@@ -376,10 +407,12 @@ export class ImportService {
    * signature index itself; a P2002 at the write is reported on the row, with
    * the person standing.
    */
-  async importTeachers(
-    dto: ImportTeachersDto,
-    user: AuthenticatedUser,
-  ): Promise<ImportReport> {
+  async importTeachers(dto: ImportTeachersDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importTeachersByPosition(dto, user, line), line);
+  }
+
+  private async importTeachersByPosition(dto: ImportTeachersDto, user: AuthenticatedUser, line: FileRow): Promise<ImportReport> {
     const schoolId = requireSchoolId(user); // 403 up front, same contract as the sibling methods
 
     const posts = dto.rows
@@ -465,7 +498,7 @@ export class ImportService {
         if (earlier && earlier.email !== email) {
           refuse(
             index,
-            `Signaturen "${signature}" står redan på rad ${earlier.row} för en annan lärare. En signatur är unik inom läsåret.`,
+            `Signaturen "${signature}" står redan på rad ${line(earlier.row)} för en annan lärare. En signatur är unik inom läsåret.`,
           );
           continue;
         }
@@ -570,10 +603,12 @@ export class ImportService {
    * pair is a row error naming the first, because Ma 1-6 plus Ma 7-9 is written
    * as 1-9.
    */
-  async importTeacherQualifications(
-    dto: ImportTeacherQualificationsDto,
-    user: AuthenticatedUser,
-  ): Promise<ImportReport> {
+  async importTeacherQualifications(dto: ImportTeacherQualificationsDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importTeacherQualificationsByPosition(dto, user, line), line);
+  }
+
+  private async importTeacherQualificationsByPosition(dto: ImportTeacherQualificationsDto, user: AuthenticatedUser, line: FileRow): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
       const report: ImportReport & { updated: number } = {
@@ -637,7 +672,7 @@ export class ImportService {
         if (firstRow !== undefined) {
           report.errors.push({
             row: rowNumber,
-            message: `Samma lärare och ämne står redan på rad ${firstRow}. En lärare har ett årskursspann per ämne — skriv 1–9 i stället för två rader.`,
+            message: `Samma lärare och ämne står redan på rad ${line(firstRow)}. En lärare har ett årskursspann per ämne — skriv 1–9 i stället för två rader.`,
           });
           continue;
         }
@@ -706,10 +741,12 @@ export class ImportService {
    * the mentors it has given a request are told, once each, as
    * TeacherDutiesService does for one uppdrag: one catch-up for the file.
    */
-  async importTeacherDuties(
-    dto: ImportTeacherDutiesDto,
-    user: AuthenticatedUser,
-  ): Promise<ImportReport> {
+  async importTeacherDuties(dto: ImportTeacherDutiesDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importTeacherDutiesByPosition(dto, user, line), line);
+  }
+
+  private async importTeacherDutiesByPosition(dto: ImportTeacherDutiesDto, user: AuthenticatedUser, line: FileRow): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
     const writable = new Set(dto.columns ?? []);
     return this.prisma.withRls(user, async (tx) => {
@@ -807,7 +844,7 @@ export class ImportService {
         if (firstRow !== undefined) {
           report.errors.push({
             row: rowNumber,
-            message: `Samma lärare, typ och benämning står redan på rad ${firstRow}. Ett uppdrag skrivs en gång — ändra minuterna där.`,
+            message: `Samma lärare, typ och benämning står redan på rad ${line(firstRow)}. Ett uppdrag skrivs en gång — ändra minuterna där.`,
           });
           continue;
         }
@@ -916,10 +953,12 @@ export class ImportService {
     });
   }
 
-  async importStudents(
-    dto: ImportStudentsDto,
-    user: AuthenticatedUser,
-  ): Promise<ImportReport> {
+  async importStudents(dto: ImportStudentsDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importStudentsByPosition(dto, user), line);
+  }
+
+  private async importStudentsByPosition(dto: ImportStudentsDto, user: AuthenticatedUser): Promise<ImportReport> {
     requireSchoolId(user); // 403 up front, same contract as the sibling methods
     // Resolve class NAMES once, up front. Names are what a school's lists
     // contain; ids never appear in a CSV.
@@ -933,58 +972,203 @@ export class ImportService {
       groups.map((group) => [this.normalizeName(group.name), group.id]),
     );
 
+    // An empty klass cell is a pupil without a class, as the register allows
+    // and the export writes; only a class that is NAMED and missing is an
+    // error, since a misspelt class must not land a pupil outside every class.
     const rows = dto.rows.map((row, index) => {
-      const groupId = groupByName.get(this.normalizeName(row.className));
+      const className = row.className?.trim() ?? '';
+      const groupId = className === '' ? null : groupByName.get(this.normalizeName(className));
       return { ...row, index, studentGroupId: groupId };
     });
 
     const unresolved = rows.filter((row) => row.studentGroupId === undefined);
-    const resolved = rows.filter((row) => row.studentGroupId !== undefined);
+    const resolved = rows
+      .filter((row) => row.studentGroupId !== undefined)
+      .map((row) => ({ ...row, studentGroupId: row.studentGroupId ?? undefined }));
 
-    const report = await this.importPeople(resolved, 'STUDENT', user);
+    const created = new Set<number>();
+    const report = await this.importPeople(resolved, 'STUDENT', user, created);
     for (const row of unresolved) {
       report.errors.push({
         row: row.index + 1,
-        message: `Klassen "${row.className}" finns inte för det valda läsåret. Importera klasserna först.`,
+        message: `Klassen "${row.className}" finns inte för det valda läsåret. Importera klasserna först, eller lämna kolumnen klass tom.`,
       });
     }
     report.errors.sort((a, b) => a.row - b.row);
+    // Said per pupil the import CREATED without a class: the import cannot
+    // give them one later (a second upload skips them as known), so a klass
+    // column emptied by mistake has to be seen in this report, not in
+    // October. The web counts them into one sentence.
+    const classless = resolved.filter((row) => row.studentGroupId === undefined && created.has(row.index));
+    if (classless.length > 0) {
+      report.warnings = classless.map((row) => ({
+        row: row.index + 1,
+        code: STUDENT_WITHOUT_CLASS,
+        params: {},
+        message: 'Eleven skapades utan klass. Ge eleven en klass under Personer.',
+      }));
+    }
     return report;
   }
 
-  async importGroups(
+  /**
+   * The läsår's groups: classes, and — when the file has the `typ` column —
+   * teaching groups, halves of a class and groups that replace a subject.
+   *
+   * Create-only, matched by normalized name within the year, like before. A
+   * file of only namn and arskurs is the class list it always was.
+   *
+   * Two passes, so a half may stand before its class in the file: every row
+   * that is no half first, then the halves, each resolving its class by name
+   * among the year's groups and the ones this file just made. A half is made
+   * as "Dela klassen" makes one (splitLockedClass): a teaching group of the
+   * class's year, in the class's årskurs unless the row names one, with the
+   * class in halfOfId — which the database also holds (HALF_OF_NOT_A_CLASS).
+   * A subject to replace is resolved like every kind's ämne, and only a
+   * teaching group that is no half may replace one, as the groups page says.
+   */
+  async importGroups(dto: ImportGroupsDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importGroupsByPosition(dto, user), line);
+  }
+
+  private async importGroupsByPosition(dto: ImportGroupsDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const schoolId = requireSchoolId(user);
+    try {
+      return await this.importGroupRows(dto, user, schoolId);
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      rethrowPrismaError(error);
+    }
+  }
+
+  private importGroupRows(
     dto: ImportGroupsDto,
     user: AuthenticatedUser,
+    schoolId: string,
   ): Promise<ImportReport> {
-    const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
+      const isHalf = (row: (typeof dto.rows)[number]) => (row.halfOf ?? '').trim() !== '';
+      const halves = dto.rows.some(isHalf);
+      // A half's insert wakes StudentGroups_half_is_of_a_class, which holds
+      // its class FOR SHARE: the file would hold classes in its own order.
+      // So, as split does (src/common/lock-order.ts): the school's people
+      // lock, then every existing class a half names, in id order, FOR NO
+      // KEY UPDATE, which also queues this file behind a "Dela klassen" of
+      // the same class and it behind this file.
+      if (halves) await holdTheSchoolsPeople(tx, schoolId);
       const existing = await tx.studentGroup.findMany({
         where: { academicYearId: dto.academicYearId },
-        select: { name: true },
+        select: { id: true, name: true, kind: true, gradeLevel: true },
       });
-      const taken = new Set(existing.map((group) => this.normalizeName(group.name)));
+      const byName = new Map(existing.map((group) => [this.normalizeName(group.name), group]));
+      const namedClasses = new Set(
+        dto.rows.filter(isHalf).map((row) => byName.get(this.normalizeName(row.halfOf ?? ''))),
+      );
+      const classIds = [...namedClasses].flatMap((group) => (group?.kind === 'CLASS' ? [group.id] : []));
+      await lockGroups(tx, classIds, 'NO KEY UPDATE');
+      // The halves those classes have already, under the lock.
+      const splitInto = new Map<string, string[]>();
+      if (classIds.length > 0) {
+        for (const half of await tx.studentGroup.findMany({
+          where: { halfOfId: { in: classIds } },
+          select: { name: true, halfOfId: true },
+          orderBy: { name: 'asc' },
+        })) {
+          splitInto.set(half.halfOfId!, [...(splitInto.get(half.halfOfId!) ?? []), half.name]);
+        }
+      }
+      const replaces = dto.rows.some((row) => (row.replacesSubject ?? '').trim() !== '');
+      const subjects = replaces
+        ? await tx.subject.findMany({ select: { id: true, code: true, name: true } })
+        : [];
 
       const report: ImportReport = { created: 0, skipped: 0, errors: [] };
-      for (const row of dto.rows) {
+      const ordered = [
+        ...[...dto.rows.entries()].filter(([, row]) => !isHalf(row)),
+        ...[...dto.rows.entries()].filter(([, row]) => isHalf(row)),
+      ];
+      for (const [index, row] of ordered) {
+        const rowNumber = index + 1;
         const key = this.normalizeName(row.name);
-        if (taken.has(key)) {
+        if (byName.has(key)) {
           report.skipped += 1; // exists already, or duplicated within the file
           continue;
         }
-        taken.add(key);
-        await tx.studentGroup.create({
+        const kind = row.kind ?? 'CLASS';
+        const halfName = (row.halfOf ?? '').trim();
+        let halfOfId: string | null = null;
+        let gradeLevel = row.gradeLevel ?? null;
+        if (halfName !== '') {
+          const theClass = byName.get(this.normalizeName(halfName));
+          if (!theClass || theClass.kind !== 'CLASS') {
+            report.errors.push({
+              row: rowNumber,
+              message: theClass
+                ? `halvklass_av: "${halfName}" är en undervisningsgrupp. En halvklass är en halva av en klass.`
+                : `halvklass_av: klassen "${halfName}" finns inte för det valda läsåret. Skriv klassen på en egen rad i filen, eller importera klasserna först.`,
+            });
+            continue;
+          }
+          if (kind !== 'TEACHING_GROUP') {
+            report.errors.push({
+              row: rowNumber,
+              message: `typ: en halvklass är en undervisningsgrupp. Skriv "undervisningsgrupp", eller lämna halvklass_av tom.`,
+            });
+            continue;
+          }
+          // A class split already gets no more halves, as "Dela klassen"
+          // refuses it (CLASS_ALREADY_SPLIT). How many a file gives a class
+          // that has none is not judged: a school can delete one half on
+          // its own, and the export then writes the one that is left, which
+          // must read back (granskning-260-r2, N2).
+          const already = splitInto.get(theClass.id);
+          if (already) {
+            report.errors.push({
+              row: rowNumber,
+              message: `halvklass_av: klassen "${halfName}" är redan delad i ${already.join(' och ')}. En klass delas en gång, i två halvor.`,
+            });
+            continue;
+          }
+          halfOfId = theClass.id;
+          gradeLevel ??= theClass.gradeLevel;
+        }
+        let replacesSubjectId: string | null = null;
+        const replacedSubject = (row.replacesSubject ?? '').trim();
+        if (replacedSubject !== '') {
+          if (kind !== 'TEACHING_GROUP' || halfOfId !== null) {
+            report.errors.push({
+              row: rowNumber,
+              message:
+                kind !== 'TEACHING_GROUP'
+                  ? 'ersatter_amne: en klass är elevernas hemklass och ersätter inga lektioner. Gör en undervisningsgrupp, eller lämna kolumnen tom.'
+                  : 'ersatter_amne: en halvklass är en del av klassen och ersätter inga lektioner. Lämna kolumnen tom.',
+            });
+            continue;
+          }
+          const subject = this.resolveSubject(subjects, replacedSubject);
+          if ('message' in subject) {
+            report.errors.push({ row: rowNumber, message: `ersatter_amne: ${subject.message}` });
+            continue;
+          }
+          replacesSubjectId = subject.id;
+        }
+        const created = await tx.studentGroup.create({
           data: {
             schoolId,
             academicYearId: dto.academicYearId,
             name: row.name.trim(),
-            // klasser.csv is the class list; the membership file is what
-            // creates teaching groups.
-            kind: 'CLASS',
-            gradeLevel: row.gradeLevel ?? null,
+            kind,
+            gradeLevel,
+            ...(halfOfId ? { halfOfId } : {}),
+            ...(replacesSubjectId ? { replacesSubjectId } : {}),
           },
+          select: { id: true, name: true, kind: true, gradeLevel: true },
         });
+        byName.set(key, created);
         report.created += 1;
       }
+      report.errors.sort((a, b) => a.row - b.row);
       return report;
     });
   }
@@ -1006,10 +1190,12 @@ export class ImportService {
    * read once from NationalSubjects (28 rows), inside the transaction, so the
    * check costs one query however many rows the file has.
    */
-  async importSubjects(
-    dto: ImportSubjectsDto,
-    user: AuthenticatedUser,
-  ): Promise<ImportReport> {
+  async importSubjects(dto: ImportSubjectsDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importSubjectsByPosition(dto, user), line);
+  }
+
+  private async importSubjectsByPosition(dto: ImportSubjectsDto, user: AuthenticatedUser): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
       const existing = await tx.subject.findMany({ select: { name: true } });
@@ -1077,10 +1263,12 @@ export class ImportService {
    * classes these are not scoped to an academic year: a school's slöjdsal
    * outlives any single läsår.
    */
-  async importRoomTypes(
-    dto: ImportRoomTypesDto,
-    user: AuthenticatedUser,
-  ): Promise<ImportReport> {
+  async importRoomTypes(dto: ImportRoomTypesDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importRoomTypesByPosition(dto, user), line);
+  }
+
+  private async importRoomTypesByPosition(dto: ImportRoomTypesDto, user: AuthenticatedUser): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
       const existing = await tx.roomType.findMany({ select: { name: true } });
@@ -1101,10 +1289,88 @@ export class ImportService {
     });
   }
 
-  async importMemberships(
-    dto: ImportMembershipsDto,
-    user: AuthenticatedUser,
-  ): Promise<ImportReport> {
+  /**
+   * Salar, matched by normalized name so a re-upload is a no-op, like the
+   * room types and the subjects: a school's rooms are a catalogue, and a
+   * room that exists keeps what the Salar page gave it. The room type comes
+   * as a NAME and an unknown one fails the row rather than creating a room
+   * that any lesson may use — the subjects import's reason. The grade span
+   * and the building are held as RoomsService.create holds them.
+   */
+  async importRooms(dto: ImportRoomsDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importRoomsByPosition(dto, user), line);
+  }
+
+  private async importRoomsByPosition(dto: ImportRoomsDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const schoolId = requireSchoolId(user);
+    try {
+      return await this.prisma.withRls(user, async (tx) => {
+        const existing = await tx.room.findMany({ select: { name: true } });
+        const taken = new Set(existing.map((room) => this.normalizeName(room.name)));
+        const roomTypes = await tx.roomType.findMany({ select: { id: true, name: true } });
+        const roomTypeByName = new Map(roomTypes.map((type) => [this.normalizeName(type.name), type.id]));
+
+        const report: ImportReport = { created: 0, skipped: 0, errors: [] };
+        for (const [index, row] of dto.rows.entries()) {
+          const rowNumber = index + 1;
+          const key = this.normalizeName(row.name);
+          if (taken.has(key)) {
+            report.skipped += 1; // exists already, or duplicated within the file
+            continue;
+          }
+          let roomTypeId: string | null = null;
+          if (row.roomType && row.roomType.trim() !== '') {
+            const resolved = roomTypeByName.get(this.normalizeName(row.roomType));
+            if (!resolved) {
+              report.errors.push({
+                row: rowNumber,
+                message: `salstyp: "${row.roomType}" finns inte. Lägg till salstypen under Salar, eller importera salstyperna först.`,
+              });
+              continue;
+            }
+            roomTypeId = resolved;
+          }
+          const min = row.minGradeLevel ?? null;
+          const max = row.maxGradeLevel ?? null;
+          if (min !== null && max !== null && min > max) {
+            report.errors.push({
+              row: rowNumber,
+              message: `lagsta_arskurs (${min}) är högre än hogsta_arskurs (${max}).`,
+            });
+            continue;
+          }
+          taken.add(key);
+          await tx.room.create({
+            data: {
+              schoolId,
+              name: row.name.trim(),
+              code: row.code?.trim() || null,
+              capacity: row.capacity ?? null,
+              roomTypeId,
+              minGradeLevel: min,
+              maxGradeLevel: max,
+              // As RoomsService does: trimmed, and a blank is no building.
+              building: row.building?.trim() || null,
+              floor: row.floor ?? null,
+            },
+          });
+          report.created += 1;
+        }
+        return report;
+      });
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      rethrowPrismaError(error);
+    }
+  }
+
+  async importMemberships(dto: ImportMembershipsDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importMembershipsByPosition(dto, user), line);
+  }
+
+  private async importMembershipsByPosition(dto: ImportMembershipsDto, user: AuthenticatedUser): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
     try {
       return await this.importMembershipRows(dto, user, schoolId);
@@ -1290,13 +1556,15 @@ export class ImportService {
    * The staffing judge has counted a held row in file order like any other,
    * so a refused block can only have made a later row's judgement stricter.
    */
-  async importRequirements(
-    dto: ImportRequirementsDto,
-    user: AuthenticatedUser,
-  ): Promise<ImportReport> {
+  async importRequirements(dto: ImportRequirementsDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importRequirementsByPosition(dto, user, line), line);
+  }
+
+  private async importRequirementsByPosition(dto: ImportRequirementsDto, user: AuthenticatedUser, line: FileRow): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
     try {
-      return await this.importRequirementRows(dto, user, schoolId);
+      return await this.importRequirementRows(dto, user, schoolId, line);
     } catch (error) {
       // TB409 and every other refusal a write meets, mapped as the timplan
       // import maps them: a 409 naming the block, never a bare 500.
@@ -1308,6 +1576,7 @@ export class ImportService {
     dto: ImportRequirementsDto,
     user: AuthenticatedUser,
     schoolId: string,
+    line: FileRow,
   ): Promise<ImportReport> {
     return this.prisma.withRls(user, async (tx) => {
       // `updated` typed as present rather than optional: it is optional on
@@ -1509,7 +1778,7 @@ export class ImportService {
         if (firstRow !== undefined) {
           report.errors.push({
             row: rowNumber,
-            message: `Samma grupp och ämne står redan på rad ${firstRow}. Ta bort den ena raden — timplanen har en rad per grupp och ämne.`,
+            message: `Samma grupp och ämne står redan på rad ${line(firstRow)}. Ta bort den ena raden — timplanen har en rad per grupp och ämne.`,
           });
           continue;
         }
@@ -1782,7 +2051,7 @@ export class ImportService {
       }
 
       if (heldForBlock.size > 0) {
-        await writeHeldBlocks(tx, report, existing, heldForBlock, dto.academicYearId);
+        await writeHeldBlocks(tx, report, existing, heldForBlock, dto.academicYearId, line);
       }
 
       return report;
@@ -1812,6 +2081,11 @@ export class ImportService {
    * same 409.
    */
   async importTimplan(dto: ImportTimplanDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const line = fileRows(dto);
+    return inFileRows(await this.importTimplanByPosition(dto, user, line), line);
+  }
+
+  private async importTimplanByPosition(dto: ImportTimplanDto, user: AuthenticatedUser, line: FileRow): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
     try {
       return await this.prisma.withRls(user, async (tx) => {
@@ -1859,7 +2133,7 @@ export class ImportService {
           if (firstRow !== undefined) {
             report.errors.push({
               row: rowNumber,
-              message: `Samma ämne och årskurs står redan på rad ${firstRow}. Timplanen har en rad per ämne och årskurs — ta bort den ena raden.`,
+              message: `Samma ämne och årskurs står redan på rad ${line(firstRow)}. Timplanen har en rad per ämne och årskurs — ta bort den ena raden.`,
             });
             continue;
           }
@@ -1937,6 +2211,7 @@ export class ImportService {
       firstName: string;
       lastName: string;
       email: string;
+      phone?: string | null;
       index?: number;
       studentGroupId?: string;
     }>,
@@ -1964,7 +2239,7 @@ export class ImportService {
             firstName: row.firstName.trim(),
             lastName: row.lastName.trim(),
             email: row.email.trim(),
-            phone: null,
+            phone: row.phone?.trim() || null,
             studentGroupId: row.studentGroupId,
             // An import never emails anybody. Uploading a class list is
             // roster preparation, often weeks before term starts; the school

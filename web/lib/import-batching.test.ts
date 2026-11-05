@@ -116,8 +116,45 @@ describe("importCsvInBatches", () => {
     }
   });
 
+  it("sends each batch its rows' lines in the file, and takes the gateway's rows as they come back", async () => {
+    // With rowNumbers the gateway names the file's own lines, so a later
+    // batch's rows must not be shifted by its offset again.
+    post
+      .mockResolvedValueOnce({ created: 499, skipped: 0, errors: [{ row: 4, message: "a" }] })
+      .mockResolvedValueOnce({ created: 1, skipped: 0, errors: [{ row: 702, message: "b" }] });
+    const rowNumbers = Array.from({ length: 600 }, (_, i) => i + 2 + (i >= 300 ? 100 : 0));
+
+    const report = await importCsvInBatches({
+      kind: "students",
+      academicYearId: YEAR,
+      rows: Array.from({ length: 600 }, (_, i) => ({ firstName: `E${i}` })),
+      rowNumbers,
+    });
+
+    const sent = post.mock.calls.map(([, body]) => (body as { rowNumbers?: number[] }).rowNumbers);
+    expect(sent).toEqual([rowNumbers.slice(0, 500), rowNumbers.slice(500)]);
+    expect(report.errors).toEqual([
+      { row: 4, message: "a" },
+      { row: 702, message: "b" },
+    ]);
+  });
+
+  it("names a refused later batch by its first row's line in the file", async () => {
+    post.mockResolvedValueOnce({ created: 500, skipped: 0, errors: [] }).mockRejectedValueOnce(new Error("HTTP 500"));
+
+    const report = await importCsvInBatches({
+      kind: "students",
+      academicYearId: YEAR,
+      rows: Array.from({ length: 600 }, (_, i) => ({ firstName: `E${i}` })),
+      rowNumbers: Array.from({ length: 600 }, (_, i) => i + 3),
+    });
+
+    expect(report.errors).toEqual([{ row: 503, message: "HTTP 500" }]);
+  });
+
   it("mirrors the row caps the API DTOs declare", () => {
     expect(IMPORT_MAX_ROWS).toEqual({
+      rooms: 500,
       subjects: 500,
       students: 500,
       teachers: 500,

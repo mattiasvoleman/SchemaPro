@@ -65,6 +65,11 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   ImportService.importMemberships, whose pupils placed in a half are held
  *   in id order before the members are inserted, as the member trigger would
  *   otherwise hold them in the order of the file.
+ *   Steps 1 and 2: ImportService.importGroups when the file has halves. It
+ *   holds the existing classes the halves name FOR NO KEY UPDATE in id order,
+ *   as split holds its class, before it inserts any group: a half's insert
+ *   wakes the trigger that holds its class FOR SHARE, which would otherwise
+ *   take the classes in the order of the file. It holds no Users row.
  *   Step 1, and a year's groups FOR SHARE in id order as their own step 2: the
  *   rollover, the year's activation and the carry of tjänster. Each holds a
  *   year's groups and then rows of Users (the activation's pupils, a half's

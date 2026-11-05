@@ -13,7 +13,7 @@
  */
 
 import type { LessonRecurrence } from "@/lib/types";
-import { CSV_TEMPLATES, RECURRENCE_WORD, serializeCsv } from "@/lib/csv-export";
+import { CSV_TEMPLATES, RECURRENCE_WORD, activeEmails, serializeCsv } from "@/lib/csv-export";
 import { isMixed, lengthPartsOf, type LessonShape } from "@/lib/lesson-lengths";
 
 /**
@@ -50,13 +50,16 @@ export function requirementsToCsv(
   }[],
   groups: { id: string; name: string }[],
   subjects: { id: string; name: string; code: string | null }[],
-  people: { id: string; email: string }[],
+  people: { id: string; email: string; isActive?: boolean }[],
 ): string {
   const groupName = new Map(groups.map((group) => [group.id, group.name]));
   const subjectLabel = new Map(
     subjects.map((subject) => [subject.id, subject.code?.trim() || subject.name]),
   );
-  const email = new Map(people.map((person) => [person.id, person.email]));
+  // Active teachers only, as every person-bearing export: the import resolves a
+  // teacher among the active ones, so a deactivated one's row came back as
+  // "Ingen aktiv lärare …". The row is left out, as an unknown teacher's is.
+  const email = activeEmails(people);
 
   // Lektionslängder: a `lektionslangder` column, last, ONLY when some row
   // the file carries is split. A school that never splits a post gets the

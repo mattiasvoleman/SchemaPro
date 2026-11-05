@@ -10,13 +10,17 @@ import {
   mapClassRows,
   mapMembershipRows,
   mapRequirementRows,
+  mapRoomRows,
   mapRoomTypeRows,
   mapSubjectRows,
   mapStudentRows,
   mapTeacherDutyRows,
   mapTeacherQualificationRows,
   mapTeacherRows,
+  decodeCsvBytes,
+  fileProblems,
   parseCsv,
+  type CsvEncoding,
   type ImportKind,
   type ParsedCsv,
   type RowError,
@@ -60,6 +64,8 @@ const MAPPERS: Record<
   (parsed: ParsedCsv) => {
     rows: Array<Record<string, unknown>>;
     errors: RowError[];
+    /** The file row of each posted row, sent so the gateway's report names it too. */
+    rowNumbers: number[];
     /**
      * Which columns the file had. Only a kind that UPDATES needs it — for the
      * six create-only kinds an absent column cannot overwrite anything, so
@@ -73,6 +79,7 @@ const MAPPERS: Record<
   classes: mapClassRows,
   teachingGroups: mapMembershipRows,
   roomTypes: mapRoomTypeRows,
+  rooms: mapRoomRows,
   subjects: mapSubjectRows,
   requirements: mapRequirementRows,
   teacherQualifications: mapTeacherQualificationRows,
@@ -80,6 +87,29 @@ const MAPPERS: Record<
 };
 
 const PREVIEW_ROWS = 5;
+
+/**
+ * The detail the gateway answers a body its ValidationPipe refuses with
+ * (src/common/filters/http-exception.filter.ts): English, and with no row in
+ * it, since the fields it names sit in a list this client does not read. The
+ * mappers in lib/csv.ts ask the DTOs' own questions first so a file should
+ * never get here; if one does, the reader is told in their language that
+ * nothing was imported, rather than shown a sentence written for a log.
+ */
+const REFUSED_BODY = "One or more fields failed validation.";
+
+/**
+ * The warning code the students import gives a pupil it created without a
+ * class (ImportService.importStudents): counted in a sentence of its own,
+ * not listed as a tjänstefördelning warning.
+ */
+const WITHOUT_CLASS = "IMPORT_STUDENT_WITHOUT_CLASS";
+
+/** The code page's name as a reader knows it, for the sentence that says the file was not UTF-8. */
+const ENCODING_NAME: Record<Exclude<CsvEncoding, "utf-8">, string> = {
+  "windows-1252": "Windows-1252",
+  macintosh: "Mac Roman",
+};
 
 interface FilePreview {
   fileName: string;
@@ -89,8 +119,13 @@ interface FilePreview {
   /** Typed rows ready to POST (invalid rows already excluded). */
   rows: Array<Record<string, unknown>>;
   errors: RowError[];
+  rowNumbers: number[];
   /** The file's own column set, where the mapper reports one. */
   columns?: string[];
+  /** The code page a file that was not UTF-8 was read in, said above the preview. */
+  legacyEncoding: string | null;
+  /** Pupils of a students file with an empty klass cell, who are created without a class. */
+  withoutClass: number;
 }
 
 export interface CsvImportDialogProps {
@@ -169,20 +204,34 @@ export function CsvImportDialog({
   const onFileChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const parsed = parseCsv(await file.text());
+    // Bytes, not file.text(): a file saved in Excel is Windows-1252, and
+    // read as UTF-8 its å, ä and ö would be lost before parsing (decodeCsvBytes).
+    const decoded = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
+    const parsed = parseCsv(decoded.text);
     const mapped = MAPPERS[kind](parsed);
     setReport(null);
     setPreview({
       fileName: file.name,
       headers: parsed.headers,
       previewRows: parsed.rows.slice(0, PREVIEW_ROWS),
-      rows: mapped.rows,
-      errors: mapped.errors,
+      rows: decoded.problem ? [] : mapped.rows,
+      // What the file itself says is wrong comes first: until it is fixed,
+      // the rows below it are not what the school wrote.
+      errors: decoded.problem
+        ? [{ row: 0, message: decoded.problem }]
+        : [...fileProblems(parsed), ...mapped.errors],
+      rowNumbers: mapped.rowNumbers,
       ...(mapped.columns ? { columns: mapped.columns } : {}),
+      legacyEncoding:
+        decoded.problem === null && decoded.encoding !== "utf-8" ? ENCODING_NAME[decoded.encoding] : null,
+      withoutClass:
+        kind === "students" ? mapped.rows.filter((row) => row.className === null).length : 0,
     });
   };
 
   const missingYear = IMPORT_NEEDS_YEAR[kind] && targetYear === null;
+  const createdWithoutClass = (report?.warnings ?? []).filter((warning) => warning.code === WITHOUT_CLASS).length;
+  const staffingWarnings = (report?.warnings ?? []).filter((warning) => warning.code !== WITHOUT_CLASS);
 
   /**
    * The sentence an admin has to read before they draw the wrong conclusion
@@ -216,10 +265,12 @@ export function CsvImportDialog({
         ...(targetYear !== null ? { academicYearId: targetYear.id } : {}),
         ...(preview.columns ? { columns: preview.columns } : {}),
         rows: preview.rows,
+        rowNumbers: preview.rowNumbers,
       });
       setReport(result);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      const message = error instanceof Error ? error.message : tCommon("error");
+      toast.error(message === REFUSED_BODY ? t("rejectedByServer") : message);
     }
   };
 
@@ -258,10 +309,15 @@ export function CsvImportDialog({
               {report.errors.length > 0 ? (
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-destructive">{t("rowErrors")}</p>
+                  <p className="text-sm text-muted-foreground">{t("rowNumbering")}</p>
                   <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-destructive">
                     {report.errors.map((error, index) => (
                       <li key={`${error.row}-${index}`}>
-                        {t("rowError", { row: error.row, message: error.message })}
+                        {t("rowError", {
+                          row: error.row,
+                          // A later batch refused whole lands here (importCsvInBatches).
+                          message: error.message === REFUSED_BODY ? t("rejectedByServer") : error.message,
+                        })}
                       </li>
                     ))}
                   </ul>
@@ -274,11 +330,16 @@ export function CsvImportDialog({
                 list that looks like one would send the admin to fix a file
                 that landed. A refused row is in the errors above instead.
               */}
-              {report.warnings && report.warnings.length > 0 ? (
+              {createdWithoutClass > 0 ? (
+                <p className="text-sm text-foreground">
+                  {t("createdWithoutClass", { count: createdWithoutClass })}
+                </p>
+              ) : null}
+              {staffingWarnings.length > 0 ? (
                 <div className="space-y-1">
                   <p className="text-sm font-medium">{t("rowWarnings")}</p>
                   <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
-                    {report.warnings.map((warning, index) => (
+                    {staffingWarnings.map((warning, index) => (
                       <li key={`${warning.row}-${index}`}>
                         {t("rowError", {
                           row: warning.row,
@@ -362,12 +423,23 @@ export function CsvImportDialog({
                       <p className="text-sm font-medium text-destructive">
                         {t("mappingErrors")}
                       </p>
+                      <p className="text-sm text-muted-foreground">{t("rowNumbering")}</p>
                       <ul className="max-h-40 space-y-1 overflow-y-auto text-sm text-destructive">
                         {preview.errors.map((error, index) => (
                           <li key={`${error.row}-${index}`}>{error.message}</li>
                         ))}
                       </ul>
                     </div>
+                  ) : null}
+                  {preview.legacyEncoding ? (
+                    <p className="text-sm text-muted-foreground">
+                      {t("readAs", { encoding: preview.legacyEncoding })}
+                    </p>
+                  ) : null}
+                  {preview.withoutClass > 0 ? (
+                    <p className="text-sm text-foreground">
+                      {t("withoutClass", { count: preview.withoutClass })}
+                    </p>
                   ) : null}
                   {preview.previewRows.length > 0 ? (
                     <div className="max-h-56 overflow-auto rounded-md border">
