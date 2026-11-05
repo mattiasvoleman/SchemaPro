@@ -6826,6 +6826,7 @@
       }
     },
     "export": {
+      "notesTitle": "How the file was written",
       "title": "Export",
       "description": "Download the timetable in the format the other system reads.",
       "summary": "{count, plural, one {# lesson} other {# lessons}} in {year}; {parked, plural, =0 {none on the tray} one {# on the tray is left out} other {# on the tray are left out}}.",
@@ -6879,7 +6880,8 @@
         "REQ_TEACHERS_DIFFER": "{post}: the lessons have different teachers ({teachers}). The post gets the most common one; assign the others as shared lessons.",
         "REQ_DIFFERS_FROM_POST": "{post}: the timplan post says {post_shape} minutes, the timetable's lessons are {lessons}. The post was not changed.",
         "REQ_CO_TEACHERS_DIFFER": "{post}: a co-teacher is not on every lesson. The post got no co-teacher.",
-        "BLOCK_MEMBERS_DIFFER": "Block {block}: the posts' lessons and weeks do not agree, so the posts were made without the block."
+        "BLOCK_MEMBERS_DIFFER": "Block {block}: the posts' lessons and weeks do not agree, so the posts were made without the block.",
+        "TEACHER_NO_LONGER_ACTIVE": "{teacher} is no longer active but still has the lesson at {ref}. It is left as it is."
       },
       "posts": "{count, plural, one {# timplan post is created} other {# timplan posts are created}}",
       "postsHint": "Derived from the lessons. A timplan post that already exists is not changed.",
@@ -6922,7 +6924,8 @@
       "CLASH_TEACHER": "The teacher is already busy: {with}.",
       "CLASH_ROOM": "The room is already booked: {with}.",
       "CLASH_GROUP": "The class or group (or pupils in it) is already busy: {with}.",
-      "CLASH_AVAILABILITY": "The time is marked unavailable for the teacher, the room or the group."
+      "CLASH_AVAILABILITY": "The time is marked unavailable for the teacher, the room or the group.",
+      "BAD_BLOCK_NAME": "The block name cannot be used: it may be at most {max} characters (it is {length}) and must not look like a personal identity number."
     },
     "loadFailed": "The data could not be loaded",
     "loadFailedHint": "Nothing has changed."

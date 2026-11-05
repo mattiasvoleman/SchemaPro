@@ -55,6 +55,7 @@ export default function ScheduleExchangePage() {
   const [plan, setPlan] = useState<ImportPlanDto | null>(null);
   const [result, setResult] = useState<ImportResultDto | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [exportNotes, setExportNotes] = useState<string[]>([]);
 
   const summary = useQuery({
     queryKey: KEYS.summary(yearId ?? ""),
@@ -64,11 +65,15 @@ export default function ScheduleExchangePage() {
 
   const exportFile = useMutation({
     mutationFn: (chosen: ExchangeFormat) =>
-      api.post<{ filename: string; contentType: string; contentBase64: string }>("/api/v1/schedule-exchange/export", {
+      api.post<{ filename: string; contentType: string; contentBase64: string; notes?: string[] }>("/api/v1/schedule-exchange/export", {
         academicYearId: yearId,
         format: chosen,
       }),
-    onSuccess: (file) => saveBase64(file.filename, file.contentType, file.contentBase64),
+    onMutate: () => setExportNotes([]),
+    onSuccess: (file) => {
+      saveBase64(file.filename, file.contentType, file.contentBase64);
+      setExportNotes(file.notes ?? []);
+    },
     onError: () => toast.error(t("export.failed")),
   });
 
@@ -163,6 +168,15 @@ export default function ScheduleExchangePage() {
             </p>
             {s.teachersWithoutSignature > 0 ? (
               <Notice tone="warning">{t("export.noSignature", { count: s.teachersWithoutSignature })}</Notice>
+            ) : null}
+            {exportNotes.length > 0 ? (
+              <Notice tone="warning" title={t("export.notesTitle")}>
+                <ul className="list-disc pl-5">
+                  {exportNotes.map((note, i) => (
+                    <li key={i}>{note}</li>
+                  ))}
+                </ul>
+              </Notice>
             ) : null}
             <ul className="grid gap-3 sm:grid-cols-2">
               {EXCHANGE_FORMATS.map((id) => (

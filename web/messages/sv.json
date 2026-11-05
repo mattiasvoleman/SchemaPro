@@ -6826,6 +6826,7 @@
       }
     },
     "export": {
+      "notesTitle": "Så skrevs filen",
       "title": "Exportera",
       "description": "Hämta schemat i det format som det andra systemet läser.",
       "summary": "{count, plural, one {# lektion} other {# lektioner}} i läsåret {year}; {parked, plural, =0 {inga på brickan} one {# på brickan lämnas utanför} other {# på brickan lämnas utanför}}.",
@@ -6879,7 +6880,8 @@
         "REQ_TEACHERS_DIFFER": "{post}: lektionerna har olika lärare ({teachers}). Posten får den vanligaste; fördela de andra som delade lektioner.",
         "REQ_DIFFERS_FROM_POST": "{post}: timplansposten säger {post_shape} minuter, schemats lektioner är {lessons}. Posten ändrades inte.",
         "REQ_CO_TEACHERS_DIFFER": "{post}: medlärare finns inte på alla lektioner. Posten fick ingen medlärare.",
-        "BLOCK_MEMBERS_DIFFER": "Blocket {block}: posternas lektioner och veckor stämmer inte överens, så posterna lades utan block."
+        "BLOCK_MEMBERS_DIFFER": "Blocket {block}: posternas lektioner och veckor stämmer inte överens, så posterna lades utan block.",
+        "TEACHER_NO_LONGER_ACTIVE": "Läraren {teacher} är inte längre aktiv men har kvar lektionen på {ref}. Den lämnas som den är."
       },
       "posts": "{count, plural, one {# timplanspost skapas} other {# timplansposter skapas}}",
       "postsHint": "Härledda ur lektionerna. En timplanspost som redan finns ändras inte.",
@@ -6922,7 +6924,8 @@
       "CLASH_TEACHER": "Läraren är redan upptagen: {with}.",
       "CLASH_ROOM": "Salen är redan bokad: {with}.",
       "CLASH_GROUP": "Klassen eller gruppen (eller elever i den) är redan upptagen: {with}.",
-      "CLASH_AVAILABILITY": "Tiden är markerad som otillgänglig för läraren, salen eller gruppen."
+      "CLASH_AVAILABILITY": "Tiden är markerad som otillgänglig för läraren, salen eller gruppen.",
+      "BAD_BLOCK_NAME": "Blocknamnet går inte att använda: det får vara högst {max} tecken (det är {length}) och får inte likna ett personnummer."
     },
     "loadFailed": "Uppgifterna kunde inte hämtas",
     "loadFailedHint": "Inget har ändrats."

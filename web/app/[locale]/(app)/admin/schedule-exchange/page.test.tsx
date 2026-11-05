@@ -108,6 +108,20 @@ describe("Schema som fil: export", () => {
     await waitFor(() => expect(saveBase64).toHaveBeenCalledWith("rastra-schema-2026-2027.csv", "text/csv", "QQ=="));
   });
 
+  it("shows what the writer changed on the way out, and clears it when the next file is made", async () => {
+    post.mockResolvedValueOnce({ filename: "a-untis.zip", contentType: "application/zip", contentBase64: "QQ==", notes: ["Signaturen ”A,B” skrevs som ”A B”."] });
+    post.mockResolvedValueOnce({ filename: "a.csv", contentType: "text/csv", contentBase64: "QQ==", notes: [] });
+    renderPage();
+    expect(await screen.findByText(/export.summary/)).toBeInTheDocument();
+    const user = userEvent.setup();
+    const item = (id: string) => screen.getAllByText(`formats.${id}.name`).find((node) => node.tagName === "P")!.closest("li")!;
+    await user.click(within(item("UNTIS_GPU")).getByRole("button", { name: "export.download" }));
+    expect(await screen.findByText("Signaturen ”A,B” skrevs som ”A B”.")).toBeInTheDocument();
+    expect(screen.getByText("export.notesTitle")).toBeInTheDocument();
+    await user.click(within(item("TABLE_CSV")).getByRole("button", { name: "export.download" }));
+    await waitFor(() => expect(screen.queryByText("export.notesTitle")).not.toBeInTheDocument());
+  });
+
   it("warns about teachers with no signature, and offers nothing to export from an empty year", async () => {
     get.mockResolvedValue({ ...SUMMARY, lessons: 0, teachersWithoutSignature: 2 });
     renderPage();

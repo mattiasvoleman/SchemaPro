@@ -6822,7 +6822,8 @@
     <li><strong>Allt eller inget.</strong> Varje rad som inte går att placera
       nämns vid namn med skälet, och så länge någon rad är vägrad skrivs
       ingenting alls. Skälen: klassen, gruppen, ämnet, läraren eller salen
-      finns inte (eller kan vara flera); läraren är inte aktiv; läraren, salen
+      finns inte (eller kan vara flera); läraren är inte aktiv (för en ny
+      lektion, se nedan); blocknamnet är längre än 80 tecken; läraren, salen
       eller klassen är upptagen samtidigt (samma kontroll som när du flyttar en
       lektion för hand); lektionen ligger utanför ramtiden (4.4), över en rast
       (4.5) eller över gruppens lunch, eller lämnar klassen utan lediga
@@ -6834,7 +6835,12 @@
       skolan samma lektion med annan sal, lärare eller tid vägras raden och
       säger vad som skiljer; ändra eller ta bort lektionen i schemat först.
       Lektioner i skolan som inte står i filen rörs inte och räknas i
-      förhandsvisningen.</li>
+      förhandsvisningen. En lektion som skolan har kvar hos en lärare som
+      slutat är fortfarande <em>Finns redan</em>, med en varning om att
+      läraren inte längre är aktiv; en <em>ny</em> lektion med en inaktiv
+      lärare vägras. Trycker två personer <span class="ui">Skriv in</span> på
+      samma fil samtidigt skrivs den en gång: den andra får veta att schemat
+      har ändrats och förhandsgranskar igen.</li>
     <li><strong>Lektionerna blir låsta</strong> och hör inte till Generera, så
       en ny körning lägger det som återstår runt dem (5.2).</li>
     <li><strong>Timplansposterna härleds.</strong> För varje klass och ämne som
@@ -6846,17 +6852,23 @@
       Har lektionerna olika veckomönster eller perioder, fler än tre olika
       längder eller olika lärare härleds ingen post eller bara den vanligaste
       läraren, och förhandsvisningen säger det.</li>
-    <li><strong>Inga personnummer.</strong> En kolumn som heter personnummer,
-      samordningsnummer eller liknande läses inte, sparas inte och visas inte;
-      förhandsvisningen säger att kolumnen hoppades över. Rastra Schema
-      behöver bara signatur, klass och gruppnamn.</li>
+    <li><strong>Inga personnummer.</strong> Rastra Schema tar inte emot
+      personnummer, inte ens som kontrollsumma. En kolumn som heter
+      personnummer, samordningsnummer eller liknande läses inte, sparas inte
+      och visas inte; förhandsvisningen säger att kolumnen hoppades över. Står
+      något som <em>ser ut</em> som ett personnummer eller samordningsnummer
+      (hela eller inne i en längre text, med eller utan streck) i en kolumn
+      som <em>läses</em>, till exempel i <em>Lärare</em> eller <em>Block</em>,
+      läses den raden inte alls: förhandsvisningen säger vilken rad och vilken
+      kolumn, men återger aldrig numret. Rastra Schema behöver bara signatur,
+      klass och gruppnamn.</li>
   </ul>
 
   <h4>Det här kan de fyra formaten, och inte</h4>
   <table>
     <thead><tr><th style="width:24%">Format</th><th>Så är det valt, och det filen inte bär</th></tr></thead>
     <tbody>
-      <tr><td class="k">Tabell</td><td>Bär allt ovan. Rubrikraden hittas var den än står i filen, rubrikerna får vara svenska eller engelska och i valfri ordning, och en Excel-fil som sparats i Excel läses också (datum och tider som Excel gjort till tal blir text igen). En CSV som inte är UTF-8 läses som windows-1252.</td></tr>
+      <tr><td class="k">Tabell</td><td>Bär allt ovan. Rubrikraden hittas var den än står i filen, rubrikerna får vara svenska eller engelska och i valfri ordning, och en Excel-fil som sparats i Excel läses också (datum och tider som Excel gjort till tal blir text igen). En CSV som inte är UTF-8 läses som windows-1252 (Excel för Windows) eller Mac Roman (Excel för Mac), efter vilken som har flest å, ä och ö bland tecknen över 127; förhandsvisningen säger vilken som lästes.</td></tr>
       <tr><td class="k">Untis</td><td>A- och B-vecka står i GPU002 i fältet <em>Gruppe</em> som <em>A-vecka</em> och <em>B-vecka</em>, perioder (termin) som från- och till-datum i GPU002. Bär inte block, lärarnas namn och e-post, eller ämneskod. En fil från Untis har bara periodnummer och inga tider: skriv då skolans tidsraster i rutan som visas, en period per rad (<em>1 08:10-09:10</em>), och Rastra Schema gissar aldrig en tid. Att Untis själv läser filen härifrån har inte prövats i ett riktigt Untis.</td></tr>
       <tr><td class="k">aSc Timetables</td><td>A- och B-vecka blir en veckodefinition, en period (termin) ett terminsnamn med datumen (<em>2026-08-17–2026-12-18</em>) som bara Rastra Schema läser som datum; i aSc ser det ut som ett namngivet block. aSc veckor är lägen i en rotation och inte veckonummer: A läses som udda veckor, och det sägs i förhandsvisningen. Bär inte block. aSc:s egen import har inte prövats; försök med en licensierad aSc innan skolan får veta att aSc placerar lektionerna.</td></tr>
     </tbody>
