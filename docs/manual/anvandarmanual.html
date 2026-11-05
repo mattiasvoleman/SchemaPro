@@ -70,6 +70,7 @@
       <li><span>7.4 Dataskydd och gallring</span><span class="dots"></span><span class="pg" data-pg="s74"></span></li>
       <li><span>7.5 Logga in med skolkonto</span><span class="dots"></span><span class="pg" data-pg="s75"></span></li>
       <li><span>7.6 Kalenderprenumeration</span><span class="dots"></span><span class="pg" data-pg="s76"></span></li>
+      <li><span>7.7 Schema som fil: tabell, Untis och aSc</span><span class="dots"></span><span class="pg" data-pg="s77"></span></li>
     </ol>
     <li><span>8 · Årscykel</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
     <ol>
@@ -6741,6 +6742,136 @@
       som Google hämtar adressen själva några gånger om dygnet, så en ändring
       kan dröja innan den syns där. En vårdnadshavares prenumeration skrivs i
       läsloggen (7.4) en gång per dag som kalendern hämtar barnets schema.
+    </p>
+  </div>
+
+  <h3 id="s77"><span class="num">7.7</span>Schema som fil: tabell, Untis och aSc</h3>
+  <p>
+    Grundschemat kan lämna Rastra Schema som en tabell (CSV eller Excel) eller
+    som filer för Untis och aSc Timetables, och en fil i samma format kan läsas
+    in igen som <strong>låsta lektioner</strong>. Det är vägen för en skola
+    som flyttar hit från ett annat schemaprogram, för en som vill räkna på
+    schemat i Excel, och för en som lämnar schemat till ett system som läser
+    de formaten. Sidan heter <span class="path">Schemaläggning › Schema som
+    fil</span>. <strong>Hämta</strong> och <strong>Förhandsgranska</strong>
+    kan alla administratörer, också läsaren; <strong>Skriv in</strong> kräver
+    att du ändrar både Schemaläggning och Planering, alltså rektor, en
+    fullständig administratör eller en schemaläggare (2.2).
+  </p>
+
+  <h4>Exportera</h4>
+  <p>
+    Filen innehåller <strong>grundschemat</strong>: det som Generera skriver
+    och det du publicerar (5.6). I en skola som publicerar via utkast är det
+    utkastet (5.7), och sidan säger vilket. Det är grundschemat och inte det
+    publicerade veckoschemat, eftersom det är det enda lagret som en import kan
+    skriva, så att en fil kan gå ut och komma tillbaka, och för att det är en
+    veckomall med veckomönster och perioder, där det publicerade schemat är
+    daterade dagar med vikarier och inställda lektioner. Det publicerade
+    schemat lämnar redan som Schemavisaren, kalenderfiler och utskrift (7.1,
+    7.6, 5.8). Lektioner på brickan (5.3) följer inte med: de upptar ingen tid.
+    Filen nämner lärarna med namn och e-postadress, så en export skrivs i
+    läsloggen som en läsning av personuppgifter (7.4).
+  </p>
+  <table>
+    <thead><tr><th style="width:24%">Format</th><th>Det här får du</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Tabell, CSV</td><td>En rad per lektion, semikolonavgränsad i UTF-8 med rubrikrad. Excel öppnar den. Det är formatet som läser sig själv: det bär också id:n och blocknamn.</td></tr>
+      <tr><td class="k">Tabell, Excel</td><td>Samma tabell som en .xlsx-fil med rubrikraden fryst. Alla celler är text, så tider, datum och signaturer som <em>007</em> ändras inte av Excel.</td></tr>
+      <tr><td class="k">Untis, GPU-filer</td><td>GPU001 (schemat) och GPU002 (lektionerna) i en zip. Tiden står i GPU001 i minuter: Untis skriver ingen fil med sitt tidsraster, så en fil härifrån är självbärande men läses inte av verktyg som väntar sig periodnummer.</td></tr>
+      <tr><td class="k">aSc Timetables, XML</td><td>En XML-fil med klasser, grupper, lärare, salar, lektioner och kort. Tidsrastret görs av lektionernas tider.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Tabellens kolumner är <span class="ui">Lektions-id</span>,
+    <span class="ui">Klass/grupp</span>, <span class="ui">Grupp-id</span>,
+    <span class="ui">Ytterligare klasser</span>,
+    <span class="ui">Ytterligare klass-id</span>, <span class="ui">Ämne</span>,
+    <span class="ui">Ämneskod</span>, <span class="ui">Ämnes-id</span>,
+    <span class="ui">Lärare</span> (signaturen), <span class="ui">Lärarnamn</span>,
+    <span class="ui">Lärare e-post</span>, <span class="ui">Lärar-id</span>,
+    samma fyra för <span class="ui">Medlärare</span>, <span class="ui">Sal</span>,
+    <span class="ui">Sal-id</span>, <span class="ui">Dag</span>,
+    <span class="ui">Start</span>, <span class="ui">Slut</span>,
+    <span class="ui">Längd</span>, <span class="ui">Period</span>,
+    <span class="ui">Från</span>, <span class="ui">Till</span>,
+    <span class="ui">Veckomönster</span> (<em>A</em> är udda veckor,
+    <em>B</em> jämna, tomt varje vecka), <span class="ui">Block</span> och
+    <span class="ui">Låst</span>. En lärare utan signatur får en förkortning som
+    görs av namnet; sidan säger hur många det gäller. Förkortningen känns inte
+    igen vid import från Untis- och aSc-filerna, så lägg in signaturerna under
+    <span class="path">Planering › Tjänstefördelning</span> först om filen ska
+    tillbaka hit.
+  </p>
+
+  <h4>Importera</h4>
+  <p>
+    Välj filen (för Untis GPU001 och GPU002, eller en zip), kontrollera
+    formatet och tryck <span class="ui">Förhandsgranska</span>. <strong>Inget
+    skrivs förrän du har läst förhandsvisningen och trycker
+    <span class="ui">Skriv in</span></strong>, och bara om skolan och filen är
+    som förhandsvisningen visade: har något ändrats emellan säger Rastra
+    Schema det och du förhandsgranskar igen.
+  </p>
+  <ul>
+    <li><strong>Hur raderna hittar sina saker.</strong> En klass eller grupp
+      på <em>namn</em>, ett ämne på ämneskod eller namn, en lärare på
+      <em>signatur eller e-postadress</em>, en sal på namn. Stavningen får
+      skilja i versaler och mellanslag, inte mer. En id-cell i tabellen gäller
+      bara om namnet i raden hör till samma sak; annars vägras raden.</li>
+    <li><strong>Allt eller inget.</strong> Varje rad som inte går att placera
+      nämns vid namn med skälet, och så länge någon rad är vägrad skrivs
+      ingenting alls. Skälen: klassen, gruppen, ämnet, läraren eller salen
+      finns inte (eller kan vara flera); läraren är inte aktiv; läraren, salen
+      eller klassen är upptagen samtidigt (samma kontroll som när du flyttar en
+      lektion för hand); lektionen ligger utanför ramtiden (4.4), över en rast
+      (4.5) eller över gruppens lunch, eller lämnar klassen utan lediga
+      minuter för lunchen; tiden är inte på femminutersrastret, dagen är inte
+      måndag till fredag, perioden ligger utanför läsåret; raden finns två
+      gånger.</li>
+    <li><strong>Importen ändrar aldrig en lektion som finns.</strong> En rad
+      som är precis en befintlig lektion står som <em>Finns redan</em>. Har
+      skolan samma lektion med annan sal, lärare eller tid vägras raden och
+      säger vad som skiljer; ändra eller ta bort lektionen i schemat först.
+      Lektioner i skolan som inte står i filen rörs inte och räknas i
+      förhandsvisningen.</li>
+    <li><strong>Lektionerna blir låsta</strong> och hör inte till Generera, så
+      en ny körning lägger det som återstår runt dem (5.2).</li>
+    <li><strong>Timplansposterna härleds.</strong> För varje klass och ämne som
+      filen rör skapas en timplanspost av lektionerna: hur många i veckan, hur
+      långa (<em>1 × 80 + 1 × 40</em> om de skiljer), läraren och medläraren,
+      veckomönstret och perioden, och blocket om kolumnen <em>Block</em> nämner
+      ett och posternas lektioner och veckor stämmer. En post som redan finns
+      ändras aldrig; skiljer den sig från lektionerna står det som en varning.
+      Har lektionerna olika veckomönster eller perioder, fler än tre olika
+      längder eller olika lärare härleds ingen post eller bara den vanligaste
+      läraren, och förhandsvisningen säger det.</li>
+    <li><strong>Inga personnummer.</strong> En kolumn som heter personnummer,
+      samordningsnummer eller liknande läses inte, sparas inte och visas inte;
+      förhandsvisningen säger att kolumnen hoppades över. Rastra Schema
+      behöver bara signatur, klass och gruppnamn.</li>
+  </ul>
+
+  <h4>Det här kan de fyra formaten, och inte</h4>
+  <table>
+    <thead><tr><th style="width:24%">Format</th><th>Så är det valt, och det filen inte bär</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Tabell</td><td>Bär allt ovan. Rubrikraden hittas var den än står i filen, rubrikerna får vara svenska eller engelska och i valfri ordning, och en Excel-fil som sparats i Excel läses också (datum och tider som Excel gjort till tal blir text igen). En CSV som inte är UTF-8 läses som windows-1252.</td></tr>
+      <tr><td class="k">Untis</td><td>A- och B-vecka står i GPU002 i fältet <em>Gruppe</em> som <em>A-vecka</em> och <em>B-vecka</em>, perioder (termin) som från- och till-datum i GPU002. Bär inte block, lärarnas namn och e-post, eller ämneskod. En fil från Untis har bara periodnummer och inga tider: skriv då skolans tidsraster i rutan som visas, en period per rad (<em>1 08:10-09:10</em>), och Rastra Schema gissar aldrig en tid. Att Untis själv läser filen härifrån har inte prövats i ett riktigt Untis.</td></tr>
+      <tr><td class="k">aSc Timetables</td><td>A- och B-vecka blir en veckodefinition, en period (termin) ett terminsnamn med datumen (<em>2026-08-17–2026-12-18</em>) som bara Rastra Schema läser som datum; i aSc ser det ut som ett namngivet block. aSc veckor är lägen i en rotation och inte veckonummer: A läses som udda veckor, och det sägs i förhandsvisningen. Bär inte block. aSc:s egen import har inte prövats; försök med en licensierad aSc innan skolan får veta att aSc placerar lektionerna.</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <span class="label">Storlek och det som saknas</span>
+    <p>
+      En fil får vara högst cirka 700 kB (omkring 2 500 lektioner) och en
+      import högst 5 000 lektioner. Skolans <em>egna</em> filer från Skola24
+      läser Rastra Schema inte ännu: de saknar öppen beskrivning. Delade
+      lektioner (flera lärare på en post) härleds inte; tjänstefördelningens
+      varna- eller vägra-regler (4.3) körs inte för de poster importen gör, så
+      se över dem under <span class="path">Tjänstefördelning</span> efteråt.
+      Lunchkontrollen gäller klasser och deras egna lektioner; en
+      undervisningsgrupps lektioner tar elever från klassen utan att räknas.
     </p>
   </div>
 </section>
