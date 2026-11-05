@@ -55,6 +55,7 @@ import { SitesModule } from '../../src/sites/sites.module';
 import { SharingModule } from '../../src/sharing/sharing.module';
 import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
 import { SupervisionModule } from '../../src/supervision/supervision.module';
+import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
 import { HuvudmanModule } from '../../src/huvudman/huvudman.module';
@@ -176,6 +177,8 @@ export const FEATURE_MODULES = [
   // Without JobsModule: GallringJob takes the runner as @Optional and
   // registers nothing, so the controller is routed and no timer starts.
   GallringModule,
+  // Frånvarobevakning's job is @Optional on the runner too, and the setup turns it off.
+  AbsenceWatchModule,
   SignInModule,
   HuvudmanModule,
   AccessLogModule,

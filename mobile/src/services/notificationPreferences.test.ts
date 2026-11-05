@@ -41,6 +41,8 @@ describe('notification preferences', () => {
   it('names a type this build does not know as another notice, never by its key', () => {
     const t = translatorFor('sv');
     expect(preferenceLabel(t, 'SUPERVISION_COVER', true)).toBe('Rastvaktspass som vikarie');
+    expect(preferenceLabel(t, 'ABSENCE_WATCH_DIGEST', true)).toBe('Frånvarosammanställning');
+    expect(preferenceLabel(translatorFor('en'), 'ABSENCE_WATCH_DIGEST', true)).toBe('Absence summary');
     expect(preferenceLabel(t, 'LESSON_SUBSTITUTE', true)).toBe('Vikarier på mina lektioner');
     expect(preferenceLabel(t, 'FROM_A_NEWER_GATEWAY', false)).toBe('Andra notiser');
     expect(preferenceLabel(translatorFor('en'), 'FROM_A_NEWER_GATEWAY', false)).toBe('Other notifications');

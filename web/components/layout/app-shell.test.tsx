@@ -212,6 +212,8 @@ describe("AppShell navigation", () => {
     expect(link("nav.myCover")).toHaveAttribute("href", "/teacher/franvaro");
     // The mentor's leave inbox (20261023091000), whether or not the school delegates.
     expect(link("nav.myLeave")).toHaveAttribute("href", "/teacher/ledighet");
+    // Frånvarobevakning: the mentor's pupils over a limit, in the menu always.
+    expect(link("nav.absenceWatch")).toHaveAttribute("href", "/teacher/absence-watch");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
@@ -219,7 +221,7 @@ describe("AppShell navigation", () => {
     expect(screen.queryByRole("link", { name: "nav.leaveRequests" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
     // Counted inside the nav: the skip link is a link too, and not an entry.
-    expect(navLinks()).toHaveLength(8);
+    expect(navLinks()).toHaveLength(9);
 
   });
 
@@ -233,13 +235,15 @@ describe("AppShell navigation", () => {
     expect(navLinks()).toHaveLength(3);
   });
 
-  it("guardian gets a single my-children link", () => {
+  it("guardian gets the my-children link, the absence watch and the calendar feed", () => {
     navState.pathname = "/guardian";
     renderShell({ role: "GUARDIAN" });
 
     expect(link("nav.myChildren")).toHaveAttribute("href", "/guardian");
+    // Frånvarobevakning: the children over a limit, in the menu always.
+    expect(link("nav.absenceWatch")).toHaveAttribute("href", "/guardian/absence-watch");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
-    expect(navLinks()).toHaveLength(2);
+    expect(navLinks()).toHaveLength(3);
   });
 
   it("groups the admin menu by the manual's four phases, Dataskydd and Integrationer last and unlabelled", () => {
@@ -286,6 +290,7 @@ describe("AppShell navigation", () => {
       "nav.leaveRequests",
       "nav.roomBookings",
       "nav.reports",
+      "nav.absenceWatch",
       "nav.classBook",
     ]);
 
@@ -421,6 +426,7 @@ describe("AppShell mobile drawer", () => {
     const drawer = screen.getByRole("dialog");
     const close = within(drawer).getByRole("button", { name: "common.close" });
     const children = within(drawer).getByRole("link", { name: "nav.myChildren" });
+    const watch = within(drawer).getByRole("link", { name: "nav.absenceWatch" });
     const feed = within(drawer).getByRole("link", { name: "nav.calendarFeed" });
     // Below the menu, the tillgänglighetsredogörelse: the drawer's last stop.
     const statement = within(drawer).getByRole("link", { name: "accessibilityStatement.link" });
@@ -428,6 +434,8 @@ describe("AppShell mobile drawer", () => {
 
     await user.tab();
     expect(children).toHaveFocus();
+    await user.tab();
+    expect(watch).toHaveFocus();
     await user.tab();
     expect(feed).toHaveFocus();
     await user.tab();
