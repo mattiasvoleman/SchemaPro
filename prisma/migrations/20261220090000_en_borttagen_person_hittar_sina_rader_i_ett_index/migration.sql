@@ -7,11 +7,14 @@
 -- with. The lookup is an equality on the key's columns, once for each person
 -- removed. Over 3 million attendance marks the gateway's bulk removal of 500
 -- pupils ran out its 60 s (409 BULK_TIMED_OUT, nothing removed); with these
--- indexes the same removal took 3.3 s. Over 1.5 million marks, 150 pupils
--- took 14.2 s and then 0.8 s, and 500 took 33.6 s and then 2 to 5 s (five
--- runs, on a host under load; the rest is the pupils' own marks going with
--- them). The other tables of that fixture are nearly empty, so the time was
--- the AttendanceRecords key's.
+-- indexes the same removal went through in 3 to 10 s: 3.3 s on Postgres 16,
+-- where it was first measured, and 7.8 to 10.1 s alone (9.0 s beside the run
+-- without them) on Postgres 17 over a heavier fixture (120 000 lessons, every
+-- mark naming a recorder), where a review measured it again; both on a host
+-- under load. Over 1.5 million marks, 150 pupils took 14.2 s and then 0.8 s,
+-- and 500 took 33.6 s and then 2 to 5 s (five runs; the rest is the pupils'
+-- own marks going with them). The other tables of that fixture are nearly
+-- empty, so the time was the AttendanceRecords key's.
 --
 -- The list is read from the catalogue, not from the schema: every foreign key
 -- into Users or HuvudmanMembers (the two tables that hold people) that no
@@ -88,10 +91,11 @@
 -- whatever it got and it tries again 50 ms later. The migration never waits
 -- while it holds a lock, and no request queues behind it; once it has them
 -- all it builds the indexes without waiting for anything a request holds.
--- After 30 s of refusals it stops with nothing done and can be rerun (prisma
--- migrate resolve --rolled-back, then deploy). lock_timeout bounds any wait
--- nobody foresaw. SHARE is the mode CREATE INDEX takes: it lets reads through
--- and holds writes for the build.
+-- After 30 s of refusals it stops with nothing done, but Prisma will not run
+-- the file again (P3009) until the failed run is marked rolled back, so the
+-- message says so: prisma migrate resolve --rolled-back <this migration>, then
+-- deploy. lock_timeout bounds any wait nobody foresaw. SHARE is the mode
+-- CREATE INDEX takes: it lets reads through and holds writes for the build.
 --
 -- No IF NOT EXISTS, as no index of this repository has one: an index of one of
 -- these names that was not made here is something to look at, and a failure
@@ -113,7 +117,7 @@ BEGIN
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'The tables the indexes are built on were not free at once in 30 s: nothing is changed, run the migration again';
+        RAISE EXCEPTION 'The tables the indexes are built on were not free at once in 30 s: nothing is changed. Mark this migration rolled back (prisma migrate resolve --rolled-back 20261220090000_en_borttagen_person_hittar_sina_rader_i_ett_index) and run prisma migrate deploy again';
       END IF;
       PERFORM pg_sleep(0.05);
     END;
