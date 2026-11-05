@@ -129,8 +129,8 @@ describe('renderExport and readUpload', () => {
 
 describe('decodeText, fileStem and parsePeriods', () => {
   it('reads UTF-8 with or without a mark, else windows-1252', () => {
-    expect(decodeText(Buffer.from('åäö', 'utf8'))).toEqual({ text: 'åäö', legacyEncoding: false, encoding: 'utf-8' });
-    expect(decodeText(Buffer.from('åäö', 'latin1'))).toEqual({ text: 'åäö', legacyEncoding: true, encoding: 'windows-1252' });
+    expect(decodeText(Buffer.from('åäö', 'utf8'))).toEqual({ text: 'åäö', legacyEncoding: false, encoding: 'utf-8', lossy: false });
+    expect(decodeText(Buffer.from('åäö', 'latin1'))).toEqual({ text: 'åäö', legacyEncoding: true, encoding: 'windows-1252', lossy: false });
   });
 
   describe('a file that is not UTF-8 (M3 of the review)', () => {
@@ -141,20 +141,20 @@ describe('decodeText, fileStem and parsePeriods', () => {
 
     it('reads Mac Roman, which Excel for Mac writes, by the Swedish letters in it', () => {
       const text = 'Klass/grupp;Ämne;Lärare\r\n7Å;Matematik;Östen\r\n';
-      expect(decodeText(encode(text, MAC))).toEqual({ text, legacyEncoding: true, encoding: 'macintosh' });
+      expect(decodeText(encode(text, MAC))).toEqual({ text, legacyEncoding: true, encoding: 'macintosh', lossy: false });
     });
 
     it('reads windows-1252 as ever, also when the file is written with a Mac’s kind of dash and quotes', () => {
       const text = 'Klass/grupp;Ämne\r\n7Å;Matematik – “Östen”\r\n';
-      expect(decodeText(encode(text, WIN))).toEqual({ text, legacyEncoding: true, encoding: 'windows-1252' });
+      expect(decodeText(encode(text, WIN))).toEqual({ text, legacyEncoding: true, encoding: 'windows-1252', lossy: false });
     });
 
-    it('is not decided by typographic signs: a dash and quotation marks alone vote for neither', () => {
-      // 96 is a dash in windows-1252 and 'û' in Mac Roman; D0 an 'Ð' there and a dash here. Without a Swedish letter the guess is Excel for Windows.
-      expect(decodeText(encode('– “x”', MAC)).encoding).toBe('windows-1252');
-      // One Swedish letter outvotes any number of signs.
-      expect(decodeText(encode('“a” “b” “c” – – – ö', MAC)).encoding).toBe('macintosh');
-      expect(decodeText(encode('“a” “b” “c” – – – ö', WIN)).encoding).toBe('windows-1252');
+    it('is decided by which reading looks like text: a dash and quotation marks beside names do not outvote them', () => {
+      // D0 is a dash in Mac Roman and an 'Ð' with no letter beside it in windows-1252; the file is read as what it was.
+      const notes = 'Klass;Åk 7–9 – ”klar”;Lärare\r\n7Å;Matematik;Östen\r\n';
+      expect(decodeText(encode(notes, MAC)).encoding).toBe('macintosh');
+      expect(decodeText(encode(notes, WIN)).encoding).toBe('windows-1252');
+      // More of them, in the table the web's decoder is held to as well, are in text-encoding.spec.ts.
     });
 
     it('reads the same file the same whether the page’s CSV reader or this one sees it', () => {
