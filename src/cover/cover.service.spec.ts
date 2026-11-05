@@ -149,6 +149,33 @@ describe('CoverService', () => {
       expect(realtime.notifyCoverBoardChanged).toHaveBeenCalledWith(SCHOOL, '2026-10-14', '2026-10-14');
     });
 
+    it('a vikarie put on the lesson settles the question that asked for it: the colleagues who had not answered are told it is taken, the vikarie put there is not', async () => {
+      world({ teachers: [{ teacherId: A, role: 'LEAD' }] });
+      tx.coverRequestLesson.findMany.mockResolvedValue([
+        { request: { id: 'req-1', lessons: [{ calendarLessonId: LESSON }, { calendarLessonId: LESSON_B }], recipients: [{ userId: B }, { userId: T }] } },
+      ]);
+
+      await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: S, expected: 'OPEN' }, testUser());
+
+      // Asked for with the chosen vikarie left out (they get the booking instead).
+      expect(tx.coverRequestLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { open: true, absenceId: ABSENCE, calendarLessonId: LESSON } }),
+      );
+      const closed = notifications.notifyUsers.mock.calls.find(([, options]) => options.type === 'COVER_REQUEST_CLOSED');
+      expect(closed).toBeDefined();
+      expect(closed![1].userIds).toEqual([B, T]);
+      expect(closed![1].meta).toMatchObject({ requestId: 'req-1', reason: 'TAKEN', lessonCount: expect.any(Number) });
+    });
+
+    it('a decision that is not a vikarie (självstudier, inställd, medlärare) tells no colleague anything about a question', async () => {
+      world({ teachers: [{ teacherId: A, role: 'LEAD' }, { teacherId: B, role: 'ASSISTANT' }] });
+      tx.coverRequestLesson.findMany.mockResolvedValue([
+        { request: { id: 'req-1', lessons: [{ calendarLessonId: LESSON }], recipients: [{ userId: T }] } },
+      ]);
+      await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'CO_TEACHER', expected: 'OPEN' }, testUser());
+      expect(notifications.notifyUsers.mock.calls.some(([, options]) => options.type === 'COVER_REQUEST_CLOSED')).toBe(false);
+    });
+
     it('a stale SUBSTITUTE decision (its substitute gone) is replaced in place, keeping the rows it removed', async () => {
       world({ teachers: [] }, [decision({ substituteId: T })]);
 

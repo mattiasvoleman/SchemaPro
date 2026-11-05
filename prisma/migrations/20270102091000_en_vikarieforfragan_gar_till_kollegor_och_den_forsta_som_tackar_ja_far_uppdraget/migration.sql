@@ -60,11 +60,12 @@
 --   cover_requests_admin_select / _insert / _update
 --       (a request is born open and in the name of whoever writes it: a
 --       trigger stamps both, so a writer cannot send it as somebody else)
---   cover_request_lessons_admin_select / _insert / _update
+--   cover_request_lessons_admin_select / _insert
 --   cover_request_recipients_admin_select / _insert / _update
---   cover_confirmations_admin_select / _insert / _update
+--   cover_confirmations_admin_select / _insert
 --       the school's SCHOOL_ADMIN; writes by whoever writes Drift
---       (app.current_user_may('DRIFT', true)), as the board's decisions.
+--       (app.current_user_may('DRIFT', true)), as the board's decisions. A line
+--       and a confirmation are never updated by an arm.
 --   cover_requests_recipient_select
 --   cover_request_lessons_recipient_select
 --       a TEACHER the requests they were asked, and the lessons on them.
@@ -435,6 +436,8 @@ BEGIN
       USING ERRCODE = 'CR403';
   END IF;
   IF NEW."answer" IS NOT DISTINCT FROM OLD."answer" THEN
+    -- An answer given stays as given, the time of it too, whoever writes the row.
+    NEW."answeredAt" := OLD."answeredAt";
     RETURN NEW;
   END IF;
   -- A person answers once: PENDING -> ACCEPTED | DECLINED, and never again.
@@ -482,7 +485,9 @@ $$;
 
 REVOKE ALL ON FUNCTION app.cover_request_closes_on_decision() FROM PUBLIC;
 
-CREATE TRIGGER "TeacherAbsenceCovers_c_closes_requests" AFTER INSERT OR UPDATE ON "TeacherAbsenceCovers"
+-- INSERT, and an UPDATE that names the decision or the vikarie: a key's SET
+-- NULL of who decided (a person removed) is no decision on the lesson.
+CREATE TRIGGER "TeacherAbsenceCovers_c_closes_requests" AFTER INSERT OR UPDATE OF "decision", "substituteId" ON "TeacherAbsenceCovers"
     FOR EACH ROW EXECUTE FUNCTION app.cover_request_closes_on_decision();
 
 -- A confirmation is the vikarie's tap on the pass a DECISION gave them, so it
@@ -527,6 +532,7 @@ CREATE TRIGGER "TeacherAbsenceCovers_e_drops_confirmations_on_delete" AFTER DELE
 --   CR410  gone: withdrawn, expired or closed by a decision on the lesson
 --   CR411  the caller has answered already
 --   CR412  the request has ended (the triggers' word for it)
+--   CR413  the caller said yes first and asks again: theirs already
 --   CR422  the sender can no longer place a vikarie (removed, deactivated,
 --          or no longer writes Drift)
 CREATE FUNCTION app.cover_request_sender(p_request uuid)
@@ -551,6 +557,11 @@ BEGIN
     RAISE EXCEPTION 'COVER_REQUEST_NOT_FOUND' USING ERRCODE = 'CR404';
   END IF;
   IF req."status" = 'ACCEPTED' THEN
+    -- The winner asking again (a lost answer, a second tap, a retry) is told
+    -- so, not that a colleague was first.
+    IF req."acceptedByUserId" = me THEN
+      RAISE EXCEPTION 'COVER_REQUEST_YOURS' USING ERRCODE = 'CR413';
+    END IF;
     RAISE EXCEPTION 'COVER_REQUEST_TAKEN' USING ERRCODE = 'CR409';
   END IF;
   IF req."status" <> 'OPEN' OR req."expiresAt" <= clock_timestamp() THEN
@@ -572,7 +583,7 @@ END
 $$;
 
 COMMENT ON FUNCTION app.cover_request_sender(uuid) IS
-  'The administrator who sent request p_request, answered only to a TEACHER of the same school who was asked and has not answered while the request is open. The gateway places the vikarie as them. Refusals CR404, CR409, CR410, CR411 and CR422.';
+  'The administrator who sent request p_request, answered only to a TEACHER of the same school who was asked and has not answered while the request is open. The gateway places the vikarie as them. Refusals CR404, CR409, CR410, CR411, CR413 and CR422.';
 
 -- The tap on a pass: the caller confirms every pass of theirs on the lesson
 -- that a cover decision gave them, once. Answers how many are confirmed
@@ -647,15 +658,22 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp"
 DECLARE
   n integer;
 BEGIN
+  IF app.current_user_id() IS NOT NULL THEN
+    RAISE EXCEPTION 'COVER_REQUEST_EXPIRY_IS_THE_JOBS' USING ERRCODE = 'CR403';
+  END IF;
+  -- A request a yes holds is skipped: it ends by that yes, or the next pass
+  -- finds it, and the job never waits on a lock behind the first yes.
   UPDATE "CoverRequests" SET "status" = 'EXPIRED'
-   WHERE "status" = 'OPEN' AND "expiresAt" <= clock_timestamp();
+   WHERE "id" IN (SELECT q."id" FROM "CoverRequests" q
+                   WHERE q."status" = 'OPEN' AND q."expiresAt" <= clock_timestamp()
+                   ORDER BY q."id" FOR UPDATE SKIP LOCKED);
   GET DIAGNOSTICS n = ROW_COUNT;
   RETURN n;
 END
 $$;
 
 COMMENT ON FUNCTION app.cover_requests_expire() IS
-  'Ends the open requests whose expiresAt has passed (EXPIRED) in every school; answers how many.';
+  'Ends the open requests whose expiresAt has passed (EXPIRED) in every school, skipping any a yes holds; answers how many. Refused (CR403) to anybody with a login.';
 
 -- ---------------------------------------------------------------------------
 -- Row-level security and grants. See the preamble.
@@ -714,13 +732,6 @@ BEGIN
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
                     AND (select app.current_user_may('DRIFT', true)));
-    CREATE POLICY "cover_request_lessons_admin_update" ON "CoverRequestLessons"
-        FOR UPDATE TO "app_authenticated"
-        USING ("schoolId" = (select app.current_school_id())
-               AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
-        WITH CHECK ("schoolId" = (select app.current_school_id())
-                    AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-                    AND (select app.current_user_may('DRIFT', true)));
 
     -- CoverRequestRecipients
     CREATE POLICY "cover_request_recipients_admin_select" ON "CoverRequestRecipients"
@@ -769,17 +780,17 @@ BEGIN
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
                     AND (select app.current_user_may('DRIFT', true)));
-    CREATE POLICY "cover_confirmations_admin_update" ON "CoverConfirmations"
-        FOR UPDATE TO "app_authenticated"
-        USING ("schoolId" = (select app.current_school_id())
-               AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
-        WITH CHECK ("schoolId" = (select app.current_school_id())
-                    AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-                    AND (select app.current_user_may('DRIFT', true)));
 
-    FOREACH t IN ARRAY ARRAY['CoverRequests', 'CoverRequestLessons', 'CoverRequestRecipients', 'CoverConfirmations'] LOOP
+    -- A line is turned off by the trigger of its request and a confirmation is
+    -- written once and deleted by the trigger of its decision: no arm updates
+    -- either, so the API's role holds no UPDATE on them.
+    FOREACH t IN ARRAY ARRAY['CoverRequests', 'CoverRequestRecipients'] LOOP
       EXECUTE format('REVOKE ALL ON %I FROM app_authenticated', t);
       EXECUTE format('GRANT SELECT, INSERT, UPDATE ON %I TO app_authenticated', t);
+    END LOOP;
+    FOREACH t IN ARRAY ARRAY['CoverRequestLessons', 'CoverConfirmations'] LOOP
+      EXECUTE format('REVOKE ALL ON %I FROM app_authenticated', t);
+      EXECUTE format('GRANT SELECT, INSERT ON %I TO app_authenticated', t);
     END LOOP;
 
     GRANT EXECUTE ON FUNCTION app.cover_request_sender(uuid) TO "app_authenticated";
@@ -850,7 +861,6 @@ BEGIN
                  ('CoverRequestLessons', 'cover_request_lessons_admin_select', 'SELECT'),
                  ('CoverRequestLessons', 'cover_request_lessons_recipient_select', 'SELECT'),
                  ('CoverRequestLessons', 'cover_request_lessons_admin_insert', 'INSERT'),
-                 ('CoverRequestLessons', 'cover_request_lessons_admin_update', 'UPDATE'),
                  ('CoverRequestRecipients', 'cover_request_recipients_admin_select', 'SELECT'),
                  ('CoverRequestRecipients', 'cover_request_recipients_own_select', 'SELECT'),
                  ('CoverRequestRecipients', 'cover_request_recipients_admin_insert', 'INSERT'),
@@ -858,8 +868,7 @@ BEGIN
                  ('CoverRequestRecipients', 'cover_request_recipients_own_decline', 'UPDATE'),
                  ('CoverConfirmations', 'cover_confirmations_admin_select', 'SELECT'),
                  ('CoverConfirmations', 'cover_confirmations_substitute_select', 'SELECT'),
-                 ('CoverConfirmations', 'cover_confirmations_admin_insert', 'INSERT'),
-                 ('CoverConfirmations', 'cover_confirmations_admin_update', 'UPDATE'))
+                 ('CoverConfirmations', 'cover_confirmations_admin_insert', 'INSERT'))
            AND (SELECT bool_and(
                          e LIKE '%current_school_id()%'
                          AND e NOT LIKE '% OR %'
@@ -881,8 +890,8 @@ BEGIN
     RAISE EXCEPTION 'COVER_REQUEST_REACH: these arms reach the vikarieförfrågningar beyond the admin''s, the recipient''s own and Drift''s writes: %', bad;
   END IF;
   IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public'
-       AND tablename IN ('CoverRequests', 'CoverRequestLessons', 'CoverRequestRecipients', 'CoverConfirmations')) <> 17 THEN
-    RAISE EXCEPTION 'COVER_REQUEST_REACH: the four tables have % arms, not the seventeen above',
+       AND tablename IN ('CoverRequests', 'CoverRequestLessons', 'CoverRequestRecipients', 'CoverConfirmations')) <> 15 THEN
+    RAISE EXCEPTION 'COVER_REQUEST_REACH: the four tables have % arms, not the fifteen above',
       (SELECT count(*) FROM pg_policies WHERE schemaname = 'public'
         AND tablename IN ('CoverRequests', 'CoverRequestLessons', 'CoverRequestRecipients', 'CoverConfirmations'));
   END IF;

@@ -20168,8 +20168,8 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('CancellationBatchCredits', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('CancellationBatchLessons', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('CancellationBatches', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
-  ('CoverConfirmations', '{DRIFT}', '{DRIFT}', '{}', '{}'),
-  ('CoverRequestLessons', '{DRIFT}', '{DRIFT}', '{}', '{}'),
+  ('CoverConfirmations', '{DRIFT}', '{}', '{}', '{}'),
+  ('CoverRequestLessons', '{DRIFT}', '{}', '{}', '{}'),
   ('CoverRequestRecipients', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('CoverRequests', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('CoverSettings', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
@@ -36685,7 +36685,7 @@ ROLLBACK;
 -- dem (CoverRequests, CoverRequestLessons, CoverRequestRecipients,
 -- CoverConfirmations, 20270102091000).
 --
--- Fyra tabeller, 17 armar, ingen DELETE för någon roll, ingenting för
+-- Fyra tabeller, 15 armar, ingen DELETE för någon roll, ingenting för
 -- PostgREST:s roller, och sex funktioner som bara API:ts roll får anropa.
 -- Migrationens egen vakt (COVER_REQUEST_REACH) körs när migreringen
 -- läggs på; här står samma sak mot den databas sviten kör mot, och med
@@ -36710,9 +36710,13 @@ BEGIN
       RAISE EXCEPTION 'cover requests: % has no row-level security', t;
     END IF;
     IF NOT (has_table_privilege('app_authenticated', format('public.%I', t), 'SELECT')
-            AND has_table_privilege('app_authenticated', format('public.%I', t), 'INSERT')
-            AND has_table_privilege('app_authenticated', format('public.%I', t), 'UPDATE')) THEN
+            AND has_table_privilege('app_authenticated', format('public.%I', t), 'INSERT')) THEN
       RAISE EXCEPTION 'cover requests: the API role lacks a grant on %', t;
+    END IF;
+    -- A line is turned off by its request's trigger and a confirmation is
+    -- written once: no arm updates either, so no UPDATE is granted.
+    IF has_table_privilege('app_authenticated', format('public.%I', t), 'UPDATE') IS DISTINCT FROM (t IN ('CoverRequests', 'CoverRequestRecipients')) THEN
+      RAISE EXCEPTION 'cover requests: the API role''s UPDATE on % is not what the arms say', t;
     END IF;
     IF has_table_privilege('app_authenticated', format('public.%I', t), 'DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
       RAISE EXCEPTION 'cover requests: the API role may delete from, truncate, reference or trigger %', t;
@@ -36730,7 +36734,7 @@ BEGIN
   END LOOP;
 
   SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables);
-  IF n <> 17 THEN RAISE EXCEPTION 'cover requests: the four tables have % arms, not 17', n; END IF;
+  IF n <> 15 THEN RAISE EXCEPTION 'cover requests: the four tables have % arms, not 15', n; END IF;
   SELECT count(*) INTO n FROM pg_policies
    WHERE schemaname = 'public' AND tablename = ANY (tables) AND (roles <> '{app_authenticated}'::name[] OR cmd = 'DELETE' OR cmd = 'ALL');
   IF n <> 0 THEN RAISE EXCEPTION 'cover requests: % arm(s) reach beyond the API role or delete', n; END IF;
@@ -36914,9 +36918,7 @@ BEGIN
   UPDATE "CoverRequests" SET status = 'ACCEPTED', "acceptedByUserId" = t3 WHERE id = req;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'cover requests: a colleague changed a request (% row)', n; END IF;
-  UPDATE "CoverRequestLessons" SET open = false WHERE "requestId" = req;
-  GET DIAGNOSTICS n = ROW_COUNT;
-  IF n <> 0 THEN RAISE EXCEPTION 'cover requests: a colleague changed a line (% row)', n; END IF;
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequestLessons" SET open = false WHERE "requestId" = %L$q$, req), '42501', 'a colleague changing a line');
   -- A yes written straight to their own row: the guard (a BEFORE trigger, which
   -- speaks first) and the arm's WITH CHECK both refuse it.
   PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequestRecipients" SET answer = 'ACCEPTED' WHERE "requestId" = %L AND "userId" = %L$q$, req, t3),
@@ -36938,6 +36940,11 @@ BEGIN
   SELECT count(*) INTO n FROM "CoverRequestRecipients"
    WHERE "requestId" = req AND "userId" = t3 AND answer = 'DECLINED' AND "answeredAt" > now() - interval '1 minute';
   IF n <> 1 THEN RAISE EXCEPTION 'cover requests: the no was not stamped with the database''s clock'; END IF;
+  -- The no keeps the time it was given: the same answer written again moves nothing.
+  UPDATE "CoverRequestRecipients" SET answer = 'DECLINED', "answeredAt" = timestamptz '2001-01-01' WHERE "requestId" = req AND "userId" = t3;
+  SELECT count(*) INTO n FROM "CoverRequestRecipients"
+   WHERE "requestId" = req AND "userId" = t3 AND "answeredAt" > now() - interval '1 minute';
+  IF n <> 1 THEN RAISE EXCEPTION 'cover requests: a colleague who declined moved the time of the no'; END IF;
   -- Having answered, they are told so and are no longer anybody's yes.
   PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, req), 'CR411', 'the sender, to a colleague who answered');
   PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequestRecipients" SET answer = 'PENDING', "answeredAt" = NULL WHERE "requestId" = %L AND "userId" = %L$q$, req, t3),
@@ -37061,12 +37068,17 @@ DECLARE
   me uuid := app.current_user_id();
   t1 uuid; t2 uuid; t3 uuid;
   l uuid; a uuid; r1 uuid; r2 uuid; r3 uuid; rx uuid;
+  me_auth text; t2_auth text; t3_auth text;
   rec "CoverRequests";
   n bigint;
 BEGIN
   SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
   SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY "authId" LIMIT 1;
   SELECT id INTO t3 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1, t2) ORDER BY "authId" LIMIT 1;
+  -- The logins, read while this is still the administrator: a teacher reads no one else's.
+  SELECT "authId"::text INTO me_auth FROM "Users" WHERE id = me;
+  SELECT "authId"::text INTO t2_auth FROM "Users" WHERE id = t2;
+  SELECT "authId"::text INTO t3_auth FROM "Users" WHERE id = t3;
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
   VALUES (school, (SELECT id FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1),
           (SELECT id FROM "StudentGroups" WHERE "schoolId" = school ORDER BY id LIMIT 1),
@@ -37098,6 +37110,13 @@ BEGIN
     RAISE EXCEPTION 'cover requests: a yes is not stamped on the answer row';
   END IF;
 
+  -- The one who said yes asking again is told it is theirs (a lost answer, a second tap).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', t2_auth)::text, true);
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, r1), 'CR413', 'the sender, to the colleague who said yes');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', t3_auth)::text, true);
+  PERFORM pg_temp.refuses(format($q$SELECT * FROM app.cover_request_sender(%L)$q$, r1), 'CR409', 'the sender, to a colleague who came second');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', me_auth)::text, true);
+
   -- The end is final, whoever asks.
   PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET status = 'ACCEPTED', "acceptedByUserId" = %L WHERE id = %L$q$, t3, r1), 'CR412', 'a second yes');
   PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET status = 'WITHDRAWN' WHERE id = %L$q$, r1), 'CR412', 'a withdrawal after the yes');
@@ -37114,7 +37133,11 @@ BEGIN
   INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (school, r3, t3);
   PERFORM pg_sleep(1.3);
   PERFORM pg_temp.refuses(format($q$UPDATE "CoverRequests" SET status = 'ACCEPTED', "acceptedByUserId" = %L WHERE id = %L$q$, t3, r3), 'CR410', 'a yes after the time is out');
+  -- The job's door has no login: a person who calls it is refused, the job is not.
+  PERFORM pg_temp.refuses($q$SELECT app.cover_requests_expire()$q$, 'CR403', 'the expiry run by a person');
+  PERFORM set_config('request.jwt.claims', '', true);
   PERFORM app.cover_requests_expire();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', me_auth)::text, true);
   IF (SELECT status FROM "CoverRequests" WHERE id = r3) <> 'EXPIRED' THEN
     RAISE EXCEPTION 'cover requests: the expiry did not end the request that ran out';
   END IF;
@@ -37134,6 +37157,20 @@ BEGIN
   END IF;
   -- And a decision on a lesson nobody asked about moves nothing.
   UPDATE "TeacherAbsenceCovers" SET "decidedAt" = now() WHERE "absenceId" = a AND "calendarLessonId" = l;
+
+  -- A decision's own change closes a request; a key's SET NULL of who decided it
+  -- (a person removed) is no decision on the lesson. r5 asks for the pair the
+  -- decision above is on.
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (school, me, now() + interval '1 hour') RETURNING id INTO rx;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (school, rx, a, l);
+  UPDATE "TeacherAbsenceCovers" SET "decidedByUserId" = NULL WHERE "absenceId" = a AND "calendarLessonId" = l;
+  IF (SELECT status FROM "CoverRequests" WHERE id = rx) <> 'OPEN' THEN
+    RAISE EXCEPTION 'cover requests: clearing who decided a lesson ended the question about it';
+  END IF;
+  UPDATE "TeacherAbsenceCovers" SET decision = 'SUPERVISED_STUDY', "substituteId" = NULL WHERE "absenceId" = a AND "calendarLessonId" = l;
+  IF (SELECT status FROM "CoverRequests" WHERE id = rx) <> 'CLOSED' THEN
+    RAISE EXCEPTION 'cover requests: a changed decision did not end the question about its lesson';
+  END IF;
 
   -- A person removed clears their own column and nothing else: the request
   -- they sent stays, and cannot be answered.
@@ -37245,7 +37282,7 @@ BEGIN
   PERFORM pg_temp.refuses(format($q$SELECT app.cover_confirm(%L)$q$, current_setting('app.test_rls318_lpast')), 'CR404', 'a tap on a lesson that is over');
   PERFORM pg_temp.refuses(format($q$SELECT app.cover_confirm(%L)$q$, gen_random_uuid()), 'CR404', 'a tap on a lesson that does not exist');
   -- Nothing written by hand.
-  PERFORM pg_temp.refuses(format($q$UPDATE "CoverConfirmations" SET "confirmedAt" = now() WHERE "calendarLessonId" = %L$q$, l), 'none', 'an UPDATE of a confirmation by its owner');
+  PERFORM pg_temp.refuses(format($q$UPDATE "CoverConfirmations" SET "confirmedAt" = now() WHERE "calendarLessonId" = %L$q$, l), '42501', 'an UPDATE of a confirmation');
 END $$;
 
 -- 318c: a colleague who is not the vikarie reads and confirms nothing of theirs.

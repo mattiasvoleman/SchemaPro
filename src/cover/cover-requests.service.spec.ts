@@ -13,11 +13,13 @@ import {
   COVER_REQUEST_LESSON_CANCELLED,
   COVER_REQUEST_LESSON_COVERED,
   COVER_REQUEST_LESSON_STARTED,
+  COVER_REQUEST_LESSON_TWICE,
   CoverRequestsService,
   myStateOf,
   type RequestLessonView,
 } from './cover-requests.service';
 import { toBoardRequest } from './cover-request-reads';
+import { Prisma } from '@prisma/client';
 import type { PersonDay } from './cover-rules';
 import { CoverService } from './cover.service';
 
@@ -269,6 +271,26 @@ describe('CoverRequestsService', () => {
       expect(body['params']).toMatchObject({ lessonId: LESSON_B, rules: 'DAILY_CAP' });
     });
 
+    it('refuses one question that asks for a lesson twice (two absent teachers on it): a colleague cannot be put on it twice', async () => {
+      const other = '77777777-7777-4777-8777-777777777777';
+      const body = await bodyOf(
+        service.create(dto({ lessons: [{ lessonId: LESSON, absenceId: ABSENCE }, { lessonId: LESSON, absenceId: other }] }), admin),
+      );
+      expect(body['code']).toBe(COVER_REQUEST_LESSON_TWICE);
+      expect(body['params']).toEqual({ lessonId: LESSON });
+      expect(tx.coverRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('tries the notices once more when the first transaction fails, and gives up quietly after that: the question is stored either way', async () => {
+      notifications.notifyUsers.mockRejectedValueOnce(new Error('pool'));
+      const view = await service.create(dto(), admin);
+      expect(view.id).toBe(REQUEST);
+      expect(notifications.notifyUsers.mock.calls.filter(([, options]) => options.type === 'COVER_REQUESTED')).toHaveLength(2);
+
+      notifications.notifyUsers.mockReset().mockRejectedValue(new Error('pool'));
+      await expect(service.create(dto(), admin)).resolves.toMatchObject({ id: REQUEST });
+    });
+
     it('refuses a second open request for a lesson, whether found or raced', async () => {
       tx.coverRequestLesson.findFirst.mockResolvedValue({ requestId: REQUEST, calendarLessonId: LESSON });
       expect(await codeOf(service.create(dto(), admin))).toBe(COVER_REQUEST_EXISTS);
@@ -330,6 +352,7 @@ describe('CoverRequestsService', () => {
         classNotices: [],
         warnings: [],
         passNotices: [],
+        closedRequests: [],
       });
     });
 
@@ -396,6 +419,33 @@ describe('CoverRequestsService', () => {
     it('says a request past its time is gone even when the nightly job has not settled it', async () => {
       locked = open({ expiresAt: new Date(NOW.getTime() - 1000) });
       expect(await codeOf(service.accept(REQUEST, teacher))).toBe('COVER_REQUEST_GONE');
+    });
+
+    it('tells the one who said yes first, asking again, that it is theirs: a lost answer or a second tap is no defeat', async () => {
+      const yours = Object.assign(new Error('yours'), {
+        code: 'P2010',
+        clientVersion: 'test',
+        meta: { driverAdapterError: { cause: { originalCode: 'CR413' } } },
+      });
+      Object.setPrototypeOf(yours, Prisma.PrismaClientKnownRequestError.prototype);
+      tx.$queryRaw.mockImplementation(async (statement: unknown) => {
+        if (sqlOf(statement).includes('app.cover_request_sender')) throw yours;
+        return [];
+      });
+      tx.coverRequestLesson.count.mockResolvedValue(2);
+      await expect(service.accept(REQUEST, teacher)).resolves.toEqual({ requestId: REQUEST, lessons: 2 });
+      expect(tx.coverRequest.update).not.toHaveBeenCalled();
+      expect(cover.decideInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('says the sender is gone, not that the request is missing, when they are removed or lose Drift between the lookup and the write', async () => {
+      locked = null;
+      expect(await codeOf(service.accept(REQUEST, teacher))).toBe('COVER_REQUEST_SENDER_GONE');
+      locked = open();
+      const noRight = Object.assign(new Error('rls'), { code: 'P2010', clientVersion: 'test', meta: { driverAdapterError: { cause: { originalCode: '42501' } } } });
+      Object.setPrototypeOf(noRight, Prisma.PrismaClientKnownRequestError.prototype);
+      tx.coverRequest.update.mockRejectedValue(noRight);
+      expect(await codeOf(service.accept(REQUEST, teacher))).toBe('COVER_REQUEST_SENDER_GONE');
     });
 
     it('refuses a colleague who has answered, and one who was never asked', async () => {

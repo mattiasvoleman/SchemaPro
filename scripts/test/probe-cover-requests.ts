@@ -276,6 +276,9 @@ export async function coverRequestsChecks(owner: Client, api: PrismaService, mar
       assert.deepEqual(mine1.requests.map((r) => r.state), ['TAKEN']);
       assert.equal(mine1.requests[0]!.lessons.length, 2);
       assert.deepEqual(mine1.passes, []);
+      // The winner asking again (a lost answer, a second tap) is told it is theirs, not that a colleague was first.
+      assert.deepEqual(await requests.accept(sent.id, asTeacher(t[1]!)), { requestId: sent.id, lessons: 2 });
+      assert.deepEqual(await substitutesOf(l1), [t[1]!.id]);
       // Too late: told so, and the request is not touched again.
       await assert.rejects(requests.accept(sent.id, asTeacher(t[0]!)), (e: unknown) => codeOf(e) === 'COVER_REQUEST_TAKEN');
       await assert.rejects(requests.decline(sent.id, asTeacher(t[0]!)), (e: unknown) => codeOf(e) === 'COVER_REQUEST_GONE');
@@ -333,6 +336,9 @@ export async function coverRequestsChecks(owner: Client, api: PrismaService, mar
           assert.deepEqual(subs, [t[3]!.id]);
           assert.equal(board.status, 'fulfilled');
           assert.equal(ended.status, 'CLOSED');
+          // The colleagues who had not answered are told it is taken.
+          const told = (await noticesTo(t[1]!.id, 'COVER_REQUEST_CLOSED')).filter((n) => n.meta['requestId'] === sent.id);
+          assert.deepEqual(told.map((n) => n.meta['reason']), ['TAKEN'], `round ${round}`);
           assert.ok(
             ['COVER_REQUEST_GONE', 'COVER_REQUEST_LESSON_COVERED', 'COVER_REQUEST_TAKEN'].includes(String(codeOf(yes.reason))),
             `round ${round}: the yes was refused with ${String(codeOf(yes.reason))} ${messageOf(yes.reason)}`,

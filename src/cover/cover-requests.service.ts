@@ -18,7 +18,7 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { pairsStatement, toBoardItem, type BoardItem, type PairRow } from './cover-board';
 import { asDay, dayBounds, readPersonDays, schoolTimezone } from './cover-context';
 import { lockLessons, lockTeachers } from './cover-decisions';
-import { COVER_PASS_NOT_FOUND, mapCoverErrors, sqlStateOf } from './cover-errors';
+import { COVER_PASS_NOT_FOUND, mapCoverErrors, rethrowCoverError, sqlStateOf } from './cover-errors';
 import { sendAccepted, sendClosed, sendRequested, type RequestNoticeContext } from './cover-request-notices';
 import { requestSelect, toBoardRequest, type BoardRequest } from './cover-request-reads';
 import { ownYesBreaksRule, recipientBreaksRule } from './cover-request-rules';
@@ -37,6 +37,7 @@ export const COVER_REQUEST_EXISTS = 'COVER_REQUEST_EXISTS';
 export const COVER_REQUEST_ENDED = 'COVER_REQUEST_ENDED';
 export const COVER_REQUEST_RECIPIENT_INVALID = 'COVER_REQUEST_RECIPIENT_INVALID';
 export const COVER_REQUEST_WINDOW = 'COVER_REQUEST_WINDOW';
+export const COVER_REQUEST_LESSON_TWICE = 'COVER_REQUEST_LESSON_TWICE';
 
 /** A request is judged and shown this long after it was sent. */
 const MINE_LOOKBACK_DAYS = 14;
@@ -187,6 +188,17 @@ export class CoverRequestsService {
     const created = await this.cover.write(user, async (tx) => {
       const timezone = await schoolTimezone(tx, schoolId);
       const pairs = dedupePairs(dto.lessons);
+      // A lesson with two absent teachers is two pairs; one colleague cannot be
+      // put on it twice (SUBSTITUTE_ON_LESSON), so a yes to both would never go
+      // through. One question per absence.
+      const twice = pairs.find((pair, index) => pairs.findIndex((other) => other.lessonId === pair.lessonId) !== index);
+      if (twice) {
+        throw new BadRequestException({
+          message: 'Två frånvarande har samma lektion. Skicka en förfrågan för var och en av dem.',
+          code: COVER_REQUEST_LESSON_TWICE,
+          params: { lessonId: twice.lessonId },
+        });
+      }
       await lockLessons(tx, pairs.map((pair) => pair.lessonId));
 
       const items = await readPairs(tx, pairs, now);
@@ -277,8 +289,8 @@ export class CoverRequestsService {
     });
 
     // Told after the commit, in a transaction of its own: a refused write told nobody.
-    await this.prisma
-      .withRls(user, async (tx) => {
+    await this.tellOnce(`Cover request notices [request=${created.id}]`, () =>
+      this.prisma.withRls(user, async (tx) => {
         await sendRequested(this.notifications, tx, {
           schoolId,
           timezone: created.timezone,
@@ -286,8 +298,8 @@ export class CoverRequestsService {
           recipientIds: created.recipientIds,
           expiresAt: created.expiresAt,
         });
-      })
-      .catch(() => this.logger.warn(`Cover request notices failed after commit [request=${created.id}]`));
+      }),
+    );
     this.broadcast(schoolId, created.lessonIds, user);
     this.logger.log(`Cover request sent [request=${created.id}, lessons=${created.lessonIds.length}, recipients=${created.recipientIds.length}]`);
     return this.viewOf(user, created.id);
@@ -308,8 +320,8 @@ export class CoverRequestsService {
       await tx.coverRequest.update({ where: { id: requestId }, data: { status: 'WITHDRAWN' } });
       return { timezone, lessonIds: lines.map((line) => line.calendarLessonId), pending: pending.map((row) => row.userId) };
     });
-    await this.prisma
-      .withRls(user, async (tx) => {
+    await this.tellOnce(`Cover request withdrawal notices [request=${requestId}]`, () =>
+      this.prisma.withRls(user, async (tx) => {
         await sendClosed(this.notifications, tx, {
           schoolId,
           timezone: closed.timezone,
@@ -317,8 +329,8 @@ export class CoverRequestsService {
           recipientIds: closed.pending,
           reason: 'WITHDRAWN',
         });
-      })
-      .catch(() => this.logger.warn(`Cover request withdrawal notices failed [request=${requestId}]`));
+      }),
+    );
     this.broadcast(schoolId, closed.lessonIds, user);
     this.logger.log(`Cover request withdrawn [request=${requestId}]`);
     return this.viewOf(user, requestId);
@@ -465,14 +477,22 @@ export class CoverRequestsService {
     if (!me) throw new BadRequestException('Användar-id saknas.');
 
     // Who places the vikarie: answered by the database to this colleague alone.
-    const sender = await mapCoverErrors(() =>
-      this.prisma.withRls(user, async (tx) => {
+    const sender = await this.prisma
+      .withRls(user, async (tx) => {
         const rows = await tx.$queryRaw<{ userId: string; authId: string; adminProfile: AuthenticatedUser['adminProfile'] | null; hrRead: boolean }[]>(
           Prisma.sql`SELECT "userId", "authId", "adminProfile", "hrRead" FROM app.cover_request_sender(${requestId}::uuid)`,
         );
         return rows[0];
-      }),
-    );
+      })
+      .catch((error: unknown) => {
+        // Said yes first and asks again (a lost answer, a second tap): theirs already.
+        if (sqlStateOf(error) === 'CR413') return 'YOURS' as const;
+        return rethrowCoverError(error);
+      });
+    if (sender === 'YOURS') {
+      const lessons = await this.prisma.withRls(user, (tx) => tx.coverRequestLesson.count({ where: { requestId } }));
+      return { requestId, lessons };
+    }
     if (!sender) {
       throw new ConflictException({
         message: 'Den som skickade förfrågan kan inte längre tillsätta uppdraget. Hör av dig till expeditionen.',
@@ -489,7 +509,17 @@ export class CoverRequestsService {
       ...(user.channel ? { channel: user.channel } : {}),
     };
 
-    const outcome = await this.cover.write(principal, (tx) => this.acceptInTransaction(tx, principal, requestId, me));
+    const outcome = await this.cover
+      .write(principal, (tx) => this.acceptInTransaction(tx, principal, requestId, me))
+      .catch((error: unknown) => {
+        // The sender was found a moment ago. A request that is now invisible to
+        // them, or a write their claims no longer allow, means they were removed
+        // or lost Drift in between: said as that, not as a missing request or an
+        // absence's setting.
+        const code = (error as { getResponse?: () => { code?: string } }).getResponse?.().code;
+        if (code === 'ABSENCE_SELF_REPORT_OFF') throw senderGone();
+        throw error;
+      });
     await this.cover.afterCommit(principal, outcome.effects);
     await this.tellAfterAccept(principal, outcome);
     this.logger.log(`Cover request accepted [request=${requestId}, lessons=${outcome.lessonIds.length}]`);
@@ -521,7 +551,12 @@ export class CoverRequestsService {
     // THE LOCK THAT MAKES THE FIRST YES THE ONLY ONE: any number of colleagues
     // answering together queue here, on the one request, and the first through
     // ends it.
-    const request = await lockRequest(tx, requestId, schoolId);
+    // The sender's own claims cannot see the request: they were removed since
+    // the lookup (their Users row is what the policies key on).
+    const request = await lockRequest(tx, requestId, schoolId).catch((error: unknown) => {
+      if ((error as { getResponse?: () => { code?: string } }).getResponse?.().code === 'COVER_REQUEST_NOT_FOUND') throw senderGone();
+      throw error;
+    });
     if (request.status === 'ACCEPTED') throw taken();
     if (request.status !== 'OPEN' || request.expiresAt.getTime() <= request.now.getTime()) throw gone();
     if (request.requestedByUserId !== principal.userId) throw senderGone();
@@ -603,8 +638,8 @@ export class CoverRequestsService {
 
   /** After the commit: the sender is told who took it, and the others that it is taken. */
   private async tellAfterAccept(principal: AuthenticatedUser, outcome: AcceptOutcome): Promise<void> {
-    await this.prisma
-      .withRls(principal, async (tx) => {
+    await this.tellOnce(`Cover request notices after accept [request=${outcome.requestId}]`, () =>
+      this.prisma.withRls(principal, async (tx) => {
         const timezone = await schoolTimezone(tx, outcome.schoolId);
         const context: RequestNoticeContext = { requestId: outcome.requestId, lessonIds: outcome.lessonIds };
         const person = await tx.user.findUnique({ where: { id: outcome.acceptedById }, select: { firstName: true, lastName: true } });
@@ -622,8 +657,25 @@ export class CoverRequestsService {
           recipientIds: outcome.others,
           reason: 'TAKEN',
         });
-      })
-      .catch(() => this.logger.warn(`Cover request notices failed after accept [request=${outcome.requestId}]`));
+      }),
+    );
+  }
+
+  /**
+   * Notices are sent after the commit, in a transaction of their own, and
+   * never fail the write: the question is stored and answerable whether or
+   * not anybody was pushed. A transaction that fails once (a pool error, a
+   * deadlock's victim) is tried once more before it is given up and logged,
+   * because an unsent question is the one failure the school cannot see.
+   */
+  private async tellOnce(label: string, send: () => Promise<unknown>): Promise<void> {
+    try {
+      await send();
+      return;
+    } catch {
+      this.logger.warn(`${label} failed, trying once more`);
+    }
+    await send().catch(() => this.logger.error(`${label} failed twice: nobody was told`));
   }
 
   /** The nightly job: the open requests whose time is out. */

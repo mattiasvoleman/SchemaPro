@@ -5712,6 +5712,7 @@
     "errors": {
       "COVER_REQUEST_LESSON_CANCELLED": "Lektionen är inställd och går inte att fråga om.",
       "COVER_REQUEST_LESSON_COVERED": "Lektionen har redan en vikarie eller är ordnad på annat sätt.",
+      "COVER_REQUEST_LESSON_TWICE": "Två frånvarande har samma lektion. Skicka en förfrågan för var och en av dem.",
       "COVER_REQUEST_LESSON_STARTED": "Lektionen har redan börjat eller börjar inom en minut. Tillsätt en vikarie direkt på tavlan.",
       "COVER_REQUEST_EXISTS": "Det finns redan en öppen förfrågan för lektionen. Dra tillbaka den först.",
       "COVER_REQUEST_RECIPIENT_RULE": "En av kollegorna kan inte ta lektionen utan att bryta mot en regel. Välj andra kollegor.",

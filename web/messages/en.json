@@ -5712,6 +5712,7 @@
     "errors": {
       "COVER_REQUEST_LESSON_CANCELLED": "The lesson is cancelled and cannot be asked about.",
       "COVER_REQUEST_LESSON_COVERED": "The lesson already has a substitute or has been dealt with in another way.",
+      "COVER_REQUEST_LESSON_TWICE": "Two absent teachers share this lesson. Send one question for each of them.",
       "COVER_REQUEST_LESSON_STARTED": "The lesson has started or starts within a minute. Assign a substitute directly on the board.",
       "COVER_REQUEST_EXISTS": "There is already an open request for the lesson. Withdraw it first.",
       "COVER_REQUEST_RECIPIENT_RULE": "One of the colleagues cannot take the lesson without breaking a rule. Choose other colleagues.",
