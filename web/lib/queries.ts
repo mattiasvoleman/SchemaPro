@@ -1748,7 +1748,7 @@ export interface ImportReport {
    * see IMPORT_UPDATES_ROWS below.
    */
   updated?: number;
-  /** 1-based DATA row numbers (the header row is not counted). */
+  /** The file's rows as Excel numbers them, when the dialog posted them; else 1-based positions. */
   errors: { row: number; message: string }[];
   /**
    * Rows that were SAVED but that the school's tjänstefördelning policy warns
@@ -1774,6 +1774,7 @@ const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
   classes: "/api/v1/import/groups",
   teachingGroups: "/api/v1/import/group-members",
   roomTypes: "/api/v1/import/room-types",
+  rooms: "/api/v1/import/rooms",
   requirements: "/api/v1/import/requirements",
   teacherQualifications: "/api/v1/import/teacher-qualifications",
   teacherDuties: "/api/v1/import/teacher-duties",
@@ -1788,8 +1789,9 @@ export const IMPORT_NEEDS_YEAR: Record<ImportKind, boolean> = {
   classes: true,
   teachingGroups: true,
   // Room types belong to the school, not to a läsår — the same slöjdsal
-  // exists across every year.
+  // exists across every year. So do the salar.
   roomTypes: false,
+  rooms: false,
   // A timplan is written for one läsår and only means anything inside it: the
   // same 7A reads three NO one year and two the next. The year comes from the
   // dialog, like teachingGroups — never from a column in the file, where it
@@ -1946,6 +1948,12 @@ export interface ImportCsvInput {
    * Travels with every batch, because each batch is validated on its own.
    */
   columns?: string[];
+  /**
+   * Each row's row in the file (ParsedCsv.rowNumbers), sliced with the rows:
+   * the gateway then names the line the school edits, and its rows need no
+   * shifting by the batch offset.
+   */
+  rowNumbers?: number[];
 }
 
 /**
@@ -1969,6 +1977,7 @@ export const IMPORT_MAX_ROWS: Record<ImportKind, number> = {
   classes: 500,
   teachingGroups: 2000,
   roomTypes: 200,
+  rooms: 500,
   // A full timplan is groups × subjects: forty groups and fifteen subjects is
   // 600 rows before anyone has done anything unusual, so this cap is reached by
   // an ordinary school and the batching above is what carries it. 1000 rather
@@ -2011,6 +2020,7 @@ export const IMPORT_UPDATES_ROWS: Record<ImportKind, boolean> = {
   classes: false,
   teachingGroups: false,
   roomTypes: false,
+  rooms: false,
   requirements: true,
   // An existing (teacher, subject) row takes the file's span and kind: a
   // behörighet is a document the school corrects, like the timplan, and a
@@ -2041,6 +2051,7 @@ export async function importCsvInBatches({
   academicYearId,
   rows,
   columns,
+  rowNumbers,
 }: ImportCsvInput): Promise<ImportReport> {
   const size = IMPORT_MAX_ROWS[kind];
   const merged: ImportReport = { created: 0, skipped: 0, errors: [] };
@@ -2053,6 +2064,7 @@ export async function importCsvInBatches({
         {
           ...(IMPORT_NEEDS_YEAR[kind] ? { academicYearId } : {}),
           ...(columns ? { columns } : {}),
+          ...(rowNumbers ? { rowNumbers: rowNumbers.slice(offset, offset + size) } : {}),
           rows: batch,
         },
       );
@@ -2069,10 +2081,11 @@ export async function importCsvInBatches({
       if (typeof report?.updated === "number") {
         merged.updated = (merged.updated ?? 0) + report.updated;
       }
-      // Row numbers come back 1-based within the batch; shift them so they
-      // point at the line the admin actually has to fix in their file.
+      // Row numbers come back as the file's when they were posted, and
+      // 1-based within the batch otherwise; shift only those.
+      const shift = rowNumbers ? 0 : offset;
       for (const error of report?.errors ?? []) {
-        merged.errors.push({ ...error, row: error.row + offset });
+        merged.errors.push({ ...error, row: error.row + shift });
       }
       // Same shift, and the same "only when it came back" as `updated`: a
       // students upload has no policy to warn about and must not grow an
@@ -2081,7 +2094,7 @@ export async function importCsvInBatches({
         merged.warnings ??= [];
         for (const warning of report.warnings) {
           merged.warnings.push({
-            row: warning.row + offset,
+            row: warning.row + shift,
             code: warning.code,
             params: warning.params ?? {},
             message: warning.message,
@@ -2092,7 +2105,7 @@ export async function importCsvInBatches({
     } catch (error) {
       if (offset === 0) throw error;
       merged.errors.push({
-        row: offset + 1,
+        row: rowNumbers?.[offset] ?? offset + 1,
         message:
           error instanceof Error
             ? error.message
@@ -2132,6 +2145,12 @@ export function useImportCsv() {
       // ranking's figures.
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.unstaffed });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
+      // The catalogues a file can add to: salar.csv on the Salar page (and a
+      // salstyper.csv beside it), amnen.csv on Ämnen. Without these the page
+      // showed the list from before the import for staleTime's 30 s.
+      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: ["roomTypes"] });
+      void queryClient.invalidateQueries({ queryKey: ["subjects"] });
     },
   });
 }

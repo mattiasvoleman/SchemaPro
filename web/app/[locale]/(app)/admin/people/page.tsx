@@ -446,6 +446,9 @@ export default function PeoplePage() {
   const yearsQuery = useAcademicYears();
   const years = yearsQuery.data;
   const activeYear = years?.find((year) => year.isActive) ?? years?.[0] ?? null;
+  // The year the import writes into, for the exports: the active one, never
+  // the fallback above, which a file could not be read back into.
+  const exportYearId = years?.find((year) => year.isActive)?.id ?? null;
   const activeYearId = activeYear?.id ?? null;
   const requirementsQuery = useRequirements(activeYearId);
   const requirements = requirementsQuery.data;
@@ -907,20 +910,55 @@ export default function PeoplePage() {
             ) : null}
             <CsvExportButton
               exports={[
+                /*
+                 * Each file waits for every list it is built from, as the
+                 * timplan's export does: built from a list still in flight,
+                 * a file looks complete and is not — every teacher without
+                 * a tjänst, every pupil without a class, a behörighet left
+                 * out for want of its subject.
+                 */
                 {
                   kind: "teachers",
                   // With the active year's posts, so the file imports back
                   // with the tjänst it showed; a teacher without one gets
-                  // empty post cells, which the importer leaves alone.
+                  // empty post cells, which the importer leaves alone. No
+                  // active year, no posts: the import would have none to
+                  // write them into.
                   build: () =>
-                    teachersToCsv(people ?? [], (userId) => employmentOf(userId) ?? undefined),
-                  empty: !people?.some((person) => person.role === "TEACHER"),
+                    teachersToCsv(
+                      people ?? [],
+                      exportYearId === null ? undefined : (userId) => employmentOf(userId) ?? undefined,
+                    ),
+                  empty:
+                    !people?.some((person) => person.role === "TEACHER") ||
+                    (exportYearId !== null && employments === undefined),
                 },
                 {
                   kind: "teacherQualifications",
                   build: () =>
                     teacherQualificationsToCsv(qualifications ?? [], people ?? [], subjects ?? []),
-                  empty: (qualifications ?? []).length === 0,
+                  empty: (qualifications ?? []).length === 0 || people === undefined || subjects === undefined,
+                },
+                {
+                  kind: "teacherDuties",
+                  // Read and built at the click: the page holds no uppdrag,
+                  // and sits close to its bundle budget.
+                  build: () =>
+                    exportYearId === null
+                      ? null
+                      : import("@/lib/duties-csv-export")
+                          .then(({ teacherDutiesCsvFor }) =>
+                            teacherDutiesCsvFor(exportYearId, people ?? [], subjects ?? [], groups ?? []),
+                          )
+                          .catch(() => {
+                            toast.error(tCommon("error"));
+                            return null;
+                          }),
+                  empty:
+                    exportYearId === null ||
+                    !people?.some((person) => person.role === "TEACHER") ||
+                    subjects === undefined ||
+                    groups === undefined,
                 },
                 {
                   kind: "students",
@@ -928,7 +966,7 @@ export default function PeoplePage() {
                   // and an exported file saying "—" is one the importer would
                   // reject on the way back in.
                   build: () => studentsToCsv(people ?? [], exportClassName),
-                  empty: !people?.some((person) => person.role === "STUDENT"),
+                  empty: !people?.some((person) => person.role === "STUDENT") || groups === undefined,
                 },
               ]}
             />

@@ -334,7 +334,7 @@ export function useSchoolUnitsForSpan(enabled: boolean) {
 export function useImportTimplan() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { localTimplanId: string; columns: string[]; rows: TimplanImportRow[] }) =>
+    mutationFn: (body: { localTimplanId: string; columns: string[]; rows: TimplanImportRow[]; rowNumbers?: number[] }) =>
       api.post<TimplanImportReport>("/api/v1/import/timplan", body),
     onSuccess: (_report, body) => {
       void queryClient.invalidateQueries({ queryKey: TIMPLAN_KEYS.plan(body.localTimplanId) });

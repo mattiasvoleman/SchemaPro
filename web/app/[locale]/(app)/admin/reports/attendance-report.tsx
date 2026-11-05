@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { compareSwedish } from "@/lib/sorting";
 import { groupLabel } from "@/lib/year-scope";
 import { useLocale, useTranslations } from "next-intl";
@@ -74,11 +75,6 @@ function defaultFrom(): string {
   return toDateString(d);
 }
 
-/** RFC 4180-style escaping: quote fields containing separators or quotes. */
-function csvField(value: string | number): string {
-  const text = String(value);
-  return /[";\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
 
 /**
  * Närvaro: the attendance report, as /admin/reports was before staffing
@@ -183,7 +179,13 @@ export function AttendanceReport() {
   const number = useMemo(() => new Intl.NumberFormat(locale), [locale]);
   const percent = useMemo(() => new Intl.NumberFormat(locale, { style: "percent" }), [locale]);
 
-  const exportCsv = () => {
+  /*
+   * Through serializeCsv, as every other file the app hands out: BOM, ;, CRLF
+   * and the formula guard. Its own escaping had no guard, and the rows begin
+   * with a pupil's name, so a surname written =HYPERLINK(…) ran when the file
+   * was opened in Excel. Loaded at the click, as the other reports' exports.
+   */
+  const exportCsv = async () => {
     const groupName = groups?.find((group) => group.id === groupId)?.name ?? t("class");
     const header = [
       t("student"),
@@ -197,35 +199,26 @@ export function AttendanceReport() {
       t("invalidMinutes"),
       t("scheduledMinutes"),
     ];
-    const lines = [
-      header.map(csvField).join(";"),
-      ...stats.map((entry) =>
-        [
-          entry.name,
-          entry.total,
-          entry.present,
-          entry.absent,
-          entry.late,
-          entry.excused,
-          entry.rate !== null ? `${Math.round(entry.rate * 100)}%` : "",
-          entry.validAbsenceMinutes,
-          entry.invalidAbsenceMinutes,
-          entry.scheduledMinutes,
-        ]
-          .map(csvField)
-          .join(";"),
-      ),
-    ];
-    // BOM so Excel opens the UTF-8 file with correct encoding.
-    const blob = new Blob([`\uFEFF${lines.join("\n")}`], {
-      type: "text/csv;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = t("csvFilename", { group: groupName, from: fromDate, to: toDate });
-    link.click();
-    URL.revokeObjectURL(url);
+    const rows = stats.map((entry) =>
+      [
+        entry.name,
+        entry.total,
+        entry.present,
+        entry.absent,
+        entry.late,
+        entry.excused,
+        entry.rate !== null ? `${Math.round(entry.rate * 100)}%` : "",
+        entry.validAbsenceMinutes,
+        entry.invalidAbsenceMinutes,
+        entry.scheduledMinutes,
+      ].map(String),
+    );
+    try {
+      const { downloadCsv, serializeCsv } = await import("@/lib/csv-export");
+      downloadCsv(t("csvFilename", { group: groupName, from: fromDate, to: toDate }), serializeCsv(header, rows));
+    } catch {
+      toast.error(tCommon("error"));
+    }
   };
 
   const ratePercent = (rate: number | null) => (rate !== null ? percent.format(rate) : "—");
@@ -275,7 +268,7 @@ export function AttendanceReport() {
           variant="outline"
           size="sm"
           className="ml-auto"
-          onClick={exportCsv}
+          onClick={() => void exportCsv()}
           disabled={!groupId || !hasData || failed}
         >
           <Download />

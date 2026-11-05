@@ -12,14 +12,15 @@
  * parser; it is re-exported below, so importing from here still finds it.
  */
 
-import { parseDecimal } from "@/lib/staffing-forms";
+import { readNumber } from "@/lib/csv-number";
 import type {
   LessonRecurrence,
   TeacherContractKind,
   TeacherDutyKind,
   TeacherQualificationKind,
 } from "@/lib/types";
-import { BOM, normalizeHeader } from "@/lib/csv-export";
+import { BOM, CSV_TEMPLATES, downloadCsv, normalizeHeader, serializeCsv, type ImportKind } from "@/lib/csv-export";
+import { isEmailAddress, isHexColor, textLength } from "@/lib/csv-cell-rules";
 import {
   LESSON_GRID_MINUTES,
   LESSON_MAX_MINUTES,
@@ -33,30 +34,133 @@ import {
 export * from "@/lib/csv-export";
 export * from "@/lib/requirements-csv-export";
 
+export { decodeCsvBytes, type CsvEncoding, type DecodedCsv } from "@/lib/csv-encoding";
+
+/**
+ * The example rows of each downloadable template, under the headers
+ * CSV_TEMPLATES (lib/csv-export.ts) gives. Here and not beside the headers:
+ * only this dialog's "Ladda ner mall" writes them, and in lib/csv-export.ts
+ * they shipped with every page that has an export button.
+ */
+export const CSV_EXAMPLES: Record<ImportKind, string[][]> = {
+  subjects: [
+    ["Matematik", "MA", "#4f46e5", "", "MA", "ja"],
+    ["Textilslöjd", "SLTX", "#db2777", "Textilslöjd", "SL", "ja"],
+    // The row the flag exists for: no national code, and not teaching time.
+    ["Mentorstid", "MT", "#64748b", "", "", "nej"],
+  ],
+  rooms: [
+    ["Sal A1", "A1", "Klassrum", "30", "7", "9", "Hus A", "1"],
+    ["Slöjdsal", "SL1", "Trä- och metallslöjd", "16", "", "", "Hus B", "-1"],
+  ],
+  roomTypes: [["Hemkunskapssal"], ["Trä- och metallslöjd"], ["Textilslöjd"]],
+  classes: [
+    ["7A", "7", "klass", "", ""],
+    // A class is split in two halves, as "Dela klassen" splits it.
+    ["7A:1", "7", "undervisningsgrupp", "7A", ""],
+    ["7A:2", "7", "undervisningsgrupp", "7A", ""],
+    ["SvA7", "7", "undervisningsgrupp", "", "SVA"],
+  ],
+  teachers: [
+    ["Karin", "Ek", "karin.ek@example.com", "070-123 45 67", "100", "", "ferie", "KEK"],
+    ["Bo", "Alm", "bo.alm@example.com", "", "", "", "", ""],
+  ],
+  teacherQualifications: [
+    ["karin.ek@example.com", "MA", "7", "9", "legitimation"],
+    ["karin.ek@example.com", "NO", "7", "9", "behörig"],
+    ["bo.alm@example.com", "SLTX", "1", "9", "tillåten"],
+  ],
+  teacherDuties: [
+    ["karin.ek@example.com", "mentorskap", "Mentor 7B", "90", "nej", "", "7B", "", "", ""],
+    ["karin.ek@example.com", "apt", "APT", "120", "nej", "", "", "", "", ""],
+    ["bo.alm@example.com", "ämnesansvar", "Ämnesansvar slöjd", "60", "ja", "SLTX", "", "", "", ""],
+  ],
+  students: [["Alma", "Berg", "alma.berg@example.com", "", "7A"]],
+  teachingGroups: [
+    ["Ma71", "alma.berg@example.com"],
+    ["Sv73", "alma.berg@example.com"],
+  ],
+  // The examples exist to show the columns nobody guesses right. Row two is
+  // 120 minutes on ODD weeks with a second teacher — the slöjd/hemkunskap
+  // shape, where a group reads a long pass every other week; row three is a
+  // subject read for one term only, which is what the date pair is for; row
+  // four is the idrott the minute pair exists for, ten minutes of ombyte
+  // before and twenty of dusch after, which are minutes OUTSIDE the 60 the
+  // same row teaches in. A template of identical "alla veckor, hela läsåret,
+  // noll minuter" rows would teach an administrator that the last five
+  // columns are decoration. Row two is also the one row whose medlärare is
+  // charged half: two teachers in one slöjdsal, counted as one and a half.
+  requirements: [
+    ["7A", "MA", "3", "60", "0", "0", "karin.ek@example.com", "", "alla", "", "", "100", "100"],
+    [
+      "Sl71",
+      "SLTX",
+      "1",
+      "120",
+      "0",
+      "0",
+      "karin.ek@example.com",
+      "bo.alm@example.com",
+      "udda",
+      "",
+      "",
+      "100",
+      "50",
+    ],
+    ["7A", "SV", "2", "45", "0", "0", "", "", "alla", "2026-01-12", "2026-03-27", "100", "100"],
+    ["7A", "IDH", "2", "60", "10", "20", "karin.ek@example.com", "", "alla", "", "", "100", "100"],
+  ],
+};
+
+export function templateCsvContent(kind: ImportKind): string {
+  return serializeCsv(CSV_TEMPLATES[kind].headers, CSV_EXAMPLES[kind]);
+}
+
+export function downloadTemplate(kind: ImportKind): void {
+  downloadCsv(CSV_TEMPLATES[kind].filename, templateCsvContent(kind));
+}
+
+export type CsvDelimiter = ";" | "," | "\t";
+
 export interface ParsedCsv {
   headers: string[];
   /** Data rows (header excluded), each padded/truncated to headers.length. */
   rows: string[][];
-  delimiter: ";" | ",";
+  delimiter: CsvDelimiter;
+  /**
+   * Each data row's row in the file as Excel numbers it: the header is row 1
+   * when it is the first line, an empty line is a row of its own, and a cell
+   * with a line break inside it does not start a new one. Every "Rad N" the
+   * import says, in the browser and from the gateway, is this number, as in
+   * the schedule exchange's reader (src/schedule-exchange/csv.ts).
+   */
+  rowNumbers: number[];
+  /** The row a quote that never closes opened on: the rest of the file is then one cell. */
+  unterminatedAt: number | null;
+  /** Rows with filled cells to the right of the last header, which no column reads. */
+  overflowRows: number[];
 }
 
-/** Pick the delimiter that splits the header row into the most fields. */
-function detectDelimiter(headerLine: string): ";" | "," {
-  let semicolons = 0;
-  let commas = 0;
+/**
+ * The delimiter that splits the header row into the most fields: ; , or tab
+ * (a table copied out of a text editor or Google Sheets), a tie going to ;,
+ * the Swedish default, and then to ,.
+ */
+function detectDelimiter(headerLine: string): CsvDelimiter {
+  const counts = { ";": 0, ",": 0, "\t": 0 };
   let inQuotes = false;
   for (const char of headerLine) {
     if (char === '"') inQuotes = !inQuotes;
-    else if (!inQuotes && char === ";") semicolons += 1;
-    else if (!inQuotes && char === ",") commas += 1;
+    else if (!inQuotes && (char === ";" || char === "," || char === "\t")) counts[char] += 1;
   }
-  return semicolons >= commas ? ";" : ",";
+  if (counts[";"] >= counts[","] && counts[";"] >= counts["\t"]) return ";";
+  return counts[","] >= counts["\t"] ? "," : "\t";
 }
 
 /**
  * RFC 4180-style parse: quoted fields may contain the delimiter, newlines and
- * doubled quotes (""). Blank lines are dropped; short rows are padded so
- * column lookups never go out of bounds.
+ * doubled quotes (""). Blank lines are dropped but keep their row number;
+ * short rows are padded so column lookups never go out of bounds.
  */
 export function parseCsv(text: string): ParsedCsv {
   const input = text.startsWith(BOM) ? text.slice(BOM.length) : text;
@@ -76,9 +180,13 @@ export function parseCsv(text: string): ParsedCsv {
   const delimiter = detectDelimiter(input.slice(0, headerEnd));
 
   const records: string[][] = [];
+  const recordNumbers: number[] = [];
   let field = "";
   let record: string[] = [];
   let inQuotes = false;
+  let quoteOpenedAt = 0;
+  // Records ended so far, the blank ones included: Excel numbers them all.
+  let ended = 0;
 
   const pushField = () => {
     record.push(readFormulaGuard(field));
@@ -86,8 +194,12 @@ export function parseCsv(text: string): ParsedCsv {
   };
   const pushRecord = () => {
     pushField();
+    ended += 1;
     // A record of nothing but empty fields is a blank line, not data.
-    if (record.some((value) => value.trim() !== "")) records.push(record);
+    if (record.some((value) => value.trim() !== "")) {
+      records.push(record);
+      recordNumbers.push(ended);
+    }
     record = [];
   };
 
@@ -106,6 +218,7 @@ export function parseCsv(text: string): ParsedCsv {
       }
     } else if (char === '"' && field === "") {
       inQuotes = true;
+      quoteOpenedAt = ended + 1;
     } else if (char === delimiter) {
       pushField();
     } else if (char === "\n") {
@@ -117,18 +230,49 @@ export function parseCsv(text: string): ParsedCsv {
       field += char;
     }
   }
+  const unterminatedAt = inQuotes ? quoteOpenedAt : null;
   if (field !== "" || record.length > 0) pushRecord();
 
-  if (records.length === 0) return { headers: [], rows: [], delimiter };
+  if (records.length === 0) {
+    return { headers: [], rows: [], delimiter, rowNumbers: [], unterminatedAt, overflowRows: [] };
+  }
 
   const headers = records[0].map((header) => header.trim());
-  const rows = records.slice(1).map((row) => {
+  const overflowRows: number[] = [];
+  const rows = records.slice(1).map((row, index) => {
     const padded = [...row.map((value) => value.trim())];
+    if (padded.slice(headers.length).some((value) => value !== "")) overflowRows.push(recordNumbers[index + 1]!);
     while (padded.length < headers.length) padded.push("");
     return padded.slice(0, headers.length);
   });
-  return { headers, rows, delimiter };
+  return { headers, rows, delimiter, rowNumbers: recordNumbers.slice(1), unterminatedAt, overflowRows };
 }
+
+/**
+ * What the file itself says is wrong before any column is read: a quote that
+ * never closes (the rest of the file became one cell) and cells to the right
+ * of the header row (a comma file whose 66,667 was not quoted reads as 66
+ * and 667). Both would otherwise import something the school did not write.
+ */
+export function fileProblems(parsed: ParsedCsv): RowError[] {
+  const problems: RowError[] = [];
+  if (parsed.unterminatedAt !== null) {
+    problems.push({
+      row: parsed.unterminatedAt,
+      message: `Rad ${parsed.unterminatedAt}: ett citattecken öppnas men stängs aldrig, så resten av filen blev en enda cell. Lägg till det avslutande citattecknet, eller ta bort det inledande.`,
+    });
+  }
+  for (const row of parsed.overflowRows) {
+    problems.push({
+      row,
+      message: `Rad ${row}: raden har fler celler än rubrikraden har kolumner. Står ett tal med decimalkomma i en kommaavgränsad fil måste det stå inom citattecken, eller sparas filen med semikolon.`,
+    });
+  }
+  return problems;
+}
+
+/** Data row `index`'s row in the file, for a ParsedCsv that may have been built by hand. */
+const rowOf = (parsed: ParsedCsv, index: number): number => parsed.rowNumbers?.[index] ?? index + 2;
 
 /**
  * Undoes `neutralizeFormula` (lib/csv-export.ts) on the way back in.
@@ -139,7 +283,7 @@ export function parseCsv(text: string): ParsedCsv {
  * rename people.
  */
 function readFormulaGuard(value: string): string {
-  return /^'[\s\t]*[=+\-@\t\r]/.test(value) ? value.slice(1) : value;
+  return /^'+[\s\t]*[=+\-@\t\r]/.test(value) ? value.slice(1) : value;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +291,7 @@ function readFormulaGuard(value: string): string {
 // ---------------------------------------------------------------------------
 
 export interface RowError {
-  /** 1-based data-row number (header row not counted) — matches the API. */
+  /** The row in the file as Excel numbers it (ParsedCsv.rowNumbers); 0 for the file as a whole. */
   row: number;
   message: string;
 }
@@ -156,21 +300,57 @@ interface MappedRows<T> {
   rows: T[];
   errors: RowError[];
   /**
-   * The 1-based file row each entry of `rows` came from, aligned by index. A
-   * mapper that checks a cell AFTER this pass (a yes/no column, say) needs it
-   * to name the right line, and cannot recover it from `rows` once a required
-   * field has dropped a line in between.
+   * The file row each entry of `rows` came from, aligned by index. A mapper
+   * that checks a cell AFTER this pass (a yes/no column, say) needs it to name
+   * the right line, and the import posts them so the gateway's messages name
+   * the same rows (ImportReport).
    */
   rowNumbers: number[];
 }
 
 /**
+ * What the import DTO holds a filled cell to, beyond being there: the
+ * longest text it takes (@MaxLength), an e-mail address (@IsEmail) or a
+ * hex colour (@IsHexColor). See lib/csv-cell-rules.ts for why the browser
+ * asks the gateway's own questions.
+ */
+interface CellRule {
+  max?: number;
+  email?: boolean;
+  hex?: boolean;
+}
+
+/** Why the gateway would refuse a filled cell, as a row error naming the column; null when it would not. */
+function cellProblem(row: number, label: string, value: string, rule: CellRule): string | null {
+  if (value === "") return null;
+  if (rule.email && !isEmailAddress(value)) {
+    return `Rad ${row}: ${label} "${value}" är inte en e-postadress. Skriv den som namn@skolan.se.`;
+  }
+  if (rule.hex && !isHexColor(value)) {
+    return `Rad ${row}: ${label} "${value}" är ingen färgkod. Skriv den som #4f46e5, eller lämna cellen tom.`;
+  }
+  if (rule.max !== undefined && textLength(value) > rule.max) {
+    return `Rad ${row}: ${label} är ${textLength(value)} tecken lång, men får vara högst ${rule.max}.`;
+  }
+  return null;
+}
+
+const NAME: CellRule = { max: 120 };
+/** CreateUserDto's @MaxLength(40); a number is text, written as the school writes it. */
+const PHONE: CellRule = { max: 40 };
+const PHONE_ALIASES = ["telefon", "telefonnummer", "tel", "mobil", "mobilnummer", "phone"];
+const GROUP_NAME: CellRule = { max: 60 };
+const EMAIL: CellRule = { email: true, max: 254 };
+const SUBJECT: CellRule = { max: 120 };
+
+/**
  * Column resolution by normalized header, with per-row required-field checks.
- * `spec` maps output fields to accepted header spellings.
+ * `spec` maps output fields to accepted header spellings. `required: "column"`
+ * is a column the file must have whose cells may be empty.
  */
 function mapRows<T>(
   parsed: ParsedCsv,
-  spec: { field: keyof T & string; aliases: string[]; required: boolean }[],
+  spec: { field: keyof T & string; aliases: string[]; required: boolean | "column"; rule?: CellRule }[],
   requiredMessage: (field: string, row: number) => string,
 ): MappedRows<Record<string, string>> {
   const normalized = parsed.headers.map(normalizeHeader);
@@ -181,7 +361,7 @@ function mapRows<T>(
   }
 
   const missing = spec.filter(
-    ({ field, required }) => required && !columnOf.has(field),
+    ({ field, required }) => required !== false && !columnOf.has(field),
   );
   if (missing.length > 0) {
     return {
@@ -202,13 +382,20 @@ function mapRows<T>(
   const rowNumbers: number[] = [];
   const errors: RowError[] = [];
   parsed.rows.forEach((raw, index) => {
+    const line = rowOf(parsed, index);
     const row: Record<string, string> = {};
     let valid = true;
-    for (const { field, required } of spec) {
+    for (const { field, required, rule } of spec) {
       const column = columnOf.get(field);
       const value = column !== undefined ? raw[column] : "";
-      if (required && value === "") {
-        errors.push({ row: index + 1, message: requiredMessage(field, index + 1) });
+      if (required === true && value === "") {
+        errors.push({ row: line, message: requiredMessage(field, line) });
+        valid = false;
+        break;
+      }
+      const problem = rule ? cellProblem(line, FIELD_LABELS[field] ?? field, value, rule) : null;
+      if (problem !== null) {
+        errors.push({ row: line, message: problem });
         valid = false;
         break;
       }
@@ -216,7 +403,7 @@ function mapRows<T>(
     }
     if (valid) {
       rows.push(row);
-      rowNumbers.push(index + 1);
+      rowNumbers.push(line);
     }
   });
   return { rows, errors, rowNumbers };
@@ -226,6 +413,7 @@ const FIELD_LABELS: Record<string, string> = {
   firstName: "fornamn",
   lastName: "efternamn",
   email: "epost",
+  phone: "telefon",
   className: "klass",
   name: "namn",
   gradeLevel: "arskurs",
@@ -236,8 +424,13 @@ const FIELD_LABELS: Record<string, string> = {
   lessonLengths: "lektionslangder",
   // As the template's header spells them, so a complaint about a cell names the
   // column an administrator can actually find in the file.
-  minutesBefore: "minutesBefore",
-  minutesAfter: "minutesAfter",
+  minutesBefore: "minuter_fore",
+  minutesAfter: "minuter_efter",
+  code: "kod",
+  color: "farg",
+  roomType: "salstyp",
+  halfOf: "halvklass_av",
+  replacesSubject: "ersatter_amne",
   teacherEmail: "larare",
   coTeacherEmail: "medlarare",
   teacherLoadPercent: "larare_procent",
@@ -252,17 +445,39 @@ const FIELD_LABELS: Record<string, string> = {
 const requiredMessage = (field: string, row: number) =>
   `Rad ${row}: kolumnen "${FIELD_LABELS[field] ?? field}" är tom.`;
 
-export function mapStudentRows(parsed: ParsedCsv) {
-  return mapRows(
+/**
+ * Student rows. The klass column must be there, but a cell may be empty: a
+ * pupil not yet placed in a class is one the register holds and the people
+ * page exports so, and the row then posts className null.
+ */
+export function mapStudentRows(parsed: ParsedCsv): MappedRows<{
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string | null;
+  className: string | null;
+}> {
+  const mapped = mapRows(
     parsed,
     [
-      { field: "firstName", aliases: ["fornamn", "firstname"], required: true },
-      { field: "lastName", aliases: ["efternamn", "lastname"], required: true },
-      { field: "email", aliases: ["epost", "email", "epostadress"], required: true },
-      { field: "className", aliases: ["klass", "class"], required: true },
+      { field: "firstName", aliases: ["fornamn", "firstname"], required: true, rule: NAME },
+      { field: "lastName", aliases: ["efternamn", "lastname"], required: true, rule: NAME },
+      { field: "email", aliases: ["epost", "email", "epostadress"], required: true, rule: EMAIL },
+      { field: "phone", aliases: PHONE_ALIASES, required: false, rule: PHONE },
+      { field: "className", aliases: ["klass", "class"], required: "column", rule: GROUP_NAME },
     ],
     requiredMessage,
   );
+  return {
+    ...mapped,
+    rows: mapped.rows.map((row) => ({
+      firstName: row.firstName!,
+      lastName: row.lastName!,
+      email: row.email!,
+      phone: row.phone || null,
+      className: row.className || null,
+    })),
+  };
 }
 
 /**
@@ -280,6 +495,8 @@ export type TeacherRow = {
   firstName: string;
   lastName: string;
   email: string;
+  /** Present only when the cell has a number, like the post fields. */
+  phone?: string;
   employmentPercent?: number;
   reductionPercent?: number;
   contractKind?: TeacherContractKind;
@@ -324,6 +541,7 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
     firstName: find(["fornamn", "firstname"]),
     lastName: find(["efternamn", "lastname"]),
     email: find(["epost", "email", "epostadress"]),
+    phone: find(PHONE_ALIASES),
     employmentPercent: find(TEACHER_POST_COLUMNS.employmentPercent),
     reductionPercent: find(TEACHER_POST_COLUMNS.reductionPercent),
     contractKind: find(TEACHER_POST_COLUMNS.contractKind),
@@ -351,7 +569,7 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
   const rowNumbers: number[] = [];
   const errors: RowError[] = [];
   parsed.rows.forEach((raw, index) => {
-    const rowNumber = index + 1;
+    const rowNumber = rowOf(parsed, index);
     const cell = (column: number) => (column === -1 ? "" : raw[column]);
     const fail = (message: string) => {
       errors.push({ row: rowNumber, message });
@@ -364,7 +582,13 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
     };
     for (const field of ["firstName", "lastName", "email"] as const) {
       if (row[field] === "") return fail(requiredMessage(field, rowNumber));
+      const problem = cellProblem(rowNumber, FIELD_LABELS[field]!, row[field], field === "email" ? EMAIL : NAME);
+      if (problem !== null) return fail(problem);
     }
+    const phone = cell(columns.phone);
+    const phoneProblem = cellProblem(rowNumber, "telefon", phone, PHONE);
+    if (phoneProblem !== null) return fail(phoneProblem);
+    if (phone !== "") row.phone = phone;
 
     const rawPercent = cell(columns.employmentPercent);
     const rawReduction = cell(columns.reductionPercent);
@@ -384,7 +608,7 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
         `Rad ${rowNumber}: nedsättning, avtal eller signatur utan tjanst_procent. Ange tjänstgöringsgraden, eller lämna alla fyra tomma.`,
       );
     }
-    const percent = parseDecimal(rawPercent, 3);
+    const percent = readNumber(rawPercent, { decimals: 3, percent: true });
     if (percent === null || percent <= 0 || percent > 100) {
       return fail(
         `Rad ${rowNumber}: tjanst_procent "${rawPercent}" är inte ett tal över 0 och högst 100 med högst tre decimaler.`,
@@ -393,7 +617,7 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
     row.employmentPercent = percent;
 
     if (rawReduction !== "") {
-      const reduction = parseDecimal(rawReduction, 3);
+      const reduction = readNumber(rawReduction, { decimals: 3, percent: true });
       if (reduction === null || reduction > 100) {
         return fail(
           `Rad ${rowNumber}: nedsattning_procent "${rawReduction}" är inte ett tal mellan 0 och 100 med högst tre decimaler.`,
@@ -418,7 +642,8 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
     }
 
     if (rawSignature !== "") {
-      if (rawSignature.length > 8) {
+      // Counted as @MaxLength(8) counts, an emoji once.
+      if (textLength(rawSignature) > 8) {
         return fail(`Rad ${rowNumber}: signatur "${rawSignature}" är längre än åtta tecken.`);
       }
       row.signature = rawSignature;
@@ -507,7 +732,7 @@ export function mapTeacherQualificationRows(parsed: ParsedCsv): MappedRows<Teach
   const errors: RowError[] = [];
   const seenAtRow = new Map<string, number>();
   parsed.rows.forEach((raw, index) => {
-    const rowNumber = index + 1;
+    const rowNumber = rowOf(parsed, index);
     const cell = (field: QualificationField) => raw[columnOf.get(field)!];
     const fail = (message: string) => {
       errors.push({ row: rowNumber, message });
@@ -515,13 +740,17 @@ export function mapTeacherQualificationRows(parsed: ParsedCsv): MappedRows<Teach
 
     const teacherEmail = cell("teacherEmail");
     if (teacherEmail === "") return fail(`Rad ${rowNumber}: kolumnen "larare_epost" är tom.`);
+    const emailProblem = cellProblem(rowNumber, "larare_epost", teacherEmail, EMAIL);
+    if (emailProblem !== null) return fail(emailProblem);
     const subject = cell("subject");
     if (subject === "") return fail(`Rad ${rowNumber}: kolumnen "amne" är tom.`);
+    const subjectProblem = cellProblem(rowNumber, "amne", subject, SUBJECT);
+    if (subjectProblem !== null) return fail(subjectProblem);
 
     const grade = (field: "minGrade" | "maxGrade"): number | null => {
       const value = cell(field);
-      const parsed = Number(value);
-      if (value === "" || !Number.isInteger(parsed) || parsed < 0 || parsed > 12) {
+      const parsed = readNumber(value);
+      if (parsed === null || parsed > 12) {
         fail(`Rad ${rowNumber}: ${labels[field]} "${value}" är inte ett heltal mellan 0 och 12.`);
         return null;
       }
@@ -667,7 +896,7 @@ export function mapTeacherDutyRows(parsed: ParsedCsv): MappedRows<TeacherDutyRow
   const errors: RowError[] = [];
   const seenAtRow = new Map<string, number>();
   parsed.rows.forEach((raw, index) => {
-    const rowNumber = index + 1;
+    const rowNumber = rowOf(parsed, index);
     const cell = (field: DutyField) => {
       const column = columnOf.get(field);
       return column === undefined ? "" : (raw[column] ?? "").trim();
@@ -678,6 +907,14 @@ export function mapTeacherDutyRows(parsed: ParsedCsv): MappedRows<TeacherDutyRow
 
     for (const field of DUTY_REQUIRED) {
       if (cell(field) === "") return fail(`Rad ${rowNumber}: kolumnen "${DUTY_LABELS[field]}" är tom.`);
+    }
+    for (const [field, rule] of [
+      ["teacherEmail", EMAIL],
+      ["subject", SUBJECT],
+      ["groupName", GROUP_NAME],
+    ] as const) {
+      const problem = cellProblem(rowNumber, DUTY_LABELS[field], cell(field), rule);
+      if (problem !== null) return fail(problem);
     }
     const teacherEmail = cell("teacherEmail");
     const rawKind = cell("kind");
@@ -692,8 +929,8 @@ export function mapTeacherDutyRows(parsed: ParsedCsv): MappedRows<TeacherDutyRow
       return fail(`Rad ${rowNumber}: benamning är längre än 80 tecken.`);
     }
     const rawMinutes = cell("minutesPerWeek");
-    const minutesPerWeek = /^\d+$/.test(rawMinutes) ? Number(rawMinutes) : NaN;
-    if (!Number.isInteger(minutesPerWeek) || minutesPerWeek < 1 || minutesPerWeek > 2400) {
+    const minutesPerWeek = readNumber(rawMinutes);
+    if (minutesPerWeek === null || minutesPerWeek < 1 || minutesPerWeek > 2400) {
       return fail(
         `Rad ${rowNumber}: minuter_per_vecka "${rawMinutes}" är inte ett heltal mellan 1 och 2400.`,
       );
@@ -748,51 +985,121 @@ export function mapTeacherDutyRows(parsed: ParsedCsv): MappedRows<TeacherDutyRow
   return { rows, errors, rowNumbers, columns: [...columnOf.keys()] };
 }
 
-export function mapClassRows(parsed: ParsedCsv): {
-  rows: { name: string; gradeLevel?: number }[];
-  errors: RowError[];
-} {
+/**
+ * One row of klasser.csv after mapping — ImportGroupRowDto. The three keys
+ * after gradeLevel are present only when their cell says something, so a
+ * class list of namn and arskurs posts exactly what it always did.
+ */
+export type ClassRow = {
+  name: string;
+  gradeLevel?: number;
+  kind?: "CLASS" | "TEACHING_GROUP";
+  /** The class this group is a half of, by name. */
+  halfOf?: string;
+  /** The subject a teaching group replaces, by code or name. */
+  replacesSubject?: string;
+};
+
+/** The typ, read like `veckor`: "Klass", "undervisningsgrupp", "Grupp" and the enum names. */
+const GROUP_KIND_BY_WORD: Record<string, "CLASS" | "TEACHING_GROUP"> = {
+  klass: "CLASS",
+  hemklass: "CLASS",
+  class: "CLASS",
+  undervisningsgrupp: "TEACHING_GROUP",
+  grupp: "TEACHING_GROUP",
+  halvklass: "TEACHING_GROUP",
+  teachinggroup: "TEACHING_GROUP",
+};
+
+/**
+ * The läsår's groups. A file of only namn and arskurs is a class list, as it
+ * always was; typ makes a row a teaching group, halvklass_av a half of the
+ * class it names (a teaching group, so typ may be left empty there) and
+ * ersatter_amne the subject a teaching group replaces. What only the
+ * database knows — whether the class exists, whether the subject does — is
+ * the gateway's, in the report.
+ */
+export function mapClassRows(parsed: ParsedCsv): MappedRows<ClassRow> {
   const normalized = parsed.headers.map(normalizeHeader);
-  const nameColumn = normalized.findIndex((header) =>
-    ["namn", "name", "klass"].includes(header),
-  );
-  const gradeColumn = normalized.findIndex((header) =>
-    ["arskurs", "gradelevel", "ak"].includes(header),
-  );
+  const find = (aliases: string[]) => normalized.findIndex((header) => aliases.includes(header));
+  const nameColumn = find(["namn", "name", "klass"]);
+  const gradeColumn = find(["arskurs", "gradelevel", "ak"]);
+  const kindColumn = find(["typ", "kind", "grupptyp"]);
+  const halfColumn = find(["halvklassav", "halvav", "halfof"]);
+  const replacesColumn = find(["ersatteramne", "ersatter", "replacessubject"]);
   if (nameColumn === -1) {
     return {
       rows: [],
       errors: [
         { row: 0, message: 'Kolumner saknas: namn. Ladda ner mallen och utgå från den.' },
       ],
+      rowNumbers: [],
     };
   }
 
-  const rows: { name: string; gradeLevel?: number }[] = [];
+  const rows: ClassRow[] = [];
+  const rowNumbers: number[] = [];
   const errors: RowError[] = [];
   parsed.rows.forEach((raw, index) => {
-    const rowNumber = index + 1;
-    const name = raw[nameColumn];
-    if (name === "") {
-      errors.push({ row: rowNumber, message: requiredMessage("name", rowNumber) });
-      return;
+    const rowNumber = rowOf(parsed, index);
+    const cell = (column: number) => (column === -1 ? "" : raw[column]!);
+    const fail = (message: string) => {
+      errors.push({ row: rowNumber, message });
+    };
+    const name = raw[nameColumn]!;
+    if (name === "") return fail(requiredMessage("name", rowNumber));
+    const halfOf = cell(halfColumn);
+    const replacesSubject = cell(replacesColumn);
+    for (const [label, value, rule] of [
+      ["namn", name, GROUP_NAME],
+      ["halvklass_av", halfOf, GROUP_NAME],
+      ["ersatter_amne", replacesSubject, SUBJECT],
+    ] as const) {
+      const problem = cellProblem(rowNumber, label, value, rule);
+      if (problem !== null) return fail(problem);
     }
-    const rawGrade = gradeColumn === -1 ? "" : raw[gradeColumn];
-    if (rawGrade === "") {
-      rows.push({ name });
-      return;
+
+    const row: ClassRow = { name };
+    const rawGrade = cell(gradeColumn);
+    if (rawGrade !== "") {
+      const grade = readNumber(rawGrade);
+      if (grade === null || grade > 12) {
+        return fail(`Rad ${rowNumber}: årskurs "${rawGrade}" är inte ett tal mellan 0 och 12.`);
+      }
+      row.gradeLevel = grade;
     }
-    const grade = Number(rawGrade);
-    if (!Number.isInteger(grade) || grade < 0 || grade > 12) {
-      errors.push({
-        row: rowNumber,
-        message: `Rad ${rowNumber}: årskurs "${rawGrade}" är inte ett tal mellan 0 och 12.`,
-      });
-      return;
+
+    const rawKind = cell(kindColumn);
+    const kind = rawKind === "" ? undefined : GROUP_KIND_BY_WORD[normalizeHeader(rawKind)];
+    if (rawKind !== "" && kind === undefined) {
+      return fail(
+        `Rad ${rowNumber}: typ "${rawKind}" känns inte igen. Skriv "klass" eller "undervisningsgrupp", eller lämna cellen tom för en klass.`,
+      );
     }
-    rows.push({ name, gradeLevel: grade });
+    if (halfOf !== "" && kind === "CLASS") {
+      return fail(
+        `Rad ${rowNumber}: en halvklass är en undervisningsgrupp, men typ säger "${rawKind}". Skriv "undervisningsgrupp", eller lämna halvklass_av tom.`,
+      );
+    }
+    if (replacesSubject !== "" && (halfOf !== "" || kind !== "TEACHING_GROUP")) {
+      return fail(
+        halfOf !== ""
+          ? `Rad ${rowNumber}: en halvklass är en del av klassen och ersätter inget ämne. Lämna ersatter_amne tom.`
+          : `Rad ${rowNumber}: bara en undervisningsgrupp kan ersätta ett ämne, men typ säger "${rawKind || "klass"}". Skriv "undervisningsgrupp" i typ, eller lämna ersatter_amne tom.`,
+      );
+    }
+    if (kind !== undefined || halfOf !== "") row.kind = halfOf !== "" ? "TEACHING_GROUP" : kind;
+    if (halfOf !== "") row.halfOf = halfOf;
+    if (replacesSubject !== "") row.replacesSubject = replacesSubject;
+    rows.push(row);
+    rowNumbers.push(rowNumber);
   });
-  return { rows, errors };
+  // Every half after every group that is none, keeping file order within each:
+  // the upload is cut into batches, and a half whose class landed in a later
+  // batch would be told its class does not exist. Each row keeps its row
+  // number, so a message still names the line in the file.
+  const order = rows.map((_, index) => index).sort((a, b) => Number(!!rows[a]!.halfOf) - Number(!!rows[b]!.halfOf) || a - b);
+  return { rows: order.map((index) => rows[index]!), errors, rowNumbers: order.map((index) => rowNumbers[index]!) };
 }
 
 /**
@@ -804,10 +1111,16 @@ export function mapClassRows(parsed: ParsedCsv): {
  */
 export type SubjectRow = {
   name: string;
-  code: string;
-  color: string;
-  /** The room type's NAME, resolved server-side. */
-  roomType: string;
+  /**
+   * Null for an empty cell. Code and colour were posted as "" and the DTO's
+   * @IsOptional() lets only null and undefined through: one subject without a
+   * colour — as the subjects page saves one and exports it — made the whole
+   * file a 400 ("rows.9.color must be a hexadecimal color").
+   */
+  code: string | null;
+  color: string | null;
+  /** The room type's NAME, resolved server-side; null for an empty cell. */
+  roomType: string | null;
   /**
    * The Skolverket code exactly as written — the server trims and upper-cases
    * it, and refuses the row if it is not a known code. Null for an empty cell:
@@ -850,17 +1163,20 @@ export function parseYesNoCell(cell: string): boolean | null | undefined {
  * every subject was before the columns existed, so an old file imports as it
  * always did.
  */
-export function mapSubjectRows(parsed: ParsedCsv): { rows: SubjectRow[]; errors: RowError[] } {
+export function mapSubjectRows(parsed: ParsedCsv): MappedRows<SubjectRow> {
   const mapped = mapRows(
     parsed,
     [
-      { field: "name", aliases: ["namn", "name", "amne"], required: true },
-      { field: "code", aliases: ["kod", "code", "forkortning"], required: false },
-      { field: "color", aliases: ["farg", "color"], required: false },
+      { field: "name", aliases: ["namn", "name", "amne"], required: true, rule: NAME },
+      { field: "code", aliases: ["kod", "code", "forkortning"], required: false, rule: { max: 20 } },
+      { field: "color", aliases: ["farg", "color"], required: false, rule: { hex: true } },
       {
         field: "roomType",
-        aliases: ["salstyp", "kraver_salstyp", "roomtype"],
+        // Headers are compared normalized, underscores gone: "kräver_salstyp"
+        // arrives as "kraversalstyp", which the old "kraver_salstyp" never met.
+        aliases: ["salstyp", "kraversalstyp", "roomtype"],
         required: false,
+        rule: GROUP_NAME,
       },
       {
         field: "nationalCode",
@@ -872,6 +1188,7 @@ export function mapSubjectRows(parsed: ParsedCsv): { rows: SubjectRow[]; errors:
           "skolverketkod",
         ],
         required: false,
+        rule: { max: 20 },
       },
       {
         field: "countsTowardTimplan",
@@ -888,6 +1205,7 @@ export function mapSubjectRows(parsed: ParsedCsv): { rows: SubjectRow[]; errors:
   );
 
   const rows: SubjectRow[] = [];
+  const rowNumbers: number[] = [];
   const errors = [...mapped.errors];
   mapped.rows.forEach((row, index) => {
     const rowNumber = mapped.rowNumbers[index]!;
@@ -905,22 +1223,121 @@ export function mapSubjectRows(parsed: ParsedCsv): { rows: SubjectRow[]; errors:
     const nationalCode = (row.nationalCode ?? "").trim();
     rows.push({
       name: row.name ?? "",
-      code: row.code ?? "",
-      color: row.color ?? "",
-      roomType: row.roomType ?? "",
+      code: row.code || null,
+      color: row.color || null,
+      roomType: row.roomType || null,
       nationalCode: nationalCode === "" ? null : nationalCode,
       countsTowardTimplan,
     });
+    rowNumbers.push(rowNumber);
   });
   // Two sources of row errors; the reader expects them in file order.
   errors.sort((a, b) => a.row - b.row);
-  return { rows, errors };
+  return { rows, errors, rowNumbers };
+}
+
+/** One row of salar.csv after mapping — ImportRoomRowDto. */
+export type RoomRow = {
+  name: string;
+  code: string | null;
+  /** The room type's NAME, resolved server-side. */
+  roomType: string | null;
+  capacity: number | null;
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+  building: string | null;
+  floor: number | null;
+};
+
+const ROOM_COLUMNS = {
+  name: ["namn", "name", "sal", "rum"],
+  code: ["kod", "code", "salskod"],
+  roomType: ["salstyp", "typ", "roomtype"],
+  capacity: ["kapacitet", "platser", "antalplatser", "capacity"],
+  minGradeLevel: ["lagstaarskurs", "franarskurs", "mingrade"],
+  maxGradeLevel: ["hogstaarskurs", "tillarskurs", "maxgrade"],
+  building: ["byggnad", "hus", "building"],
+  floor: ["vaning", "plan", "floor"],
+} satisfies Record<string, string[]>;
+
+/**
+ * Salar. Only the name is required; every bound is CreateRoomDto's, said
+ * per row with the column named: a text cell's length, a capacity of 1 to
+ * 10 000, an årskurs of 0 to 12 with the lowest not above the highest, a
+ * floor of -5 to 50. Whether the salstyp exists is the gateway's.
+ */
+export function mapRoomRows(parsed: ParsedCsv): MappedRows<RoomRow> {
+  const normalized = parsed.headers.map(normalizeHeader);
+  const column = Object.fromEntries(
+    Object.entries(ROOM_COLUMNS).map(([field, aliases]) => [field, normalized.findIndex((header) => aliases.includes(header))]),
+  ) as Record<keyof typeof ROOM_COLUMNS, number>;
+  if (column.name === -1) {
+    return {
+      rows: [],
+      errors: [{ row: 0, message: "Kolumner saknas: namn. Ladda ner mallen och utgå från den." }],
+      rowNumbers: [],
+    };
+  }
+
+  const rows: RoomRow[] = [];
+  const rowNumbers: number[] = [];
+  const errors: RowError[] = [];
+  parsed.rows.forEach((raw, index) => {
+    const rowNumber = rowOf(parsed, index);
+    const cell = (field: keyof typeof ROOM_COLUMNS) => (column[field] === -1 ? "" : raw[column[field]]!);
+    const fail = (message: string) => {
+      errors.push({ row: rowNumber, message });
+    };
+    if (cell("name") === "") return fail(requiredMessage("name", rowNumber));
+    for (const [label, field, rule] of [
+      ["namn", "name", NAME],
+      ["kod", "code", { max: 20 }],
+      ["salstyp", "roomType", GROUP_NAME],
+      ["byggnad", "building", GROUP_NAME],
+    ] as const) {
+      const problem = cellProblem(rowNumber, label, cell(field), rule);
+      if (problem !== null) return fail(problem);
+    }
+    const whole = (label: string, field: keyof typeof ROOM_COLUMNS, min: number, max: number, signed = false) => {
+      const raw = cell(field);
+      if (raw === "") return null;
+      const value = readNumber(raw, { signed });
+      if (value === null || value < min || value > max) {
+        fail(`Rad ${rowNumber}: ${label} "${raw}" är inte ett heltal mellan ${min} och ${max}.`);
+        return undefined;
+      }
+      return value;
+    };
+    const capacity = whole("kapacitet", "capacity", 1, 10000);
+    if (capacity === undefined) return;
+    const minGradeLevel = whole("lagsta_arskurs", "minGradeLevel", 0, 12);
+    if (minGradeLevel === undefined) return;
+    const maxGradeLevel = whole("hogsta_arskurs", "maxGradeLevel", 0, 12);
+    if (maxGradeLevel === undefined) return;
+    if (minGradeLevel !== null && maxGradeLevel !== null && minGradeLevel > maxGradeLevel) {
+      return fail(`Rad ${rowNumber}: lagsta_arskurs (${minGradeLevel}) är högre än hogsta_arskurs (${maxGradeLevel}).`);
+    }
+    const floor = whole("vaning", "floor", -5, 50, true);
+    if (floor === undefined) return;
+    rows.push({
+      name: cell("name"),
+      code: cell("code") || null,
+      roomType: cell("roomType") || null,
+      capacity,
+      minGradeLevel,
+      maxGradeLevel,
+      building: cell("building") || null,
+      floor,
+    });
+    rowNumbers.push(rowNumber);
+  });
+  return { rows, errors, rowNumbers };
 }
 
 export function mapRoomTypeRows(parsed: ParsedCsv) {
   return mapRows(
     parsed,
-    [{ field: "name", aliases: ["namn", "name", "salstyp", "typ"], required: true }],
+    [{ field: "name", aliases: ["namn", "name", "salstyp", "typ"], required: true, rule: GROUP_NAME }],
     requiredMessage,
   );
 }
@@ -929,8 +1346,8 @@ export function mapMembershipRows(parsed: ParsedCsv) {
   return mapRows(
     parsed,
     [
-      { field: "groupName", aliases: ["grupp", "group", "undervisningsgrupp"], required: true },
-      { field: "email", aliases: ["epost", "email", "epostadress", "elev"], required: true },
+      { field: "groupName", aliases: ["grupp", "group", "undervisningsgrupp"], required: true, rule: GROUP_NAME },
+      { field: "email", aliases: ["epost", "email", "epostadress", "elev"], required: true, rule: EMAIL },
     ],
     requiredMessage,
   );
@@ -1217,9 +1634,7 @@ function lengthsProblemMessage(
  * So the column set travels as data of its own, and the server writes only the
  * columns the file actually had.
  */
-export function mapRequirementRows(parsed: ParsedCsv): {
-  rows: RequirementRow[];
-  errors: RowError[];
+export function mapRequirementRows(parsed: ParsedCsv): MappedRows<RequirementRow> & {
   columns: RequirementField[];
 } {
   const normalized = parsed.headers.map(normalizeHeader);
@@ -1243,17 +1658,19 @@ export function mapRequirementRows(parsed: ParsedCsv): {
             .join(", ")}. Ladda ner mallen och utgå från den.`,
         },
       ],
+      rowNumbers: [],
       columns: [],
     };
   }
 
   const rows: RequirementRow[] = [];
+  const rowNumbers: number[] = [];
   const errors: RowError[] = [];
   /** Identifying pair -> the file line that claimed it first. */
   const seenAtRow = new Map<string, number>();
 
   parsed.rows.forEach((raw, index) => {
-    const rowNumber = index + 1;
+    const rowNumber = rowOf(parsed, index);
     const cell = (field: RequirementField): string => {
       const column = columnOf.get(field);
       return column === undefined ? "" : raw[column];
@@ -1269,6 +1686,15 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     if (groupName === "") return fail(requiredMessage("groupName", rowNumber));
     const subject = cell("subject");
     if (subject === "") return fail(requiredMessage("subject", rowNumber));
+    for (const [field, rule] of [
+      ["groupName", GROUP_NAME],
+      ["subject", SUBJECT],
+      ["teacherEmail", EMAIL],
+      ["coTeacherEmail", EMAIL],
+    ] as const) {
+      const problem = cellProblem(rowNumber, FIELD_LABELS[field]!, cell(field), rule);
+      if (problem !== null) return fail(problem);
+    }
 
     /*
      * Lektionslängder. A filled cell is the row: its count and longest are
@@ -1302,7 +1728,7 @@ export function mapRequirementRows(parsed: ParsedCsv): {
       listed && cell("lessonsPerWeek").trim() === ""
         ? String(listed.lessonsPerWeek)
         : cell("lessonsPerWeek");
-    const lessonsPerWeek = Number(rawLessons);
+    const lessonsPerWeek = readNumber(rawLessons) ?? NaN;
     if (!Number.isInteger(lessonsPerWeek) || lessonsPerWeek < 1 || lessonsPerWeek > 40) {
       return fail(
         `Rad ${rowNumber}: lektioner_per_vecka "${rawLessons}" är inte ett heltal mellan 1 och 40.`,
@@ -1313,7 +1739,7 @@ export function mapRequirementRows(parsed: ParsedCsv): {
       listed && cell("minutesPerLesson").trim() === ""
         ? String(listed.minutesPerLesson)
         : cell("minutesPerLesson");
-    const minutesPerLesson = Number(rawMinutes);
+    const minutesPerLesson = readNumber(rawMinutes) ?? NaN;
     if (
       !Number.isInteger(minutesPerLesson) ||
       minutesPerLesson < 15 ||
@@ -1348,8 +1774,8 @@ export function mapRequirementRows(parsed: ParsedCsv): {
      */
     const pupilMinutes = (field: "minutesBefore" | "minutesAfter"): number | null => {
       const raw = cell(field);
-      const minutes = raw === "" ? 0 : Number(raw);
-      if (!Number.isInteger(minutes) || minutes < 0 || minutes > 60) {
+      const minutes = raw === "" ? 0 : readNumber(raw);
+      if (minutes === null || minutes > 60) {
         fail(
           `Rad ${rowNumber}: ${FIELD_LABELS[field]} "${raw}" är inte ett heltal mellan 0 och 60.`,
         );
@@ -1371,9 +1797,9 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     const loadPercent = (
       field: "teacherLoadPercent" | "coTeacherLoadPercent",
     ): number | null => {
-      const raw = cell(field).replace(/\s*%$/, "");
-      const percent = raw === "" ? 100 : Number(raw);
-      if (!Number.isInteger(percent) || percent < 0 || percent > 200) {
+      const raw = cell(field);
+      const percent = raw === "" ? 100 : readNumber(raw, { percent: true });
+      if (percent === null || percent > 200) {
         fail(
           `Rad ${rowNumber}: ${FIELD_LABELS[field]} "${cell(field)}" är inte ett heltal mellan 0 och 200.`,
         );
@@ -1484,10 +1910,11 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     seenAtRow.set(duplicateKey, rowNumber);
 
     rows.push(row);
+    rowNumbers.push(rowNumber);
   });
 
   // The keys of `columnOf` are exactly the columns the header carried, which is
   // what the server needs and all it needs — the header is read once, and a row
   // cannot introduce a column the header did not declare.
-  return { rows, errors, columns: [...columnOf.keys()] };
+  return { rows, errors, rowNumbers, columns: [...columnOf.keys()] };
 }

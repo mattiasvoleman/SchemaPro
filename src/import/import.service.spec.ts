@@ -231,6 +231,57 @@ describe('ImportService', () => {
       ]);
       expect(users.create).toHaveBeenCalledTimes(1);
     });
+
+    it('creates a pupil without a class when the klass cell is empty, as the register allows', async () => {
+      // The people page exports a pupil not yet placed in a class with an
+      // empty klass cell; that row must come back as the same pupil.
+      const report = await service.importStudents(
+        {
+          academicYearId: YEAR_ID,
+          rows: [
+            { firstName: 'Östen', lastName: 'Åberg', email: 'osten@example.com', className: null },
+            { firstName: 'Ida', lastName: 'Ek', email: 'ida@example.com', className: '  ' },
+            { firstName: 'Nils', lastName: 'Ahl', email: 'nils@example.com' },
+          ],
+        },
+        testUser(),
+      );
+
+      // Each said, since the import cannot place them later: a second upload
+      // skips them as known.
+      expect(report).toEqual({
+        created: 3,
+        skipped: 0,
+        errors: [],
+        warnings: [1, 2, 3].map((row) => ({
+          row,
+          code: 'IMPORT_STUDENT_WITHOUT_CLASS',
+          params: {},
+          message: 'Eleven skapades utan klass. Ge eleven en klass under Personer.',
+        })),
+      });
+      for (const call of users.create.mock.calls) {
+        expect(call[0]).toEqual(expect.objectContaining({ role: 'STUDENT', studentGroupId: undefined }));
+      }
+    });
+
+    it('still refuses a class that is named and missing, saying the cell may be left empty', async () => {
+      const report = await service.importStudents(
+        {
+          academicYearId: YEAR_ID,
+          rows: [{ firstName: 'Alma', lastName: 'Berg', email: 'alma@example.com', className: '7X' }],
+        },
+        testUser(),
+      );
+
+      expect(report.errors).toEqual([
+        {
+          row: 1,
+          message: 'Klassen "7X" finns inte för det valda läsåret. Importera klasserna först, eller lämna kolumnen klass tom.',
+        },
+      ]);
+      expect(users.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('importGroups', () => {
@@ -260,12 +311,147 @@ describe('ImportService', () => {
           kind: 'CLASS',
           gradeLevel: 7,
         },
+        select: expect.anything(),
       });
       // Only this läsår's classes count as taken: last year's 7B does not make
       // this year's a duplicate.
       expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { academicYearId: YEAR_ID } }),
       );
+    });
+
+    describe('the typ, halvklass_av and ersatter_amne columns', () => {
+      /** Every create answers what it wrote, with an id named after the group. */
+      const echoCreates = () =>
+        tx.studentGroup.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve({ id: `id-${String(data.name)}`, name: data.name, kind: data.kind, gradeLevel: data.gradeLevel }),
+        );
+      const created = () =>
+        tx.studentGroup.create.mock.calls.map(([args]: [{ data: Record<string, unknown> }]) => args.data);
+
+      /** The year's groups for the year's read, `halves` for the read of the named classes' halves. */
+      const arrangeGroups = (groups: unknown[], halves: unknown[] = []) =>
+        tx.studentGroup.findMany.mockImplementation((args?: { where?: { halfOfId?: unknown }; select?: Record<string, unknown> }) =>
+          Promise.resolve(asSelected(args?.where?.halfOfId ? halves : groups, args?.select)),
+        );
+      const GROUP_LOCK = /^SELECT 1 FROM "StudentGroups" g WHERE g\."id" = ANY\(\?::uuid\[\]\) ORDER BY g\."id" FOR NO KEY UPDATE$/;
+      const sqlOf = (call: unknown[]) => rawSql(call).replace(/\s+/g, ' ').trim();
+
+      it('makes a teaching group, and the two halves of a class the file names AFTER them, in the class’s årskurs', async () => {
+        arrangeGroups([]);
+        echoCreates();
+
+        const report = await service.importGroups(
+          {
+            academicYearId: YEAR_ID,
+            rows: [
+              { name: '7B:1', kind: 'TEACHING_GROUP', halfOf: '7b' },
+              { name: '7B:2', kind: 'TEACHING_GROUP', halfOf: '7B' },
+              { name: '7B', gradeLevel: 7 },
+              { name: 'Sv-stöd 7', kind: 'TEACHING_GROUP', gradeLevel: 7 },
+            ],
+          },
+          testUser(),
+        );
+
+        expect(report).toEqual({ created: 4, skipped: 0, errors: [] });
+        expect(created()).toEqual([
+          expect.objectContaining({ name: '7B', kind: 'CLASS', gradeLevel: 7 }),
+          expect.objectContaining({ name: 'Sv-stöd 7', kind: 'TEACHING_GROUP', gradeLevel: 7 }),
+          { schoolId: testUser().schoolId, academicYearId: YEAR_ID, name: '7B:1', kind: 'TEACHING_GROUP', gradeLevel: 7, halfOfId: 'id-7B' },
+          { schoolId: testUser().schoolId, academicYearId: YEAR_ID, name: '7B:2', kind: 'TEACHING_GROUP', gradeLevel: 7, halfOfId: 'id-7B' },
+        ]);
+      });
+
+      it('splits a class the year already has, holding the people lock and then the class before any insert', async () => {
+        arrangeGroups([{ id: GROUP_7A, name: '7A', kind: 'CLASS', gradeLevel: 7 }]);
+        echoCreates();
+
+        const report = await service.importGroups(
+          {
+            academicYearId: YEAR_ID,
+            rows: [
+              { name: '7A:1', kind: 'TEACHING_GROUP', halfOf: '7A', gradeLevel: 7 },
+              { name: '7A:2', kind: 'TEACHING_GROUP', halfOf: '7A', gradeLevel: 7 },
+            ],
+          },
+          testUser(),
+        );
+
+        expect(report).toEqual({ created: 2, skipped: 0, errors: [] });
+        expect(created().map((data) => data.halfOfId)).toEqual([GROUP_7A, GROUP_7A]);
+        // Step 1, then step 2 in id order (src/common/lock-order.ts), both
+        // before the first half's insert wakes the trigger that holds the class.
+        const [people, lock] = tx.$executeRaw.mock.calls;
+        expect(sqlOf(people!)).toBe('SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))');
+        expect(sqlOf(lock!)).toMatch(GROUP_LOCK);
+        expect((lock![0] as Prisma.Sql).values).toEqual([[GROUP_7A]]);
+        const [peopleAt, lockAt] = tx.$executeRaw.mock.invocationCallOrder;
+        expect(peopleAt!).toBeLessThan(lockAt!);
+        expect(lockAt!).toBeLessThan(tx.studentGroup.create.mock.invocationCallOrder[0]!);
+      });
+
+      it('takes no lock for a file without halves', async () => {
+        arrangeGroups([]);
+        echoCreates();
+
+        await service.importGroups({ academicYearId: YEAR_ID, rows: [{ name: '7A', gradeLevel: 7 }] }, testUser());
+
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+      });
+
+      it('refuses a half of a class that is split already, naming its halves, as "Dela klassen" does', async () => {
+        arrangeGroups(
+          [{ id: GROUP_7A, name: '7A', kind: 'CLASS', gradeLevel: 7 }],
+          [
+            { name: '7A:1', halfOfId: GROUP_7A },
+            { name: '7A:2', halfOfId: GROUP_7A },
+          ],
+        );
+        echoCreates();
+
+        const report = await service.importGroups(
+          {
+            academicYearId: YEAR_ID,
+            rows: [
+              { name: '7A grupp 1', kind: 'TEACHING_GROUP', halfOf: '7A' },
+              { name: '7A grupp 2', kind: 'TEACHING_GROUP', halfOf: '7A' },
+            ],
+          },
+          testUser(),
+        );
+
+        expect(report.created).toBe(0);
+        expect(report.errors).toEqual([1, 2].map((row) => ({
+          row,
+          message: 'halvklass_av: klassen "7A" är redan delad i 7A:1 och 7A:2. En klass delas en gång, i två halvor.',
+        })));
+      });
+
+      it('takes the one half an export writes for a class whose other half was deleted (granskning-260-r2, N2)', async () => {
+        // The rows lib/csv.ts maps from classesToCsv for a 7B left with only
+        // 7B:2 (web/lib/csv-roundtrip.test.ts writes and reads the same file).
+        arrangeGroups([]);
+        echoCreates();
+
+        const report = await service.importGroups(
+          {
+            academicYearId: YEAR_ID,
+            rows: [
+              { name: '7B', gradeLevel: 7, kind: 'CLASS' },
+              { name: '7B:2', gradeLevel: 7, kind: 'TEACHING_GROUP', halfOf: '7B' },
+            ],
+            rowNumbers: [2, 3],
+          },
+          testUser(),
+        );
+
+        expect(report).toEqual({ created: 2, skipped: 0, errors: [] });
+        expect(created().map((data) => [data.name, data.halfOfId ?? null])).toEqual([
+          ['7B', null],
+          ['7B:2', 'id-7B'],
+        ]);
+      });
     });
   });
 
@@ -495,6 +681,88 @@ describe('ImportService', () => {
         service.importSubjects({ rows: rows() }, schoolless()),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('importRooms', () => {
+    it('creates the rooms the school lacks, by name, resolving the room type by name', async () => {
+      arrangeRows(tx.room.findMany, [{ name: 'Sal A1' }]);
+      arrangeRows(tx.roomType.findMany, [{ id: 'rt-slojd', name: 'Trä- och metallslöjd' }]);
+      tx.room.create.mockResolvedValue({});
+
+      const report = await service.importRooms(
+        {
+          rows: [
+            { name: ' sal a1 ' }, // exists, case- and space-insensitive
+            {
+              name: 'Slöjdsal',
+              code: 'SL1',
+              roomType: 'trä- och metallslöjd',
+              capacity: 16,
+              minGradeLevel: 4,
+              maxGradeLevel: 9,
+              building: '  Hus B ',
+              floor: -1,
+            },
+            { name: 'Slöjdsal' }, // duplicated within the file
+            { name: 'Aula', code: '', building: '   ' },
+          ],
+        },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 2, skipped: 2, errors: [] });
+      expect(tx.room.create.mock.calls.map(([args]: [{ data: unknown }]) => args.data)).toEqual([
+        {
+          schoolId: testUser().schoolId,
+          name: 'Slöjdsal',
+          code: 'SL1',
+          capacity: 16,
+          roomTypeId: 'rt-slojd',
+          minGradeLevel: 4,
+          maxGradeLevel: 9,
+          building: 'Hus B',
+          floor: -1,
+        },
+        {
+          schoolId: testUser().schoolId,
+          name: 'Aula',
+          code: null,
+          capacity: null,
+          roomTypeId: null,
+          minGradeLevel: null,
+          maxGradeLevel: null,
+          building: null,
+          floor: null,
+        },
+      ]);
+    });
+
+    it('refuses a row with an unknown room type or a span that runs backwards, naming the column', async () => {
+      arrangeRows(tx.room.findMany, []);
+      arrangeRows(tx.roomType.findMany, []);
+      tx.room.create.mockResolvedValue({});
+
+      const report = await service.importRooms(
+        {
+          rows: [
+            { name: 'Labb', roomType: 'Laborationssal' },
+            { name: 'Sal 9', minGradeLevel: 9, maxGradeLevel: 7 },
+            { name: 'Sal 1' },
+          ],
+          rowNumbers: [2, 3, 5],
+        },
+        testUser(),
+      );
+
+      expect(report).toEqual({
+        created: 1,
+        skipped: 0,
+        errors: [
+          { row: 2, message: 'salstyp: "Laborationssal" finns inte. Lägg till salstypen under Salar, eller importera salstyperna först.' },
+          { row: 3, message: 'lagsta_arskurs (9) är högre än hogsta_arskurs (7).' },
+        ],
+      });
     });
   });
 
@@ -763,6 +1031,7 @@ describe('ImportService', () => {
           kind: 'CLASS',
           gradeLevel: null,
         },
+        select: expect.anything(),
       });
     });
 
@@ -1039,6 +1308,7 @@ describe('ImportService', () => {
           kind: 'CLASS',
           gradeLevel: null,
         },
+        select: expect.anything(),
       });
     });
   });
@@ -1812,6 +2082,35 @@ describe('ImportService', () => {
         { row: 1, message: expect.stringContaining('Ämnet "Fysik" finns inte') },
         { row: 3, message: expect.stringContaining('Samma ämne och årskurs står redan på rad 2') },
       ]);
+    });
+
+    it('names the file’s rows, from rowNumbers, in `row` and in the sentence about the earlier row', async () => {
+      // The browser posts each row's line in the file (the header is line 1,
+      // an empty line counts), so the report names the line in Excel.
+      const report = await service.importTimplan(
+        {
+          localTimplanId: PLAN,
+          rows: [
+            row({ subject: 'Fysik' }),
+            row({ gradeLevel: 5 }),
+            row({ subject: 'Matematik', gradeLevel: 5, minutesPerWeek: 120 }),
+          ],
+          rowNumbers: [2, 4, 7],
+        },
+        testUser(),
+      );
+
+      expect(report.errors).toEqual([
+        { row: 2, message: expect.stringContaining('Ämnet "Fysik" finns inte') },
+        { row: 7, message: expect.stringContaining('Samma ämne och årskurs står redan på rad 4') },
+      ]);
+    });
+
+    it('refuses rowNumbers that are not one per row, before reading anything', async () => {
+      await expect(
+        service.importTimplan({ localTimplanId: PLAN, rows: [row({}), row({ gradeLevel: 5 })], rowNumbers: [2] }, testUser()),
+      ).rejects.toThrow(new BadRequestException('rowNumbers: ett radnummer per rad i rows.'));
+      expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
     it('touches the plan before writing a cell — the entries have no timestamps of their own', async () => {
