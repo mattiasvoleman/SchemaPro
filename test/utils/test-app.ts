@@ -38,6 +38,7 @@ import { ResourcesModule } from '../../src/resources/resources.module';
 import { CalendarModule } from '../../src/calendar/calendar.module';
 import { UsersModule } from '../../src/users/users.module';
 import { ImportModule } from '../../src/import/import.module';
+import { ScheduleExchangeModule } from '../../src/schedule-exchange/exchange.module';
 import { OptimizationModule } from '../../src/optimization/optimization.module';
 import { IntegrationModule } from '../../src/integration/integration.module';
 import { FamilyModule } from '../../src/family/family.module';
@@ -153,6 +154,7 @@ export const FEATURE_MODULES = [
   HealthModule,
   FamilyModule,
   ImportModule,
+  ScheduleExchangeModule,
   IntegrationModule,
   OptimizationModule,
   AttendanceModule,

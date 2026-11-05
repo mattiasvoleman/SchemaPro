@@ -316,7 +316,7 @@ export const BLOCK_CARD_STALE = 'BLOCK_CARD_STALE';
 export const NOT_A_BLOCK_CARD = 'NOT_A_BLOCK_CARD';
 
 /** A lesson the clash scan holds a candidate against: one of its day, or one moved with it. */
-interface DayLesson {
+export interface DayLesson {
   id: string;
   teacherId: string | null;
   coTeacherId: string | null;
@@ -2156,7 +2156,13 @@ export class MasterLessonsService {
     );
   }
 
-  private async findConflicts(
+  /**
+   * Public since the timetable import (Schemat som tabell, schedule-exchange):
+   * it holds a whole file's lessons to this one rule, one lesson at a time,
+   * with the lessons already accepted from the file as `options.alongside`.
+   * It only reads; the callers decide what a clash means.
+   */
+  async findConflicts(
     tx: PrismaClient,
     /** The year's roster basis: every pupil read below is read through it. */
     basis: RosterBasis,
