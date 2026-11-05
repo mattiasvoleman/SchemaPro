@@ -1239,6 +1239,22 @@
     för att se <span class="ui">Rollhistorik</span>: vad som ändrades, när och
     av vem.
   </p>
+  <p id="skyddad-identitet">
+    <strong>Skyddad identitet.</strong> Fäll ut personens rad för att se om
+    personen är markerad med skyddad identitet, och varifrån markeringen
+    kommer: från elevregistret (7.2) eller satt för hand. Rektor, en
+    fullständig administratör och expeditionen markerar och tar bort
+    markeringen med knappen på raden; övriga administratörer ser den. En
+    markerad person finns inte i filerna Rastra Schema skriver om personer
+    (3.6, 6.9): inte i elevfilen, lärarfilen, vårdnadshavarfilen eller
+    närvarorapporten, och inte heller i en rad som nämner personen. Rastra
+    Schema sparar bara att skyddet finns, aldrig vilket skydd det är
+    (sekretessmarkering eller skyddad folkbokföring). Lärare, elever och
+    vårdnadshavare ser inte markeringen. Tar du bort en markering som kommer
+    från registret sätts den igen vid nästa synk, så länge registret har kvar
+    skyddet. Markeringen försvinner med personen, och när gallringen
+    pseudonymiserar en person som slutat (7.4).
+  </p>
   <p>
     Sidan visar varje profil det den ändrar. Expeditionen lägger upp och
     ändrar personer och kopplar vårdnadshavare. Schemaläggaren ändrar
@@ -1340,13 +1356,14 @@
       per koppling mellan en aktiv vårdnadshavare och en aktiv elev; en
       vårdnadshavare utan koppling kommer inte med. Att filen hämtas står i
       läsloggen (7.4) som en läsning av personernas namn och kontaktuppgifter
-      och av vem som är vårdnadshavare till vem. Filen tar med alla aktiva
-      kopplingar, även för en elev med skyddad identitet (7.2): det sparas
-      inte på eleven, så Rastra Schema kan inte hålla den eleven utanför.
-      Exporterna av elever och vårdnadshavare påminner om det när filen
-      hämtas, och importdialogen för vårdnadshavare säger det innan filen
-      väljs: skolan ansvarar för att en sådan fil hanteras därefter, eller
-      för att de eleverna tas bort ur den innan den lämnar skolan.
+      och av vem som är vårdnadshavare till vem. En person som skolan
+      markerat med <a href="#skyddad-identitet">skyddad identitet</a> finns
+      inte i någon av filerna, och inte heller en rad som nämner personen:
+      vårdnadshavarfilen lämnar ute varje koppling där eleven eller
+      vårdnadshavaren är markerad, och timplansfilen en post vars lärare är
+      markerad. När filen hämtas står det hur många som hölls utanför. Den
+      som har skyddad identitet men inte är markerad finns med, så markera
+      personen innan du delar en fil.
       På sidor som rymmer två listor — klasser och undervisningsgrupper, eller
       lärare och elever — frågar knappen vilken fil du vill ha.
     </p>
@@ -5741,6 +5758,8 @@
     <span class="path">Drift › Rapporter</span> har tre flikar. Fliken
     <span class="ui">Närvaro</span> visar närvarograd per klass och elev för en
     vald period, med klassens snitt som jämförelse, och kan exporteras som CSV.
+    En elev med <a href="#skyddad-identitet">skyddad identitet</a> finns inte
+    i filen, och det står hur många som hölls utanför.
   </p>
 
   <h4>Tjänstefördelning: planerat, schemalagt och genomfört</h4>
@@ -5842,7 +5861,11 @@
     HR-uppgifter rakt igenom, så den hämtas av rektor, en fullständig
     administratör eller den som har HR-läs (2.2); andra administratörer ser
     i stället en mening om vem som hämtar den. Varje hämtning sparas i
-    läsloggen (7.4): filen namnger varje lärare med tjänst. Filen räknar läsårets planerade
+    läsloggen (7.4): filen namnger varje lärare med tjänst. SCB ska ha alla
+    lärare, så en lärare med <a href="#skyddad-identitet">skyddad
+    identitet</a> finns med; det står hur många när filen hämtas, så att
+    filen hanteras därefter. Samma gäller Samverkan-filen och vikarietimmarna
+    till lönen. Filen räknar läsårets planerade
     undervisning (inte perioden ovan):
   </p>
   <ul>
@@ -6486,7 +6509,15 @@
   </p>
   <ul>
     <li>Ändringar för en person med <strong>skyddad identitet</strong> i
-      registret.</li>
+      registret. Markeringen själv är undantaget: en person som redan är
+      kopplad och som registret skyddar markeras (<span class="ui">Skyddad
+      identitet</span>, förvald, och natten gör den också), och den som du
+      kryssar i att skapa eller koppla markeras med det. Säger registret
+      <em>Ingen</em> för en person som synken markerat föreslås att
+      markeringen tas bort; det är förvalt men görs aldrig av natten, och
+      bara vid en full synk. En markering du satt för hand tar synken aldrig
+      bort. Rastra Schema sparar bara att skyddet finns, aldrig vilket
+      (3.6).</li>
     <li>En ändrad <strong>e-postadress</strong> för någon som redan är
       inbjuden. Personen loggar in med den gamla adressen tills du skickar
       inbjudan igen. Då flyttar personens egen inloggning till den nya, och
@@ -6631,11 +6662,10 @@
     </p>
     <p>
       Importen och en tillämpning körs aldrig i samma ögonblick: den ena
-      väntar på den andra. En skyddad identitet vet importen däremot inget
-      om. Registret anger den i en synk, men den sparas inte på eleven.
-      Har skolan en elev med skyddad identitet, ta bort den elevens rader ur
-      filen innan du laddar upp den, och tänk på samma sak när du delar en
-      exporterad fil.
+      väntar på den andra. Importen markerar ingen som skyddad. Har en person
+      i filen skyddad identitet, markera personen under
+      <span class="path">Personer</span> (3.6), så hålls den utanför filerna
+      Rastra Schema skriver.
     </p>
   </div>
 
