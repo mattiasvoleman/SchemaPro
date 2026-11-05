@@ -13,6 +13,7 @@ import {
   ImportMembershipsDto,
   ImportRequirementsDto,
   ImportRoomTypesDto,
+  ImportRoomsDto,
   ImportSubjectsDto,
   ImportStudentsDto,
   ImportTeacherDutiesDto,
@@ -65,6 +66,13 @@ export class ImportController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.imports.importRoomTypes(dto, user);
+  }
+
+  /** Salar: create-only by name, the room type by name — see the service. */
+  @Post('rooms')
+  @Area('PLANERING')
+  importRooms(@Body() dto: ImportRoomsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.imports.importRooms(dto, user);
   }
 
   @Post('group-members')

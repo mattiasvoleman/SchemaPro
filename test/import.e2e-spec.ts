@@ -423,13 +423,16 @@ describe('CSV import (e2e)', () => {
           rows: [
             { name: '7B', gradeLevel: 7, kind: 'CLASS' },
             { name: '7B:1', gradeLevel: 7, kind: 'TEACHING_GROUP', halfOf: '7B' },
+            { name: '7B:2', gradeLevel: 7, kind: 'TEACHING_GROUP', halfOf: '7B' },
             { name: 'Sv-stöd 7', gradeLevel: 7, kind: 'TEACHING_GROUP' },
             { name: 'SvA 7', kind: 'TEACHING_GROUP', replacesSubject: 'SV' },
           ],
+          // The rows' lines in the file, the header being line 1 and line 4 empty.
+          rowNumbers: [2, 3, 5, 6, 7],
         })
         .expect(201);
 
-      expect(response.body).toEqual({ created: 4, skipped: 0, errors: [] });
+      expect(response.body).toEqual({ created: 5, skipped: 0, errors: [] });
       const writes = harness.tx['studentGroup']!['create']!.mock.calls.map(
         (call) => (call[0] as { data: Record<string, unknown> }).data,
       );
@@ -438,6 +441,7 @@ describe('CSV import (e2e)', () => {
         expect.objectContaining({ name: 'Sv-stöd 7', kind: 'TEACHING_GROUP', gradeLevel: 7 }),
         expect.objectContaining({ name: 'SvA 7', replacesSubjectId: 'sub-sv' }),
         expect.objectContaining({ name: '7B:1', halfOfId: 'id-7B' }),
+        expect.objectContaining({ name: '7B:2', halfOfId: 'id-7B' }),
       ]);
     });
 
@@ -449,11 +453,28 @@ describe('CSV import (e2e)', () => {
       const response = await post(harness, 'students')
         .send({
           academicYearId: YEAR_ID,
-          rows: [{ firstName: 'Östen', lastName: 'Åberg', email: 'osten@example.com', className: null }],
+          rows: [{ firstName: 'Östen', lastName: 'Åberg', email: 'osten@example.com', phone: '070-123 45 67', className: null }],
+          rowNumbers: [5],
         })
         .expect(201);
 
-      expect(response.body).toEqual({ created: 1, skipped: 0, errors: [] });
+      // Counted in the report as created without a class, on the row the file has.
+      expect(response.body).toEqual({
+        created: 1,
+        skipped: 0,
+        errors: [],
+        warnings: [
+          {
+            row: 5,
+            code: 'IMPORT_STUDENT_WITHOUT_CLASS',
+            params: {},
+            message: 'Eleven skapades utan klass. Ge eleven en klass under Personer.',
+          },
+        ],
+      });
+      expect(harness.tx['user']!['create']!).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ phone: '070-123 45 67' }) }),
+      );
     });
 
     it('imports teaching-group memberships', async () => {
@@ -805,6 +826,40 @@ describe('CSV import (e2e)', () => {
         .expect(400);
     });
 
+    it('imports salar with every column the file has, the room type by name', async () => {
+      harness.tx['room']!['findMany']!.mockResolvedValue([]);
+      harness.tx['roomType']!['findMany']!.mockResolvedValue([{ id: 'rt-1', name: 'Klassrum' }]);
+      harness.tx['room']!['create']!.mockResolvedValue({ id: 'room-1' });
+
+      const response = await post(harness, 'rooms')
+        .send({
+          rows: [
+            {
+              name: 'Sal A1',
+              code: 'A1',
+              roomType: 'Klassrum',
+              capacity: 30,
+              minGradeLevel: 7,
+              maxGradeLevel: 9,
+              building: 'Hus A',
+              floor: 1,
+            },
+          ],
+          rowNumbers: [2],
+        })
+        .expect(201);
+
+      expect(response.body).toEqual({ created: 1, skipped: 0, errors: [] });
+      expect(harness.tx['room']!['create']!).toHaveBeenCalledWith({
+        data: expect.objectContaining({ name: 'Sal A1', roomTypeId: 'rt-1', capacity: 30, floor: 1 }),
+      });
+    });
+
+    it('400s a sal whose capacity the rooms column does not hold, and a year in the body', async () => {
+      await post(harness, 'rooms').send({ rows: [{ name: 'Sal', capacity: 0 }] }).expect(400);
+      await post(harness, 'rooms').send({ academicYearId: YEAR_ID, rows: [{ name: 'Sal' }] }).expect(400);
+    });
+
     it('imports room types with no year in the body at all', async () => {
       // The web dialog omits academicYearId for this kind. With
       // forbidNonWhitelisted validation, sending one anyway would be a 400 —
@@ -1015,6 +1070,7 @@ describe('CSV import (e2e)', () => {
           'students',
           'groups',
           'room-types',
+          'rooms',
           'group-members',
           'requirements',
           'teacher-qualifications',
@@ -1029,6 +1085,17 @@ describe('CSV import (e2e)', () => {
         }
       },
     );
+
+    it('refuses the expedition salar, which are PLANERING like the Salar page, and writes nothing', async () => {
+      const response = await request(harness.app.getHttpServer())
+        .post('/api/v1/import/rooms')
+        .set('x-test-user', asUser({ adminProfile: 'EXPEDITION' } as never))
+        .send({ rows: [{ name: 'Sal A1' }] })
+        .expect(403);
+
+      expect(response.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+      expect(harness.tx['room']!['create']!).not.toHaveBeenCalled();
+    });
 
     it('403s a school admin with no school on the principal', async () => {
       await request(harness.app.getHttpServer())

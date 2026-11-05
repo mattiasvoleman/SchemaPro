@@ -42,6 +42,23 @@ import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
  * administrative action, not a bulk pipe.
  */
 
+/**
+ * Each posted row's row in the CSV file as Excel numbers it — the header is
+ * row 1 and an empty line is a row of its own (web/lib/csv.ts parseCsv) — so
+ * the report, and every "rad N" in its sentences, names the line the school
+ * edits rather than the row's place in the request. One number per row of
+ * `rows`. Absent, as from a client posting rows of its own, a row is its
+ * 1-based position in `rows`, as before.
+ */
+export class ImportFileRowsDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(2000)
+  @IsInt({ each: true, message: 'rowNumbers: radnummer anges som heltal.' })
+  @Min(1, { each: true, message: 'rowNumbers: radnummer börjar på 1.' })
+  rowNumbers?: number[];
+}
+
 export class ImportStudentRowDto {
   @IsString()
   @IsNotEmpty()
@@ -58,6 +75,15 @@ export class ImportStudentRowDto {
   email!: string;
 
   /**
+   * As the person form takes it (CreateUserDto): text, up to 40 characters.
+   * The people page exports it; an empty cell posts null.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string | null;
+
+  /**
    * Group NAME as the school writes it (7A) — resolved server-side.
    *
    * Optional: a pupil the school has not placed in a class yet is a pupil the
@@ -71,7 +97,7 @@ export class ImportStudentRowDto {
   className?: string | null;
 }
 
-export class ImportStudentsDto {
+export class ImportStudentsDto extends ImportFileRowsDto {
   @IsUUID('4')
   academicYearId!: string;
 
@@ -97,6 +123,15 @@ export class ImportTeacherRowDto {
   @IsEmail()
   @MaxLength(254)
   email!: string;
+
+  /**
+   * As the person form takes it (CreateUserDto): text, up to 40 characters.
+   * The people page exports it; an empty cell posts null.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string | null;
 
   /**
    * The teacher's post for the ACTIVE läsår, optional column by column.
@@ -143,7 +178,7 @@ export class ImportTeacherRowDto {
   signature?: string | null;
 }
 
-export class ImportTeachersDto {
+export class ImportTeachersDto extends ImportFileRowsDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(500)
@@ -198,7 +233,7 @@ export class ImportGroupRowDto {
   replacesSubject?: string | null;
 }
 
-export class ImportGroupsDto {
+export class ImportGroupsDto extends ImportFileRowsDto {
   @IsUUID('4')
   academicYearId!: string;
 
@@ -265,7 +300,7 @@ export class ImportSubjectRowDto {
   countsTowardTimplan?: boolean | null;
 }
 
-export class ImportSubjectsDto {
+export class ImportSubjectsDto extends ImportFileRowsDto {
   // No academicYearId: subjects belong to the school, not to a year.
   @IsArray()
   @ArrayMinSize(1)
@@ -282,7 +317,7 @@ export class ImportRoomTypeRowDto {
   name!: string;
 }
 
-export class ImportRoomTypesDto {
+export class ImportRoomTypesDto extends ImportFileRowsDto {
   // No academicYearId: room types belong to the school, not to a year — the
   // same slöjdsal exists across every läsår.
   @IsArray()
@@ -291,6 +326,69 @@ export class ImportRoomTypesDto {
   @ValidateNested({ each: true })
   @Type(() => ImportRoomTypeRowDto)
   rows!: ImportRoomTypeRowDto[];
+}
+
+/**
+ * One sal from salar.csv: the room as the Salar page has it, the bounds
+ * CreateRoomDto's, the room type by NAME as amnen.csv names it. Not the
+ * skolområde or "kräver godkännande": a site is chosen on the page among the
+ * school's sites, and approval is a decision rather than a fact of the room.
+ */
+export class ImportRoomRowDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  code?: string | null;
+
+  /** The room type's NAME, resolved against the school's own list. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  roomType?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10000)
+  capacity?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  minGradeLevel?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  maxGradeLevel?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  building?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(-5)
+  @Max(50)
+  floor?: number | null;
+}
+
+export class ImportRoomsDto extends ImportFileRowsDto {
+  // A school's rooms, not a year's: no academicYearId, like the room types.
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => ImportRoomRowDto)
+  rows!: ImportRoomRowDto[];
 }
 
 export class ImportMembershipRowDto {
@@ -306,7 +404,7 @@ export class ImportMembershipRowDto {
   email!: string;
 }
 
-export class ImportMembershipsDto {
+export class ImportMembershipsDto extends ImportFileRowsDto {
   @IsUUID('4')
   academicYearId!: string;
 
@@ -527,7 +625,7 @@ export const OPTIONAL_REQUIREMENT_COLUMNS = [
 export type OptionalRequirementColumn =
   (typeof OPTIONAL_REQUIREMENT_COLUMNS)[number];
 
-export class ImportRequirementsDto {
+export class ImportRequirementsDto extends ImportFileRowsDto {
   /** From the dialog, as for teachingGroups — never a column in the file. */
   @IsUUID('4')
   academicYearId!: string;
@@ -606,7 +704,7 @@ export class ImportTeacherQualificationRowDto {
  * person, not to a year. Capped like memberships — one row per teacher and
  * subject, so even a large school runs to a few hundred.
  */
-export class ImportTeacherQualificationsDto {
+export class ImportTeacherQualificationsDto extends ImportFileRowsDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(2000)
@@ -707,7 +805,7 @@ export const TEACHER_DUTY_FILE_COLUMNS = [
 
 export type TeacherDutyFileColumn = (typeof TEACHER_DUTY_FILE_COLUMNS)[number];
 
-export class ImportTeacherDutiesDto {
+export class ImportTeacherDutiesDto extends ImportFileRowsDto {
   /** The läsår the uppdrag belong to, from the dialog — never a column. */
   @IsUUID('4')
   academicYearId!: string;
@@ -787,7 +885,7 @@ export const TIMPLAN_FILE_COLUMNS = ['subject', 'gradeLevel', 'minutesPerWeek', 
 
 export type TimplanFileColumn = (typeof TIMPLAN_FILE_COLUMNS)[number];
 
-export class ImportTimplanDto {
+export class ImportTimplanDto extends ImportFileRowsDto {
   /** The DRAFT plan the rows go into, chosen in the dialog — never a column. */
   @IsUUID('4')
   localTimplanId!: string;
