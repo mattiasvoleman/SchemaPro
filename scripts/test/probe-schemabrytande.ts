@@ -484,6 +484,13 @@ export async function scheduleActivityChecks(owner: Client, api: PrismaService, 
       assert.deepEqual(listed.filter((entry) => entry.removedAt === null).map((entry) => [entry.id, entry.name, entry.replacementLessons, entry.credits, entry.doubleCounts]), [
         [activity.id, 'Friluftsdag åk 7A', 2, 4, false],
       ]);
+      // What a change must send again is in the view: each named subject and its minutes a day.
+      const active = listed.find((entry) => entry.id === activity.id)!;
+      assert.deepEqual(
+        active.creditLines.map((line) => [line.subjectId, line.minutes]).sort(),
+        [[idrott, 120], [matte, 60]].sort(),
+      );
+      assert.equal(active.academicYearId, year.id);
       assert.deepEqual(listed.filter((entry) => entry.removedAt !== null).map((entry) => [entry.name, entry.replacementLessons]), [['Prov åk 7C', 0]]);
     });
 
