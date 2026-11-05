@@ -248,6 +248,13 @@ export function readChange(
       if (!role) return { subject: holder, detail: null };
       return { subject: holder, detail: end ? { key: "dutyUntil", values: { role, start, end } } : { key: "duty", values: { role, start } } };
     }
+    case "PROTECTION": {
+      // Skyddad identitet (20270107090000): the school's mark set (ADD) or
+      // lifted (END). The person is named in after alone, which a finished
+      // run no longer has: its rows then name nobody.
+      const subject = byExternal(after?.["personExternalId"]) ?? byLocal(after?.["userLocalId"]);
+      return { subject, detail: { key: change.op === "END" ? "protectionEnd" : "protectionAdd", values: {} } };
+    }
     case "ORGANISATION": {
       // A skolenhet (SchoolUnits): created, linked or updated from the
       // source's Organisation, or a note naming it by its displayName.

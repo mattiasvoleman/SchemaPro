@@ -1,0 +1,101 @@
+/**
+ * Every place the web hands out a file, and what it does with a person the
+ * school has marked as having a protected identity (skyddad identitet,
+ * 20270107090000; lib/protected-people.ts).
+ *
+ * people-files.test.ts reads app/, components/ and lib/ for a download (the
+ * primitives in DOWNLOADS) and fails on a source that downloads and is not
+ * listed here, on a listed one that no longer downloads, on a HOLDS_OUT or
+ * KEEPS_AND_SAYS source that does not read the marks, and on an export
+ * button entry of a PEOPLE_KIND whose source builds it without them. A new
+ * file is therefore decided here, by name, before it ships. The gateway's
+ * own files are the same list's other half: src/common/people-files.ts.
+ */
+
+export type PeopleFileRule =
+  /** The marked persons, and every row naming one, are not in the file; the page says how many. */
+  | "HOLDS_OUT"
+  /** The recipient is to have everyone (SCB, payroll, the samverkan): the marked are in it, and the page says how many. */
+  | "KEEPS_AND_SAYS"
+  /** Names staff (signature, name, e-mail), no pupil and no guardian. Not filtered: see `why`. */
+  | "NAMES_STAFF"
+  /** Names nobody: a template, a timplan, the school's rooms or subjects. */
+  | "NAMES_NOBODY"
+  /** About one person, read for that person's own sake (the läslogg of a data subject). */
+  | "ONE_PERSON"
+  /** The download itself, which the sources listed here call. */
+  | "PRIMITIVE";
+
+export interface PeopleFile {
+  files: string;
+  rule: PeopleFileRule;
+  why: string;
+}
+
+/** What a download looks like in the source. */
+export const DOWNLOADS =
+  /\b(downloadCsv|downloadIcs|downloadScbText|downloadScbCsv|saveBase64|downloadTemplate)\(|URL\.createObjectURL\(|\bdoc\.save\(/;
+
+/** The export button's kinds that name people: built from the unmarked only. */
+export const PEOPLE_KINDS = [
+  "teachers",
+  "teacherQualifications",
+  "teacherDuties",
+  "students",
+  "guardians",
+  "teachingGroups",
+  "requirements",
+] as const;
+
+/** Paths from web/. */
+export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
+  "components/import/csv-export-button.tsx": {
+    files: "larare.csv, behorigheter.csv, uppdrag.csv, elever.csv, vardnadshavare.csv, undervisningsgrupper.csv, timplansposter.csv, and the files of no person",
+    rule: "HOLDS_OUT",
+    why: "Each page builds its people's entries through withoutMarked (vardnadshavare.csv: the gateway holds a link out when either end is marked); the button says how many.",
+  },
+  "app/[locale]/(app)/admin/reports/attendance-report.tsx": {
+    files: "narvaro_<klass>_<från>_<till>.csv",
+    rule: "HOLDS_OUT",
+    why: "A row per pupil: a marked pupil's row is left out.",
+  },
+  "app/[locale]/(app)/admin/reports/staffing-report.tsx": {
+    files: "tjanstefordelning-….csv (samverkan), scb-pedagogisk-personal-….txt and .csv",
+    rule: "KEEPS_AND_SAYS",
+    why: "SCB is to have every teacher (lärarregistret), and the samverkan on the tjänstefördelning every post; a teacher left out makes both wrong.",
+  },
+  "app/[locale]/(app)/admin/reports/cover-hours-report.tsx": {
+    files: "vikarietimmar-lektioner-….csv, vikarietimmar-summering-….csv",
+    rule: "KEEPS_AND_SAYS",
+    why: "The payroll pays everyone in it; a vikarie left out goes unpaid.",
+  },
+  "app/[locale]/(app)/admin/schedule-exchange/page.tsx": {
+    files: "the timetable as CSV, Excel, Untis GPU and aSc XML",
+    rule: "NAMES_STAFF",
+    why: "Names teachers by signature, name and e-mail and no pupil: the lessons are named by group. A teacher left out would leave lessons without their teacher in the other system.",
+  },
+  "app/[locale]/(app)/admin/timetable/timetable-exports.ts": {
+    files: "timetable.ics, timetable.pdf",
+    rule: "NAMES_STAFF",
+    why: "Names the lesson's teachers; pupils only as a count.",
+  },
+  "app/[locale]/(app)/admin/dataskydd/access-log-csv.ts": {
+    files: "lasningar-<namn>-<datum>.csv",
+    rule: "ONE_PERSON",
+    why: "Who has read about one person: dataskydd's answer to that person, whose name is the subject.",
+  },
+  "app/[locale]/(app)/admin/timplan/page.tsx": {
+    files: "lokal_timplan.csv",
+    rule: "NAMES_NOBODY",
+    why: "Subjects and minutes.",
+  },
+  "components/import/csv-import-dialog.tsx": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only." },
+  "components/timplan/timplan-import-dialog.tsx": { files: "the timplan template", rule: "NAMES_NOBODY", why: "Headers only." },
+  "lib/csv.ts": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only (downloadTemplate)." },
+  "lib/csv-export.ts": { files: "—", rule: "PRIMITIVE", why: "downloadCsv." },
+  "lib/ics.ts": { files: "—", rule: "PRIMITIVE", why: "downloadIcs." },
+  "lib/pdf.ts": { files: "—", rule: "PRIMITIVE", why: "The PDF's save." },
+  "lib/scb-csv.ts": { files: "—", rule: "PRIMITIVE", why: "downloadScbCsv." },
+  "lib/scb-file.ts": { files: "—", rule: "PRIMITIVE", why: "downloadScbText." },
+  "lib/schedule-exchange.ts": { files: "—", rule: "PRIMITIVE", why: "saveBase64." },
+};

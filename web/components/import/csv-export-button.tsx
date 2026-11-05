@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
 import { CSV_TEMPLATES, downloadCsv, type ImportKind } from "@/lib/csv-export";
+import type { HeldOutFile } from "@/lib/protected-people";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -20,17 +21,15 @@ export interface CsvExport {
    * them, for a page that loads its builder at the click rather than with
    * the route (/admin/requirements, at its bundle budget). Null downloads
    * nothing: the page has already said why (a builder that did not load).
+   *
+   * A file of people is a HeldOutFile (lib/protected-people.ts): built
+   * without the persons the school has marked as having a protected
+   * identity, and how many those were, which is said once the file is
+   * handed over.
    */
-  build: () => string | null | Promise<string | null>;
+  build: () => string | HeldOutFile | null | Promise<string | HeldOutFile | null>;
   /** Nothing to export — the entry is shown but disabled. */
   empty?: boolean;
-  /**
-   * The file names pupils and may therefore name some with protected personal
-   * data (skyddad identitet), which the school does not store: said once the
-   * file has been handed over, since the school is the one who can hold such
-   * a pupil's rows back.
-   */
-  protectedWarning?: boolean;
 }
 
 /**
@@ -59,10 +58,14 @@ export function CsvExportButton({ exports }: { exports: CsvExport[] }) {
     running.current = true;
     setPending(true);
     try {
-      const file = await entry.build();
-      if (file === null) return;
-      downloadCsv(CSV_TEMPLATES[entry.kind].filename, file);
-      if (entry.protectedWarning) toast.warning(t("protectedWarning"), { duration: 15000 });
+      const built = await entry.build();
+      if (built === null) return;
+      const content = typeof built === "string" ? built : built.content;
+      if (content !== null) downloadCsv(CSV_TEMPLATES[entry.kind].filename, content);
+      // Skyddad identitet: how many the file leaves out, also when none.
+      if (typeof built !== "string") {
+        toast.info(t(`heldOut.${built.unit ?? "people"}`, { count: built.heldOut }), { duration: 10000 });
+      }
     } finally {
       running.current = false;
       setPending(false);

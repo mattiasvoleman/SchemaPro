@@ -57,7 +57,7 @@ import { useApplyRun, useDiscardRun, useRunChanges } from "./use-ss12000-sync";
  * rows read by kind, operation and code.
  */
 
-const ENTITIES: ChangeEntity[] = ["PERSON", "GROUP", "CLASS_MEMBERSHIP", "GROUP_MEMBERSHIP", "RESPONSIBLE", "DUTY_LINK", "ORGANISATION"];
+const ENTITIES: ChangeEntity[] = ["PERSON", "GROUP", "CLASS_MEMBERSHIP", "GROUP_MEMBERSHIP", "RESPONSIBLE", "DUTY_LINK", "ORGANISATION", "PROTECTION"];
 const PAGE = 200;
 
 export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun; fullEveryDays: number; onClose: () => void }) {

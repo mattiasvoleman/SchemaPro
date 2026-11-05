@@ -98,9 +98,12 @@ const state = vi.hoisted(() => ({
   roleChanges: [] as unknown[],
   /** Whether the school has an active guardian, who is what makes the guardians export available. */
   withGuardian: false,
+  /** Skyddad identitet: the marks the exports read at the click, or a read that fails. */
+  marks: [] as Array<{ userId: string; source: string }>,
+  marksFail: false,
 }));
 
-const { saveEmployment, createPerson, updatePerson, unlinkGuardian, inviteOne, downloadCsv, guardiansCsvFor } =
+const { saveEmployment, createPerson, updatePerson, unlinkGuardian, inviteOne, downloadCsv, guardiansCsvFor, apiGet } =
   vi.hoisted(() => ({
     saveEmployment: vi.fn(),
     createPerson: vi.fn(),
@@ -109,7 +112,15 @@ const { saveEmployment, createPerson, updatePerson, unlinkGuardian, inviteOne, d
     inviteOne: vi.fn(),
     downloadCsv: vi.fn(),
     guardiansCsvFor: vi.fn(),
+    apiGet: vi.fn(),
   }));
+
+// The gateway, for the one read the page's files make themselves: the marks of
+// a protected identity (lib/protected-people.ts, loaded at the click).
+vi.mock("@/lib/api", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/api")>();
+  return { ...real, api: { ...real.api, get: apiGet } };
+});
 
 // The download itself and the module read at the click, the one thing the guardians export adds.
 vi.mock("@/lib/csv-export", async (importOriginal) => ({
@@ -200,6 +211,12 @@ vi.mock("@/lib/staffing-queries", () => ({
  * Redigera or Ta bort: a stand-in saying what it was opened with
  * (students-bulk-dialogs.test.tsx tests the real ones).
  */
+// The mark of a protected identity on an opened row has a test of its own
+// (components/people/protected-identity.test.tsx): it reads through react-query.
+vi.mock("@/components/people/protected-identity", () => ({
+  ProtectedIdentity: ({ userId }: { userId: string }) => <p data-testid="protected-identity">{userId}</p>,
+}));
+
 vi.mock("./students-bulk-dialogs", () => ({
   StudentsBulkDialogs: ({ mode, ids }: { mode: string; ids: string[] }) => (
     <div role="dialog" aria-label={`bulk-${mode}`}>
@@ -258,6 +275,15 @@ describe("People page", () => {
     state.administratorsFailed = false;
     state.roleChanges = [];
     state.withGuardian = false;
+    state.marks = [];
+    state.marksFail = false;
+    apiGet.mockImplementation((path: string) =>
+      path === "/api/v1/person-protections"
+        ? state.marksFail
+          ? Promise.reject(new Error("HTTP 500"))
+          : Promise.resolve(state.marks)
+        : Promise.reject(new Error(`unexpected read ${path}`)),
+    );
     updatePerson.mockResolvedValue(undefined);
     saveEmployment.mockResolvedValue(undefined);
     unlinkGuardian.mockResolvedValue(undefined);
@@ -455,7 +481,7 @@ describe("People page", () => {
 
     it("reads the links at the click and downloads them as vardnadshavare.csv", async () => {
       state.withGuardian = true;
-      guardiansCsvFor.mockResolvedValue("FILEN");
+      guardiansCsvFor.mockResolvedValue({ content: "FILEN", heldOut: 0, unit: "links" });
       const user = userEvent.setup();
       render(<PeoplePage />);
 
@@ -467,9 +493,9 @@ describe("People page", () => {
       await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("vardnadshavare.csv", "FILEN"));
     });
 
-    it("warns, once the file is handed over, that it may name pupils with protected personal data", async () => {
+    it("says, once the file is handed over, how many links the gateway held out for a protected identity", async () => {
       state.withGuardian = true;
-      guardiansCsvFor.mockResolvedValue("FILEN");
+      guardiansCsvFor.mockResolvedValue({ content: "FILEN", heldOut: 2, unit: "links" });
       const user = userEvent.setup();
       render(<PeoplePage />);
 
@@ -477,29 +503,13 @@ describe("People page", () => {
       await user.click(guardianEntry());
 
       await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("vardnadshavare.csv", "FILEN"));
-      expect(toast.warning).toHaveBeenCalledWith("protectedWarning", expect.anything());
-    });
-
-    it("warns the same on elever.csv, which carries every pupil's name, address and class, and on no other file", async () => {
-      const user = userEvent.setup();
-      render(<PeoplePage />);
-
-      await openExports(user);
-      await user.click(screen.getByRole("menuitem", { name: "kinds.students" }));
-      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("elever.csv", expect.any(String)));
-      expect(toast.warning).toHaveBeenCalledTimes(1);
-
-      vi.mocked(toast.warning).mockClear();
-      downloadCsv.mockClear();
-      await openExports(user);
-      await user.click(screen.getByRole("menuitem", { name: "kinds.teachers" }));
-      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("larare.csv", expect.any(String)));
+      expect(toast.info).toHaveBeenCalledWith("heldOut.links(2)", expect.anything());
       expect(toast.warning).not.toHaveBeenCalled();
     });
 
     it("says so, and downloads nothing, when there is no link to export", async () => {
       state.withGuardian = true;
-      guardiansCsvFor.mockResolvedValue(null);
+      guardiansCsvFor.mockResolvedValue({ content: null, heldOut: 0, unit: "links" });
       const user = userEvent.setup();
       render(<PeoplePage />);
 
@@ -518,6 +528,68 @@ describe("People page", () => {
 
       await openExports(user);
       await user.click(guardianEntry());
+
+      await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith("error"));
+      expect(downloadCsv).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the files of people, without those marked as having a protected identity", () => {
+    const openExports = async (user: ReturnType<typeof userEvent.setup>) =>
+      user.click(screen.getByRole("button", { name: "exportButton" }));
+    const exported = (filename: string) =>
+      String(downloadCsv.mock.calls.find(([name]) => name === filename)?.[1] ?? "");
+
+    it("leaves a marked pupil out of elever.csv, reads the marks at the click, and says how many", async () => {
+      state.marks = [{ userId: "st-1", source: "MANUAL" }];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+      expect(apiGet).not.toHaveBeenCalled();
+
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.students" }));
+
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("elever.csv", expect.any(String)));
+      expect(apiGet).toHaveBeenCalledWith("/api/v1/person-protections");
+      expect(exported("elever.csv")).toContain("nils@skolan.se");
+      expect(exported("elever.csv")).not.toContain("alma@skolan.se");
+      expect(exported("elever.csv")).not.toContain("Alma");
+      expect(toast.info).toHaveBeenCalledWith("heldOut.people(1)", expect.anything());
+    });
+
+    it("leaves a marked teacher out of larare.csv and counts only the file's own role", async () => {
+      state.marks = [{ userId: "t-1", source: "SS12000" }, { userId: "st-2", source: "MANUAL" }];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.teachers" }));
+
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("larare.csv", expect.any(String)));
+      expect(exported("larare.csv")).not.toContain("karin@skolan.se");
+      expect(toast.info).toHaveBeenCalledWith("heldOut.people(1)", expect.anything());
+    });
+
+    it("says none was held out when nobody of the file's role is marked", async () => {
+      state.marks = [{ userId: "t-1", source: "MANUAL" }];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.students" }));
+
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("elever.csv", expect.any(String)));
+      expect(exported("elever.csv")).toContain("alma@skolan.se");
+      expect(toast.info).toHaveBeenCalledWith("heldOut.people(0)", expect.anything());
+    });
+
+    it("downloads nothing, and says an error, when the marks cannot be read", async () => {
+      state.marksFail = true;
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.students" }));
 
       await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith("error"));
       expect(downloadCsv).not.toHaveBeenCalled();

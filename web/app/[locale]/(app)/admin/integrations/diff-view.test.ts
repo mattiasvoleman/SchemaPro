@@ -163,6 +163,19 @@ describe("reading a change", () => {
     expect(unknownSubjectKey("DUTY_LINK")).toBe("unknownPerson");
   });
 
+  it("reads the mark of a protected identity by the person its after names, and a finished run's by nobody", () => {
+    const add = change({ entity: "PROTECTION", op: "ADD", after: { personExternalId: "ext-x", userLocalId: "u-bo" } });
+    expect(readChange(add, new Map(), (id) => (id === "u-bo" ? "Bo Ek" : null))).toEqual({
+      subject: "Bo Ek",
+      detail: { key: "protectionAdd", values: {} },
+    });
+    const end = change({ entity: "PROTECTION", op: "END", after: { personExternalId: "ext-x", userLocalId: "u-bo" } });
+    expect(readChange(end, new Map(), (id) => (id === "u-bo" ? "Bo Ek" : null)).detail?.key).toBe("protectionEnd");
+    // Minimised: no after, no id, so nobody.
+    expect(readChange(change({ entity: "PROTECTION", op: "ADD" }), new Map(), () => "Bo Ek").subject).toBeNull();
+    expect(unknownSubjectKey("PROTECTION")).toBe("unknownPerson");
+  });
+
   it("reads a skolenhet's create, link, update and notes, and a class the register puts in another unit", () => {
     const read = (over: Partial<SyncChange>) => readChange(change({ entity: "ORGANISATION", ...over }), new Map(), () => null);
     expect(read({ op: "CREATE", after: { name: "Norra F–6", code: "11111111", schoolTypes: ["GR"], gradeFrom: 0, gradeTo: 6 } })).toEqual({

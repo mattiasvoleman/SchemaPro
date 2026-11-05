@@ -2633,7 +2633,8 @@
         "GROUP_MEMBERSHIP": "Group membership",
         "RESPONSIBLE": "Guardian",
         "DUTY_LINK": "Duty",
-        "ORGANISATION": "School unit"
+        "ORGANISATION": "School unit",
+        "PROTECTION": "Protected identity"
       },
       "roles": {
         "STUDENT": "Pupil",
@@ -2693,7 +2694,9 @@
         "unitTypes": "School types: {types}",
         "unitOverlap": "Grades {span} already belong to {other}",
         "unitCodeHolder": "School unit code {code} is already on {holder}",
-        "unitMismatch": "Grade {grade}: {local} here, {source} in the register"
+        "unitMismatch": "Grade {grade}: {local} here, {source} in the register",
+        "protectionAdd": "Marked as having a protected identity: the register protects the person, who is kept out of the files Rastra writes.",
+        "protectionEnd": "The mark is lifted: the register now says Ingen."
       },
       "changesLoadFailed": "The changes could not be loaded"
     },
@@ -2900,8 +2903,12 @@
     "resultSummaryGuardians": "{created} guardians created, {linked, plural, one {# link added} other {# links added}}, {skipped} already existed",
     "guardiansNotice": "A row is a link between a guardian and a pupil: the pupil's e-mail address is in the column elev_epost, and the pupil must exist and be active. A guardian who does not exist is created without an invitation. One who does exist only gets the link, so their name and phone number are not changed.",
     "noGuardianLinks": "There are no links between guardians and pupils to export.",
-    "protectedWarning": "The file may contain people with protected personal data. Which pupils those are is not stored, so the school is responsible for handling the file accordingly, or for removing those pupils from it before it leaves the school.",
-    "protectedNotice": "The file may contain people with protected personal data. Which pupils those are is not stored, so the school is responsible for handling the file accordingly.",
+    "keptProtected": "{count, plural, one {One person in the file has a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.} other {# people in the file have a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.}}",
+    "heldOut": {
+      "people": "{count, plural, =0 {Nobody was kept out of the file: none of them is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One person with a protected identity was kept out of the file, and every row naming them.} other {# people with a protected identity were kept out of the file, and every row naming any of them.}}",
+      "links": "{count, plural, =0 {No link was kept out of the file: no pupil or guardian in it is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One link was kept out of the file, because the pupil or the guardian has a protected identity.} other {# links were kept out of the file, because the pupil or the guardian has a protected identity.}}"
+    },
+    "protectedNotice": "The import marks nobody as protected. If a person in the file has a protected identity, mark them under People, and they are kept out of the files Rastra writes.",
     "fileWarnings": "To check before importing",
     "questionMarkInName": "Row {row}: {name} has a question mark in the name. Excel replaces a character the file's encoding lacks with ?. Correct the name in the file, or save it again as CSV UTF-8.",
     "guardianDetailsDiffer": "Row {row}: {email} is also on row {first}, with other details. The row that comes first applies, so the name and phone number on row {row} are not used. If they are two people they need an address each.",
@@ -7362,5 +7369,18 @@
       "loadFailed": "The list could not be loaded",
       "loadFailedHint": "Nothing has changed. Reload the page in a moment."
     }
+  },
+  "protectedIdentity": {
+    "title": "Protected identity",
+    "none": "Not marked.",
+    "fromRegister": "Marked. The mark comes from the pupil register (SS12000).",
+    "byHand": "Marked by hand.",
+    "explain": "A marked person is not in the files Rastra writes about people, such as elever.csv, vardnadshavare.csv and the attendance report. Which protection the person has is not stored.",
+    "registerOwns": "If you remove the mark, the next sync sets it again for as long as the register keeps the protection.",
+    "set": "Mark protected identity",
+    "remove": "Remove the mark",
+    "marked": "The person is marked as having a protected identity.",
+    "unmarked": "The mark is removed.",
+    "loadFailed": "The mark could not be read."
   }
 }

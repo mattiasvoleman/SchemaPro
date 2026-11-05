@@ -92,6 +92,15 @@ export function StaffingReport() {
   const locale = useLocale();
   const tCause = useTranslations("timplanCoverage.delivered.cause");
   const tCommon = useTranslations("common");
+  const tCsv = useTranslations("csvImport");
+  /**
+   * The samverkan file and SCB's keep every teacher, the marked ones too
+   * (skyddad identitet): the union's samverkan and SCB are to have them all.
+   * Said after the download, so the school handles the file as protected.
+   */
+  const sayKept = (count: number) => {
+    if (count > 0) toast.info(tCsv("keptProtected", { count }), { duration: 10000 });
+  };
 
   const { data: years } = useAcademicYears();
   const [chosenYearId, setChosenYearId] = useState<string | null>(null);
@@ -190,12 +199,15 @@ export function StaffingReport() {
     if (!data || !load.data || !year) return;
     setExporting("samverkan");
     try {
-      const [{ samverkanCsv, samverkanFilename }, { downloadCsv }, qualifications] = await Promise.all([
+      const [{ samverkanCsv, samverkanFilename }, { downloadCsv }, qualifications, kept] = await Promise.all([
         import("@/lib/staffing-exports"),
         import("@/lib/csv-export"),
         includeQualifications
           ? api.get<TeacherQualification[]>("/api/v1/teacher-qualifications")
           : Promise.resolve(null),
+        import("@/lib/protected-people").then(({ markedAmong }) =>
+          markedAmong((load.data?.teachers ?? []).map((row) => row.userId)),
+        ),
       ]);
       downloadCsv(
         samverkanFilename(year.name, data.from, data.to),
@@ -212,6 +224,7 @@ export function StaffingReport() {
           travel: load.data.travel?.teachers ?? null,
         }),
       );
+      sayKept(kept);
     } catch (error) {
       toast.error(exportFailure(error));
     } finally {
@@ -232,6 +245,7 @@ export function StaffingReport() {
     try {
       const file = await api.get<ScbFile>(scbFilePath(asked));
       downloadScbText(file);
+      sayKept(file.protectedInFile ?? 0);
       setScbAnswer({ yearId: asked, file });
     } catch (error) {
       toast.error(exportFailure(error));
@@ -249,6 +263,7 @@ export function StaffingReport() {
     try {
       const { downloadScbCsv } = await import("@/lib/scb-csv");
       downloadScbCsv(scbFile);
+      sayKept(scbFile.protectedInFile ?? 0);
     } catch {
       toast.error(t("exportFailed"));
     }

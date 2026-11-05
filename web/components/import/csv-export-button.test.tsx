@@ -6,7 +6,7 @@ import { CsvExportButton } from "./csv-export-button";
 
 const downloadCsv = vi.hoisted(() => vi.fn());
 
-vi.mock("sonner", () => ({ toast: { warning: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { warning: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 vi.mock("@/lib/csv-export", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/csv-export")>()),
@@ -16,7 +16,8 @@ vi.mock("@/lib/csv-export", async (importOriginal) => ({
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
   useLocale: () => "sv",
-  useTranslations: () => (key: string) => key,
+  useTranslations: () => (key: string, values?: Record<string, unknown>) =>
+    values && "count" in values ? `${key}:${String(values["count"])}` : key,
 }));
 
 describe("CsvExportButton", () => {
@@ -168,27 +169,44 @@ describe("CsvExportButton", () => {
     });
   });
 
-  describe("a file that may name a pupil with protected personal data", () => {
-    it("says so once the file has been handed over, and not before", async () => {
+  describe("a file of people, without those marked as having a protected identity", () => {
+    it("says once the file has been handed over how many it left out, also when none", async () => {
       const user = userEvent.setup();
-      render(<CsvExportButton exports={[{ kind: "students", build: () => "ELEVER", protectedWarning: true }]} />);
+      const { rerender } = render(
+        <CsvExportButton exports={[{ kind: "students", build: async () => ({ content: "ELEVER", heldOut: 2, unit: "people" }) }]} />,
+      );
 
-      expect(toast.warning).not.toHaveBeenCalled();
+      expect(toast.info).not.toHaveBeenCalled();
       await user.click(screen.getByRole("button", { name: "exportButton" }));
 
-      expect(downloadCsv).toHaveBeenCalledWith("elever.csv", "ELEVER");
-      expect(toast.warning).toHaveBeenCalledTimes(1);
-      expect(toast.warning).toHaveBeenCalledWith("protectedWarning", expect.objectContaining({ duration: expect.any(Number) }));
+      await waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("elever.csv", "ELEVER"));
+      expect(toast.info).toHaveBeenCalledTimes(1);
+      expect(toast.info).toHaveBeenCalledWith("heldOut.people:2", expect.objectContaining({ duration: expect.any(Number) }));
+      expect(downloadCsv.mock.invocationCallOrder[0]).toBeLessThan((toast.info as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!);
+
+      rerender(<CsvExportButton exports={[{ kind: "students", build: () => ({ content: "ELEVER", heldOut: 0 }) }]} />);
+      await user.click(screen.getByRole("button", { name: "exportButton" }));
+      await waitFor(() => expect(toast.info).toHaveBeenLastCalledWith("heldOut.people:0", expect.anything()));
     });
 
-    it("says nothing for a file that has no such pupils in it, or when nothing was downloaded", async () => {
+    it("counts links for vardnadshavare.csv, and says it even when every link was held out and no file is left", async () => {
+      const user = userEvent.setup();
+      render(<CsvExportButton exports={[{ kind: "guardians", build: async () => ({ content: null, heldOut: 3, unit: "links" }) }]} />);
+      await user.click(screen.getByRole("button", { name: "exportButton" }));
+
+      await waitFor(() => expect(toast.info).toHaveBeenCalledWith("heldOut.links:3", expect.anything()));
+      expect(downloadCsv).not.toHaveBeenCalled();
+    });
+
+    it("says nothing for a file that names nobody, or when nothing was built", async () => {
       const user = userEvent.setup();
       const { rerender } = render(<CsvExportButton exports={[{ kind: "roomTypes", build: () => "SALSTYPER" }]} />);
       await user.click(screen.getByRole("button", { name: "exportButton" }));
-      expect(toast.warning).not.toHaveBeenCalled();
+      expect(toast.info).not.toHaveBeenCalled();
 
-      rerender(<CsvExportButton exports={[{ kind: "students", build: () => null, protectedWarning: true }]} />);
+      rerender(<CsvExportButton exports={[{ kind: "students", build: () => null }]} />);
       await user.click(screen.getByRole("button", { name: "exportButton" }));
+      expect(toast.info).not.toHaveBeenCalled();
       expect(toast.warning).not.toHaveBeenCalled();
     });
   });

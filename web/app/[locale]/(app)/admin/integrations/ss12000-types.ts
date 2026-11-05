@@ -118,7 +118,9 @@ export type ChangeEntity =
   | "GROUP_MEMBERSHIP"
   | "RESPONSIBLE"
   | "DUTY_LINK"
-  | "ORGANISATION";
+  | "ORGANISATION"
+  /** A person's mark of a protected identity, set (ADD) or lifted (END); the person is named in after alone. */
+  | "PROTECTION";
 
 export type ChangeOp =
   | "CREATE"

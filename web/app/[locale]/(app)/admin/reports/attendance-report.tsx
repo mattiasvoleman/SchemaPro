@@ -89,6 +89,7 @@ function defaultFrom(): string {
 export function AttendanceReport() {
   const t = useTranslations("reports");
   const tCommon = useTranslations("common");
+  const tCsv = useTranslations("csvImport");
   const locale = useLocale();
 
   const [groupId, setGroupId] = useState<string | null>(null);
@@ -184,6 +185,10 @@ export function AttendanceReport() {
    * and the formula guard. Its own escaping had no guard, and the rows begin
    * with a pupil's name, so a surname written =HYPERLINK(…) ran when the file
    * was opened in Excel. Loaded at the click, as the other reports' exports.
+   *
+   * Without the pupils the school has marked as having a protected identity
+   * (lib/protected-people.ts): the marks are read at the click, a read that
+   * fails downloads nothing, and the page says how many it left out.
    */
   const exportCsv = async () => {
     const groupName = groups?.find((group) => group.id === groupId)?.name ?? t("class");
@@ -199,7 +204,15 @@ export function AttendanceReport() {
       t("invalidMinutes"),
       t("scheduledMinutes"),
     ];
-    const rows = stats.map((entry) =>
+    let marks: Set<string>;
+    try {
+      marks = await (await import("@/lib/protected-people")).readMarks();
+    } catch {
+      toast.error(tCommon("error"));
+      return;
+    }
+    const kept = stats.filter((entry) => !marks.has(entry.studentId));
+    const rows = kept.map((entry) =>
       [
         entry.name,
         entry.total,
@@ -216,6 +229,7 @@ export function AttendanceReport() {
     try {
       const { downloadCsv, serializeCsv } = await import("@/lib/csv-export");
       downloadCsv(t("csvFilename", { group: groupName, from: fromDate, to: toDate }), serializeCsv(header, rows));
+      toast.info(tCsv("heldOut.people", { count: stats.length - kept.length }), { duration: 10000 });
     } catch {
       toast.error(tCommon("error"));
     }

@@ -70,6 +70,7 @@ export function CoverHoursReport() {
   const t = useTranslations("coverHours");
   const tErrors = useTranslations("coverErrors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
+  const tCsv = useTranslations("csvImport");
   const locale = useLocale();
   const { school } = useProfile();
   const initial = lastMonth(toDateString(new Date()));
@@ -99,9 +100,13 @@ export function CoverHoursReport() {
   const download = async (data: Hours, kind: "lektioner" | "summering") => {
     setExporting(true);
     try {
-      const [exports, { downloadCsv }] = await Promise.all([
+      // The vikarier the school has marked as having a protected identity are
+      // in it, since the payroll is to have everyone it pays: said after the
+      // download, so the school handles the file as protected.
+      const [exports, { downloadCsv }, kept] = await Promise.all([
         import("@/lib/cover-hours-export"),
         import("@/lib/csv-export"),
+        import("@/lib/protected-people").then(({ markedAmong }) => markedAmong(data.summary.map((line) => line.userId))),
       ]);
       const subjectName = new Map((subjects ?? []).map((s) => [s.id, s.name]));
       const groupName = new Map((groups ?? []).map((g) => [g.id, g.name]));
@@ -118,6 +123,7 @@ export function CoverHoursReport() {
       };
       const csv = kind === "lektioner" ? exports.hoursLessonsCsv(data, names) : exports.hoursSummaryCsv(data, names);
       downloadCsv(exports.hoursFilename(kind, data.from, data.to), csv);
+      if (kept > 0) toast.info(tCsv("keptProtected", { count: kept }), { duration: 10000 });
     } catch (failure) {
       toast.error(coverErrorText(tErrors, failure, tCommon("error")));
     } finally {

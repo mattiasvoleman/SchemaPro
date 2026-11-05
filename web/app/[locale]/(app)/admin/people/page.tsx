@@ -99,6 +99,10 @@ const AdminRoleFields = lazy(() =>
 const RoleHistory = lazy(() =>
   import("@/components/people/role-history").then((module) => ({ default: module.RoleHistory })),
 );
+// Skyddad identitet: the mark, read and set on an opened row only.
+const ProtectedIdentity = lazy(() =>
+  import("@/components/people/protected-identity").then((module) => ({ default: module.ProtectedIdentity })),
+);
 import {
   useCrudMutations,
   useAcademicYears,
@@ -562,6 +566,21 @@ export default function PeoplePage() {
   const exportClassName = (id: string | null) =>
     id ? (groups?.find((group) => group.id === id)?.name ?? "") : "";
 
+  /**
+   * A file of people without those the school has marked as having a
+   * protected identity (skyddad identitet), built at the click: the marks
+   * are read then, from a module the page loads only for an export. A read
+   * that fails downloads nothing, rather than a file with them in it.
+   */
+  const unmarked =
+    (role: UserRole, build: (kept: Person[]) => string | null | Promise<string | null>) => () =>
+      import("@/lib/protected-people")
+        .then(({ withoutMarked }) => withoutMarked(people ?? [], role, build))
+        .catch(() => {
+          toast.error(tCommon("error"));
+          return null;
+        });
+
   const groupName = (id: string | null) =>
     id ? (groups?.find((group) => group.id === id)?.name ?? "—") : "—";
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -916,6 +935,10 @@ export default function PeoplePage() {
                  * a file looks complete and is not — every teacher without
                  * a tjänst, every pupil without a class, a behörighet left
                  * out for want of its subject.
+                 *
+                 * And each leaves out the persons the school has marked as
+                 * having a protected identity, and every row naming one
+                 * (unmarked, above).
                  */
                 {
                   kind: "teachers",
@@ -924,36 +947,32 @@ export default function PeoplePage() {
                   // empty post cells, which the importer leaves alone. No
                   // active year, no posts: the import would have none to
                   // write them into.
-                  build: () =>
+                  build: unmarked("TEACHER", (kept) =>
                     teachersToCsv(
-                      people ?? [],
+                      kept,
                       exportYearId === null ? undefined : (userId) => employmentOf(userId) ?? undefined,
                     ),
+                  ),
                   empty:
                     !people?.some((person) => person.role === "TEACHER") ||
                     (exportYearId !== null && employments === undefined),
                 },
                 {
                   kind: "teacherQualifications",
-                  build: () =>
-                    teacherQualificationsToCsv(qualifications ?? [], people ?? [], subjects ?? []),
+                  build: unmarked("TEACHER", (kept) => teacherQualificationsToCsv(qualifications ?? [], kept, subjects ?? [])),
                   empty: (qualifications ?? []).length === 0 || people === undefined || subjects === undefined,
                 },
                 {
                   kind: "teacherDuties",
                   // Read and built at the click: the page holds no uppdrag,
                   // and sits close to its bundle budget.
-                  build: () =>
+                  build: unmarked("TEACHER", (kept) =>
                     exportYearId === null
                       ? null
-                      : import("@/lib/duties-csv-export")
-                          .then(({ teacherDutiesCsvFor }) =>
-                            teacherDutiesCsvFor(exportYearId, people ?? [], subjects ?? [], groups ?? []),
-                          )
-                          .catch(() => {
-                            toast.error(tCommon("error"));
-                            return null;
-                          }),
+                      : import("@/lib/duties-csv-export").then(({ teacherDutiesCsvFor }) =>
+                          teacherDutiesCsvFor(exportYearId, kept, subjects ?? [], groups ?? []),
+                        ),
+                  ),
                   empty:
                     exportYearId === null ||
                     !people?.some((person) => person.role === "TEACHER") ||
@@ -965,21 +984,21 @@ export default function PeoplePage() {
                   // Not `groupName`: that renders an em dash for "no class",
                   // and an exported file saying "—" is one the importer would
                   // reject on the way back in.
-                  build: () => studentsToCsv(people ?? [], exportClassName),
+                  build: unmarked("STUDENT", (kept) => studentsToCsv(kept, exportClassName)),
                   empty: !people?.some((person) => person.role === "STUDENT") || groups === undefined,
-                  // Every pupil is in it, whether or not they have a protected identity.
-                  protectedWarning: true,
                 },
                 {
                   kind: "guardians",
                   // Read and built at the click: the page holds no links, and
                   // sits close to its bundle budget. The gateway lists the
                   // school's links in one read that the läslogg records.
+                  // The gateway holds out a link where the pupil or the guardian
+                  // has a protected identity, and counts it.
                   build: () =>
                     import("@/lib/guardians-csv-export")
                       .then(async ({ guardiansCsvFor }) => {
                         const file = await guardiansCsvFor();
-                        if (file === null) toast.info(tCsvImport("noGuardianLinks"));
+                        if (file.content === null) toast.info(tCsvImport("noGuardianLinks"));
                         return file;
                       })
                       .catch(() => {
@@ -987,7 +1006,6 @@ export default function PeoplePage() {
                         return null;
                       }),
                   empty: !people?.some((person) => person.role === "GUARDIAN" && person.isActive),
-                  protectedWarning: true,
                 },
               ]}
             />
@@ -1176,9 +1194,10 @@ export default function PeoplePage() {
                         subjectName={subjectName}
                         t={t}
                       />
-                      <div className="mt-3">
+                      <div className="mt-3 space-y-3">
                         <Suspense fallback={null}>
                           <RoleHistory userId={person.id} />
+                          <ProtectedIdentity userId={person.id} writes={writesPeople} />
                         </Suspense>
                       </div>
                     </TableCell>

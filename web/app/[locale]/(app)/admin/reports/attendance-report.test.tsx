@@ -29,6 +29,15 @@ const state = vi.hoisted(() => ({
   purged: {} as Record<string, string>,
 }));
 
+// The file's download, and the marks of a protected identity it reads at the click.
+const { downloadCsv, readMarks, info } = vi.hoisted(() => ({ downloadCsv: vi.fn(), readMarks: vi.fn(), info: vi.fn() }));
+vi.mock("@/lib/csv-export", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/csv-export")>()),
+  downloadCsv,
+}));
+vi.mock("@/lib/protected-people", () => ({ readMarks }));
+vi.mock("sonner", () => ({ toast: { info, error: vi.fn(), success: vi.fn() } }));
+
 vi.mock("@/lib/retention-queries", () => ({
   usePurgedBefore: () => ({ of: (kind: string) => state.purged[kind] ?? null }),
 }));
@@ -75,6 +84,32 @@ describe("Rapporter › Närvaro", () => {
     state.people = { data: PEOPLE, isLoading: false, isError: false };
     state.records = { data: RECORDS, isLoading: false, isError: false };
     state.purged = {};
+    downloadCsv.mockReset();
+    info.mockReset();
+    readMarks.mockReset().mockResolvedValue(new Set());
+  });
+
+  it("leaves a pupil marked as having a protected identity out of the file, and says how many", async () => {
+    readMarks.mockResolvedValue(new Set(["p-ada"]));
+    renderReport();
+    const user = await chooseClass();
+    await user.click(await screen.findByRole("button", { name: "Exportera CSV" }));
+
+    await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledTimes(1));
+    const [, csv] = downloadCsv.mock.calls[0] as [string, string];
+    expect(csv).toContain("Åström, Eli");
+    expect(csv).not.toContain("Berg");
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("En person med skyddad identitet"), expect.anything());
+  });
+
+  it("downloads nothing when the marks cannot be read", async () => {
+    readMarks.mockRejectedValue(new Error("HTTP 500"));
+    renderReport();
+    const user = await chooseClass();
+    await user.click(await screen.findByRole("button", { name: "Exportera CSV" }));
+
+    await vi.waitFor(() => expect(readMarks).toHaveBeenCalled());
+    expect(downloadCsv).not.toHaveBeenCalled();
   });
 
   it("asks for a class first, with labelled filters", () => {

@@ -2633,7 +2633,8 @@
         "GROUP_MEMBERSHIP": "Gruppmedlemskap",
         "RESPONSIBLE": "Vårdnadshavare",
         "DUTY_LINK": "Tjänst",
-        "ORGANISATION": "Skolenhet"
+        "ORGANISATION": "Skolenhet",
+        "PROTECTION": "Skyddad identitet"
       },
       "roles": {
         "STUDENT": "Elev",
@@ -2693,7 +2694,9 @@
         "unitTypes": "Skolformer: {types}",
         "unitOverlap": "Årskurs {span} ligger redan i {other}",
         "unitCodeHolder": "Skolenhetskod {code} finns redan på {holder}",
-        "unitMismatch": "Årskurs {grade}: {local} här, {source} i registret"
+        "unitMismatch": "Årskurs {grade}: {local} här, {source} i registret",
+        "protectionAdd": "Markeras med skyddad identitet: registret skyddar personen, som hålls utanför filerna Rastra skriver.",
+        "protectionEnd": "Markeringen tas bort: registret säger nu Ingen."
       },
       "changesLoadFailed": "Ändringarna kunde inte hämtas"
     },
@@ -2900,8 +2903,12 @@
     "resultSummaryGuardians": "{created} vårdnadshavare skapade, {linked, plural, one {# koppling tillagd} other {# kopplingar tillagda}}, {skipped} fanns redan",
     "guardiansNotice": "En rad är en koppling mellan en vårdnadshavare och en elev: elevens e-postadress står i kolumnen elev_epost, och eleven måste finnas och vara aktiv. En vårdnadshavare som inte finns skapas utan inbjudan. En som finns får bara kopplingen, så namn och telefon ändras inte.",
     "noGuardianLinks": "Det finns inga kopplingar mellan vårdnadshavare och elever att exportera.",
-    "protectedWarning": "Filen kan innehålla personer med skyddade personuppgifter. Det sparas inte vilka elever det gäller, så skolan ansvarar för att filen hanteras därefter, eller för att de eleverna tas bort ur den innan den lämnar skolan.",
-    "protectedNotice": "Filen kan innehålla personer med skyddade personuppgifter. Det sparas inte vilka elever det gäller, så skolan ansvarar för att filen hanteras därefter.",
+    "keptProtected": "{count, plural, one {En person i filen har skyddad identitet. Den finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.} other {# personer i filen har skyddad identitet. De finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.}}",
+    "heldOut": {
+      "people": "{count, plural, =0 {Ingen hölls utanför filen: ingen av dem är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En person med skyddad identitet hölls utanför filen, och varje rad som nämner personen.} other {# personer med skyddad identitet hölls utanför filen, och varje rad som nämner någon av dem.}}",
+      "links": "{count, plural, =0 {Ingen koppling hölls utanför filen: ingen elev eller vårdnadshavare i den är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En koppling hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet.} other {# kopplingar hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet.}}"
+    },
+    "protectedNotice": "Importen markerar ingen som skyddad. Har en person i filen skyddad identitet, markera personen under Personer, så hålls den utanför filerna Rastra skriver.",
     "fileWarnings": "Att kontrollera före importen",
     "questionMarkInName": "Rad {row}: {name} har ett frågetecken i namnet. Excel byter ut ett tecken som filens kodning saknar mot ?. Rätta namnet i filen, eller spara om den som CSV UTF-8.",
     "guardianDetailsDiffer": "Rad {row}: {email} står också på rad {first}, med andra uppgifter. Raden som står först gäller, så namnet och telefonen på rad {row} används inte. Är det två personer behöver de var sin e-postadress.",
@@ -7362,5 +7369,18 @@
       "loadFailed": "Listan kunde inte hämtas",
       "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund."
     }
+  },
+  "protectedIdentity": {
+    "title": "Skyddad identitet",
+    "none": "Inte markerad.",
+    "fromRegister": "Markerad. Markeringen kommer från elevregistret (SS12000).",
+    "byHand": "Markerad för hand.",
+    "explain": "En markerad person finns inte i filerna Rastra skriver om personer, som elever.csv, vardnadshavare.csv och närvarorapporten. Vilket skydd personen har sparas inte.",
+    "registerOwns": "Tar du bort markeringen sätts den igen vid nästa synk, så länge registret har kvar skyddet.",
+    "set": "Markera skyddad identitet",
+    "remove": "Ta bort markeringen",
+    "marked": "Personen är markerad med skyddad identitet.",
+    "unmarked": "Markeringen är borttagen.",
+    "loadFailed": "Markeringen kunde inte läsas."
   }
 }
