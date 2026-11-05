@@ -6,12 +6,15 @@ import { PrismaService } from '../database/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { enterGrundschemaWrite, publishModeOf, type PublishMode } from '../publication/publish-mode';
-import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
+import { lockYearForGrundschemaEdit, scheduleBusy } from '../optimization/regeneration-lock';
+import { isLockTimeout } from '../publication/publish-mode';
 import { MasterLessonsService, type DayLesson } from '../calendar/master-lessons.service';
+import { ConflictReads } from '../calendar/conflict-reads';
 import { loadRosters, gradeSpanOf } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rosters';
 import { toNioarigSpan } from '../common/grade-numbering';
 import { recordRead } from '../access-log/access-log';
+import { redactPersonalNumbers, scrubPersonalNumbers } from './file-safety';
 import { clockOfMinutes, type ExchangeDocument, type ExchangeLesson, type ReadProblem, type TeacherRef, type WeekPattern } from './exchange-model';
 import {
   EXCHANGE_FORMATS,
@@ -27,6 +30,7 @@ import {
   duplicateKey,
   fitRefusals,
   indexContext,
+  inactiveRefusal,
   labelOf,
   lunchFits,
   matchExisting,
@@ -168,9 +172,12 @@ export class ScheduleExchangeService {
     return this.prisma.withRls(user, async (tx) => {
       const loaded = await this.load(tx, academicYearId);
       const doc = documentOf(loaded.schoolName, loaded.ctx, loaded.blocksById);
-      const teacherIds = new Set<string>();
-      for (const l of loaded.ctx.existing) for (const id of [l.teacherId, l.coTeacherId]) if (id) teacherIds.add(id);
-      await recordRead(tx, 'PEOPLE', teacherIds, user.channel);
+      // The people the FILE names, which is the document's list of teachers: a signed
+      // teacher with no lesson yet is in the file, with name and e-mail address, as one
+      // who teaches is (the review of PR #256, M1).
+      const named = new Set<string>();
+      for (const t of doc.teachers) if (t.id) named.add(t.id);
+      await recordRead(tx, 'PEOPLE', named, user.channel);
       return renderExport(format, doc);
     }, { timeoutMs: PLAN_TIMEOUT_MS });
   }
@@ -184,7 +191,9 @@ export class ScheduleExchangeService {
     dto: { academicYearId: string; format: ExchangeFormat; files: UploadedFile[]; periods?: string },
     user: AuthenticatedUser,
   ): Promise<ImportPlan> {
-    return this.prisma.withRls(user, (tx) => this.plan(tx, user, dto, false), { timeoutMs: PLAN_TIMEOUT_MS });
+    const plan = await this.prisma.withRls(user, (tx) => this.plan(tx, user, dto, false), { timeoutMs: PLAN_TIMEOUT_MS });
+    // The last door: whatever of the file reached the answer, a personnummer is not in it.
+    return scrubPersonalNumbers(plan);
   }
 
   /**
@@ -204,6 +213,12 @@ export class ScheduleExchangeService {
         const schoolId = requireSchoolId(user);
         const mode = await enterGrundschemaWrite(tx, schoolId);
         await lockYearForGrundschemaEdit(tx, dto.academicYearId);
+        // The shared lock above only keeps a rewrite of the year out; it lets two applies of
+        // one file run side by side, and both then planned the same CREATEs and both wrote
+        // them (two of four tries in the review of PR #256, H5). This one is exclusive, so
+        // the second apply plans after the first has committed, finds the lessons, and
+        // answers IMPORT_PLAN_CHANGED. Taken after the shared lock and before the plan.
+        await lockYearForImport(tx, dto.academicYearId);
         const plan = await this.plan(tx, user, dto, true);
         if (plan.fingerprint !== dto.fingerprint) {
           throw new ConflictException({
@@ -250,7 +265,7 @@ export class ScheduleExchangeService {
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
       throw new BadRequestException({
-        message: `Filen går inte att läsa som ${dto.format}: ${error instanceof Error ? error.message : 'okänt fel'}`,
+        message: `Filen går inte att läsa som ${dto.format}: ${error instanceof Error ? redactPersonalNumbers(error.message) : 'okänt fel'}`,
         code: 'IMPORT_UNREADABLE',
       });
     }
@@ -279,6 +294,8 @@ export class ScheduleExchangeService {
     // 2. Each row: what the school has, what fits, what clashes. In file
     //    order, so that a row is held against the rows before it.
     const seen = new Map<string, string>();
+    // The school's facts the clash rule reads, asked once for the whole file and not once per row.
+    const reads = new ConflictReads();
     const accepted: Array<{ row: PlanRow; lesson: ResolvedLesson; fake: DayLesson }> = [];
     const existingLabel = (id: string): string => {
       const e = ctx.existing.find((x) => x.id === id);
@@ -314,6 +331,21 @@ export class ScheduleExchangeService {
             detail: `Skolan har redan ${existingLabel(existing.id)}, men med annan ${changes.join(', ')}. Importen ändrar inga befintliga lektioner: ta bort eller ändra lektionen i schemat först.`,
           });
         }
+        // The school's lesson stays what it is. A teacher who has since left is said once,
+        // beside the row, and does not turn "finns redan" into a refusal.
+        for (const t of r.inactiveTeachers) {
+          warnings.push({
+            code: 'TEACHER_NO_LONGER_ACTIVE',
+            params: { ref: lesson.ref, teacher: t.name },
+            detail: `Läraren ${t.name} är inte längre aktiv men har kvar ${existingLabel(existing.id)}. Lektionen lämnas som den är.`,
+          });
+        }
+        continue;
+      }
+
+      // A deactivated teacher is not placed on a lesson the school does not yet have.
+      if (r.inactiveTeachers.length > 0) {
+        row.refusals.push(...r.inactiveTeachers.map(inactiveRefusal));
         continue;
       }
 
@@ -347,7 +379,7 @@ export class ScheduleExchangeService {
           startDate: r.from ? new Date(`${r.from}T00:00:00.000Z`) : null,
           endDate: r.to ? new Date(`${r.to}T00:00:00.000Z`) : null,
         },
-        { alongside: accepted.filter((a) => a.lesson.day === r.day).map((a) => a.fake) },
+        { alongside: accepted.filter((a) => a.lesson.day === r.day).map((a) => a.fake), reads },
       );
       for (const c of conflicts) {
         const other = c.masterLessonId?.startsWith('import:')
@@ -516,28 +548,30 @@ export class ScheduleExchangeService {
     }
 
     // The posts, and then the lessons: locked, and never the optimizer's.
-    let requirementsCreated = 0;
-    for (const q of plan.requirements) {
-      if (q.action !== 'CREATE') continue;
-      await tx.teachingRequirement.create({
-        data: {
-          schoolId,
-          academicYearId: yearId,
-          subjectId: q.subjectId,
-          studentGroupId: q.groupId,
-          teacherId: q.teacherId,
-          coTeacherId: q.coTeacherId,
-          lessonsPerWeek: q.lessonsPerWeek,
-          minutesPerLesson: q.minutesPerLesson,
-          ...(q.lessonLengths.length > 0 ? { lessonLengths: q.lessonLengths } : {}),
-          recurrence: RECURRENCE_OF[q.recurrence],
-          startDate: q.from ? new Date(`${q.from}T00:00:00.000Z`) : null,
-          endDate: q.to ? new Date(`${q.to}T00:00:00.000Z`) : null,
-          blockId: q.block ? (blockIds.get(q.block) ?? null) : null,
-        },
-      });
-      requirementsCreated += 1;
-    }
+    const posts = plan.requirements
+      .filter((q) => q.action === 'CREATE')
+      .map((q) => ({
+        schoolId,
+        academicYearId: yearId,
+        subjectId: q.subjectId,
+        studentGroupId: q.groupId,
+        teacherId: q.teacherId,
+        coTeacherId: q.coTeacherId,
+        lessonsPerWeek: q.lessonsPerWeek,
+        minutesPerLesson: q.minutesPerLesson,
+        ...(q.lessonLengths.length > 0 ? { lessonLengths: q.lessonLengths } : {}),
+        recurrence: RECURRENCE_OF[q.recurrence],
+        startDate: q.from ? new Date(`${q.from}T00:00:00.000Z`) : null,
+        endDate: q.to ? new Date(`${q.to}T00:00:00.000Z`) : null,
+        blockId: q.block ? (blockIds.get(q.block) ?? null) : null,
+      }));
+    // The posts outside a block in one statement (a school of 125 classes makes a thousand of
+    // them); the posts of a block one at a time, since a block's members are checked against
+    // each other as they arrive (TB409) and must meet in the order the plan made them.
+    const loose = posts.filter((q) => q.blockId === null);
+    if (loose.length > 0) await tx.teachingRequirement.createMany({ data: loose });
+    for (const q of posts) if (q.blockId !== null) await tx.teachingRequirement.create({ data: q });
+    const requirementsCreated = posts.length;
 
     const ids = toCreate.map(() => randomUUID());
     if (toCreate.length > 0) {
@@ -775,6 +809,25 @@ export class ScheduleExchangeService {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * The year's import lock, exclusive and waited for at most 5 s (then 409
+ * SCHEDULE_BUSY), the transaction's own lock_timeout put back after it so the
+ * apply's later row waits stay as they were. Its own key: only an apply of an
+ * import takes it, after the shared edit lock and before anything is read, so
+ * it cannot cycle with a writer that takes the regeneration lock exclusively.
+ */
+async function lockYearForImport(tx: PrismaClient, academicYearId: string): Promise<void> {
+  try {
+    const [setting] = await tx.$queryRaw<{ previous: string }[]>`SELECT current_setting('lock_timeout') AS "previous"`;
+    await tx.$executeRaw`SELECT set_config('lock_timeout', '5s', true)`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('schedule-exchange-apply'), hashtext(${academicYearId}::uuid::text))`;
+    await tx.$executeRaw`SELECT set_config('lock_timeout', ${setting?.previous ?? '0'}, true)`;
+  } catch (error) {
+    if (isLockTimeout(error)) throw scheduleBusy();
+    throw error;
+  }
+}
 
 function timeOf(minutes: number): Date {
   return new Date(Date.UTC(1970, 0, 1, Math.floor(minutes / 60), minutes % 60));

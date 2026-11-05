@@ -28,7 +28,15 @@
  *          the school as it was;
  *   (x-d)  who may do what: a läsare previews and exports but its apply is
  *          refused by the database, and an export of a teacher's name is a row
- *          in the läslogg.
+ *          in the läslogg;
+ *   (x-e)  the review of PR #256: the clash rule answers the same from the
+ *          file-wide cache (ConflictReads) as from the database, over a school
+ *          with pupils, halves and blocks; two applies of one file at once
+ *          write it once; a teacher who has left does not turn "finns redan"
+ *          into a refusal; an export logs every teacher the file names; no
+ *          personnummer in a column comes back in the answer or is stored as
+ *          a block's name;
+ *   (x-f)  a file of 5 000 rows previews and applies in seconds, not minutes.
  *
  * Independent of what earlier CI steps left in the database. The demo school's
  * active year is NOT the probe's to wipe: by the time this runs the RLS fixtures
@@ -52,6 +60,9 @@ import { PrismaClient } from '@prisma/client';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
+import { ConflictReads } from '../../src/calendar/conflict-reads';
+import { rostersOfYear } from '../../src/year-rollover/projected-rosters';
+import { hasPersonalNumber } from '../../src/schedule-exchange/file-safety';
 import { createPgAdapter } from '../../src/database/pool-config';
 import { PrismaService } from '../../src/database/prisma.service';
 import type { NotificationsService } from '../../src/notifications/notifications.service';
@@ -353,7 +364,7 @@ async function main(): Promise<void> {
   const cleanup: Array<() => Promise<void>> = [];
   try {
     await seedSchoolChecks(owner, exchange, masterLessons, tag, cleanup);
-    await hogstadiumChecks(owner, exchange, masterLessons, tag, cleanup);
+    await hogstadiumChecks(owner, api, exchange, masterLessons, tag, cleanup);
   } finally {
     for (const undo of cleanup.reverse()) await undo().catch((error) => console.error('cleanup:', error));
     await api.$disconnect();
@@ -481,7 +492,7 @@ async function seedSchoolChecks(owner: Owner, exchange: ScheduleExchangeService,
 // (x-b), (x-c), (x-d) the högstadium
 // ---------------------------------------------------------------------------
 
-async function hogstadiumChecks(owner: Owner, exchange: ScheduleExchangeService, masterLessons: MasterLessonsService, tag: string, cleanup: Array<() => Promise<void>>): Promise<void> {
+async function hogstadiumChecks(owner: Owner, api: PrismaService, exchange: ScheduleExchangeService, masterLessons: MasterLessonsService, tag: string, cleanup: Array<() => Promise<void>>): Promise<void> {
   let school!: School & { names: Record<string, string> };
   await check('(x-b) a högstadium with halves, A and B weeks, a term split and a block is laid', async () => {
     school = await buildHogstadium(owner, masterLessons, tag);
@@ -498,6 +509,8 @@ async function hogstadiumChecks(owner: Owner, exchange: ScheduleExchangeService,
   }
   await refusalChecks(owner, exchange, school);
   await roleChecks(owner, exchange, school);
+  await reviewChecks(owner, api, exchange, masterLessons, school, original, tag, cleanup);
+  await bigFileChecks(owner, exchange, tag, cleanup);
 }
 
 /**
@@ -821,6 +834,298 @@ async function roleChecks(owner: Owner, exchange: ScheduleExchangeService, schoo
     void renderExport;
   });
 }
+
+// ---------------------------------------------------------------------------
+// (x-e) the review of PR #256
+// ---------------------------------------------------------------------------
+
+/** The posts and blocks of a year, to put back after a check that deletes them. */
+async function snapshotOf(owner: Owner, yearId: string) {
+  return {
+    posts: await owner.teachingRequirement.findMany({ where: { academicYearId: yearId } }),
+    blocks: await owner.teachingBlock.findMany({ where: { academicYearId: yearId } }),
+  };
+}
+
+async function putBack(owner: Owner, school: School, original: string[], snap: Awaited<ReturnType<typeof snapshotOf>>): Promise<void> {
+  await wipeLessons(owner, school.yearId);
+  await owner.teachingRequirement.deleteMany({ where: { academicYearId: school.yearId } });
+  await owner.teachingBlock.deleteMany({ where: { academicYearId: school.yearId } });
+  await owner.teachingBlock.createMany({ data: snap.blocks, skipDuplicates: true });
+  await owner.teachingRequirement.createMany({ data: snap.posts, skipDuplicates: true });
+  await restoreFrom(owner, school, original);
+}
+
+/** Pupils for the högstadium: a class's own, and the halves' and language groups' members, so the rosters are not empty. */
+async function addPupils(owner: Owner, school: School & { names: Record<string, string> }): Promise<() => Promise<void>> {
+  const ids: string[] = [];
+  const pupil = async (n: number, home: string, ...groups: string[]) => {
+    const row = await owner.user.create({
+      data: { schoolId: school.schoolId, authId: randomUUID(), role: 'STUDENT', firstName: `Elev${n}`, lastName: 'Probe', email: `elev${n}-${randomUUID().slice(0, 6)}@probe.example.com`, studentGroupId: school.names[home]! },
+    });
+    ids.push(row.id);
+    for (const g of groups) await owner.studentGroupMember.create({ data: { schoolId: school.schoolId, studentGroupId: school.names[g]!, studentId: row.id } });
+  };
+  await pupil(1, '7A', '7A-1', 'Sp7');
+  await pupil(2, '7A', '7A-1', 'Ty7');
+  await pupil(3, '7A', '7A-2', 'Sp7');
+  await pupil(4, '7A', '7A-2', 'Fr7');
+  await pupil(5, '7B', 'Sp7');
+  await pupil(6, '8A');
+  return async () => {
+    await owner.user.deleteMany({ where: { id: { in: ids } } });
+  };
+}
+
+async function reviewChecks(
+  owner: Owner,
+  api: PrismaService,
+  exchange: ScheduleExchangeService,
+  masterLessons: MasterLessonsService,
+  school: School & { names: Record<string, string> },
+  original: string[],
+  tag: string,
+  cleanup: Array<() => Promise<void>>,
+): Promise<void> {
+  // ---- The cache is the same rule -----------------------------------------
+  await check('(x-e) the clash rule answers the same from the file-wide cache as from the database, over a school with pupils', async () => {
+    const removePupils = await addPupils(owner, school);
+    try {
+      const year = await owner.academicYear.findUniqueOrThrow({ where: { id: school.yearId } });
+      const compared = await api.withRls(school.admin, async (tx) => {
+        const basis = await rostersOfYear(tx, school.admin, school.yearId, { isActive: year.isActive, predecessorId: year.predecessorId });
+        const reads = new ConflictReads();
+        const lessons = await tx.masterLesson.findMany({ where: { academicYearId: school.yearId, isParked: false }, include: { extraGroups: true } });
+        const minutes = (d: Date) => d.getUTCHours() * 60 + d.getUTCMinutes();
+        let clashes = 0;
+        let n = 0;
+        for (const l of lessons) {
+          // The lesson itself (it must not clash with itself), as a new lesson (it clashes with itself), and moved to the
+          // slot of the next lesson of the week, so that other classes, halves and teachers are in play.
+          const next = lessons[(n + 1) % lessons.length]!;
+          for (const where of [{ id: l.id, slot: l }, { id: null, slot: l }, { id: null, slot: next }, { id: l.id, slot: next }]) {
+            const args = [
+              tx,
+              basis,
+              { id: where.id, academicYearId: school.yearId, studentGroupId: l.studentGroupId, subjectId: l.subjectId },
+              {
+                dayOfWeek: where.slot.dayOfWeek,
+                startMinutes: minutes(where.slot.startTime),
+                endMinutes: minutes(where.slot.endTime),
+                teacherId: l.teacherId,
+                coTeacherId: l.coTeacherId,
+                roomId: l.roomId,
+                extraGroupIds: l.extraGroups.map((e) => e.studentGroupId),
+                studentIds: [],
+                recurrence: l.recurrence,
+                startDate: l.startDate,
+                endDate: l.endDate,
+              },
+            ] as const;
+            const fresh = await masterLessons.findConflicts(args[0], args[1], args[2], args[3]);
+            const cached = await masterLessons.findConflicts(args[0], args[1], args[2], args[3], { reads });
+            assert.deepEqual(cached, fresh, `lesson ${l.id} ${JSON.stringify(where.slot.dayOfWeek)}`);
+            clashes += fresh.length;
+          }
+          n += 1;
+        }
+        assert.ok(clashes > 20, `only ${clashes} clashes were compared: the lessons do not meet`);
+        return lessons.length * 4;
+      });
+      assert.ok(compared >= 60, `only ${compared} comparisons`);
+    } finally {
+      await removePupils();
+    }
+  });
+
+  // ---- Two applies at once ------------------------------------------------
+  await check('(x-e) two applies of one previewed file at once write it once, the other is told', async () => {
+    const snap = await snapshotOf(owner, school.yearId);
+    try {
+      const files = await bytesOf('TABLE_CSV', exchange, school.yearId, school.admin);
+      const outcomes: string[] = [];
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        await wipeLessons(owner, school.yearId);
+        await owner.teachingRequirement.deleteMany({ where: { academicYearId: school.yearId } });
+        await owner.teachingBlock.deleteMany({ where: { academicYearId: school.yearId } });
+        const plan = await exchange.preview({ academicYearId: school.yearId, format: 'TABLE_CSV', files }, school.admin);
+        assert.equal(plan.canApply, true);
+        const dto = { academicYearId: school.yearId, format: 'TABLE_CSV' as const, files, fingerprint: plan.fingerprint };
+        const settled = await Promise.allSettled([exchange.apply(dto, school.admin), exchange.apply(dto, school.admin)]);
+        const wrote = settled.filter((r) => r.status === 'fulfilled').length;
+        const told = settled.flatMap((r) => (r.status === 'rejected' ? [(r.reason as { response?: { code?: string } }).response?.code ?? String(r.reason)] : []));
+        outcomes.push(`${wrote} wrote, ${told.join('+') || 'nobody told'}`);
+        assert.equal(wrote, 1, `${wrote} applies wrote (${told.join(', ')})`);
+        assert.ok(told.every((code) => code === 'IMPORT_PLAN_CHANGED' || code === 'SCHEDULE_BUSY'), `the other was told ${told.join(', ')}`);
+        assert.equal(await owner.masterLesson.count({ where: { academicYearId: school.yearId } }), original.length, 'a lesson was written twice');
+      }
+      assert.equal(outcomes.length, 6);
+    } finally {
+      await putBack(owner, school, original, snap);
+    }
+  });
+
+  // ---- A teacher who has left ---------------------------------------------
+  await check('(x-e) the school’s own export, read back after a teacher has left, is still "finns redan"', async () => {
+    const files = await bytesOf('TABLE_CSV', exchange, school.yearId, school.admin);
+    const leaver = await owner.teacherEmployment.findFirstOrThrow({ where: { academicYearId: school.yearId, signature: 'ABE' } });
+    await owner.user.update({ where: { id: leaver.userId }, data: { isActive: false } });
+    try {
+      const plan = await exchange.preview({ academicYearId: school.yearId, format: 'TABLE_CSV', files }, school.admin);
+      assert.equal(plan.canApply, true, JSON.stringify(plan.rows.filter((r) => r.action === 'REFUSED').slice(0, 2)));
+      assert.equal(plan.summary.unchanged, original.length);
+      assert.ok(plan.warnings.some((w) => w.code === 'TEACHER_NO_LONGER_ACTIVE'), 'the teacher who left is not mentioned');
+      // A NEW lesson with that teacher is still refused.
+      const extra = Buffer.from('Klass/grupp;Ämne;Dag;Start;Slut;Lärare\r\n8B;Svenska;Fre;13:00;14:00;ABE\r\n', 'utf8');
+      const fresh = await exchange.preview({ academicYearId: school.yearId, format: 'TABLE_CSV', files: [{ name: 'x.csv', bytes: extra }] }, school.admin);
+      assert.deepEqual(fresh.rows[0]!.refusals.map((r) => r.code), ['TEACHER_INACTIVE']);
+    } finally {
+      await owner.user.update({ where: { id: leaver.userId }, data: { isActive: true } });
+    }
+  });
+
+  // ---- The läslogg --------------------------------------------------------
+  // A school of its own, with an administrator who has read nothing: the log lists a subject once
+  // per reader and kind and quarter-hour, so teachers an earlier check already read would hide
+  // whether this export logged them.
+  await check('(x-e) an export of a school with no lesson yet logs the signed teachers it names', async () => {
+    const row = await owner.school.create({ data: { name: `Probe läslogg ${tag}`, slug: `probe-s0-log-${tag}`, timezone: 'Europe/Stockholm' } });
+    cleanup.push(async () => {
+      await owner.school.delete({ where: { id: row.id } });
+    });
+    const year = await owner.academicYear.create({
+      data: { schoolId: row.id, name: '2026/2027', startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11'), gradeNumbering: 'NIOARIG', isActive: true },
+    });
+    await owner.user.create({ data: { schoolId: row.id, authId: randomUUID(), role: 'SCHOOL_ADMIN', adminProfile: 'FULL', firstName: 'Ada', lastName: 'Admin', email: `admin-log-${tag}@probe.example.com` } });
+    const people: string[] = [];
+    for (const [short, first] of [['AAA', 'Anna'], ['BBB', 'Bo'], ['CCC', 'Cia']] as const) {
+      const user = await owner.user.create({ data: { schoolId: row.id, authId: randomUUID(), role: 'TEACHER', firstName: first, lastName: 'Utanlektion', email: `${short.toLowerCase()}-log-${tag}@probe.example.com` } });
+      await owner.teacherEmployment.create({ data: { schoolId: row.id, userId: user.id, academicYearId: year.id, employmentPercent: 100, signature: short } });
+      people.push(user.id);
+    }
+    const admin = await adminOf(owner, row.id);
+    assert.equal(await owner.masterLesson.count({ where: { academicYearId: year.id } }), 0);
+    const file = await exchange.export(year.id, 'ASC_XML', admin);
+    assert.ok(file.body.toString('utf8').includes('bbb-log-'), 'the file does not name the teachers: the check below would prove nothing');
+    const rows = await owner.personalDataAccess.findMany({ where: { schoolId: row.id, kind: 'PEOPLE', actorId: admin.userId! } });
+    const logged = new Set(rows.flatMap((r) => r.subjectIds));
+    for (const id of people) assert.ok(logged.has(id), 'a teacher the file names is not in the läslogg');
+  });
+
+  // ---- Personnummer -------------------------------------------------------
+  await check('(x-e) a personnummer in any column is in no answer, and is not stored as a block’s name', async () => {
+    const forms = ['19800101-1234', '8001011234', '198001011234', '800101-1234', '19800181-1234', 'Anna Berg 19800101-1234', '(800101-1234)', '19800101 - 1234'];
+    const columns = ['Klass/grupp', 'Ämne', 'Lärare', 'Sal', 'Dag', 'Start', 'Block', 'Veckomönster', 'Från'];
+    const base = ['7B', 'Svenska', 'Tis', '15:00', '16:00', 'BLU', 'A102', '', '', ''];
+    const header = ['Klass/grupp', 'Ämne', 'Dag', 'Start', 'Slut', 'Lärare', 'Sal', 'Block', 'Veckomönster', 'Från'];
+    for (const form of forms) {
+      for (const column of columns) {
+        const row = [...base];
+        row[header.indexOf(column)] = form;
+        const csv = Buffer.from(writeCsv([header, row]), 'utf8');
+        const plan = await exchange.preview({ academicYearId: school.yearId, format: 'TABLE_CSV', files: [{ name: 'pn.csv', bytes: csv }] }, school.admin);
+        const answer = JSON.stringify(plan);
+        assert.ok(!hasPersonalNumber(answer) && !/1234/.test(answer), `the answer to ${JSON.stringify(form)} in ${column} holds the number`);
+        assert.equal(plan.canApply, false, `${column}: a row with a number in it was applicable`);
+      }
+    }
+    const names = await owner.teachingBlock.findMany({ where: { academicYearId: school.yearId } });
+    assert.ok(names.every((b) => !hasPersonalNumber(b.name)), 'a block is named like a personnummer');
+  });
+
+  await check('(x-e) a block name the database would refuse is a refusal of the row, not a 500', async () => {
+    const header = ['Klass/grupp', 'Ämne', 'Dag', 'Start', 'Slut', 'Block'];
+    for (const block of ['x'.repeat(81), 'å'.repeat(200)]) {
+      const csv = Buffer.from(writeCsv([header, ['7B', 'Svenska', 'Fre', '13:00', '14:00', block]]), 'utf8');
+      const plan = await exchange.preview({ academicYearId: school.yearId, format: 'TABLE_CSV', files: [{ name: 'b.csv', bytes: csv }] }, school.admin);
+      assert.deepEqual(plan.rows[0]!.refusals.map((r) => r.code), ['BAD_BLOCK_NAME']);
+      await assert.rejects(
+        exchange.apply({ academicYearId: school.yearId, format: 'TABLE_CSV', files: [{ name: 'b.csv', bytes: csv }], fingerprint: plan.fingerprint }, school.admin),
+        (e: unknown) => (e as { response?: { code?: string } }).response?.code === 'IMPORT_HAS_REFUSALS',
+      );
+    }
+    void tag;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// (x-f) a file of 5 000 rows
+// ---------------------------------------------------------------------------
+
+/**
+ * 125 classes of grade 5, each with 40 lessons a week (five days, eight hours)
+ * and no pupils, in a school of its own with the generator's lunch on: the
+ * file the review (H6) timed at 76 s to preview and 80 s to apply, and held
+ * the year's lock and a connection for the whole of it. Checked with a bound
+ * far above what it takes on a loaded machine and far below what it took.
+ */
+async function bigFileChecks(owner: Owner, exchange: ScheduleExchangeService, tag: string, cleanup: Array<() => Promise<void>>): Promise<void> {
+  let school: School | undefined;
+  await check('(x-f) a school with 125 classes is made', async () => {
+    const row = await owner.school.create({ data: { name: `Probe stor skola ${tag}`, slug: `probe-s0-big-${tag}`, timezone: 'Europe/Stockholm' } });
+    cleanup.push(async () => {
+      await owner.school.delete({ where: { id: row.id } });
+    });
+    const year = await owner.academicYear.create({
+      data: { schoolId: row.id, name: '2026/2027', startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11'), gradeNumbering: 'NIOARIG', isActive: true },
+    });
+    await owner.user.create({ data: { schoolId: row.id, authId: randomUUID(), role: 'SCHOOL_ADMIN', adminProfile: 'FULL', firstName: 'Ada', lastName: 'Admin', email: `admin-big-${tag}@probe.example.com` } });
+    await owner.subject.createMany({ data: ['Matematik', 'Svenska', 'Engelska', 'Idrott', 'Bild', 'Musik', 'NO', 'SO'].map((name) => ({ schoolId: row.id, name })) });
+    await owner.studentGroup.createMany({
+      data: Array.from({ length: 125 }, (_v, i) => ({ schoolId: row.id, academicYearId: year.id, name: `Z${String(i + 1).padStart(3, '0')}`, kind: 'CLASS' as const, gradeLevel: 5 })),
+    });
+    await owner.lunchSetting.create({ data: { schoolId: row.id, lunchEnabled: true, lunchStartTime: time('11:00'), lunchEndTime: time('13:00'), lunchMinutes: 30 } });
+    school = { schoolId: row.id, yearId: year.id, admin: await adminOf(owner, row.id) };
+  });
+  if (!school) return;
+  const big = school;
+
+  const subjects = ['Matematik', 'Svenska', 'Engelska', 'Idrott', 'Bild', 'Musik', 'NO', 'SO'];
+  const starts = ['08:00', '09:00', '10:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
+  const days = ['Mån', 'Tis', 'Ons', 'Tors', 'Fre'];
+  const rows: string[][] = [];
+  let n = 0;
+  for (let c = 1; c <= 125; c += 1) {
+    for (const d of days) {
+      for (const st of starts) {
+        const h = Number(st.slice(0, 2));
+        rows.push([`Z${String(c).padStart(3, '0')}`, subjects[n % subjects.length]!, d, st, `${String(h + 1).padStart(2, '0')}:00`]);
+        n += 1;
+      }
+    }
+  }
+  const files = [{ name: 'big.csv', bytes: Buffer.from(writeCsv([['Klass/grupp', 'Ämne', 'Dag', 'Start', 'Slut'], ...rows]), 'utf8') }];
+
+  let fingerprint = '';
+  await check('(x-f) 5 000 rows preview in seconds', async () => {
+    const started = Date.now();
+    const plan = await exchange.preview({ academicYearId: big.yearId, format: 'TABLE_CSV', files }, big.admin);
+    const ms = Date.now() - started;
+    console.log(`     5 000-row preview: ${ms} ms`);
+    assert.equal(plan.summary.rows, 5000);
+    assert.equal(plan.canApply, true, JSON.stringify(plan.rows.filter((r) => r.action === 'REFUSED').slice(0, 2)));
+    assert.ok(ms < BIG_PREVIEW_MS, `${ms} ms`);
+    fingerprint = plan.fingerprint;
+  });
+  await check('(x-f) 5 000 rows apply in seconds, and all are written', async () => {
+    const started = Date.now();
+    const done = await exchange.apply({ academicYearId: big.yearId, format: 'TABLE_CSV', files, fingerprint }, big.admin);
+    const ms = Date.now() - started;
+    console.log(`     5 000-row apply: ${ms} ms`);
+    assert.equal(done.created, 5000);
+    assert.equal(await owner.masterLesson.count({ where: { academicYearId: big.yearId } }), 5000);
+    assert.ok(ms < BIG_APPLY_MS, `${ms} ms`);
+  });
+  await check('(x-f) the same file again is all "finns redan"', async () => {
+    const plan = await exchange.preview({ academicYearId: big.yearId, format: 'TABLE_CSV', files }, big.admin);
+    assert.equal(plan.summary.unchanged, 5000);
+    assert.equal(plan.summary.create, 0);
+  });
+}
+
+/** Generous: what the review measured was 76 s and 80 s; a loaded Mac and a CI runner both have to pass. */
+const BIG_PREVIEW_MS = 45_000;
+const BIG_APPLY_MS = 60_000;
 
 void main().catch((error) => {
   console.error(error);

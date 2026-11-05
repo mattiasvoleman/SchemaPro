@@ -5,11 +5,14 @@ import {
   fitRefusals,
   frameWindowOf,
   indexContext,
+  labelOf,
   lunchFits,
   matchExisting,
   planFingerprint,
   rastsOf,
   resolveLesson,
+  shortText,
+  MAX_SHOWN,
   type ExistingLesson,
   type FinalLesson,
   type PlanContext,
@@ -86,7 +89,10 @@ describe('resolveLesson', () => {
     expect(refusalsOf({ teachers: [{ short: 'XYZ', name: null, email: null, id: null }] })).toEqual(['UNKNOWN_TEACHER']);
     // A signature and an e-mail that name two people is a contradiction, not a spelling.
     expect(refusalsOf({ teachers: [{ short: 'ABE', name: null, email: 'bo@skolan.example', id: null }] })).toEqual(['TEACHER_KEYS_DISAGREE']);
-    expect(refusalsOf({ teachers: [{ short: 'OGA', name: null, email: null, id: null }] })).toEqual(['TEACHER_INACTIVE']);
+    // A teacher who has left resolves: whether that is a refusal is the plan's to say (a new lesson) or not (the school's own).
+    const gone = resolved({ teachers: [{ short: 'OGA', name: null, email: null, id: null }] });
+    expect(gone.inactiveTeachers.map((t) => [t.id, t.key, t.name])).toEqual([['t-old', 'OGA', 'Olof Gammal']]);
+    expect(refusalsOf({ teachers: [{ short: 'OGA', name: null, email: null, id: null }], room: 'Aulan' }).sort()).toEqual(['TEACHER_INACTIVE', 'UNKNOWN_ROOM']);
     expect(
       refusalsOf({ teachers: [{ short: 'ABE', name: null, email: null, id: null }, { short: 'abe', name: null, email: null, id: null }] }),
     ).toEqual(['SAME_TEACHER_TWICE']);
@@ -156,6 +162,35 @@ describe('resolveLesson', () => {
     expect(refusalsOf({ teachers: [{ short: 'DUP', name: null, email: null, id: null }] }, ctx)).toEqual(['AMBIGUOUS_TEACHER']);
     const twoRooms = context({ rooms: [{ id: 'r1', name: 'Sal', code: null }, { id: 'r2', name: 'sal', code: null }] });
     expect(refusalsOf({ room: 'Sal' }, twoRooms)).toEqual(['AMBIGUOUS_ROOM']);
+  });
+});
+
+describe('what a refusal quotes of the file (H3 of the review)', () => {
+  const long = 'x'.repeat(32_767);
+  const reasons = (over: Partial<ExchangeLesson>) => {
+    const r = resolveLesson(lesson(over), indexContext(context()), context());
+    return 'refusals' in r ? r.refusals : [];
+  };
+
+  it('cuts a name to a line a reader can take in, in the code, the params and the sentence', () => {
+    for (const over of [{ group: long }, { subject: long }, { room: long }, { extraGroups: [long] }, { teachers: [{ short: long, name: null, email: null, id: null }] }, { start: long }, { end: long }]) {
+      const found = reasons(over);
+      expect(found.length).toBeGreaterThan(0);
+      expect(JSON.stringify(found).length).toBeLessThan(1_000);
+    }
+  });
+
+  it('cuts a label as well, and a period', () => {
+    expect(labelOf(lesson({ group: long, subject: long, start: long, end: long })).length).toBeLessThan(400);
+    const found = reasons({ from: long, to: long });
+    expect(JSON.stringify(found).length).toBeLessThan(1_000);
+  });
+
+  it('redacts a personnummer in what it quotes, before the cut', () => {
+    expect(shortText('Anna 19800101-1234')).toBe('Anna [personnummer]');
+    expect(shortText(`${'a'.repeat(MAX_SHOWN - 3)}19800101-1234`)).not.toMatch(/\d{4}/);
+    expect(shortText(null)).toBe('');
+    expect(shortText('a\n  b')).toBe('a b');
   });
 });
 

@@ -7,6 +7,7 @@ import { lessonsToTable } from './lesson-table';
 import { writeXlsx } from './xlsx';
 import { documentOf, IMPORT_HAS_REFUSALS, IMPORT_PLAN_CHANGED, ScheduleExchangeService } from './exchange.service';
 import { indexContext, type PlanContext } from './exchange-plan';
+import * as exchangeFiles from './exchange-files';
 
 jest.mock('../year-rollover/projected-rosters', () => ({ rostersOfYear: jest.fn().mockResolvedValue({ kind: 'CURRENT' }) }));
 jest.mock('../optimization/room-eligibility', () => ({
@@ -25,6 +26,7 @@ jest.mock('../optimization/regeneration-lock', () => ({
 jest.mock('../access-log/access-log', () => ({ ...jest.requireActual('../access-log/access-log'), recordRead: jest.fn().mockResolvedValue(undefined) }));
 
 import { enterGrundschemaWrite, publishModeOf } from '../publication/publish-mode';
+import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { recordRead } from '../access-log/access-log';
 
 const SCHOOL = 'school-1';
@@ -58,6 +60,9 @@ function masterRow(over: Record<string, unknown> = {}) {
 
 function world(over: { lessons?: unknown[]; requirements?: unknown[]; blocks?: unknown[]; frames?: unknown[]; rasts?: unknown[]; lunch?: unknown; sittings?: unknown[]; conflicts?: unknown[] } = {}) {
   const tx = {
+    // lockYearForImport: the setting it puts back, and the statements that set it and take the lock.
+    $queryRaw: jest.fn().mockResolvedValue([{ previous: '0' }]),
+    $executeRaw: jest.fn().mockResolvedValue(1),
     academicYear: {
       findUnique: jest.fn().mockResolvedValue({
         id: YEAR,
@@ -89,6 +94,7 @@ function world(over: { lessons?: unknown[]; requirements?: unknown[]; blocks?: u
         { id: 't-abe', firstName: 'Anna', lastName: 'Berg', email: 'anna@skolan.example', isActive: true },
         { id: 't-blu', firstName: 'Bo', lastName: 'Lund', email: 'bo@skolan.example', isActive: true },
         { id: 't-nosig', firstName: 'Nina', lastName: 'Utan', email: 'nina@skolan.example', isActive: true },
+        { id: 't-oga', firstName: 'Olle', lastName: 'Gammal', email: 'olle@skolan.example', isActive: false },
       ]),
     },
     teacherEmployment: {
@@ -96,6 +102,7 @@ function world(over: { lessons?: unknown[]; requirements?: unknown[]; blocks?: u
         { userId: 't-abe', signature: 'ABE' },
         { userId: 't-blu', signature: ' BLU ' },
         { userId: 't-nosig', signature: null },
+        { userId: 't-oga', signature: 'OGA' },
       ]),
     },
     masterLesson: {
@@ -110,7 +117,7 @@ function world(over: { lessons?: unknown[]; requirements?: unknown[]; blocks?: u
     lunchSetting: { findUnique: jest.fn().mockResolvedValue(over.lunch ?? null) },
     lunchServing: { findMany: jest.fn().mockResolvedValue([]) },
     lunchSitting: { findMany: jest.fn().mockResolvedValue(over.sittings ?? []) },
-    teachingRequirement: { findMany: jest.fn().mockResolvedValue(over.requirements ?? []), create: jest.fn().mockResolvedValue({}) },
+    teachingRequirement: { findMany: jest.fn().mockResolvedValue(over.requirements ?? []), create: jest.fn().mockResolvedValue({}), createMany: jest.fn().mockResolvedValue({ count: 0 }) },
     teachingBlock: {
       findMany: jest.fn().mockResolvedValue(over.blocks ?? []),
       create: jest.fn().mockImplementation(({ data }: { data: { name: string } }) => Promise.resolve({ id: `b-${data.name}`, name: data.name })),
@@ -364,6 +371,99 @@ describe('ScheduleExchangeService.preview', () => {
   });
 });
 
+describe('ScheduleExchangeService.preview, a teacher who has left (M2 of the review)', () => {
+  const OGA = [{ short: 'OGA', name: null, email: null, id: null }];
+
+  it('says "finns redan" to a lesson the school has with a teacher who has since left, and warns beside it', async () => {
+    const { service, masterLessons } = world({ lessons: [masterRow({ teacherId: 't-oga' })] });
+    const plan = await preview(service, [base({ teachers: OGA })]);
+    expect(plan.rows.map((r) => [r.action, r.refusals.map((x) => x.code)])).toEqual([['UNCHANGED', []]]);
+    expect(plan.canApply).toBe(true);
+    expect(plan.warnings.map((w) => [w.code, w.params['teacher']])).toEqual([['TEACHER_NO_LONGER_ACTIVE', 'Olle Gammal']]);
+    expect(masterLessons.findConflicts).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a NEW lesson with that teacher, by name, before the clash scan', async () => {
+    const { service, masterLessons } = world();
+    const plan = await preview(service, [base({ teachers: OGA })]);
+    expect(plan.rows[0]!.refusals.map((x) => [x.code, x.params['key']])).toEqual([['TEACHER_INACTIVE', 'OGA']]);
+    expect(plan.rows[0]!.refusals[0]!.detail).toBe('Läraren Olle Gammal är inte aktiv.');
+    expect(plan.canApply).toBe(false);
+    expect(masterLessons.findConflicts).not.toHaveBeenCalled();
+  });
+
+  it('lists the teacher beside the row’s other reasons', async () => {
+    const { service } = world();
+    const plan = await preview(service, [base({ teachers: OGA, room: 'Aulan' })]);
+    expect(plan.rows[0]!.refusals.map((x) => x.code).sort()).toEqual(['TEACHER_INACTIVE', 'UNKNOWN_ROOM']);
+  });
+
+  it('does not let a changed lesson with such a teacher pass: it is still the school’s own and refused as different', async () => {
+    const { service } = world({ lessons: [masterRow({ teacherId: 't-oga' })] });
+    const plan = await preview(service, [base({ teachers: OGA, room: 'A102' })]);
+    expect(plan.rows[0]!.refusals.map((x) => x.code)).toEqual(['EXISTS_DIFFERENT']);
+  });
+});
+
+describe('ScheduleExchangeService.preview, what is written as the file says it (M4 and H1 of the review)', () => {
+  it('refuses a block name longer than the database allows, by row and without quoting it', async () => {
+    const { service } = world();
+    const plan = await preview(service, [base({ block: 'x'.repeat(81) })]);
+    expect(plan.rows[0]!.refusals.map((x) => x.code)).toEqual(['BAD_BLOCK_NAME']);
+    expect(plan.rows[0]!.refusals[0]!.detail).not.toContain('xxxx');
+    expect(plan.canApply).toBe(false);
+  });
+
+  it('takes a block of exactly 80 characters, counted as the database counts them', async () => {
+    const { service } = world();
+    expect((await preview(service, [base({ block: 'å'.repeat(80) })])).canApply).toBe(true);
+    expect((await preview(service, [base({ block: 'å'.repeat(81) })])).canApply).toBe(false);
+  });
+
+  it('refuses a block named like a personnummer, whichever reader let it through', async () => {
+    const { service } = world();
+    const spy = jest.spyOn(exchangeFiles, 'readUpload').mockReturnValue({ lessons: [base({ block: 'Klass 19800101-1234' })], problems: [], notes: [] });
+    try {
+      const plan = await preview(service, []);
+      expect(plan.rows[0]!.refusals.map((x) => x.code)).toEqual(['BAD_BLOCK_NAME']);
+      expect(JSON.stringify(plan)).not.toContain('1234');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('answers with no personnummer in it, whatever a reader let through (the last door)', async () => {
+    const { service } = world();
+    const spy = jest.spyOn(exchangeFiles, 'readUpload').mockReturnValue({
+      lessons: [base({ group: '9Z 19800101-1234', ref: 'rad 3 800101-1234' })],
+      problems: [{ ref: 'rad 9', code: 'X', message: 'Läraren 8001011234 finns inte' }],
+      notes: ['Kolumnen 198001011234 lästes inte'],
+    });
+    try {
+      const plan = await preview(service, []);
+      expect(JSON.stringify(plan)).not.toMatch(/1234/);
+      expect(plan.unreadable[0]!.message).toBe('Läraren [personnummer] finns inte');
+      expect(plan.notes).toEqual(['Kolumnen [personnummer] lästes inte']);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('does not echo a personnummer in the message of a file that cannot be read at all', async () => {
+    const { service } = world();
+    const spy = jest.spyOn(exchangeFiles, 'readUpload').mockImplementation(() => {
+      throw new Error('trasig fil 19800101-1234');
+    });
+    try {
+      const attempt = preview(service, []);
+      await expect(attempt).rejects.toBeInstanceOf(BadRequestException);
+      await expect(attempt).rejects.not.toThrow(/1234/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe('ScheduleExchangeService.apply', () => {
   async function applied(lessons: ExchangeLesson[], over: Parameters<typeof world>[0] = {}, mode: 'DIRECT' | 'DRAFT' = 'DIRECT') {
     (enterGrundschemaWrite as jest.Mock).mockResolvedValue(mode);
@@ -397,6 +497,27 @@ describe('ScheduleExchangeService.apply', () => {
     expect(enterGrundschemaWrite).toHaveBeenCalledWith(tx, SCHOOL);
     expect(prisma.withRls).toHaveBeenLastCalledWith(user, expect.any(Function), { timeoutMs: 120_000 });
     expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL);
+  });
+
+  it('writes the posts that join no block in one statement, and a block’s posts one at a time', async () => {
+    const { service, tx, files, plan } = await applied([
+      base(),
+      base({ group: '7B', day: 2, block: 'Språkval' }),
+      base({ group: '7B', subject: 'Svenska', day: 3, block: 'Språkval' }),
+    ]);
+    const result = await service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user);
+    expect(result.requirementsCreated).toBe(3);
+    const loose = (tx.teachingRequirement.createMany.mock.calls[0]![0] as { data: Array<{ studentGroupId: string; blockId: string | null }> }).data;
+    expect(loose.map((q) => [q.studentGroupId, q.blockId])).toEqual([['g-7a', null]]);
+    expect(tx.teachingRequirement.create).toHaveBeenCalledTimes(2);
+    expect(tx.teachingRequirement.create.mock.calls.map((c) => (c[0] as { data: { blockId: string } }).data.blockId)).toEqual(['b-Språkval', 'b-Språkval']);
+  });
+
+  it('does not ask for a statement of posts when every post is the school’s already', async () => {
+    const post = { id: 'q1', studentGroupId: 'g-7a', subjectId: 's-ma', teacherId: 't-abe', coTeacherId: null, lessonsPerWeek: 1, minutesPerLesson: 60, lessonLengths: [], recurrence: 'ALL_WEEKS', startDate: null, endDate: null, blockId: null };
+    const { service, tx, files, plan } = await applied([base(), base({ day: 3 })], { lessons: [masterRow()], requirements: [post] });
+    await service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user);
+    expect(tx.teachingRequirement.createMany).not.toHaveBeenCalled();
   });
 
   it('tells the staff room only that a draft changed, in a school that publishes through one', async () => {
@@ -443,6 +564,62 @@ describe('ScheduleExchangeService.apply', () => {
     expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
     expect(tx.teachingBlock.create).not.toHaveBeenCalled();
   });
+
+  describe('the year’s import lock (H5 of the review)', () => {
+    const statements = (calls: unknown[][]): string[] => calls.map((c) => (c[0] as string[]).join('?'));
+
+    it('takes an exclusive lock of its own after the shared edit lock and before it reads anything', async () => {
+      const { service, tx, files, plan } = await applied([base()]);
+      const order: string[] = [];
+      (lockYearForGrundschemaEdit as jest.Mock).mockImplementationOnce(async () => void order.push('edit lock'));
+      tx.$executeRaw.mockImplementation(async (strings: string[]) => void order.push(strings.join('?').includes('pg_advisory_xact_lock') ? 'import lock' : 'setting'));
+      tx.academicYear.findUnique.mockImplementation(async () => {
+        order.push('read');
+        return { id: YEAR, schoolId: SCHOOL, name: '2026/2027', startDate: date('2026-08-17'), endDate: date('2027-06-11'), isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG', school: { name: 'x' } };
+      });
+      await service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user);
+      expect(order.indexOf('edit lock')).toBeLessThan(order.indexOf('import lock'));
+      expect(order.indexOf('import lock')).toBeLessThan(order.indexOf('read'));
+      const all = statements(tx.$executeRaw.mock.calls);
+      expect(all.some((sql) => sql.includes("hashtext('schedule-exchange-apply')"))).toBe(true);
+    });
+
+    it('waits at most five seconds for it, then puts the transaction’s own setting back', async () => {
+      const { service, tx, files, plan } = await applied([base()]);
+      tx.$queryRaw.mockResolvedValue([{ previous: '15s' }]);
+      await service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user);
+      const sql = tx.$executeRaw.mock.calls.map((c) => ({ text: (c[0] as string[]).join('?'), values: c.slice(1) }));
+      expect(sql[0]!.text).toContain("set_config('lock_timeout', '5s', true)");
+      expect(sql[2]!.text).toContain("set_config('lock_timeout', ");
+      expect(sql[2]!.values).toEqual(['15s']);
+    });
+
+    it('answers 409 SCHEDULE_BUSY, writing nothing, when the other apply still holds it after five seconds', async () => {
+      const { service, tx, files, plan } = await applied([base()]);
+      tx.$executeRaw
+        .mockResolvedValueOnce(1)
+        .mockRejectedValueOnce(new Error('canceling statement due to lock timeout'));
+      const attempt = service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user);
+      await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+      await expect(attempt).rejects.toMatchObject({ response: { code: 'SCHEDULE_BUSY' } });
+      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+    });
+
+    it('lets any other failure of the lock through as it is', async () => {
+      const { service, tx, files, plan } = await applied([base()]);
+      tx.$executeRaw.mockResolvedValueOnce(1).mockRejectedValueOnce(new Error('connection reset'));
+      await expect(service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files, fingerprint: plan.fingerprint }, user)).rejects.toThrow('connection reset');
+    });
+
+    it('lets the second of two applies of one file find the lessons the first wrote, and answer IMPORT_PLAN_CHANGED', async () => {
+      // The first apply's lessons are committed by the time the second gets the lock: it plans again and sees them.
+      const first = await applied([base()]);
+      const second = world({ lessons: [masterRow()] });
+      const attempt = second.service.apply({ academicYearId: YEAR, format: 'TABLE_CSV', files: first.files, fingerprint: first.plan.fingerprint }, user);
+      await expect(attempt).rejects.toMatchObject({ response: { code: IMPORT_PLAN_CHANGED } });
+      expect(second.tx.masterLesson.createMany).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('ScheduleExchangeService.export and summary', () => {
@@ -462,6 +639,24 @@ describe('ScheduleExchangeService.export and summary', () => {
     expect(recordRead).toHaveBeenCalledWith(tx, 'PEOPLE', new Set(['t-abe', 't-nosig', 't-blu']), 'WEB');
     // Parked lessons are left out at the source.
     expect((tx.masterLesson.findMany.mock.calls[0]![0] as { where: Record<string, unknown> }).where).toEqual({ academicYearId: YEAR, isParked: false });
+  });
+
+  it('records every teacher the FILE names, also a signed one with no lesson yet (M1 of the review)', async () => {
+    const { service, tx } = world({ lessons: [masterRow()] });
+    await service.export(YEAR, 'ASC_XML', user);
+    // t-abe teaches; t-blu and t-oga are signed and active-or-named: the file lists them with name and e-mail.
+    const logged = (recordRead as jest.Mock).mock.calls.at(-1)![2] as Set<string>;
+    expect(logged.has('t-abe')).toBe(true);
+    expect(logged.has('t-blu')).toBe(true);
+    expect(recordRead).toHaveBeenLastCalledWith(tx, 'PEOPLE', expect.any(Set), 'WEB');
+  });
+
+  it('records no teacher in an export that names none', async () => {
+    const w = world({ lessons: [] });
+    w.tx.user.findMany.mockResolvedValue([{ id: 't-x', firstName: 'X', lastName: 'Y', email: 'x@skolan.example', isActive: true }]);
+    w.tx.teacherEmployment.findMany.mockResolvedValue([]);
+    await w.service.export(YEAR, 'TABLE_CSV', user);
+    expect(recordRead).toHaveBeenLastCalledWith(w.tx, 'PEOPLE', new Set(), 'WEB');
   });
 
   it('writes every format, and refuses one it does not know', async () => {

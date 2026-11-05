@@ -47,7 +47,7 @@ export class ScheduleExchangeController {
   @AnyAdministrator('Exporten läser schemat och skriver ingenting av skolans.')
   async export(@Body() dto: ExportDto, @CurrentUser() user: AuthenticatedUser) {
     const file = await this.exchange.export(dto.academicYearId, dto.format, user);
-    return { filename: file.filename, contentType: file.contentType, contentBase64: file.body.toString('base64') };
+    return { filename: file.filename, contentType: file.contentType, contentBase64: file.body.toString('base64'), notes: file.notes };
   }
 
   /** `POST /schedule-exchange/import/preview` - the plan, writing nothing. */

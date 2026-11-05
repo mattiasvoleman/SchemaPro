@@ -62,6 +62,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'SOURCE',
     why: 'the rollover reads its own source year; ROLLOVER_SOURCE_NOT_ACTIVATED refuses a source whose pupils have not moved in',
   },
+  'src/calendar/conflict-reads.ts': {
+    basis: 'PROJECTED',
+    why: 'an import’s clash scan reads the roster of a group once for the file instead of once per row; the home side through readHomePupils and the basis, memberships as they are',
+  },
   'src/calendar/lesson-roster.ts': {
     basis: 'CURRENT',
     why: 'who attends a lesson, for every caller: the attendance check and the register’s list (real people at dated lessons, it writes rows), every lesson notice and avbokning digest, and the teacher app’s broadcast (nobody is told about next year’s class before the activation)',

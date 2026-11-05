@@ -6,6 +6,7 @@ import {
   type TeacherRef,
   type WeekPattern,
 } from './exchange-model';
+import { hasPersonalNumber, redactPersonalNumbers } from './file-safety';
 
 /**
  * The import's decisions, pure (Schemat som tabell och i öppna format).
@@ -41,6 +42,7 @@ export type RefusalCode =
   | 'UNKNOWN_TEACHER'
   | 'AMBIGUOUS_TEACHER'
   | 'TEACHER_INACTIVE'
+  | 'BAD_BLOCK_NAME'
   | 'TEACHER_KEYS_DISAGREE'
   | 'SAME_TEACHER_TWICE'
   | 'UNKNOWN_ROOM'
@@ -81,7 +83,8 @@ export type WarningCode =
   | 'REQ_CO_TEACHERS_DIFFER'
   | 'BLOCK_MEMBERS_DIFFER'
   | 'BLOCK_NOT_LINKED'
-  | 'NO_REQUIREMENT';
+  | 'NO_REQUIREMENT'
+  | 'TEACHER_NO_LONGER_ACTIVE';
 
 export interface PlanWarning {
   code: WarningCode;
@@ -227,6 +230,16 @@ export interface ResolvedLesson {
   to: string | null;
   block: string | null;
   lessonId: string | null;
+  /**
+   * Teachers the row names who are not active (left, on leave). Resolving a row
+   * does not refuse them: a lesson the school already has with such a teacher
+   * is still exactly that lesson, and the school's own export, read back, must
+   * say "finns redan" and not refuse a file nothing in the schedule moved
+   * under (the review of PR #256, M2). The plan refuses them on a row that
+   * would CREATE a lesson (refuseInactive), where a deactivated teacher must
+   * not be placed, and warns on a row that matches a lesson the school has.
+   */
+  inactiveTeachers: Array<{ id: string; key: string; name: string }>;
 }
 
 /**
@@ -257,9 +270,23 @@ export function normalizeName(text: string | null | undefined): string {
   return (text ?? '').normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+/** The most characters of a name from the file that a refusal or a label carries. */
+export const MAX_SHOWN = 60;
+
+/**
+ * A value from the file as an answer may carry it: redacted, on one line, cut.
+ * A name is as long as its cell, and an xlsx can use one 32 767-character
+ * string for five thousand cells; a refusal per row that quoted it whole was an
+ * answer of 160 MB (the review of PR #256). The cut is far above any real name.
+ */
+export function shortText(value: string | null | undefined): string {
+  const flat = redactPersonalNumbers(String(value ?? '')).replace(/\s+/g, ' ').trim();
+  return flat.length > MAX_SHOWN ? `${flat.slice(0, MAX_SHOWN)}…` : flat;
+}
+
 export function labelOf(lesson: ExchangeLesson): string {
   const day = DAY_NAMES[lesson.day] ?? String(lesson.day);
-  return `${lesson.subject} · ${lesson.group} · ${day} ${lesson.start}–${lesson.end}`;
+  return `${shortText(lesson.subject)} · ${shortText(lesson.group)} · ${day} ${shortText(lesson.start)}–${shortText(lesson.end)}`;
 }
 
 function refusal(code: RefusalCode, params: Record<string, string | number>, detail: string): Refusal {
@@ -330,13 +357,13 @@ function resolveGroup(name: string, id: string | null | undefined, idx: Indexes)
   const byName = idx.groupsByName.get(normalizeName(name)) ?? [];
   if (byId) {
     if (name.trim() !== '' && normalizeName(byId.name) !== normalizeName(name)) {
-      return { refusal: refusal('ID_NAME_MISMATCH', { kind: 'grupp', id: byId.name, name }, `Id:t hör till gruppen ${byId.name}, men namnet är ${name}. Ta bort id-cellen eller rätta namnet.`) };
+      return { refusal: refusal('ID_NAME_MISMATCH', { kind: 'grupp', id: byId.name, name: shortText(name) }, `Id:t hör till gruppen ${byId.name}, men namnet är ${shortText(name)}. Ta bort id-cellen eller rätta namnet.`) };
     }
     return { ok: byId };
   }
   if (byName.length === 1) return { ok: byName[0]! };
   return {
-    refusal: refusal('UNKNOWN_GROUP', { name }, `Klassen eller gruppen ${name} finns inte i läsåret.`),
+    refusal: refusal('UNKNOWN_GROUP', { name: shortText(name) }, `Klassen eller gruppen ${shortText(name)} finns inte i läsåret.`),
   };
 }
 
@@ -349,7 +376,7 @@ function resolveSubject(
   const byId = id ? idx.subjectsById.get(id) : undefined;
   if (byId) {
     if (name.trim() !== '' && normalizeName(byId.name) !== normalizeName(name)) {
-      return { refusal: refusal('ID_NAME_MISMATCH', { kind: 'ämne', id: byId.name, name }, `Id:t hör till ämnet ${byId.name}, men namnet är ${name}. Ta bort id-cellen eller rätta namnet.`) };
+      return { refusal: refusal('ID_NAME_MISMATCH', { kind: 'ämne', id: byId.name, name: shortText(name) }, `Id:t hör till ämnet ${byId.name}, men namnet är ${shortText(name)}. Ta bort id-cellen eller rätta namnet.`) };
     }
     return { ok: byId };
   }
@@ -362,7 +389,7 @@ function resolveSubject(
       if (name.trim() !== '' && normalizeName(only.name) !== normalizeName(name)) {
         const named = idx.subjectsByName.get(normalizeName(name)) ?? [];
         if (named.length > 0 && !named.includes(only)) {
-          return { refusal: refusal('ID_NAME_MISMATCH', { kind: 'ämne', id: only.name, name }, `Ämneskoden ${code} hör till ${only.name}, men namnet är ${name}.`) };
+          return { refusal: refusal('ID_NAME_MISMATCH', { kind: 'ämne', id: only.name, name: shortText(name) }, `Ämneskoden ${shortText(code)} hör till ${only.name}, men namnet är ${shortText(name)}.`) };
         }
       }
       return { ok: only };
@@ -374,12 +401,12 @@ function resolveSubject(
     return {
       refusal: refusal(
         'AMBIGUOUS_SUBJECT',
-        { name, count: byName.length },
-        `Ämnet ${name} finns ${byName.length} gånger i skolan. Ange ämneskod eller id.`,
+        { name: shortText(name), count: byName.length },
+        `Ämnet ${shortText(name)} finns ${byName.length} gånger i skolan. Ange ämneskod eller id.`,
       ),
     };
   }
-  return { refusal: refusal('UNKNOWN_SUBJECT', { name }, `Ämnet ${name} finns inte i skolan.`) };
+  return { refusal: refusal('UNKNOWN_SUBJECT', { name: shortText(name) }, `Ämnet ${shortText(name)} finns inte i skolan.`) };
 }
 
 function resolveRoom(name: string | null, id: string | null | undefined, idx: Indexes): Resolution<RoomRow | null> {
@@ -387,7 +414,7 @@ function resolveRoom(name: string | null, id: string | null | undefined, idx: In
   const byId = id ? idx.roomsById.get(id) : undefined;
   if (byId) {
     if (clean !== '' && normalizeName(byId.name) !== normalizeName(clean)) {
-      return { refusal: refusal('ID_NAME_MISMATCH', { kind: 'sal', id: byId.name, name: clean }, `Id:t hör till salen ${byId.name}, men namnet är ${clean}.`) };
+      return { refusal: refusal('ID_NAME_MISMATCH', { kind: 'sal', id: byId.name, name: shortText(clean) }, `Id:t hör till salen ${byId.name}, men namnet är ${shortText(clean)}.`) };
     }
     return { ok: byId };
   }
@@ -395,13 +422,13 @@ function resolveRoom(name: string | null, id: string | null | undefined, idx: In
   const byName = idx.roomsByName.get(normalizeName(clean)) ?? [];
   if (byName.length === 1) return { ok: byName[0]! };
   if (byName.length > 1) {
-    return { refusal: refusal('AMBIGUOUS_ROOM', { name: clean, count: byName.length }, `Salen ${clean} finns ${byName.length} gånger.`) };
+    return { refusal: refusal('AMBIGUOUS_ROOM', { name: shortText(clean), count: byName.length }, `Salen ${shortText(clean)} finns ${byName.length} gånger.`) };
   }
-  return { refusal: refusal('UNKNOWN_ROOM', { name: clean }, `Salen ${clean} finns inte i skolan.`) };
+  return { refusal: refusal('UNKNOWN_ROOM', { name: shortText(clean) }, `Salen ${shortText(clean)} finns inte i skolan.`) };
 }
 
 function describeRef(ref: TeacherRef): string {
-  return ref.short ?? ref.email ?? ref.name ?? ref.id ?? '(tom)';
+  return shortText(ref.short ?? ref.email ?? ref.name ?? ref.id ?? '(tom)');
 }
 
 function resolveTeacher(ref: TeacherRef, idx: Indexes): Resolution<TeacherRow> {
@@ -429,11 +456,7 @@ function resolveTeacher(ref: TeacherRef, idx: Indexes): Resolution<TeacherRow> {
     const names = [...found.values()].map((t) => `${t.firstName} ${t.lastName}`).join(' och ');
     return { refusal: refusal('TEACHER_KEYS_DISAGREE', { key: label }, `Signatur, e-post och id för ${label} pekar på olika personer (${names}).`) };
   }
-  const only = [...found.values()][0]!;
-  if (!only.isActive) {
-    return { refusal: refusal('TEACHER_INACTIVE', { key: label }, `Läraren ${only.firstName} ${only.lastName} är inte aktiv.`) };
-  }
-  return { ok: only };
+  return { ok: [...found.values()][0]! };
 }
 
 function isoDate(text: string | null): string | null {
@@ -463,6 +486,7 @@ export function resolveLesson(
   const room = take(resolveRoom(lesson.room, lesson.ids.room, idx));
 
   const teacherIds: string[] = [];
+  const inactiveTeachers: ResolvedLesson['inactiveTeachers'] = [];
   for (const ref of lesson.teachers) {
     const t = take(resolveTeacher(ref, idx));
     if (t) {
@@ -470,6 +494,7 @@ export function resolveLesson(
         refusals.push(refusal('SAME_TEACHER_TWICE', { key: describeRef(ref) }, `Läraren ${describeRef(ref)} står både som lärare och medlärare.`));
       } else {
         teacherIds.push(t.id);
+        if (!t.isActive) inactiveTeachers.push({ id: t.id, key: describeRef(ref), name: `${t.firstName} ${t.lastName}` });
       }
     }
   }
@@ -477,9 +502,9 @@ export function resolveLesson(
   const startMin = minutesOfClock(lesson.start);
   const endMin = minutesOfClock(lesson.end);
   if (startMin === null || endMin === null || endMin <= startMin) {
-    refusals.push(refusal('BAD_TIME', { start: lesson.start, end: lesson.end }, `Tiden ${lesson.start}–${lesson.end} är ingen lektionstid (slut måste vara efter start).`));
+    refusals.push(refusal('BAD_TIME', { start: shortText(lesson.start), end: shortText(lesson.end) }, `Tiden ${shortText(lesson.start)}–${shortText(lesson.end)} är ingen lektionstid (slut måste vara efter start).`));
   } else if (startMin % GRID_MINUTES !== 0 || endMin % GRID_MINUTES !== 0) {
-    refusals.push(refusal('OFF_GRID', { start: lesson.start, end: lesson.end }, `Tiden ${lesson.start}–${lesson.end} ligger inte på femminutersrastret som schemamotorn räknar i.`));
+    refusals.push(refusal('OFF_GRID', { start: shortText(lesson.start), end: shortText(lesson.end) }, `Tiden ${shortText(lesson.start)}–${shortText(lesson.end)} ligger inte på femminutersrastret som schemamotorn räknar i.`));
   }
   if (!SCHOOL_DAYS.includes(lesson.day)) {
     refusals.push(refusal('DAY_OUTSIDE_SCHOOL_WEEK', { day: lesson.day }, `Dag ${lesson.day} ligger utanför skolveckan måndag–fredag.`));
@@ -487,14 +512,26 @@ export function resolveLesson(
   const from = isoDate(lesson.from);
   const to = isoDate(lesson.to);
   if (from !== null && to !== null && to < from) {
-    refusals.push(refusal('PERIOD_REVERSED', { from, to }, `Perioden ${from}–${to} slutar före den börjar.`));
+    refusals.push(refusal('PERIOD_REVERSED', { from: shortText(from), to: shortText(to) }, `Perioden ${shortText(from)}–${shortText(to)} slutar före den börjar.`));
   } else if ((from !== null && (from < ctx.year.start || from > ctx.year.end)) || (to !== null && (to < ctx.year.start || to > ctx.year.end))) {
     refusals.push(
-      refusal('PERIOD_OUTSIDE_YEAR', { from: from ?? '', to: to ?? '', year: ctx.year.name }, `Perioden ${from ?? '…'}–${to ?? '…'} ligger utanför läsåret ${ctx.year.name} (${ctx.year.start}–${ctx.year.end}).`),
+      refusal('PERIOD_OUTSIDE_YEAR', { from: shortText(from), to: shortText(to), year: ctx.year.name }, `Perioden ${shortText(from) || '…'}–${shortText(to) || '…'} ligger utanför läsåret ${ctx.year.name} (${ctx.year.start}–${ctx.year.end}).`),
     );
   }
 
+  // A block's name is the one text of the file that is written to the database as it is. The
+  // database holds it to 1-80 characters (TeachingBlocks_name_is_sane); a name longer than that,
+  // or one that holds a personnummer, is refused here, by row, and not by a 500 at the write.
+  const block = lesson.block?.trim() ? lesson.block.trim() : null;
+  if (block !== null && [...block].length > MAX_BLOCK_NAME) {
+    refusals.push(refusal('BAD_BLOCK_NAME', { length: [...block].length, max: MAX_BLOCK_NAME }, `Blocknamnet är ${[...block].length} tecken; ett block får heta högst ${MAX_BLOCK_NAME}.`));
+  } else if (block !== null && hasPersonalNumber(block)) {
+    refusals.push(refusal('BAD_BLOCK_NAME', { length: [...block].length, max: MAX_BLOCK_NAME }, 'Blocknamnet liknar ett personnummer och används inte. Rastra tar inte emot personnummer.'));
+  }
+
   if (refusals.length > 0 || !group || !subject || startMin === null || endMin === null || room === undefined) {
+    // Every reason is listed: an inactive teacher too, though on a row that resolves it is the plan's to judge.
+    for (const t of inactiveTeachers) refusals.push(inactiveRefusal(t));
     return { refusals };
   }
   return {
@@ -510,10 +547,19 @@ export function resolveLesson(
       weeks: lesson.weeks,
       from,
       to,
-      block: lesson.block?.trim() ? lesson.block.trim() : null,
+      block,
       lessonId: lesson.ids.lesson ?? null,
+      inactiveTeachers,
     },
   };
+}
+
+/** The longest name a block may have (the database's check, in characters). */
+export const MAX_BLOCK_NAME = 80;
+
+/** What a lesson that would be CREATED with a deactivated teacher is refused with. */
+export function inactiveRefusal(t: { key: string; name: string }): Refusal {
+  return refusal('TEACHER_INACTIVE', { key: t.key }, `Läraren ${t.name} är inte aktiv.`);
 }
 
 // ---------------------------------------------------------------------------

@@ -38,7 +38,7 @@ describe('Schedule exchange (e2e)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     service.summary.mockResolvedValue({ lessons: 3 });
-    service.export.mockResolvedValue({ filename: 'a.csv', contentType: 'text/csv; charset=utf-8', body: Buffer.from('Á;B', 'utf8') });
+    service.export.mockResolvedValue({ filename: 'a.csv', contentType: 'text/csv; charset=utf-8', body: Buffer.from('Á;B', 'utf8'), notes: ['Signaturen ”A,B” skrevs som ”A B”.'] });
     service.preview.mockResolvedValue({ canApply: true, fingerprint: FINGERPRINT });
     service.apply.mockResolvedValue({ created: 2 });
   });
@@ -65,7 +65,12 @@ describe('Schedule exchange (e2e)', () => {
         .set('x-test-user', asUser({}))
         .send({ academicYearId: YEAR_ID, format: 'TABLE_CSV' })
         .expect(201);
-      expect(response.body).toEqual({ filename: 'a.csv', contentType: 'text/csv; charset=utf-8', contentBase64: Buffer.from('Á;B', 'utf8').toString('base64') });
+      expect(response.body).toEqual({
+        filename: 'a.csv',
+        contentType: 'text/csv; charset=utf-8',
+        contentBase64: Buffer.from('Á;B', 'utf8').toString('base64'),
+        notes: ['Signaturen ”A,B” skrevs som ”A B”.'],
+      });
       expect(service.export).toHaveBeenCalledWith(YEAR_ID, 'TABLE_CSV', expect.anything());
     });
 
