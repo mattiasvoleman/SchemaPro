@@ -164,7 +164,34 @@ describe("importCsvInBatches", () => {
       requirements: 1000,
       teacherQualifications: 2000,
       teacherDuties: 2000,
+      guardians: 500,
     });
+  });
+
+  it("sums the links a guardian file wrote across batches, and leaves the counter out of every other kind's report", async () => {
+    // One guardian of pupils in two batches is made by the first and only
+    // linked by the second; the merged report must say both.
+    post
+      .mockResolvedValueOnce({ created: 1, skipped: 0, linked: 500, errors: [] })
+      .mockResolvedValueOnce({ created: 0, skipped: 1, linked: 3, errors: [{ row: 4, message: "x" }] });
+    const guardians = Array.from({ length: 503 }, (_, i) => ({
+      firstName: "Gun",
+      lastName: "Ek",
+      email: "gun@exempelskolan.se",
+      phone: null,
+      studentEmail: `elev${i}@exempelskolan.se`,
+    }));
+
+    const report = await importCsvInBatches({ kind: "guardians", rows: guardians, rowNumbers: guardians.map((_, i) => i + 2) });
+
+    expect(bodies().map((body) => body.rows.length)).toEqual([500, 3]);
+    expect(post.mock.calls.map(([path]) => path)).toEqual(["/api/v1/import/guardians", "/api/v1/import/guardians"]);
+    // No läsår in the body: a guardian and a link belong to the school.
+    expect(post.mock.calls[0]![1]).not.toHaveProperty("academicYearId");
+    expect(report).toEqual({ created: 1, skipped: 1, linked: 503, errors: [{ row: 4, message: "x" }] });
+
+    post.mockResolvedValue({ created: 1, skipped: 0, errors: [] });
+    expect(await importCsvInBatches({ kind: "students", academicYearId: YEAR, rows: [{ firstName: "A" }] })).not.toHaveProperty("linked");
   });
 
   it("splits a 5400-row file into batches no larger than the cap", async () => {

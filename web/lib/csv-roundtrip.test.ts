@@ -19,6 +19,7 @@ import {
   classesToCsv,
   decodeCsvBytes,
   mapClassRows,
+  mapGuardianRows,
   mapMembershipRows,
   mapRequirementRows,
   mapRoomRows,
@@ -40,6 +41,7 @@ import {
   type ParsedCsv,
 } from "@/lib/csv";
 import { teacherDutiesToCsv } from "@/lib/duties-csv-export";
+import { guardiansToCsv } from "@/lib/guardians-csv-export";
 import { mapTimplanRows, timplanToCsv } from "@/lib/timplan-csv";
 
 // ---------------------------------------------------------------------------
@@ -192,7 +194,24 @@ const rooms = [
   { name: "Labbet", code: null, capacity: null, roomTypeId: "rt-lab", minGradeLevel: 4, maxGradeLevel: 9, building: null, floor: null },
 ];
 
+/**
+ * What GET /api/v1/guardian-links/export answers: one row per link, a
+ * guardian of two pupils twice. The formula-guarded phone and names, a quote
+ * and a semicolon in a name, a phone nobody wrote and an å, ä and ö.
+ */
+const guardianLinks = [
+  { firstName: "Åsa", lastName: "Öberg-Ek", email: "asa.ek@exempel.se", phone: "+46 70 123 45 67", studentEmail: "noah.sjö.7b@skola.se" },
+  { firstName: "Åsa", lastName: "Öberg-Ek", email: "asa.ek@exempel.se", phone: "+46 70 123 45 67", studentEmail: "elsa.berg.7a@skola.se" },
+  { firstName: "Gunnar", lastName: 'O"Neil; Berg', email: "gunnar@exempel.se", phone: null, studentEmail: "elsa.berg.7a@skola.se" },
+  { firstName: "-Lisa", lastName: "=Lund", email: "lisa@exempel.se", phone: "070-123 45 67", studentEmail: "lisa.lund@skola.se" },
+];
+
 const KINDS = {
+  guardians: {
+    csv: () => guardiansToCsv(guardianLinks),
+    read: mapGuardianRows,
+    expected: guardianLinks,
+  },
   rooms: {
     csv: () => roomsToCsv(rooms, roomTypes),
     read: mapRoomRows,
@@ -472,6 +491,31 @@ describe("the files themselves", () => {
       { name: "7B:2", gradeLevel: 7, kind: "TEACHING_GROUP", halfOf: "7B" },
     ]);
     expect(rowNumbers).toEqual([2, 3]);
+  });
+
+  it("write the guardians one row per link: a guardian of two pupils twice, the pupil under elev_epost, no relation type or date", () => {
+    const { headers, rows } = parseCsv(KINDS.guardians.csv());
+
+    expect(headers).toEqual(["fornamn", "efternamn", "epost", "telefon", "elev_epost"]);
+    expect(rows).toHaveLength(guardianLinks.length);
+    expect(rows[0]!.slice(0, 4)).toEqual(rows[1]!.slice(0, 4));
+    expect(rows.map((row) => row[4])).toEqual([
+      "noah.sjö.7b@skola.se",
+      "elsa.berg.7a@skola.se",
+      "elsa.berg.7a@skola.se",
+      "lisa.lund@skola.se",
+    ]);
+    // The phone is the guardian's own, hyphened as the manual asks, and guarded like any cell.
+    expect(KINDS.guardians.csv().split("\r\n").find((line) => line.startsWith("-Lisa") || line.startsWith("'-Lisa"))).toBe(
+      "'-Lisa;'=Lund;lisa@exempel.se;070-123 45 67;lisa.lund@skola.se",
+    );
+  });
+
+  it("number the guardians' rows as Excel does, from the header row, in a file saved as Windows-1252", () => {
+    const { errors, rowNumbers } = mapGuardianRows(parseCsv(decodeCsvBytes(saved(KINDS.guardians.csv(), "excel-windows")).text));
+
+    expect(errors).toEqual([]);
+    expect(rowNumbers).toEqual([2, 3, 4, 5]);
   });
 
   it("write uppdrag dates as days even when the gateway answers a timestamp", () => {

@@ -5,6 +5,8 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import {
+  ImportGuardianRowDto,
+  ImportGuardiansDto,
   ImportRequirementRowDto,
   ImportRequirementsDto,
   ImportSubjectRowDto,
@@ -465,6 +467,65 @@ describe('ImportTimplanRowDto — a lokal timplan file’s row', () => {
   it('measures a note in code points, as the column does', async () => {
     await expect(errorsOf(row({ note: 'a\uFE0F'.repeat(250) }))).resolves.toEqual([]);
     await expect(errorsOf(row({ note: 'a\uFE0F'.repeat(251) }))).resolves.toEqual(['note']);
+  });
+});
+
+/**
+ * vardnadshavare.csv's row, at the wire. The web mapper (mapGuardianRows)
+ * asks the same questions with the same figures: 120 for a name, 40 for a
+ * phone, an e-mail address for both address cells.
+ */
+describe('ImportGuardianRowDto \u2014 a v\u00E5rdnadshavare file\u2019s row', () => {
+  const row = (patch: object = {}) => ({
+    firstName: 'Gun',
+    lastName: 'Berg',
+    email: 'gun@skola.se',
+    phone: '070-123 45 67',
+    studentEmail: 'alma@skola.se',
+    ...patch,
+  });
+  const errorsOf = async (body: object) =>
+    (await validate(plainToInstance(ImportGuardianRowDto, body))).map((error) => error.property);
+  const file = (body: object) => validate(plainToInstance(ImportGuardiansDto, body));
+
+  it('accepts a row as the browser posts it, with a phone or with null', async () => {
+    await expect(errorsOf(row())).resolves.toEqual([]);
+    await expect(errorsOf(row({ phone: null }))).resolves.toEqual([]);
+    const { phone: _phone, ...withoutPhone } = row();
+    await expect(errorsOf(withoutPhone)).resolves.toEqual([]);
+  });
+
+  it('refuses a pupil address that is missing, empty or no address, naming studentEmail', async () => {
+    const { studentEmail: _studentEmail, ...missing } = row();
+    await expect(errorsOf(missing)).resolves.toEqual(['studentEmail']);
+    await expect(errorsOf(row({ studentEmail: '' }))).resolves.toEqual(['studentEmail']);
+    await expect(errorsOf(row({ studentEmail: 'Alma Berg' }))).resolves.toEqual(['studentEmail']);
+  });
+
+  it('refuses a guardian address that is no address, and a name or phone past its column', async () => {
+    await expect(errorsOf(row({ email: 'gun@' }))).resolves.toEqual(['email']);
+    await expect(errorsOf(row({ firstName: 'x'.repeat(121) }))).resolves.toEqual(['firstName']);
+    await expect(errorsOf(row({ firstName: 'x'.repeat(120) }))).resolves.toEqual([]);
+    await expect(errorsOf(row({ lastName: '' }))).resolves.toEqual(['lastName']);
+    await expect(errorsOf(row({ phone: '7'.repeat(41) }))).resolves.toEqual(['phone']);
+    await expect(errorsOf(row({ phone: '7'.repeat(40) }))).resolves.toEqual([]);
+  });
+
+  it('refuses a name of only blanks, and trims one that has letters (the service trimmed an empty one to \'\')', async () => {
+    await expect(errorsOf(row({ firstName: '   ' }))).resolves.toEqual(['firstName']);
+    await expect(errorsOf(row({ lastName: '\t  ' }))).resolves.toEqual(['lastName']);
+    const trimmed = plainToInstance(ImportGuardianRowDto, row({ firstName: '  Gun ', lastName: ' Berg  ' }));
+    expect([trimmed.firstName, trimmed.lastName]).toEqual(['Gun', 'Berg']);
+    await expect(validate(trimmed)).resolves.toEqual([]);
+    // 120 is counted after the trim, as the column will hold it.
+    await expect(errorsOf(row({ firstName: ` ${'x'.repeat(120)} ` }))).resolves.toEqual([]);
+    await expect(errorsOf(row({ firstName: 7 }))).resolves.toEqual(['firstName']);
+  });
+
+  it('caps a file at 500 rows, like the people files, and takes at least one', async () => {
+    expect((await file({ rows: Array.from({ length: 500 }, () => row()) })).length).toBe(0);
+    expect((await file({ rows: Array.from({ length: 501 }, () => row()) })).map((e) => e.property)).toEqual(['rows']);
+    expect((await file({ rows: [] })).map((e) => e.property)).toEqual(['rows']);
   });
 });
 
