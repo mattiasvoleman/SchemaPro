@@ -668,6 +668,68 @@ describe('Publicering (e2e)', () => {
     });
   });
 
+  describe('schemabrytande aktivitet', () => {
+    const SUBJECT = '99999999-9999-4999-8999-999999999999';
+    const GROUP = '12121212-1212-4212-8212-121212121212';
+    const TEACHER = '13131313-1313-4313-8313-131313131313';
+    const body = {
+      academicYearId: YEAR_ID,
+      name: 'Friluftsdag åk 7',
+      fromDate: '2026-11-10',
+      toDate: '2026-11-11',
+      scope: 'GROUPS',
+      groupIds: [GROUP],
+      replacementSubjectId: SUBJECT,
+      description: 'Samling vid skolgården',
+      teachers: [{ studentGroupId: GROUP, teacherId: TEACHER, role: 'LEAD' }],
+      credits: [{ subjectId: SUBJECT, minutes: 120 }],
+    };
+
+    it('refuses what the tables refuse, with the field named', async () => {
+      const cases: Array<[string, Record<string, unknown>]> = [
+        ['replacementSubjectId', { ...body, replacementSubjectId: undefined }],
+        ['replacementSubjectId', { ...body, replacementSubjectId: 'matte' }],
+        ['name', { ...body, name: '' }],
+        ['name', { ...body, name: 'x'.repeat(81) }], // the credit's name is at most 80
+        ['fromDate', { ...body, fromDate: '10 nov' }],
+        ['description', { ...body, description: 'x'.repeat(301) }],
+        ['teachers', { ...body, teachers: [{ studentGroupId: GROUP, teacherId: TEACHER, role: 'SUBSTITUTE' }] }], // a vikarie is the lesson's
+        ['teachers', { ...body, teachers: [{ studentGroupId: 'g', teacherId: TEACHER }] }],
+        ['credits', { ...body, credits: [{ subjectId: SUBJECT, minutes: 0 }] }],
+        ['credits', { ...body, credits: [{ subjectId: SUBJECT, minutes: 601 }] }],
+        ['credits', { ...body, credits: Array.from({ length: 13 }, () => ({ subjectId: SUBJECT, minutes: 10 })) }],
+        ['scope', { ...body, scope: 'KLASS' }],
+        ['notify', { ...body, notify: 'ja' }],
+        ['cause', { ...body, cause: 'TEACHER_UNAVAILABLE' }], // not a field: an activity is always an event
+      ];
+      for (const [field, payload] of cases) {
+        const response = await request(http()).post('/api/v1/schedule-activities/preview').set('x-test-user', admin()).send(payload);
+        // `cause` is unknown to the DTO and removed by the whitelist when that is on; every other case is a 400 naming its field.
+        if (field === 'cause') {
+          expect([200, 400]).toContain(response.status);
+        } else {
+          expect({ field, status: response.status }).toEqual({ field, status: 400 });
+          expect(JSON.stringify(response.body)).toContain(field);
+        }
+      }
+    });
+
+    it('refuses a span the avbokning would refuse, by the same rules and codes', async () => {
+      const response = await request(http())
+        .post('/api/v1/schedule-activities/preview')
+        .set('x-test-user', admin())
+        .send({ ...body, toDate: '2027-04-02' }) // 33 days
+        .expect(400);
+      expect(response.body.code).toBe('CANCELLATION_RANGE');
+      const half = await request(http())
+        .post('/api/v1/schedule-activities/preview')
+        .set('x-test-user', admin())
+        .send({ ...body, startTime: '08:00' })
+        .expect(400);
+      expect(half.body.code).toBe('CANCELLATION_RANGE');
+    });
+  });
+
   describe('every route is the admin\'s', () => {
     const routes = [
       ['GET', '/api/v1/publication-settings'],
@@ -686,6 +748,14 @@ describe('Publicering (e2e)', () => {
       ['POST', '/api/v1/cancellation-batches/66666666-6666-4666-8666-666666666666/reapply'],
       ['POST', '/api/v1/cancellation-batches/66666666-6666-4666-8666-666666666666/reverse/preview'],
       ['POST', '/api/v1/cancellation-batches/66666666-6666-4666-8666-666666666666/reverse'],
+      ['POST', '/api/v1/schedule-activities/preview'],
+      ['POST', '/api/v1/schedule-activities'],
+      ['GET', `/api/v1/schedule-activities?academicYearId=${YEAR_ID}`],
+      ['POST', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666/preview'],
+      ['PATCH', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666'],
+      ['POST', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666/reapply'],
+      ['POST', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666/remove/preview'],
+      ['POST', '/api/v1/schedule-activities/66666666-6666-4666-8666-666666666666/remove'],
       ['GET', `/api/v1/public-links?academicYearId=${YEAR_ID}`],
       ['POST', '/api/v1/public-links'],
       ['POST', '/api/v1/public-links/77777777-7777-4777-8777-777777777777/revoke'],
@@ -694,7 +764,7 @@ describe('Publicering (e2e)', () => {
     ] as const;
     const send = (method: string, path: string) => {
       const agent = request(http());
-      return method === 'GET' ? agent.get(path) : method === 'PUT' ? agent.put(path) : agent.post(path);
+      return method === 'GET' ? agent.get(path) : method === 'PUT' ? agent.put(path) : method === 'PATCH' ? agent.patch(path) : agent.post(path);
     };
 
     it.each(

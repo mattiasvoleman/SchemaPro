@@ -20217,6 +20217,9 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('RoomPreferences', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('RoomTypes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('Rooms', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('ScheduleActivities', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('ScheduleActivityLessons', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('ScheduleActivityTeachers', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('ScheduleCandidateRuns', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
   ('ScheduleCandidates', '{SCHEMALAGGNING}', '{}', '{SCHEMALAGGNING}', '{}'),
   ('ScheduleChangeLogs', '{SCHEMALAGGNING}', '{}', '{}', '{}'),
@@ -38773,6 +38776,1695 @@ BEGIN
   SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today);
   IF n <> 0 OR EXISTS (SELECT 1 FROM "AbsenceWatchDigests" WHERE "recipientGroup" = 'GUARDIAN') THEN
     RAISE EXCEPTION 'frånvarobevakning 308: a school that is off had a digest written';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 310: en schemabrytande aktivitet ställer in lektionerna och
+-- ersätter dem, katalogen (ScheduleActivities, ScheduleActivityTeachers,
+-- ScheduleActivityLessons, 20270101090000).
+--
+-- The activity owns one avbokning (CancellationBatches) and says what comes
+-- in its place: the replacement subject, the responsible teachers per class
+-- or group, and the replacement lessons, one per group and day. This section
+-- holds what the migration wrote into the catalogue, apart from any row:
+--   * row security is on, and each table has exactly four arms, TO the API's
+--     role: staff (administrator and teacher) read, and only an
+--     administrator writes, the write asking the area DRIFT in WITH CHECK
+--     (insert, update) or USING (delete); the update arm's USING never asks
+--     the area, so a row lock keeps working for every administrator (the
+--     rule of section 106). No arm names a pupil or a guardian;
+--   * the grants: the API's role holds SELECT, INSERT, UPDATE and DELETE;
+--     PostgREST's authenticated and anon hold nothing, not even a column;
+--     service_role holds SELECT only; nobody holds TRUNCATE, REFERENCES or
+--     TRIGGER, nobody but the owner holds a PUBLIC grant, and on Postgres 17
+--     nobody holds MAINTAIN (20261016120000);
+--   * the keys: ten foreign keys in all, each with its ON DELETE and ON
+--     UPDATE, the SET NULL ones naming only their own column; every key to a
+--     school-owned table is the composite (id, schoolId), so a row cannot
+--     point across the school boundary. studentGroupId on the teachers and
+--     on the lessons is NOT a key, on purpose (the class is named in the
+--     activity's selection, and a replacement lesson goes with its class
+--     through CalendarLessons);
+--   * the CHECKs, the primary keys and every unique index (one avbokning per
+--     activity, one lead per activity and group, one replacement lesson per
+--     group and day, one activity per lesson), and the indexes the person
+--     keys are looked up by.
+-- How the arms behave is section 311's, the school boundary section 312's,
+-- the cascades and the constraints at work section 313's.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tables constant regclass[] := ARRAY['public."ScheduleActivities"', 'public."ScheduleActivityTeachers"',
+                                       'public."ScheduleActivityLessons"']::regclass[];
+  api oid := (SELECT oid FROM pg_roles WHERE rolname = 'app_authenticated');
+  bad text;
+BEGIN
+  IF api IS NULL THEN
+    RAISE EXCEPTION 'sa310: the API''s role does not exist, so nothing below says anything';
+  END IF;
+
+  -- Row security is on, for all three.
+  SELECT string_agg(c.relname, ', ') INTO bad FROM pg_class c WHERE c.oid = ANY (tables) AND NOT c.relrowsecurity;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: row security is off on %', bad; END IF;
+
+  -- Exactly these arms, with these commands: no more, no fewer.
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname COLLATE "C") INTO bad
+    FROM pg_policy WHERE polrelid = ANY (tables);
+  IF bad IS DISTINCT FROM
+       'schedule_activities_admin_delete:d,schedule_activities_admin_insert:a,schedule_activities_admin_update:w,schedule_activities_staff_select:r,'
+       'schedule_activity_lessons_admin_delete:d,schedule_activity_lessons_admin_insert:a,schedule_activity_lessons_admin_update:w,schedule_activity_lessons_staff_select:r,'
+       'schedule_activity_teachers_admin_delete:d,schedule_activity_teachers_admin_insert:a,schedule_activity_teachers_admin_update:w,schedule_activity_teachers_staff_select:r' THEN
+    RAISE EXCEPTION 'sa310: policies are %', bad;
+  END IF;
+
+  -- Every arm is the API's role's alone (a TO public arm would admit a row on
+  -- a GUC, as section 36 describes), and none is RESTRICTIVE.
+  SELECT string_agg(p.polname, ', ') INTO bad FROM pg_policy p
+   WHERE p.polrelid = ANY (tables) AND (p.polroles <> ARRAY[api] OR NOT p.polpermissive);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: arms that are not the API role''s permissive ones: %', bad; END IF;
+
+  -- What each arm asks. A read asks the school and the staff roles and never
+  -- the area; a write asks the school, SCHOOL_ADMIN and DRIFT as a write.
+  SELECT string_agg(format('%s.%s', tablename, policyname), ', ') INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public' AND tablename IN ('ScheduleActivities', 'ScheduleActivityTeachers', 'ScheduleActivityLessons')
+     AND NOT CASE
+       WHEN policyname LIKE '%\_staff\_select' THEN
+         qual LIKE '%current_school_id%' AND qual LIKE '%SCHOOL_ADMIN%' AND qual LIKE '%TEACHER%'
+         AND qual NOT LIKE '%STUDENT%' AND qual NOT LIKE '%GUARDIAN%' AND qual NOT LIKE '%current_user_may%'
+         AND with_check IS NULL
+       WHEN policyname LIKE '%\_admin\_insert' THEN
+         qual IS NULL AND with_check LIKE '%current_school_id%' AND with_check LIKE '%= ''SCHOOL_ADMIN''%'
+         AND with_check ~ 'current_user_may\(''DRIFT''::"AdminArea", true\)'
+       WHEN policyname LIKE '%\_admin\_update' THEN
+         qual LIKE '%current_school_id%' AND qual LIKE '%= ''SCHOOL_ADMIN''%' AND qual NOT LIKE '%current_user_may%'
+         AND with_check LIKE '%current_school_id%' AND with_check LIKE '%= ''SCHOOL_ADMIN''%'
+         AND with_check ~ 'current_user_may\(''DRIFT''::"AdminArea", true\)'
+       WHEN policyname LIKE '%\_admin\_delete' THEN
+         with_check IS NULL AND qual LIKE '%current_school_id%' AND qual LIKE '%= ''SCHOOL_ADMIN''%'
+         AND qual ~ 'current_user_may\(''DRIFT''::"AdminArea", true\)'
+       ELSE false END;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: arms that ask something else than the migration wrote: %', bad; END IF;
+END $$;
+
+-- The grants, role by role and privilege by privilege.
+DO $$
+DECLARE
+  tables constant text[] := ARRAY['public."ScheduleActivities"', 'public."ScheduleActivityTeachers"',
+                                  'public."ScheduleActivityLessons"'];
+  tbl text;
+  r text;
+  priv text;
+  wanted boolean;
+  wrong text[] := '{}';
+  grantees text;
+BEGIN
+  FOREACH tbl IN ARRAY tables LOOP
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+        IF r = 'app_authenticated' THEN RAISE EXCEPTION 'sa310: the API''s role does not exist'; END IF;
+        CONTINUE;
+      END IF;
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        wanted := (r = 'app_authenticated' AND priv IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE'))
+               OR (r = 'service_role' AND priv = 'SELECT');
+        IF has_table_privilege(r, tbl, priv) IS DISTINCT FROM wanted THEN
+          wrong := wrong || format('%s %s on %s: %s', r, priv, tbl, NOT wanted);
+        END IF;
+      END LOOP;
+      -- MAINTAIN (REINDEX, CLUSTER, VACUUM, LOCK) is the owner's alone.
+      IF current_setting('server_version_num')::int >= 170000 THEN
+        IF has_table_privilege(r, tbl, 'MAINTAIN') THEN
+          wrong := wrong || format('%s MAINTAIN on %s', r, tbl);
+        END IF;
+      END IF;
+      -- No column grant either: PostgREST's roles and the service key hold
+      -- no column of these tables, and the service key writes none.
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+        wanted := (r = 'app_authenticated' AND priv IN ('SELECT', 'INSERT', 'UPDATE'))
+               OR (r = 'service_role' AND priv = 'SELECT');
+        IF has_any_column_privilege(r, tbl, priv) IS DISTINCT FROM wanted THEN
+          wrong := wrong || format('%s holds a column %s of %s: %s', r, priv, tbl, NOT wanted);
+        END IF;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN RAISE EXCEPTION 'sa310: grants: %', array_to_string(wrong, '; '); END IF;
+
+  -- Nobody but the owner, the API's role and the service key appears in the
+  -- ACL, and PUBLIC does not.
+  SELECT string_agg(DISTINCT coalesce(ro.rolname, 'PUBLIC'), ', ' ORDER BY coalesce(ro.rolname, 'PUBLIC')) INTO grantees
+    FROM pg_class c
+    CROSS JOIN LATERAL aclexplode(c.relacl) a
+    LEFT JOIN pg_roles ro ON ro.oid = a.grantee
+   WHERE c.oid = ANY (tables::regclass[]) AND a.grantee <> c.relowner;
+  IF grantees IS DISTINCT FROM 'app_authenticated, service_role' THEN
+    RAISE EXCEPTION 'sa310: the ACLs name % beside the owner', grantees;
+  END IF;
+END $$;
+
+-- The columns that keep a row in its school and its place are NOT NULL; the
+-- ones that may be empty are the ones the migration says may.
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  SELECT string_agg(format('%s.%s (%s)', e.tbl, e.col, CASE WHEN a.attnotnull THEN 'NOT NULL' ELSE 'nullable' END), ', ') INTO bad
+    FROM (VALUES
+      ('ScheduleActivities', 'id', true, 'uuid'), ('ScheduleActivities', 'schoolId', true, 'uuid'),
+      ('ScheduleActivities', 'academicYearId', true, 'uuid'), ('ScheduleActivities', 'batchId', true, 'uuid'),
+      ('ScheduleActivities', 'replacementSubjectId', true, 'uuid'), ('ScheduleActivities', 'description', false, 'text'),
+      ('ScheduleActivities', 'scopeGroupIds', true, 'uuid[]'), ('ScheduleActivities', 'createdAt', true, 'timestamp(6) with time zone'),
+      ('ScheduleActivities', 'createdByUserId', false, 'uuid'), ('ScheduleActivities', 'updatedAt', true, 'timestamp(6) with time zone'),
+      ('ScheduleActivities', 'removedAt', false, 'timestamp(6) with time zone'), ('ScheduleActivities', 'removedByUserId', false, 'uuid'),
+      ('ScheduleActivityTeachers', 'activityId', true, 'uuid'), ('ScheduleActivityTeachers', 'studentGroupId', true, 'uuid'),
+      ('ScheduleActivityTeachers', 'teacherId', true, 'uuid'), ('ScheduleActivityTeachers', 'schoolId', true, 'uuid'),
+      ('ScheduleActivityTeachers', 'role', true, '"TeacherAssignmentRole"'),
+      ('ScheduleActivityLessons', 'activityId', true, 'uuid'), ('ScheduleActivityLessons', 'calendarLessonId', true, 'uuid'),
+      ('ScheduleActivityLessons', 'studentGroupId', true, 'uuid'), ('ScheduleActivityLessons', 'date', true, 'date'),
+      ('ScheduleActivityLessons', 'schoolId', true, 'uuid')) e(tbl, col, required, typ)
+    LEFT JOIN pg_attribute a ON a.attrelid = format('public.%I', e.tbl)::regclass AND a.attname = e.col AND NOT a.attisdropped
+   WHERE a.attnum IS NULL OR a.attnotnull IS DISTINCT FROM e.required
+      OR format_type(a.atttypid, a.atttypmod) IS DISTINCT FROM e.typ;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: columns that are not as the migration made them: %', bad; END IF;
+  -- The role defaults to LEAD and the selection to none, so a statement that
+  -- names neither (the first the API will send) still stores a row.
+  IF (SELECT pg_get_expr(d.adbin, d.adrelid) FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+       WHERE d.adrelid = 'public."ScheduleActivityTeachers"'::regclass AND a.attname = 'role') NOT LIKE '''LEAD''%' THEN
+    RAISE EXCEPTION 'sa310: the role of a responsible teacher does not default to LEAD';
+  END IF;
+END $$;
+
+-- The foreign keys, with their columns, targets, ON DELETE and ON UPDATE
+-- (a CASCADE, a SET NULL naming one column, or NO ACTION). A key on
+-- studentGroupId would be a row more in the dialog that removes a class, and
+-- is not there; no key at all points at StudentGroups.
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  WITH actual AS (
+    SELECT (SELECT relname FROM pg_class WHERE oid = c.conrelid) AS tbl, c.conname,
+           (SELECT relname FROM pg_class WHERE oid = c.confrelid) AS ref,
+           (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) AS cols,
+           (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum) AS refcols,
+           c.confdeltype::text AS del, c.confupdtype::text AS upd,
+           (SELECT string_agg(a.attname::text, ',' ORDER BY a.attnum) FROM pg_attribute a
+             WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.confdelsetcols)) AS setcols
+      FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
+                                                'public."ScheduleActivityLessons"'::regclass)
+  ), expected(tbl, conname, ref, cols, refcols, del, upd, setcols) AS (VALUES
+    ('ScheduleActivities', 'ScheduleActivities_schoolId_fkey', 'Schools', 'schoolId', 'id', 'c', 'c', NULL),
+    ('ScheduleActivities', 'ScheduleActivities_academicYearId_schoolId_fkey', 'AcademicYears', 'academicYearId,schoolId', 'id,schoolId', 'c', 'c', NULL),
+    ('ScheduleActivities', 'ScheduleActivities_batchId_schoolId_fkey', 'CancellationBatches', 'batchId,schoolId', 'id,schoolId', 'c', 'c', NULL),
+    ('ScheduleActivities', 'ScheduleActivities_replacementSubjectId_schoolId_fkey', 'Subjects', 'replacementSubjectId,schoolId', 'id,schoolId', 'c', 'c', NULL),
+    ('ScheduleActivities', 'ScheduleActivities_createdByUserId_schoolId_fkey', 'Users', 'createdByUserId,schoolId', 'id,schoolId', 'n', 'a', 'createdByUserId'),
+    ('ScheduleActivities', 'ScheduleActivities_removedByUserId_schoolId_fkey', 'Users', 'removedByUserId,schoolId', 'id,schoolId', 'n', 'a', 'removedByUserId'),
+    ('ScheduleActivityTeachers', 'ScheduleActivityTeachers_activityId_schoolId_fkey', 'ScheduleActivities', 'activityId,schoolId', 'id,schoolId', 'c', 'c', NULL),
+    ('ScheduleActivityTeachers', 'ScheduleActivityTeachers_teacherId_schoolId_fkey', 'Users', 'teacherId,schoolId', 'id,schoolId', 'c', 'a', NULL),
+    ('ScheduleActivityLessons', 'ScheduleActivityLessons_activityId_schoolId_fkey', 'ScheduleActivities', 'activityId,schoolId', 'id,schoolId', 'c', 'c', NULL),
+    ('ScheduleActivityLessons', 'ScheduleActivityLessons_calendarLessonId_schoolId_fkey', 'CalendarLessons', 'calendarLessonId,schoolId', 'id,schoolId', 'c', 'c', NULL))
+  SELECT string_agg(format('%s: %s', coalesce(a.conname, e.conname),
+                           CASE WHEN a.conname IS NULL THEN 'missing'
+                                WHEN e.conname IS NULL THEN 'not expected'
+                                ELSE format('%s(%s) -> %s(%s) ON DELETE %s%s ON UPDATE %s, expected %s(%s) -> %s(%s) ON DELETE %s%s ON UPDATE %s',
+                                            a.tbl, a.cols, a.ref, a.refcols, a.del, coalesce(' (' || a.setcols || ')', ''), a.upd,
+                                            e.tbl, e.cols, e.ref, e.refcols, e.del, coalesce(' (' || e.setcols || ')', ''), e.upd) END), '; ')
+    INTO bad
+    FROM actual a FULL JOIN expected e ON e.conname = a.conname
+   WHERE (a.tbl, a.ref, a.cols, a.refcols, a.del, a.upd, a.setcols) IS DISTINCT FROM (e.tbl, e.ref, e.cols, e.refcols, e.del, e.upd, e.setcols);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: foreign keys: %', bad; END IF;
+
+  -- No key on a studentGroupId, and none to StudentGroups from these tables.
+  SELECT string_agg(c.conname, ', ') INTO bad
+    FROM pg_constraint c
+   WHERE c.contype = 'f'
+     AND c.conrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
+                        'public."ScheduleActivityLessons"'::regclass)
+     AND (c.confrelid = 'public."StudentGroups"'::regclass
+          OR EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                        AND a.attname = 'studentGroupId'));
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: a key points at the class or sits on its column: %', bad; END IF;
+
+  -- Nothing else points at these tables but their own children.
+  SELECT string_agg(c.conname, ', ') INTO bad
+    FROM pg_constraint c
+   WHERE c.contype = 'f'
+     AND c.confrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
+                         'public."ScheduleActivityLessons"'::regclass)
+     AND c.conname NOT IN ('ScheduleActivityTeachers_activityId_schoolId_fkey', 'ScheduleActivityLessons_activityId_schoolId_fkey');
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: keys that point at an activity table: %', bad; END IF;
+END $$;
+
+-- The CHECKs (their behaviour is section 313's), and the validated state of
+-- every constraint.
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  SELECT string_agg(format('%s: %s', coalesce(a.conname, e.conname),
+                           CASE WHEN a.conname IS NULL THEN 'missing' WHEN e.conname IS NULL THEN 'not expected'
+                                ELSE 'is ' || a.def END), '; ')
+    INTO bad
+    FROM (SELECT c.conname, (SELECT relname FROM pg_class WHERE oid = c.conrelid) AS tbl, pg_get_constraintdef(c.oid) AS def
+            FROM pg_constraint c
+           WHERE c.contype = 'c' AND c.conrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
+                                                    'public."ScheduleActivityLessons"'::regclass)) a
+    FULL JOIN (VALUES
+      ('ScheduleActivities_description_is_sane', 'ScheduleActivities',
+         '^CHECK \(\(\(description IS NULL\) OR \(\(char_length\(btrim\(description\)\) >= 1\) AND \(char_length\(btrim\(description\)\) <= 300\)\)\)\)$'),
+      ('ScheduleActivities_scope_ids_are_few', 'ScheduleActivities', '^CHECK \(\(cardinality\("scopeGroupIds"\) <= 200\)\)$'),
+      ('ScheduleActivities_removal_is_recorded', 'ScheduleActivities',
+         '^CHECK \(\(\("removedAt" IS NOT NULL\) OR \("removedByUserId" IS NULL\)\)\)$'),
+      ('ScheduleActivityTeachers_role_is_responsible', 'ScheduleActivityTeachers',
+         '^CHECK \(\(role = ANY \(ARRAY\[''LEAD''::"TeacherAssignmentRole", ''ASSISTANT''::"TeacherAssignmentRole"\]\)\)\)$')
+    ) e(conname, tbl, pattern) ON e.conname = a.conname
+   WHERE a.conname IS NULL OR e.conname IS NULL OR a.tbl <> e.tbl OR a.def !~ e.pattern;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: CHECKs: %', bad; END IF;
+
+  SELECT string_agg(conname, ', ') INTO bad FROM pg_constraint
+   WHERE conrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
+                      'public."ScheduleActivityLessons"'::regclass)
+     AND (NOT convalidated OR condeferrable);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: constraints that are NOT VALID or deferrable: %', bad; END IF;
+END $$;
+
+-- The primary keys and every unique index, exactly; and the indexes the
+-- person keys and the lookups by class use, at least.
+DO $$
+DECLARE
+  bad text;
+  missing text;
+BEGIN
+  WITH actual AS (
+    SELECT (SELECT relname FROM pg_class WHERE oid = i.indrelid) AS tbl, ic.relname AS idx, i.indisprimary AS pk, i.indisunique AS uniq,
+           (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum) AS cols,
+           pg_get_expr(i.indpred, i.indrelid) AS pred
+      FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
+     WHERE i.indrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
+                          'public."ScheduleActivityLessons"'::regclass)
+  ), unique_expected(tbl, idx, pk, cols, pred) AS (VALUES
+    ('ScheduleActivities', 'ScheduleActivities_pkey', true, 'id', NULL),
+    ('ScheduleActivities', 'ScheduleActivities_id_schoolId_key', false, 'id,schoolId', NULL),
+    ('ScheduleActivities', 'ScheduleActivities_batchId_key', false, 'batchId', NULL),
+    ('ScheduleActivityTeachers', 'ScheduleActivityTeachers_pkey', true, 'activityId,studentGroupId,teacherId', NULL),
+    ('ScheduleActivityTeachers', 'ScheduleActivityTeachers_one_lead_per_group', false, 'activityId,studentGroupId',
+       '(role = ''LEAD''::"TeacherAssignmentRole")'),
+    ('ScheduleActivityLessons', 'ScheduleActivityLessons_pkey', true, 'activityId,calendarLessonId', NULL),
+    ('ScheduleActivityLessons', 'ScheduleActivityLessons_calendarLessonId_key', false, 'calendarLessonId', NULL),
+    ('ScheduleActivityLessons', 'ScheduleActivityLessons_activityId_studentGroupId_date_key', false, 'activityId,studentGroupId,date', NULL)),
+  plain_expected(tbl, idx, cols) AS (VALUES
+    ('ScheduleActivities', 'ScheduleActivities_academicYearId_schoolId_idx', 'academicYearId,schoolId'),
+    ('ScheduleActivities', 'ScheduleActivities_replacementSubjectId_schoolId_idx', 'replacementSubjectId,schoolId'),
+    ('ScheduleActivities', 'ScheduleActivities_createdByUserId_schoolId_idx', 'createdByUserId,schoolId'),
+    ('ScheduleActivities', 'ScheduleActivities_removedByUserId_schoolId_idx', 'removedByUserId,schoolId'),
+    ('ScheduleActivityTeachers', 'ScheduleActivityTeachers_studentGroupId_schoolId_idx', 'studentGroupId,schoolId'),
+    ('ScheduleActivityTeachers', 'ScheduleActivityTeachers_teacherId_schoolId_idx', 'teacherId,schoolId'),
+    ('ScheduleActivityTeachers', 'ScheduleActivityTeachers_schoolId_idx', 'schoolId'),
+    ('ScheduleActivityLessons', 'ScheduleActivityLessons_studentGroupId_schoolId_idx', 'studentGroupId,schoolId'),
+    ('ScheduleActivityLessons', 'ScheduleActivityLessons_schoolId_idx', 'schoolId'))
+  SELECT (SELECT string_agg(format('%s: %s', coalesce(a.idx, e.idx),
+                                   CASE WHEN a.idx IS NULL THEN 'missing' WHEN e.idx IS NULL THEN 'not expected'
+                                        ELSE format('%s(%s) WHERE %s, expected %s(%s) WHERE %s', a.tbl, a.cols, a.pred, e.tbl, e.cols, e.pred) END), '; ')
+            FROM (SELECT * FROM actual WHERE uniq) a FULL JOIN unique_expected e ON e.idx = a.idx
+           WHERE (a.tbl, a.pk, a.cols, a.pred) IS DISTINCT FROM (e.tbl, e.pk, e.cols, e.pred)),
+         (SELECT string_agg(e.idx, ', ')
+            FROM plain_expected e LEFT JOIN actual a ON a.idx = e.idx AND a.tbl = e.tbl AND a.cols = e.cols AND NOT a.uniq AND a.pred IS NULL
+           WHERE a.idx IS NULL)
+    INTO bad, missing;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: unique indexes: %', bad; END IF;
+  bad := missing;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: lookup indexes that are missing or changed: %', bad; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 311: en schemabrytande aktivitet, vem som läser och skriver
+-- (ScheduleActivities, ScheduleActivityTeachers, ScheduleActivityLessons,
+-- 20270101090000).
+--
+-- Each table has a staff arm (an administrator and a teacher read the
+-- school's rows) and three administrator arms that ask the area DRIFT
+-- (section 310 holds the catalogue). In the matrix school, whose
+-- administrators the fixtures give one of each profile, with and without
+-- HR-läs, every one of the eight (the full administrator, the rektor, the
+-- two schemaläggare, the two expeditioner and the two läsare) is held to the
+-- profile's own answer, app.admin_profile_writes(profile) containing DRIFT,
+-- and to the brief's: all but the läsare write it.
+--   * a profile that writes DRIFT inserts an activity on an avbokning of its
+--     own, a responsible teacher and a replacement lesson on it, updates
+--     each of the three, and deletes each (one row every time);
+--   * a läsare reads the target activity's rows, and is refused every INSERT
+--     and every UPDATE by the arm's WITH CHECK (insufficient_privilege, "row-
+--     level security"), since the update arm's USING admits every
+--     administrator (a row lock needs it); a DELETE finds no row, since the
+--     delete arm asks the area in USING. Nothing of the target moves;
+--   * a teacher reads all three tables and is refused every INSERT; an UPDATE
+--     and a DELETE reach no row. A pupil and a guardian read no row, are
+--     refused every INSERT, and their UPDATE and DELETE reach no row;
+--   * PostgREST's role (authenticated) holds no grant on the tables, so it is
+--     refused every command by a missing privilege, not by row security,
+--     whoever it carries the token of; with no principal at all, and with the
+--     GUCs of the service and sync paths set, the API's role reads nothing
+--     (no arm is TO public).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid;
+  grp uuid;
+  t1 uuid;
+  t2 uuid;
+  subj uuid;
+  b uuid;
+  target uuid;
+  les uuid;
+  who text;
+  spare_batch uuid;
+  spare_lesson uuid;
+  spares jsonb := '{}';
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school'
+     OR NOT app.current_user_may('DRIFT', true) THEN
+    RAISE EXCEPTION 'sa311: expected the matrix school''s full administrator';
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller 7A';
+  SELECT id INTO t1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111';
+  IF y IS NULL OR grp IS NULL OR t1 IS NULL THEN
+    RAISE EXCEPTION 'sa311: the matrix school lacks its year, its class or its teacher; fixtures did not run';
+  END IF;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'sa311 ersättningsämne', 'SA311', now()) RETURNING id INTO subj;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'sa311-lararen@example.invalid', 'Sa', 'Tvåan', 'TEACHER', gen_random_uuid(), true, now())
+  RETURNING id INTO t2;
+
+  -- The target every refused statement below is aimed at: an activity on an
+  -- avbokning of its own, a lead, and a replacement lesson.
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (school, y, 'sa311 mål', 'EVENT', '2030-10-07', '2030-10-07', 'SCHOOL') RETURNING id INTO b;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description, "scopeGroupIds")
+  VALUES (school, y, b, subj, 'sa311 mål', ARRAY[grp]) RETURNING id INTO target;
+  INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+  VALUES (target, grp, t1, school, 'LEAD');
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, subj, grp, '2030-10-07', '2030-10-07 09:00+00', '2030-10-07 10:00+00', now()) RETURNING id INTO les;
+  INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+  VALUES (target, les, grp, '2030-10-07', school);
+
+  -- A spare avbokning and a spare lesson for each principal below, planted by
+  -- the full administrator, so that what a principal meets is the arms' and
+  -- nothing else's (a pupil cannot read an avbokning, a läsare cannot make one).
+  FOREACH who IN ARRAY ARRAY[
+    '00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000106', '00000000-0000-4000-8000-000000000107',
+    '00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000109', '00000000-0000-4000-8000-000000000110',
+    '00000000-0000-4000-8000-000000000115', '00000000-0000-4000-8000-000000000116', '00000000-0000-4000-8000-000000000111',
+    '00000000-0000-4000-8000-000000000112', '00000000-0000-4000-8000-000000000113'] LOOP
+    INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+    VALUES (school, y, 'sa311 ' || who, 'EVENT', '2030-10-08', '2030-10-08', 'SCHOOL') RETURNING id INTO spare_batch;
+    INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+    VALUES (school, subj, grp, '2030-10-08', '2030-10-08 09:00+00', '2030-10-08 10:00+00', 'sa311 ' || who, now())
+    RETURNING id INTO spare_lesson;
+    spares := spares || jsonb_build_object(who, jsonb_build_object('batch', spare_batch, 'lesson', spare_lesson));
+  END LOOP;
+
+  PERFORM set_config('app.test_rls311_spares', spares::text, true);
+  PERFORM set_config('app.test_rls311_ids', jsonb_build_object('school', school, 'year', y, 'group', grp, 'subject', subj,
+                                                               'teacher2', t2, 'target', target)::text, true);
+  -- What the whole of each table holds for the school, as the full
+  -- administrator reads it: the fixtures' row, the target, and nothing else.
+  PERFORM set_config('app.test_rls311_counts', jsonb_build_object(
+    'activities', (SELECT count(*) FROM "ScheduleActivities"),
+    'teachers', (SELECT count(*) FROM "ScheduleActivityTeachers"),
+    'lessons', (SELECT count(*) FROM "ScheduleActivityLessons"))::text, true);
+  IF (SELECT count(*) FROM "ScheduleActivities") <> 2 OR (SELECT count(*) FROM "ScheduleActivityTeachers") <> 2
+     OR (SELECT count(*) FROM "ScheduleActivityLessons") <> 2 THEN
+    RAISE EXCEPTION 'sa311: the matrix school holds % / % / % rows of the activity tables, expected the fixtures'' one and the target',
+      (SELECT count(*) FROM "ScheduleActivities"), (SELECT count(*) FROM "ScheduleActivityTeachers"),
+      (SELECT count(*) FROM "ScheduleActivityLessons");
+  END IF;
+END $$;
+
+-- The eight administrators.
+DO $$
+DECLARE
+  principals constant text[][] := ARRAY[
+    ['00000000-0000-4000-8000-000000000105', 'FULL'],
+    ['00000000-0000-4000-8000-000000000106', 'REKTOR'],
+    ['00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE'],
+    ['00000000-0000-4000-8000-000000000108', 'EXPEDITION'],
+    ['00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE'],
+    ['00000000-0000-4000-8000-000000000110', 'EXPEDITION'],
+    ['00000000-0000-4000-8000-000000000115', 'LASARE'],
+    ['00000000-0000-4000-8000-000000000116', 'LASARE']];
+  -- By step, what a profile that does not write DRIFT meets.
+  refusals constant text[] := ARRAY['refused', 'refused', 'refused', 'refused', 'refused', 'refused', 'none', 'none', 'none'];
+  labels constant text[] := ARRAY['INSERT activity', 'INSERT teacher', 'INSERT lesson', 'UPDATE activity', 'UPDATE teacher',
+                                  'UPDATE lesson', 'DELETE lesson', 'DELETE teacher', 'DELETE activity'];
+  ids jsonb := current_setting('app.test_rls311_ids')::jsonb;
+  spares jsonb := current_setting('app.test_rls311_spares')::jsonb;
+  school uuid := (ids ->> 'school')::uuid;
+  y uuid := (ids ->> 'year')::uuid;
+  grp uuid := (ids ->> 'group')::uuid;
+  subj uuid := (ids ->> 'subject')::uuid;
+  t2 uuid := (ids ->> 'teacher2')::uuid;
+  target uuid := (ids ->> 'target')::uuid;
+  i integer;
+  step integer;
+  profile text;
+  writes boolean;
+  own uuid;
+  parent uuid;
+  stmt text;
+  n bigint;
+  msg text;
+  st text;
+  outcome text;
+  expected text;
+  seen bigint;
+  wrong text[] := '{}';
+BEGIN
+  FOR i IN 1 .. array_length(principals, 1) LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', principals[i][1])::text, true);
+    SELECT u."adminProfile"::text INTO profile FROM "Users" u WHERE u.id = app.current_user_id();
+    IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_school_id() IS DISTINCT FROM school
+       OR profile IS DISTINCT FROM principals[i][2] THEN
+      RAISE EXCEPTION 'sa311: % resolved as % % in %, expected % in the matrix school', principals[i][1],
+        app.current_user_role(), profile, app.current_school_id(), principals[i][2];
+    END IF;
+    -- The profile's own answer, and the brief's: all but the läsare write DRIFT.
+    writes := 'DRIFT' = ANY (app.admin_profile_writes(profile::"AdminProfile"));
+    IF writes IS DISTINCT FROM (profile <> 'LASARE') OR app.current_user_may('DRIFT', true) IS DISTINCT FROM writes THEN
+      RAISE EXCEPTION 'sa311: % (%) writes DRIFT: % by the profile, % by the session', principals[i][1], profile, writes,
+        app.current_user_may('DRIFT', true);
+    END IF;
+
+    own := NULL;
+    FOR step IN 1 .. 9 LOOP
+      parent := coalesce(own, target);
+      stmt := CASE step
+        WHEN 1 THEN format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description, "scopeGroupIds")
+                              VALUES (%L, %L, %L, %L, %L, ARRAY[%L]::uuid[]) RETURNING id$q$,
+                           school, y, (spares -> principals[i][1] ->> 'batch')::uuid, subj, 'sa311 ' || principals[i][2], grp)
+        WHEN 2 THEN format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                              VALUES (%L, %L, %L, %L, 'ASSISTANT')$q$, parent, grp, t2, school)
+        WHEN 3 THEN format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                              VALUES (%L, %L, %L, '2030-10-08', %L)$q$,
+                           parent, (spares -> principals[i][1] ->> 'lesson')::uuid, grp, school)
+        WHEN 4 THEN format($q$UPDATE "ScheduleActivities" SET description = %L WHERE id = %L$q$, 'sa311 ändrad av ' || principals[i][2], parent)
+        WHEN 5 THEN format($q$UPDATE "ScheduleActivityTeachers" SET role = 'ASSISTANT' WHERE "activityId" = %L$q$, parent)
+        WHEN 6 THEN format($q$UPDATE "ScheduleActivityLessons" SET date = date + 1 WHERE "activityId" = %L$q$, parent)
+        WHEN 7 THEN format($q$DELETE FROM "ScheduleActivityLessons" WHERE "activityId" = %L$q$, parent)
+        WHEN 8 THEN format($q$DELETE FROM "ScheduleActivityTeachers" WHERE "activityId" = %L$q$, parent)
+        ELSE format($q$DELETE FROM "ScheduleActivities" WHERE id = %L$q$, parent)
+      END;
+      outcome := NULL;
+      BEGIN
+        IF step = 1 THEN EXECUTE stmt INTO own; ELSE EXECUTE stmt; END IF;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        outcome := CASE WHEN n = 0 THEN 'none' WHEN n = 1 THEN 'admitted' ELSE n || ' rows' END;
+      EXCEPTION
+        WHEN insufficient_privilege THEN
+          GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+          outcome := CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+        WHEN OTHERS THEN
+          GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+          outcome := 'error ' || st || ' ' || left(msg, 100);
+      END;
+      expected := CASE WHEN writes THEN 'admitted' ELSE refusals[step] END;
+      IF outcome IS DISTINCT FROM expected THEN
+        wrong := wrong || format('%s (%s) met %s on %s, expected %s', principals[i][1], principals[i][2], outcome, labels[step], expected);
+      END IF;
+    END LOOP;
+    IF writes IS DISTINCT FROM (own IS NOT NULL) THEN
+      wrong := wrong || format('%s (%s): the activity it inserted %s', principals[i][1], principals[i][2],
+                               CASE WHEN own IS NULL THEN 'was not returned' ELSE 'exists although it was refused' END);
+    END IF;
+
+    -- Every administrator reads the target's rows, as the full one does.
+    SELECT (SELECT count(*) FROM "ScheduleActivities" WHERE id = target)
+         + (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "activityId" = target)
+         + (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = target) INTO seen;
+    IF seen <> 3 THEN
+      wrong := wrong || format('%s (%s) reads %s of the target''s 3 rows', principals[i][1], principals[i][2], seen);
+    END IF;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'sa311: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+
+-- Nothing of the target moved, and every row a writer made is gone again.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  target uuid := (current_setting('app.test_rls311_ids')::jsonb ->> 'target')::uuid;
+  counts jsonb := current_setting('app.test_rls311_counts')::jsonb;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM "ScheduleActivities" WHERE id = target AND description = 'sa311 mål' AND "removedAt" IS NULL)
+     OR NOT EXISTS (SELECT 1 FROM "ScheduleActivityTeachers" WHERE "activityId" = target AND role = 'LEAD')
+     OR NOT EXISTS (SELECT 1 FROM "ScheduleActivityLessons" WHERE "activityId" = target AND date = '2030-10-07') THEN
+    RAISE EXCEPTION 'sa311: a refused statement moved the target';
+  END IF;
+  IF (SELECT count(*) FROM "ScheduleActivities") <> (counts ->> 'activities')::bigint
+     OR (SELECT count(*) FROM "ScheduleActivityTeachers") <> (counts ->> 'teachers')::bigint
+     OR (SELECT count(*) FROM "ScheduleActivityLessons") <> (counts ->> 'lessons')::bigint THEN
+    RAISE EXCEPTION 'sa311: the tables hold rows nobody should have left behind';
+  END IF;
+END $$;
+
+-- A teacher reads, and writes nothing. A pupil and a guardian read nothing.
+DO $$
+DECLARE
+  principals constant text[][] := ARRAY[
+    ['00000000-0000-4000-8000-000000000111', 'TEACHER'],
+    ['00000000-0000-4000-8000-000000000112', 'STUDENT'],
+    ['00000000-0000-4000-8000-000000000113', 'GUARDIAN']];
+  refusals constant text[] := ARRAY['refused', 'refused', 'refused', 'none', 'none', 'none', 'none', 'none', 'none'];
+  labels constant text[] := ARRAY['INSERT activity', 'INSERT teacher', 'INSERT lesson', 'UPDATE activity', 'UPDATE teacher',
+                                  'UPDATE lesson', 'DELETE lesson', 'DELETE teacher', 'DELETE activity'];
+  ids jsonb := current_setting('app.test_rls311_ids')::jsonb;
+  spares jsonb := current_setting('app.test_rls311_spares')::jsonb;
+  counts jsonb := current_setting('app.test_rls311_counts')::jsonb;
+  school uuid := (ids ->> 'school')::uuid;
+  y uuid := (ids ->> 'year')::uuid;
+  grp uuid := (ids ->> 'group')::uuid;
+  subj uuid := (ids ->> 'subject')::uuid;
+  t2 uuid := (ids ->> 'teacher2')::uuid;
+  target uuid := (ids ->> 'target')::uuid;
+  i integer;
+  step integer;
+  stmt text;
+  n bigint;
+  msg text;
+  st text;
+  outcome text;
+  expected_rows bigint;
+  seen bigint;
+  wrong text[] := '{}';
+BEGIN
+  FOR i IN 1 .. array_length(principals, 1) LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', principals[i][1])::text, true);
+    IF app.current_user_role()::text IS DISTINCT FROM principals[i][2] OR app.current_school_id() IS DISTINCT FROM school THEN
+      RAISE EXCEPTION 'sa311: % resolved as % in %, expected % in the matrix school', principals[i][1],
+        app.current_user_role(), app.current_school_id(), principals[i][2];
+    END IF;
+
+    -- A teacher reads every row the full administrator does; the others none.
+    SELECT (SELECT count(*) FROM "ScheduleActivities"), (SELECT count(*) FROM "ScheduleActivityTeachers"),
+           (SELECT count(*) FROM "ScheduleActivityLessons") INTO n, seen, expected_rows;
+    IF principals[i][2] = 'TEACHER' THEN
+      IF n <> (counts ->> 'activities')::bigint OR seen <> (counts ->> 'teachers')::bigint OR expected_rows <> (counts ->> 'lessons')::bigint THEN
+        wrong := wrong || format('a teacher reads %s / %s / %s rows, expected %s / %s / %s', n, seen, expected_rows,
+                                 counts ->> 'activities', counts ->> 'teachers', counts ->> 'lessons');
+      END IF;
+      IF (SELECT count(*) FROM "ScheduleActivities" WHERE id = target AND description = 'sa311 mål')
+         + (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "activityId" = target)
+         + (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = target) <> 3 THEN
+        wrong := wrong || 'a teacher does not read the target''s three rows';
+      END IF;
+    ELSIF n + seen + expected_rows <> 0 THEN
+      wrong := wrong || format('%s reads %s / %s / %s rows', principals[i][2], n, seen, expected_rows);
+    END IF;
+
+    FOR step IN 1 .. 9 LOOP
+      stmt := CASE step
+        WHEN 1 THEN format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description, "scopeGroupIds")
+                              VALUES (%L, %L, %L, %L, %L, ARRAY[%L]::uuid[])$q$,
+                           school, y, (spares -> principals[i][1] ->> 'batch')::uuid, subj, 'sa311 ' || principals[i][2], grp)
+        WHEN 2 THEN format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                              VALUES (%L, %L, %L, %L, 'ASSISTANT')$q$, target, grp, t2, school)
+        WHEN 3 THEN format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                              VALUES (%L, %L, %L, '2030-10-08', %L)$q$,
+                           target, (spares -> principals[i][1] ->> 'lesson')::uuid, grp, school)
+        WHEN 4 THEN format($q$UPDATE "ScheduleActivities" SET description = %L WHERE id = %L$q$, 'sa311 ändrad av ' || principals[i][2], target)
+        WHEN 5 THEN format($q$UPDATE "ScheduleActivityTeachers" SET role = 'ASSISTANT' WHERE "activityId" = %L$q$, target)
+        WHEN 6 THEN format($q$UPDATE "ScheduleActivityLessons" SET date = date + 1 WHERE "activityId" = %L$q$, target)
+        WHEN 7 THEN format($q$DELETE FROM "ScheduleActivityLessons" WHERE "activityId" = %L$q$, target)
+        WHEN 8 THEN format($q$DELETE FROM "ScheduleActivityTeachers" WHERE "activityId" = %L$q$, target)
+        ELSE format($q$DELETE FROM "ScheduleActivities" WHERE id = %L$q$, target)
+      END;
+      outcome := NULL;
+      BEGIN
+        EXECUTE stmt;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        outcome := CASE WHEN n = 0 THEN 'none' WHEN n = 1 THEN 'admitted' ELSE n || ' rows' END;
+      EXCEPTION
+        WHEN insufficient_privilege THEN
+          GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+          outcome := CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+        WHEN OTHERS THEN
+          GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+          outcome := 'error ' || st || ' ' || left(msg, 100);
+      END;
+      IF outcome IS DISTINCT FROM refusals[step] THEN
+        wrong := wrong || format('%s met %s on %s, expected %s', principals[i][2], outcome, labels[step], refusals[step]);
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'sa311: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+
+-- PostgREST's role holds no grant: every command meets a missing privilege,
+-- not row security, whether the token is an administrator's or a teacher's.
+DO $$
+DECLARE
+  school uuid := (current_setting('app.test_rls311_ids')::jsonb ->> 'school')::uuid;
+  sub text;
+  tbl text;
+  cmd text;
+  n bigint;
+  msg text;
+  st text;
+  outcome text;
+  wrong text[] := '{}';
+BEGIN
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000111'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    EXECUTE 'SET LOCAL ROLE authenticated';
+    IF current_user <> 'authenticated' OR app.current_school_id() IS DISTINCT FROM school THEN
+      RAISE EXCEPTION 'sa311: expected to be authenticated in the matrix school, am % in %', current_user, app.current_school_id();
+    END IF;
+    FOREACH tbl IN ARRAY ARRAY['ScheduleActivities', 'ScheduleActivityTeachers', 'ScheduleActivityLessons'] LOOP
+      FOREACH cmd IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+        outcome := NULL;
+        BEGIN
+          IF cmd = 'SELECT' THEN EXECUTE format('SELECT count(*) FROM %I', tbl);
+          ELSIF cmd = 'INSERT' THEN EXECUTE format('INSERT INTO %I ("schoolId") VALUES (%L)', tbl, school);
+          ELSIF cmd = 'UPDATE' THEN EXECUTE format('UPDATE %I SET "schoolId" = "schoolId"', tbl);
+          ELSE EXECUTE format('DELETE FROM %I', tbl);
+          END IF;
+          GET DIAGNOSTICS n = ROW_COUNT;
+          outcome := 'ran';
+        EXCEPTION
+          WHEN insufficient_privilege THEN
+            GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+            outcome := CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+          WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+            outcome := 'error ' || st || ' ' || left(msg, 100);
+        END;
+        IF outcome <> 'denied' THEN
+          wrong := wrong || format('%s as authenticated met %s on %s, expected a missing privilege', cmd, outcome, tbl);
+        END IF;
+      END LOOP;
+    END LOOP;
+    EXECUTE 'SET LOCAL ROLE app_authenticated';
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'sa311: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+
+-- With no principal, and with the service and sync paths' GUCs set (which
+-- admit a row of a table with a TO public arm), the API's role reads none of
+-- it and is refused an INSERT.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', (current_setting('app.test_rls311_ids')::jsonb ->> 'school'), true);
+SELECT set_config('app.sync_school_id', (current_setting('app.test_rls311_ids')::jsonb ->> 'school'), true);
+SELECT set_config('app.service_key_lookup', 'on', true);
+DO $$
+DECLARE
+  ids jsonb := current_setting('app.test_rls311_ids')::jsonb;
+  n bigint;
+BEGIN
+  IF app.current_user_id() IS NOT NULL THEN
+    RAISE EXCEPTION 'sa311: expected no principal';
+  END IF;
+  SELECT (SELECT count(*) FROM "ScheduleActivities") + (SELECT count(*) FROM "ScheduleActivityTeachers")
+       + (SELECT count(*) FROM "ScheduleActivityLessons") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'sa311: % row(s) read with no principal', n; END IF;
+  BEGIN
+    INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId")
+    VALUES ((ids ->> 'target')::uuid, (ids ->> 'group')::uuid, (ids ->> 'teacher2')::uuid, (ids ->> 'school')::uuid);
+    RAISE EXCEPTION 'sa311: a row was written with no principal';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 312: en schemabrytande aktivitet, skolgränsen (ScheduleActivities,
+-- ScheduleActivityTeachers, ScheduleActivityLessons, 20270101090000).
+--
+-- Two schools, each with an activity of its own: an avbokning, a replacement
+-- subject, a responsible teacher and a replacement lesson, planted by its own
+-- administrator. Then, for the administrator of either school against the
+-- other's rows:
+--   * the other school's activity, teacher row and lesson mark are not read
+--     (no row of the other school at all), and an UPDATE or a DELETE of them
+--     reaches no row;
+--   * a row written with the other school's schoolId is refused by the arm's
+--     WITH CHECK (insufficient_privilege, "row-level security"), though
+--     everything else about it is valid for that school, and so is moving
+--     the administrator's own row to it by an UPDATE;
+--   * a row of the administrator's own school cannot point across the
+--     boundary: the composite keys (id, schoolId) refuse an avbokning, a
+--     year, a subject, a teacher, an activity, a lesson or a person that
+--     belongs to the other school (foreign_key_violation), on an INSERT and
+--     on an UPDATE, with the same statements admitted when they name the
+--     administrator's own school's rows (so the refusal is the key's);
+--   * a teacher reads its own school's activity and none of the other's, and
+--     a pupil of the other school reads nothing of either.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls312_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  admins constant text[] := ARRAY['00000000-0000-4000-8000-000000000006', current_setting('app.test_rls312_admin_a')];
+  sub text;
+  school uuid;
+  side text;
+  y uuid;
+  grp uuid;
+  teacher uuid;
+  teacher_auth text;
+  subj uuid;
+  b uuid;
+  spare uuid;
+  control uuid;
+  les uuid;
+  spare_les uuid;
+  control_les uuid;
+  extra uuid;
+  extra_les uuid;
+  act uuid;
+  sides jsonb := '{}';
+BEGIN
+  FOREACH sub IN ARRAY admins LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    school := app.current_school_id();
+    IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('DRIFT', true) THEN
+      RAISE EXCEPTION 'sa312: % is not an administrator who writes DRIFT', sub;
+    END IF;
+    side := CASE WHEN (SELECT slug FROM "Schools" WHERE id = school) = 'rls-fixture-school' THEN 'b' ELSE 'a' END;
+    SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, "startDate" LIMIT 1;
+    SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y ORDER BY id LIMIT 1;
+    IF side = 'b' THEN
+      SELECT id, "authId"::text INTO teacher, teacher_auth FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000001';
+    ELSE
+      SELECT id, "authId"::text INTO teacher, teacher_auth FROM "Users"
+       WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+    END IF;
+    IF y IS NULL OR grp IS NULL OR teacher IS NULL THEN
+      RAISE EXCEPTION 'sa312: school % lacks a year, a class or a teacher to plant on; fixtures did not run', side;
+    END IF;
+    INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'sa312 ersättningsämne ' || side, 'SA312' || upper(side), now())
+    RETURNING id INTO subj;
+    -- Four avbokningar (the activity's; a spare for the statements that must
+    -- be refused; one for a second activity and one to move the first onto,
+    -- both for statements that must be admitted) and four lessons.
+    INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+    SELECT school, y, 'sa312 ' || side || ' ' || n, 'EVENT', '2030-10-07', '2030-10-07', 'SCHOOL' FROM generate_series(1, 4) n;
+    SELECT id INTO b FROM "CancellationBatches" WHERE "schoolId" = school AND name = 'sa312 ' || side || ' 1';
+    SELECT id INTO spare FROM "CancellationBatches" WHERE "schoolId" = school AND name = 'sa312 ' || side || ' 2';
+    SELECT id INTO control FROM "CancellationBatches" WHERE "schoolId" = school AND name = 'sa312 ' || side || ' 3';
+    SELECT id INTO extra FROM "CancellationBatches" WHERE "schoolId" = school AND name = 'sa312 ' || side || ' 4';
+    INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+    SELECT school, subj, grp, '2030-10-07', '2030-10-07 09:00+00', '2030-10-07 10:00+00', 'sa312 ' || side || ' ' || n, now()
+      FROM generate_series(1, 4) n;
+    SELECT id INTO les FROM "CalendarLessons" WHERE "schoolId" = school AND note = 'sa312 ' || side || ' 1';
+    SELECT id INTO spare_les FROM "CalendarLessons" WHERE "schoolId" = school AND note = 'sa312 ' || side || ' 2';
+    SELECT id INTO control_les FROM "CalendarLessons" WHERE "schoolId" = school AND note = 'sa312 ' || side || ' 3';
+    SELECT id INTO extra_les FROM "CalendarLessons" WHERE "schoolId" = school AND note = 'sa312 ' || side || ' 4';
+
+    INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description, "scopeGroupIds")
+    VALUES (school, y, b, subj, 'sa312 ' || side, ARRAY[grp]) RETURNING id INTO act;
+    INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+    VALUES (act, grp, teacher, school, 'LEAD');
+    INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+    VALUES (act, les, grp, '2030-10-07', school);
+
+    sides := sides || jsonb_build_object(side, jsonb_build_object('school', school, 'year', y, 'group', grp, 'teacher', teacher,
+      'teacherAuth', teacher_auth, 'subject', subj, 'batch', b, 'spare', spare, 'control', control, 'lesson', les,
+      'spareLesson', spare_les, 'controlLesson', control_les, 'extra', extra, 'extraLesson', extra_les,
+      'activity', act, 'admin', sub));
+  END LOOP;
+  IF (sides -> 'a' ->> 'school') = (sides -> 'b' ->> 'school') THEN
+    RAISE EXCEPTION 'sa312: both administrators are in the same school';
+  END IF;
+  PERFORM set_config('app.test_rls312_sides', sides::text, true);
+END $$;
+
+-- Each administrator against the other school's rows.
+DO $$
+DECLARE
+  sides jsonb := current_setting('app.test_rls312_sides')::jsonb;
+  mine_key text;
+  m jsonb;
+  o jsonb;
+  c record;
+  n bigint;
+  msg text;
+  st text;
+  outcome text;
+  seen bigint;
+  total bigint;
+  wrong text[] := '{}';
+BEGIN
+  FOREACH mine_key IN ARRAY ARRAY['a', 'b'] LOOP
+    m := sides -> mine_key;
+    o := sides -> CASE mine_key WHEN 'a' THEN 'b' ELSE 'a' END;
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', m ->> 'admin')::text, true);
+    IF app.current_school_id() IS DISTINCT FROM (m ->> 'school')::uuid THEN
+      RAISE EXCEPTION 'sa312: the administrator of school % resolved in %', mine_key, app.current_school_id();
+    END IF;
+
+    -- Reading: the administrator's own rows, none of the other school's.
+    SELECT (SELECT count(*) FROM "ScheduleActivities" WHERE id = (m ->> 'activity')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "activityId" = (m ->> 'activity')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = (m ->> 'activity')::uuid) INTO seen;
+    IF seen <> 3 THEN wrong := wrong || format('school %s''s administrator reads %s of its own 3 rows', mine_key, seen); END IF;
+    SELECT (SELECT count(*) FROM "ScheduleActivities" WHERE id = (o ->> 'activity')::uuid OR "schoolId" = (o ->> 'school')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "activityId" = (o ->> 'activity')::uuid OR "schoolId" = (o ->> 'school')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = (o ->> 'activity')::uuid OR "schoolId" = (o ->> 'school')::uuid)
+         INTO seen;
+    IF seen <> 0 THEN wrong := wrong || format('school %s''s administrator reads %s row(s) of school %s',
+                                               mine_key, seen, CASE mine_key WHEN 'a' THEN 'b' ELSE 'a' END); END IF;
+    SELECT (SELECT count(*) FROM "ScheduleActivities") + (SELECT count(*) FROM "ScheduleActivityTeachers")
+         + (SELECT count(*) FROM "ScheduleActivityLessons") INTO total;
+    SELECT (SELECT count(*) FROM "ScheduleActivities" WHERE "schoolId" = (m ->> 'school')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "schoolId" = (m ->> 'school')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "schoolId" = (m ->> 'school')::uuid) INTO seen;
+    IF total <> seen THEN wrong := wrong || format('school %s''s administrator reads %s rows, %s of them its own', mine_key, total, seen); END IF;
+
+    FOR c IN SELECT * FROM (VALUES
+      -- The other school's rows, written to, changed or removed.
+      (1, 'INSERT activity with the other school''s schoolId', 'refused',
+         format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+                   VALUES (%L, %L, %L, %L, 'sa312 intrång')$q$, o ->> 'school', o ->> 'year', o ->> 'spare', o ->> 'subject')),
+      (2, 'INSERT teacher with the other school''s schoolId', 'refused',
+         format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                   VALUES (%L, %L, %L, %L, 'ASSISTANT')$q$, o ->> 'activity', o ->> 'group', o ->> 'teacher', o ->> 'school')),
+      (3, 'INSERT lesson with the other school''s schoolId', 'refused',
+         format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                   VALUES (%L, %L, %L, '2030-10-07', %L)$q$, o ->> 'activity', o ->> 'spareLesson', o ->> 'group', o ->> 'school')),
+      (4, 'UPDATE the other school''s activity', 'none',
+         format($q$UPDATE "ScheduleActivities" SET description = 'sa312 intrång' WHERE id = %L$q$, o ->> 'activity')),
+      (5, 'UPDATE the other school''s teacher row', 'none',
+         format($q$UPDATE "ScheduleActivityTeachers" SET role = 'ASSISTANT' WHERE "activityId" = %L$q$, o ->> 'activity')),
+      (6, 'UPDATE the other school''s lesson mark', 'none',
+         format($q$UPDATE "ScheduleActivityLessons" SET date = date + 1 WHERE "activityId" = %L$q$, o ->> 'activity')),
+      (7, 'DELETE the other school''s lesson mark', 'none',
+         format($q$DELETE FROM "ScheduleActivityLessons" WHERE "activityId" = %L$q$, o ->> 'activity')),
+      (8, 'DELETE the other school''s teacher row', 'none',
+         format($q$DELETE FROM "ScheduleActivityTeachers" WHERE "activityId" = %L$q$, o ->> 'activity')),
+      (9, 'DELETE the other school''s activity', 'none',
+         format($q$DELETE FROM "ScheduleActivities" WHERE id = %L$q$, o ->> 'activity')),
+      -- The administrator's own rows, moved to the other school.
+      (10, 'UPDATE own activity to the other school', 'refused',
+         format($q$UPDATE "ScheduleActivities" SET "schoolId" = %L WHERE id = %L$q$, o ->> 'school', m ->> 'activity')),
+      (11, 'UPDATE own teacher row to the other school', 'refused',
+         format($q$UPDATE "ScheduleActivityTeachers" SET "schoolId" = %L WHERE "activityId" = %L$q$, o ->> 'school', m ->> 'activity')),
+      (12, 'UPDATE own lesson mark to the other school', 'refused',
+         format($q$UPDATE "ScheduleActivityLessons" SET "schoolId" = %L WHERE "activityId" = %L$q$, o ->> 'school', m ->> 'activity')),
+      -- Own rows pointing at the other school's: the composite keys refuse.
+      (20, 'INSERT activity on the other school''s avbokning', 'fk',
+         format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId")
+                   VALUES (%L, %L, %L, %L)$q$, m ->> 'school', m ->> 'year', o ->> 'spare', m ->> 'subject')),
+      (21, 'INSERT activity in the other school''s year', 'fk',
+         format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId")
+                   VALUES (%L, %L, %L, %L)$q$, m ->> 'school', o ->> 'year', m ->> 'spare', m ->> 'subject')),
+      (22, 'INSERT activity with the other school''s subject', 'fk',
+         format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId")
+                   VALUES (%L, %L, %L, %L)$q$, m ->> 'school', m ->> 'year', m ->> 'spare', o ->> 'subject')),
+      (23, 'INSERT activity created by the other school''s person', 'fk',
+         format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", "createdByUserId")
+                   VALUES (%L, %L, %L, %L, %L)$q$, m ->> 'school', m ->> 'year', m ->> 'spare', m ->> 'subject', o ->> 'teacher')),
+      (24, 'INSERT activity removed by the other school''s person', 'fk',
+         format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", "removedAt", "removedByUserId")
+                   VALUES (%L, %L, %L, %L, now(), %L)$q$, m ->> 'school', m ->> 'year', m ->> 'spare', m ->> 'subject', o ->> 'teacher')),
+      (25, 'UPDATE own activity to the other school''s avbokning', 'fk',
+         format($q$UPDATE "ScheduleActivities" SET "batchId" = %L WHERE id = %L$q$, o ->> 'spare', m ->> 'activity')),
+      (26, 'UPDATE own activity to the other school''s subject', 'fk',
+         format($q$UPDATE "ScheduleActivities" SET "replacementSubjectId" = %L WHERE id = %L$q$, o ->> 'subject', m ->> 'activity')),
+      (27, 'UPDATE own activity to the other school''s year', 'fk',
+         format($q$UPDATE "ScheduleActivities" SET "academicYearId" = %L WHERE id = %L$q$, o ->> 'year', m ->> 'activity')),
+      (28, 'INSERT teacher row with the other school''s teacher', 'fk',
+         format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                   VALUES (%L, %L, %L, %L, 'ASSISTANT')$q$, m ->> 'activity', m ->> 'group', o ->> 'teacher', m ->> 'school')),
+      (29, 'INSERT teacher row on the other school''s activity', 'fk',
+         format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                   VALUES (%L, %L, %L, %L, 'ASSISTANT')$q$, o ->> 'activity', m ->> 'group', m ->> 'teacher', m ->> 'school')),
+      (30, 'UPDATE own teacher row to the other school''s teacher', 'fk',
+         format($q$UPDATE "ScheduleActivityTeachers" SET "teacherId" = %L WHERE "activityId" = %L$q$, o ->> 'teacher', m ->> 'activity')),
+      (31, 'INSERT lesson mark on the other school''s lesson', 'fk',
+         format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                   VALUES (%L, %L, %L, '2030-10-08', %L)$q$, m ->> 'activity', o ->> 'spareLesson', m ->> 'group', m ->> 'school')),
+      (32, 'INSERT lesson mark on the other school''s activity', 'fk',
+         format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                   VALUES (%L, %L, %L, '2030-10-08', %L)$q$, o ->> 'activity', m ->> 'spareLesson', m ->> 'group', m ->> 'school')),
+      (33, 'UPDATE own lesson mark to the other school''s lesson', 'fk',
+         format($q$UPDATE "ScheduleActivityLessons" SET "calendarLessonId" = %L WHERE "activityId" = %L$q$, o ->> 'spareLesson', m ->> 'activity')),
+      -- The same statements about the administrator's own school's rows.
+      (40, 'INSERT activity on its own avbokning, year and subject', 'admitted',
+         format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", "createdByUserId")
+                   VALUES (%L, %L, %L, %L, %L)$q$, m ->> 'school', m ->> 'year', m ->> 'control', m ->> 'subject', m ->> 'teacher')),
+      (41, 'INSERT teacher row with its own teacher', 'admitted',
+         format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                   SELECT id, %L, %L, %L, 'ASSISTANT' FROM "ScheduleActivities" WHERE "batchId" = %L$q$,
+                m ->> 'group', m ->> 'teacher', m ->> 'school', m ->> 'control')),
+      (42, 'INSERT lesson mark on its own lesson', 'admitted',
+         format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                   SELECT id, %L, %L, '2030-10-08', %L FROM "ScheduleActivities" WHERE "batchId" = %L$q$,
+                m ->> 'controlLesson', m ->> 'group', m ->> 'school', m ->> 'control')),
+      (43, 'UPDATE own activity to its own other avbokning', 'admitted',
+         format($q$UPDATE "ScheduleActivities" SET "batchId" = %L, "createdByUserId" = %L WHERE id = %L$q$,
+                m ->> 'extra', m ->> 'teacher', m ->> 'activity')),
+      (44, 'UPDATE own lesson mark to its own other lesson', 'admitted',
+         format($q$UPDATE "ScheduleActivityLessons" SET "calendarLessonId" = %L WHERE "activityId" = %L$q$,
+                m ->> 'extraLesson', m ->> 'activity'))
+    ) v(ord, label, expected, stmt) ORDER BY ord LOOP
+      outcome := NULL;
+      BEGIN
+        EXECUTE c.stmt;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        outcome := CASE WHEN n = 0 THEN 'none' WHEN n = 1 THEN 'admitted' ELSE n || ' rows' END;
+      EXCEPTION
+        WHEN insufficient_privilege THEN
+          GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+          outcome := CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+        WHEN foreign_key_violation THEN
+          outcome := 'fk';
+        WHEN OTHERS THEN
+          GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+          outcome := 'error ' || st || ' ' || left(msg, 100);
+      END;
+      IF outcome IS DISTINCT FROM c.expected THEN
+        wrong := wrong || format('school %s''s administrator met %s on "%s", expected %s', mine_key, outcome, c.label, c.expected);
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'sa312: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+
+-- Nothing of either school moved: each activity is still its school's, and
+-- the other administrator reads none of it.
+DO $$
+DECLARE
+  sides jsonb := current_setting('app.test_rls312_sides')::jsonb;
+  side text;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sides -> side ->> 'admin')::text, true);
+    IF NOT EXISTS (SELECT 1 FROM "ScheduleActivities"
+                    WHERE id = (sides -> side ->> 'activity')::uuid AND "schoolId" = (sides -> side ->> 'school')::uuid
+                      AND description = 'sa312 ' || side AND "batchId" = (sides -> side ->> 'extra')::uuid) THEN
+      RAISE EXCEPTION 'sa312: the activity of school % was moved, renamed or lost', side;
+    END IF;
+    IF (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "activityId" = (sides -> side ->> 'activity')::uuid
+                                                         AND "schoolId" = (sides -> side ->> 'school')::uuid) <> 1
+       OR (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = (sides -> side ->> 'activity')::uuid
+                                                           AND "schoolId" = (sides -> side ->> 'school')::uuid
+                                                           AND date = '2030-10-07') <> 1 THEN
+      RAISE EXCEPTION 'sa312: the teacher row or the lesson mark of school % was moved or lost', side;
+    END IF;
+  END LOOP;
+END $$;
+
+-- A teacher reads its own school's activity and none of the other's; a pupil
+-- of the second school reads nothing of either.
+DO $$
+DECLARE
+  sides jsonb := current_setting('app.test_rls312_sides')::jsonb;
+  side text;
+  other text;
+  who record;
+  seen bigint;
+  total bigint;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    other := CASE side WHEN 'a' THEN 'b' ELSE 'a' END;
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sides -> side ->> 'teacherAuth')::text, true);
+    IF app.current_user_role() IS DISTINCT FROM 'TEACHER' OR app.current_school_id() IS DISTINCT FROM (sides -> side ->> 'school')::uuid THEN
+      RAISE EXCEPTION 'sa312: the teacher of school % resolved as % in %', side, app.current_user_role(), app.current_school_id();
+    END IF;
+    SELECT (SELECT count(*) FROM "ScheduleActivities" WHERE id = (sides -> side ->> 'activity')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "activityId" = (sides -> side ->> 'activity')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = (sides -> side ->> 'activity')::uuid) INTO seen;
+    IF seen <> 3 THEN RAISE EXCEPTION 'sa312: the teacher of school % reads % of its school''s 3 rows', side, seen; END IF;
+    SELECT (SELECT count(*) FROM "ScheduleActivities" WHERE id = (sides -> other ->> 'activity')::uuid OR "schoolId" = (sides -> other ->> 'school')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "activityId" = (sides -> other ->> 'activity')::uuid OR "schoolId" = (sides -> other ->> 'school')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = (sides -> other ->> 'activity')::uuid OR "schoolId" = (sides -> other ->> 'school')::uuid)
+         INTO seen;
+    IF seen <> 0 THEN RAISE EXCEPTION 'sa312: the teacher of school % reads % row(s) of school %', side, seen, other; END IF;
+    SELECT (SELECT count(*) FROM "ScheduleActivities") + (SELECT count(*) FROM "ScheduleActivityTeachers")
+         + (SELECT count(*) FROM "ScheduleActivityLessons") INTO total;
+    SELECT (SELECT count(*) FROM "ScheduleActivities" WHERE "schoolId" = (sides -> side ->> 'school')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "schoolId" = (sides -> side ->> 'school')::uuid)
+         + (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "schoolId" = (sides -> side ->> 'school')::uuid) INTO seen;
+    IF total <> seen THEN RAISE EXCEPTION 'sa312: the teacher of school % reads % rows, % of them its school''s', side, total, seen; END IF;
+  END LOOP;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000002')::text, true);
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' OR app.current_school_id() IS DISTINCT FROM (sides -> 'b' ->> 'school')::uuid THEN
+    RAISE EXCEPTION 'sa312: expected the pupil of school b';
+  END IF;
+  SELECT (SELECT count(*) FROM "ScheduleActivities") + (SELECT count(*) FROM "ScheduleActivityTeachers")
+       + (SELECT count(*) FROM "ScheduleActivityLessons") INTO total;
+  IF total <> 0 THEN RAISE EXCEPTION 'sa312: a pupil of school b reads % row(s)', total; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 313: en schemabrytande aktivitet, radens liv (ScheduleActivities,
+-- ScheduleActivityTeachers, ScheduleActivityLessons, 20270101090000).
+--
+-- What the keys and constraints of section 310 do to a row, run by the matrix
+-- school's full administrator on rows planted here. Each cascade has its own
+-- activity:
+--   * the avbokning removed takes the activity, its teacher rows and its
+--     lesson marks with it; the lessons themselves stay (they are the
+--     calendar's);
+--   * a lesson removed takes its mark and nothing else of the activity;
+--   * a replacement subject removed takes the activity, its teacher rows and
+--     its marks, and leaves the avbokning and the lessons;
+--   * a teacher removed (a Users row) takes that teacher's rows and the
+--     colleagues' stay with the activity;
+--   * an administrator who made or removed an activity leaves it: SET NULL on
+--     that column alone (createdByUserId, removedByUserId), so removedAt, the
+--     other person, the description and the selection stay, and the row stays;
+--   * a class removed takes its lessons (CalendarLessons) and so their marks,
+--     and leaves the teacher rows that name it and the selection that holds
+--     its id: there is no key on studentGroupId, on purpose;
+--   * an academic year removed takes its activities.
+-- Then the constraints at work: the description (1–300 characters after
+-- trimming, counted as characters), at most 200 groups in the selection, a
+-- removal recorded with its time; one activity per avbokning; one lead per
+-- activity and class, no substitute, no teacher twice in a class; one
+-- replacement lesson per class and day, a lesson marked once; and the
+-- defaults a statement that names neither the role nor the selection meets.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid;
+  y2 uuid;
+  grp uuid;
+  tgrp uuid;
+  g uuid;
+  subj uuid;
+  subj_x uuid;
+  ta uuid;
+  tb uuid;
+  adm1 uuid;
+  adm2 uuid;
+  adm3 uuid;
+  b uuid;
+  act uuid;
+  act_b uuid;
+  act_c uuid;
+  l1 uuid;
+  l2 uuid;
+  lg uuid;
+  rec record;
+  n bigint;
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school'
+     OR NOT app.current_user_may('PLANERING', true) OR NOT app.current_user_may('DRIFT', true)
+     OR NOT app.current_user_decides() THEN
+    RAISE EXCEPTION 'sa313: expected the matrix school''s full administrator';
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller 7A';
+  SELECT id INTO tgrp FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller Spanska';
+  IF y IS NULL OR grp IS NULL OR tgrp IS NULL THEN
+    RAISE EXCEPTION 'sa313: the matrix school lacks its year or its classes; fixtures did not run';
+  END IF;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'sa313 ersättningsämne', 'SA313', now()) RETURNING id INTO subj;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'sa313 ämne som tas bort', 'SA313X', now()) RETURNING id INTO subj_x;
+
+  -- 1. The avbokning goes.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'sa313-a@example.invalid', 'Sa', 'A', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO ta;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'sa313-b@example.invalid', 'Sa', 'B', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO tb;
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (school, y, 'sa313 1', 'EVENT', '2030-10-14', '2030-10-14', 'SCHOOL') RETURNING id INTO b;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description, "scopeGroupIds")
+  VALUES (school, y, b, subj, 'sa313 1', ARRAY[grp, tgrp]) RETURNING id INTO act;
+  INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+  VALUES (act, grp, ta, school, 'LEAD'), (act, grp, tb, school, 'ASSISTANT'), (act, tgrp, ta, school, 'LEAD');
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (school, subj, grp, '2030-10-14', '2030-10-14 09:00+00', '2030-10-14 10:00+00', 'sa313 1a', now()),
+         (school, subj, tgrp, '2030-10-14', '2030-10-14 09:00+00', '2030-10-14 10:00+00', 'sa313 1b', now());
+  INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+  SELECT act, id, "studentGroupId", date, school FROM "CalendarLessons" WHERE "schoolId" = school AND note IN ('sa313 1a', 'sa313 1b');
+  IF (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "activityId" = act) <> 3
+     OR (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = act) <> 2 THEN
+    RAISE EXCEPTION 'sa313: the first activity was not planted whole';
+  END IF;
+  DELETE FROM "CancellationBatches" WHERE id = b;
+  IF EXISTS (SELECT 1 FROM "ScheduleActivities" WHERE id = act)
+     OR EXISTS (SELECT 1 FROM "ScheduleActivityTeachers" WHERE "activityId" = act)
+     OR EXISTS (SELECT 1 FROM "ScheduleActivityLessons" WHERE "activityId" = act) THEN
+    RAISE EXCEPTION 'sa313: the avbokning was removed and its activity, teacher rows or lesson marks stayed';
+  END IF;
+  IF (SELECT count(*) FROM "CalendarLessons" WHERE "schoolId" = school AND note IN ('sa313 1a', 'sa313 1b')) <> 2 THEN
+    RAISE EXCEPTION 'sa313: the avbokning was removed and took the replacement lessons themselves';
+  END IF;
+
+  -- 2. A lesson goes: its mark goes, and only its mark.
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (school, y, 'sa313 2', 'EVENT', '2030-10-15', '2030-10-16', 'SCHOOL') RETURNING id INTO b;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+  VALUES (school, y, b, subj, 'sa313 2') RETURNING id INTO act;
+  INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role) VALUES (act, grp, ta, school, 'LEAD');
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (school, subj, grp, '2030-10-15', '2030-10-15 09:00+00', '2030-10-15 10:00+00', 'sa313 2a', now()) RETURNING id INTO l1;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (school, subj, grp, '2030-10-16', '2030-10-16 09:00+00', '2030-10-16 10:00+00', 'sa313 2b', now()) RETURNING id INTO l2;
+  INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+  VALUES (act, l1, grp, '2030-10-15', school), (act, l2, grp, '2030-10-16', school);
+  DELETE FROM "CalendarLessons" WHERE id = l1;
+  IF EXISTS (SELECT 1 FROM "ScheduleActivityLessons" WHERE "calendarLessonId" = l1) THEN
+    RAISE EXCEPTION 'sa313: a lesson was removed and its mark stayed';
+  END IF;
+  IF (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = act AND "calendarLessonId" = l2) <> 1
+     OR NOT EXISTS (SELECT 1 FROM "ScheduleActivities" WHERE id = act)
+     OR NOT EXISTS (SELECT 1 FROM "ScheduleActivityTeachers" WHERE "activityId" = act)
+     OR NOT EXISTS (SELECT 1 FROM "CancellationBatches" WHERE id = b) THEN
+    RAISE EXCEPTION 'sa313: a lesson was removed and took more than its mark';
+  END IF;
+
+  -- 3. A replacement subject goes: the activity goes, with its rows; the
+  -- avbokning and the lesson (of another subject) stay.
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (school, y, 'sa313 3', 'EVENT', '2030-10-17', '2030-10-17', 'SCHOOL') RETURNING id INTO b;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+  VALUES (school, y, b, subj_x, 'sa313 3') RETURNING id INTO act;
+  INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role) VALUES (act, grp, ta, school, 'LEAD');
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (school, subj, grp, '2030-10-17', '2030-10-17 09:00+00', '2030-10-17 10:00+00', 'sa313 3', now()) RETURNING id INTO l1;
+  INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+  VALUES (act, l1, grp, '2030-10-17', school);
+  DELETE FROM "Subjects" WHERE id = subj_x;
+  IF EXISTS (SELECT 1 FROM "ScheduleActivities" WHERE id = act)
+     OR EXISTS (SELECT 1 FROM "ScheduleActivityTeachers" WHERE "activityId" = act)
+     OR EXISTS (SELECT 1 FROM "ScheduleActivityLessons" WHERE "activityId" = act) THEN
+    RAISE EXCEPTION 'sa313: the replacement subject was removed and its activity or the activity''s rows stayed';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "CancellationBatches" WHERE id = b) OR NOT EXISTS (SELECT 1 FROM "CalendarLessons" WHERE id = l1) THEN
+    RAISE EXCEPTION 'sa313: the replacement subject was removed and took the avbokning or a lesson of another subject';
+  END IF;
+
+  -- 4. A teacher goes: that teacher's rows go; the colleague's stay.
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (school, y, 'sa313 4', 'EVENT', '2030-10-18', '2030-10-18', 'SCHOOL') RETURNING id INTO b;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+  VALUES (school, y, b, subj, 'sa313 4') RETURNING id INTO act;
+  INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+  VALUES (act, grp, ta, school, 'LEAD'), (act, grp, tb, school, 'ASSISTANT'), (act, tgrp, ta, school, 'ASSISTANT');
+  DELETE FROM "Users" WHERE id = ta;
+  IF EXISTS (SELECT 1 FROM "ScheduleActivityTeachers" WHERE "teacherId" = ta) THEN
+    RAISE EXCEPTION 'sa313: a teacher was removed and their rows stayed';
+  END IF;
+  IF (SELECT count(*) FROM "ScheduleActivityTeachers" WHERE "activityId" = act) <> 1
+     OR NOT EXISTS (SELECT 1 FROM "ScheduleActivityTeachers" WHERE "activityId" = act AND "teacherId" = tb)
+     OR NOT EXISTS (SELECT 1 FROM "ScheduleActivities" WHERE id = act) THEN
+    RAISE EXCEPTION 'sa313: a teacher was removed and took the colleague''s row or the activity';
+  END IF;
+
+  -- 5. An administrator goes: the column that names them is emptied, and only
+  -- that column; the row stays.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (school, 'sa313-adm1@example.invalid', 'Sa', 'Admin1', 'SCHOOL_ADMIN', 'EXPEDITION', gen_random_uuid(), true, now()) RETURNING id INTO adm1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (school, 'sa313-adm2@example.invalid', 'Sa', 'Admin2', 'SCHOOL_ADMIN', 'EXPEDITION', gen_random_uuid(), true, now()) RETURNING id INTO adm2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (school, 'sa313-adm3@example.invalid', 'Sa', 'Admin3', 'SCHOOL_ADMIN', 'EXPEDITION', gen_random_uuid(), true, now()) RETURNING id INTO adm3;
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  SELECT school, y, 'sa313 5' || x, 'EVENT', '2030-10-21', '2030-10-21', 'SCHOOL' FROM unnest(ARRAY['a', 'b', 'c']) x;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description, "scopeGroupIds",
+                                    "createdByUserId", "removedAt", "removedByUserId")
+  SELECT school, y, id, subj, 'sa313 5' || right(name, 1), ARRAY[grp, tgrp],
+         CASE right(name, 1) WHEN 'c' THEN adm3 ELSE adm1 END,
+         CASE right(name, 1) WHEN 'b' THEN NULL ELSE '2030-10-22 08:00+00'::timestamptz END,
+         CASE right(name, 1) WHEN 'a' THEN adm2 WHEN 'c' THEN adm3 ELSE NULL END
+    FROM "CancellationBatches" WHERE "schoolId" = school AND name IN ('sa313 5a', 'sa313 5b', 'sa313 5c');
+  DELETE FROM "Users" WHERE id = adm1;
+  SELECT "createdByUserId" AS c, "removedByUserId" AS r, "removedAt" AS at, "scopeGroupIds" AS s INTO rec FROM "ScheduleActivities" WHERE description = 'sa313 5a';
+  IF NOT FOUND OR rec.c IS NOT NULL OR rec.r IS DISTINCT FROM adm2 OR rec.at IS DISTINCT FROM '2030-10-22 08:00+00'::timestamptz
+     OR rec.s IS DISTINCT FROM ARRAY[grp, tgrp] THEN
+    RAISE EXCEPTION 'sa313: the maker was removed and the activity became (%)', rec;
+  END IF;
+  SELECT "createdByUserId" AS c, "removedAt" AS at INTO rec FROM "ScheduleActivities" WHERE description = 'sa313 5b';
+  IF NOT FOUND OR rec.c IS NOT NULL OR rec.at IS NOT NULL THEN
+    RAISE EXCEPTION 'sa313: the maker of a live activity was removed and the activity became (%)', rec;
+  END IF;
+  DELETE FROM "Users" WHERE id = adm2;
+  SELECT "createdByUserId" AS c, "removedByUserId" AS r, "removedAt" AS at INTO rec FROM "ScheduleActivities" WHERE description = 'sa313 5a';
+  IF NOT FOUND OR rec.c IS NOT NULL OR rec.r IS NOT NULL OR rec.at IS DISTINCT FROM '2030-10-22 08:00+00'::timestamptz THEN
+    RAISE EXCEPTION 'sa313: the remover was removed and the activity became (%)', rec;
+  END IF;
+  DELETE FROM "Users" WHERE id = adm3;
+  SELECT "createdByUserId" AS c, "removedByUserId" AS r, "removedAt" AS at INTO rec FROM "ScheduleActivities" WHERE description = 'sa313 5c';
+  IF NOT FOUND OR rec.c IS NOT NULL OR rec.r IS NOT NULL OR rec.at IS NULL THEN
+    RAISE EXCEPTION 'sa313: a person who both made and removed an activity was removed and the activity became (%)', rec;
+  END IF;
+
+  -- 6. A class goes: its lessons go (CalendarLessons), and so their marks.
+  -- The teacher row that names it stays, and so does the selection.
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (school, y, 'sa313 klass', 7, now()) RETURNING id INTO g;
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (school, y, 'sa313 6', 'EVENT', '2030-10-23', '2030-10-23', 'SCHOOL') RETURNING id INTO b;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description, "scopeGroupIds")
+  VALUES (school, y, b, subj, 'sa313 6', ARRAY[g, grp]) RETURNING id INTO act;
+  INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role) VALUES (act, g, tb, school, 'LEAD');
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (school, subj, g, '2030-10-23', '2030-10-23 09:00+00', '2030-10-23 10:00+00', 'sa313 6g', now()) RETURNING id INTO lg;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (school, subj, grp, '2030-10-23', '2030-10-23 09:00+00', '2030-10-23 10:00+00', 'sa313 6h', now()) RETURNING id INTO l1;
+  INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+  VALUES (act, lg, g, '2030-10-23', school), (act, l1, grp, '2030-10-23', school);
+  DELETE FROM "StudentGroups" WHERE id = g;
+  IF EXISTS (SELECT 1 FROM "CalendarLessons" WHERE id = lg) OR EXISTS (SELECT 1 FROM "ScheduleActivityLessons" WHERE "calendarLessonId" = lg) THEN
+    RAISE EXCEPTION 'sa313: a class was removed and its replacement lesson or its mark stayed';
+  END IF;
+  IF (SELECT count(*) FROM "ScheduleActivityLessons" WHERE "activityId" = act) <> 1
+     OR NOT EXISTS (SELECT 1 FROM "ScheduleActivityTeachers" WHERE "activityId" = act AND "studentGroupId" = g AND "teacherId" = tb)
+     OR NOT EXISTS (SELECT 1 FROM "ScheduleActivities" WHERE id = act AND g = ANY ("scopeGroupIds")) THEN
+    RAISE EXCEPTION 'sa313: a class was removed and the activity lost more than the class''s lesson mark (or the teacher row did not stay)';
+  END IF;
+
+  -- 7. An academic year goes: its activities go with its avbokningar.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'sa313 år', '2041-08-15', '2042-06-15', false, now()) RETURNING id INTO y2;
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (school, y2, 'sa313 7', 'EVENT', '2041-10-14', '2041-10-14', 'SCHOOL') RETURNING id INTO b;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+  VALUES (school, y2, b, subj, 'sa313 7') RETURNING id INTO act;
+  INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId") VALUES (act, grp, tb, school);
+  DELETE FROM "AcademicYears" WHERE id = y2;
+  IF EXISTS (SELECT 1 FROM "ScheduleActivities" WHERE id = act) OR EXISTS (SELECT 1 FROM "ScheduleActivityTeachers" WHERE "activityId" = act)
+     OR EXISTS (SELECT 1 FROM "CancellationBatches" WHERE id = b) THEN
+    RAISE EXCEPTION 'sa313: an academic year was removed and an avbokning, an activity or its rows stayed';
+  END IF;
+END $$;
+
+-- The constraints at work.
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid;
+  grp uuid;
+  tgrp uuid;
+  subj uuid;
+  ta uuid;
+  tb uuid;
+  tc uuid;
+  td uuid;
+  adm uuid;
+  bs uuid[];
+  ls uuid[];
+  act uuid;
+  act2 uuid;
+  c record;
+  st text;
+  cn text;
+  outcome text;
+  rec record;
+  wrong text[] := '{}';
+BEGIN
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller 7A';
+  SELECT id INTO tgrp FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller Spanska';
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'sa313 villkor', 'SA313V', now()) RETURNING id INTO subj;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  SELECT school, 'sa313-v' || n || '@example.invalid', 'Sa', 'V' || n, 'TEACHER', gen_random_uuid(), true, now() FROM generate_series(1, 4) n;
+  SELECT id INTO ta FROM "Users" WHERE "schoolId" = school AND email = 'sa313-v1@example.invalid';
+  SELECT id INTO tb FROM "Users" WHERE "schoolId" = school AND email = 'sa313-v2@example.invalid';
+  SELECT id INTO tc FROM "Users" WHERE "schoolId" = school AND email = 'sa313-v3@example.invalid';
+  SELECT id INTO td FROM "Users" WHERE "schoolId" = school AND email = 'sa313-v4@example.invalid';
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (school, 'sa313-vadm@example.invalid', 'Sa', 'VAdmin', 'SCHOOL_ADMIN', 'EXPEDITION', gen_random_uuid(), true, now()) RETURNING id INTO adm;
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  SELECT school, y, 'sa313 c' || n, 'EVENT', '2030-11-04', '2030-11-04', 'SCHOOL' FROM generate_series(1, 14) n;
+  SELECT array_agg(id ORDER BY substring(name from 8)::int) INTO bs FROM "CancellationBatches" WHERE "schoolId" = school AND name ~ '^sa313 c[0-9]+$';
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  SELECT school, subj, grp, '2030-11-04', '2030-11-04 09:00+00', '2030-11-04 10:00+00', 'sa313 cl' || n, now() FROM generate_series(1, 6) n;
+  SELECT array_agg(id ORDER BY substring(note from 9)::int) INTO ls FROM "CalendarLessons" WHERE "schoolId" = school AND note ~ '^sa313 cl[0-9]+$';
+  IF cardinality(bs) <> 14 OR cardinality(ls) <> 6 OR ta IS NULL OR td IS NULL THEN
+    RAISE EXCEPTION 'sa313: the constraint rows were not planted whole';
+  END IF;
+
+  -- The first activity, to compare with and to hang rows on.
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+  VALUES (school, y, bs[1], subj, 'sa313 villkor') RETURNING id INTO act;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+  VALUES (school, y, bs[2], subj, 'sa313 villkor 2') RETURNING id INTO act2;
+
+  FOR c IN SELECT * FROM (VALUES
+    -- ScheduleActivities.
+    (1, 'description empty', '23514:ScheduleActivities_description_is_sane',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+                 VALUES (%L, %L, %L, %L, '')$q$, school, y, bs[3], subj)),
+    (2, 'description only spaces', '23514:ScheduleActivities_description_is_sane',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+                 VALUES (%L, %L, %L, %L, '    ')$q$, school, y, bs[3], subj)),
+    (3, 'description of 301 characters', '23514:ScheduleActivities_description_is_sane',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+                 VALUES (%L, %L, %L, %L, repeat('a', 301))$q$, school, y, bs[3], subj)),
+    (4, 'description of 301 multibyte characters', '23514:ScheduleActivities_description_is_sane',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+                 VALUES (%L, %L, %L, %L, repeat('å', 301))$q$, school, y, bs[3], subj)),
+    (5, 'description of 300 characters', 'admitted',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+                 VALUES (%L, %L, %L, %L, repeat('a', 300))$q$, school, y, bs[3], subj)),
+    (6, 'description of 300 multibyte characters (600 bytes)', 'admitted',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+                 VALUES (%L, %L, %L, %L, repeat('å', 300))$q$, school, y, bs[4], subj)),
+    (7, 'description of one character between blanks', 'admitted',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+                 VALUES (%L, %L, %L, %L, '  x ')$q$, school, y, bs[5], subj)),
+    (8, 'no description', 'admitted',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description)
+                 VALUES (%L, %L, %L, %L, NULL)$q$, school, y, bs[6], subj)),
+    (9, 'UPDATE description to empty', '23514:ScheduleActivities_description_is_sane',
+       format($q$UPDATE "ScheduleActivities" SET description = '' WHERE id = %L$q$, act)),
+    (10, 'selection of 201 groups', '23514:ScheduleActivities_scope_ids_are_few',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", "scopeGroupIds")
+                 VALUES (%L, %L, %L, %L, ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 201)))$q$, school, y, bs[7], subj)),
+    (11, 'selection of 200 groups', 'admitted',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", "scopeGroupIds")
+                 VALUES (%L, %L, %L, %L, ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 200)))$q$, school, y, bs[7], subj)),
+    (12, 'removed by somebody at no time', '23514:ScheduleActivities_removal_is_recorded',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", "removedByUserId")
+                 VALUES (%L, %L, %L, %L, %L)$q$, school, y, bs[8], subj, adm)),
+    (13, 'UPDATE: removed by somebody at no time', '23514:ScheduleActivities_removal_is_recorded',
+       format($q$UPDATE "ScheduleActivities" SET "removedByUserId" = %L WHERE id = %L$q$, adm, act)),
+    (14, 'removed at a time, by nobody known', 'admitted',
+       format($q$UPDATE "ScheduleActivities" SET "removedAt" = now() WHERE id = %L$q$, act)),
+    (15, 'then removed by somebody', 'admitted',
+       format($q$UPDATE "ScheduleActivities" SET "removedByUserId" = %L WHERE id = %L$q$, adm, act)),
+    (16, 'removed by somebody, the time taken away', '23514:ScheduleActivities_removal_is_recorded',
+       format($q$UPDATE "ScheduleActivities" SET "removedAt" = NULL WHERE id = %L$q$, act)),
+    (17, 'a second activity on the same avbokning', '23505:ScheduleActivities_batchId_key',
+       format($q$INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId")
+                 VALUES (%L, %L, %L, %L)$q$, school, y, bs[1], subj)),
+    -- ScheduleActivityTeachers.
+    (20, 'a lead', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                 VALUES (%L, %L, %L, %L, 'LEAD')$q$, act, grp, ta, school)),
+    (21, 'a second lead of the same class', '23505:ScheduleActivityTeachers_one_lead_per_group',
+       format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                 VALUES (%L, %L, %L, %L, 'LEAD')$q$, act, grp, tb, school)),
+    (22, 'a lead of another class', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                 VALUES (%L, %L, %L, %L, 'LEAD')$q$, act, tgrp, tb, school)),
+    (23, 'the lead of the same class in another activity', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                 VALUES (%L, %L, %L, %L, 'LEAD')$q$, act2, grp, ta, school)),
+    (24, 'an assistant', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                 VALUES (%L, %L, %L, %L, 'ASSISTANT')$q$, act, grp, tb, school)),
+    (25, 'a second assistant of the same class', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                 VALUES (%L, %L, %L, %L, 'ASSISTANT')$q$, act, grp, tc, school)),
+    (26, 'the same teacher twice in a class', '23505:ScheduleActivityTeachers_pkey',
+       format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                 VALUES (%L, %L, %L, %L, 'ASSISTANT')$q$, act, grp, ta, school)),
+    (27, 'a substitute', '23514:ScheduleActivityTeachers_role_is_responsible',
+       format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+                 VALUES (%L, %L, %L, %L, 'SUBSTITUTE')$q$, act, grp, td, school)),
+    (28, 'an assistant made the second lead', '23505:ScheduleActivityTeachers_one_lead_per_group',
+       format($q$UPDATE "ScheduleActivityTeachers" SET role = 'LEAD' WHERE "activityId" = %L AND "studentGroupId" = %L AND "teacherId" = %L$q$,
+              act, grp, tb)),
+    (29, 'the lead made a substitute', '23514:ScheduleActivityTeachers_role_is_responsible',
+       format($q$UPDATE "ScheduleActivityTeachers" SET role = 'SUBSTITUTE' WHERE "activityId" = %L AND "studentGroupId" = %L AND "teacherId" = %L$q$,
+              act, grp, ta)),
+    (30, 'the lead made an assistant', 'admitted',
+       format($q$UPDATE "ScheduleActivityTeachers" SET role = 'ASSISTANT' WHERE "activityId" = %L AND "studentGroupId" = %L AND "teacherId" = %L$q$,
+              act, grp, ta)),
+    (31, 'and an assistant the lead', 'admitted',
+       format($q$UPDATE "ScheduleActivityTeachers" SET role = 'LEAD' WHERE "activityId" = %L AND "studentGroupId" = %L AND "teacherId" = %L$q$,
+              act, grp, tb)),
+    (32, 'a class that exists nowhere, no role named', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId")
+                 VALUES (%L, gen_random_uuid(), %L, %L)$q$, act, ta, school)),
+    -- ScheduleActivityLessons.
+    (40, 'a replacement lesson', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                 VALUES (%L, %L, %L, '2030-11-04', %L)$q$, act, ls[1], grp, school)),
+    (41, 'a second lesson of the same class and day', '23505:ScheduleActivityLessons_activityId_studentGroupId_date_key',
+       format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                 VALUES (%L, %L, %L, '2030-11-04', %L)$q$, act, ls[2], grp, school)),
+    (42, 'a lesson of another class the same day', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                 VALUES (%L, %L, %L, '2030-11-04', %L)$q$, act, ls[2], tgrp, school)),
+    (43, 'a lesson of the same class another day', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                 VALUES (%L, %L, %L, '2030-11-05', %L)$q$, act, ls[3], grp, school)),
+    (44, 'a lesson marked by two activities', '23505:ScheduleActivityLessons_calendarLessonId_key',
+       format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                 VALUES (%L, %L, %L, '2030-11-06', %L)$q$, act2, ls[1], grp, school)),
+    (45, 'a lesson marked twice by one activity', '23505',
+       format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                 VALUES (%L, %L, %L, '2030-11-07', %L)$q$, act, ls[1], grp, school)),
+    (46, 'the same class and day in another activity', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                 VALUES (%L, %L, %L, '2030-11-04', %L)$q$, act2, ls[4], grp, school)),
+    (47, 'a class that exists nowhere, named on a lesson of another class', 'admitted',
+       format($q$INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+                 VALUES (%L, %L, gen_random_uuid(), '2030-11-08', %L)$q$, act, ls[5], school))
+  ) v(ord, label, expected, stmt) ORDER BY ord LOOP
+    outcome := NULL;
+    BEGIN
+      EXECUTE c.stmt;
+      outcome := 'admitted';
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, cn = CONSTRAINT_NAME;
+      outcome := st || ':' || coalesce(cn, '');
+    END;
+    IF NOT (outcome = c.expected OR (position(':' IN c.expected) = 0 AND split_part(outcome, ':', 1) = c.expected)) THEN
+      wrong := wrong || format('"%s" met %s, expected %s', c.label, outcome, c.expected);
+    END IF;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'sa313: %', array_to_string(wrong, '; ');
+  END IF;
+
+  -- What the admitted statements left: the lead is the one made lead last,
+  -- the two leads of the two classes and the assistants are as written.
+  IF (SELECT string_agg(role::text || ':' || ("teacherId" = tb)::text, ',' ORDER BY role, "teacherId" = tb)
+        FROM "ScheduleActivityTeachers" WHERE "activityId" = act AND "studentGroupId" = grp AND "teacherId" IN (ta, tb, tc))
+     IS DISTINCT FROM 'LEAD:true,ASSISTANT:false,ASSISTANT:false' THEN
+    RAISE EXCEPTION 'sa313: the roles of the class are not as the admitted statements left them';
+  END IF;
+
+  -- The defaults: a statement that names neither the role nor the selection,
+  -- nor a description or a person, stores an activity that is alive, with an
+  -- empty selection, and a responsible teacher who leads.
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId") VALUES (school, y, bs[9], subj)
+  RETURNING id INTO act;
+  INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId") VALUES (act, grp, ta, school);
+  SELECT description IS NULL AS d, "scopeGroupIds" = '{}'::uuid[] AS s, "removedAt" IS NULL AS r, "createdByUserId" IS NULL AS c,
+         "removedByUserId" IS NULL AS rb, "createdAt" = now() AS ca, "updatedAt" = now() AS ua
+    INTO rec FROM "ScheduleActivities" WHERE id = act;
+  IF NOT (rec.d AND rec.s AND rec.r AND rec.c AND rec.rb AND rec.ca AND rec.ua) THEN
+    RAISE EXCEPTION 'sa313: an activity stored with no optional column named is not alive and empty: %', rec;
+  END IF;
+  IF (SELECT role FROM "ScheduleActivityTeachers" WHERE "activityId" = act AND "teacherId" = ta) IS DISTINCT FROM 'LEAD' THEN
+    RAISE EXCEPTION 'sa313: a responsible teacher stored with no role named does not lead';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 314: en schemabrytande aktivitet rör ingenting annat
+-- (20270101090000 is additive: three new tables and no change to what was).
+--
+-- The avbokning's own tables are as section 27g left them: the same 13 arms
+-- (four on the batch, four on its lessons, five on its credits, the fifth
+-- being the teacher's read of the credit link) under the same names,
+-- commands and roles (TO authenticated, which the API's role is a member of),
+-- the same grants (the API's role and PostgREST's authenticated hold SELECT,
+-- INSERT, UPDATE and DELETE, service_role SELECT, nobody anything else), and
+-- no key from any of them to the new tables; the only key between the
+-- two families is the activity's own, ScheduleActivities.batchId. Then the
+-- statements of the API that serves before the migration, which name no new
+-- table, run as the matrix school's full administrator against a lesson and
+-- a credit planted here: an avbokning is made, takes a lesson and a credit,
+-- is counted, reversed, and removed, and no activity is born, owned or left
+-- behind by any of it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  old_tables constant regclass[] := ARRAY['public."CancellationBatches"', 'public."CancellationBatchLessons"',
+                                          'public."CancellationBatchCredits"']::regclass[];
+  auth oid := (SELECT oid FROM pg_roles WHERE rolname = 'authenticated');
+  bad text;
+BEGIN
+  IF auth IS NULL THEN RAISE EXCEPTION 'sa314: the role authenticated does not exist'; END IF;
+
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname COLLATE "C") INTO bad FROM pg_policy
+   WHERE polrelid = ANY (old_tables);
+  IF bad IS DISTINCT FROM
+       'cancellation_batch_credits_admin_delete:d,cancellation_batch_credits_admin_insert:a,cancellation_batch_credits_admin_select:r,cancellation_batch_credits_admin_update:w,'
+       'cancellation_batch_credits_staff_select:r,'
+       'cancellation_batch_lessons_admin_delete:d,cancellation_batch_lessons_admin_insert:a,cancellation_batch_lessons_admin_select:r,cancellation_batch_lessons_admin_update:w,'
+       'cancellation_batches_admin_delete:d,cancellation_batches_admin_insert:a,cancellation_batches_admin_select:r,cancellation_batches_admin_update:w' THEN
+    RAISE EXCEPTION 'sa314: the avbokning''s policies are %', bad;
+  END IF;
+  IF (SELECT count(*) FROM pg_policy WHERE polrelid = 'public."CancellationBatches"'::regclass) <> 4
+     OR (SELECT count(*) FROM pg_policy WHERE polrelid = 'public."CancellationBatchLessons"'::regclass) <> 4
+     OR (SELECT count(*) FROM pg_policy WHERE polrelid = 'public."CancellationBatchCredits"'::regclass) <> 5 THEN
+    RAISE EXCEPTION 'sa314: the avbokning''s tables do not hold 4, 4 and 5 arms';
+  END IF;
+  SELECT string_agg(polname, ', ') INTO bad FROM pg_policy
+   WHERE polrelid = ANY (old_tables) AND (polroles <> ARRAY[auth] OR NOT polpermissive);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa314: arms that are not authenticated''s permissive ones: %', bad; END IF;
+
+  -- Nothing in an arm of theirs reaches for the new tables.
+  SELECT string_agg(polname, ', ') INTO bad FROM pg_policy
+   WHERE polrelid = ANY (old_tables)
+     AND (coalesce(pg_get_expr(polqual, polrelid), '') || coalesce(pg_get_expr(polwithcheck, polrelid), '')) LIKE '%ScheduleActivit%';
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa314: arms of the avbokning that read the activity: %', bad; END IF;
+
+  -- The grants, table by table, exactly: the owner aside, the API's role and
+  -- PostgREST's authenticated hold the four, service_role the read.
+  SELECT string_agg(c.relname || ' ' || x.acl, '; ' ORDER BY c.relname COLLATE "C") INTO bad
+    FROM pg_class c
+    CROSS JOIN LATERAL (
+      SELECT coalesce(string_agg(coalesce(r.rolname, 'PUBLIC') || ':' || a.privilege_type, ',' ORDER BY coalesce(r.rolname, 'PUBLIC') COLLATE "C",
+                                                                                              a.privilege_type COLLATE "C"), '') AS acl
+        FROM aclexplode(c.relacl) a LEFT JOIN pg_roles r ON r.oid = a.grantee WHERE a.grantee <> c.relowner) x
+   WHERE c.oid = ANY (old_tables)
+     AND x.acl <> 'app_authenticated:DELETE,app_authenticated:INSERT,app_authenticated:SELECT,app_authenticated:UPDATE,'
+                  'authenticated:DELETE,authenticated:INSERT,authenticated:SELECT,authenticated:UPDATE,service_role:SELECT';
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa314: the avbokning''s grants moved: %', bad; END IF;
+
+  -- No key from the avbokning's tables to the new ones, and the new tables
+  -- reach the avbokning through the activity's batchId alone.
+  SELECT string_agg(conname, ', ') INTO bad FROM pg_constraint
+   WHERE contype = 'f' AND conrelid = ANY (old_tables)
+     AND confrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
+                       'public."ScheduleActivityLessons"'::regclass);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa314: keys from the avbokning to the activity: %', bad; END IF;
+  SELECT string_agg(conname, ', ') INTO bad FROM pg_constraint
+   WHERE contype = 'f' AND confrelid = ANY (old_tables)
+     AND conrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
+                      'public."ScheduleActivityLessons"'::regclass)
+     AND conname <> 'ScheduleActivities_batchId_schoolId_fkey';
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa314: keys from the activity to the avbokning''s tables other than its batchId: %', bad; END IF;
+  -- And no trigger on the avbokning's tables, before or after: nothing there
+  -- to learn of an activity.
+  SELECT string_agg(tgname, ', ') INTO bad FROM pg_trigger WHERE tgrelid = ANY (old_tables) AND NOT tgisinternal;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa314: triggers on the avbokning''s tables: %', bad; END IF;
+END $$;
+
+-- The old API's own statements (src/publication/cancellation-batches.service.ts
+-- at the commit before the activity), none of which names a new table.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  y uuid;
+  grp uuid;
+  subj uuid;
+  lesson uuid;
+  b uuid;
+  credit uuid;
+  n bigint;
+  rec record;
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'sa314: expected the matrix school''s full administrator';
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller 7A';
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = school AND code = 'RLSR';
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (school, subj, grp, '2030-11-11', '2030-11-11 09:00+00', '2030-11-11 10:00+00', 'sa314 anteckning', now()) RETURNING id INTO lesson;
+
+  -- Create: the batch (the columns create() names), its lessons, the
+  -- lessons cancelled, a credit and its link, the count.
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", "startTime", "endTime", scope,
+                                     "minGradeLevel", "maxGradeLevel", "groupIds", "createdByUserId", notifies)
+  VALUES (school, y, 'sa314 prao', 'EVENT', '2030-11-11', '2030-11-12', NULL, NULL, 'GRADES', 7, 9, '{}', me, false)
+  RETURNING id INTO b;
+  INSERT INTO "CancellationBatchLessons" ("batchId", "calendarLessonId", "schoolId", "previousNote") VALUES (b, lesson, school, 'sa314 anteckning');
+  UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'EVENT', note = 'Inställd: sa314 prao'
+   WHERE id = lesson AND status = 'SCHEDULED';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sa314: the old API could not cancel the lesson'; END IF;
+  INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, name, "updatedAt")
+  VALUES (school, y, '2030-11-11', 300, 'sa314 prao', now()) RETURNING id INTO credit;
+  INSERT INTO "CancellationBatchCredits" ("batchId", "creditId", "schoolId") VALUES (b, credit, school);
+  UPDATE "CancellationBatches" SET cancelled = 1 WHERE id = b;
+  SELECT cancelled AS c, "createdByUserId" AS u INTO rec FROM "CancellationBatches" WHERE id = b;
+  IF rec.c <> 1 OR rec.u IS DISTINCT FROM me THEN
+    RAISE EXCEPTION 'sa314: the avbokning the old API made is not as it wrote it (%)', rec;
+  END IF;
+  -- No activity owns it, and none came of it.
+  IF EXISTS (SELECT 1 FROM "ScheduleActivities" WHERE "batchId" = b)
+     OR EXISTS (SELECT 1 FROM "ScheduleActivityLessons" WHERE "calendarLessonId" = lesson) THEN
+    RAISE EXCEPTION 'sa314: an avbokning made without an activity has one';
+  END IF;
+
+  -- Reverse: the lesson back, the credit removed (its link with it), the
+  -- batch stamped.
+  UPDATE "CalendarLessons" SET status = 'SCHEDULED', "cancelCause" = NULL, note = 'sa314 anteckning'
+   WHERE id = lesson AND status = 'CANCELLED' AND "cancelCause" = 'EVENT';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sa314: the old API could not reinstate the lesson'; END IF;
+  DELETE FROM "TimplanCredits" WHERE id = credit;
+  IF EXISTS (SELECT 1 FROM "CancellationBatchCredits" WHERE "batchId" = b) THEN
+    RAISE EXCEPTION 'sa314: a credit removed by the old API left its link';
+  END IF;
+  UPDATE "CancellationBatches" SET "reversedAt" = now(), "reversedByUserId" = me, reinstated = 1, "skippedRoomTaken" = 0 WHERE id = b;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sa314: the old API could not reverse the avbokning'; END IF;
+
+  -- Removed: the lesson link goes with it, and nothing else is asked.
+  DELETE FROM "CancellationBatches" WHERE id = b;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 OR EXISTS (SELECT 1 FROM "CancellationBatchLessons" WHERE "batchId" = b) THEN
+    RAISE EXCEPTION 'sa314: an avbokning made and reversed by the old API was not removed whole';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "CalendarLessons" WHERE id = lesson AND status = 'SCHEDULED') THEN
+    RAISE EXCEPTION 'sa314: the lesson did not survive its avbokning';
+  END IF;
+
+  -- The fixtures' own avbokning (an activity's, since 20270101090000) is
+  -- still read by every administrator, and by the teacher as 27g says:
+  -- the credit link and nothing else of it.
+  IF (SELECT count(*) FROM "CancellationBatches" WHERE name = 'Roller prao') <> 1 THEN
+    RAISE EXCEPTION 'sa314: the matrix school''s avbokning is not read by its administrator';
+  END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'sa314: expected a TEACHER'; END IF;
+  IF (SELECT count(*) FROM "CancellationBatches") + (SELECT count(*) FROM "CancellationBatchLessons") <> 0 THEN
+    RAISE EXCEPTION 'sa314: a teacher reads an avbokning or its lessons';
+  END IF;
+  IF (SELECT count(*) FROM "CancellationBatchCredits") < 1 THEN
+    RAISE EXCEPTION 'sa314: a teacher no longer reads the credit link';
   END IF;
 END $$;
 ROLLBACK;

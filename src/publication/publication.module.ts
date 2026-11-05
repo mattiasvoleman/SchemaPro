@@ -8,6 +8,8 @@ import { PublicationsService } from './publications.service';
 import { DraftService } from './draft.service';
 import { CancellationBatchesController } from './cancellation-batches.controller';
 import { CancellationBatchesService } from './cancellation-batches.service';
+import { ScheduleActivitiesController } from './schedule-activities.controller';
+import { ScheduleActivitiesService } from './schedule-activities.service';
 import { PublicLinksController } from './public-links.controller';
 import { PublicLinksService } from './public-links.service';
 import { PublicTimetableController } from './public-timetable.controller';
@@ -30,6 +32,7 @@ import { PrintTimetablesService } from './print-timetables.service';
     CalendarController,
     PublicationsController,
     CancellationBatchesController,
+    ScheduleActivitiesController,
     PublicLinksController,
     PublicTimetableController,
     PrintController,
@@ -38,6 +41,7 @@ import { PrintTimetablesService } from './print-timetables.service';
     PublicationsService,
     DraftService,
     CancellationBatchesService,
+    ScheduleActivitiesService,
     PublicLinksService,
     PublicViewerThrottlerGuard,
     PrintTimetablesService,

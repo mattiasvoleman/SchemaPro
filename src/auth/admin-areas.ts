@@ -243,6 +243,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   CancellationBatchCredits: only('DRIFT'),
   CancellationBatchLessons: only('DRIFT'),
   CancellationBatches: only('DRIFT'),
+  // Schemabrytande aktivitet (20270101090000): an avbokning's, so Drift's.
+  ScheduleActivities: only('DRIFT'),
+  ScheduleActivityLessons: only('DRIFT'),
+  ScheduleActivityTeachers: only('DRIFT'),
   CoverSettings: only('DRIFT'),
   LeaveRequests: only('DRIFT'),
   // Lektionslogg (20261203090000): rektor removes a log that should not
