@@ -37,6 +37,18 @@ const APPLY_TIMEOUT_MS = 120_000;
 
 const NOTES: ReadonlySet<ChangeOp> = new Set(['CONFLICT', 'INFO']);
 /**
+ * Skyddad identitet (review of #263, N2): a protected register person the
+ * run matched by address alone, to a row with another name or to several
+ * rows. The mark is proposed deselected, since an address is reused, but the
+ * person stays in the files until somebody decides, so the proposal holds
+ * the night's run as a selected change does: the run waits for an
+ * administrator (PROTECTION_REVIEW) instead of closing and taking the
+ * proposal with it.
+ */
+const PROTECTION_DECISIONS: ReadonlySet<string> = new Set(['PROTECTION_ADDRESS_NAME_DIFFERS', 'PROTECTION_ADDRESS_AMBIGUOUS']);
+export const awaitsProtectionDecision = (change: { entity: string; op: string; applied: boolean; conflictCode: string | null }): boolean =>
+  change.entity === 'PROTECTION' && change.op === 'ADD' && !change.applied && PROTECTION_DECISIONS.has(change.conflictCode ?? '');
+/**
  * The applied changes that may give a mentor a pending leave request
  * (Mentorns ledighetsbeslut): a pupil's class move, and a reactivation, of a
  * pupil or a teacher, which a relink also is (apply.ts sets isActive).
@@ -385,12 +397,16 @@ export class Ss12000SyncService {
         // next run, and one the admin keeps declining must not stop the
         // cursors for good.
         const holds = (change: { entity: string }) => change.entity !== 'ORGANISATION';
-        const pendingForAdmin = changes.some(
-          (change) => change.selected && !change.applied && !NOTES.has(change.op) && !change.autoApplicable && holds(change),
-        );
+        const protectionWaits = changes.some(awaitsProtectionDecision);
+        const pendingForAdmin =
+          protectionWaits ||
+          changes.some((change) => change.selected && !change.applied && !NOTES.has(change.op) && !change.autoApplicable && holds(change));
         // Nothing the night may make, and something the admin must: it waits.
         if (auto.length === 0 && pendingForAdmin) {
-          await tx.ss12000SyncRun.update({ where: { id: runId }, data: { autoApplyBlockedReason: 'REVIEW_REQUIRED' } });
+          await tx.ss12000SyncRun.update({
+            where: { id: runId },
+            data: { autoApplyBlockedReason: protectionWaits ? 'PROTECTION_REVIEW' : 'REVIEW_REQUIRED' },
+          });
           return 'NOTHING';
         }
         const stamp = new Date();
@@ -403,9 +419,9 @@ export class Ss12000SyncService {
         if (this.notifications && auto.some((change) => applied.has(change.id) && MOVES_A_MENTOR.has(`${change.entity}:${change.op}`))) {
           told = await askNewMentors(tx);
         }
-        const remaining = changes.some(
-          (change) => change.selected && !change.applied && !NOTES.has(change.op) && !applied.has(change.id) && holds(change),
-        );
+        const remaining =
+          protectionWaits ||
+          changes.some((change) => change.selected && !change.applied && !NOTES.has(change.op) && !applied.has(change.id) && holds(change));
         const errors = [...asArray(run.errors), ...outcome.skipped.map(({ code, entity, externalId }) => ({ code, entity, externalId }))].slice(0, 200);
         if (!remaining) {
           await tx.ss12000SyncRun.update({
@@ -442,6 +458,8 @@ export class Ss12000SyncService {
             autoApplied: true,
             appliedAt: stamp,
             basisHash: basisHash(after, source),
+            // What the night made is made; the run says what still waits.
+            ...(protectionWaits ? { autoApplyBlockedReason: 'PROTECTION_REVIEW' } : {}),
             errors: errors as Prisma.InputJsonValue,
             counts: { ...asObject(run.counts), applied: { auto: outcome.applied.length, skipped: outcome.skipped.length } } as Prisma.InputJsonValue,
           },

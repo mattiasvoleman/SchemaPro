@@ -29,6 +29,9 @@ import { makeTestTls } from './utils/test-tls';
  *      proposed unticked and never marked at night; a mark an administrator
  *      removed does not come back; once the address is corrected the sync
  *      proposes lifting the mark, unticked, and a tick lifts it for good;
+ *   N2 (round 3) names compare loosely: José García in the register marks
+ *      Jose Garcia at night; Kalle for Karl is proposed and the night waits
+ *      for the administrator (PROTECTION_REVIEW) with the proposal there;
  *   F8 no finished run, log line or count names a protected person;
  *   and the history says who set and removed each mark (M3).
  *
@@ -45,6 +48,8 @@ const P1 = 'bbbbbbbb-6300-4000-8000-000000000001';
 const P2 = 'bbbbbbbb-6300-4000-8000-000000000002';
 const P3 = 'bbbbbbbb-6300-4000-8000-000000000003';
 const P4 = 'bbbbbbbb-6300-4000-8000-000000000004';
+const P5 = 'bbbbbbbb-6300-4000-8000-000000000005';
+const P6 = 'bbbbbbbb-6300-4000-8000-000000000006';
 const T1 = 'dddddddd-6300-4000-8000-000000000001';
 const C7A = 'eeeeeeee-6300-4000-8000-00000000007a';
 const D1 = 'ffffffff-6300-4000-8000-000000000001';
@@ -104,6 +109,8 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
         WHERE "runId" = $1 AND entity = 'PROTECTION' AND "conflictCode" LIKE 'PROTECTION\\_ADDRESS\\_%' ORDER BY seq`,
       [runId],
     );
+  const reasonOf = async (runId: string) =>
+    (await one<{ reason: string | null }>(`SELECT "autoApplyBlockedReason" AS reason FROM "Ss12000SyncRuns" WHERE id = $1`, [runId])).reason;
   const world = (p1: string, extra: unknown[] = []) => {
     provider.world = {
       organisations: [s1Organisation(ORG, 'Skyddad synk', '63000001')],
@@ -272,7 +279,9 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
     world('Ingen', [p2, p3, sara]);
 
     let run = await night();
-    expect(run.status).toBe('APPLIED');
+    // The night makes no mark on a name that differs, and waits for the administrator (N2).
+    expect(run.status).toBe('DIFF_READY');
+    expect(await reasonOf(run.id)).toBe('PROTECTION_REVIEW');
     expect(await addressChanges(run.id)).toEqual([
       expect.objectContaining({ op: 'ADD', selected: false, auto: false, applied: false, code: 'PROTECTION_ADDRESS_NAME_DIFFERS' }),
     ]);
@@ -321,6 +330,41 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
     expect(await marksOf(handTyped)).toEqual(['SS12000']);
   });
 
+  it('N2: names compare loosely, and a name that still differs holds the night with its proposal for the administrator', async () => {
+    const student = async (email: string, first: string, last: string) =>
+      (await one<{ id: string }>(
+        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+         VALUES ($1, $2, $3, $4, 'STUDENT', gen_random_uuid(), true, now() - interval '1 day') RETURNING id`,
+        [school, email, first, last],
+      )).id;
+    // Typed in by hand without accents; and with the call name the school uses.
+    const jose = await student('jose.garcia@ekskolan.example', 'Jose', 'Garcia');
+    const kalle = await student('karl.berg@ekskolan.example', 'Kalle', 'Berg');
+    const p2 = s1Pupil(P2, 'Hand', 'Skriven', 'p2.hand@ekskolan.example', ORG, { securityMarking: 'Skyddad folkbokföring' });
+    const p3 = s1Pupil(P3, 'Ny', 'Skyddad', 'p3.ny@ekskolan.example', ORG, { securityMarking: 'Sekretessmarkering' });
+    const sara = s1Pupil(P4, 'Sara', 'Skydd', 'delad@ekskolan.example', ORG, { securityMarking: 'Sekretessmarkering' });
+    const p5 = s1Pupil(P5, 'José', 'García', 'jose.garcia@ekskolan.example', ORG, { securityMarking: 'Skyddad folkbokföring' });
+    const p6 = s1Pupil(P6, 'Karl', 'Berg', 'karl.berg@ekskolan.example', ORG, { securityMarking: 'Sekretessmarkering' });
+    world('Ingen', [p2, p3, sara, p5, p6]);
+
+    let run = await night();
+    expect(await marksOf(jose)).toEqual(['SS12000']);
+    expect(await marksOf(kalle)).toEqual([]);
+    // The night made what it could and waits: the proposal is there in the morning.
+    expect(run.status).toBe('DIFF_READY');
+    expect(await reasonOf(run.id)).toBe('PROTECTION_REVIEW');
+    const [add] = await addressChanges(run.id);
+    expect(add).toMatchObject({ op: 'ADD', selected: false, applied: false, code: 'PROTECTION_ADDRESS_NAME_DIFFERS' });
+
+    await sync.apply(admin, run.id, { basisHash: run.basisHash, select: [add!.id] });
+    expect(await marksOf(kalle)).toEqual(['SS12000']);
+    run = await night();
+    expect(await addressChanges(run.id)).toEqual([]);
+    expect(await reasonOf(run.id)).not.toBe('PROTECTION_REVIEW');
+    expect(await marksOf(jose)).toEqual(['SS12000']);
+    expect(await marksOf(kalle)).toEqual(['SS12000']);
+  });
+
   it('F8: no finished run, log line or count names a protected person', async () => {
     const held = await one<{ n: number }>(
       `SELECT count(*)::int AS n FROM "Ss12000SyncChanges" c JOIN "Ss12000SyncRuns" r ON r.id = c."runId"
@@ -329,8 +373,8 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
       [school],
     );
     expect(held.n).toBe(0);
-    expect(lines.filter((line) => /Pia|Skriven|Skyddad folk|p1\.ett|p2\.hand|p3\.ny|Sara|delad@/.test(line))).toEqual([]);
+    expect(lines.filter((line) => /Pia|Skriven|Skyddad folk|p1\.ett|p2\.hand|p3\.ny|Sara|delad@|Jos[eé]|Garc[ií]a|Karl|Kalle|karl\.berg/.test(line))).toEqual([]);
     const runs = JSON.stringify(await all(`SELECT counts, errors FROM "Ss12000SyncRuns" WHERE "schoolId" = $1`, [school]));
-    for (const id of [P1, P2, P3, P4]) expect(runs).not.toContain(id);
+    for (const id of [P1, P2, P3, P4, P5, P6]) expect(runs).not.toContain(id);
   });
 });

@@ -347,6 +347,55 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     expect(only(done.changes, 'PROTECTION')).toEqual([]);
   });
 
+  // The reviewer's 26 name variants (#263, round 3) and those that kill X3, X4 and X9: a local row
+  // unlinked, sharing the address with a protected register person. AUTO: marked at night.
+  const NAME_CASES: Array<[string, { first: string; last: string }, { given: string; middle?: string; family: string }, 'AUTO' | 'PROPOSED']> = [
+    ['same', { first: 'Anna', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['case: lower vs Title', { first: 'anna', last: 'berg' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['case: UPPER vs Title', { first: 'ANNA', last: 'BERG' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['Swedish letters, case: ÅSA/åsa', { first: 'ÅSA', last: 'STRÖM' }, { given: 'åsa', family: 'ström' }, 'AUTO'],
+    ['accent: precomposed vs decomposed (NFC/NFD), X3', { first: 'José', last: 'García' }, { given: 'José', family: 'García' }, 'AUTO'],
+    ['accent folded: Jose/José', { first: 'Jose', last: 'Garcia' }, { given: 'José', family: 'García' }, 'AUTO'],
+    ['accent folded: Asa/Åsa', { first: 'Asa', last: 'Strom' }, { given: 'Åsa', family: 'Ström' }, 'AUTO'],
+    ['accent only one name: Rene/René', { first: 'Rene', last: 'Dubois' }, { given: 'René', family: 'Dubois' }, 'AUTO'],
+    ['hyphen vs space, first: Anna-Lena/Anna Lena', { first: 'Anna Lena', last: 'Berg' }, { given: 'Anna-Lena', family: 'Berg' }, 'AUTO'],
+    ['hyphen vs space, first (reverse)', { first: 'Anna-Lena', last: 'Berg' }, { given: 'Anna Lena', family: 'Berg' }, 'AUTO'],
+    ['double surname: space vs hyphen', { first: 'Anna', last: 'Berg Svensson' }, { given: 'Anna', family: 'Berg-Svensson' }, 'AUTO'],
+    ['double surname: order swapped', { first: 'Anna', last: 'Svensson Berg' }, { given: 'Anna', family: 'Berg Svensson' }, 'AUTO'],
+    ['double surname: only one half locally', { first: 'Anna', last: 'Berg' }, { given: 'Anna', family: 'Berg Svensson' }, 'AUTO'],
+    ['spaces: leading/trailing/double', { first: '  Anna ', last: ' Berg  ' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['spaces: inner double, X4', { first: 'Anna  Lena', last: 'Berg' }, { given: 'Anna Lena', family: 'Berg' }, 'AUTO'],
+    ['spaces: NBSP and tab, X4', { first: 'Anna Lena', last: 'Berg\tSvensson' }, { given: 'Anna Lena', family: 'Berg Svensson' }, 'AUTO'],
+    ['spaces: zero-width space inside', { first: 'An​na', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['middle name in the first name locally', { first: 'Anna Maria', last: 'Berg' }, { given: 'Anna', middle: 'Maria', family: 'Berg' }, 'AUTO'],
+    ['all given names locally, call name in register', { first: 'Karl Johan', last: 'Berg' }, { given: 'Karl', family: 'Berg' }, 'AUTO'],
+    ['call name locally, all given names in register', { first: 'Johan', last: 'Berg' }, { given: 'Karl Johan', family: 'Berg' }, 'AUTO'],
+    ['the middle name locally', { first: 'Maria', last: 'Berg' }, { given: 'Anna', middle: 'Maria', family: 'Berg' }, 'AUTO'],
+    ['ß vs ss', { first: 'Anna', last: 'WEISS' }, { given: 'Anna', family: 'Weiß' }, 'AUTO'],
+    ['compatibility ligature ﬁ', { first: 'Sofia', last: 'Berg' }, { given: 'Soﬁa', family: 'Berg' }, 'AUTO'],
+    ["apostrophe: O'Brien/OBrien", { first: 'Sean', last: 'OBrien' }, { given: 'Sean', family: 'O’Brien' }, 'AUTO'],
+    ['different person, identical name (namesake)', { first: 'Anna', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['nickname', { first: 'Kalle', last: 'Berg' }, { given: 'Karl', family: 'Berg' }, 'PROPOSED'],
+    ['one-letter typo', { first: 'Ana', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+    ['one-letter surname difference: Svenson/Svensson', { first: 'Anna', last: 'Svenson' }, { given: 'Anna', family: 'Svensson' }, 'PROPOSED'],
+    ['first/last swapped locally', { first: 'Berg', last: 'Anna' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+    ['same given name, another family name, X9', { first: 'Anna', last: 'Lund' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+    ['another given name, same family name (a sibling)', { first: 'Erik', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+    ['an empty first name locally', { first: '', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+  ];
+
+  it.each(NAME_CASES)('compares names loosely for a mark by address: %s (review of #263, N2)', (_label, local, register, expected) => {
+    const person = marked(1, { givenName: register.given, middleName: register.middle ?? null, familyName: register.family });
+    const row = user(1, { email: 's1@skola.se', firstName: local.first, lastName: local.last });
+    const [mark, ...rest] = only(diff(roster({ people: [person] }), slice({ users: [row] })).changes, 'PROTECTION');
+    expect(rest).toEqual([]);
+    expect(mark).toMatchObject(
+      expected === 'AUTO'
+        ? { op: 'ADD', selected: true, autoApplicable: true, conflictCode: null }
+        : { op: 'ADD', selected: false, autoApplicable: false, conflictCode: 'PROTECTION_ADDRESS_NAME_DIFFERS' },
+    );
+  });
+
   it('proposes the mark deselected, with a code, when only the address agrees: addresses are reused (review of #263, N1)', () => {
     // Lisa holds the address the register now gives a protected pupil, Skyddad Elev1.
     const result = diff(roster({ people: [marked(1)] }), slice({ users: [user(1, { email: 's1@skola.se', firstName: 'Lisa', lastName: 'Lund' })] }));

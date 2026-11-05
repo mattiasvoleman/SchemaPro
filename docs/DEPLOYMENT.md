@@ -1123,9 +1123,11 @@ Walk the full product loop once, in order:
   since the last run, so a person the register already protected is marked
   only when a full run reads them, and the night runs one every seventh day
   (or as the school set it); until then the files still name that person. A
-  mark matched on the e-mail address alone (the names differ, or several rows
-  share it) is proposed unselected and never made at night: look for
-  `PROTECTION_ADDRESS_*` in the review. **A rollback of the API past this
+  mark matched on the e-mail address alone (the names differ even loosely
+  compared, or several rows share it) is proposed unselected and never made
+  at night, and it holds the night's run open for an administrator
+  (`autoApplyBlockedReason` `PROTECTION_REVIEW`, which the sync history
+  states without a name): look for `PROTECTION_ADDRESS_*` in the review. **A rollback of the API past this
   release once a sync has run**: an
   older API cannot read a run that holds a `PROTECTION` change (the enum value
   is unknown to its client), so the SS12000 history and review answer 500.

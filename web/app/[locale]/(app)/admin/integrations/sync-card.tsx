@@ -239,7 +239,9 @@ function RunRow({
               ? t("autoBlockedStale")
               : run.autoApplyBlockedReason === "REVIEW_REQUIRED"
                 ? t("autoBlockedReview")
-                : t("autoBlocked")}
+                : run.autoApplyBlockedReason === "PROTECTION_REVIEW"
+                  ? t("autoProtectionReview")
+                  : t("autoBlocked")}
           </p>
         ) : null}
         {run.errors.length > 0 ? (

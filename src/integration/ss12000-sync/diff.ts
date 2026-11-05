@@ -43,10 +43,13 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  *    RELINK (after.byAddress), whether or not the link is made: a person
  *    typed in by hand, read from a file or imported before the register
  *    protected them is marked by the first run that finds them. By address
- *    it is automatic only when the given and family names agree too; else,
- *    and for each of two rows sharing the address, it is proposed
- *    deselected with a code (PROTECTION_ADDRESS_NAME_DIFFERS,
- *    PROTECTION_ADDRESS_AMBIGUOUS), since addresses are reused. It names the
+ *    it is automatic only when the names agree too, loosely (namesAgree:
+ *    accents, hyphens, order and a call name do not part them); else, and
+ *    for each of two rows sharing the address, it is proposed deselected
+ *    with a code (PROTECTION_ADDRESS_NAME_DIFFERS,
+ *    PROTECTION_ADDRESS_AMBIGUOUS), since addresses are reused. Such a
+ *    proposal holds the night's run for an administrator, as a selected
+ *    change does (ss12000-sync.service.ts, autoApply). It names the
  *    person in its after alone (the minimisation nulls it): externalId and
  *    localId stay empty, so a finished run says how many marks it set, never
  *    whose. A person this apply creates, links or relinks is marked by the
@@ -257,13 +260,40 @@ export function pickEmail(person: S1Person, role: LocalRole): string | null {
   return EMAIL.test(chosen) && chosen.length <= 254 ? chosen : null;
 }
 
-/** A name as compared: NFC, trimmed, single-spaced, case-folded. */
-const nameKey = (value: string | null | undefined): string =>
-  (value ?? '').normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('sv');
+/**
+ * A name's parts as the marking of a protected identity compares them:
+ * compatibility forms taken apart (a ligature, a non-breaking space), accents
+ * and zero-width characters dropped, apostrophes dropped, ß as ss, case
+ * folded, and split at anything not a letter or digit (a space, a hyphen).
+ * "José García" and "Jose Garcia", "Anna-Lena" and "anna lena" give the
+ * same parts.
+ */
+function nameParts(value: string | null | undefined): Set<string> {
+  const folded = (value ?? '')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\p{Cf}/gu, '')
+    .replace(/['\u2019\u02BC`]/g, '')
+    .toLocaleLowerCase('sv')
+    .replace(/ß/g, 'ss');
+  return new Set(folded.split(/[^\p{L}\p{N}]+/u).filter((part) => part.length > 0));
+}
 
-/** Whether a local row and a source person have the same given and family name. */
-function sameName(local: { firstName: string; lastName: string }, person: S1Person): boolean {
-  return nameKey(local.firstName) === nameKey(person.givenName) && nameKey(local.lastName) === nameKey(person.familyName);
+const overlaps = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean => [...a].some((part) => b.has(part));
+
+/**
+ * Whether a local row's name agrees with a protected source person's, for a
+ * mark matched on the address (review of #263, N2). Missing a protected
+ * person keeps them in the files, which weighs more than marking one too
+ * many, so it is loose: one given name in common (the register's given and
+ * middle names against the row's first names, so a call name agrees with all
+ * given names) and one family name part in common (a double surname with a
+ * hyphen or in another order, or half of it). Another given name, a nickname
+ * or a typo still differs: the mark is then proposed for a decision.
+ */
+function namesAgree(local: { firstName: string; lastName: string }, person: S1Person): boolean {
+  const given = new Set([...nameParts(person.givenName), ...nameParts(person.middleName)]);
+  return overlaps(nameParts(local.firstName), given) && overlaps(nameParts(local.lastName), nameParts(person.familyName));
 }
 
 function dutyClass(roles: DutyRole[]): 'TEACHING' | 'REVIEW' | 'NON_TEACHING' {
@@ -424,7 +454,7 @@ export function computeDiff(input: DiffInput): DiffResult {
   const plans = new Map<string, Plan>();
   // A protected source person the run matches by address to a local row it
   // does not link (yet): the mark's ground (see PROTECTED IDENTITY above).
-  const addressMatches = new Map<string, { localId: string; email: string; sameName: boolean }>();
+  const addressMatches = new Map<string, { localId: string; email: string; namesAgree: boolean }>();
   const ambiguousMatches = new Map<string, { localIds: string[]; email: string }>();
   for (const user of local.users) if (user.ss12000Id) plans.set(user.ss12000Id, { localId: user.id, role: user.role, linked: true });
 
@@ -538,7 +568,7 @@ export function computeDiff(input: DiffInput): DiffResult {
         note('PERSON', 'CONFLICT', 'PERSON_ROLE_MISMATCH', person.id, match.id, { email, role: primary, localRole: match.role, ...display }, isProt);
         continue;
       }
-      if (isProt) addressMatches.set(person.id, { localId: match.id, email, sameName: sameName(match, person) });
+      if (isProt) addressMatches.set(person.id, { localId: match.id, email, namesAgree: namesAgree(match, person) });
       if (!match.isActive) {
         push({
           entity: 'PERSON', op: 'RELINK', externalId: person.id, localId: match.id,
@@ -978,13 +1008,14 @@ export function computeDiff(input: DiffInput): DiffResult {
     // The one row the run matched by address (a LINK or RELINK it proposes):
     // marked whether or not the link is made, since a person typed in by
     // hand or read from a file is in Rastra all the same; at night only when
-    // the names agree too, since an address is reused (a sibling, a former
-    // pupil). Two rows with the address: each proposed, none automatic.
+    // the names agree too (namesAgree), since an address is reused (a
+    // sibling, a former pupil). Two rows with the address: each proposed,
+    // none automatic.
     const match = addressMatches.get(ext);
     if (match) {
       addressed.add(match.localId);
       if (!syncMarked.has(match.localId)) {
-        mark('ADD', ext, match.localId, { email: match.email, code: match.sameName ? null : 'PROTECTION_ADDRESS_NAME_DIFFERS' });
+        mark('ADD', ext, match.localId, { email: match.email, code: match.namesAgree ? null : 'PROTECTION_ADDRESS_NAME_DIFFERS' });
       }
       continue;
     }
