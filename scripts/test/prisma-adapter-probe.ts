@@ -141,6 +141,7 @@ import { scheduleCandidateChecks } from './probe-schedule-candidates';
 import { sweepTioarigSchool, tioarigChecks } from './probe-tioarig';
 import { lessonLogChecks, sweepLessonLogSchool } from './probe-lesson-log';
 import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
+import { coverRequestsChecks, sweepCoverRequestsSchool } from './probe-cover-requests';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
@@ -5916,6 +5917,7 @@ async function runChecks(
   await tioarigChecks(owner, api, MARKER, check);
   await lessonLogChecks(owner, api, MARKER, check);
   await rastvaktChecks(owner, api, MARKER, check);
+  await coverRequestsChecks(owner, api, MARKER, check);
   await elevlistanChecks(owner, api, MARKER, check);
   await massvalChecks(owner, api, MARKER, check);
 }
@@ -6403,6 +6405,7 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // Lektionslogg's school, likewise.
   await sweepLessonLogSchool(owner, MARKER);
   await sweepRastvaktSchool(owner, MARKER);
+  await sweepCoverRequestsSchool(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
   await sweepElevlistanSchool(owner, MARKER);
   // Massåtgärder's school, likewise.

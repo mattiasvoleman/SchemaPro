@@ -43,6 +43,7 @@ import {
 } from './cover-decisions';
 import { rethrowCoverError } from './cover-errors';
 import { sendNotices, settleNotices } from './cover-notices';
+import { readBoardParts, type BoardConfirmation, type BoardRequest } from './cover-request-reads';
 import { passSummaryOf, type PassBoardItem, type PassSummary } from './supervision-board';
 import { readPassBoard } from './supervision-cover-reads';
 import { sendPassNotices, settlePassNotices, type PassNotice } from './supervision-notices';
@@ -115,6 +116,14 @@ export interface BoardResponse {
    */
   supervision: PassBoardItem[];
   supervisionSummary: PassSummary;
+  /**
+   * The vikarieförfrågningar that ask for a lesson of the window, and what
+   * each colleague answered (Vikariefrågan, 20270102091000;
+   * cover-request-reads.ts). Ids and answers: never a reason.
+   */
+  requests: BoardRequest[];
+  /** The vikarie's confirmations of the window's passes. */
+  confirmations: BoardConfirmation[];
 }
 
 /** One pair, read inside a write's transaction after its locks. */
@@ -206,6 +215,15 @@ export class CoverService {
       );
       const lessonIds = [...new Set(items.map((item) => item.lessonId))];
       const noted = await substituteNotedLessons(tx, lessonIds);
+      const { requests, confirmations } = await readBoardParts(tx, lessonIds, now);
+      // Whom the window's questions went to and what each answered: work
+      // behaviour of named people, read as the counter's figures are.
+      await recordRead(
+        tx,
+        'EMPLOYMENT',
+        requests.flatMap((request) => request.recipients.map((recipient) => recipient.userId)),
+        user.channel,
+      );
       return {
         from,
         to,
@@ -220,6 +238,8 @@ export class CoverService {
         })),
         supervision,
         supervisionSummary: passSummaryOf(supervision),
+        requests,
+        confirmations,
       };
     });
   }

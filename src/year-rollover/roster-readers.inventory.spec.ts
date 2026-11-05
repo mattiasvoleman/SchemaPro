@@ -415,6 +415,10 @@ describe('the roster-reader inventory', () => {
       // running year, so a year two steps ahead answering R6's 409 there is
       // the same answer the old vikarie PATCH gives.
       //
+      // Vikariefrågan's yes (CoverRequestsTeacherController.accept) is that
+      // same SUBSTITUTE decision, placed as the administrator who asked, so it
+      // asks behörighet through assignInTransaction and answers the same 409.
+      //
       // Planerat mot timplan's pupil read for one class
       // (TimplanCoverageController.plannedPupils) reads the year's rosters as
       // the overview does and answers for one class, so it answers the 409 the
@@ -433,6 +437,7 @@ describe('the roster-reader inventory', () => {
         'CoverController.candidates',
         'CoverController.decide',
         'CoverController.proposal',
+        'CoverRequestsTeacherController.accept',
         'ImportController.importRequirements',
         'LunchSittingsController.place',
         'MasterLessonsController.create',

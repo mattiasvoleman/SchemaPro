@@ -636,6 +636,79 @@ describe('CoverService', () => {
     expect(JSON.stringify(board)).not.toMatch(/"reason(Id)?":/);
   });
 
+  it('the board shows the questions asked about its lessons and what each colleague answered, ids and answers only, and records whom it names', async () => {
+    tx.$queryRaw.mockImplementation((statement: unknown) =>
+      Promise.resolve(
+        noteQuery(statement)
+          ? []
+          : [
+              {
+                absenceId: ABSENCE,
+                absentTeacherId: A,
+                lessonId: LESSON,
+                isLive: true,
+                decisionId: null,
+                decision: null,
+                decidedAt: null,
+                removedTeachers: [],
+                date: '2026-10-14',
+                startsAt: START,
+                endsAt: END,
+                subjectId: 'subj',
+                studentGroupId: 'grp',
+                roomId: null,
+                lessonStatus: 'SCHEDULED',
+                cancelCause: null,
+                absenceStartsAt: new Date('2026-10-13T22:00:00.000Z'),
+                absenceEndsAt: new Date('2026-10-14T22:00:00.000Z'),
+                absenceStatus: 'ACTIVE',
+                teachers: [{ teacherId: A, role: 'LEAD' }],
+                extraGroupIds: [],
+                coveringSubstituteIds: [],
+              },
+            ],
+      ),
+    );
+    tx.teacherAbsence.findMany.mockResolvedValue([]);
+    tx.coverRequest.findMany.mockResolvedValue([
+      {
+        id: 'req-1',
+        status: 'OPEN',
+        createdAt: NOW,
+        expiresAt: new Date(NOW.getTime() + 3_600_000),
+        requestedByUserId: B,
+        acceptedByUserId: null,
+        lessons: [{ absenceId: ABSENCE, calendarLessonId: LESSON }],
+        recipients: [
+          { userId: S, answer: 'PENDING', answeredAt: null },
+          { userId: T, answer: 'DECLINED', answeredAt: NOW },
+        ],
+      },
+    ]);
+    tx.coverConfirmation.findMany.mockResolvedValue([]);
+    const board = await cover.board('2026-10-14', '2026-10-14', testUser({ channel: 'WEB' }));
+    expect(board.requests).toEqual([
+      {
+        id: 'req-1',
+        status: 'OPEN',
+        createdAt: NOW.toISOString(),
+        expiresAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+        requestedByUserId: B,
+        acceptedByUserId: null,
+        pairs: [{ absenceId: ABSENCE, lessonId: LESSON }],
+        recipients: [
+          { userId: S, answer: 'PENDING', answeredAt: null },
+          { userId: T, answer: 'DECLINED', answeredAt: NOW.toISOString() },
+        ],
+      },
+    ]);
+    expect(board.confirmations).toEqual([]);
+    expect(tx.coverRequest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { lessons: { some: { calendarLessonId: { in: [LESSON] } } } } }),
+    );
+    expect(recordedReads(tx)).toContainEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [S, T] });
+  });
+
   it('the board records the absent teacher of a pair whose absence has ended too, and an empty board records nothing', async () => {
     tx.$queryRaw.mockResolvedValue([]);
     tx.teacherAbsence.findMany.mockResolvedValue([]);

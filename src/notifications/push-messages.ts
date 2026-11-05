@@ -18,7 +18,9 @@ import type { NotificationKind } from './notifications.service';
  * (SUPERVISION_COVER, _WITHDRAWN) says when, and not where: an area's name is
  * the school's own words.
  *
- * TEACHER_ABSENCE_REPORTED has no text here: it is never pushed. An
+ * TEACHER_ABSENCE_REPORTED has no text here: it is never pushed. A request
+ * to cover (COVER_REQUESTED) says when, never which lesson or who is away; the
+ * end of one (COVER_REQUEST_CLOSED) is pushed as TAKEN or WITHDRAWN. An
  * avbokning digest (CANCELLATION_DIGEST) says how many of the person's
  * lessons and over which days, never the avbokning's name ("Prao åk 9" is
  * free text the admin typed); its reversal is a kind of its own.
@@ -40,9 +42,11 @@ export type PushLocale = 'sv' | 'en';
  * avbokning and its reversal.
  */
 export type PushKind =
-  | Exclude<NotificationKind, 'TEACHER_ABSENCE_REPORTED'>
+  | Exclude<NotificationKind, 'TEACHER_ABSENCE_REPORTED' | 'COVER_REQUEST_CLOSED'>
   | 'LESSON_SUBSTITUTE_COVER'
-  | 'CANCELLATION_DIGEST_REVERSED';
+  | 'CANCELLATION_DIGEST_REVERSED'
+  | 'COVER_REQUEST_TAKEN'
+  | 'COVER_REQUEST_WITHDRAWN';
 
 export interface PushText {
   title: string;
@@ -154,6 +158,30 @@ const SV: Record<PushKind, Template> = {
     bare: 'Ett rastvaktspass är avbokat.',
     many: '{count} rastvaktspass är avbokade.',
   },
+  COVER_REQUESTED: {
+    title: 'Vikariefråga',
+    one: 'Kan du vikariera {when}? Svara i appen.',
+    bare: 'Kan du vikariera? Svara i appen.',
+    many: '{count} vikariefrågor väntar på svar.',
+  },
+  COVER_REQUEST_ACCEPTED: {
+    title: 'Vikarie tillsatt',
+    one: 'En kollega har tackat ja till passet {when}.',
+    bare: 'En kollega har tackat ja till ett vikariepass.',
+    many: '{count} vikariepass har fått en vikarie.',
+  },
+  COVER_REQUEST_TAKEN: {
+    title: 'Uppdraget är tillsatt',
+    one: 'Passet {when} är redan tillsatt av en kollega.',
+    bare: 'Ett pass är redan tillsatt av en kollega.',
+    many: '{count} pass är redan tillsatta.',
+  },
+  COVER_REQUEST_WITHDRAWN: {
+    title: 'Vikariefrågan indragen',
+    one: 'Frågan om passet {when} är indragen. Du behöver inte svara.',
+    bare: 'En vikariefråga är indragen. Du behöver inte svara.',
+    many: '{count} vikariefrågor är indragna. Du behöver inte svara.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lektioner blir av',
     one: ({ lessons }) =>
@@ -256,6 +284,30 @@ const EN: Record<PushKind, Template> = {
     bare: 'A break duty is withdrawn.',
     many: '{count} break duties are withdrawn.',
   },
+  COVER_REQUESTED: {
+    title: 'Cover request',
+    one: 'Can you cover {when}? Answer in the app.',
+    bare: 'Can you cover a lesson? Answer in the app.',
+    many: '{count} cover requests are waiting for an answer.',
+  },
+  COVER_REQUEST_ACCEPTED: {
+    title: 'Cover found',
+    one: 'A colleague has said yes to the lesson {when}.',
+    bare: 'A colleague has said yes to a cover lesson.',
+    many: '{count} cover lessons have a substitute.',
+  },
+  COVER_REQUEST_TAKEN: {
+    title: 'Already covered',
+    one: 'The lesson {when} is already covered by a colleague.',
+    bare: 'A lesson is already covered by a colleague.',
+    many: '{count} lessons are already covered.',
+  },
+  COVER_REQUEST_WITHDRAWN: {
+    title: 'Cover request withdrawn',
+    one: 'The question about the lesson {when} is withdrawn.',
+    bare: 'A cover request is withdrawn.',
+    many: '{count} cover requests are withdrawn.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lessons back on',
     one: ({ lessons }) =>
@@ -274,6 +326,7 @@ export function pushKindOf(type: NotificationKind, meta: Record<string, unknown>
   if (type === 'TEACHER_ABSENCE_REPORTED') return null;
   if (type === 'LESSON_SUBSTITUTE' && meta['cover'] === true) return 'LESSON_SUBSTITUTE_COVER';
   if (type === 'CANCELLATION_DIGEST' && meta['reversed'] === true) return 'CANCELLATION_DIGEST_REVERSED';
+  if (type === 'COVER_REQUEST_CLOSED') return meta['reason'] === 'WITHDRAWN' ? 'COVER_REQUEST_WITHDRAWN' : 'COVER_REQUEST_TAKEN';
   return type;
 }
 

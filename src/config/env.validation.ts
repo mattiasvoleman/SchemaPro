@@ -218,6 +218,14 @@ export class EnvironmentVariables {
   GALLRING_BACKGROUND: string = 'on';
 
   /**
+   * The expiry of vikarieförfrågningar (src/cover/cover-requests.job.ts). `on`
+   * unless set to `off`; the test setup turns it off. A request past its time
+   * cannot be answered either way: the job settles the stored status.
+   */
+  @IsIn(['on', 'off'])
+  COVER_REQUESTS_BACKGROUND: string = 'on';
+
+  /**
    * Schemaförslag (src/optimization/schedule-candidates.service.ts): the solve
    * budget, in seconds, of every candidate, KEEP's included, so the emphases
    * are compared at one budget (the engine takes the smaller of this and its

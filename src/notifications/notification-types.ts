@@ -17,6 +17,13 @@ import type { NotificationKind } from './notifications.service';
  * Staff are booked for an absent rastvakt's pass and told when it is off
  * (SUPERVISION_COVER, SUPERVISION_COVER_WITHDRAWN, Rastvakt i vardagen): both
  * listed, both always sent.
+ *
+ * Vikariefrågan (D4): a teacher is asked to cover (COVER_REQUESTED) and told
+ * when the lesson went to somebody else or the question was taken back
+ * (COVER_REQUEST_CLOSED); the administrator who asked is told who said yes
+ * (COVER_REQUEST_ACCEPTED). All three are choices: the in-app row is always
+ * written, and a colleague who would rather not be pushed still finds the
+ * question in the app.
  */
 
 export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
@@ -35,6 +42,9 @@ export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
   'LEAVE_REQUESTED',
   'SUPERVISION_COVER',
   'SUPERVISION_COVER_WITHDRAWN',
+  'COVER_REQUESTED',
+  'COVER_REQUEST_ACCEPTED',
+  'COVER_REQUEST_CLOSED',
 ];
 
 type ChoosingRole = 'GUARDIAN' | 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN';
@@ -66,8 +76,8 @@ const LESSONS: readonly NotificationKind[] = [
 export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = {
   GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
-  TEACHER: [...STAFF, 'LEAVE_REQUESTED'],
-  SCHOOL_ADMIN: STAFF,
+  TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED'],
+  SCHOOL_ADMIN: [...STAFF, 'COVER_REQUEST_ACCEPTED'],
 };
 
 /**

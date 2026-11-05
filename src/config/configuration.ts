@@ -68,6 +68,11 @@ export interface GallringConfig {
   background: boolean;
 }
 
+export interface CoverRequestsConfig {
+  /** The 5-minute expiry of vikarieförfrågningar (COVER_REQUESTS_BACKGROUND, default on). */
+  background: boolean;
+}
+
 /** Schemaförslag (src/optimization/schedule-candidates.service.ts). */
 export interface CandidatesConfig {
   /** CANDIDATE_MAX_SECONDS: the solve budget of every candidate, KEEP's included, 5..120 (30). */
@@ -102,6 +107,7 @@ export interface Configuration {
   push: PushConfig;
   ss12000: Ss12000Config;
   gallring: GallringConfig;
+  coverRequests: CoverRequestsConfig;
   candidates: CandidatesConfig;
 }
 
@@ -164,6 +170,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     gallring: {
       background: env.GALLRING_BACKGROUND !== 'off',
+    },
+    coverRequests: {
+      background: env.COVER_REQUESTS_BACKGROUND !== 'off',
     },
     candidates: {
       maxSeconds: env.CANDIDATE_MAX_SECONDS ?? DEFAULT_CANDIDATES_CONFIG.maxSeconds,

@@ -101,6 +101,12 @@ enum NotificationType {
   SUPERVISION_COVER
   /// A booked rastvaktspass no longer needed: the decision undone or handed to somebody else (20261210090000).
   SUPERVISION_COVER_WITHDRAWN
+  /// A colleague is asked to cover lessons: the lessons and the time, never who is away (20270102090000).
+  COVER_REQUESTED
+  /// To the administrator who asked: a colleague said yes (20270102090000).
+  COVER_REQUEST_ACCEPTED
+  /// To a colleague asked who did not get it: taken by another, or withdrawn (20270102090000).
+  COVER_REQUEST_CLOSED
 }
 
 /// A decision on an absent rastvakt's pass (20261210090000).
@@ -4079,6 +4085,103 @@ model SubstituteAvailability {
 }
 
 // -----------------------------------------------------------------------------
+// Vikariefrågan (D4, 20270102091000): a request to chosen colleagues to cover
+// lessons, the first yes gets them all. The trigger that makes a request end
+// once, the open flag's follow-up, the partial unique index that holds one open
+// request per (absence, lesson), the recipient's narrow decline, the keys' ON
+// DELETE and the RLS live in the migration; Prisma knows the columns.
+// -----------------------------------------------------------------------------
+
+enum CoverRequestStatus {
+  OPEN
+  ACCEPTED
+  WITHDRAWN
+  EXPIRED
+  /// Ended by a decision on one of its lessons made another way.
+  CLOSED
+}
+
+enum CoverRecipientAnswer {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+/// One request: who sent it, until when it can be answered, how it ended.
+/// closedAt and acceptedAt are stamped by the database (the trigger
+/// CoverRequests_a_one_way), which also refuses to end it twice or to accept
+/// it after expiresAt.
+model CoverRequest {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId          String             @db.Uuid
+  /// SET NULL when the person is removed; such a request can no longer be answered.
+  requestedByUserId String?            @db.Uuid
+  status            CoverRequestStatus @default(OPEN)
+  createdAt         DateTime           @default(now()) @db.Timestamptz(6)
+  expiresAt         DateTime           @db.Timestamptz(6)
+  closedAt          DateTime?          @db.Timestamptz(6)
+  acceptedByUserId  String?            @db.Uuid
+  acceptedAt        DateTime?          @db.Timestamptz(6)
+
+  lessons    CoverRequestLesson[]
+  recipients CoverRequestRecipient[]
+
+  @@unique([id, schoolId])
+  @@index([schoolId, createdAt])
+  @@map("CoverRequests")
+}
+
+/// The (absence, lesson) pairs a request asks for. open follows the request.
+model CoverRequestLesson {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String  @db.Uuid
+  requestId        String  @db.Uuid
+  absenceId        String  @db.Uuid
+  calendarLessonId String  @db.Uuid
+  open             Boolean @default(true)
+
+  request CoverRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, absenceId, calendarLessonId])
+  @@index([requestId, schoolId])
+  @@index([calendarLessonId, schoolId])
+  @@map("CoverRequestLessons")
+}
+
+/// A colleague asked, and what they answered. answeredAt is stamped by the database.
+model CoverRequestRecipient {
+  id         String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String               @db.Uuid
+  requestId  String               @db.Uuid
+  userId     String               @db.Uuid
+  answer     CoverRecipientAnswer @default(PENDING)
+  answeredAt DateTime?            @db.Timestamptz(6)
+  createdAt  DateTime             @default(now()) @db.Timestamptz(6)
+
+  request CoverRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, userId])
+  @@index([userId, schoolId, createdAt])
+  @@map("CoverRequestRecipients")
+}
+
+/// The vikarie's tap on a pass a cover decision gave them; counts only while
+/// the decision still names them. Written by app.cover_confirm, and by the
+/// placement of a request's winner.
+model CoverConfirmation {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String   @db.Uuid
+  absenceId        String   @db.Uuid
+  calendarLessonId String   @db.Uuid
+  userId           String   @db.Uuid
+  confirmedAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([absenceId, calendarLessonId])
+  @@index([userId, schoolId])
+  @@map("CoverConfirmations")
+}
+
+// -----------------------------------------------------------------------------
 // SS12000 consumer: the school's source, its run log and its diff
 // (20261014090000-20261014110000). SIS TK450 SS12000 OpenAPI 2.1.0.
 // Composite keys, CHECKs, guards and RLS live in the migrations.
@@ -4433,6 +4536,8 @@ enum RetentionDataType {
   DEPARTED_PEOPLE
   /// The read log, PersonalDataAccess (20261026090000).
   ACCESS_LOG
+  /// Vikarieförfrågningar and the vikarie's confirmations (20270102090000).
+  COVER_REQUESTS
 }
 
 /// PURGE_AFTER `months`; KEEP (bevaras); UNDECIDED (back to ej beslutat).

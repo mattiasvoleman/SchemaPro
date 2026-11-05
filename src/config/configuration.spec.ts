@@ -73,6 +73,8 @@ describe('loadConfiguration', () => {
       ss12000: { secretsKey: undefined, secretsKeyPrevious: undefined, background: true, allowInsecureLocal: false },
       // Unset: the nightly gallring ticks (and removes nothing until a school decides).
       gallring: { background: true },
+      // Unset: the expiry of vikarieförfrågningar ticks.
+      coverRequests: { background: true },
       // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
       candidates: { maxSeconds: 30, runsMax: 2, solverWorkers: 4, background: true },
     });
@@ -87,6 +89,11 @@ describe('loadConfiguration', () => {
     expect(on.background).toBe(false);
     expect(loadConfiguration(env({ SS12000_ALLOW_INSECURE_LOCAL: '1' })).ss12000.allowInsecureLocal).toBe(false);
     expect(loadConfiguration(env({ NODE_ENV: NodeEnv.Test, SS12000_ALLOW_INSECURE_LOCAL: '1' })).ss12000.allowInsecureLocal).toBe(true);
+  });
+
+  it('turns the vikarieförfrågningar expiry off only for COVER_REQUESTS_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ COVER_REQUESTS_BACKGROUND: 'off' })).coverRequests.background).toBe(false);
+    expect(loadConfiguration(env({ COVER_REQUESTS_BACKGROUND: 'on' })).coverRequests.background).toBe(true);
   });
 
   it('turns the gallring tick off only for GALLRING_BACKGROUND=off', () => {

@@ -47,6 +47,9 @@ process.env['SS12000_BACKGROUND'] = 'off';
 // The nightly gallring (src/gallring): no background tick in tests either; a
 // spec drives GallringJob.tick itself.
 process.env['GALLRING_BACKGROUND'] = 'off';
+// The vikarieförfrågningar's expiry (src/cover/cover-requests.job.ts): no
+// 5-minute tick in tests; a spec drives CoverRequestsJob.tick itself.
+process.env['COVER_REQUESTS_BACKGROUND'] = 'off';
 // The schemaförslag sweep (src/optimization/schedule-candidates.service.ts):
 // no quarter-hourly tick either; a spec drives sweep() and tick() itself.
 process.env['CANDIDATES_BACKGROUND'] = 'off';
