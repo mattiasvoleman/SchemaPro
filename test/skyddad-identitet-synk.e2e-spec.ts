@@ -8,6 +8,8 @@ import { clearTokenCache, type ClientOptions } from '../src/integration/ss12000-
 import { Ss12000SourceService } from '../src/integration/ss12000-sync/ss12000-source.service';
 import { Ss12000Outbound, Ss12000Secrets } from '../src/integration/ss12000-sync/ss12000-sync.providers';
 import { Ss12000SyncService } from '../src/integration/ss12000-sync/ss12000-sync.service';
+import type { Scope } from '../src/integration/ss12000-v2/scopes';
+import { Ss12000V2Service, type V2Caller } from '../src/integration/ss12000-v2/ss12000-v2.service';
 import { PersonProtectionsService } from '../src/users/person-protections';
 import { MockSs12000Provider, isoDay, s1Adult, s1Duty, s1Group, s1Organisation, s1Pupil } from './utils/ss12000-mock-provider';
 import { makeTestTls } from './utils/test-tls';
@@ -29,6 +31,11 @@ import { makeTestTls } from './utils/test-tls';
  *      proposed unticked and never marked at night; a mark an administrator
  *      removed does not come back; once the address is corrected the sync
  *      proposes lifting the mark, unticked, and a tick lifts it for good;
+ *   S1-S4 (20270111090000) the register's kind is stored with the sync's mark
+ *      and the real v2.0 provider sends it as securityMarking: on the
+ *      Person, never for a mark by hand; a change at the register changes
+ *      it at night and moves the Person's meta.modified; a mark written
+ *      before the kind was kept gets it at the next run; a lift takes it off;
  *   N2 (round 3) names compare loosely: José García in the register marks
  *      Jose Garcia at night; Kalle for Karl is proposed and the night waits
  *      for the administrator (PROTECTION_REVIEW) with the proposal there;
@@ -74,6 +81,8 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
   let sync: Ss12000SyncService;
   let sources: Ss12000SourceService;
   let marks: PersonProtectionsService;
+  let provider2: Ss12000V2Service;
+  let keyId: string;
   let handTyped: string;
   const lines: string[] = [];
 
@@ -168,6 +177,13 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
     sources = new Ss12000SourceService(api, secrets, outbound);
     sync = new Ss12000SyncService(api, secrets, outbound, undefined as never);
     marks = new PersonProtectionsService(api);
+    provider2 = new Ss12000V2Service(api);
+    // The connected system's key: the provider records its reads under it (läslogg).
+    keyId = (await one<{ id: string }>(
+      `INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", scopes)
+       VALUES ($1, 'skyddad probe v2', $2, '{organisations.read,persons.read,responsibles.read,groups.read,duties.read,activities.read}'::text[]) RETURNING id`,
+      [school, 'skyddad-synk-probe-key'.padEnd(64, '0')],
+    )).id;
     clearTokenCache();
     const connection = { name: 'Skyddad', baseUrl: provider.baseUrl, authKind: 'OAUTH2_CLIENT_CREDENTIALS' as const, tokenUrl: provider.tokenUrl, clientId: 'probe' };
     await sources.put(admin, connection);
@@ -264,6 +280,8 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
     expect(create.selected).toBe(false);
     await sync.apply(admin, run.id, { basisHash: run.basisHash, select: [create.id] });
     expect(await marksOf((await userOf(P3)).id)).toEqual(['SS12000']);
+    // With the register's kind, from the CREATE itself (20270111090000), not left for a later run.
+    expect(await kindOf((await userOf(P3)).id)).toBe('SEKRETESSMARKERING');
   });
 
   it('N1: a row with the address but another name is proposed unticked, never marked at night, and a removed mark stays removed', async () => {
@@ -363,6 +381,93 @@ maybe('Skyddad identitet: the SS12000 sync sets, keeps and lifts the mark (a rea
     expect(await reasonOf(run.id)).not.toBe('PROTECTION_REVIEW');
     expect(await marksOf(jose)).toEqual(['SS12000']);
     expect(await marksOf(kalle)).toEqual(['SS12000']);
+  });
+
+  // The v2.0 provider as a connected system reads it: the school's own key, every scope but attendance.
+  const SCOPES = ['organisations.read', 'persons.read', 'responsibles.read', 'groups.read', 'duties.read', 'activities.read'] as Scope[];
+  const reader = (scopes: Scope[] = SCOPES): V2Caller => ({ schoolId: school, keyId, scopes: new Set(scopes) });
+  const sent = async (userId: string, scopes?: Scope[]) => {
+    const persons = (await provider2.listPersons(reader(scopes), {})).data as Array<Record<string, unknown>>;
+    return persons.find((person) => person['id'] === userId || person['id'] === (ssIdOf.get(userId) ?? ''));
+  };
+  // The v2.0 id of a linked person is the register's id.
+  const ssIdOf = new Map<string, string>();
+  const kindOf = async (userId: string) =>
+    (await one<{ kind: string | null }>(`SELECT kind::text AS kind FROM "PersonProtections" WHERE "userId" = $1 AND source = 'SS12000'`, [userId]))?.kind ?? null;
+
+  it('S1: the provider sends the register\'s kind on the Person, and nothing for a mark by hand', async () => {
+    const p3 = (await userOf(P3)).id;
+    ssIdOf.set(p3, P3);
+    const jose = (await one<{ id: string }>(`SELECT id FROM "Users" WHERE "schoolId" = $1 AND email = 'jose.garcia@ekskolan.example'`, [school])).id;
+    const kalle = (await one<{ id: string }>(`SELECT id FROM "Users" WHERE "schoolId" = $1 AND email = 'karl.berg@ekskolan.example'`, [school])).id;
+    // The kinds as the sync wrote them: a created pupil's from its CREATE, an address match's from its ADD.
+    expect(await kindOf(p3)).toBe('SEKRETESSMARKERING');
+    expect(await kindOf(handTyped)).toBe('SKYDDAD_FOLKBOKFORING');
+    expect(await kindOf(jose)).toBe('SKYDDAD_FOLKBOKFORING');
+    expect(await kindOf(kalle)).toBe('SEKRETESSMARKERING');
+    expect((await sent(p3))?.['securityMarking']).toBe('Sekretessmarkering');
+    expect((await sent(handTyped))?.['securityMarking']).toBe('Skyddad folkbokföring');
+    expect((await sent(kalle))?.['securityMarking']).toBe('Sekretessmarkering');
+    // Tor, marked by hand: sent as before, with nothing.
+    const tor = (await userOf(T1)).id;
+    ssIdOf.set(tor, T1);
+    await marks.set(tor, admin);
+    const torSent = await sent(tor);
+    expect(torSent).toBeDefined();
+    expect(torSent).not.toHaveProperty('securityMarking');
+    // Never "Ingen", for anybody; a key without persons.read reads no marking at all.
+    const all = JSON.stringify((await provider2.listPersons(reader(), {})).data);
+    expect(all).not.toContain('"securityMarking":"Ingen"');
+    const groupsOnly = JSON.stringify(await provider2.listGroups(reader(['organisations.read', 'groups.read']), { expandReferenceNames: 'true' }));
+    expect(groupsOnly).not.toContain('securityMarking');
+    await marks.remove(tor, admin);
+  });
+
+  it('S2: the register\'s new kind is made at night, sent, and moves the Person\'s meta.modified', async () => {
+    const p3 = (await userOf(P3)).id;
+    const before = (await sent(p3))!['meta'] as { modified: string };
+    const p2 = s1Pupil(P2, 'Hand', 'Skriven', 'p2.hand@ekskolan.example', ORG, { securityMarking: 'Skyddad folkbokföring' });
+    const p3w = s1Pupil(P3, 'Ny', 'Skyddad', 'p3.ny@ekskolan.example', ORG, { securityMarking: 'Skyddad folkbokföring' });
+    const sara = s1Pupil(P4, 'Sara', 'Skydd', 'delad@ekskolan.example', ORG, { securityMarking: 'Sekretessmarkering' });
+    const p5 = s1Pupil(P5, 'José', 'García', 'jose.garcia@ekskolan.example', ORG, { securityMarking: 'Skyddad folkbokföring' });
+    const p6 = s1Pupil(P6, 'Karl', 'Berg', 'karl.berg@ekskolan.example', ORG, { securityMarking: 'Sekretessmarkering' });
+    world('Ingen', [p2, p3w, sara, p5, p6]);
+    const run = await night();
+    expect(await protectionChanges(run.id)).toEqual([expect.objectContaining({ op: 'UPDATE', selected: true, auto: true, applied: true })]);
+    expect(await kindOf(p3)).toBe('SKYDDAD_FOLKBOKFORING');
+    const after = (await sent(p3))!;
+    expect(after['securityMarking']).toBe('Skyddad folkbokföring');
+    expect(Date.parse((after['meta'] as { modified: string }).modified)).toBeGreaterThan(Date.parse(before.modified));
+    // The history records decisions, not the register's kinds: nothing for this one.
+    const history = await marks.one(p3, admin);
+    expect(history.events.map((event) => event.action)).toEqual(['ADDED']);
+  });
+
+  it('S3: a mark written before the school kept the kind gets it at the next run, at night', async () => {
+    await owner.query(`UPDATE "PersonProtections" SET kind = NULL WHERE "userId" = $1 AND source = 'SS12000'`, [handTyped]);
+    expect(await sent(handTyped)).not.toHaveProperty('securityMarking');
+    const run = await night();
+    expect(await protectionChanges(run.id)).toEqual([expect.objectContaining({ op: 'UPDATE', auto: true, applied: true })]);
+    expect(await kindOf(handTyped)).toBe('SKYDDAD_FOLKBOKFORING');
+    expect((await sent(handTyped))?.['securityMarking']).toBe('Skyddad folkbokföring');
+  });
+
+  it('S4: a lifted mark takes the marking off, never the old kind in its place, and moves the Person', async () => {
+    const p3 = (await userOf(P3)).id;
+    const before = (await sent(p3))!['meta'] as { modified: string };
+    const p2 = s1Pupil(P2, 'Hand', 'Skriven', 'p2.hand@ekskolan.example', ORG, { securityMarking: 'Skyddad folkbokföring' });
+    const p3w = s1Pupil(P3, 'Ny', 'Skyddad', 'p3.ny@ekskolan.example', ORG, { securityMarking: 'Ingen' });
+    const sara = s1Pupil(P4, 'Sara', 'Skydd', 'delad@ekskolan.example', ORG, { securityMarking: 'Sekretessmarkering' });
+    const p5 = s1Pupil(P5, 'José', 'García', 'jose.garcia@ekskolan.example', ORG, { securityMarking: 'Skyddad folkbokföring' });
+    const p6 = s1Pupil(P6, 'Karl', 'Berg', 'karl.berg@ekskolan.example', ORG, { securityMarking: 'Sekretessmarkering' });
+    world('Ingen', [p2, p3w, sara, p5, p6]);
+    const run = await manual();
+    const end = (await protectionChanges(run.id)).find((change) => change.op === 'END')!;
+    await sync.apply(admin, run.id, { basisHash: run.basisHash, select: [end.id] });
+    expect(await marksOf(p3)).toEqual([]);
+    const after = (await sent(p3))!;
+    expect(after).not.toHaveProperty('securityMarking');
+    expect(Date.parse((after['meta'] as { modified: string }).modified)).toBeGreaterThan(Date.parse(before.modified));
   });
 
   it('F8: no finished run, log line or count names a protected person', async () => {

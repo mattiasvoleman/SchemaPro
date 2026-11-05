@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient, type SchoolUnitType } from '@prisma/client';
 import { normaliseUnitTypes, SCHOOL_UNIT_TYPES, spansOverlap } from '../../school-units/school-unit-map';
-import type { ChangeEntity, ChangeOp } from './diff';
+import type { ChangeEntity, ChangeOp, ProtectionKind } from './diff';
 
 /**
  * Writes the selected changes of a diff, in one transaction the caller
@@ -56,10 +56,14 @@ import type { ChangeEntity, ChangeOp } from './diff';
  *     and a PROTECTION ADD marks one linked before, or the one local row
  *     the diff matched by address (after.byAddress) whether or not its LINK
  *     is applied. A PROTECTION END lifts the mark the sync wrote, and only
- *     that row: an administrator's mark is a row of its own and stands. Both
+ *     that row: an administrator's mark is a row of its own and stands. They
  *     name the person by the source's id, in the change's after, as a duty
  *     link does; an END the database refuses (only those who decide lift a
- *     mark) is skipped with SS12000_PROTECTION_NOT_LIFTED.
+ *     mark) is skipped with SS12000_PROTECTION_NOT_LIFTED. Each mark the sync
+ *     writes carries the register's kind when the change does (after.kind,
+ *     after.protectionKind on a person change; 20270111090000), and a
+ *     PROTECTION UPDATE gives the sync's mark the register's kind; one gone
+ *     since the diff is skipped with SS12000_TARGET_CHANGED.
  *
  * Nothing else is deleted: no other statement here removes a row.
  */
@@ -83,6 +87,9 @@ export interface ApplyOutcome {
 const CHUNK = 500;
 
 const str = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+/** A kind of protection as the diff wrote it, or none. */
+const kindIn = (value: unknown): ProtectionKind | null =>
+  value === 'SEKRETESSMARKERING' || value === 'SKYDDAD_FOLKBOKFORING' ? value : null;
 const num = (value: unknown): number | null => (typeof value === 'number' && Number.isInteger(value) ? value : null);
 
 function chunks<T>(rows: T[]): T[][] {
@@ -298,11 +305,14 @@ export async function applyChanges(
   }
 
   // --- marks of a protected identity (20270107090000) --------------------------
-  const marking = new Set<string>();
+  // Each mark with the register's kind (20270111090000), when the change
+  // carries one: what the SS12000 provider passes on.
+  const marking = new Map<string, ProtectionKind | null>();
+  const toMark = (userId: string, kind: ProtectionKind | null) => marking.set(userId, marking.get(userId) ?? kind);
   for (const op of ['CREATE', 'LINK', 'RELINK'] as const) {
     for (const change of of('PERSON', op)) {
       const userId = change.protectedIdentity && applied.has(change.id) ? userOf(change) : null;
-      if (userId) marking.add(userId);
+      if (userId) toMark(userId, kindIn(change.after?.['protectionKind']));
     }
   }
   // A person matched by address and not linked (after.byAddress) is marked,
@@ -311,7 +321,7 @@ export async function applyChanges(
   // this is the one change that may name a local row the source id does
   // not reach. The row must still be the school's, and an ADD's row must
   // still have the address it was matched by.
-  const viaAddress = [...of('PROTECTION', 'ADD'), ...of('PROTECTION', 'END')].filter(
+  const viaAddress = [...of('PROTECTION', 'ADD'), ...of('PROTECTION', 'UPDATE'), ...of('PROTECTION', 'END')].filter(
     (change) => !personOf('personExternalId')(change) && change.after?.['byAddress'] === true,
   );
   const addressRows = new Map(
@@ -335,14 +345,44 @@ export async function applyChanges(
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
       continue;
     }
-    marking.add(userId);
+    toMark(userId, kindIn(change.after?.['kind']));
     done(change);
   }
-  for (const rows of chunks([...marking].sort())) {
+  for (const rows of chunks([...marking.keys()].sort())) {
     await tx.personProtection.createMany({
-      data: rows.map((userId) => ({ userId, schoolId, source: 'SS12000' as const })),
+      data: rows.map((userId) => ({ userId, schoolId, source: 'SS12000' as const, kind: marking.get(userId) ?? null })),
       skipDuplicates: true,
     });
+  }
+  // The register's kind on a mark the sync holds. A mark gone since the diff
+  // (an administrator removed it) is not written again by a change of kind.
+  const rekinding = new Map<ProtectionKind | null, Array<{ userId: string; change: StoredChange }>>();
+  for (const change of of('PROTECTION', 'UPDATE')) {
+    const userId = personOf('personExternalId')(change) ?? byAddress(change);
+    if (!userId) {
+      skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
+      continue;
+    }
+    const kind = kindIn(change.after?.['kind']);
+    rekinding.set(kind, [...(rekinding.get(kind) ?? []), { userId, change }]);
+  }
+  for (const [kind, rows] of rekinding) {
+    await tx.personProtection.updateMany({
+      where: { schoolId, userId: { in: rows.map((row) => row.userId) }, source: 'SS12000' },
+      data: { kind },
+    });
+    const held = new Set(
+      (
+        await tx.personProtection.findMany({
+          where: { schoolId, userId: { in: rows.map((row) => row.userId) }, source: 'SS12000' },
+          select: { userId: true },
+        })
+      ).map((row) => row.userId),
+    );
+    for (const { userId, change } of rows) {
+      if (held.has(userId)) done(change);
+      else skip(change, 'SS12000_TARGET_CHANGED');
+    }
   }
   const lifting = new Map<string, StoredChange>();
   for (const change of of('PROTECTION', 'END')) {

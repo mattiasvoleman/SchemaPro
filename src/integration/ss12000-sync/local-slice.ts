@@ -102,7 +102,7 @@ export async function readLocalSlice(tx: PrismaClient, schoolId: string, options
     // or lifts against. Not in the basis hash: a mark set or removed between
     // the diff and the apply meets an insert that skips it or a delete that
     // finds nothing, never a wrong write, and a run is not made stale for it.
-    tx.personProtection.findMany({ where: { schoolId }, select: { userId: true, source: true }, orderBy: { userId: 'asc' } }),
+    tx.personProtection.findMany({ where: { schoolId }, select: { userId: true, source: true, kind: true }, orderBy: { userId: 'asc' } }),
   ]);
   const runIds = [...new Set(deactivations.map((change) => change.runId))];
   const runs = runIds.length

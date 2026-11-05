@@ -697,6 +697,12 @@ model PersonProtection {
   userId   String                 @db.Uuid
   schoolId String                 @db.Uuid
   source   PersonProtectionSource
+  /// Which protection the register gives (20270111090000), on the sync's row
+  /// alone (CHECK PersonProtections_a_kind_is_the_registers): what the SS12000
+  /// provider passes on as securityMarking. Null on a mark by hand, on a row
+  /// written before the school kept it, or for a marking not recognised.
+  /// The sync writes it, nobody else.
+  kind     PersonProtectionKind?
 
   school School @relation("PersonProtectionSchool", fields: [schoolId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   user   User   @relation("PersonProtectionUser", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
@@ -704,6 +710,15 @@ model PersonProtection {
   @@id([userId, schoolId, source])
   @@index([schoolId])
   @@map("PersonProtections")
+}
+
+/// Which protection the register gives a person: S1 SecurityMarking's two
+/// values that protect (20270111090000).
+enum PersonProtectionKind {
+  /// Sekretessmarkering
+  SEKRETESSMARKERING
+  /// Skyddad folkbokföring
+  SKYDDAD_FOLKBOKFORING
 }
 
 /// A mark set (ADDED) or removed (REMOVED).

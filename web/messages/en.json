@@ -2698,6 +2698,7 @@
         "unitMismatch": "Grade {grade}: {local} here, {source} in the register",
         "protectionAdd": "Marked as having a protected identity: the register protects the person, who is kept out of the files Rastra writes.",
         "protectionEnd": "The mark is lifted: the register now says Ingen.",
+        "protectionUpdate": "The register now gives another kind of protection for the person. The kind is passed on to the systems the school connected over SS12000; the person stays marked.",
         "protectionAddByAddress": "Marked as having a protected identity: a protected person in the register has the same e-mail address as this row, which is not linked to the register.",
         "protectionEndByAddress": "The mark is lifted: the sync set it on the e-mail address, and no protected person in the register has that address any more."
       },
@@ -7386,7 +7387,7 @@
       "both": "Marked by hand and by the pupil register (SS12000)."
     },
     "explain": "A marked person is not in the files Rastra writes about people, such as elever.csv, vardnadshavare.csv and the attendance report. Which protection the person has is not stored.",
-    "integrations": "Systems the school connected over SS12000 get the person as before, without a mark.",
+    "integrations": "Systems the school connected over SS12000 get the register's marking with the person, so they can protect them. A mark by hand is not passed on, and which protection it is is not shown here.",
     "byAddress": "The person is not linked to the register: the mark was set because a protected person in the register has the same e-mail address. If it is the wrong person: correct the e-mail address and remove the mark. The next full sync also proposes lifting it once no protected person has the address.",
     "registerOwns": "The mark follows the register: when the register says Ingen, the sync proposes removing it. A mark by hand stays until an administrator removes it.",
     "set": "Mark protected identity",

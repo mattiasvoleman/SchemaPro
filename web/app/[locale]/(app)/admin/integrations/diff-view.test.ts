@@ -181,6 +181,9 @@ describe("reading a change", () => {
     expect(byAddress).toEqual({ subject: "Lisa Lund", detail: { key: "protectionAddByAddress", values: {} } });
     const lift = change({ entity: "PROTECTION", op: "END", after: { personExternalId: null, userLocalId: "u-lisa", byAddress: true } });
     expect(readChange(lift, new Map(), names)).toEqual({ subject: "Lisa Lund", detail: { key: "protectionEndByAddress", values: {} } });
+    // The register's kind changed: said, never named.
+    const rekind = change({ entity: "PROTECTION", op: "UPDATE", after: { personExternalId: "ext-x", userLocalId: "u-bo", kind: "SKYDDAD_FOLKBOKFORING" } });
+    expect(readChange(rekind, new Map(), (id) => (id === "u-bo" ? "Bo Ek" : null))).toEqual({ subject: "Bo Ek", detail: { key: "protectionUpdate", values: {} } });
     // Minimised: no after, no id, so nobody.
     expect(readChange(change({ entity: "PROTECTION", op: "ADD" }), new Map(), () => "Bo Ek").subject).toBeNull();
     expect(unknownSubjectKey("PROTECTION")).toBe("unknownPerson");

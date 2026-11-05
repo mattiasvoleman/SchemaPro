@@ -1137,6 +1137,31 @@ Walk the full product loop once, in order:
   again after the release returns). The marks and their history may stay: an
   older API never reads them, and the exports simply stop leaving the marked
   out.
+- **Skyddad identitet, the register's kind**: 20270111090000 adds
+  `PersonProtections.kind` (`SEKRETESSMARKERING` or `SKYDDAD_FOLKBOKFORING`,
+  on the sync's row alone: CHECK `PersonProtections_a_kind_is_the_registers`),
+  two UPDATE arms (`person_protections_sync_update`,
+  `person_protections_admin_update`, both for source SS12000) with UPDATE on
+  the column `kind` alone for `app_authenticated`, the provider's read
+  `app.ss12000_security_markings()` (EXECUTE for `app_authenticated` only),
+  the trigger `PersonProtections_ss12000_versions` that moves a Person's
+  version when the kind it is sent with moves, and op UPDATE in
+  `Ss12000SyncChanges_a_mark_names_its_person_in_after_alone` (NOT VALID). The
+  gallring functions are not touched: `md5(prosrc)` stays
+  `7efba42244c71937b4cb82ffc23a6ba1`, `de359f739e3908c9a36e41ff541cdf13`,
+  `6f18f62fc354bde849aa2e8b01eeceda`. It takes `PersonProtections` and
+  `Ss12000SyncChanges` NOWAIT in a loop with a 30 s cap; if they are not free
+  at once it stops with nothing changed, and `npx prisma migrate resolve
+  --rolled-back 20270111090000_skolan_skickar_registrets_sort_av_skydd_vidare`
+  lets it run again. After: eight policies on the two tables, all
+  `{app_authenticated}`; `kind` NULL on every row. **Right after rollout, run
+  a full sync per SS12000 school** and apply it: each existing mark of the
+  sync gets the register's kind (PROTECTION UPDATE, preselected; the night
+  makes them too, at its next full run), and until then the provider sends no
+  `securityMarking` for that person. **A rollback of the API**: an older API
+  never reads the column or the function, writes its marks with no kind, and
+  sends no `securityMarking`; a `DIFF_READY` run holding a PROTECTION UPDATE is
+  applied without it. The column, the arms and the function may stay.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

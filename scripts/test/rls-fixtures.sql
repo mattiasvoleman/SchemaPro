@@ -3033,8 +3033,11 @@ BEGIN
   VALUES (s1, 'DEPARTED_PEOPLE', 'PURGE_AFTER', 12, NULL, admin, now() - interval '2 days');
   ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
 
-  INSERT INTO "PersonProtections" ("userId", "schoolId", source)
-  SELECT u."id", s1, v.source::"PersonProtectionSource"
+  -- P1's mark from the register carries its kind (20270111090000), as the
+  -- sync writes it; P3's, written before the school kept it, has none.
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source, kind)
+  SELECT u."id", s1, v.source::"PersonProtectionSource",
+         CASE WHEN v.email = 'sk-p1@example.invalid' THEN 'SEKRETESSMARKERING'::"PersonProtectionKind" END
     FROM (VALUES ('sk-t1@example.invalid', 'MANUAL'), ('sk-p1@example.invalid', 'SS12000'),
                  ('sk-p3@example.invalid', 'SS12000'), ('sk-g2@example.invalid', 'MANUAL')) AS v(email, source)
     JOIN "Users" u ON u."schoolId" = s1 AND u."email" = v.email;
@@ -3132,7 +3135,8 @@ BEGIN
 END $$;
 
 -- The matrix school's mark (20270107090000), so the role matrix (section 116)
--- has a row of PersonProtections to probe: its second pupil, by hand.
+-- has a row of PersonProtections to probe: its second pupil, the register's
+-- mark, since an update (the register's kind, 20270111090000) reaches no other.
 DO $$
 DECLARE
   m uuid;
@@ -3142,7 +3146,7 @@ BEGIN
     RETURN;
   END IF;
   INSERT INTO "PersonProtections" ("userId", "schoolId", source)
-  SELECT id, m, 'MANUAL' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
+  SELECT id, m, 'SS12000' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
 END $$;
 
 -- The policy tests run as the unprivileged role, which by design cannot see

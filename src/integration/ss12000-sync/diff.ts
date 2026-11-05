@@ -34,8 +34,10 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  * (on Person or on a PersonReference) is not "Ingen" is deselected and never
  * auto-applied; the flag goes with the run's minimisation. What is kept is
  * the school's mark that the person is protected (PersonProtections,
- * 20270107090000), never which protection, and the diff keeps it as the
- * register has it:
+ * 20270107090000), and on the sync's mark which protection the register
+ * gives (kind, 20270111090000: the stronger where two places differ, none
+ * for a marking not recognised), which the SS12000 provider passes on; the
+ * diff keeps both as the register has them:
  *  - a person the register marks and the sync has not (an administrator's
  *    own mark is a row of its own): PROTECTION ADD, selected and automatic,
  *    since it only keeps the person out of files. That is the linked person,
@@ -61,7 +63,12 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  *    never automatic, so the defaults never lift a protection. An absent
  *    marking is not "Ingen", an INCREMENTAL run may not read the record (a
  *    child's) that still marks the person, and an administrator's mark is
- *    theirs: the sync lifts only its own row.
+ *    theirs: the sync lifts only its own row;
+ *  - a mark the sync holds whose kind is not the register's (or was written
+ *    before the school kept it): PROTECTION UPDATE with the register's kind,
+ *    selected and automatic, since it only changes what the connected
+ *    systems are told, to what the register itself says. A mark by hand
+ *    has no kind and is never touched.
  *
  * DEACTIVATE, of a linked person only: a FULL run that no longer finds them
  * (a pupil not returned by the enrolment fetch, staff with no active duty, a
@@ -193,7 +200,7 @@ export interface LocalSlice {
   /** The school's skolenheter; absent in a slice read before they existed (treated as none). */
   units?: LocalUnit[];
   /** The marks of a protected identity (PersonProtections); absent is none. */
-  protections?: Array<{ userId: string; source: 'SS12000' | 'MANUAL' }>;
+  protections?: Array<{ userId: string; source: 'SS12000' | 'MANUAL'; kind?: ProtectionKind | null }>;
   lastAppliedAt: Date | null;
 }
 
@@ -279,21 +286,67 @@ function nameParts(value: string | null | undefined): Set<string> {
   return new Set(folded.split(/[^\p{L}\p{N}]+/u).filter((part) => part.length > 0));
 }
 
-const overlaps = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean => [...a].some((part) => b.has(part));
+/**
+ * Name particles: words that do not tell one family (or person) from
+ * another, so they never make two names agree. "van Dijk" and "Dijk" agree;
+ * "van Dijk" and "van Berg" do not.
+ */
+const NAME_PARTICLES: ReadonlySet<string> = new Set([
+  'af', 'av', 'da', 'dal', 'de', 'degli', 'dei', 'del', 'della', 'den', 'der', 'des', 'di', 'do', 'dos', 'du',
+  'el', 'la', 'le', 'lo', 'ten', 'ter', 'van', 'vom', 'von', 'zu', 'zum', 'zur',
+]);
+
+/** Two names' parts agree when the parts that tell, particles aside, of one are all among the other's. */
+function partsAgree(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  const telling = (parts: ReadonlySet<string>): string[] => {
+    const kept = [...parts].filter((part) => !NAME_PARTICLES.has(part));
+    // A name of particles alone ("Van") is compared as it is.
+    return kept.length > 0 ? kept : [...parts];
+  };
+  const [x, y] = [telling(a), telling(b)];
+  if (x.length === 0 || y.length === 0) return false;
+  const [xs, ys] = [new Set(x), new Set(y)];
+  return x.every((part) => ys.has(part)) || y.every((part) => xs.has(part));
+}
 
 /**
  * Whether a local row's name agrees with a protected source person's, for a
- * mark matched on the address (review of #263, N2). Missing a protected
- * person keeps them in the files, which weighs more than marking one too
- * many, so it is loose: one given name in common (the register's given and
- * middle names against the row's first names, so a call name agrees with all
- * given names) and one family name part in common (a double surname with a
- * hyphen or in another order, or half of it). Another given name, a nickname
- * or a typo still differs: the mark is then proposed for a decision.
+ * mark matched on the address (reviews of #263, N2 and round 4 L-a). Missing
+ * a protected person keeps them in the files, which weighs more than marking
+ * one too many, so accents, hyphens, order and a call name do not part two
+ * names; but one shared part is not enough. The given names of one (the
+ * register's given and middle names, the row's first names) must all be
+ * among the other's, so a call name agrees with all given names either way;
+ * and the family name parts of one must all be among the other's, so a
+ * double surname with a hyphen, in another order or by half agrees. Name
+ * particles (van, de, af, von) are not counted. Another given name beside a
+ * shared one, a nickname or a typo differs: the mark is then proposed for a
+ * decision.
  */
 function namesAgree(local: { firstName: string; lastName: string }, person: S1Person): boolean {
   const given = new Set([...nameParts(person.givenName), ...nameParts(person.middleName)]);
-  return overlaps(nameParts(local.firstName), given) && overlaps(nameParts(local.lastName), nameParts(person.familyName));
+  return partsAgree(nameParts(local.firstName), given) && partsAgree(nameParts(local.lastName), nameParts(person.familyName));
+}
+
+/**
+ * Which protection the register gives a person (20270111090000), as the
+ * school stores it on the sync's mark and passes it on in securityMarking:
+ * never for a mark by hand, and nothing for a marking the parser did not
+ * recognise (the person is protected all the same).
+ */
+export type ProtectionKind = 'SEKRETESSMARKERING' | 'SKYDDAD_FOLKBOKFORING';
+
+export function protectionKindOf(marking: S1Person['securityMarking']): ProtectionKind | null {
+  return marking === 'Skyddad folkbokföring' ? 'SKYDDAD_FOLKBOKFORING' : marking === 'Sekretessmarkering' ? 'SEKRETESSMARKERING' : null;
+}
+
+const KIND_RANK: Record<ProtectionKind, number> = { SEKRETESSMARKERING: 1, SKYDDAD_FOLKBOKFORING: 2 };
+
+/** Of two kinds read for one person in different places, the stronger: the register is never understated. */
+function strongerKind(a: ProtectionKind | null | undefined, b: ProtectionKind | null): ProtectionKind | null {
+  if (!a) return b;
+  if (!b) return a;
+  return KIND_RANK[b] > KIND_RANK[a] ? b : a;
 }
 
 function dutyClass(roles: DutyRole[]): 'TEACHING' | 'REVIEW' | 'NON_TEACHING' {
@@ -388,15 +441,29 @@ export function computeDiff(input: DiffInput): DiffResult {
 
   const guardianOf = new Map<string, Array<{ pupilId: string; relationType: string | null }>>();
   const protectedIds = new Set<string>();
+  // Which protection, the strongest wherever the source names the person.
+  const kinds = new Map<string, ProtectionKind | null>();
+  const protects = (personId: string, marking: S1Person['securityMarking']) => {
+    if (!isProtected(marking)) return;
+    protectedIds.add(personId);
+    kinds.set(personId, strongerKind(kinds.get(personId), protectionKindOf(marking)));
+  };
+  const kindOf = (personId: string): ProtectionKind | null => kinds.get(personId) ?? null;
+  // A person a CREATE, LINK or RELINK makes or links here is marked by the
+  // apply with that change (apply.ts), with the kind it carries.
+  const protectionOf = (personId: string): { protectionKind?: ProtectionKind } => {
+    const kind = protectedIds.has(personId) ? kindOf(personId) : null;
+    return kind ? { protectionKind: kind } : {};
+  };
   // Wherever the source says "Ingen" in so many words: the one ground for
   // lifting a mark (PROTECTION END), and only with nothing in protectedIds.
   const saidIngen = new Set<string>();
   for (const person of persons.values()) {
-    if (isProtected(person.securityMarking)) protectedIds.add(person.id);
+    protects(person.id, person.securityMarking);
     if (person.securityMarking === 'Ingen') saidIngen.add(person.id);
     if (!activePupils.has(person.id)) continue;
     for (const responsible of person.responsibles) {
-      if (isProtected(responsible.securityMarking)) protectedIds.add(responsible.personId);
+      protects(responsible.personId, responsible.securityMarking);
       if (responsible.securityMarking === 'Ingen') saidIngen.add(responsible.personId);
       guardianOf.set(responsible.personId, [
         ...(guardianOf.get(responsible.personId) ?? []),
@@ -406,7 +473,7 @@ export function computeDiff(input: DiffInput): DiffResult {
   }
   for (const group of roster.groups) {
     for (const membership of group.memberships) {
-      if (isProtected(membership.personSecurityMarking)) protectedIds.add(membership.personId);
+      protects(membership.personId, membership.personSecurityMarking);
       if (membership.personSecurityMarking === 'Ingen') saidIngen.add(membership.personId);
     }
   }
@@ -573,7 +640,7 @@ export function computeDiff(input: DiffInput): DiffResult {
         push({
           entity: 'PERSON', op: 'RELINK', externalId: person.id, localId: match.id,
           before: { isActive: false, firstName: match.firstName, lastName: match.lastName, email: match.email },
-          after: { ss12000Id: person.id, isActive: true, ...display },
+          after: { ss12000Id: person.id, isActive: true, ...display, ...protectionOf(person.id) },
           conflictCode: 'PERSON_MATCHES_INACTIVE', selected: false, autoApplicable: false, protectedIdentity: isProt,
         });
         plans.set(person.id, { localId: match.id, role: match.role, linked: false });
@@ -582,7 +649,7 @@ export function computeDiff(input: DiffInput): DiffResult {
       push({
         entity: 'PERSON', op: 'LINK', externalId: person.id, localId: match.id,
         before: { firstName: match.firstName, lastName: match.lastName, email: match.email, role: match.role },
-        after: { ss12000Id: person.id, ...display },
+        after: { ss12000Id: person.id, ...display, ...protectionOf(person.id) },
         conflictCode: match.role === 'SCHOOL_ADMIN' ? 'PERSON_ADMIN_UNTOUCHED' : multiple ? 'PERSON_MULTIPLE_ROLES' : null,
         selected: true, autoApplicable: false, protectedIdentity: isProt,
       });
@@ -617,7 +684,7 @@ export function computeDiff(input: DiffInput): DiffResult {
     push({
       entity: 'PERSON', op: 'CREATE', externalId: person.id, localId: null,
       before: null,
-      after: { role: primary, firstName: person.givenName, lastName: person.familyName, middleName: person.middleName, email },
+      after: { role: primary, firstName: person.givenName, lastName: person.familyName, middleName: person.middleName, email, ...protectionOf(person.id) },
       conflictCode: code, selected, autoApplicable: false, protectedIdentity: isProt,
     });
     plans.set(person.id, { localId: null, role: primary, linked: false });
@@ -976,26 +1043,38 @@ export function computeDiff(input: DiffInput): DiffResult {
   // ---------------------------------------------------------------------
   // The sync's own mark: a person may hold an administrator's beside it,
   // which the sync neither needs nor touches.
-  const syncMarked = new Set((local.protections ?? []).filter((m) => m.source === 'SS12000').map((m) => m.userId));
+  // The sync's own marks, with the kind each holds.
+  const syncMarked = new Map(
+    (local.protections ?? []).filter((m) => m.source === 'SS12000').map((m) => [m.userId, m.kind ?? null] as const),
+  );
   const mark = (
-    op: 'ADD' | 'END',
+    op: 'ADD' | 'UPDATE' | 'END',
     ext: string | null,
     userId: string,
     address: { email?: string; code: string | null } | null,
   ) => {
     // An ADD only keeps a person out of files: selected and made at night,
-    // unless a code says the address alone is the ground. An END lifts a
-    // protection: never by default, never at night.
-    const automatic = op === 'ADD' && !address?.code;
+    // unless a code says the address alone is the ground. An UPDATE only
+    // changes which protection the connected systems are told of, to the
+    // register's own: made at night too. An END lifts a protection: never
+    // by default, never at night. The kind rides in the after with the
+    // person, and the minimisation nulls it with them.
+    const automatic = (op === 'ADD' || op === 'UPDATE') && !address?.code;
     push({
       entity: 'PROTECTION', op, externalId: null, localId: null,
       before: null,
       after: {
         personExternalId: ext, userLocalId: userId,
+        ...(op !== 'END' && ext ? { kind: kindOf(ext) } : {}),
         ...(address ? { byAddress: true, ...(address.email ? { email: address.email } : {}) } : {}),
       },
       conflictCode: address?.code ?? null, selected: automatic, autoApplicable: automatic, protectedIdentity: false,
     });
+  };
+  // A mark the sync holds whose kind is not the register's (or was written
+  // before the school kept it): the register's kind, at night.
+  const rekind = (ext: string, userId: string, address: { email?: string } | null) => {
+    if (syncMarked.has(userId) && syncMarked.get(userId) !== kindOf(ext)) mark('UPDATE', ext, userId, address ? { ...address, code: null } : null);
   };
   // Every local row a protected source person reaches by address in this run.
   const addressed = new Set<string>();
@@ -1003,6 +1082,7 @@ export function computeDiff(input: DiffInput): DiffResult {
     const linked = usersByExt.get(ext);
     if (linked) {
       if (!syncMarked.has(linked.id)) mark('ADD', ext, linked.id, null);
+      else rekind(ext, linked.id, null);
       continue;
     }
     // The one row the run matched by address (a LINK or RELINK it proposes):
@@ -1016,12 +1096,16 @@ export function computeDiff(input: DiffInput): DiffResult {
       addressed.add(match.localId);
       if (!syncMarked.has(match.localId)) {
         mark('ADD', ext, match.localId, { email: match.email, code: match.namesAgree ? null : 'PROTECTION_ADDRESS_NAME_DIFFERS' });
+      } else {
+        rekind(ext, match.localId, { email: match.email });
       }
       continue;
     }
     for (const localId of ambiguousMatches.get(ext)?.localIds ?? []) {
       addressed.add(localId);
-      if (!syncMarked.has(localId)) mark('ADD', ext, localId, { email: ambiguousMatches.get(ext)!.email, code: 'PROTECTION_ADDRESS_AMBIGUOUS' });
+      const email = ambiguousMatches.get(ext)!.email;
+      if (!syncMarked.has(localId)) mark('ADD', ext, localId, { email, code: 'PROTECTION_ADDRESS_AMBIGUOUS' });
+      else rekind(ext, localId, { email });
     }
   }
   if (full) {
