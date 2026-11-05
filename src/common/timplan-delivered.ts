@@ -149,6 +149,10 @@ const LOST: Partial<Record<DeliveredBucket, LostCause>> = {
   CANCELLED_MANUAL: 'cancelledManual',
   // A bulk avbokning (prao, friluftsdag): lost, unless the school credits
   // the day (TimplanCredits) — then the credit makes it up, as for any day.
+  // The same for a schemabrytande aktivitet's cancelled lessons: its
+  // replacement lesson is a lesson of a subject that does not count toward the
+  // timplan (see timplan-delivered.sql.ts), so it neither hides nor makes up
+  // what was cancelled; the credits the school wrote do.
   CANCELLED_EVENT: 'cancelledEvent',
   CANCELLED_UNKNOWN: 'cancelledUnknown',
   TEACHERLESS: 'teacherless',

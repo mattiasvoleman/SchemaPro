@@ -45,6 +45,19 @@ import type {
  *                              (not lost, not projected) before its day and
  *                              after it
  *
+ * A SCHEMABRYTANDE AKTIVITET (20270101090000) adds no branch here. Its
+ * replacement lesson is an ordinary CalendarLesson with a teacher row, and the
+ * CASE above classifies it as it classifies any other: DELIVERED once past and
+ * with a teacher, TEACHERLESS without one (lost), AHEAD before it. Its subject
+ * is one that does not count toward the timplan (the service refuses one that
+ * does, ACTIVITY_SUBJECT_COUNTS), so rule 5 keeps it out of every pupil's
+ * timplan and the day's minutes arrive only as the school's credits, one per
+ * named subject: counted once. The staffing reconciliation reads every subject
+ * (`subjects: 'all'`), so for a teacher the replacement lesson is held time,
+ * and the lessons the activity cancelled are CANCELLED_EVENT, bortfall, as
+ * before. probe-schemabrytande.ts (sa-d) pins all three readings over this
+ * very statement.
+ *
  * The break test is publish's breakCoversGroup in SQL: a whole-school break
  * covers every group, a spanned one a group whose gradeLevel is inside it.
  *

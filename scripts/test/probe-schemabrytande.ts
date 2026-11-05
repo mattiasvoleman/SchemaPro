@@ -9,6 +9,8 @@
  *         are cancelled; a teaching group with pupils of another class goes on
  *         and is named; a class with nobody responsible and a teacher who is
  *         busy with another class at the same time are warned about;
+ *   sa-a2 a joint lesson of the named class and another class goes for both,
+ *         and the other class's pupils are named as uncovered;
  *   sa-b  creating it cancels those lessons as an avbokning does (note,
  *         cause EVENT), writes ONE replacement lesson per class and day from
  *         the first start to the last end of what it replaces (master-less,
@@ -22,6 +24,12 @@
  *   sa-d  delivered time keeps one definition: the replacement lesson (a
  *         subject that does not count) is no pupil's timplan, is the teachers'
  *         held time once it is past, and a cancelled lesson is bortfall;
+ *   sa-d2 the teachers' days and the cover board agree: the responsible are
+ *         busy on the replacement lesson, the others whose lessons were
+ *         cancelled are free, and a cancelled lesson derives as CANCELLED;
+ *   sa-j  over a weekend and the change to summer time the replacement
+ *         lessons keep the class's clock (07:00Z in winter, 06:00Z in summer
+ *         for 08:00), and a day with no lesson gets none;
  *   sa-e  a lesson published into the activity's days later is taken by the
  *         re-application, and the replacement lesson grows to hold it;
  *   sa-f  the avbokning an activity owns cannot be reversed by itself, and is
@@ -30,12 +38,12 @@
  *         replacement lesson, a day added cancels and replaces, a teacher is
  *         swapped on the lesson, the name follows to the cancelled lessons'
  *         notes, and a lesson of a vikarie stays;
+ *   sa-i  the rows are the staff's to read and the administrator's to write:
+ *         a teacher reads, a pupil, a guardian and another school read nothing,
+ *         a teacher and a läsare write nothing;
  *   sa-h  removing it puts the lessons ahead back, deletes the replacement
  *         lessons ahead, and the credits; one with attendance stays, with the
  *         lessons it replaced; a second removal is 409;
- *   sa-i  the rows are the staff's to read and the administrator's to write:
- *         a teacher reads, a pupil and another school read nothing, a teacher
- *         and a läsare write nothing.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -277,6 +285,17 @@ export async function scheduleActivityChecks(owner: Client, api: PrismaService, 
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CancellationBatches" WHERE "schoolId" = $1`, [s])).n, 0);
     });
 
+    await check('(sa-a2) a joint lesson of a named class and another class is cancelled for both, and the pupils of the one the activity is not for are named as uncovered', async () => {
+      const friday = (await one<{ d: string }>(`SELECT ($1::date + 4)::text AS d`, [monday])).d;
+      const joint = await lesson(friday, '11:00', '11:45', matte, k7a, [eva], [k7b]);
+      const preview = await activities.preview(body({ fromDate: friday, toDate: friday }), admin);
+      assert.equal(preview.matched, 1);
+      // Frans goes in 7B, which the activity does not name: his lesson goes and nothing replaces it.
+      assert.equal(preview.warnings.uncoveredPupils, 1);
+      assert.deepEqual(preview.classes.map((entry) => [entry.name, entry.days]), [['AK7A', 1]]);
+      await owner.query(`DELETE FROM "CalendarLessons" WHERE id = $1`, [joint]);
+    });
+
     await check('(sa-b) creating cancels, replaces once per class and day, credits the named subjects and tells people once', async () => {
       const preview = await activities.preview(body(), admin);
       const created = await activities.create({ ...body(), expectedDigest: preview.digest }, admin);
@@ -398,6 +417,41 @@ export async function scheduleActivityChecks(owner: Client, api: PrismaService, 
       }
     });
 
+    await check('(sa-j) over a weekend and the change to summer time the replacement lessons keep the class’s own clock, and a day with no lesson gets none', async () => {
+      const friday = '2027-03-26';
+      const monday2 = '2027-03-29';
+      for (const date of [friday, monday2]) await lesson(date, '08:00', '08:45', matte, k7c, [eva]);
+      const dst = await activities.create(
+        {
+          academicYearId: year.id,
+          name: 'Prov åk 7C',
+          fromDate: friday,
+          toDate: monday2,
+          scope: 'GROUPS',
+          groupIds: [k7c],
+          replacementSubjectId: temadag,
+          teachers: [{ studentGroupId: k7c, teacherId: eva.userId!, role: 'LEAD' }],
+          notify: false,
+        },
+        admin,
+      );
+      assert.equal(dst.cancelled, 2);
+      const rows = await replacementsOf(dst.activity.id);
+      assert.deepEqual(rows.map((row) => [row.date, row.from, row.to]), [
+        [friday, '08:00', '08:45'],
+        [monday2, '08:00', '08:45'],
+      ]);
+      // 08:00 on the Friday is 07:00Z (winter time) and on the Monday 06:00Z (summer time).
+      const instants = await all<{ at: string }>(
+        `SELECT to_char(cl."startsAt" AT TIME ZONE 'UTC', 'HH24:MI') AS at FROM "ScheduleActivityLessons" sal JOIN "CalendarLessons" cl ON cl.id = sal."calendarLessonId" WHERE sal."activityId" = $1 ORDER BY cl.date`,
+        [dst.activity.id],
+      );
+      assert.deepEqual(instants.map((row) => row.at), ['07:00', '06:00']);
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "schoolId" = $1 AND date = '2027-03-27'`, [s])).n, 0);
+      await activities.remove(dst.activity.id, admin);
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ScheduleActivityLessons" WHERE "activityId" = $1`, [dst.activity.id])).n, 0);
+    });
+
     await check('(sa-e) a lesson published into the activity’s days later is cancelled with the rest, and the replacement lesson grows to hold it', async () => {
       const late = await lesson(tuesday, '11:00', '11:45', matte, k7a, [anna]);
       await api.withRls(admin, (tx) => reapplyActiveBatches(tx as unknown as PrismaClient, s, year.id, tuesday, wednesday, 'Europe/Stockholm'));
@@ -426,7 +480,11 @@ export async function scheduleActivityChecks(owner: Client, api: PrismaService, 
       await assert.rejects(batches.reversePreview(activity.batchId, admin), ConflictException);
       assert.deepEqual(await batches.list(year.id, admin), []);
       const listed = await activities.list(year.id, admin);
-      assert.deepEqual(listed.map((entry) => [entry.id, entry.name, entry.replacementLessons, entry.credits, entry.doubleCounts]), [[activity.id, 'Friluftsdag åk 7A', 2, 4, false]]);
+      // The removed one stays in the list as the record it is, marked.
+      assert.deepEqual(listed.filter((entry) => entry.removedAt === null).map((entry) => [entry.id, entry.name, entry.replacementLessons, entry.credits, entry.doubleCounts]), [
+        [activity.id, 'Friluftsdag åk 7A', 2, 4, false],
+      ]);
+      assert.deepEqual(listed.filter((entry) => entry.removedAt !== null).map((entry) => [entry.name, entry.replacementLessons]), [['Prov åk 7C', 0]]);
     });
 
     await check('(sa-g) changing it: a day dropped is put back, a day added is cancelled and replaced, the lesson’s teacher is swapped, the name follows', async () => {

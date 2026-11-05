@@ -5399,6 +5399,93 @@
     skickar ingen ny sammanfattning.
   </p>
 
+  <h4>Schemabrytande aktivitet</h4>
+  <p>
+    Friluftsdagen, praon och de nationella proven ställer in klassens lektioner,
+    men eleverna ska ändå ha en lektion att vara närvarande på. Det gör
+    <span class="path">Drift › Aktiviteter</span>: en aktivitet är en avbokning
+    och det som kommer i dess ställe. Ange namn, dagar (högst 31), eventuellt
+    ett tidsfönster och vilka klasser eller årskurser den gäller, som i en
+    avbokning. Lägg till
+  </p>
+  <ul>
+    <li><strong>Ämne för ersättningslektionen.</strong> Ett ämne som inte räknas
+      mot timplanen, till exempel <em>Temadag</em>. Lägg det under
+      <span class="path">Grunddata › Ämnen</span> med
+      <span class="ui">Räknas mot timplanen</span> avslaget. Ett ämne som räknas
+      vägras, eftersom dagens minuter då skulle räknas två gånger. Ämnets
+      namn är det vårdnadshavare ser på lektionen (de ser inte anteckningen),
+      så döp ämnet efter aktiviteten, till exempel <em>Friluftsdag</em>.</li>
+    <li><strong>Beskrivning.</strong> Några ord som eleverna och lärarna läser på
+      lektionen, efter aktivitetens namn, till exempel <em>Samling vid skolgården</em>.</li>
+    <li><strong>Ansvariga lärare</strong> för varje klass som får en
+      ersättningslektion. Den första blir ledande. En klass utan ansvarig lärare
+      får en lärarlös lektion, som räknas som förlorad tid, och förhandsgranskningen
+      säger vilka klasser det gäller.</li>
+    <li><strong>Tillgodoräkna tiden.</strong> En rad per ämne som dagen ska
+      räknas som undervisningstid i, med minuter per dag, till exempel 120
+      minuter Idrott och hälsa och 60 minuter Biologi. Raderna blir
+      tillgodoräkningar på varje hel dag efter i dag, för de klasser du namngav.</li>
+  </ul>
+  <p>
+    Lektionerna ställs in som i en avbokning, och för varje klass och dag skrivs
+    <strong>en ersättningslektion</strong> från den första starten till det sista
+    slutet av det den ersätter. Den bär närvaro: den ansvariga läraren öppnar
+    registret på den som på vilken lektion som helst och ser klassens elever, och
+    ingen elev står som frånvarande från en lektion som inte hålls. Lektionen
+    ligger i lärarnas veckor, så att det syns vem som är upptagen. Den
+    lärare vars lektion ställdes in utan att vara ansvarig för klassen är ledig,
+    och vikarietavlan ser det så.
+  </p>
+  <p>
+    En namngiven klass tar sina halvklasser med sig, och de grupper (till exempel
+    en ersättande grupp som SvA7, ett språkval eller en nivågrupp) vars elever
+    alla går i de namngivna klasserna. En grupp med elever ur en annan klass går
+    vidare, och förhandsgranskningen namnger den under <em>Lektioner som pågår
+    för klassens elever</em>: det är då ditt val om dessa elever ska vara
+    frånvarande från den eller inte. Förhandsgranskningen varnar också när en
+    ansvarig lärare har en lektion med en annan klass samtidigt.
+  </p>
+  <p>
+    <strong>Täckning.</strong> Ersättningslektionen räknas som hållen tid för
+    läraren, om hen står på den: personalens avstämning läser alla ämnen. För
+    elevernas timplan är det tillgodoräkningarna som räknas, eftersom
+    ersättningslektionens ämne inte gör det; de är skolans skrivna beslut om
+    vilka ämnen dagen räknas i. De ställda lektionerna är förlorad tid som förut
+    (<em>Inställd – avbokning</em>) tills en tillgodoräkning täcker dem, och en
+    ersättningslektion utan lärare är det också.
+  </p>
+  <p>
+    <strong>Publicering.</strong> En aktivitet verkar på kalendern som den är.
+    Det gör den lika med och utan utkast: lektioner som ett utkast eller en
+    påfyllning skriver in i aktivitetens dagar ställs in som de övriga, och
+    ersättningslektionen för klassen och dagen följer med. Ersättningslektionerna
+    har ingen masterlektion, så en publicering, en ändring i grundschemat eller
+    ett förkastat utkast rör dem aldrig; bara aktiviteten gör det.
+  </p>
+  <p>
+    <strong>Ändra och ta bort.</strong> <span class="ui">Ändra</span> visar vad
+    som sätts tillbaka och vad som ställs in, och berör bara dem det gäller: de
+    lektioner som inte längre ingår blir av som planerade, de nya ställs in,
+    och ersättningslektionerna, de ansvariga lärarna och tillgodoräkningarna
+    efter i dag skrivs om. <span class="ui">Ta bort</span> sätter tillbaka de
+    lektioner som ligger framåt (med sin tidigare anteckning), tar bort
+    ersättningslektionerna framåt som saknar närvaro och tillgodoräkningarna från
+    och med i dag. En ersättningslektion som har hållits eller har närvaro står
+    kvar som den hölls, tillsammans med de lektioner den ersatte, eftersom de
+    annars skulle ligga bredvid den. En aktivitet tas bort en gång. Avbokningen
+    en aktivitet äger syns inte under <span class="path">Drift › Avbokning</span>
+    och tas bara tillbaka med aktiviteten.
+  </p>
+  <p>
+    <strong>Besked.</strong> Som standard får eleverna, deras vårdnadshavare och
+    lärarna en notis var, med antalet inställda lektioner och dagarna; en ansvarig
+    lärare får i e-posten också veta vilka klasser hen ansvarar för. Det är
+    samma notis som en avbokning skickar. Tas aktiviteten bort, eller sätts
+    lektioner tillbaka vid en ändring, får de berörda en notis om de lektioner som
+    blir av. Förhandsgranskningen säger hur många som nås.
+  </p>
+
   <h3><span class="num">6.6</span>Närvaro</h3>
   <p>
     Läraren registrerar närvaro under <span class="path">Närvaro</span>, som

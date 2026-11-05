@@ -204,6 +204,7 @@ export async function syncReplacementsInTransaction(
           startsAt: true,
           endsAt: true,
           note: true,
+          status: true,
           _count: { select: { attendanceRecords: true } },
           teachers: { select: { id: true, teacherId: true, role: true } },
         },
@@ -251,7 +252,8 @@ export async function syncReplacementsInTransaction(
     }
     const lesson = row.calendarLesson;
     // History: it has begun or carries a register. Left exactly as it was held.
-    if (lesson.startsAt <= now || lesson._count.attendanceRecords > 0) continue;
+    // And one the administrator cancelled by hand (the day planner) stays so.
+    if (lesson.startsAt <= now || lesson._count.attendanceRecords > 0 || lesson.status !== 'SCHEDULED') continue;
     const moved = lesson.startsAt.getTime() !== entry.startsAt.getTime() || lesson.endsAt.getTime() !== entry.endsAt.getTime();
     if (moved || lesson.note !== note) {
       await tx.calendarLesson.update({
