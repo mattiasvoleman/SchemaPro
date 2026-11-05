@@ -448,6 +448,7 @@ export const SCHEDULE_ACTIVITIES: ScheduleActivity[] = [
     removedAt: null,
     reinstated: 0,
     doubleCounts: false,
+    addedSince: 0,
   },
   {
     id: uid(KIND.misc, 9143),
@@ -475,6 +476,7 @@ export const SCHEDULE_ACTIVITIES: ScheduleActivity[] = [
     removedAt: ago(4, "08:00"),
     reinstated: 1,
     doubleCounts: false,
+    addedSince: 0,
   },
 ];
 

@@ -12,11 +12,18 @@
  * undervisningstid" on Temadag), and then the lesson and the credit would
  * count the same hours twice. The gateway says so per activity
  * (doubleCounts); the row says it too, beside the state, with the way out.
+ *
+ * LESSONS ADDED SINCE. A publish or a påfyllning writes ordinary lessons into
+ * an activity's days after it was made. The gateway counts those it has not
+ * cancelled (addedSince); the row says so, beside the state, and "Tillämpa
+ * igen" cancels them and puts the replacement lessons in their place, as the
+ * same button on the avbokning's row does.
  */
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
+import { Loader2, TriangleAlert } from "lucide-react";
 import type { ScheduleActivity } from "@/lib/schedule-activity-types";
 import type { AcademicYear, Person, Room, StudentGroup, Subject } from "@/lib/types";
 import { toDateString } from "@/lib/utils";
@@ -28,10 +35,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TableCard } from "@/components/ui/table-card";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useReadOnly } from "@/components/profile-context";
-import { useFormats } from "./activity-format";
+import { useErrorText, useFormats } from "./activity-format";
 import { EditActivityDialog } from "./edit-activity-dialog";
 import { RemoveActivityDialog } from "./remove-activity-dialog";
-import { useScheduleActivities } from "./use-schedule-activities";
+import { useReapplyActivity, useScheduleActivities } from "./use-schedule-activities";
 
 /** How many named classes a row spells out before it says "och N till". */
 const NAMED_GROUPS_SHOWN = 6;
@@ -54,7 +61,9 @@ export function ActivitiesCard({
   const tGrades = useTranslations("grades");
   const { periodText } = useFormats();
   const readOnly = useReadOnly();
+  const errorText = useErrorText();
   const activities = useScheduleActivities(year.id);
+  const reapply = useReapplyActivity();
   const [changing, setChanging] = useState<ScheduleActivity | null>(null);
   const [removing, setRemoving] = useState<ScheduleActivity | null>(null);
   const today = toDateString(new Date());
@@ -70,6 +79,15 @@ export function ActivitiesCard({
     return names.length > NAMED_GROUPS_SHOWN
       ? `${names.slice(0, NAMED_GROUPS_SHOWN).join(", ")} ${t("andMoreGroups", { count: names.length - NAMED_GROUPS_SHOWN })}`
       : names.join(", ");
+  };
+
+  const doReapply = async (activity: ScheduleActivity) => {
+    try {
+      const outcome = await reapply.mutateAsync(activity.id);
+      toast.success(t("reapplied", { count: outcome.added }));
+    } catch (error) {
+      toast.error(errorText(error));
+    }
   };
 
   return (
@@ -139,6 +157,11 @@ export function ActivitiesCard({
                     ) : (
                       <Badge variant="secondary">{t("stateActive")}</Badge>
                     )}
+                    {!removed && activity.addedSince > 0 ? (
+                      <span className="block pt-1 text-xs text-muted-foreground">
+                        {t("addedSince", { count: activity.addedSince })}
+                      </span>
+                    ) : null}
                     {!removed && activity.notifies ? (
                       <span className="block pt-1 text-xs text-muted-foreground">{t("notified")}</span>
                     ) : null}
@@ -153,11 +176,26 @@ export function ActivitiesCard({
                     <TableCell className="text-right">
                       {removed ? null : (
                         <div className="flex flex-wrap justify-end gap-2">
+                          {activity.addedSince > 0 ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              aria-label={tCommon("actionNamed", { action: t("reapply"), name: activity.name })}
+                              onClick={() => void doReapply(activity)}
+                              disabled={reapply.isPending}
+                              data-writes="DRIFT"
+                            >
+                              {reapply.isPending && reapply.variables === activity.id ? <Loader2 className="animate-spin" /> : null}
+                              {t("reapply")}
+                            </Button>
+                          ) : null}
                           <Button
                             variant="outline"
                             size="sm"
                             aria-label={tCommon("actionNamed", { action: t("change"), name: activity.name })}
                             onClick={() => setChanging(activity)}
+                            // The form leaves out a class the year no longer holds, so it waits for the year's groups.
+                            disabled={groups.length === 0}
                             data-writes="DRIFT"
                           >
                             {t("change")}

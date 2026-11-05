@@ -206,10 +206,11 @@ describe("the activity form", () => {
       removedAt: null,
       reinstated: 0,
       doubleCounts: false,
+      addedSince: 0,
     };
 
     it("opens on the activity, the leading teacher first, so a save sends the same lead", () => {
-      const opened = formOfActivity(activity, [{ subjectId: "idh", minutes: 300 }], 0);
+      const opened = formOfActivity(activity, [{ subjectId: "idh", minutes: 300 }], 0, GROUPS);
       expect(opened).toMatchObject({
         name: "Friluftsdag åk 7",
         description: "Ta med matsäck.",
@@ -227,8 +228,40 @@ describe("the activity form", () => {
       ]);
     });
 
+    it("leaves out a class that no longer exists, and its teachers, so the activity can still be changed", () => {
+      // 7c was deleted after the activity was made: the page's groups no longer hold it.
+      const named = {
+        ...activity,
+        scopeGroupIds: ["7a", "7c", "7b"],
+        teachers: [...activity.teachers, { studentGroupId: "7c", teacherId: "dan", role: "LEAD" as const }],
+      };
+      const opened = formOfActivity(named, [], 0, GROUPS);
+      expect(opened.groupIds).toEqual(["7a", "7b"]);
+      expect(opened.teachers).toEqual({ "7a": ["anna", "bo"], "7b": ["cia"] });
+      // What remains is what it was: the same form as when nothing is missing.
+      expect(opened).toEqual(formOfActivity(activity, [], 0, GROUPS));
+      expect(activityProblems(opened, YEAR)).toEqual([]);
+      expect(teachersOf(opened, ownerIdsOf(opened, GROUPS)).map((teacher) => teacher.studentGroupId)).toEqual([
+        "7a",
+        "7a",
+        "7b",
+      ]);
+
+      // A scope by years names no classes, but its teachers are still per class.
+      const byGrade = { ...named, scope: "GRADES" as const, minGradeLevel: 7, maxGradeLevel: 7, scopeGroupIds: [] };
+      const graded = formOfActivity(byGrade, [], 0, GROUPS);
+      expect(graded.groupIds).toEqual([]);
+      expect(graded.teachers).toEqual({ "7a": ["anna", "bo"], "7b": ["cia"] });
+
+      // Every class gone: the form asks for classes again rather than send names the year does not hold.
+      const none = formOfActivity(named, [], 0, []);
+      expect(none.groupIds).toEqual([]);
+      expect(none.teachers).toEqual({});
+      expect(activityProblems(none, YEAR)).toEqual(["groups"]);
+    });
+
     it("asks for another subject when the old one counts toward the timplan now", () => {
-      const opened = formOfActivity({ ...activity, doubleCounts: true }, [], 0);
+      const opened = formOfActivity({ ...activity, doubleCounts: true }, [], 0, GROUPS);
       expect(opened.replacementSubjectId).toBe("");
       expect(activityProblems(opened, YEAR)).toEqual(["subject"]);
     });

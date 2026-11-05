@@ -279,16 +279,27 @@ export function hasCreditsAhead(activity: Pick<ScheduleActivity, "credits" | "to
   return activity.credits > 0 && activity.toDate > today;
 }
 
-/** The form an existing activity opens on. `firstId` numbers the credit rows. */
+/**
+ * The form an existing activity opens on. `firstId` numbers the credit rows.
+ *
+ * `groups` are those the page has loaded for the activity's läsår. A class
+ * deleted since the activity was made is no longer among them, so the form
+ * leaves it and its teachers out rather than send a name the year does not
+ * hold: a deleted class does not make the activity impossible to change, and
+ * the preview says what the change then does.
+ */
 export function formOfActivity(
   activity: ScheduleActivity,
   credits: readonly ActivityCreditLine[],
   firstId: number,
+  groups: readonly { id: string }[],
 ): ActivityForm {
+  const known = new Set(groups.map((group) => group.id));
   const teachers: Record<string, string[]> = {};
   // The leading teacher first: the gateway makes the first named lead.
   const ordered = [...activity.teachers].sort((a, b) => Number(b.role === "LEAD") - Number(a.role === "LEAD"));
   for (const teacher of ordered) {
+    if (!known.has(teacher.studentGroupId)) continue;
     teachers[teacher.studentGroupId] = [...(teachers[teacher.studentGroupId] ?? []), teacher.teacherId];
   }
   return {
@@ -300,7 +311,7 @@ export function formOfActivity(
     scope: activity.scope,
     minGradeLevel: activity.minGradeLevel ?? EMPTY_ACTIVITY_FORM.minGradeLevel,
     maxGradeLevel: activity.maxGradeLevel ?? EMPTY_ACTIVITY_FORM.maxGradeLevel,
-    groupIds: activity.scope === "GROUPS" ? [...activity.scopeGroupIds] : [],
+    groupIds: activity.scope === "GROUPS" ? activity.scopeGroupIds.filter((id) => known.has(id)) : [],
     // A subject that counts toward the timplan now is no longer a choice (the gateway
     // refuses it): the form asks for another rather than sending the old one.
     replacementSubjectId: activity.replacementSubject && !activity.doubleCounts ? activity.replacementSubject.id : "",

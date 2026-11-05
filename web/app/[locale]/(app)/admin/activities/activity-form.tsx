@@ -96,8 +96,15 @@ export function ActivityFormBody({
   const preview = useActivityPreview();
   const create = useCreateActivity();
   const change = useChangeActivity();
+  const yearGroups = useMemo(
+    () =>
+      groups
+        .filter((group) => group.academicYearId === year.id)
+        .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name, "sv") : a.kind === "CLASS" ? -1 : 1)),
+    [groups, year.id],
+  );
   const [form, setForm] = useState<ActivityForm>(() =>
-    activity ? formOfActivity(activity, creditLines ?? [], 0) : EMPTY_ACTIVITY_FORM,
+    activity ? formOfActivity(activity, creditLines ?? [], 0, yearGroups) : EMPTY_ACTIVITY_FORM,
   );
   const [previewed, setPreviewed] = useState<ActivitySelection | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -110,13 +117,6 @@ export function ActivityFormBody({
     onBusyChange?.(saving);
   }, [onBusyChange, saving]);
 
-  const yearGroups = useMemo(
-    () =>
-      groups
-        .filter((group) => group.academicYearId === year.id)
-        .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name, "sv") : a.kind === "CLASS" ? -1 : 1)),
-    [groups, year.id],
-  );
   const replacementSubjects = useMemo(() => subjects.filter((subject) => !subject.countsTowardTimplan), [subjects]);
   const creditSubjects = useMemo(() => subjects.filter((subject) => subject.countsTowardTimplan), [subjects]);
   const teachers = useMemo(

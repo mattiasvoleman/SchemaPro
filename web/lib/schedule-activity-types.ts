@@ -140,6 +140,8 @@ export interface ScheduleActivity {
   reinstated: number;
   /** The subject counts toward the timplan now: the day's minutes would be counted twice. */
   doubleCounts: boolean;
+  /** Ordinary lessons that have come into its days since it was made or last applied and that it has not cancelled; 0 once removed. */
+  addedSince: number;
 }
 
 /** POST /schedule-activities. */
@@ -155,6 +157,12 @@ export interface ActivityChanged {
   activity: ScheduleActivity;
   released: number;
   taken: number;
+}
+
+/** POST /schedule-activities/:id/reapply: `added` is how many lessons it cancelled just now. */
+export interface ActivityReapplied {
+  activity: ScheduleActivity;
+  added: number;
 }
 
 /** POST /schedule-activities/:id/remove/preview and /remove (RemovePreview). */

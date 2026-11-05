@@ -8,6 +8,7 @@ import type {
   ActivityCreated,
   ActivityInput,
   ActivityPreview,
+  ActivityReapplied,
   ActivityRemovePreview,
   ActivitySelection,
   ScheduleActivity,
@@ -76,6 +77,15 @@ export function useChangeActivity() {
   return useMutation({
     mutationFn: ({ id, input }: { id: string; input: ActivityInput }) =>
       api.patch<ActivityChanged>(`/api/v1/schedule-activities/${id}`, input),
+    onSettled: after,
+  });
+}
+
+/** Cancels the ordinary lessons that have come into the activity's days since; `added` says how many. */
+export function useReapplyActivity() {
+  const after = useAfterActivity();
+  return useMutation({
+    mutationFn: (id: string) => api.post<ActivityReapplied>(`/api/v1/schedule-activities/${id}/reapply`),
     onSettled: after,
   });
 }

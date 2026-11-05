@@ -118,6 +118,7 @@ const ACTIVITY: ScheduleActivity = {
   removedAt: null,
   reinstated: 0,
   doubleCounts: false,
+  addedSince: 0,
 };
 /** Held already: its days are behind the pinned today. */
 const FINISHED: ScheduleActivity = {
@@ -589,6 +590,96 @@ describe("/admin/activities", () => {
     await user.click(within(row).getByRole("button", { name: "Ändra Friluftsdag" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(/men raderna här är tomma\. Sparar du så tas tillgodoräkningarna/)).toBeInTheDocument();
+  });
+
+  it("opens a change of an activity that names a class since deleted, without it and its teachers", async () => {
+    // g-gone is not among the groups the page loaded (useGroups holds 9A and 9B).
+    listed = [
+      {
+        ...ACTIVITY,
+        scope: "GROUPS",
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        scopeGroupIds: ["g-9a", "g-gone"],
+        teachers: [
+          { studentGroupId: "g-9a", teacherId: "u-anna", role: "LEAD" },
+          { studentGroupId: "g-gone", teacherId: "u-bo", role: "LEAD" },
+        ],
+      },
+    ];
+    post.mockResolvedValue({ ...PREVIEW, digest: DIGEST_WITH_TEACHER, change: { released: 0, taken: 0 } });
+    const user = userEvent.setup();
+    renderPage();
+    const row = (await screen.findByText("Friluftsdag")).closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: "Ändra Friluftsdag" }));
+    const dialog = await screen.findByRole("dialog", { name: "Ändra Friluftsdag" });
+    expect(await within(dialog).findByLabelText("Namn")).toHaveValue("Friluftsdag");
+    await user.click(within(dialog).getByRole("button", { name: "Förhandsgranska" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/api/v1/schedule-activities/a-1/preview", {
+        academicYearId: "y26",
+        name: "Friluftsdag",
+        fromDate: "2026-12-07",
+        toDate: "2026-12-08",
+        scope: "GROUPS",
+        groupIds: ["g-9a"],
+        replacementSubjectId: "s-tema",
+        description: "Ta med matsäck.",
+        teachers: [{ studentGroupId: "g-9a", teacherId: "u-anna", role: "LEAD" }],
+        credits: [{ subjectId: "s-idh", minutes: 300 }],
+      }),
+    );
+  });
+
+  it("says lessons have come into an activity's days since, and applies it again to cancel them", async () => {
+    listed = [{ ...ACTIVITY, addedSince: 3 }];
+    post.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/schedule-activities/a-1/reapply") {
+        // The list is read again after the write: nothing waits any more.
+        listed = [{ ...ACTIVITY, cancelled: 65, addedSince: 0 }];
+        return { activity: listed[0], added: 3 };
+      }
+      throw new Error(`unexpected POST ${path}`);
+    });
+    const user = userEvent.setup();
+    renderPage();
+    const row = (await screen.findByText("Friluftsdag")).closest("tr")!;
+    expect(row).toHaveTextContent("3 lektioner har tillkommit i aktivitetens dagar och är inte inställda än.");
+    const button = within(row).getByRole("button", { name: "Tillämpa igen Friluftsdag" });
+    expect(button).toHaveAttribute("data-writes", "DRIFT");
+
+    await user.click(button);
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/schedule-activities/a-1/reapply"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("3 lektioner till ställdes in."));
+    await waitFor(() => expect(row).toHaveTextContent("65 inställda lektioner"));
+    expect(row).not.toHaveTextContent("har tillkommit i aktivitetens dagar");
+    expect(within(row).queryByRole("button", { name: "Tillämpa igen Friluftsdag" })).not.toBeInTheDocument();
+  });
+
+  it("says when applying again cancelled nothing, and a refusal in words", async () => {
+    listed = [{ ...ACTIVITY, addedSince: 1 }];
+    post.mockResolvedValueOnce({ activity: ACTIVITY, added: 0 });
+    post.mockRejectedValueOnce(new ApiError(409, "…", "ACTIVITY_REMOVED"));
+    const user = userEvent.setup();
+    renderPage();
+    const row = (await screen.findByText("Friluftsdag")).closest("tr")!;
+    expect(row).toHaveTextContent("1 lektion har tillkommit i aktivitetens dagar och är inte inställd än.");
+    await user.click(within(row).getByRole("button", { name: "Tillämpa igen Friluftsdag" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Inga nya lektioner ställdes in."));
+    await user.click(within(row).getByRole("button", { name: "Tillämpa igen Friluftsdag" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Aktiviteten är redan borttagen."));
+  });
+
+  it("offers no re-apply where nothing has come into the days, nor on a removed activity", async () => {
+    // A removed activity carries 0 from the gateway; the row does not trust that alone.
+    listed = [ACTIVITY, { ...REMOVED, addedSince: 4 }];
+    renderPage();
+    const row = (await screen.findByText("Friluftsdag")).closest("tr")!;
+    expect(row).not.toHaveTextContent("har tillkommit");
+    expect(within(row).queryByRole("button", { name: /Tillämpa igen/ })).not.toBeInTheDocument();
+    const removed = screen.getByText("Prao åk 8").closest("tr")!;
+    expect(removed).not.toHaveTextContent("har tillkommit");
+    expect(screen.queryByRole("button", { name: /Tillämpa igen/ })).not.toBeInTheDocument();
   });
 
   it("asks what a removal does before it removes, and says what stays", async () => {
