@@ -103,18 +103,19 @@
 --     is. A lesson the timetable removes takes it out of the request; a
 --     request with no line left is closed by the gateway when it is
 --     answered.
---   * A confirmation is CASCADE to its decision (absenceId, calendarLessonId)
---     in TeacherAbsenceCovers: an undone decision takes the confirmation
---     with it.
+--   * A confirmation is CASCADE to its absence and its lesson, and goes with
+--     its decision by trigger (app.cover_confirmations_follow_decision): an
+--     undone decision takes the confirmation with it, and one handed to
+--     another vikarie takes the old vikarie's.
 --
 -- ## Beside the live API: every lock at once, or none
 --
 -- Production runs this while the API before it serves requests. No existing
--- table gains a column; the new keys take Schools, Users, TeacherAbsences,
--- CalendarLessons and TeacherAbsenceCovers in SHARE ROW EXCLUSIVE, which
--- blocks writes to them (not reads, and not the KEY SHARE a foreign-key
--- check takes) for the length of the file; the new tables are empty, so
--- each key validates nothing. A request writes CalendarLessons,
+-- table gains a column; the new keys and triggers take Schools, Users,
+-- TeacherAbsences, CalendarLessons and TeacherAbsenceCovers in SHARE ROW
+-- EXCLUSIVE, which blocks writes to them (not reads, and not the KEY SHARE a
+-- foreign-key check takes) for the length of the file; the new tables are
+-- empty, so each key validates nothing. A request writes CalendarLessons,
 -- TeacherAbsences and Users in one transaction, so the locks are taken
 -- together, NOWAIT, in a loop: a refusal rolls the subtransaction back with
 -- whatever it got and tries again 50 ms later; it never waits while it
@@ -306,9 +307,6 @@ ALTER TABLE "CoverConfirmations"
 ALTER TABLE "CoverConfirmations"
     ADD CONSTRAINT "CoverConfirmations_userId_schoolId_fkey" FOREIGN KEY ("userId", "schoolId")
     REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION;
-ALTER TABLE "CoverConfirmations"
-    ADD CONSTRAINT "CoverConfirmations_decision_fkey" FOREIGN KEY ("absenceId", "calendarLessonId")
-    REFERENCES "TeacherAbsenceCovers"("absenceId", "calendarLessonId") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 -- ---------------------------------------------------------------------------
 -- A request ends once, and only the database says when.
@@ -487,12 +485,24 @@ REVOKE ALL ON FUNCTION app.cover_request_closes_on_decision() FROM PUBLIC;
 CREATE TRIGGER "TeacherAbsenceCovers_c_closes_requests" AFTER INSERT OR UPDATE ON "TeacherAbsenceCovers"
     FOR EACH ROW EXECUTE FUNCTION app.cover_request_closes_on_decision();
 
+-- A confirmation is the vikarie's tap on the pass a DECISION gave them, so it
+-- lives and dies with that decision: handed to somebody else, or taken back,
+-- it goes. A trigger and not a foreign key to the decision: a key from
+-- CoverConfirmations to TeacherAbsenceCovers would put a table a level down
+-- from the lessons of a group that the removal inventory (probe mv1) holds to
+-- the first level of the cascade, and the trigger covers what the key would:
+-- the decision's own delete and the cascades that reach it.
 CREATE FUNCTION app.cover_confirmations_follow_decision() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
-  DELETE FROM "CoverConfirmations" c
-   WHERE c."absenceId" = NEW."absenceId" AND c."calendarLessonId" = NEW."calendarLessonId"
-     AND c."userId" IS DISTINCT FROM NEW."substituteId";
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM "CoverConfirmations" c
+     WHERE c."absenceId" = OLD."absenceId" AND c."calendarLessonId" = OLD."calendarLessonId";
+  ELSE
+    DELETE FROM "CoverConfirmations" c
+     WHERE c."absenceId" = NEW."absenceId" AND c."calendarLessonId" = NEW."calendarLessonId"
+       AND c."userId" IS DISTINCT FROM NEW."substituteId";
+  END IF;
   RETURN NULL;
 END
 $$;
@@ -500,6 +510,8 @@ $$;
 REVOKE ALL ON FUNCTION app.cover_confirmations_follow_decision() FROM PUBLIC;
 
 CREATE TRIGGER "TeacherAbsenceCovers_d_drops_confirmations" AFTER UPDATE OF "substituteId", "decision" ON "TeacherAbsenceCovers"
+    FOR EACH ROW EXECUTE FUNCTION app.cover_confirmations_follow_decision();
+CREATE TRIGGER "TeacherAbsenceCovers_e_drops_confirmations_on_delete" AFTER DELETE ON "TeacherAbsenceCovers"
     FOR EACH ROW EXECUTE FUNCTION app.cover_confirmations_follow_decision();
 
 -- ---------------------------------------------------------------------------

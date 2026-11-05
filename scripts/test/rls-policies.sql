@@ -36762,7 +36762,8 @@ BEGIN
   END IF;
   -- The triggers that make a request end once and keep the rest in step.
   FOREACH f IN ARRAY ARRAY['CoverRequests_a_one_way', 'CoverRequests_b_close_lines', 'CoverRequestRecipients_a_narrow',
-                           'TeacherAbsenceCovers_c_closes_requests', 'TeacherAbsenceCovers_d_drops_confirmations'] LOOP
+                           'TeacherAbsenceCovers_c_closes_requests', 'TeacherAbsenceCovers_d_drops_confirmations',
+                           'TeacherAbsenceCovers_e_drops_confirmations_on_delete'] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = f AND NOT tgisinternal AND tgenabled = 'O') THEN
       RAISE EXCEPTION 'cover requests: the trigger % is missing or disabled', f;
     END IF;
