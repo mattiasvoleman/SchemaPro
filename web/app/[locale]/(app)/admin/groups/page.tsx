@@ -145,6 +145,7 @@ export default function GroupsPage() {
   // The active year's classes, for the skolenheter card's map, and the year's
   // numbering they are placed by.
   const activeYear = years.find((year) => year.isActive);
+  const activeGroups = (groups ?? []).filter((group) => group.academicYearId === activeYear?.id);
   const activeClasses = useMemo(
     () => (groups ?? []).filter((group) => group.kind === "CLASS" && group.academicYearId === activeYear?.id),
     [groups, activeYear?.id],
@@ -422,15 +423,17 @@ export default function GroupsPage() {
           <>
             <CsvExportButton
               exports={[
+                // The active läsår's, which is the year the import writes
+                // into: every year's groups made a file that put last year's
+                // classes and groups into this one.
                 {
                   kind: "classes",
-                  build: () => classesToCsv(groups ?? []),
-                  empty: !groups?.some((group) => group.kind === "CLASS"),
+                  build: () => classesToCsv(activeGroups, subjects ?? []),
+                  empty: activeGroups.length === 0,
                 },
                 {
                   kind: "teachingGroups",
-                  build: () =>
-                    membershipsToCsv(groups ?? [], people ?? [], memberships ?? []),
+                  build: () => membershipsToCsv(activeGroups, people ?? [], memberships ?? []),
                   empty: !memberships || memberships.length === 0,
                 },
               ]}

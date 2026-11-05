@@ -352,7 +352,11 @@ describe("templateCsvContent", () => {
 
   it("classes template is byte-exact", () => {
     expect(templateCsvContent("classes")).toBe(
-      BOM + "namn;arskurs\r\n7A;7\r\n7B;7\r\n",
+      BOM +
+        "namn;arskurs;typ;halvklass_av;ersatter_amne\r\n" +
+        "7A;7;klass;;\r\n" +
+        "7A:1;7;undervisningsgrupp;7A;\r\n" +
+        "SvA7;7;undervisningsgrupp;;SVA\r\n",
     );
   });
 
@@ -446,8 +450,9 @@ describe("templateCsvContent", () => {
     const classes = mapClassRows(parseCsv(templateCsvContent("classes")));
     expect(classes.errors).toEqual([]);
     expect(classes.rows).toStrictEqual([
-      { name: "7A", gradeLevel: 7 },
-      { name: "7B", gradeLevel: 7 },
+      { name: "7A", gradeLevel: 7, kind: "CLASS" },
+      { name: "7A:1", gradeLevel: 7, kind: "TEACHING_GROUP", halfOf: "7A" },
+      { name: "SvA7", gradeLevel: 7, kind: "TEACHING_GROUP", replacesSubject: "SVA" },
     ]);
 
     const memberships = mapMembershipRows(
@@ -577,14 +582,18 @@ describe("mapStudentRows", () => {
     ]);
   });
 
-  it("reports an empty klass cell with its row number", () => {
+  it("reads an empty klass cell as a pupil without a class, posting className null", () => {
+    // The register holds pupils not yet placed in a class, and the people
+    // page exports them with an empty cell; refusing it made that export a
+    // file that could not be imported back.
     const csv =
       "fornamn;efternamn;epost;klass\r\nAlma;Berg;a@example.com;7A\r\nBo;Ek;b@example.com;\r\n";
     const result = mapStudentRows(parseCsv(csv));
-    expect(result.errors).toEqual([
-      { row: 2, message: 'Rad 2: kolumnen "klass" är tom.' },
+    expect(result.errors).toEqual([]);
+    expect(result.rows).toEqual([
+      { firstName: "Alma", lastName: "Berg", email: "a@example.com", className: "7A" },
+      { firstName: "Bo", lastName: "Ek", email: "b@example.com", className: null },
     ]);
-    expect(result.rows).toHaveLength(1);
   });
 });
 
@@ -873,7 +882,7 @@ describe("subjects", () => {
         name: "Matematik",
         code: "MA",
         color: "#4f46e5",
-        roomType: "",
+        roomType: null,
         nationalCode: "MA",
         countsTowardTimplan: true,
       },
@@ -890,7 +899,7 @@ describe("subjects", () => {
         name: "Mentorstid",
         code: "MT",
         color: "#64748b",
-        roomType: "",
+        roomType: null,
         nationalCode: null,
         countsTowardTimplan: false,
       },
@@ -909,8 +918,8 @@ describe("subjects", () => {
       {
         name: "Bild",
         code: "BL",
-        color: "",
-        roomType: "",
+        color: null,
+        roomType: null,
         nationalCode: null,
         countsTowardTimplan: null,
       },
@@ -1042,7 +1051,7 @@ describe("subjects", () => {
         name: "Matematik",
         code: "MA",
         color: "#4f46e5",
-        roomType: "",
+        roomType: null,
         nationalCode: "MA",
         countsTowardTimplan: true,
       },
@@ -1056,8 +1065,8 @@ describe("subjects", () => {
       },
       {
         name: "Kemi",
-        code: "",
-        color: "",
+        code: null,
+        color: null,
         roomType: "Laborationssal",
         nationalCode: "KE",
         countsTowardTimplan: true,
@@ -1065,8 +1074,8 @@ describe("subjects", () => {
       {
         name: "Mentorstid",
         code: "MT",
-        color: "",
-        roomType: "",
+        color: null,
+        roomType: null,
         nationalCode: null,
         countsTowardTimplan: false,
       },
@@ -1506,7 +1515,7 @@ describe("teaching requirements", () => {
       });
 
       it.each(["61", "-1", "1.5", "5,5", "tio minuter"])(
-        'rejects minutesBefore "%s" with the same sentence the other numbers use',
+        'rejects minuter_fore "%s" with the same sentence the other numbers use',
         (value) => {
           const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 4: value })));
 
@@ -1514,20 +1523,20 @@ describe("teaching requirements", () => {
           expect(errors).toEqual([
             {
               row: 1,
-              message: `Rad 1: minutesBefore "${value}" är inte ett heltal mellan 0 och 60.`,
+              message: `Rad 1: minuter_fore "${value}" är inte ett heltal mellan 0 och 60.`,
             },
           ]);
         },
       );
 
-      it.each(["61", "-5", "abc"])('rejects minutesAfter "%s"', (value) => {
+      it.each(["61", "-5", "abc"])('rejects minuter_efter "%s"', (value) => {
         const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 5: value })));
 
         expect(rows).toEqual([]);
         expect(errors).toEqual([
           {
             row: 1,
-            message: `Rad 1: minutesAfter "${value}" är inte ett heltal mellan 0 och 60.`,
+            message: `Rad 1: minuter_efter "${value}" är inte ett heltal mellan 0 och 60.`,
           },
         ]);
       });
@@ -1538,12 +1547,25 @@ describe("teaching requirements", () => {
         const { errors } = mapRequirementRows(parseCsv(oneRow({ 4: "99", 5: "99" })));
 
         expect(errors).toHaveLength(1);
-        expect(errors[0]?.message).toContain("minutesBefore");
+        expect(errors[0]?.message).toContain("minuter_fore");
+      });
+
+      it("still reads a file saved from an export that wrote the API's field names", () => {
+        // Until 2027-01 the template and the export spelled these two
+        // minutesBefore and minutesAfter; a school's saved copy keeps working.
+        const csv =
+          "grupp;amne;lektioner_per_vecka;minuter_per_lektion;minutesBefore;minutesAfter\r\n" +
+          "7A;IDH;2;60;10;20\r\n";
+        const { rows, errors, columns } = mapRequirementRows(parseCsv(csv));
+
+        expect(errors).toEqual([]);
+        expect(rows[0]).toMatchObject({ minutesBefore: 10, minutesAfter: 20 });
+        expect(columns).toEqual(expect.arrayContaining(["minutesBefore", "minutesAfter"]));
       });
 
       it("also reads the Swedish headers a hand would write", () => {
-        // The template writes the API's field names; a school that adds the
-        // column itself writes what the timplan page calls it.
+        // The template writes minuter_fore; a school that adds the column
+        // itself writes what the timplan page calls it.
         const csv =
           "grupp;amne;lektioner_per_vecka;minuter_per_lektion;ombyte_fore;dusch_efter\r\n" +
           "7A;IDH;2;60;10;20\r\n";
@@ -1923,7 +1945,7 @@ describe("teaching requirements", () => {
     it("writes a header-only file when there is nothing to export", () => {
       expect(requirementsToCsv([], groups, subjects, people)).toBe(
         "﻿" +
-          "grupp;amne;lektioner_per_vecka;minuter_per_lektion;minutesBefore;minutesAfter;" +
+          "grupp;amne;lektioner_per_vecka;minuter_per_lektion;minuter_fore;minuter_efter;" +
           "larare;medlarare;veckor;fran;till;larare_procent;medlarare_procent\r\n",
       );
     });
@@ -1993,38 +2015,69 @@ describe("export round trips", () => {
 
   it("classes survive, keeping the grade level a number again", () => {
     const exported = classesToCsv([
-      { name: "7A", kind: "CLASS", gradeLevel: 7 },
-      { name: "F-klass", kind: "CLASS", gradeLevel: 0 },
+      { id: "g-7a", name: "7A", kind: "CLASS", gradeLevel: 7 },
+      { id: "g-f", name: "F-klass", kind: "CLASS", gradeLevel: 0 },
     ]);
     const { rows, errors } = mapClassRows(parseCsv(exported));
 
     expect(errors).toEqual([]);
     // Year 0 must survive as 0, not be lost to a falsy check somewhere.
     expect(rows).toEqual([
-      { name: "7A", gradeLevel: 7 },
-      { name: "F-klass", gradeLevel: 0 },
+      { name: "7A", gradeLevel: 7, kind: "CLASS" },
+      { name: "F-klass", gradeLevel: 0, kind: "CLASS" },
     ]);
   });
 
   it("leaves a class without a grade level blank, and reads back without one", () => {
-    const exported = classesToCsv([{ name: "Förberedelse", kind: "CLASS", gradeLevel: null }]);
+    const exported = classesToCsv([{ id: "g-fb", name: "Förberedelse", kind: "CLASS", gradeLevel: null }]);
     const { rows, errors } = mapClassRows(parseCsv(exported));
 
     expect(errors).toEqual([]);
-    expect(rows[0]).toEqual({ name: "Förberedelse" });
+    expect(rows[0]).toEqual({ name: "Förberedelse", kind: "CLASS" });
   });
 
-  it("keeps teaching groups out of the class export", () => {
-    // They have their own file; re-importing them here would turn every
-    // teaching group into a home class.
-    const exported = classesToCsv([
-      { name: "7A", kind: "CLASS", gradeLevel: 7 },
-      { name: "Ma71", kind: "TEACHING_GROUP", gradeLevel: null },
-    ]);
+  it("writes the year's teaching groups too, as such, with their halves and replaced subjects", () => {
+    // A teaching group nobody is placed in yet appears in no membership row,
+    // and the timplan that names it failed on re-import ("Gruppen finns
+    // inte"); a half written without its class came back as a plain group.
+    const exported = classesToCsv(
+      [
+        { id: "g-7b", name: "7B", kind: "CLASS", gradeLevel: 7, halfOfId: null, replacesSubjectId: null },
+        { id: "g-7b1", name: "7B grupp 1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7b", replacesSubjectId: null },
+        { id: "g-stod", name: "Sv-stöd 7", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: null, replacesSubjectId: null },
+        { id: "g-sva", name: "SvA 7", kind: "TEACHING_GROUP", gradeLevel: null, halfOfId: null, replacesSubjectId: "s-sv" },
+      ],
+      [{ id: "s-sv", name: "Svenska", code: "SV" }],
+    );
 
-    expect(mapClassRows(parseCsv(exported)).rows).toEqual([
-      { name: "7A", gradeLevel: 7 },
+    expect(exported.split("\r\n").slice(1, 5)).toEqual([
+      "7B;7;klass;;",
+      "7B grupp 1;7;undervisningsgrupp;7B;",
+      "Sv-stöd 7;7;undervisningsgrupp;;",
+      "SvA 7;;undervisningsgrupp;;SV",
     ]);
+    const { rows, errors } = mapClassRows(parseCsv(exported));
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      { name: "7B", gradeLevel: 7, kind: "CLASS" },
+      { name: "7B grupp 1", gradeLevel: 7, kind: "TEACHING_GROUP", halfOf: "7B" },
+      { name: "Sv-stöd 7", gradeLevel: 7, kind: "TEACHING_GROUP" },
+      { name: "SvA 7", kind: "TEACHING_GROUP", replacesSubject: "SV" },
+    ]);
+  });
+
+  it("leaves out a half whose class, or a group whose subject, the lists cannot name", () => {
+    // Written without them they would come back as something else: a plain
+    // teaching group, or one that replaces nothing.
+    const exported = classesToCsv(
+      [
+        { id: "g-h", name: "7C:1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-other-year" },
+        { id: "g-r", name: "SvA 8", kind: "TEACHING_GROUP", gradeLevel: 8, replacesSubjectId: "s-gone" },
+      ],
+      [],
+    );
+
+    expect(mapClassRows(parseCsv(exported)).rows).toEqual([]);
   });
 
   it("teachers survive, and students are left out of their file", () => {
@@ -2278,7 +2331,7 @@ describe("export round trips", () => {
 
   it("quotes a name containing the delimiter in every kind", () => {
     const exported = classesToCsv([
-      { name: "7A; parallell", kind: "CLASS", gradeLevel: 7 },
+      { id: "g-par", name: "7A; parallell", kind: "CLASS", gradeLevel: 7 },
     ]);
 
     expect(mapClassRows(parseCsv(exported)).rows[0]?.name).toBe("7A; parallell");
@@ -2343,6 +2396,15 @@ describe("formula injection", () => {
     const parsed = parseCsv(serializeCsv(["name"], [["'Anna'"]]));
     expect(parsed.rows[0]?.[0]).toBe("'Anna'");
   });
+
+  it.each(["'=x", "''+1", "'-5", "' @a"])(
+    "brings back %s with the apostrophe it began with, though it looks like a guarded cell",
+    (value) => {
+      const written = serializeCsv(["name"], [[value]]);
+      expect(written.split("\r\n")[1]).toBe(`'${value}`);
+      expect(parseCsv(written).rows[0]?.[0]).toBe(value);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

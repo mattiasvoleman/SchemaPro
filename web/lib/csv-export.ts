@@ -84,10 +84,14 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
   },
   classes: {
     filename: "klasser.csv",
-    headers: ["namn", "arskurs"],
+    // The läsår's groups, not only its classes: typ, halvklass_av and
+    // ersatter_amne may be left out, and a file of namn and arskurs is the
+    // class list it always was.
+    headers: ["namn", "arskurs", "typ", "halvklass_av", "ersatter_amne"],
     exampleRows: [
-      ["7A", "7"],
-      ["7B", "7"],
+      ["7A", "7", "klass", "", ""],
+      ["7A:1", "7", "undervisningsgrupp", "7A", ""],
+      ["SvA7", "7", "undervisningsgrupp", "", "SVA"],
     ],
   },
   teachers: {
@@ -171,11 +175,10 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
   },
   requirements: {
     filename: "timplansposter.csv",
-    // minutesBefore and minutesAfter are the API's own field names rather than
-    // Swedish like their neighbours, because the two are read back by name in
-    // the payload the dialog posts and one spelling of a rule is enough. The
-    // importer takes Swedish spellings too (see REQUIREMENT_COLUMNS) — a hand
-    // that adds the column to its own file writes ombyte, not minutesBefore.
+    // minuter_fore and minuter_efter, Swedish like every other header. They
+    // were the API's field names (minutesBefore) until 2027-01, and the
+    // importer still reads those (see REQUIREMENT_COLUMNS), so a file saved
+    // from an older export imports as it did.
     //
     // They sit next to minuter_per_lektion, where the three numbers that
     // describe one lesson's shape stand together: the reader sees the pupils'
@@ -185,8 +188,8 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
       "amne",
       "lektioner_per_vecka",
       "minuter_per_lektion",
-      "minutesBefore",
-      "minutesAfter",
+      "minuter_fore",
+      "minuter_efter",
       "larare",
       "medlarare",
       "veckor",
@@ -267,8 +270,12 @@ function escapeField(value: string): string {
  * unaffected: readFormulaGuard only strips a leading apostrophe.
  */
 function neutralizeFormula(value: string): string {
-  if (!/^[\s\t]*[=+\-@\t\r]/.test(value)) return value;
-  if (value.trim() !== "" && Number.isFinite(Number(value.trim()))) return value;
+  // Apostrophes already in front count too: "'=x" looks exactly like a
+  // guarded "=x", and unguarded the import would take the value's own
+  // apostrophe away. Guarded, "''=x" comes back as "'=x".
+  const shape = /^('*)[\s\t]*[=+\-@\t\r]/.exec(value);
+  if (shape === null) return value;
+  if (shape[1] === "" && value.trim() !== "" && Number.isFinite(Number(value.trim()))) return value;
   if (/^-?\d+(,\d+)?$/.test(value)) return value;
   return `'${value}`;
 }
@@ -307,6 +314,18 @@ export function downloadTemplate(kind: ImportKind): void {
   anchor.click();
   URL.revokeObjectURL(url);
 }
+
+/**
+ * The people a file may name. Not a deactivated one: the import makes every
+ * person it creates active and resolves rows only to active people, so a
+ * deactivated pupil's membership came back as "Ingen aktiv elev …" and a
+ * deactivated teacher, read into another school, came back active.
+ */
+export const isActivePerson = (person: { isActive?: boolean }) => person.isActive !== false;
+
+/** Person id → e-mail, for the active people only. */
+export const activeEmails = (people: { id: string; email: string; isActive?: boolean }[]) =>
+  new Map(people.filter(isActivePerson).map((person) => [person.id, person.email]));
 
 // ---------------------------------------------------------------------------
 // The words an export writes for an enum, the inverse of the importer's
@@ -382,17 +401,42 @@ export function roomTypesToCsv(roomTypes: { name: string }[]): string {
   );
 }
 
+/**
+ * ONE läsår's groups — the caller hands in the year the import writes into —
+ * with the typ that tells a teaching group from a class, the class a half
+ * belongs to and the subject a group replaces, as the importer reads them.
+ *
+ * Not only the classes: a teaching group nobody is placed in yet is in no
+ * membership row, and a timplan naming it failed on re-import. A half whose
+ * class, or a group whose subject, the lists cannot name is left out rather
+ * than written as something else.
+ */
 export function classesToCsv(
-  groups: { name: string; kind: string; gradeLevel: number | null }[],
+  groups: {
+    id: string;
+    name: string;
+    kind: string;
+    gradeLevel: number | null;
+    halfOfId?: string | null;
+    replacesSubjectId?: string | null;
+  }[],
+  subjects: { id: string; name: string; code: string | null }[] = [],
 ): string {
-  return serializeCsv(
-    CSV_TEMPLATES.classes.headers,
-    groups
-      // Teaching groups have their own file, and a class list containing them
-      // would re-import them as classes.
-      .filter((group) => group.kind === "CLASS")
-      .map((group) => [group.name, group.gradeLevel === null ? "" : String(group.gradeLevel)]),
-  );
+  const rows: string[][] = [];
+  for (const group of groups) {
+    const half = group.halfOfId ? groups.find((other) => other.id === group.halfOfId)?.name : "";
+    const replaced = subjects.find((subject) => subject.id === group.replacesSubjectId);
+    const subject = group.replacesSubjectId ? replaced && (replaced.code?.trim() || replaced.name) : "";
+    if (half === undefined || subject === undefined) continue;
+    rows.push([
+      group.name,
+      group.gradeLevel === null ? "" : String(group.gradeLevel),
+      group.kind === "CLASS" ? "klass" : "undervisningsgrupp",
+      half,
+      subject,
+    ]);
+  }
+  return serializeCsv(CSV_TEMPLATES.classes.headers, rows);
 }
 
 /**
@@ -402,10 +446,12 @@ export function classesToCsv(
  * exports a list — with the four post columns EMPTY, which the importer reads
  * as "no post stated" and leaves alone. Never "0": a zero in tjanst_procent is
  * a row the API refuses, and a file that cannot import back is not an export.
- * The percentages are written with a point; the mapper takes both.
+ * The percentages are written with a decimal comma, 66,667: Swedish Excel
+ * reads that as the number and saves it back so, while it may read 12.5 as
+ * a date (12 May). The mapper takes both.
  */
 export function teachersToCsv(
-  people: { id?: string; role: string; firstName: string; lastName: string; email: string }[],
+  people: { id?: string; role: string; firstName: string; lastName: string; email: string; isActive?: boolean }[],
   employmentOf?: (userId: string) =>
     | {
         /** Null when hidden from this reader (Roller i skolan): the cell is left empty. */
@@ -419,21 +465,23 @@ export function teachersToCsv(
   return serializeCsv(
     CSV_TEMPLATES.teachers.headers,
     people
-      .filter((person) => person.role === "TEACHER")
+      .filter((person) => person.role === "TEACHER" && isActivePerson(person))
       .map((person) => {
         const post = person.id !== undefined ? employmentOf?.(person.id) : undefined;
         return [
           person.firstName,
           person.lastName,
           person.email,
-          post && post.employmentPercent !== null ? String(post.employmentPercent) : "",
-          post && (post.reductionPercent ?? 0) > 0 ? String(post.reductionPercent) : "",
+          post && post.employmentPercent !== null ? decimalComma(post.employmentPercent) : "",
+          post && (post.reductionPercent ?? 0) > 0 ? decimalComma(post.reductionPercent!) : "",
           post ? CONTRACT_WORD[post.contractKind] : "",
           post?.signature ?? "",
         ];
       }),
   );
 }
+
+const decimalComma = (value: number) => String(value).replace(".", ",");
 
 /**
  * Behörigheter as the file the importer reads: e-mail, subject code, span,
@@ -449,10 +497,10 @@ export function teacherQualificationsToCsv(
     maxGradeLevel: number;
     kind: TeacherQualificationKind;
   }[],
-  people: { id: string; email: string }[],
+  people: { id: string; email: string; isActive?: boolean }[],
   subjects: { id: string; name: string; code: string | null }[],
 ): string {
-  const email = new Map(people.map((person) => [person.id, person.email]));
+  const email = activeEmails(people);
   const subjectLabel = new Map(
     subjects.map((subject) => [subject.id, subject.code?.trim() || subject.name]),
   );
@@ -479,13 +527,14 @@ export function studentsToCsv(
     lastName: string;
     email: string;
     studentGroupId: string | null;
+    isActive?: boolean;
   }[],
   className: (groupId: string | null) => string,
 ): string {
   return serializeCsv(
     CSV_TEMPLATES.students.headers,
     people
-      .filter((person) => person.role === "STUDENT")
+      .filter((person) => person.role === "STUDENT" && isActivePerson(person))
       .map((person) => [
         person.firstName,
         person.lastName,
@@ -505,11 +554,11 @@ export function studentsToCsv(
  */
 export function membershipsToCsv(
   groups: { id: string; name: string }[],
-  people: { id: string; email: string }[],
+  people: { id: string; email: string; isActive?: boolean }[],
   memberships: { studentGroupId: string; studentId: string }[],
 ): string {
   const groupName = new Map(groups.map((group) => [group.id, group.name]));
-  const email = new Map(people.map((person) => [person.id, person.email]));
+  const email = activeEmails(people);
 
   const rows: string[][] = [];
   for (const row of memberships) {

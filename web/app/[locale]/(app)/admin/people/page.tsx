@@ -923,6 +923,23 @@ export default function PeoplePage() {
                   empty: (qualifications ?? []).length === 0,
                 },
                 {
+                  kind: "teacherDuties",
+                  // Read and built at the click: the page holds no uppdrag,
+                  // and sits close to its bundle budget.
+                  build: () =>
+                    activeYearId === null
+                      ? null
+                      : import("@/lib/duties-csv-export")
+                          .then(({ teacherDutiesCsvFor }) =>
+                            teacherDutiesCsvFor(activeYearId, people ?? [], subjects ?? [], groups ?? []),
+                          )
+                          .catch(() => {
+                            toast.error(tCommon("error"));
+                            return null;
+                          }),
+                  empty: activeYearId === null || !people?.some((person) => person.role === "TEACHER"),
+                },
+                {
                   kind: "students",
                   // Not `groupName`: that renders an em dash for "no class",
                   // and an exported file saying "—" is one the importer would
