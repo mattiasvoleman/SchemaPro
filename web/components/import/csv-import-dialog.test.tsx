@@ -233,7 +233,7 @@ describe("CsvImportDialog preview", () => {
 
     await screen.findByText("mappingErrors");
     expect(
-      screen.getByText('Rad 1: kolumnen "efternamn" är tom.'),
+      screen.getByText('Rad 2: kolumnen "efternamn" är tom.'),
     ).toBeInTheDocument();
     // The valid row still counts, but errors block the import.
     expect(screen.getByText("rowsReady(count=1)")).toBeInTheDocument();
@@ -335,9 +335,11 @@ describe("CsvImportDialog import", () => {
     expect(mockPost).toHaveBeenCalledWith("/api/v1/import/students", {
       academicYearId: "y-1",
       rows: [
-        { firstName: "Alma", lastName: "Berg", email: "alma@example.com", className: "7A" },
-        { firstName: "Nils", lastName: "Ek", email: "nils@example.com", className: "7B" },
+        { firstName: "Alma", lastName: "Berg", email: "alma@example.com", phone: null, className: "7A" },
+        { firstName: "Nils", lastName: "Ek", email: "nils@example.com", phone: null, className: "7B" },
       ],
+      // Each row's line in the file, the header being line 1.
+      rowNumbers: [2, 3],
     });
   });
 
@@ -357,6 +359,7 @@ describe("CsvImportDialog import", () => {
     expect(supabaseState.years).toEqual([ACTIVE_YEAR]); // a year IS active
     expect(mockPost).toHaveBeenCalledWith("/api/v1/import/room-types", {
       rows: [{ name: "Hemkunskapssal" }, { name: "Textilslöjd" }],
+      rowNumbers: [2, 3],
     });
   });
 
@@ -385,6 +388,7 @@ describe("CsvImportDialog import", () => {
     await screen.findByText("resultSummary(created=1|skipped=0)");
     expect(mockPost).toHaveBeenCalledWith("/api/v1/import/teachers", {
       rows: [{ firstName: "Karin", lastName: "Ek", email: "karin.ek@example.com" }],
+      rowNumbers: [2],
     });
   });
 
@@ -402,6 +406,7 @@ describe("CsvImportDialog import", () => {
     expect(mockPost).toHaveBeenCalledWith("/api/v1/import/groups", {
       academicYearId: "y-1",
       rows: [{ name: "7A", gradeLevel: 7 }, { name: "8B" }],
+      rowNumbers: [2, 3],
     });
   });
 
@@ -420,6 +425,7 @@ describe("CsvImportDialog import", () => {
     expect(mockPost).toHaveBeenCalledWith("/api/v1/import/group-members", {
       academicYearId: "y-1",
       rows: [{ groupName: "Ma71", email: "alma@example.com" }],
+      rowNumbers: [2],
     });
   });
 
@@ -452,6 +458,7 @@ describe("CsvImportDialog import", () => {
           groupName: "7B",
         },
       ],
+      rowNumbers: [2],
     });
     // The drawer's and the people page's uppdrag cards refetch.
     await waitFor(() =>
@@ -627,6 +634,7 @@ describe("CsvImportDialog import", () => {
           endDate: null,
         },
       ],
+      rowNumbers: [2],
     });
   });
 });
@@ -806,6 +814,8 @@ describe("CsvImportDialog with files as schools save them", () => {
     await user.upload(screen.getByLabelText("chooseFile"), file);
 
     await screen.findByText("rowsReady(count=1)");
+    // Said, so a wrong guess is checked against the preview.
+    expect(screen.getByText("readAs(encoding=Windows-1252)")).toBeInTheDocument();
     expect(screen.getByText("Östen")).toBeInTheDocument();
     expect(screen.getByText("7Ä")).toBeInTheDocument();
     await waitFor(() => expect(importButton()).toBeEnabled());
@@ -835,9 +845,71 @@ describe("CsvImportDialog with files as schools save them", () => {
     await uploadCsv(user, BOM + "fornamn;efternamn;epost;klass\r\nAlma;Berg;alma.berg@;7A\r\n");
 
     expect(
-      await screen.findByText('Rad 1: epost "alma.berg@" är inte en e-postadress. Skriv den som namn@skolan.se.'),
+      await screen.findByText('Rad 2: epost "alma.berg@" är inte en e-postadress. Skriv den som namn@skolan.se.'),
     ).toBeInTheDocument();
     expect(screen.getByText("rowNumbering")).toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
+  });
+});
+
+describe("CsvImportDialog: what the file itself says", () => {
+  const latin = (text: string) => Uint8Array.from([...text].map((char) => char.charCodeAt(0)));
+
+  it("refuses a UTF-16 file with what to save it as, and sends nothing", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    const utf16 = new Uint8Array([0xff, 0xfe, ...[..."fornamn"].flatMap((char) => [char.charCodeAt(0), 0])]);
+    await user.upload(screen.getByLabelText("chooseFile"), new File([utf16], "elever.csv", { type: "text/csv" }));
+
+    expect(await screen.findByText(/Filen är sparad som Unicode-text \(UTF-16\)/)).toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
+  });
+
+  it("names the row a quote opens on and never closes", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await uploadCsv(user, BOM + 'fornamn;efternamn;epost;klass\r\nAlma;Berg;alma@example.com;7A\r\n"Nils;Ek;nils@example.com;7B\r\n');
+
+    expect(await screen.findByText(/^Rad 3: ett citattecken öppnas men stängs aldrig/)).toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
+  });
+
+  it("counts the pupils a file creates without a class, before and after the import", async () => {
+    mockPost.mockResolvedValue({
+      created: 2,
+      skipped: 0,
+      errors: [],
+      warnings: [
+        { row: 3, code: "IMPORT_STUDENT_WITHOUT_CLASS", params: {}, message: "Eleven skapades utan klass." },
+        { row: 2, code: "STAFF_TEACHER_NOT_QUALIFIED", params: {}, message: "Obehörig." },
+      ],
+    });
+    const user = userEvent.setup();
+    renderDialog();
+    await uploadCsv(user, BOM + "fornamn;efternamn;epost;klass\r\nAlma;Berg;alma@example.com;7A\r\nNils;Ek;nils@example.com;\r\n");
+
+    expect(await screen.findByText("withoutClass(count=1)")).toBeInTheDocument();
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    expect(await screen.findByText("createdWithoutClass(count=1)")).toBeInTheDocument();
+    // Counted in its sentence, not listed among the tjänstefördelning's warnings.
+    expect(screen.queryByText(/Eleven skapades utan klass/)).not.toBeInTheDocument();
+    expect(screen.getByText("rowWarnings")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it("refuses a file Excel saved as CSV (MS-DOS), whose å, ä and ö cannot be read safely", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    // "Åsa;Öberg" and "Märta;Ström" in code page 850.
+    const bytes = new Uint8Array([
+      ...latin("fornamn;efternamn;epost;klass\r\n"),
+      0x8f, ...latin("sa;"), 0x99, ...latin("berg;a@example.com;7A\r\nM"), 0x84, ...latin("rta;Str"), 0x94, ...latin("m;m@example.com;7A\r\n"),
+    ]);
+    await user.upload(screen.getByLabelText("chooseFile"), new File([bytes], "elever.csv", { type: "text/csv" }));
+
+    expect(await screen.findByText(/CSV \(MS-DOS\)/)).toBeInTheDocument();
     expect(importButton()).toBeDisabled();
   });
 });

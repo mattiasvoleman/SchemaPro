@@ -34,6 +34,7 @@
 
 import type { ParsedCsv, RowError } from "@/lib/csv";
 import { normalizeHeader, serializeCsv } from "@/lib/csv-export";
+import { readNumber } from "@/lib/csv-number";
 import { inGradeSpan, type GradeSpan } from "@/lib/timplan-coverage";
 import type { TimplanImportRow } from "@/lib/timplan-queries";
 
@@ -95,6 +96,8 @@ export function formatTimplanGrade(grade: number): string {
 export function mapTimplanRows(parsed: ParsedCsv): {
   rows: TimplanImportRow[];
   errors: RowError[];
+  /** The file row of each entry of `rows`, posted so the gateway names the same rows. */
+  rowNumbers: number[];
   columns: TimplanFileColumn[];
 } {
   const normalized = parsed.headers.map(normalizeHeader);
@@ -116,6 +119,7 @@ export function mapTimplanRows(parsed: ParsedCsv): {
             .join(", ")}. Ladda ner mallen och utgå från den.`,
         },
       ],
+      rowNumbers: [],
       columns: [],
     };
   }
@@ -128,6 +132,7 @@ export function mapTimplanRows(parsed: ParsedCsv): {
           message: `Filen har ${parsed.rows.length} rader. En timplan rymmer högst ${TIMPLAN_MAX_ROWS} — en rad per ämne och årskurs.`,
         },
       ],
+      rowNumbers: [],
       columns: [],
     };
   }
@@ -136,10 +141,12 @@ export function mapTimplanRows(parsed: ParsedCsv): {
     columnOf.has(field),
   );
   const rows: TimplanImportRow[] = [];
+  const rowNumbers: number[] = [];
   const errors: RowError[] = [];
 
   parsed.rows.forEach((raw, index) => {
-    const rowNumber = index + 1;
+    // The row in the file as Excel numbers it, as lib/csv.ts reads every file.
+    const rowNumber = parsed.rowNumbers?.[index] ?? index + 2;
     const cell = (field: TimplanFileColumn): string => {
       const column = columnOf.get(field);
       return column === undefined ? "" : raw[column].trim();
@@ -167,13 +174,8 @@ export function mapTimplanRows(parsed: ParsedCsv): {
     }
 
     const rawMinutes = cell("minutesPerWeek");
-    const minutesPerWeek = Number(rawMinutes);
-    if (
-      rawMinutes === "" ||
-      !Number.isInteger(minutesPerWeek) ||
-      minutesPerWeek < 0 ||
-      minutesPerWeek > 1200
-    ) {
+    const minutesPerWeek = readNumber(rawMinutes);
+    if (minutesPerWeek === null || minutesPerWeek > 1200) {
       return fail(
         `Rad ${rowNumber}: minuter_per_vecka "${rawMinutes}" är inte ett heltal mellan 0 och 1200.`,
       );
@@ -189,9 +191,10 @@ export function mapTimplanRows(parsed: ParsedCsv): {
       row.note = note;
     }
     rows.push(row);
+    rowNumbers.push(rowNumber);
   });
 
-  return { rows, errors, columns };
+  return { rows, errors, rowNumbers, columns };
 }
 
 /**

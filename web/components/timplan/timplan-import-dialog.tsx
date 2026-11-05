@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
-import { decodeCsvBytes, downloadCsv, parseCsv, type RowError } from "@/lib/csv";
+import { decodeCsvBytes, downloadCsv, fileProblems, parseCsv, type RowError } from "@/lib/csv";
 import {
   formatTimplanGrade,
   mapTimplanRows,
@@ -48,7 +48,10 @@ interface FilePreview {
   previewRows: string[][];
   rows: TimplanImportRow[];
   errors: RowError[];
+  rowNumbers: number[];
   columns: TimplanFileColumn[];
+  /** The code page a file that was not UTF-8 was read in. */
+  legacyEncoding: string | null;
 }
 
 export interface TimplanImportDialogProps {
@@ -108,15 +111,23 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
     if (!file) return;
     // Bytes, not file.text(): a file saved in Excel is Windows-1252, and
     // read as UTF-8 its å, ä and ö would be lost before parsing (decodeCsvBytes).
-    const parsed = parseCsv(decodeCsvBytes(new Uint8Array(await file.arrayBuffer())));
+    const decoded = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
+    const parsed = parseCsv(decoded.text);
     const mapped = mapTimplanRows(parsed);
     setReport(null);
     setPreview({
       headers: parsed.headers,
       previewRows: parsed.rows.slice(0, PREVIEW_ROWS),
-      rows: mapped.rows,
-      errors: mapped.errors,
+      rows: decoded.problem ? [] : mapped.rows,
+      errors: decoded.problem ? [{ row: 0, message: decoded.problem }] : [...fileProblems(parsed), ...mapped.errors],
+      rowNumbers: mapped.rowNumbers,
       columns: mapped.columns,
+      legacyEncoding:
+        decoded.problem === null && decoded.encoding !== "utf-8"
+          ? decoded.encoding === "macintosh"
+            ? "Mac Roman"
+            : "Windows-1252"
+          : null,
     });
   };
 
@@ -128,6 +139,7 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
           localTimplanId: plan.id,
           columns: preview.columns,
           rows: preview.rows,
+          rowNumbers: preview.rowNumbers,
         }),
       );
     } catch (error) {
@@ -204,9 +216,15 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
 
               {preview ? (
                 <div className="space-y-3">
+                  {preview.legacyEncoding ? (
+                    <p className="text-sm text-muted-foreground">
+                      {tImport("readAs", { encoding: preview.legacyEncoding })}
+                    </p>
+                  ) : null}
                   {preview.errors.length > 0 ? (
                     <div className="space-y-1">
                       <p className="text-sm font-medium text-destructive">{tImport("mappingErrors")}</p>
+                      <p className="text-sm text-muted-foreground">{tImport("rowNumbering")}</p>
                       <ul className="max-h-40 space-y-1 overflow-y-auto text-sm text-destructive">
                         {preview.errors.map((error, index) => (
                           <li key={`${error.row}-${index}`}>{error.message}</li>
