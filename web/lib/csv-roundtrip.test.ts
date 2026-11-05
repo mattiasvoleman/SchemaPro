@@ -454,6 +454,26 @@ describe("the files themselves", () => {
     expect(mapRequirementRows(parseCsv(file)).rows).toStrictEqual(KINDS.requirements.expected);
   });
 
+  it("write a class whose other half was deleted with the one half left, which the import takes (granskning-260-r2, N2)", () => {
+    // The gateway's half of this round trip is import.service.spec.ts's
+    // "takes the one half an export writes", with exactly these rows.
+    const file = classesToCsv(
+      [
+        { id: "g-7b", name: "7B", kind: "CLASS", gradeLevel: 7, halfOfId: null, replacesSubjectId: null },
+        { id: "g-7b2", name: "7B:2", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7b", replacesSubjectId: null },
+      ],
+      subjects,
+    );
+
+    const { rows, errors, rowNumbers } = mapClassRows(parseCsv(decodeCsvBytes(saved(file, "excel-windows")).text));
+    expect(errors).toEqual([]);
+    expect(rows).toStrictEqual([
+      { name: "7B", gradeLevel: 7, kind: "CLASS" },
+      { name: "7B:2", gradeLevel: 7, kind: "TEACHING_GROUP", halfOf: "7B" },
+    ]);
+    expect(rowNumbers).toEqual([2, 3]);
+  });
+
   it("write uppdrag dates as days even when the gateway answers a timestamp", () => {
     const file = teacherDutiesToCsv(
       [{ ...duties[0]!, validFrom: "2026-08-17T00:00:00.000Z", validTo: "2026-12-18T00:00:00.000Z" }],

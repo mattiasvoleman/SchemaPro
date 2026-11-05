@@ -1078,14 +1078,6 @@ export class ImportService {
           splitInto.set(half.halfOfId!, [...(splitInto.get(half.halfOfId!) ?? []), half.name]);
         }
       }
-      // "Dela klassen" makes exactly two halves of a class that has none, and
-      // so does a file: the halves it creates, counted per class.
-      const newHalves = new Map<string, number>();
-      for (const row of dto.rows) {
-        if (!isHalf(row) || byName.has(this.normalizeName(row.name))) continue;
-        const theClass = this.normalizeName(row.halfOf ?? '');
-        newHalves.set(theClass, (newHalves.get(theClass) ?? 0) + 1);
-      }
       const replaces = dto.rows.some((row) => (row.replacesSubject ?? '').trim() !== '');
       const subjects = replaces
         ? await tx.subject.findMany({ select: { id: true, code: true, name: true } })
@@ -1125,19 +1117,16 @@ export class ImportService {
             });
             continue;
           }
+          // A class split already gets no more halves, as "Dela klassen"
+          // refuses it (CLASS_ALREADY_SPLIT). How many a file gives a class
+          // that has none is not judged: a school can delete one half on
+          // its own, and the export then writes the one that is left, which
+          // must read back (granskning-260-r2, N2).
           const already = splitInto.get(theClass.id);
           if (already) {
             report.errors.push({
               row: rowNumber,
               message: `halvklass_av: klassen "${halfName}" är redan delad i ${already.join(' och ')}. En klass delas en gång, i två halvor.`,
-            });
-            continue;
-          }
-          const inFile = newHalves.get(this.normalizeName(halfName)) ?? 0;
-          if (inFile !== 2) {
-            report.errors.push({
-              row: rowNumber,
-              message: `halvklass_av: en klass delas i två halvor, men filen ger klassen "${halfName}" ${inFile === 1 ? 'en' : inFile}. Skriv två rader för klassens halvor.`,
             });
             continue;
           }

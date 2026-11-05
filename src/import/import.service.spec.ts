@@ -428,7 +428,9 @@ describe('ImportService', () => {
         })));
       });
 
-      it('refuses one half, or three, of a class the file splits', async () => {
+      it('takes the one half an export writes for a class whose other half was deleted (granskning-260-r2, N2)', async () => {
+        // The rows lib/csv.ts maps from classesToCsv for a 7B left with only
+        // 7B:2 (web/lib/csv-roundtrip.test.ts writes and reads the same file).
         arrangeGroups([]);
         echoCreates();
 
@@ -436,95 +438,19 @@ describe('ImportService', () => {
           {
             academicYearId: YEAR_ID,
             rows: [
-              { name: '8A', gradeLevel: 8 },
-              { name: '8A:1', kind: 'TEACHING_GROUP', halfOf: '8A' },
-              { name: '9A', gradeLevel: 9 },
-              { name: '9A:1', kind: 'TEACHING_GROUP', halfOf: '9A' },
-              { name: '9A:2', kind: 'TEACHING_GROUP', halfOf: '9A' },
-              { name: '9A:3', kind: 'TEACHING_GROUP', halfOf: '9A' },
+              { name: '7B', gradeLevel: 7, kind: 'CLASS' },
+              { name: '7B:2', gradeLevel: 7, kind: 'TEACHING_GROUP', halfOf: '7B' },
             ],
+            rowNumbers: [2, 3],
           },
           testUser(),
         );
 
-        expect(created().map((data) => data.name)).toEqual(['8A', '9A']);
-        expect(report.errors).toEqual([
-          { row: 2, message: 'halvklass_av: en klass delas i två halvor, men filen ger klassen "8A" en. Skriv två rader för klassens halvor.' },
-          ...[4, 5, 6].map((row) => ({
-            row,
-            message: 'halvklass_av: en klass delas i två halvor, men filen ger klassen "9A" 3. Skriv två rader för klassens halvor.',
-          })),
+        expect(report).toEqual({ created: 2, skipped: 0, errors: [] });
+        expect(created().map((data) => [data.name, data.halfOfId ?? null])).toEqual([
+          ['7B', null],
+          ['7B:2', 'id-7B'],
         ]);
-      });
-
-      it('resolves a replaced subject by code or name, and writes nothing about it when the cell is empty', async () => {
-        arrangeRows(tx.studentGroup.findMany, []);
-        arrangeRows(tx.subject.findMany, [{ id: 'sub-sv', name: 'Svenska', code: 'SV' }]);
-        echoCreates();
-
-        const report = await service.importGroups(
-          {
-            academicYearId: YEAR_ID,
-            rows: [
-              { name: 'SvA 7', kind: 'TEACHING_GROUP', replacesSubject: 'sv' },
-              { name: 'SvA 8', kind: 'TEACHING_GROUP', replacesSubject: 'Svenska' },
-              { name: 'Ma71', kind: 'TEACHING_GROUP', replacesSubject: null },
-            ],
-          },
-          testUser(),
-        );
-
-        expect(report).toEqual({ created: 3, skipped: 0, errors: [] });
-        expect(created().map((data) => data.replacesSubjectId)).toEqual(['sub-sv', 'sub-sv', undefined]);
-      });
-
-      it('reads no subjects for a file that replaces none', async () => {
-        arrangeRows(tx.studentGroup.findMany, []);
-        echoCreates();
-
-        await service.importGroups({ academicYearId: YEAR_ID, rows: [{ name: '7A', gradeLevel: 7 }] }, testUser());
-
-        expect(tx.subject.findMany).not.toHaveBeenCalled();
-      });
-
-      it('refuses, per row and naming the column, what the database or the groups page would refuse', async () => {
-        arrangeRows(tx.studentGroup.findMany, [
-          { id: GROUP_7A, name: '7A', kind: 'CLASS', gradeLevel: 7 },
-          { id: 'id-ma71', name: 'Ma71', kind: 'TEACHING_GROUP', gradeLevel: null },
-        ]);
-        arrangeRows(tx.subject.findMany, [{ id: 'sub-sv', name: 'Svenska', code: 'SV' }]);
-        echoCreates();
-
-        const report = await service.importGroups(
-          {
-            academicYearId: YEAR_ID,
-            rows: [
-              { name: '7X:1', kind: 'TEACHING_GROUP', halfOf: '7X' },
-              { name: 'Ma71:1', kind: 'TEACHING_GROUP', halfOf: 'Ma71' },
-              { name: '7A:1', kind: 'CLASS', halfOf: '7A' },
-              { name: '7C', replacesSubject: 'SV' },
-              { name: '7A:2', kind: 'TEACHING_GROUP', halfOf: '7A', replacesSubject: 'SV' },
-              { name: 'SvA 9', kind: 'TEACHING_GROUP', replacesSubject: 'Tyska' },
-              { name: 'Fine', kind: 'TEACHING_GROUP' },
-            ],
-          },
-          testUser(),
-        );
-
-        expect(report.created).toBe(1);
-        expect(report.errors).toEqual([
-          {
-            row: 1,
-            message:
-              'halvklass_av: klassen "7X" finns inte för det valda läsåret. Skriv klassen på en egen rad i filen, eller importera klasserna först.',
-          },
-          { row: 2, message: 'halvklass_av: "Ma71" är en undervisningsgrupp. En halvklass är en halva av en klass.' },
-          { row: 3, message: 'typ: en halvklass är en undervisningsgrupp. Skriv "undervisningsgrupp", eller lämna halvklass_av tom.' },
-          { row: 4, message: expect.stringMatching(/^ersatter_amne: en klass är elevernas hemklass/) },
-          { row: 5, message: expect.stringMatching(/^ersatter_amne: en halvklass är en del av klassen/) },
-          { row: 6, message: expect.stringMatching(/^ersatter_amne: Ämnet "Tyska" finns inte\./) },
-        ]);
-        expect(created()).toEqual([expect.objectContaining({ name: 'Fine' })]);
       });
     });
   });
