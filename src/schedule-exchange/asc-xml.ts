@@ -196,7 +196,12 @@
  *     dates, the first not after the second) returns from/to. All ones is the
  *     whole year, silently. Anything else (a name like "Term 1", no matching
  *     def) is read as the whole year WITH a note naming the term: it never
- *     becomes a date.
+ *     becomes a date. The name is cut apart in code, not matched with a
+ *     pattern (a pattern with consecutive optional blanks backtracked
+ *     quadratically: a name of a dash, 32 000 blanks and an x held the process
+ *     for 4 s, once per card), a name over MAX_SPAN_NAME characters is never
+ *     tried (a note says so without quoting it), and a term is resolved once
+ *     per distinct bit string, not once per card.
  *
  *  9. LESSONS AND CARDS. aSc separates what is taught (<lesson>: subject,
  *     classes, groups, teachers, rooms, periodsperweek) from where it sits
@@ -285,17 +290,77 @@
  *     period or a period not in <periods>, a day, week or term string the
  *     model cannot hold: a ReadProblem on the card ("kort 4") or lesson
  *     ("lektion 17") with a stable code, the rest of the file read. The
- *     numbers count elements in the file, from 1.
+ *     numbers count elements in the file, from 1. A reference to a row that
+ *     holds a personnummer-shaped value is such a problem too (CHOICE 19).
  *
- * 19. NO PERSONNUMMER. No field of the format is one. An attribute or element
- *     named like one (personnummer, personnr, pnr, ssn, civic number,
- *     samordningsnummer, national id) with a value is never read and never
- *     copied; one note names the attribute (not the value).
+ * 19. NO PERSONNUMMER (the user's decision of 2026-11-05: none is read, stored
+ *     or echoed). No field of the format is one, and the shape is looked for
+ *     in VALUES (file-safety.ts, hasPersonalNumber), not only in the NAME of a
+ *     field: a school's program calls a column what it likes. It is done once,
+ *     to the parsed tree, before any table is read (quarantine()), so that no
+ *     later read of an attribute, now or added in a year, can get at one.
+ *     a. A field NAMED like one (personnummer, personnr, pnr, ssn, civic number,
+ *        samordningsnummer, national id), attribute or element, is deleted from
+ *        the tree unread; its value taints nothing and is never echoed. One
+ *        note names the fields (at most ten; a name that itself has the shape
+ *        is not listed but counted as "ett fält vars namn liknar ett
+ *        personnummer").
+ *     b. Every attribute of a ROW (an element two levels down: teacher, class,
+ *        subject, classroom, group, period, week, day or term definition,
+ *        lesson, card) is one of three kinds (ROWS names them):
+ *        - COPIED: what the reader copies into a lesson, a label or a note:
+ *          name, short, e-mail, first and last name, start and end time, and
+ *          the name of a definition (which is read as a date span). A value
+ *          with the shape in one of these makes the ROW unreadable (TAINTED):
+ *          everything but its id and period is deleted from the tree, so a
+ *          name, a short or an e-mail can never be copied out of it. Whatever
+ *          points at a tainted row by id is not read either: a lesson whose
+ *          subject, class, group, teacher, room or week, day or term
+ *          definition is tainted is ONE problem (ASC_LESSON_PERSONAL_NUMBER,
+ *          "lektion 17") that names the KIND of row and never its content; a
+ *          card whose room is tainted, or whose term only a tainted
+ *          definition could name, is ASC_CARD_PERSONAL_NUMBER, a card in a
+ *          tainted period ASC_PERIOD_PERSONAL_NUMBER.
+ *        - LINK: id, period, lessonid, classid(s), groupid(s), subjectid,
+ *          teacherid(s), classroomid(s), the definition ids of a lesson, the
+ *          bit strings days, weeks and terms and the numbers (day,
+ *          periodspercard, durationperiods): lookup keys, matched and
+ *          interpreted, never stored and never shown. A LINK with the shape
+ *          does NOT make its row unreadable (an aSc id is random, a random
+ *          16-digit hex id has the shape 0.12 % of the time, and the user
+ *          cannot change an id in a foreign export). It is only never copied:
+ *          a message that has to name it says what is missing (the teacher a
+ *          lesson points at) and leaves the value out, and where the reader
+ *          would have used an id as a name (a group or a definition with no
+ *          name) it does not.
+ *        - UNREAD: every other attribute (a teacher's mobile number or birth
+ *          date, any extra column), the text of a row, and anything outside
+ *          the tables. A value with the shape there is deleted from the tree
+ *          unread and counted in the one note; the row stays, and so do the
+ *          lessons that use it.
+ *     c. A tainted row nothing points at is not silent: the one note counts the
+ *        tainted rows by kind and the unread values. The shape errs towards
+ *        refusing (see file-safety.ts): ten digits that read as a date, and
+ *        four more, in a COPIED field make a row unreadable with a plain
+ *        message.
+ *     d. What of the file still reaches a message or a note is quoted through
+ *        excerpt() (redacted, one line, 40 characters) and every message and
+ *        note is redacted once more as it is stored.
  *
  * 20. LIMITS. A source over MAX_EXCHANGE_BYTES, or more lessons than
  *     MAX_EXCHANGE_LESSONS, is refused whole with one problem; invalid XML
  *     (xml.ts: DOCTYPE, ENTITY, unclosed tags, depth, size) is one problem,
  *     ASC_XML_INVALID; a root that is not <timetable> is ASC_NOT_TIMETABLE.
+ *     An ANSWER stays small however many cards share one long value (a lesson
+ *     of 5 000 cards and a 30 000-character `terms` made 150 MB of messages):
+ *     a value is quoted at most 40 characters; the problems are the first
+ *     MAX_PROBLEMS in file order and one closing line that counts the rest
+ *     (ProblemLog, ASC_TOO_MANY_PROBLEMS); a lesson's problem names at most
+ *     five reasons; the notes list at most ten of a kind and count the rest;
+ *     a bit string (days, weeks, terms) of more than MAX_BITS characters is
+ *     not one, because a lesson's own `weeks` is shared by all its cards and
+ *     was scanned once per card; and a name over MAX_SPAN_NAME characters is
+ *     not a date span (CHOICE 8).
  *
  * THE ONE THING THIS FILE CANNOT VERIFY: that aSc's own import accepts the
  * cards. [S3] says of the cards table "mostly export only; limited import".
@@ -316,6 +381,7 @@ import {
   type TeacherRef,
   type WeekPattern,
 } from './exchange-model';
+import { MAX_QUOTE, ProblemLog, excerpt, hasPersonalNumber, redactPersonalNumbers } from './file-safety';
 import { XmlError, element, parseXml, type XmlNode } from './xml';
 
 // ---------------------------------------------------------------------------
@@ -398,14 +464,47 @@ function spanName(from: string | null, to: string | null): string {
   return `${from ?? ''}–${to ?? ''}`;
 }
 
-/** The inverse of spanName, tolerant of the dash (en, em, hyphen) and of spaces; null when the text is not a span. */
+/**
+ * The longest name of a term that is tried as a date span (CHOICE 8). The span
+ * the writer makes is 21 characters and a school's own prefix ("Termin 1:
+ * 2026-08-17 – 2026-12-18") is not much more; the name is the file's, so a
+ * name of any length must not cost more than a comparison of its length.
+ */
+const MAX_SPAN_NAME = 120;
+
+const SPAN_DASHES = '–—-';
+
+/**
+ * The inverse of spanName, tolerant of the dash (en, em, hyphen) and of spaces;
+ * null when the text is not a span.
+ *
+ * Cut apart in code, with no pattern over the whole text. The first version was
+ * one pattern, /^\s*(date)?\s*[–—-]\s*(date)?\s*$/, whose optional date between
+ * two runs of blanks lets the engine try every split of a long run of blanks
+ * between the two: quadratic, and a name of a dash, 32 000 blanks and an "x"
+ * (a 42 kB file) held the process for 4 s, once per card. Here the text is
+ * trimmed once, an ISO date is exactly ten characters (checked by the anchored,
+ * fixed-width ISO_DATE), and each step moves forward over the text once.
+ */
 function parseSpan(text: string): { from: string | null; to: string | null } | null {
-  const m = /^\s*(\d{4}-\d{2}-\d{2})?\s*[–—-]\s*(\d{4}-\d{2}-\d{2})?\s*$/.exec(text);
-  if (!m) return null;
-  const from = m[1] ?? null;
-  const to = m[2] ?? null;
+  if (text.length > MAX_SPAN_NAME) return null;
+  let rest = text.trim();
+  let from: string | null = null;
+  const head = rest.slice(0, 10);
+  if (ISO_DATE.test(head)) {
+    if (!isIsoDate(head)) return null;
+    from = head;
+    rest = rest.slice(10).trimStart();
+  }
+  const dash = rest.charAt(0);
+  if (dash === '' || !SPAN_DASHES.includes(dash)) return null;
+  rest = rest.slice(1).trimStart();
+  let to: string | null = null;
+  if (rest !== '') {
+    if (!isIsoDate(rest)) return null;
+    to = rest;
+  }
   if (from === null && to === null) return null;
-  if ((from !== null && !isIsoDate(from)) || (to !== null && !isIsoDate(to))) return null;
   if (from !== null && to !== null && from > to) return null;
   return { from, to };
 }
@@ -768,6 +867,8 @@ export function decodeAscBytes(buf: Buffer): string {
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return new TextDecoder('utf-8').decode(buf);
   if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf);
   if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) return new TextDecoder('utf-16be').decode(buf);
+  // At most 256 characters reach the pattern, however large the file is, so
+  // its lazy `[^>]*?` beside `\s` cannot cost more than a few thousand steps.
   const head = buf.subarray(0, 256).toString('latin1');
   const declared = /^\s*<\?xml[^>]*?\sencoding\s*=\s*["']([A-Za-z0-9._:-]+)["']/.exec(head)?.[1];
   if (declared !== undefined) {
@@ -784,6 +885,7 @@ export function decodeAscBytes(buf: Buffer): string {
   }
 }
 
+
 // ---------------------------------------------------------------------------
 // The reader
 // ---------------------------------------------------------------------------
@@ -797,14 +899,51 @@ const NOTE_QUALIFIED_GROUPS =
 const NOTE_NUMERIC_DAY_ZERO =
   'Kort som anger dagen med ett tal läses med 0 som måndag, eftersom filen inte sätter daynumbering1 (aSc:s standard).';
 const NOTE_NO_CARDS = 'Filen innehåller inga placerade kort, så det finns inget schema att läsa.';
+const NOTE_LONG_TERM_NAME = `Namnet på en termin i filen är längre än ${MAX_SPAN_NAME} tecken, så det läses inte som datum; terminen läses som hela läsåret.`;
+const NO_PERSONNUMMER = 'Rastra tar inte emot personnummer.';
 
+/** A field named like a personnummer: dropped unread (CHOICE 19 a). */
 const PERSONNUMMER_LIKE = /personnummer|personnr|pnr|ssn|civic|national[-_ ]?id|samordningsnummer|personal[-_ ]?(?:id|number)/i;
 
 const WEEKDAY_PREFIXES: ReadonlyArray<RegExp> = [/^(mån|mon)/i, /^(tis|tue)/i, /^(ons|wed)/i, /^(tor|thu)/i, /^(fre|fri)/i, /^(lör|sat)/i, /^(sön|sun)/i];
 
+/**
+ * The longest string of days, weeks or terms that is read as bits (CHOICE 20).
+ * A week rotation has two positions, a ten-day cycle ten, a school a handful of
+ * terms. A lesson's own `weeks` or `terms` is shared by all its cards and is
+ * looked at once per card, so a megabyte of ones there was a megabyte of work
+ * (and an array of a million characters) per card.
+ */
+const MAX_BITS = 64;
+/** The most things of one kind a note spells out; the rest are counted (CHOICE 20). */
+const MAX_LISTED = 10;
+/** The most reasons one lesson's problem spells out; the rest are counted (CHOICE 20). */
+const MAX_REASONS = 5;
+/**
+ * A value is cut this long before it is quoted. An excerpt shows MAX_QUOTE
+ * characters; a value that a lesson shares with thousands of cards is quoted
+ * thousands of times, and each quote must cost the cut and not the value.
+ */
+const CLIP = MAX_QUOTE * 10;
+
+/** The rows that can be tainted, as a sentence names them (CHOICE 19). */
+const KINDS = {
+  teacher: { the: 'läraren', one: 'lärare', many: 'lärare' },
+  class: { the: 'klassen', one: 'klass', many: 'klasser' },
+  group: { the: 'gruppen', one: 'grupp', many: 'grupper' },
+  subject: { the: 'ämnet', one: 'ämne', many: 'ämnen' },
+  room: { the: 'salen', one: 'sal', many: 'salar' },
+  period: { the: 'perioden', one: 'period', many: 'perioder' },
+  term: { the: 'terminen', one: 'termin', many: 'terminer' },
+  week: { the: 'veckodefinitionen', one: 'veckodefinition', many: 'veckodefinitioner' },
+  day: { the: 'dagdefinitionen', one: 'dagdefinition', many: 'dagdefinitioner' },
+} as const;
+type Kind = keyof typeof KINDS;
+const KIND_ORDER = Object.keys(KINDS) as Kind[];
+
 interface PeriodEntry {
   ok: boolean;
-  why: 'time' | 'ambiguous' | null;
+  why: 'time' | 'ambiguous' | 'personal' | null;
   start: number;
   end: number;
 }
@@ -844,6 +983,10 @@ interface CardRow {
 interface Placement {
   rows: CardRow[];
   length: number;
+}
+interface TermSpan {
+  from: string | null;
+  to: string | null;
 }
 
 /** Elements by name without regard to case, across sections of the same name (CHOICE 3). */
@@ -885,15 +1028,208 @@ function plural(n: number, one: string, many: string): string {
   return n === 1 ? one : many;
 }
 
+/** "a, b och c". */
+function listOf(items: readonly string[]): string {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} och ${items[items.length - 1]}`;
+}
+
+/** A value of the file as a message quotes it: cut, then redacted, one line, MAX_QUOTE characters, in quotation marks (CHOICE 20). */
+function quote(value: string): string {
+  return excerpt(value.length > CLIP ? value.slice(0, CLIP) : value);
+}
+
+/** The same without the marks, for a name a message puts in marks of its own (<...>) and for a parser's reason. */
+function shown(value: string, max: number): string {
+  const flat = redactPersonalNumbers(value.length > max * 10 ? value.slice(0, max * 10) : value)
+    .replace(/\s+/g, ' ')
+    .trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+/**
+ * A LINK value (an id, a bit string; CHOICE 19) as a message may quote it, or
+ * null when it has the shape of a personnummer. Such a value is matched and
+ * never shown: the message leaves it out and says what it can without it.
+ */
+function quoteLink(value: string): string | null {
+  const cut = value.length > CLIP ? value.slice(0, CLIP) : value;
+  return hasPersonalNumber(cut) ? null : excerpt(cut);
+}
+
+/** "läraren ”T404” finns inte i filen", or, with the id left out, "läraren som lektionen hänvisar till finns inte i filen". */
+function missing(the: string, id: string, from: 'lektionen' | 'kortet'): string {
+  const quoted = quoteLink(id);
+  return quoted === null ? `${the} som ${from} hänvisar till finns inte i filen.` : `${the} ${quoted} finns inte i filen.`;
+}
+
+/** The value of a bit string for a sentence that says it cannot be read: ` ”101”`, or nothing when it has the shape. */
+function bitsPart(bits: string): string {
+  const quoted = quoteLink(bits);
+  return quoted === null ? '' : ` ${quoted}`;
+}
+
+/** "perioden 3", or "kortets period" when the number the card gives is itself shaped like a personnummer. */
+function periodRef(number: number): string {
+  return hasPersonalNumber(String(number)) ? 'kortets period' : `perioden ${number}`;
+}
+
+/** A count from the file for a sentence: the number, or words when the number has the shape of a personnummer. */
+function countText(n: number): string {
+  return hasPersonalNumber(String(n)) ? 'ett orimligt antal' : String(n);
+}
+
+/** The position label of a term that has no def: "period 2+3". The string is at most MAX_BITS long. */
+function positionsLabel(bits: string): string {
+  return `period ${[...bits].flatMap((b, i) => (b === '1' ? [i + 1] : [])).join('+')}`;
+}
+
 /** The week pattern a bit string over a rotation means, or null when the model has none (CHOICE 7). */
 function weekPatternOfBits(bits: string): WeekPattern | null {
-  if (!/^[01]+$/.test(bits) || !bits.includes('1')) return null;
+  if (bits.length > MAX_BITS || !/^[01]+$/.test(bits) || !bits.includes('1')) return null;
   if (!bits.includes('0')) return 'ALL';
   if (bits.length % 2 !== 0) return null;
   const everyOther = (parity: number): boolean => [...bits].every((bit, i) => (i % 2 === parity ? bit === '1' : bit === '0'));
   if (everyOther(0)) return 'ODD';
   if (everyOther(1)) return 'EVEN';
   return null;
+}
+
+/** What the file's own values are taken for, once, before any table is read. */
+interface Quarantine {
+  /** The rows (elements two levels down) with a personnummer-shaped value in a COPIED field; their fields are already gone. */
+  tainted: Set<XmlNode>;
+  /** The names of the fields that say personnummer, which were dropped unread. */
+  names: Set<string>;
+  /** Values with the shape in UNREAD places (CHOICE 19): deleted from the tree, counted. */
+  unread: number;
+}
+
+interface RowFields {
+  /** Copied into a lesson, a label or a note: a value with the shape makes the row tainted. */
+  copied: readonly string[];
+  /** Matched and interpreted, never stored or shown: a value with the shape is left alone and never copied. */
+  link: readonly string[];
+}
+
+/**
+ * Which attributes of each row the reader READS, and how (CHOICE 19). Keyed by
+ * the section and the row, in lower case like rowsOf. An attribute that is
+ * not here is unread: if the reader is changed to read one, it goes here
+ * first, and until then a value with the shape in it is gone from the tree
+ * (a read of it gets nothing: that fails closed).
+ */
+const ROWS: Readonly<Record<string, RowFields>> = {
+  'periods/period': { copied: ['starttime', 'endtime'], link: ['period'] },
+  'subjects/subject': { copied: ['name', 'short'], link: ['id'] },
+  'classrooms/classroom': { copied: ['name', 'short'], link: ['id'] },
+  'teachers/teacher': { copied: ['name', 'short', 'email', 'firstname', 'lastname'], link: ['id'] },
+  'classes/class': { copied: ['name', 'short'], link: ['id'] },
+  'groups/group': { copied: ['name'], link: ['id', 'entireclass', 'classids', 'classid'] },
+  'daysdefs/daysdef': { copied: ['name', 'short'], link: ['id', 'days'] },
+  'weeksdefs/weeksdef': { copied: ['name', 'short'], link: ['id', 'weeks'] },
+  'termsdefs/termsdef': { copied: ['name', 'short'], link: ['id', 'terms'] },
+  'lessons/lesson': {
+    copied: [],
+    link: [
+      'id',
+      'subjectid',
+      'classids',
+      'classid',
+      'groupids',
+      'groupid',
+      'teacherids',
+      'teacherid',
+      'classroomids',
+      'classroomid',
+      'daysdefid',
+      'weeksdefid',
+      'termsdefid',
+      'periodspercard',
+      'durationperiods',
+      'weeks',
+      'terms',
+    ],
+  },
+  'cards/card': { copied: [], link: ['lessonid', 'classroomids', 'classroomid', 'period', 'days', 'day', 'weeks', 'terms', 'durationperiods'] },
+};
+/** The root is read for its options (daynumbering1) and for nothing else. */
+const ROOT_FIELDS: RowFields = { copied: [], link: ['options'] };
+/** What a tainted row keeps: the keys the reader matches it by, for the set of ids a lesson may not point at. */
+const KEPT_BY_A_TAINTED_ROW = ['id', 'period'] as const;
+
+/**
+ * CHOICE 19, in the one place. Walks the parsed tree once and takes out of it
+ * everything the reader must never read, so that no attribute read anywhere
+ * below (today's, or one added next year) can get hold of it:
+ *
+ *  a. a field NAMED like a personnummer, attribute or element: deleted, and its
+ *     name remembered for the note. Its value taints nothing: it is not looked
+ *     at, so it cannot be echoed.
+ *  b. a field whose VALUE has the shape (hasPersonalNumber), by what the field
+ *     is to the reader (ROWS): COPIED, and the row is TAINTED and loses all
+ *     but the keys it is matched by; LINK, and it stays, to be matched and
+ *     never copied; or UNREAD (anything else, the text of an element, the
+ *     root's and the tables' own fields), and the value is deleted and counted.
+ *
+ * Iterative, like the walk it replaces: no recursion depth to reason about.
+ */
+function quarantine(root: XmlNode): Quarantine {
+  const tainted = new Set<XmlNode>();
+  const names = new Set<string>();
+  let unread = 0;
+  // Each node with its depth (the root is 0, a table 1, a row 2) and, for a row, the table it is in.
+  const stack: Array<[XmlNode, number, string]> = [[root, 0, '']];
+  for (let item = stack.pop(); item !== undefined; item = stack.pop()) {
+    const [node, depth, table] = item;
+
+    for (const [name, value] of Object.entries(node.attrs)) {
+      if (!PERSONNUMMER_LIKE.test(name)) continue;
+      if (value.trim() !== '') names.add(name);
+      delete node.attrs[name];
+    }
+    if (node.children.some((child) => PERSONNUMMER_LIKE.test(child.name))) {
+      node.children = node.children.filter((child) => {
+        if (!PERSONNUMMER_LIKE.test(child.name)) return true;
+        if (child.text.trim() !== '') names.add(child.name);
+        return false;
+      });
+    }
+
+    const fields = depth === 0 ? ROOT_FIELDS : depth === 2 ? ROWS[`${table}/${node.name.toLowerCase()}`] : undefined;
+    let copiedDirty = false;
+    for (const [key, value] of Object.entries(node.attrs)) {
+      if (!hasPersonalNumber(value)) continue;
+      if (fields?.copied.includes(key)) copiedDirty = true;
+      else if (!fields?.link.includes(key)) {
+        delete node.attrs[key];
+        unread += 1;
+      }
+    }
+    if (hasPersonalNumber(node.text)) {
+      node.text = '';
+      unread += 1;
+    }
+    if (copiedDirty) {
+      const kept: Record<string, string> = {};
+      for (const key of KEPT_BY_A_TAINTED_ROW) if (node.attrs[key] !== undefined) kept[key] = node.attrs[key];
+      node.attrs = kept;
+      tainted.add(node);
+    }
+
+    const childTable = depth === 1 ? node.name.toLowerCase() : table;
+    for (const child of node.children) stack.push([child, depth + 1, childTable]);
+  }
+  return { tainted, names, unread };
+}
+
+/** The names of fields that say personnummer, as a note lists them: sorted, at most MAX_LISTED, a name that is itself a number only counted. */
+function listedNames(names: ReadonlySet<string>): string {
+  const own = [...names].filter((name) => !hasPersonalNumber(name)).sort();
+  const numbered = names.size - own.length;
+  const out = own.slice(0, MAX_LISTED).map((name) => shown(name, MAX_QUOTE));
+  if (own.length > MAX_LISTED) out.push(`${own.length - MAX_LISTED} till`);
+  if (numbered > 0) out.push(numbered === 1 ? 'ett fält vars namn liknar ett personnummer' : `${numbered} fält vars namn liknar ett personnummer`);
+  return out.join(', ');
 }
 
 /**
@@ -911,127 +1247,190 @@ export function readAscXml(xml: string): ParsedExchange {
   try {
     root = parseXml(xml);
   } catch (e) {
-    if (e instanceof XmlError) return refuse('fil', 'ASC_XML_INVALID', `Filen kunde inte läsas som XML: ${e.message}`);
+    // The parser names a tag or an entity of the file in its message, and the file may have made that name any length.
+    if (e instanceof XmlError) return refuse('fil', 'ASC_XML_INVALID', `Filen kunde inte läsas som XML: ${shown(e.message, 160)}`);
     throw e;
   }
   if (root.name.toLowerCase() !== 'timetable') {
-    return refuse('fil', 'ASC_NOT_TIMETABLE', `Filen är ingen aSc Timetables XML: rotelementet är <${root.name}>, inte <timetable>.`);
+    return refuse('fil', 'ASC_NOT_TIMETABLE', `Filen är ingen aSc Timetables XML: rotelementet är <${shown(root.name, MAX_QUOTE)}>, inte <timetable>.`);
   }
 
   // Problems are found in passes (lessons, cards, blocks, times) but read in
-  // the order of the file: each is keyed to the card being worked on.
+  // the order of the file: each is keyed to the card being worked on, and the
+  // ProblemLog (the first MAX_PROBLEMS, then a count) is fed in that order.
   const found: Array<{ at: number; problem: ReadProblem }> = [];
   let cursor = 0;
   const noteList: string[] = [];
   const note = (text: string): void => {
-    if (!noteList.includes(text)) noteList.push(text);
+    const safe = redactPersonalNumbers(text);
+    if (!noteList.includes(safe)) noteList.push(safe);
+  };
+  /** One note for each of the first MAX_LISTED things, and one that counts the rest (CHOICE 20). */
+  const noteEach = (things: readonly string[], one: (thing: string) => string, rest: (n: number) => string): void => {
+    for (const thing of things.slice(0, MAX_LISTED)) note(one(thing));
+    if (things.length > MAX_LISTED) note(rest(things.length - MAX_LISTED));
   };
   const problem = (ref: string, code: string, message: string): void => {
-    found.push({ at: cursor, problem: { ref, code, message } });
+    found.push({ at: cursor, problem: { ref, code, message: redactPersonalNumbers(message) } });
   };
 
-  // ---- Fields that look like a personnummer: never read (CHOICE 19) --------
-  const personal = new Set<string>();
-  const stack: XmlNode[] = [root];
-  for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
-    for (const [name, value] of Object.entries(node.attrs)) if (PERSONNUMMER_LIKE.test(name) && value.trim() !== '') personal.add(name);
-    if (PERSONNUMMER_LIKE.test(node.name) && node.text.trim() !== '') personal.add(node.name);
-    stack.push(...node.children);
-  }
-  if (personal.size > 0) {
-    note(`Filen har fält som liknar personnummer (${[...personal].sort().join(', ')}). De läses aldrig och sparas inte.`);
-  }
+  // ---- Nothing that looks like a personnummer is read (CHOICE 19) ------------
+  const { tainted, names, unread } = quarantine(root);
+  if (names.size > 0) note(`Filen har fält som liknar personnummer (${listedNames(names)}). De läses aldrig och sparas inte.`);
+
+  const taintedRows = Object.fromEntries(KIND_ORDER.map((kind) => [kind, 0])) as Record<Kind, number>;
+  /** The ids of the tainted rows of each kind: a lesson that points at one is not read. */
+  const poisoned = Object.fromEntries(KIND_ORDER.map((kind) => [kind, new Set<string>()])) as Record<Kind, Set<string>>;
+  /** The rows of a table that are fit to read; a tainted one is counted and its id set aside. */
+  const readable = (table: string, rowName: string, kind: Kind): XmlNode[] => {
+    const out: XmlNode[] = [];
+    for (const node of rowsOf(root, table, rowName)) {
+      if (!tainted.has(node)) {
+        out.push(node);
+        continue;
+      }
+      taintedRows[kind] += 1;
+      const id = attr(node, 'id');
+      if (id !== null) poisoned[kind].add(id);
+    }
+    return out;
+  };
 
   // ---- The tables ----------------------------------------------------------
   const periods = new Map<number, PeriodEntry>();
   for (const p of rowsOf(root, 'periods', 'period')) {
+    const isTainted = tainted.has(p);
+    if (isTainted) taintedRows.period += 1;
     const numberText = attr(p, 'period');
     if (numberText === null || !/^-?\d+$/.test(numberText)) continue;
     const number = Number(numberText);
+    if (isTainted) {
+      // Every card in it is a problem, and it stays one if the number is listed again.
+      periods.set(number, { ok: false, why: 'personal', start: 0, end: 0 });
+      continue;
+    }
     const start = minutesOfClock(attr(p, 'starttime') ?? '');
     const end = minutesOfClock(attr(p, 'endtime') ?? '');
     const entry: PeriodEntry =
       start !== null && end !== null && end > start ? { ok: true, why: null, start, end } : { ok: false, why: 'time', start: 0, end: 0 };
     const earlier = periods.get(number);
     if (earlier === undefined) periods.set(number, entry);
-    else if (!(earlier.ok && entry.ok && earlier.start === entry.start && earlier.end === entry.end)) {
+    else if (earlier.why !== 'personal' && !(earlier.ok && entry.ok && earlier.start === entry.start && earlier.end === entry.end)) {
       periods.set(number, { ok: false, why: 'ambiguous', start: 0, end: 0 });
     }
   }
 
   const subjects = new Map<string, { name: string; short: string | null }>();
-  for (const s of rowsOf(root, 'subjects', 'subject')) {
+  for (const s of readable('subjects', 'subject', 'subject')) {
     const id = attr(s, 'id');
     const name = attr(s, 'name') ?? attr(s, 'short');
     if (id !== null && name !== null && !subjects.has(id)) subjects.set(id, { name, short: attr(s, 'short') });
   }
   const rooms = new Map<string, string>();
-  for (const r of rowsOf(root, 'classrooms', 'classroom')) {
+  for (const r of readable('classrooms', 'classroom', 'room')) {
     const id = attr(r, 'id');
     const name = attr(r, 'name') ?? attr(r, 'short');
     if (id !== null && name !== null && !rooms.has(id)) rooms.set(id, name);
   }
   const teachers = new Map<string, TeacherRef>();
-  for (const t of rowsOf(root, 'teachers', 'teacher')) {
+  for (const t of readable('teachers', 'teacher', 'teacher')) {
     const id = attr(t, 'id');
     if (id === null || teachers.has(id)) continue;
     const full = [attr(t, 'firstname'), attr(t, 'lastname')].filter((part): part is string => part !== null).join(' ');
     teachers.set(id, { short: attr(t, 'short'), name: attr(t, 'name') ?? (full !== '' ? full : null), email: attr(t, 'email'), id: null });
   }
   const classes = new Map<string, string>();
-  for (const c of rowsOf(root, 'classes', 'class')) {
+  for (const c of readable('classes', 'class', 'class')) {
     const id = attr(c, 'id');
     const name = attr(c, 'name') ?? attr(c, 'short');
     if (id !== null && name !== null && !classes.has(id)) classes.set(id, name);
   }
   const groups = new Map<string, GroupInfo>();
   const groupNameCount = new Map<string, number>();
-  for (const g of rowsOf(root, 'groups', 'group')) {
+  for (const g of readable('groups', 'group', 'group')) {
     const id = attr(g, 'id');
     if (id === null || groups.has(id)) continue;
     const entire = attr(g, 'entireclass') === '1';
-    const name = attr(g, 'name') ?? id;
+    // A group with no name is called by its id, unless the id has the shape of a
+    // personnummer: an id is a key and is never copied into a name (CHOICE 19).
+    const name = attr(g, 'name') ?? (hasPersonalNumber(id) ? null : id);
+    if (name === null) {
+      taintedRows.group += 1;
+      poisoned.group.add(id);
+      continue;
+    }
     groups.set(id, { id, name, classIds: idsOf(g, 'classids', 'classid'), entire, qualified: false });
     if (!entire) groupNameCount.set(name, (groupNameCount.get(name) ?? 0) + 1);
   }
   for (const g of groups.values()) g.qualified = !g.entire && (groupNameCount.get(g.name) ?? 0) > 1;
 
-  const readDefs = (table: string, rowName: string, field: string): Map<string, Def> => {
+  const readDefs = (table: string, rowName: string, field: string, kind: Kind): Map<string, Def> => {
     const out = new Map<string, Def>();
-    for (const d of rowsOf(root, table, rowName)) {
+    for (const d of readable(table, rowName, kind)) {
       const id = attr(d, 'id');
       if (id === null || out.has(id)) continue;
-      out.set(id, { name: attr(d, 'name') ?? attr(d, 'short') ?? id, short: attr(d, 'short'), fields: splitIds(d.attrs[field]) });
+      // Called by its id when it has no name, unless the id is shaped like a personnummer (CHOICE 19).
+      const name = attr(d, 'name') ?? attr(d, 'short') ?? (hasPersonalNumber(id) ? 'utan namn' : id);
+      out.set(id, { name, short: attr(d, 'short'), fields: splitIds(d.attrs[field]) });
     }
     return out;
   };
-  const daysDefs = readDefs('daysdefs', 'daysdef', 'days');
-  const weeksDefs = readDefs('weeksdefs', 'weeksdef', 'weeks');
-  const termsDefs = readDefs('termsdefs', 'termsdef', 'terms');
+  const daysDefs = readDefs('daysdefs', 'daysdef', 'days', 'day');
+  const weeksDefs = readDefs('weeksdefs', 'weeksdef', 'weeks', 'week');
+  const termsDefs = readDefs('termsdefs', 'termsdef', 'terms', 'term');
 
-  // ---- Assumptions made visible ------------------------------------------------
-  for (const def of daysDefs.values()) {
-    if (def.fields.length !== 1 || !/^[01]+$/.test(def.fields[0]!) || def.fields[0]!.split('1').length !== 2) continue;
-    const at = def.fields[0]!.indexOf('1');
-    const hit = WEEKDAY_PREFIXES.findIndex((re) => re.test(def.name) || (def.short !== null && re.test(def.short)));
-    if (hit >= 0 && hit !== at) note(`Dagarna i filen läses med position 1 som måndag, men dagen "${def.name}" står på position ${at + 1}.`);
-  }
-  const multiWeeks = [...weeksDefs.values()].some((d) => d.fields.some((f) => f.length > 1));
-  const weeksNonTrivial = [...weeksDefs.values()].some((d) => d.fields.some((f) => f.includes('0')));
-
-  // ---- Lessons (what is taught) ---------------------------------------------
+  // ---- Lessons (what is taught) and cards (where it sits), as elements -------
+  const lessonNodes = rowsOf(root, 'lessons', 'lesson');
+  const cardNodes = rowsOf(root, 'cards', 'card');
   const lessonById = new Map<string, LessonInfo>();
-  rowsOf(root, 'lessons', 'lesson').forEach((node, i) => {
+  lessonNodes.forEach((node, i) => {
     const id = attr(node, 'id');
     if (id !== null && !lessonById.has(id)) lessonById.set(id, { ordinal: i + 1, node });
   });
 
+  // A tainted row nothing points at is not silent either: one note, with the values that were deleted unread.
+  const taintedParts = KIND_ORDER.filter((kind) => taintedRows[kind] > 0).map(
+    (kind) => `${taintedRows[kind]} ${plural(taintedRows[kind], KINDS[kind].one, KINDS[kind].many)}`,
+  );
+  const unreadPart = `${unread} ${plural(unread, 'värde', 'värden')} som liknar personnummer i ${plural(unread, 'ett fält', 'fält')} som inte läses; ${plural(unread, 'det', 'de')} sparas inte.`;
+  if (taintedParts.length > 0) {
+    note(
+      [
+        `Filen har värden som liknar personnummer i ${listOf(taintedParts)}. De läses aldrig och sparas inte, och en lektion som hänvisar till dem läses inte heller.`,
+        ...(unread > 0 ? [`Dessutom finns ${unreadPart}`] : []),
+        NO_PERSONNUMMER,
+      ].join(' '),
+    );
+  } else if (unread > 0) {
+    note(`Filen har ${unreadPart} ${NO_PERSONNUMMER}`);
+  }
+
+  // ---- Assumptions made visible ------------------------------------------------
+  const dayMismatches: string[] = [];
+  for (const def of daysDefs.values()) {
+    if (def.fields.length !== 1 || !/^[01]+$/.test(def.fields[0]!) || def.fields[0]!.split('1').length !== 2) continue;
+    const at = def.fields[0]!.indexOf('1');
+    const hit = WEEKDAY_PREFIXES.findIndex((re) => re.test(def.name) || (def.short !== null && re.test(def.short)));
+    if (hit >= 0 && hit !== at) dayMismatches.push(`Dagarna i filen läses med position 1 som måndag, men dagen ${quote(def.name)} står på position ${at + 1}.`);
+  }
+  noteEach(
+    dayMismatches,
+    (text) => text,
+    (n) => `Ytterligare ${n} ${plural(n, 'dag', 'dagar')} i filen står på en annan position än den som läses som ${plural(n, 'dess', 'deras')} veckodag.`,
+  );
+  // A week definition that was not read might hold a rotation: no card is guessed to be "every week" then.
+  const multiWeeks = taintedRows.week > 0 || [...weeksDefs.values()].some((d) => d.fields.some((f) => f.length > 1));
+  const weeksNonTrivial = [...weeksDefs.values()].some((d) => d.fields.some((f) => f.includes('0')));
+
+  // ---- Lessons (what is taught) ---------------------------------------------
   let qualifiedUsed = false;
   const groupName = (g: GroupInfo, classId: string | null): string => {
     if (g.entire) return classes.get(classId ?? g.classIds[0] ?? '') ?? g.name;
     if (g.qualified && g.classIds.length > 0) {
       qualifiedUsed = true;
-      return `${classes.get(g.classIds[0]!) ?? g.classIds[0]!} ${g.name}`;
+      // The class's name, or its id when the file has no such class (never an id shaped like a personnummer).
+      const classLabel = classes.get(g.classIds[0]!) ?? (hasPersonalNumber(g.classIds[0]!) ? null : g.classIds[0]!);
+      return classLabel === null ? g.name : `${classLabel} ${g.name}`;
     }
     return g.name;
   };
@@ -1040,30 +1439,64 @@ export function readAscXml(xml: string): ParsedExchange {
   const resolved = new Map<string, ResolvedLesson | null>();
   const resolveLesson = (id: string, info: LessonInfo): ResolvedLesson | null => {
     if (resolved.has(id)) return resolved.get(id) ?? null;
+    const ref = `lektion ${info.ordinal}`;
+    // At most MAX_REASONS are spelled out: a lesson may name a million ids, and
+    // every one that is not in the file is a reason.
     const issues: Issue[] = [];
+    let moreIssues = 0;
+    const issue = (code: string, text: string): void => {
+      if (issues.length < MAX_REASONS) issues.push({ code, text });
+      else moreIssues += 1;
+    };
+    // A reference to a row that was not read, said once for each kind of row.
+    const personal = new Set<Kind>();
+    const pointsAtTainted = (kind: Kind): void => {
+      if (personal.has(kind)) return;
+      personal.add(kind);
+      issue('ASC_LESSON_PERSONAL_NUMBER', `${KINDS[kind].the} som lektionen hänvisar till har ett värde som liknar ett personnummer.`);
+    };
     const node = info.node;
 
     const subjectId = attr(node, 'subjectid');
     const subject = subjectId !== null ? subjects.get(subjectId) : undefined;
-    if (subjectId === null) issues.push({ code: 'ASC_LESSON_NO_SUBJECT', text: 'lektionen saknar ämne.' });
-    else if (!subject) issues.push({ code: 'ASC_LESSON_NO_SUBJECT', text: `ämnet "${subjectId}" finns inte i filen.` });
+    if (subjectId === null) issue('ASC_LESSON_NO_SUBJECT', 'lektionen saknar ämne.');
+    else if (poisoned.subject.has(subjectId)) pointsAtTainted('subject');
+    else if (!subject) issue('ASC_LESSON_NO_SUBJECT', missing(KINDS.subject.the, subjectId, 'lektionen'));
 
     const selected: GroupInfo[] = [];
     for (const gid of idsOf(node, 'groupids', 'groupid')) {
       const g = groups.get(gid);
-      if (g) selected.push(g);
-      else issues.push({ code: 'ASC_LESSON_REF_UNKNOWN', text: `gruppen "${gid}" finns inte i filen.` });
+      if (poisoned.group.has(gid)) pointsAtTainted('group');
+      else if (g) {
+        selected.push(g);
+        // A group of a class that was not read is not read either.
+        if (g.classIds.some((cid) => poisoned.class.has(cid))) pointsAtTainted('class');
+      } else issue('ASC_LESSON_REF_UNKNOWN', missing(KINDS.group.the, gid, 'lektionen'));
+    }
+    // Which selected groups belong to which class, once: finding them class by
+    // class was one pass over all selected groups for every class.
+    const selectedOfClass = new Map<string, GroupInfo[]>();
+    for (const g of selected) {
+      for (const cid of g.classIds) {
+        const ofClass = selectedOfClass.get(cid);
+        if (ofClass === undefined) selectedOfClass.set(cid, [g]);
+        else ofClass.push(g);
+      }
     }
     const attendees: string[] = [];
     const emitted = new Set<string>();
     const classIds = idsOf(node, 'classids', 'classid');
     for (const cid of classIds) {
-      const className = classes.get(cid);
-      if (className === undefined) {
-        issues.push({ code: 'ASC_LESSON_REF_UNKNOWN', text: `klassen "${cid}" finns inte i filen.` });
+      if (poisoned.class.has(cid)) {
+        pointsAtTainted('class');
         continue;
       }
-      const covering = selected.filter((g) => g.classIds.includes(cid));
+      const className = classes.get(cid);
+      if (className === undefined) {
+        issue('ASC_LESSON_REF_UNKNOWN', missing(KINDS.class.the, cid, 'lektionen'));
+        continue;
+      }
+      const covering = selectedOfClass.get(cid) ?? [];
       if (covering.length === 0) attendees.push(className);
       for (const g of covering) {
         if (emitted.has(g.id)) continue;
@@ -1077,23 +1510,34 @@ export function readAscXml(xml: string): ParsedExchange {
       attendees.push(groupName(g, null));
     }
     const named = unique(attendees);
-    if (named.length === 0 && issues.length === 0) issues.push({ code: 'ASC_LESSON_NO_GROUP', text: 'lektionen har varken klass eller grupp.' });
+    if (named.length === 0 && issues.length === 0) issue('ASC_LESSON_NO_GROUP', 'lektionen har varken klass eller grupp.');
 
     const teacherRefs: TeacherRef[] = [];
     for (const tid of idsOf(node, 'teacherids', 'teacherid')) {
       const t = teachers.get(tid);
-      if (t) teacherRefs.push({ ...t });
-      else issues.push({ code: 'ASC_LESSON_REF_UNKNOWN', text: `läraren "${tid}" finns inte i filen.` });
+      if (poisoned.teacher.has(tid)) pointsAtTainted('teacher');
+      else if (t) teacherRefs.push({ ...t });
+      else issue('ASC_LESSON_REF_UNKNOWN', missing(KINDS.teacher.the, tid, 'lektionen'));
     }
     const roomNames: string[] = [];
     for (const rid of idsOf(node, 'classroomids', 'classroomid')) {
       const r = rooms.get(rid);
-      if (r !== undefined) roomNames.push(r);
-      else issues.push({ code: 'ASC_LESSON_REF_UNKNOWN', text: `salen "${rid}" finns inte i filen.` });
+      if (poisoned.room.has(rid)) pointsAtTainted('room');
+      else if (r !== undefined) roomNames.push(r);
+      else issue('ASC_LESSON_REF_UNKNOWN', missing(KINDS.room.the, rid, 'lektionen'));
+    }
+    // The lesson's own days, weeks and terms definitions: read only when the
+    // card has nothing of its own, but a lesson that points at one that was not
+    // read is not read, whatever the card says.
+    for (const [column, kind] of [['daysdefid', 'day'], ['weeksdefid', 'week'], ['termsdefid', 'term']] as const) {
+      const defId = attr(node, column);
+      if (defId !== null && poisoned[kind].has(defId)) pointsAtTainted(kind);
     }
 
     if (issues.length > 0 || !subject) {
-      problem(`lektion ${info.ordinal}`, issues[0]!.code, `Lektion ${info.ordinal} hoppas över: ${issues.map((i) => i.text).join(' ')}`);
+      const reasons = `${issues.map((i) => i.text).join(' ')}${moreIssues > 0 ? ` Ytterligare ${moreIssues} ${plural(moreIssues, 'orsak', 'orsaker')} visas inte.` : ''}`;
+      const code = personal.size > 0 ? 'ASC_LESSON_PERSONAL_NUMBER' : issues[0]!.code;
+      problem(ref, code, `Lektion ${info.ordinal} hoppas över: ${reasons}${personal.size > 0 ? ` ${NO_PERSONNUMMER}` : ''}`);
       resolved.set(id, null);
       return null;
     }
@@ -1112,7 +1556,6 @@ export function readAscXml(xml: string): ParsedExchange {
   };
 
   // ---- Cards (where it sits) ----------------------------------------------------
-  const cardNodes = rowsOf(root, 'cards', 'card');
   const placedLessons = new Set<string>();
   const rowsByLesson = new Map<string, CardRow[]>();
   cardNodes.forEach((node, i) => {
@@ -1122,7 +1565,11 @@ export function readAscXml(xml: string): ParsedExchange {
     if (lessonId !== null) placedLessons.add(lessonId);
     const info = lessonId !== null ? lessonById.get(lessonId) : undefined;
     if (lessonId === null || !info) {
-      problem(`kort ${ordinal}`, 'ASC_CARD_NO_LESSON', `Kort ${ordinal} hoppas över: ${lessonId === null ? 'kortet pekar inte ut någon lektion' : `lektionen "${lessonId}" finns inte i filen`}.`);
+      problem(
+        `kort ${ordinal}`,
+        'ASC_CARD_NO_LESSON',
+        `Kort ${ordinal} hoppas över: ${lessonId === null ? 'kortet pekar inte ut någon lektion.' : missing('lektionen', lessonId, 'kortet')}`,
+      );
       return;
     }
     if (resolveLesson(lessonId, info) === null) return;
@@ -1151,7 +1598,9 @@ export function readAscXml(xml: string): ParsedExchange {
     const sameSitting = new Map<string, CardRow[]>();
     for (const row of loose) {
       const key = ['days', 'day', 'weeks', 'terms', 'classroomids', 'classroomid'].map((a) => attr(row.node, a) ?? '').join('|');
-      sameSitting.set(key, [...(sameSitting.get(key) ?? []), row]);
+      const sitting = sameSitting.get(key);
+      if (sitting === undefined) sameSitting.set(key, [row]);
+      else sitting.push(row);
     }
     const k = lesson!.perCard;
     for (const group of sameSitting.values()) {
@@ -1170,7 +1619,7 @@ export function readAscXml(xml: string): ParsedExchange {
           problem(
             `kort ${row.ordinal}`,
             'ASC_CARD_BLOCK_INCOMPLETE',
-            `Kort ${row.ordinal} hoppas över: lektionen har ${k} perioder per kort men kortet har bara ${run.length - whole} på rad, så längden går inte att avgöra.`,
+            `Kort ${row.ordinal} hoppas över: lektionen har ${countText(k)} perioder per kort men kortet har bara ${run.length - whole} på rad, så längden går inte att avgöra.`,
           );
         }
       }
@@ -1181,19 +1630,33 @@ export function readAscXml(xml: string): ParsedExchange {
   // ---- Placements to lessons -----------------------------------------------------
   const lessons: ExchangeLesson[] = [];
   const termNotes = new Set<string>();
+  let longTermName = false;
   let dayDefault = false;
   let roomsSeveral = 0;
   let roomsUnchosen = 0;
   const day0 = !/daynumbering1/.test(root.attrs.options ?? '');
 
-  const termsOf = (bits: string): { from: string | null; to: string | null } => {
-    if (/^1+$/.test(bits)) return { from: null, to: null };
-    const def = [...termsDefs.values()].find((d) => d.fields.includes(bits));
+  // A term is told once per distinct bit string, however many cards carry it
+  // (CHOICE 8): the first def whose string it is, then its name as a span.
+  // null: the string could only be named by a def that was not read.
+  const wholeYear: TermSpan = { from: null, to: null };
+  const defByBits = new Map<string, Def>();
+  for (const d of termsDefs.values()) for (const field of d.fields) if (!defByBits.has(field)) defByBits.set(field, d);
+  const termCache = new Map<string, TermSpan | null>();
+  const termsOf = (bits: string): TermSpan | null => {
+    if (/^1+$/.test(bits)) return wholeYear;
+    const cached = termCache.get(bits);
+    if (cached !== undefined) return cached;
+    const def = defByBits.get(bits);
     const span = def !== undefined ? parseSpan(def.name) : null;
-    if (span !== null) return span;
-    const label = def?.name ?? `period ${[...bits].flatMap((b, i) => (b === '1' ? [i + 1] : [])).join('+')}`;
-    termNotes.add(label);
-    return { from: null, to: null };
+    let result: TermSpan | null = span ?? wholeYear;
+    if (span === null) {
+      if (def === undefined && taintedRows.term > 0) result = null;
+      else if (def !== undefined && def.name.length > MAX_SPAN_NAME) longTermName = true;
+      else termNotes.add(quote(def?.name ?? positionsLabel(bits)));
+    }
+    termCache.set(bits, result);
+    return result;
   };
 
   // The card's own bit string, else its lesson's, else the lesson's def when
@@ -1225,12 +1688,14 @@ export function readAscXml(xml: string): ParsedExchange {
     for (let step = 0; step < placement.length && timeProblem === null; step += 1) {
       const number = first.period + step;
       const p = periods.get(number);
-      if (p === undefined) timeProblem = { code: 'ASC_PERIOD_UNKNOWN', why: `perioden ${number} finns inte i filens perioder, och en tid gissas aldrig.` };
+      if (p === undefined) timeProblem = { code: 'ASC_PERIOD_UNKNOWN', why: `${periodRef(number)} finns inte i filens perioder, och en tid gissas aldrig.` };
       else if (!p.ok) {
         timeProblem =
-          p.why === 'ambiguous'
-            ? { code: 'ASC_PERIOD_AMBIGUOUS', why: `perioden ${number} har olika tider på olika rader.` }
-            : { code: 'ASC_PERIOD_TIME_INVALID', why: `perioden ${number} har ingen tid som går att läsa (start före slut, som H:MM).` };
+          p.why === 'personal'
+            ? { code: 'ASC_PERIOD_PERSONAL_NUMBER', why: `${periodRef(number)} har ett värde som liknar ett personnummer. ${NO_PERSONNUMMER}` }
+            : p.why === 'ambiguous'
+              ? { code: 'ASC_PERIOD_AMBIGUOUS', why: `${periodRef(number)} har olika tider på olika rader.` }
+              : { code: 'ASC_PERIOD_TIME_INVALID', why: `${periodRef(number)} har ingen tid som går att läsa (start före slut, som H:MM).` };
       } else {
         if (step === 0) start = p.start;
         end = p.end;
@@ -1245,8 +1710,8 @@ export function readAscXml(xml: string): ParsedExchange {
     let days: number[] = [];
     const daysText = attr(card, 'days');
     if (daysText !== null) {
-      if (!/^[01]+$/.test(daysText) || !daysText.includes('1')) {
-        skip('ASC_DAY_INVALID', `dagarna "${daysText}" pekar inte ut någon dag.`);
+      if (daysText.length > MAX_BITS || !/^[01]+$/.test(daysText) || !daysText.includes('1')) {
+        skip('ASC_DAY_INVALID', `dagarna${bitsPart(daysText)} pekar inte ut någon dag.`);
         continue;
       }
       if (daysText.lastIndexOf('1') >= 7) {
@@ -1277,7 +1742,7 @@ export function readAscXml(xml: string): ParsedExchange {
     } else {
       const pattern = weekPatternOfBits(weeksText);
       if (pattern === null) {
-        skip('ASC_WEEKS_UNSUPPORTED', `veckorna "${weeksText}" går inte att uttrycka som varje, udda eller jämn vecka.`);
+        skip('ASC_WEEKS_UNSUPPORTED', `veckorna${bitsPart(weeksText)} går inte att uttrycka som varje, udda eller jämn vecka.`);
         continue;
       }
       weeks = pattern;
@@ -1285,11 +1750,18 @@ export function readAscXml(xml: string): ParsedExchange {
 
     // The terms (CHOICE 8).
     const termsText = bitsFor('terms', card, lessonNode);
-    if (termsText !== null && !/^[01]+$/.test(termsText)) {
-      skip('ASC_TERMS_INVALID', `perioderna "${termsText}" går inte att läsa.`);
+    if (termsText !== null && (termsText.length > MAX_BITS || !/^[01]+$/.test(termsText))) {
+      skip('ASC_TERMS_INVALID', `perioderna${bitsPart(termsText)} går inte att läsa.`);
       continue;
     }
-    const span = termsText === null ? { from: null, to: null } : termsOf(termsText);
+    const span = termsText === null ? wholeYear : termsOf(termsText);
+    if (span === null) {
+      skip(
+        'ASC_CARD_PERSONAL_NUMBER',
+        `kortets termin går inte att avgöra, eftersom en terminsdefinition i filen har ett värde som liknar ett personnummer. ${NO_PERSONNUMMER}`,
+      );
+      continue;
+    }
 
     // The room (CHOICE 16).
     let room: string | null = null;
@@ -1298,9 +1770,13 @@ export function readAscXml(xml: string): ParsedExchange {
       const ids = splitIds(cardRooms);
       if (ids.length > 1) roomsSeveral += 1;
       if (ids.length > 0) {
+        if (poisoned.room.has(ids[0]!)) {
+          skip('ASC_CARD_PERSONAL_NUMBER', `salen som kortet hänvisar till har ett värde som liknar ett personnummer. ${NO_PERSONNUMMER}`);
+          continue;
+        }
         room = rooms.get(ids[0]!) ?? null;
         if (room === null) {
-          skip('ASC_CARD_REF_UNKNOWN', `salen "${ids[0]!}" finns inte i filen.`);
+          skip('ASC_CARD_REF_UNKNOWN', missing(KINDS.room.the, ids[0]!, 'kortet'));
           continue;
         }
       }
@@ -1338,9 +1814,12 @@ export function readAscXml(xml: string): ParsedExchange {
     note(`${unplaced} ${plural(unplaced, 'lektion', 'lektioner')} i filen har inga kort (är inte placerade) och hoppas över.`);
   }
   if (weeksNonTrivial || lessons.some((l) => l.weeks !== 'ALL')) note(NOTE_WEEKS);
-  for (const label of termNotes) {
-    note(`Perioden "${label}" i aSc har inga datum och läses som hela läsåret; sätt datum på lektionerna efter importen om de bara ska gälla en del av året.`);
-  }
+  noteEach(
+    [...termNotes],
+    (label) => `Perioden ${label} i aSc har inga datum och läses som hela läsåret; sätt datum på lektionerna efter importen om de bara ska gälla en del av året.`,
+    (n) => `${n} ${plural(n, 'period', 'perioder')} till i aSc har inga datum och läses som hela läsåret.`,
+  );
+  if (longTermName) note(NOTE_LONG_TERM_NAME);
   if (dayDefault) note(NOTE_NUMERIC_DAY_ZERO);
   if (qualifiedUsed) note(NOTE_QUALIFIED_GROUPS);
   if (tooManyTeachers > 0) {
@@ -1355,5 +1834,7 @@ export function readAscXml(xml: string): ParsedExchange {
   if (lessons.length > MAX_EXCHANGE_LESSONS) {
     return refuse('fil', 'ASC_TOO_MANY_LESSONS', `Filen har fler än ${MAX_EXCHANGE_LESSONS} lektioner och läses inte.`);
   }
-  return { lessons, problems: found.sort((a, b) => a.at - b.at).map((f) => f.problem), notes: noteList };
+  const log = new ProblemLog('ASC_TOO_MANY_PROBLEMS');
+  for (const f of found.sort((a, b) => a.at - b.at)) log.add(f.problem.ref, f.problem.code, f.problem.message);
+  return { lessons, problems: log.close(), notes: noteList };
 }

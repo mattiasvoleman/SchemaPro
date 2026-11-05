@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
 import { excelSerialToText, isDateFormatCode, readXlsx, writeXlsx, XlsxError, XLSX_MAX_CELL_CHARS } from './xlsx';
 import { childNamed, childrenNamed, parseXml, type XmlNode } from './xml';
@@ -359,6 +360,74 @@ describe('readXlsx: what it refuses, in Swedish', () => {
     expectRefusal(() => readXlsx(bomb), /komprimeringsbomb/);
   });
 
+  describe('the size a package may unpack to (EXCHANGE_ZIP_LIMITS: 8 MB a part, 8 MB in all)', () => {
+    const MB8 = 8 * 1024 * 1024;
+    /** The bytes of the other parts of pkg(): the limit is on the sum, so a sheet of the size below makes the package that size. */
+    const others = [...readZip(pkg({ sheet: sheetXml('') })).values()].reduce((sum, part) => sum + part.length, 0) - Buffer.byteLength(sheetXml(''));
+    /** A valid sheet padded with an XML comment so that the package unpacks to `total` bytes: random hex, so that it is no bomb either. */
+    function packageOfSize(total: number): Buffer {
+      const empty = sheetXml('');
+      const padding = total - others - Buffer.byteLength(empty) - '<!---->'.length;
+      const comment = randomBytes(Math.ceil(padding / 2)).toString('hex').slice(0, padding);
+      return pkg({ sheet: empty.replace('<sheetData>', `<!--${comment}--><sheetData>`) });
+    }
+
+    it('reads a package of exactly 8 MB unpacked and refuses one byte more, which the generic limits would have taken', () => {
+      const exact = packageOfSize(MB8);
+      expect([...readZip(exact).values()].reduce((sum, part) => sum + part.length, 0)).toBe(MB8);
+      expect(readXlsx(exact).rows).toEqual([]);
+      const over = packageOfSize(MB8 + 1);
+      expectRefusal(() => readXlsx(over), /^Filen går inte att läsa som en Excel-arbetsbok \(\.xlsx\): Zip-filen är större än 8 MB uppackad\.$/);
+      expect(readZip(over).size).toBeGreaterThan(0); // 64 MB in all: zip.ts alone would have unpacked it
+    });
+
+    it('refuses from the directory, before a byte is inflated: a part whose stream is spoilt is still "too large", not "damaged"', () => {
+      const name = 'xl/worksheets/sheet1.xml';
+      const spoilt = Buffer.from(writeZip([{ name, data: randomBytes(MB8 + 1024) }]));
+      spoilt.fill(0xff, 30 + name.length, 30 + name.length + 64); // the first bytes of the deflate stream
+      expectRefusal(() => readXlsx(spoilt), /större än 8 MB uppackad/);
+      expect(() => readZip(spoilt)).toThrow(/skadad/); // the generic limits would have started to inflate it
+    });
+
+    it('refuses parts that are each small enough and together are not', () => {
+      const bytes = writeZip(['a', 'b', 'c'].map((letter) => ({ name: `xl/${letter}.bin`, data: randomBytes(3 * 1024 * 1024) })));
+      expectRefusal(() => readXlsx(bytes), /Zip-filen är större än 8 MB uppackad/);
+    });
+  });
+
+  describe('what a refusal quotes of the file: a line, never the whole of it, never a personnummer', () => {
+    const PNR = '19800101-1234';
+
+    it('names a part or a target in at most 40 characters, redacted', () => {
+      const long = readXlsx.bind(null, pkg({ workbookRels: WORKBOOK_RELS(`worksheets/${'n'.repeat(5000)}.xml`) }));
+      expectRefusal(long, /^Excel-filen saknar kalkylbladet xl\/worksheets\/n{26}…\.$/);
+      const numbered = readXlsx.bind(null, pkg({ workbookRels: WORKBOOK_RELS(`worksheets/${PNR}.xml`) }));
+      expectRefusal(numbered, /^Excel-filen saknar kalkylbladet xl\/worksheets\/\[personnummer\]\.xml\.$/);
+    });
+
+    it('names a cell reference the same way', () => {
+      const missing = (reference: string): Buffer => pkg({ sheet: sheetXml(`<row r="1"><c r="${reference}" t="s"><v>99</v></c></row>`), shared: EXCEL_SHARED });
+      expectRefusal(() => readXlsx(missing(`X${'1'.repeat(5000)}`)), /^Cell X1{39}… pekar på en text som inte finns i filen\.$/);
+      expectRefusal(() => readXlsx(missing(`X${PNR}`)), /^Cell X\[personnummer\] pekar/);
+      const tooLong = sheetXml(`<row r="1"><c r="Y${PNR}" t="inlineStr"><is><t>${'x'.repeat(XLSX_MAX_CELL_CHARS + 1)}</t></is></c></row>`);
+      expectRefusal(() => readXlsx(pkg({ sheet: tooLong })), /^Cell Y\[personnummer\] har 32768 tecken; högst 32767 läses\.$/);
+    });
+
+    it('cuts the words of zip.ts and xml.ts that name a part or an element of the file, at 200 characters', () => {
+      const zipName = `xl/${PNR}-${'n'.repeat(300)}.xml`;
+      const zipped = writeZip([{ name: zipName, data: randomBytes(8 * 1024 * 1024 + 1) }]);
+      expect(() => readXlsx(zipped)).toThrow(XlsxError);
+      const zipMessage = (() => { try { readXlsx(zipped); } catch (error) { return (error as Error).message; } return ''; })();
+      expect(zipMessage).toMatch(/^Filen går inte att läsa som en Excel-arbetsbok \(\.xlsx\): Posten "xl\/\[personnummer\]-n+…$/);
+      expect(zipMessage.length).toBeLessThan(280);
+
+      const element = `a${PNR}${'z'.repeat(5000)}`;
+      const xmlMessage = (() => { try { readXlsx(pkg({ sheet: `${DECL}<worksheet xmlns="${MAIN}"><sheetData></${element}></worksheet>` })); } catch (error) { return (error as Error).message; } return ''; })();
+      expect(xmlMessage).toMatch(/^Delen xl\/worksheets\/sheet1\.xml i Excel-filen är inte giltig XML: Sluttaggen <\/a\[personnummer\]z+…$/);
+      expect(xmlMessage.length).toBeLessThan(280);
+    });
+  });
+
   it('refuses a zip that is not a workbook', () => {
     expectRefusal(() => readXlsx(writeZip([{ name: 'notes.txt', data: Buffer.from('hej') }])), /arbetsboken \(xl\/workbook\.xml\) saknas/);
     expectRefusal(() => readXlsx(pkg({ workbookXml: `${DECL}<html/>` })), /arbetsboken har fel rotelement/);
@@ -575,13 +644,25 @@ describe('writeXlsx and readXlsx: every cell is text and comes back as written',
   it('refuses a sheet with more cells than the XML reader will count, and takes the largest real table (5 000 lessons of 28 columns)', () => {
     const grid = (rows: number, columns: number): string[][] => Array.from({ length: rows }, (_v, r) => Array.from({ length: columns }, (_w, c) => `${r}-${c}`));
     expectRefusal(() => writeXlsx(grid(7000, 30), { sheetName: 'S' }), /210000 ifyllda celler; fler än ungefär 199968/);
-    const inside = grid(5000, 28);
-    expect(read(inside)).toEqual(inside);
+    // 5 000 lessons of 28 columns whose text repeats the way a timetable's does (a group, a subject, a teacher
+    // is on many rows): about 6 MB unpacked, inside the 8 MB the reader takes. (Every cell a text of its own
+    // is 14 MB: see the size limits below.)
+    const repeating = Array.from({ length: 5000 }, (_v, r) => Array.from({ length: 28 }, (_w, c) => `${c}-${r % 150}`));
+    expect(read(repeating)).toEqual(repeating);
   });
 
   it('refuses to write what it could not read back', () => {
     expectRefusal(() => writeXlsx(new Array(20001).fill(['x']), { sheetName: 'S' }), /20001 rader/);
     expectRefusal(() => writeXlsx([new Array(65).fill('x')], { sheetName: 'S' }), /65 kolumner/);
     expectRefusal(() => writeXlsx([['a', 'x'.repeat(XLSX_MAX_CELL_CHARS + 1)]], { sheetName: 'S' }), /rad 1, kolumn 2 har 32768 tecken/);
+  });
+
+  it('refuses a table that would unpack to more than the reader takes, in plain words, and writes one just under it', () => {
+    // 384 cells of 30 000 characters, each its own text (random, so that the zip is not refused as a bomb
+    // on the way back): 11 MB of shared strings from a table of 384 cells.
+    const heavy = Array.from({ length: 6 }, () => Array.from({ length: 64 }, () => randomBytes(15_000).toString('hex')));
+    expectRefusal(() => writeXlsx(heavy, { sheetName: 'S' }), /^Tabellen blir \d+(\.\d)? MB uppackad i en Excel-fil; högst 8 MB ryms\. Dela upp den eller använd CSV\.$/);
+    const light = heavy.slice(0, 2);
+    expect(readXlsx(writeXlsx(light, { sheetName: 'S' })).rows).toEqual(light);
   });
 });

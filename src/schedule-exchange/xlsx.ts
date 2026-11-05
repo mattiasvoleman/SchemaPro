@@ -35,7 +35,8 @@
  *
  *   The writer refuses what the reader would refuse (more than 20 000 rows, 64
  *   columns, a cell of more than 32 767 characters, a sheet with more cells than
- *   xml.ts will parse: see the end of this comment), so that no file leaves
+ *   xml.ts will parse: see the end of this comment, a package that unpacks to
+ *   more than the reader's size limits: see REFUSALS), so that no file leaves
  *   Rastra that cannot come back.
  *
  * READER. `readXlsx` returns the FIRST WORKSHEET in workbook order as a
@@ -90,12 +91,23 @@
  * password-protected workbook and a legacy .xls (both are OLE2 compound files,
  * D0 CF 11 E0; an encrypted OOXML workbook is wrapped in one, and its
  * "EncryptedPackage" stream tells the two apart), anything that is not a zip
- * (zip.ts's refusals pass through: more than 64 entries, 32 MB per part,
- * 200:1 compression, …), a package with no workbook or no worksheet, XML that
- * is not well formed or has a DOCTYPE (xml.ts), more than 20 000 rows, more
- * than 64 columns or a cell of more than 32 767 characters (Excel's own cell
- * limit). Rows and columns are limited by what is in them: styled but empty
- * cells beyond the limits (a whole formatted column) do not count.
+ * (zip.ts's refusals pass through: more than 64 entries, 200:1 compression, …;
+ * and the size: EXCHANGE_ZIP_LIMITS, 8 MB a part and 8 MB in all, checked from
+ * the zip's own directory BEFORE anything is unpacked, so that a zip of a few
+ * hundred kilobytes that unpacks to tens of megabytes costs nothing), a
+ * package with no workbook or no worksheet, XML that is not well formed or has
+ * a DOCTYPE (xml.ts), more than 20 000 rows, more than 64 columns or a cell of
+ * more than 32 767 characters (Excel's own cell limit). Rows and columns are
+ * limited by what is in them: styled but empty cells beyond the limits (a
+ * whole formatted column) do not count.
+ *
+ * WHAT A REFUSAL MAY QUOTE. The package is a stranger's, and so is every name in
+ * it: an entry, a relationship target, a cell reference, an element in the XML
+ * that xml.ts complains about. A refusal names them through `shown`: redacted
+ * for personnummer (a part may be called 19800101-1234.xml), on one line, and
+ * cut, so that one message is never longer than a line (a part name may be
+ * 65 535 characters, a relationship target as long as the part). The numbers
+ * in a refusal are counts, never text from the file.
  *
  * ONE LIMIT IS xml.ts's, NOT OURS: its parser accepts at most MAX_NODES
  * (400 000) elements per part. A cell is two elements (`<c><v>`) and a row one,
@@ -107,6 +119,8 @@
  * bound covers it.)
  */
 
+import { EXCHANGE_ZIP_LIMITS } from './exchange-model';
+import { MAX_QUOTE, redactPersonalNumbers } from './file-safety';
 import { childNamed, childrenNamed, element, escapeXml, MAX_NODES, parseXml, type XmlNode } from './xml';
 import { readZip, writeZip } from './zip';
 
@@ -115,6 +129,20 @@ export class XlsxError extends Error {
     super(message);
     this.name = 'XlsxError';
   }
+}
+
+/** The longest a message quotes a name from the file, and the longest it quotes a message of zip.ts or xml.ts. */
+const MAX_INNER_MESSAGE = 200;
+
+/**
+ * Text of the file as a refusal shows it: personnummer redacted FIRST (so that
+ * a number is not cut in two and shown in half), on one line, cut to `most`
+ * characters. No quotation marks: it is a name, a path or a sentence, not a
+ * value (a value is quoted with excerpt() in the table reader).
+ */
+function shown(text: string, most = MAX_QUOTE): string {
+  const flat = redactPersonalNumbers(text).replace(/\s+/g, ' ').trim();
+  return flat.length > most ? `${flat.slice(0, most)}…` : flat;
 }
 
 export const XLSX_MAX_ROWS = 20_000;
@@ -318,7 +346,7 @@ export function writeXlsx(rows: string[][], options: WriteXlsxOptions): Buffer {
     ]);
 
   const part = (partName: string, xml: string): { name: string; data: Buffer } => ({ name: partName, data: Buffer.from(xml, 'utf8') });
-  return writeZip([
+  const parts = [
     part('[Content_Types].xml', contentTypes),
     part('_rels/.rels', rootRels),
     part('xl/workbook.xml', workbook),
@@ -326,7 +354,18 @@ export function writeXlsx(rows: string[][], options: WriteXlsxOptions): Buffer {
     part('xl/styles.xml', stylesXml()),
     part('xl/sharedStrings.xml', sharedStrings),
     part('xl/worksheets/sheet1.xml', sheet),
-  ]);
+  ];
+  // What readXlsx will unpack: the same limits, so that no file leaves Rastra that the reader would refuse for
+  // its size. (A table of 5 000 lessons whose text repeats, as a timetable's does, is about 6 MB; one in which
+  // nearly every cell is a text of its own, 14 MB.)
+  const unpacked = parts.reduce((sum, { data }) => sum + data.length, 0);
+  if (unpacked > EXCHANGE_ZIP_LIMITS.maxTotalBytes || parts.some(({ data }) => data.length > EXCHANGE_ZIP_LIMITS.maxEntryBytes)) {
+    const mb = (bytes: number): number => Math.round((bytes / (1024 * 1024)) * 10) / 10;
+    throw new XlsxError(
+      `Tabellen blir ${mb(unpacked)} MB uppackad i en Excel-fil; högst ${mb(Math.min(EXCHANGE_ZIP_LIMITS.maxEntryBytes, EXCHANGE_ZIP_LIMITS.maxTotalBytes))} MB ryms. Dela upp den eller använd CSV.`,
+    );
+  }
+  return writeZip(parts);
 }
 
 // ---------------------------------------------------------------------------
@@ -394,7 +433,7 @@ function parsePart(bytes: Buffer, part: string): XmlNode {
   try {
     return parseXml(bytes.toString('utf8'));
   } catch (error) {
-    throw new XlsxError(`Delen ${part} i Excel-filen är inte giltig XML: ${(error as Error).message}`);
+    throw new XlsxError(`Delen ${shown(part)} i Excel-filen är inte giltig XML: ${shown((error as Error).message, MAX_INNER_MESSAGE)}`);
   }
 }
 
@@ -502,10 +541,14 @@ export function readXlsx(buf: Buffer): ReadXlsxResult {
   }
   let entries: Map<string, Buffer>;
   try {
-    entries = readZip(buf);
+    // The exchange limits, not the generic ones: a file here is refused for its unpacked size from the
+    // zip's directory, before a byte is inflated (the review of PR #256: a zip under 1 MB that unpacks to
+    // tens of MB cost CPU and hundreds of MB of memory before any other check could say no).
+    entries = readZip(buf, EXCHANGE_ZIP_LIMITS);
   } catch (error) {
-    // readZip only throws ZipError (every count in the file is checked before it is used).
-    throw new XlsxError(`Filen går inte att läsa som en Excel-arbetsbok (.xlsx): ${(error as Error).message}`);
+    // readZip only throws ZipError (every count in the file is checked before it is used), and its
+    // messages name the entry, which is the file's text.
+    throw new XlsxError(`Filen går inte att läsa som en Excel-arbetsbok (.xlsx): ${shown((error as Error).message, MAX_INNER_MESSAGE)}`);
   }
 
   // The workbook part: found through the package relationships, with the conventional name as the fallback.
@@ -535,7 +578,7 @@ export function readXlsx(buf: Buffer): ReadXlsxResult {
   }
   if (sheetPath === '') throw new XlsxError('Excel-filen innehåller inget kalkylblad.');
   const sheetBytes = entries.get(sheetPath);
-  if (sheetBytes === undefined) throw new XlsxError(`Excel-filen saknar kalkylbladet ${sheetPath}.`);
+  if (sheetBytes === undefined) throw new XlsxError(`Excel-filen saknar kalkylbladet ${shown(sheetPath)}.`);
 
   const date1904 = ['1', 'true'].includes(childNamed(workbook, 'workbookPr')?.attrs['date1904'] ?? '');
 
@@ -558,7 +601,7 @@ export function readXlsx(buf: Buffer): ReadXlsxResult {
       case 's': {
         if (stored.trim() === '') return '';
         const text = shared[Number(stored)];
-        if (text === undefined) throw new XlsxError(`Cell ${where} pekar på en text som inte finns i filen.`);
+        if (text === undefined) throw new XlsxError(`Cell ${shown(where)} pekar på en text som inte finns i filen.`);
         return text;
       }
       case 'inlineStr': {
@@ -599,7 +642,7 @@ export function readXlsx(buf: Buffer): ReadXlsxResult {
       if (text === '') continue; // a styled but empty cell does not count towards the limits
       if (rowNumber > XLSX_MAX_ROWS) throw new XlsxError(`Kalkylbladet har data på rad ${rowNumber}; högst ${XLSX_MAX_ROWS} rader läses.`);
       if (column > XLSX_MAX_COLUMNS) throw new XlsxError(`Kalkylbladet har data i kolumn ${columnName(column)}; högst ${XLSX_MAX_COLUMNS} kolumner läses.`);
-      if (text.length > XLSX_MAX_CELL_CHARS) throw new XlsxError(`Cell ${where} har ${text.length} tecken; högst ${XLSX_MAX_CELL_CHARS} läses.`);
+      if (text.length > XLSX_MAX_CELL_CHARS) throw new XlsxError(`Cell ${shown(where)} har ${text.length} tecken; högst ${XLSX_MAX_CELL_CHARS} läses.`);
       (grid[rowNumber - 1] ??= [])[column - 1] = text;
       width = Math.max(width, column);
     }

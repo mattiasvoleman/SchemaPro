@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { highSchoolDocument, smallSchoolDocument } from './__fixtures__/documents';
 import { parseCsv, writeCsv } from './csv';
 import { MAX_EXCHANGE_LESSONS, type ExchangeDocument, type ExchangeLesson } from './exchange-model';
+import * as fileSafety from './file-safety';
+import { MAX_PROBLEMS } from './file-safety';
 import { LESSON_TABLE_HEADER, LESSON_TABLE_HEADER_EN, lessonsToTable, normalizeHeader, tableToLessons } from './lesson-table';
 import { readXlsx, writeXlsx } from './xlsx';
 
@@ -466,6 +469,341 @@ describe('tableToLessons: personnummer are dropped unread', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Personnummer in a cell
+// ---------------------------------------------------------------------------
+
+/** The ways a number turns up in a cell: whole, short, long, a samordningsnummer, inside a name, in parentheses, spaced. */
+const NUMBERS: [string, string][] = [
+  ['12 digits with a hyphen', '19800101-1234'],
+  ['10 digits', '8001011234'],
+  ['12 digits', '198001011234'],
+  ['10 digits with a hyphen', '800101-1234'],
+  ['a samordningsnummer', '19800181-1234'],
+  ['inside a name', 'Anna Berg 19800101-1234'],
+  ['in parentheses', '(800101-1234)'],
+  ['with spaces round the hyphen', '19800101 - 1234'],
+];
+/** Any digit run of any of the numbers above: the date, the last four. */
+const NUMBER_DIGITS = /1980|8001|1234/;
+
+/** The columns the reader reads: every one but the derived Period and Låst. */
+const READ_COLUMNS = LESSON_TABLE_HEADER.filter((header) => header !== 'Period' && header !== 'Låst');
+
+describe('tableToLessons: a personnummer in a cell the reader reads makes the row unreadable', () => {
+  const message = (...columns: string[]): string =>
+    `${columns.length === 1 ? 'Kolumnen' : 'Kolumnerna'} ${columns.length < 2 ? columns[0] : `${columns.slice(0, -1).join(', ')} och ${columns[columns.length - 1]}`} innehåller något som liknar ett personnummer; raden läses inte. Rastra tar inte emot personnummer.`;
+
+  it.each(READ_COLUMNS)('%s: no lesson, one problem that names the column and quotes nothing', (column) => {
+    for (const [form, number] of NUMBERS) {
+      const parsed = tableToLessons(table(row({ [column]: number })));
+      expect({ form, lessons: parsed.lessons.length, problems: parsed.problems }).toEqual({
+        form,
+        lessons: 0,
+        problems: [{ ref: 'rad 2', code: 'TABLE_PERSONAL_NUMBER', message: message(column) }],
+      });
+      expect(JSON.stringify(parsed)).not.toMatch(NUMBER_DIGITS);
+    }
+  });
+
+  it.each(READ_COLUMNS)('%s: the same through a CSV file and through an Excel file', (column) => {
+    for (const number of ['19800101-1234', 'Anna Berg 19800101-1234', '(800101-1234)']) {
+      const rows = table(row({ [column]: number }));
+      for (const read of [
+        () => tableToLessons(parseCsv(writeCsv(rows)).rows, parseCsv(writeCsv(rows)).rowNumbers),
+        () => tableToLessons(readXlsx(writeXlsx(rows, { sheetName: 'S' })).rows),
+      ]) {
+        const parsed = read();
+        expect(parsed.lessons).toEqual([]);
+        expect(parsed.problems).toEqual([{ ref: 'rad 2', code: 'TABLE_PERSONAL_NUMBER', message: message(column) }]);
+        expect(JSON.stringify(parsed)).not.toMatch(NUMBER_DIGITS);
+      }
+    }
+  });
+
+  it('is decided before anything of the row is parsed: a bad day, a bad time and a co-teacher without a lead say nothing more', () => {
+    const parsed = tableToLessons(table(row({ Dag: '19800101-1234', Start: '800101-1234', Slut: '198001011234', Medlärare: '8001011234', Veckomönstret: 'x' })));
+    expect(parsed.problems).toEqual([
+      { ref: 'rad 2', code: 'TABLE_PERSONAL_NUMBER', message: message('Medlärare', 'Dag', 'Start', 'Slut') },
+    ]);
+    expect(JSON.stringify(parsed)).not.toMatch(NUMBER_DIGITS);
+  });
+
+  it('names every column that has one, in the order of the contract, in the one problem', () => {
+    const parsed = tableToLessons(table(row({ Block: '19800101-1234', Lärare: 'Anna 800101-1234', Sal: '(198001011234)' })));
+    expect(parsed.problems).toEqual([{ ref: 'rad 2', code: 'TABLE_PERSONAL_NUMBER', message: message('Lärare', 'Sal', 'Block') }]);
+    expect(JSON.stringify(parsed)).not.toMatch(NUMBER_DIGITS);
+  });
+
+  it('refuses that row only: the rows around it are read, and keep their numbers', () => {
+    const parsed = tableToLessons(table(row(), row({ 'Lärarnamn': 'Anna Berg 19800101-1234' }), row({ Ämne: 'Svenska' })));
+    expect(parsed.lessons.map((lesson) => [lesson.ref, lesson.subject])).toEqual([['rad 2', 'Matematik'], ['rad 4', 'Svenska']]);
+    expect(parsed.problems.map((problem) => [problem.ref, problem.code])).toEqual([['rad 3', 'TABLE_PERSONAL_NUMBER']]);
+  });
+
+  it('does not take for a personnummer what is not shaped like one', () => {
+    for (const text of ['A101', '2026-08-17', '08:10', 'Rum 12', '19801301-1234', '8001011', '1980010112345', '19800101-12345']) {
+      const parsed = tableToLessons(table(row({ Block: text })));
+      expect({ text, problems: parsed.problems.map((problem) => problem.code) }).toEqual({ text, problems: [] });
+    }
+  });
+
+  describe('the ids Rastra writes are not taken for numbers by chance', () => {
+    // Random v4 UUIDs that have the shape of a personnummer: one in 721 does (416 of 300 000, measured).
+    const SHAPED = ['2bf66f8e-e2e7-4e02-a99d-9501727348cd', '33372b62-0a99-43f1-b32c-dd5803823078', 'e932a14f-8594-474f-85b9-ac5901616400'];
+    const ID_COLUMN_NAMES = ['Lektions-id', 'Grupp-id', 'Ämnes-id', 'Lärar-id', 'Medlärar-id', 'Sal-id'];
+
+    it('are premises: each of these UUIDs has the shape', () => {
+      for (const id of SHAPED) expect(fileSafety.hasPersonalNumber(id)).toBe(true);
+    });
+
+    it.each(ID_COLUMN_NAMES)('%s: a UUID is read, whatever it looks like', (column) => {
+      for (const id of SHAPED) {
+        const parsed = tableToLessons(table(row({ Lärare: 'ABE', [column]: id })));
+        expect({ id, problems: parsed.problems }).toEqual({ id, problems: [] });
+        expect(parsed.lessons).toHaveLength(1);
+      }
+    });
+
+    it('a list of them in the extra class ids is read, empty places and all', () => {
+      const parsed = tableToLessons(table(row({ 'Ytterligare klasser': '8B | 7C | 7D', 'Ytterligare klass-id': `${SHAPED[0]} |  | ${SHAPED[1]!.toUpperCase()}` })));
+      expect(parsed.problems).toEqual([]);
+      expect(parsed.lessons[0]!.ids.extraGroups).toEqual([SHAPED[0], null, SHAPED[1]!.toUpperCase()]);
+    });
+
+    it('reads back 3 000 random ones through the id columns with no problem at all', () => {
+      const uuids = Array.from({ length: 500 * 6 }, () => randomUUID());
+      const rows = Array.from({ length: 500 }, (_v, i) => {
+        const [lesson, group, subject, teacher, co, room] = uuids.slice(i * 6, i * 6 + 6);
+        return row({ 'Lektions-id': lesson!, 'Grupp-id': group!, 'Ämnes-id': subject!, Lärare: 'ABE', 'Lärar-id': teacher!, Medlärare: 'BLU', 'Medlärar-id': co!, 'Sal-id': room! });
+      });
+      const parsed = tableToLessons(table(...rows));
+      expect(parsed.problems).toEqual([]);
+      expect(parsed.lessons).toHaveLength(500);
+      expect(parsed.lessons.map((lesson) => lesson.ids.lesson)).toEqual(rows.map((r) => r[0]));
+    });
+
+    it('takes a UUID-shaped cell whose tail is a twelve-digit personnummer for the id it is shaped like, and nothing else', () => {
+      const tail = '00000000-0000-0000-0000-198001011234';
+      expect(fileSafety.hasPersonalNumber(tail)).toBe(true);
+      const parsed = tableToLessons(table(row({ 'Sal-id': tail })));
+      expect(parsed.problems).toEqual([]);
+      expect(parsed.lessons[0]!.ids.room).toBe(tail);
+      // Not UUID-shaped: a letter after the tail, one group too many, a prefix, the number alone.
+      for (const text of ['00000000-0000-0000-0000-198001011234x', '00000000-0000-0000-0000-0000-198001011234', 'id 00000000-0000-0000-0000-198001011234', '198001011234']) {
+        const refused = tableToLessons(table(row({ 'Sal-id': text })));
+        expect({ text, codes: refused.problems.map((problem) => problem.code) }).toEqual({ text, codes: ['TABLE_PERSONAL_NUMBER'] });
+        expect(refused.problems[0]!.message).not.toMatch(NUMBER_DIGITS);
+      }
+    });
+
+    it('is for the id columns only, and for nothing but ids in them', () => {
+      const [shaped] = SHAPED;
+      expect(tableToLessons(table(row({ Block: shaped! }))).problems.map((problem) => problem.code)).toEqual(['TABLE_PERSONAL_NUMBER']);
+      expect(tableToLessons(table(row({ Lärare: shaped! }))).problems.map((problem) => problem.code)).toEqual(['TABLE_PERSONAL_NUMBER']);
+      for (const text of [`${shaped} 19800101-1234`, `${shaped} | 19800101-1234`, `${shaped}x`, '19800101-1234', '8001011234', `${shaped.slice(1)}`]) {
+        const parsed = tableToLessons(table(row({ 'Grupp-id': text })));
+        expect({ text, codes: parsed.problems.map((problem) => problem.code), lessons: parsed.lessons.length }).toEqual({ text, codes: ['TABLE_PERSONAL_NUMBER'], lessons: 0 });
+      }
+    });
+  });
+
+  describe('a column that is not read does not make its row unreadable', () => {
+    const PNR = '19800101-1234';
+
+    it('a column whose header says personnummer, and a column nobody recognises', () => {
+      const header = ['Klass/grupp', 'Ämne', 'Dag', 'Start', 'Slut', 'Personnummer', 'Anteckning'];
+      const parsed = tableToLessons([header, ['7A', 'Ma', 'Mån', '08:10', '09:10', PNR, `Ring ${PNR}`]]);
+      expect(parsed.problems).toEqual([]);
+      expect(parsed.lessons).toHaveLength(1);
+      expect(parsed.notes).toEqual([
+        'Kolumnen Personnummer lästes inte: Rastra tar inte emot personnummer.',
+        'Kolumnen Anteckning lästes inte: Rastra känner inte igen rubriken.',
+      ]);
+      expect(JSON.stringify(parsed)).not.toMatch(NUMBER_DIGITS);
+    });
+
+    it('the second of two columns with one header (the first is the one that is used), and Period and Låst, which are derived', () => {
+      const header = [...LESSON_TABLE_HEADER, 'Lärare'];
+      const values = row({ Lärare: 'ABE', Period: PNR, Låst: `Ja ${PNR}` });
+      const parsed = tableToLessons([header, [...values, PNR]]);
+      expect(parsed.problems).toEqual([]);
+      expect(parsed.lessons).toHaveLength(1);
+      expect(parsed.lessons[0]!.teachers).toEqual([{ short: 'ABE', name: null, email: null, id: null }]);
+      expect(parsed.notes).toEqual(['Kolumnen Lärare finns flera gånger; den första används.']);
+      expect(JSON.stringify(parsed)).not.toMatch(NUMBER_DIGITS);
+    });
+  });
+
+  describe('a header that is itself a personnummer is not read and is not named', () => {
+    const required = ['Klass/grupp', 'Ämne', 'Dag', 'Start', 'Slut'];
+    const lesson = ['7A', 'Ma', 'Mån', '08:10', '09:10'];
+    const NOTE = 'En kolumn vars rubrik liknar ett personnummer lästes inte: Rastra tar inte emot personnummer.';
+
+    it.each(NUMBERS)('%s', (_form, number) => {
+      const parsed = tableToLessons([[...required, number], [...lesson, number]]);
+      expect(parsed.problems).toEqual([]);
+      expect(parsed.lessons).toHaveLength(1);
+      expect(parsed.notes).toEqual([NOTE]);
+      expect(JSON.stringify(parsed)).not.toMatch(NUMBER_DIGITS);
+    });
+
+    it('also when the header goes on to say what it is, and is counted when there are several', () => {
+      const one = tableToLessons([[...required, 'Personnummer 19800101-1234'], [...lesson, 'x']]);
+      expect(one.notes).toEqual([NOTE]);
+      const two = tableToLessons([[...required, 'Personnummer 19800101-1234', '800101-1234', 'Anteckning'], [...lesson, 'x', 'y', 'z']]);
+      expect(two.notes).toEqual([
+        '2 kolumner vars rubriker liknar personnummer lästes inte: Rastra tar inte emot personnummer.',
+        'Kolumnen Anteckning lästes inte: Rastra känner inte igen rubriken.',
+      ]);
+      expect(JSON.stringify(two)).not.toMatch(NUMBER_DIGITS);
+    });
+
+    it('also in a title above the table, which is skipped without a word', () => {
+      const parsed = tableToLessons([['Schema 19800101-1234'], [...required], [...lesson]]);
+      expect(parsed.lessons).toHaveLength(1);
+      expect(parsed.notes).toEqual([]);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What a message may quote, and how many problems and notes a file may cost
+// ---------------------------------------------------------------------------
+
+describe('tableToLessons: a message quotes a value in at most 40 characters', () => {
+  const cut = `”${'x'.repeat(40)}…”`;
+
+  it.each([
+    ['Dag', 'Dagen'],
+    ['Start', 'Starttiden'],
+    ['Slut', 'Sluttiden'],
+    ['Längd', 'Längden'],
+    ['Från', 'Datumet'],
+    ['Till', 'Datumet'],
+    ['Veckomönster', 'Veckomönstret'],
+  ])('%s', (column, what) => {
+    const [problem] = problemsOf({ [column]: 'x'.repeat(32_767) });
+    expect(problem!.message.startsWith(`${what} ${cut} `)).toBe(true);
+    expect(problem!.message.length).toBeLessThan(200);
+  });
+
+  it('puts the value on one line, redacted of nothing it may keep, and shows a short one whole', () => {
+    expect(problemsOf({ Dag: 'tre\nrader\t och   blanka' })[0]!.message).toMatch(/^Dagen ”tre rader och blanka” går inte/);
+    expect(problemsOf({ Dag: 'x'.repeat(40) })[0]!.message).toMatch(/^Dagen ”x{40}” går inte/);
+    expect(problemsOf({ Dag: 'x'.repeat(41) })[0]!.message).toMatch(/^Dagen ”x{40}…” går inte/);
+  });
+});
+
+describe('tableToLessons: a file of bad rows costs 500 problems and one line', () => {
+  it('keeps the first 500, counts the rest in one closing line, and still returns the lessons it could read', () => {
+    const parsed = tableToLessons(table(...Array.from({ length: 700 }, () => row({ Dag: 'x' })), row()));
+    expect(parsed.lessons).toHaveLength(1);
+    expect(parsed.problems).toHaveLength(MAX_PROBLEMS + 1);
+    expect(parsed.problems[0]).toMatchObject({ ref: 'rad 2', code: 'TABLE_BAD_DAY' });
+    expect(parsed.problems[MAX_PROBLEMS - 1]).toMatchObject({ ref: `rad ${MAX_PROBLEMS + 1}`, code: 'TABLE_BAD_DAY' });
+    expect(parsed.problems[MAX_PROBLEMS]).toEqual({ ref: '', code: 'TABLE_TOO_MANY_PROBLEMS', message: 'Ytterligare 200 problem visas inte.' });
+  });
+
+  it('counts problems, not rows: a row with five problems is five of the 500', () => {
+    const five = row({ Dag: 'x', Start: 'x', Slut: 'x', Från: 'x', Veckomönster: 'x' });
+    const parsed = tableToLessons(table(...Array.from({ length: 150 }, () => five)));
+    expect(parsed.problems).toHaveLength(MAX_PROBLEMS + 1);
+    expect(parsed.problems.at(-1)!.message).toBe('Ytterligare 250 problem visas inte.');
+  });
+
+  it('counts the unreadable rows with a personnummer in the same 500', () => {
+    const parsed = tableToLessons(table(...Array.from({ length: 501 }, () => row({ Block: '19800101-1234' }))));
+    expect(parsed.problems).toHaveLength(MAX_PROBLEMS + 1);
+    expect(parsed.problems.at(-1)!.message).toBe('Ytterligare 1 problem visas inte.');
+    expect(JSON.stringify(parsed)).not.toMatch(NUMBER_DIGITS);
+  });
+
+  it('says nothing more when there are exactly 500', () => {
+    const parsed = tableToLessons(table(...Array.from({ length: MAX_PROBLEMS }, () => row({ Dag: 'x' }))));
+    expect(parsed.problems).toHaveLength(MAX_PROBLEMS);
+    expect(parsed.problems.some((problem) => problem.code === 'TABLE_TOO_MANY_PROBLEMS')).toBe(false);
+  });
+
+  it('is the same for a CSV file of cells of 32 767 characters, which are all in the file and not shared (about 20 MB here)', () => {
+    const long = 'x'.repeat(32_767);
+    const bad = row({ Dag: long, Från: long, Till: long, Veckomönster: long });
+    const parsed = parseCsv(writeCsv(table(...Array.from({ length: 150 }, () => bad))));
+    const started = Date.now();
+    const result = tableToLessons(parsed.rows, parsed.rowNumbers);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(result.problems).toHaveLength(MAX_PROBLEMS + 1);
+    expect(JSON.stringify(result).length).toBeLessThan(200_000);
+  });
+
+  it('is the same for an Excel file in which 5 000 cells are one shared string, and asks about it once', () => {
+    const long = 'x'.repeat(32_767);
+    const spy = jest.spyOn(fileSafety, 'hasPersonalNumber');
+    try {
+      const rows = table(...Array.from({ length: 5000 }, () => row({ Dag: long, Från: long, Till: long, Veckomönster: long, Block: long })));
+      const started = Date.now();
+      const result = tableToLessons(rows);
+      expect(Date.now() - started).toBeLessThan(3000);
+      expect(result.problems).toHaveLength(MAX_PROBLEMS + 1);
+      expect(JSON.stringify(result).length).toBeLessThan(200_000);
+      expect(spy.mock.calls.filter(([text]) => (text ?? '').length > 1000)).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('reads 5 000 lessons that share a long block name, asking about it once', () => {
+    const long = 'x'.repeat(32_767);
+    const spy = jest.spyOn(fileSafety, 'hasPersonalNumber');
+    try {
+      const parsed = tableToLessons(table(...Array.from({ length: 5000 }, () => row({ Block: long }))));
+      expect(parsed.problems).toEqual([]);
+      expect(parsed.lessons).toHaveLength(5000);
+      expect(spy.mock.calls.filter(([text]) => (text ?? '').length > 1000)).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('tableToLessons: a note is one per distinct thing, and short', () => {
+  const required = ['Klass/grupp', 'Ämne', 'Dag', 'Start', 'Slut'];
+  const lesson = ['7A', 'Ma', 'Mån', '08:10', '09:10'];
+  const wide = (extra: string[]): string[][] => [[...required, ...extra], [...lesson, ...extra.map(() => 'x')]];
+
+  it('names ten unrecognised headers and counts the rest, however wide the header row', () => {
+    const parsed = tableToLessons(wide(Array.from({ length: 1000 }, (_v, i) => `Kol ${i}`)));
+    expect(parsed.notes).toEqual([
+      'Kolumnerna Kol 0, Kol 1, Kol 2, Kol 3, Kol 4, Kol 5, Kol 6, Kol 7, Kol 8, Kol 9 och 990 till lästes inte: Rastra känner inte igen rubrikerna.',
+    ]);
+  });
+
+  it('names ten repeated headers, in the order they come, and counts the rest', () => {
+    const again = tableToLessons(wide(Array.from({ length: 13 }, (_v, i) => (i % 2 === 0 ? 'Dag' : 'Start'))));
+    expect(again.notes).toEqual([
+      'Kolumnerna Dag, Start, Dag, Start, Dag, Start, Dag, Start, Dag, Start och 3 till finns flera gånger; den första av varje används.',
+    ]);
+  });
+
+  it('cuts a header that is very long, on one line', () => {
+    const parsed = tableToLessons(wide(['Anteckning\nom\tsalen'.padEnd(5000, 'y')]));
+    expect(parsed.notes).toEqual([`Kolumnen Anteckning om salen${'y'.repeat(21)}… lästes inte: Rastra känner inte igen rubriken.`]);
+  });
+
+  it('says once for a personnummer header that is repeated, and names ten of many different ones', () => {
+    const same = tableToLessons(wide(['Personnummer', 'Personnummer', 'PERSONNUMMER']));
+    expect(same.notes).toEqual([
+      'Kolumnen Personnummer lästes inte: Rastra tar inte emot personnummer.',
+      'Kolumnen PERSONNUMMER lästes inte: Rastra tar inte emot personnummer.',
+    ]);
+    const many = tableToLessons(wide(Array.from({ length: 25 }, (_v, i) => `Personnummer ${i}`)));
+    expect(many.notes).toHaveLength(11);
+    expect(many.notes[0]).toBe('Kolumnen Personnummer 0 lästes inte: Rastra tar inte emot personnummer.');
+    expect(many.notes[9]).toBe('Kolumnen Personnummer 9 lästes inte: Rastra tar inte emot personnummer.');
+    expect(many.notes[10]).toBe('15 kolumner till vars rubrik säger personnummer lästes inte: Rastra tar inte emot personnummer.');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // One row at a time
 // ---------------------------------------------------------------------------
 
@@ -507,7 +845,7 @@ describe('tableToLessons: a row', () => {
     it.each(['0', '8', '10', 'Måndagen', 'Mo', 'x'])('refuses %j and says what is allowed', (text) => {
       const [problem] = problemsOf({ Dag: text });
       expect(problem).toMatchObject({ code: 'TABLE_BAD_DAY', ref: 'rad 2' });
-      expect(problem!.message).toBe(`Dagen "${text}" går inte att läsa. Skriv Mån, Tis, Ons, Tors, Fre, Lör, Sön eller 1–7.`);
+      expect(problem!.message).toBe(`Dagen ”${text}” går inte att läsa. Skriv Mån, Tis, Ons, Tors, Fre, Lör, Sön eller 1–7.`);
     });
   });
 
@@ -537,11 +875,11 @@ describe('tableToLessons: a row', () => {
       const problems = problemsOf({ Start: text });
       expect(problems).toHaveLength(1);
       expect(problems[0]).toMatchObject({ code: 'TABLE_BAD_TIME' });
-      expect(problems[0]!.message).toBe(`Starttiden "${text}" går inte att läsa som klockslag (HH:MM).`);
+      expect(problems[0]!.message).toBe(`Starttiden ”${text}” går inte att läsa som klockslag (HH:MM).`);
     });
 
     it('refuses an unreadable end, and an end that is not after the start, naming both', () => {
-      expect(problemsOf({ Slut: 'kvart över' })[0]!.message).toBe('Sluttiden "kvart över" går inte att läsa som klockslag (HH:MM).');
+      expect(problemsOf({ Slut: 'kvart över' })[0]!.message).toBe('Sluttiden ”kvart över” går inte att läsa som klockslag (HH:MM).');
       expect(problemsOf({ Start: '09:00', Slut: '08:00' })).toEqual([
         { ref: 'rad 2', code: 'TABLE_BAD_TIME', message: 'Sluttiden 08:00 är inte efter starttiden 09:00.' },
       ]);
@@ -556,7 +894,7 @@ describe('tableToLessons: a row', () => {
 
     it('refuses a length that disagrees with start and end, naming both numbers, and skips the lesson', () => {
       expect(problemsOf({ Längd: '45' })).toEqual([
-        { ref: 'rad 2', code: 'TABLE_LENGTH_MISMATCH', message: 'Längden "45" stämmer inte med start 08:10 och slut 09:10, som är 60 minuter. Rätta längden eller tiderna.' },
+        { ref: 'rad 2', code: 'TABLE_LENGTH_MISMATCH', message: 'Längden ”45” stämmer inte med start 08:10 och slut 09:10, som är 60 minuter. Rätta längden eller tiderna.' },
       ]);
       expect(problemsOf({ Längd: '60,5' })[0]!.code).toBe('TABLE_LENGTH_MISMATCH');
       expect(problemsOf({ Längd: 'en timme' })[0]!.code).toBe('TABLE_LENGTH_MISMATCH');
@@ -596,7 +934,7 @@ describe('tableToLessons: a row', () => {
       'refuses %s in either column, naming the column',
       (text) => {
         const from = problemsOf({ Från: text });
-        expect(from).toEqual([{ ref: 'rad 2', code: 'TABLE_BAD_DATE', message: `Datumet "${text}" i kolumnen Från går inte att läsa. Skriv ÅÅÅÅ-MM-DD.` }]);
+        expect(from).toEqual([{ ref: 'rad 2', code: 'TABLE_BAD_DATE', message: `Datumet ”${text}” i kolumnen Från går inte att läsa. Skriv ÅÅÅÅ-MM-DD.` }]);
         expect(problemsOf({ Till: text })[0]!.message).toContain('i kolumnen Till');
       },
     );
@@ -621,7 +959,7 @@ describe('tableToLessons: a row', () => {
     it.each(['C', 'A+B', 'vecka 3', '1'])('refuses %j', (text) => {
       const [problem] = problemsOf({ Veckomönster: text });
       expect(problem).toMatchObject({ code: 'TABLE_BAD_WEEKS', ref: 'rad 2' });
-      expect(problem!.message).toBe(`Veckomönstret "${text}" går inte att läsa. Skriv A (udda veckor), B (jämna veckor) eller lämna tomt.`);
+      expect(problem!.message).toBe(`Veckomönstret ”${text}” går inte att läsa. Skriv A (udda veckor), B (jämna veckor) eller lämna tomt.`);
     });
   });
 

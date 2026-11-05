@@ -186,3 +186,13 @@ export function blankLesson(partial: Partial<ExchangeLesson> & Pick<ExchangeLess
 /** The most rows and bytes any reader will take: a school has hundreds of lessons, not millions. */
 export const MAX_EXCHANGE_LESSONS = 5000;
 export const MAX_EXCHANGE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * What a zip that holds an exchange file may unpack to. The generic limits of
+ * zip.ts (32 MB an entry, 64 MB in all) are for a zip of anything; a file here
+ * is read as text only up to MAX_EXCHANGE_BYTES, so a zip that unpacks to more
+ * is refused before it is unpacked and not after (the review of PR #256: a
+ * zip under 1 MB that unpacks to tens of MB cost CPU and a few hundred MB of
+ * memory per call before the 8 MB check refused it).
+ */
+export const EXCHANGE_ZIP_LIMITS = { maxEntryBytes: MAX_EXCHANGE_BYTES, maxTotalBytes: MAX_EXCHANGE_BYTES } as const;

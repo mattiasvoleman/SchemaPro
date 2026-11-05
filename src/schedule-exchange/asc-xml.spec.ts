@@ -8,6 +8,7 @@ import {
   type ExchangeLesson,
   type TeacherRef,
 } from './exchange-model';
+import { MAX_PROBLEMS, hasPersonalNumber } from './file-safety';
 import { parseXml, type XmlNode } from './xml';
 
 /**
@@ -107,6 +108,10 @@ ${o.extra ?? ''}
 }
 
 const notesWithoutBlock = (notes: string[]): string[] => notes.filter((n) => !n.includes('parallella block'));
+
+/** A personnummer as a school's file might carry one, and a test for any trace of it, whole or in part, in an answer. */
+const PN = '19800101-1234';
+const leaks = (answer: unknown): boolean => /1980|800101|1234/.test(JSON.stringify(answer)) || hasPersonalNumber(JSON.stringify(answer));
 const BLOCK_NOTE = expect.stringContaining('parallella block');
 const WEEKS_NOTE = expect.stringContaining('lägen i en rotation');
 
@@ -511,7 +516,7 @@ describe('CHOICE 6: days', () => {
     const defs = `<daysdefs><daysdef id="d1" name="Söndag" short="Sön" days="1000000"/><daysdef id="d2" name="Måndag" short="Mån" days="0100000"/></daysdefs>`;
     const r = readAscXml(mini({ defs }));
     expect(r.notes).toContainEqual(expect.stringContaining('position 1 som måndag'));
-    expect(r.notes).toContainEqual(expect.stringContaining('"Söndag"'));
+    expect(r.notes).toContainEqual(expect.stringContaining('”Söndag”'));
     expect(notesWithoutBlock(readAscXml(writeAscXml(highSchoolDocument())).notes).some((n) => n.includes('position 1 som måndag'))).toBe(false);
   });
 });
@@ -637,14 +642,81 @@ describe('CHOICE 8: terms and dates', () => {
     const defs = `<termsdefs><termsdef id="t1" name="${name}" terms="10"/></termsdefs>`;
     const r = readAscXml(mini({ defs, cards: [cardRow({ terms: '10' })] }));
     expect(r.lessons[0]).toMatchObject({ from: null, to: null });
-    expect(r.notes).toContainEqual(expect.stringContaining(`"${name}"`));
+    expect(r.notes).toContainEqual(expect.stringContaining(`”${name}”`));
   });
 
   it('names a term with no def by its position, and refuses a terms string that is not bits', () => {
     const r = readAscXml(mini({ cards: [cardRow({ terms: '010' }), cardRow({ terms: 'x', days: '01000' })] }));
     expect(r.lessons).toHaveLength(1);
-    expect(r.notes).toContainEqual(expect.stringContaining('"period 2"'));
+    expect(r.notes).toContainEqual(expect.stringContaining('”period 2”'));
     expect(r.problems.map((p) => p.code)).toEqual(['ASC_TERMS_INVALID']);
+  });
+
+  describe('a name is cut apart in code and tried only up to MAX_SPAN_NAME characters', () => {
+    const readTerm = (name: string) => {
+      const defs = `<termsdefs><termsdef id="t1" name="${name}" terms="10"/></termsdefs>`;
+      return readAscXml(mini({ defs, cards: [cardRow({ terms: '10' })] }));
+    };
+    // 10 + blanks + 1 + 10 characters: 99 blanks make 120, 100 make 121.
+    const spaced = (blanks: number): string => `2026-08-17${' '.repeat(blanks)}–2026-12-18`;
+
+    it('reads a span with 99 blanks before its dash (120 characters), the longest that is tried', () => {
+      const r = readTerm(spaced(99));
+      expect(r.lessons[0]).toMatchObject({ from: '2026-08-17', to: '2026-12-18' });
+      expect(notesWithoutBlock(r.notes)).toEqual([]);
+    });
+
+    it('does not try a name of 121 characters, reads the whole year and says so without quoting the name', () => {
+      const r = readTerm(spaced(100));
+      expect(r.lessons[0]).toMatchObject({ from: null, to: null });
+      expect(notesWithoutBlock(r.notes)).toEqual([expect.stringContaining('längre än 120 tecken')]);
+      expect(JSON.stringify(r.notes)).not.toContain('2026-08-17');
+    });
+
+    it('says it once however many terms have a long name', () => {
+      const long = 'T'.repeat(500);
+      const defs = `<termsdefs><termsdef id="t1" name="${long}" terms="10"/><termsdef id="t2" name="${long}x" terms="01"/></termsdefs>`;
+      const r = readAscXml(mini({ defs, cards: [cardRow({ terms: '10' }), cardRow({ terms: '01', days: '01000' })] }));
+      expect(r.lessons.map((l) => [l.from, l.to])).toEqual([[null, null], [null, null]]);
+      expect(r.notes.filter((n) => n.includes('längre än 120 tecken'))).toHaveLength(1);
+    });
+
+    it.each([0, 100, 32_000])('reads a name of a dash, %i blanks and an x in no time (it was quadratic)', (blanks) => {
+      const started = Date.now();
+      const r = readTerm(`–${' '.repeat(blanks)}x`);
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(r.lessons[0]).toMatchObject({ from: null, to: null });
+    });
+
+    it.each([0, 50, 32_000])('reads a name of a date, %i blanks, a dash, the same blanks and an x in no time', (blanks) => {
+      const started = Date.now();
+      readTerm(`2026-08-17${' '.repeat(blanks)}–${' '.repeat(blanks)}x`);
+      expect(Date.now() - started).toBeLessThan(1000);
+    });
+
+    it.each([
+      ['a dash alone', '–'],
+      ['two dates and no dash', '2026-08-17 2026-12-18'],
+      ['a date, a dash and text', '2026-08-17–till jul'],
+      ['text, a dash and a date', 'från–2026-12-18'],
+      ['a bad first date', '2026-13-01–2026-12-18'],
+      ['a bad second date', '2026-08-17–2026-02-30'],
+    ])('does not read %s as a span', (_label, name) => {
+      expect(readTerm(name).lessons[0]).toMatchObject({ from: null, to: null });
+    });
+
+    it('reads a span of one end however the blanks fall', () => {
+      expect(readTerm('  2026-08-17 \t –  ').lessons[0]).toMatchObject({ from: '2026-08-17', to: null });
+      expect(readTerm('–  2026-12-18').lessons[0]).toMatchObject({ from: null, to: '2026-12-18' });
+    });
+
+    it('gives every card of a term the term\'s dates, resolving the term once for all of them', () => {
+      const defs = `<termsdefs><termsdef id="t1" name="${autumn}" terms="10"/></termsdefs>`;
+      const cards = Array.from({ length: 300 }, (_, i) => cardRow({ terms: '10', days: '10000', period: String(1 + (i % 4)) }));
+      const r = readAscXml(mini({ defs, cards }));
+      expect(r.lessons).toHaveLength(300);
+      expect(r.lessons.every((l) => l.from === '2026-08-17' && l.to === '2026-12-18')).toBe(true);
+    });
   });
 });
 
@@ -868,7 +940,7 @@ describe('CHOICE 15: teachers', () => {
   it('refuses a lesson that names a teacher the file does not have, rather than dropping the teacher', () => {
     const r = readAscXml(mini({ lessons: [lessonRow({ teacherids: 'T1,T404' })] }));
     expect(r.lessons).toEqual([]);
-    expect(r.problems).toEqual([{ ref: 'lektion 1', code: 'ASC_LESSON_REF_UNKNOWN', message: expect.stringContaining('läraren "T404"') }]);
+    expect(r.problems).toEqual([{ ref: 'lektion 1', code: 'ASC_LESSON_REF_UNKNOWN', message: expect.stringContaining('läraren ”T404”') }]);
   });
 });
 
@@ -900,7 +972,7 @@ describe('CHOICE 16: rooms', () => {
 
   it('refuses a card whose room is not in the file', () => {
     const r = readAscXml(mini({ cards: [cardRow({ classroomids: 'R404' })] }));
-    expect(r.problems).toEqual([{ ref: 'kort 1', code: 'ASC_CARD_REF_UNKNOWN', message: expect.stringContaining('salen "R404"') }]);
+    expect(r.problems).toEqual([{ ref: 'kort 1', code: 'ASC_CARD_REF_UNKNOWN', message: expect.stringContaining('salen ”R404”') }]);
   });
 });
 
@@ -960,7 +1032,7 @@ describe('a file as aSc would export it', () => {
     expect(r.notes).toEqual([
       '1 lektion i filen har inga kort (är inte placerade) och hoppas över.',
       expect.stringContaining('lägen i en rotation'),
-      'Perioden "Term 1" i aSc har inga datum och läses som hela läsåret; sätt datum på lektionerna efter importen om de bara ska gälla en del av året.',
+      'Perioden ”Term 1” i aSc har inga datum och läses som hela läsåret; sätt datum på lektionerna efter importen om de bara ska gälla en del av året.',
       expect.stringContaining('klassens namn framför'),
       BLOCK_NOTE,
     ]);
@@ -1013,12 +1085,25 @@ describe('CHOICE 18: never guess', () => {
     expect(r.problems.every((p) => /hoppas över/.test(p.message))).toBe(true);
   });
 
+  it('refuses a lesson that points at a room the file does not have', () => {
+    const r = readAscXml(mini({ lessons: [lessonRow({ classroomids: 'R1,R404' })] }));
+    expect(r.lessons).toEqual([]);
+    expect(r.problems).toEqual([{ ref: 'lektion 1', code: 'ASC_LESSON_REF_UNKNOWN', message: 'Lektion 1 hoppas över: salen ”R404” finns inte i filen.' }]);
+  });
+
+  it('reads the first of two rows with one id, whatever the others say', () => {
+    const xml = mini({ groups: '<groups><group id="G1" classid="C1" name="Hela klassen" entireclass="1"/><group id="G1" classid="C1" name="Annan" entireclass="0"/></groups>' })
+      .replace('<teacher id="T1" name="Teacher One" short="TO"/>', '<teacher id="T1" name="Teacher One" short="TO"/><teacher id="T1" name="Impostor" short="XX"/>');
+    const r = readAscXml(xml.replace('<lesson ', '<lesson groupids="G1" '));
+    expect(r.lessons[0]).toMatchObject({ group: '7A', teachers: [{ short: 'TO' }] });
+  });
+
   it('refuses a lesson that points at a class or group the file does not have', () => {
     const r = readAscXml(mini({ lessons: [lessonRow({ classids: 'C1,C404', groupids: 'G404' })] }));
     expect(r.lessons).toEqual([]);
     expect(r.problems).toHaveLength(1);
-    expect(r.problems[0]!.message).toContain('"G404"');
-    expect(r.problems[0]!.message).toContain('"C404"');
+    expect(r.problems[0]!.message).toContain('”G404”');
+    expect(r.problems[0]!.message).toContain('”C404”');
   });
 });
 
@@ -1046,6 +1131,484 @@ describe('CHOICE 19: no personnummer', () => {
 
   it('writes none: nothing in the document model could carry one', () => {
     expect(writeAscXml(highSchoolDocument())).not.toMatch(/personnummer|pnr|ssn/i);
+  });
+
+  describe('a field named like one', () => {
+    it('does not taint the row that carries it: the row is read, the field is not', () => {
+      const xml = mini().replace('<teacher id="T1"', '<teacher id="T1" personnummer="19800101-1234"');
+      const r = readAscXml(xml);
+      expect(r.problems).toEqual([]);
+      expect(r.lessons[0]!.teachers).toEqual([{ short: 'TO', name: 'Teacher One', email: null, id: null }]);
+      expect(r.notes).toContainEqual('Filen har fält som liknar personnummer (personnummer). De läses aldrig och sparas inte.');
+      expect(leaks(r)).toBe(false);
+    });
+
+    it('drops an element named like one, with its text and everything below it, and notes it only when it has text', () => {
+      const xml = mini()
+        .replace('<teachers>', '<teachers><pnr>19800101-1234</pnr><samordningsnummer/>')
+        .replace('</timetable>', '<personnummer><teacher id="T9" name="Nine" short="NI"/></personnummer></timetable>');
+      const r = readAscXml(xml);
+      expect(r.problems).toEqual([]);
+      expect(r.lessons).toHaveLength(1);
+      expect(r.notes).toContainEqual(expect.stringContaining('(pnr)'));
+      expect(leaks(r)).toBe(false);
+      // Nothing below the dropped element is a teacher: a lesson that names T9 cannot find it.
+      const t9 = readAscXml(xml.replace('teacherids="T1"', 'teacherids="T9"'));
+      expect(t9.problems.map((p) => p.code)).toEqual(['ASC_LESSON_REF_UNKNOWN']);
+    });
+
+    it('lists at most ten names, sorted, and counts the rest', () => {
+      const attrsOf = Array.from({ length: 13 }, (_, i) => `pnr${String(i).padStart(2, '0')}="x"`).join(' ');
+      const r = readAscXml(mini({ extra: `<students><student id="X1" ${attrsOf}/></students>` }));
+      const note = r.notes.find((n) => n.startsWith('Filen har fält som liknar personnummer'))!;
+      expect(note).toContain('pnr00, pnr01, pnr02, pnr03, pnr04, pnr05, pnr06, pnr07, pnr08, pnr09, 3 till');
+      expect(note).not.toContain('pnr10');
+    });
+
+    it('does not list a name that has the shape itself, it counts it', () => {
+      const one = readAscXml(mini({ extra: '<students><student id="X1" pnr19800101-1234="x" ssn="y"/></students>' }));
+      expect(one.notes).toContainEqual('Filen har fält som liknar personnummer (ssn, ett fält vars namn liknar ett personnummer). De läses aldrig och sparas inte.');
+      const two = readAscXml(mini({ extra: '<students><student id="X1" pnr19800101-1234="x" ssn-198001011234="y"/></students>' }));
+      expect(two.notes).toContainEqual('Filen har fält som liknar personnummer (2 fält vars namn liknar ett personnummer). De läses aldrig och sparas inte.');
+      expect(leaks(one) || leaks(two)).toBe(false);
+    });
+  });
+
+  /** Puts the number in a field of the first row that starts with `opening` (the field is added or, when the row has it, replaced: the last one wins). */
+  const put = (xml: string, opening: string, field: string, value: string = PN): string => {
+    const at = xml.indexOf(opening);
+    expect(at).toBeGreaterThanOrEqual(0);
+    const end = xml.indexOf('>', at);
+    const close = xml[end - 1] === '/' ? end - 1 : end;
+    return `${xml.slice(0, close)} ${field}="${value}"${xml.slice(close)}`;
+  };
+  const THE_NOTE = (what: string): string =>
+    `Filen har värden som liknar personnummer i ${what}. De läses aldrig och sparas inte, och en lektion som hänvisar till dem läses inte heller. Rastra tar inte emot personnummer.`;
+
+  describe('a COPIED field (a name, a short, an e-mail, a time) with the shape taints its row, which is not read', () => {
+    const defsOf = [
+      '<daysdefs><daysdef id="D1" name="Mån" days="10000"/></daysdefs>',
+      '<weeksdefs><weeksdef id="W1" name="Varje" weeks="1"/></weeksdefs>',
+      '<termsdefs><termsdef id="M1" name="Hela" terms="1"/></termsdefs>',
+    ].join('');
+
+    it.each([
+      ['a teacher', mini(), '<teacher id="T1"', 'läraren', '1 lärare'],
+      ['a class', mini(), '<class id="C1"', 'klassen', '1 klass'],
+      ['a subject', mini(), '<subject id="S1"', 'ämnet', '1 ämne'],
+      ['a classroom', mini(), '<classroom id="R1"', 'salen', '1 sal'],
+      ['a group', mini({ lessons: [lessonRow({ groupids: 'G1' })] }), '<group id="G1"', 'gruppen', '1 grupp'],
+      ['the class of a group', mini({ lessons: [lessonRow({ classids: null, groupids: 'G1' })] }), '<class id="C1"', 'klassen', '1 klass'],
+      ['a days definition', mini({ defs: defsOf, lessons: [lessonRow({ daysdefid: 'D1' })] }), '<daysdef id="D1"', 'dagdefinitionen', '1 dagdefinition'],
+      ['a weeks definition', mini({ defs: defsOf, lessons: [lessonRow({ weeksdefid: 'W1' })] }), '<weeksdef id="W1"', 'veckodefinitionen', '1 veckodefinition'],
+      ['a terms definition', mini({ defs: defsOf, lessons: [lessonRow({ termsdefid: 'M1' })] }), '<termsdef id="M1"', 'terminen', '1 termin'],
+    ])('a lesson that points at %s with one is one problem that names the kind and not the value', (_label, file, opening, the, counted) => {
+      const r = readAscXml(put(file, opening, 'name'));
+      expect(r.lessons).toEqual([]);
+      expect(r.problems).toEqual([
+        {
+          ref: 'lektion 1',
+          code: 'ASC_LESSON_PERSONAL_NUMBER',
+          message: `Lektion 1 hoppas över: ${the} som lektionen hänvisar till har ett värde som liknar ett personnummer. Rastra tar inte emot personnummer.`,
+        },
+      ]);
+      expect(r.notes).toContainEqual(THE_NOTE(counted));
+      expect(leaks(r)).toBe(false);
+    });
+
+    it.each([
+      ['a teacher’s name', '<teacher id="T1"', 'name'],
+      ['a teacher’s short', '<teacher id="T1"', 'short'],
+      ['a teacher’s e-mail', '<teacher id="T1"', 'email'],
+      ['a teacher’s first name', '<teacher id="T1"', 'firstname'],
+      ['a teacher’s last name', '<teacher id="T1"', 'lastname'],
+      ['a subject’s short', '<subject id="S1"', 'short'],
+      ['a classroom’s short', '<classroom id="R1"', 'short'],
+      ['a class’s short', '<class id="C1"', 'short'],
+    ])('%s', (_label, opening, field) => {
+      const r = readAscXml(put(mini(), opening, field));
+      expect(r.lessons).toEqual([]);
+      expect(r.problems.map((p) => p.code)).toEqual(['ASC_LESSON_PERSONAL_NUMBER']);
+      expect(leaks(r)).toBe(false);
+    });
+
+    it('also takes a definition’s short, which is matched against the names of the week days', () => {
+      const defs = '<daysdefs><daysdef id="D1" name="Mån" days="10000"/></daysdefs>';
+      const r = readAscXml(put(mini({ defs, lessons: [lessonRow({ daysdefid: 'D1' })] }), '<daysdef id="D1"', 'short'));
+      expect(r.problems.map((p) => p.code)).toEqual(['ASC_LESSON_PERSONAL_NUMBER']);
+    });
+
+    it('reads the lessons that do not point at it, and says once what it did not read', () => {
+      const two = mini({ lessons: [lessonRow(), lessonRow({ id: 'L2', teacherids: 'T2' })], cards: [cardRow(), cardRow({ lessonid: 'L2', days: '01000' }), cardRow({ lessonid: 'L2', days: '00100' })] });
+      const r = readAscXml(put(two, '<teacher id="T1"', 'name'));
+      expect(r.lessons.map((l) => [l.day, l.teachers[0]!.short])).toEqual([
+        [2, 'TW'],
+        [3, 'TW'],
+      ]);
+      expect(r.problems.map((p) => [p.ref, p.code])).toEqual([['lektion 1', 'ASC_LESSON_PERSONAL_NUMBER']]);
+      expect(r.notes.filter((n) => n.includes('liknar personnummer'))).toEqual([THE_NOTE('1 lärare')]);
+    });
+
+    it('reports a lesson once however many cards it has', () => {
+      const r = readAscXml(put(mini({ cards: [cardRow(), cardRow({ days: '01000' }), cardRow({ days: '00100' })] }), '<subject id="S1"', 'name'));
+      expect(r.problems).toHaveLength(1);
+    });
+
+    it('is not silent about a tainted row nothing points at: one note, counted by kind', () => {
+      let xml = mini();
+      xml = xml.replace('<teachers>', `<teachers><teacher id="T8" name="${PN}" short="EI"/><teacher id="T9" name="Nine" short="${PN}"/>`);
+      xml = xml.replace('<classrooms>', `<classrooms><classroom id="R9" name="${PN}"/>`);
+      const r = readAscXml(xml);
+      expect(r.problems).toEqual([]);
+      expect(r.lessons).toHaveLength(1);
+      expect(r.notes.filter((n) => n.includes('liknar personnummer'))).toEqual([THE_NOTE('2 lärare och 1 sal')]);
+      expect(leaks(r)).toBe(false);
+    });
+
+    it('lists three kinds with commas and an "och"', () => {
+      let xml = mini();
+      xml = xml.replace('<teachers>', `<teachers><teacher id="T9" name="${PN}"/>`);
+      xml = xml.replace('<classrooms>', `<classrooms><classroom id="R9" name="${PN}"/>`);
+      xml = xml.replace('<subjects>', `<subjects><subject id="S9" name="${PN}"/>`);
+      expect(readAscXml(xml).notes).toContainEqual(THE_NOTE('1 lärare, 1 ämne och 1 sal'));
+    });
+
+    it('never copies a field out of it, not even one that looks harmless', () => {
+      const xml = mini().replace('<teachers>', `<teachers><teacher id="T7" name="Seven ${PN}" short="SE" email="seven@school.example"/>`);
+      const r = readAscXml(xml.replace('teacherids="T1"', 'teacherids="T7,T1"'));
+      expect(r.lessons).toEqual([]);
+      expect(JSON.stringify(r)).not.toMatch(/Seven|seven@/);
+    });
+
+    it('says a kind once however many rows of it a lesson points at', () => {
+      const xml = put(put(mini({ lessons: [lessonRow({ teacherids: 'T1,T2' })] }), '<teacher id="T1"', 'name'), '<teacher id="T2"', 'name');
+      const r = readAscXml(xml);
+      expect(r.problems).toHaveLength(1);
+      expect(r.problems[0]!.message.match(/läraren/g)).toHaveLength(1);
+      expect(r.notes).toContainEqual(THE_NOTE('2 lärare'));
+    });
+
+    it('is a problem of the card when the card’s own room is tainted', () => {
+      const file = mini({ lessons: [lessonRow({ classroomids: null })], cards: [cardRow({ classroomids: 'R1' }), cardRow({ classroomids: 'R2', days: '01000' })] });
+      const r = readAscXml(put(file, '<classroom id="R1"', 'name'));
+      expect(r.lessons.map((l) => l.room)).toEqual(['Sal 2']);
+      expect(r.problems).toEqual([
+        {
+          ref: 'kort 1',
+          code: 'ASC_CARD_PERSONAL_NUMBER',
+          message: 'Kort 1 hoppas över: salen som kortet hänvisar till har ett värde som liknar ett personnummer. Rastra tar inte emot personnummer.',
+        },
+      ]);
+    });
+
+    describe('a period', () => {
+      const periodsOf = (...rows: string[]): string => `<periods>${rows.join('')}</periods>`;
+      const P1 = '<period period="1" starttime="8:00" endtime="8:45"/>';
+      const P2 = '<period period="2" starttime="8:55" endtime="9:40"/>';
+      const P1_TAINTED = `<period period="1" starttime="8:00" endtime="${PN}"/>`;
+      const cards = [cardRow(), cardRow({ period: '2', days: '01000' })];
+      const message = 'Kort 1 hoppas över: perioden 1 har ett värde som liknar ett personnummer. Rastra tar inte emot personnummer.';
+
+      it('is a problem for the cards in it only, never a time', () => {
+        const r = readAscXml(mini({ periods: periodsOf(P1_TAINTED, P2), cards }));
+        expect(r.lessons.map((l) => [l.day, l.start])).toEqual([[2, '08:55']]);
+        expect(r.problems).toEqual([{ ref: 'kort 1', code: 'ASC_PERIOD_PERSONAL_NUMBER', message }]);
+        expect(r.notes).toContainEqual(THE_NOTE('1 period'));
+        expect(leaks(r)).toBe(false);
+      });
+
+      it('stays one when the same number is listed again, clean, before or after', () => {
+        for (const rows of [[P1_TAINTED, P1, P2], [P1, P1_TAINTED, P2]]) {
+          const r = readAscXml(mini({ periods: periodsOf(...rows), cards }));
+          expect(r.problems).toEqual([{ ref: 'kort 1', code: 'ASC_PERIOD_PERSONAL_NUMBER', message }]);
+        }
+      });
+
+      it('is only counted when its number cannot be read', () => {
+        const r = readAscXml(mini({ periods: periodsOf(P1, `<period period="x" starttime="${PN}"/>`, P2), cards }));
+        expect(r.problems).toEqual([]);
+        expect(r.notes).toContainEqual(THE_NOTE('1 period'));
+      });
+
+      it('names it “kortets period” when its number is itself shaped like a personnummer', () => {
+        const file = mini({ periods: periodsOf(`<period period="8001011234" starttime="8:00" endtime="${PN}"/>`, P2), cards: [cardRow({ period: '8001011234' })] });
+        const r = readAscXml(file);
+        expect(r.problems).toEqual([
+          {
+            ref: 'kort 1',
+            code: 'ASC_PERIOD_PERSONAL_NUMBER',
+            message: 'Kort 1 hoppas över: kortets period har ett värde som liknar ett personnummer. Rastra tar inte emot personnummer.',
+          },
+        ]);
+        expect(leaks(r)).toBe(false);
+      });
+    });
+
+    describe('a terms definition', () => {
+      const defs = (name: string): string => `<termsdefs><termsdef id="t1" name="${name}" terms="10"/><termsdef id="t2" name="Resten" terms="01"/></termsdefs>`;
+
+      it('leaves a card that only it could name unread, and the cards the others name read', () => {
+        const r = readAscXml(mini({ defs: defs(PN), cards: [cardRow({ terms: '10' }), cardRow({ terms: '01', days: '01000' }), cardRow({ terms: '11', days: '00100' })] }));
+        expect(r.lessons.map((l) => [l.day, l.from, l.to])).toEqual([
+          [2, null, null],
+          [3, null, null],
+        ]);
+        expect(r.problems).toEqual([
+          {
+            ref: 'kort 1',
+            code: 'ASC_CARD_PERSONAL_NUMBER',
+            message:
+              'Kort 1 hoppas över: kortets termin går inte att avgöra, eftersom en terminsdefinition i filen har ett värde som liknar ett personnummer. Rastra tar inte emot personnummer.',
+          },
+        ]);
+        expect(r.notes).toContainEqual(THE_NOTE('1 termin'));
+        expect(leaks(r)).toBe(false);
+      });
+
+      it('changes nothing for a file without one', () => {
+        const r = readAscXml(mini({ defs: defs('Term 1'), cards: [cardRow({ terms: '10' })] }));
+        expect(r.problems).toEqual([]);
+        expect(r.lessons).toHaveLength(1);
+      });
+    });
+
+    describe('a weeks definition', () => {
+      const card = cardRow({ weeks: null });
+      it('stops a card with no weeks from being read as every week, since the definition might hold a rotation', () => {
+        const defs = `<weeksdefs><weeksdef id="W1" name="${PN}" weeks="10"/></weeksdefs>`;
+        const r = readAscXml(mini({ defs, cards: [card] }));
+        expect(r.problems.map((p) => p.code)).toEqual(['ASC_WEEKS_UNKNOWN']);
+      });
+
+      it('and a file without one reads the same card as every week', () => {
+        const r = readAscXml(mini({ cards: [card] }));
+        expect(r.problems).toEqual([]);
+        expect(r.lessons.map((l) => l.weeks)).toEqual(['ALL']);
+      });
+    });
+  });
+
+  describe('a field the reader does not read never taints its row', () => {
+    const UNREAD = (n: number): string =>
+      n === 1
+        ? 'Filen har 1 värde som liknar personnummer i ett fält som inte läses; det sparas inte. Rastra tar inte emot personnummer.'
+        : `Filen har ${n} värden som liknar personnummer i fält som inte läses; de sparas inte. Rastra tar inte emot personnummer.`;
+
+    it('keeps a teacher whose mobile number, birth date and extra column have the shape, and the lessons they teach', () => {
+      const xml = put(put(put(mini(), '<teacher id="T1"', 'mobile', '0701234567'), '<teacher id="T1"', 'birthdate', PN), '<teacher id="T1"', 'skolid', PN);
+      const r = readAscXml(xml);
+      expect(r.problems).toEqual([]);
+      expect(r.lessons).toHaveLength(1);
+      expect(r.lessons[0]!.teachers).toEqual([{ short: 'TO', name: 'Teacher One', email: null, id: null }]);
+      expect(r.notes).toContainEqual(UNREAD(3));
+      expect(leaks(r)).toBe(false);
+    });
+
+    it('counts one value in the singular', () => {
+      const r = readAscXml(put(mini(), '<teacher id="T1"', 'color', PN));
+      expect(r.lessons).toHaveLength(1);
+      expect(r.notes).toContainEqual(UNREAD(1));
+    });
+
+    it('does so in every row: a class’s teacher, a group’s count, a lesson’s capacity, a card’s id', () => {
+      let xml = mini();
+      xml = put(xml, '<class id="C1"', 'teacherid', PN);
+      xml = put(xml, '<group id="G1"', 'studentcount', PN);
+      xml = put(xml, '<lesson id="L1"', 'capacity', PN);
+      xml = put(xml, '<card ', 'id', PN);
+      const r = readAscXml(xml);
+      expect(r.problems).toEqual([]);
+      expect(r.lessons).toHaveLength(1);
+      expect(r.notes).toContainEqual(UNREAD(4));
+    });
+
+    it('deletes the text of a row that has the shape, and reads the row', () => {
+      const r = readAscXml(mini().replace('<teacher id="T1" name="Teacher One" short="TO"/>', `<teacher id="T1" name="Teacher One" short="TO">Anna ${PN}</teacher>`));
+      expect(r.problems).toEqual([]);
+      expect(r.lessons[0]!.teachers[0]!.name).toBe('Teacher One');
+      expect(r.notes).toContainEqual(UNREAD(1));
+      expect(leaks(r)).toBe(false);
+    });
+
+    it('counts a value in an element that is not a row, or that nothing reads, in the same note', () => {
+      let xml = mini({ extra: `<students><student id="X1" name="Pupil ${PN}"/></students>` });
+      xml = xml.replace('<timetable ', `<timetable displayname="${PN}" `);
+      xml = xml.replace('<teachers>', `<teachers owner="${PN}">`);
+      xml = xml.replace('<class id="C2" name="7B"/>', `<class id="C2" name="7B"><note why="${PN}"/></class>`);
+      const r = readAscXml(xml);
+      expect(r.problems).toEqual([]);
+      expect(r.lessons).toHaveLength(1);
+      expect(r.notes).toContainEqual(UNREAD(4));
+      expect(leaks(r)).toBe(false);
+    });
+
+    it('adds the unread values to the note about tainted rows, in one note', () => {
+      const xml = put(put(mini(), '<teacher id="T2"', 'mobile', '0701234567'), '<teacher id="T3"', 'name');
+      const r = readAscXml(xml);
+      expect(r.problems).toEqual([]);
+      expect(r.notes.filter((n) => n.includes('liknar personnummer'))).toEqual([
+        'Filen har värden som liknar personnummer i 1 lärare. De läses aldrig och sparas inte, och en lektion som hänvisar till dem läses inte heller. Dessutom finns 1 värde som liknar personnummer i ett fält som inte läses; det sparas inte. Rastra tar inte emot personnummer.',
+      ]);
+    });
+
+    it('leaves the root’s options alone: they are read for daynumbering1 and never shown', () => {
+      const r = readAscXml(mini({ root: `daynumbering1 ${PN}`, cards: [cardRow({ days: null, day: '1' })] }));
+      expect(r.lessons.map((l) => l.day)).toEqual([1]);
+      expect(r.notes.some((n) => n.includes('liknar personnummer') || n.includes('daynumbering1'))).toBe(false);
+    });
+  });
+
+  describe('a LINK (an id, a bit string, a number) with the shape does not make its row unreadable, and is never copied', () => {
+    const IDS = ['x19800101-1234y', '8001011234', '19800101-1234', '198001011234'];
+    const control = readAscXml(mini());
+    const sameAsControl = (r: ReturnType<typeof readAscXml>): void => {
+      expect(r.problems).toEqual([]);
+      expect(r.lessons).toEqual(control.lessons);
+      expect(r.notes).toEqual(control.notes);
+      expect(leaks(r)).toBe(false);
+    };
+    const renamed = (from: string, to: string, xml: string = mini()): string => xml.split(`"${from}"`).join(`"${to}"`);
+
+    it.each(IDS)('reads a lesson, its cards and every row it points at when their ids are %s', (id) => {
+      for (const from of ['L1', 'T1', 'S1', 'C1', 'R1']) sameAsControl(readAscXml(renamed(from, id)));
+    });
+
+    it.each(IDS)('reads a lesson in a group with the id %s, and the group of a class the same', (id) => {
+      const file = mini({ lessons: [lessonRow({ groupids: 'G1' })] });
+      const r = readAscXml(renamed('G1', id, file));
+      expect(r.problems).toEqual([]);
+      expect(r.lessons.map((l) => l.group)).toEqual(['7A']);
+      expect(leaks(r)).toBe(false);
+    });
+
+    it.each(IDS)('reads the periods when their numbers are %s, and a card in one', (id) => {
+      const r = readAscXml(mini().split('period="1"').join(`period="${id.replace(/\D/g, '') || '1'}"`));
+      sameAsControl(r);
+    });
+
+    it.each(IDS)('reads the definitions and the bit strings that have the shape of %s', (id) => {
+      const defs = `<daysdefs><daysdef id="${id}" name="Mån" days="10000"/></daysdefs><weeksdefs><weeksdef id="${id}x" name="V" weeks="0101010101"/></weeksdefs><termsdefs><termsdef id="${id}y" name="Alla" terms="1"/></termsdefs>`;
+      const file = mini({ defs, lessons: [lessonRow({ daysdefid: id, weeksdefid: `${id}x`, termsdefid: `${id}y` })], cards: [cardRow({ weeks: '0101010101' })] });
+      const r = readAscXml(file);
+      expect(r.problems).toEqual([]);
+      expect(r.lessons.map((l) => l.weeks)).toEqual(['EVEN']);
+      expect(leaks(r)).toBe(false);
+    });
+
+    it('reads a card whose terms string has the shape, and names the term by its place', () => {
+      const r = readAscXml(mini({ cards: [cardRow({ terms: '0101010101' })] }));
+      expect(r.problems).toEqual([]);
+      expect(r.notes).toContainEqual(expect.stringContaining('”period 2+4+6+8+10”'));
+      expect(leaks(r)).toBe(false);
+    });
+
+    describe('a reference to one that is not in the file names the kind of thing and leaves the id out', () => {
+      it.each(IDS)('in a lesson (%s)', (id) => {
+        const cases: Array<[Record<string, string | null>, string, string]> = [
+          [{ subjectid: id }, 'ASC_LESSON_NO_SUBJECT', 'ämnet'],
+          [{ classids: id }, 'ASC_LESSON_REF_UNKNOWN', 'klassen'],
+          [{ groupids: id }, 'ASC_LESSON_REF_UNKNOWN', 'gruppen'],
+          [{ teacherids: id }, 'ASC_LESSON_REF_UNKNOWN', 'läraren'],
+          [{ classroomids: id }, 'ASC_LESSON_REF_UNKNOWN', 'salen'],
+        ];
+        for (const [over, code, the] of cases) {
+          const r = readAscXml(mini({ lessons: [lessonRow(over)] }));
+          expect(r.problems).toEqual([
+            { ref: 'lektion 1', code, message: `Lektion 1 hoppas över: ${the} som lektionen hänvisar till finns inte i filen.` },
+          ]);
+          expect(leaks(r)).toBe(false);
+        }
+      });
+
+      it.each(IDS)('in a card (%s)', (id) => {
+        const lesson = readAscXml(mini({ cards: [cardRow({ lessonid: id })] }));
+        expect(lesson.problems).toEqual([
+          { ref: 'kort 1', code: 'ASC_CARD_NO_LESSON', message: 'Kort 1 hoppas över: lektionen som kortet hänvisar till finns inte i filen.' },
+        ]);
+        const room = readAscXml(mini({ lessons: [lessonRow({ classroomids: null })], cards: [cardRow({ classroomids: id })] }));
+        expect(room.problems).toEqual([
+          { ref: 'kort 1', code: 'ASC_CARD_REF_UNKNOWN', message: 'Kort 1 hoppas över: salen som kortet hänvisar till finns inte i filen.' },
+        ]);
+        const period = readAscXml(mini({ cards: [cardRow({ period: id.replace(/\D/g, '') })] }));
+        expect(period.problems).toEqual([
+          { ref: 'kort 1', code: 'ASC_PERIOD_UNKNOWN', message: 'Kort 1 hoppas över: kortets period finns inte i filens perioder, och en tid gissas aldrig.' },
+        ]);
+        expect(leaks(lesson) || leaks(room) || leaks(period)).toBe(false);
+      });
+
+      it('and still quotes an id that is not shaped like one', () => {
+        const r = readAscXml(mini({ lessons: [lessonRow({ teacherids: 'T404' })] }));
+        expect(r.problems[0]!.message).toBe('Lektion 1 hoppas över: läraren ”T404” finns inte i filen.');
+      });
+    });
+
+    it('does not name a bit string or a number that has the shape when it says the string cannot be read', () => {
+      const days = readAscXml(mini({ cards: [cardRow({ days: '8001011234' })] }));
+      const weeks = readAscXml(mini({ cards: [cardRow({ weeks: '8001011234' })] }));
+      const terms = readAscXml(mini({ cards: [cardRow({ terms: '8001011234' })] }));
+      expect(days.problems).toEqual([{ ref: 'kort 1', code: 'ASC_DAY_INVALID', message: 'Kort 1 hoppas över: dagarna pekar inte ut någon dag.' }]);
+      expect(weeks.problems).toEqual([
+        { ref: 'kort 1', code: 'ASC_WEEKS_UNSUPPORTED', message: 'Kort 1 hoppas över: veckorna går inte att uttrycka som varje, udda eller jämn vecka.' },
+      ]);
+      expect(terms.problems).toEqual([{ ref: 'kort 1', code: 'ASC_TERMS_INVALID', message: 'Kort 1 hoppas över: perioderna går inte att läsa.' }]);
+      const perCard = readAscXml(mini({ lessons: [lessonRow({ periodspercard: '8001011234' })] }));
+      expect(perCard.problems[0]!.message).toBe(
+        'Kort 1 hoppas över: lektionen har ett orimligt antal perioder per kort men kortet har bara 1 på rad, så längden går inte att avgöra.',
+      );
+      expect(leaks([days, weeks, terms, perCard])).toBe(false);
+    });
+
+    it('does not use an id shaped like a personnummer as the name of a group or a definition that has none', () => {
+      const group = readAscXml(
+        mini({ groups: '<groups><group id="8001011234" classid="C1" entireclass="0"/></groups>', lessons: [lessonRow({ classids: null, groupids: '8001011234' })] }),
+      );
+      expect(group.lessons).toEqual([]);
+      expect(group.problems.map((p) => [p.code, p.message])).toEqual([
+        [
+          'ASC_LESSON_PERSONAL_NUMBER',
+          'Lektion 1 hoppas över: gruppen som lektionen hänvisar till har ett värde som liknar ett personnummer. Rastra tar inte emot personnummer.',
+        ],
+      ]);
+      const term = readAscXml(mini({ defs: '<termsdefs><termsdef id="8001011234" terms="10"/></termsdefs>', cards: [cardRow({ terms: '10' })] }));
+      expect(term.lessons).toHaveLength(1);
+      expect(term.notes).toContainEqual(expect.stringContaining('Perioden ”utan namn” i aSc'));
+      expect(leaks(group) || leaks(term)).toBe(false);
+      // An id that is not shaped like one is still the name of a row that has none.
+      const plainGroup = readAscXml(
+        mini({ groups: '<groups><group id="Gx" classid="C1" entireclass="0"/></groups>', lessons: [lessonRow({ classids: null, groupids: 'Gx' })] }),
+      );
+      expect(plainGroup.lessons.map((l) => l.group)).toEqual(['Gx']);
+      const plainTerm = readAscXml(mini({ defs: '<termsdefs><termsdef id="Tx" terms="10"/></termsdefs>', cards: [cardRow({ terms: '10' })] }));
+      expect(plainTerm.notes).toContainEqual(expect.stringContaining('Perioden ”Tx” i aSc'));
+    });
+
+    it('does not call a group by the id of a class that is not in the file when that id has the shape', () => {
+      const groups = '<groups><group id="G1" classid="8001011234" name="Grupp 1" entireclass="0"/><group id="G2" classid="C2" name="Grupp 1" entireclass="0"/></groups>';
+      const r = readAscXml(mini({ groups, lessons: [lessonRow({ classids: null, groupids: 'G1' })] }));
+      expect(r.problems).toEqual([]);
+      expect(r.lessons.map((l) => l.group)).toEqual(['Grupp 1']);
+      expect(leaks(r)).toBe(false);
+      const plain = readAscXml(mini({ groups: groups.replace('8001011234', 'K404'), lessons: [lessonRow({ classids: null, groupids: 'G1' })] }));
+      expect(plain.lessons.map((l) => l.group)).toEqual(['K404 Grupp 1']);
+    });
+  });
+
+  describe('what of the file still reaches a message', () => {
+    it('is quoted through excerpt: one line, 40 characters, a number redacted', () => {
+      const r = readAscXml(mini({ lessons: [lessonRow({ teacherids: 'T1,Läraren\nmed ett mycket långt namn som inte finns i filen alls' })] }));
+      expect(r.problems[0]!.message).toBe(
+        'Lektion 1 hoppas över: läraren ”Läraren med ett mycket långt namn som in…” finns inte i filen.',
+      );
+    });
+
+    it('is redacted in the reason of a parser error and in the name of a wrong root, and cut', () => {
+      const bad = readAscXml(`<timetable><${PN}>`);
+      expect(bad.problems).toEqual([{ ref: 'fil', code: 'ASC_XML_INVALID', message: 'Filen kunde inte läsas som XML: Elementet <[personnummer]> slutar aldrig.' }]);
+      const wrongRoot = readAscXml(`<${'x'.repeat(5000)}/>`);
+      expect(wrongRoot.problems[0]!.message).toBe(`Filen är ingen aSc Timetables XML: rotelementet är <${'x'.repeat(40)}…>, inte <timetable>.`);
+      const longName = readAscXml(`<timetable><${'y'.repeat(5000)}>`);
+      expect(longName.problems[0]!.message.length).toBeLessThan(220);
+    });
   });
 });
 
@@ -1092,5 +1655,181 @@ describe('CHOICE 20: limits and invalid files', () => {
     const r = readAscXml(mini({ cards: Array.from({ length: MAX_EXCHANGE_LESSONS / 5 + 1 }, () => cardRow({ days: '11111' })) }));
     expect(r.lessons).toEqual([]);
     expect(r.problems.map((p) => p.code)).toEqual(['ASC_TOO_MANY_LESSONS']);
+  });
+
+  it('reads one lesson more than the limit through a card on two days, and refuses the file', () => {
+    const cards = [...Array.from({ length: MAX_EXCHANGE_LESSONS - 1 }, () => cardRow()), cardRow({ days: '11000' })];
+    const r = readAscXml(mini({ cards }));
+    expect(r.lessons).toEqual([]);
+    expect(r.problems.map((p) => p.code)).toEqual(['ASC_TOO_MANY_LESSONS']);
+  });
+
+  describe('an answer stays small however many cards echo one long value', () => {
+    const answerSize = (r: unknown): number => JSON.stringify(r).length;
+
+    it('one lesson with a 30 000-character terms value and 5 000 cards: 500 problems and a count', () => {
+      const long = 'x'.repeat(30_000);
+      const r = readAscXml(mini({ lessons: [lessonRow({ terms: long })], cards: Array.from({ length: 5000 }, () => cardRow({ terms: null })) }));
+      expect(r.lessons).toEqual([]);
+      expect(r.problems).toHaveLength(MAX_PROBLEMS + 1);
+      expect(r.problems.slice(0, MAX_PROBLEMS).every((p) => p.code === 'ASC_TERMS_INVALID')).toBe(true);
+      expect(r.problems[0]).toEqual({
+        ref: 'kort 1',
+        code: 'ASC_TERMS_INVALID',
+        message: `Kort 1 hoppas över: perioderna ”${'x'.repeat(40)}…” går inte att läsa.`,
+      });
+      expect(r.problems.at(-1)).toEqual({ ref: '', code: 'ASC_TOO_MANY_PROBLEMS', message: `Ytterligare ${5000 - MAX_PROBLEMS} problem visas inte.` });
+      expect(answerSize(r)).toBeLessThan(200_000);
+    });
+
+    const lessonLevel: Array<[string, string, string, Record<string, string | null>, Record<string, string | null>]> = [
+      ['weeks', 'veckorna', 'ASC_WEEKS_UNSUPPORTED', { weeks: 'y'.repeat(30_000) }, { weeks: null }],
+      ['terms', 'perioderna', 'ASC_TERMS_INVALID', { terms: 'y'.repeat(30_000) }, { terms: null }],
+    ];
+    it.each(lessonLevel)('the same for the lesson-level %s', (_label, what, code, onLesson, onCard) => {
+      const r = readAscXml(mini({ lessons: [lessonRow(onLesson)], cards: Array.from({ length: 3000 }, () => cardRow(onCard)) }));
+      expect(r.problems).toHaveLength(MAX_PROBLEMS + 1);
+      expect(r.problems[0]).toMatchObject({ code, message: expect.stringContaining(`${what} ”${'y'.repeat(40)}…”`) });
+      expect(answerSize(r)).toBeLessThan(200_000);
+    });
+
+    it('5 000 lessons that each name a 1 000-character subject the file does not have', () => {
+      const lessonsOf = Array.from({ length: 5000 }, (_, i) => lessonRow({ id: `L${i}`, subjectid: `${'s'.repeat(1000)}${i}` }));
+      const cardsOf = Array.from({ length: 5000 }, (_, i) => cardRow({ lessonid: `L${i}` }));
+      const r = readAscXml(mini({ lessons: lessonsOf, cards: cardsOf }));
+      expect(r.problems).toHaveLength(MAX_PROBLEMS + 1);
+      expect(r.problems[0]!.message).toBe(`Lektion 1 hoppas över: ämnet ”${'s'.repeat(40)}…” finns inte i filen.`);
+      expect(answerSize(r)).toBeLessThan(200_000);
+    });
+
+    it('5 000 cards that name a lesson the file does not have, by a 1 000-character id each', () => {
+      const r = readAscXml(mini({ cards: Array.from({ length: 5000 }, (_, i) => cardRow({ lessonid: `${'k'.repeat(1000)}${i}` })) }));
+      expect(r.problems).toHaveLength(MAX_PROBLEMS + 1);
+      expect(answerSize(r)).toBeLessThan(200_000);
+    });
+
+    it('keeps the problems that come first in the file, in the file’s order, however the passes found them', () => {
+      // A block that is one card short is found in a later pass than a card with no lesson, but sits earlier in the file.
+      const cards = [
+        cardRow({ lessonid: 'LB', period: '1' }),
+        ...Array.from({ length: 600 }, () => cardRow({ lessonid: 'L404' })),
+      ];
+      const r = readAscXml(mini({ lessons: [lessonRow({ id: 'LB', periodspercard: '2' })], cards }));
+      expect(r.problems).toHaveLength(MAX_PROBLEMS + 1);
+      expect(r.problems.slice(0, 3).map((p) => [p.ref, p.code])).toEqual([
+        ['kort 1', 'ASC_CARD_BLOCK_INCOMPLETE'],
+        ['kort 2', 'ASC_CARD_NO_LESSON'],
+        ['kort 3', 'ASC_CARD_NO_LESSON'],
+      ]);
+      expect(r.problems[MAX_PROBLEMS - 1]!.ref).toBe(`kort ${MAX_PROBLEMS}`);
+      expect(r.problems.at(-1)!.message).toBe('Ytterligare 101 problem visas inte.');
+    });
+
+    it('closes with no count when the problems fit', () => {
+      const r = readAscXml(mini({ cards: Array.from({ length: MAX_PROBLEMS }, () => cardRow({ lessonid: 'L404' })) }));
+      expect(r.problems).toHaveLength(MAX_PROBLEMS);
+      expect(r.problems.some((p) => p.code === 'ASC_TOO_MANY_PROBLEMS')).toBe(false);
+    });
+
+    it('spells out five reasons of a lesson and counts the rest, whatever a lesson names', () => {
+      const unknown = Array.from({ length: 200_000 }, (_, i) => `K${i}`).join(',');
+      const r = readAscXml(mini({ lessons: [lessonRow({ classids: unknown })] }));
+      expect(r.problems).toHaveLength(1);
+      expect(r.problems[0]!.message).toMatch(/^Lektion 1 hoppas över: klassen ”K0” finns inte i filen\. klassen ”K1” .* klassen ”K4” finns inte i filen\. Ytterligare 199995 orsaker visas inte\.$/);
+      expect(r.problems[0]!.message.length).toBeLessThan(400);
+      const six = readAscXml(mini({ lessons: [lessonRow({ classids: 'K0,K1,K2,K3,K4,K5' })] }));
+      expect(six.problems[0]!.message.endsWith(' Ytterligare 1 orsak visas inte.')).toBe(true);
+    });
+
+    it('says the personnummer sentence once, and gives the lesson its code, when other reasons come first and fill the list', () => {
+      let xml = mini({ lessons: [lessonRow({ groupids: 'G404,G405,G406,G407,G408,G409', classids: 'C1', teacherids: 'T1' })] });
+      xml = xml.replace('<class id="C1"', `<class id="C1" short="${PN}"`).replace('<teacher id="T1"', `<teacher id="T1" email="${PN}"`);
+      const r = readAscXml(xml);
+      expect(r.problems).toHaveLength(1);
+      expect(r.problems[0]).toMatchObject({ ref: 'lektion 1', code: 'ASC_LESSON_PERSONAL_NUMBER' });
+      const message = r.problems[0]!.message;
+      expect(message).toMatch(/Ytterligare 3 orsaker visas inte\. Rastra tar inte emot personnummer\.$/);
+      expect(message.match(/Rastra tar inte emot personnummer/g)).toHaveLength(1);
+    });
+
+    it('lists at most ten terms by name in the notes and counts the rest, one note each, never one per card', () => {
+      const width = 13;
+      const bits = (i: number): string => '0'.repeat(i) + '1' + '0'.repeat(width - i - 1);
+      const defs = `<termsdefs>${Array.from({ length: width }, (_, i) => `<termsdef id="t${i}" name="Term ${i}" terms="${bits(i)}"/>`).join('')}</termsdefs>`;
+      const cards = Array.from({ length: 2000 }, (_, i) => cardRow({ terms: bits(i % width), period: String(1 + (i % 4)) }));
+      const r = readAscXml(mini({ defs, cards }));
+      const termNotes = r.notes.filter((n) => n.startsWith('Perioden') || n.includes('perioder till') || n.includes('period till'));
+      expect(termNotes).toHaveLength(11);
+      expect(termNotes[0]).toContain('”Term 0”');
+      expect(termNotes[9]).toContain('”Term 9”');
+      expect(termNotes[10]).toBe('3 perioder till i aSc har inga datum och läses som hela läsåret.');
+      expect(answerSize(r.notes)).toBeLessThan(10_000);
+    });
+
+    it('lists at most ten week days that start on another position, and counts the rest', () => {
+      const daysdefs = (n: number): string =>
+        `<daysdefs>${Array.from({ length: n }, (_, i) => `<daysdef id="d${i}" name="Söndag ${i}" short="Sön" days="1000000"/>`).join('')}</daysdefs>`;
+      const mismatches = (n: number) => readAscXml(mini({ defs: daysdefs(n) })).notes.filter((note) => note.includes('position 1 som måndag'));
+      expect(mismatches(1)).toHaveLength(1);
+      expect(mismatches(10)).toHaveLength(10);
+      expect(mismatches(12)).toHaveLength(10);
+      expect(readAscXml(mini({ defs: daysdefs(12) })).notes).toContainEqual(
+        'Ytterligare 2 dagar i filen står på en annan position än den som läses som deras veckodag.',
+      );
+      expect(readAscXml(mini({ defs: daysdefs(11) })).notes).toContainEqual(
+        'Ytterligare 1 dag i filen står på en annan position än den som läses som dess veckodag.',
+      );
+    });
+
+    it('names a day with a long name only by its first characters', () => {
+      const defs = `<daysdefs><daysdef id="d1" name="Söndag${'x'.repeat(5000)}" days="1000000"/></daysdefs>`;
+      const note = readAscXml(mini({ defs })).notes.find((n) => n.includes('position 1 som måndag'))!;
+      expect(note.length).toBeLessThan(200);
+    });
+  });
+
+  describe('a string of days, weeks or terms is at most MAX_BITS characters (64)', () => {
+    it.each([
+      ['days', (n: number) => cardRow({ days: `1${'0'.repeat(n - 1)}` }), 'ASC_DAY_INVALID'],
+      ['weeks', (n: number) => cardRow({ weeks: '1'.repeat(n) }), 'ASC_WEEKS_UNSUPPORTED'],
+      ['terms', (n: number) => cardRow({ terms: '1'.repeat(n) }), 'ASC_TERMS_INVALID'],
+    ])('%s: 64 characters are read, 65 are not', (_label, make, code) => {
+      expect(readAscXml(mini({ cards: [make(64)] })).problems).toEqual([]);
+      expect(readAscXml(mini({ cards: [make(64)] })).lessons).toHaveLength(1);
+      const r = readAscXml(mini({ cards: [make(65)] }));
+      expect(r.lessons).toEqual([]);
+      expect(r.problems.map((p) => p.code)).toEqual([code]);
+    });
+
+    it('costs the cards of a lesson with a megabyte of ones in its weeks the length check, not the megabyte', () => {
+      const started = Date.now();
+      const r = readAscXml(mini({ lessons: [lessonRow({ weeks: '1'.repeat(1_000_000) })], cards: Array.from({ length: 4000 }, () => cardRow({ weeks: null })) }));
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(r.problems).toHaveLength(MAX_PROBLEMS + 1);
+    });
+  });
+
+  describe('the work a lesson or a card costs is linear in the file', () => {
+    it('a lesson in 20 000 classes and as many groups, each group of one class (was a pass over all groups per class: 12 s)', () => {
+      const n = 20_000;
+      const classes = Array.from({ length: n }, (_, i) => `<class id="C${i}" name="K${i}"/>`).join('');
+      const groups = Array.from({ length: n }, (_, i) => `<group id="G${i}" classid="C${i}" name="g${i}" entireclass="0"/>`).join('');
+      const ids = (prefix: string): string => Array.from({ length: n }, (_, i) => `${prefix}${i}`).join(',');
+      const xml = mini({ groups: `<groups>${groups}</groups>`, lessons: [lessonRow({ classids: ids('C'), groupids: ids('G') })] }).replace('<classes><class id="C1" name="7A"/><class id="C2" name="7B"/></classes>', `<classes>${classes}</classes>`);
+      const started = Date.now();
+      const r = readAscXml(xml);
+      expect(Date.now() - started).toBeLessThan(3000);
+      expect(r.problems).toEqual([]);
+      expect(r.lessons).toHaveLength(1);
+      expect(r.lessons[0]!.extraGroups).toHaveLength(n - 1);
+    });
+
+    it('30 000 cards of a lesson that wants two periods in a row (were copied once per card: 1.8 s)', () => {
+      const cards = Array.from({ length: 40_000 }, (_, i) => cardRow({ period: String(1 + (i % 2)), days: '10000' }));
+      const started = Date.now();
+      const r = readAscXml(mini({ lessons: [lessonRow({ periodspercard: '2' })], cards }));
+      expect(Date.now() - started).toBeLessThan(1500);
+      expect(r.problems.length).toBeGreaterThan(0);
+    });
   });
 });

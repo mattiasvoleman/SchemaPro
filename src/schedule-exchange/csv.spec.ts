@@ -47,6 +47,15 @@ describe('parseCsv', () => {
     expect(parseCsv(`${head}\n${tail}`).delimiter).toBe(';');
   });
 
+  it('takes a cell of 32 767 characters whole, in a file of hundreds of them, and says nothing about any (it has no messages to quote them in)', () => {
+    const long = 'x'.repeat(32_767);
+    const parsed = parseCsv(`a;b\r\n${Array.from({ length: 300 }, () => `${long};1`).join('\r\n')}`);
+    expect(parsed.rows).toHaveLength(301);
+    expect(parsed.rows[300]).toEqual([long, '1']);
+    expect(parsed.rowNumbers.at(-1)).toBe(301);
+    expect(parsed.unterminated).toBe(false);
+  });
+
   it('accepts CRLF, LF and a lone CR as line breaks and a missing final newline', () => {
     for (const eol of ['\r\n', '\n', '\r']) {
       expect(parseCsv(`a;b${eol}c;d`).rows).toEqual([

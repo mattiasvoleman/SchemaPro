@@ -1,6 +1,7 @@
 import { blankLesson, MAX_EXCHANGE_BYTES, MAX_EXCHANGE_LESSONS, type ExchangeDocument, type ExchangeLesson, type TeacherRef } from './exchange-model';
 import { highSchoolDocument, smallSchoolDocument } from './__fixtures__/documents';
-import { decodeUntisBytes, readUntisGpu, writeUntisGpu, type UntisPeriod } from './untis-gpu';
+import { hasPersonalNumber } from './file-safety';
+import { decodeUntisBytes, listSafeChanges, readUntisGpu, writeUntisGpu, type UntisPeriod } from './untis-gpu';
 
 /**
  * The Untis GPU001/GPU002 codec. One describe per concern; the "CHOICE n"
@@ -1077,5 +1078,503 @@ describe('personnummer', () => {
 
   it('is not in the words of the notes when there is none', () => {
     expect(readUntisGpu(writeUntisGpu(highSchoolDocument())).notes.some((n) => n.includes('personnummer'))).toBe(false);
+  });
+});
+
+// ─── The review of PR #256: personnummer anywhere in a field (H1) ────────────
+
+describe('personnummer anywhere in a field', () => {
+  /** Every way the review found that a number gets past a test of the whole field. */
+  const EMBEDDED: Record<string, string> = {
+    'namn och ÅÅÅÅMMDD-NNNN': 'Anna Berg 19800101-1234',
+    'parentes (ÅÅMMDD-NNNN)': '(800101-1234)',
+    'mellanslag runt bindestrecket': '19800101 - 1234',
+    'ÅÅMMDD+NNNN i en text': 'f. 800101+1234 d.',
+    'samordningsnummer i en text': 'Sam 19800181-1234 x',
+    'tio siffror': '8001011234',
+    'tolv siffror': '198001011234',
+  };
+  const leaked = (value: unknown): boolean => /1980|8001|1234/.test(JSON.stringify(value));
+
+  const LINE_001 = ['1', '"8A"', '"ABE"', '"Matematik"', '"A101"', '1', '510', '00:45', '"Text 1"', '"Text 2"', '13:00', '14:00', '"x"', '"y"', '"z"', '"w"'];
+  const NUMERIC_001 = new Set([0, 5, 6, 7, 10, 11]);
+  const line001With = (index: number, value: string): string => {
+    const fields = [...LINE_001];
+    fields[index] = NUMERIC_001.has(index) ? value : `"${value}"`;
+    return fields.join(',');
+  };
+
+  it('has a control: the untouched line reads clean', () => {
+    const parsed = readUntisGpu({ gpu001: text(LINE_001.join(',')) });
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.lessons).toHaveLength(1);
+  });
+
+  it('skips a GPU001 line whose Unterr.-Nr., Klasse, Lehrer, Fach, Raum, Tag, Stunde or Stundenlänge holds one, in every form, and echoes nothing', () => {
+    for (const index of [0, 1, 2, 3, 4, 5, 6, 7]) {
+      for (const [form, value] of Object.entries(EMBEDDED)) {
+        const parsed = readUntisGpu({ gpu001: text(line001With(index, value), row001('2', '8A', 'ABE', 'Svenska', 'A101', '2')) });
+        expect({ index, form, problems: parsed.problems.map((p) => [p.ref, p.code]) }).toEqual({ index, form, problems: [['GPU001 rad 1', 'GPU_PERSONNUMMER_DROPPED']] });
+        expect({ index, form, lessons: parsed.lessons.map((l) => l.subject) }).toEqual({ index, form, lessons: ['Svenska'] });
+        expect({ index, form, leaked: leaked(parsed) }).toEqual({ index, form, leaked: false });
+      }
+    }
+  });
+
+  it('blanks one in a GPU001 field the reader does not read, keeps the line, counts it in the note and echoes nothing', () => {
+    for (const index of [8, 9, 10, 11, 12, 13, 14, 15]) {
+      for (const [form, value] of Object.entries(EMBEDDED)) {
+        const parsed = readUntisGpu({ gpu001: text(line001With(index, value)) });
+        expect({ index, form, problems: parsed.problems }).toEqual({ index, form, problems: [] });
+        expect({ index, form, lessons: parsed.lessons.length }).toEqual({ index, form, lessons: 1 });
+        expect({ index, form, leaked: leaked(parsed) }).toEqual({ index, form, leaked: false });
+        expect({ index, form, noted: countNotes(parsed.notes, '1 fält') }).toEqual({ index, form, noted: 1 });
+      }
+    }
+  });
+
+  it('finds one in a field that is not quoted, with spaces in it, in a semicolon file too', () => {
+    const parsed = readUntisGpu({ gpu001: '1;8A;ABE;Matematik;Rum 19800101 - 1234 ;1;510;00:45\r\n2;8A;ABE;Svenska;A101;2;510;00:45\r\n' });
+    expect(parsed.problems.map((p) => [p.ref, p.code])).toEqual([['GPU001 rad 1', 'GPU_PERSONNUMMER_DROPPED']]);
+    expect(parsed.lessons.map((l) => l.subject)).toEqual(['Svenska']);
+    expect(leaked(parsed)).toBe(false);
+  });
+
+  it('finds one that a quoted field breaks over two physical lines, since the field is tested whole', () => {
+    const parsed = readUntisGpu({ gpu001: text('1,"8A","ABE","Matematik","Rum 19800101\n-1234",1,510,00:45', row001('2', '8A', 'ABE', 'Svenska', 'A101', '2')) });
+    expect(parsed.problems.map((p) => [p.ref, p.code])).toEqual([['GPU001 rad 1', 'GPU_PERSONNUMMER_DROPPED']]);
+    expect(leaked(parsed)).toBe(false);
+  });
+
+  it('tests every one of the 45 GPU002 fields: a field the reader reads skips the row, any other is blanked and only counted', () => {
+    const readIndexes = new Set([0, 4, 5, 6, 7, 11, 14, 15, 41]);
+    const textIndexes = new Set([4, 5, 6, 7, 11, 41]);
+    const gpu001 = text(row001('1', '8A', 'ABE', 'Matematik', 'A101', '1'));
+    for (let index = 0; index < 45; index += 1) {
+      for (const [form, value] of Object.entries(EMBEDDED)) {
+        const fields = new Array<string>(45).fill('');
+        fields[0] = '1';
+        fields[4] = '"8A"';
+        fields[5] = '"ABE"';
+        fields[6] = '"Matematik"';
+        fields[11] = '"A-vecka"';
+        fields[index] = index === 0 || !textIndexes.has(index) ? value : `"${value}"`;
+        const parsed = readUntisGpu({ gpu001, gpu002: text(fields.join(',')) });
+        const where = { index, form };
+        expect({ ...where, leaked: leaked(parsed) }).toEqual({ ...where, leaked: false });
+        if (readIndexes.has(index)) {
+          expect({ ...where, codes: codes(parsed) }).toEqual({ ...where, codes: ['GPU_PERSONNUMMER_DROPPED', 'GPU_NO_GPU002_ROW'] });
+          expect({ ...where, weeks: parsed.lessons[0]!.weeks }).toEqual({ ...where, weeks: 'ALL' });
+        } else {
+          expect({ ...where, problems: parsed.problems }).toEqual({ ...where, problems: [] });
+          // The row was used: the week pattern in field 12 reached the lesson.
+          expect({ ...where, weeks: parsed.lessons[0]!.weeks }).toEqual({ ...where, weeks: 'ODD' });
+          expect({ ...where, noted: countNotes(parsed.notes, '1 fält') }).toEqual({ ...where, noted: 1 });
+        }
+      }
+    }
+  });
+
+  it('does not take an ordinary text with digits in it for one', () => {
+    for (const value of ['Sal 12 (2026-2027)', 'Rum 1234 och 5678', 'v. 34-35, 2026', 'A101 / A102 / A103', '2026-08-17 till 2026-12-18']) {
+      const parsed = readUntisGpu({ gpu001: text(`1,"8A","ABE","Matematik","${value}",1,510,00:45`) });
+      expect({ value, problems: parsed.problems }).toEqual({ value, problems: [] });
+      expect(parsed.lessons[0]!.room).toBe(value);
+    }
+  });
+
+  describe('what a message quotes of the file', () => {
+    it('is control: a number in the shape the filter does not know gets past it, which is why the message must not quote it', () => {
+      expect(hasPersonalNumber('1980.01.01-1234')).toBe(false);
+      expect(hasPersonalNumber('19800101.1234')).toBe(false);
+    });
+
+    it('quotes a short value as it is', () => {
+      const parsed = readUntisGpu({ gpu001: text('1,"8A","ABE","Matematik","A101",tisdag,510,00:45') });
+      expect(parsed.problems[0]!.message).toContain('”tisdag”');
+    });
+
+    it('quotes at most 40 characters of a value, cut with an ellipsis, on one line', () => {
+      const parsed = readUntisGpu({ gpu001: text(`1,"8A","ABE","Matematik","A101","${'x'.repeat(100)}",510,00:45`) });
+      expect(parsed.problems[0]!.message).toContain(`”${'x'.repeat(40)}…”`);
+      expect(parsed.problems[0]!.message).not.toContain('x'.repeat(41));
+    });
+
+    it('does not quote a value with ten digits or more, however they are separated, in any message that quotes the file', () => {
+      const odd = '1980.01.01-1234';
+      const grid: UntisPeriod[] = [{ number: 1, start: '08:30', end: '09:15' }];
+      const cases: Array<[string, string, ReturnType<typeof readUntisGpu>]> = [
+        ['Tag', 'GPU_BAD_DAY', readUntisGpu({ gpu001: text(`1,"8A","ABE","Matematik","A101","${odd}",510,00:45`) })],
+        ['Unterr.-Nr.', 'GPU_BAD_LESSON_NUMBER', readUntisGpu({ gpu001: text(`${odd},"8A","ABE","Matematik","A101",1,510,00:45`) })],
+        ['Stunde, minutform', 'GPU_BAD_TIME', readUntisGpu({ gpu001: text(`1,"8A","ABE","Matematik","A101",1,"${odd}",00:45`) })],
+        ['Stundenlänge', 'GPU_BAD_TIME', readUntisGpu({ gpu001: text(`1,"8A","ABE","Matematik","A101",1,510,"${odd}"`) })],
+        ['Stunde, periodform', 'GPU_BAD_PERIOD', readUntisGpu({ gpu001: text(`1,"8A","ABE","Matematik","A101",1,"${odd}",`) }, { periods: grid })],
+        [
+          'GPU002 Unt-Nummer',
+          'GPU_BAD_LESSON_NUMBER',
+          readUntisGpu({ gpu001: text(row001('1', '8A', 'ABE', 'Matematik', 'A101', '1')), gpu002: text(`${odd},,,,"8A","ABE","Matematik"`) }),
+        ],
+      ];
+      for (const [where, code, parsed] of cases) {
+        expect({ where, codes: codes(parsed).slice(0, 1) }).toEqual({ where, codes: [code] });
+        expect({ where, message: parsed.problems[0]!.message }).toEqual({ where, message: expect.stringContaining('[siffror utelämnade]') });
+        expect({ where, leaked: leaked(parsed) }).toEqual({ where, leaked: false });
+      }
+    });
+
+    it('does not quote such a value in the note on a group text that is left alone either', () => {
+      const parsed = readUntisGpu({
+        gpu001: text(row001('1', '7A', 'FAL', 'Slöjd', 'Slöjdsalen', '2')),
+        gpu002: text(row002({ 1: '1', 5: '7A', 6: 'FAL', 7: 'Slöjd', 12: 'Grupp 1980.01.01-1234' })),
+      });
+      expect(parsed.problems).toEqual([]);
+      expect(countNotes(parsed.notes, '[siffror utelämnade]')).toBe(1);
+      expect(leaked(parsed)).toBe(false);
+    });
+
+    it('sees the digits of a number that starts before the cut or after a run of blanks, and leaves a long text with digits far out alone', () => {
+      const tag = (value: string): string => readUntisGpu({ gpu001: text(`1,"8A","ABE","Matematik","A101","${value}",510,00:45`) }).problems[0]!.message;
+      expect(tag(`${'x'.repeat(35)}1980.01.01-1234`)).toContain('[siffror utelämnade]');
+      expect(tag(`x${' '.repeat(1000)}1980.01.01-1234`)).toContain('[siffror utelämnade]');
+      const farOut = tag(`${'x'.repeat(60)}1980.01.01-1234`);
+      expect(farOut).toContain(`”${'x'.repeat(40)}…”`);
+      expect(farOut).not.toMatch(/1980|1234/);
+    });
+
+    it('does quote a value with a few digits in it: a lesson number "1b" is not a secret', () => {
+      const parsed = readUntisGpu({ gpu001: text(row001('1b', '8A', 'ABE', 'Matematik', 'A101', '1')) });
+      expect(parsed.problems[0]!.message).toContain('”1b”');
+    });
+  });
+});
+
+// ─── The Gruppe field read word by word, and its cap (H4) ────────────────────
+
+describe('the Gruppe field as a week pattern (CHOICE 9)', () => {
+  const gpu001 = text(row001('1', '7A', 'FAL', 'Slöjd', 'Slöjdsalen', '2', '780', '01:20'));
+  const read = (group: string): ReturnType<typeof readUntisGpu> =>
+    readUntisGpu({ gpu001, gpu002: text(row002({ 1: '1', 5: '7A', 6: 'FAL', 7: 'Slöjd', 12: group })) });
+  const weeksFor = (group: string): string => read(group).lessons[0]!.weeks;
+
+  it.each([
+    ['Vecka-A', 'ODD'],
+    ['A - vecka', 'ODD'],
+    ['a   Woche', 'ODD'],
+    ['Week-B', 'EVEN'],
+    ['Jämn-vecka', 'EVEN'],
+    ['vecka - jämn', 'EVEN'],
+    ['  B-VECKA  ', 'EVEN'],
+    ['Ungerade-Woche', 'ODD'],
+    ['Gerade', 'EVEN'],
+    ['Alla veckor'.slice(0, 4), 'ALL'],
+  ])('reads %j as %s', (group, weeks) => {
+    expect(weeksFor(group)).toBe(weeks);
+  });
+
+  it.each(['vecka', 'Woche', 'week', 'vecka vecka', '---', '- -', 'A vecka B', 'Aa-vecka', 'vecka2', 'varje vecka', 'every week', 'G1-vecka'])(
+    'does not take %j for a pattern: every week, and the text is named in the note',
+    (group) => {
+      const parsed = read(group);
+      expect(parsed.lessons[0]!.weeks).toBe('ALL');
+      expect(parsed.problems).toEqual([]);
+      expect(countNotes(parsed.notes, 'ignoreras')).toBe(1);
+      expect(countNotes(parsed.notes, 'tolkades som veckomönster')).toBe(0);
+    },
+  );
+
+  it('reads a pattern of exactly 200 characters and treats one of 201 as a group name that is left alone', () => {
+    const padded = (length: number): string => `A${' '.repeat(length - 'A'.length - 'vecka'.length)}vecka`;
+    expect(padded(200)).toHaveLength(200);
+    expect(weeksFor(padded(200))).toBe('ODD');
+    const over = read(padded(201));
+    expect(over.lessons[0]!.weeks).toBe('ALL');
+    expect(over.problems).toEqual([]);
+    expect(countNotes(over.notes, 'ignoreras')).toBe(1);
+  });
+
+  it('treats a long text as no pattern, names its start once and quotes it short', () => {
+    const long = `Spanska steg tre ${'för åk åtta och nio, grupp A, '.repeat(20)}`;
+    expect(long.length).toBeGreaterThan(200);
+    const parsed = read(long);
+    expect(parsed.lessons[0]!.weeks).toBe('ALL');
+    expect(parsed.problems).toEqual([]);
+    const note = parsed.notes.find((n) => n.includes('ignoreras'))!;
+    expect(note).toContain(`”${long.slice(0, 40)}…”`);
+    expect(note.length).toBeLessThan(400);
+  });
+
+  it('names at most three different group texts in one note, however many rows have one', () => {
+    const rows = Array.from({ length: 300 }, (_v, i) => row002({ 1: String(i + 1), 5: '7A', 6: 'FAL', 7: 'Slöjd', 12: `Grupp ${'x'.repeat(250)} ${i}` }));
+    const lines001 = Array.from({ length: 300 }, (_v, i) => row001(String(i + 1), '7A', 'FAL', 'Slöjd', 'Slöjdsalen', '2', String(480 + i), '00:45'));
+    const parsed = readUntisGpu({ gpu001: text(...lines001), gpu002: text(...rows) });
+    expect(parsed.lessons).toHaveLength(300);
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.notes.filter((n) => n.includes('ignoreras'))).toHaveLength(1);
+    // Every long text starts the same way, so they are one distinct quote.
+    expect((parsed.notes.find((n) => n.includes('ignoreras'))!.match(/”/g) ?? []).length).toBe(2);
+  });
+});
+
+// ─── What a stranger's file may cost (H4) ────────────────────────────────────
+
+/**
+ * CPU time rather than the clock on the wall: the host these run on is shared and
+ * the wall clock counts the other processes too. The bounds are many times what
+ * the fixed reader needs (tens to a few hundred milliseconds) and far under what
+ * the unfixed one needed (2 to 44 seconds), so a loaded machine does not fail
+ * them and a regression does. Every case is the same input at several sizes, so
+ * that a change that is only less bad is caught too.
+ */
+const BOUND_MS = 1500;
+
+function cpuMillis<T>(body: () => T): { result: T; ms: number } {
+  const before = process.cpuUsage();
+  const result = body();
+  const used = process.cpuUsage(before);
+  return { result, ms: (used.user + used.system) / 1000 };
+}
+
+describe('what a stranger’s file may cost', () => {
+  const longRow002 = (n: number, group: string): string => {
+    const f = new Array<string>(45).fill('');
+    f[0] = String(n);
+    f[4] = '"7A"';
+    f[5] = '"AB"';
+    f[6] = '"Matematik"';
+    f[11] = `"${group}"`;
+    return f.join(',');
+  };
+  const lines001 = (n: number): string => Array.from({ length: n }, (_v, i) => `${i + 1},"7A","AB","Matematik","",1,${480 + (i % 100) * 5},01:00`).join('\r\n');
+  const repeated = (filler: string, length: number): string => filler.repeat(Math.max(1, Math.floor(length / filler.length)));
+
+  describe('the Gruppe field of GPU002 (200 characters is the cap)', () => {
+    const fillers = [' ', '-', ' -', '- ', 'A ', '- A', 'A-B ', 'vecka ', '-vecka', 'vecka-', ' vecka -', '1', '1 ', 'ä'];
+    for (const length of [10, 100, 200, 201, 500, 1000, 1990]) {
+      it(`300 rows whose field is each of ${fillers.length} fillers, ${length} characters long`, () => {
+        for (const filler of fillers) {
+          const gpu002 = Array.from({ length: 300 }, (_v, i) => longRow002(i + 1, repeated(filler, length))).join('\r\n');
+          const { ms, result } = cpuMillis(() => readUntisGpu({ gpu001: lines001(300), gpu002 }));
+          expect({ filler, length, tooSlow: ms >= BOUND_MS }).toEqual({ filler, length, tooSlow: false });
+          expect(result.lessons).toHaveLength(300);
+        }
+      });
+    }
+  });
+
+  describe('a GPU001 field of the longest size the reader takes (1 990 characters)', () => {
+    const fillers = ['1', '1 ', '-', ' ', '- ', ':', '1:', '0:0', ',', 'a,', '~', '12345678 ', '19800101-', '"" '];
+    const fieldNames = ['Unterr.-Nr.', 'Klasse', 'Lehrer', 'Fach', 'Raum', 'Tag', 'Stunde', 'Stundenlänge'];
+    it.each(fieldNames.map((name, index) => [name, index] as const))('%s, with each filler, 150 lines', (_name, index) => {
+      for (const filler of fillers) {
+        const long = repeated(filler, 1990).slice(0, 1990).replace(/"/g, '');
+        const lines = Array.from({ length: 150 }, (_v, i) => {
+          const fields = [String(i + 1), '"7A"', '"AB"', '"Matematik"', '"A101"', '1', '510', '00:45'];
+          fields[index] = `"${long}"`;
+          return fields.join(',');
+        });
+        const { ms, result } = cpuMillis(() => readUntisGpu({ gpu001: lines.join('\r\n') }));
+        expect({ filler, tooSlow: ms >= BOUND_MS }).toEqual({ filler, tooSlow: false });
+        expect(result.problems.length).toBeLessThanOrEqual(501);
+      }
+    });
+
+    it('all four text fields long at once, with each filler, 300 lines', () => {
+      for (const filler of fillers) {
+        const long = repeated(filler, 1990).slice(0, 1990).replace(/"/g, '');
+        const lines = Array.from({ length: 300 }, (_v, i) => `${i + 1},"${long}","${long}","${long}","${long}",1,510,00:45`);
+        const { ms } = cpuMillis(() => readUntisGpu({ gpu001: lines.join('\r\n') }));
+        expect({ filler, tooSlow: ms >= BOUND_MS }).toEqual({ filler, tooSlow: false });
+      }
+    });
+  });
+
+  describe('a GPU002 row of 45 long fields', () => {
+    it.each(['1', '1 ', '-', ' - ', '0:', 'a,', '12345678-'])('%j, 40 rows', (filler) => {
+      const long = repeated(filler, 1990).slice(0, 1990);
+      const row = Array.from({ length: 45 }, () => `"${long.replace(/"/g, '')}"`).join(',');
+      const { ms, result } = cpuMillis(() =>
+        readUntisGpu({ gpu001: text(row001('1', '7A', 'ABE', 'Matematik', 'A101', '1')), gpu002: Array.from({ length: 40 }, () => row).join('\r\n') }),
+      );
+      expect(ms).toBeLessThan(BOUND_MS);
+      expect(result.problems.length).toBeLessThanOrEqual(501);
+    });
+  });
+
+  describe('a file of as many lines as the reader takes', () => {
+    const MANY = MAX_EXCHANGE_LESSONS * 8 - 10;
+
+    it('lines of one lesson that differ only in the teacher are merged without comparing every line with every other', () => {
+      const lines = Array.from({ length: MANY }, (_v, i) => `1,"8A","T${i}","Matematik","A101",1,510,00:45`);
+      const { ms, result } = cpuMillis(() => readUntisGpu({ gpu001: lines.join('\r\n') }));
+      expect(ms).toBeLessThan(BOUND_MS);
+      expect(result.lessons).toEqual([]);
+      expect(codes(result)).toEqual(['GPU_TOO_MANY_TEACHERS']);
+    });
+
+    it('lines of one lesson that differ only in the class are merged into one lesson with all of them', () => {
+      const lines = Array.from({ length: MANY }, (_v, i) => `1,"C${i}","T","Matematik","A101",1,510,00:45`);
+      const { ms, result } = cpuMillis(() => readUntisGpu({ gpu001: lines.join('\r\n') }));
+      expect(ms).toBeLessThan(BOUND_MS);
+      expect(result.problems).toEqual([]);
+      expect(result.lessons).toHaveLength(1);
+      expect(result.lessons[0]!.extraGroups).toHaveLength(MANY - 1);
+      expect(countNotes(result.notes, 'flera klasser')).toBe(1);
+    });
+
+    it.each([[2000, 15_000], [5000, 35_000]])('%i lessons against %i GPU002 rows that all carry the same lesson number (nothing matches)', (lessons, rows) => {
+      const gpu001 = Array.from({ length: lessons }, (_v, i) => `1,"X${i}","TX${i}","S${i}","R${i}",1,510,00:45`).join('\r\n');
+      const gpu002 = Array.from({ length: rows }, (_v, i) => `1,,,,"C${i}","T${i}","Sub${i}"`).join('\r\n');
+      const { ms, result } = cpuMillis(() => readUntisGpu({ gpu001, gpu002 }));
+      expect(ms).toBeLessThan(BOUND_MS * 2);
+      expect(result.lessons).toHaveLength(lessons);
+      expect(codes(result)).toEqual(['GPU_TOO_MANY_ROWS']);
+    });
+
+    it.each([[2000, 15_000], [5000, 35_000]])('%i lessons against %i GPU002 rows that all match, and carry two different week patterns', (lessons, rows) => {
+      const gpu001 = Array.from({ length: lessons }, (_v, i) => `1,"X","TX","S","R${i}",1,510,00:45`).join('\r\n');
+      const gpu002 = Array.from({ length: rows }, (_v, i) => `1,,,,"X","TX","S",,,,,"${i % 2 === 0 ? 'A' : 'B'}-vecka"`).join('\r\n');
+      const { ms, result } = cpuMillis(() => readUntisGpu({ gpu001, gpu002 }));
+      expect(ms).toBeLessThan(BOUND_MS * 2);
+      expect(result.lessons).toHaveLength(lessons);
+      // The 500 rows that are read alternate between the weeks, so each lesson is ambiguous and says so.
+      expect(codes(result).filter((c) => c === 'GPU_AMBIGUOUS_ROW').length).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe('at most 500 GPU002 rows are read for one lesson number (CHOICE 14)', () => {
+  const gpu001 = text(row001('1', '8A', 'ABE', 'Matematik', 'A101', '1'), row001('2', '8B', 'BLU', 'Svenska', 'A102', '2'));
+  const rowsOf = (no: number, count: number, group: (i: number) => string): string[] =>
+    Array.from({ length: count }, (_v, i) => row002({ 1: String(no), 5: no === 1 ? '8A' : '8B', 6: no === 1 ? 'ABE' : 'BLU', 7: no === 1 ? 'Matematik' : 'Svenska', 12: group(i) }));
+
+  it('reads exactly 500 rows without a word', () => {
+    const parsed = readUntisGpu({ gpu001, gpu002: text(...rowsOf(1, 500, () => 'A-vecka'), ...rowsOf(2, 1, () => '')) });
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.lessons.map((l) => l.weeks)).toEqual(['ODD', 'ALL']);
+  });
+
+  it('names the number once, on the first row left out, and does not read that row or the ones after it', () => {
+    // The 501st row says B-vecka; if it were read the lesson would be ambiguous.
+    const gpu002 = text(...rowsOf(1, 500, () => 'A-vecka'), ...rowsOf(1, 20, () => 'B-vecka'), ...rowsOf(2, 1, () => 'B-vecka'));
+    const parsed = readUntisGpu({ gpu001, gpu002 });
+    expect(parsed.problems.map((p) => [p.ref, p.code])).toEqual([['GPU002 rad 501', 'GPU_TOO_MANY_ROWS']]);
+    expect(parsed.problems[0]!.message).toContain('Lektionsnummer 1');
+    expect(parsed.problems[0]!.message).toContain('500');
+    expect(parsed.lessons.map((l) => l.weeks)).toEqual(['ODD', 'EVEN']);
+  });
+
+  it('names each crowded number once', () => {
+    const gpu002 = text(...rowsOf(1, 503, () => 'A-vecka'), ...rowsOf(2, 502, () => 'B-vecka'));
+    const parsed = readUntisGpu({ gpu001, gpu002 });
+    expect(parsed.problems.map((p) => [p.ref, p.code])).toEqual([
+      ['GPU002 rad 501', 'GPU_TOO_MANY_ROWS'],
+      ['GPU002 rad 1004', 'GPU_TOO_MANY_ROWS'],
+    ]);
+  });
+});
+
+describe('the lessons are counted before GPU002 is joined (CHOICE 14, LIMITS)', () => {
+  const many = (n: number): string => text(...Array.from({ length: n }, (_v, i) => row001(String(i + 1), '8A', 'ABE', 'Matematik', 'A101', '1')));
+
+  it('refuses too many lessons with the one problem, not with a problem per lesson that has no GPU002 row', () => {
+    const parsed = readUntisGpu({ gpu001: many(MAX_EXCHANGE_LESSONS + 1), gpu002: text(row002({ 1: '1', 5: '8A', 6: 'ABE', 7: 'Matematik' })) });
+    expect(parsed.lessons).toEqual([]);
+    expect(codes(parsed)).toEqual(['GPU_TOO_MANY_LESSONS']);
+    expect(parsed.problems[0]!.message).toContain(String(MAX_EXCHANGE_LESSONS + 1));
+  });
+
+  it('counts only the lessons it would read: ones refused for their teachers do not count against the limit', () => {
+    const three = ['EST', 'FAL', 'GUS'].map((t) => row001('9999', '8A', t, 'Idrott', 'Gym', '4'));
+    const parsed = readUntisGpu({ gpu001: text(...Array.from({ length: MAX_EXCHANGE_LESSONS }, (_v, i) => row001(String(i + 1), '8A', 'ABE', 'Matematik', 'A101', '1')), ...three) });
+    expect(parsed.lessons).toHaveLength(MAX_EXCHANGE_LESSONS);
+    expect(codes(parsed)).toEqual(['GPU_TOO_MANY_TEACHERS']);
+  });
+});
+
+// ─── The writer says what it changed (LÅG-4) ─────────────────────────────────
+
+describe('listSafeChanges: names the writer had to change', () => {
+  const docWith = (lessons: ExchangeLesson[]): ExchangeDocument => ({ ...snapshotDocument(), lessons });
+  const lessonOf = (more: Partial<ExchangeLesson>): ExchangeLesson =>
+    blankLesson({ ref: '', group: '7A', subject: 'Matematik', teachers: [], room: null, day: 1, start: '08:00', end: '08:45', ...more });
+
+  it('says nothing for documents whose names are written as they are', () => {
+    expect(listSafeChanges(smallSchoolDocument())).toEqual([]);
+    expect(listSafeChanges(highSchoolDocument())).toEqual([]);
+    expect(listSafeChanges(snapshotDocument())).toEqual([]);
+    expect(listSafeChanges({ ...snapshotDocument(), lessons: [] })).toEqual([]);
+  });
+
+  it('says in Swedish, with the real names, what a signature was written as and why', () => {
+    const notes = listSafeChanges(docWith([lessonOf({ teachers: [teacher('A,B', 'Anna B', null)] })]));
+    expect(notes).toEqual([
+      'Signaturen ”A,B” skrevs som ”A B” i GPU001 och GPU002, eftersom komma och tilde skiljer namnen åt i Untis fält med flera värden.',
+    ]);
+  });
+
+  it('says it for a tilde, a class, an extra class and a room, each with its own word and files', () => {
+    const notes = listSafeChanges(
+      docWith([lessonOf({ group: '7A,x', extraGroups: ['8~B'], teachers: [teacher('C~D', 'C D', null)], room: 'Sal 1, vån 2' })]),
+    );
+    expect(notes).toEqual([
+      'Gruppen ”7A,x” skrevs som ”7A x” i GPU001 och GPU002, eftersom komma och tilde skiljer namnen åt i Untis fält med flera värden.',
+      'Gruppen ”8~B” skrevs som ”8 B” i GPU001 och GPU002, eftersom komma och tilde skiljer namnen åt i Untis fält med flera värden.',
+      'Signaturen ”C~D” skrevs som ”C D” i GPU001 och GPU002, eftersom komma och tilde skiljer namnen åt i Untis fält med flera värden.',
+      'Rummet ”Sal 1, vån 2” skrevs som ”Sal 1 vån 2” i GPU002 (Fachraum), eftersom komma och tilde skiljer namnen åt i Untis fält med flera värden.',
+    ]);
+  });
+
+  it('says it once for a name however many lessons carry it, and falls back to the teacher name like the writer does', () => {
+    const named: TeacherRef = { short: null, name: 'Nina,Nord', email: null, id: null };
+    const notes = listSafeChanges(docWith([lessonOf({ teachers: [named] }), lessonOf({ day: 2, teachers: [named, teacher('A,B', 'x', null)] }), lessonOf({ day: 3, teachers: [teacher('A,B', 'x', null)] })]));
+    expect(notes.map((n) => n.replace(/ i GPU001.*$/, ''))).toEqual(['Signaturen ”A,B” skrevs som ”A B”', 'Signaturen ”Nina,Nord” skrevs som ”Nina Nord”']);
+  });
+
+  it('is the same whatever the order of the lessons', () => {
+    const lessons = [lessonOf({ teachers: [teacher('Z,1', 'x', null)] }), lessonOf({ day: 2, teachers: [teacher('A,2', 'x', null)] }), lessonOf({ day: 3, group: '9,x' })];
+    expect(listSafeChanges(docWith([...lessons].reverse()))).toEqual(listSafeChanges(docWith(lessons)));
+  });
+
+  it('does not report a change the writer does not make: control characters and edges are cleaned, but that is not an ambiguity', () => {
+    expect(listSafeChanges(docWith([lessonOf({ group: ' 7A\n', teachers: [teacher('\tABE ', 'x', null)], room: 'A\u0000101' })]))).toEqual([]);
+  });
+
+  it('spells out five names and counts the rest in one closing sentence', () => {
+    const lessons = (n: number): ExchangeLesson[] => Array.from({ length: n }, (_v, i) => lessonOf({ day: 1 + (i % 7), teachers: [teacher(`T,${i}`, 'x', null)] }));
+    const five = listSafeChanges(docWith(lessons(5)));
+    expect(five).toHaveLength(5);
+    expect(five.every((n) => n.startsWith('Signaturen'))).toBe(true);
+    const eight = listSafeChanges(docWith(lessons(8)));
+    expect(eight).toHaveLength(6);
+    expect(eight.slice(0, 5)).toEqual(five.slice(0, 5));
+    expect(eight[5]).toBe('Ytterligare 3 namn med komma eller tilde skrevs om på samma sätt.');
+  });
+
+  it('agrees with the writer: what it reports is exactly what comes back different from a round trip', () => {
+    const doc = docWith([
+      lessonOf({ group: '7A,x', teachers: [teacher('A,B', 'x', null), teacher('CAN', 'x', null)] }),
+      lessonOf({ day: 2, group: '8A', teachers: [teacher('DNO', 'x', null)] }),
+    ]);
+    const parsed = readUntisGpu(writeUntisGpu(doc));
+    const names = new Set(parsed.lessons.flatMap((l) => [l.group, ...l.extraGroups, ...l.teachers.map((t) => t.short ?? '')]));
+    expect([...names].sort()).toEqual(['7A x', '8A', 'A B', 'CAN', 'DNO']);
+    const notes = listSafeChanges(doc);
+    expect(notes).toHaveLength(2);
+    expect(notes.join('\n')).toContain('”7A,x” skrevs som ”7A x”');
+    expect(notes.join('\n')).toContain('”A,B” skrevs som ”A B”');
+  });
+
+  it('never quotes a personnummer in a name, and cuts a long name short', () => {
+    const notes = listSafeChanges(docWith([lessonOf({ teachers: [teacher('Anna 19800101-1234,x', 'x', null)] }), lessonOf({ day: 2, group: `${'g'.repeat(100)},x` })]));
+    expect(JSON.stringify(notes)).not.toMatch(/1980|1234/);
+    expect(notes.join('\n')).toContain('[personnummer]');
+    expect(notes.join('\n')).toContain(`”${'g'.repeat(40)}…”`);
+  });
+
+  it('does not throw for a document the writer refuses, and does not change the writer’s return value', () => {
+    const bad = docWith([lessonOf({ start: '8.00', teachers: [teacher('A,B', 'x', null)] })]);
+    expect(() => writeUntisGpu(bad)).toThrow(RangeError);
+    expect(listSafeChanges(bad)).toHaveLength(1);
+    expect(Object.keys(writeUntisGpu(snapshotDocument())).sort()).toEqual(['gpu001', 'gpu002']);
   });
 });

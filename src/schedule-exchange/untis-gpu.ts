@@ -188,7 +188,12 @@
  *     as the lesson's groups when the matching GPU002 line has it, else the
  *     Class names (so GPU001 alone reads a half as its whole class, which the
  *     GPU002-missing note says). A name containing ',' or '~' cannot be told
- *     from a list; the writer replaces that character with a space.
+ *     from a list; the writer replaces that character with a space. The same goes
+ *     for a teacher signature and for a room in GPU002's Fachraum (CHOICES 6, 13).
+ *     The writer's return value is only the two files, so the change is said by a
+ *     separate pure function, `listSafeChanges(doc)`, one sentence per name changed,
+ *     for the export's notes: a school should not find "A,B" renamed "A B" by
+ *     diffing files.
  *  9. A/B weeks.  Spec: no week field in GPU001; S17 realises A/B weeks with
  *     lesson groups, S10 recognises them from group names, S8 reads GPU002
  *     field 12 as "Woche". Chosen: GPU002 field 12 (Gruppe) holds "A-vecka"
@@ -197,6 +202,9 @@
  *     gerade, with or without vecka/Woche/week, and leaves other group texts
  *     alone with a note. A school whose Gruppe means something else but is
  *     spelled "A" will see its rows read as odd weeks; the note counts them.
+ *     The text is cut at blanks and hyphens and compared word by word (no
+ *     pattern is run on it), and only up to 200 characters: a pattern is a few
+ *     words, and a longer text is a group name that is left alone, like any other.
  * 10. Term and date limits.  Spec: GPU002 fields 15 and 16, Date, YYYYMMDD;
  *     nothing on inclusivity. Chosen: first and last day of the lesson, both
  *     inclusive (MasterLesson.startDate/endDate); empty = open. The reader also
@@ -218,23 +226,49 @@
  *     class set, subject and teacher; if rows still disagree on weeks, dates or
  *     groups the first is used and GPU_AMBIGUOUS_ROW says so; a number with no
  *     GPU002 row keeps its lesson as "every week, all year" and says so
- *     (GPU_NO_GPU002_ROW).
+ *     (GPU_NO_GPU002_ROW). At most 500 GPU002 rows are read for one number; the
+ *     rest are not, and the number is named once (GPU_TOO_MANY_ROWS).
  *
  * LIMITS. The reader refuses input over MAX_EXCHANGE_BYTES (GPU_TOO_LARGE), a
  * file of more than 8 x MAX_EXCHANGE_LESSONS physical lines before tokenising it
  * (GPU_TOO_MANY_LESSONS: a lesson is a line per teacher, a foreign file may add a
  * line per class), a result of more than MAX_EXCHANGE_LESSONS lessons
- * (GPU_TOO_MANY_LESSONS), a line with a field over 2000 characters
- * (GPU_FIELD_TOO_LONG) and keeps at most 500 problems (GPU_TOO_MANY_PROBLEMS).
+ * (GPU_TOO_MANY_LESSONS, counted before GPU002 is joined), a line with a field
+ * over 2000 characters (GPU_FIELD_TOO_LONG), more than 500 GPU002 rows of one
+ * lesson number (GPU_TOO_MANY_ROWS) and keeps at most 500 problems
+ * (GPU_TOO_MANY_PROBLEMS).
  * Measured 2026-11-05 on a developer laptop: 8 MB of hostile input (short lines, one
  * giant field, quotes, bare separators) takes at most half a second to refuse; a
  * 5000-lesson file takes about 30 ms.
  *
+ * WHAT A STRANGER'S FILE MAY COST (the review of PR #256). The reader's cost must
+ * not depend on what is in a field or on how the lines relate, only on how many
+ * there are. Three things were found that did, and each is closed:
+ *  - No regular expression sees file text unless it is anchored and bounded, or
+ *    is one character class with one repeat (nothing to backtrack into). The
+ *    Gruppe field was the exception: removing "vecka" and its separators with
+ *    `[-\s]*\bvecka\b` is quadratic on a field of hyphens or blanks, and 300 rows
+ *    of 2 000 characters held the process for 2 to 3 seconds (CPU, a loaded
+ *    host). It is read in code instead and the same rows take milliseconds.
+ *  - Lines of one lesson are merged through a Set, not `includes` on the list
+ *    built so far: 39 000 lines that differ only in the teacher (or the class)
+ *    were 2.2 seconds of CPU and are 0.3.
+ *  - The join to GPU002 narrows a number's rows once per lesson, so 5 000
+ *    lessons against 35 000 rows of one number took 24 to 44 seconds of wall
+ *    time. The rows per number are capped (above) and the lessons are counted
+ *    first; the same file is 0.3 seconds of CPU.
+ *
  * NO PERSONNUMMER. No field of these files is one. Still, every field of every
- * line is checked: one that looks like a personnummer (YYMMDD or YYYYMMDD,
- * optional - or +, four digits, a possible date) is blanked before anything
- * reads it, never echoed, counted in a note, and a line whose READ field it was
- * is skipped with GPU_PERSONNUMMER_DROPPED.
+ * line is checked (file-safety `hasPersonalNumber`): one that holds a
+ * personnummer or samordningsnummer ANYWHERE in it, alone or inside longer text
+ * ("Anna Berg 19800101-1234", "(800101-1234)", "19800101 - 1234"), is blanked
+ * before anything reads it, never echoed, counted in a note, and a line whose
+ * READ field it was is skipped with GPU_PERSONNUMMER_DROPPED. A field the reader
+ * does not read is blanked too and does not skip the line. What a message quotes
+ * of the file goes through `excerpt` (redacted, at most 40 characters) and a
+ * value with ten digits or more, however they are separated, is not quoted at
+ * all, so a number written in a shape the filter does not know is still not
+ * repeated.
  */
 
 import { TextDecoder } from 'node:util';
@@ -249,10 +283,10 @@ import {
   type ExchangeDocument,
   type ExchangeLesson,
   type ParsedExchange,
-  type ReadProblem,
   type TeacherRef,
   type WeekPattern,
 } from './exchange-model';
+import { excerpt, hasPersonalNumber, MAX_QUOTE, ProblemLog } from './file-safety';
 
 /** The two DIF files the writer produces; there is deliberately no GPU011 (CHOICE 1). */
 export interface UntisFiles {
@@ -320,8 +354,26 @@ const NOTE_NO_GPU002 =
 const NOTE_GPU011 =
   'GPU011 är i Untis en stundentafel (läroplan med ämnen och minsta/största timantal), inte ett tidsraster, och används inte. Inga av Untis DIF-filer bär klockslag för perioder.';
 
-/** The most problems kept; a hostile 8 MB file of bad lines must not become 400 000 messages. */
-const MAX_PROBLEMS = 500;
+/**
+ * The most GPU002 rows read for one lesson number. A lesson is a handful of rows
+ * (a line per class and teacher); a coupled block that shares one number may be
+ * dozens. Each GPU001 lesson is joined to the rows of its number by narrowing
+ * them three times (CHOICE 14), so the cost of the join is lessons x rows per
+ * number, and a file may make both large at once: 5 000 lessons and 35 000 rows
+ * of the same number held the process for 24 to 44 seconds. With the cap the
+ * product is at most 5 000 x 500, however the file is built. Rows beyond it are
+ * not read and the number is named once (GPU_TOO_MANY_ROWS).
+ */
+const MAX_ROWS_PER_NUMBER = 500;
+
+/**
+ * The longest Gruppe text (GPU002 field 12) that is looked at as a week pattern.
+ * A pattern is a few words ("Udda vecka", "B-Woche"); a longer text is a group
+ * NAME that happens to be long, never a pattern, so it is not interpreted at all
+ * (it is named in the note about group texts that are left alone). The cap is
+ * what keeps the cost of the field independent of what a stranger put in it.
+ */
+const MAX_WEEK_FIELD_CHARS = 200;
 
 // ─── Writer ──────────────────────────────────────────────────────────────────
 
@@ -340,9 +392,63 @@ function listSafe(value: string): string {
   return cleanText(value).replace(/[,~]/g, ' ');
 }
 
+/** The text a teacher is written as, before it is made list-safe: the signature, the name as the fallback. */
+function teacherText(teacher: TeacherRef): string {
+  return teacher.short ?? teacher.name ?? '';
+}
+
 /** The signature a teacher is written as; the document gives every teacher one, the name is the fallback. */
 function teacherCode(teacher: TeacherRef): string {
-  return listSafe(teacher.short ?? teacher.name ?? '');
+  return listSafe(teacherText(teacher));
+}
+
+/** How many renamed names `listSafeChanges` spells out; the rest are counted in one closing sentence. */
+const MAX_LISTED_RENAMES = 5;
+
+/**
+ * The names `writeUntisGpu` has to change, as one Swedish sentence each, for the
+ * notes of an export (CHOICE 8). ',' and '~' separate the names in a DIF list
+ * field (classes, teachers, rooms), so a name that holds one cannot be written
+ * as it is; the writer replaces the character with a space. That is the right
+ * thing to write but a thing to say: a signature "A,B" comes back from Untis as
+ * "A B", and a school that finds a teacher renamed in its import should not have
+ * to diff the files to learn why. Nothing is said about a name that is written
+ * as it is, and the same name is said once however many lessons carry it.
+ *
+ * Pure, and deliberately NOT part of the writer's return value (callers destructure
+ * `{ gpu001, gpu002 }`): a caller that wants the notes asks for them with the same
+ * document. It never throws: a lesson the writer would refuse is simply read for
+ * its names. The order is the same for the same document, whatever the order of
+ * the lessons, as the writer's own output is.
+ */
+export function listSafeChanges(doc: ExchangeDocument): string[] {
+  type Kind = 'class' | 'teacher' | 'room';
+  const found: Record<Kind, Map<string, string>> = { class: new Map(), teacher: new Map(), room: new Map() };
+  const note = (kind: Kind, value: string): void => {
+    const written = listSafe(value);
+    if (written !== cleanText(value)) found[kind].set(cleanText(value), written);
+  };
+  for (const lesson of doc.lessons) {
+    for (const name of [lesson.group, ...lesson.extraGroups]) note('class', name);
+    for (const t of lesson.teachers) note('teacher', teacherText(t));
+    // GPU001 keeps a room as it is (it is a quoted text, not a list); only GPU002's Fachraum is a '~' list.
+    note('room', lesson.room ?? '');
+  }
+
+  const sentences: string[] = [];
+  const say = (kind: Kind, label: string, where: string): void => {
+    for (const [from, to] of [...found[kind]].sort((a, b) => compareText(a[0], b[0]))) {
+      sentences.push(
+        `${label} ${excerpt(from)} skrevs som ${excerpt(to)} i ${where}, eftersom komma och tilde skiljer namnen åt i Untis fält med flera värden.`,
+      );
+    }
+  };
+  say('class', 'Gruppen', 'GPU001 och GPU002');
+  say('teacher', 'Signaturen', 'GPU001 och GPU002');
+  say('room', 'Rummet', 'GPU002 (Fachraum)');
+  if (sentences.length <= MAX_LISTED_RENAMES) return sentences;
+  const rest = sentences.length - MAX_LISTED_RENAMES;
+  return [...sentences.slice(0, MAX_LISTED_RENAMES), `Ytterligare ${rest} namn med komma eller tilde skrevs om på samma sätt.`];
 }
 
 /** 'YYYY-MM-DD' to 'YYYYMMDD'; anything else (including null) to an empty field. */
@@ -664,24 +770,21 @@ function tokenise(text: string, separator: string): RawRecord[] {
   return records;
 }
 
-/** A personnummer by shape: [YY]YYMMDD, an optional - or +, four digits, with a possible month and day (or a samordningsnummer day, +60). */
-function looksLikePersonnummer(value: string): boolean {
-  // The shortest is ten digits; the longest, twelve digits with a hyphen and spaces around it. Most fields are not near either.
-  if (value.length < 10 || value.length > 16) return false;
-  const m = /^(?:\d{2})?(\d{2})(\d{2})(\d{2})\s?[-+]?\s?\d{4}$/.exec(value.trim());
-  if (!m) return false;
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  return month >= 1 && month <= 12 && ((day >= 1 && day <= 31) || (day >= 61 && day <= 91));
-}
-
+/**
+ * Every field of every record, tested for a personnummer or samordningsnummer
+ * anywhere in it (file-safety `hasPersonalNumber`: whole or inside longer text,
+ * with or without hyphen and spaces). A field that has one is replaced by an
+ * empty one and its index is recorded, so that nothing downstream can read,
+ * keep or quote it, and the reader decides per index whether the line is
+ * skipped (a field it reads) or only counted (a field it does not).
+ */
 function tableOf(text: string): { records: DifRecord[]; dropped: number } {
   const records: DifRecord[] = [];
   let droppedTotal = 0;
   for (const raw of tokenise(text, detectSeparator(text))) {
     const dropped: number[] = [];
     const fields = raw.fields.map((value, index) => {
-      if (!looksLikePersonnummer(value)) return value;
+      if (!hasPersonalNumber(value)) return value;
       dropped.push(index);
       droppedTotal += 1;
       return '';
@@ -695,10 +798,26 @@ function tableOf(text: string): { records: DifRecord[]; dropped: number } {
 
 const at = (fields: string[], index: number): string => fields[index] ?? '';
 
-/** A short, safe excerpt of a value for a message (never a long or multi-line text). */
+/**
+ * A value of the file as a message may show it: file-safety `excerpt` (redacted,
+ * one line, at most 40 characters, in quotation marks). One more door on top of
+ * that: a value with ten digits or more in the part that would be shown, however
+ * they are separated, is not quoted at all. `hasPersonalNumber` knows the shapes
+ * a personnummer is written in; a stranger can write one in a shape it does not
+ * know ("1980.01.01-1234"), and a field that reaches a message is by definition
+ * one the reader could not use, so it costs nothing to say "digits left out"
+ * instead of repeating them. The part looked at is the one-line text up to 12
+ * characters past where the quote is cut, so a number that straddles the cut is
+ * seen whole and not shown in half.
+ */
 function shown(value: string): string {
-  const flat = value.replace(/\s+/g, ' ').trim();
-  return `”${flat.length > 24 ? `${flat.slice(0, 24)}…` : flat}”`;
+  const visible = value.replace(/\s+/g, ' ').trim().slice(0, MAX_QUOTE + 12);
+  let digits = 0;
+  for (let i = 0; i < visible.length; i += 1) {
+    const c = visible.charCodeAt(i);
+    if (c >= 48 && c <= 57) digits += 1;
+  }
+  return digits >= 10 ? '”[siffror utelämnade]”' : excerpt(value);
 }
 
 function splitList(value: string): string[] {
@@ -737,15 +856,34 @@ function isoDate(text: string): DateResult {
   return { ok: true, value: `${m[1]}-${m[2]}-${m[3]}` };
 }
 
-/** The Gruppe field as a week pattern (CHOICE 9): null when it is some other kind of group text. */
+/** The words that say "week" and carry no pattern of their own ("A-vecka", "Gerade Woche", "Week A"). */
+const WEEK_WORDS: ReadonlySet<string> = new Set(['vecka', 'woche', 'week']);
+
+/**
+ * The Gruppe field as a week pattern (CHOICE 9): null when it is some other kind
+ * of group text.
+ *
+ * Read in code, not by pattern matching: the text is cut at blanks and hyphens,
+ * the words for "week" are dropped, and what is left must be one of the
+ * spellings `weekPatternOf` knows. An earlier version removed the week words
+ * with `[-\s]*\bvecka\b` and its mirror image; on a field of hyphens or blanks
+ * that is quadratic (the engine tries the run from every position and gives
+ * it all back each time), which made 300 rows of 2 000 characters hold the
+ * process for seconds. The one pattern left is a single character class with a
+ * single repeat, which has nothing to backtrack into, and it only ever sees at
+ * most MAX_WEEK_FIELD_CHARS characters: a longer text is not a week pattern.
+ */
 function weekPatternOfGroup(text: string): WeekPattern | null {
-  const original = text.trim().toLowerCase();
-  if (original === '') return 'ALL';
-  const stripped = original
-    .replace(/[-\s]*\b(vecka|woche|week)\b/g, '')
-    .replace(/\b(vecka|woche|week)\b[-\s]*/g, '')
-    .trim();
-  if (stripped === '') return null;
+  const trimmed = text.trim();
+  if (trimmed === '') return 'ALL';
+  if (trimmed.length > MAX_WEEK_FIELD_CHARS) return null;
+  const rest = trimmed
+    .toLowerCase()
+    .split(/[\s-]+/)
+    .filter((token) => token !== '' && !WEEK_WORDS.has(token));
+  // Nothing but week words (a bare "vecka") or nothing at all (a field of hyphens) says no pattern.
+  if (rest.length === 0) return null;
+  const stripped = rest.join(' ');
   if (stripped === 'ungerade') return 'ODD';
   if (stripped === 'gerade') return 'EVEN';
   return weekPatternOf(stripped);
@@ -775,14 +913,29 @@ interface Row002 {
   from: string | null;
   to: string | null;
   studentGroups: string[];
-}
-
-function sameSet(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((value) => b.includes(value));
+  /** Derived once per row, because the join below asks them once per row per lesson of its number. */
+  classKey: string;
+  studentKey: string;
+  teacherSet: ReadonlySet<string>;
 }
 
 function pushUnique(list: string[], value: string): void {
   if (!list.includes(value)) list.push(value);
+}
+
+/** Appends the values not yet in `list`; `seen` mirrors `list`, so merging a line is a lookup and not a scan of everything merged so far. */
+function addDistinct(list: string[], seen: Set<string>, values: readonly string[]): void {
+  for (const value of values) {
+    if (!seen.has(value)) {
+      seen.add(value);
+      list.push(value);
+    }
+  }
+}
+
+/** A set of names as one string, so that two sets are the same set exactly when their keys are equal. */
+function setKey(names: readonly string[]): string {
+  return JSON.stringify([...names].sort());
 }
 
 /**
@@ -795,19 +948,11 @@ export function readUntisGpu(
   files: { gpu001?: string; gpu002?: string; gpu011?: string },
   options: UntisReadOptions = {},
 ): ParsedExchange {
-  const problems: ReadProblem[] = [];
+  // At most MAX_PROBLEMS are kept; a hostile 8 MB file of bad lines must not become 400 000 messages.
+  const log = new ProblemLog('GPU_TOO_MANY_PROBLEMS');
   const notes: string[] = [];
-  let suppressed = 0;
-  const problem = (ref: string, code: string, message: string): void => {
-    if (problems.length < MAX_PROBLEMS) problems.push({ ref, code, message });
-    else suppressed += 1;
-  };
-  const finish = (lessons: ExchangeLesson[]): ParsedExchange => {
-    if (suppressed > 0) {
-      problems.push({ ref: '', code: 'GPU_TOO_MANY_PROBLEMS', message: `Ytterligare ${suppressed} problem visas inte.` });
-    }
-    return { lessons, problems, notes };
-  };
+  const problem = (ref: string, code: string, message: string): void => log.add(ref, code, message);
+  const finish = (lessons: ExchangeLesson[]): ParsedExchange => ({ lessons, problems: log.close(), notes });
 
   const text001 = files.gpu001 ?? '';
   const text002 = files.gpu002 ?? '';
@@ -858,6 +1003,7 @@ export function readUntisGpu(
 
   // ── GPU002 ──
   const rowsByNumber = new Map<number, Row002[]>();
+  const crowdedNumbers = new Set<number>();
   const hasGpu002 = text002.trim() !== '';
   const ignoredGroupTexts: string[] = [];
   let weekGroupRows = 0;
@@ -885,6 +1031,20 @@ export function readUntisGpu(
         problem(ref, 'GPU_BAD_LESSON_NUMBER', `Unt-Nummer (fält 1) ska vara ett heltal men är ${shown(lessonText)}; raden hoppas över.`);
         continue;
       }
+      const lessonNo = Number(lessonText);
+      const known = rowsByNumber.get(lessonNo);
+      if (known && known.length >= MAX_ROWS_PER_NUMBER) {
+        // Said once per number, on the first row left out; the rest of that number's rows are not looked at.
+        if (!crowdedNumbers.has(lessonNo)) {
+          crowdedNumbers.add(lessonNo);
+          problem(
+            ref,
+            'GPU_TOO_MANY_ROWS',
+            `Lektionsnummer ${lessonNo} har fler än ${MAX_ROWS_PER_NUMBER} rader i GPU002; de första ${MAX_ROWS_PER_NUMBER} används och resten läses inte.`,
+          );
+        }
+        continue;
+      }
       const from = isoDate(at(f, F2.from - 1));
       const to = isoDate(at(f, F2.to - 1));
       if (!from.ok || !to.ok) {
@@ -905,20 +1065,24 @@ export function readUntisGpu(
       }
       const studentGroups = splitList(at(f, F2.studentGroup - 1));
       if (studentGroups.length > 0) studentGroupRows += 1;
+      const classes = splitList(at(f, F2.klass - 1));
+      const teachers = splitList(at(f, F2.teacher - 1));
       const row: Row002 = {
         ref,
-        lessonNo: Number(lessonText),
-        classes: splitList(at(f, F2.klass - 1)),
-        teachers: splitList(at(f, F2.teacher - 1)),
+        lessonNo,
+        classes,
+        teachers,
         subject: at(f, F2.subject - 1),
         weeks,
         from: from.value,
         to: to.value,
         studentGroups,
+        classKey: setKey(classes),
+        studentKey: studentGroups.join('\u0001'),
+        teacherSet: new Set(teachers),
       };
-      const list = rowsByNumber.get(row.lessonNo);
-      if (list) list.push(row);
-      else rowsByNumber.set(row.lessonNo, [row]);
+      if (known) known.push(row);
+      else rowsByNumber.set(lessonNo, [row]);
     }
   } else {
     notes.push(NOTE_NO_GPU002);
@@ -1020,34 +1184,45 @@ export function readUntisGpu(
   }
 
   // ── Merge lines of one lesson (CHOICES 6 and 7) ──
+  // Each merged entry keeps a Set beside the list it grows: a file of 40 000 lines that differ only in the teacher
+  // (or the class) is one lesson with 40 000 names, and `includes` on a list that long, per line, took 2 seconds.
   // First the teachers: lines identical but for the teacher are one lesson.
-  const byTeacherless = new Map<string, Entry001>();
+  const byTeacherless = new Map<string, { entry: Entry001; seen: Set<string> }>();
   for (const e of entries) {
     const key = [e.lessonNo, e.classes.join('\u0001'), e.subject, e.room, e.day, e.start, e.end].join('\u0000');
     const known = byTeacherless.get(key);
     if (known) {
-      for (const teacher of e.teachers) pushUnique(known.teachers, teacher);
+      addDistinct(known.entry.teachers, known.seen, e.teachers);
     } else {
-      byTeacherless.set(key, { ...e, teachers: [...e.teachers] });
+      byTeacherless.set(key, { entry: { ...e, teachers: [...e.teachers] }, seen: new Set(e.teachers) });
     }
   }
   // Then the classes: lines identical but for the class, with the same teachers, are one lesson with several classes.
   let classLinesMerged = false;
-  const byClassless = new Map<string, Entry001>();
-  for (const e of byTeacherless.values()) {
+  const byClassless = new Map<string, { entry: Entry001; seen: Set<string> }>();
+  for (const { entry: e } of byTeacherless.values()) {
     const key = [e.lessonNo, e.subject, e.room, e.day, e.start, e.end, [...e.teachers].sort().join('\u0001')].join('\u0000');
     const known = byClassless.get(key);
     if (known) {
-      for (const klass of e.classes) pushUnique(known.classes, klass);
+      addDistinct(known.entry.classes, known.seen, e.classes);
       classLinesMerged = true;
     } else {
-      byClassless.set(key, { ...e, classes: [...e.classes] });
+      byClassless.set(key, { entry: { ...e, classes: [...e.classes] }, seen: new Set(e.classes) });
     }
+  }
+
+  // The lessons the file would make, counted BEFORE they are joined to GPU002: the join costs the number of lessons
+  // times the number of GPU002 rows that share their number, and a file that is to be refused is not paid for first.
+  let buildable = 0;
+  for (const { entry } of byClassless.values()) if (entry.teachers.length <= 2) buildable += 1;
+  if (buildable > MAX_EXCHANGE_LESSONS) {
+    problem('GPU001', 'GPU_TOO_MANY_LESSONS', `Filen innehåller ${buildable} lektioner men högst ${MAX_EXCHANGE_LESSONS} tas emot; ingen av dem har lästs in.`);
+    return finish([]);
   }
 
   // ── Resolve each entry against GPU002 and build the lessons ──
   const lessons: ExchangeLesson[] = [];
-  for (const e of byClassless.values()) {
+  for (const { entry: e } of byClassless.values()) {
     if (e.teachers.length > 2) {
       problem(e.ref, 'GPU_TOO_MANY_TEACHERS', `Lektionen har ${e.teachers.length} lärare men Rastra tar högst två (ledande lärare och en medlärare); lektionen hoppas över.`);
       continue;
@@ -1070,13 +1245,13 @@ export function readUntisGpu(
           const kept = candidates.filter(keep);
           if (kept.length > 0) candidates = kept;
         };
-        narrow((row) => sameSet(row.classes, e.classes));
+        const classKey = setKey(e.classes);
+        narrow((row) => row.classKey === classKey);
         narrow((row) => row.subject === e.subject);
-        narrow((row) => (e.teachers.length === 0 ? row.teachers.length === 0 : row.teachers.some((teacher) => e.teachers.includes(teacher))));
+        narrow((row) => (e.teachers.length === 0 ? row.teachers.length === 0 : e.teachers.some((teacher) => row.teacherSet.has(teacher))));
         const row = candidates[0]!;
         const agree = candidates.every(
-          (other) =>
-            other.weeks === row.weeks && other.from === row.from && other.to === row.to && other.studentGroups.join('\u0001') === row.studentGroups.join('\u0001'),
+          (other) => other.weeks === row.weeks && other.from === row.from && other.to === row.to && other.studentKey === row.studentKey,
         );
         if (!agree) {
           problem(
@@ -1108,11 +1283,6 @@ export function readUntisGpu(
         to,
       }),
     );
-  }
-
-  if (lessons.length > MAX_EXCHANGE_LESSONS) {
-    problem('GPU001', 'GPU_TOO_MANY_LESSONS', `Filen innehåller ${lessons.length} lektioner men högst ${MAX_EXCHANGE_LESSONS} tas emot; ingen av dem har lästs in.`);
-    return finish([]);
   }
 
   // ── Notes: what was decided and what the format could not carry, once each ──

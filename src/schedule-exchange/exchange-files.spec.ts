@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { BadRequestException } from '@nestjs/common';
 import { smallSchoolDocument, highSchoolDocument } from './__fixtures__/documents';
 import { MAX_EXCHANGE_BYTES } from './exchange-model';
@@ -16,6 +17,22 @@ describe('renderExport and readUpload', () => {
       expect(parsed.problems).toEqual([]);
       expect(parsed.lessons.map(lessonKey).sort()).toEqual(doc.lessons.map(lessonKey).sort());
     }
+  });
+
+  it('answers an xlsx export too large for the reader to take back with a 400 that says so, not a 500', () => {
+    const doc = smallSchoolDocument();
+    doc.lessons = Array.from({ length: 400 }, (_v, i) => ({ ...doc.lessons[0]!, group: `${i}-${randomBytes(15_000).toString('hex')}` }));
+    expect(() => renderExport('TABLE_XLSX', doc)).toThrow(expect.objectContaining({ response: expect.objectContaining({ code: 'EXPORT_XLSX_TOO_LARGE' }) }));
+    // The same table is fine as a CSV.
+    expect(renderExport('TABLE_CSV', doc).body.length).toBeGreaterThan(0);
+  });
+
+  it('carries the Untis writer’s notes out with the file, and none for the other formats', () => {
+    const doc = smallSchoolDocument();
+    doc.teachers = [{ short: 'A,B', name: 'Anna Berg', email: null, id: null }, ...doc.teachers];
+    doc.lessons = [{ ...doc.lessons[0]!, teachers: [doc.teachers[0]!] }, ...doc.lessons.slice(1)];
+    expect(renderExport('UNTIS_GPU', doc).notes.join(' ')).toContain('A,B');
+    for (const format of ['TABLE_CSV', 'TABLE_XLSX', 'ASC_XML'] as const) expect(renderExport(format, doc).notes).toEqual([]);
   });
 
   it('puts the Untis files in one zip, with no GPU011 (Untis writes no time grid)', () => {
@@ -71,8 +88,48 @@ describe('renderExport and readUpload', () => {
 
 describe('decodeText, fileStem and parsePeriods', () => {
   it('reads UTF-8 with or without a mark, else windows-1252', () => {
-    expect(decodeText(Buffer.from('åäö', 'utf8'))).toEqual({ text: 'åäö', legacyEncoding: false });
-    expect(decodeText(Buffer.from('åäö', 'latin1'))).toEqual({ text: 'åäö', legacyEncoding: true });
+    expect(decodeText(Buffer.from('åäö', 'utf8'))).toEqual({ text: 'åäö', legacyEncoding: false, encoding: 'utf-8' });
+    expect(decodeText(Buffer.from('åäö', 'latin1'))).toEqual({ text: 'åäö', legacyEncoding: true, encoding: 'windows-1252' });
+  });
+
+  describe('a file that is not UTF-8 (M3 of the review)', () => {
+    /** Mac Roman and windows-1252 bytes of the few characters a Swedish timetable has. */
+    const MAC: Record<string, number> = { å: 0x8c, ä: 0x8a, ö: 0x9a, Å: 0x81, Ä: 0x80, Ö: 0x85, é: 0x8e, ü: 0x9f, '–': 0xd0, '“': 0xd2, '”': 0xd3 };
+    const WIN: Record<string, number> = { å: 0xe5, ä: 0xe4, ö: 0xf6, Å: 0xc5, Ä: 0xc4, Ö: 0xd6, é: 0xe9, ü: 0xfc, '–': 0x96, '“': 0x93, '”': 0x94 };
+    const encode = (text: string, table: Record<string, number>) => Buffer.from([...text].map((c) => table[c] ?? c.charCodeAt(0)));
+
+    it('reads Mac Roman, which Excel for Mac writes, by the Swedish letters in it', () => {
+      const text = 'Klass/grupp;Ämne;Lärare\r\n7Å;Matematik;Östen\r\n';
+      expect(decodeText(encode(text, MAC))).toEqual({ text, legacyEncoding: true, encoding: 'macintosh' });
+    });
+
+    it('reads windows-1252 as ever, also when the file is written with a Mac’s kind of dash and quotes', () => {
+      const text = 'Klass/grupp;Ämne\r\n7Å;Matematik – “Östen”\r\n';
+      expect(decodeText(encode(text, WIN))).toEqual({ text, legacyEncoding: true, encoding: 'windows-1252' });
+    });
+
+    it('is not decided by typographic signs: a dash and quotation marks alone vote for neither', () => {
+      // 96 is a dash in windows-1252 and 'û' in Mac Roman; D0 an 'Ð' there and a dash here. Without a Swedish letter the guess is Excel for Windows.
+      expect(decodeText(encode('– “x”', MAC)).encoding).toBe('windows-1252');
+      // One Swedish letter outvotes any number of signs.
+      expect(decodeText(encode('“a” “b” “c” – – – ö', MAC)).encoding).toBe('macintosh');
+      expect(decodeText(encode('“a” “b” “c” – – – ö', WIN)).encoding).toBe('windows-1252');
+    });
+
+    it('reads the same file the same whether the page’s CSV reader or this one sees it', () => {
+      const text = 'Klass/grupp;Ämne;Dag;Start;Slut\r\n7A;Matematik;Mån;08:10;09:10\r\n7B;Slöjd;Tis;08:10;09:10\r\n';
+      for (const [table, name] of [[MAC, 'Mac Roman'], [WIN, 'windows-1252']] as const) {
+        const parsed = readUpload('TABLE_CSV', [{ name: 'a.csv', bytes: encode(text, table) }]);
+        expect(parsed.lessons.map((l) => [l.group, l.subject, l.day])).toEqual([['7A', 'Matematik', 1], ['7B', 'Slöjd', 2]]);
+        expect(parsed.notes.some((n) => n.includes(name))).toBe(true);
+      }
+    });
+
+    it('says which one it read, in the Untis file’s note too', () => {
+      const bytes = encode('1,"7A","ABE","Matematik","A101",1,510,"01:00"\r\n"ÅÄÖ"\r\n', MAC);
+      const parsed = readUpload('UNTIS_GPU', [{ name: 'GPU001.TXT', bytes }]);
+      expect(parsed.notes.some((n) => n.includes('Mac Roman'))).toBe(true);
+    });
   });
 
   it('makes a file name of a year name', () => {

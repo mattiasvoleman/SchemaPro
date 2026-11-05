@@ -37,13 +37,53 @@
  *   been edited by hand in one place and not the other, and the lesson is
  *   refused, naming both numbers, instead of silently trusting one of them.
  *
- * PERSONNUMMER. A column whose header says personnummer, samordningsnummer or
- * any of their usual abbreviations is dropped UNREAD: it is never parsed,
- * never stored, never echoed in a problem or a note (only the HEADER is, so
- * that the school learns the column was not taken). Rastra does not take
- * personnummer (the user's decision of 2026-11-05) and a timetable has no use
- * for one; but a file exported from a student system may carry one, and the
- * guarantee must hold for that file.
+ * PERSONNUMMER (the user's decision of 2026-11-05: Rastra reads, stores and
+ * echoes none; a timetable has no use for one, but a file exported from a
+ * student system may carry them). Two doors, because a number can arrive by
+ * its column or by a cell:
+ *
+ *   BY THE COLUMN. A column whose header says personnummer, samordningsnummer
+ *   or any of their usual abbreviations is dropped UNREAD: never parsed, never
+ *   stored, never echoed in a problem or a note (only the HEADER is named, so
+ *   that the school learns the column was not taken). A header that itself
+ *   looks like a personnummer (someone pasted the first student's number over
+ *   it) is dropped the same way and is NOT named: the note says that such a
+ *   column exists and not what it says. A number in an unread column does not
+ *   make its row unreadable: the column is not looked at.
+ *
+ *   BY THE CELL. Naming the column is not enough: a number typed into the
+ *   Lärare column, the Block column ("Anna Berg 19800101-1234") or any other
+ *   column the reader DOES read would be taken for a teacher, a block name, a
+ *   room, and end up in the database or in a message. So before anything of a
+ *   row is parsed every cell of every column the reader reads is tested with
+ *   hasPersonalNumber (file-safety.ts), and one that has the shape makes the
+ *   ROW unreadable: no lesson, ONE problem that names the columns and never
+ *   quotes a value. The test comes first, so that no later message of the row
+ *   (a bad day, a bad time) can quote the number; and `cell()` hands out only
+ *   what passed it. Period and Låst are not read (see above), so they are not
+ *   tested either.
+ *
+ *   ONE EXEMPTION: an id column (Lektions-id, Grupp-id, Ämnes-id, Lärar-id, Sal-id
+ *   and the like) whose cell is nothing but UUIDs, which is what Rastra's own
+ *   export writes there, is not taken for a number. The shape of a personnummer
+ *   is wide (ten digits that read as a date, then four more, with or without a
+ *   hyphen) and a random UUID has it by chance: 416 of 300 000 random v4 UUIDs,
+ *   one in 721, measured 2026-11-05. A school's own export holds hundreds of
+ *   them, and a group's id that happened to have the shape would have made every
+ *   lesson of the group unreadable in the file Rastra itself had written,
+ *   without the school being able to do anything about it. A personnummer that
+ *   someone typed into an id column is not UUID-shaped and is refused like any
+ *   other; so is a UUID with anything else in the cell.
+ *
+ * WHAT A MESSAGE MAY QUOTE. A cell value is quoted with excerpt(): redacted,
+ * one line, at most 40 characters. An xlsx shared string may be 32 767
+ * characters long and used by five thousand cells (the review of PR #256: one
+ * message per cell that quoted all of it was 650 million characters), so no
+ * message quotes a value whole. Problems are kept in a ProblemLog (the first
+ * 500 and one closing line that counts the rest) and a message is only BUILT
+ * while there is room for it, so a file of nothing but bad rows costs 500
+ * messages and not five thousand excerpts of 32 767 characters. Notes are one
+ * per distinct thing (a header, a kind), never one per row.
  *
  * ROW NUMBERS. A problem's `ref` is "rad N", N being the row as the user sees
  * it in Excel: the header is the row it really is on, a title above it counts.
@@ -53,7 +93,10 @@
  *
  * LIMITS. At most MAX_EXCHANGE_LESSONS rows with content; more is one problem,
  * TABLE_TOO_MANY_ROWS, and no lesson is read (a prefix of a table is a
- * different timetable, and the user should hear that before, not after).
+ * different timetable, and the user should hear that before, not after). At
+ * most MAX_PROBLEMS problems are reported; the rest are counted in a closing
+ * line (TABLE_TOO_MANY_PROBLEMS, ref ''), and the lessons that were readable
+ * are returned all the same.
  */
 
 import {
@@ -67,9 +110,9 @@ import {
   type ExchangeIds,
   type ExchangeLesson,
   type ParsedExchange,
-  type ReadProblem,
   type TeacherRef,
 } from './exchange-model';
+import { excerpt, hasPersonalNumber, MAX_PROBLEMS, ProblemLog } from './file-safety';
 
 // ---------------------------------------------------------------------------
 // The columns
@@ -153,6 +196,22 @@ export const LESSON_TABLE_HEADER_EN: readonly string[] = COLUMNS.map((column) =>
 
 /** The headers a table cannot be read without. */
 const REQUIRED: readonly ColumnKey[] = ['group', 'subject', 'day', 'start', 'end'];
+
+/** Columns the reader recognises and does not read: derived on write, ignored on read (see the head of this file). */
+const UNREAD: ReadonlySet<ColumnKey> = new Set<ColumnKey>(['period', 'locked']);
+
+/** The columns that hold ids Rastra wrote (the ids of the flat table), the only ones where UUIDs are expected. */
+const ID_COLUMNS: ReadonlySet<ColumnKey> = new Set<ColumnKey>(['lessonId', 'groupId', 'extraGroupIds', 'subjectId', 'teacherId', 'coTeacherId', 'roomId']);
+
+/** A UUID in its canonical text form, 8-4-4-4-12 hexadecimal digits, in either case: what Postgres writes (gen_random_uuid()) and what the export puts in an id cell. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** True when an id cell holds nothing but UUIDs: one, or a list of them with ' | ' (an empty place in the list is allowed). */
+const isOnlyIds = (text: string): boolean =>
+  text.split('|').every((part) => {
+    const id = part.trim();
+    return id === '' || UUID.test(id);
+  });
 
 const LABEL = new Map<ColumnKey, string>(COLUMNS.map((column) => [column.key, column.sv]));
 const label = (key: ColumnKey): string => LABEL.get(key)!;
@@ -275,8 +334,17 @@ const DAY_OF = new Map<string, number>();
   for (const name of names) DAY_OF.set(name, index + 1);
 });
 
+/**
+ * The longest text that is a day's name or a week pattern ("Wednesday",
+ * "varje vecka"), with air. A longer cell is neither, and is refused as it is:
+ * normalising a 32 767-character shared string once per row, for five thousand
+ * rows, is the cost of nothing.
+ */
+const LONGEST_WORD = 32;
+
 /** 1-7 or a day's name, Swedish or English, short or long, in any case ("Mån." too); null when it is none. */
 function dayOf(text: string): number | null {
+  if (text.length > LONGEST_WORD) return null;
   const key = text
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -326,20 +394,67 @@ function listOf(items: string[]): string {
 
 const orNull = (text: string): string | null => (text === '' ? null : text);
 
+/** The most headers one note names; the rest are counted. A CSV header row may have any number of columns. */
+const MAX_NAMED = 10;
+
+/**
+ * A header as a note names it: redacted, one line and at most 40 characters
+ * like a quoted value (excerpt), but without the quotation marks, which a name
+ * does not have. (A header that has the shape of a personnummer never gets
+ * here: recognise() does not name it.)
+ */
+const named = (header: string): string => excerpt(header).slice(1, -1);
+
+/** "A, B och C" of at most MAX_NAMED names, then "A, B, … och 90 till". */
+function namedList(headers: string[]): string {
+  if (headers.length <= MAX_NAMED) return listOf(headers.map(named));
+  return `${headers.slice(0, MAX_NAMED).map(named).join(', ')} och ${headers.length - MAX_NAMED} till`;
+}
+
+/** The texts at least this long are asked once, not once per cell: see numberTest. */
+const REMEMBERED_FROM = 64;
+
+/**
+ * hasPersonalNumber for the cells of ONE table, remembering the answer for a
+ * long text. An xlsx cell is a reference to a shared string, so five thousand
+ * cells can hold the same 32 767 characters and a test that scanned them for
+ * each cell would scan 160 million characters for one string. The memory is
+ * keyed by the text itself, lives for one call, and holds only the strings the
+ * file already holds.
+ */
+function numberTest(): (text: string) => boolean {
+  const answers = new Map<string, boolean>();
+  return (text) => {
+    if (text.length < REMEMBERED_FROM) return hasPersonalNumber(text);
+    let answer = answers.get(text);
+    if (answer === undefined) {
+      answer = hasPersonalNumber(text);
+      answers.set(text, answer);
+    }
+    return answer;
+  };
+}
+
 interface Recognised {
   columns: Partial<Record<ColumnKey, number>>;
-  /** Headers of a personal-number column: dropped unread. */
+  /** Headers of a personal-number column (the header SAYS personnummer): dropped unread, named. */
   personal: string[];
+  /** How many columns have a header that IS a personnummer: dropped unread, never named. */
+  numbered: number;
   unknown: string[];
   duplicated: string[];
 }
 
 /** Which column is which, by the headers in one row. */
-function recognise(cells: string[]): Recognised {
-  const result: Recognised = { columns: {}, personal: [], unknown: [], duplicated: [] };
+function recognise(cells: string[], hasNumber: (text: string) => boolean): Recognised {
+  const result: Recognised = { columns: {}, personal: [], numbered: 0, unknown: [], duplicated: [] };
   cells.forEach((cell, index) => {
     const header = cell.trim();
     if (header === '') return;
+    if (hasNumber(header)) {
+      result.numbered += 1;
+      return;
+    }
     const normalized = normalizeHeader(header);
     if (isPersonalNumberHeader(normalized)) {
       result.personal.push(header);
@@ -369,16 +484,17 @@ const isEmptyRow = (row: string[] | undefined): boolean => row === undefined || 
  */
 export function tableToLessons(rows: string[][], rowNumbers?: number[]): ParsedExchange {
   const lessons: ExchangeLesson[] = [];
-  const problems: ReadProblem[] = [];
+  const log = new ProblemLog('TABLE_TOO_MANY_PROBLEMS');
   const notes: string[] = [];
   const refOf = (index: number): string => `rad ${rowNumbers?.[index] ?? index + 1}`;
+  const hasNumber = numberTest();
 
   // 1. The header row.
   let headerIndex = -1;
   let found: Recognised | null = null;
   let best: { index: number; count: number; columns: Recognised['columns'] } = { index: -1, count: 0, columns: {} };
   for (let index = 0; index < Math.min(rows.length, HEADER_SEARCH_ROWS) && found === null; index += 1) {
-    const candidate = recognise(rows[index]!);
+    const candidate = recognise(rows[index]!, hasNumber);
     const count = REQUIRED.length - missingOf(candidate.columns).length;
     if (count === REQUIRED.length) {
       found = candidate;
@@ -390,29 +506,37 @@ export function tableToLessons(rows: string[][], rowNumbers?: number[]): ParsedE
   if (found === null) {
     const missing = missingOf(best.columns).map(label);
     const what = missing.length === 1 ? `Kolumnen ${missing[0]} saknas` : `Kolumnerna ${listOf(missing)} saknas`;
-    problems.push({
-      ref: refOf(Math.max(best.index, 0)),
-      code: 'TABLE_MISSING_COLUMN',
-      message: `${what} i tabellen. Rubrikraden ska ha ${listOf(REQUIRED.map(label))}.`,
-    });
-    return { lessons, problems, notes };
+    log.add(refOf(Math.max(best.index, 0)), 'TABLE_MISSING_COLUMN', `${what} i tabellen. Rubrikraden ska ha ${listOf(REQUIRED.map(label))}.`);
+    return { lessons, problems: log.close(), notes };
   }
   const { columns } = found;
 
-  // What was left unread, said once each.
-  for (const header of found.personal) notes.push(`Kolumnen ${header} lästes inte: Rastra tar inte emot personnummer.`);
+  // What was left unread, said once each: a note per distinct thing, never one per column of a very wide header row.
+  const personal = [...new Set(found.personal)];
+  for (const header of personal.slice(0, MAX_NAMED)) notes.push(`Kolumnen ${named(header)} lästes inte: Rastra tar inte emot personnummer.`);
+  if (personal.length > MAX_NAMED) {
+    notes.push(`${personal.length - MAX_NAMED} kolumner till vars rubrik säger personnummer lästes inte: Rastra tar inte emot personnummer.`);
+  }
+  if (found.numbered > 0) {
+    // Not named: the header IS the number.
+    notes.push(
+      found.numbered === 1
+        ? 'En kolumn vars rubrik liknar ett personnummer lästes inte: Rastra tar inte emot personnummer.'
+        : `${found.numbered} kolumner vars rubriker liknar personnummer lästes inte: Rastra tar inte emot personnummer.`,
+    );
+  }
   if (found.unknown.length > 0) {
     notes.push(
       found.unknown.length === 1
-        ? `Kolumnen ${found.unknown[0]} lästes inte: Rastra känner inte igen rubriken.`
-        : `Kolumnerna ${listOf(found.unknown)} lästes inte: Rastra känner inte igen rubrikerna.`,
+        ? `Kolumnen ${named(found.unknown[0]!)} lästes inte: Rastra känner inte igen rubriken.`
+        : `Kolumnerna ${namedList(found.unknown)} lästes inte: Rastra känner inte igen rubrikerna.`,
     );
   }
   if (found.duplicated.length > 0) {
     notes.push(
       found.duplicated.length === 1
-        ? `Kolumnen ${found.duplicated[0]} finns flera gånger; den första används.`
-        : `Kolumnerna ${listOf(found.duplicated)} finns flera gånger; den första av varje används.`,
+        ? `Kolumnen ${named(found.duplicated[0]!)} finns flera gånger; den första används.`
+        : `Kolumnerna ${namedList(found.duplicated)} finns flera gånger; den första av varje används.`,
     );
   }
 
@@ -422,58 +546,79 @@ export function tableToLessons(rows: string[][], rowNumbers?: number[]): ParsedE
     if (!isEmptyRow(rows[index])) dataRows.push(index);
   }
   if (dataRows.length > MAX_EXCHANGE_LESSONS) {
-    problems.push({
-      ref: refOf(dataRows[MAX_EXCHANGE_LESSONS]!),
-      code: 'TABLE_TOO_MANY_ROWS',
-      message: `Tabellen har ${dataRows.length} rader med innehåll; högst ${MAX_EXCHANGE_LESSONS} lektioner tas emot åt gången. Dela tabellen i flera filer.`,
-    });
-    return { lessons, problems, notes };
+    log.add(
+      refOf(dataRows[MAX_EXCHANGE_LESSONS]!),
+      'TABLE_TOO_MANY_ROWS',
+      `Tabellen har ${dataRows.length} rader med innehåll; högst ${MAX_EXCHANGE_LESSONS} lektioner tas emot åt gången. Dela tabellen i flera filer.`,
+    );
+    return { lessons, problems: log.close(), notes };
   }
 
   // 3. One lesson per row.
+  const readKeys = COLUMNS.map((column) => column.key).filter((key) => columns[key] !== undefined && !UNREAD.has(key));
   for (const index of dataRows) {
     const row = rows[index]!;
     const ref = refOf(index);
-    const cell = (key: ColumnKey): string => {
-      const at = columns[key];
-      return at === undefined ? '' : (row[at] ?? '').trim();
-    };
-    const rowProblems: ReadProblem[] = [];
-    const bad = (code: string, message: string): void => {
-      rowProblems.push({ ref, code, message });
+
+    // The personnummer door comes first, before anything of the row is parsed,
+    // so that no message below can quote what it found.
+    const values: Partial<Record<ColumnKey, string>> = {};
+    const numbered: ColumnKey[] = [];
+    for (const key of readKeys) {
+      const text = (row[columns[key]!] ?? '').trim();
+      values[key] = text;
+      // isOnlyIds is asked only of the rare text that has the shape: see ONE EXEMPTION at the head of this file.
+      if (hasNumber(text) && !(ID_COLUMNS.has(key) && isOnlyIds(text))) numbered.push(key);
+    }
+    if (numbered.length > 0) {
+      log.add(
+        ref,
+        'TABLE_PERSONAL_NUMBER',
+        `${numbered.length === 1 ? 'Kolumnen' : 'Kolumnerna'} ${listOf(numbered.map(label))} innehåller något som liknar ett personnummer; raden läses inte. Rastra tar inte emot personnummer.`,
+      );
+      continue;
+    }
+
+    /** What the row holds in a column the reader reads; only what passed the test above. */
+    const cell = (key: ColumnKey): string => values[key] ?? '';
+    // A message is built only while there is room for it (see the head of this file).
+    let bads = 0;
+    const bad = (code: string, message: () => string): void => {
+      bads += 1;
+      log.add(ref, code, log.size < MAX_PROBLEMS ? message() : '');
     };
 
     const group = cell('group');
     const subject = cell('subject');
     const missing = REQUIRED.filter((key) => cell(key) === '').map(label);
     if (missing.length > 0) {
-      bad('TABLE_MISSING_VALUE', `Värde saknas i ${missing.length === 1 ? 'kolumnen' : 'kolumnerna'} ${listOf(missing)}.`);
+      bad('TABLE_MISSING_VALUE', () => `Värde saknas i ${missing.length === 1 ? 'kolumnen' : 'kolumnerna'} ${listOf(missing)}.`);
     }
 
     const dayText = cell('day');
     const day = dayText === '' ? null : dayOf(dayText);
     if (dayText !== '' && day === null) {
-      bad('TABLE_BAD_DAY', `Dagen "${dayText}" går inte att läsa. Skriv Mån, Tis, Ons, Tors, Fre, Lör, Sön eller 1–7.`);
+      bad('TABLE_BAD_DAY', () => `Dagen ${excerpt(dayText)} går inte att läsa. Skriv Mån, Tis, Ons, Tors, Fre, Lör, Sön eller 1–7.`);
     }
 
     const startText = cell('start');
     const endText = cell('end');
     const start = startText === '' ? null : clockOf(startText);
     const end = endText === '' ? null : clockOf(endText);
-    if (startText !== '' && start === null) bad('TABLE_BAD_TIME', `Starttiden "${startText}" går inte att läsa som klockslag (HH:MM).`);
-    if (endText !== '' && end === null) bad('TABLE_BAD_TIME', `Sluttiden "${endText}" går inte att läsa som klockslag (HH:MM).`);
+    if (startText !== '' && start === null) bad('TABLE_BAD_TIME', () => `Starttiden ${excerpt(startText)} går inte att läsa som klockslag (HH:MM).`);
+    if (endText !== '' && end === null) bad('TABLE_BAD_TIME', () => `Sluttiden ${excerpt(endText)} går inte att läsa som klockslag (HH:MM).`);
     let minutes: number | null = null;
     if (start !== null && end !== null) {
       minutes = minutesOfClock(end)! - minutesOfClock(start)!;
       if (minutes <= 0) {
-        bad('TABLE_BAD_TIME', `Sluttiden ${end} är inte efter starttiden ${start}.`);
+        bad('TABLE_BAD_TIME', () => `Sluttiden ${end} är inte efter starttiden ${start}.`);
       } else {
         const lengthText = cell('length');
         const length = Number(lengthText.replace(',', '.'));
         if (lengthText !== '' && length !== minutes) {
           bad(
             'TABLE_LENGTH_MISMATCH',
-            `Längden "${lengthText}" stämmer inte med start ${start} och slut ${end}, som är ${minutes} minuter. Rätta längden eller tiderna.`,
+            () => `Längden ${excerpt(lengthText)} stämmer inte med start ${start} och slut ${end}, som är ${minutes} minuter. Rätta längden eller tiderna.`,
           );
         }
       }
@@ -485,16 +630,17 @@ export function tableToLessons(rows: string[][], rowNumbers?: number[]): ParsedE
       if (text === '') continue;
       dates[key] = isoDateOf(text);
       if (dates[key] === null) {
-        bad('TABLE_BAD_DATE', `Datumet "${text}" i kolumnen ${label(key)} går inte att läsa. Skriv ÅÅÅÅ-MM-DD.`);
+        bad('TABLE_BAD_DATE', () => `Datumet ${excerpt(text)} i kolumnen ${label(key)} går inte att läsa. Skriv ÅÅÅÅ-MM-DD.`);
       }
     }
     if (dates.from !== null && dates.to !== null && dates.from > dates.to) {
-      bad('TABLE_BAD_DATE', `Perioden börjar ${dates.from}, efter att den slutar ${dates.to}.`);
+      bad('TABLE_BAD_DATE', () => `Perioden börjar ${dates.from}, efter att den slutar ${dates.to}.`);
     }
 
-    const weeks = weekPatternOf(cell('weeks'));
+    const weeksText = cell('weeks');
+    const weeks = weeksText.length > LONGEST_WORD ? null : weekPatternOf(weeksText);
     if (weeks === null) {
-      bad('TABLE_BAD_WEEKS', `Veckomönstret "${cell('weeks')}" går inte att läsa. Skriv A (udda veckor), B (jämna veckor) eller lämna tomt.`);
+      bad('TABLE_BAD_WEEKS', () => `Veckomönstret ${excerpt(weeksText)} går inte att läsa. Skriv A (udda veckor), B (jämna veckor) eller lämna tomt.`);
     }
 
     const person = (short: ColumnKey, name: ColumnKey, email: ColumnKey, id: ColumnKey): TeacherRef | null => {
@@ -504,13 +650,10 @@ export function tableToLessons(rows: string[][], rowNumbers?: number[]): ParsedE
     const lead = person('teacher', 'teacherName', 'teacherEmail', 'teacherId');
     const co = person('coTeacher', 'coTeacherName', 'coTeacherEmail', 'coTeacherId');
     if (co !== null && lead === null) {
-      bad('TABLE_CO_WITHOUT_LEAD', 'Det finns en medlärare men ingen lärare. Flytta medläraren till kolumnen Lärare.');
+      bad('TABLE_CO_WITHOUT_LEAD', () => 'Det finns en medlärare men ingen lärare. Flytta medläraren till kolumnen Lärare.');
     }
 
-    if (rowProblems.length > 0) {
-      problems.push(...rowProblems);
-      continue;
-    }
+    if (bads > 0) continue;
 
     // The extra groups and their ids: both lists split on '|'; the ids are kept
     // at the position of their name, so a name dropped as empty or repeated
@@ -559,5 +702,5 @@ export function tableToLessons(rows: string[][], rowNumbers?: number[]): ParsedE
       }),
     );
   }
-  return { lessons, problems, notes };
+  return { lessons, problems: log.close(), notes };
 }
