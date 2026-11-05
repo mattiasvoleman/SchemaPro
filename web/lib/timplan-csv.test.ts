@@ -44,7 +44,7 @@ describe("mapTimplanRows: a lokal timplan file to ImportTimplanRowDto rows", () 
     expect(errors[0]!.message).toContain("arskurs");
   });
 
-  it("gives one error per bad row, numbered as the API numbers rows, and maps the rest", () => {
+  it("gives one error per bad row, numbered as Excel numbers rows, and maps the rest", () => {
     const { rows, errors } = mapTimplanRows(
       file(
         "amne;arskurs;minuter_per_vecka",
@@ -62,7 +62,7 @@ describe("mapTimplanRows: a lokal timplan file to ImportTimplanRowDto rows", () 
       [1, 60],
       [6, 0],
     ]);
-    expect(errors.map((error) => error.row)).toEqual([2, 3, 4, 5, 6, 7]);
+    expect(errors.map((error) => error.row)).toEqual([3, 4, 5, 6, 7, 8]);
     expect(errors[1]!.message).toContain('"12"');
   });
 

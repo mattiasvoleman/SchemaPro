@@ -34,6 +34,7 @@
 
 import type { ParsedCsv, RowError } from "@/lib/csv";
 import { normalizeHeader, serializeCsv } from "@/lib/csv-export";
+import { readNumber } from "@/lib/csv-number";
 import { inGradeSpan, type GradeSpan } from "@/lib/timplan-coverage";
 import type { TimplanImportRow } from "@/lib/timplan-queries";
 
@@ -95,6 +96,8 @@ export function formatTimplanGrade(grade: number): string {
 export function mapTimplanRows(parsed: ParsedCsv): {
   rows: TimplanImportRow[];
   errors: RowError[];
+  /** The file row of each entry of `rows`, posted so the gateway names the same rows. */
+  rowNumbers: number[];
   columns: TimplanFileColumn[];
 } {
   const normalized = parsed.headers.map(normalizeHeader);
@@ -116,6 +119,7 @@ export function mapTimplanRows(parsed: ParsedCsv): {
             .join(", ")}. Ladda ner mallen och utgå från den.`,
         },
       ],
+      rowNumbers: [],
       columns: [],
     };
   }
@@ -128,6 +132,7 @@ export function mapTimplanRows(parsed: ParsedCsv): {
           message: `Filen har ${parsed.rows.length} rader. En timplan rymmer högst ${TIMPLAN_MAX_ROWS} — en rad per ämne och årskurs.`,
         },
       ],
+      rowNumbers: [],
       columns: [],
     };
   }
@@ -136,10 +141,12 @@ export function mapTimplanRows(parsed: ParsedCsv): {
     columnOf.has(field),
   );
   const rows: TimplanImportRow[] = [];
+  const rowNumbers: number[] = [];
   const errors: RowError[] = [];
 
   parsed.rows.forEach((raw, index) => {
-    const rowNumber = index + 1;
+    // The row in the file as Excel numbers it, as lib/csv.ts reads every file.
+    const rowNumber = parsed.rowNumbers?.[index] ?? index + 2;
     const cell = (field: TimplanFileColumn): string => {
       const column = columnOf.get(field);
       return column === undefined ? "" : raw[column].trim();
@@ -151,6 +158,14 @@ export function mapTimplanRows(parsed: ParsedCsv): {
 
     const subject = cell("subject");
     if (subject === "") return fail(`Rad ${rowNumber}: amne saknas.`);
+    // ImportTimplanRowDto's @MaxLength(120), in code points: the page this
+    // module ships with is near its budget, and the one difference from the
+    // DTO's count (lib/csv-cell-rules.ts), an emoji's variation selector, is
+    // not in a subject's name.
+    const length = [...subject].length;
+    if (length > 120) {
+      return fail(`Rad ${rowNumber}: amne är ${length} tecken lång, men får vara högst 120.`);
+    }
 
     const rawGrade = cell("gradeLevel");
     const gradeLevel = parseTimplanGrade(rawGrade);
@@ -159,13 +174,8 @@ export function mapTimplanRows(parsed: ParsedCsv): {
     }
 
     const rawMinutes = cell("minutesPerWeek");
-    const minutesPerWeek = Number(rawMinutes);
-    if (
-      rawMinutes === "" ||
-      !Number.isInteger(minutesPerWeek) ||
-      minutesPerWeek < 0 ||
-      minutesPerWeek > 1200
-    ) {
+    const minutesPerWeek = readNumber(rawMinutes);
+    if (minutesPerWeek === null || minutesPerWeek > 1200) {
       return fail(
         `Rad ${rowNumber}: minuter_per_vecka "${rawMinutes}" är inte ett heltal mellan 0 och 1200.`,
       );
@@ -174,15 +184,17 @@ export function mapTimplanRows(parsed: ParsedCsv): {
     const row: TimplanImportRow = { subject, gradeLevel, minutesPerWeek };
     if (columnOf.has("note")) {
       const note = cell("note");
-      if (note.length > 500) {
+      // Code points, as the DTO's @MaxCodePoints(500) and the column count.
+      if ([...note].length > 500) {
         return fail(`Rad ${rowNumber}: notering är längre än 500 tecken.`);
       }
       row.note = note;
     }
     rows.push(row);
+    rowNumbers.push(rowNumber);
   });
 
-  return { rows, errors, columns };
+  return { rows, errors, rowNumbers, columns };
 }
 
 /**
