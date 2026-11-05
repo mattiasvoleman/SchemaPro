@@ -32,8 +32,36 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  *
  * PROTECTED IDENTITY. Every change touching a person whose securityMarking
  * (on Person or on a PersonReference) is not "Ingen" is deselected and never
- * auto-applied; the flag goes with the run's minimisation and is never
- * stored on the person.
+ * auto-applied; the flag goes with the run's minimisation. What is kept is
+ * the school's mark that the person is protected (PersonProtections,
+ * 20270107090000), never which protection, and the diff keeps it as the
+ * register has it:
+ *  - a person the register marks and the sync has not (an administrator's
+ *    own mark is a row of its own): PROTECTION ADD, selected and automatic,
+ *    since it only keeps the person out of files. That is the linked person,
+ *    or the one local row the run matches by address and proposes to LINK or
+ *    RELINK (after.byAddress), whether or not the link is made: a person
+ *    typed in by hand, read from a file or imported before the register
+ *    protected them is marked by the first run that finds them. By address
+ *    it is automatic only when the names agree too, loosely (namesAgree:
+ *    accents, hyphens, order and a call name do not part them); else, and
+ *    for each of two rows sharing the address, it is proposed deselected
+ *    with a code (PROTECTION_ADDRESS_NAME_DIFFERS,
+ *    PROTECTION_ADDRESS_AMBIGUOUS), since addresses are reused. Such a
+ *    proposal holds the night's run for an administrator, as a selected
+ *    change does (ss12000-sync.service.ts, autoApply). It names the
+ *    person in its after alone (the minimisation nulls it): externalId and
+ *    localId stay empty, so a finished run says how many marks it set, never
+ *    whose. A person this apply creates, links or relinks is marked by the
+ *    apply with that change too (apply.ts);
+ *  - a mark the sync wrote (source SS12000), for a linked person a FULL run
+ *    reads as "Ingen" wherever it names them and as nothing else, or for an
+ *    unlinked row no protected source person reaches by address any more
+ *    (PROTECTION_ADDRESS_NO_LONGER_MATCHES): PROTECTION END, deselected and
+ *    never automatic, so the defaults never lift a protection. An absent
+ *    marking is not "Ingen", an INCREMENTAL run may not read the record (a
+ *    child's) that still marks the person, and an administrator's mark is
+ *    theirs: the sync lifts only its own row.
  *
  * DEACTIVATE, of a linked person only: a FULL run that no longer finds them
  * (a pupil not returned by the enrolment fetch, staff with no active duty, a
@@ -87,7 +115,15 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  */
 
 export type LocalRole = 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN' | 'GUARDIAN';
-export type ChangeEntity = 'PERSON' | 'GROUP' | 'CLASS_MEMBERSHIP' | 'GROUP_MEMBERSHIP' | 'RESPONSIBLE' | 'DUTY_LINK' | 'ORGANISATION';
+export type ChangeEntity =
+  | 'PERSON'
+  | 'GROUP'
+  | 'CLASS_MEMBERSHIP'
+  | 'GROUP_MEMBERSHIP'
+  | 'RESPONSIBLE'
+  | 'DUTY_LINK'
+  | 'ORGANISATION'
+  | 'PROTECTION';
 export type ChangeOp = 'CREATE' | 'LINK' | 'RELINK' | 'UPDATE' | 'MOVE' | 'DEACTIVATE' | 'REACTIVATE' | 'ADD' | 'END' | 'CONFLICT' | 'INFO';
 
 export interface LocalUser {
@@ -156,6 +192,8 @@ export interface LocalSlice {
   years: LocalYear[];
   /** The school's skolenheter; absent in a slice read before they existed (treated as none). */
   units?: LocalUnit[];
+  /** The marks of a protected identity (PersonProtections); absent is none. */
+  protections?: Array<{ userId: string; source: 'SS12000' | 'MANUAL' }>;
   lastAppliedAt: Date | null;
 }
 
@@ -220,6 +258,42 @@ export function pickEmail(person: S1Person, role: LocalRole): string | null {
   const fallback = role === 'GUARDIAN' ? undefined : person.eduPersonPrincipalNames[0];
   const chosen = (typed ?? fallback ?? '').trim().toLowerCase();
   return EMAIL.test(chosen) && chosen.length <= 254 ? chosen : null;
+}
+
+/**
+ * A name's parts as the marking of a protected identity compares them:
+ * compatibility forms taken apart (a ligature, a non-breaking space), accents
+ * and zero-width characters dropped, apostrophes dropped, ß as ss, case
+ * folded, and split at anything not a letter or digit (a space, a hyphen).
+ * "José García" and "Jose Garcia", "Anna-Lena" and "anna lena" give the
+ * same parts.
+ */
+function nameParts(value: string | null | undefined): Set<string> {
+  const folded = (value ?? '')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\p{Cf}/gu, '')
+    .replace(/['\u2019\u02BC`]/g, '')
+    .toLocaleLowerCase('sv')
+    .replace(/ß/g, 'ss');
+  return new Set(folded.split(/[^\p{L}\p{N}]+/u).filter((part) => part.length > 0));
+}
+
+const overlaps = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean => [...a].some((part) => b.has(part));
+
+/**
+ * Whether a local row's name agrees with a protected source person's, for a
+ * mark matched on the address (review of #263, N2). Missing a protected
+ * person keeps them in the files, which weighs more than marking one too
+ * many, so it is loose: one given name in common (the register's given and
+ * middle names against the row's first names, so a call name agrees with all
+ * given names) and one family name part in common (a double surname with a
+ * hyphen or in another order, or half of it). Another given name, a nickname
+ * or a typo still differs: the mark is then proposed for a decision.
+ */
+function namesAgree(local: { firstName: string; lastName: string }, person: S1Person): boolean {
+  const given = new Set([...nameParts(person.givenName), ...nameParts(person.middleName)]);
+  return overlaps(nameParts(local.firstName), given) && overlaps(nameParts(local.lastName), nameParts(person.familyName));
 }
 
 function dutyClass(roles: DutyRole[]): 'TEACHING' | 'REVIEW' | 'NON_TEACHING' {
@@ -314,11 +388,16 @@ export function computeDiff(input: DiffInput): DiffResult {
 
   const guardianOf = new Map<string, Array<{ pupilId: string; relationType: string | null }>>();
   const protectedIds = new Set<string>();
+  // Wherever the source says "Ingen" in so many words: the one ground for
+  // lifting a mark (PROTECTION END), and only with nothing in protectedIds.
+  const saidIngen = new Set<string>();
   for (const person of persons.values()) {
     if (isProtected(person.securityMarking)) protectedIds.add(person.id);
+    if (person.securityMarking === 'Ingen') saidIngen.add(person.id);
     if (!activePupils.has(person.id)) continue;
     for (const responsible of person.responsibles) {
       if (isProtected(responsible.securityMarking)) protectedIds.add(responsible.personId);
+      if (responsible.securityMarking === 'Ingen') saidIngen.add(responsible.personId);
       guardianOf.set(responsible.personId, [
         ...(guardianOf.get(responsible.personId) ?? []),
         { pupilId: person.id, relationType: responsible.relationType },
@@ -326,7 +405,10 @@ export function computeDiff(input: DiffInput): DiffResult {
     }
   }
   for (const group of roster.groups) {
-    for (const membership of group.memberships) if (isProtected(membership.personSecurityMarking)) protectedIds.add(membership.personId);
+    for (const membership of group.memberships) {
+      if (isProtected(membership.personSecurityMarking)) protectedIds.add(membership.personId);
+      if (membership.personSecurityMarking === 'Ingen') saidIngen.add(membership.personId);
+    }
   }
 
   const deletedPersons = new Set(roster.deleted?.persons ?? []);
@@ -370,6 +452,10 @@ export function computeDiff(input: DiffInput): DiffResult {
   // Persons: create, link, update, reactivate
   // ---------------------------------------------------------------------
   const plans = new Map<string, Plan>();
+  // A protected source person the run matches by address to a local row it
+  // does not link (yet): the mark's ground (see PROTECTED IDENTITY above).
+  const addressMatches = new Map<string, { localId: string; email: string; namesAgree: boolean }>();
+  const ambiguousMatches = new Map<string, { localIds: string[]; email: string }>();
   for (const user of local.users) if (user.ss12000Id) plans.set(user.ss12000Id, { localId: user.id, role: user.role, linked: true });
 
   const inScope = [...persons.values()]
@@ -473,6 +559,7 @@ export function computeDiff(input: DiffInput): DiffResult {
       }
       if (matches.length > 1 || (claims.get(email) ?? 0) > 1) {
         note('PERSON', 'CONFLICT', 'PERSON_AMBIGUOUS_MATCH', person.id, null, { email, role: primary, ...display }, isProt);
+        if (isProt) ambiguousMatches.set(person.id, { localIds: matches.map((u) => u.id), email });
         continue;
       }
       const match = matches[0]!;
@@ -481,6 +568,7 @@ export function computeDiff(input: DiffInput): DiffResult {
         note('PERSON', 'CONFLICT', 'PERSON_ROLE_MISMATCH', person.id, match.id, { email, role: primary, localRole: match.role, ...display }, isProt);
         continue;
       }
+      if (isProt) addressMatches.set(person.id, { localId: match.id, email, namesAgree: namesAgree(match, person) });
       if (!match.isActive) {
         push({
           entity: 'PERSON', op: 'RELINK', externalId: person.id, localId: match.id,
@@ -880,6 +968,72 @@ export function computeDiff(input: DiffInput): DiffResult {
         conflictCode: null, selected: true, autoApplicable: true,
         protectedIdentity: holder?.ss12000Id ? protectedIds.has(holder.ss12000Id) : false,
       });
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Protected identity: the school's mark (see PROTECTED IDENTITY above)
+  // ---------------------------------------------------------------------
+  // The sync's own mark: a person may hold an administrator's beside it,
+  // which the sync neither needs nor touches.
+  const syncMarked = new Set((local.protections ?? []).filter((m) => m.source === 'SS12000').map((m) => m.userId));
+  const mark = (
+    op: 'ADD' | 'END',
+    ext: string | null,
+    userId: string,
+    address: { email?: string; code: string | null } | null,
+  ) => {
+    // An ADD only keeps a person out of files: selected and made at night,
+    // unless a code says the address alone is the ground. An END lifts a
+    // protection: never by default, never at night.
+    const automatic = op === 'ADD' && !address?.code;
+    push({
+      entity: 'PROTECTION', op, externalId: null, localId: null,
+      before: null,
+      after: {
+        personExternalId: ext, userLocalId: userId,
+        ...(address ? { byAddress: true, ...(address.email ? { email: address.email } : {}) } : {}),
+      },
+      conflictCode: address?.code ?? null, selected: automatic, autoApplicable: automatic, protectedIdentity: false,
+    });
+  };
+  // Every local row a protected source person reaches by address in this run.
+  const addressed = new Set<string>();
+  for (const ext of [...protectedIds].sort()) {
+    const linked = usersByExt.get(ext);
+    if (linked) {
+      if (!syncMarked.has(linked.id)) mark('ADD', ext, linked.id, null);
+      continue;
+    }
+    // The one row the run matched by address (a LINK or RELINK it proposes):
+    // marked whether or not the link is made, since a person typed in by
+    // hand or read from a file is in Rastra all the same; at night only when
+    // the names agree too (namesAgree), since an address is reused (a
+    // sibling, a former pupil). Two rows with the address: each proposed,
+    // none automatic.
+    const match = addressMatches.get(ext);
+    if (match) {
+      addressed.add(match.localId);
+      if (!syncMarked.has(match.localId)) {
+        mark('ADD', ext, match.localId, { email: match.email, code: match.namesAgree ? null : 'PROTECTION_ADDRESS_NAME_DIFFERS' });
+      }
+      continue;
+    }
+    for (const localId of ambiguousMatches.get(ext)?.localIds ?? []) {
+      addressed.add(localId);
+      if (!syncMarked.has(localId)) mark('ADD', ext, localId, { email: ambiguousMatches.get(ext)!.email, code: 'PROTECTION_ADDRESS_AMBIGUOUS' });
+    }
+  }
+  if (full) {
+    for (const user of local.users) {
+      if (!syncMarked.has(user.id)) continue;
+      if (user.ss12000Id) {
+        if (saidIngen.has(user.ss12000Id) && !protectedIds.has(user.ss12000Id)) mark('END', user.ss12000Id, user.id, null);
+      } else if (!addressed.has(user.id)) {
+        // Marked by address, and no protected source person has the address
+        // any more (it was corrected, or the person left the register).
+        mark('END', null, user.id, { code: 'PROTECTION_ADDRESS_NO_LONGER_MATCHES' });
+      }
     }
   }
 

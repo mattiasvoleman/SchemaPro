@@ -263,14 +263,19 @@ describe('computeDiff: persons', () => {
     });
   });
 
-  it('deselects and never auto-applies ANY change touching a protected identity, and stores no marking', () => {
+  it('deselects and never auto-applies ANY change touching a protected identity, and never says which protection', () => {
     const p = pupil(ext(1), 'Skyddad', 'Person', 'sp@skola.se', { securityMarking: 'Skyddad folkbokföring' });
     const result = diff(roster({ people: [p] }), slice({ users: [user(1, { ss12000Id: ext(1), firstName: 'X', email: 'sp@skola.se' })] }));
-    expect(result.changes.length).toBeGreaterThan(0);
-    for (const change of result.changes) {
+    const held = result.changes.filter((change) => change.entity !== 'PROTECTION');
+    expect(held.length).toBeGreaterThan(0);
+    for (const change of held) {
       expect(change).toMatchObject({ selected: false, autoApplicable: false, protectedIdentity: true });
-      expect(JSON.stringify(change)).not.toMatch(/Skyddad folkbokföring|Sekretessmarkering/);
     }
+    // The mark itself is the one change about them that is made, and made at night.
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      expect.objectContaining({ op: 'ADD', selected: true, autoApplicable: true, protectedIdentity: false }),
+    ]);
+    for (const change of result.changes) expect(JSON.stringify(change)).not.toMatch(/Skyddad folkbokföring|Sekretessmarkering/);
   });
 
   it('protects a guardian marked on the pupil\'s PersonReference, too', () => {
@@ -291,6 +296,221 @@ describe('computeDiff: persons', () => {
     const elsewhere = pupil(ext(1), 'A', 'B', 'a@skola.se', { enrolments: [{ organisationId: OTHER_ORG, schoolYear: 7, schoolType: 'GR', startDate: '2026-08-01', endDate: null, cancelled: false }] });
     const cancelled = pupil(ext(2), 'C', 'D', 'c@skola.se', { enrolments: [{ organisationId: ORG, schoolYear: 7, schoolType: 'GR', startDate: '2026-08-01', endDate: null, cancelled: true }] });
     expect(diff(roster({ people: [elsewhere, cancelled] }), slice()).changes).toEqual([]);
+  });
+});
+
+describe('computeDiff: the mark of a protected identity (20270107090000)', () => {
+  const marked = (n: number, patch: Partial<S1Person> = {}) =>
+    pupil(ext(n), 'Skyddad', `Elev${n}`, `s${n}@skola.se`, { securityMarking: 'Sekretessmarkering', ...patch });
+  const linked = (n: number, patch: Partial<LocalUser> = {}) => user(n, { ss12000Id: ext(n), email: `s${n}@skola.se`, ...patch });
+
+  it('marks a linked person the register protects and Rastra does not, naming them in the after alone', () => {
+    const result = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)] }));
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      {
+        entity: 'PROTECTION', op: 'ADD', externalId: null, localId: null,
+        before: null, after: { personExternalId: ext(1), userLocalId: loc(1) },
+        conflictCode: null, selected: true, autoApplicable: true, protectedIdentity: false,
+      },
+    ]);
+    expect(result.counts['PROTECTION']).toEqual({ ADD: 1 });
+  });
+
+  it('proposes nothing for a person the sync has marked, and its own mark beside an administrator\'s', () => {
+    const synced = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000' }] }));
+    expect(only(synced.changes, 'PROTECTION')).toEqual([]);
+    // The administrator's mark is theirs to lift; the register's is recorded beside it.
+    const byHand = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }] }));
+    expect(only(byHand.changes, 'PROTECTION')).toEqual([expect.objectContaining({ op: 'ADD', selected: true, autoApplicable: true })]);
+  });
+
+  it('marks a person in Rastra but not linked, matched by address and name, whether or not the link is made (review of #263, M2)', () => {
+    // Typed in by hand, read from a file or imported before the register protected her.
+    const local = slice({ users: [user(1, { email: 's1@skola.se', firstName: 'Skyddad', lastName: 'Elev1' })] });
+    const result = diff(roster({ people: [marked(1)] }), local);
+    expect(only(result.changes, 'PERSON', 'LINK')).toEqual([expect.objectContaining({ localId: loc(1), selected: false, protectedIdentity: true })]);
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      {
+        entity: 'PROTECTION', op: 'ADD', externalId: null, localId: null,
+        before: null, after: { personExternalId: ext(1), userLocalId: loc(1), byAddress: true, email: 's1@skola.se' },
+        conflictCode: null, selected: true, autoApplicable: true, protectedIdentity: false,
+      },
+    ]);
+    // Names compared as written, not as typed: case, spaces and Unicode form.
+    const typed = slice({ users: [user(1, { email: 's1@skola.se', firstName: '  skyddad ', lastName: 'ELEV1' })] });
+    expect(only(diff(roster({ people: [marked(1)] }), typed).changes, 'PROTECTION')).toEqual([expect.objectContaining({ autoApplicable: true })]);
+    // A deactivated row the run proposes to RELINK, too.
+    const inactive = diff(roster({ people: [marked(1)] }), slice({ users: [user(1, { email: 's1@skola.se', firstName: 'Skyddad', lastName: 'Elev1', isActive: false })] }));
+    expect(only(inactive.changes, 'PROTECTION')).toEqual([expect.objectContaining({ op: 'ADD', autoApplicable: true, after: expect.objectContaining({ userLocalId: loc(1), byAddress: true }) })]);
+    // Already marked by the sync: nothing more.
+    const done = diff(roster({ people: [marked(1)] }), slice({ users: [user(1, { email: 's1@skola.se' })], protections: [{ userId: loc(1), source: 'SS12000' }] }));
+    expect(only(done.changes, 'PROTECTION')).toEqual([]);
+  });
+
+  // The reviewer's 26 name variants (#263, round 3) and those that kill X3, X4 and X9: a local row
+  // unlinked, sharing the address with a protected register person. AUTO: marked at night.
+  const NAME_CASES: Array<[string, { first: string; last: string }, { given: string; middle?: string; family: string }, 'AUTO' | 'PROPOSED']> = [
+    ['same', { first: 'Anna', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['case: lower vs Title', { first: 'anna', last: 'berg' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['case: UPPER vs Title', { first: 'ANNA', last: 'BERG' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['Swedish letters, case: ÅSA/åsa', { first: 'ÅSA', last: 'STRÖM' }, { given: 'åsa', family: 'ström' }, 'AUTO'],
+    ['accent: precomposed vs decomposed (NFC/NFD), X3', { first: 'José', last: 'García' }, { given: 'José', family: 'García' }, 'AUTO'],
+    ['accent folded: Jose/José', { first: 'Jose', last: 'Garcia' }, { given: 'José', family: 'García' }, 'AUTO'],
+    ['accent folded: Asa/Åsa', { first: 'Asa', last: 'Strom' }, { given: 'Åsa', family: 'Ström' }, 'AUTO'],
+    ['accent only one name: Rene/René', { first: 'Rene', last: 'Dubois' }, { given: 'René', family: 'Dubois' }, 'AUTO'],
+    ['hyphen vs space, first: Anna-Lena/Anna Lena', { first: 'Anna Lena', last: 'Berg' }, { given: 'Anna-Lena', family: 'Berg' }, 'AUTO'],
+    ['hyphen vs space, first (reverse)', { first: 'Anna-Lena', last: 'Berg' }, { given: 'Anna Lena', family: 'Berg' }, 'AUTO'],
+    ['double surname: space vs hyphen', { first: 'Anna', last: 'Berg Svensson' }, { given: 'Anna', family: 'Berg-Svensson' }, 'AUTO'],
+    ['double surname: order swapped', { first: 'Anna', last: 'Svensson Berg' }, { given: 'Anna', family: 'Berg Svensson' }, 'AUTO'],
+    ['double surname: only one half locally', { first: 'Anna', last: 'Berg' }, { given: 'Anna', family: 'Berg Svensson' }, 'AUTO'],
+    ['spaces: leading/trailing/double', { first: '  Anna ', last: ' Berg  ' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['spaces: inner double, X4', { first: 'Anna  Lena', last: 'Berg' }, { given: 'Anna Lena', family: 'Berg' }, 'AUTO'],
+    ['spaces: NBSP and tab, X4', { first: 'Anna Lena', last: 'Berg\tSvensson' }, { given: 'Anna Lena', family: 'Berg Svensson' }, 'AUTO'],
+    ['spaces: zero-width space inside', { first: 'An​na', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['middle name in the first name locally', { first: 'Anna Maria', last: 'Berg' }, { given: 'Anna', middle: 'Maria', family: 'Berg' }, 'AUTO'],
+    ['all given names locally, call name in register', { first: 'Karl Johan', last: 'Berg' }, { given: 'Karl', family: 'Berg' }, 'AUTO'],
+    ['call name locally, all given names in register', { first: 'Johan', last: 'Berg' }, { given: 'Karl Johan', family: 'Berg' }, 'AUTO'],
+    ['the middle name locally', { first: 'Maria', last: 'Berg' }, { given: 'Anna', middle: 'Maria', family: 'Berg' }, 'AUTO'],
+    ['ß vs ss', { first: 'Anna', last: 'WEISS' }, { given: 'Anna', family: 'Weiß' }, 'AUTO'],
+    ['compatibility ligature ﬁ', { first: 'Sofia', last: 'Berg' }, { given: 'Soﬁa', family: 'Berg' }, 'AUTO'],
+    ["apostrophe: O'Brien/OBrien", { first: 'Sean', last: 'OBrien' }, { given: 'Sean', family: 'O’Brien' }, 'AUTO'],
+    ['different person, identical name (namesake)', { first: 'Anna', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'AUTO'],
+    ['nickname', { first: 'Kalle', last: 'Berg' }, { given: 'Karl', family: 'Berg' }, 'PROPOSED'],
+    ['one-letter typo', { first: 'Ana', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+    ['one-letter surname difference: Svenson/Svensson', { first: 'Anna', last: 'Svenson' }, { given: 'Anna', family: 'Svensson' }, 'PROPOSED'],
+    ['first/last swapped locally', { first: 'Berg', last: 'Anna' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+    ['same given name, another family name, X9', { first: 'Anna', last: 'Lund' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+    ['another given name, same family name (a sibling)', { first: 'Erik', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+    ['an empty first name locally', { first: '', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+  ];
+
+  it.each(NAME_CASES)('compares names loosely for a mark by address: %s (review of #263, N2)', (_label, local, register, expected) => {
+    const person = marked(1, { givenName: register.given, middleName: register.middle ?? null, familyName: register.family });
+    const row = user(1, { email: 's1@skola.se', firstName: local.first, lastName: local.last });
+    const [mark, ...rest] = only(diff(roster({ people: [person] }), slice({ users: [row] })).changes, 'PROTECTION');
+    expect(rest).toEqual([]);
+    expect(mark).toMatchObject(
+      expected === 'AUTO'
+        ? { op: 'ADD', selected: true, autoApplicable: true, conflictCode: null }
+        : { op: 'ADD', selected: false, autoApplicable: false, conflictCode: 'PROTECTION_ADDRESS_NAME_DIFFERS' },
+    );
+  });
+
+  it('proposes the mark deselected, with a code, when only the address agrees: addresses are reused (review of #263, N1)', () => {
+    // Lisa holds the address the register now gives a protected pupil, Skyddad Elev1.
+    const result = diff(roster({ people: [marked(1)] }), slice({ users: [user(1, { email: 's1@skola.se', firstName: 'Lisa', lastName: 'Lund' })] }));
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      expect.objectContaining({
+        op: 'ADD', after: expect.objectContaining({ userLocalId: loc(1), byAddress: true }),
+        conflictCode: 'PROTECTION_ADDRESS_NAME_DIFFERS', selected: false, autoApplicable: false,
+      }),
+    ]);
+  });
+
+  it('proposes the mark deselected on each of two rows sharing the address, and on no row of another role', () => {
+    const two = slice({ users: [user(1, { email: 's1@skola.se' }), user(2, { email: 'S1@skola.se' })] });
+    expect(only(diff(roster({ people: [marked(1)] }), two).changes, 'PROTECTION')).toEqual([
+      expect.objectContaining({ op: 'ADD', after: expect.objectContaining({ userLocalId: loc(1) }), conflictCode: 'PROTECTION_ADDRESS_AMBIGUOUS', selected: false, autoApplicable: false }),
+      expect.objectContaining({ op: 'ADD', after: expect.objectContaining({ userLocalId: loc(2) }), conflictCode: 'PROTECTION_ADDRESS_AMBIGUOUS', selected: false, autoApplicable: false }),
+    ]);
+    const teacher = slice({ users: [user(1, { email: 's1@skola.se', role: 'TEACHER' })] });
+    expect(only(diff(roster({ people: [marked(1)] }), teacher).changes, 'PROTECTION')).toEqual([]);
+  });
+
+  it('proposes lifting, deselected, a mark made by address once no protected person has the address (review of #263, N1)', () => {
+    // The address was corrected: Lisa's row is marked by the sync, unlinked, and nobody protected matches it.
+    const corrected = diff(
+      roster({ people: [marked(1, { emails: [{ value: 'ny@skola.se', type: 'Skola elev' }] })] }),
+      slice({ users: [user(2, { email: 'lisa@skola.se', firstName: 'Lisa', lastName: 'Lund' })], protections: [{ userId: loc(2), source: 'SS12000' }] }),
+    );
+    expect(only(corrected.changes, 'PROTECTION')).toEqual([
+      expect.objectContaining({
+        op: 'END', after: { personExternalId: null, userLocalId: loc(2), byAddress: true },
+        conflictCode: 'PROTECTION_ADDRESS_NO_LONGER_MATCHES', selected: false, autoApplicable: false,
+      }),
+    ]);
+    // Still reached by a protected person's address: no lift; an INCREMENTAL run: no lift.
+    const still = diff(roster({ people: [marked(2, { emails: [{ value: 'lisa@skola.se', type: 'Skola elev' }] })] }),
+      slice({ users: [user(2, { email: 'lisa@skola.se', firstName: 'Lisa', lastName: 'Lund' })], protections: [{ userId: loc(2), source: 'SS12000' }] }));
+    expect(only(still.changes, 'PROTECTION')).toEqual([]);
+    const incremental = diff(
+      roster({ mode: 'INCREMENTAL', people: [] }),
+      slice({ users: [user(2, { email: 'lisa@skola.se' })], protections: [{ userId: loc(2), source: 'SS12000' }] }),
+    );
+    expect(only(incremental.changes, 'PROTECTION')).toEqual([]);
+    // A mark by hand on an unlinked row is the administrator's: never proposed for lifting.
+    const byHand = diff(roster({ people: [] }), slice({ users: [user(2, { email: 'lisa@skola.se' })], protections: [{ userId: loc(2), source: 'MANUAL' }] }));
+    expect(only(byHand.changes, 'PROTECTION')).toEqual([]);
+  });
+
+  it('proposes lifting a mark the sync wrote when a FULL run reads "Ingen" for the person: never by default, never at night', () => {
+    const result = diff(
+      roster({ people: [pupil(ext(1), 'Ej', 'Skyddad', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000' }] }),
+    );
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      expect.objectContaining({
+        op: 'END', externalId: null, localId: null, after: { personExternalId: ext(1), userLocalId: loc(1) },
+        selected: false, autoApplicable: false, protectedIdentity: false,
+      }),
+    ]);
+  });
+
+  it('proposes lifting the sync\'s own mark also where an administrator\'s stands beside it, which the lift leaves', () => {
+    const result = diff(
+      roster({ people: [pupil(ext(1), 'Ej', 'Skyddad', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }, { userId: loc(1), source: 'SS12000' }] }),
+    );
+    expect(only(result.changes, 'PROTECTION').map((c) => c.op)).toEqual(['END']);
+  });
+
+  it('never lifts a mark an administrator set', () => {
+    const result = diff(
+      roster({ people: [pupil(ext(1), 'Ej', 'Skyddad', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }] }),
+    );
+    expect(only(result.changes, 'PROTECTION')).toEqual([]);
+  });
+
+  it('lifts nothing on an absent marking, in an INCREMENTAL run, or while any reference still marks the person', () => {
+    const marks = [{ userId: loc(1), source: 'SS12000' as const }];
+    const absent = diff(roster({ people: [pupil(ext(1), 'A', 'B', 's1@skola.se', { securityMarking: null })] }), slice({ users: [linked(1)], protections: marks }));
+    expect(only(absent.changes, 'PROTECTION')).toEqual([]);
+
+    const incremental = diff(
+      roster({ mode: 'INCREMENTAL', people: [pupil(ext(1), 'A', 'B', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [linked(1)], protections: marks }),
+    );
+    expect(only(incremental.changes, 'PROTECTION')).toEqual([]);
+
+    // The guardian's own record says Ingen; the child's reference to them does not.
+    const people = [
+      adult(ext(10), 'G', 'H', 'g@hem.se', 'Privat', { securityMarking: 'Ingen' }),
+      pupil(ext(1), 'B', 'H', 's1@skola.se', { responsibles: [{ personId: ext(10), securityMarking: 'Sekretessmarkering', relationType: 'Vårdnadshavare' }] }),
+    ];
+    const guardian = user(10, { ss12000Id: ext(10), role: 'GUARDIAN', email: 'g@hem.se' });
+    const referenced = diff(roster({ people }), slice({ users: [linked(1), guardian], protections: [{ userId: loc(10), source: 'SS12000' }] }));
+    expect(only(referenced.changes, 'PROTECTION')).toEqual([]);
+  });
+
+  it('lifts a linked guardian\'s mark when every reference to them says "Ingen", though their own record is never read', () => {
+    const people = [
+      pupil(ext(1), 'B', 'H', 's1@skola.se', { responsibles: [{ personId: ext(10), securityMarking: 'Ingen', relationType: 'Vårdnadshavare' }] }),
+    ];
+    const guardian = user(10, { ss12000Id: ext(10), role: 'GUARDIAN', email: 'g@hem.se' });
+    const result = diff(roster({ people }), slice({ users: [linked(1), guardian], protections: [{ userId: loc(10), source: 'SS12000' }] }));
+    expect(only(result.changes, 'PROTECTION').map((c) => [c.op, c.after?.['userLocalId']])).toEqual([['END', loc(10)]]);
+  });
+
+  it('proposes lifting the sync\'s mark on a row no longer linked only as an address mark that no longer matches', () => {
+    // The row lost its link; the register says "Ingen" for the pupil it was, and no protected person has the address.
+    const result = diff(
+      roster({ people: [pupil(ext(1), 'A', 'B', 's1@skola.se', { securityMarking: 'Ingen' })] }),
+      slice({ users: [user(1, { email: 's1@skola.se' })], protections: [{ userId: loc(1), source: 'SS12000' }] }),
+    );
+    expect(only(result.changes, 'PROTECTION')).toEqual([
+      expect.objectContaining({ op: 'END', conflictCode: 'PROTECTION_ADDRESS_NO_LONGER_MATCHES', selected: false }),
+    ]);
   });
 });
 

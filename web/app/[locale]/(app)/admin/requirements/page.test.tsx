@@ -444,6 +444,21 @@ vi.mock("@/lib/csv-export", async (importOriginal) => ({
   downloadCsv: vi.fn(),
 }));
 
+// The one read the export makes itself: the marks of a protected identity
+// (lib/protected-people.ts), which the file's posts are held to.
+const marks = vi.hoisted(() => ({ rows: [] as Array<{ userId: string; source: string }> }));
+vi.mock("@/lib/api", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...real,
+    api: {
+      ...real.api,
+      get: (path: string) =>
+        path === "/api/v1/person-protections" ? Promise.resolve(marks.rows) : Promise.reject(new Error(`unexpected read ${path}`)),
+    },
+  };
+});
+
 const mockDownloadCsv = downloadCsv as unknown as Mock;
 
 // Mål mode's Täckning pill links to the coverage page. next-intl's real Link
@@ -461,7 +476,7 @@ vi.mock("@/i18n/navigation", () => ({
     </a>
   ),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 // The year's blocks, read for the dialog of a post in one; blockPair is the
 // real one. Recorded, so a test can say when the page asked.
@@ -541,6 +556,7 @@ beforeEach(() => {
   removeMock.mockReset().mockResolvedValue(undefined);
   importMock.mockReset().mockResolvedValue({ created: 0, skipped: 0, errors: [] });
   mockDownloadCsv.mockReset();
+  marks.rows = [];
 });
 
 describe("Timplan matrix", () => {
@@ -1433,6 +1449,26 @@ describe("Timplan CSV", () => {
     const [, secondFile] = mockDownloadCsv.mock.calls[1] as [string, string];
     expect(secondFile).toContain("8B;BI;1;60;0;0;;;alla;;");
     expect(secondFile).not.toContain("7A");
+  });
+
+  it("leaves out a post whose teacher is marked as having a protected identity, whole, and says how many teachers", async () => {
+    // Not an empty teacher cell: the importer reads that as "no teacher" and
+    // would take the teacher off the post on the way back in.
+    state.requirements = loaded([{ ...requirements[0], teacherId: "t-anna" }, requirements[1]]);
+    state.people = loaded([
+      { id: "t-anna", firstName: "Anna", lastName: "Berg", email: "anna@example.test", role: "TEACHER", isActive: true },
+    ] as never);
+    marks.rows = [{ userId: "t-anna", source: "MANUAL" }];
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+
+    await user.click(exportButton());
+
+    await waitFor(() => expect(mockDownloadCsv).toHaveBeenCalledTimes(1));
+    const [, file] = mockDownloadCsv.mock.calls[0] as [string, string];
+    expect(file).not.toContain("anna@example.test");
+    expect(file.trim().split("\r\n")).toHaveLength(2);
+    expect(toast.info).toHaveBeenCalledWith(expect.stringContaining("heldOut.people"), expect.anything());
   });
 
   it("says so and downloads nothing when the builder no longer loads", async () => {

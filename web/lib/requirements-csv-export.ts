@@ -15,6 +15,25 @@
 import type { LessonRecurrence } from "@/lib/types";
 import { CSV_TEMPLATES, RECURRENCE_WORD, activeEmails, serializeCsv } from "@/lib/csv-export";
 import { isMixed, lengthPartsOf, type LessonShape } from "@/lib/lesson-lengths";
+import { withoutMarked, type HeldOutFile } from "@/lib/protected-people";
+
+/**
+ * The timplan file as the page's export writes it: without the posts whose
+ * teacher or co-teacher the school has marked as having a protected identity
+ * (skyddad identitet), read at the click. A post naming one is left out
+ * whole, as a post whose teacher the roster cannot name is, rather than
+ * written with an empty teacher cell: the importer reads an empty cell as
+ * "no teacher" and would take the teacher off the post on the way back in,
+ * while a row the file leaves out is left alone. `heldOut` counts the marked
+ * teachers the file would have named.
+ */
+export function requirementsCsvWithoutMarked(...args: Parameters<typeof requirementsToCsv>): Promise<HeldOutFile> {
+  const [requirements, groups, subjects, people] = args;
+  const teaching = new Set(requirements.flatMap((row) => [row.teacherId, row.coTeacherId]));
+  return withoutMarked(people, (person) => teaching.has(person.id), (kept) =>
+    requirementsToCsv(requirements, groups, subjects, kept),
+  );
+}
 
 /**
  * The timplan as the school's own file: names, codes and e-mail addresses,

@@ -470,6 +470,46 @@ describe('SS12000 sync (e2e)', () => {
       expect(w.changes.some((c) => c['applied'])).toBe(false);
     });
 
+    it('holds the night for a protected register person matched by address to a row with another name (PROTECTION_REVIEW, #263 N2)', async () => {
+      await scheduled(true);
+      w.units.push(linkedUnit());
+      // Kalle Svensson holds the address the register gives a protected pupil.
+      provider.world.persons = [s1Pupil(PUPIL, 'José', 'García', 'jose.garcia@skola.se', ORG, { securityMarking: 'Sekretessmarkering' })];
+      provider.world.groups = [];
+      provider.world.duties = [];
+      w.users.push({ id: '10000003-0000-4000-8000-000000000000', schoolId: SCHOOL, role: 'STUDENT', firstName: 'Kalle', lastName: 'Svensson', email: 'jose.garcia@skola.se', ss12000Id: null, isActive: true, studentGroupId: null, invitedAt: null, updatedAt: new Date(0) });
+      await harness.app.get(Ss12000SchedulerService).tick();
+      // Without it the night ends APPLIED, nothing being selected, and the proposal goes with it.
+      expect(w.runs).toEqual([
+        expect.objectContaining({ trigger: 'SCHEDULED', status: 'DIFF_READY', autoApplied: false, autoApplyBlockedReason: 'PROTECTION_REVIEW' }),
+      ]);
+      expect(w.changes.find((c) => c['entity'] === 'PROTECTION')).toMatchObject({
+        op: 'ADD', selected: false, autoApplicable: false, applied: false, conflictCode: 'PROTECTION_ADDRESS_NAME_DIFFERS',
+      });
+      expect(w.source).toMatchObject({ modifiedCursor: null });
+    });
+
+    it('makes what it may and still holds the run for the protection proposal', async () => {
+      await scheduled(true);
+      w.units.push(linkedUnit());
+      provider.world.persons = [
+        s1Pupil(PUPIL, 'Ella', 'Ek', 'ella.ek@skola.se', ORG),
+        s1Pupil('bbbbbbbb-7777-4000-8000-000000000001', 'José', 'García', 'jose.garcia@skola.se', ORG, { securityMarking: 'Sekretessmarkering' }),
+      ];
+      provider.world.groups = [];
+      provider.world.duties = [];
+      w.users.push(
+        { id: '10000001-0000-4000-8000-000000000000', schoolId: SCHOOL, role: 'STUDENT', firstName: 'Elle', lastName: 'Ek', email: 'ella.ek@skola.se', ss12000Id: PUPIL, isActive: true, studentGroupId: null, invitedAt: null, updatedAt: new Date(0) },
+        { id: '10000003-0000-4000-8000-000000000000', schoolId: SCHOOL, role: 'STUDENT', firstName: 'Kalle', lastName: 'Svensson', email: 'jose.garcia@skola.se', ss12000Id: null, isActive: true, studentGroupId: null, invitedAt: null, updatedAt: new Date(0) },
+      );
+      await harness.app.get(Ss12000SchedulerService).tick();
+      expect(w.runs).toEqual([
+        expect.objectContaining({ trigger: 'SCHEDULED', status: 'DIFF_READY', autoApplied: true, autoApplyBlockedReason: 'PROTECTION_REVIEW' }),
+      ]);
+      expect(w.changes.filter((c) => c['applied']).map((c) => `${c['entity']}:${c['op']}`)).toEqual(['PERSON:UPDATE']);
+      expect(w.source).toMatchObject({ modifiedCursor: null, lastAppliedAt: expect.any(Date) });
+    });
+
     it('waits with a diff when auto-apply is off', async () => {
       await scheduled(false);
       await harness.app.get(Ss12000SchedulerService).tick();

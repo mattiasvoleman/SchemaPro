@@ -1264,6 +1264,41 @@
     för att se <span class="ui">Rollhistorik</span>: vad som ändrades, när och
     av vem.
   </p>
+  <p id="skyddad-identitet">
+    <strong>Skyddad identitet.</strong> Fäll ut personens rad för att se om
+    personen är markerad med skyddad identitet, varifrån markeringen kommer
+    (från elevregistret, 7.2, eller satt för hand), och vem som satt eller
+    tagit bort en markering och när. Rektor, en fullständig administratör och
+    expeditionen markerar för hand. Bara rektor och en fullständig
+    administratör tar bort markeringarna, eftersom det är ett beslut att lyfta
+    ett skydd. Övriga administratörer ser markeringen. En markerad person
+    finns inte i filerna Rastra Schema skriver om personer (3.6, 6.9): inte i
+    elevfilen, lärarfilen, vårdnadshavarfilen eller närvarorapporten, och
+    inte heller i en rad som nämner personen. Rastra Schema sparar bara att
+    skyddet finns, aldrig vilket skydd det är (sekretessmarkering eller
+    skyddad folkbokföring). Lärare, elever och vårdnadshavare ser inte
+    markeringen. En markering för hand står kvar tills en administratör tar
+    bort den, också om registret senare säger att personen inte är skyddad;
+    markera därför för hand också en person som registret redan markerat, om
+    du vill att skyddet ska stå kvar. Tar du bort en markering som kommer
+    från registret sätts den igen vid nästa synk, så länge registret har kvar
+    skyddet. Är personen inte kopplad till registret säger raden att
+    registrets markering sattes på e-postadressen (7.2). Är det fel person,
+    rätta e-postadressen och ta bort markeringen; nästa fulla synk föreslår
+    också att den tas bort när ingen skyddad person i registret har adressen
+    längre. Markeringen försvinner med personen, och när gallringen
+    pseudonymiserar en person som slutat (7.4); historiken gallras med
+    skolans ändringsloggar.
+  </p>
+  <p>
+    <strong>Andra system får personen som förut.</strong> Markeringen
+    hindrar inte de system skolan anslutit via SS12000 (7.3): de får den
+    markerade personen med namn, e-post, grupper och vårdnadshavare som
+    vanligt, och utan någon markering. Rastra Schema skickar inte vidare att
+    personen är skyddad, eftersom SS12000 bara kan säga vilket skydd det är,
+    och det sparas inte. Den som ansluter ett system som läser personer får
+    själv se till att det hanterar skyddade personer.
+  </p>
   <p>
     Sidan visar varje profil det den ändrar. Expeditionen lägger upp och
     ändrar personer och kopplar vårdnadshavare. Schemaläggaren ändrar
@@ -1365,13 +1400,18 @@
       per koppling mellan en aktiv vårdnadshavare och en aktiv elev; en
       vårdnadshavare utan koppling kommer inte med. Att filen hämtas står i
       läsloggen (7.4) som en läsning av personernas namn och kontaktuppgifter
-      och av vem som är vårdnadshavare till vem. Filen tar med alla aktiva
-      kopplingar, även för en elev med skyddad identitet (7.2): det sparas
-      inte på eleven, så Rastra Schema kan inte hålla den eleven utanför.
-      Exporterna av elever och vårdnadshavare påminner om det när filen
-      hämtas, och importdialogen för vårdnadshavare säger det innan filen
-      väljs: skolan ansvarar för att en sådan fil hanteras därefter, eller
-      för att de eleverna tas bort ur den innan den lämnar skolan.
+      och av vem som är vårdnadshavare till vem. En person som skolan
+      markerat med <a href="#skyddad-identitet">skyddad identitet</a> finns
+      inte i någon av filerna, och inte heller en rad som nämner personen:
+      vårdnadshavarfilen lämnar ute varje koppling där eleven eller
+      vårdnadshavaren är markerad, och timplansfilen en post vars lärare är
+      markerad. När filen hämtas står det hur många som hölls utanför. Den
+      som har skyddad identitet men inte är markerad finns med, så markera
+      personen innan du delar en fil. Lärare med skyddad identitet finns
+      däremot kvar med namn i schemafilerna (7.7), i schemat som iCal och PDF,
+      i utskrifterna, i kalenderprenumerationerna och, om skolan visar
+      lärarnas namn, i Schemavisaren (7.1); dölj en sådan lärare under
+      <span class="path">Publicering</span> för de publika scheman.
       På sidor som rymmer två listor — klasser och undervisningsgrupper, eller
       lärare och elever — frågar knappen vilken fil du vill ha.
     </p>
@@ -5766,6 +5806,8 @@
     <span class="path">Drift › Rapporter</span> har tre flikar. Fliken
     <span class="ui">Närvaro</span> visar närvarograd per klass och elev för en
     vald period, med klassens snitt som jämförelse, och kan exporteras som CSV.
+    En elev med <a href="#skyddad-identitet">skyddad identitet</a> finns inte
+    i filen, och det står hur många som hölls utanför.
   </p>
 
   <h4>Tjänstefördelning: planerat, schemalagt och genomfört</h4>
@@ -5867,7 +5909,11 @@
     HR-uppgifter rakt igenom, så den hämtas av rektor, en fullständig
     administratör eller den som har HR-läs (2.2); andra administratörer ser
     i stället en mening om vem som hämtar den. Varje hämtning sparas i
-    läsloggen (7.4): filen namnger varje lärare med tjänst. Filen räknar läsårets planerade
+    läsloggen (7.4): filen namnger varje lärare med tjänst. SCB ska ha alla
+    lärare, så en lärare med <a href="#skyddad-identitet">skyddad
+    identitet</a> finns med; det står hur många när filen hämtas, så att
+    filen hanteras därefter. Samma gäller Samverkan-filen och vikarietimmarna
+    till lönen. Filen räknar läsårets planerade
     undervisning (inte perioden ovan):
   </p>
   <ul>
@@ -6511,7 +6557,31 @@
   </p>
   <ul>
     <li>Ändringar för en person med <strong>skyddad identitet</strong> i
-      registret.</li>
+      registret. Markeringen själv är undantaget: en person som registret
+      skyddar markeras (<span class="ui">Skyddad identitet</span>, förvald,
+      och natten gör den också), både den som redan är kopplad och den som
+      finns i Rastra Schema utan att vara kopplad men har samma e-postadress
+      och ett namn som stämmer (inskriven för hand, inläst från fil eller
+      importerad tidigare), också om du väntar med kopplingen. Namnet stämmer
+      när ett förnamn och en del av efternamnet är gemensamma; accenter,
+      bindestreck, ordningen och ett tilltalsnamn i stället för alla förnamn
+      skiljer dem inte åt. Stämmer bara adressen (ett smeknamn, ett stavfel,
+      ett helt annat namn), eller har flera personer i Rastra Schema
+      adressen, föreslås markeringen men är inte förvald och görs inte på
+      natten: adresser återanvänds, så kryssa i den bara för den som är samma
+      människa. Tills du bestämt dig är personen inte markerad och finns i
+      filerna, så natten väntar på dig: den lämnar diffen öppen, och
+      synkhistoriken säger att synken väntar på ditt beslut om skyddad
+      identitet, utan att nämna vem. Är det inte samma person, ändra
+      e-postadressen. Den du kryssar i att skapa
+      markeras med det. Säger registret <em>Ingen</em> för en person som
+      synken markerat, eller har ingen skyddad person i registret längre
+      adressen till en okopplad person som synken markerat på adressen (till
+      exempel för att adressen rättats), föreslås att markeringen tas bort.
+      Det är inte förvalt, natten gör det aldrig, och det föreslås bara vid en
+      full synk; kryssa i det när du vill lyfta skyddet. En markering du satt
+      för hand tar synken aldrig bort. Rastra Schema
+      sparar bara att skyddet finns, aldrig vilket (3.6).</li>
     <li>En ändrad <strong>e-postadress</strong> för någon som redan är
       inbjuden. Personen loggar in med den gamla adressen tills du skickar
       inbjudan igen. Då flyttar personens egen inloggning till den nya, och
@@ -6607,7 +6677,9 @@
     Under <span class="ui">Nattlig synk</span> slår du på en synk varje natt
     vid den timme du väljer, skolans tid. Var sjunde dag (eller så ofta du
     anger) blir den en full synk. En nattlig synk som bara hämtar väntar på
-    din granskning precis som en manuell. Väntar en manuell diff redan på dig
+    din granskning precis som en manuell. Det gör också en natt som hittat
+    en skyddad person i registret som den inte kan markera själv (7.2,
+    skyddad identitet): den gör det den får och lämnar resten åt dig. Väntar en manuell diff redan på dig
     hoppar natten över sin synk, så att din granskning inte ersätts.
   </p>
   <p>
@@ -6656,11 +6728,10 @@
     </p>
     <p>
       Importen och en tillämpning körs aldrig i samma ögonblick: den ena
-      väntar på den andra. En skyddad identitet vet importen däremot inget
-      om. Registret anger den i en synk, men den sparas inte på eleven.
-      Har skolan en elev med skyddad identitet, ta bort den elevens rader ur
-      filen innan du laddar upp den, och tänk på samma sak när du delar en
-      exporterad fil.
+      väntar på den andra. Importen markerar ingen som skyddad. Har en person
+      i filen skyddad identitet, markera personen under
+      <span class="path">Personer</span> (3.6), så hålls den utanför filerna
+      Rastra Schema skriver.
     </p>
   </div>
 

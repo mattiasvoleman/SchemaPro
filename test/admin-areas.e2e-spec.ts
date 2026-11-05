@@ -110,6 +110,44 @@ describe('Administrator profiles and areas (e2e)', () => {
     expect(harness.tx['room']!['create']).not.toHaveBeenCalled();
   });
 
+  it("lets every profile read the marks of a protected identity, Personal's writers set one, and only those who decide remove one (skyddad identitet)", async () => {
+    harness.tx['personProtection']!['findMany']!.mockResolvedValue([{ userId: USER_ID, source: 'MANUAL' }]);
+    harness.tx['user']!['findFirst']!.mockResolvedValue({ id: USER_ID });
+    for (const profile of ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION', 'LASARE']) {
+      const read = await request(http()).get('/api/v1/person-protections').set('x-test-user', as(profile)).expect(200);
+      expect(read.body).toEqual([{ userId: USER_ID, source: 'MANUAL' }]);
+      await request(http()).get(`/api/v1/person-protections/${USER_ID}`).set('x-test-user', as(profile)).expect(200);
+    }
+
+    for (const profile of ['FULL', 'REKTOR', 'EXPEDITION']) {
+      await request(http()).put(`/api/v1/person-protections/${USER_ID}`).set('x-test-user', as(profile)).expect(200);
+    }
+    expect(harness.tx['personProtection']!['createMany']).toHaveBeenCalledTimes(3);
+    for (const profile of ['SCHEMALAGGARE', 'LASARE']) {
+      const set = await request(http()).put(`/api/v1/person-protections/${USER_ID}`).set('x-test-user', as(profile)).expect(403);
+      expect(set.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+    }
+    expect(harness.tx['personProtection']!['createMany']).toHaveBeenCalledTimes(3);
+
+    // Lifting a protection is a decision: rektor and full, not the expedition.
+    for (const profile of ['FULL', 'REKTOR']) {
+      await request(http()).delete(`/api/v1/person-protections/${USER_ID}`).set('x-test-user', as(profile)).expect(200);
+    }
+    for (const profile of ['EXPEDITION', 'SCHEMALAGGARE', 'LASARE']) {
+      const removed = await request(http()).delete(`/api/v1/person-protections/${USER_ID}`).set('x-test-user', as(profile)).expect(403);
+      expect(removed.body).toMatchObject({ code: 'DECISION_NOT_YOURS' });
+    }
+    expect(harness.tx['personProtection']!['deleteMany']).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a teacher, a pupil and a guardian the marks altogether (skyddad identitet)", async () => {
+    for (const role of ['TEACHER', 'STUDENT', 'GUARDIAN']) {
+      await request(http()).get('/api/v1/person-protections').set('x-test-user', asUser({ role } as never)).expect(403);
+      await request(http()).put(`/api/v1/person-protections/${USER_ID}`).set('x-test-user', asUser({ role } as never)).expect(403);
+    }
+    expect(harness.tx['personProtection']!['findMany']).not.toHaveBeenCalled();
+  });
+
   it("refuses the planner the pupils' bulk routes and the expedition the groups', by area, and lets the profile that owns each through (Massåtgärder)", async () => {
     const pupils = ['/api/v1/users/students/bulk-delete', '/api/v1/users/students/bulk-update'];
     const groups = ['/api/v1/student-groups/bulk-delete', '/api/v1/student-groups/bulk-update'];

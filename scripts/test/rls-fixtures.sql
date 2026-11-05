@@ -2969,6 +2969,182 @@ BEGIN
   VALUES (m, 'MENTOR', '2030-09-02', '2030-09-08', 1, 1);
 END $$;
 
+-- Skyddad identitet (20270107090000), sections 340-344: a school of its own,
+-- with its marks planted once, as the owner.
+--
+--   …e50000000001  FULL                       …e50000000006  T1, teacher, marked by hand
+--   …e50000000002  REKTOR                     …e50000000007  T2, teacher
+--   …e50000000003  EXPEDITION                 …e50000000011  P1 (SK7A), marked by the sync
+--   …e50000000004  SCHEMALAGGARE              …e50000000012  P2 (SK7A)
+--   …e50000000005  LASARE                     …e50000000013  P3, departed two years ago, marked by the sync
+--   …e50000000021  G1 (P1)   …e50000000022  G2 (P2), marked by hand
+--   …e50000000031  the other school's FULL, …32 its pupil, marked by hand
+--
+-- The school has decided to pseudonymise departed people after 12 months
+-- (two days ago), so section 343 can run gallring on P3.
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  k uuid;
+  admin uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-skyddad-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Skyddad identitet', 'rls-skyddad-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Skyddad', current_date - 700, current_date + 700, true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'SK7A', 7, now()) RETURNING id INTO k;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s1, 'sk-full@example.invalid', 'Skyddad', 'Full', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-e50000000001', true, now()),
+    (s1, 'sk-rektor@example.invalid', 'Skyddad', 'Rektor', 'SCHOOL_ADMIN', 'REKTOR', '00000000-0000-4000-8000-e50000000002', true, now()),
+    (s1, 'sk-expedition@example.invalid', 'Skyddad', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-e50000000003', true, now()),
+    (s1, 'sk-schemalaggare@example.invalid', 'Skyddad', 'Schemaläggare', 'SCHOOL_ADMIN', 'SCHEMALAGGARE', '00000000-0000-4000-8000-e50000000004', true, now()),
+    (s1, 'sk-lasare@example.invalid', 'Skyddad', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-e50000000005', true, now());
+  SELECT id INTO admin FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-e50000000001';
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (s1, 'sk-t1@example.invalid', 'Skyddad', 'Lärare Ett', 'TEACHER', '00000000-0000-4000-8000-e50000000006', true, now()),
+    (s1, 'sk-t2@example.invalid', 'Skyddad', 'Lärare Två', 'TEACHER', '00000000-0000-4000-8000-e50000000007', true, now()),
+    (s1, 'sk-g1@example.invalid', 'Skyddad', 'Vårdnadshavare Ett', 'GUARDIAN', '00000000-0000-4000-8000-e50000000021', true, now()),
+    (s1, 'sk-g2@example.invalid', 'Skyddad', 'Vårdnadshavare Två', 'GUARDIAN', '00000000-0000-4000-8000-e50000000022', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    (s1, 'sk-p1@example.invalid', 'Skyddad', 'Elev Ett', 'STUDENT', '00000000-0000-4000-8000-e50000000011', true, k, now()),
+    (s1, 'sk-p2@example.invalid', 'Skyddad', 'Elev Två', 'STUDENT', '00000000-0000-4000-8000-e50000000012', true, k, now()),
+    (s1, 'sk-p3@example.invalid', 'Skyddad', 'Elev Slutad', 'STUDENT', '00000000-0000-4000-8000-e50000000013', true, k, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT s1, g."id", p."id"
+    FROM (VALUES ('sk-g1@example.invalid', 'sk-p1@example.invalid'),
+                 ('sk-g2@example.invalid', 'sk-p2@example.invalid')) AS v(guardian, pupil)
+    JOIN "Users" g ON g."schoolId" = s1 AND g."email" = v.guardian
+    JOIN "Users" p ON p."schoolId" = s1 AND p."email" = v.pupil;
+
+  -- P3 left two years ago.
+  UPDATE "Users" SET "isActive" = false, "updatedAt" = now() WHERE "schoolId" = s1 AND email = 'sk-p3@example.invalid';
+  ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  UPDATE "Users" SET "deactivatedAt" = now() - interval '2 years' WHERE "schoolId" = s1 AND email = 'sk-p3@example.invalid';
+  ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (s1, 'DEPARTED_PEOPLE', 'PURGE_AFTER', 12, NULL, admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source)
+  SELECT u."id", s1, v.source::"PersonProtectionSource"
+    FROM (VALUES ('sk-t1@example.invalid', 'MANUAL'), ('sk-p1@example.invalid', 'SS12000'),
+                 ('sk-p3@example.invalid', 'SS12000'), ('sk-g2@example.invalid', 'MANUAL')) AS v(email, source)
+    JOIN "Users" u ON u."schoolId" = s1 AND u."email" = v.email;
+
+  -- The other school: an administrator and a marked pupil.
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Skyddad annan', 'rls-skyddad-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'sk-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-e50000000031', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'sk-annan-p@example.invalid', 'Annan', 'Elev', 'STUDENT', '00000000-0000-4000-8000-e50000000032', true, now());
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source)
+  SELECT id, s2, 'MANUAL' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-e50000000032';
+END $$;
+
+-- The rest of the skyddad school, for the files (test/skyddad-identitet.e2e-spec.ts):
+-- an unmarked family (P4, linked to the register, and G3), a teaching group
+-- of P1, P2 and P4, a subject, the two teachers' posts, behörigheter,
+-- uppdrag and tjänster. Planted on its own, once.
+--
+--   …e50000000014  P4 (SK7A), ss12000Id e5000000-0000-4000-8000-000000000014
+--   …e50000000023  G3 (P4)
+DO $$
+DECLARE
+  s1 uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-skyddad-school');
+  y uuid;
+  k uuid;
+  tg uuid;
+  subj uuid;
+  t1 uuid;
+  t2 uuid;
+  p4 uuid;
+BEGIN
+  IF s1 IS NULL OR EXISTS (SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-e50000000014') THEN
+    RETURN;
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = s1 AND "isActive";
+  SELECT id INTO k FROM "StudentGroups" WHERE "schoolId" = s1 AND name = 'SK7A';
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = s1 AND email = 'sk-t1@example.invalid';
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = s1 AND email = 'sk-t2@example.invalid';
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'sk-p4@example.invalid', 'Synkad', 'Elev Fyra', 'STUDENT', '00000000-0000-4000-8000-e50000000014', true, k, now())
+  RETURNING id INTO p4;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'sk-g3@example.invalid', 'Synkad', 'Vårdnadshavare Tre', 'GUARDIAN', '00000000-0000-4000-8000-e50000000023', true, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT s1, id, p4 FROM "Users" WHERE "schoolId" = s1 AND email = 'sk-g3@example.invalid';
+  -- The register's id, written as the school's administrator, the only writer the guard allows.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-e50000000001')::text, true);
+  UPDATE "Users" SET "ss12000Id" = 'e5000000-0000-4000-8000-000000000014' WHERE id = p4;
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'Skyddad matematik', 'SKMA', now()) RETURNING id INTO subj;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (s1, y, 'SKMA7', 'TEACHING_GROUP', now()) RETURNING id INTO tg;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId")
+  SELECT s1, tg, id FROM "Users" WHERE "schoolId" = s1 AND email IN ('sk-p1@example.invalid', 'sk-p2@example.invalid', 'sk-p4@example.invalid');
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", "updatedAt") VALUES
+    (s1, y, subj, tg, t1, 3, 60, now()),
+    (s1, y, subj, k, t2, 2, 60, now());
+  INSERT INTO "TeacherSubjectQualifications" ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt") VALUES
+    (s1, t1, subj, 7, 9, 'LEGITIMATION', now()),
+    (s1, t2, subj, 7, 9, 'LEGITIMATION', now());
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt") VALUES
+    (s1, t1, y, 'ANNAT', 'Skyddad uppgift', 60, now()),
+    (s1, t2, y, 'ANNAT', 'Synlig uppgift', 60, now());
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt") VALUES
+    (s1, t1, y, 100, 'SKY', now()),
+    (s1, t2, y, 100, 'SYN', now());
+END $$;
+
+-- The skyddad school's history (20270107090000, section 343): the school has
+-- decided to keep change logs 12 months (two days ago), and one event of its
+-- marks is 13 months old (due) beside the fresh ones the marks above wrote.
+-- Planted once, as the owner, past the history's guard.
+DO $$
+DECLARE
+  s1 uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-skyddad-school');
+  p2 uuid;
+  admin uuid;
+BEGIN
+  IF s1 IS NULL OR EXISTS (SELECT 1 FROM "PersonProtectionEvents" WHERE "schoolId" = s1 AND "at" < now() - interval '1 year') THEN
+    RETURN;
+  END IF;
+  SELECT id INTO p2 FROM "Users" WHERE "schoolId" = s1 AND email = 'sk-p2@example.invalid';
+  SELECT id INTO admin FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-e50000000001';
+  ALTER TABLE "PersonProtectionEvents" DISABLE TRIGGER "PersonProtectionEvents_written_by_trigger";
+  INSERT INTO "PersonProtectionEvents" ("schoolId", "userId", action, source, "actorId", "at")
+  VALUES (s1, p2, 'REMOVED', 'MANUAL', admin, now() - interval '13 months');
+  ALTER TABLE "PersonProtectionEvents" ENABLE TRIGGER "PersonProtectionEvents_written_by_trigger";
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (s1, 'CHANGE_LOGS', 'PURGE_AFTER', 12, NULL, admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+END $$;
+
+-- The matrix school's mark (20270107090000), so the role matrix (section 116)
+-- has a row of PersonProtections to probe: its second pupil, by hand.
+DO $$
+DECLARE
+  m uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "PersonProtections" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source)
+  SELECT id, m, 'MANUAL' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

@@ -171,6 +171,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('CoverRequestRecipients', ['userId', 'schoolId'], 'CASCADE', others),
   key('CoverConfirmations', ['userId', 'schoolId'], 'CASCADE', others),
   key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),
+  // Skyddad identitet (20270107090000): the mark goes with the person, counted like any other row.
+  key('PersonProtections', ['userId', 'schoolId'], 'CASCADE', others),
   key('Notifications', ['userId'], 'CASCADE', account('notices')),
   key('NotificationOptOuts', ['userId', 'schoolId'], 'CASCADE', account('noticeSettings')),
   key('DevicePushTokens', ['userId', 'schoolId'], 'CASCADE', account('pushDevices')),

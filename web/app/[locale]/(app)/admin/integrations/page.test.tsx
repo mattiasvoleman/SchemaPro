@@ -353,6 +353,15 @@ describe("/admin/integrations — the register", () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/ss12000-sync/runs", { mode: "FULL" }));
   });
 
+  it("says when the night waits for a decision on a protected identity, naming nobody (#263, N2)", async () => {
+    server.source = { ...SOURCE, organisationIds: ["aaaaaaaa-aaaa-1aaa-8aaa-aaaaaaaaaaaa"] };
+    server.runs = [run({ id: "r1", trigger: "SCHEDULED", autoApplied: true, appliedAt: "2026-11-05T02:01:00.000Z", autoApplyBlockedReason: "PROTECTION_REVIEW" })];
+    renderPage();
+    const said = await screen.findByText(/^Synken väntar på ditt beslut om skyddad identitet/);
+    expect(said).toHaveTextContent("Personen är inte markerad och finns i filerna tills du granskat diffen.");
+    expect(screen.queryByText(/Natten tillämpade inget/)).toBeNull();
+  });
+
   it("will not sync before a skolenhet is chosen", async () => {
     server.source = { ...SOURCE };
     renderPage();

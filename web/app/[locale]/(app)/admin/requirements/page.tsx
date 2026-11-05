@@ -1161,15 +1161,16 @@ export default function RequirementsPage() {
   // The builder is loaded at the click, not with the route: the page sits at
   // its bundle budget, and nobody pays for the CSV code who never exports. A
   // chunk that no longer loads (a deploy since the page opened) says so and
-  // downloads nothing, rather than a click that did nothing at all.
+  // downloads nothing, rather than a click that did nothing at all; so does a
+  // read of the marks of a protected identity that fails (the file leaves
+  // marked teachers' posts out, lib/requirements-csv-export.ts).
   const exportCsv = () =>
-    import("@/lib/requirements-csv-export").then(
-      ({ requirementsToCsv }) => requirementsToCsv(requirements ?? [], yearGroups, subjects ?? [], people ?? []),
-      () => {
+    import("@/lib/requirements-csv-export")
+      .then(({ requirementsCsvWithoutMarked: toCsv }) => toCsv(requirements ?? [], yearGroups, subjects ?? [], people ?? []))
+      .catch(() => {
         toast.error(tCommon("error"));
         return null;
-      },
-    );
+      });
 
   /**
    * Nothing to export is one reason to disable the button. An unanswered

@@ -74,6 +74,11 @@ export interface ScbFile {
   text: string;
   missing: ScbMissing[];
   notices: ScbNotice[];
+  /**
+   * How many of the teachers in the file the school has marked as having a
+   * protected identity: SCB is to have every teacher, so they are in it.
+   */
+  protectedInFile?: number;
 }
 
 export function scbFilePath(academicYearId: string): string {

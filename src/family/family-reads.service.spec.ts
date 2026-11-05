@@ -208,10 +208,14 @@ describe('FamilyReadsService', () => {
         link(GUARDIAN_ID, CHILD_B, 'gun@example.test', 'bo@example.test'),
       ]);
 
-      await expect(service.guardianExport(testUser({ channel: 'WEB' }))).resolves.toEqual([
-        { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.test', phone: '070-123 45 67', studentEmail: 'alva@example.test' },
-        { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.test', phone: null, studentEmail: 'bo@example.test' },
-      ]);
+      tx.guardianStudent.count.mockResolvedValue(2);
+      await expect(service.guardianExport(testUser({ channel: 'WEB' }))).resolves.toEqual({
+        rows: [
+          { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.test', phone: '070-123 45 67', studentEmail: 'alva@example.test' },
+          { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.test', phone: null, studentEmail: 'bo@example.test' },
+        ],
+        heldOut: 0,
+      });
       const [query] = tx.guardianStudent.findMany.mock.calls[0] as [{ select: { student: { select: object } } }];
       expect(query.select.student.select).toEqual({ email: true });
     });
@@ -222,8 +226,8 @@ describe('FamilyReadsService', () => {
       expect(tx.guardianStudent.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            guardian: { role: 'GUARDIAN', isActive: true },
-            student: { role: 'STUDENT', isActive: true },
+            guardian: { role: 'GUARDIAN', isActive: true, protections: { none: {} } },
+            student: { role: 'STUDENT', isActive: true, protections: { none: {} } },
           },
           orderBy: [
             { guardian: { lastName: 'asc' } },
@@ -252,8 +256,28 @@ describe('FamilyReadsService', () => {
     });
 
     it('records nothing for a school with no links: the read named nobody', async () => {
-      await expect(service.guardianExport(testUser())).resolves.toEqual([]);
+      tx.guardianStudent.count.mockResolvedValue(0);
+      await expect(service.guardianExport(testUser())).resolves.toEqual({ rows: [], heldOut: 0 });
       expect(recordedReads(tx)).toEqual([]);
+    });
+
+    it('holds out a link where the pupil or the guardian has a protected identity, counts it, and names nobody it held out', async () => {
+      // Three links the school has; the read that leaves the marked out answers one.
+      tx.guardianStudent.count.mockResolvedValue(3);
+      tx.guardianStudent.findMany.mockResolvedValue([link(GUARDIAN_ID, CHILD_A, 'gun@example.test', 'alva@example.test')]);
+
+      const answer = await service.guardianExport(testUser({ channel: 'WEB' }));
+
+      expect(answer.heldOut).toBe(2);
+      expect(answer.rows).toHaveLength(1);
+      // The count asks the same people without the marks: both ends of a link, each.
+      expect(tx.guardianStudent.count).toHaveBeenCalledWith({
+        where: { guardian: { role: 'GUARDIAN', isActive: true }, student: { role: 'STUDENT', isActive: true } },
+      });
+      expect(recordedReads(tx).map((read) => read.ids)).toEqual([
+        [GUARDIAN_ID, CHILD_A],
+        [GUARDIAN_ID, CHILD_A],
+      ]);
     });
   });
 });

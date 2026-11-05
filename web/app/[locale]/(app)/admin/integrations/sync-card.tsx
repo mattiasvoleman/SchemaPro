@@ -31,7 +31,7 @@ const DiffReviewDialog = lazy(() =>
   import("./diff-review-dialog").then((module) => ({ default: module.DiffReviewDialog })),
 );
 
-const ENTITIES: ChangeEntity[] = ["PERSON", "GROUP", "CLASS_MEMBERSHIP", "GROUP_MEMBERSHIP", "RESPONSIBLE", "DUTY_LINK", "ORGANISATION"];
+const ENTITIES: ChangeEntity[] = ["PERSON", "GROUP", "CLASS_MEMBERSHIP", "GROUP_MEMBERSHIP", "RESPONSIBLE", "DUTY_LINK", "ORGANISATION", "PROTECTION"];
 const CHANGE_OPS: ChangeOp[] = ["CREATE", "LINK", "RELINK", "UPDATE", "MOVE", "DEACTIVATE", "REACTIVATE", "ADD", "END"];
 const NOTE_OPS: ChangeOp[] = ["CONFLICT", "INFO"];
 
@@ -239,7 +239,9 @@ function RunRow({
               ? t("autoBlockedStale")
               : run.autoApplyBlockedReason === "REVIEW_REQUIRED"
                 ? t("autoBlockedReview")
-                : t("autoBlocked")}
+                : run.autoApplyBlockedReason === "PROTECTION_REVIEW"
+                  ? t("autoProtectionReview")
+                  : t("autoBlocked")}
           </p>
         ) : null}
         {run.errors.length > 0 ? (

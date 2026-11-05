@@ -2581,6 +2581,7 @@
       "autoBlocked": "The night applied nothing: too many deactivations. Review the diff.",
       "autoBlockedStale": "The night applied nothing: the school changed between the fetch and the apply. Review the diff or sync again.",
       "autoBlockedReview": "The night applied nothing: everything left needs an administrator. Review the diff.",
+      "autoProtectionReview": "The sync is waiting for your decision on a protected identity: a protected person in the register has the same e-mail address as someone in Rastra Schema, but the name differs or several people have the address. The person is not marked and is in the files until you review the diff.",
       "partlyApplied": "Partly applied {when}",
       "older": "Show older syncs",
       "errorCodes": "Errors: {codes}",
@@ -2633,7 +2634,8 @@
         "GROUP_MEMBERSHIP": "Group membership",
         "RESPONSIBLE": "Guardian",
         "DUTY_LINK": "Duty",
-        "ORGANISATION": "School unit"
+        "ORGANISATION": "School unit",
+        "PROTECTION": "Protected identity"
       },
       "roles": {
         "STUDENT": "Pupil",
@@ -2693,7 +2695,11 @@
         "unitTypes": "School types: {types}",
         "unitOverlap": "Grades {span} already belong to {other}",
         "unitCodeHolder": "School unit code {code} is already on {holder}",
-        "unitMismatch": "Grade {grade}: {local} here, {source} in the register"
+        "unitMismatch": "Grade {grade}: {local} here, {source} in the register",
+        "protectionAdd": "Marked as having a protected identity: the register protects the person, who is kept out of the files Rastra writes.",
+        "protectionEnd": "The mark is lifted: the register now says Ingen.",
+        "protectionAddByAddress": "Marked as having a protected identity: a protected person in the register has the same e-mail address as this row, which is not linked to the register.",
+        "protectionEndByAddress": "The mark is lifted: the sync set it on the e-mail address, and no protected person in the register has that address any more."
       },
       "changesLoadFailed": "The changes could not be loaded"
     },
@@ -2741,6 +2747,7 @@
       "SS12000_DEPENDENCY_NOT_APPLIED": "Skipped: the change it depends on was not chosen.",
       "SS12000_TARGET_CHANGED": "Skipped: the row had changed in Rastra timetable.",
       "SS12000_HALF_MEMBER_NOT_IN_CLASS": "Skipped: the pupil is not in the class of the half, or is already in the class's other half.",
+      "SS12000_PROTECTION_NOT_LIFTED": "Skipped: the mark could not be lifted, so the person is still kept out of the files.",
       "STALE": "The run was interrupted (the server restarted) and marked as failed.",
       "EXPIRED": "The diff was not reviewed within 30 days and was discarded.",
       "REVIEW_PENDING": "The nightly sync was skipped because a manual diff is waiting for review.",
@@ -2758,6 +2765,9 @@
       "PERSON_NO_EMAIL": "The register has no usable email address for the person.",
       "PERSON_AMBIGUOUS_MATCH": "The address fits several people, so nobody is linked automatically.",
       "PERSON_MATCHES_INACTIVE": "The address belongs to a deactivated person. Link and reactivate only if it is the same human being.",
+      "PROTECTION_ADDRESS_NAME_DIFFERS": "Only the e-mail address agrees: the name differs even when accents, hyphens, order and call names are disregarded. Addresses are reused, so the mark is made only if you select it, and until then the person is in the files. Select it if it is the same person.",
+      "PROTECTION_ADDRESS_AMBIGUOUS": "Several people in Rastra Schema have the register's address, so nobody is marked automatically, and until then the person is in the files. Select the mark for the one who is the same person.",
+      "PROTECTION_ADDRESS_NO_LONGER_MATCHES": "The row is not linked to the register, and no protected person there has its address any more, for example because the address was corrected. Select the lift if the person has no protected identity.",
       "PERSON_ADMIN_UNTOUCHED": "An administrator is linked but never changed by a sync.",
       "PERSON_MULTIPLE_ROLES": "The person has several roles in the register; Rastra timetable gives each person one role.",
       "DUTY_ROLE_REVIEW": "The duty would give a teacher sign-in with access to pupils' data. Choose it only if that is right.",
@@ -2900,8 +2910,12 @@
     "resultSummaryGuardians": "{created} guardians created, {linked, plural, one {# link added} other {# links added}}, {skipped} already existed",
     "guardiansNotice": "A row is a link between a guardian and a pupil: the pupil's e-mail address is in the column elev_epost, and the pupil must exist and be active. A guardian who does not exist is created without an invitation. One who does exist only gets the link, so their name and phone number are not changed.",
     "noGuardianLinks": "There are no links between guardians and pupils to export.",
-    "protectedWarning": "The file may contain people with protected personal data. Which pupils those are is not stored, so the school is responsible for handling the file accordingly, or for removing those pupils from it before it leaves the school.",
-    "protectedNotice": "The file may contain people with protected personal data. Which pupils those are is not stored, so the school is responsible for handling the file accordingly.",
+    "keptProtected": "{count, plural, one {One person in the file has a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.} other {# people in the file have a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.}}",
+    "heldOut": {
+      "people": "{count, plural, =0 {Nobody was kept out of the file: none of them is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One person with a protected identity was kept out of the file, and every row naming them. Anyone with a protected identity who is not marked under People is in it.} other {# people with a protected identity were kept out of the file, and every row naming any of them. Anyone with a protected identity who is not marked under People is in it.}}",
+      "links": "{count, plural, =0 {No link was kept out of the file: no pupil or guardian in it is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One link was kept out of the file, because the pupil or the guardian has a protected identity. Anyone with a protected identity who is not marked under People is in it.} other {# links were kept out of the file, because the pupil or the guardian has a protected identity. Anyone with a protected identity who is not marked under People is in it.}}"
+    },
+    "protectedNotice": "The import marks nobody as protected. If a person in the file has a protected identity, mark them under People, and they are kept out of the files Rastra writes.",
     "fileWarnings": "To check before importing",
     "questionMarkInName": "Row {row}: {name} has a question mark in the name. Excel replaces a character the file's encoding lacks with ?. Correct the name in the file, or save it again as CSV UTF-8.",
     "guardianDetailsDiffer": "Row {row}: {email} is also on row {first}, with other details. The row that comes first applies, so the name and phone number on row {row} are not used. If they are two people they need an address each.",
@@ -7361,6 +7375,37 @@
       "truncatedBody": "More than {count} findings matched, and the oldest are not shown.",
       "loadFailed": "The list could not be loaded",
       "loadFailedHint": "Nothing has changed. Reload the page in a moment."
+    }
+  },
+  "protectedIdentity": {
+    "title": "Protected identity",
+    "state": {
+      "none": "Not marked.",
+      "fromRegister": "Marked. The mark comes from the pupil register (SS12000).",
+      "byHand": "Marked by hand.",
+      "both": "Marked by hand and by the pupil register (SS12000)."
+    },
+    "explain": "A marked person is not in the files Rastra writes about people, such as elever.csv, vardnadshavare.csv and the attendance report. Which protection the person has is not stored.",
+    "integrations": "Systems the school connected over SS12000 get the person as before, without a mark.",
+    "byAddress": "The person is not linked to the register: the mark was set because a protected person in the register has the same e-mail address. If it is the wrong person: correct the e-mail address and remove the mark. The next full sync also proposes lifting it once no protected person has the address.",
+    "registerOwns": "The mark follows the register: when the register says Ingen, the sync proposes removing it. A mark by hand stays until an administrator removes it.",
+    "set": "Mark protected identity",
+    "setAlongside": "Mark by hand as well",
+    "remove": "Remove the marks",
+    "marked": "The person is marked as having a protected identity.",
+    "unmarked": "The marks are removed.",
+    "loadFailed": "The mark could not be read.",
+    "historyTitle": "History of the mark",
+    "nobody": "Rastra (the sync or gallring)",
+    "event": {
+      "ADDED": {
+        "MANUAL": "marked by hand by {who}",
+        "SS12000": "marked from the register by {who}"
+      },
+      "REMOVED": {
+        "MANUAL": "the mark by hand removed by {who}",
+        "SS12000": "the register's mark removed by {who}"
+      }
     }
   }
 }

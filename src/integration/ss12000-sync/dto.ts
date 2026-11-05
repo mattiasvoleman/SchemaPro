@@ -153,7 +153,7 @@ export class ListRunsQueryDto {
   before?: string;
 }
 
-export const CHANGE_ENTITIES = ['PERSON', 'GROUP', 'CLASS_MEMBERSHIP', 'GROUP_MEMBERSHIP', 'RESPONSIBLE', 'DUTY_LINK', 'ORGANISATION'] as const;
+export const CHANGE_ENTITIES = ['PERSON', 'GROUP', 'CLASS_MEMBERSHIP', 'GROUP_MEMBERSHIP', 'RESPONSIBLE', 'DUTY_LINK', 'ORGANISATION', 'PROTECTION'] as const;
 export const CHANGE_OPS = ['CREATE', 'LINK', 'RELINK', 'UPDATE', 'MOVE', 'DEACTIVATE', 'REACTIVATE', 'ADD', 'END', 'CONFLICT', 'INFO'] as const;
 
 export class ListChangesQueryDto {

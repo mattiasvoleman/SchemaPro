@@ -438,7 +438,18 @@ export default function GroupsPage() {
                 },
                 {
                   kind: "teachingGroups",
-                  build: () => membershipsToCsv(activeGroups, people ?? [], memberships ?? []),
+                  // Without the pupils the school has marked as having a
+                  // protected identity: the marks are read at the click, from
+                  // a module loaded only then (lib/protected-people.ts).
+                  build: () =>
+                    import("@/lib/protected-people")
+                      .then(({ withoutMarked }) =>
+                        withoutMarked(people ?? [], "STUDENT", (kept) => membershipsToCsv(activeGroups, kept, memberships ?? [])),
+                      )
+                      .catch(() => {
+                        toast.error(tCommon("error"));
+                        return null;
+                      }),
                   empty:
                     !memberships ||
                     memberships.length === 0 ||

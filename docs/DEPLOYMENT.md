@@ -1102,6 +1102,41 @@ Walk the full product loop once, in order:
   rollback should not be done while a school is asking. What a rollback
   changes: nobody can ask or answer a question, the vikarie's tap is gone, and
   the questions and confirmations already made stay in the tables unread.
+- **Skyddad identitet**: 20270107090000 adds the tables `PersonProtections`
+  (a row per person and source, SS12000 or MANUAL, never which protection)
+  and `PersonProtectionEvents` (who set or removed a mark and when, written by
+  a trigger alone), six policies, the value `PROTECTION` of
+  `Ss12000ChangeEntity`, a CHECK on `Ss12000SyncChanges` added NOT VALID, and
+  `app.gallring_due`, `app.gallring_purge` and `app.gallring_pseudonymise`
+  again with their new lines. Before running it, `md5(prosrc)` of the three
+  must be main's (`07be372dadba42ef4f7f233384306515`,
+  `60b2278333a2fb0816b05e022159ee67`, `6925e950b02270edc12d634aa8ff2f90`);
+  after, `7efba42244c71937b4cb82ffc23a6ba1`,
+  `de359f739e3908c9a36e41ff541cdf13`, `6f18f62fc354bde849aa2e8b01eeceda`. It
+  takes `Schools`, `Users` and `Ss12000SyncChanges` NOWAIT in a loop with a
+  30 s cap; if they are not free at once it stops with nothing changed, and
+  `npx prisma migrate resolve --rolled-back
+  20270107090000_skolan_minns_att_en_person_har_skyddad_identitet` lets it run
+  again. **Right after rollout, run a full sync for every school with an
+  SS12000 source** (Integrationer › SS12000 › Full synk) and apply its marks
+  (they are preselected). An incremental run reads only the people changed
+  since the last run, so a person the register already protected is marked
+  only when a full run reads them, and the night runs one every seventh day
+  (or as the school set it); until then the files still name that person. A
+  mark matched on the e-mail address alone (the names differ even loosely
+  compared, or several rows share it) is proposed unselected and never made
+  at night, and it holds the night's run open for an administrator
+  (`autoApplyBlockedReason` `PROTECTION_REVIEW`, which the sync history
+  states without a name): look for `PROTECTION_ADDRESS_*` in the review. **A rollback of the API past this
+  release once a sync has run**: an
+  older API cannot read a run that holds a `PROTECTION` change (the enum value
+  is unknown to its client), so the SS12000 history and review answer 500.
+  The value cannot be dropped. Before rolling back, as the owner, delete those
+  changes (`DELETE FROM "Ss12000SyncChanges" WHERE entity::text =
+  'PROTECTION'`; a DIFF_READY run then lacks its marks and should be run
+  again after the release returns). The marks and their history may stay: an
+  older API never reads them, and the exports simply stop leaving the marked
+  out.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

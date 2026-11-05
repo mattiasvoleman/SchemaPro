@@ -63,7 +63,12 @@ vi.mock("@/lib/queries", () => ({
 vi.mock("@/components/profile-context", () => ({
   useProfile: () => ({ profile: state.profile, school: { name: "Norra skolan", timezone: "Europe/Stockholm" } }),
 }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
+
+// Skyddad identitet: the samverkan file keeps every teacher and says how many
+// of them are marked, read from this module at the click.
+const markedAmong = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/protected-people", () => ({ markedAmong }));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: (namespace: string) => (key: string, values?: Record<string, unknown>) =>
@@ -124,6 +129,7 @@ const response = (overrides: Partial<StaffingReconciliationResponse> = {}): Staf
 describe("Rapporter › Tjänstefördelning", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    markedAmong.mockReset().mockResolvedValue(0);
     state.recArgs = [];
     state.years = [YEAR_1];
     state.profile = { id: "u-admin" };
@@ -281,6 +287,35 @@ describe("Rapporter › Tjänstefördelning", () => {
     await waitFor(() => expect(download).toHaveBeenCalledTimes(2));
     expect(apiGet).toHaveBeenCalledWith("/api/v1/teacher-qualifications");
     expect(download.mock.calls[1]![1]).toContain("Behörigheter");
+  });
+
+  it("keeps a marked teacher in the samverkan file and in SCB's, and says how many, once the file is handed over", async () => {
+    const user = userEvent.setup();
+    const { toast } = await import("sonner");
+    markedAmong.mockResolvedValue(1);
+    render(<StaffingReport />);
+    await user.click(screen.getByRole("button", { name: "exportSamverkan" }));
+    await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    expect(markedAmong).toHaveBeenCalledWith(expect.arrayContaining([expect.any(String)]));
+    expect(download.mock.calls[0]![1]).toContain("Alm;Bo;");
+    expect(toast.info).toHaveBeenCalledWith("keptProtected(1)", expect.anything());
+
+    vi.mocked(toast.info).mockClear();
+    apiGet.mockResolvedValueOnce({
+      filename: "f.txt", matdatum: "2026-10-15", specVersionDate: "2026-05-07", columns: ["System"],
+      rows: [["Rastra Schema"]], text: "Rastra Schema\r\n", missing: [], notices: [], protectedInFile: 2,
+    });
+    await user.click(screen.getByRole("button", { name: "exportScb" }));
+    await waitFor(() => expect(toast.info).toHaveBeenCalledWith("keptProtected(2)", expect.anything()));
+  });
+
+  it("says nothing of protected identity when nobody in the file is marked", async () => {
+    const user = userEvent.setup();
+    const { toast } = await import("sonner");
+    render(<StaffingReport />);
+    await user.click(screen.getByRole("button", { name: "exportSamverkan" }));
+    await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    expect(toast.info).not.toHaveBeenCalled();
   });
 
   it("saves the gateway's SCB file as it came, and lists PersonNr, the rows that lack more, and the notices", async () => {

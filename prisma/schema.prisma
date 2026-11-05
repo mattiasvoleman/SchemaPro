@@ -235,6 +235,9 @@ model School {
   /// marks towards it (each school reads only its own).
   sharedTeacherMarks      SharedTeacherMark[] @relation("SharedTeacherMarkSchool")
   teacherMarksTowards     SharedTeacherMark[] @relation("SharedTeacherMarkWithSchool")
+  /// Skyddad identitet (20270107090000): the school's marks of its protected people, and who set or removed them.
+  personProtections       PersonProtection[] @relation("PersonProtectionSchool")
+  personProtectionEvents  PersonProtectionEvent[] @relation("PersonProtectionEventSchool")
   studentGroups           StudentGroup[]
   teachingRequirements    TeachingRequirement[]
   teachingRequirementShares TeachingRequirementShare[]
@@ -432,6 +435,9 @@ model User {
   decidedRoomLoans    RoomLoan[]        @relation("RoomLoanDecider")
   /// Delade lärare: the school's marks of this row as shared.
   sharedTeacherMarks  SharedTeacherMark[] @relation("SharedTeacherMarkTeacher")
+  /// Skyddad identitet (20270107090000): a row per source (the sync's, an
+  /// administrator's). Admin-only; never select it into a read others see.
+  protections         PersonProtection[] @relation("PersonProtectionUser")
   /// Membership of the substitute pool (20261012110000): at most one row, a
   /// list for the composite key's sake as workRules. readActiveStaffIds
   /// filters on it.
@@ -668,6 +674,63 @@ model SharedTeacherMark {
   @@index([schoolId])
   @@index([withSchoolId])
   @@map("SharedTeacherMarks")
+}
+
+/// Where a person's mark of a protected identity comes from (20270107090000).
+enum PersonProtectionSource {
+  /// The SS12000 sync wrote it; the sync lifts it when the register says "Ingen".
+  SS12000
+  /// An administrator set it; only an administrator removes it.
+  MANUAL
+}
+
+/// Skyddad identitet (20270107090000): that the person has a protected
+/// identity, and where Rastra learnt it, a row per source: the person is
+/// marked while any row names them, and each source's row is lifted only by
+/// its own writer. Never which protection. Read by the school's
+/// administrators, set by Personal's writers, removed by those who decide,
+/// and the SS12000 sync's; every file of people leaves these persons out
+/// (src/users/person-protections.ts). Goes with the person, and at
+/// gallring's pseudonymisation; who set and removed it is in
+/// PersonProtectionEvent.
+model PersonProtection {
+  userId   String                 @db.Uuid
+  schoolId String                 @db.Uuid
+  source   PersonProtectionSource
+
+  school School @relation("PersonProtectionSchool", fields: [schoolId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user   User   @relation("PersonProtectionUser", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([userId, schoolId, source])
+  @@index([schoolId])
+  @@map("PersonProtections")
+}
+
+/// A mark set (ADDED) or removed (REMOVED).
+enum PersonProtectionAction {
+  ADDED
+  REMOVED
+}
+
+/// Who set or removed a mark of a protected identity, and when
+/// (20270107090000). Written by a trigger on PersonProtections alone, read by
+/// the school's administrators, purged under CHANGE_LOGS. No key to Users:
+/// the history outlives the person, ids only, as GuardianStudentHistory.
+model PersonProtectionEvent {
+  id       String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId String                 @db.Uuid
+  userId   String                 @db.Uuid
+  action   PersonProtectionAction
+  source   PersonProtectionSource
+  /// app.current_user_id() of the write; NULL for the sync's principal, gallring and a school's removal.
+  actorId  String?                @db.Uuid
+  at       DateTime               @default(now()) @db.Timestamptz(6)
+
+  school School @relation("PersonProtectionEventSchool", fields: [schoolId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([schoolId, userId, at])
+  @@index([schoolId, at])
+  @@map("PersonProtectionEvents")
 }
 
 enum RoomLoanStatus {
@@ -4327,6 +4390,8 @@ enum Ss12000ChangeEntity {
   RESPONSIBLE
   DUTY_LINK
   ORGANISATION
+  /// A person's mark of a protected identity, set (ADD) or lifted (END) (20270107090000).
+  PROTECTION
 }
 
 enum Ss12000ChangeOp {

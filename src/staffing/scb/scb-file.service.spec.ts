@@ -110,6 +110,20 @@ describe('ScbFileService', () => {
     expect(file.notices).toContainEqual({ code: 'INACTIVE', params: { name: 'Bo Alm', date: '2026-10-01' } });
   });
 
+  it('keeps a teacher marked as having a protected identity, since SCB is to have every teacher, and says how many the file names', async () => {
+    // Anna and Bo are both in the file; Anna is marked, and so is somebody the file does not name.
+    tx.personProtection.findMany.mockResolvedValue([{ userId: ANNA }, { userId: '99999999-9999-4999-8999-999999999999' }]);
+    const file = await service.build(YEAR_ID, testUser({ channel: 'WEB' }), new Date('2026-10-15T23:30:00.000Z'));
+    expect(file.rows.map((row) => row[col('PersonNamn')])).toEqual(['Bo Alm', 'Anna Öberg']);
+    expect(file.protectedInFile).toBe(1);
+    expect(tx.personProtection.findMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL_ID }, select: { userId: true } });
+  });
+
+  it('says none when nobody in the file is marked', async () => {
+    const file = await service.build(YEAR_ID, testUser({ channel: 'WEB' }));
+    expect(file.protectedInFile).toBe(0);
+  });
+
   it('records the teachers the file names, EMPLOYMENT and PEOPLE, in the read’s transaction and nobody else', async () => {
     tx.teacherEmployment.findMany.mockResolvedValue([postRow(ANNA)]);
     await service.build(YEAR_ID, testUser({ channel: 'WEB' }));

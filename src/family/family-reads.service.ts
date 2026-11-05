@@ -63,6 +63,15 @@ export interface GuardianExportRow {
   studentEmail: string;
 }
 
+/**
+ * GET /api/v1/guardian-links/export: the file's rows, and how many links
+ * were held out because the pupil or the guardian has a protected identity.
+ */
+export interface GuardianExport {
+  rows: GuardianExportRow[];
+  heldOut: number;
+}
+
 /** The newest this many: what the web and the app read directly before, each one at most. */
 export const FAMILY_READ_LIMIT = 200;
 
@@ -191,17 +200,27 @@ export class FamilyReadsService {
    * says who is whose guardian, so it is two records, PEOPLE and GUARDIANS
    * (the kinds of access-log.ts), about everyone in it.
    *
-   * It holds back no pupil. The school does not store which pupils have a
-   * protected identity: the SS12000 sync marks them in its diff, which is
-   * emptied when the run ends, and nothing else on a person says it.
+   * A link where the pupil or the guardian has a protected identity
+   * (PersonProtections, 20270107090000) is held out, both ways: the link
+   * says where a protected child's guardian is, or a protected guardian's
+   * child. It is counted, never named, so the dialog can say how many; the
+   * läslogg names only those the file names. The marks are read under the
+   * caller's RLS, which every administrator profile and the huvudman's
+   * reader pass (person_protections_admin_select).
    */
-  async guardianExport(user: AuthenticatedUser): Promise<GuardianExportRow[]> {
+  async guardianExport(user: AuthenticatedUser): Promise<GuardianExport> {
     return this.prisma.withRls(user, async (tx) => {
+      const exportable = {
+        guardian: { role: 'GUARDIAN' as const, isActive: true },
+        student: { role: 'STUDENT' as const, isActive: true },
+      };
+      const unmarked = {
+        guardian: { ...exportable.guardian, protections: { none: {} } },
+        student: { ...exportable.student, protections: { none: {} } },
+      };
+      const all = await tx.guardianStudent.count({ where: exportable });
       const links = await tx.guardianStudent.findMany({
-        where: {
-          guardian: { role: 'GUARDIAN', isActive: true },
-          student: { role: 'STUDENT', isActive: true },
-        },
+        where: unmarked,
         select: {
           guardianId: true,
           studentId: true,
@@ -219,13 +238,16 @@ export class FamilyReadsService {
       const everyone = links.flatMap((link) => [link.guardianId, link.studentId]);
       await recordRead(tx, 'PEOPLE', everyone, user.channel);
       await recordRead(tx, 'GUARDIANS', everyone, user.channel);
-      return links.map((link) => ({
-        firstName: link.guardian.firstName,
-        lastName: link.guardian.lastName,
-        email: link.guardian.email,
-        phone: link.guardian.phone,
-        studentEmail: link.student.email,
-      }));
+      return {
+        rows: links.map((link) => ({
+          firstName: link.guardian.firstName,
+          lastName: link.guardian.lastName,
+          email: link.guardian.email,
+          phone: link.guardian.phone,
+          studentEmail: link.student.email,
+        })),
+        heldOut: all - links.length,
+      };
     });
   }
 }

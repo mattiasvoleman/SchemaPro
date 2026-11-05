@@ -38,7 +38,12 @@ vi.mock("@/lib/queries", () => ({
   useGroups: () => ({ data: [{ id: "g-7a", name: "7A" }] }),
   useRooms: () => ({ data: [] }),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+
+// Skyddad identitet: the payroll files keep every vikarie and say how many of
+// them are marked, read from this module at the click.
+const markedAmong = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/protected-people", () => ({ markedAmong }));
 
 const HOURS: Hours = {
   from: "2026-09-01",
@@ -76,6 +81,7 @@ function renderReport() {
 beforeEach(() => {
   vi.resetAllMocks();
   get.mockResolvedValue(HOURS);
+  markedAmong.mockResolvedValue(0);
 });
 
 describe("Vikarietimmar", () => {
@@ -104,6 +110,19 @@ describe("Vikarietimmar", () => {
     const [filename, csv] = download.mock.calls[0] as [string, string];
     expect(filename).toBe("vikarietimmar-lektioner-2026-09-01-2026-09-30.csv");
     expect(csv).toContain("Cia Holm;cia@example.se;Vikariepool;2026-09-14;08:00;09:30;90;Matematik;7A;");
+  });
+
+  it("keeps a marked vikarie in the payroll file, since the payroll pays everyone, and says how many are in it", async () => {
+    const { toast } = await import("sonner");
+    markedAmong.mockResolvedValue(1);
+    const user = userEvent.setup();
+    renderReport();
+    await screen.findByText("Cia Holm");
+    await user.click(screen.getByRole("button", { name: "Exportera pass (CSV)" }));
+    await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    expect((download.mock.calls[0] as [string, string])[1]).toContain("Cia Holm");
+    expect(markedAmong).toHaveBeenCalledWith(HOURS.summary.map((line) => line.userId));
+    expect(toast.info).toHaveBeenCalledWith(expect.stringContaining("skyddad identitet"), expect.anything());
   });
 
   it("lists, outside the files, a cover the calendar credits to a substitute who was away themself — to check, without saying why", async () => {

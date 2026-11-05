@@ -9,13 +9,14 @@
  *
  * Only active people and their links are in it, and the gateway makes that cut
  * (GET /api/v1/guardian-links/export): the import takes a pupil only if they
- * are active, and a guardian who is not is an error on the way back in. It
- * says nothing of a pupil's protected identity, because the school does not
- * store which pupils have one.
+ * are active, and a guardian who is not is an error on the way back in. A
+ * link where the pupil or the guardian has a protected identity is held out
+ * there too, and counted (skyddad identitet, lib/protected-people.ts).
  */
 
 import { api } from "@/lib/api";
 import { CSV_TEMPLATES, serializeCsv } from "@/lib/csv-export";
+import type { HeldOutFile } from "@/lib/protected-people";
 
 /** What GET /api/v1/guardian-links/export answers: the file's columns, per link. */
 export interface GuardianExportRow {
@@ -33,8 +34,17 @@ export function guardiansToCsv(rows: GuardianExportRow[]): string {
   );
 }
 
-/** The school's links, read at the click and written as vardnadshavare.csv; null for a school with none. */
-export async function guardiansCsvFor(): Promise<string | null> {
-  const rows = await api.get<GuardianExportRow[]>("/api/v1/guardian-links/export");
-  return rows.length === 0 ? null : guardiansToCsv(rows);
+/** What the gateway answers: the rows, and how many links it held out for a protected identity. */
+export interface GuardianExport {
+  rows: GuardianExportRow[];
+  heldOut: number;
+}
+
+/**
+ * The school's links, read at the click and written as vardnadshavare.csv,
+ * and how many were held out; no file (null content) when no link is left.
+ */
+export async function guardiansCsvFor(): Promise<HeldOutFile> {
+  const { rows, heldOut } = await api.get<GuardianExport>("/api/v1/guardian-links/export");
+  return { content: rows.length === 0 ? null : guardiansToCsv(rows), heldOut, unit: "links" };
 }

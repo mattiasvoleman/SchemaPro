@@ -2581,6 +2581,7 @@
       "autoBlocked": "Natten tillämpade inget: för många avaktiveringar. Granska diffen.",
       "autoBlockedStale": "Natten tillämpade inget: skolan ändrades mellan hämtningen och tillämpningen. Granska diffen eller synka igen.",
       "autoBlockedReview": "Natten tillämpade inget: allt som återstod kräver en administratör. Granska diffen.",
+      "autoProtectionReview": "Synken väntar på ditt beslut om skyddad identitet: en skyddad person i registret har samma e-postadress som någon i Rastra Schema, men namnet skiljer sig eller flera har adressen. Personen är inte markerad och finns i filerna tills du granskat diffen.",
       "partlyApplied": "Delvis tillämpad {when}",
       "older": "Visa äldre synkar",
       "errorCodes": "Fel: {codes}",
@@ -2633,7 +2634,8 @@
         "GROUP_MEMBERSHIP": "Gruppmedlemskap",
         "RESPONSIBLE": "Vårdnadshavare",
         "DUTY_LINK": "Tjänst",
-        "ORGANISATION": "Skolenhet"
+        "ORGANISATION": "Skolenhet",
+        "PROTECTION": "Skyddad identitet"
       },
       "roles": {
         "STUDENT": "Elev",
@@ -2693,7 +2695,11 @@
         "unitTypes": "Skolformer: {types}",
         "unitOverlap": "Årskurs {span} ligger redan i {other}",
         "unitCodeHolder": "Skolenhetskod {code} finns redan på {holder}",
-        "unitMismatch": "Årskurs {grade}: {local} här, {source} i registret"
+        "unitMismatch": "Årskurs {grade}: {local} här, {source} i registret",
+        "protectionAdd": "Markeras med skyddad identitet: registret skyddar personen, som hålls utanför filerna Rastra skriver.",
+        "protectionEnd": "Markeringen tas bort: registret säger nu Ingen.",
+        "protectionAddByAddress": "Markeras med skyddad identitet: en skyddad person i registret har samma e-postadress som den här raden, som inte är kopplad till registret.",
+        "protectionEndByAddress": "Markeringen tas bort: synken satte den på e-postadressen, och ingen skyddad person i registret har den adressen längre."
       },
       "changesLoadFailed": "Ändringarna kunde inte hämtas"
     },
@@ -2741,6 +2747,7 @@
       "SS12000_DEPENDENCY_NOT_APPLIED": "Hoppades över: ändringen den bygger på valdes inte.",
       "SS12000_TARGET_CHANGED": "Hoppades över: raden hade ändrats i Rastra Schema.",
       "SS12000_HALF_MEMBER_NOT_IN_CLASS": "Hoppades över: eleven går inte i halvklassens klass, eller står redan i klassens andra halva.",
+      "SS12000_PROTECTION_NOT_LIFTED": "Hoppades över: markeringen kunde inte tas bort, så personen hålls fortfarande utanför filerna.",
       "STALE": "Körningen avbröts (servern startades om) och markerades som misslyckad.",
       "EXPIRED": "Diffen granskades inte inom 30 dagar och kastades.",
       "REVIEW_PENDING": "Nattens synk hoppades över eftersom en manuell diff väntar på granskning.",
@@ -2758,6 +2765,9 @@
       "PERSON_NO_EMAIL": "Registret har ingen användbar e-postadress för personen.",
       "PERSON_AMBIGUOUS_MATCH": "Adressen passar flera personer, så ingen kopplas automatiskt.",
       "PERSON_MATCHES_INACTIVE": "Adressen tillhör en avaktiverad person. Koppla och återaktivera bara om det är samma människa.",
+      "PROTECTION_ADDRESS_NAME_DIFFERS": "Bara e-postadressen stämmer: namnet skiljer sig också när accenter, bindestreck, ordning och tilltalsnamn bortses från. Adresser återanvänds, så markeringen görs bara om du väljer den, och tills dess finns personen i filerna. Välj den om det är samma människa.",
+      "PROTECTION_ADDRESS_AMBIGUOUS": "Flera personer i Rastra Schema har registrets adress, så ingen markeras automatiskt, och tills dess finns personen i filerna. Välj markeringen för den som är samma människa.",
+      "PROTECTION_ADDRESS_NO_LONGER_MATCHES": "Raden är inte kopplad till registret, och ingen skyddad person där har dess adress längre, till exempel för att adressen rättats. Välj borttagningen om personen inte har skyddad identitet.",
       "PERSON_ADMIN_UNTOUCHED": "En administratör kopplas men ändras aldrig av en synk.",
       "PERSON_MULTIPLE_ROLES": "Personen har flera roller i registret; Rastra Schema ger en roll per person.",
       "DUTY_ROLE_REVIEW": "Tjänsten skulle ge en lärarinloggning med åtkomst till elevers uppgifter. Välj den bara om det är rätt.",
@@ -2900,8 +2910,12 @@
     "resultSummaryGuardians": "{created} vårdnadshavare skapade, {linked, plural, one {# koppling tillagd} other {# kopplingar tillagda}}, {skipped} fanns redan",
     "guardiansNotice": "En rad är en koppling mellan en vårdnadshavare och en elev: elevens e-postadress står i kolumnen elev_epost, och eleven måste finnas och vara aktiv. En vårdnadshavare som inte finns skapas utan inbjudan. En som finns får bara kopplingen, så namn och telefon ändras inte.",
     "noGuardianLinks": "Det finns inga kopplingar mellan vårdnadshavare och elever att exportera.",
-    "protectedWarning": "Filen kan innehålla personer med skyddade personuppgifter. Det sparas inte vilka elever det gäller, så skolan ansvarar för att filen hanteras därefter, eller för att de eleverna tas bort ur den innan den lämnar skolan.",
-    "protectedNotice": "Filen kan innehålla personer med skyddade personuppgifter. Det sparas inte vilka elever det gäller, så skolan ansvarar för att filen hanteras därefter.",
+    "keptProtected": "{count, plural, one {En person i filen har skyddad identitet. Den finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.} other {# personer i filen har skyddad identitet. De finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.}}",
+    "heldOut": {
+      "people": "{count, plural, =0 {Ingen hölls utanför filen: ingen av dem är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En person med skyddad identitet hölls utanför filen, och varje rad som nämner personen. Den som har skyddad identitet men inte är markerad under Personer finns med.} other {# personer med skyddad identitet hölls utanför filen, och varje rad som nämner någon av dem. Den som har skyddad identitet men inte är markerad under Personer finns med.}}",
+      "links": "{count, plural, =0 {Ingen koppling hölls utanför filen: ingen elev eller vårdnadshavare i den är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En koppling hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} other {# kopplingar hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.}}"
+    },
+    "protectedNotice": "Importen markerar ingen som skyddad. Har en person i filen skyddad identitet, markera personen under Personer, så hålls den utanför filerna Rastra skriver.",
     "fileWarnings": "Att kontrollera före importen",
     "questionMarkInName": "Rad {row}: {name} har ett frågetecken i namnet. Excel byter ut ett tecken som filens kodning saknar mot ?. Rätta namnet i filen, eller spara om den som CSV UTF-8.",
     "guardianDetailsDiffer": "Rad {row}: {email} står också på rad {first}, med andra uppgifter. Raden som står först gäller, så namnet och telefonen på rad {row} används inte. Är det två personer behöver de var sin e-postadress.",
@@ -7361,6 +7375,37 @@
       "truncatedBody": "Fler än {count} fynd stämde, och de äldsta visas inte.",
       "loadFailed": "Listan kunde inte hämtas",
       "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund."
+    }
+  },
+  "protectedIdentity": {
+    "title": "Skyddad identitet",
+    "state": {
+      "none": "Inte markerad.",
+      "fromRegister": "Markerad. Markeringen kommer från elevregistret (SS12000).",
+      "byHand": "Markerad för hand.",
+      "both": "Markerad för hand och av elevregistret (SS12000)."
+    },
+    "explain": "En markerad person finns inte i filerna Rastra skriver om personer, som elever.csv, vardnadshavare.csv och närvarorapporten. Vilket skydd personen har sparas inte.",
+    "integrations": "System som skolan anslutit via SS12000 får personen som förut, utan markering.",
+    "byAddress": "Personen är inte kopplad till registret: markeringen sattes för att en skyddad person i registret har samma e-postadress. Är det fel person: rätta e-postadressen och ta bort markeringen. Nästa fullständiga synk föreslår också att den tas bort när ingen skyddad person har adressen längre.",
+    "registerOwns": "Markeringen följer registret: säger registret Ingen föreslår synken att den tas bort. En markering för hand står kvar tills en administratör tar bort den.",
+    "set": "Markera skyddad identitet",
+    "setAlongside": "Markera för hand också",
+    "remove": "Ta bort markeringarna",
+    "marked": "Personen är markerad med skyddad identitet.",
+    "unmarked": "Markeringarna är borttagna.",
+    "loadFailed": "Markeringen kunde inte läsas.",
+    "historyTitle": "Historik för markeringen",
+    "nobody": "Rastra (synken eller gallringen)",
+    "event": {
+      "ADDED": {
+        "MANUAL": "markerad för hand av {who}",
+        "SS12000": "markerad från registret av {who}"
+      },
+      "REMOVED": {
+        "MANUAL": "markeringen för hand borttagen av {who}",
+        "SS12000": "registrets markering borttagen av {who}"
+      }
     }
   }
 }

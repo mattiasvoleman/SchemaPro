@@ -4,7 +4,7 @@ import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user
 import type { PrismaService } from '../../database/prisma.service';
 import { Ss12000SourceService } from './ss12000-source.service';
 import { Ss12000Outbound, Ss12000Secrets } from './ss12000-sync.providers';
-import { Ss12000SyncService, peopleInChanges } from './ss12000-sync.service';
+import { Ss12000SyncService, awaitsProtectionDecision, peopleInChanges } from './ss12000-sync.service';
 
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
 const admin = {
@@ -69,7 +69,7 @@ describe('the läslogg of the change review and the provisioning list', () => {
     createdAt: new Date(),
   });
 
-  it('peopleInChanges: each entity under its kind, a guardian and a duty holder from the JSON, and nothing that is not a uuid', () => {
+  it('peopleInChanges: each entity under its kind, a guardian, a duty holder and a marked person from the JSON, and nothing that is not a uuid', () => {
     const named = peopleInChanges([
       change('PERSON', PUPIL, { firstName: 'Ada' }, { firstName: 'Adah' }, 1),
       change('PERSON', null, null, { firstName: 'Ny' }, 2),
@@ -80,9 +80,11 @@ describe('the läslogg of the change review and the provisioning list', () => {
       change('DUTY_LINK', null, { userLocalId: OLD_HOLDER }, { userLocalId: TEACHER }, 7),
       change('GROUP', GROUP, null, { name: '7A' }, 8),
       change('ORGANISATION', SCHOOL, null, {}, 9),
+      // A mark names its person in the after alone (localId stays empty).
+      change('PROTECTION', null, null, { personExternalId: 'e0000001-0000-4000-8000-000000000000', userLocalId: GUARDIAN }, 10),
     ] as never);
     expect(named).toEqual({
-      PEOPLE: [PUPIL],
+      PEOPLE: [PUPIL, GUARDIAN],
       ROSTER: [PUPIL, PUPIL],
       GUARDIANS: [PUPIL, GUARDIAN, PUPIL],
       EMPLOYMENT: [OLD_HOLDER, TEACHER],
@@ -118,5 +120,24 @@ describe('the läslogg of the change review and the provisioning list', () => {
     const sync = new Ss12000SyncService(prisma as unknown as PrismaService, new Ss12000Secrets(undefined), new Ss12000Outbound(undefined));
     await expect(sync.provisioning({ ...admin, channel: 'WEB' })).resolves.toHaveLength(2);
     expect(recordedReads(tx)).toEqual([{ kind: 'PEOPLE', channel: 'WEB', ids: [PUPIL, TEACHER] }]);
+  });
+});
+
+describe('awaitsProtectionDecision (review of #263, N2)', () => {
+  const change = (patch: Partial<{ entity: string; op: string; applied: boolean; conflictCode: string | null }>) => ({
+    entity: 'PROTECTION', op: 'ADD', applied: false, conflictCode: 'PROTECTION_ADDRESS_NAME_DIFFERS', ...patch,
+  });
+
+  it('holds the night for a mark by address that waits for a decision: another name, or several rows', () => {
+    expect(awaitsProtectionDecision(change({}))).toBe(true);
+    expect(awaitsProtectionDecision(change({ conflictCode: 'PROTECTION_ADDRESS_AMBIGUOUS' }))).toBe(true);
+  });
+
+  it('not for one made, a mark made at night, a lift, or a note about a person', () => {
+    expect(awaitsProtectionDecision(change({ applied: true }))).toBe(false);
+    expect(awaitsProtectionDecision(change({ conflictCode: null }))).toBe(false);
+    expect(awaitsProtectionDecision(change({ op: 'END', conflictCode: 'PROTECTION_ADDRESS_NO_LONGER_MATCHES' }))).toBe(false);
+    expect(awaitsProtectionDecision(change({ op: 'END' }))).toBe(false);
+    expect(awaitsProtectionDecision(change({ entity: 'PERSON', op: 'CONFLICT', conflictCode: 'PERSON_AMBIGUOUS_MATCH' }))).toBe(false);
   });
 });
