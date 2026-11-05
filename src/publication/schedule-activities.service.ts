@@ -614,6 +614,13 @@ export class ScheduleActivitiesService {
    */
   private async evaluate(tx: PrismaClient, checked: Checked, activity: ActivityRow | null): Promise<Evaluation> {
     const named = checked.named;
+    // An activity belongs to its läsår for good: its lessons, credits and teachers are that year's.
+    if (activity && activity.academicYearId !== named.academicYearId) {
+      throw new BadRequestException({
+        message: 'academicYearId: en aktivitet byter inte läsår. Ta bort den och gör en ny.',
+        code: CANCELLATION_SCOPE,
+      });
+    }
     const { timezone, today } = await yearOf(tx, named.academicYearId, named);
     const now = new Date();
 

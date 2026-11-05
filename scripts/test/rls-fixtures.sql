@@ -1367,6 +1367,44 @@ BEGIN
     (m, 'roller-lasare-hr@example.invalid', 'Roller', 'Läsare HR', 'SCHOOL_ADMIN', 'LASARE', true,  '00000000-0000-4000-8000-000000000116', true, now());
 END $$;
 
+-- The matrix school's schemabrytande aktivitet (20270101090000, sections
+-- 310–314): the activity that owns the school's 'Roller prao' avbokning, a
+-- lead for its class and the replacement lesson of the day, so section 116
+-- has a row of each of the three tables to probe. Planted on their own and
+-- only when missing, like the läsare above: a database whose
+-- rls-roller-school was planted before the migration gets them too.
+DO $$
+DECLARE
+  m uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-roller-school');
+  yr uuid;
+  batch uuid;
+  subj uuid;
+  grp uuid;
+  teacher uuid;
+  activity uuid;
+  lesson uuid;
+BEGIN
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "ScheduleActivities" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = m AND "isActive";
+  SELECT id INTO batch FROM "CancellationBatches" WHERE "schoolId" = m AND name = 'Roller prao';
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = m AND code = 'RLSR';
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = m AND name = 'Roller 7A';
+  SELECT id INTO teacher FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111';
+  IF yr IS NULL OR batch IS NULL OR subj IS NULL OR grp IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'fixtures: the matrix school lacks what its activity hangs on';
+  END IF;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", description, "scopeGroupIds")
+  VALUES (m, yr, batch, subj, 'Roller prao', ARRAY[grp]) RETURNING id INTO activity;
+  INSERT INTO "ScheduleActivityTeachers" ("activityId", "studentGroupId", "teacherId", "schoolId", role)
+  VALUES (activity, grp, teacher, m, 'LEAD');
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (m, subj, grp, '2030-09-09', '2030-09-09 09:00+00', '2030-09-09 10:00+00', now()) RETURNING id INTO lesson;
+  INSERT INTO "ScheduleActivityLessons" ("activityId", "calendarLessonId", "studentGroupId", date, "schoolId")
+  VALUES (activity, lesson, grp, '2030-09-09', m);
+END $$;
+
 -- SS12000-närvaro (sections 155–159, 20261114090000). Two schools with a
 -- lesson, two pupils' attendance and absences and integration keys: one that
 -- has not decided (its admin decides inside the sections' transactions) and

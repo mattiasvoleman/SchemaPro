@@ -1547,6 +1547,7 @@ model ScheduleActivity {
 
   @@unique([id, schoolId])
   @@unique([batchId])
+  @@index([schoolId])
   @@index([academicYearId, schoolId])
   @@index([replacementSubjectId, schoolId])
   @@index([createdByUserId, schoolId])

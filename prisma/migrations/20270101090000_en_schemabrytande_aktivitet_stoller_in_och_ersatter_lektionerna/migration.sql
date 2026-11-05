@@ -52,9 +52,12 @@
 --
 -- ## Radnivåsäkerhet
 --
--- Tre armar per tabell, som avbokningens: personalen (administratör och
--- lärare) läser, och administratören skriver i området DRIFT
--- (app.current_user_may). Ingen arm för elev eller vårdnadshavare: de läser
+-- Fyra policyer per tabell: personalen (administratör och lärare) läser, och
+-- administratören lägger till, ändrar och tar bort i området DRIFT
+-- (app.current_user_may), som avbokningens tabeller gör. De gäller
+-- app_authenticated, API:ts roll; PostgREST:s roll (authenticated) har ingenting
+-- här, till skillnad från avbokningens tabeller, eftersom ingen sida läser dem
+-- därifrån. Ingen arm för elev eller vårdnadshavare: de läser
 -- ersättningslektionen i kalendern som vilken lektion som helst, och de
 -- ansvariga lärarna i lektionens egen lärarrad. Inga personuppgifter finns i
 -- tabellerna utöver lärarens id; en lärare som tas bort tar sina rader med
@@ -116,12 +119,14 @@ CREATE TABLE "ScheduleActivities" (
         "description" IS NULL OR char_length(btrim("description")) BETWEEN 1 AND 300
     ),
     CONSTRAINT "ScheduleActivities_scope_ids_are_few" CHECK (cardinality("scopeGroupIds") <= 200),
-    -- Removed once, by somebody (or by nobody known any more), never un-removed.
+    -- Whoever removed it needs a time to have removed it at. (That a removal is
+    -- never taken back is the service's rule: the database does not hold it.)
     CONSTRAINT "ScheduleActivities_removal_is_recorded" CHECK ("removedAt" IS NOT NULL OR "removedByUserId" IS NULL)
 );
 
 CREATE UNIQUE INDEX "ScheduleActivities_id_schoolId_key" ON "ScheduleActivities"("id", "schoolId");
 CREATE UNIQUE INDEX "ScheduleActivities_batchId_key" ON "ScheduleActivities"("batchId");
+CREATE INDEX "ScheduleActivities_schoolId_idx" ON "ScheduleActivities"("schoolId");
 CREATE INDEX "ScheduleActivities_academicYearId_schoolId_idx" ON "ScheduleActivities"("academicYearId", "schoolId");
 CREATE INDEX "ScheduleActivities_replacementSubjectId_schoolId_idx" ON "ScheduleActivities"("replacementSubjectId", "schoolId");
 CREATE INDEX "ScheduleActivities_createdByUserId_schoolId_idx" ON "ScheduleActivities"("createdByUserId", "schoolId");
