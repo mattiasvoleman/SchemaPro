@@ -45,4 +45,18 @@ describe('notification preferences', () => {
     expect(preferenceLabel(t, 'FROM_A_NEWER_GATEWAY', false)).toBe('Andra notiser');
     expect(preferenceLabel(translatorFor('en'), 'FROM_A_NEWER_GATEWAY', false)).toBe('Other notifications');
   });
+
+  it('names the three cover-request types the gateway offers by role, in both languages', () => {
+    // TEACHER gets the question and its end, SCHOOL_ADMIN the answer (TYPES_BY_ROLE).
+    expect(
+      (['COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'COVER_REQUEST_ACCEPTED'] as const).map((type) => [
+        preferenceLabel(translatorFor('sv'), type, true),
+        preferenceLabel(translatorFor('en'), type, true),
+      ]),
+    ).toEqual([
+      ['Förfrågningar om att vikariera', 'Requests to cover a lesson'],
+      ['Vikarieförfrågningar som tillsatts eller dragits tillbaka', 'Cover requests that were filled or withdrawn'],
+      ['Svar på dina vikarieförfrågningar', 'Answers to your cover requests'],
+    ]);
+  });
 });

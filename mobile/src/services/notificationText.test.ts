@@ -173,6 +173,78 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Prao åk 9 är ångrad: 12 lektioner blir av som planerat (19 okt – 23 okt).',
     'Prao åk 9 is undone: 12 lessons go ahead as planned (19 Oct – 23 Oct).',
   ],
+  [
+    'COVER_REQUESTED, one lesson, with the time to answer by',
+    row('COVER_REQUESTED', {
+      requestId: 'r-1',
+      startsAt: at,
+      lessonCount: 1,
+      expiresAt: '2026-10-13T07:30:00.000Z',
+      lessons: [{ lessonId: 'l-1', startsAt: at, subjectName: 'Matematik', groupName: '7A', roomName: 'B204' }],
+    }),
+    'Kan du vikariera? Matematik, 7A, B204 (tis 13 okt 08:00). Svara senast tis 13 okt 07:30.',
+    'Can you cover? Matematik, 7A, B204 (Tue 13 Oct 08:00). Answer by Tue 13 Oct 07:30.',
+  ],
+  [
+    'COVER_REQUESTED, a lesson without a room',
+    row('COVER_REQUESTED', {
+      requestId: 'r-1',
+      startsAt: at,
+      lessonCount: 1,
+      expiresAt: '2026-10-13T07:30:00.000Z',
+      lessons: [{ lessonId: 'l-1', startsAt: at, subjectName: 'Matematik', groupName: '7A', roomName: null }],
+    }),
+    'Kan du vikariera? Matematik, 7A (tis 13 okt 08:00). Svara senast tis 13 okt 07:30.',
+    'Can you cover? Matematik, 7A (Tue 13 Oct 08:00). Answer by Tue 13 Oct 07:30.',
+  ],
+  [
+    'COVER_REQUESTED, several lessons',
+    row('COVER_REQUESTED', {
+      requestId: 'r-1',
+      startsAt: at,
+      lessonCount: 3,
+      expiresAt: '2026-10-13T07:30:00.000Z',
+      lessons: [{ lessonId: 'l-1', startsAt: at, subjectName: 'Matematik', groupName: '7A', roomName: 'B204' }],
+    }),
+    'Kan du vikariera 3 lektioner från tis 13 okt 08:00? Svara senast tis 13 okt 07:30.',
+    'Can you cover 3 lessons from Tue 13 Oct 08:00? Answer by Tue 13 Oct 07:30.',
+  ],
+  [
+    'COVER_REQUEST_CLOSED, taken by a colleague',
+    row('COVER_REQUEST_CLOSED', { requestId: 'r-1', startsAt: at, lessonCount: 1, reason: 'TAKEN', lessons: [] }),
+    'Vikariepasset tis 13 okt 08:00 är redan tillsatt av en kollega.',
+    'The cover lesson Tue 13 Oct 08:00 is already filled by a colleague.',
+  ],
+  [
+    'COVER_REQUEST_CLOSED, taken, several lessons',
+    row('COVER_REQUEST_CLOSED', { requestId: 'r-1', startsAt: at, lessonCount: 2, reason: 'TAKEN', lessons: [] }),
+    '2 vikariepass från tis 13 okt 08:00 är redan tillsatta av en kollega.',
+    '2 cover lessons from Tue 13 Oct 08:00 are already filled by a colleague.',
+  ],
+  [
+    'COVER_REQUEST_CLOSED, withdrawn',
+    row('COVER_REQUEST_CLOSED', { requestId: 'r-1', startsAt: at, lessonCount: 1, reason: 'WITHDRAWN', lessons: [] }),
+    'Förfrågan om vikariepasset tis 13 okt 08:00 är återkallad.',
+    'The request about the cover lesson Tue 13 Oct 08:00 is withdrawn.',
+  ],
+  [
+    'COVER_REQUEST_CLOSED, withdrawn, several lessons',
+    row('COVER_REQUEST_CLOSED', { requestId: 'r-1', startsAt: at, lessonCount: 4, reason: 'WITHDRAWN', lessons: [] }),
+    'Förfrågan om 4 vikariepass från tis 13 okt 08:00 är återkallad.',
+    'The request about 4 cover lessons from Tue 13 Oct 08:00 is withdrawn.',
+  ],
+  [
+    'COVER_REQUEST_ACCEPTED, to the administrator who asked',
+    row('COVER_REQUEST_ACCEPTED', { requestId: 'r-1', startsAt: at, lessonCount: 1, acceptedByName: 'Anna Lind' }),
+    'Anna Lind har tackat ja till vikariepasset tis 13 okt 08:00.',
+    'Anna Lind has said yes to the cover lesson Tue 13 Oct 08:00.',
+  ],
+  [
+    'COVER_REQUEST_ACCEPTED, several lessons',
+    row('COVER_REQUEST_ACCEPTED', { requestId: 'r-1', startsAt: at, lessonCount: 3, acceptedByName: 'Anna Lind' }),
+    'Anna Lind har tackat ja till 3 vikariepass från tis 13 okt 08:00.',
+    'Anna Lind has said yes to 3 cover lessons from Tue 13 Oct 08:00.',
+  ],
 ];
 
 describe('notificationText', () => {
@@ -181,9 +253,33 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all fifteen types the gateway writes', () => {
+  it('covers all eighteen types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(15);
+    expect(types.size).toBe(18);
+  });
+
+  it('words a cover notice from a gateway that said no count, no lessons and no name', () => {
+    expect(notificationText(row('COVER_REQUESTED', { startsAt: at, expiresAt: '2026-10-13T07:30:00.000Z' }), translatorFor('sv'), 'sv')).toBe(
+      'Kan du vikariera?  (tis 13 okt 08:00). Svara senast tis 13 okt 07:30.',
+    );
+    expect(notificationText(row('COVER_REQUEST_CLOSED', { startsAt: at }), translatorFor('en'), 'en')).toBe(
+      'The cover lesson Tue 13 Oct 08:00 is already filled by a colleague.',
+    );
+    expect(notificationText(row('COVER_REQUEST_ACCEPTED', { startsAt: at }), translatorFor('sv'), 'sv')).toBe(
+      '— har tackat ja till vikariepasset tis 13 okt 08:00.',
+    );
+  });
+
+  it('never names whom a cover request replaces, nor a reason, whatever the meta carries', () => {
+    for (const type of ['COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'COVER_REQUEST_ACCEPTED'] as const) {
+      const text = notificationText(
+        row(type, { startsAt: at, lessonCount: 1, reason: 'TAKEN', absentTeacherName: 'Berit Frånvarande', absenceReason: 'Sjuk' }),
+        translatorFor('sv'),
+        'sv',
+      );
+      expect(text).not.toContain('Berit');
+      expect(text).not.toContain('Sjuk');
+    }
   });
 
   it('never carries a leave request’s reason to the mentor, whatever the meta holds', () => {

@@ -1,4 +1,4 @@
-import { appRefusal, homeOf } from './appGate';
+import { appRefusal, homeOf, tapTarget, tapTypeOf } from './appGate';
 
 /**
  * Each app admits only its own roles, and tells everyone else which app is
@@ -31,5 +31,46 @@ describe('appRefusal', () => {
 
   it('admits nobody in a build that does not say which app it is', () => {
     for (const role of ['TEACHER', 'SCHOOL_ADMIN', 'STUDENT', 'GUARDIAN']) expect(appRefusal(null, role)).toBe('APP_NOT_CONFIGURED');
+  });
+});
+
+/**
+ * A tap on a push opens the role's Notiser tab, except a cover question for a
+ * teacher (Vikariefrågan), which opens the Vikarie tab where it is answered.
+ */
+describe('tapTarget', () => {
+  it.each([
+    ['TEACHER', 'COVER_REQUESTED', '/(app)/cover-requests'],
+    ['TEACHER', 'COVER_REQUEST_CLOSED', '/(app)/cover-requests'],
+    // The answer is the administrator's, and an inbox row like the rest.
+    ['SCHOOL_ADMIN', 'COVER_REQUEST_ACCEPTED', '/(app)/notifications'],
+    ['TEACHER', 'LESSON_SUBSTITUTE', '/(app)/notifications'],
+    // Only a teacher has the tab: another role's tap never leaves its own shell.
+    ['SCHOOL_ADMIN', 'COVER_REQUESTED', '/(app)/notifications'],
+    ['STUDENT', 'COVER_REQUESTED', '/(student)/notifications'],
+    ['GUARDIAN', 'COVER_REQUEST_CLOSED', '/(guardian)/notifications'],
+    // A push from a gateway that sent no type, or a role not yet known.
+    ['TEACHER', null, '/(app)/notifications'],
+    [null, 'COVER_REQUESTED', '/(app)/notifications'],
+  ])('%s tapping %s opens %s', (role, type, target) => {
+    expect(tapTarget(role, type)).toBe(target);
+  });
+});
+
+describe('tapTypeOf', () => {
+  it('reads the notice type the gateway put in the push', () => {
+    const response = { notification: { request: { content: { data: { notificationId: 'n-1', type: 'COVER_REQUESTED' } } } } };
+    expect(tapTypeOf(response)).toBe('COVER_REQUESTED');
+  });
+
+  it.each([
+    ['no response', undefined],
+    ['null', null],
+    ['an empty response', {}],
+    ['a push without data', { notification: { request: { content: {} } } }],
+    ['data that is not an object', { notification: { request: { content: { data: 'x' } } } }],
+    ['a type that is not a string', { notification: { request: { content: { data: { type: 7 } } } } }],
+  ])('says none for %s', (_name, response) => {
+    expect(tapTypeOf(response)).toBeNull();
   });
 });

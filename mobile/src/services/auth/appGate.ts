@@ -36,6 +36,36 @@ export function homeOf(role: string | null): { group: '(guardian)' | '(student)'
   return { group: '(app)', home: '/(app)/schedule', notifications: '/(app)/notifications' };
 }
 
+/** Where a push tap goes: the role's Notiser tab, or the cover requests a teacher is asked in. */
+export type TapTarget = ReturnType<typeof homeOf>['notifications'] | '/(app)/cover-requests';
+
+/**
+ * The notice types whose push is a question for a teacher (Vikariefrågan):
+ * the question itself and its end, either of which is read in the Vikarie tab
+ * where the card says what became of it. COVER_REQUEST_ACCEPTED is the
+ * administrator's, and an inbox row like the rest.
+ */
+const COVER_QUESTION_TYPES: ReadonlySet<string> = new Set(['COVER_REQUESTED', 'COVER_REQUEST_CLOSED']);
+
+/**
+ * What a tap on a push opens. The type is what the gateway put in the push's
+ * data (notification-delivery.service: { notificationId, type }); a tap that
+ * carries none, or one the role has no screen for, opens the Notiser tab as
+ * every tap did before. Only a TEACHER has the Vikarie tab.
+ */
+export function tapTarget(role: string | null, type: string | null): TapTarget {
+  if (role === 'TEACHER' && type !== null && COVER_QUESTION_TYPES.has(type)) return '/(app)/cover-requests';
+  return homeOf(role).notifications;
+}
+
+/** The notice type in a notification response (expo-notifications), or null where the push carried none. */
+export function tapTypeOf(response: unknown): string | null {
+  const content = (response as { notification?: { request?: { content?: { data?: unknown } } } } | null | undefined)?.notification
+    ?.request?.content;
+  const type = (content?.data as { type?: unknown } | null | undefined)?.type;
+  return typeof type === 'string' ? type : null;
+}
+
 export function isAppRefusal(code: string): code is AppRefusal {
   return code === 'USE_GUARDIAN_APP' || code === 'USE_SCHOOL_APP' || code === 'ROLE_NOT_SUPPORTED' || code === 'APP_NOT_CONFIGURED';
 }

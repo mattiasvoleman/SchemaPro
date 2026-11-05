@@ -30,6 +30,11 @@ jest.mock('react-native-safe-area-context', () => require('react-native-safe-are
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+  // As a focused tab: the Vikarie screen reads its list when it is shown.
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('react').useEffect(effect, [effect]);
+  },
 }));
 
 let mockRole = 'TEACHER';
@@ -150,6 +155,26 @@ jest.mock('../services/leaveRequests', () => ({
   fetchLeaveRequests: jest.fn(async () => []),
   requestLeave: jest.fn(),
 }));
+// The teacher's cover requests (Vikariefrågan): one question to answer, one that
+// a colleague took, and a pass to confirm, so every card is drawn.
+jest.mock('../services/coverRequests', () => {
+  const lesson = (id: string, subjectName: string) => ({
+    lessonId: id, date: '2026-10-19', startsAt: '2026-10-19T08:10:00Z', endsAt: '2026-10-19T09:00:00Z',
+    subjectName, groupName: '7A', roomName: 'B204', cancelled: false,
+  });
+  return {
+    ...jest.requireActual('../services/coverRequests'),
+    fetchMyCover: jest.fn(async () => ({
+      requests: [
+        { id: 'q1', state: 'OPEN', createdAt: '2026-10-18T08:00:00Z', expiresAt: '2026-10-18T12:00:00Z', lessons: [lesson('c1', 'Matematik')] },
+        { id: 'q2', state: 'TAKEN', createdAt: '2026-10-17T08:00:00Z', expiresAt: '2026-10-17T12:00:00Z', lessons: [lesson('c2', 'Fysik')] },
+      ],
+      passes: [{ ...lesson('c3', 'Svenska'), confirmedAt: null }],
+    })),
+    answerCoverRequest: jest.fn(),
+    confirmCoverPass: jest.fn(),
+  };
+});
 /** A subject's own colour, from the school's data: the one colour a screen draws that the palette does not hold. */
 const mockSubjectColour = '#0e7490';
 jest.mock('../services/familySchedule', () => {
@@ -210,6 +235,7 @@ import { StudentScheduleScreen } from './student/StudentScheduleScreen';
 import { GuardianHomeScreen } from './guardian/GuardianHomeScreen';
 import { ChildScheduleScreen } from './guardian/ChildScheduleScreen';
 import { LeaveRequestsScreen } from './guardian/LeaveRequestsScreen';
+import { CoverRequestsScreen } from './cover/CoverRequestsScreen';
 // A route file outside jest's roots; importing it from here is fine.
 import LoginScreen from '../../app/(auth)/login';
 
@@ -324,6 +350,7 @@ const SCREENS: ReadonlyArray<[string, React.ComponentType, string, 'list' | 'col
   ['schedule', ScheduleScreen, 'TEACHER', 'list'],
   ['attendance', AttendanceScreen, 'TEACHER', 'list'],
   ['notifications', NotificationsScreen, 'TEACHER', 'list'],
+  ['cover requests', CoverRequestsScreen, 'TEACHER', 'list'],
   ['settings', SettingsScreen, 'TEACHER', 'column'],
   ['student schedule', StudentScheduleScreen, 'STUDENT', 'list'],
   ['guardian home', GuardianHomeScreen, 'GUARDIAN', 'split'],

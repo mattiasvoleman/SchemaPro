@@ -158,7 +158,10 @@ export type NotificationType =
   | 'CANCELLATION_DIGEST'
   | 'LEAVE_REQUESTED'
   | 'SUPERVISION_COVER'
-  | 'SUPERVISION_COVER_WITHDRAWN';
+  | 'SUPERVISION_COVER_WITHDRAWN'
+  | 'COVER_REQUESTED'
+  | 'COVER_REQUEST_ACCEPTED'
+  | 'COVER_REQUEST_CLOSED';
 
 export interface NotificationRow {
   readonly id: string;
