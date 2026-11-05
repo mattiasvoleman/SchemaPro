@@ -393,10 +393,11 @@ const STAFF_NOTICES: NotificationTypeName[] = [
   "ROOM_BOOKING_DECIDED",
 ];
 const OFFERED: Record<Persona, NotificationTypeName[]> = {
-  guardian: [...LESSON_NOTICES, "LEAVE_DECIDED", "ABSENCE_UNREPORTED"],
+  // The week's or month's count of pupils over a limit (Frånvarobevakning): everyone but a pupil.
+  guardian: [...LESSON_NOTICES, "LEAVE_DECIDED", "ABSENCE_UNREPORTED", "ABSENCE_WATCH_DIGEST"],
   student: [...LESSON_NOTICES, "LEAVE_DECIDED"],
-  teacher: STAFF_NOTICES,
-  admin: STAFF_NOTICES,
+  teacher: [...STAFF_NOTICES, "ABSENCE_WATCH_DIGEST"],
+  admin: [...STAFF_NOTICES, "ABSENCE_WATCH_DIGEST"],
 };
 /** Sent whatever is chosen: the unreported absence to a guardian, a cover lesson's withdrawal to staff. */
 const REQUIRED: Record<Persona, NotificationTypeName[]> = {

@@ -26,6 +26,9 @@
           - link "Ledighet":
             - /url: /sv/teacher/ledighet
         - listitem:
+          - link "Frånvarobevakning":
+            - /url: /sv/teacher/absence-watch
+        - listitem:
           - link "Min kalenderprenumeration":
             - /url: /sv/calendar-feed
     - link "Tillgänglighetsredogörelse":

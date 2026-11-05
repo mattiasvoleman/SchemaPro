@@ -33,7 +33,8 @@ interface NotificationRow {
     | "CANCELLATION_DIGEST"
     | "LEAVE_REQUESTED"
     | "SUPERVISION_COVER"
-    | "SUPERVISION_COVER_WITHDRAWN";
+    | "SUPERVISION_COVER_WITHDRAWN"
+    | "ABSENCE_WATCH_DIGEST";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -113,6 +114,16 @@ export function NotificationBell() {
           from: str("startDate"),
           to: str("endDate"),
           days: Number(meta.schoolDays ?? 0),
+        });
+      case "ABSENCE_WATCH_DIGEST":
+        // Frånvarobevakning: counts and a period, never a pupil, a figure of
+        // minutes or a reason (the e-mail says no more). The guardian's
+        // counts are their own children.
+        return t(meta.group === "GUARDIAN" ? "absenceWatchDigestGuardian" : "absenceWatchDigest", {
+          open: Number(meta.open ?? 0),
+          crossed: Number(meta.crossed ?? 0),
+          from: str("periodStart").slice(0, 10),
+          to: str("periodEnd").slice(0, 10),
         });
       case "LESSON_CANCELLED":
         return t("lessonCancelled", {

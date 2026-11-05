@@ -5755,9 +5755,9 @@
   <table>
     <thead><tr><th style="width:30%">Roll</th><th>Kan välja bort</th><th style="width:30%">Skickas alltid</th></tr></thead>
     <tbody>
-      <tr><td class="k">Vårdnadshavare</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet</td><td>Oanmäld frånvaro</td></tr>
+      <tr><td class="k">Vårdnadshavare</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet, sammanställning av frånvaro (6.12)</td><td>Oanmäld frånvaro</td></tr>
       <tr><td class="k">Elev</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet</td><td>—</td></tr>
-      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, och för lärare ledighetsansökningar att besluta om som mentor</td><td>Egna vikariepass och avbokade vikariepass, rastvaktspass som vikarie och avbokade rastvaktspass</td></tr>
+      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, sammanställning av frånvaro (6.12), och för lärare ledighetsansökningar att besluta om som mentor</td><td>Egna vikariepass och avbokade vikariepass, rastvaktspass som vikarie och avbokade rastvaktspass</td></tr>
     </tbody>
   </table>
   <p>
@@ -5781,6 +5781,7 @@
     </p>
   </div>
   <p>
+    Sammanställningen av frånvaro (6.12) skickas som e-post och push bara med antal, aldrig med en elev.
     En push säger aldrig en persons namn, inte ens barnets, och aldrig ett
     ämne, en grupp eller en sal. Sådana namn kan avslöja känsliga uppgifter,
     och en push syns på en låst skärm. Pushen säger vad som hänt och när,
@@ -5897,6 +5898,119 @@
       läsningen på. Det som begränsar den är vilka som får läsa den alls.
     </p>
   </div>
+  <h3 id="s612"><span class="num">6.12</span>Frånvarobevakning</h3>
+  <p>
+    Frånvarobevakningen säger till när en elev har för mycket frånvaro. Skolan
+    sätter gränserna, ett nattligt jobb räknar vilka elever som har passerat
+    dem, och mentorer, rektor, kansli och vårdnadshavare får en
+    sammanställning varje vecka eller månad. Den är <strong>avstängd för
+    varje skola</strong> tills en administratör slår på den under
+    <span class="path">Drift › Frånvarobevakning</span>. Sidan skriver du på
+    som rektor, fullständig administratör, schemaläggare och expedition. En
+    läsare ser den men ändrar ingenting.
+  </p>
+
+  <h4>Gränserna</h4>
+  <p>
+    En gräns hör till en <strong>mottagargrupp</strong>: <em>Mentor</em>,
+    <em>Rektor</em>, <em>Kansli</em> eller <em>Vårdnadshavare</em>. Varje grupp
+    kan ha olika gränser, till exempel 10 % för mentorerna och 20 % för
+    vårdnadshavarna. En gräns är av ett av två slag:
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">Slag</th><th>Betyder</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Andel av de registrerade minuterna</td><td>Så många procent (1–100) av elevens registrerade lektionsminuter de senaste 7–60 dagarna, räknade till och med i går. Gränsen är nådd när andelen är lika med den eller över.</td></tr>
+      <tr><td class="k">Skoldagar i följd</td><td>Så många skoldagar i följd (2–30) som eleven varit frånvarande hela dagen och som pågår nu.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Varje gräns räknar <span class="ui">giltig frånvaro</span> (anmäld eller
+    beviljad, registrerad som <em>Giltig</em>), <span class="ui">ogiltig
+    frånvaro</span> eller <span class="ui">all frånvaro</span>. Skolan kan ha en
+    gräns för varje grupp, slag och grund, alltså högst sex för en grupp. En
+    gräns byter inte grupp, slag eller grund: det blir en ny gräns.
+  </p>
+
+  <h4>Vad som räknas</h4>
+  <p>
+    Räkningen bygger på närvaron i minuter som <span class="ui">Närvaro</span>
+    i rapporterna (6.9) redan visar, med samma regler:
+  </p>
+  <ul>
+    <li><strong>Närvarande</strong> är närvaro. <strong>Giltig</strong> är giltig frånvaro, lektionens minuter. <strong>Frånvarande</strong> är ogiltig frånvaro, lektionens minuter. <strong>Sen</strong> räknas som 15 minuters ogiltig frånvaro, högst lektionens längd, och eleven är i övrigt närvarande. En lektion som ingen har registrerat räknas varken som närvaro eller frånvaro.</li>
+    <li>Bara lektioner som hålls räknas. <strong>En inställd lektion är aldrig frånvaro</strong>, vad som än hunnit registreras på den. <strong>En ersättningslektion</strong>, till exempel en friluftsdag som ersätter dagens lektioner, räknas som vilken lektion som helst.</li>
+    <li>Lov, helger och dagar utan en enda registrerad lektion räknas inte som skoldagar. De bryter inte en följd av dagar, och de räknas inte som frånvaro. Beviljad ledighet är giltig frånvaro, som förut.</li>
+    <li>En dag räknas som frånvaro i en följd när <em>varje</em> registrerad lektion den dagen är det. En följd som slutade för mer än sju dagar sedan pågår inte längre, och följden räknas högst 90 dagar bakåt.</li>
+    <li>Frånvaron ska pågå: en elev är över en gräns bara om eleven har en registrerad lektion de senaste sju dagarna, för en andel såväl som för en följd. Under ett lov står därför ingen kvar över en gräns från terminen före, och en elev som är frånvarande från första skoldagen efter lovet hittas direkt.</li>
+    <li>Gallrar skolan närvaron efter kortare tid än gränsens fönster (7.4) räknas bara det som finns kvar. Räkningen ser inte vad som gallrats.</li>
+    <li>Andelen räknas över kalenderdagar i skolans egen tid: fönstret av <em>N</em> dagar slutar i går, och båda ändarna räknas med. Sommartid ändrar ingenting, eftersom en lektions minuter är dess längd och dagen är skolans datum.</li>
+  </ul>
+  <p>
+    Bara <strong>aktiva elever</strong> räknas. En elev som inte längre är
+    aktiv har inga öppna fynd. Hur många elever det blir beror på skolans
+    gränser: en gräns som många passerar säger inte mycket. Börja högre än du
+    tror.
+  </p>
+
+  <h4>Sammanställningen</h4>
+  <p>
+    Jobbet körs en gång per natt för varje skola med bevakningen på, från klockan
+    05:00 skolans tid. Första dagen efter en hel vecka (måndag till söndag) eller
+    en hel månad skrivs sammanställningen för varje grupp som har en gräns.
+    Hur ofta, vecka eller månad, väljer du per grupp under
+    <span class="ui">Hur ofta sammanställningen skickas</span>. Förvalet är varje
+    vecka för personal och varje månad för vårdnadshavare. En sammanställning för
+    en period som slutade innan bevakningen slogs på skrivs inte, och en vecka
+    eller månad skrivs en enda gång, även om jobbet skulle köras två gånger.
+  </p>
+  <table>
+    <thead><tr><th style="width:22%">Mottagargrupp</th><th>Vem som får den</th><th style="width:34%">Vad den gäller</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Mentor</td><td>Lärare som har mentorskap för elevens klass i dag, enligt uppdraget under <span class="path">Personer</span></td><td>Mentorns egna elever</td></tr>
+      <tr><td class="k">Rektor</td><td>Administratörer med profilen Rektor eller Fullständig</td><td>Alla elever</td></tr>
+      <tr><td class="k">Kansli</td><td>Administratörer med profilen Expedition</td><td>Alla elever</td></tr>
+      <tr><td class="k">Vårdnadshavare</td><td>Elevens vårdnadshavare</td><td>Det egna barnet</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Den som inte har något att få veta får ingen sammanställning. Den säger
+    <em>hur många</em> elever som är över en gräns och hur många som passerade en
+    under perioden, och ingenting annat: <strong>inget namn, ingen klass, inga
+    minuter och aldrig en anledning</strong>, varken i e-posten, i pushen eller i
+    notisen. Vilka eleverna är står bakom inloggningen, i vyn nedan. Var och en
+    kan stänga av e-post och push för sammanställningen under Notiser (6.10).
+  </p>
+
+  <h4>Vilka elever, och sedan när</h4>
+  <p>
+    Under gränserna på samma sida står eleverna som har passerat en gräns, med
+    klass, mottagargrupp, gränsen, mätetalet (till exempel <em>120 av 600
+    minuter (20 %)</em> eller <em>5 skoldagar i följd</em>) och <strong>sedan
+    när</strong>. För följder är det den dag följden nådde gränsen. För en andel
+    är det den natt bevakningen först såg att eleven passerat den, eftersom
+    andelen inte räknas om dag för dag bakåt. <span class="ui">Visa även de som
+    kommit under gränsen</span> tar med dem som kommit under den de senaste 60
+    dagarna. Mentorer och vårdnadshavare ser samma lista med sina egna elever
+    under <span class="path">Frånvarobevakning</span> i sin meny, bara det
+    gränserna för deras grupp har fångat.
+  </p>
+  <p>
+    Varje gång en lista öppnas skrivs det i skolans läslogg (7.4) att den som
+    öppnade den har läst elevernas närvaro och namn, och sammanställningen
+    skrivs som en läsning av de elever den bygger på, med mottagaren som läsare.
+    Loggen säger vilka som lästes, inte vad som stod där.
+  </p>
+  <div class="note">
+    <span class="label">Ändra eller ta bort en gräns</span>
+    <p>
+      En ändrad gräns räknas in vid nästa natts körning. Tar du bort en gräns,
+      eller stänger av bevakningen, stängs de elevers fynd direkt: de räknas som
+      under gränsen från i dag och ingen får en ny sammanställning om dem. Fynd
+      som funnits sparas så länge skolan sparar närvaron (7.4).
+    </p>
+  </div>
+
 </section>
 
 <!-- ============================ 7 ============================ -->
@@ -6418,7 +6532,7 @@
   <table>
     <thead><tr><th style="width:20%">Slag</th><th style="width:42%">Det här gallras</th><th>Det här finns kvar</th></tr></thead>
     <tbody>
-      <tr><td class="k">Närvaro</td><td>Närvaroregistreringar för lektioner före gränsdagen.</td><td>Lektionerna. Undervisningstiden räknas på lektionerna, inte på närvaron.</td></tr>
+      <tr><td class="k">Närvaro</td><td>Närvaroregistreringar för lektioner före gränsdagen, och de fynd frånvarobevakningen (6.12) har gjort av dem, efter den dag fyndet senast sågs.</td><td>Lektionerna. Undervisningstiden räknas på lektionerna, inte på närvaron.</td></tr>
       <tr><td class="k">Frånvaroanmälningar</td><td>Anmälningar från vårdnadshavare och elever, och dagarna i beviljad ledighet, före gränsdagen.</td><td>—</td></tr>
       <tr><td class="k">Ledighetsansökningar</td><td>Ansökningar vars sista dag är före gränsdagen, med anledning och beslut, och uppgiften om vilka mentorer som fick notisen om ansökan.</td><td>—</td></tr>
       <tr><td class="k">Notiser</td><td>Notiser i Rastra Schema som skapades före gränsdagen.</td><td>—</td></tr>
