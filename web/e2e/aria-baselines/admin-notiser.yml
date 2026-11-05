@@ -100,6 +100,9 @@
         - link "Rapporter":
           - /url: /sv/admin/reports
       - listitem:
+        - link "Frånvarobevakning":
+          - /url: /sv/admin/absence-watch
+      - listitem:
         - link "Klassbok":
           - /url: /sv/admin/klassbok
     - list:
@@ -149,5 +152,8 @@
       - listitem:
         - text: Beslut om lokalbokning
         - switch "Beslut om lokalbokning" [checked]
+      - listitem:
+        - text: Frånvarosammanställning
+        - switch "Frånvarosammanställning" [checked]
 - region "Meddelanden alt+T"
 - alert

@@ -8,6 +8,9 @@
         - link "Mina barn":
           - /url: /sv/guardian
       - listitem:
+        - link "Frånvarobevakning":
+          - /url: /sv/guardian/absence-watch
+      - listitem:
         - link "Min kalenderprenumeration":
           - /url: /sv/calendar-feed
   - link "Tillgänglighetsredogörelse":
@@ -52,5 +55,8 @@
         - text: Oanmäld frånvaro
         - paragraph: Skickas alltid. Skolan ska meddela vårdnadshavare samma dag när en elev är borta utan anmälan.
         - switch "Oanmäld frånvaro" [checked] [disabled]
+      - listitem:
+        - text: Frånvarosammanställning
+        - switch "Frånvarosammanställning" [checked]
 - region "Meddelanden alt+T"
 - alert
