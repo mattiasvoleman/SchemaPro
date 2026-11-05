@@ -40469,3 +40469,459 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 340-344: Skyddad identitet (20270107090000). A school's mark that
+-- a person has a protected identity, where it comes from (SS12000 or MANUAL)
+-- and never which protection. The school's people are in the fixtures
+-- ('rls-skyddad-school'): T1, P1, P3 and G2 are marked; T2, P2 and G1 not.
+--
+-- What the database cannot hold, and these sections do not try to: which
+-- reads become a file. Exports are built in the gateway and the browser from
+-- ordinary reads under RLS; src/common/people-files.ts and
+-- web/lib/people-files.ts decide each by name, and their tests fail a new
+-- one. scripts/test/probe-skyddad-identitet.ts runs the files themselves.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Section 340: markeringen i katalogen. Three columns and nothing about the
+-- kind of protection; no column on Users; the keys cascade with the person
+-- and the school; five arms, all app_authenticated's; SELECT, INSERT and
+-- DELETE for the API, nothing for PostgREST's roles, SELECT for
+-- service_role, MAINTAIN nobody's on 17; the sync's change kind and its
+-- CHECK; gallring's line.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  v text;
+  n bigint;
+  r text;
+BEGIN
+  SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum) INTO v
+    FROM pg_attribute a WHERE a.attrelid = 'public."PersonProtections"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  IF v IS DISTINCT FROM 'userId:uuid,schoolId:uuid,source:"PersonProtectionSource"' THEN
+    RAISE EXCEPTION 'skyddad 340: PersonProtections holds %, not the person, the school and the source alone', v;
+  END IF;
+  IF enum_range(NULL::"PersonProtectionSource")::text <> '{SS12000,MANUAL}' THEN
+    RAISE EXCEPTION 'skyddad 340: the sources are %', enum_range(NULL::"PersonProtectionSource");
+  END IF;
+  SELECT string_agg(a.attname, ', ') INTO v FROM pg_attribute a
+   WHERE a.attrelid = 'public."Users"'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+     AND a.attname ~* 'protect|skydd|secur|marking|sekretess';
+  IF v IS NOT NULL THEN
+    RAISE EXCEPTION 'skyddad 340: Users has % (teachers, guardians and the person read Users)', v;
+  END IF;
+  IF (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."PersonProtections"'::regclass) IS NOT TRUE THEN
+    RAISE EXCEPTION 'skyddad 340: row security is off';
+  END IF;
+
+  -- The keys: with the person, with the school; ids never rewritten.
+  SELECT string_agg(c.conname || '=' || c.confdeltype::text || c.confupdtype::text || ':' || c.confrelid::regclass::text, ',' ORDER BY c.conname) INTO v
+    FROM pg_constraint c WHERE c.conrelid = 'public."PersonProtections"'::regclass AND c.contype = 'f';
+  IF v IS DISTINCT FROM 'PersonProtections_schoolId_fkey=ca:"Schools",PersonProtections_userId_schoolId_fkey=ca:"Users"' THEN
+    RAISE EXCEPTION 'skyddad 340: the keys are %', v;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = 'public."PersonProtections"'::regclass AND i.indisprimary
+                   AND i.indkey::text = (SELECT attnum::text FROM pg_attribute WHERE attrelid = 'public."PersonProtections"'::regclass AND attname = 'userId')) THEN
+    RAISE EXCEPTION 'skyddad 340: one row per person is not the primary key';
+  END IF;
+
+  -- Five arms, the API's alone.
+  SELECT string_agg(policyname || ':' || cmd || ':' || roles::text, ',' ORDER BY policyname) INTO v
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'PersonProtections';
+  IF v IS DISTINCT FROM 'person_protections_admin_delete:DELETE:{app_authenticated},person_protections_admin_insert:INSERT:{app_authenticated},person_protections_admin_select:SELECT:{app_authenticated},person_protections_sync_insert:INSERT:{app_authenticated},person_protections_sync_select:SELECT:{app_authenticated}' THEN
+    RAISE EXCEPTION 'skyddad 340: the arms are %', v;
+  END IF;
+
+  -- Grants.
+  IF NOT (has_table_privilege('app_authenticated', 'public."PersonProtections"', 'SELECT')
+          AND has_table_privilege('app_authenticated', 'public."PersonProtections"', 'INSERT')
+          AND has_table_privilege('app_authenticated', 'public."PersonProtections"', 'DELETE'))
+     OR has_table_privilege('app_authenticated', 'public."PersonProtections"', 'UPDATE')
+     OR has_table_privilege('app_authenticated', 'public."PersonProtections"', 'TRUNCATE')
+     OR has_table_privilege('app_authenticated', 'public."PersonProtections"', 'REFERENCES')
+     OR has_table_privilege('app_authenticated', 'public."PersonProtections"', 'TRIGGER') THEN
+    RAISE EXCEPTION 'skyddad 340: the API''s role holds %',
+      (SELECT relacl FROM pg_class WHERE oid = 'public."PersonProtections"'::regclass);
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
+       AND (has_table_privilege(r, 'public."PersonProtections"', 'SELECT') OR has_table_privilege(r, 'public."PersonProtections"', 'INSERT')
+            OR has_table_privilege(r, 'public."PersonProtections"', 'UPDATE') OR has_table_privilege(r, 'public."PersonProtections"', 'DELETE')
+            OR has_table_privilege(r, 'public."PersonProtections"', 'TRUNCATE') OR has_table_privilege(r, 'public."PersonProtections"', 'REFERENCES')
+            OR has_table_privilege(r, 'public."PersonProtections"', 'TRIGGER')) THEN
+      RAISE EXCEPTION 'skyddad 340: % holds a privilege on the marks', r;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')
+     AND (has_table_privilege('service_role', 'public."PersonProtections"', 'INSERT') OR has_table_privilege('service_role', 'public."PersonProtections"', 'UPDATE')
+          OR has_table_privilege('service_role', 'public."PersonProtections"', 'DELETE') OR has_table_privilege('service_role', 'public."PersonProtections"', 'TRUNCATE')) THEN
+    RAISE EXCEPTION 'skyddad 340: service_role writes the marks';
+  END IF;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+        EXECUTE format('SELECT has_table_privilege(%L, %L, %L)', r, 'public."PersonProtections"', 'MAINTAIN') INTO v;
+        IF v::boolean THEN RAISE EXCEPTION 'skyddad 340: % holds MAINTAIN on the marks', r; END IF;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- The sync's change, and the CHECK that keeps its person out of the ids a finished run keeps.
+  IF NOT ('PROTECTION' = ANY (enum_range(NULL::"Ss12000ChangeEntity")::text[])) THEN
+    RAISE EXCEPTION 'skyddad 340: Ss12000ChangeEntity has no PROTECTION';
+  END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO v FROM pg_constraint c
+   WHERE c.conrelid = 'public."Ss12000SyncChanges"'::regclass AND c.conname = 'Ss12000SyncChanges_a_mark_names_its_person_in_after_alone';
+  IF v IS NULL OR v NOT LIKE '%"externalId" IS NULL%' OR v NOT LIKE '%"localId" IS NULL%' THEN
+    RAISE EXCEPTION 'skyddad 340: the CHECK on a mark''s change is %', v;
+  END IF;
+
+  -- Gallring's line, and the function still the API's alone.
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.gallring_pseudonymise(uuid, uuid[])'::regprocedure) NOT LIKE '%DELETE FROM "PersonProtections"%' THEN
+    RAISE EXCEPTION 'skyddad 340: pseudonymisation leaves the mark';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 341: vem som läser och skriver markeringen. Every administrator
+-- profile reads the school's four marks and nothing of the other school's;
+-- full, rektor and the expedition (Personal) set and remove one; the planner
+-- and the läsare are refused the set and remove nothing. A teacher (a marked
+-- one too), a pupil and a guardian read nothing and write nothing. Nobody
+-- updates a mark. The other school's administrator reads its own one mark,
+-- cannot write one for this school, and cannot mark this school's person in
+-- its own name (the composite key). PostgREST's role is refused the table.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.sk_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'skyddad: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.sk_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  p2 uuid;
+  p1 uuid;
+  other_pupil uuid;
+  other_admin uuid;
+  who text;
+  n bigint;
+BEGIN
+  PERFORM pg_temp.sk_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  IF school IS NULL OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-skyddad-school' THEN
+    RAISE EXCEPTION 'skyddad 341: the full administrator is not in rls-skyddad-school; fixtures did not run';
+  END IF;
+  SELECT id INTO p1 FROM "Users" WHERE "schoolId" = school AND email = 'sk-p1@example.invalid';
+  SELECT id INTO p2 FROM "Users" WHERE "schoolId" = school AND email = 'sk-p2@example.invalid';
+  PERFORM pg_temp.sk_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  SELECT id INTO other_pupil FROM "Users" WHERE "schoolId" = other AND role = 'STUDENT';
+  other_admin := app.current_user_id();
+  IF p1 IS NULL OR p2 IS NULL OR other_pupil IS NULL OR other_admin IS NULL THEN
+    RAISE EXCEPTION 'skyddad 341: the fixtures lack P1, P2 or the other school''s pupil';
+  END IF;
+  PERFORM set_config('app.test_rls34_school', school::text, true);
+  PERFORM set_config('app.test_rls34_other', other::text, true);
+  PERFORM set_config('app.test_rls34_p1', p1::text, true);
+  PERFORM set_config('app.test_rls34_p2', p2::text, true);
+  PERFORM set_config('app.test_rls34_other_pupil', other_pupil::text, true);
+
+  -- Every administrator profile reads the four, none of the other school's.
+  FOREACH who IN ARRAY ARRAY['01', '02', '03', '04', '05'] LOOP
+    PERFORM pg_temp.sk_as('00000000-0000-4000-8000-e500000000' || who);
+    IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'skyddad 341: …%: expected an administrator', who; END IF;
+    SELECT count(*) INTO n FROM "PersonProtections";
+    IF n <> 4 THEN RAISE EXCEPTION 'skyddad 341: administrator …% reads % marks, not the school''s four', who, n; END IF;
+    PERFORM pg_temp.sk_refuses(format($q$UPDATE "PersonProtections" SET source = 'MANUAL' WHERE "userId" = %L$q$, p1),
+                               '42501', 'an administrator''s update of a mark');
+  END LOOP;
+
+  -- Personal's writers set a mark by hand and remove it; never in another school's name.
+  FOREACH who IN ARRAY ARRAY['01', '02', '03'] LOOP
+    PERFORM pg_temp.sk_as('00000000-0000-4000-8000-e500000000' || who);
+    INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p2, school, 'MANUAL');
+    DELETE FROM "PersonProtections" WHERE "userId" = p2;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'skyddad 341: administrator …% removed % marks, not the one it set', who, n; END IF;
+    PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (%L, %L, 'MANUAL')$q$, other_pupil, other),
+                               '42501', 'a mark in another school');
+    -- An unmarked person of the other school, so the key decides and not the one-row-per-person index.
+    PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (%L, %L, 'MANUAL')$q$, other_admin, school),
+                               '23503', 'another school''s person marked in this school''s name');
+  END LOOP;
+
+  -- The planner and the läsare read and do not write.
+  FOREACH who IN ARRAY ARRAY['04', '05'] LOOP
+    PERFORM pg_temp.sk_as('00000000-0000-4000-8000-e500000000' || who);
+    PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (%L, %L, 'MANUAL')$q$, p2, school),
+                               '42501', format('administrator …%s setting a mark', who));
+    DELETE FROM "PersonProtections" WHERE "userId" = p1;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'skyddad 341: administrator …% removed a mark', who; END IF;
+  END LOOP;
+
+  -- A teacher (the marked one too), a pupil, a guardian: nothing.
+  FOREACH who IN ARRAY ARRAY['06', '07', '11', '12', '21', '22'] LOOP
+    PERFORM pg_temp.sk_as('00000000-0000-4000-8000-e500000000' || who);
+    IF app.current_user_role() IS NULL OR app.current_user_role() = 'SCHOOL_ADMIN' THEN
+      RAISE EXCEPTION 'skyddad 341: …% did not resolve as a teacher, pupil or guardian', who;
+    END IF;
+    SELECT count(*) INTO n FROM "PersonProtections";
+    IF n <> 0 THEN RAISE EXCEPTION 'skyddad 341: % …% reads % marks', app.current_user_role(), who, n; END IF;
+    PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (%L, %L, 'MANUAL')$q$, p2, school),
+                               '42501', format('%s …%s setting a mark', app.current_user_role(), who));
+    DELETE FROM "PersonProtections" WHERE "schoolId" = school;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'skyddad 341: % …% removed % marks', app.current_user_role(), who, n; END IF;
+  END LOOP;
+
+  -- The other school's administrator: its one mark, none of these.
+  PERFORM pg_temp.sk_as('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "PersonProtections";
+  IF n <> 1 THEN RAISE EXCEPTION 'skyddad 341: the other school''s administrator reads % marks, not its one', n; END IF;
+  SELECT count(*) INTO n FROM "PersonProtections" WHERE "schoolId" = school;
+  IF n <> 0 THEN RAISE EXCEPTION 'skyddad 341: the other school reads this school''s marks'; END IF;
+
+  -- The four are as the fixtures planted them.
+  PERFORM pg_temp.sk_as('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "PersonProtections" WHERE "userId" = p1 AND source = 'SS12000';
+  IF n <> 1 THEN RAISE EXCEPTION 'skyddad 341: P1''s mark from the register is gone'; END IF;
+END $$;
+
+-- PostgREST's role, as the full administrator: no grant at all.
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'skyddad 341: expected the administrator as authenticated'; END IF;
+  PERFORM pg_temp.sk_refuses('SELECT count(*) FROM "PersonProtections"', '42501', 'PostgREST''s read of the marks');
+  PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (%L, %L, 'MANUAL')$q$,
+                                    current_setting('app.test_rls34_p2'), current_setting('app.test_rls34_school')),
+                             '42501', 'PostgREST''s write of a mark');
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 342: synkens principal. With no login and the school's sync id it
+-- reads the school's marks and nobody else's, sets one with source SS12000
+-- and is refused one by hand or in another school; it removes nothing (a
+-- lift is never automatic: the administrator's apply makes it).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.sk_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'skyddad: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-e50000000001')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls34_school', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_rls34_p2', (SELECT id::text FROM "Users" WHERE email = 'sk-p2@example.invalid'), true);
+  PERFORM set_config('app.test_rls34_p1', (SELECT id::text FROM "Users" WHERE email = 'sk-p1@example.invalid'), true);
+  PERFORM set_config('app.test_rls34_t2', (SELECT id::text FROM "Users" WHERE email = 'sk-t2@example.invalid'), true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-e50000000031')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls34_other', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_rls34_other_pupil', (SELECT id::text FROM "Users" WHERE role = 'STUDENT'), true);
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.sync_school_id', current_setting('app.test_rls34_school'), true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls34_school')::uuid;
+  p2 uuid := current_setting('app.test_rls34_p2')::uuid;
+  n bigint;
+BEGIN
+  IF app.current_user_id() IS NOT NULL OR app.current_sync_school_id() IS DISTINCT FROM school THEN
+    RAISE EXCEPTION 'skyddad 342: expected the sync principal and no login';
+  END IF;
+  SELECT count(*) INTO n FROM "PersonProtections";
+  IF n <> 4 THEN RAISE EXCEPTION 'skyddad 342: the sync reads % marks, not the school''s four', n; END IF;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p2, school, 'SS12000');
+  SELECT count(*) INTO n FROM "PersonProtections" WHERE "userId" = p2 AND source = 'SS12000';
+  IF n <> 1 THEN RAISE EXCEPTION 'skyddad 342: the sync''s mark is not there'; END IF;
+  DELETE FROM "PersonProtections" WHERE "userId" = p2;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'skyddad 342: the sync removed a mark'; END IF;
+  -- An unmarked person (T2), so the arm decides and not the one-row-per-person index.
+  PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (%L, %L, 'MANUAL')$q$,
+                                    current_setting('app.test_rls34_t2'), school),
+                             '42501', 'a mark by hand from the sync');
+  PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (%L, %L, 'SS12000')$q$,
+                                    current_setting('app.test_rls34_other_pupil'), current_setting('app.test_rls34_other')),
+                             '42501', 'the sync''s mark in another school');
+END $$;
+SELECT set_config('app.sync_school_id', current_setting('app.test_rls34_other'), true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "PersonProtections" WHERE "schoolId" = current_setting('app.test_rls34_school')::uuid;
+  IF n <> 0 THEN RAISE EXCEPTION 'skyddad 342: another school''s sync reads this school''s marks'; END IF;
+END $$;
+SELECT set_config('app.sync_school_id', '', true);
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 343: markeringen följer personen. A person removed takes their
+-- mark with them (the key); gallring's pseudonymisation of a departed
+-- person (P3, the school decided 12 months) removes theirs and nobody
+-- else's.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-e50000000001')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  newcomer uuid;
+  n bigint;
+BEGIN
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'sk-new@example.invalid', 'Skyddad', 'Ny', 'STUDENT', gen_random_uuid(), true, now()) RETURNING id INTO newcomer;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (newcomer, school, 'MANUAL');
+  DELETE FROM "Users" WHERE id = newcomer;
+  SELECT count(*) INTO n FROM "PersonProtections" WHERE "userId" = newcomer;
+  IF n <> 0 THEN RAISE EXCEPTION 'skyddad 343: a removed person''s mark stayed'; END IF;
+  PERFORM set_config('app.test_rls343_school', school::text, true);
+  PERFORM set_config('app.test_rls343_p3', (SELECT id::text FROM "Users" WHERE "schoolId" = school AND email = 'sk-p3@example.invalid'), true);
+  SELECT count(*) INTO n FROM "PersonProtections";
+  IF n <> 4 THEN RAISE EXCEPTION 'skyddad 343: the school has % marks before gallring, not four', n; END IF;
+END $$;
+
+-- The night, with no principal.
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls343_school')::uuid, now());
+BEGIN
+  IF app.gallring_pseudonymise(run, ARRAY[current_setting('app.test_rls343_p3')::uuid]) <> 1 THEN
+    RAISE EXCEPTION 'skyddad 343: the departed pupil was not pseudonymised';
+  END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-e50000000001')::text, true);
+DO $$
+DECLARE
+  p3 uuid := current_setting('app.test_rls343_p3')::uuid;
+  n bigint;
+BEGIN
+  IF (SELECT "pseudonymisedAt" FROM "Users" WHERE id = p3) IS NULL THEN
+    RAISE EXCEPTION 'skyddad 343: P3 is not a pseudonym';
+  END IF;
+  SELECT count(*) INTO n FROM "PersonProtections" WHERE "userId" = p3;
+  IF n <> 0 THEN RAISE EXCEPTION 'skyddad 343: the pseudonym kept its mark'; END IF;
+  SELECT count(*) INTO n FROM "PersonProtections";
+  IF n <> 3 THEN RAISE EXCEPTION 'skyddad 343: gallring took % marks, not P3''s alone', 4 - n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 344: synkens ändring som sätter eller lyfter en markering. It is
+-- PROTECTION ADD or END, with no externalId and no localId (the CHECK): the
+-- person is in its after alone, which the minimisation nulls when the run
+-- ends. A finished run then says how many marks it set, never whose.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.sk_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'skyddad: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-e50000000001')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  src uuid;
+BEGIN
+  INSERT INTO "Ss12000Sources" ("schoolId", name, "baseUrl", "authKind", "tokenUrl", "clientId", "organisationIds")
+  VALUES (school, 'RLS 344', 'https://api.ist.example/ss12000v2-api/source/SE00344/v2.0', 'OAUTH2_CLIENT_CREDENTIALS',
+          'https://skolid.example/connect/token', 'rls344', ARRAY['aaaaaaaa-0000-4000-8000-000000000344']::uuid[])
+  RETURNING id INTO src;
+  PERFORM set_config('app.test_rls344_school', school::text, true);
+  PERFORM set_config('app.test_rls344_source', src::text, true);
+  PERFORM set_config('app.test_rls344_p2', (SELECT id::text FROM "Users" WHERE "schoolId" = school AND email = 'sk-p2@example.invalid'), true);
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.sync_school_id', current_setting('app.test_rls344_school'), true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls344_school')::uuid;
+  p2 uuid := current_setting('app.test_rls344_p2')::uuid;
+  run uuid;
+BEGIN
+  INSERT INTO "Ss12000SyncRuns" ("schoolId", "sourceId", "trigger", "mode")
+  VALUES (school, current_setting('app.test_rls344_source')::uuid, 'SCHEDULED', 'FULL') RETURNING id INTO run;
+  PERFORM set_config('app.test_rls344_run', run::text, true);
+  PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "Ss12000SyncChanges" ("runId", "schoolId", seq, entity, op, "externalId", after, selected, "autoApplicable")
+                                       VALUES (%L, %L, 0, 'PROTECTION', 'ADD', gen_random_uuid(), '{}', true, true)$q$, run, school),
+                             '23514', 'a mark''s change naming its person by the register''s id');
+  PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "Ss12000SyncChanges" ("runId", "schoolId", seq, entity, op, "localId", after, selected, "autoApplicable")
+                                       VALUES (%L, %L, 0, 'PROTECTION', 'ADD', %L, '{}', true, true)$q$, run, school, p2),
+                             '23514', 'a mark''s change naming its person by the row''s id');
+  PERFORM pg_temp.sk_refuses(format($q$INSERT INTO "Ss12000SyncChanges" ("runId", "schoolId", seq, entity, op, after, selected)
+                                       VALUES (%L, %L, 0, 'PROTECTION', 'UPDATE', '{}', true)$q$, run, school),
+                             '23514', 'a mark''s change that is neither ADD nor END');
+  INSERT INTO "Ss12000SyncChanges" ("runId", "schoolId", seq, entity, op, after, selected, "autoApplicable")
+  VALUES (run, school, 0, 'PROTECTION', 'ADD', jsonb_build_object('personExternalId', gen_random_uuid(), 'userLocalId', p2), true, true),
+         (run, school, 1, 'PROTECTION', 'END', jsonb_build_object('personExternalId', gen_random_uuid(), 'userLocalId', p2), true, false);
+  UPDATE "Ss12000SyncRuns" SET status = 'DIFF_READY', "basisHash" = repeat('c', 64), "fetchedAt" = now() WHERE id = run;
+  UPDATE "Ss12000SyncRuns" SET status = 'APPLIED', "appliedAt" = now(), "finishedAt" = now() WHERE id = run;
+END $$;
+SELECT set_config('app.sync_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-e50000000001')::text, true);
+DO $$
+DECLARE
+  n bigint;
+  named bigint;
+BEGIN
+  SELECT count(*), count(*) FILTER (WHERE after IS NOT NULL OR before IS NOT NULL OR "externalId" IS NOT NULL OR "localId" IS NOT NULL)
+    INTO n, named
+    FROM "Ss12000SyncChanges" WHERE "runId" = current_setting('app.test_rls344_run')::uuid AND entity = 'PROTECTION';
+  IF n <> 2 THEN RAISE EXCEPTION 'skyddad 344: the finished run has % marks'' changes, not two', n; END IF;
+  IF named <> 0 THEN RAISE EXCEPTION 'skyddad 344: % of the finished run''s marks still name their person', named; END IF;
+  PERFORM pg_temp.sk_refuses(format($q$UPDATE "Ss12000SyncChanges" SET after = '{"userLocalId": "x"}' WHERE "runId" = %L AND entity = 'PROTECTION'$q$,
+                                    current_setting('app.test_rls344_run')),
+                             'SS409', 'a finished run''s mark named again');
+END $$;
+ROLLBACK;
