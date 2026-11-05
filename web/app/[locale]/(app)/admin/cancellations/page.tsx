@@ -34,6 +34,7 @@ import { CancellationFormCard } from "./cancellation-form-card";
 
 export default function CancellationsPage() {
   const t = useTranslations("cancellations");
+  const tActivities = useTranslations("scheduleActivities");
   const { year, yearId, setYearId, isLoading, isError } = useYearScope();
   const groupsQuery = useGroups();
   const roomsQuery = useRooms();
@@ -45,7 +46,16 @@ export default function CancellationsPage() {
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
-        intro={t("intro")}
+        intro={
+          <>
+            {t("intro")}{" "}
+            {/* An aktivitet owns such an avbokning and puts a lesson that carries attendance in its place. */}
+            {tActivities("cancellationsHint")}{" "}
+            <Link href="/admin/activities" className="font-medium underline underline-offset-4">
+              {tActivities("cancellationsLink")}
+            </Link>
+          </>
+        }
         actions={<YearSelect value={yearId} onValueChange={setYearId} label={t("yearLabel")} />}
       />
       {isLoading ? (

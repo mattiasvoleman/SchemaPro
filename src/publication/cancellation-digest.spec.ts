@@ -91,4 +91,59 @@ describe('the avbokning digest', () => {
       body: 'Avbokningen Prao åk 9 är ångrad. 12 lektioner mellan 19 okt och 23 okt blir av som planerat.\n\nSe schemat i Rastra Schema.',
     });
   });
+  it('says that an activity replaces the lessons, and tells a responsible teacher their classes', async () => {
+    expect(digestEmail('Friluftsdag åk 7', { count: 4, first: '2026-11-10', last: '2026-11-11' }, false, { responsibleFor: [] })).toEqual({
+      subject: 'Inställda lektioner: Friluftsdag åk 7',
+      body: 'Friluftsdag åk 7: 4 lektioner mellan 10 nov och 11 nov är inställda och ersätts av aktiviteten.\n\nSe schemat i Rastra Schema.',
+    });
+    expect(digestEmail('Friluftsdag åk 7', { count: 1, first: '2026-11-10', last: '2026-11-10' }, false, { responsibleFor: ['7A', '7B'] }).body).toBe(
+      'Friluftsdag åk 7: En lektion den 10 nov är inställd och ersätts av aktiviteten.\n\nDu är ansvarig för 7A, 7B.\n\nSe schemat i Rastra Schema.',
+    );
+    expect(digestEmail('Friluftsdag åk 7', { count: 4, first: '2026-11-10', last: '2026-11-11' }, true, { responsibleFor: ['7A'] })).toEqual({
+      subject: 'Aktiviteten är borttagen: Friluftsdag åk 7',
+      body: 'Aktiviteten Friluftsdag åk 7 är borttagen. 4 lektioner mellan 10 nov och 11 nov blir av som planerat.\n\nDu är ansvarig för 7A under aktiviteten.\n\nSe schemat i Rastra Schema.',
+    });
+
+    // The same kind of notice and the same meta, plus a flag; a responsible teacher is told apart in the e-mail only.
+    const notifyUsers = jest.fn(async (_tx: unknown, options: { userIds: string[] }) => options.userIds.length);
+    const notifications = { notifyUsers } as unknown as NotificationsService;
+    const audience = await digestAudience(client(), lessons);
+    await sendDigest(notifications, client(), 'school', { id: 'batch', name: 'Friluftsdag' }, audience, false, {
+      responsible: new Map([['t1', ['9A']]]),
+    });
+    const calls = notifyUsers.mock.calls.map(
+      ([, options]) => options as unknown as { userIds: string[]; type: string; meta: Record<string, unknown>; email: { body: string } },
+    );
+    expect(calls.every((call) => call.type === 'CANCELLATION_DIGEST' && call.meta.activity === true)).toBe(true);
+    const teacher = calls.find((call) => call.userIds.includes('t1'))!;
+    expect(teacher.userIds).toEqual(['t1']);
+    expect(teacher.email.body).toContain('Du är ansvarig för 9A.');
+    expect(calls.filter((call) => call !== teacher).every((call) => !call.email.body.includes('ansvarig'))).toBe(true);
+    expect(calls.reduce((sum, call) => sum + call.userIds.length, 0)).toBe(7);
+  });
+
+  it('promises no replacement to the people whose lessons nothing replaces', async () => {
+    expect(
+      digestEmail('Friluftsdag åk 7', { count: 2, first: '2026-11-10', last: '2026-11-11' }, false, { responsibleFor: [], plain: true }),
+    ).toEqual({
+      subject: 'Inställda lektioner: Friluftsdag åk 7',
+      body: 'Friluftsdag åk 7: 2 lektioner mellan 10 nov och 11 nov är inställda.\n\nSe schemat i Rastra Schema.',
+    });
+
+    const notifyUsers = jest.fn(async (_tx: unknown, options: { userIds: string[] }) => options.userIds.length);
+    const notifications = { notifyUsers } as unknown as NotificationsService;
+    const audience = await digestAudience(client(), lessons);
+    // Ada and her guardian have nothing replacing the lessons; the rest do.
+    await sendDigest(notifications, client(), 'school', { id: 'batch', name: 'Friluftsdag' }, audience, false, {
+      responsible: new Map(),
+      plain: new Set(['ada', 'g1']),
+    });
+    const calls = notifyUsers.mock.calls.map(
+      ([, options]) => options as unknown as { userIds: string[]; email: { body: string } },
+    );
+    const said = (call: { email: { body: string } }) => call.email.body.includes('ersätts av aktiviteten');
+    const plain = calls.filter((call) => !said(call)).flatMap((call) => call.userIds).sort();
+    expect(plain).toEqual(['ada', 'g1']);
+    expect(calls.filter(said).flatMap((call) => call.userIds)).not.toContain('ada');
+  });
 });

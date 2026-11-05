@@ -51,6 +51,39 @@ export async function enterPublication(tx: PrismaClient, schoolId: string): Prom
 }
 
 /**
+ * The exclusive side WITHOUT queueing: tried every `everyMs` for at most
+ * `waitMs`, and answers whether the school's publication lock was got.
+ *
+ * enterPublication waits in the lock queue, and a waiting exclusive request
+ * makes every shared request that comes after it wait too, so a writer that
+ * only needs the shared side is held up for as long as the publish in front of
+ * it is open (and answers 409 after 5 s) for no fault of its own. This asks
+ * pg_try_advisory_xact_lock instead, which never waits and so never stands in
+ * anybody's way: the shared holders go on, and the caller comes back to ask
+ * again. Used by the pass a schemabrytande aktivitet makes after its commit,
+ * which wants to know that every publish open beside it has finished and can
+ * do without if one does not. The key is the one app.enter_publication takes
+ * (migration 20261011100000); the school is the caller's own, as the function
+ * checks it is.
+ */
+export async function tryEnterPublication(
+  tx: PrismaClient,
+  schoolId: string,
+  options: { waitMs?: number; everyMs?: number } = {},
+): Promise<boolean> {
+  const { waitMs = 10_000, everyMs = 100 } = options;
+  const giveUpAt = Date.now() + waitMs;
+  for (;;) {
+    const rows = await tx.$queryRaw<{ got: boolean }[]>(
+      Prisma.sql`SELECT pg_try_advisory_xact_lock(hashtext('publication'), hashtext(${schoolId}::uuid::text)) AS "got"`,
+    );
+    if (rows?.[0]?.got === true) return true;
+    if (Date.now() >= giveUpAt) return false;
+    await new Promise((resolve) => setTimeout(resolve, everyMs));
+  }
+}
+
+/**
  * The mode, read without a lock, through the one-word definer function: for
  * readers (a TEACHER cannot read the settings row, and needs only this).
  */
