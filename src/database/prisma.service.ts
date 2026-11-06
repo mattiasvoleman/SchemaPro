@@ -590,11 +590,18 @@ export class PrismaService
    * app.public_timetable(), the SECURITY DEFINER function that decides what
    * a share link may see. The timeout bounds what an anonymous caller can
    * make the database do per request.
+   *
+   * JIT is off in it: a door that builds a pupil's week (20270118090000) plans
+   * a function of several CTEs whose estimated cost clears jit_above_cost
+   * on a database nobody has ANALYZEd yet, and compiling it took 1.3 s to
+   * run 30 ms of query, a second of the 2 s the door is given. The doors are
+   * short statements; nothing in them is worth compiling.
    */
   async withPublicViewer<T>(fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
     return this.$transaction(
       async (tx) => {
         await tx.$executeRaw`SET LOCAL statement_timeout = '2s'`;
+        await tx.$executeRaw`SET LOCAL jit = off`;
         return fn(tx as unknown as PrismaClient);
       },
       { timeout: 5_000 },

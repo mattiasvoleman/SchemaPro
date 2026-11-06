@@ -229,9 +229,9 @@ export async function printChecks(context: PrintContext): Promise<void> {
     assert.deepEqual(await agree(), { klass: true, room: true, teacher: true, index: true });
     await publications.upsertSettings({ publicEmbedOrigins: [] }, school.admin);
     assert.deepEqual(await agree(), { klass: false, room: false, teacher: false, index: false });
-    await publications.upsertSettings({ publicEmbedOrigins: sites, publicRooms: false }, school.admin);
+    await publications.upsertSettings({ publicEmbedOrigins: sites, viewerRoomMode: 'OFF' }, school.admin);
     assert.equal((await agree()).room, false);
-    await publications.upsertSettings({ publicRooms: true }, school.admin);
+    await publications.upsertSettings({ viewerRoomMode: 'LIST' }, school.admin);
     // The table refuses what the DTO would not let through: a path, plain http.
     await assert.rejects(publications.upsertSettings({ publicEmbedOrigins: ['https://skolan.example/schema'] }, school.admin));
     await assert.rejects(publications.upsertSettings({ publicEmbedOrigins: ['http://skolan.example'] }, school.admin));

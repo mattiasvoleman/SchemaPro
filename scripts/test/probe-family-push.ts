@@ -207,8 +207,8 @@ export async function familyPushChecks(owner: Client, api: PrismaService, marker
     [school.schoolId, school.classA, d(0)],
   );
   await owner.query(
-    `INSERT INTO "PublicationSettings" ("schoolId", "publicViewerEnabled", "publicGroups", "publicTeacherDisplay", "updatedAt")
-     VALUES ($1, true, true, 'SIGNATURE', now())`,
+    `INSERT INTO "PublicationSettings" ("schoolId", "viewerAudience", "viewerClassMode", "publicTeacherDisplay", "updatedAt")
+     VALUES ($1, 'EVERYONE', 'LIST', 'SIGNATURE', now())`,
     [school.schoolId],
   );
 

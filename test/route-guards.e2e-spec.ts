@@ -10,6 +10,7 @@ import { READS_ONLY_KEY } from '../src/auth/huvudman-reader';
 import { ROLES_KEY } from '../src/auth/decorators/roles.decorator';
 import { createTestApp, type TestHarness } from './utils/test-app';
 import { FILE_ROUTE, PEOPLE_ROUTES, peopleRouteOf } from '../src/common/people-files';
+import { OPEN_ROUTES, openRouteOf } from '../src/publication/open-routes';
 
 /**
  * Whole-graph guard invariants.
@@ -201,6 +202,44 @@ describe('Route guard coverage (e2e)', () => {
     ].sort();
 
     expect(publicPaths).toEqual([...PUBLIC_PATHS].sort());
+  });
+
+  // Schemavisarens lägen (20270118090000): the school decides what a stranger
+  // may read of a timetable, and a route that shows one to a stranger answers
+  // to that decision or it is a leak. Every open route is classed in
+  // src/publication/open-routes.ts: through the viewer's door, a person's own
+  // address, or no schedule at all. A new one fails here until it is decided;
+  // test/public-viewer.e2e-spec.ts then asks each viewer route whether it
+  // keeps to its door.
+  it('classes every open route by what it has to do with the viewer\'s modes, and keeps no class for a route that is gone', () => {
+    const open = routes.filter((route) => route.isPublic);
+    // Not vacuous: the viewer, the feed, the probes, the sign-in lookup and SS12000 are all found.
+    expect(open.length).toBeGreaterThanOrEqual(10);
+    expect(open.map((route) => route.full)).toEqual(
+      expect.arrayContaining(['/public/v1/timetables/:token', '/public/v1/timetables/:token/embed', '/public/v1/calendar-feeds/:file']),
+    );
+    const unclassed = open.filter((route) => openRouteOf(route.verb, route.full) === null);
+    expect(unclassed.map((route) => `${route.verb} ${route.full} (${route.controller}.${route.method})`)).toEqual([]);
+    const gone = Object.keys(OPEN_ROUTES).filter((key) => {
+      const [verb, path] = key.split(' ');
+      return path!.endsWith('*')
+        ? !open.some((route) => route.verb === verb && route.full.startsWith(path!.slice(0, -1)))
+        : !open.some((route) => `${route.verb} ${route.full}` === key);
+    });
+    expect(gone).toEqual([]);
+    // A route that shows a stranger a timetable names the door that asks the school.
+    for (const [key, entry] of Object.entries(OPEN_ROUTES)) {
+      if (entry.relation === 'VIEWER') expect(`${key} ${entry.door}`).toMatch(/ app\.[a-z_]+\($/);
+    }
+  });
+
+  // The signed-in staff route of Schemavisaren is the other door of the same
+  // viewer: it is not open, and a pupil, a guardian or a stranger do not get
+  // through it.
+  it('keeps the staff door of the viewer to teachers and administrators', () => {
+    const staff = routes.find((route) => route.full === '/api/v1/schemavisaren/:token');
+    expect(staff?.isPublic).toBe(false);
+    expect(staff?.roles).toEqual(['TEACHER', 'SCHOOL_ADMIN']);
   });
 
   // Huvudman (20261212090000): a member with no school named reaches the

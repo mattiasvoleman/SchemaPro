@@ -157,6 +157,9 @@
       "name": "ScheduleVersions"
     },
     {
+      "name": "SchemavisarenStaff"
+    },
+    {
       "name": "SchoolBreaks"
     },
     {
@@ -13796,6 +13799,67 @@
         }
       }
     },
+    "/api/v1/schemavisaren/{token}": {
+      "get": {
+        "tags": [
+          "SchemavisarenStaff"
+        ],
+        "operationId": "SchemavisarenStaffController_show",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "target",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
     "/api/v1/school-breaks": {
       "get": {
         "tags": [
@@ -20386,6 +20450,116 @@
           "SCHOOL_ADMIN"
         ]
       }
+    },
+    "/api/v1/viewer-hidden": {
+      "get": {
+        "tags": [
+          "PublicLinks"
+        ],
+        "operationId": "PublicLinksController_hiddenTargets",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/viewer-hidden/{kind}/{id}": {
+      "put": {
+        "tags": [
+          "PublicLinks"
+        ],
+        "operationId": "PublicLinksController_setHiddenTarget",
+        "parameters": [
+          {
+            "name": "kind",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "group",
+                "room",
+                "student"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherPublicLabelDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PUBLICERING"
+          ]
+        }
+      }
     }
   },
   "components": {
@@ -21793,6 +21967,7 @@
             "enum": [
               "GROUP",
               "ROOM",
+              "STUDENT",
               "TEACHER"
             ]
           },
@@ -27063,17 +27238,52 @@
               "WARN"
             ]
           },
-          "publicViewerEnabled": {
-            "type": "boolean"
+          "viewerAudience": {
+            "type": "string",
+            "enum": [
+              "EVERYONE",
+              "STAFF"
+            ]
           },
-          "publicGroups": {
-            "type": "boolean"
+          "viewerClassMode": {
+            "type": "string",
+            "enum": [
+              "CODE",
+              "LIST",
+              "OFF"
+            ]
           },
-          "publicTeachers": {
-            "type": "boolean"
+          "viewerGroupMode": {
+            "type": "string",
+            "enum": [
+              "CODE",
+              "LIST",
+              "OFF"
+            ]
           },
-          "publicRooms": {
-            "type": "boolean"
+          "viewerTeacherMode": {
+            "type": "string",
+            "enum": [
+              "CODE",
+              "LIST",
+              "OFF"
+            ]
+          },
+          "viewerStudentMode": {
+            "type": "string",
+            "enum": [
+              "CODE",
+              "LIST",
+              "OFF"
+            ]
+          },
+          "viewerRoomMode": {
+            "type": "string",
+            "enum": [
+              "CODE",
+              "LIST",
+              "OFF"
+            ]
           },
           "publicTeacherDisplay": {
             "type": "string",

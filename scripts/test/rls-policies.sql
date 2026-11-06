@@ -8700,10 +8700,13 @@ BEGIN
     RAISE EXCEPTION 'viewer: a teacher link took a free-text name';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
+  -- An index of teachers is a link since 20270118090000 (the school's Lista for teachers), and it still takes no name of its own.
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash")
+  VALUES (school, y, 'TEACHER', repeat('c', 64));
   BEGIN
-    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash")
-    VALUES (school, y, 'TEACHER', repeat('c', 64));
-    RAISE EXCEPTION 'viewer: an index of teachers was stored';
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash", label)
+    VALUES (school, y, 'TEACHER', repeat('9', 64), 'Alla lärare');
+    RAISE EXCEPTION 'viewer: an index of teachers took a free-text name';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
   BEGIN
@@ -19652,7 +19655,8 @@ BEGIN
       RAISE EXCEPTION 'print: % may call the builder', r;
     END IF;
   END LOOP;
-  FOREACH fn IN ARRAY ARRAY['app.public_timetable(text, uuid, date)', 'app.print_timetables("PublicScopeKind", date, "TeacherDisplay", boolean)'] LOOP
+  -- The viewer's rules are app.schemavisaren_read's since 20270118090000; the two doors of it are one line each.
+  FOREACH fn IN ARRAY ARRAY['app.schemavisaren_read(text, uuid, date, uuid)', 'app.print_timetables("PublicScopeKind", date, "TeacherDisplay", boolean)'] LOOP
     IF (SELECT prosrc FROM pg_proc WHERE oid = fn::regprocedure) NOT LIKE '%app.timetable_week_days(%' THEN
       RAISE EXCEPTION 'print: % builds its days without the shared whitelist', fn;
     END IF;
@@ -19960,9 +19964,10 @@ BEGIN
   EXCEPTION WHEN check_violation THEN NULL;
   END;
   UPDATE "PublicationSettings" SET "publicEmbedOrigins" = ARRAY['https://skolan.se:1', 'https://skolan.se:65535'] WHERE "schoolId" = school;
+  -- The viewer's lägen since 20270118090000: open to everyone, classes and teachers by code.
   UPDATE "PublicationSettings"
-     SET "publicViewerEnabled" = true, "publicGroups" = true, "publicEmbedGroups" = true,
-         "publicTeachers" = true, "publicTeacherDisplay" = 'SIGNATURE', "publicEmbedTeachers" = false,
+     SET "viewerAudience" = 'EVERYONE', "viewerClassMode" = 'CODE', "viewerGroupMode" = 'CODE', "publicEmbedGroups" = true,
+         "viewerTeacherMode" = 'CODE', "publicTeacherDisplay" = 'SIGNATURE', "publicEmbedTeachers" = false,
          "publicEmbedOrigins" = ARRAY['https://skolan.se', 'https://www.skolan.se:8443']
    WHERE "schoolId" = school;
   INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetGroupId", "tokenHash")
@@ -20011,9 +20016,9 @@ BEGIN
   IF pg_temp.rls143_embed(repeat('2', 64)) IS NULL THEN RAISE EXCEPTION 'embed: the teacher link does not frame with its embedding on'; END IF;
   IF pg_temp.rls143_embed(repeat('3', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: an unknown hash frames'; END IF;
   -- (Teachers shown and named by nobody is no state: PublicationSettings_teachers_are_named.)
-  PERFORM pg_temp.rls143_set('"publicTeachers" = false');
-  IF pg_temp.rls143_embed(repeat('2', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a teacher link frames with the teachers'' scope off'; END IF;
-  PERFORM pg_temp.rls143_set('"publicTeachers" = true');
+  PERFORM pg_temp.rls143_set('"viewerTeacherMode" = ''OFF''');
+  IF pg_temp.rls143_embed(repeat('2', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a teacher link frames with the teachers'' mode off'; END IF;
+  PERFORM pg_temp.rls143_set('"viewerTeacherMode" = ''CODE''');
   -- What the viewer does not show, the frame does not find.
   INSERT INTO "TeacherPublicLabels" ("userId", "schoolId", hidden)
   SELECT id, app.current_school_id(), true FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951';
@@ -20022,25 +20027,26 @@ BEGIN
   IF pg_temp.rls143_embed(repeat('2', 64)) IS NULL THEN RAISE EXCEPTION 'embed: the teacher link does not frame once its teacher is shown again'; END IF;
   IF pg_temp.rls143_embed(repeat('4', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the link of a group under the school''s size frames'; END IF;
   IF pg_temp.rls143_embed(repeat('5', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a room link frames with the rooms'' scope off'; END IF;
-  PERFORM pg_temp.rls143_set('"publicRooms" = true');
+  PERFORM pg_temp.rls143_set('"viewerRoomMode" = ''CODE''');
   IF pg_temp.rls143_embed(repeat('5', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a room link frames with the rooms'' embedding off'; END IF;
   PERFORM pg_temp.rls143_set('"publicEmbedRooms" = true');
   IF pg_temp.rls143_embed(repeat('5', 64)) IS DISTINCT FROM 'https://skolan.se https://www.skolan.se:8443' THEN
     RAISE EXCEPTION 'embed: the room link frames %', pg_temp.rls143_embed(repeat('5', 64));
   END IF;
   IF pg_temp.rls143_embed(repeat('6', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the link of a läsår long over frames'; END IF;
-  PERFORM pg_temp.rls143_set('"publicRooms" = false');
-  IF pg_temp.rls143_embed(repeat('5', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a room link frames with the rooms'' scope off again'; END IF;
+  PERFORM pg_temp.rls143_set('"viewerRoomMode" = ''OFF''');
+  IF pg_temp.rls143_embed(repeat('5', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a room link frames with the rooms'' mode off again'; END IF;
 
   PERFORM pg_temp.rls143_set('"publicEmbedGroups" = false');
   IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the class link frames with the classes'' embedding off'; END IF;
-  PERFORM pg_temp.rls143_set('"publicEmbedGroups" = true, "publicGroups" = false');
-  IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the class link frames with the classes'' scope off'; END IF;
-  PERFORM pg_temp.rls143_set('"publicGroups" = true, "publicViewerEnabled" = false');
+  PERFORM pg_temp.rls143_set('"publicEmbedGroups" = true, "viewerClassMode" = ''OFF''');
+  IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the class link frames with the classes'' mode off'; END IF;
+  -- A viewer for staff is framed nowhere (20270118090000): the frame holds no session.
+  PERFORM pg_temp.rls143_set('"viewerClassMode" = ''CODE'', "viewerAudience" = ''STAFF''');
   IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL OR pg_temp.rls143_embed(repeat('2', 64)) IS NOT NULL THEN
-    RAISE EXCEPTION 'embed: a link frames with the viewer off';
+    RAISE EXCEPTION 'embed: a link frames with the viewer for staff';
   END IF;
-  PERFORM pg_temp.rls143_set('"publicViewerEnabled" = true, "publicEmbedOrigins" = ''{}''');
+  PERFORM pg_temp.rls143_set('"viewerAudience" = ''EVERYONE'', "publicEmbedOrigins" = ''{}''');
   IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a link frames with no website'; END IF;
   PERFORM pg_temp.rls143_set('"publicEmbedOrigins" = ARRAY[''https://skolan.se'']');
   UPDATE "PublicTimetableLinks" SET "revokedAt" = now() WHERE "tokenHash" = repeat('1', 64);
@@ -20220,6 +20226,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('PersonProtectionEvents', '{}', '{}', '{}', '{}'),
   ('PersonProtections', '{PERSONAL}', '{PERSONAL}', '{DECIDES}', '{}'),
   ('PersonalDataAccess', '{}', '{}', '{}', '{DECIDES}'),
+  ('PublicTimetableHidden', '{PUBLICERING}', '{}', '{PUBLICERING}', '{}'),
   ('PublicTimetableLinks', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
   ('PublicationPendingRemovals', '{}', '{}', '{PUBLICERING}', '{}'),
   ('PublicationSettings', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
@@ -44428,5 +44435,843 @@ BEGIN
   IF EXISTS (SELECT 1 FROM "CrisisReports" WHERE "byUserId" = (SELECT id FROM "Users" WHERE "authId" = current_setting('app.test_rls355_t4_auth')::uuid)) THEN
     RAISE EXCEPTION 'krisläge: a teacher reads a mark another teacher made with no group';
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 375: Schemavisarens lägen, tabellerna och reglerna på dem
+-- (20270118090000).
+--
+-- The three types and the settings' defaults (nothing shown, and to staff if
+-- anything ever is); the two CHECKs on the settings (a pupil is never in a
+-- list, a teacher shown has a name); the link's shapes with a pupil's (a
+-- target of its own, never an index) and a teacher's index; PublicTimetableHidden:
+-- exactly one target, one row per target, keys that cannot name another
+-- school's group, cascade with the group, the administrator's three arms and
+-- no others, and nothing for a teacher, a pupil or a guardian.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls375_group_b', :'group_b', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; grp uuid; grp2 uuid; room uuid; pupil uuid; teacher uuid; guardian uuid; n bigint; bad text; r text;
+  other_group uuid := current_setting('app.test_rls375_group_b')::uuid;
+BEGIN
+  IF (SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder) FROM pg_enum e WHERE e.enumtypid = '"ViewerMode"'::regtype)
+       IS DISTINCT FROM ARRAY['OFF', 'LIST', 'CODE'] THEN RAISE EXCEPTION 'lägen: the modes are not off, list and code'; END IF;
+  IF (SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder) FROM pg_enum e WHERE e.enumtypid = '"ViewerAudience"'::regtype)
+       IS DISTINCT FROM ARRAY['STAFF', 'EVERYONE'] THEN RAISE EXCEPTION 'lägen: the audiences are not staff and everyone'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_enum e WHERE e.enumtypid = '"PublicScopeKind"'::regtype AND e.enumlabel = 'STUDENT') THEN
+    RAISE EXCEPTION 'lägen: a link has no pupil kind';
+  END IF;
+
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO guardian FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND "isActive" ORDER BY id LIMIT 1;
+  IF y IS NULL OR teacher IS NULL OR pupil IS NULL OR guardian IS NULL THEN RAISE EXCEPTION 'lägen: the primary school lacks a year, a teacher, a pupil or a guardian'; END IF;
+
+  -- The defaults: a school with a row and nothing said shows nothing, to staff.
+  DELETE FROM "PublicationSettings" WHERE "schoolId" = school;
+  INSERT INTO "PublicationSettings" ("schoolId") VALUES (school);
+  SELECT count(*) INTO n FROM "PublicationSettings"
+   WHERE "schoolId" = school AND "viewerAudience" = 'STAFF' AND "viewerClassMode" = 'OFF' AND "viewerGroupMode" = 'OFF'
+     AND "viewerTeacherMode" = 'OFF' AND "viewerStudentMode" = 'OFF' AND "viewerRoomMode" = 'OFF';
+  IF n <> 1 THEN RAISE EXCEPTION 'lägen: a new row of settings is not off and for staff'; END IF;
+
+  -- A pupil's schedule is a code or off, never a list; a teacher shown has a name.
+  BEGIN
+    UPDATE "PublicationSettings" SET "viewerStudentMode" = 'LIST' WHERE "schoolId" = school;
+    RAISE EXCEPTION 'lägen: a list of pupils was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  UPDATE "PublicationSettings" SET "viewerStudentMode" = 'CODE' WHERE "schoolId" = school;
+  BEGIN
+    UPDATE "PublicationSettings" SET "viewerTeacherMode" = 'CODE' WHERE "schoolId" = school;
+    RAISE EXCEPTION 'lägen: teachers shown by nobody''s name were stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'SIGNATURE', "viewerTeacherMode" = 'LIST' WHERE "schoolId" = school;
+  BEGIN
+    UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'NONE' WHERE "schoolId" = school;
+    RAISE EXCEPTION 'lägen: a shown teacher was left without a name';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- The link's shapes.
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash") VALUES (school, y, 'STUDENT', repeat('1', 64));
+    RAISE EXCEPTION 'lägen: a pupil link with no pupil (an index of pupils) was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetStudentId", "targetGroupId", "tokenHash")
+    VALUES (school, y, 'STUDENT', pupil, grp, repeat('2', 64));
+    RAISE EXCEPTION 'lägen: a pupil link with two targets was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetStudentId", "tokenHash")
+    VALUES (school, y, 'GROUP', pupil, repeat('3', 64));
+    RAISE EXCEPTION 'lägen: a class link pointing at a pupil was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetStudentId", "tokenHash", label)
+  VALUES (school, y, 'STUDENT', pupil, repeat('4', 64), 'Barn 1');
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash") VALUES (school, y, 'TEACHER', repeat('5', 64));
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash", label) VALUES (school, y, 'TEACHER', repeat('6', 64), 'Alla');
+    RAISE EXCEPTION 'lägen: a list of teachers took a name of its own';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- A pupil cannot be given a code while they or a guardian of theirs is marked, or a teacher while marked.
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (pupil, school, 'MANUAL');
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetStudentId", "tokenHash") VALUES (school, y, 'STUDENT', pupil, repeat('7', 64));
+    RAISE EXCEPTION 'lägen: a marked pupil was given a code';
+  EXCEPTION WHEN SQLSTATE 'PB400' THEN NULL;
+  END;
+  DELETE FROM "PersonProtections" WHERE "userId" = pupil;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (school, guardian, pupil) ON CONFLICT DO NOTHING;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (guardian, school, 'MANUAL');
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetStudentId", "tokenHash") VALUES (school, y, 'STUDENT', pupil, repeat('7', 64));
+    RAISE EXCEPTION 'lägen: a pupil with a marked guardian was given a code';
+  EXCEPTION WHEN SQLSTATE 'PB400' THEN NULL;
+  END;
+  DELETE FROM "PersonProtections" WHERE "userId" = guardian;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (teacher, school, 'SS12000');
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetTeacherId", "tokenHash") VALUES (school, y, 'TEACHER', teacher, repeat('8', 64));
+    RAISE EXCEPTION 'lägen: a marked teacher was given a link';
+  EXCEPTION WHEN SQLSTATE 'PB400' THEN NULL;
+  END;
+  DELETE FROM "PersonProtections" WHERE "userId" = teacher;
+  -- A pupil of another role is no pupil's page.
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetStudentId", "tokenHash") VALUES (school, y, 'STUDENT', teacher, repeat('7', 64));
+    RAISE EXCEPTION 'lägen: a teacher was given a pupil''s page';
+  EXCEPTION WHEN SQLSTATE 'PB400' THEN NULL;
+  END;
+
+  -- PublicTimetableHidden: exactly one target, one row per target, this school's own.
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'rls375 sal', now()) RETURNING id INTO room;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt") VALUES (school, y, 'rls375 klass', 'CLASS', now()) RETURNING id INTO grp2;
+  BEGIN
+    INSERT INTO "PublicTimetableHidden" ("schoolId") VALUES (school);
+    RAISE EXCEPTION 'lägen: a hidden mark with no target was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "PublicTimetableHidden" ("schoolId", "targetGroupId", "targetRoomId") VALUES (school, grp2, room);
+    RAISE EXCEPTION 'lägen: a hidden mark with two targets was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  INSERT INTO "PublicTimetableHidden" ("schoolId", "targetGroupId") VALUES (school, grp2);
+  BEGIN
+    INSERT INTO "PublicTimetableHidden" ("schoolId", "targetGroupId") VALUES (school, grp2);
+    RAISE EXCEPTION 'lägen: a group was hidden twice';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "PublicTimetableHidden" ("schoolId", "targetGroupId") VALUES (school, other_group);
+    RAISE EXCEPTION 'lägen: another school''s class was hidden by this one';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  INSERT INTO "PublicTimetableHidden" ("schoolId", "targetRoomId") VALUES (school, room);
+  INSERT INTO "PublicTimetableHidden" ("schoolId", "targetStudentId") VALUES (school, pupil);
+  DELETE FROM "StudentGroups" WHERE id = grp2;
+  IF EXISTS (SELECT 1 FROM "PublicTimetableHidden" WHERE "targetGroupId" = grp2) THEN RAISE EXCEPTION 'lägen: the mark of a deleted class stayed'; END IF;
+  PERFORM set_config('app.test_rls375_school', school::text, true);
+  PERFORM set_config('app.test_rls375_room', room::text, true);
+  PERFORM set_config('app.test_rls375_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = teacher), true);
+  PERFORM set_config('app.test_rls375_pupil_sub', (SELECT "authId"::text FROM "Users" WHERE id = pupil), true);
+  PERFORM set_config('app.test_rls375_guardian_sub', (SELECT "authId"::text FROM "Users" WHERE id = guardian), true);
+END $$;
+
+-- The catalogue: three arms, the administrator's, and the grants of a table the API reads and writes by arms alone.
+DO $$
+DECLARE bad text; r text;
+BEGIN
+  SELECT string_agg(polname || ':' || polcmd::text || ':' || coalesce(polroles::regrole[]::text, ''), ',' ORDER BY polname) INTO bad
+    FROM pg_policy WHERE polrelid = 'public."PublicTimetableHidden"'::regclass;
+  IF bad IS DISTINCT FROM 'public_timetable_hidden_admin_delete:d:{app_authenticated},public_timetable_hidden_admin_insert:a:{app_authenticated},public_timetable_hidden_admin_select:r:{app_authenticated}' THEN
+    RAISE EXCEPTION 'lägen: the hidden marks'' policies are %', bad;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = 'public."PublicTimetableHidden"'::regclass
+               AND (pg_get_expr(p.polqual, p.polrelid) ~* '(^|[^a-z])(or|not)([^a-z]|$)' OR pg_get_expr(p.polwithcheck, p.polrelid) ~* '(^|[^a-z])(or|not)([^a-z]|$)')) THEN
+    RAISE EXCEPTION 'lägen: an arm of the hidden marks has an OR or a NOT';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."PublicTimetableHidden"'::regclass) THEN RAISE EXCEPTION 'lägen: row security is off on the hidden marks'; END IF;
+  IF NOT has_table_privilege('app_authenticated', 'public."PublicTimetableHidden"', 'SELECT')
+     OR NOT has_table_privilege('app_authenticated', 'public."PublicTimetableHidden"', 'INSERT')
+     OR NOT has_table_privilege('app_authenticated', 'public."PublicTimetableHidden"', 'DELETE') THEN
+    RAISE EXCEPTION 'lägen: the API cannot read, add or remove a hidden mark';
+  END IF;
+  SELECT string_agg(p, ',') INTO bad FROM unnest(ARRAY['UPDATE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+   WHERE has_table_privilege('app_authenticated', 'public."PublicTimetableHidden"', p);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'lägen: the API holds % on the hidden marks', bad; END IF;
+  IF current_setting('server_version_num')::int >= 170000 AND has_table_privilege('app_authenticated', 'public."PublicTimetableHidden"', 'MAINTAIN') THEN
+    RAISE EXCEPTION 'lägen: the API holds MAINTAIN on the hidden marks';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      -- (service_role reads, as on every table of this kind; it writes nothing.)
+      SELECT string_agg(p, ',') INTO bad FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
+       WHERE has_table_privilege(r, 'public."PublicTimetableHidden"', p) AND NOT (r = 'service_role' AND p = 'SELECT');
+      IF bad IS NOT NULL THEN RAISE EXCEPTION 'lägen: % holds % on the hidden marks', r, bad; END IF;
+    END IF;
+  END LOOP;
+END $$;
+
+-- Who reads and who writes: a teacher, a pupil and a guardian none of it; another school's administrator none of this school's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls375_teacher_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "PublicTimetableHidden";
+  IF n <> 0 THEN RAISE EXCEPTION 'lägen: a teacher reads % hidden mark(s)', n; END IF;
+  BEGIN
+    INSERT INTO "PublicTimetableHidden" ("schoolId", "targetRoomId")
+    SELECT app.current_school_id(), id FROM "Rooms" WHERE "schoolId" = app.current_school_id() AND name <> 'rls375 sal' LIMIT 1;
+    RAISE EXCEPTION 'lägen: a teacher hid a room';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls375_pupil_sub'))::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "PublicTimetableHidden") <> 0 OR (SELECT count(*) FROM "PublicTimetableLinks") <> 0 THEN
+    RAISE EXCEPTION 'lägen: a pupil reads hidden marks or links';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls375_guardian_sub'))::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "PublicTimetableHidden") <> 0 OR (SELECT count(*) FROM "PublicTimetableLinks") <> 0 THEN
+    RAISE EXCEPTION 'lägen: a guardian reads hidden marks or links';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "PublicTimetableHidden") <> 0 THEN RAISE EXCEPTION 'lägen: another school''s administrator reads this school''s hidden marks'; END IF;
+  BEGIN
+    INSERT INTO "PublicTimetableHidden" ("schoolId", "targetRoomId")
+    VALUES (current_setting('app.test_rls375_school')::uuid, current_setting('app.test_rls375_room')::uuid);
+    RAISE EXCEPTION 'lägen: an administrator hid another school''s room';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 376: dörrarna, i katalogen (20270118090000).
+--
+-- A visitor, or a signed-in person of any role, may ask the database for a
+-- timetable through four doors and no other: the viewer (for a visitor),
+-- the viewer as staff, the frames' websites and a calendar feed. Each is
+-- SECURITY DEFINER with a pinned search_path and the API role's alone. The
+-- rules (app.schemavisaren_read), the week's builders and the helpers that
+-- ask who is protected are nobody's to call: they take a school as an
+-- argument, and a caller of them could pass any. A new function that takes
+-- a link's hash and that the API role may execute fails here until it is
+-- decided: it is a new way for a stranger to read a timetable.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  fn text; r text; got text;
+  doors constant text[] := ARRAY[
+    'app.public_timetable(text, uuid, date)', 'app.public_timetable_staff(text, uuid, date)',
+    'app.public_timetable_embed(text)', 'app.calendar_feed(text)'];
+  internal constant text[] := ARRAY[
+    'app.schemavisaren_read(text, uuid, date, uuid)', 'app.schemavisaren_touch(uuid, timestamptz)',
+    'app.viewer_person_is_protected(uuid)', 'app.viewer_student_showable(uuid, uuid)', 'app.viewer_handle(text, uuid)',
+    'app.timetable_week_days(uuid, "PublicScopeKind", uuid, date, text, "TeacherDisplay", boolean, integer)',
+    'app.timetable_pupil_days(uuid, uuid, date, text, "TeacherDisplay")',
+    'app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")',
+    'app.calendar_feed_teacher_lessons(uuid, uuid, date, date, text)',
+    'app.family_lesson_labels(uuid, "TeacherDisplay", uuid[])',
+    'app.family_lesson_labels(uuid, "TeacherDisplay", uuid[], boolean)'];
+BEGIN
+  FOREACH fn IN ARRAY doors LOOP
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'dörrar: % is not SECURITY DEFINER', fn; END IF;
+    IF NOT coalesce((SELECT 'search_path="public", "pg_temp"' = ANY (proconfig) OR 'search_path=public, pg_temp' = ANY (proconfig)
+                       FROM pg_proc WHERE oid = fn::regprocedure), false) THEN
+      RAISE EXCEPTION 'dörrar: % has no pinned search_path', fn;
+    END IF;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'dörrar: the API may not call %', fn; END IF;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'dörrar: % may call %', r, fn;
+      END IF;
+    END LOOP;
+    IF (SELECT proacl::text FROM pg_proc WHERE oid = fn::regprocedure) ~ '[{,]=X/' THEN RAISE EXCEPTION 'dörrar: PUBLIC may call %', fn; END IF;
+  END LOOP;
+
+  -- The doors are exactly these: every function the API role may execute that takes a link's hash.
+  SELECT string_agg(p.oid::regprocedure::text, ', ' ORDER BY p.oid::regprocedure::text) INTO got
+    FROM pg_proc p
+   WHERE p.pronamespace = 'app'::regnamespace
+     AND (p.proargnames @> ARRAY['token_hash'] OR p.proargnames @> ARRAY['p_token_hash'])
+     AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE');
+  IF got IS DISTINCT FROM 'app.calendar_feed(text), app.calendar_feed_create(uuid,text,text), app.public_timetable(text,uuid,date), app.public_timetable_embed(text), app.public_timetable_staff(text,uuid,date)' THEN
+    RAISE EXCEPTION 'dörrar: the functions that take a link''s hash and the API may call are % — a new one is decided in src/publication/open-routes.ts and here', got;
+  END IF;
+
+  FOREACH fn IN ARRAY internal LOOP
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'dörrar: % may call %', r, fn;
+      END IF;
+    END LOOP;
+    IF (SELECT proacl::text FROM pg_proc WHERE oid = fn::regprocedure) ~ '[{,]=X/' THEN RAISE EXCEPTION 'dörrar: PUBLIC may call %', fn; END IF;
+  END LOOP;
+
+  -- What the doors ask: the anonymous one the visitor's NULL, the staff one the caller's role and school.
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.public_timetable(text, uuid, date)'::regprocedure) NOT LIKE '%NULL::uuid%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.public_timetable(text, uuid, date)'::regprocedure) LIKE '%current_user_role%' THEN
+    RAISE EXCEPTION 'dörrar: the anonymous door is not asked as a visitor';
+  END IF;
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.public_timetable_staff(text, uuid, date)'::regprocedure) NOT LIKE '%current_user_role()%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.public_timetable_staff(text, uuid, date)'::regprocedure) NOT LIKE '%current_school_id()%' THEN
+    RAISE EXCEPTION 'dörrar: the staff door does not ask who the caller is';
+  END IF;
+  -- The week is built in one place for the viewer and the print set.
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.schemavisaren_read(text, uuid, date, uuid)'::regprocedure) NOT LIKE '%app.viewer_person_is_protected(%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.schemavisaren_read(text, uuid, date, uuid)'::regprocedure) NOT LIKE '%PublicTimetableHidden%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.timetable_week_days(uuid, "PublicScopeKind", uuid, date, text, "TeacherDisplay", boolean, integer)'::regprocedure) NOT LIKE '%app.viewer_person_is_protected(%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.print_timetables("PublicScopeKind", date, "TeacherDisplay", boolean)'::regprocedure) NOT LIKE '%app.viewer_person_is_protected(%' THEN
+    RAISE EXCEPTION 'dörrar: a door of the viewer or the print set does not ask who is protected';
+  END IF;
+  -- The feeds name no protected colleague, and the family's own week is the three-argument form.
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.calendar_feed_teacher_lessons(uuid, uuid, date, date, text)'::regprocedure) NOT LIKE '%app.viewer_person_is_protected(%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")'::regprocedure) NOT LIKE '%, true) st%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.family_lesson_labels(uuid, "TeacherDisplay", uuid[])'::regprocedure) NOT LIKE '%, false)%' THEN
+    RAISE EXCEPTION 'dörrar: a calendar feed names a protected teacher, or the family''s own week no longer does';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 377: vad dörrarna svarar, per läge och publik (20270118090000).
+--
+-- One school's published week, a link of every shape, and the viewer asked as
+-- a visitor and as a signed-in person of every role and of another school:
+--
+--   * a kind that is OFF answers nothing, whatever link it is asked by;
+--   * LIST answers an index of the kind and a link to one target; CODE
+--     answers a link to one target and no index, and a target of a kind in
+--     CODE mode is not reached through another kind's index;
+--   * a pupil is reached by a code alone;
+--   * a viewer for staff answers a visitor as an unknown link, and answers
+--     only a teacher or an administrator of the link's own school, through
+--     the staff door; the anonymous door never asks who calls;
+--   * a class, group, room or pupil the school hides, and a teacher it
+--     hides, are found by no link and no list, and the answer for them is
+--     the answer for a link that does not exist;
+--   * a link that does not answer does not count as used.
+--
+-- Section 378 is the protected identity, section 379 the print set, the
+-- frames and the calendar feeds.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; cls uuid; tg uuid; sm uuid; room uuid; subj uuid; t1 uuid; t2 uuid; t3 uuid; p1 uuid; p6 uuid; guardian uuid;
+  monday date; l1 uuid; l2 uuid; l3 uuid; l4 uuid; n integer;
+  pupils uuid[];
+BEGIN
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  SELECT array_agg(id ORDER BY id) INTO pupils FROM (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY id LIMIT 6) s;
+  p1 := pupils[1]; p6 := pupils[6];
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY id LIMIT 1;
+  SELECT id INTO t3 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1, t2) ORDER BY id LIMIT 1;
+  SELECT id INTO guardian FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND "isActive" ORDER BY id LIMIT 1;
+  IF subj IS NULL OR p6 IS NULL OR t3 IS NULL OR guardian IS NULL THEN RAISE EXCEPTION 'lägen: the primary school lacks a subject, six pupils, three teachers or a guardian'; END IF;
+
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "updatedAt")
+  VALUES (school, 'rls377 2096/97', DATE '2096-08-15', DATE '2097-06-12', now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt") VALUES (school, y, 'rls377 7K', 'CLASS', now()) RETURNING id INTO cls;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt") VALUES (school, y, 'rls377 Ma', 'TEACHING_GROUP', now()) RETURNING id INTO tg;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt") VALUES (school, y, 'rls377 liten', 'TEACHING_GROUP', now()) RETURNING id INTO sm;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") SELECT school, tg, unnest(pupils[1:5]);
+  -- The small group is linked while it is big enough, then shrinks to the one pupil (the viewer reads it as gone).
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") SELECT school, sm, unnest(pupils[1:5]);
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (school, guardian, p1) ON CONFLICT DO NOTHING;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'rls377 sal', now()) RETURNING id INTO room;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+  VALUES (school, t1, y, 100, 'KXA', now()), (school, t2, y, 100, 'KXB', now());
+  monday := DATE '2096-10-03' - (extract(isodow FROM DATE '2096-10-03')::int - 1);
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (school, subj, cls, room, monday + 1, (monday + 1)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '8 hours', (monday + 1)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '9 hours', 'SCHEDULED', now()) RETURNING id INTO l1;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (school, subj, tg, room, monday + 2, (monday + 2)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '10 hours', (monday + 2)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '11 hours', 'SCHEDULED', now()) RETURNING id INTO l2;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (school, subj, cls, room, monday + 3, (monday + 3)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '8 hours', (monday + 3)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '9 hours', 'CANCELLED', now()) RETURNING id INTO l3;
+  -- A lesson for a few named pupils: the pupil's own page and no other's.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (school, subj, sm, room, monday + 4, (monday + 4)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '13 hours', (monday + 4)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '14 hours', 'SCHEDULED', now()) RETURNING id INTO l4;
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES (school, l4, p1);
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role)
+  VALUES (school, l1, t1, 'LEAD'), (school, l1, t2, 'ASSISTANT'), (school, l2, t2, 'LEAD'), (school, l3, t1, 'LEAD'), (school, l4, t2, 'LEAD');
+
+  DELETE FROM "PublicationSettings" WHERE "schoolId" = school;
+  INSERT INTO "PublicationSettings" ("schoolId", "publicTeacherDisplay", "viewerAudience") VALUES (school, 'SIGNATURE', 'EVERYONE');
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetGroupId", "targetTeacherId", "targetRoomId", "targetStudentId", "tokenHash", label)
+  SELECT school, y, v.kind::"PublicScopeKind", v.g, v.t, v.r, v.p, encode(sha256(convert_to('k377-' || v.name, 'UTF8')), 'hex'), v.lbl
+    FROM (VALUES ('GROUP', cls, NULL::uuid, NULL::uuid, NULL::uuid, 'cls', NULL::text), ('GROUP', NULL, NULL, NULL, NULL, 'gidx', NULL), ('GROUP', NULL, NULL, NULL, NULL, 'gidx2', NULL),
+                 ('GROUP', tg, NULL, NULL, NULL, 'tg', NULL), ('GROUP', sm, NULL, NULL, NULL, 'sm', NULL),
+                 ('ROOM', NULL, NULL, room, NULL, 'room', NULL), ('ROOM', NULL, NULL, NULL, NULL, 'ridx', NULL),
+                 ('TEACHER', NULL, t1, NULL, NULL, 't1', NULL), ('TEACHER', NULL, NULL, NULL, NULL, 'tidx', NULL),
+                 ('STUDENT', NULL, NULL, NULL, p1, 'p1', 'Barn 1'), ('STUDENT', NULL, NULL, NULL, p6, 'p6', NULL)) v(kind, g, t, r, p, name, lbl);
+
+  DELETE FROM "StudentGroupMembers" WHERE "studentGroupId" = sm AND "studentId" <> p1;
+
+  PERFORM set_config('app.k377_school', school::text, true);
+  PERFORM set_config('app.k377_week', monday::text, true);
+  PERFORM set_config('app.k377_ids', jsonb_build_object('cls', cls, 'tg', tg, 'sm', sm, 'room', room, 't1', t1, 't2', t2, 't3', t3, 'p1', p1, 'p6', p6, 'guardian', guardian, 'l1', l1, 'l2', l2, 'year', y)::text, true);
+  PERFORM set_config('app.k377_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = t3), true);
+  PERFORM set_config('app.k377_t2_sub', (SELECT "authId"::text FROM "Users" WHERE id = t2), true);
+  PERFORM set_config('app.k377_pupil_sub', (SELECT "authId"::text FROM "Users" WHERE id = p6), true);
+  PERFORM set_config('app.k377_p1_sub', (SELECT "authId"::text FROM "Users" WHERE id = p1), true);
+  PERFORM set_config('app.k377_guardian_sub', (SELECT "authId"::text FROM "Users" WHERE id = guardian), true);
+END $$;
+
+CREATE FUNCTION pg_temp.kh(name text) RETURNS text LANGUAGE sql AS $$ SELECT encode(sha256(convert_to('k377-' || name, 'UTF8')), 'hex') $$;
+CREATE FUNCTION pg_temp.kid(name text) RETURNS uuid LANGUAGE sql AS $$ SELECT (current_setting('app.k377_ids')::jsonb ->> name)::uuid $$;
+-- The viewer asked as a visitor: no principal at all, as the API asks it.
+CREATE FUNCTION pg_temp.kv(link text, tgt uuid DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true); got jsonb;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  got := app.public_timetable(pg_temp.kh(link), tgt, current_setting('app.k377_week')::date);
+  PERFORM set_config('request.jwt.claims', coalesce(claims, ''), true);
+  RETURN got;
+END $$;
+-- The handle a list link gives the entry with this label (NULL if the list does not hold it).
+CREATE FUNCTION pg_temp.kt(link text, label text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT (t ->> 'id')::uuid FROM jsonb_array_elements(pg_temp.kv(link) -> 'targets') t WHERE t ->> 'label' = label
+$$;
+-- The staff door asked as the person whose authId is `sub` (NULL: nobody).
+CREATE FUNCTION pg_temp.ks(sub text, link text, tgt uuid DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true); got jsonb;
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN sub IS NULL THEN '' ELSE json_build_object('sub', sub)::text END, true);
+  got := app.public_timetable_staff(pg_temp.kh(link), tgt, current_setting('app.k377_week')::date);
+  PERFORM set_config('request.jwt.claims', coalesce(claims, ''), true);
+  RETURN got;
+END $$;
+-- The anonymous door asked while somebody is signed in: it must not care.
+CREATE FUNCTION pg_temp.ka(sub text, link text, tgt uuid DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true); got jsonb;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+  got := app.public_timetable(pg_temp.kh(link), tgt, current_setting('app.k377_week')::date);
+  PERFORM set_config('request.jwt.claims', coalesce(claims, ''), true);
+  RETURN got;
+END $$;
+-- The school's settings, as the administrator changes them.
+CREATE FUNCTION pg_temp.kset(assignment text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true);
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', current_setting('app.k377_admin_sub'))::text, true);
+  EXECUTE format('UPDATE "PublicationSettings" SET %s WHERE "schoolId" = %L', assignment, current_setting('app.k377_school'));
+  PERFORM set_config('request.jwt.claims', coalesce(claims, ''), true);
+END $$;
+SELECT set_config('app.k377_admin_sub', :'admin_auth_id', true);
+
+DO $$
+DECLARE
+  everything constant text[] := ARRAY['cls', 'gidx', 'tg', 'sm', 'room', 'ridx', 't1', 'tidx', 'p1', 'p6'];
+  link text; doc jsonb; school uuid := current_setting('app.k377_school')::uuid;
+  cls uuid := pg_temp.kid('cls'); tg uuid := pg_temp.kid('tg'); room uuid := pg_temp.kid('room'); t1 uuid := pg_temp.kid('t1');
+  p1 uuid := pg_temp.kid('p1'); p6 uuid := pg_temp.kid('p6'); sm uuid := pg_temp.kid('sm');
+  teacher_sub text := current_setting('app.k377_teacher_sub'); other_sub constant text := '00000000-0000-4000-8000-000000000951';
+  targets text; labels text; keys text;
+  h_cls uuid; h_tg uuid; h_room uuid; h_t1 uuid; h_t2 uuid; h_cls2 uuid;
+BEGIN
+  -- Every kind off: nothing answers, for a visitor and for staff alike, however it is asked.
+  PERFORM pg_temp.kset('"viewerAudience" = ''EVERYONE''');
+  FOREACH link IN ARRAY everything LOOP
+    IF pg_temp.kv(link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the link % answers a visitor with every kind off', link; END IF;
+    IF pg_temp.ks(teacher_sub, link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the link % answers staff with every kind off', link; END IF;
+  END LOOP;
+  IF pg_temp.kv('gidx', cls) IS NOT NULL OR pg_temp.kv('ridx', room) IS NOT NULL OR pg_temp.kv('tidx', t1) IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: an index gives a target with every kind off';
+  END IF;
+
+  -- CODE: the link to one target, and never the list.
+  PERFORM pg_temp.kset('"viewerClassMode" = ''CODE'', "viewerGroupMode" = ''CODE'', "viewerRoomMode" = ''CODE'', "viewerTeacherMode" = ''CODE'', "viewerStudentMode" = ''CODE''');
+  FOREACH link IN ARRAY ARRAY['cls', 'tg', 'room', 't1', 'p1'] LOOP
+    IF pg_temp.kv(link) IS NULL THEN RAISE EXCEPTION 'lägen: the code of % does not open it in CODE mode', link; END IF;
+  END LOOP;
+  FOREACH link IN ARRAY ARRAY['gidx', 'ridx', 'tidx'] LOOP
+    IF pg_temp.kv(link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the list % is answered in CODE mode', link; END IF;
+  END LOOP;
+  IF pg_temp.kv('gidx', cls) IS NOT NULL OR pg_temp.kv('ridx', room) IS NOT NULL OR pg_temp.kv('tidx', t1) IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: a target is reached through a list in CODE mode';
+  END IF;
+  IF pg_temp.kv('cls') ->> 'title' IS DISTINCT FROM 'rls377 7K' OR pg_temp.kv('t1') ->> 'title' IS DISTINCT FROM 'KXA' THEN
+    RAISE EXCEPTION 'lägen: a page is titled %, %', pg_temp.kv('cls') ->> 'title', pg_temp.kv('t1') ->> 'title';
+  END IF;
+  -- A pupil's page is titled by the school's label, or by nothing: the pupil's name is not printed unless written.
+  IF pg_temp.kv('p1') ->> 'title' IS DISTINCT FROM 'Barn 1' OR pg_temp.kv('p6') ->> 'title' IS DISTINCT FROM '' THEN
+    RAISE EXCEPTION 'lägen: a pupil''s page is titled %, %', pg_temp.kv('p1') ->> 'title', pg_temp.kv('p6') ->> 'title';
+  END IF;
+
+  -- Every kind listed once, to learn the names the lists give their entries.
+  PERFORM pg_temp.kset('"viewerClassMode" = ''LIST'', "viewerGroupMode" = ''LIST'', "viewerRoomMode" = ''LIST'', "viewerTeacherMode" = ''LIST''');
+  h_cls := pg_temp.kt('gidx', 'rls377 7K'); h_tg := pg_temp.kt('gidx', 'rls377 Ma'); h_room := pg_temp.kt('ridx', 'rls377 sal');
+  h_t1 := pg_temp.kt('tidx', 'KXA'); h_t2 := pg_temp.kt('tidx', 'KXB');
+  IF h_cls IS NULL OR h_tg IS NULL OR h_room IS NULL OR h_t1 IS NULL OR h_t2 IS NULL THEN RAISE EXCEPTION 'lägen: a list does not hold what it should'; END IF;
+  PERFORM set_config('app.k377_h_t1', h_t1::text, true);
+  PERFORM set_config('app.k377_h_cls', h_cls::text, true);
+  -- A list prints no id of the database's, and asked for one it answers nothing: the lists name their entries themselves.
+  IF h_cls IN (cls, tg, sm, room, t1, pg_temp.kid('t2'), p1) OR h_tg IN (cls, tg, sm, room, t1) OR h_room IN (cls, tg, room, t1) OR h_t1 IN (cls, tg, room, t1)
+     OR EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('gidx') -> 'targets') t WHERE (t ->> 'id')::uuid IN (SELECT id FROM "StudentGroups" WHERE "schoolId" = school))
+     OR EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('ridx') -> 'targets') t WHERE (t ->> 'id')::uuid IN (SELECT id FROM "Rooms" WHERE "schoolId" = school))
+     OR EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('tidx') -> 'targets') t WHERE (t ->> 'id')::uuid IN (SELECT id FROM "Users" WHERE "schoolId" = school)) THEN
+    RAISE EXCEPTION 'lägen: a list prints an id of the database';
+  END IF;
+  IF pg_temp.kv('gidx', cls) IS NOT NULL OR pg_temp.kv('gidx', tg) IS NOT NULL OR pg_temp.kv('ridx', room) IS NOT NULL OR pg_temp.kv('tidx', t1) IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: a list answers for an id of the database';
+  END IF;
+  -- Another list link names the same class otherwise, and its name is no good here.
+  h_cls2 := pg_temp.kt('gidx2', 'rls377 7K');
+  IF h_cls2 IS NULL OR h_cls2 = h_cls OR pg_temp.kv('gidx', h_cls2) IS NOT NULL OR pg_temp.kv('gidx2', h_cls2) IS NULL THEN
+    RAISE EXCEPTION 'lägen: two lists name a class alike, or take each other''s names';
+  END IF;
+
+  -- LIST for classes only: the class list holds the class, not the teaching groups; the group's link is shut (its kind is off).
+  PERFORM pg_temp.kset('"viewerClassMode" = ''LIST'', "viewerGroupMode" = ''OFF''');
+  targets := (SELECT string_agg(t ->> 'label', ',' ORDER BY t ->> 'label') FROM jsonb_array_elements(pg_temp.kv('gidx') -> 'targets') t);
+  IF pg_temp.kv('gidx') ->> 'kind' IS DISTINCT FROM 'GROUP' OR targets IS DISTINCT FROM 'rls377 7K' THEN
+    RAISE EXCEPTION 'lägen: the class list holds %', targets;
+  END IF;
+  IF pg_temp.kv('gidx', h_cls) IS NULL THEN RAISE EXCEPTION 'lägen: a listed class does not open through its list'; END IF;
+  IF pg_temp.kv('gidx', h_tg) IS NOT NULL THEN RAISE EXCEPTION 'lägen: a group is reached through the class list while groups are off'; END IF;
+  IF pg_temp.kv('tg') IS NOT NULL OR pg_temp.kv('sm') IS NOT NULL THEN RAISE EXCEPTION 'lägen: a group opens while groups are off'; END IF;
+  IF pg_temp.kv('cls') IS NULL THEN RAISE EXCEPTION 'lägen: a class link does not open in LIST mode'; END IF;
+  -- Groups listed as well, class off: the list holds the groups big enough to name, not the small one, not the class.
+  PERFORM pg_temp.kset('"viewerClassMode" = ''OFF'', "viewerGroupMode" = ''LIST''');
+  targets := (SELECT string_agg(t ->> 'label', ',' ORDER BY t ->> 'label') FROM jsonb_array_elements(pg_temp.kv('gidx') -> 'targets') t);
+  IF targets IS DISTINCT FROM 'rls377 Ma' THEN RAISE EXCEPTION 'lägen: the group list holds %', targets; END IF;
+  IF pg_temp.kv('gidx', h_tg) IS NULL OR pg_temp.kv('gidx', h_cls) IS NOT NULL OR pg_temp.kv('cls') IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: groups listed and classes off reach the wrong targets';
+  END IF;
+  IF pg_temp.kv('sm') IS NOT NULL THEN RAISE EXCEPTION 'lägen: a group under the school''s size opens by its link'; END IF;
+  PERFORM pg_temp.kset('"viewerClassMode" = ''LIST'', "viewerGroupMode" = ''LIST''');
+  targets := (SELECT string_agg(t ->> 'label', ',' ORDER BY t ->> 'label') FROM jsonb_array_elements(pg_temp.kv('gidx') -> 'targets') t);
+  IF targets IS DISTINCT FROM 'rls377 7K,rls377 Ma' THEN RAISE EXCEPTION 'lägen: the class and group list holds %', targets; END IF;
+
+  -- Rooms and teachers.
+  PERFORM pg_temp.kset('"viewerRoomMode" = ''LIST'', "viewerTeacherMode" = ''LIST''');
+  IF pg_temp.kv('ridx') ->> 'kind' IS DISTINCT FROM 'ROOM' OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('ridx') -> 'targets') t WHERE t ->> 'label' = 'rls377 sal')
+     OR pg_temp.kv('ridx', h_room) IS NULL THEN RAISE EXCEPTION 'lägen: the room list does not hold and open the room'; END IF;
+  labels := (SELECT string_agg(t ->> 'label', ',' ORDER BY t ->> 'label') FROM jsonb_array_elements(pg_temp.kv('tidx') -> 'targets') t);
+  IF pg_temp.kv('tidx') ->> 'kind' IS DISTINCT FROM 'TEACHER' OR labels IS DISTINCT FROM 'KXA,KXB' THEN
+    RAISE EXCEPTION 'lägen: the teacher list holds % (those with a tjänst and a signature, and nobody else)', labels;
+  END IF;
+  IF pg_temp.kv('tidx', h_t1) IS NULL OR pg_temp.kv('tidx', h_t2) IS NULL OR pg_temp.kv('tidx', h_cls) IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: a teacher is reached through the list wrongly';
+  END IF;
+  PERFORM pg_temp.kset('"publicTeacherDisplay" = ''NAME''');
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('tidx') -> 'targets') t WHERE t ->> 'label' !~ ' ') THEN
+    RAISE EXCEPTION 'lägen: teachers listed by name are not named';
+  END IF;
+  PERFORM pg_temp.kset('"publicTeacherDisplay" = ''SIGNATURE''');
+
+  -- A pupil is reached by a code alone: no list gives one, and no other link takes one as its target.
+  PERFORM pg_temp.kset('"viewerStudentMode" = ''CODE''');
+  IF pg_temp.kv('gidx', p1) IS NOT NULL OR pg_temp.kv('cls', p1) IS NOT NULL OR pg_temp.kv('p1', cls) IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: a pupil is reached by something that is not their code';
+  END IF;
+  PERFORM pg_temp.kset('"viewerStudentMode" = ''OFF''');
+  IF pg_temp.kv('p1') IS NOT NULL THEN RAISE EXCEPTION 'lägen: a pupil''s code opens with pupils off'; END IF;
+  PERFORM pg_temp.kset('"viewerStudentMode" = ''CODE''');
+
+  -- What a pupil's page holds: the lessons of the pupil's groups and the one that names them, times, subject, room,
+  -- teachers as the school names them; no group, no id, no pupil, and nothing that is not a field of the whitelist.
+  doc := pg_temp.kv('p1');
+  IF (SELECT count(*) FROM jsonb_array_elements(doc -> 'days') d, jsonb_array_elements(d -> 'lessons') l) <> 2 THEN
+    RAISE EXCEPTION 'lägen: the pupil''s week holds % lessons, not the group''s and the one that names them', (SELECT count(*) FROM jsonb_array_elements(doc -> 'days') d, jsonb_array_elements(d -> 'lessons') l);
+  END IF;
+  keys := (SELECT string_agg(DISTINCT k, ',' ORDER BY k) FROM jsonb_array_elements(doc -> 'days') d, jsonb_array_elements(d -> 'lessons') l, jsonb_object_keys(l) k);
+  IF keys IS DISTINCT FROM 'cancelled,end,groups,room,start,subject,teachers' THEN RAISE EXCEPTION 'lägen: a pupil''s lesson holds the fields %', keys; END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(doc -> 'days') d, jsonb_array_elements(d -> 'lessons') l WHERE jsonb_array_length(l -> 'groups') <> 0) THEN
+    RAISE EXCEPTION 'lägen: a pupil''s page names a group';
+  END IF;
+  -- The named lesson is the named pupil's alone.
+  IF (SELECT count(*) FROM jsonb_array_elements(pg_temp.kv('p6') -> 'days') d, jsonb_array_elements(d -> 'lessons') l) <> 0 THEN
+    RAISE EXCEPTION 'lägen: a pupil in no group reads lessons';
+  END IF;
+  IF (SELECT count(*) FROM jsonb_array_elements(pg_temp.kv('sm') -> 'days') d) IS NOT NULL AND pg_temp.kv('sm') IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: the named lesson''s group answers while under the school''s size';
+  END IF;
+
+  -- A viewer for staff: a visitor gets what an unknown link gets; staff of the school get the page through the staff door;
+  -- staff of another school, a pupil, a guardian and nobody do not; the anonymous door does not ask who calls.
+  PERFORM pg_temp.kset('"viewerAudience" = ''STAFF'', "viewerClassMode" = ''LIST'', "viewerGroupMode" = ''LIST'', "viewerRoomMode" = ''LIST'', "viewerTeacherMode" = ''LIST'', "viewerStudentMode" = ''CODE''');
+  FOREACH link IN ARRAY ARRAY['cls', 'gidx', 'tg', 'room', 'ridx', 't1', 'tidx', 'p1'] LOOP
+    IF pg_temp.kv(link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the link % answers a visitor in a viewer for staff', link; END IF;
+    IF pg_temp.ka(teacher_sub, link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the anonymous door answers % because someone is signed in', link; END IF;
+    IF pg_temp.ks(teacher_sub, link) IS NULL THEN RAISE EXCEPTION 'lägen: the link % does not answer a teacher of the school in a viewer for staff', link; END IF;
+    IF pg_temp.ks(current_setting('app.k377_admin_sub'), link) IS NULL THEN RAISE EXCEPTION 'lägen: the link % does not answer an administrator of the school', link; END IF;
+    IF pg_temp.ks(other_sub, link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the link % answers a teacher of another school', link; END IF;
+    IF pg_temp.ks(current_setting('app.k377_pupil_sub'), link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the link % answers a pupil as staff', link; END IF;
+    IF pg_temp.ks(current_setting('app.k377_guardian_sub'), link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the link % answers a guardian as staff', link; END IF;
+    IF pg_temp.ks(NULL, link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the link % answers the staff door with nobody signed in', link; END IF;
+  END LOOP;
+  -- Staff keep the kinds' modes: a kind that is off is off for them too, and a list stays a list.
+  PERFORM pg_temp.kset('"viewerClassMode" = ''OFF'', "viewerRoomMode" = ''CODE''');
+  IF pg_temp.ks(teacher_sub, 'cls') IS NOT NULL OR pg_temp.ks(teacher_sub, 'ridx') IS NOT NULL OR pg_temp.ks(teacher_sub, 'room') IS NULL THEN
+    RAISE EXCEPTION 'lägen: staff are shown a kind that is off, or a list of a kind in CODE mode';
+  END IF;
+  -- Open to everyone again: staff are answered as a visitor is, document for document.
+  PERFORM pg_temp.kset('"viewerAudience" = ''EVERYONE'', "viewerClassMode" = ''LIST'', "viewerRoomMode" = ''LIST''');
+  FOREACH link IN ARRAY ARRAY['cls', 'gidx', 'tg', 'room', 'ridx', 't1', 'tidx', 'p1'] LOOP
+    IF pg_temp.ks(teacher_sub, link) IS DISTINCT FROM pg_temp.kv(link) OR pg_temp.kv(link) IS NULL THEN
+      RAISE EXCEPTION 'lägen: staff and a visitor read different documents from %', link;
+    END IF;
+  END LOOP;
+
+  -- What the school hides is found by no link and no list, and the answer is the answer for a link that is not there.
+  PERFORM pg_temp.kset('"viewerAudience" = ''EVERYONE''');
+  INSERT INTO "PublicTimetableHidden" ("schoolId", "targetGroupId") VALUES (school, cls), (school, tg);
+  INSERT INTO "PublicTimetableHidden" ("schoolId", "targetRoomId") VALUES (school, room);
+  INSERT INTO "PublicTimetableHidden" ("schoolId", "targetStudentId") VALUES (school, p1);
+  INSERT INTO "TeacherPublicLabels" ("userId", "schoolId", hidden) VALUES (t1, school, true);
+  FOREACH link IN ARRAY ARRAY['cls', 'tg', 'room', 'p1', 't1'] LOOP
+    IF pg_temp.kv(link) IS NOT NULL THEN RAISE EXCEPTION 'lägen: the hidden target of % is found by its link', link; END IF;
+  END LOOP;
+  IF pg_temp.kv('gidx', h_cls) IS NOT NULL OR pg_temp.kv('gidx', h_tg) IS NOT NULL OR pg_temp.kv('ridx', h_room) IS NOT NULL OR pg_temp.kv('tidx', h_t1) IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: a hidden target is found through a list';
+  END IF;
+  IF pg_temp.kv('gidx') IS NULL OR pg_temp.kv('gidx') -> 'targets' <> '[]'::jsonb THEN
+    RAISE EXCEPTION 'lägen: the class and group list holds % with every class and group hidden (it is empty, not gone)', pg_temp.kv('gidx') -> 'targets';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('ridx') -> 'targets') t WHERE t ->> 'label' = 'rls377 sal') THEN RAISE EXCEPTION 'lägen: a hidden room is listed'; END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('tidx') -> 'targets') t WHERE t ->> 'label' = 'KXA') THEN RAISE EXCEPTION 'lägen: a hidden teacher is listed'; END IF;
+  -- Hidden and not there read alike: a link that does not exist, a target that does not exist.
+  IF pg_temp.kv('cls') IS DISTINCT FROM (SELECT app.public_timetable(repeat('0', 64), NULL, current_setting('app.k377_week')::date))
+     OR pg_temp.kv('gidx', h_cls) IS DISTINCT FROM pg_temp.kv('gidx', gen_random_uuid()) THEN
+    RAISE EXCEPTION 'lägen: hidden and not-there read differently';
+  END IF;
+  DELETE FROM "PublicTimetableHidden";
+  DELETE FROM "TeacherPublicLabels" WHERE "userId" = t1;
+  IF pg_temp.kv('cls') IS NULL OR pg_temp.kv('t1') IS NULL OR pg_temp.kv('p1') IS NULL OR pg_temp.kv('ridx', h_room) IS NULL THEN
+    RAISE EXCEPTION 'lägen: a target does not come back when it is shown again';
+  END IF;
+
+  -- A link that did not answer is not used; one that answers is, at most every five minutes.
+  UPDATE "PublicTimetableLinks" SET "lastUsedAt" = NULL;
+  PERFORM pg_temp.kset('"viewerClassMode" = ''OFF''');
+  PERFORM pg_temp.kv('cls');
+  IF (SELECT "lastUsedAt" FROM "PublicTimetableLinks" WHERE "tokenHash" = pg_temp.kh('cls')) IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: a link that answered nothing was marked used';
+  END IF;
+  PERFORM pg_temp.kset('"viewerClassMode" = ''CODE''');
+  PERFORM pg_temp.kv('cls');
+  IF (SELECT "lastUsedAt" FROM "PublicTimetableLinks" WHERE "tokenHash" = pg_temp.kh('cls')) IS NULL THEN
+    RAISE EXCEPTION 'lägen: a link that answered was not marked used';
+  END IF;
+  -- At most every five minutes: a busy link writes almost nothing.
+  UPDATE "PublicTimetableLinks" SET "lastUsedAt" = now() - interval '1 minute' WHERE "tokenHash" = pg_temp.kh('cls');
+  PERFORM pg_temp.kv('cls');
+  IF (SELECT now() - "lastUsedAt" FROM "PublicTimetableLinks" WHERE "tokenHash" = pg_temp.kh('cls')) < interval '50 seconds' THEN
+    RAISE EXCEPTION 'lägen: a link used a minute ago was marked again';
+  END IF;
+  UPDATE "PublicTimetableLinks" SET "lastUsedAt" = now() - interval '10 minutes' WHERE "tokenHash" = pg_temp.kh('cls');
+  PERFORM pg_temp.kv('cls');
+  IF (SELECT now() - "lastUsedAt" FROM "PublicTimetableLinks" WHERE "tokenHash" = pg_temp.kh('cls')) > interval '1 minute' THEN
+    RAISE EXCEPTION 'lägen: a link used ten minutes ago was not marked again';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 378: en person med skyddad identitet syns aldrig i visaren
+-- (PersonProtections, 20270107090000; 20270118090000).
+--
+-- Whatever the modes and the audience: a teacher with a mark, of either
+-- source, is named on no lesson, has no page, is on no list and is given no
+-- link; a pupil with a mark, and a pupil whose guardian has one, has no page;
+-- no guardian is in any document; and none of it says that someone is held
+-- back. The marks are lifted and the pages come back. The same fixture as 377.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  everything constant text[] := ARRAY['cls', 'gidx', 'tg', 'room', 'ridx', 't1', 'tidx', 'p1', 'p6'];
+  school uuid := current_setting('app.k377_school')::uuid;
+  t1 uuid := pg_temp.kid('t1'); p1 uuid := pg_temp.kid('p1'); guardian uuid := pg_temp.kid('guardian');
+  teacher_sub text := current_setting('app.k377_teacher_sub');
+  link text; src text; mode text; audience text; staff boolean;
+  t1_name text; g_mail text;
+BEGIN
+  SELECT "firstName" || ' ' || "lastName" INTO t1_name FROM "Users" WHERE id = t1;
+  SELECT email INTO g_mail FROM "Users" WHERE id = guardian;
+  -- A corpus: everything every link of the school says, asked as the audience asks it.
+  CREATE TEMP TABLE k378_corpus (text_of text);
+
+  FOREACH audience IN ARRAY ARRAY['EVERYONE', 'STAFF'] LOOP
+    FOREACH mode IN ARRAY ARRAY['LIST', 'CODE'] LOOP
+      staff := audience = 'STAFF';
+      PERFORM pg_temp.kset(format('"viewerAudience" = %L, "viewerClassMode" = %L, "viewerGroupMode" = %L, "viewerRoomMode" = %L, "viewerTeacherMode" = %L, "viewerStudentMode" = ''CODE''', audience, mode, mode, mode, mode));
+      FOREACH src IN ARRAY ARRAY['SS12000', 'MANUAL'] LOOP
+        DELETE FROM "PersonProtections";
+        -- Unmarked: the teacher is named on the class page and the pages are there.
+        IF (CASE WHEN staff THEN pg_temp.ks(teacher_sub, 'cls') ELSE pg_temp.kv('cls') END)::text NOT LIKE '%KXA%' THEN
+          RAISE EXCEPTION 'skyddad identitet: the teacher is not named while unmarked (% %)', audience, mode;
+        END IF;
+        IF (CASE WHEN staff THEN pg_temp.ks(teacher_sub, 't1') ELSE pg_temp.kv('t1') END) IS NULL
+           OR (CASE WHEN staff THEN pg_temp.ks(teacher_sub, 'p1') ELSE pg_temp.kv('p1') END) IS NULL THEN
+          RAISE EXCEPTION 'skyddad identitet: the pages are not there while nobody is marked (% %)', audience, mode;
+        END IF;
+
+        INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (t1, school, src::"PersonProtectionSource");
+        FOREACH link IN ARRAY everything LOOP
+          INSERT INTO k378_corpus
+          SELECT coalesce((CASE WHEN staff THEN pg_temp.ks(teacher_sub, link) ELSE pg_temp.kv(link) END)::text, 'NULL');
+        END LOOP;
+        IF (CASE WHEN staff THEN pg_temp.ks(teacher_sub, 't1') ELSE pg_temp.kv('t1') END) IS NOT NULL THEN
+          RAISE EXCEPTION 'skyddad identitet: a marked teacher has a page (% % %)', audience, mode, src;
+        END IF;
+        IF mode = 'LIST' AND (CASE WHEN staff THEN pg_temp.ks(teacher_sub, 'tidx', current_setting('app.k377_h_t1')::uuid) ELSE pg_temp.kv('tidx', current_setting('app.k377_h_t1')::uuid) END) IS NOT NULL THEN
+          RAISE EXCEPTION 'skyddad identitet: a marked teacher is reached through the list (% % %)', audience, mode, src;
+        END IF;
+        IF EXISTS (SELECT 1 FROM k378_corpus WHERE text_of LIKE '%KXA%' OR text_of LIKE '%' || t1_name || '%') THEN
+          RAISE EXCEPTION 'skyddad identitet: a marked teacher is named or listed somewhere (% % %)', audience, mode, src;
+        END IF;
+        -- The unmarked colleague is still named: the mark hides one person, not the lesson.
+        IF NOT EXISTS (SELECT 1 FROM k378_corpus WHERE text_of LIKE '%KXB%') THEN
+          RAISE EXCEPTION 'skyddad identitet: the colleague of a marked teacher lost their name (% %)', audience, mode;
+        END IF;
+        DELETE FROM k378_corpus;
+
+        -- A marked teacher is given no link.
+        BEGIN
+          INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetTeacherId", "tokenHash")
+          VALUES (school, pg_temp.kid('year'), 'TEACHER', t1, pg_temp.kh('again'));
+          RAISE EXCEPTION 'skyddad identitet: a marked teacher was given a link';
+        EXCEPTION WHEN SQLSTATE 'PB400' THEN NULL;
+        END;
+        DELETE FROM "PersonProtections";
+
+        -- A marked pupil, and a pupil with a marked guardian.
+        INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p1, school, src::"PersonProtectionSource");
+        IF (CASE WHEN staff THEN pg_temp.ks(teacher_sub, 'p1') ELSE pg_temp.kv('p1') END) IS NOT NULL THEN
+          RAISE EXCEPTION 'skyddad identitet: a marked pupil has a page (% % %)', audience, mode, src;
+        END IF;
+        DELETE FROM "PersonProtections";
+        INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (guardian, school, src::"PersonProtectionSource");
+        IF (CASE WHEN staff THEN pg_temp.ks(teacher_sub, 'p1') ELSE pg_temp.kv('p1') END) IS NOT NULL THEN
+          RAISE EXCEPTION 'skyddad identitet: the child of a marked guardian has a page (% % %)', audience, mode, src;
+        END IF;
+        -- No guardian is in any document, marked or not.
+        FOREACH link IN ARRAY everything LOOP
+          INSERT INTO k378_corpus
+          SELECT coalesce((CASE WHEN staff THEN pg_temp.ks(teacher_sub, link) ELSE pg_temp.kv(link) END)::text, 'NULL');
+        END LOOP;
+        IF g_mail IS NOT NULL AND EXISTS (SELECT 1 FROM k378_corpus WHERE text_of LIKE '%' || g_mail || '%') THEN
+          RAISE EXCEPTION 'skyddad identitet: a guardian is in a document';
+        END IF;
+        DELETE FROM k378_corpus;
+        DELETE FROM "PersonProtections";
+      END LOOP;
+    END LOOP;
+  END LOOP;
+
+  -- Lifted, they come back: the mark is what hid them, not a state of the link.
+  PERFORM pg_temp.kset('"viewerAudience" = ''EVERYONE'', "viewerClassMode" = ''CODE'', "viewerTeacherMode" = ''CODE'', "viewerStudentMode" = ''CODE'', "viewerGroupMode" = ''CODE'', "viewerRoomMode" = ''CODE''');
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (t1, school, 'MANUAL'), (p1, school, 'SS12000');
+  IF pg_temp.kv('t1') IS NOT NULL OR pg_temp.kv('p1') IS NOT NULL THEN RAISE EXCEPTION 'skyddad identitet: marked people have pages'; END IF;
+  -- And the answer for a page hidden by a mark is the answer for no page at all.
+  IF pg_temp.kv('t1') IS DISTINCT FROM app.public_timetable(repeat('0', 64), NULL, current_setting('app.k377_week')::date) THEN
+    RAISE EXCEPTION 'skyddad identitet: a protected page is answered differently from a missing one';
+  END IF;
+  DELETE FROM "PersonProtections";
+  IF pg_temp.kv('t1') IS NULL OR pg_temp.kv('p1') IS NULL OR pg_temp.kv('cls')::text NOT LIKE '%KXA%' THEN
+    RAISE EXCEPTION 'skyddad identitet: the pages do not come back when the marks are lifted';
+  END IF;
+  DROP TABLE k378_corpus;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 379: utskriften, ramarna och kalenderflödena (20270118090000).
+--
+--   * the administrator's print set leaves a marked teacher out of the set
+--     and out of every sheet, and a class's sheet does not name them;
+--   * a viewer for staff is framed nowhere, a pupil's page nowhere, and a
+--     kind that is off nowhere;
+--   * the calendar feeds have their own authority (a person's own address,
+--     whatever the viewer's modes) and name no marked teacher: the feed's
+--     builders say so in the catalogue (section 376) and the adapter probe
+--     reads the feeds themselves; the family's own week in the app still
+--     names the teacher, as before, which is asserted here.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  school uuid := current_setting('app.k377_school')::uuid;
+  t1 uuid := pg_temp.kid('t1'); t2 uuid := pg_temp.kid('t2');
+  week date := current_setting('app.k377_week')::date;
+  doc jsonb; labels text; t1_name text; feed_doc jsonb;
+BEGIN
+  SELECT "firstName" || ' ' || "lastName" INTO t1_name FROM "Users" WHERE id = t1;
+
+  -- The print set (the administrator is the caller).
+  doc := app.print_timetables('TEACHER', week + 2, 'SIGNATURE', true);
+  IF doc IS NULL OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(doc -> 'sheets') s WHERE s ->> 'title' = 'KXA') THEN
+    RAISE EXCEPTION 'utskrift: the print set of teachers lacks an unmarked teacher: %', doc;
+  END IF;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (t1, school, 'SS12000');
+  doc := app.print_timetables('TEACHER', week + 2, 'SIGNATURE', true);
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(doc -> 'sheets') s WHERE s ->> 'title' = 'KXA')
+     OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(doc -> 'sheets') s WHERE s ->> 'title' = 'KXB') THEN
+    RAISE EXCEPTION 'utskrift: the print set of teachers holds a marked teacher, or lost an unmarked one';
+  END IF;
+  doc := app.print_timetables('GROUP', week + 2, 'SIGNATURE', true);
+  IF doc::text LIKE '%KXA%' OR doc::text NOT LIKE '%KXB%' THEN RAISE EXCEPTION 'utskrift: a class sheet names a marked teacher, or no longer an unmarked one'; END IF;
+  doc := app.print_timetables('GROUP', week + 2, 'NAME', true);
+  IF doc::text LIKE '%' || t1_name || '%' THEN RAISE EXCEPTION 'utskrift: a class sheet names a marked teacher by name'; END IF;
+  IF app.print_timetables('STUDENT', week + 2, 'SIGNATURE', true) IS NOT NULL THEN RAISE EXCEPTION 'utskrift: a print set of pupils exists'; END IF;
+  DELETE FROM "PersonProtections";
+
+  -- The frames: the websites that may frame the viewer.
+  PERFORM pg_temp.kset('"publicEmbedOrigins" = ARRAY[''https://skolan.example''], "publicEmbedGroups" = true, "publicEmbedRooms" = true, "publicEmbedTeachers" = true, "viewerAudience" = ''EVERYONE'', "viewerClassMode" = ''CODE'', "viewerRoomMode" = ''CODE'', "viewerTeacherMode" = ''CODE'', "viewerStudentMode" = ''CODE''');
+  IF app.public_timetable_embed(pg_temp.kh('cls')) IS NULL OR app.public_timetable_embed(pg_temp.kh('t1')) IS NULL THEN
+    RAISE EXCEPTION 'ramar: an open viewer is not framed';
+  END IF;
+  IF app.public_timetable_embed(pg_temp.kh('p1')) IS NOT NULL THEN RAISE EXCEPTION 'ramar: a pupil''s page is framed'; END IF;
+  PERFORM pg_temp.kset('"viewerClassMode" = ''OFF''');
+  IF app.public_timetable_embed(pg_temp.kh('cls')) IS NOT NULL THEN RAISE EXCEPTION 'ramar: a kind that is off is framed'; END IF;
+  PERFORM pg_temp.kset('"viewerClassMode" = ''CODE'', "viewerAudience" = ''STAFF''');
+  IF app.public_timetable_embed(pg_temp.kh('cls')) IS NOT NULL OR app.public_timetable_embed(pg_temp.kh('t1')) IS NOT NULL THEN
+    RAISE EXCEPTION 'ramar: a viewer for staff is framed';
+  END IF;
+  PERFORM pg_temp.kset('"viewerAudience" = ''EVERYONE''');
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (t1, school, 'MANUAL');
+  IF app.public_timetable_embed(pg_temp.kh('t1')) IS NOT NULL THEN RAISE EXCEPTION 'ramar: a marked teacher''s page is framed'; END IF;
+  DELETE FROM "PersonProtections";
+
+  -- (The feeds' own content, with their dates inside a feed's window, is the adapter probe's: probe-schemavisaren-lagen.)
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (t2, school, 'MANUAL');
+  -- The family's own week in the app is not a feed: the guardian still reads the teacher's name there.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', current_setting('app.k377_guardian_sub'))::text, true);
+  SELECT string_agg(array_to_string(f.labels, ','), ';') INTO labels FROM app.family_lesson_staff(ARRAY[pg_temp.kid('l2')]) f;
+  IF labels IS DISTINCT FROM 'KXB' THEN
+    RAISE EXCEPTION 'flöden: the family''s own week names % for a marked teacher, not what it named before (KXB)', labels;
+  END IF;
+  DELETE FROM "PersonProtections";
 END $$;
 ROLLBACK;

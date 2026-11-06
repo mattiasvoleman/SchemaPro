@@ -271,7 +271,7 @@
     <tbody>
       <tr><td class="k">Planering</td><td>Grunddata (läsår, ämnen, salar, klasser och skolenheter), timplanen och dess block, tjänstefördelningens regler, lärarnas arbetstid, behörigheter och uppdrag, och rastvaktsschemat.</td></tr>
       <tr><td class="k">Schemaläggning</td><td>Grundschemat, dess versioner och genereringen.</td></tr>
-      <tr><td class="k">Publicering</td><td>Publiceringen, Schemavisaren, undervisningstiden och skolans kalenderprenumeration.</td></tr>
+      <tr><td class="k">Publicering</td><td>Publiceringen, Schemavisaren (lägen, koder och dolda scheman), undervisningstiden och skolans kalenderprenumeration.</td></tr>
       <tr><td class="k">Drift</td><td>Den daterade kalendern, frånvaro, vikarier, ledighet, lokalbokningar, rapporter och att ta bort en lektions ämne och läxa (6.11).</td></tr>
       <tr><td class="k">Personal</td><td>Registret: personer och kopplingar mellan elever och vårdnadshavare.</td></tr>
       <tr><td class="k">Integrationer</td><td>API-nycklar, SS12000 och skolans inloggning.</td></tr>
@@ -1419,10 +1419,10 @@
       markerad. När filen hämtas står det hur många som hölls utanför. Den
       som har skyddad identitet men inte är markerad finns med, så markera
       personen innan du delar en fil. Lärare med skyddad identitet finns
-      däremot kvar med namn i schemafilerna (7.7), i schemat som iCal och PDF,
-      i utskrifterna, i kalenderprenumerationerna och, om skolan visar
-      lärarnas namn, i Schemavisaren (7.1); dölj en sådan lärare under
-      <span class="path">Publicering</span> för de publika scheman.
+      däremot kvar med namn i schemafilerna (7.7) och i schemat som iCal och
+      PDF. I Schemavisaren (7.1), i utskriften av klassernas, lärarnas och
+      salarnas veckor (5.8) och i kalenderprenumerationerna (7.6) nämns en
+      markerad lärare aldrig.
       På sidor som rymmer två listor — klasser och undervisningsgrupper, eller
       lärare och elever — frågar knappen vilken fil du vill ha.
     </p>
@@ -4948,8 +4948,9 @@
       Undervisningsgrupperna får inga egna blad.</li>
     <li><strong>Lärare</strong>: den som har en tjänst under läsåret eller en
       lektion under veckan. Med signatur skrivs bara den ut som har en
-      signatur för läsåret, och en lärare som aldrig visas i Schemavisaren
-      (7.1) skrivs aldrig ut.</li>
+      signatur för läsåret. En lärare som är dold i Schemavisaren (7.1), eller
+      som har skyddad identitet, skrivs aldrig ut, och står inte heller på
+      klassernas och salarnas blad.</li>
     <li><strong>Salar</strong>: skolans salar.</li>
   </ul>
   <p>
@@ -6652,16 +6653,136 @@
 
   <h3 id="s71"><span class="num">7.1</span>Schemavisaren</h3>
   <p>
-    Schemavisaren visar skolans <em>publicerade</em> schema utan inloggning,
-    per klass, lärare eller sal: det som annars sitter på klassrumsdörren. Den
-    visar tider, ämne, grupp, sal och läraren som skolan väljer, aldrig
-    elevnamn, närvaro, anteckningar eller orsaker. Varje vecka går att skriva
-    ut på ett liggande A4. Allt är avstängt tills skolan slår på det under
-    <span class="path">Schemaläggning › Publicering › Schemavisaren</span>.
+    Schemavisaren visar skolans <em>publicerade</em> schema utanför Rastra, per
+    klass, undervisningsgrupp, lärare, elev eller sal: det som annars sitter på
+    klassrumsdörren. Den visar tider, ämne, grupp, sal och läraren som skolan
+    väljer, aldrig elevnamn, närvaro, anteckningar eller orsaker. Varje vecka
+    går att skriva ut på ett liggande A4. Skolan bestämmer själv under
+    <span class="path">Schemaläggning › Schemavisaren</span> vem som får titta
+    och hur varje sorts schema nås. <strong>Allt är avstängt, och bara för
+    inloggad personal, tills skolan väljer annat.</strong> Frågar ett
+    dataskyddsombud vad en främling kan läsa, är det här svaret: en elevs
+    schema visar var eleven finns, så det nås bara med en kod som skolan delat
+    ut, och en person med skyddad identitet visas aldrig.
+  </p>
+
+  <h4>Hur varje sorts schema nås</h4>
+  <p>
+    Under <span class="ui">Vem och hur</span> väljer skolan, för var och en av
+    sorterna <span class="ui">Klass</span>, <span class="ui">Undervisningsgrupp</span>,
+    <span class="ui">Lärare</span>, <span class="ui">Elev</span> och
+    <span class="ui">Sal</span>, ett av tre lägen:
   </p>
   <ul>
-    <li><strong>Vad som visas</strong>: klasser och grupper, lärare och salar
-      slås på var för sig.</li>
+    <li><strong>Av</strong>: sorten visas inte. Ingen länk eller kod till den
+      fungerar.</li>
+    <li><strong>Lista</strong>: besökaren väljer i en lista över sortens alla
+      scheman, utom de dolda. Listan har en egen länk som skolan skapar, och
+      varje schema i den går också att nå med sin egen länk. En elevs schema
+      kan aldrig vara en lista: en lista över elever vore ett register över var
+      de är. En lista över lärare går bara när läraren visas med signatur eller
+      namn.</li>
+    <li><strong>Fritext-ID</strong>: schemat syns bara för den som skriver in
+      eller öppnar den exakta koden. Det finns ingen lista att bläddra i, och en
+      lista över sorten svarar inte ens om skolan skapat en.</li>
+  </ul>
+  <p>
+    Valet gäller var sort för sig: skolan kan till exempel visa klasserna i en
+    lista, salarna med kod och aldrig lärarna. Ett schema nås bara genom den
+    sortens läge, aldrig genom en annan sorts lista. En ändring syns för
+    besökarna inom en minut.
+  </p>
+
+  <h4>Vem får titta</h4>
+  <ul>
+    <li><strong>Alla som har länk eller kod</strong>: schemat öppnas utan
+      inloggning. Bara i det läget kan Schemavisaren bäddas in på skolans
+      webbplats.</li>
+    <li><strong>Bara inloggad personal</strong> (förvalt): lärare och
+      administratörer på skolan som loggat in ser schemat. För alla andra
+      svarar länkar och koder som om schemat inte fanns, och ingen elev, ingen
+      vårdnadshavare, ingen besökare och ingen personal på en annan skola kommer
+      in. Personalen öppnar länken eller skriver in koden som vanligt, och
+      loggar in när sidan ber om det.</li>
+  </ul>
+  <div class="warn">
+    <span class="label">Samma svar för allt som inte visas</span>
+    <p>
+      Ett schema som inte finns, är avstängt, är dolt, är bara för personal, hör
+      till en person med skyddad identitet eller har en återkallad kod ger
+      besökaren exakt samma svar: <em>Schemat finns inte</em>. Ingen kan alltså
+      pröva sig fram till vad som finns. Den som försöker med många koder som
+      inte finns spärras en stund från den adressen; en familj som skriver fel
+      några gånger märker inget.
+    </p>
+  </div>
+
+  <h4>Koderna</h4>
+  <p>
+    En kod är tjugo slumpade tecken i fyra grupper, till exempel
+    <em>K7QM2-X9DRT-4V8WN-B5C3H</em>. Den skapas under <span class="ui">Koder
+    och länkar</span> med <span class="ui">Skapa kod</span>, visas <strong>en
+    enda gång</strong> och sparas inte i Rastra, bara ett oläsligt avtryck av
+    den. Tappas den återkallas den och en ny skapas. Den som har koden skriver in
+    den på Schemavisarens ingångssida (adressen slutar på <em>/v</em>) eller
+    öppnar adressen som följer med: stora eller små bokstäver, med eller utan
+    bindestreck spelar ingen roll.
+  </p>
+  <p>
+    Koden är inte en signatur, ett klassnamn, en sal eller ett personnummer, och
+    ingenting som en sida visar går att räkna om till en kod. Skola24 tar
+    signaturen som id; en signatur på tre bokstäver går att räkna upp, och en
+    klass som visar sina lärares signaturer skulle lämna ut dem. Därför delar
+    skolan själv ut koderna. Skolor som hade Schemavisaren påslagen innan lägena
+    kom behåller sina länkar: de fungerar som förut.
+  </p>
+
+  <h4>Elevens schema</h4>
+  <p>
+    Under <span class="ui">Koder och länkar</span> väljer du <span class="ui">Elev</span>,
+    klass och elev, och skapar en kod. Sidan bakom den visar elevens lektioner
+    som familjen ser dem i Rastra Schema: tid, ämne, sal och lärarna som skolan
+    visar, inställda lektioner markerade. Den visar inga gruppnamn, ingen
+    anmärkning och ingen annan elev, och den kan aldrig bäddas in på en
+    webbplats. Sidan har ingen rubrik med elevens namn om inte skolan skriver en
+    egen benämning när koden skapas, till exempel <em>Barn 1</em>. Skolans
+    <span class="ui">Elev</span>-läge är <em>Av</em> eller <em>Fritext-ID</em>.
+  </p>
+
+  <h4>Dolda scheman</h4>
+  <p>
+    Under <span class="ui">Dolda scheman</span> döljer skolan ett enskilt
+    schema: en lärare, en klass, en undervisningsgrupp, en sal eller en elev.
+    Ett dolt schema finns inte i någon lista, nås inte med någon länk eller kod
+    och namnges inte, i vilket läge som helst, och besökaren får samma svar som
+    för ett schema som inte finns. En lärare som döljs syns inte heller på
+    klassens eller salens lektioner. Det går att visa dem igen när som helst.
+  </p>
+
+  <h4>Skyddad identitet</h4>
+  <p>
+    En person som skolan markerat med <a href="#skyddad-identitet">skyddad
+    identitet</a> visas <strong>aldrig</strong> i Schemavisaren, oavsett läge
+    och oavsett vem som får titta:
+  </p>
+  <ul>
+    <li>En <strong>lärare</strong> namnges inte på någon lektion, har ingen egen
+      vecka, finns inte i listan över lärare och får ingen kod. Kollegorna på
+      samma lektion står kvar.</li>
+    <li>En <strong>elev</strong> har ingen sida, och inte heller en elev vars
+      vårdnadshavare är markerad: ett barns schema visar var vårdnadshavarens
+      barn finns. Det går inte att skapa en kod till dem, och en kod som fanns
+      slutar fungera medan markeringen står kvar.</li>
+    <li>En <strong>vårdnadshavare</strong> finns aldrig i något dokument.</li>
+  </ul>
+  <p>
+    Det gäller också skolans utskrifter av klassernas, lärarnas och salarnas
+    veckor (5.8) och ramen på webbplatsen. Besökaren får inte veta att någon
+    hålls utanför. Tas markeringen bort kommer sidorna tillbaka.
+  </p>
+
+  <h4>Vad som visas</h4>
+  <ul>
     <li><strong>Läraren</strong> visas som signatur, namn eller inte alls.
       Förvalet är inte alls. Signaturen är skolans egen, den som står på
       lärarens tjänst för läsåret, och hittas aldrig på. En lärare utan
@@ -6676,24 +6797,17 @@
       bläddra bakåt genom ett helt läsårs inställda lektioner.</li>
     <li><strong>Små grupper</strong>: en undervisningsgrupp med färre elever än
       skolans gräns (förval 5) visas som <em>Grupp</em> och får ingen egen
-      länk, så att ingen elev kan pekas ut. En lektion för namngivna elever
+      kod, så att ingen elev kan pekas ut. En lektion för namngivna elever
       syns i salens vecka bara som upptagen tid.</li>
-    <li><strong>Lärare som aldrig visas</strong>: en lärare med skyddad
-      identitet markeras här och syns då inte någonstans i Schemavisaren och
-      inte i vårdnadshavarnas schema.</li>
   </ul>
   <p>
-    En <strong>länk</strong> gäller en klass, en lärare eller en sal, eller är
-    ett register över läsårets klasser och grupper eller skolans salar.
-    Adressen är slumpad och går inte att gissa. Den visas en enda gång, när
-    länken skapas, så kopiera den då. Sidan bakom länken indexeras inte av
-    sökmotorer.
+    Sidan bakom en länk eller kod indexeras inte av sökmotorer.
   </p>
   <div class="warn">
-    <span class="label">Återkalla en länk som spridits för brett</span>
+    <span class="label">Återkalla en kod som spridits för brett</span>
     <p>
-      En återkallad länk slutar fungera inom en minut. Det är så länge ett
-      svar får sparas på vägen. Skapa en ny länk om den behövs igen. Visaren
+      En återkallad kod slutar fungera inom en minut. Det är så länge ett
+      svar får sparas på vägen. Skapa en ny kod om den behövs igen. Visaren
       tål att en hel klass öppnar länken samtidigt, men begränsar hur ofta en
       enskild besökare och en enskild länk kan hämta.
     </p>
@@ -6703,9 +6817,11 @@
   <p>
     Schemavisaren kan visas i en ram på skolans egen webbplats, till exempel
     klassernas veckor på familjernas sidor. Det är avstängt tills skolan slår
-    på det under <span class="path">Schemaläggning › Publicering ›
-    Schemavisaren</span>, i rutan <span class="ui">Inbäddning på skolans
-    webbplats</span>.
+    på det under <span class="path">Schemaläggning › Schemavisaren</span>, i
+    rutan <span class="ui">Inbäddning på skolans webbplats</span>, och det
+    går bara när Schemavisaren är öppen för <em>alla som har länk eller
+    kod</em>: en ram har ingen inloggning. Inte heller en elevs sida kan
+    bäddas in.
   </p>
   <ol>
     <li>Slå på <span class="ui">Bädda in klasser och grupper</span>,
@@ -7564,14 +7680,20 @@
   </p>
   <ul>
     <li><strong>En lärare</strong> får sina lektioner med grupp, sal och
-      kollegor, också de lektioner hen är vikarie på. En kollega som står
-      bland <strong>Lärare som aldrig visas</strong> (7.1) namnges aldrig, inte
-      heller en som har slutat, och en lektion för namngivna elever namnger
-      ingen elev.</li>
+      kollegor, också de lektioner hen är vikarie på. En kollega som är dold
+      under <span class="ui">Dolda scheman</span> (7.1), eller som har skyddad
+      identitet, namnges aldrig, inte heller en som har slutat, och en
+      lektion för namngivna elever namnger ingen elev.</li>
     <li><strong>En elev och en vårdnadshavare</strong> får elevens lektioner
       så som familjen ser dem i Rastra Schema: lärarna som skolan visar dem för
       familjer i Schemavisaren, och en lektion med vikarie eller en inställd
-      lektion utan namn. Andra elever syns aldrig.</li>
+      lektion utan namn. Andra elever syns aldrig. En lärare med skyddad
+      identitet namnges inte i prenumerationen; i Rastra Schema och i appen
+      ser familjen läraren som förut.</li>
+    <li><strong>Ingen av Schemavisarens lägen styr prenumerationen.</strong>
+      En prenumeration är personens egen adress till sin egen vecka, som
+      personen själv skapat och skolan slagit på för gruppen; den följer inte
+      Av, Lista eller Fritext-ID. Det är inte Schemavisaren.</li>
     <li><strong>Lov och studiedagar</strong> står som heldagar: hela skolans
       för lärare, och de som gäller elevens årskurs för elever och
       vårdnadshavare.</li>
@@ -8182,8 +8304,8 @@
       </tr>
       <tr>
         <td class="k">En länk till Schemavisaren visar ”Schemat finns inte”</td>
-        <td>Länken är återkallad, Schemavisaren eller länkens sort är avstängd, gruppen är för liten eller läraren visas aldrig.</td>
-        <td>Kontrollera under <span class="path">Publicering › Schemavisaren</span>. Svaret är detsamma i alla fallen, så att en gissad adress inte avslöjar något.</td>
+        <td>Koden är återkallad, sortens läge är <em>Av</em> (eller <em>Fritext-ID</em> och adressen är en lista), Schemavisaren är bara för inloggad personal, schemat är dolt, personen har skyddad identitet, gruppen är för liten eller läraren visas inte.</td>
+        <td>Kontrollera under <span class="path">Schemaläggning › Schemavisaren</span>; listan över koder säger varför just den koden inte visas. Besökaren får samma svar i alla fallen, så att en gissad kod inte avslöjar något.</td>
       </tr>
       <tr>
         <td class="k">En kalenderprenumeration visar inget nytt</td>
@@ -8193,7 +8315,7 @@
       <tr>
         <td class="k">Schemat visas inte i ramen på skolans webbplats</td>
         <td>Sorten är inte inbäddad, webbplatsen är inte angiven eller är skriven på ett annat sätt (med eller utan www), eller ramen använder länkens vanliga adress i stället för inbäddningskoden.</td>
-        <td>Kontrollera under <span class="path">Publicering › Schemavisaren</span>, i rutan Inbäddning på skolans webbplats, och använd koden därifrån (7.1). En avstängning gäller inom en minut.</td>
+        <td>Kontrollera under <span class="path">Schemaläggning › Schemavisaren</span>, i rutan Inbäddning på skolans webbplats, och använd koden därifrån (7.1). Visaren måste vara öppen för alla, och en elevs sida bäddas aldrig in. En avstängning gäller inom en minut.</td>
       </tr>
       <tr>
         <td class="k">En sal går inte att boka</td>

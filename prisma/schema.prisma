@@ -1383,6 +1383,24 @@ enum PublicScopeKind {
   GROUP
   TEACHER
   ROOM
+  /// A pupil's week behind a code (20270118090000); never an index, never embedded.
+  STUDENT
+}
+
+/// How Schemavisaren shows one kind of schedule (20270118090000): OFF (not
+/// shown), LIST (a list to pick from) or CODE (Fritext-ID: only to the holder
+/// of the exact code). A pupil's is never LIST (CHECK).
+enum ViewerMode {
+  OFF
+  LIST
+  CODE
+}
+
+/// Who may read Schemavisaren: anyone with a link or a code, or a signed-in
+/// teacher or administrator of the school.
+enum ViewerAudience {
+  STAFF
+  EVERYONE
 }
 
 enum TeacherDisplay {
@@ -1431,6 +1449,16 @@ model PublicationSettings {
   publicEmbedTeachers  Boolean        @default(false)
   publicEmbedRooms     Boolean        @default(false)
   publicEmbedOrigins   String[]       @default([])
+  /// Schemavisarens lägen (20270118090000): who may look, and a mode per kind
+  /// of schedule. The viewer reads these and no longer the four switches
+  /// above (publicViewerEnabled, publicGroups, publicTeachers, publicRooms),
+  /// which the API keeps in step until a later migration drops them.
+  viewerAudience       ViewerAudience @default(STAFF)
+  viewerClassMode      ViewerMode     @default(OFF)
+  viewerGroupMode      ViewerMode     @default(OFF)
+  viewerTeacherMode    ViewerMode     @default(OFF)
+  viewerStudentMode    ViewerMode     @default(OFF)
+  viewerRoomMode       ViewerMode     @default(OFF)
   /// Kalenderprenumeration (20261112091000), per audience, off by default.
   /// Turning one off revokes that audience's live feeds (a trigger).
   calendarFeedTeachers  Boolean      @default(false)
@@ -1714,6 +1742,7 @@ model PublicTimetableLink {
   targetGroupId   String?         @db.Uuid
   targetTeacherId String?         @db.Uuid
   targetRoomId    String?         @db.Uuid
+  targetStudentId String?         @db.Uuid
   tokenHash       String          @unique
   label           String?
   createdAt       DateTime        @default(now()) @db.Timestamptz(6)
@@ -1723,6 +1752,22 @@ model PublicTimetableLink {
 
   @@index([schoolId, academicYearId])
   @@map("PublicTimetableLinks")
+}
+
+/// A class, group, room or pupil the school hides from Schemavisaren one by
+/// one (20270118090000): never listed, never found by link or code, whatever
+/// the mode. Exactly one target (CHECK); the keys are composite (id, schoolId)
+/// in the migration. A teacher is hidden by TeacherPublicLabel.
+model PublicTimetableHidden {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String   @db.Uuid
+  targetGroupId   String?  @unique @db.Uuid
+  targetRoomId    String?  @unique @db.Uuid
+  targetStudentId String?  @unique @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([schoolId])
+  @@map("PublicTimetableHidden")
 }
 
 /// A teacher never shown on a public timetable (skyddad identitet).

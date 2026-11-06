@@ -49,30 +49,25 @@ describe('embed origins', () => {
 
 describe('embedsKind (app.public_timetable_embed, said in TypeScript)', () => {
   const on = {
-    publicViewerEnabled: true,
-    publicGroups: true,
-    publicTeachers: true,
-    publicRooms: true,
-    publicTeacherDisplay: 'SIGNATURE' as const,
+    viewerAudience: 'EVERYONE' as const,
     publicEmbedGroups: true,
     publicEmbedTeachers: true,
     publicEmbedRooms: true,
     publicEmbedOrigins: ['https://skolan.se'],
   };
 
-  it('frames a link while the viewer, its scope, the scope\'s embedding and a website are all there', () => {
+  it('frames a link while the viewer is open to everyone, the kind\'s embedding is on and there is a website', () => {
     expect(['GROUP', 'TEACHER', 'ROOM'].map((kind) => embedsKind(on, kind as 'GROUP'))).toEqual([true, true, true]);
   });
 
   it.each<[string, Parameters<typeof embedsKind>[0], Parameters<typeof embedsKind>[1]]>([
     ['no settings row', null, 'GROUP'],
-    ['the viewer off', { ...on, publicViewerEnabled: false }, 'GROUP'],
+    ['a viewer for staff', { ...on, viewerAudience: 'STAFF' }, 'GROUP'],
     ['no website', { ...on, publicEmbedOrigins: [] }, 'ROOM'],
-    ['the classes off', { ...on, publicGroups: false }, 'GROUP'],
     ['the classes\' embedding off', { ...on, publicEmbedGroups: false }, 'GROUP'],
     ['the rooms\' embedding off', { ...on, publicEmbedRooms: false }, 'ROOM'],
     ['the teachers\' embedding off', { ...on, publicEmbedTeachers: false }, 'TEACHER'],
-    ['teachers named by nothing', { ...on, publicTeacherDisplay: 'NONE' }, 'TEACHER'],
+    ['a pupil, whatever is on: a page held by a code is never framed', on, 'STUDENT'],
   ])('frames nothing with %s', (_why, settings, kind) => {
     expect(embedsKind(settings, kind)).toBe(false);
   });
