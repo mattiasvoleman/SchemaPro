@@ -56,6 +56,8 @@ export interface BuildContext {
   tables?: readonly TableFile[];
   /** Rows a data file's part holds before the next part begins. ROWS_PER_PART; lowered by the specs. */
   rowsPerPart?: number;
+  /** What a part of the archive could not do and the rest went on without; the manifest says it. Filled while the archive is built. */
+  notes?: string[];
 }
 
 export interface BuildResult {
@@ -274,6 +276,7 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
       created: ctx.now.toISOString().replace(/\.\d{3}Z$/, 'Z'),
       school: { name: ctx.schoolName, id: ctx.schoolId },
       heldOut: { skyddadIdentitetPersoner: heldOut.people, kopplingar: heldOut.links },
+      ...(ctx.notes && ctx.notes.length > 0 ? { anmarkningar: ctx.notes } : {}),
       files: files.map((file) => ({
         path: file.path,
         beskrivning: file.title,

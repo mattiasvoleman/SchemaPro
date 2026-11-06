@@ -220,12 +220,23 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
         const guardians = await this.family.guardianExport(user);
         return { files: listFiles(lists, markedSet, guardians.rows), linksHeldOut: guardians.heldOut };
       },
+      // The schedule is a part of the archive, not the archive: a school leaving the service must get the rest of its
+      // data even when Schema som fil cannot write this year's table, so a failure here is said in the manifest and the
+      // build goes on (and is logged, by class).
       schema: async () => {
         if (!activeYearId) return null;
-        const file = await this.exchange.export(activeYearId, 'TABLE_CSV', user);
-        return { path: 'schema/grundschema.csv', body: file.body };
+        try {
+          const file = await this.exchange.export(activeYearId, 'TABLE_CSV', user);
+          return { path: 'schema/grundschema.csv', body: file.body };
+        } catch (error) {
+          if (error instanceof ExportWithdrawn) throw error;
+          this.logger.warn(`School export went on without the grundschema [export=${id}, ${errorName(error)}]`);
+          ctx.notes!.push(`Grundschemat (schema/grundschema.csv) skrevs inte (${errorName(error)}). Resten av filen är hel. Schemat hämtas med Schema som fil.`);
+          return null;
+        }
       },
       dataFiles: DATA_FILES,
+      notes: [],
     };
 
     const sink = new ChunkSink(async (seq, bytes) => {

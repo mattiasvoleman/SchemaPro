@@ -175,3 +175,12 @@ describe('buildArchive', () => {
     expect([...files.keys()]).toEqual(['README.txt', 'FORMAT.md', 'manifest.json']);
   });
 });
+
+describe('buildArchive notes', () => {
+  it('says in the manifest what a part could not do, and only when there is something to say', async () => {
+    const quiet = await build({ notes: [] });
+    expect(JSON.parse(quiet.files.get('manifest.json')!.toString('utf8'))).not.toHaveProperty('anmarkningar');
+    const noisy = await build({ notes: ['Grundschemat skrevs inte (TypeError).'] });
+    expect(JSON.parse(noisy.files.get('manifest.json')!.toString('utf8')).anmarkningar).toEqual(['Grundschemat skrevs inte (TypeError).']);
+  });
+});

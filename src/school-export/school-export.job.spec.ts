@@ -99,6 +99,23 @@ describe('SchoolExportJob', () => {
     expect(sent(tx, 'app.school_export_fail')).toEqual([]);
   });
 
+  it('goes on without the grundschema when Schema som fil cannot write it, and says so in the manifest', async () => {
+    const exchange = { export: jest.fn().mockRejectedValue(new TypeError('Cannot read properties of undefined')) };
+    job = new SchoolExportJob(prisma as never, { guardianExport: jest.fn().mockResolvedValue({ rows: [], heldOut: 0 }) } as never, exchange as never, { get: () => ({ background: true }) } as never, jobs as never);
+    tx.academicYear.findFirst.mockResolvedValue({ id: 'y1' });
+    answer({
+      'app.school_export_claim': [CLAIM],
+      'app.school_export_heartbeat': [{ alive: true }],
+      'app.current_user_decides': [{ decides: true, name: 'Provskolan' }],
+    });
+    await job.tick();
+    expect(exchange.export).toHaveBeenCalled();
+    const [finish] = sent(tx, 'app.school_export_finish');
+    expect(finish).toBeDefined();
+    expect(JSON.parse((finish as string[])[4]!).map((f: { path: string }) => f.path)).not.toContain('schema/grundschema.csv');
+    expect(sent(tx, 'app.school_export_fail')).toEqual([]);
+  });
+
   it('fails an export whose administrator may no longer decide, by error class, and leaves nothing half-built', async () => {
     answer({
       'app.school_export_claim': [CLAIM],
