@@ -3304,6 +3304,7 @@ BEGIN
   VALUES (a, al, 'LESSON', 'Gammal 7A', 'Historia', now() - interval '4 hours', now() - interval '3 hours') RETURNING id INTO call;
   INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId") VALUES (a, call, t1);
   INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId") VALUES (a, al, call, p1);
+END $$;
 
 -- Rapporteringsgrad (20270112090100), sections 345-349: a school of its own, so
 -- the counting is proved over lessons the sections plant themselves, on fixed
