@@ -562,13 +562,18 @@ export const NOTISER: DataFile = {
     const markedOut = [...env.markedOut];
     const names = [...env.markedNames];
     let after: { at: string; id: string } | null = null;
+    // No marked person, nothing to look for in a notice's content: the scan of every notice is for a school that has marks.
+    const mentions =
+      markedOut.length === 0 && names.length === 0
+        ? Prisma.sql`false`
+        : Prisma.sql`(n."meta" IS NOT NULL AND (EXISTS (SELECT 1 FROM unnest(${markedOut}::text[]) m WHERE position(m in n."meta"::text) > 0)
+                                                OR EXISTS (SELECT 1 FROM unnest(${names}::text[]) m WHERE m <> '' AND position(m in lower(n."meta"::text)) > 0)))`;
     for (;;) {
       const batch: NoticeRow[] = await env.read((tx) =>
         tx.$queryRaw<NoticeRow[]>(Prisma.sql`
           SELECT n."id"::text AS id, n."userId"::text AS recipient, u."email" AS "recipientEmail", n."type"::text AS type,
                  n."meta"::text AS content,
-                 (n."meta" IS NOT NULL AND (EXISTS (SELECT 1 FROM unnest(${markedOut}::text[]) m WHERE position(m in n."meta"::text) > 0)
-                                            OR EXISTS (SELECT 1 FROM unnest(${names}::text[]) m WHERE m <> '' AND position(m in lower(n."meta"::text)) > 0))) AS "mentionsMarked",
+                 ${mentions} AS "mentionsMarked",
                  ${ISO(Prisma.sql`n."readAt"`)} AS "readAt", ${ISO(Prisma.sql`n."emailedAt"`)} AS "emailedAt", ${ISO(Prisma.sql`n."createdAt"`)} AS created,
                  to_char(n."createdAt", 'YYYY-MM-DD HH24:MI:SS.US+00') AS at
             FROM "Notifications" n JOIN "Users" u ON u."id" = n."userId"

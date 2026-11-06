@@ -190,6 +190,15 @@ describe('the data files', () => {
     });
   });
 
+  describe('notiser.csv without a marked person', () => {
+    it('does not scan the notices\' content for one', async () => {
+      const h = harness([[]]);
+      await rowsOf(NOTISER, h.env);
+      expect(h.calls[0]!.strings.join('?')).not.toContain('position(');
+      expect(h.calls[0]!.strings.join('?')).toContain('false AS "mentionsMarked"');
+    });
+  });
+
   describe('laslogg.csv', () => {
     const read = (over: object) => ({
       id: 'r1', at: '2026-11-05T10:00:00Z', channel: 'WEB', actor: OTHER, actorEmail: 'a@x', role: 'SCHOOL_ADMIN', member: null, key: null, huvudmanKey: null,
