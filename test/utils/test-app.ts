@@ -57,6 +57,7 @@ import { SharingModule } from '../../src/sharing/sharing.module';
 import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
 import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module';
+import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
 import { HuvudmanModule } from '../../src/huvudman/huvudman.module';
@@ -181,6 +182,8 @@ export const FEATURE_MODULES = [
   GallringModule,
   // Frånvarobevakning's job is @Optional on the runner too, and the setup turns it off.
   AbsenceWatchModule,
+  // Rapporteringsgrad's job is @Optional on the runner too, and the setup turns it off.
+  ReportingRateModule,
   SignInModule,
   HuvudmanModule,
   AccessLogModule,

@@ -41,6 +41,7 @@ import { YearRolloverModule } from './year-rollover/year-rollover.module';
 import { CoverModule } from './cover/cover.module';
 import { CrisisModule } from './crisis/crisis.module';
 import { AbsenceWatchModule } from './absence-watch/absence-watch.module';
+import { ReportingRateModule } from './reporting-rate/reporting-rate.module';
 import { GallringModule } from './gallring/gallring.module';
 import { AccessLogModule } from './access-log/access-log.module';
 import { SchoolUnitsModule } from './school-units/school-units.module';
@@ -145,6 +146,7 @@ import type { ThrottleConfig } from './config/configuration';
     CrisisModule,
     GallringModule,
     AbsenceWatchModule,
+    ReportingRateModule,
     AccessLogModule,
     SchoolUnitsModule,
     HuvudmanModule,

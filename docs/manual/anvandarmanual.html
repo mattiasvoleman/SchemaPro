@@ -86,7 +86,8 @@
       <li><span>6.10 Notiser, e-post och push</span><span class="dots"></span><span class="pg" data-pg="s610"></span></li>
       <li><span>6.11 Lektionslogg och klassbok</span><span class="dots"></span><span class="pg" data-pg="s611"></span></li>
       <li><span>6.12 Frånvarobevakning</span><span class="dots"></span><span class="pg" data-pg="s612"></span></li>
-      <li><span>6.13 Krisläge: larm vid utrymning och inrymning</span><span class="dots"></span><span class="pg" data-pg="s613"></span></li>
+      <li><span>6.13 Rapporteringsgrad</span><span class="dots"></span><span class="pg" data-pg="s613"></span></li>
+      <li><span>6.14 Krisläge: larm vid utrymning och inrymning</span><span class="dots"></span><span class="pg" data-pg="s614"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -6060,7 +6061,7 @@
     <tbody>
       <tr><td class="k">Vårdnadshavare</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet, sammanställning av frånvaro (6.12)</td><td>Oanmäld frånvaro</td></tr>
       <tr><td class="k">Elev</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet</td><td>—</td></tr>
-      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, sammanställning av frånvaro (6.12), och för lärare ledighetsansökningar att besluta om som mentor</td><td>Egna vikariepass och avbokade vikariepass, rastvaktspass som vikarie och avbokade rastvaktspass</td></tr>
+      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, sammanställning av frånvaro (6.12), och för lärare ledighetsansökningar att besluta om som mentor, påminnelse om lektioner utan sparat register (lärare) och veckobesked om rapporteringsgrad (rektor och fullständig administratör) (6.13)</td><td>Egna vikariepass och avbokade vikariepass, rastvaktspass som vikarie och avbokade rastvaktspass</td></tr>
     </tbody>
   </table>
   <p>
@@ -6314,7 +6315,113 @@
     </p>
   </div>
 
-  <h3 id="s613"><span class="num">6.13</span>Krisläge: larm vid utrymning och inrymning</h3>
+  <h3 id="s613"><span class="num">6.13</span>Rapporteringsgrad</h3>
+  <p>
+    Rapporteringsgraden säger hur stor del av varje lärares lektioner som har
+    fått sitt register sparat. Sidan finns under
+    <span class="path">Drift › Rapporteringsgrad</span>, med en tabell per
+    vecka, månad och läsår som kan sorteras så att de lägsta andelarna står
+    överst.
+  </p>
+  <ul>
+    <li><strong>Räkningen börjar första natten</strong> efter att Rastra har uppdaterats för skolan, och den är på för alla skolor: den går inte att slå av för en enskild skola. Den första körningen räknar de senaste 90 dagarna, så sidan har historik redan första morgonen.</li>
+    <li><strong>Varje lärares andel ser</strong> rektor, fullständig administratör, expedition, schemaläggare och läsare, alltså alla administratörsprofiler. Varje sådan läsning skrivs i skolans läslogg (7.4).</li>
+    <li><strong>Läraren ser sin egen</strong> andel och sina öppna lektioner (4.6 i lärarmanualen), och ingen annan lärares. Elever och vårdnadshavare ser ingenting.</li>
+    <li><strong>Påminnelserna och veckobeskedet</strong> är det enda skolan slår på, i inställningarna längst ner. De är avstängda tills dess, och ingen får någon notis av räkningen i sig. Inställningarna ändrar rektor, fullständig administratör, schemaläggare och expedition.</li>
+  </ul>
+
+  <h4>Vad som räknas</h4>
+  <p>
+    En lektion räknas för en lärare när den är <strong>hållen</strong>: den har
+    slutat, den är inte inställd, och läraren står på den. Det är samma lektioner
+    som genomförd tid (6.9) och frånvarobevakningen (6.12) räknar. Lektionen är
+    <strong>rapporterad</strong> när dess register är sparat, alltså när minst
+    en elev har fått en markering som inte är <em>Okänd</em>.
+  </p>
+  <ul>
+    <li><strong>En inställd lektion räknas aldrig</strong>, vad som än hunnit registreras på den. Det gäller också lektioner som ett lov, en studiedag eller en schemabrytande aktivitet (6.5) tagit bort.</li>
+    <li><strong>En ersättningslektion</strong>, till exempel dagen som ersätter en klass lektioner vid en friluftsdag, räknas hos den ansvariga läraren.</li>
+    <li><strong>En vikarie</strong> räknas för de lektioner den tagit. Läraren som var frånvarande räknas inte för dem, för vikarien har ersatt läraren på lektionen.</li>
+    <li><strong>En lärare som själv är frånvarande</strong> när lektionen går räknas inte för den. En lektion som ingen tagit beslut om ligger kvar på den frånvarande, som inte kan ha tagit närvaro.</li>
+    <li>Är flera lärare på samma lektion hör registret till lektionen: när en av dem sparat det är lektionen rapporterad för alla.</li>
+    <li><strong>Bara aktiva lärare räknas.</strong> En lärare som slutat, och en administratör som står på en lektion, får ingen rad och drar inte ner skolans siffra.</li>
+    <li><strong>En lektion som ingen elev kan få en markering på räknas inte</strong>: varken som hållen, som öppen eller som rapporterad, eftersom läraren inte kan göra något åt den. Listan är registrets egen: klassens elever, grupperna som är lagda på lektionen och deras medlemmar, och elever som lektionen namnger. Klassen räknas både som den är nu och som den var lektionens dag (klasshistoriken). Läsårsaktiveringen flyttar varje elev till nästa års klass och tömmer förra årets, och ett läsårs andel ändras inte av det: lektionerna räknas som de gjorde när eleverna satt kvar. Medlemmar i en undervisningsgrupp och elever som lektionen namnger räknas som de är registrerade, även om eleven har slutat sedan dess. Har ett register redan sparats på lektionen räknas den som rapporterad, vad listan än blivit sedan.</li>
+    <li>Lov, helger och veckor utan en enda hållen lektion har ingen grad. De syns som tomma i stället för som noll procent.</li>
+    <li>Andelen är dagens lektioner i skolans datum. Sommartid ändrar ingenting: en vecka är sju kalenderdagar.</li>
+  </ul>
+  <p>
+    Graden räknas varje natt, klockan 06:00 skolans tid, för de senaste 90
+    dagarna och till och med i går. Ett register som sparas dagarna efter
+    lektionen flyttar graden vid nästa natts körning. Sidan säger
+    <span class="ui">Uppdaterad t.o.m.</span> vilken dag siffrorna gäller.
+    En dag äldre än 90 dagar är färdig.
+  </p>
+  <div class="note">
+    <span class="label">En gräns att känna till</span>
+    <p>
+      Grupper som ersätter ett ämne (ersättande grupper) dras inte av i
+      elevlistan: en lektion där en sådan grupp tar bort varje elev räknas ändå
+      som hållen och blir aldrig rapporterad. Det är sällsynt; rätta i så fall
+      gruppens medlemmar (3.4). Aktiverar skolan ett läsår före det gamla
+      läsårets slut stänger klasshistoriken klassen den dagen, så en klass som
+      då töms tar sina sista veckors oregistrerade lektioner med sig ur de 90
+      dagar som räknas om. En lärare som avaktiveras får sina dagar inom de
+      senaste 90 dagarna borttagna vid nästa natts körning, medan äldre dagar
+      ligger kvar.
+    </p>
+  </div>
+
+  <h4>Vyn</h4>
+  <p>
+    Välj <span class="ui">Vecka</span>, <span class="ui">Månad</span> eller
+    <span class="ui">Läsår</span> och bläddra med pilarna eller tryck
+    <span class="ui">Idag</span>. Överst står hela
+    skolans andel. Tabellen under har en rad för varje lärare som hade en hållen
+    lektion i perioden: hållna lektioner, rapporterade, öppna och andelen. Den
+    börjar med den lägsta andelen, och du sorterar om genom att klicka på en
+    kolumnrubrik. Antalet är lektioner per lärare: en lektion med två lärare
+    räknas för båda.
+  </p>
+  <p>
+    Vyn visar vad enskilda lärare gör på sitt arbete, och varje öppning skrivs i
+    skolans läslogg (7.4) som en läsning av de lärarnas anställning och namn.
+    Loggen säger vilka som lästes, inte vad som stod där. Använd den som underlag
+    för ett samtal, inte som en rangordning att visa upp.
+  </p>
+
+  <h4>Påminnelser</h4>
+  <p>
+    Påminnelserna är <strong>avstängda för varje skola</strong> tills en
+    administratör slår på dem. Det finns två, som slås på var för sig:
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">Påminnelse</th><th>Vad den gör</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Påminn lärare om öppna lektioner</td><td>En lärare får en notis (och e-post och push, om läraren valt det) när en lektion stått öppen längre än skolans gräns. Läraren får högst en notis per natt, med <em>antalet nya</em> lektioner som passerat gränsen sedan förra gången (äldre öppna lektioner kan finnas kvar, och läraren ser dem alla under Min rapportering). Notisen nämner inget ämne, ingen klass och ingen tid, och en lektion påminns det om en enda gång. Inga påminnelser skickas på lördagar och söndagar, inte för lektioner före den dag påminnelsen slogs på och inte för lektioner äldre än 30 dagar.</td></tr>
+      <tr><td class="k">Skicka rektor ett veckobesked</td><td>Varje måndag får rektor och fullständiga administratörer förra veckans andel för skolan som helhet: hållna och rapporterade lektioner och hur många lärare de fördelar sig på. Aldrig ett namn. En vecka utan hållna lektioner ger inget besked.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <span class="ui">Öppen för länge efter</span> är antalet kalenderdagar ett
+    register får vänta, 1–30, och förvalet är två. Räknat i kalenderdagar och
+    inte i timmar, så att en dag med sommartid inte flyttar gränsen. En lektion
+    på måndag är över gränsen på onsdag. Gränsen styr också vad läraren ser som
+    <em>Öppen för länge</em> på sin sida, även om påminnelserna är avstängda. Var och en
+    kan stänga av e-post och push för påminnelsen och för veckobeskedet under
+    Notiser (6.10).
+  </p>
+
+  <h4>Gallring</h4>
+  <p>
+    Lärarnas dagar och påminnelsernas rader är närvaro i en annan form, och
+    gallras som den (7.4): när skolan bestämt hur länge närvaron sparas går de
+    samtidigt. Har skolan någon gång bestämt att närvaron gallras räknas inte
+    dagar äldre än den kortaste tiden den valt om, så en dag vars närvaro kan ha
+    gallrats blir aldrig en rapporteringsgrad på noll procent. Veckobeskedets
+    rader innehåller bara antal och gallras inte.
+  </p>
+
+  <h3 id="s614"><span class="num">6.14</span>Krisläge: larm vid utrymning och inrymning</h3>
   <p>
     <span class="path">Drift › Krisläge</span> startar ett upprop när huset ska
     tömmas (<strong>utrymning</strong>) eller när alla ska vara kvar där de är
@@ -7031,7 +7138,7 @@
   <table>
     <thead><tr><th style="width:20%">Slag</th><th style="width:42%">Det här gallras</th><th>Det här finns kvar</th></tr></thead>
     <tbody>
-      <tr><td class="k">Närvaro</td><td>Närvaroregistreringar för lektioner före gränsdagen, och de fynd frånvarobevakningen (6.12) har gjort av dem, efter den dag fyndet senast sågs.</td><td>Lektionerna. Undervisningstiden räknas på lektionerna, inte på närvaron.</td></tr>
+      <tr><td class="k">Närvaro</td><td>Närvaroregistreringar för lektioner före gränsdagen, de fynd frånvarobevakningen (6.12) har gjort av dem, efter den dag fyndet senast sågs, och lärarnas rapporteringsgrad (6.13) för dagar före gränsdagen.</td><td>Lektionerna. Undervisningstiden räknas på lektionerna, inte på närvaron.</td></tr>
       <tr><td class="k">Frånvaroanmälningar</td><td>Anmälningar från vårdnadshavare och elever, och dagarna i beviljad ledighet, före gränsdagen.</td><td>—</td></tr>
       <tr><td class="k">Ledighetsansökningar</td><td>Ansökningar vars sista dag är före gränsdagen, med anledning och beslut, och uppgiften om vilka mentorer som fick notisen om ansökan.</td><td>—</td></tr>
       <tr><td class="k">Notiser</td><td>Notiser i Rastra Schema som skapades före gränsdagen.</td><td>—</td></tr>

@@ -216,7 +216,9 @@ export type NotificationType =
   | 'ABSENCE_WATCH_DIGEST'
   | 'CRISIS_ALARM'
   | 'CRISIS_ENDED'
-  | 'CRISIS_GUARDIAN_AFTER';
+  | 'CRISIS_GUARDIAN_AFTER'
+  | 'LESSON_REPORT_REMINDER'
+  | 'REPORTING_RATE_DIGEST';
 
 export interface NotificationRow {
   readonly id: string;

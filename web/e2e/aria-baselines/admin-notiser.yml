@@ -112,6 +112,9 @@
         - link "Frånvarobevakning":
           - /url: /sv/admin/absence-watch
       - listitem:
+        - link "Rapporteringsgrad":
+          - /url: /sv/admin/reporting-rate
+      - listitem:
         - link "Klassbok":
           - /url: /sv/admin/klassbok
     - list:
@@ -164,5 +167,8 @@
       - listitem:
         - text: Frånvarosammanställning
         - switch "Frånvarosammanställning" [checked]
+      - listitem:
+        - text: Veckobesked om rapporteringsgrad
+        - switch "Veckobesked om rapporteringsgrad" [checked]
 - region "Meddelanden alt+T"
 - alert

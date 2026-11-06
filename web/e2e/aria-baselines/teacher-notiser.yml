@@ -32,6 +32,9 @@
         - link "Frånvarobevakning":
           - /url: /sv/teacher/absence-watch
       - listitem:
+        - link "Min rapportering":
+          - /url: /sv/teacher/reporting-rate
+      - listitem:
         - link "Min kalenderprenumeration":
           - /url: /sv/calendar-feed
   - link "Tillgänglighetsredogörelse":
@@ -77,5 +80,8 @@
       - listitem:
         - text: Frånvarosammanställning
         - switch "Frånvarosammanställning" [checked]
+      - listitem:
+        - text: Påminnelser om öppna lektioner
+        - switch "Påminnelser om öppna lektioner" [checked]
 - region "Meddelanden alt+T"
 - alert

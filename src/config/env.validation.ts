@@ -243,6 +243,16 @@ export class EnvironmentVariables {
   ABSENCE_WATCH_BACKGROUND: string = 'on';
 
   /**
+   * The nightly reporting rate (src/reporting-rate/reporting-rate.job.ts):
+   * it stores each teacher's held and reported lessons for the last 90 days
+   * for every school with lessons, and sends the reminders and the weekly
+   * notice of the schools that turned them on. `on` unless set to `off`; the
+   * test setup turns it off.
+   */
+  @IsIn(['on', 'off'])
+  REPORTING_RATE_BACKGROUND: string = 'on';
+
+  /**
    * Schemaförslag (src/optimization/schedule-candidates.service.ts): the solve
    * budget, in seconds, of every candidate, KEEP's included, so the emphases
    * are compared at one budget (the engine takes the smaller of this and its

@@ -1082,10 +1082,11 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- Gallring: CRISIS_DRILLS and CRISIS_ALARMS (20270113090000). Both bodies are
--- 20270107090000's (Skyddad identitet's, which carry Frånvarobevakning's
--- findings under ATTENDANCE, the vikarieförfrågningar under COVER_REQUESTS and
--- the marks' history under CHANGE_LOGS) plus the one branch marked "krisläge",
--- so none of them is lost; a later release that restates the functions again
+-- 20270112090100's (Rapporteringsgrad's, which carry its TeacherReportingDays and
+-- ReportingReminders under ATTENDANCE, and before them Frånvarobevakning's
+-- findings, the vikarieförfrågningar under COVER_REQUESTS and Skyddad identitet's
+-- marks' history under CHANGE_LOGS) plus the one branch marked "krisläge", so
+-- none of them is lost; a later release that restates the functions again
 -- must carry every branch. An alarm goes once it has ended and its end is
 -- before the cutoff (the school's local midnight), with everything that hangs
 -- on it (the calls, the teachers, the pupils and the marks go with it by their
@@ -1109,6 +1110,15 @@ LANGUAGE sql STABLE AS $$
   SELECT 'AbsenceWatchFindings', w."id"
     FROM school, "public"."AbsenceWatchFindings" w
    WHERE p_type = 'ATTENDANCE' AND w."schoolId" = school."id" AND w."lastSeenOn" < p_before
+  UNION ALL
+  -- rapporteringsgrad
+  SELECT 'TeacherReportingDays', d."id"
+    FROM school, "public"."TeacherReportingDays" d
+   WHERE p_type = 'ATTENDANCE' AND d."schoolId" = school."id" AND d."day" < p_before
+  UNION ALL
+  SELECT 'ReportingReminders', r."id"
+    FROM school, "public"."ReportingReminders" r
+   WHERE p_type = 'ATTENDANCE' AND r."schoolId" = school."id" AND r."lessonDate" < p_before
   UNION ALL
   SELECT 'AbsenceReports', r."id"
     FROM school, "public"."AbsenceReports" r
@@ -1214,6 +1224,21 @@ BEGIN
         DELETE FROM "AbsenceWatchFindings" WHERE "id" IN (
           SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
            WHERE d."tbl" = 'AbsenceWatchFindings' LIMIT budget - n);
+        GET DIAGNOSTICS step = ROW_COUNT;
+        n := n + step;
+      END IF;
+      -- rapporteringsgrad
+      IF n < budget THEN
+        DELETE FROM "TeacherReportingDays" WHERE "id" IN (
+          SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
+           WHERE d."tbl" = 'TeacherReportingDays' LIMIT budget - n);
+        GET DIAGNOSTICS step = ROW_COUNT;
+        n := n + step;
+      END IF;
+      IF n < budget THEN
+        DELETE FROM "ReportingReminders" WHERE "id" IN (
+          SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
+           WHERE d."tbl" = 'ReportingReminders' LIMIT budget - n);
         GET DIAGNOSTICS step = ROW_COUNT;
         n := n + step;
       END IF;

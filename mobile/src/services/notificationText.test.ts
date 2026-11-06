@@ -341,6 +341,24 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Skolan har haft ett larm tis 13 okt 08:00. Det är avslutat.',
     'The school had an alarm Tue 13 Oct 08:00. It has ended.',
   ],
+  [
+    'LESSON_REPORT_REMINDER, several lessons: the count is the teacher’s own',
+    row('LESSON_REPORT_REMINDER', { count: 3, limitDays: 2 }),
+    '3 nya lektioner hölls för minst 2 dagar sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Spara närvaron under Närvaro.',
+    '3 new lessons were held at least 2 days ago and have no saved register. Older open lessons may remain. Save the attendance under Attendance.',
+  ],
+  [
+    'LESSON_REPORT_REMINDER, one lesson and a limit of one day',
+    row('LESSON_REPORT_REMINDER', { count: 1, limitDays: 1 }),
+    'En ny lektion hölls för minst en dag sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Spara närvaron under Närvaro.',
+    'One new lesson was held at least one day ago and has no saved register. Older open lessons may remain. Save the attendance under Attendance.',
+  ],
+  [
+    'REPORTING_RATE_DIGEST, the week only: no count, no share',
+    row('REPORTING_RATE_DIGEST', { periodStart: '2026-11-02', periodEnd: '2026-11-08', held: 120, reported: 96, teachers: 14 }),
+    'Rapporteringsgrad 2 nov – 8 nov: veckans sammanställning för skolan finns i Rastra Schema på webben.',
+    "Reporting rate 2 Nov – 8 Nov: the week's summary for the school is in Rastra timetable on the web.",
+  ],
 ];
 
 describe('notificationText', () => {
@@ -349,9 +367,9 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all twenty-two types the gateway writes', () => {
+  it('covers all twenty-four types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(22);
+    expect(types.size).toBe(24);
   });
 
   it('words an alarm notice written without its time by the time it was written', () => {
@@ -437,6 +455,34 @@ describe('notificationText', () => {
     );
     expect(text).not.toContain('Alva');
     expect(text).not.toContain('Sjuk');
+  });
+
+  it('says the rektor’s weekly note without a figure of the school’s, whatever the meta holds', () => {
+    const meta = { periodStart: '2026-11-02', periodEnd: '2026-11-08', held: 1234, reported: 987, teachers: 41, teacherName: 'Anna Lind' };
+    for (const locale of ['sv', 'en'] as const) {
+      const text = notificationText(row('REPORTING_RATE_DIGEST', meta), translatorFor(locale), locale);
+      expect(text).not.toMatch(/1234|987|41|Anna|Lind|%/);
+    }
+  });
+
+  it('says a reminder without the subject, the class, the time or the teacher, whatever the meta holds', () => {
+    const text = notificationText(
+      row('LESSON_REPORT_REMINDER', { count: 2, limitDays: 3, subjectName: 'Matematik', groupName: '7A', startsAt: at, teacherName: 'Anna Lind' }),
+      translatorFor('sv'),
+      'sv',
+    );
+    expect(text).toBe('2 nya lektioner hölls för minst 3 dagar sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Spara närvaron under Närvaro.');
+    expect(text).not.toMatch(/Matematik|7A|Anna|08:00/);
+  });
+
+  it('survives a reminder and a weekly note with no meta', () => {
+    for (const type of ['LESSON_REPORT_REMINDER', 'REPORTING_RATE_DIGEST'] as const) {
+      for (const locale of ['sv', 'en'] as const) {
+        const text = notificationText(row(type, null), translatorFor(locale), locale);
+        expect(text).not.toMatch(/undefined|NaN|\{/);
+        expect(text.length).toBeGreaterThan(10);
+      }
+    }
   });
 
   it('survives a summary with no meta', () => {

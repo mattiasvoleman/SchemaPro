@@ -28,7 +28,9 @@ export type NotificationKind =
   | 'ABSENCE_WATCH_DIGEST'
   | 'CRISIS_ALARM'
   | 'CRISIS_ENDED'
-  | 'CRISIS_GUARDIAN_AFTER';
+  | 'CRISIS_GUARDIAN_AFTER'
+  | 'LESSON_REPORT_REMINDER'
+  | 'REPORTING_RATE_DIGEST';
 
 
 /** Where a transaction's outbox is kept (PrismaService.commitLocal). */

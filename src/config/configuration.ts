@@ -83,6 +83,11 @@ export interface AbsenceWatchConfig {
   background: boolean;
 }
 
+export interface ReportingRateConfig {
+  /** The nightly reporting rate (REPORTING_RATE_BACKGROUND, default on). */
+  background: boolean;
+}
+
 /** Schemaförslag (src/optimization/schedule-candidates.service.ts). */
 export interface CandidatesConfig {
   /** CANDIDATE_MAX_SECONDS: the solve budget of every candidate, KEEP's included, 5..120 (30). */
@@ -120,6 +125,7 @@ export interface Configuration {
   coverRequests: CoverRequestsConfig;
   crisis: CrisisConfig;
   absenceWatch: AbsenceWatchConfig;
+  reportingRate: ReportingRateConfig;
   candidates: CandidatesConfig;
 }
 
@@ -191,6 +197,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     absenceWatch: {
       background: env.ABSENCE_WATCH_BACKGROUND !== 'off',
+    },
+    reportingRate: {
+      background: env.REPORTING_RATE_BACKGROUND !== 'off',
     },
     candidates: {
       maxSeconds: env.CANDIDATE_MAX_SECONDS ?? DEFAULT_CANDIDATES_CONFIG.maxSeconds,

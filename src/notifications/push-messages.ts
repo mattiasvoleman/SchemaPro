@@ -33,6 +33,11 @@ import type { NotificationKind } from './notifications.service';
  * an exercise when it is: no kind of alarm, no pupil, group or place, and no
  * time (the phone shows when the push arrived). Its end and the notice to the
  * guardians afterwards (CRISIS_GUARDIAN_AFTER) say as little.
+ * The reporting rate (Rapporteringsgrad) is told the same way: a reminder
+ * (LESSON_REPORT_REMINDER) says that lessons are waiting for their register,
+ * not how many, which or when, and the weekly notice to rektor
+ * (REPORTING_RATE_DIGEST) says that there is one, with no figure. A figure is
+ * about the teachers, and the lock screen is not the place for it.
  *
  * Within one transaction a person gets one push per kind; with more than one
  * notice the body is the plural ("3 lektioner är inställda.").
@@ -243,6 +248,18 @@ const SV: Record<PushKind, Template> = {
     bare: 'Skolan har haft ett larm. Det är avslutat. Läs mer i appen.',
     many: 'Skolan har haft ett larm. Det är avslutat. Läs mer i appen.',
   },
+  LESSON_REPORT_REMINDER: {
+    title: 'Närvaro',
+    one: 'Du har lektioner utan sparad närvaro. Öppna appen för att se vilka.',
+    bare: 'Du har lektioner utan sparad närvaro. Öppna appen för att se vilka.',
+    many: 'Du har lektioner utan sparad närvaro. Öppna appen för att se vilka.',
+  },
+  REPORTING_RATE_DIGEST: {
+    title: 'Rapporteringsgrad',
+    one: 'Du har ett nytt veckobesked om rapporteringsgraden. Öppna appen för att se mer.',
+    bare: 'Du har ett nytt veckobesked om rapporteringsgraden. Öppna appen för att se mer.',
+    many: 'Du har ett nytt veckobesked om rapporteringsgraden. Öppna appen för att se mer.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lektioner blir av',
     one: ({ lessons }) =>
@@ -416,6 +433,18 @@ const EN: Record<PushKind, Template> = {
     one: 'The school has had an alarm. It has ended. Read more in the app.',
     bare: 'The school has had an alarm. It has ended. Read more in the app.',
     many: 'The school has had an alarm. It has ended. Read more in the app.',
+  },
+  LESSON_REPORT_REMINDER: {
+    title: 'Attendance',
+    one: 'You have lessons with no saved attendance. Open the app to see which.',
+    bare: 'You have lessons with no saved attendance. Open the app to see which.',
+    many: 'You have lessons with no saved attendance. Open the app to see which.',
+  },
+  REPORTING_RATE_DIGEST: {
+    title: 'Reporting rate',
+    one: 'You have a new weekly summary of the reporting rate. Open the app to see more.',
+    bare: 'You have a new weekly summary of the reporting rate. Open the app to see more.',
+    many: 'You have a new weekly summary of the reporting rate. Open the app to see more.',
   },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lessons back on',

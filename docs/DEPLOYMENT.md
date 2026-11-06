@@ -237,6 +237,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `CRISIS_BACKGROUND` | `on` (default) or `off`: the quarter-hourly look at alarms left open in Krisläge. A real alarm that has stood open for 12 hours, or an exercise for 3, is ended (`autoEnded`), because only one of each kind can be open and a forgotten one would stop the next. Nobody is told; the app reads the alarm again when it is opened. With `off` an alarm is ended by an administrator or not at all |
 | `GALLRING_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of the nightly gallring. A school's run starts at 03:00 its local time, once a night, and only for the kinds its admin has given a period on `/admin/dataskydd`; a school that has decided nothing loses nothing |
 | `ABSENCE_WATCH_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarobevakning's nightly count. A school's night starts at 05:00 its local time, once a night, and only for a school whose administrator has turned the bevakning on (`/admin/absence-watch`; off for every school until then). The night counts the pupils over the school's limits as of yesterday and, on the first day after a whole week or month, writes the digest of each group that has a limit. Off, nothing is counted or sent and the findings already made stay |
+| `REPORTING_RATE_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Rapporteringsgrad's nightly job. A school's night starts at 06:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch; only the reminders and the weekly notice are, under `/admin/reporting-rate`). The night stores each teacher's held and reported lessons per day, tells the teachers of lessons that stood open past the school's limit (if the school turned that on) and, on Mondays, tells rektor and the full administrators the week's totals (likewise). **Off, this is the emergency brake:** nothing is counted, reminded or sent, the days already stored stay and the pages show them unchanged (they stop getting newer), and a teacher's list of open lessons, which reads the lessons live, still answers. A value that is neither `on` nor `off` is refused at start |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -1138,6 +1139,169 @@ Walk the full product loop once, in order:
   again after the release returns). The marks and their history may stay: an
   older API never reads them, and the exports simply stop leaving the marked
   out.
+- **Rapporteringsgrad**: 20270112090000 adds the `NotificationType` values
+  `LESSON_REPORT_REMINDER` and `REPORTING_RATE_DIGEST` and nothing else (a value
+  cannot be used in the transaction that adds it, so it is a file of its own).
+  20270112090100 adds the tables `ReportingSettings`, `TeacherReportingDays`,
+  `ReportingReminders` and `ReportingDigests`, eight `app.reporting_*` functions
+  (seven SECURITY DEFINER with a pinned `search_path`, and `app.reporting_lessons`,
+  the one definition of a reported lesson, which runs as its caller and is the
+  owner's alone), a trigger on the switches, and `app.gallring_due` and
+  `app.gallring_purge` again with the days and the reminders under the ATTENDANCE
+  kind. No existing row is touched and no existing table gains a column. The new
+  keys take `Schools` and `Users` in SHARE ROW EXCLUSIVE, NOWAIT, together in a
+  loop: reads and foreign-key checks go on, writes to the two wait for the file,
+  and if both are not free at once in 30 s it stops with nothing changed
+  (`prisma migrate resolve --rolled-back
+  20270112090100_rapporteringsgrad_per_larare_och_paminnelser_for_oppna_lektioner`,
+  then deploy again). `CalendarLessons` is not locked: a reminder names its lesson
+  by id, with no key. The API before the release knows none of the objects and
+  writes no notice of the new types, so it keeps working between the migration and
+  the deploy. The migration goes in first, then the merge.
+  **What is on after the deploy, and what is not.** The reminders to teachers and
+  the weekly notice to rektor are **off for every school** until an administrator
+  turns them on (no row in `ReportingSettings`), so nobody is told anything.
+  The nightly *count*, however, is not a switch: from the first night after the
+  deploy the job stores each teacher's held and reported lessons per day for the
+  last 90 days, for every school with a lesson in the last 90 days
+  (`app.reporting_schools()`). Rektor and the other administrators read it on
+  `/admin/reporting-rate`, a teacher reads their own on `/teacher/reporting-rate`,
+  and a pupil and a guardian read nothing. That is new information for a school's
+  staff: say so in the release note, and tell the schools that it is theirs to
+  use as a basis for a conversation.
+  **Decision, 2026-11-06 (the owner's, on the review's M2):** this stays as it is.
+  The count is on for every school from the first night, with no switch per school,
+  and *every* administrator profile (full administrator, rektor, expedition,
+  schemaläggare and läsare) reads every teacher's share on `/admin/reporting-rate`;
+  each such read is written to the school's läslogg (EMPLOYMENT and PEOPLE for the
+  teachers listed). The first night counts the last 90 days back, so the page has
+  its history from the first morning. A teacher reads their own days and open
+  lessons only. The user and teacher manuals (6.13 and 4.6) say the same.
+  **Release note** (in these words or others): *From the first night after this
+  release Rastra counts, every night, what share of each teacher's held lessons
+  have a saved register, for the last 90 days. Rektor and all of the school's
+  administrators see the share per teacher; each teacher sees their own; pupils
+  and guardians see nothing. Nobody is reminded or told anything until the school
+  turns the reminders or the weekly notice on under Drift › Rapporteringsgrad. The
+  figure is a basis for a conversation, not a verdict.* The emergency brake is
+  `REPORTING_RATE_BACKGROUND=off` (the environment table above): nothing is
+  counted, reminded or sent, the days already stored stay, and the pages show them
+  as of the last night.
+  **Before the migration**, as the owner: no `app.reporting_%` function and no
+  `ReportingSettings`, `TeacherReportingDays`, `ReportingReminders` or
+  `ReportingDigests` table exist (`SELECT count(*) FROM pg_proc WHERE proname LIKE
+  'reporting\_%'` and `SELECT count(*) FROM pg_tables WHERE tablename IN
+  ('ReportingSettings', 'TeacherReportingDays', 'ReportingReminders',
+  'ReportingDigests')` are both 0), `prisma migrate status` lists exactly the two
+  new migrations as pending, no session sits idle in a transaction that holds
+  `Users` or `Schools` (`SELECT pid, state, now() - xact_start FROM
+  pg_stat_activity WHERE state = 'idle in transaction'`), and the gallring
+  functions carry `main`'s branches, with the md5 read for the record
+  (`SELECT proname, md5(prosrc) FROM pg_proc WHERE pronamespace = 'app'::regnamespace
+  AND proname IN ('gallring_due', 'gallring_purge')`; after Skyddad identitet these
+  are `7efba422…` and `de359f73…`). The migration restates both functions from
+  20270107090000 and adds two branches; a release that restated them earlier
+  would be overwritten.
+  **After it, before the merge:** the four tables have row security on, and
+  `app_authenticated` holds SELECT and INSERT/UPDATE on the settings, SELECT alone
+  on the days and the week's ledger and nothing on the reminders' ledger
+  (`SELECT relname, relrowsecurity FROM pg_class WHERE relname IN (...)`;
+  `SELECT has_table_privilege('app_authenticated', 'public."ReportingReminders"',
+  'SELECT, INSERT, UPDATE, DELETE')` and `has_table_privilege('app_authenticated',
+  'public."TeacherReportingDays"', 'INSERT, UPDATE, DELETE')` are false); none of
+  the eight functions is executable by `anon`, `authenticated` or PUBLIC, and
+  `app_authenticated` runs six of them, not `app.reporting_lessons` and not the
+  trigger's (`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.proname LIKE
+  'reporting\_%' AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR
+  has_function_privilege('authenticated', p.oid, 'EXECUTE'))` returns no row);
+  `SELECT count(*) FROM "ReportingSettings"` is 0; no role of the four holds
+  MAINTAIN on the tables; there are 8 functions (`SELECT count(*) FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND
+  p.proname LIKE 'reporting\_%'`); and both gallring functions carry the branches
+  (`SELECT proname, position('TeacherReportingDays' IN prosrc) > 0,
+  position('ReportingReminders' IN prosrc) > 0, position('AbsenceWatchFindings' IN
+  prosrc) > 0, position('CoverRequests' IN prosrc) > 0, position('PersonProtectionEvents'
+  IN prosrc) > 0 FROM pg_proc WHERE pronamespace = 'app'::regnamespace AND proname IN
+  ('gallring_due', 'gallring_purge')` is true on every column of both rows). A later
+  migration that replaces `app.gallring_due` or `app.gallring_purge` has to carry
+  these branches along (the owner checks, section 349o, fail when it does not).
+  **After the merge:** `JobRuns` gets a row for `reporting-rate` within five minutes
+  of the new instance serving (`SELECT job, runs, failures, counts FROM "JobRuns"
+  WHERE job = 'reporting-rate' ORDER BY day DESC LIMIT 3`), and `GET /health/ready`
+  counts the job under `jobs.scheduled`. Every school is counted the next night after
+  06:00 local time: `written` is the number of teacher-days stored (a school of 50
+  teachers writes some 3 000 the first night and nothing on the nights after, until a
+  register is saved late), `held` and `reported` the lessons of the last 90 days. Count
+  time on a school of 25 classes and 50 teachers with a year of lessons (33 000
+  lessons, 200 000 marks, `scripts/bench/reporting-rate.sql`, Postgres 17.11) is 0.2-0.3 s
+  the first night and 0.1 s every night after on a quiet host (0.7 s and 0.3 s on a loaded
+  one), the reminders 0.09 s the first night and 0.03-0.05 s after, the week's notice
+  3-6 ms, and the rektor's view of a läsår (one grouped sum over 3 200 rows) 3 ms; the job
+  lifts the delivery door's 5 s statement limit to 9 s for the count. A teacher's list of
+  open lessons (every page view of *Min rapportering*) takes 10 ms for 30 days and 34 ms
+  for 90 on the same school, where the first version took 26 and 94 ms: it asks for the
+  school, the person and the day once and hands them to the definition as values, because
+  those helpers are SECURITY DEFINER lookups and were called for every lesson of the
+  school's month when left in a filter.
+  The first version of the count deleted vanished days with a NOT EXISTS against the
+  counted days and was planned as a nested loop (1.1–1.3 s on the nights after the
+  first, quadratic in the school's days); a FULL JOIN of stored and counted days cannot
+  be one, and the figures are identical. A school that fails is counted in `failed` and
+  retried two hours later the same day.
+  **The reminders and the weekly notice:** a school turns them on under *Drift ›
+  Rapporteringsgrad*, with a limit of 1–30 calendar days (two to begin with). The first
+  reminder comes on the first weekday after 06:00 for a lesson dated on or after the day
+  the switch went on, and at most 30 days back; a lesson is reminded of once per
+  teacher; nothing is sent on a Saturday or a Sunday. The week's notice comes on the
+  first Monday after a whole week has ended on or after the day it was turned on. Both
+  carry counts only (no name, subject, class, time, minutes or reason), in the inbox, the
+  e-mail and the push.
+  **Gallring:** the days and the reminders follow the school's decision for *Närvaro*
+  (`RetentionDataType` ATTENDANCE): by the day each stands for, in the same batches. A
+  school that has decided nothing loses none. A school that has ever chosen to purge
+  attendance is counted only from the cutoff of the *shortest* period it has chosen, also
+  after it switches to keeping (the marks of the days before may be gone, and counted
+  again they would read as days nobody reported). The reminders' ledger is cleared by
+  the reminding itself after 60 days.
+  **The roster:** a lesson that no pupil can be marked on can never have a register
+  saved, so it is neither held, open nor reported (the class's pupils, the groups joined
+  to it and their members, and the pupils the lesson names: the register's own three
+  sources, read in SQL), unless a register was already saved on it, which stays a register
+  whatever the roster has become. The night counts the last 90 days again, so the roster
+  must not move a day that was counted: a class is read both as it is (its active pupils)
+  and as it was on the lesson's day (`StudentEnrollments`, the class history, the segment
+  `[validFrom, validTo)` that holds the date), and a lesson is unreportable only when
+  nobody sat in the class then and nobody can be marked now. The läsårsaktivering moves
+  every pupil to next year's class and empties last year's, but the history keeps them in
+  it to the year's end, so last year's share stands still (the adapter probe (rj)
+  activates a year through the service and counts the same 90 days again; the
+  owner checks plant the same in section 346o). Members of a teaching group and named
+  pupils have no dates and count as recorded, active or not (what the register accepts
+  for saving, `RECORDED` in `lesson-roster.ts`).
+  **Known limits:** the roster does not subtract the pupils a replacing group (ersättande
+  grupper) takes off a lesson, so a lesson where every pupil is taken off still counts as
+  held; a year activated before the old year ends closes the class history that day, so
+  the unregistered lessons of the weeks that are left drop out of the days; a teacher who
+  is deactivated loses the stored days of the last 90 days at the next night while older
+  days stay; a register saved more than 90 days after its lesson does not move the stored day; the e-mail and the push go to the delivery's in-memory queue after the
+  commit, as every other notice does, so a process that stops between the commit and the
+  send loses them for that night, and the ledger keeps the reminder from being written
+  again.
+  **Clients from before the release:** the web and the app before it draw the two
+  notices with their fallback text ("Ny notis" / "Notis") and list them in Settings under
+  their catalogue keys, switchable.
+  **Rolling it back:** the migration stays, and the API before the release never reads
+  the new tables. Prisma's client throws on a read that selects a notice's type from a row
+  holding a value it does not know, and the one such read is the person's opt-outs: a
+  person who switched a new notice off while the release was live would make
+  `GET /notification-preferences` a 500 on the API before it. Before rolling back, as the
+  owner, count them; nonzero means delete those rows (the person is asked again when the
+  release returns): `SELECT count(*) FROM "NotificationOptOuts" WHERE "type"::text IN
+  ('LESSON_REPORT_REMINDER', 'REPORTING_RATE_DIGEST');`. What a rollback changes: nobody is
+  counted or told, the days already stored stay in the table unread, and a school that has
+  the switches on keeps them for the day the release is back. The notices already written
+  stay in people's inboxes.
+
 - **Skyddad identitet, the register's kind**: 20270111090000 adds
   `PersonProtections.kind` (`SEKRETESSMARKERING` or `SKYDDAD_FOLKBOKFORING`,
   on the sync's row alone: CHECK `PersonProtections_a_kind_is_the_registers`),

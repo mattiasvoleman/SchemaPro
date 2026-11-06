@@ -32,7 +32,9 @@ export interface NotificationRow {
     | "ABSENCE_WATCH_DIGEST"
     | "CRISIS_ALARM"
     | "CRISIS_ENDED"
-    | "CRISIS_GUARDIAN_AFTER";
+    | "CRISIS_GUARDIAN_AFTER"
+    | "LESSON_REPORT_REMINDER"
+    | "REPORTING_RATE_DIGEST";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -49,6 +51,9 @@ const HREF: Partial<Record<NotificationRow["type"], string>> = {
   COVER_REQUESTED: "/teacher/franvaro",
   COVER_REQUEST_CLOSED: "/teacher/franvaro",
   COVER_REQUEST_ACCEPTED: "/admin/cover",
+  // Rapporteringsgrad (D2): the teacher to the lessons that stand open, rektor to the week's figures.
+  LESSON_REPORT_REMINDER: "/teacher/reporting-rate",
+  REPORTING_RATE_DIGEST: "/admin/reporting-rate",
 };
 
 /**
@@ -100,6 +105,19 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
         crossed: Number(meta.crossed ?? 0),
         from: str("periodStart").slice(0, 10),
         to: str("periodEnd").slice(0, 10),
+      });
+    case "LESSON_REPORT_REMINDER":
+      // Rapporteringsgrad: how many lessons and the school's limit, never which
+      // lesson, its subject, its class or its time (the e-mail says no more).
+      return t("lessonReportReminder", { count: Number(meta.count ?? 0), limitDays: Number(meta.limitDays ?? 0) });
+    case "REPORTING_RATE_DIGEST":
+      // Last week's lessons held and reported for the school as a whole and the
+      // week's dates, never a teacher.
+      return t("reportingRateDigest", {
+        from: str("periodStart").slice(0, 10),
+        to: str("periodEnd").slice(0, 10),
+        held: Number(meta.held ?? 0),
+        reported: Number(meta.reported ?? 0),
       });
     case "LESSON_CANCELLED":
       return t("lessonCancelled", {

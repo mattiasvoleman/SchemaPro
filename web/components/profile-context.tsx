@@ -152,6 +152,9 @@ export const TEACHER_NAV: NavSection[] = [
       // menu: a teacher who mentors nobody gets an empty list, said kindly.
       // The admin's Rapporter icon, already in the shell.
       { labelKey: "absenceWatch", href: "/teacher/absence-watch", icon: BarChart3 },
+      // Rapporteringsgrad: the lessons whose register is not saved, and the
+      // teacher's own share. The attendance icon, already in the shell.
+      { labelKey: "myReporting", href: "/teacher/reporting-rate", icon: ClipboardCheck },
       { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
     ],
 

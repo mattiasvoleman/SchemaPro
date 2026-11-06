@@ -593,6 +593,49 @@ describe("NotificationBell inbox", () => {
     expect(document.body).not.toHaveTextContent(/Alva|Sjuk/);
   });
 
+  it("tells a teacher the number of lessons left open and the limit, and the rektor the week's lessons held and reported, never a subject, a class, a time or a name, and takes each to its page (Rapporteringsgrad)", async () => {
+    const user = userEvent.setup();
+    supabaseState.selectResults.push(
+      ok([
+        notif({
+          type: "LESSON_REPORT_REMINDER",
+          meta: { count: 3, limitDays: 2, subjectName: "Matematik", groupName: "7A", startsAt: "2026-11-02T08:10:00.000Z", teacherName: "Anna Lind" },
+        }),
+        notif({
+          type: "REPORTING_RATE_DIGEST",
+          meta: {
+            periodStart: "2026-11-02",
+            periodEnd: "2026-11-08T00:00:00.000Z",
+            held: 120,
+            reported: 96,
+            teachers: 14,
+            teacherName: "Anna Lind",
+          },
+        }),
+        // No meta is a sentence of zeros, not a crash and not "undefined".
+        notif({ type: "LESSON_REPORT_REMINDER", meta: null }),
+        notif({ type: "REPORTING_RATE_DIGEST", meta: null }),
+      ]),
+    );
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    const reminder = screen.getByText("lessonReportReminder(count=3|limitDays=2)");
+    const digestText = "reportingRateDigest(from=2026-11-02|to=2026-11-08|held=120|reported=96)";
+    expect(screen.getByText(digestText)).toBeInTheDocument();
+    expect(screen.getByText("lessonReportReminder(count=0|limitDays=0)")).toBeInTheDocument();
+    expect(screen.getByText("reportingRateDigest(from=|to=|held=0|reported=0)")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/Matematik|7A|Anna|Lind/);
+
+    await user.click(reminder);
+    expect(router.push).toHaveBeenLastCalledWith("/teacher/reporting-rate");
+    await user.click(bellButton());
+    await user.click(screen.getByText(digestText));
+    expect(router.push).toHaveBeenLastCalledWith("/admin/reporting-rate");
+  });
+
   it("says a notice of a type this build does not know as a notice, never an empty line", async () => {
     const user = userEvent.setup();
     supabaseState.selectResults.push(ok([notif({ type: "FROM_A_NEWER_GATEWAY" as BellRow["type"], meta: {} })]));
