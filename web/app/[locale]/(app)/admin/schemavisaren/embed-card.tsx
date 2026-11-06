@@ -5,11 +5,17 @@
  * frame on the school's own website.
  *
  * OFF BY DEFAULT, PER AUDIENCE. Every viewer page refuses to be framed
- * anywhere (frame-ancestors 'none'); a share link's frame (/v/<token>/embed)
- * may be framed by the websites listed here, and only for the kinds turned
- * on: the classes for the families, the teachers for the substitutes, the
- * rooms for the visitors. A kind can be embedded only while the viewer shows
- * it at all — embedding adds a frame, not a field.
+ * anywhere (frame-ancestors 'none'); a link's frame (/v/<link>/embed) may be
+ * framed by the websites listed here, and only for the kinds turned on: the
+ * classes for the families, the teachers for the substitutes, the rooms for
+ * the visitors. A pupil's schedule is never framed.
+ *
+ * AND ONLY WHILE THE VIEWER IS OPEN TO EVERYONE (Schemavisarens lägen). A
+ * frame is a visitor with no session, so a viewer for staff has nothing to
+ * show in one; and a kind can be embedded only while the viewer shows it at
+ * all — embedding adds a frame, not a field. A switch is therefore offered
+ * only when the audience is everyone and a kind it covers is not Av, and says
+ * which of the two it is waiting for (lib/viewer-modes.ts embedOffered).
  *
  * THE WEBSITES are origins as frame-ancestors takes them: https, a host, an
  * optional port, no page. What an admin types is normalized by the gateway
@@ -30,6 +36,7 @@ import { useUpdatePublicationSettings } from "@/lib/publication-queries";
 import { publicationErrorText } from "@/lib/publication-messages";
 import type { PublicationSettings, PublicationSettingsInput } from "@/lib/publication-types";
 import { embedSnippet, publicViewerEmbedUrl, tokenOfViewerUrl } from "@/lib/publication-view";
+import { embedOffered, type EmbedFlag } from "@/lib/viewer-modes";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
@@ -40,12 +47,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useReadOnly } from "@/components/profile-context";
 
-type EmbedFlag = "publicEmbedGroups" | "publicEmbedTeachers" | "publicEmbedRooms";
-const SCOPES: { flag: EmbedFlag; scope: "publicGroups" | "publicTeachers" | "publicRooms" }[] = [
-  { flag: "publicEmbedGroups", scope: "publicGroups" },
-  { flag: "publicEmbedTeachers", scope: "publicTeachers" },
-  { flag: "publicEmbedRooms", scope: "publicRooms" },
-];
+const FLAGS: EmbedFlag[] = ["publicEmbedGroups", "publicEmbedTeachers", "publicEmbedRooms"];
 
 export const MAX_SITES = 10;
 /** An origin as the gateway stores it (src/publication/embed-origins.ts): https, a host of labels, a port a browser can have. */
@@ -80,8 +82,8 @@ export function sitesOf(text: string): { sites: string[]; refused: string[] } {
 }
 
 export function EmbedCard({ settings }: { settings: PublicationSettings }) {
-  const t = useTranslations("publishing");
-  const tErrors = useTranslations("publishing.errors") as unknown as MessageLookup;
+  const t = useTranslations("schemavisaren");
+  const tErrors = useTranslations("schemavisaren.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const update = useUpdatePublicationSettings();
   const [changes, setChanges] = useState<PublicationSettingsInput>({});
@@ -96,7 +98,7 @@ export function EmbedCard({ settings }: { settings: PublicationSettings }) {
   const { sites, refused } = sitesOf(text);
   const tooMany = sites.length > MAX_SITES;
   const dirty = Object.keys(changes).length > 0 || sitesText !== null;
-  const anyOn = SCOPES.some(({ flag }) => value(flag));
+  const anyOn = FLAGS.some((flag) => value(flag) && embedOffered(settings, flag));
 
   const save = async () => {
     setProblem(null);
@@ -110,7 +112,7 @@ export function EmbedCard({ settings }: { settings: PublicationSettings }) {
     }
   };
 
-  // A link of this SchemaPro, as the links above are: an address of another
+  // A link of this Rastra, as the links above are: an address of another
   // site (a test server, an old address, a typo) would put a frame of
   // something else on the school's website.
   const token = (() => {
@@ -133,7 +135,7 @@ export function EmbedCard({ settings }: { settings: PublicationSettings }) {
 
   return (
     <SectionCard
-      id="publish-embed"
+      id="viewer-embed"
       title={t("embedTitle")}
       description={t("embedBody")}
       descriptionClassName="max-w-prose"
@@ -154,22 +156,27 @@ export function EmbedCard({ settings }: { settings: PublicationSettings }) {
         </Button>
       }
     >
+      {settings.viewerAudience !== "EVERYONE" ? <Notice tone="neutral">{t("embedNeedsEveryone")}</Notice> : null}
       <ul className="space-y-2">
-        {SCOPES.map(({ flag, scope }) => {
-          const shown = settings.publicViewerEnabled && settings[scope];
+        {FLAGS.map((flag) => {
+          const offered = embedOffered(settings, flag);
           return (
             // The whole row: its label presses the switch as well.
             <li key={flag} className="flex items-start justify-between gap-4 rounded-md border p-3" data-writes-inert="PUBLICERING">
               <div className="min-w-0 space-y-1">
                 <Label htmlFor={`embed-${flag}`}>{t(`embed.${flag}`)}</Label>
                 <p id={`embed-${flag}-hint`} className="text-xs text-muted-foreground">
-                  {shown ? t(`embed.${flag}Hint`) : t("embedScopeOff")}
+                  {offered
+                    ? t(`embed.${flag}Hint`)
+                    : settings.viewerAudience !== "EVERYONE"
+                      ? t("embedAudienceOff")
+                      : t("embedScopeOff")}
                 </p>
               </div>
               <Switch
                 id={`embed-${flag}`}
                 checked={value(flag)}
-                disabled={!shown}
+                disabled={!offered}
                 onCheckedChange={(checked) => setChanges((previous) => ({ ...previous, [flag]: checked }))}
                 aria-describedby={`embed-${flag}-hint`}
               />

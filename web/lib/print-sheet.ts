@@ -15,8 +15,11 @@
 import type { PublicLesson } from "@/lib/public-timetable";
 import type { FamilySchedule } from "@/lib/family-schedule";
 
-/** A class or group, a teacher, a room — or one pupil's own week. */
-export type SheetKind = "GROUP" | "TEACHER" | "ROOM" | "PUPIL";
+/**
+ * A class or group, a teacher, a room — or one pupil's: PUPIL is a person's own
+ * printout, STUDENT a pupil's page in Schemavisaren, behind a code.
+ */
+export type SheetKind = "GROUP" | "TEACHER" | "ROOM" | "PUPIL" | "STUDENT";
 
 export interface SheetLesson extends PublicLesson {
   /** A person's own week only: "Vikarie" on a lesson their teacher covers, or they cover. */

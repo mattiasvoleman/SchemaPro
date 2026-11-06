@@ -102,7 +102,7 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
   "app/[locale]/(app)/admin/publishing/print/page.tsx": {
     files: "the print set (Utskrift)",
     rule: "NAMES_STAFF",
-    why: "The gateway's print set (GET /print/timetables), without a teacher hidden from public timetables; no pupil.",
+    why: "The gateway's print set (GET /print/timetables), without a teacher hidden from public timetables or with a protected identity; no pupil.",
   },
   "components/lesson-log/class-book-page.tsx": {
     files: "the klassbok printed",

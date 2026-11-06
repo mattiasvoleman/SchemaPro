@@ -112,9 +112,12 @@ export const ADMIN_NAV: NavSection[] = [
       { labelKey: "gaps", href: "/admin/gaps", icon: CalendarSearch },
       // Last in the phase, as in the manual: a schedule is published once it
       // is refined. The mode (direct or utkast), which published timetable is
-      // valid when, the checks, and Schemavisaren. The ramtider's icon — a
-      // validity range is a range of dates too.
+      // valid when, and the checks. The ramtider's icon — a validity range is a
+      // range of dates too.
       { labelKey: "publishing", href: "/admin/publishing", icon: CalendarRange },
+      // Right after what it shows: the published timetable outside Rastra, to whom and with which
+      // codes. Publicering's icon again, already in the shell (a new glyph here costs every route).
+      { labelKey: "schemavisaren", href: "/admin/schemavisaren", icon: CalendarRange },
       // Kalenderprenumeration, per audience: Publicering's icon, already in the shell.
       { labelKey: "calendarFeeds", href: "/admin/calendar-feeds", icon: CalendarRange },
       // Schema som fil: the grundschema as a table or an Untis or aSc file, and back in as locked

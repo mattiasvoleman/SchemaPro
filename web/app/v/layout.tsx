@@ -24,7 +24,8 @@ export const metadata: Metadata = {
 
 /*
  * The page's title is the page's own (<title> in app/v/[token]: "7A – Vecka
- * 42"), hoisted by React; a layout title would sit beside it. The document's
+ * 42"; in app/v/page.tsx, where a code is typed), hoisted by React; a layout
+ * title would sit beside it. The document's
  * language is the one ?lang= asked for: proxy.ts passes it as x-viewer-lang,
  * since a layout is not given the search params.
  */

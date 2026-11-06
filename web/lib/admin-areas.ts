@@ -120,6 +120,9 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   // Schema som fil: the export only reads, the import writes the grundschema and the posts it implies.
   "/admin/schedule-exchange": "SCHEMALAGGNING",
   "/admin/publishing": "PUBLICERING",
+  // Schemavisaren: its settings are PublicationSettings, its codes PublicTimetableLinks and its
+  // hidden schedules PublicTimetableHidden and TeacherPublicLabels — all Publicering's.
+  "/admin/schemavisaren": "PUBLICERING",
   // Kalenderprenumeration's switches are PublicationSettings, Publicering's.
   "/admin/calendar-feeds": "PUBLICERING",
   "/admin/lessons": "DRIFT",

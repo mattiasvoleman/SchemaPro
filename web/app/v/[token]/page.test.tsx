@@ -18,9 +18,19 @@ import PublicTimetablePage from "./page";
 const nav = vi.hoisted(() => ({ notFound: vi.fn(() => { throw new Error("NEXT_NOT_FOUND"); }) }));
 vi.mock("next/navigation", () => ({ notFound: nav.notFound }));
 const forwarded = vi.hoisted(() => ({ value: "6.6.6.6, 203.0.113.9" as string | null }));
+// The request's cookies, and the session the Supabase client reads out of them.
+const browser = vi.hoisted(() => ({
+  cookies: [] as { name: string; value: string }[],
+  getSession: vi.fn(),
+}));
 vi.mock("next/headers", () => ({
   headers: async () => new Headers(forwarded.value ? { "x-forwarded-for": forwarded.value } : {}),
+  cookies: async () => ({
+    getAll: () => browser.cookies,
+    get: (name: string) => browser.cookies.find((cookie) => cookie.name === name),
+  }),
 }));
+vi.mock("@/utils/supabase/server", () => ({ createClient: () => ({ auth: { getSession: browser.getSession } }) }));
 
 const TOKEN = "Tok_en-".padEnd(43, "x");
 const fetchMock = vi.fn();
@@ -63,6 +73,8 @@ describe("/v/[token]", () => {
     fetchMock.mockReset();
     nav.notFound.mockClear();
     forwarded.value = "6.6.6.6, 203.0.113.9";
+    browser.cookies = [];
+    browser.getSession.mockReset().mockResolvedValue({ data: { session: null } });
     vi.stubEnv("PUBLIC_VIEWER_PROXY_KEY", "k".repeat(40));
     vi.stubEnv("PUBLIC_VIEWER_API_BASE_URL", "http://gateway.internal");
   });
@@ -196,6 +208,137 @@ describe("/v/[token]", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     respond(404, { status: 404 });
     await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+
+  it("reads a code however it was typed, asks for it and links to it in the one spelling the school hands out", async () => {
+    respond(200, { kind: "GROUP", school: "Skolan", targets: [{ id: "0b9d6a5e-3c1f-4a7b-9d2e-5f6a7b8c9d0e", label: "7A" }] });
+    await renderPage({}, "k7qm2 x9drt-4v8wn b5c3h");
+    expect(fetchMock).toHaveBeenCalledWith("http://gateway.internal/public/v1/timetables/K7QM2-X9DRT-4V8WN-B5C3H", expect.anything());
+    expect(screen.getByRole("link", { name: "7A" })).toHaveAttribute(
+      "href",
+      "/v/K7QM2-X9DRT-4V8WN-B5C3H?target=0b9d6a5e-3c1f-4a7b-9d2e-5f6a7b8c9d0e",
+    );
+    // Not a code: not-found without asking.
+    fetchMock.mockClear();
+    await expect(renderPage({}, "K7QM2-X9DRT-4V8WN")).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lists the school's teachers as a list of teachers", async () => {
+    respond(200, { kind: "TEACHER", school: "Skolan", targets: [{ id: "0b9d6a5e-3c1f-4a7b-9d2e-5f6a7b8c9d0e", label: "AB" }] });
+    await renderPage();
+    expect(screen.getByRole("heading", { level: 1, name: "Lärare" })).toBeInTheDocument();
+    expect(document.title).toBe("Lärare – Skolan");
+    expect(screen.getByRole("link", { name: "AB" })).toHaveAttribute("href", `/v/${TOKEN}?target=0b9d6a5e-3c1f-4a7b-9d2e-5f6a7b8c9d0e`);
+  });
+
+  describe("a pupil's page", () => {
+    const PUPIL = {
+      kind: "STUDENT",
+      title: "",
+      school: "Skolan i Exempelby",
+      week: WEEK.week,
+      days: [
+        { date: "2026-10-12", lessons: [{ start: "08:00", end: "08:50", subject: "Matematik", groups: [], room: "Sal 12", teachers: ["AB"], cancelled: false }] },
+        ...WEEK.days.slice(1),
+      ],
+    };
+
+    it("is titled for what it is when the link has no label, and names no group and no pupil", async () => {
+      respond(200, PUPIL);
+      const { container } = await renderPage();
+      expect(screen.getByRole("heading", { level: 1, name: "Elevens schema" })).toBeInTheDocument();
+      expect(document.title).toBe("Elevens schema – Vecka 42");
+      expect(screen.getByText("Skolan i Exempelby · Elev")).toBeInTheDocument();
+      // The lesson reads room and teacher; there is no group to put in its line.
+      expect(screen.getAllByText("Sal 12 · AB")).toHaveLength(2);
+      expect(container.textContent).not.toContain("7A");
+    });
+
+    it("is titled by the label the school gave the link, in English as asked", async () => {
+      respond(200, { ...PUPIL, title: "Barn 1" });
+      await renderPage();
+      expect(screen.getByRole("heading", { level: 1, name: "Barn 1" })).toBeInTheDocument();
+      respond(200, PUPIL);
+      await renderPage({ lang: "en" });
+      expect(screen.getByRole("heading", { level: 1, name: "The pupil's timetable" })).toBeInTheDocument();
+    });
+  });
+
+  describe("a viewer for staff (the signed-in twin)", () => {
+    const signedIn = (token = "access.jwt") => {
+      browser.cookies = [{ name: "sb-abcdefgh-auth-token", value: "x" }];
+      browser.getSession.mockResolvedValue({ data: { session: { access_token: token } } });
+    };
+
+    it("asks once more as the person when the public answer was the 404 and the visitor holds a session", async () => {
+      signedIn();
+      browser.cookies.push({ name: "rastra_school", value: "7C9E6679-7425-40DE-944B-E07FC1F90AE7" });
+      respond(404, { status: 404 });
+      respond(200, WEEK);
+      await renderPage({ date: "2026-10-12" });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenLastCalledWith(`http://gateway.internal/api/v1/schemavisaren/${TOKEN}?date=2026-10-12`, {
+        cache: "no-store",
+        // The token is only forwarded, with the school the browser chose; no proxy key, no client address.
+        headers: { Accept: "application/json", Authorization: "Bearer access.jwt", "x-school-id": "7c9e6679-7425-40de-944b-e07fc1f90ae7" },
+      });
+      expect(screen.getByRole("heading", { level: 1, name: "7A" })).toBeInTheDocument();
+    });
+
+    it("is the same not-found for a visitor with no Supabase cookie, and asks nobody", async () => {
+      respond(404, { status: 404 });
+      await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(browser.getSession).not.toHaveBeenCalled();
+      // A cookie of somebody else's site is no session.
+      browser.cookies = [{ name: "theme", value: "dark" }];
+      respond(404, { status: 404 });
+      await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
+      expect(browser.getSession).not.toHaveBeenCalled();
+    });
+
+    it("is the same not-found when the cookie holds no session, the session cannot be read, or the twin refuses", async () => {
+      browser.cookies = [{ name: "sb-abcdefgh-auth-token", value: "x" }];
+      respond(404, {});
+      await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      browser.getSession.mockRejectedValue(new Error("cookie unreadable"));
+      fetchMock.mockClear();
+      respond(404, {});
+      await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      signedIn();
+      for (const status of [404, 401, 403]) {
+        fetchMock.mockClear();
+        respond(404, {});
+        respond(status, { status });
+        await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+      }
+    });
+
+    it("does not ask as staff when the public answer was not the 404", async () => {
+      signedIn();
+      respond(429, {});
+      await renderPage();
+      expect(screen.getByRole("heading", { name: sv.publicViewer.busyTitle })).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      respond(200, WEEK);
+      await renderPage();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(browser.getSession).not.toHaveBeenCalled();
+    });
+
+    it("says in words that the twin could not be reached, rather than that nothing is there", async () => {
+      signedIn();
+      respond(404, {});
+      fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
+      await renderPage();
+      expect(screen.getByRole("heading", { name: sv.publicViewer.unavailableTitle })).toBeInTheDocument();
+    });
   });
 
   it("says a rate limit and an unreachable gateway in words", async () => {

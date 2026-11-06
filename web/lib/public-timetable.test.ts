@@ -4,10 +4,13 @@ import {
   clientIpOf,
   isIndex,
   placement,
+  readStaffViewerResponse,
   readViewerResponse,
   shiftWeek,
   shownDays,
+  staffViewerFetchOf,
   timed,
+  viewerAddressOf,
   viewerFetchOf,
   viewerHref,
   viewerQueryOf,
@@ -64,6 +67,43 @@ describe("the viewer's request to the gateway", () => {
     await expect(readViewerResponse(json(500, {}))).resolves.toEqual({ kind: "unavailable" });
     await expect(readViewerResponse(new Response("<html>", { status: 200 }))).resolves.toEqual({ kind: "unavailable" });
     expect(isIndex({ kind: "ROOM", school: "S", targets: [] })).toBe(true);
+  });
+});
+
+describe("the viewer's signed-in twin (a viewer for staff)", () => {
+  const query = { target: UUID, date: "2026-10-12" };
+
+  it("asks /api/v1/schemavisaren as the person, with the school they chose and no proxy key or client address", () => {
+    const asked = staffViewerFetchOf("http://api/", TOKEN, query, "access.jwt", "7C9E6679-7425-40DE-944B-E07FC1F90AE7");
+    expect(asked.url).toBe(`http://api/api/v1/schemavisaren/${TOKEN}?target=${UUID}&date=2026-10-12`);
+    expect(asked.headers).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer access.jwt",
+      "x-school-id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    });
+    // A login with one school names none; a malformed choice is not sent.
+    expect(staffViewerFetchOf("http://api", TOKEN, { target: null, date: null }, "t", null)).toEqual({
+      url: `http://api/api/v1/schemavisaren/${TOKEN}`,
+      headers: { Accept: "application/json", Authorization: "Bearer t" },
+    });
+    expect(staffViewerFetchOf("http://api", TOKEN, { target: null, date: null }, "t", "not-an-id").headers).not.toHaveProperty("x-school-id");
+  });
+
+  it("asks for a code in its address spelling", () => {
+    expect(staffViewerFetchOf("http://api", viewerAddressOf("k7qm2 x9drt 4v8wn b5c3h")!, { target: null, date: null }, "t", null).url).toBe(
+      "http://api/api/v1/schemavisaren/K7QM2-X9DRT-4V8WN-B5C3H",
+    );
+  });
+
+  it("answers one not-found for the 404 and for a session that is not staff's", async () => {
+    const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+    const week = { kind: "STUDENT", title: "", school: "S", week: { from: "2026-10-12", to: "2026-10-18", isoWeek: "2026-W42" }, days: [] };
+    await expect(readStaffViewerResponse(json(200, week))).resolves.toEqual({ kind: "document", document: week });
+    for (const status of [401, 403, 404]) {
+      await expect(readStaffViewerResponse(json(status, { status }))).resolves.toEqual({ kind: "notFound" });
+    }
+    await expect(readStaffViewerResponse(json(429, {}))).resolves.toEqual({ kind: "busy" });
+    await expect(readStaffViewerResponse(json(500, {}))).resolves.toEqual({ kind: "unavailable" });
   });
 });
 

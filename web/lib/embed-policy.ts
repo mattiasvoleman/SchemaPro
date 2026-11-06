@@ -17,8 +17,22 @@
  * failed answer.
  */
 
-/** /v/<token>/embed, the token a share link's (32 bytes, base64url). */
-export const EMBED_PATH = /^\/v\/([A-Za-z0-9_-]{43})\/embed\/?$/;
+import { viewerAddressOf } from "@/lib/viewer-token";
+
+/** /v/<address>/embed: the address is whatever the segment holds, and embedTokenOf says whether it is a link. */
+export const EMBED_PATH = /^\/v\/([^/]{1,200})\/embed\/?$/;
+
+/**
+ * The link a frame's path names, in the one spelling the rest of the viewer
+ * uses (a token as it is, a code in four groups of five, lib/viewer-token.ts),
+ * or null when the path is no share link's frame — then it is any other
+ * viewer page, and shut to every frame. A code typed in lower case, or with
+ * spaces, frames as the same link and shares its minute of memory.
+ */
+export function embedTokenOf(pathname: string): string | null {
+  const segment = EMBED_PATH.exec(pathname)?.[1];
+  return segment === undefined ? null : viewerAddressOf(segment);
+}
 
 /** An origin as the gateway stores it; anything else never reaches the header. */
 const ORIGIN = /^https:\/\/[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?$/;

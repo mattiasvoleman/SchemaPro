@@ -3,15 +3,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { PUBLICATION_KEYS } from "@/lib/publication-keys";
-import type { PublicLink, PublicLinkInput } from "@/lib/publication-types";
+import type { HiddenKind, HiddenTargets, PublicLink, PublicLinkInput } from "@/lib/publication-types";
 
 /*
- * Schemavisaren's share links and the teachers it never shows
- * (src/publication/public-links.controller.ts). Beside the one page that
- * uses them, for the bundle (lib/year-keys.ts says why).
+ * Schemavisaren's codes and links, and the schedules it never shows
+ * (src/publication/public-links.controller.ts). Beside the one page that uses
+ * them, for the bundle (lib/year-keys.ts says why).
  *
- * A link's token is in the create answer and nowhere else: the gateway keeps
- * only its sha256. So the list carries no address, and a lost link is revoked
+ * A link's code is in the create answer and nowhere else: the gateway keeps
+ * only its sha256. So the list carries no address, and a lost code is revoked
  * and made again.
  */
 
@@ -58,6 +58,27 @@ export function useSetTeacherHidden() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.hiddenTeachers });
       // A hidden teacher's links stop resolving; the list says so (notShownBecause) after a refetch.
+      void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.links });
+    },
+  });
+}
+
+/** The ids of the classes, groups, rooms and pupils hidden from the viewer one by one (PublicTimetableHidden). */
+export function useHiddenTargets() {
+  return useQuery({
+    queryKey: PUBLICATION_KEYS.hiddenTargets,
+    retry: false,
+    queryFn: () => api.get<HiddenTargets>("/api/v1/viewer-hidden"),
+  });
+}
+
+export function useSetTargetHidden() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kind, id, hidden }: { kind: HiddenKind; id: string; hidden: boolean }) =>
+      api.put<{ kind: HiddenKind; id: string; hidden: boolean }>(`/api/v1/viewer-hidden/${kind}/${id}`, { hidden }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.hiddenTargets });
       void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.links });
     },
   });
