@@ -2,7 +2,7 @@ import type { AdminProfile } from '@prisma/client';
 import type { AccessKind } from '../access-log/access-log';
 
 /**
- * Hela skolans data (K5, 20270110090000): the numbers and names the order, the
+ * Hela skolans data (K5, 20270114090000): the numbers and names the order, the
  * job, the database and the manual all agree on.
  */
 

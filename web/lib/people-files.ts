@@ -26,7 +26,7 @@ export type PeopleFileRule =
   /** The download itself, which the sources listed here call. */
   | "PRIMITIVE"
   /**
-   * The gateway built the file and has held the marked out before a byte left it (hela skolans data, 20270110090000;
+   * The gateway built the file and has held the marked out before a byte left it (hela skolans data, 20270114090000;
    * src/common/people-files.ts); the web only hands it over, and the order says how many were held out.
    */
   | "HANDS_OVER";

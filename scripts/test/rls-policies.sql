@@ -2858,7 +2858,7 @@ BEGIN
        -- colleagues, or the sender, are told as the sender is told a yes. It
        -- takes no caller at all: refused to anybody with a login (section 317).
        ('app', 'cover_requests_settle'),
-       -- Hela skolans data (20270110090000): the job's claim hands the gateway
+       -- Hela skolans data (20270114090000): the job's claim hands the gateway
        -- the login of the deciding administrator who ordered an export, so the
        -- file is built AS them under row-level security. It resolves no
        -- caller and takes none: the API role alone may run it, and it names
@@ -20442,7 +20442,7 @@ BEGIN
           -- A delete's arm has only USING, so a refused delete finds no row.
           refusal := CASE cmd WHEN 'delete' THEN 'none' ELSE 'refused' END;
           -- An insert here copies a row of the table, which a profile that does not read the table
-          -- (a table with readers of its own: the whole-school export, 20270110090000) cannot see:
+          -- (a table with readers of its own: the whole-school export, 20270114090000) cannot see:
           -- it has nothing to copy, and the arm's refusal is proved by that table's own sections.
           SELECT cardinality(g.rd) = 0 OR bool_or(CASE gl WHEN 'DECIDES' THEN p.decides ELSE gl = ANY (p.writes) END)
             INTO reads
@@ -41046,7 +41046,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 355: hela skolans data i katalogen (K5, 20270110090000). Two
+-- Section 355: hela skolans data i katalogen (K5, 20270114090000). Two
 -- tables with their columns, keys and checks; the unique index that lets one
 -- order be in hand per school; the four arms and no other, none for a
 -- PostgREST role; the API's role may insert two columns and nothing is

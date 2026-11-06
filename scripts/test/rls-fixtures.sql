@@ -3149,7 +3149,7 @@ BEGIN
   SELECT id, m, 'SS12000' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
 END $$;
 
--- The matrix school's whole-school export (20270110090000), so the role matrix
+-- The matrix school's whole-school export (20270114090000), so the role matrix
 -- (section 116) has a row of SchoolExports and a piece to probe. A READY file
 -- is fetchable for a while, so the row is planted afresh each run (a reused
 -- database would otherwise find it expired and the pieces unreadable).

@@ -95,7 +95,7 @@
 -- whatever it got and tries again 50 ms later; it never waits while it holds
 -- a lock, and no request queues behind it. After 30 s it stops with nothing
 -- changed: prisma migrate resolve --rolled-back
--- 20270110090000_hela_skolans_data_hamtas_som_en_tidsbegransad_fil, then
+-- 20270114090000_hela_skolans_data_hamtas_som_en_tidsbegransad_fil, then
 -- deploy again. Nothing else here locks an existing table. Additive: no
 -- column, constraint or function of a live table changes.
 
@@ -111,7 +111,7 @@ BEGIN
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Schools and Users were not free at once in 30 s: nothing is changed. Run: npx prisma migrate resolve --rolled-back 20270110090000_hela_skolans_data_hamtas_som_en_tidsbegransad_fil, then deploy again';
+        RAISE EXCEPTION 'Schools and Users were not free at once in 30 s: nothing is changed. Run: npx prisma migrate resolve --rolled-back 20270114090000_hela_skolans_data_hamtas_som_en_tidsbegransad_fil, then deploy again';
       END IF;
       PERFORM pg_sleep(0.05);
     END;
@@ -178,7 +178,7 @@ ALTER TABLE "SchoolExports"
     REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("requestedById") ON UPDATE NO ACTION;
 
 COMMENT ON TABLE "SchoolExports" IS
-  'Whole-school export (K5): one order for a zip of the school''s data, the job''s lease on it and, once built, the file''s size, SHA-256, parts and held-out count. Deciding administrators only; the file lives three days (20270110090000).';
+  'Whole-school export (K5): one order for a zip of the school''s data, the job''s lease on it and, once built, the file''s size, SHA-256, parts and held-out count. Deciding administrators only; the file lives three days (20270114090000).';
 
 -- ---------------------------------------------------------------------------
 -- SchoolExportChunks
@@ -205,7 +205,7 @@ ALTER TABLE "SchoolExportChunks"
     REFERENCES "SchoolExports"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 COMMENT ON TABLE "SchoolExportChunks" IS
-  'The whole-school export''s zip in pieces of at most 4 MiB, written once by app.school_export_put while the export is RUNNING and deleted when it expires or is withdrawn (20270110090000).';
+  'The whole-school export''s zip in pieces of at most 4 MiB, written once by app.school_export_put while the export is RUNNING and deleted when it expires or is withdrawn (20270114090000).';
 
 -- Whoever orders is the person the row names: the caller's own row, whatever
 -- the insert said. The arm still asks for it ("requestedById" = the caller),

@@ -5234,7 +5234,7 @@ model AbsenceWatchDigest {
   @@map("AbsenceWatchDigests")
 }
 
-/// Where a whole-school export is in the job (20270110090000): ordered,
+/// Where a whole-school export is in the job (20270114090000): ordered,
 /// being built, a file ready to fetch, failed, or a file that has expired.
 enum SchoolExportStatus {
   QUEUED
@@ -5244,7 +5244,7 @@ enum SchoolExportStatus {
   EXPIRED
 }
 
-/// Whole-school export (K5, 20270110090000): one order for a zip of the
+/// Whole-school export (K5, 20270114090000): one order for a zip of the
 /// school's data, the job's lease on it and, once built, what the file is.
 /// Ordered, read and withdrawn by the administrators who decide; moved
 /// through its states by the app.school_export_* functions alone. The key to

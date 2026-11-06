@@ -51,7 +51,7 @@ export class RequesterNotAllowed extends Error {
 }
 
 /**
- * The whole-school export's job (K5, 20270110090000), a job of the JobRunner.
+ * The whole-school export's job (K5, 20270114090000), a job of the JobRunner.
  * Off when SCHOOL_EXPORT_BACKGROUND=off (the test setup). A pass:
  *
  *   1. app.school_export_expire: files past their time lose their pieces,

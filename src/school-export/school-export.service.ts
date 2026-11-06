@@ -53,7 +53,7 @@ export const SCHOOL_EXPORT_CODES = {
  * Hela skolans data: ordering, listing, withdrawing and fetching the export
  * (K5). The administrators who decide (rektor and a full administrator) are
  * the only ones who may do any of it, and the rows say so too: the arms of
- * SchoolExports and SchoolExportChunks (20270110090000) answer nothing to
+ * SchoolExports and SchoolExportChunks (20270114090000) answer nothing to
  * anyone else. A läsare, the huvudman's reader and every other profile are
  * refused here by name before the database is asked.
  *
