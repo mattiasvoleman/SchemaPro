@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { holdTheSchoolsPeople } from '../common/lock-order';
 import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
 
@@ -23,9 +24,15 @@ import { PrismaService } from '../database/prisma.service';
  * the register later says. Who set or removed a mark, and when, is written by
  * the database (PersonProtectionEvents) and read with the person.
  *
- * The SS12000 provider (v1, v2.0) does not read the mark: the systems the
- * school connected get the person as before, without a marking (people-
- * files.ts, INTEGRATION).
+ * The SS12000 v2.0 provider passes the register's kind on as securityMarking
+ * (20270111090000): the sync's mark alone carries it, so a mark by hand is
+ * not passed on, and a lifted one is gone. No page shows the kind. v1 has no
+ * field for it (people-files.ts, INTEGRATION).
+ *
+ * A mark set or removed here takes the school's people lock first
+ * (lock-order.ts): the sync's mark moves the person's SS12000 version, which
+ * an apply that links or marks the person holds, so the two run one after
+ * the other.
  */
 
 export type ProtectionSource = 'SS12000' | 'MANUAL';
@@ -112,6 +119,7 @@ export class PersonProtectionsService {
   async set(userId: string, user: AuthenticatedUser): Promise<PersonProtectionView> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
+      await holdTheSchoolsPeople(tx, schoolId);
       const linked = await this.person(tx, userId, schoolId);
       await tx.personProtection.createMany({ data: [{ userId, schoolId, source: 'MANUAL' }], skipDuplicates: true });
       return (await this.view(tx, userId, schoolId, linked)).view;
@@ -126,6 +134,7 @@ export class PersonProtectionsService {
   async remove(userId: string, user: AuthenticatedUser): Promise<PersonProtectionView> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
+      await holdTheSchoolsPeople(tx, schoolId);
       const linked = await this.person(tx, userId, schoolId);
       await tx.personProtection.deleteMany({ where: { userId, schoolId } });
       return (await this.view(tx, userId, schoolId, linked)).view;

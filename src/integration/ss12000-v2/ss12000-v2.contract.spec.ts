@@ -53,6 +53,12 @@ describe('every v2 object is S1-shaped', () => {
   it('lists, with every expand and referenced names', async () => {
     const { service, world } = setup();
     world.attendanceShared = true;
+    // A marked pupil, guardian and teacher: securityMarking wherever S1 lets a person carry it.
+    world.securityMarkings = [
+      { userId: W.p1, kind: 'SKYDDAD_FOLKBOKFORING' },
+      { userId: W.g1, kind: 'SEKRETESSMARKERING' },
+      { userId: W.t1, kind: 'SEKRETESSMARKERING' },
+    ];
     const all = caller();
     const cases: Array<[string, Promise<unknown>]> = [
       ['Organisations', service.listOrganisations(all, { expandReferenceNames: 'true' })],
@@ -235,11 +241,43 @@ describe('privacy, as properties of the output', () => {
     const keys = allKeys(bodies);
     for (const key of [
       'note', 'cancelCause', 'reductionPercent', 'teachingTargetMinutesPerWeek', 'dutyPercent', 'hoursPerYear', 'civicNo',
-      'eduPersonPrincipalNames', 'phoneNumbers', 'securityMarking', 'relationType', 'minutesPlanned', 'comment',
+      'eduPersonPrincipalNames', 'phoneNumbers', 'relationType', 'minutesPlanned', 'comment',
       'absenceReason', 'reporter', 'registeredBy', 'otherAttendanceMinutes',
     ]) {
       expect({ key, present: keys.has(key) }).toEqual({ key, present: false });
     }
+  });
+
+  it('securityMarking: the register\'s kind on the person, never "Ingen", and on a reference only with the name (20270111090000)', async () => {
+    const { service, world } = setup();
+    world.securityMarkings = [{ userId: W.p1, kind: 'SKYDDAD_FOLKBOKFORING' }, { userId: W.g1, kind: 'SEKRETESSMARKERING' }];
+    const all = caller();
+    const persons = (await service.listPersons(all, {})).data as Array<Record<string, unknown>>;
+    const byName = (first: string) => persons.find((person) => person['givenName'] === first)!;
+    expect(byName('Palle')['securityMarking']).toBe('Skyddad folkbokföring');
+    expect(byName('Gun')['securityMarking']).toBe('Sekretessmarkering');
+    // A person without the sync's kind (unmarked, or a mark by hand: the function gives neither) carries none.
+    expect(persons.filter((person) => 'securityMarking' in person)).toHaveLength(2);
+    expect(JSON.stringify(persons)).not.toContain('Ingen');
+    // A reference: with the name, the marking; without it, the id alone.
+    const named = JSON.stringify(await service.listGroups(all, { expandReferenceNames: 'true' }));
+    expect(named).toContain('"securityMarking":"Skyddad folkbokföring"');
+    const bare = await service.listGroups(all, {});
+    expect(allKeys([bare]).has('securityMarking')).toBe(false);
+    const responsibles = (await service.listPersons(all, {})).data as Array<Record<string, unknown>>;
+    expect(JSON.stringify(responsibles.find((person) => person['givenName'] === 'Palle')!['responsibles'])).not.toContain('securityMarking');
+  });
+
+  it('securityMarking: a key that may not read persons learns nothing of who is protected, and the marks are not read for it', async () => {
+    const { service, world } = setup();
+    world.securityMarkings = [{ userId: W.p1, kind: 'SKYDDAD_FOLKBOKFORING' }];
+    const groupsOnly = caller(['organisations.read', 'groups.read', 'duties.read', 'activities.read']);
+    const bodies = [
+      await service.listGroups(groupsOnly, { expandReferenceNames: 'true' }),
+      await service.listDuties(groupsOnly, { expandReferenceNames: 'true' }),
+    ];
+    expect(allKeys(bodies).has('securityMarking')).toBe(false);
+    expect(world.rawStatements.some((sql) => sql.includes('app.ss12000_security_markings'))).toBe(false);
   });
 
   it('a post with deltid in days and a limit on teaching in a row yields the same Duties as one without, with the opt-in on or off', async () => {

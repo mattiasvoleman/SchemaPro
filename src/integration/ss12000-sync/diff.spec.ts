@@ -304,12 +304,109 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     pupil(ext(n), 'Skyddad', `Elev${n}`, `s${n}@skola.se`, { securityMarking: 'Sekretessmarkering', ...patch });
   const linked = (n: number, patch: Partial<LocalUser> = {}) => user(n, { ss12000Id: ext(n), email: `s${n}@skola.se`, ...patch });
 
+  describe('the register\'s kind (20270111090000)', () => {
+    const changes = (people: S1Person[], local: Parameters<typeof slice>[0], mode: 'FULL' | 'INCREMENTAL' = 'FULL') =>
+      only(diff(roster({ mode, people }), slice(local)).changes, 'PROTECTION');
+
+    it('marks with the register\'s kind, the stronger where two places differ, and none for a marking not recognised', () => {
+      expect(changes([marked(1, { securityMarking: 'Skyddad folkbokföring' })], { users: [linked(1)] })).toEqual([
+        expect.objectContaining({ op: 'ADD', after: { personExternalId: ext(1), userLocalId: loc(1), kind: 'SKYDDAD_FOLKBOKFORING' } }),
+      ]);
+      // The guardian's own record says Sekretessmarkering, the pupil's reference to her Skyddad folkbokföring.
+      const guardian = adult(ext(10), 'G', 'H', 'g@hem.se', 'Privat', { securityMarking: 'Sekretessmarkering' });
+      const child = pupil(ext(1), 'B', 'H', 'b@skola.se', { responsibles: [{ personId: ext(10), securityMarking: 'Skyddad folkbokföring', relationType: 'Vårdnadshavare' }] });
+      const both = changes([guardian, child], { users: [user(10, { ss12000Id: ext(10), role: 'GUARDIAN', email: 'g@hem.se' }), user(1, { ss12000Id: ext(1), email: 'b@skola.se' })] });
+      expect(both).toEqual([expect.objectContaining({ op: 'ADD', after: expect.objectContaining({ personExternalId: ext(10), kind: 'SKYDDAD_FOLKBOKFORING' }) })]);
+      // And the other way round: the weaker second does not understate the first.
+      const weaker = pupil(ext(1), 'B', 'H', 'b@skola.se', { responsibles: [{ personId: ext(10), securityMarking: 'Sekretessmarkering', relationType: 'Vårdnadshavare' }] });
+      const strong = adult(ext(10), 'G', 'H', 'g@hem.se', 'Privat', { securityMarking: 'Skyddad folkbokföring' });
+      expect(changes([strong, weaker], { users: [user(10, { ss12000Id: ext(10), role: 'GUARDIAN', email: 'g@hem.se' }), user(1, { ss12000Id: ext(1), email: 'b@skola.se' })] }))
+        .toEqual([expect.objectContaining({ after: expect.objectContaining({ kind: 'SKYDDAD_FOLKBOKFORING' }) })]);
+      expect(changes([marked(1, { securityMarking: 'UNRECOGNISED' })], { users: [linked(1)] })).toEqual([
+        expect.objectContaining({ op: 'ADD', selected: true, after: { personExternalId: ext(1), userLocalId: loc(1), kind: null } }),
+      ]);
+    });
+
+    it('gives the sync\'s mark the register\'s kind when it differs, at night, also in an INCREMENTAL run', () => {
+      for (const [held, mode] of [['SEKRETESSMARKERING', 'FULL'], [null, 'FULL'], [undefined, 'INCREMENTAL']] as const) {
+        expect(changes([marked(1, { securityMarking: 'Skyddad folkbokföring' })], { users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000', kind: held }] }, mode)).toEqual([
+          {
+            entity: 'PROTECTION', op: 'UPDATE', externalId: null, localId: null,
+            before: null, after: { personExternalId: ext(1), userLocalId: loc(1), kind: 'SKYDDAD_FOLKBOKFORING' },
+            conflictCode: null, selected: true, autoApplicable: true, protectedIdentity: false,
+          },
+        ]);
+      }
+      // A marking no longer recognised: nothing passed on rather than the old kind.
+      expect(changes([marked(1, { securityMarking: 'UNRECOGNISED' })], { users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000', kind: 'SEKRETESSMARKERING' }] }))
+        .toEqual([expect.objectContaining({ op: 'UPDATE', after: expect.objectContaining({ kind: null }) })]);
+      // The same kind: nothing. A mark by hand alone: the sync's ADD, never an UPDATE of the administrator's.
+      expect(changes([marked(1)], { users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000', kind: 'SEKRETESSMARKERING' }] })).toEqual([]);
+      expect(changes([marked(1)], { users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }] })).toEqual([
+        expect.objectContaining({ op: 'ADD', after: expect.objectContaining({ kind: 'SEKRETESSMARKERING' }) }),
+      ]);
+    });
+
+    it('gives a mark made by address no kind: the row may be another person, and nothing is sent for it (review of #265, N3)', () => {
+      // Maria Svensson, another pupil, holds the address the register gives the protected Anna Maria Svensson.
+      const maria = user(1, { email: 's1@skola.se', firstName: 'Maria', lastName: 'Svensson' });
+      const anna = marked(1, { givenName: 'Anna Maria', familyName: 'Svensson', securityMarking: 'Skyddad folkbokföring' });
+      expect(changes([anna], { users: [maria] })).toEqual([
+        expect.objectContaining({ op: 'ADD', selected: true, autoApplicable: true, after: expect.objectContaining({ userLocalId: loc(1), kind: null, byAddress: true }) }),
+      ]);
+      // Marked already: no kind is proposed for her, in any run; one she holds (written before) is taken off.
+      expect(changes([anna], { users: [maria], protections: [{ userId: loc(1), source: 'SS12000', kind: null }] })).toEqual([]);
+      expect(changes([anna], { users: [maria], protections: [{ userId: loc(1), source: 'SS12000', kind: null }] }, 'INCREMENTAL')).toEqual([]);
+      for (const mode of ['FULL', 'INCREMENTAL'] as const) {
+        expect(changes([anna], { users: [maria], protections: [{ userId: loc(1), source: 'SS12000', kind: 'SKYDDAD_FOLKBOKFORING' }] }, mode)).toEqual([
+          expect.objectContaining({ op: 'UPDATE', selected: true, autoApplicable: true, after: expect.objectContaining({ userLocalId: loc(1), kind: null, byAddress: true }) }),
+        ]);
+      }
+      // Two rows with the address: proposals with no kind either.
+      const twins = [user(1, { email: 's1@skola.se' }), user(2, { email: 'S1@skola.se' })];
+      expect(changes([marked(1, { securityMarking: 'Skyddad folkbokföring' })], { users: twins, protections: [{ userId: loc(2), source: 'SS12000', kind: null }] })).toEqual([
+        expect.objectContaining({ op: 'ADD', after: expect.objectContaining({ userLocalId: loc(1), kind: null }), conflictCode: 'PROTECTION_ADDRESS_AMBIGUOUS' }),
+      ]);
+    });
+
+    it('raises the kind in an INCREMENTAL run but lowers or takes it off only in a FULL one (review of #265, L1)', () => {
+      const held = (kind: 'SEKRETESSMARKERING' | 'SKYDDAD_FOLKBOKFORING' | null) => ({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000' as const, kind }] });
+      // Raised: any run.
+      for (const mode of ['FULL', 'INCREMENTAL'] as const) {
+        expect(changes([marked(1, { securityMarking: 'Skyddad folkbokföring' })], held('SEKRETESSMARKERING'), mode)).toEqual([
+          expect.objectContaining({ op: 'UPDATE', after: expect.objectContaining({ kind: 'SKYDDAD_FOLKBOKFORING' }) }),
+        ]);
+      }
+      // Lowered, or taken off for a marking not recognised: a FULL run alone.
+      expect(changes([marked(1, { securityMarking: 'Sekretessmarkering' })], held('SKYDDAD_FOLKBOKFORING'), 'INCREMENTAL')).toEqual([]);
+      expect(changes([marked(1, { securityMarking: 'UNRECOGNISED' })], held('SKYDDAD_FOLKBOKFORING'), 'INCREMENTAL')).toEqual([]);
+      expect(changes([marked(1, { securityMarking: 'Sekretessmarkering' })], held('SKYDDAD_FOLKBOKFORING'), 'FULL')).toEqual([
+        expect.objectContaining({ op: 'UPDATE', after: expect.objectContaining({ kind: 'SEKRETESSMARKERING' }) }),
+      ]);
+    });
+
+    it('carries the kind on the CREATE, LINK and RELINK of a protected person, for the apply to mark them with it', () => {
+      const result = diff(
+        roster({ people: [marked(1, { securityMarking: 'Skyddad folkbokföring' }), marked(2), marked(3, { securityMarking: 'UNRECOGNISED' })] }),
+        slice({ users: [user(2, { email: 's2@skola.se', firstName: 'Skyddad', lastName: 'Elev2', isActive: false })] }),
+      );
+      expect(only(result.changes, 'PERSON', 'CREATE').find((c) => c.externalId === ext(1))!.after).toMatchObject({ protectionKind: 'SKYDDAD_FOLKBOKFORING' });
+      expect(only(result.changes, 'PERSON', 'RELINK')[0]!.after).toMatchObject({ protectionKind: 'SEKRETESSMARKERING' });
+      expect(only(result.changes, 'PERSON', 'CREATE').find((c) => c.externalId === ext(3))!.after).not.toHaveProperty('protectionKind');
+      const linkOnly = diff(roster({ people: [marked(2)] }), slice({ users: [user(2, { email: 's2@skola.se', firstName: 'Skyddad', lastName: 'Elev2' })] }));
+      expect(only(linkOnly.changes, 'PERSON', 'LINK')[0]!.after).toMatchObject({ protectionKind: 'SEKRETESSMARKERING' });
+      // An unprotected person's change carries nothing of it.
+      const plain = diff(roster({ people: [pupil(ext(4), 'A', 'B', 'a@skola.se')] }), slice());
+      expect(only(plain.changes, 'PERSON', 'CREATE')[0]!.after).not.toHaveProperty('protectionKind');
+    });
+  });
+
   it('marks a linked person the register protects and Rastra does not, naming them in the after alone', () => {
     const result = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)] }));
     expect(only(result.changes, 'PROTECTION')).toEqual([
       {
         entity: 'PROTECTION', op: 'ADD', externalId: null, localId: null,
-        before: null, after: { personExternalId: ext(1), userLocalId: loc(1) },
+        before: null, after: { personExternalId: ext(1), userLocalId: loc(1), kind: 'SEKRETESSMARKERING' },
         conflictCode: null, selected: true, autoApplicable: true, protectedIdentity: false,
       },
     ]);
@@ -317,7 +414,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
   });
 
   it('proposes nothing for a person the sync has marked, and its own mark beside an administrator\'s', () => {
-    const synced = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000' }] }));
+    const synced = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000', kind: 'SEKRETESSMARKERING' }] }));
     expect(only(synced.changes, 'PROTECTION')).toEqual([]);
     // The administrator's mark is theirs to lift; the register's is recorded beside it.
     const byHand = diff(roster({ people: [marked(1)] }), slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }] }));
@@ -332,7 +429,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     expect(only(result.changes, 'PROTECTION')).toEqual([
       {
         entity: 'PROTECTION', op: 'ADD', externalId: null, localId: null,
-        before: null, after: { personExternalId: ext(1), userLocalId: loc(1), byAddress: true, email: 's1@skola.se' },
+        before: null, after: { personExternalId: ext(1), userLocalId: loc(1), kind: null, byAddress: true, email: 's1@skola.se' },
         conflictCode: null, selected: true, autoApplicable: true, protectedIdentity: false,
       },
     ]);
@@ -343,7 +440,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     const inactive = diff(roster({ people: [marked(1)] }), slice({ users: [user(1, { email: 's1@skola.se', firstName: 'Skyddad', lastName: 'Elev1', isActive: false })] }));
     expect(only(inactive.changes, 'PROTECTION')).toEqual([expect.objectContaining({ op: 'ADD', autoApplicable: true, after: expect.objectContaining({ userLocalId: loc(1), byAddress: true }) })]);
     // Already marked by the sync: nothing more.
-    const done = diff(roster({ people: [marked(1)] }), slice({ users: [user(1, { email: 's1@skola.se' })], protections: [{ userId: loc(1), source: 'SS12000' }] }));
+    const done = diff(roster({ people: [marked(1)] }), slice({ users: [user(1, { email: 's1@skola.se' })], protections: [{ userId: loc(1), source: 'SS12000', kind: null }] }));
     expect(only(done.changes, 'PROTECTION')).toEqual([]);
   });
 
@@ -382,9 +479,18 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     ['same given name, another family name, X9', { first: 'Anna', last: 'Lund' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
     ['another given name, same family name (a sibling)', { first: 'Erik', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
     ['an empty first name locally', { first: '', last: 'Berg' }, { given: 'Anna', family: 'Berg' }, 'PROPOSED'],
+    // Round 4, L-a: one shared part is not enough, and a particle is no part.
+    ['another given name beside a shared one', { first: 'Anna Maria', last: 'Berg' }, { given: 'Anna Lena', family: 'Berg' }, 'PROPOSED'],
+    ['another family name beside a shared one', { first: 'Anna', last: 'Berg Lind' }, { given: 'Anna', family: 'Berg Svensson' }, 'PROPOSED'],
+    ['a particle alone in common: van Berg/van Dijk', { first: 'Anna', last: 'van Berg' }, { given: 'Anna', family: 'van Dijk' }, 'PROPOSED'],
+    ['particles alone in common: de la Cruz/de Souza', { first: 'Anna', last: 'de la Cruz' }, { given: 'Anna', family: 'de Souza' }, 'PROPOSED'],
+    ['the particle left out locally: Dijk/van Dijk', { first: 'Anna', last: 'Dijk' }, { given: 'Anna', family: 'van Dijk' }, 'AUTO'],
+    ['the particle left out in the register: af Klercker', { first: 'Anna', last: 'af Klercker' }, { given: 'Anna', family: 'Klercker' }, 'AUTO'],
+    ['a name of a particle alone, the same', { first: 'Anna', last: 'Van' }, { given: 'Anna', family: 'Van' }, 'AUTO'],
+    ['a name of a particle alone against one with more', { first: 'Anna', last: 'De' }, { given: 'Anna', family: 'De Souza' }, 'PROPOSED'],
   ];
 
-  it.each(NAME_CASES)('compares names loosely for a mark by address: %s (review of #263, N2)', (_label, local, register, expected) => {
+  it.each(NAME_CASES)('compares names for a mark by address: %s (review of #263, N2 and round 4 L-a)', (_label, local, register, expected) => {
     const person = marked(1, { givenName: register.given, middleName: register.middle ?? null, familyName: register.family });
     const row = user(1, { email: 's1@skola.se', firstName: local.first, lastName: local.last });
     const [mark, ...rest] = only(diff(roster({ people: [person] }), slice({ users: [row] })).changes, 'PROTECTION');
@@ -421,7 +527,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     // The address was corrected: Lisa's row is marked by the sync, unlinked, and nobody protected matches it.
     const corrected = diff(
       roster({ people: [marked(1, { emails: [{ value: 'ny@skola.se', type: 'Skola elev' }] })] }),
-      slice({ users: [user(2, { email: 'lisa@skola.se', firstName: 'Lisa', lastName: 'Lund' })], protections: [{ userId: loc(2), source: 'SS12000' }] }),
+      slice({ users: [user(2, { email: 'lisa@skola.se', firstName: 'Lisa', lastName: 'Lund' })], protections: [{ userId: loc(2), source: 'SS12000', kind: null }] }),
     );
     expect(only(corrected.changes, 'PROTECTION')).toEqual([
       expect.objectContaining({
@@ -431,11 +537,11 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     ]);
     // Still reached by a protected person's address: no lift; an INCREMENTAL run: no lift.
     const still = diff(roster({ people: [marked(2, { emails: [{ value: 'lisa@skola.se', type: 'Skola elev' }] })] }),
-      slice({ users: [user(2, { email: 'lisa@skola.se', firstName: 'Lisa', lastName: 'Lund' })], protections: [{ userId: loc(2), source: 'SS12000' }] }));
+      slice({ users: [user(2, { email: 'lisa@skola.se', firstName: 'Lisa', lastName: 'Lund' })], protections: [{ userId: loc(2), source: 'SS12000', kind: null }] }));
     expect(only(still.changes, 'PROTECTION')).toEqual([]);
     const incremental = diff(
       roster({ mode: 'INCREMENTAL', people: [] }),
-      slice({ users: [user(2, { email: 'lisa@skola.se' })], protections: [{ userId: loc(2), source: 'SS12000' }] }),
+      slice({ users: [user(2, { email: 'lisa@skola.se' })], protections: [{ userId: loc(2), source: 'SS12000', kind: 'SEKRETESSMARKERING' }] }),
     );
     expect(only(incremental.changes, 'PROTECTION')).toEqual([]);
     // A mark by hand on an unlinked row is the administrator's: never proposed for lifting.
@@ -446,7 +552,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
   it('proposes lifting a mark the sync wrote when a FULL run reads "Ingen" for the person: never by default, never at night', () => {
     const result = diff(
       roster({ people: [pupil(ext(1), 'Ej', 'Skyddad', 's1@skola.se', { securityMarking: 'Ingen' })] }),
-      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000' }] }),
+      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'SS12000', kind: 'SEKRETESSMARKERING' }] }),
     );
     expect(only(result.changes, 'PROTECTION')).toEqual([
       expect.objectContaining({
@@ -459,7 +565,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
   it('proposes lifting the sync\'s own mark also where an administrator\'s stands beside it, which the lift leaves', () => {
     const result = diff(
       roster({ people: [pupil(ext(1), 'Ej', 'Skyddad', 's1@skola.se', { securityMarking: 'Ingen' })] }),
-      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }, { userId: loc(1), source: 'SS12000' }] }),
+      slice({ users: [linked(1)], protections: [{ userId: loc(1), source: 'MANUAL' }, { userId: loc(1), source: 'SS12000', kind: 'SEKRETESSMARKERING' }] }),
     );
     expect(only(result.changes, 'PROTECTION').map((c) => c.op)).toEqual(['END']);
   });
@@ -489,7 +595,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
       pupil(ext(1), 'B', 'H', 's1@skola.se', { responsibles: [{ personId: ext(10), securityMarking: 'Sekretessmarkering', relationType: 'Vårdnadshavare' }] }),
     ];
     const guardian = user(10, { ss12000Id: ext(10), role: 'GUARDIAN', email: 'g@hem.se' });
-    const referenced = diff(roster({ people }), slice({ users: [linked(1), guardian], protections: [{ userId: loc(10), source: 'SS12000' }] }));
+    const referenced = diff(roster({ people }), slice({ users: [linked(1), guardian], protections: [{ userId: loc(10), source: 'SS12000', kind: 'SEKRETESSMARKERING' }] }));
     expect(only(referenced.changes, 'PROTECTION')).toEqual([]);
   });
 
@@ -498,7 +604,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
       pupil(ext(1), 'B', 'H', 's1@skola.se', { responsibles: [{ personId: ext(10), securityMarking: 'Ingen', relationType: 'Vårdnadshavare' }] }),
     ];
     const guardian = user(10, { ss12000Id: ext(10), role: 'GUARDIAN', email: 'g@hem.se' });
-    const result = diff(roster({ people }), slice({ users: [linked(1), guardian], protections: [{ userId: loc(10), source: 'SS12000' }] }));
+    const result = diff(roster({ people }), slice({ users: [linked(1), guardian], protections: [{ userId: loc(10), source: 'SS12000', kind: 'SEKRETESSMARKERING' }] }));
     expect(only(result.changes, 'PROTECTION').map((c) => [c.op, c.after?.['userLocalId']])).toEqual([['END', loc(10)]]);
   });
 
@@ -506,7 +612,7 @@ describe('computeDiff: the mark of a protected identity (20270107090000)', () =>
     // The row lost its link; the register says "Ingen" for the pupil it was, and no protected person has the address.
     const result = diff(
       roster({ people: [pupil(ext(1), 'A', 'B', 's1@skola.se', { securityMarking: 'Ingen' })] }),
-      slice({ users: [user(1, { email: 's1@skola.se' })], protections: [{ userId: loc(1), source: 'SS12000' }] }),
+      slice({ users: [user(1, { email: 's1@skola.se' })], protections: [{ userId: loc(1), source: 'SS12000', kind: 'SEKRETESSMARKERING' }] }),
     );
     expect(only(result.changes, 'PROTECTION')).toEqual([
       expect.objectContaining({ op: 'END', conflictCode: 'PROTECTION_ADDRESS_NO_LONGER_MATCHES', selected: false }),
