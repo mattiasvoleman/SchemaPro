@@ -11,8 +11,13 @@ export function newToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
+/**
+ * The hash a link is kept by. A code is hashed in its canonical spelling
+ * whichever way it was written or shown (K7QM2-X9DRT-… and k7qm2x9drt… are
+ * one link), a token as it is, and anything that is neither as it stands.
+ */
 export function tokenHashOf(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+  return createHash('sha256').update(viewerTokenOf(token) ?? token).digest('hex');
 }
 
 /**

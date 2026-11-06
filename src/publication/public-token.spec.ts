@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { codeForDisplay, newCode, newToken, tokenHashOf, viewerTokenOf } from './public-token';
 
 describe('a Schemavisaren code', () => {
@@ -39,6 +40,16 @@ describe('viewerTokenOf (the one place an address becomes a link)', () => {
     const spellings = ['K7QM2X9DRT4V8WNB5C3H', 'K7QM2-X9DRT-4V8WN-B5C3H', 'k7qm2-x9drt-4v8wn-b5c3h', ' K7QM2 X9DRT 4V8WN B5C3H ', 'k7qm2x9drt4v8wnb5c3h'];
     for (const spelling of spellings) expect(viewerTokenOf(spelling)).toBe(code);
     expect(new Set(spellings.map((spelling) => tokenHashOf(viewerTokenOf(spelling)!))).size).toBe(1);
+  });
+
+  it('hashes a code as it is kept, whichever way the code is written or shown', () => {
+    const code = newCode();
+    expect(tokenHashOf(codeForDisplay(code))).toBe(tokenHashOf(code));
+    expect(tokenHashOf(codeForDisplay(code).toLowerCase())).toBe(tokenHashOf(code));
+    // A token, and anything that is no link, as it stands.
+    const token = newToken();
+    expect(tokenHashOf(token)).toBe(createHash('sha256').update(token).digest('hex'));
+    expect(tokenHashOf('short')).toBe(createHash('sha256').update('short').digest('hex'));
   });
 
   it('reads I and L as 1 and O as 0, as the alphabet leaves them out', () => {
