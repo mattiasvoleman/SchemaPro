@@ -36,7 +36,9 @@ describe('appRefusal', () => {
 
 /**
  * A tap on a push opens the role's Notiser tab, except a cover question for a
- * teacher (Vikariefrågan), which opens the Vikarie tab where it is answered.
+ * teacher (Vikariefrågan), which opens the Vikarie tab where it is answered,
+ * and an alarm (Krisläge), which opens the Larm tab of a teacher or an
+ * administrator.
  */
 describe('tapTarget', () => {
   it.each([
@@ -53,6 +55,26 @@ describe('tapTarget', () => {
     ['TEACHER', null, '/(app)/notifications'],
     [null, 'COVER_REQUESTED', '/(app)/notifications'],
   ])('%s tapping %s opens %s', (role, type, target) => {
+    expect(tapTarget(role, type)).toBe(target);
+  });
+
+  // Krisläge: the push says only that an alarm is going or over, and the staff
+  // who count and who watch both read it in the Larm tab.
+  it.each([
+    ['TEACHER', 'CRISIS_ALARM', '/(app)/crisis'],
+    ['TEACHER', 'CRISIS_ENDED', '/(app)/crisis'],
+    ['SCHOOL_ADMIN', 'CRISIS_ALARM', '/(app)/crisis'],
+    ['SCHOOL_ADMIN', 'CRISIS_ENDED', '/(app)/crisis'],
+    // A guardian's notice has no tab of its own: an inbox row, in whichever shell the person is in.
+    ['GUARDIAN', 'CRISIS_GUARDIAN_AFTER', '/(guardian)/notifications'],
+    ['TEACHER', 'CRISIS_GUARDIAN_AFTER', '/(app)/notifications'],
+    // Only staff have the tab: another role's tap never leaves its own shell.
+    ['STUDENT', 'CRISIS_ALARM', '/(student)/notifications'],
+    ['GUARDIAN', 'CRISIS_ALARM', '/(guardian)/notifications'],
+    [null, 'CRISIS_ALARM', '/(app)/notifications'],
+    // A push without a type, from a gateway that sent none.
+    ['TEACHER', null, '/(app)/notifications'],
+  ])('%s tapping %s opens %s (Krisläge)', (role, type, target) => {
     expect(tapTarget(role, type)).toBe(target);
   });
 });

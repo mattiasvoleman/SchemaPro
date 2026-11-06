@@ -132,7 +132,7 @@ export function NotificationBell() {
                 key={entry.id}
                 onSelect={(event) => {
                   // A notice with a page to go to closes the menu and goes there; the rest stay to be read.
-                  const href = noticeHref(entry);
+                  const href = noticeHref(entry, profile.role);
                   if (href) router.push(href);
                   else event.preventDefault();
                 }}

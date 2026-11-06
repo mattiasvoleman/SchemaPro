@@ -10,6 +10,23 @@
  * here, and on a listed route that is gone. A new export is decided here, by
  * name, before it ships.
  *
+ * KRISLÄGE (20270113091000) IS DECIDED HERE TOO, though no route of it is
+ * listed: the alarm's lists and the protocol (GET /api/v1/crisis/alarms/:id and
+ * .../protocol) answer the screen in JSON, and no path of them is a file or a
+ * feed. They name every pupil on purpose, a protected one too: the roll call
+ * exists to account for everyone in the building, the register already names
+ * the pupil to the teacher, and a pupil nobody could see on the list would be
+ * a pupil nobody looked for. The files made from them, the protocol as CSV and
+ * on paper, are the web's, and there the rule is HOLDS_OUT: a marked pupil is
+ * not named and is counted (web/lib/people-files.ts, protocol-actions.ts). The
+ * same goes for the teacher's route (GET /api/v1/crisis/mine): its `others` is
+ * every pupil of the school by name and class, so that a teacher who finds a
+ * pupil who is on nobody's list of hers can say so; a protected pupil is in it,
+ * because the pupil nobody can pick is the pupil nobody finds, and staff read
+ * the school's pupils directly already. It is JSON for the phone's encrypted
+ * store, not a file. The app has no export. A route of Krisläge that ever answers a file belongs in
+ * the list below, by name, before it ships.
+ *
  * Why the database cannot hold this instead: an export is built in the
  * gateway or the browser from ordinary reads under RLS, and nothing in the
  * catalogue says which reads become a file. The rule that can be held there

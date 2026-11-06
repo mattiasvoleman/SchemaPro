@@ -11,6 +11,14 @@ import { pushKindOf, pushText, type PushKind, type PushLocale } from './push-mes
 
 /** A push lives a day: a notice about today's lessons is no use tomorrow. */
 export const PUSH_TTL_SECONDS = 86_400;
+/**
+ * An alarm (and its end) is told like an alarm: sent with high priority on a channel of its own that the phone
+ * rings on, and not kept longer than it is true. A phone that was off for an hour must not get "Ett larm pågår"
+ * for an alarm that ended before it came back; the app also asks the gateway before it shows a list.
+ */
+export const URGENT_PUSH_TTL_SECONDS = 600;
+export const URGENT_PUSH_CHANNEL = 'crisis';
+const URGENT_PUSH_TYPES: ReadonlySet<string> = new Set(['CRISIS_ALARM', 'CRISIS_ENDED']);
 
 interface PushTarget {
   token_id: string;
@@ -221,6 +229,7 @@ export class NotificationDeliveryService {
         const locale: PushLocale = target.locale === 'en' ? 'en' : 'sv';
         for (const notice of noticesOf.get(target.user_id) ?? []) {
           const text = pushText(notice.kind, notice.meta, locale, target.timezone, notice.count);
+          const urgent = URGENT_PUSH_TYPES.has(notice.type);
           out.push({
             tokenId: target.token_id,
             message: {
@@ -228,10 +237,11 @@ export class NotificationDeliveryService {
               title: text.title,
               body: text.body,
               data: { notificationId: notice.notificationId, type: notice.type },
-              ttl: PUSH_TTL_SECONDS,
-              channelId: 'default',
+              ttl: urgent ? URGENT_PUSH_TTL_SECONDS : PUSH_TTL_SECONDS,
+              channelId: urgent ? URGENT_PUSH_CHANNEL : 'default',
               sound: 'default',
-              priority: 'default',
+              priority: urgent ? 'high' : 'default',
+              ...(urgent ? { interruptionLevel: 'time-sensitive' as const } : {}),
             },
           });
         }

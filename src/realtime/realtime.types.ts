@@ -52,3 +52,17 @@ export interface CoverBoardUpdatedPayload {
   to: string;
   changedAt: string;
 }
+
+/**
+ * An alarm of Krisläge changed: started or ended (to the staff room, which the
+ * phones listen to), or marked (to the school's admins, whose live view
+ * refetches). The payload is the alarm's id and a time. It names no pupil,
+ * group, place or teacher, and not even what changed: whoever hears it asks
+ * the gateway, which answers each by their own row-level security.
+ */
+export const CRISIS_UPDATED_EVENT = 'crisis_updated';
+
+export interface CrisisUpdatedPayload {
+  alarmId: string;
+  changedAt: string;
+}

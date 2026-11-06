@@ -3,8 +3,9 @@ import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
 /**
  * The kinds of data a school sets a retention period for, in the order the
  * page lists them (RetentionDataType, 20261021110000; ACCESS_LOG, the read
- * log, 20261026090000; COVER_REQUESTS, vikarieförfrågningar, 20270102090000).
- * Eight are rows that go; DEPARTED_PEOPLE are pseudonymised in place.
+ * log, 20261026090000; COVER_REQUESTS, vikarieförfrågningar, 20270102090000;
+ * CRISIS_DRILLS and CRISIS_ALARMS, krisläget's exercises and real alarms,
+ * 20270113090000). Ten are rows that go; DEPARTED_PEOPLE are pseudonymised in place.
  */
 export const RETENTION_DATA_TYPES = [
   'ATTENDANCE',
@@ -15,6 +16,8 @@ export const RETENTION_DATA_TYPES = [
   'ABSENCE_REASONS',
   'ACCESS_LOG',
   'COVER_REQUESTS',
+  'CRISIS_DRILLS',
+  'CRISIS_ALARMS',
   'DEPARTED_PEOPLE',
 ] as const;
 export type RetentionDataTypeValue = (typeof RETENTION_DATA_TYPES)[number];

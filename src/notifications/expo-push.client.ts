@@ -26,7 +26,10 @@ export interface ExpoMessage {
   ttl: number;
   channelId: string;
   sound: 'default';
-  priority: 'default';
+  /** 'high' wakes a sleeping phone at once (FCM high priority, APNs priority 10); the alarm's push is the only one that does. */
+  priority: 'default' | 'high';
+  /** iOS: 'time-sensitive' breaks through a Focus mode the person has allowed it in. Not 'critical': that needs Apple's entitlement. */
+  interruptionLevel?: 'active' | 'time-sensitive';
 }
 
 export type ExpoTicket =

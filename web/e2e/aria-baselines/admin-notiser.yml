@@ -82,6 +82,9 @@
     - text: Drift
     - list "Drift":
       - listitem:
+        - link "Krisläge":
+          - /url: /sv/admin/crisis
+      - listitem:
         - link "Dagsplanering":
           - /url: /sv/admin/lessons
       - listitem:

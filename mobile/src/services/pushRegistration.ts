@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { ApiError, apiRequest } from './api';
 import { tapTypeOf } from './auth/appGate';
+import { currentApp } from '../config/appIdentity';
 import { translatorFor } from '../i18n';
 import { loadLocale } from '../i18n/localeStore';
 import type { Locale } from '../i18n/translate';
@@ -50,6 +51,15 @@ const TOKEN_KEY = 'sp_push_token';
 const RELEASE_KEY = 'sp_push_release';
 const UNREGISTER_TIMEOUT_MS = 4_000;
 export const ANDROID_CHANNEL_ID = 'default';
+/**
+ * The alarm's channel. The gateway sends CRISIS_ALARM and CRISIS_ENDED with this
+ * channelId (and priority high, ttl 600 s, iOS interruptionLevel time-sensitive):
+ * an id the phone has no channel for falls back to the channel of ordinary
+ * notices, so it must exist before the first alarm push arrives.
+ */
+export const CRISIS_CHANNEL_ID = 'crisis';
+/** Wait, buzz, rest, buzz, rest, buzz (ms): three long pulses, which a phone in a pocket can tell from an ordinary notice's one short one. */
+export const CRISIS_VIBRATION_PATTERN: readonly number[] = [0, 600, 250, 600, 250, 600];
 
 const STORE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
@@ -137,7 +147,7 @@ export async function enablePush(userId: string, locale: Locale): Promise<PushOu
   if (!(await serverPushEnabled())) return 'SERVER_OFF';
   if (!easProjectId() || platform() === null) return 'UNSUPPORTED';
   try {
-    await ensureAndroidChannel(translatorFor(locale)('push.channelName'));
+    await ensureAndroidChannel(locale);
     let permission = await Notifications.getPermissionsAsync();
     if (!permission.granted && permission.canAskAgain) permission = await Notifications.requestPermissionsAsync();
     if (!permission.granted) return 'DENIED';
@@ -290,16 +300,18 @@ export async function startSignedIn(userId: string): Promise<PushOutcome> {
 
 /**
  * A tap on a notification the app has not yet acted on, as the notice type
- * its push carried (null when it carried none). expo-notifications keeps the
- * last response until it is cleared, so without clearing it every later
+ * its push carried (null when it carried none) and the notification itself,
+ * which holds when it arrived: an alarm's push is also the phone's record of
+ * when the alarm began (services/crisisOffline.ts). expo-notifications keeps
+ * the last response until it is cleared, so without clearing it every later
  * sign-in or role change in the same process would replay it.
  */
-export function takeLastTap(): { readonly type: string | null } | null {
+export function takeLastTap(): { readonly type: string | null; readonly notification?: unknown } | null {
   try {
     const response = Notifications.getLastNotificationResponse();
     if (!response) return null;
     Notifications.clearLastNotificationResponse();
-    return { type: tapTypeOf(response) };
+    return { type: tapTypeOf(response), notification: (response as { notification?: unknown }).notification };
   } catch {
     return null;
   }
@@ -315,14 +327,63 @@ export function forgetTap(): void {
 }
 
 /**
- * Android shows the channel's name in the phone's notification settings, so
- * it is (re)created in the reader's language at start and on a change.
+ * Android shows a channel's name and description in the phone's notification
+ * settings, so the channels are (re)created in the reader's language at start
+ * and on a change.
+ *
+ * `default` carries the ordinary notices. `crisis` carries the alarm: the
+ * highest importance the library offers (MAX, a heads-up that makes sound), sound, a
+ * strong vibration, a visible lock-screen entry (the text never names a pupil, a
+ * group or a place), and bypassDnd, which asks to be heard through Do Not
+ * Disturb. Android lets an app ask, not decide: the person allows "Override Do
+ * Not Disturb" for the channel in the phone's settings, and once a channel exists
+ * its importance and sound are the person's to change, not the app's, so they are
+ * chosen once and right. The guardian app gets no alarm channel: it is never sent
+ * an alarm (only the notice afterwards, on the default channel).
+ *
+ * iOS needs nothing registered here. The push's time-sensitive interruption
+ * level is not a permission the app asks for (expo-notifications has no option
+ * for it, only allowCriticalAlerts, which is Apple's separate entitlement and is
+ * not requested): it takes effect when the build carries the
+ * com.apple.developer.usernotifications.time-sensitive entitlement, and the
+ * person can turn it off per app.
  */
-export async function ensureAndroidChannel(name: string): Promise<void> {
+export async function ensureAndroidChannel(locale: Locale): Promise<void> {
   if (Platform.OS !== 'android') return;
+  const t = translatorFor(locale);
   await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
-    name,
+    name: t('push.channelName'),
     importance: Notifications.AndroidImportance.DEFAULT,
     lightColor: NOTIFICATION_ACCENT,
   }).catch(() => undefined);
+  if (currentApp() === 'vardnadshavare') return;
+  await Notifications.setNotificationChannelAsync(CRISIS_CHANNEL_ID, {
+    name: t('push.crisisChannelName'),
+    description: t('push.crisisChannelDescription'),
+    importance: Notifications.AndroidImportance.MAX,
+    bypassDnd: true,
+    sound: 'default',
+    enableVibrate: true,
+    vibrationPattern: [...CRISIS_VIBRATION_PATTERN],
+    enableLights: true,
+    lightColor: NOTIFICATION_ACCENT,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    showBadge: true,
+  }).catch(() => undefined);
+}
+
+/**
+ * How a push that arrives while the app is open is shown. Every notice is a
+ * banner and kept in the list, silently, as before; an alarm or its end also
+ * sounds (the channel's sound is not played for a notification the app itself
+ * presents), so that a teacher with the app open on another tab hears it.
+ */
+export function foregroundPresentation(notification: unknown): {
+  readonly shouldShowBanner: boolean;
+  readonly shouldShowList: boolean;
+  readonly shouldPlaySound: boolean;
+  readonly shouldSetBadge: boolean;
+} {
+  const type = (notification as { request?: { content?: { data?: { type?: unknown } | null } } } | null | undefined)?.request?.content?.data?.type;
+  return { shouldShowBanner: true, shouldShowList: true, shouldPlaySound: type === 'CRISIS_ALARM' || type === 'CRISIS_ENDED', shouldSetBadge: false };
 }

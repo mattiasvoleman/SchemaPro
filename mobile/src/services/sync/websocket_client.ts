@@ -1,13 +1,15 @@
 import { io, type Socket } from 'socket.io-client';
 import { getAccessToken } from '../supabase';
 import { assertSecureBaseUrl } from '../network/secureUrl';
-import type { CalendarLessonUpdatedPayload } from '../../types';
+import type { CalendarLessonUpdatedPayload, CrisisUpdatedPayload } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WebSocketClient wraps socket.io-client with:
 //   - JWT auth handshake (token sent via `auth` option, never in the URL)
 //   - Automatic reconnection with capped exponential backoff
-//   - Typed event listener for `calendar_lesson_updated`
+//   - Typed event listeners for `calendar_lesson_updated` and, for the staff
+//     of an alarm, `crisis_updated` (it carries the alarm's id and a time and
+//     no names: whoever hears it reads the list again)
 //
 // Call connect() once when the teacher logs in, disconnect() on logout.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,18 +18,22 @@ const WS_BASE_URL = process.env['EXPO_PUBLIC_WS_BASE_URL'];
 
 export type LessonUpdatedCallback = (payload: CalendarLessonUpdatedPayload) => void;
 export type ConnectionChangeCallback = (connected: boolean) => void;
+export type CrisisUpdatedCallback = (payload: CrisisUpdatedPayload) => void;
 
 export class WebSocketClient {
   private socket: Socket | null = null;
   private readonly onLessonUpdated: LessonUpdatedCallback;
   private readonly onConnectionChange: ConnectionChangeCallback;
+  private readonly onCrisisUpdated: CrisisUpdatedCallback | undefined;
 
   constructor(
     onLessonUpdated: LessonUpdatedCallback,
     onConnectionChange: ConnectionChangeCallback,
+    onCrisisUpdated?: CrisisUpdatedCallback,
   ) {
     this.onLessonUpdated = onLessonUpdated;
     this.onConnectionChange = onConnectionChange;
+    this.onCrisisUpdated = onCrisisUpdated;
   }
 
   async connect(): Promise<void> {
@@ -75,6 +81,10 @@ export class WebSocketClient {
 
     this.socket.on('calendar_lesson_updated', (payload: CalendarLessonUpdatedPayload) => {
       this.onLessonUpdated(payload);
+    });
+
+    this.socket.on('crisis_updated', (payload: CrisisUpdatedPayload) => {
+      this.onCrisisUpdated?.(payload);
     });
   }
 

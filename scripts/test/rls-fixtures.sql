@@ -1767,7 +1767,15 @@ BEGIN
       ('fe000000-0000-4000-8000-000000000248'::uuid, m, 'STUDENT',                  NULL,                     true,  timestamptz '2026-02-01', 'flera-p-m')
     ) v(auth_id, school, role, profile, active, created, label)
   LOOP
-    row_id := gen_random_uuid();
+    -- Random, except school A's pupil: the max uuid sorts after every other
+    -- pupil there. Section 30b links the lowest-id pupil that is not the
+    -- fixture guardian's child to that guardian as an SS12000 link, and 30g
+    -- unlinks the guardian's lowest-id child expecting a MANUAL one. A random
+    -- id for this pupil sorted below the guardian's child one run in eighty-one
+    -- and 30g then unlinked the SS12000 link and found no MANUAL history row.
+    row_id := CASE WHEN rec.label = 'flera-p-a'
+                   THEN 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid
+                   ELSE gen_random_uuid() END;
     PERFORM set_config('app.login_join', row_id::text, true);
     INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "adminProfile", "authId",
                          "isActive", "invitedAt", "createdAt", "updatedAt")
@@ -3147,6 +3155,155 @@ BEGIN
   END IF;
   INSERT INTO "PersonProtections" ("userId", "schoolId", source)
   SELECT id, m, 'SS12000' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
+END $$;
+
+-- Krisläge (20270113091000), the matrix school's rows: the settings, one open
+-- exercise whose lists are not sealed (so the role matrix, section 116, can
+-- copy a row into each of the lists the way an administrator writes them in
+-- the transaction that starts an alarm), its call, the school's teacher on it,
+-- the school's pupil and one mark. A block of its own, planted once.
+DO $$
+DECLARE
+  m uuid;
+  teacher uuid; pupil uuid; cl uuid; al uuid; call uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "CrisisAlarms" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO teacher FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111';
+  SELECT id INTO pupil FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000112';
+  SELECT id INTO cl FROM "CalendarLessons" WHERE "schoolId" = m ORDER BY id LIMIT 1;
+  IF teacher IS NULL OR pupil IS NULL OR cl IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school has no teacher, pupil or lesson for a crisis alarm';
+  END IF;
+  INSERT INTO "CrisisSettings" ("schoolId") VALUES (m);
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (m, 'EVACUATION', 'DRILL') RETURNING id INTO al;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", "calendarLessonId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (m, al, cl, 'LESSON', 'Roller 7A', 'Matematik', now(), now() + interval '1 hour') RETURNING id INTO call;
+  INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId") VALUES (m, call, teacher);
+  INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId") VALUES (m, al, call, pupil);
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at, "byUserId")
+  VALUES ('c0000000-0000-4000-8000-0000000f2001', m, al, call, pupil, 'FOUND', now(), teacher);
+END $$;
+
+-- Krisläge, for section 354 (gallring). The läslogg school keeps exercises 6
+-- months and real alarms 24 (decided two days ago in the fixtures). It has an
+-- exercise that ended 7 months ago (due) and one that ended 5 (not due), a real
+-- alarm that ended 25 months ago (due) and one that ended 23 (not due), each
+-- with a call, a teacher, a pupil and a mark, so the purge's cascade has
+-- something to remove. (The exercise still OPEN that began 8 months ago is the
+-- next block's.) All planted once, as the owner: months against months do not
+-- age past the cutoff between two runs. The marks of an alarm over for more
+-- than an hour are refused by the stamp, so the trigger is off while they are
+-- planted.
+DO $$
+DECLARE
+  l uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-laslogg-school');
+  admin uuid; t122 uuid; p123 uuid; lesson uuid;
+  a record;
+  al uuid; call uuid;
+BEGIN
+  IF l IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the läslogg school is missing for the crisis alarms';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "CrisisAlarms" WHERE id = 'c0000000-0000-4000-8000-0000000f2101') THEN
+    RETURN;
+  END IF;
+  SELECT id INTO admin FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000121';
+  SELECT id INTO t122 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000122';
+  SELECT id INTO p123 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000123';
+  SELECT id INTO lesson FROM "CalendarLessons" WHERE "schoolId" = l ORDER BY id LIMIT 1;
+  IF admin IS NULL OR t122 IS NULL OR p123 IS NULL OR lesson IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the läslogg school lacks the people or the lesson for the crisis alarms';
+  END IF;
+  ALTER TABLE "CrisisReports" DISABLE TRIGGER "CrisisReports_a_stamped";
+  FOR a IN SELECT * FROM (VALUES
+      ('c0000000-0000-4000-8000-0000000f2101'::uuid, 'DRILL'::"CrisisAlarmMode", interval '7 months', interval '7 months' - interval '20 minutes'),
+      ('c0000000-0000-4000-8000-0000000f2102'::uuid, 'DRILL'::"CrisisAlarmMode", interval '5 months', interval '5 months' - interval '20 minutes'),
+      ('c0000000-0000-4000-8000-0000000f2104'::uuid, 'LIVE'::"CrisisAlarmMode", interval '25 months', interval '25 months' - interval '40 minutes'),
+      ('c0000000-0000-4000-8000-0000000f2105'::uuid, 'LIVE'::"CrisisAlarmMode", interval '23 months', interval '23 months' - interval '40 minutes')
+    ) v(id, mode, started, ended)
+  LOOP
+    INSERT INTO "CrisisAlarms" (id, "schoolId", kind, mode, "startedAt", "startedByUserId", "endedAt", "endedByUserId", "listsSealedAt")
+    VALUES (a.id, l, 'EVACUATION', a.mode, now() - a.started, admin,
+            CASE WHEN a.ended IS NULL THEN NULL ELSE now() - a.ended END,
+            CASE WHEN a.ended IS NULL THEN NULL ELSE admin END,
+            now() - a.started)
+    RETURNING id INTO al;
+    INSERT INTO "CrisisCalls" ("schoolId", "alarmId", "calendarLessonId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+    VALUES (l, al, lesson, 'LESSON', 'Läslogg 7A', 'Svenska', now() - a.started, now() - a.started + interval '1 hour')
+    RETURNING id INTO call;
+    INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId") VALUES (l, call, t122);
+    INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId") VALUES (l, al, call, p123);
+    INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at, "byUserId")
+    VALUES (gen_random_uuid(), l, al, call, p123, 'FOUND', now() - a.started + interval '5 minutes', t122);
+  END LOOP;
+  ALTER TABLE "CrisisReports" ENABLE TRIGGER "CrisisReports_a_stamped";
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (l, 'CRISIS_DRILLS', 'PURGE_AFTER', 6, 'DHP 9.2', admin, now() - interval '2 days'),
+         (l, 'CRISIS_ALARMS', 'PURGE_AFTER', 24, 'DHP 9.3', admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+END $$;
+
+-- Krisläge, for section 354: the läslogg school's exercise that is still OPEN
+-- though it began 8 months ago (never due for gallring: the job ends it first,
+-- and a night purges it only once it has ended). Planted on every run, as the
+-- owner, because the job (app.crisis_settle) ends every school's old open
+-- alarm, the adapter probe's pass included, and a suite that finds it ended
+-- would be testing the order it ran in.
+DO $$
+DECLARE
+  l uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-laslogg-school');
+  admin uuid; t122 uuid; p123 uuid; lesson uuid; al uuid := 'c0000000-0000-4000-8000-0000000f2103'; call uuid;
+BEGIN
+  IF l IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the läslogg school is missing for the open crisis alarm';
+  END IF;
+  SELECT id INTO admin FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000121';
+  SELECT id INTO t122 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000122';
+  SELECT id INTO p123 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000123';
+  SELECT id INTO lesson FROM "CalendarLessons" WHERE "schoolId" = l ORDER BY id LIMIT 1;
+  IF admin IS NULL OR t122 IS NULL OR p123 IS NULL OR lesson IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the läslogg school lacks the people or the lesson for the open crisis alarm';
+  END IF;
+  DELETE FROM "CrisisAlarms" WHERE id = al;
+  INSERT INTO "CrisisAlarms" (id, "schoolId", kind, mode, "startedAt", "startedByUserId", "listsSealedAt")
+  VALUES (al, l, 'EVACUATION', 'DRILL', now() - interval '8 months', admin, now() - interval '8 months');
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", "calendarLessonId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (l, al, lesson, 'LESSON', 'Läslogg 7A', 'Svenska', now() - interval '8 months', now() - interval '8 months' + interval '1 hour')
+  RETURNING id INTO call;
+  INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId") VALUES (l, call, t122);
+  INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId") VALUES (l, al, call, p123);
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at, "byUserId")
+  VALUES (gen_random_uuid(), l, al, call, p123, 'FOUND', now() - interval '8 months' + interval '5 minutes', t122);
+END $$;
+
+-- Krisläge, for sections 351-354: in the primary school an exercise that ended
+-- three hours ago (so a teacher on it reads and marks nothing any more), with a
+-- call for the school's first teacher by authId and its first pupil. Planted on
+-- every run, as the owner: a row that stays "three hours ago" only for the
+-- suite that planted it would age no further out of the hour, but a stale
+-- copy from another day would be a different alarm than the sections count.
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1);
+  admin uuid; t1 uuid; p1 uuid; al uuid := 'c0000000-0000-4000-8000-0000000f2201'; call uuid;
+BEGIN
+  SELECT id INTO admin FROM "Users" WHERE "schoolId" = a AND role = 'SCHOOL_ADMIN' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = a AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO p1 FROM "Users" WHERE "schoolId" = a AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1;
+  IF admin IS NULL OR t1 IS NULL OR p1 IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the primary school lacks an administrator, a teacher or a pupil for the crisis alarm';
+  END IF;
+  DELETE FROM "CrisisAlarms" WHERE id = al;
+  INSERT INTO "CrisisAlarms" (id, "schoolId", kind, mode, "startedAt", "startedByUserId", "endedAt", "endedByUserId", "listsSealedAt")
+  VALUES (al, a, 'EVACUATION', 'DRILL', now() - interval '4 hours', admin, now() - interval '3 hours', admin, now() - interval '4 hours');
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (a, al, 'LESSON', 'Gammal 7A', 'Historia', now() - interval '4 hours', now() - interval '3 hours') RETURNING id INTO call;
+  INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId") VALUES (a, call, t1);
+  INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId") VALUES (a, al, call, p1);
 END $$;
 
 -- Rapporteringsgrad (20270112090100), sections 345-349: a school of its own, so

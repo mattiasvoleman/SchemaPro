@@ -234,6 +234,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | recommended `15` (Railway's own default is `0`): the seconds between SIGTERM and SIGKILL when a deploy replaces the instance. On SIGTERM the API marks a Schemaförslag run that was solving as interrupted, stops taking requests, lets the ones in flight finish, and only then closes its database pool. With `0` it is killed before any of that: the run is left to its lease (about three minutes), and a request in flight is cut off as before |
 | `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions |
 | `COVER_REQUESTS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that settles the open vikarieförfrågningar: the ones whose time is out end `EXPIRED` and the administrator who asked is told nobody said yes, the ones whose lesson or absence went away end `CLOSED` and the colleagues they waited on are told. A question past its time cannot be answered whether or not it has run; the tick settles the stored status, frees the lesson for a new question and tells who it concerns |
+| `CRISIS_BACKGROUND` | `on` (default) or `off`: the quarter-hourly look at alarms left open in Krisläge. A real alarm that has stood open for 12 hours, or an exercise for 3, is ended (`autoEnded`), because only one of each kind can be open and a forgotten one would stop the next. Nobody is told; the app reads the alarm again when it is opened. With `off` an alarm is ended by an administrator or not at all |
 | `GALLRING_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of the nightly gallring. A school's run starts at 03:00 its local time, once a night, and only for the kinds its admin has given a period on `/admin/dataskydd`; a school that has decided nothing loses nothing |
 | `ABSENCE_WATCH_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarobevakning's nightly count. A school's night starts at 05:00 its local time, once a night, and only for a school whose administrator has turned the bevakning on (`/admin/absence-watch`; off for every school until then). The night counts the pupils over the school's limits as of yesterday and, on the first day after a whole week or month, writes the digest of each group that has a limit. Off, nothing is counted or sent and the findings already made stay |
 | `REPORTING_RATE_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Rapporteringsgrad's nightly job. A school's night starts at 06:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch; only the reminders and the weekly notice are, under `/admin/reporting-rate`). The night stores each teacher's held and reported lessons per day, tells the teachers of lessons that stood open past the school's limit (if the school turned that on) and, on Mondays, tells rektor and the full administrators the week's totals (likewise). **Off, this is the emergency brake:** nothing is counted, reminded or sent, the days already stored stay and the pages show them unchanged (they stop getting newer), and a teacher's list of open lessons, which reads the lessons live, still answers. A value that is neither `on` nor `off` is refused at start |
@@ -1175,7 +1176,7 @@ Walk the full product loop once, in order:
   each such read is written to the school's läslogg (EMPLOYMENT and PEOPLE for the
   teachers listed). The first night counts the last 90 days back, so the page has
   its history from the first morning. A teacher reads their own days and open
-  lessons only. The user and teacher manuals (6.13 and 4.6) say the same.
+  lessons only. The user and teacher manuals (6.14 and 4.7) say the same.
   **Release note** (in these words or others): *From the first night after this
   release Rastra counts, every night, what share of each teacher's held lessons
   have a saved register, for the last 90 days. Rektor and all of the school's
@@ -1327,6 +1328,209 @@ Walk the full product loop once, in order:
   never reads the column or the function, writes its marks with no kind, and
   sends no `securityMarking`; a `DIFF_READY` run holding a PROTECTION UPDATE is
   applied without it. The column, the arms and the function may stay.
+- **Krisläge**: 20270113090000 adds the `NotificationType` values
+  `CRISIS_ALARM`, `CRISIS_ENDED` and `CRISIS_GUARDIAN_AFTER` and the
+  `RetentionDataType` values `CRISIS_DRILLS` and `CRISIS_ALARMS` and nothing
+  else (a value cannot be used in the transaction that adds it, so it is a
+  file of its own: never run the two files in one `psql -1`). 20270113091000
+  adds the tables `CrisisSettings`, `CrisisAlarms`, `CrisisCalls`,
+  `CrisisCallTeachers`, `CrisisPupils` and `CrisisReports` with 24 policies,
+  the triggers that start an alarm in its writer's name (and refuse an
+  exercise beside a real alarm, KL412), let it end once and stamp and apply a
+  mark, the functions `app.crisis_may_start`,
+  `app.crisis_window_open`, `app.crisis_call_window_open`,
+  `app.crisis_lists_are_open`, `app.crisis_answers_for`,
+  `app.crisis_pupil_call`, `app.crisis_has_no_call_in` and
+  `app.crisis_settle` (executable by `app_authenticated` alone), and
+  `app.gallring_due` and `app.gallring_purge` again with the alarms' branch.
+  No existing row is touched and no existing table gains a column. The new
+  keys take `Schools`, `Users` and `CalendarLessons` in SHARE ROW EXCLUSIVE,
+  NOWAIT, together in a loop: reads and foreign-key checks go on, writes to
+  the three wait for the file (about 50 ms once the locks are taken), and if
+  all three are not free at once in 30 s it stops with nothing changed in the
+  second file (`prisma migrate resolve --rolled-back
+  20270113091000_ett_larm_raknar_eleverna_utifran_schemat`, then deploy
+  again). NOWAIT never queues, so it does not make an autovacuum give way:
+  look first (below). The API before the release knows none of the objects
+  and writes no notice of the new types, so it keeps working between the
+  migration and the deploy. **The migration goes in first, then the merge**,
+  outside an SS12000 sync window.
+  **Before the migration**, as the owner: `SHOW server_version` is the 17.x
+  production runs; `prisma migrate status` lists exactly the two new
+  migrations as pending (their stamps, 20270113090000 and 20270113091000, sort
+  after Skyddad identitet's 20270107090000, its register kind's 20270111090000
+  and Rapporteringsgrad's 20270112090000 and 20270112090100, which are applied,
+  so production and a fresh database run them in one order); the files'
+  checksums (sha256, what Prisma records) are
+  `19c464b8ed67850e1135939c2bcc142d9a316320332c679866fd201f11bab9d6` for
+  20270113090000 and
+  `4cc51e83d74111d7526c0769d0ff0341e899db6eef99fbdfa6513f2d6d8ae2f4` for
+  20270113091000; `SELECT to_regclass('"CrisisAlarms"')` is NULL and
+  `SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE
+  t.typname IN ('NotificationType', 'RetentionDataType') AND e.enumlabel LIKE
+  'CRISIS%'` returns no row; and no session sits idle in a transaction that
+  holds one of the three tables, nor an autovacuum worker on them (the query
+  of the Vikariefrågan entry above). **Gallring:** `SELECT proname,
+  md5(prosrc) FROM pg_proc WHERE pronamespace = 'app'::regnamespace AND
+  proname IN ('gallring_due', 'gallring_purge') ORDER BY 1` must show
+  Rapporteringsgrad's bodies (20270112090100): `gallring_due`
+  `2b009a76211cdb7f51b2e4c7c96b0acf`, `gallring_purge`
+  `827d5ff597528338710ebaa0a9253d96`. The second file replaces both functions
+  whole, built on exactly those bodies with one branch added to each (the
+  diff against Rapporteringsgrad's bodies is additions only: 7 lines in
+  `gallring_due`, 6 in `gallring_purge`, all marked `-- krisläge`), so they
+  carry every branch: the absence watch's findings, the reporting rate's days
+  and reminders, the cover requests, the marks' history and now the alarms.
+  `app.gallring_pseudonymise` is not touched: its `md5(prosrc)` is
+  `6f18f62fc354bde849aa2e8b01eeceda` before and after. After the migration the
+  values are `gallring_due` `1d002a81c954ccda01acc9bf0cabdbb3` and
+  `gallring_purge` `21b7b43da05c4ff63f045ee769b1ba5c`. Other values before it
+  mean a release has restated them since: its branch must be carried into
+  20270113091000's bodies, or its rows are no longer purged (the RLS suite,
+  section 350, fails when a body has lost a branch or a table, or a branch is
+  dead or only a comment).
+  **After it, before the merge:** both migrations are applied;
+  `SELECT count(*) FROM pg_policies WHERE tablename LIKE 'Crisis%'` is 24;
+  `app_authenticated` holds SELECT, INSERT and UPDATE on `CrisisSettings` and
+  `CrisisAlarms`, SELECT and INSERT on the other four and nothing else (no
+  MAINTAIN, no DELETE), `anon` and `authenticated` nothing at all; the eight
+  functions answer `app_authenticated` alone (`SELECT
+  has_function_privilege('anon', 'app.crisis_may_start()', 'EXECUTE'),
+  has_function_privilege('authenticated', 'app.crisis_settle()', 'EXECUTE'),
+  has_function_privilege('service_role', 'app.crisis_lists_are_open(uuid)',
+  'EXECUTE')` is false, false, false). Do not call `app.crisis_settle()` to
+  see: it ends the alarms that are due.
+  **After the merge:** `GET /api/v1/crisis/alarms` answers `[]` for every
+  school; `JobRuns` gets a row for `crisis` within fifteen minutes of the new
+  instance serving, its counts `{"ended": 0}`; `/admin/dataskydd` lists
+  *Krisläge: övningar* and *Krisläge: skarpa larm* as *Ej beslutat*. Then,
+  in a test school with two accounts: start an **exercise** (never a real
+  alarm in production to try it), see the teacher's group on the second
+  account, mark it, see the live view move, end it and open the protocol. Look
+  in the log for `Alarm notices ... not sent`.
+  **Who may start an alarm** is the school's choice (`/admin/crisis`,
+  settings, for those who decide): by default every administrator profile that
+  writes Drift (full, rektor, schemaläggare, expedition); rektor and full may
+  always; a läsare, a teacher, a pupil and a guardian never. The database
+  holds the same rule (`app.crisis_may_start`), so a route that forgot it
+  would still be refused. **Whether the guardians are told** after a real
+  alarm is the school's choice and off by default: they get only that an
+  alarm happened and ended, never a word about a pupil.
+  **What an alarm is built from:** the school's day as the calendar holds it
+  at the moment it starts, one rule for everybody (src/crisis/crisis-calls.ts):
+  a lesson that is held (not cancelled, not moved) and going on answers for
+  the pupils on it (the roster reader the register and the notices use);
+  between two lessons of a pupil's day, not more than two hours apart, the
+  group goes with the lesson it is going to; a teacher who is away right now
+  is left out, so a lesson whose teacher is away and which nobody covers has a
+  call with nobody to answer for it, and the administration marks it. A
+  vikarie the board or a cover request placed has taken the absent teacher's
+  row already, and the replacement lesson of a schemabrytande aktivitet is a
+  lesson like any other. **Nobody is left out:** every active pupil of the
+  school is on the roll call. A pupil no lesson's list has (before the first
+  lesson, after the last, a gap longer than a break, a cancelled lesson, the
+  after-school club) stands on one more group of the alarm, *Ej i lektion just
+  nu* (`CrisisCalls.basis = 'NO_LESSON'`, one to an alarm, no teacher, no
+  span), which the administration answers for and marks like any group whose
+  teacher is away. The live view, the end and the protocol count against every
+  active pupil, so "everyone is marked" is said only when it is true. A pupil
+  absent before (the register, a report, a leave) is on it too, as absent
+  before. **A teacher who finds a pupil who is not on their list** says so
+  ("hittad hos mig"): the mark is stored on the pupil's own group, with the
+  teacher's group in `CrisisReports.foundInCallId`, so the pupil's own
+  teacher and the administration see that they are found and by whom, and the
+  teacher keeps the pupil in a list of their own. Only *found* can be said
+  that way (a pupil of someone else's list cannot be said to be missing by a
+  teacher who does not have them). The teacher finds the pupil by a search
+  (`POST /api/v1/crisis/mine/pupils, body {alarmId, q}`: name or class, two characters
+  at least, 25 results at most, never the teacher's own list, recorded in the
+  läslogg as a read of people); the school's pupils are not sent to every phone
+  and not kept on any, so the search needs a network (a teacher who has no
+  network says it to the administration). **A teacher with no group right now**
+  (a gap, a duty) can say it too, with the alarm alone to name (`alarmId` in
+  place of `callId`): a found mark on the pupil's own group with no group to
+  find them with, which the database allows a teacher who answers for no call of
+  the alarm (`app.crisis_has_no_call_in`) and no one else. **Taking it back:**
+  the teacher who said a pupil was found can take it back while it is still the
+  pupil's latest mark (a `RETRACTED` mark, `KL413` otherwise): the pupil is
+  unmarked again, and an older mark that arrives late does not bring it back.
+  **"Inte i huset"** (`AWAY`) is a third mark, the administration's alone, for a
+  pupil nobody has seen (a group of pupils with no lesson on a Saturday or at
+  night is most of the school): it is counted for itself in the live view, the
+  end dialog and the protocol and is never added to the found, and the group of
+  pupils with no lesson has no "alla finns" (a button that wrote *found* for
+  pupils nobody saw), only a bulk "ingen av de oprickade är i huset" behind a
+  confirmation that states the number. **Known limits:** a pupil on two lessons at once is on the one that sorts first;
+  teachers with no group right now answer for nothing and are only told that an
+  alarm is going (they cannot mark; a teacher with no group has no call to
+  find a pupil with); the 120 minutes that separate a break from a gap are
+  fixed; a pupil who becomes active after the alarm began is not on it (the
+  lists are the moment's). **Starting is one at a time in a school:** `start()`
+  takes a transaction-scoped advisory lock for the school first (and locks the
+  exercise's row `FOR UPDATE` before a real alarm ends it), so an exercise and a
+  real alarm that start in the same moment leave one open, and a real alarm that
+  meets the end of an exercise waits for it and goes on instead of failing.
+  **Notices** say that an alarm (or an exercise) is going and nothing else:
+  the push has no kind of alarm, no group, no place and no pupil, and the
+  inbox row has the alarm's id, kind, mode and time (a guardian's row, after a
+  real alarm, says only that it happened and ended, no kind). The alarm and its
+  end are delivered whatever a person chose and have no switch; a guardian's
+  notice can be switched off in their settings. There is no e-mail. **The push
+  has the alarm's priority:** high priority (FCM high, APNs 10), its own
+  Android channel `crisis` (importance max, sound, vibration, asks to pass
+  Do-not-disturb), iOS `time-sensitive` (not `critical`, which needs Apple's
+  entitlement), and a time to live of 10 minutes instead of 24 hours, so a
+  phone that was off does not get "Ett larm pågår" for an alarm that ended
+  hours ago. The app also asks the gateway whether the alarm is still going
+  before it shows a list from a push. Neither can wake a phone the person has
+  turned silent in the operating system; the live view's *lärare som inte
+  svarat* is what covers that. **iOS `time-sensitive`** needs the capability
+  *Time Sensitive Notifications* on the app's identifier: the teacher app's
+  `app.config.ts` asks for the entitlement
+  `com.apple.developer.usernotifications.time-sensitive`, which needs no new
+  agreement with Apple (unlike *critical* alerts, which the app does not use).
+  The first build after the change registers the capability on the App ID
+  through EAS and regenerates the provisioning profile; if a build stops on a
+  profile that lacks the entitlement, switch the capability on under
+  Certificates, Identifiers & Profiles › Identifiers › the app › Capabilities
+  and let EAS regenerate the profile (ad hoc profiles too, §15.9). Until a build
+  carries it iOS treats the push as an ordinary one.
+  **Offline:** the phone keeps the list it last read in its encrypted store
+  and its marks in a queue of their own, sends them when the network is back
+  (a mark carries its own id, so sending twice stores it once), and for an hour
+  after the end the database still takes them (they say `late`); after that the
+  phone is told the mark belongs to no alarm and drops it. Two phones of one
+  group that send at once take the pupils in one order (call, then pupil), so
+  they wait for each other; if the database still aborts one (a deadlock), the
+  answer is `409 WRITE_CONFLICT`, which the phone and the web keep and send
+  again. The web keeps its queue and the last list per signed-in person in the
+  browser and clears them at sign-out.
+  **Retention:** exercises (`CRISIS_DRILLS`) and real alarms
+  (`CRISIS_ALARMS`) are two kinds on `/admin/dataskydd`, undecided in every
+  school, and nothing is purged until the school records a period for each. An
+  alarm goes once it has ended and its end is before the cutoff, with every
+  call, teacher, pupil and mark on it; one that is still open never does.
+  **Rolling it back:** the migrations stay, and the API before the release
+  never reads the new tables. Prisma's client throws on a read that selects an
+  enum column from a row holding a value it does not know: a notice of the new
+  types makes the person's inbox read fail, an opt-out of one makes
+  `GET /notification-preferences` a 500, and a school's decision about the new
+  kinds breaks the dataskydd page. Before rolling back past the release, as
+  the owner, count and delete those rows (the school is asked to decide again
+  when the release returns; the alarms themselves stay in the tables). A
+  retention decision is append-only, so its guard is switched off for the one
+  statement and on again in the same transaction: `BEGIN; DELETE FROM
+  "Notifications" WHERE "type"::text IN ('CRISIS_ALARM', 'CRISIS_ENDED',
+  'CRISIS_GUARDIAN_AFTER'); DELETE FROM "NotificationOptOuts" WHERE
+  "type"::text IN ('CRISIS_ALARM', 'CRISIS_ENDED', 'CRISIS_GUARDIAN_AFTER');
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER
+  "RetentionDecisions_append_only"; DELETE FROM "RetentionDecisions" WHERE
+  "dataType"::text IN ('CRISIS_DRILLS', 'CRISIS_ALARMS'); ALTER TABLE
+  "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_append_only";
+  COMMIT;`. Count them first (`SELECT count(*) FROM "Notifications" WHERE
+  "type"::text LIKE 'CRISIS\_%'`); do not roll back while an alarm is going.
+  What a rollback changes: nobody can start or answer an alarm, the phones
+  show no list, and the alarms already made stay in the tables unread.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

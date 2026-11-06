@@ -2,7 +2,7 @@ import * as Crypto from 'expo-crypto';
 import { sortByDisplayName } from '../../utils/sorting';
 import * as SecureStore from 'expo-secure-store';
 import * as SQLite from 'expo-sqlite';
-import type { AttendanceStatus, CalendarLesson, PendingAttendanceRecord, Student } from '../../types';
+import type { AttendanceStatus, CalendarLesson, PendingAttendanceRecord, PendingCrisisMark, Student } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The database is encrypted at rest with SQLCipher (compiled in via the
@@ -23,6 +23,26 @@ const DB_KEY_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
 let _db: SQLite.SQLiteDatabase | null = null;
+let _ready: { promise: Promise<void>; resolve: () => void } | null = null;
+
+/**
+ * Resolves once initDatabase has opened and keyed the store. A tap on an alarm
+ * push can launch the app and be handled before the provider that opens the
+ * database has finished (services/crisisOffline.ts remembers the alarm's time
+ * from it), so a caller that must not lose the write waits here rather than
+ * fail on getDb.
+ */
+export function whenDatabaseReady(): Promise<void> {
+  if (_db) return Promise.resolve();
+  if (!_ready) {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    _ready = { promise, resolve };
+  }
+  return _ready.promise;
+}
 
 /**
  * Returns the raw 64-hex-char (256-bit) SQLCipher key, generating and
@@ -47,6 +67,24 @@ function getDb(): SQLite.SQLiteDatabase {
 }
 
 // ─── Schema ──────────────────────────────────────────────────────────────────
+
+/** The queue's table. One text, for the schema and for the rebuild of a table made before alarm marks existed. */
+const CRISIS_QUEUE_TABLE = `CREATE TABLE IF NOT EXISTS crisis_queue (
+    id          TEXT    PRIMARY KEY NOT NULL,
+    call_id     TEXT,
+    lesson_id   TEXT,
+    alarm_id    TEXT,
+    student_id  TEXT    NOT NULL,
+    state       TEXT    NOT NULL CHECK(state IN ('FOUND', 'MISSING', 'RETRACTED')),
+    at          TEXT    NOT NULL,
+    teacher_id  TEXT    NOT NULL,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    is_synced   INTEGER NOT NULL DEFAULT 0,
+    first_name  TEXT,
+    last_name   TEXT,
+    class_name  TEXT,
+    CHECK ((call_id IS NOT NULL) + (lesson_id IS NOT NULL) + (alarm_id IS NOT NULL) = 1)
+  );`;
 
 const SCHEMA_SQL = `
   PRAGMA journal_mode = WAL;
@@ -85,6 +123,34 @@ const SCHEMA_SQL = `
     retry_count              INTEGER NOT NULL DEFAULT 0,
     is_synced                INTEGER NOT NULL DEFAULT 0
   );
+
+  -- Krisläge (F2). The last list the gateway gave each teacher, kept as the
+  -- JSON it came as: the phone shows it again when the network is gone, and
+  -- one row per teacher so a shared tablet never shows a colleague's pupils.
+  CREATE TABLE IF NOT EXISTS crisis_lists (
+    teacher_id TEXT PRIMARY KEY NOT NULL,
+    as_of      TEXT NOT NULL,
+    payload    TEXT NOT NULL
+  );
+
+  -- The roll call's own offline queue: every tap is written here first and
+  -- sent when the network allows. A mark names its group by call, by lesson or,
+  -- for a teacher with no group who found a pupil, by alarm (the gateway
+  -- refuses a mark that names more than one, or none), so the same rule is held
+  -- here. first_name, last_name and class_name are set only on a mark of a pupil
+  -- picked in the search for "found with me", for the pending row, and emptied
+  -- when the gateway has the mark.
+  ${CRISIS_QUEUE_TABLE}
+  CREATE INDEX IF NOT EXISTS crisis_queue_unsent ON crisis_queue (teacher_id, is_synced, at);
+
+  -- When the phone was told that an alarm began and that it ended (the time a
+  -- push arrived), for the list it builds itself when no list ever came. One
+  -- row: the alarm is the school's, not a teacher's.
+  CREATE TABLE IF NOT EXISTS crisis_hint (
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    alarm_at TEXT,
+    ended_at TEXT
+  );
 `;
 
 export async function initDatabase(): Promise<void> {
@@ -104,6 +170,31 @@ export async function initDatabase(): Promise<void> {
     );
   }
   await _db.execAsync(SCHEMA_SQL);
+  await rebuildCrisisQueueIfOld(_db);
+  _ready?.resolve();
+}
+
+/**
+ * A phone that ran a build from before "found with me" with no group holds a crisis_queue that
+ * can name only a call or a lesson, and states only found or missing; CREATE TABLE IF NOT EXISTS
+ * leaves it as it is. SQLite cannot change a CHECK, so the table is made again beside it and the
+ * rows copied (the unsent marks may be the only copy: all of them, in one transaction), then
+ * the old one is dropped. Found by the column it lacks, so it runs once and a new table is never touched.
+ */
+async function rebuildCrisisQueueIfOld(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(crisis_queue)');
+  if (columns.length === 0 || columns.some((column) => column.name === 'alarm_id')) return;
+  await db.withTransactionAsync(async () => {
+    await db.execAsync(`
+      ALTER TABLE crisis_queue RENAME TO crisis_queue_before_alarm_marks;
+      DROP INDEX IF EXISTS crisis_queue_unsent;
+      ${CRISIS_QUEUE_TABLE}
+      INSERT INTO crisis_queue (id, call_id, lesson_id, student_id, state, at, teacher_id, retry_count, is_synced)
+        SELECT id, call_id, lesson_id, student_id, state, at, teacher_id, retry_count, is_synced FROM crisis_queue_before_alarm_marks;
+      DROP TABLE crisis_queue_before_alarm_marks;
+      CREATE INDEX IF NOT EXISTS crisis_queue_unsent ON crisis_queue (teacher_id, is_synced, at);
+    `);
+  });
 }
 
 // ─── Students ─────────────────────────────────────────────────────────────────
@@ -362,7 +453,257 @@ export async function clearCachedSchoolData(): Promise<void> {
   // lesson_students cascades from calendar_lessons, but say it anyway: the
   // cascade depends on PRAGMA foreign_keys, which a future connection could
   // open without.
+  //
+  // The alarm list (crisis_lists) and when the phone was told of an alarm
+  // (crisis_hint) are cache too: the list names every pupil of the teacher's
+  // groups, and the next person to sign in must not read it. crisis_queue is
+  // deliberately NOT touched, for the reason above: an unsent mark of a pupil
+  // found or missing may be the only copy, and it is owned and scoped by its
+  // teacher, so it is neither shown nor sent to whoever signs in next. (A mark of
+  // a pupil picked in the search for "found with me" carries that pupil's name
+  // until it is sent, and so waits with it: the price of a pending row that can
+  // say who it is about.)
   await db.execAsync(
-    'DELETE FROM lesson_students; DELETE FROM calendar_lessons; DELETE FROM students;',
+    'DELETE FROM lesson_students; DELETE FROM calendar_lessons; DELETE FROM students; DELETE FROM crisis_lists; DELETE FROM crisis_hint;',
   );
+}
+
+// ─── Krisläge: the list, the queue and the hint ────────────────────────────────
+
+/** The list the gateway last gave this teacher, as the JSON it came as; null when the phone holds none. */
+export async function getCrisisList(teacherId: string): Promise<{ asOf: string; payload: string } | null> {
+  const db = getDb();
+  const row = await db.getFirstAsync<{ as_of: string; payload: string }>(
+    'SELECT as_of, payload FROM crisis_lists WHERE teacher_id = ?',
+    [teacherId],
+  );
+  return row ? { asOf: row.as_of, payload: row.payload } : null;
+}
+
+/** Replaces this teacher's list. One row per teacher: a colleague's is a row of their own. */
+export async function saveCrisisList(teacherId: string, asOf: string, payload: string): Promise<void> {
+  const db = getDb();
+  await db.runAsync('INSERT OR REPLACE INTO crisis_lists (teacher_id, as_of, payload) VALUES (?, ?, ?)', [
+    teacherId,
+    asOf,
+    payload,
+  ]);
+}
+
+/**
+ * Writes taps to the queue, all or none. Each tap is a row of its own with the
+ * phone's id, so a tap written twice is one row and one mark at the gateway.
+ */
+export async function enqueueCrisisMarks(marks: readonly Omit<PendingCrisisMark, 'retryCount'>[]): Promise<void> {
+  if (marks.length === 0) return;
+  const db = getDb();
+  await db.withTransactionAsync(async () => {
+    for (const mark of marks) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO crisis_queue
+           (id, call_id, lesson_id, alarm_id, student_id, state, at, teacher_id, retry_count, is_synced, first_name, last_name, class_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+        [
+          mark.id,
+          mark.callId,
+          mark.lessonId,
+          mark.alarmId ?? null,
+          mark.studentId,
+          mark.state,
+          mark.at,
+          mark.teacherId,
+          mark.pupil?.firstName ?? null,
+          mark.pupil?.lastName ?? null,
+          mark.pupil?.className ?? null,
+        ],
+      );
+    }
+  });
+}
+
+/**
+ * The marks THIS teacher has not sent, oldest tap first so a pupil's marks
+ * replay in the order they were made (the gateway keeps the latest by time).
+ * Owner-scoped for the reason getPendingAttendanceRecords is: a tablet is
+ * shared, and the gateway stamps the sender from the bearer it is given.
+ */
+export async function getPendingCrisisMarks(teacherId: string): Promise<PendingCrisisMark[]> {
+  const db = getDb();
+  const rows = await db.getAllAsync<{
+    id: string;
+    call_id: string | null;
+    lesson_id: string | null;
+    alarm_id: string | null;
+    student_id: string;
+    state: 'FOUND' | 'MISSING' | 'RETRACTED';
+    at: string;
+    teacher_id: string;
+    retry_count: number;
+    first_name: string | null;
+    last_name: string | null;
+    class_name: string | null;
+  }>('SELECT * FROM crisis_queue WHERE is_synced = 0 AND teacher_id = ? ORDER BY at ASC, rowid ASC', [teacherId]);
+  return rows.map((row) => ({
+    id: row.id,
+    callId: row.call_id,
+    lessonId: row.lesson_id,
+    alarmId: row.alarm_id ?? null,
+    studentId: row.student_id,
+    state: row.state,
+    at: row.at,
+    teacherId: row.teacher_id,
+    retryCount: row.retry_count,
+    pupil:
+      (row.first_name ?? null) !== null || (row.last_name ?? null) !== null
+        ? { firstName: row.first_name ?? '', lastName: row.last_name ?? '', className: row.class_name ?? null }
+        : null,
+  }));
+}
+
+const placeholders = (ids: readonly string[]): string => ids.map(() => '?').join(', ');
+
+/**
+ * The marks the gateway has taken (stored, or already held): kept a while as sent, never sent again. The
+ * name and class of a pupil picked in the search go now: the gateway holds them, and the phone does not.
+ */
+export async function markCrisisMarksSynced(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = getDb();
+  await db.runAsync(
+    `UPDATE crisis_queue SET is_synced = 1, first_name = NULL, last_name = NULL, class_name = NULL WHERE id IN (${placeholders(ids)})`,
+    [...ids],
+  );
+}
+
+/** Marks the gateway answered with something that is not about the network, counted so a row's history is visible. */
+export async function incrementCrisisRetry(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = getDb();
+  await db.runAsync(`UPDATE crisis_queue SET retry_count = retry_count + 1 WHERE id IN (${placeholders(ids)})`, [...ids]);
+}
+
+/** Forgets marks the gateway will never take (the alarm ended, the group is not theirs). */
+export async function deleteCrisisMarks(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = getDb();
+  await db.runAsync(`DELETE FROM crisis_queue WHERE id IN (${placeholders(ids)})`, [...ids]);
+}
+
+/** Sent rows older than `beforeIso` go: they were kept only to be read as sent for a while. */
+export async function purgeSyncedCrisisMarks(beforeIso: string): Promise<void> {
+  const db = getDb();
+  await db.runAsync('DELETE FROM crisis_queue WHERE is_synced = 1 AND at < ?', [beforeIso]);
+}
+
+/** How many marks THIS teacher still has to send. */
+export async function countPendingCrisisMarks(teacherId: string): Promise<number> {
+  const db = getDb();
+  const row = await db.getFirstAsync<{ n: number | null }>(
+    'SELECT COUNT(*) AS n FROM crisis_queue WHERE is_synced = 0 AND teacher_id = ?',
+    [teacherId],
+  );
+  return row?.n ?? 0;
+}
+
+/** The push times the phone knows of: when an alarm began and when it ended. Null where it was never told. */
+export async function getCrisisHint(): Promise<{ alarmAt: string | null; endedAt: string | null } | null> {
+  const db = getDb();
+  const row = await db.getFirstAsync<{ alarm_at: string | null; ended_at: string | null }>(
+    'SELECT alarm_at, ended_at FROM crisis_hint WHERE id = 1',
+  );
+  return row ? { alarmAt: row.alarm_at, endedAt: row.ended_at } : null;
+}
+
+/** An alarm push arrived at `atIso`. The latest time wins: a push delivered late must not move it back. */
+export async function saveCrisisAlarmHint(atIso: string): Promise<void> {
+  const db = getDb();
+  await db.runAsync(
+    `INSERT INTO crisis_hint (id, alarm_at, ended_at) VALUES (1, ?, NULL)
+     ON CONFLICT(id) DO UPDATE SET alarm_at = CASE WHEN alarm_at IS NULL OR excluded.alarm_at > alarm_at THEN excluded.alarm_at ELSE alarm_at END`,
+    [atIso],
+  );
+}
+
+/**
+ * The gateway says no alarm is open, so a hint of an alarm push sent at or before `atIso` is not about
+ * one going: the time is forgotten. A push sent later is another alarm's, and stays.
+ */
+export async function clearCrisisAlarmHint(atIso: string): Promise<void> {
+  const db = getDb();
+  await db.runAsync('UPDATE crisis_hint SET alarm_at = NULL WHERE id = 1 AND alarm_at <= ?', [atIso]);
+}
+
+/** An end push arrived at `atIso`. */
+export async function saveCrisisEndedHint(atIso: string): Promise<void> {
+  const db = getDb();
+  await db.runAsync(
+    `INSERT INTO crisis_hint (id, alarm_at, ended_at) VALUES (1, NULL, ?)
+     ON CONFLICT(id) DO UPDATE SET ended_at = CASE WHEN ended_at IS NULL OR excluded.ended_at > ended_at THEN excluded.ended_at ELSE ended_at END`,
+    [atIso],
+  );
+}
+
+/**
+ * The lessons this phone holds around a moment, with their pupils, for the
+ * list it builds when no list ever came. Only the lessons the teacher has
+ * opened for attendance (services/roster.ts) or the gateway has broadcast are
+ * here. The window is the stored dates (both ISO forms start with the UTC
+ * day), a day either side of `dayIso`, and the caller applies the real times.
+ */
+export async function getCachedLessonsAround(dayIso: string): Promise<CalendarLesson[]> {
+  const db = getDb();
+  const day = new Date(dayIso).getTime();
+  const iso = (offset: number): string => new Date(day + offset * 86_400_000).toISOString().slice(0, 10);
+  const lessons = await db.getAllAsync<{
+    id: string;
+    start_time: string;
+    end_time: string;
+    subject_name: string;
+    room_name: string;
+  }>('SELECT * FROM calendar_lessons WHERE substr(start_time, 1, 10) BETWEEN ? AND ? ORDER BY start_time', [iso(-1), iso(1)]);
+  if (lessons.length === 0) return [];
+  const pupils = await db.getAllAsync<{ lesson_id: string; student_id: string }>(
+    `SELECT lesson_id, student_id FROM lesson_students WHERE lesson_id IN (${placeholders(lessons.map((l) => l.id))})`,
+    lessons.map((l) => l.id),
+  );
+  const byLesson = new Map<string, string[]>();
+  for (const pupil of pupils) byLesson.set(pupil.lesson_id, [...(byLesson.get(pupil.lesson_id) ?? []), pupil.student_id]);
+  return lessons.map((lesson) => ({
+    id: lesson.id,
+    startTime: lesson.start_time,
+    endTime: lesson.end_time,
+    subjectName: lesson.subject_name,
+    roomName: lesson.room_name,
+    studentIds: byLesson.get(lesson.id) ?? [],
+  }));
+}
+
+/**
+ * The pupils THIS teacher has marked absent (or excused) in the register of
+ * these lessons, by lesson: the latest mark of each pupil decides. The
+ * attendance queue keeps its rows after they are sent, so this is also what the
+ * teacher took at the start of the lesson the alarm interrupted.
+ */
+export async function getRegisterAbsentees(teacherId: string, lessonIds: readonly string[]): Promise<Map<string, Set<string>>> {
+  const result = new Map<string, Set<string>>();
+  if (lessonIds.length === 0) return result;
+  const db = getDb();
+  const rows = await db.getAllAsync<{ lesson_id: string; student_id: string; status: AttendanceStatus }>(
+    `SELECT lesson_id, student_id, status FROM attendance_queue
+      WHERE submitted_by_teacher_id = ? AND lesson_id IN (${placeholders(lessonIds)})
+      ORDER BY timestamp ASC, rowid ASC`,
+    [teacherId, ...lessonIds],
+  );
+  // Rows come oldest first, so the last one a pupil has in a lesson is the one that stands.
+  const latest = new Map<string, Map<string, AttendanceStatus>>();
+  for (const row of rows) {
+    const pupils = latest.get(row.lesson_id) ?? new Map<string, AttendanceStatus>();
+    pupils.set(row.student_id, row.status);
+    latest.set(row.lesson_id, pupils);
+  }
+  for (const [lessonId, pupils] of latest) {
+    const absent = [...pupils].filter(([, status]) => status === 'absent' || status === 'excused').map(([studentId]) => studentId);
+    if (absent.length > 0) result.set(lessonId, new Set(absent));
+  }
+  return result;
 }

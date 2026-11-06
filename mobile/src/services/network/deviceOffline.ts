@@ -17,3 +17,20 @@ export async function deviceOffline(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Whether the device is joined to no network at all: strictly less than
+ * deviceOffline. A network the phone has not validated is still a network the
+ * gateway may be reachable through, and a roll call of an alarm is sent over
+ * it at once rather than waiting for the phone to be sure (Krisläge,
+ * services/crisisQueue.ts): a failed attempt costs a moment, a withheld one
+ * could cost a pupil counted late. Unknown counts as joined.
+ */
+export async function noNetwork(): Promise<boolean> {
+  try {
+    const state = await Network.getNetworkStateAsync();
+    return state.isConnected === false;
+  } catch {
+    return false;
+  }
+}

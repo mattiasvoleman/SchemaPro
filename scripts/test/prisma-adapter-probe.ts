@@ -146,6 +146,7 @@ import { scheduleActivityChecks, sweepScheduleActivitySchool } from './probe-sch
 import { scheduleActivityPublicationChecks, sweepScheduleActivityPublicationSchools } from './probe-schemabrytande-publication';
 import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
 import { coverRequestsChecks, sweepCoverRequestsSchool } from './probe-cover-requests';
+import { krislageChecks, sweepKrislageSchool } from './probe-krislage';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
@@ -5934,6 +5935,7 @@ async function runChecks(
   await scheduleActivityPublicationChecks(owner, api, MARKER, check);
   await rastvaktChecks(owner, api, MARKER, check);
   await coverRequestsChecks(owner, api, MARKER, check);
+  await krislageChecks(owner, api, MARKER, check);
   await elevlistanChecks(owner, api, MARKER, check);
   await massvalChecks(owner, api, MARKER, check);
 }
@@ -6427,6 +6429,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepScheduleActivityPublicationSchools(owner, MARKER);
   await sweepRastvaktSchool(owner, MARKER);
   await sweepCoverRequestsSchool(owner, MARKER);
+  // Krisläge's school, likewise.
+  await sweepKrislageSchool(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
   await sweepElevlistanSchool(owner, MARKER);
   // Massåtgärder's school, likewise.

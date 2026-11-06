@@ -64,9 +64,10 @@ vi.mock("@/utils/supabase/client", () => ({
 
 // The signed-in person, whose own rows the inbox reads.
 // The words and links of the notices come from the same module (see the note there), so it is the real one but for the profile.
+const who = vi.hoisted(() => ({ role: "TEACHER" as string }));
 vi.mock("@/components/profile-context", async (importActual) => ({
   ...(await importActual<typeof import("@/components/profile-context")>()),
-  useProfile: () => ({ profile: { id: "me-1" }, school: null }),
+  useProfile: () => ({ profile: { id: "me-1", role: who.role }, school: null }),
 }));
 
 // next-intl's Link needs the intl provider; an anchor is what it renders.
@@ -162,6 +163,7 @@ const bellButton = () =>
   screen.getByRole("button", { name: /^title/, hidden: true });
 
 beforeEach(() => {
+  who.role = "TEACHER";
   router.push.mockClear();
   seq = 0;
   supabaseState.selectResults.length = 0;
@@ -493,6 +495,51 @@ describe("NotificationBell inbox", () => {
     await user.click(screen.getByText(`cover.COVER_REQUEST_CLOSED(when=${when}|count=1|reason=UNANSWERED|name=)`));
     expect(router.push).toHaveBeenLastCalledWith("/admin/cover");
     expect(router.push).toHaveBeenCalledTimes(4);
+  });
+
+  it("tells an alarm and its end by mode, kind and time, never a pupil, a group or a place, and takes a teacher to Larm and an administrator to Krisläge", async () => {
+    const startedAt = "2027-01-12T09:14:00.000Z";
+    const endedAt = "2027-01-12T09:31:00.000Z";
+    const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const rows = [
+      // The gateway's meta (src/crisis/crisis-notices.ts): ids, kind, mode and times, and nothing about a pupil or a group.
+      notif({ type: "CRISIS_ALARM", meta: { alarmId: "a-1", kind: "EVACUATION", mode: "LIVE", startedAt } }),
+      notif({ type: "CRISIS_ENDED", meta: { alarmId: "a-1", kind: "EVACUATION", mode: "LIVE", startedAt, endedAt } }),
+      notif({ type: "CRISIS_GUARDIAN_AFTER", meta: { kind: "LOCKDOWN", startedAt, endedAt } }),
+    ];
+    const alarmText = `crisis.CRISIS_ALARM(mode=LIVE|kind=EVACUATION|when=${clock(startedAt)}|end=)`;
+    const endedText = `crisis.CRISIS_ENDED(mode=LIVE|kind=EVACUATION|when=${clock(startedAt)}|end=${clock(endedAt)})`;
+    // A guardian's sentence is handed the times only: never the kind of alarm, though the notice's meta carries it.
+    const guardianText = `crisis.CRISIS_GUARDIAN_AFTER(when=${clock(startedAt)}|end=${clock(endedAt)})`;
+
+    for (const [role, page] of [
+      ["TEACHER", "/teacher/crisis"],
+      ["SCHOOL_ADMIN", "/admin/crisis"],
+    ] as const) {
+      who.role = role;
+      router.push.mockClear();
+      supabaseState.selectResults.push(ok(rows));
+      const user = userEvent.setup();
+      const { view } = renderBell();
+      await waitFor(() => expect(argsFor("select").length).toBeGreaterThan(0));
+      await user.click(bellButton());
+
+      expect(screen.getByText(alarmText)).toBeInTheDocument();
+      expect(screen.getByText(endedText)).toBeInTheDocument();
+      expect(screen.getByText(guardianText)).toBeInTheDocument();
+
+      await user.click(screen.getByText(alarmText));
+      expect(router.push).toHaveBeenLastCalledWith(page);
+      await user.click(bellButton());
+      await user.click(screen.getByText(endedText));
+      expect(router.push).toHaveBeenLastCalledWith(page);
+      // A guardian's is a notice with nothing to open: the menu stays and nobody is sent anywhere.
+      await user.click(bellButton());
+      await user.click(screen.getByText(guardianText));
+      expect(router.push).toHaveBeenCalledTimes(2);
+      view.unmount();
+      supabaseState.calls.length = 0;
+    }
   });
 
   it("leaves the menu open and goes nowhere on a notice that has no page of its own", async () => {

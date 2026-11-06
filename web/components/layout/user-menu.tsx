@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { LogOut } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
+import { clearCrisisStorage } from "@/lib/crisis-storage";
 import { useRouter } from "@/i18n/navigation";
 import type { UserRole } from "@/lib/types";
 import {
@@ -36,7 +37,10 @@ export function UserMenu({ userName, email, role }: UserMenuProps) {
 
   const signOut = async () => {
     const supabase = createClient();
-    await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    // The roll call's lists and unsent marks belong to the person who was signed in (lib/crisis-storage.ts);
+    // a sign-out that did not happen leaves them to the person who still is.
+    if (!error) clearCrisisStorage();
     router.replace("/login");
     router.refresh();
   };

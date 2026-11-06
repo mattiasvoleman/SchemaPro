@@ -125,6 +125,10 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/lessons": "DRIFT",
   "/admin/teacher-absence": "DRIFT",
   "/admin/cover": "DRIFT",
+  // Krisläge: starting, ending and marking an alarm are Drift's (and the school chooses which of
+  // the profiles that write Drift may start one); the settings on the page are a decision, which
+  // the page asks of the profile itself (lib/crisis-view.ts mayAct, the settings tab).
+  "/admin/crisis": "DRIFT",
   "/admin/cancellations": "DRIFT",
   // Schemabrytande aktivitet: an avbokning it owns, so Drift's as that is.
   "/admin/activities": "DRIFT",

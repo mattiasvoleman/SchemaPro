@@ -73,6 +73,11 @@ export interface CoverRequestsConfig {
   background: boolean;
 }
 
+export interface CrisisConfig {
+  /** The quarter-hourly look at alarms left open (CRISIS_BACKGROUND, default on). */
+  background: boolean;
+}
+
 export interface AbsenceWatchConfig {
   /** The nightly absence watch (ABSENCE_WATCH_BACKGROUND, default on). */
   background: boolean;
@@ -118,6 +123,7 @@ export interface Configuration {
   ss12000: Ss12000Config;
   gallring: GallringConfig;
   coverRequests: CoverRequestsConfig;
+  crisis: CrisisConfig;
   absenceWatch: AbsenceWatchConfig;
   reportingRate: ReportingRateConfig;
   candidates: CandidatesConfig;
@@ -185,6 +191,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     coverRequests: {
       background: env.COVER_REQUESTS_BACKGROUND !== 'off',
+    },
+    crisis: {
+      background: env.CRISIS_BACKGROUND !== 'off',
     },
     absenceWatch: {
       background: env.ABSENCE_WATCH_BACKGROUND !== 'off',

@@ -36,6 +36,8 @@ module.exports = {
     'src/theme/**/*.ts',
     'src/layout/**/*.ts',
     '!src/**/*.d.ts',
+    // Test doubles are not what the suite measures.
+    '!src/**/__testing__/**',
   ],
   coverageThreshold: {
     // Floors set just under what the suite measures: 65.87 statements, 66.24

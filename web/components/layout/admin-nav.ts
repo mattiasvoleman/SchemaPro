@@ -125,6 +125,11 @@ export const ADMIN_NAV: NavSection[] = [
   {
     labelKey: "operations",
     items: [
+      // Krisläge: the roll call of an utrymning or inrymning, first in the phase
+      // because it is the page nobody should have to look for. The attendance
+      // icon (Ledighetsansökningar), already in the shell: the same act of
+      // ticking pupils off, in a different hour.
+      { labelKey: "crisis", href: "/admin/crisis", icon: ClipboardCheck },
       { labelKey: "dayPlanner", href: "/admin/lessons", icon: CalendarClock },
       { labelKey: "teacherAbsence", href: "/admin/teacher-absence", icon: UserX },
       // Beside the absence register whose lessons it covers. The day

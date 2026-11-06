@@ -70,6 +70,19 @@ export class RealtimeService {
   }
 
   /**
+   * An alarm of Krisläge changed. Called AFTER the write has committed.
+   * `staff`: it started or ended, so the phones ask again; otherwise a mark
+   * came in and only the admins' live view does. Best effort.
+   */
+  notifyCrisisChanged(schoolId: string, alarmId: string, audience: 'staff' | 'admin'): void {
+    try {
+      this.gateway.emitCrisisUpdated(schoolId, { alarmId, changedAt: new Date().toISOString() }, audience);
+    } catch {
+      this.logger.warn(`Realtime crisis broadcast failed [school=${schoolId}]`);
+    }
+  }
+
+  /**
    * Loads the lesson's current state (inside the caller's RLS transaction)
    * and broadcasts it after the transaction work is done.
    */

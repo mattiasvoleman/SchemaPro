@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { loadClient } from "@/utils/supabase/load-client";
+import { clearCrisisStorage } from "@/lib/crisis-storage";
 
 /**
  * The one interactive control on the no-profile page. The page around it is
@@ -49,6 +50,8 @@ export function SignOutButton({
       return;
     }
 
+    // What the roll call kept for this login (lib/crisis-storage.ts) is not for the next one on this device.
+    clearCrisisStorage();
     router.replace(loginPath);
     router.refresh();
   };
