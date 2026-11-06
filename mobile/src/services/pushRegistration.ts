@@ -290,16 +290,18 @@ export async function startSignedIn(userId: string): Promise<PushOutcome> {
 
 /**
  * A tap on a notification the app has not yet acted on, as the notice type
- * its push carried (null when it carried none). expo-notifications keeps the
- * last response until it is cleared, so without clearing it every later
+ * its push carried (null when it carried none) and the notification itself,
+ * which holds when it arrived: an alarm's push is also the phone's record of
+ * when the alarm began (services/crisisOffline.ts). expo-notifications keeps
+ * the last response until it is cleared, so without clearing it every later
  * sign-in or role change in the same process would replay it.
  */
-export function takeLastTap(): { readonly type: string | null } | null {
+export function takeLastTap(): { readonly type: string | null; readonly notification?: unknown } | null {
   try {
     const response = Notifications.getLastNotificationResponse();
     if (!response) return null;
     Notifications.clearLastNotificationResponse();
-    return { type: tapTypeOf(response) };
+    return { type: tapTypeOf(response), notification: (response as { notification?: unknown }).notification };
   } catch {
     return null;
   }

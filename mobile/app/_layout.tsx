@@ -8,6 +8,7 @@ import { NetworkProvider } from '../src/context/NetworkContext';
 import { SyncProvider } from '../src/context/SyncContext';
 import { AppThemeProvider, useAppTheme } from '../src/theme/ThemeContext';
 import { homeOf, tapTarget, tapTypeOf } from '../src/services/auth/appGate';
+import { rememberCrisisPush } from '../src/services/crisisOffline';
 import {
   ensureAndroidChannel,
   forgetTap,
@@ -62,8 +63,13 @@ function AuthGate(): React.JSX.Element {
 // the language. A tap on a notification opens the role's Notiser tab — every
 // role has one — except a cover question (COVER_REQUESTED, and its end,
 // COVER_REQUEST_CLOSED), which opens a teacher's Vikarie tab where it is
-// answered (tapTarget); the tap is then forgotten, so no later sign-in
-// replays it.
+// answered, and an alarm (CRISIS_ALARM, CRISIS_ENDED), which opens the Larm
+// tab of a teacher or an administrator (tapTarget); the tap is then
+// forgotten, so no later sign-in replays it.
+//
+// An alarm push is also remembered for WHEN it arrived, whether it is tapped
+// or only shown (services/crisisOffline.ts): a phone with no coverage when the
+// alarm began builds its list from that moment.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PushBridge(): null {
@@ -89,12 +95,23 @@ function PushBridge(): null {
     const open = (type: string | null): void => router.push(tapTarget(role, type));
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       forgetTap();
+      void rememberCrisisPush((response as { notification?: unknown } | null)?.notification);
       open(tapTypeOf(response));
+    });
+    // A push that arrives while the app is open is not a tap, and is still the news.
+    const arrival = Notifications.addNotificationReceivedListener((notification) => {
+      void rememberCrisisPush(notification);
     });
     // A tap that launched the app arrived before this listener existed.
     const launching = takeLastTap();
-    if (launching) open(launching.type);
-    return () => subscription.remove();
+    if (launching) {
+      void rememberCrisisPush(launching.notification);
+      open(launching.type);
+    }
+    return () => {
+      subscription.remove();
+      arrival.remove();
+    };
   }, [userId, role, router]);
 
   return null;

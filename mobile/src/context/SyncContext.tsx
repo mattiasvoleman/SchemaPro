@@ -7,13 +7,17 @@ import React, {
   useState,
   type ReactNode,
 } from 'react';
+import { AppState } from 'react-native';
+import { flushCrisisQueue } from '../services/crisisQueue';
 import { initDatabase, upsertCalendarLesson } from '../services/database/localDatabase';
 import { AttendanceSyncWorker } from '../services/sync/attendance_sync_worker';
 import { WebSocketClient } from '../services/sync/websocket_client';
 import { useAuth } from './AuthContext';
+import { useNetwork } from './NetworkContext';
 import type {
   CalendarLesson,
   CalendarLessonUpdatedPayload,
+  CrisisUpdatedPayload,
   SyncProblem,
   SyncState,
   SyncStatus,
@@ -32,6 +36,12 @@ interface SyncContextValue {
   readonly setActiveLesson: (lesson: CalendarLesson | null, options?: { readonly fromCache?: boolean }) => void;
   /** Request an immediate sync cycle (e.g. after queuing new records). */
   readonly triggerManualSync: () => Promise<void>;
+  /**
+   * The last time the gateway said an alarm began or ended (Krisläge): the
+   * roll call and the administration's view read their lists again when it
+   * changes. It carries the alarm's id and a time and no names.
+   */
+  readonly crisisUpdate: CrisisUpdatedPayload | null;
   /** The lessons whose records the server refused for good (RECORDS_REFUSED). */
   readonly refusedLessons: () => Promise<
     Array<{ lessonId: string; subjectName: string | null; startTime: string | null; markedAt: string; count: number }>
@@ -43,6 +53,13 @@ interface SyncContextValue {
 const SyncContext = createContext<SyncContextValue | null>(null);
 
 /**
+ * How often the roll call's queue is sent while the app runs, on top of every
+ * tap, every return to the front and every return of the network. The screen
+ * has a shorter timer of its own while it is open (hooks/useCrisis.ts).
+ */
+const CRISIS_FLUSH_MS = 15_000;
+
+/**
  * Bootstraps the SQLite database, starts the background sync worker, and
  * opens the WebSocket connection once the teacher is authenticated.
  *
@@ -51,6 +68,8 @@ const SyncContext = createContext<SyncContextValue | null>(null);
  */
 export function SyncProvider({ children }: { readonly children: ReactNode }): React.JSX.Element {
   const { authState } = useAuth();
+  const { networkState } = useNetwork();
+  const online = networkState.isConnected && networkState.isInternetReachable;
 
   const [syncState, setSyncState] = useState<SyncState>({
     status: 'offline',
@@ -65,6 +84,7 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
     [],
   );
   const [isDbReady, setIsDbReady] = useState(false);
+  const [crisisUpdate, setCrisisUpdate] = useState<CrisisUpdatedPayload | null>(null);
 
   const workerRef = useRef<AttendanceSyncWorker | null>(null);
   const wsRef = useRef<WebSocketClient | null>(null);
@@ -110,6 +130,7 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
           status: connected ? 'connected' : 'offline',
         }));
       },
+      (payload: CrisisUpdatedPayload) => setCrisisUpdate(payload),
     );
 
     workerRef.current = worker;
@@ -125,6 +146,27 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
       wsRef.current = null;
     };
   }, [isDbReady, authState.isAuthenticated]);
+
+  // ── The roll call's queue (Krisläge) ─────────────────────────────────────
+  // Sent when the app starts, when it returns to the front, when the network
+  // returns and on a timer; every tap sends it too (services/crisisQueue.ts).
+  // The queue is the signed-in teacher's own, which flushCrisisQueue checks.
+  useEffect(() => {
+    if (!isDbReady || !authState.isAuthenticated) return;
+    void flushCrisisQueue();
+    const timer = setInterval(() => void flushCrisisQueue(), CRISIS_FLUSH_MS);
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void flushCrisisQueue();
+    });
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, [isDbReady, authState.isAuthenticated]);
+
+  useEffect(() => {
+    if (isDbReady && authState.isAuthenticated && online) void flushCrisisQueue();
+  }, [online, isDbReady, authState.isAuthenticated]);
 
   const triggerManualSync = useCallback(async (): Promise<void> => {
     if (workerRef.current) {
@@ -151,6 +193,7 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
         activeLessonFromCache: active?.fromCache ?? false,
         setActiveLesson,
         triggerManualSync,
+        crisisUpdate,
         refusedLessons,
         discardRefused,
       }}

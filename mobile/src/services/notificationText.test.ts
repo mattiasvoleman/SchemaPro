@@ -311,6 +311,36 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Frånvarosammanställning 5 okt – 1 nov: 2 av dina barn har kommit under en gräns för frånvaro igen. Se mer i Rastra Schema på webben.',
     'Absence summary 5 Oct – 1 Nov: 2 of your children are under an absence limit again. See more in Rastra timetable on the web.',
   ],
+  [
+    'CRISIS_ALARM, a real one: that it began, not what or where',
+    row('CRISIS_ALARM', { alarmId: 'a-1', kind: 'EVACUATION', mode: 'LIVE', startedAt: at }),
+    'Ett larm startade tis 13 okt 08:00. Öppna fliken Larm och räkna din grupp.',
+    'An alarm started Tue 13 Oct 08:00. Open the Alarm tab and count your group.',
+  ],
+  [
+    'CRISIS_ALARM, a drill, which says so',
+    row('CRISIS_ALARM', { alarmId: 'a-1', kind: 'LOCKDOWN', mode: 'DRILL', startedAt: at }),
+    'En övning startade tis 13 okt 08:00. Öppna fliken Larm och räkna din grupp.',
+    'A drill started Tue 13 Oct 08:00. Open the Alarm tab and count your group.',
+  ],
+  [
+    'CRISIS_ENDED',
+    row('CRISIS_ENDED', { alarmId: 'a-1', kind: 'EVACUATION', mode: 'LIVE', startedAt: at, endedAt: '2026-10-13T08:20:00.000Z' }),
+    'Larmet som startade tis 13 okt 08:00 är avslutat.',
+    'The alarm that started Tue 13 Oct 08:00 has ended.',
+  ],
+  [
+    'CRISIS_ENDED, a drill',
+    row('CRISIS_ENDED', { alarmId: 'a-1', kind: 'EVACUATION', mode: 'DRILL', startedAt: at, endedAt: '2026-10-13T08:20:00.000Z' }),
+    'Övningen som startade tis 13 okt 08:00 är avslutad.',
+    'The drill that started Tue 13 Oct 08:00 has ended.',
+  ],
+  [
+    'CRISIS_GUARDIAN_AFTER, to a guardian: that the school had an alarm and it is over',
+    row('CRISIS_GUARDIAN_AFTER', { kind: 'EVACUATION', startedAt: at, endedAt: '2026-10-13T08:20:00.000Z' }),
+    'Skolan har haft ett larm tis 13 okt 08:00. Det är avslutat.',
+    'The school had an alarm Tue 13 Oct 08:00. It has ended.',
+  ],
 ];
 
 describe('notificationText', () => {
@@ -319,9 +349,41 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all nineteen types the gateway writes', () => {
+  it('covers all twenty-two types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(19);
+    expect(types.size).toBe(22);
+  });
+
+  it('words an alarm notice written without its time by the time it was written', () => {
+    // row() writes createdAt 07:00.
+    expect(notificationText(row('CRISIS_ALARM', null), translatorFor('sv'), 'sv')).toBe(
+      'Ett larm startade tis 13 okt 07:00. Öppna fliken Larm och räkna din grupp.',
+    );
+    expect(notificationText(row('CRISIS_GUARDIAN_AFTER', {}), translatorFor('en'), 'en')).toBe(
+      'The school had an alarm Tue 13 Oct 07:00. It has ended.',
+    );
+  });
+
+  it('never names a pupil, a group, a room, a teacher or even the kind of alarm, whatever the meta carries', () => {
+    for (const type of ['CRISIS_ALARM', 'CRISIS_ENDED', 'CRISIS_GUARDIAN_AFTER'] as const) {
+      for (const language of ['sv', 'en'] as const) {
+        const text = notificationText(
+          row(type, {
+            kind: 'LOCKDOWN',
+            mode: 'LIVE',
+            startedAt: at,
+            endedAt: at,
+            studentName: 'Alva Elev',
+            groupName: '7A',
+            roomName: 'B204',
+            teacherName: 'Anna Lind',
+          }),
+          translatorFor(language),
+          language,
+        );
+        for (const secret of ['Alva', '7A', 'B204', 'Anna', 'Inrymning', 'Lockdown', 'LOCKDOWN', 'EVACUATION']) expect(text).not.toContain(secret);
+      }
+    }
   });
 
   it('words a cover notice from a gateway that said no count, no lessons and no name', () => {

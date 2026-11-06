@@ -51,6 +51,29 @@ export interface PendingAttendanceRecord {
   retryCount: number;
 }
 
+// ─── Krisläge ─────────────────────────────────────────────────────────────────
+
+export type CrisisMarkState = 'FOUND' | 'MISSING';
+
+/**
+ * A mark in the local Krisläge queue that has not yet been sent. It names its
+ * group by the call (a list the gateway gave the phone) or by the lesson (a
+ * list the phone built from its own cache), never both: the gateway refuses a
+ * mark that names both or neither.
+ */
+export interface PendingCrisisMark {
+  /** The phone's own id: sending it twice stores it once. */
+  readonly id: string;
+  readonly callId: string | null;
+  readonly lessonId: string | null;
+  readonly studentId: string;
+  readonly state: CrisisMarkState;
+  /** When the teacher tapped, by the phone's clock. */
+  readonly at: string; // ISO 8601
+  readonly teacherId: string;
+  readonly retryCount: number;
+}
+
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 export interface AuthState {
@@ -87,6 +110,12 @@ export interface NetworkState {
 export interface CalendarLessonUpdatedPayload {
   readonly lessonId: string;
   readonly updatedLesson: CalendarLesson;
+}
+
+/** What the gateway says over the socket when an alarm starts or ends (it carries no names). */
+export interface CrisisUpdatedPayload {
+  readonly alarmId: string;
+  readonly changedAt: string; // ISO 8601
 }
 
 // ─── Guardian / student experience ──────────────────────────────────────────
@@ -162,7 +191,10 @@ export type NotificationType =
   | 'COVER_REQUESTED'
   | 'COVER_REQUEST_ACCEPTED'
   | 'COVER_REQUEST_CLOSED'
-  | 'ABSENCE_WATCH_DIGEST';
+  | 'ABSENCE_WATCH_DIGEST'
+  | 'CRISIS_ALARM'
+  | 'CRISIS_ENDED'
+  | 'CRISIS_GUARDIAN_AFTER';
 
 export interface NotificationRow {
   readonly id: string;

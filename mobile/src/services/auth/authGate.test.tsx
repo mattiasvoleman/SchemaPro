@@ -20,6 +20,7 @@ import TestRenderer, { act } from 'react-test-renderer';
 import * as Notifications from 'expo-notifications';
 import RootLayout from '../../../app/_layout';
 import { forgetTap, startSignedIn, takeLastTap } from '../pushRegistration';
+import { rememberCrisisPush } from '../crisisOffline';
 
 type AuthShape = { authState: { isAuthenticated: boolean; teacherId: string | null; role: string | null }; isLoading: boolean };
 
@@ -40,12 +41,15 @@ jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
 jest.mock('expo-notifications', () => ({
   setNotificationHandler: jest.fn(),
   addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
 }));
+// What the phone remembers of an alarm push (its database is not under test here).
+jest.mock('../crisisOffline', () => ({ rememberCrisisPush: jest.fn(async () => undefined) }));
 jest.mock('../pushRegistration', () => ({
   ensureAndroidChannel: jest.fn(async () => undefined),
   forgetTap: jest.fn(),
   startSignedIn: jest.fn(async () => undefined),
-  takeLastTap: jest.fn((): { type: string | null } | null => null),
+  takeLastTap: jest.fn((): { type: string | null; notification?: unknown } | null => null),
 }));
 jest.mock('../../context/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -277,6 +281,63 @@ describe('AuthGate (app/_layout.tsx)', () => {
         // The administrator is not asked: a stray question push still lands on the inbox.
         await act(async () => tapListener('COVER_REQUESTED')());
         expect(mockPush).toHaveBeenLastCalledWith('/(app)/notifications');
+      });
+    });
+
+    describe('on an alarm (Krisläge)', () => {
+      it.each([
+        ['TEACHER', 'CRISIS_ALARM'],
+        ['TEACHER', 'CRISIS_ENDED'],
+        ['SCHOOL_ADMIN', 'CRISIS_ALARM'],
+        ['SCHOOL_ADMIN', 'CRISIS_ENDED'],
+      ])('opens the Larm tab of a %s on a %s push', async (role, type) => {
+        await mount(signedIn(role), ['(app)', 'schedule']);
+        await act(async () => tapListener(type)());
+        expect(mockPush).toHaveBeenCalledTimes(1);
+        expect(mockPush).toHaveBeenCalledWith('/(app)/crisis');
+        expect(forgetTap).toHaveBeenCalledTimes(1);
+      });
+
+      it('opens the Larm tab of an alarm push that launched the app, and remembers when it arrived', async () => {
+        const notification = { date: 1_800_000_000, request: { content: { data: { notificationId: 'n-9', type: 'CRISIS_ALARM' } } } };
+        jest.mocked(takeLastTap).mockReturnValueOnce({ type: 'CRISIS_ALARM', notification });
+        await mount(signedIn('TEACHER'), ['(app)', 'schedule']);
+        expect(mockPush).toHaveBeenCalledTimes(1);
+        expect(mockPush).toHaveBeenCalledWith('/(app)/crisis');
+        expect(rememberCrisisPush).toHaveBeenCalledWith(notification);
+      });
+
+      it('remembers the push of a tap, and of one that arrives while the app is open, without opening anything for the latter', async () => {
+        await mount(signedIn('TEACHER'), ['(app)', 'schedule']);
+        const arrived = jest.mocked(Notifications.addNotificationReceivedListener).mock.calls.at(-1)?.[0];
+        if (!arrived) throw new Error('no listener for arriving pushes was registered');
+        const notification = { date: 1_800_000_000, request: { content: { data: { type: 'CRISIS_ALARM' } } } };
+        await act(async () => arrived(notification as never));
+        expect(rememberCrisisPush).toHaveBeenCalledWith(notification);
+        expect(mockPush).not.toHaveBeenCalled();
+
+        await act(async () => tapListener('CRISIS_ALARM')());
+        expect(rememberCrisisPush).toHaveBeenCalledTimes(2);
+      });
+
+      it('leaves a student and a guardian in their own shell, and a guardian\'s notice an inbox row', async () => {
+        await mount(signedIn('STUDENT'), ['(student)', 'schedule']);
+        await act(async () => tapListener('CRISIS_ALARM')());
+        expect(mockPush).toHaveBeenLastCalledWith('/(student)/notifications');
+        await rerender(signedIn('GUARDIAN'), ['(guardian)', 'children']);
+        await act(async () => tapListener('CRISIS_GUARDIAN_AFTER')());
+        expect(mockPush).toHaveBeenLastCalledWith('/(guardian)/notifications');
+        await rerender(signedIn('TEACHER'), ['(app)', 'schedule']);
+        await act(async () => tapListener('CRISIS_GUARDIAN_AFTER')());
+        expect(mockPush).toHaveBeenLastCalledWith('/(app)/notifications');
+      });
+
+      it('stops listening for arriving pushes when the screen goes', async () => {
+        await mount(signedIn('TEACHER'), ['(app)', 'schedule']);
+        const arrival = jest.mocked(Notifications.addNotificationReceivedListener).mock.results.at(-1)?.value as { remove: jest.Mock };
+        await act(async () => tree?.unmount());
+        tree = null;
+        expect(arrival.remove).toHaveBeenCalledTimes(1);
       });
     });
   });

@@ -393,7 +393,7 @@ describe('a sign-out the app did not start never leaves the device registered ei
 describe('a notification tap', () => {
   it('that launched the app is acted on once, never replayed at a later sign-in', () => {
     mockLastResponse = { notification: { request: { identifier: 'n-1' } } };
-    expect(takeLastTap()).toEqual({ type: null });
+    expect(takeLastTap()).toEqual({ type: null, notification: { request: { identifier: 'n-1' } } });
     expect(takeLastTap()).toBeNull();
   });
 
@@ -401,8 +401,14 @@ describe('a notification tap', () => {
     mockLastResponse = {
       notification: { request: { identifier: 'n-3', content: { data: { notificationId: 'n-3', type: 'COVER_REQUESTED' } } } },
     };
-    expect(takeLastTap()).toEqual({ type: 'COVER_REQUESTED' });
+    expect(takeLastTap()).toMatchObject({ type: 'COVER_REQUESTED' });
     expect(takeLastTap()).toBeNull();
+  });
+
+  it('that launched the app carries the notification itself, which says when an alarm push arrived', () => {
+    const notification = { date: 1_800_000_000, request: { identifier: 'n-4', content: { data: { type: 'CRISIS_ALARM' } } } };
+    mockLastResponse = { notification };
+    expect(takeLastTap()).toEqual({ type: 'CRISIS_ALARM', notification });
   });
 
   it('the running app acted on is forgotten', () => {
