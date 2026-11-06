@@ -1262,16 +1262,27 @@ Walk the full product loop once, in order:
   after it switches to keeping (the marks of the days before may be gone, and counted
   again they would read as days nobody reported). The reminders' ledger is cleared by
   the reminding itself after 60 days.
-  **The roster:** a lesson with no active pupil on its roster can never have a register
+  **The roster:** a lesson that no pupil can be marked on can never have a register
   saved, so it is neither held, open nor reported (the class's pupils, the groups joined
   to it and their members, and the pupils the lesson names: the register's own three
   sources, read in SQL), unless a register was already saved on it, which stays a register
-  whatever the roster has become. The roster is read as it is now, so the unreported
-  lessons of a class whose pupils have all left drop out of the 90 days that are counted
-  again the next night.
+  whatever the roster has become. The night counts the last 90 days again, so the roster
+  must not move a day that was counted: a class is read both as it is (its active pupils)
+  and as it was on the lesson's day (`StudentEnrollments`, the class history, the segment
+  `[validFrom, validTo)` that holds the date), and a lesson is unreportable only when
+  nobody sat in the class then and nobody can be marked now. The läsårsaktivering moves
+  every pupil to next year's class and empties last year's, but the history keeps them in
+  it to the year's end, so last year's share stands still (the adapter probe (rj)
+  activates a year through the service and counts the same 90 days again; the
+  owner checks plant the same in section 346o). Members of a teaching group and named
+  pupils have no dates and count as recorded, active or not (what the register accepts
+  for saving, `RECORDED` in `lesson-roster.ts`).
   **Known limits:** the roster does not subtract the pupils a replacing group (ersättande
   grupper) takes off a lesson, so a lesson where every pupil is taken off still counts as
-  held; a register saved more than 90 days after its lesson does not move the stored day; the e-mail and the push go to the delivery's in-memory queue after the
+  held; a year activated before the old year ends closes the class history that day, so
+  the unregistered lessons of the weeks that are left drop out of the days; a teacher who
+  is deactivated loses the stored days of the last 90 days at the next night while older
+  days stay; a register saved more than 90 days after its lesson does not move the stored day; the e-mail and the push go to the delivery's in-memory queue after the
   commit, as every other notice does, so a process that stops between the commit and the
   send loses them for that night, and the ledger keeps the reminder from being written
   again.

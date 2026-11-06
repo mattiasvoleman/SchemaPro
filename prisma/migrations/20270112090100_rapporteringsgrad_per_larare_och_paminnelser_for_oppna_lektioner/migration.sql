@@ -33,23 +33,35 @@
 --      (TeacherAbsences) som överlappar lektionen tar den ur räkningen för
 --      den läraren. En lektion som ingen tagit beslut om ligger kvar på den
 --      frånvarande, som inte kan ha tagit närvaro;
---   5. lektionen har minst en aktiv elev på sin lista. Ett register kan bara
---      sparas för en elev på listan, så en lektion utan elever kan aldrig
---      bli rapporterad, och läraren kan inte göra något åt det: den räknas
---      varken som hållen, som öppen eller som rapporterad. Listan är samma tre
---      källor som registrets egen (calendar/lesson-roster.ts, de aktiva
---      eleverna): hemklassens elever i lektionens grupp och i grupperna som
---      är lagda på den, medlemmarna i de grupperna, och elever lektionen
---      namnger. Ett register som redan är sparat är alltid ett register, vad
---      listan än har blivit sedan (en klass vars elever alla slutat): den
---      lektionen är hållen och rapporterad, så att en dag som en gång räknats
---      inte försvinner av att eleverna tas bort.
---      Listan läses som den är nu, som registrets: en lektion utan register
---      i en klass vars elever alla slutat faller ur de 90 dagar som räknas om
---      nästa natt. Ersättande grupper (SvA7 tar eleverna ur svenskan) räknas
---      inte av här: en lektion där varje elev tas bort av en sådan grupp
---      räknas ändå som hållen. Det ger sällan noll, och regeln är för lång att
---      skriva två gånger.
+--   5. lektionen har någon elev på sin lista, eller har redan ett sparat
+--      register. Ett register kan bara sparas för en elev på listan, så en
+--      lektion utan elever kan aldrig bli rapporterad, och läraren kan inte göra
+--      något åt det: den räknas varken som hållen, som öppen eller som
+--      rapporterad. Listan är registrets egen (calendar/lesson-roster.ts), men
+--      läst så att en dag som en gång räknats inte ändras av att tiden går:
+--
+--        * hemklassens elever i lektionens klass och i grupperna lagda på den
+--          räknas både som de är nu (aktiva elever i Users.studentGroupId, de
+--          som läraren kan ta närvaro på nu) och som de var på lektionens dag
+--          (StudentEnrollments, klasshistoriken: ett segment [validFrom,
+--          validTo) som täcker datumet). Läsårsaktiveringen flyttar varje elev
+--          till nästa års klass och tömmer förra årets, men historiken har kvar
+--          vilka som satt där till årets slut; en lektion är orapporterbar bara
+--          om ingen satt i klassen då och ingen kan markeras nu;
+--        * medlemmarna i en undervisningsgrupp (StudentGroupMembers) och elever
+--          lektionen namnger (CalendarLessonStudents) saknar datum, så de räknas
+--          som de är registrerade, vad eleven är nu (aktiv eller inte, men en
+--          elev): det registret tar emot för sparande (RECORDED), och en elev
+--          som slutat sedan lektionen hölls ändrar inte dess dag.
+--
+--      Ett register som redan är sparat är alltid ett register, vad listan än
+--      har blivit sedan: lektionen är hållen och rapporterad.
+--      Ersättande grupper (SvA7 tar eleverna ur svenskan) räknas inte av här: en
+--      lektion där varje elev tas bort av en sådan grupp räknas ändå som hållen.
+--      Det ger sällan noll, och regeln är för lång att skriva två gånger. En
+--      aktivering före det gamla årets slut stänger klassens segment den dagen,
+--      så en klass tom därefter tar sina sista veckors oregistrerade lektioner
+--      med sig ur dagarna.
 --
 -- Lektionen är rapporterad när dess register är sparat: minst en markering
 -- som inte är UNKNOWN. Det är registrets enda skrivare
@@ -325,11 +337,16 @@ CREATE TRIGGER "ReportingSettings_stamp"
 -- preamble; this is the one place the rule is written. Not SECURITY DEFINER and
 -- with no SET, so it can be inlined, which the planner does when p_now is no
 -- volatile call. The teacher's list passes now() and is inlined, so that its
--- filter on the teacher reaches the lessons' scan; the nightly callers pass
--- clock_timestamp() and get it as a function scan, run once for the whole
--- school, which is what they ask for. Every name is schema-qualified because
--- an inlined body runs under its caller's search path. The owner's alone:
--- nobody else may ask it for another person's rows.
+-- filter on the teacher is a condition of the join with the teacher rows; the
+-- nightly callers pass clock_timestamp() and get it as a function scan, run
+-- once for the whole school, which is what they ask for. The register check
+-- names the teacher row's lesson (t."calendarLessonId", the same id as
+-- cl."id" by the join), and so does the roster test, which is OR-ed with it:
+-- a condition that touches only the lesson is run for every lesson the scan
+-- reads, a school's month, before the join with the teacher cuts them to the
+-- teacher's few; one that touches the teacher row is run after it. Every name
+-- is schema-qualified because an inlined body runs under its caller's search
+-- path. The owner's alone: nobody else may ask it for another person's rows.
 CREATE FUNCTION app.reporting_lessons(p_school uuid, p_from date, p_to date, p_now timestamptz)
 RETURNS TABLE (lesson_id uuid, teacher_id uuid, day date,
                starts_at timestamptz, ends_at timestamptz, reported boolean)
@@ -343,7 +360,7 @@ LANGUAGE sql STABLE AS $$
      AND u."role" = 'TEACHER' AND u."isActive"
    CROSS JOIN LATERAL (
            SELECT EXISTS (SELECT 1 FROM "public"."AttendanceRecords" a
-                           WHERE a."calendarLessonId" = cl."id" AND a."status" <> 'UNKNOWN') AS "saved") r
+                           WHERE a."calendarLessonId" = t."calendarLessonId" AND a."status" <> 'UNKNOWN') AS "saved") r
    WHERE cl."schoolId" = p_school
      AND cl."date" BETWEEN p_from AND p_to
      AND cl."status" IN ('SCHEDULED', 'COMPLETED')
@@ -352,19 +369,26 @@ LANGUAGE sql STABLE AS $$
            r."saved"
         OR EXISTS (SELECT 1 FROM "public"."Users" p
                     WHERE p."studentGroupId" = cl."studentGroupId" AND p."role" = 'STUDENT' AND p."isActive")
+        OR EXISTS (SELECT 1 FROM "public"."StudentEnrollments" e
+                    WHERE e."studentGroupId" = cl."studentGroupId"
+                      AND e."validFrom" <= cl."date" AND (e."validTo" IS NULL OR cl."date" < e."validTo"))
         OR EXISTS (SELECT 1 FROM "public"."StudentGroupMembers" m
                     JOIN "public"."Users" p ON p."id" = m."studentId"
-                   WHERE m."studentGroupId" = cl."studentGroupId" AND p."role" = 'STUDENT' AND p."isActive")
+                   WHERE m."studentGroupId" = cl."studentGroupId" AND p."role" = 'STUDENT')
         OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
                     JOIN "public"."Users" p ON p."studentGroupId" = x."studentGroupId"
                    WHERE x."calendarLessonId" = cl."id" AND p."role" = 'STUDENT' AND p."isActive")
         OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
+                    JOIN "public"."StudentEnrollments" e ON e."studentGroupId" = x."studentGroupId"
+                   WHERE x."calendarLessonId" = cl."id"
+                     AND e."validFrom" <= cl."date" AND (e."validTo" IS NULL OR cl."date" < e."validTo"))
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
                     JOIN "public"."StudentGroupMembers" m ON m."studentGroupId" = x."studentGroupId"
                     JOIN "public"."Users" p ON p."id" = m."studentId"
-                   WHERE x."calendarLessonId" = cl."id" AND p."role" = 'STUDENT' AND p."isActive")
+                   WHERE x."calendarLessonId" = cl."id" AND p."role" = 'STUDENT')
         OR EXISTS (SELECT 1 FROM "public"."CalendarLessonStudents" n
                     JOIN "public"."Users" p ON p."id" = n."studentId"
-                   WHERE n."calendarLessonId" = cl."id" AND p."role" = 'STUDENT' AND p."isActive")
+                   WHERE n."calendarLessonId" = cl."id" AND p."role" = 'STUDENT')
          )
      AND NOT EXISTS (
            SELECT 1 FROM "public"."TeacherAbsences" ab
@@ -493,10 +517,14 @@ $$;
 -- not fold back, and hands them to the definition as values. The helpers are
 -- SECURITY DEFINER functions that look the caller up, so left in a filter they
 -- are called for every lesson the planner reads (a school's lessons of a month,
--- not the teacher's own), and a first version took 26 ms where this takes 10.
+-- not the teacher's own). The teacher is a scalar subquery of the CTE, which the
+-- planner takes as a parameter and can match against the teacher rows' index.
 -- The definition runs inlined, which it only does for a stable p_now (now(),
--- never clock_timestamp()): the planner then starts from the teacher's lessons.
--- scripts/bench/reporting-rate.sql times it.
+-- never clock_timestamp()), and its register and roster conditions are written
+-- to run after the join with the teacher (see the definition). On a school of
+-- 60 classes, 120 teachers and 80 000 lessons the list takes 7-12 ms for 30
+-- days and 10 ms for 90 (24 and 58 ms with the teacher a plain CTE column, 70
+-- and 220 ms in the first version). scripts/bench/reporting-rate.sql times it.
 CREATE FUNCTION app.reporting_open_lessons(p_days integer DEFAULT 30)
 RETURNS TABLE (lesson_id uuid, day date, starts_at timestamptz, ends_at timestamptz,
                subject_name text, group_name text, overdue boolean)
@@ -513,7 +541,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
     JOIN "CalendarLessons" cl ON cl."id" = l.lesson_id
     JOIN "Subjects" sj ON sj."id" = cl."subjectId"
     JOIN "StudentGroups" g ON g."id" = cl."studentGroupId"
-   WHERE l.teacher_id = me.teacher
+   WHERE l.teacher_id = (SELECT me2.teacher FROM me me2)
      AND NOT l.reported
    ORDER BY l.starts_at DESC, l.lesson_id
 $$;

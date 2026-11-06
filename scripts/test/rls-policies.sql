@@ -41901,13 +41901,12 @@ DECLARE
   t1 uuid := pg_temp.rg_id('rg-t1@example.invalid');
   d date := '2026-09-22';
 BEGIN
-  -- Nobody on the roster: a class with no pupil, a class whose only pupil has left, a teaching group whose
-  -- members are a pupil who has left and a teacher, a lesson that names a pupil who has left and one that
-  -- names a teacher, and a lesson whose joined groups are two of those.
+  -- Nobody on the roster: a class with no pupil, a class whose only pupil was deactivated before it held a day
+  -- (no segment of the class history, and not active), a teaching group whose only member is a teacher, a
+  -- lesson that names a teacher, and a lesson whose joined groups are two of those.
   PERFORM pg_temp.rg_lesson(d, 8, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B');
   PERFORM pg_temp.rg_lesson(d, 9, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7C');
   PERFORM pg_temp.rg_lesson(d, 10, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7E');
-  PERFORM pg_temp.rg_lesson(d, 11, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-p3@example.invalid']);
   PERFORM pg_temp.rg_lesson(d, 12, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-t2@example.invalid']);
   PERFORM pg_temp.rg_lesson(d, 7, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7C', 'RG7E']);        -- groups joined to it that have nobody to list
   PERFORM pg_temp.rg_expect('346r nobody on the roster', pg_temp.rg_compute('2026-09-30'),
@@ -41919,19 +41918,24 @@ BEGIN
   PERFORM pg_temp.rg_lesson(d, 15, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7A']);                -- the pupils of a class joined to it
   PERFORM pg_temp.rg_lesson(d, 16, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7D']);                -- the members of a group joined to it
   PERFORM pg_temp.rg_lesson(d, 17, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-p4@example.invalid']); -- a pupil it names
+  -- A pupil who has been deactivated since is still a pupil of a group or a lesson: the lesson was held with them
+  -- on it, and a day that was counted does not change when they leave.
+  PERFORM pg_temp.rg_lesson(d, 18, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7F');                              -- a member who has left
+  PERFORM pg_temp.rg_lesson(d, 19, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-p3@example.invalid']); -- a named pupil who has left
+  PERFORM pg_temp.rg_lesson(d, 20, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7F']);               -- the members of a joined group who have left
   PERFORM pg_temp.rg_expect('346r each source', pg_temp.rg_compute('2026-09-30'),
-    'written 1, removed 0, teachers 1, held 5, reported 0');
+    'written 1, removed 0, teachers 1, held 8, reported 0');
 
   -- A register saved on a lesson stays a register, whatever the roster has become: reported, and held.
-  PERFORM pg_temp.rg_lesson(d, 18, ARRAY[t1], ARRAY['PRESENT'], 'SCHEDULED', NULL, NULL, 'RG7B');
+  PERFORM pg_temp.rg_lesson(d, 21, ARRAY[t1], ARRAY['PRESENT'], 'SCHEDULED', NULL, NULL, 'RG7B');
   PERFORM pg_temp.rg_expect('346r a saved register on an empty roster', pg_temp.rg_compute('2026-09-30'),
-    'written 1, removed 0, teachers 1, held 6, reported 1');
+    'written 1, removed 0, teachers 1, held 9, reported 1');
 
   -- An administrator on a lesson is no teacher: no row, no count.
-  PERFORM pg_temp.rg_lesson(d, 19, ARRAY[pg_temp.rg_id('rg-full@example.invalid')]);
+  PERFORM pg_temp.rg_lesson(d, 22, ARRAY[pg_temp.rg_id('rg-full@example.invalid')]);
   PERFORM pg_temp.rg_expect('346r an administrator on a lesson', pg_temp.rg_compute('2026-09-30'),
-    'written 0, removed 0, teachers 1, held 6, reported 1');
-  PERFORM pg_temp.rg_expect('346r the day', pg_temp.rg_days(), 't1 2026-09-22 1/6');
+    'written 0, removed 0, teachers 1, held 9, reported 1');
+  PERFORM pg_temp.rg_expect('346r the day', pg_temp.rg_days(), 't1 2026-09-22 1/9');
 END $$;
 ROLLBACK;
 

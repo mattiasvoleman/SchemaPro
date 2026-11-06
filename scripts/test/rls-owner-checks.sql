@@ -888,14 +888,14 @@ END $$;
 
 -- A lesson of the school, as the policy side's rg_lesson plants it (the owner has no principal to name the school).
 CREATE FUNCTION pg_temp.rgo_lesson(p_school uuid, p_day date, p_hour integer, p_teachers uuid[] DEFAULT '{}', p_marks text[] DEFAULT '{}',
-                                   p_status "LessonStatus" DEFAULT 'SCHEDULED')
+                                   p_status "LessonStatus" DEFAULT 'SCHEDULED', p_group text DEFAULT 'RG7A', p_extra text[] DEFAULT '{}')
 RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE
   l uuid;
   starts timestamptz := (p_day + make_time(p_hour, 0, 0)) AT TIME ZONE 'Europe/Stockholm';
   i integer;
   subj uuid := (SELECT id FROM "Subjects" WHERE "schoolId" = p_school AND code = 'RGSUBJ');
-  grp uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = p_school AND name = 'RG7A');
+  grp uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = p_school AND name = p_group);
   pupils uuid[] := ARRAY(SELECT id FROM "Users" WHERE "schoolId" = p_school AND role = 'STUDENT' ORDER BY email);
 BEGIN
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
@@ -903,6 +903,8 @@ BEGIN
   FOR i IN 1..coalesce(cardinality(p_teachers), 0) LOOP
     INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (p_school, l, p_teachers[i], 'LEAD');
   END LOOP;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId")
+  SELECT p_school, l, g."id" FROM "StudentGroups" g WHERE g."schoolId" = p_school AND g."name" = ANY (p_extra);
   FOR i IN 1..coalesce(cardinality(p_marks), 0) LOOP
     INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (p_school, l, pupils[i], p_marks[i]::"AttendanceStatus", now());
   END LOOP;
@@ -1097,6 +1099,78 @@ BEGIN
   VALUES (school, 'ATTENDANCE', 'KEEP', 'RG 346 keep', admin, now() - interval '1 hour');
   ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
   PERFORM pg_temp.rgo_expect('346o keep', (SELECT written || '/' || removed FROM app.reporting_compute(school, today - 1)), '0/0');
+END $$;
+ROLLBACK;
+
+-- 346o, the class as it was. The class history (StudentEnrollments) says who sat in a class on a lesson's day,
+-- as the segment [validFrom, validTo) that holds the date, so a lesson of a class that is empty today still has a
+-- roster when pupils sat in it then, to the day. The läsårsaktivering moves every pupil to next year's class
+-- (Users.studentGroupId) and empties last year's, and a lesson that nobody could mark must not be taken out of
+-- days that were already counted because of it. The history is written by a trigger and guarded against every other
+-- writer, so the rows are planted with the triggers held off (session_replication_role), and so is the pupils' move.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  yr uuid := (SELECT id FROM "AcademicYears" WHERE "schoolId" = school);
+  t1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t1@example.invalid');
+  p1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-p2@example.invalid');
+  gb uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name = 'RG7B');
+  n integer;
+BEGIN
+  -- RG7B has nobody today; p1 sat in it from the 17th of August up to, not including, the 20th of September.
+  INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom", "validTo")
+  VALUES (school, p1, yr, gb, 7, '2026-08-17', '2026-09-20');
+  PERFORM pg_temp.rgo_lesson(school, '2026-08-14', 8, ARRAY[t1], '{}', 'SCHEDULED', 'RG7B');           -- the Friday before: nobody sat there
+  PERFORM pg_temp.rgo_lesson(school, '2026-08-17', 8, ARRAY[t1], '{}', 'SCHEDULED', 'RG7B');           -- the first day: they did
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-19', 8, ARRAY[t1], '{}', 'SCHEDULED', 'RG7B');           -- the last day: they did
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-20', 8, ARRAY[t1], '{}', 'SCHEDULED', 'RG7B');           -- the day the segment ends: not inside it
+  PERFORM pg_temp.rgo_expect('346o the class as it was', (SELECT string_agg(day::text, ',' ORDER BY day) FROM app.reporting_lessons(school, '2026-08-01', '2026-09-30', now())), '2026-08-17,2026-09-19');
+  -- A class joined to a lesson of another class counts as it was too.
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-01', 9, ARRAY[t1], '{}', 'SCHEDULED', 'RG7C', ARRAY['RG7B']);   -- inside
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-21', 9, ARRAY[t1], '{}', 'SCHEDULED', 'RG7C', ARRAY['RG7B']);   -- after
+  PERFORM pg_temp.rgo_expect('346o a joined class as it was', (SELECT string_agg(day::text, ',' ORDER BY day) FROM app.reporting_lessons(school, '2026-08-01', '2026-09-30', now())), '2026-08-17,2026-09-01,2026-09-19');
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "schoolId" = school AND "studentGroupId" = gb;
+  IF n <> 1 THEN RAISE EXCEPTION 'rapporteringsgrad 346o: the fixture history of the class is % rows, not 1', n; END IF;
+END $$;
+ROLLBACK;
+
+-- 346o, the läsårsaktivering: stored days stand still. RG7A's pupils sat in it for the whole year; the activation
+-- moves them to a class of the next year and closes their segment at the year's end. The lessons of RG7A, the
+-- unregistered one too, are counted as before, and the night writes nothing.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  yr uuid := (SELECT id FROM "AcademicYears" WHERE "schoolId" = school);
+  t1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t1@example.invalid');
+  gb uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name = 'RG7B');
+  ga uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name = 'RG7A');
+BEGIN
+  -- The pupils' open segments begin on the day the fixtures were made; the year's pupils were there from its start.
+  UPDATE "StudentEnrollments" SET "validFrom" = '2026-01-01'
+   WHERE "schoolId" = school AND "studentGroupId" = ga AND "validTo" IS NULL;
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-15', 8, ARRAY[t1], ARRAY['PRESENT', 'PRESENT']);
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-15', 9, ARRAY[t1]);
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-16', 8, ARRAY[t1]);
+  PERFORM pg_temp.rgo_expect('346o before the activation', (SELECT written || '/' || held || '/' || reported FROM app.reporting_compute(school, '2026-09-30')), '2/3/1');
+
+  -- The activation, as the service does it: the pupils move, and the history follows in the same statements.
+  UPDATE "StudentEnrollments" SET "validTo" = '2027-01-01' WHERE "schoolId" = school AND "studentGroupId" = ga AND "validTo" IS NULL;
+  INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom")
+  SELECT school, u."id", yr, gb, 8, '2027-01-01' FROM "Users" u WHERE u."schoolId" = school AND u."studentGroupId" = ga;
+  UPDATE "Users" SET "studentGroupId" = gb WHERE "schoolId" = school AND "studentGroupId" = ga;
+  IF EXISTS (SELECT 1 FROM "Users" WHERE "schoolId" = school AND "studentGroupId" = ga) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 346o: the old class still has pupils, so the activation was not simulated';
+  END IF;
+  PERFORM pg_temp.rgo_expect('346o after the activation', (SELECT written || '/' || removed || '/' || held || '/' || reported FROM app.reporting_compute(school, '2026-09-30')), '0/0/3/1');
+
+  -- Without the history the unregistered lessons would have gone with the pupils: the stored day moves.
+  DELETE FROM "StudentEnrollments" WHERE "schoolId" = school AND "studentGroupId" = ga;
+  PERFORM pg_temp.rgo_expect('346o without the history', (SELECT written || '/' || removed || '/' || held || '/' || reported FROM app.reporting_compute(school, '2026-09-30')), '1/1/1/1');
 END $$;
 ROLLBACK;
 

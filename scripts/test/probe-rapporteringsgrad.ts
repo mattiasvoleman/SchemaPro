@@ -42,6 +42,12 @@
  *       days, a lesson at midnight is Monday's, an absence across the night overlaps
  *       by the clock and not by the date.
  *
+ *   ri  who counts: a class nobody is in, a teacher who has left and an administrator on a
+ *       lesson are no one's; a week that is not over is refused with RR400;
+ *   rj  the läsårsaktivering, in a school of its own (slug <marker>-rapportering-ar): it
+ *       moves every pupil to next year's class and empties last year's, and last year's
+ *       share, stored and counted again, does not move.
+ *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
 import { strict as assert } from 'node:assert';
@@ -59,6 +65,7 @@ import { NotificationDeliveryService } from '../../src/notifications/notificatio
 import type { OutboxEntry } from '../../src/notifications/notification-outbox';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import { ScheduleActivitiesService } from '../../src/publication/schedule-activities.service';
+import { YearRolloverService } from '../../src/year-rollover/year-rollover.service';
 import { REPORTING_RATE_JOB } from '../../src/reporting-rate/reporting-rate';
 import { ReportingRateJob } from '../../src/reporting-rate/reporting-rate.job';
 import { ReportingRateService } from '../../src/reporting-rate/reporting-rate.service';
@@ -70,9 +77,13 @@ export function reportingRateSlug(marker: string): string {
   return `${marker}-rapportering`;
 }
 
+function reportingRateYearSlug(marker: string): string {
+  return `${marker}-rapportering-ar`;
+}
+
 export async function sweepReportingRateSchool(owner: Client, marker: string): Promise<void> {
   await owner.query(`DELETE FROM "JobClaims" WHERE job = $1 AND "schoolId" IN (SELECT id FROM "Schools" WHERE slug = $2)`, [REPORTING_RATE_JOB, reportingRateSlug(marker)]);
-  await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [reportingRateSlug(marker)]);
+  await owner.query(`DELETE FROM "Schools" WHERE slug = ANY($1::text[])`, [[reportingRateSlug(marker), reportingRateYearSlug(marker)]]);
 }
 
 export async function reportingRateChecks(owner: Client, api: PrismaService, marker: string, check: Check): Promise<void> {
@@ -597,6 +608,112 @@ export async function reportingRateChecks(owner: Client, api: PrismaService, mar
       await owner.query(`UPDATE "ReportingSettings" SET "rektorDigest" = true WHERE "schoolId" = $1`, [s]);
       await api.withDeliveryService((tx) => tx.$queryRaw`SELECT * FROM app.reporting_digest(${s}::uuid, ${lastMonday}::date, ${lastSunday}::date)`);
       assert.equal(await count(`SELECT count(*) AS n FROM "ReportingDigests" WHERE "schoolId" = $1 AND "periodStart" = $2::date`, [s, lastMonday]), 1);
+    });
+
+    await check('(rj) a läsårsaktivering empties last year\'s classes, and last year\'s share, stored and counted again, stands still', async () => {
+      // A school of its own: the activation hands the active flag over and moves pupils. Last year ended twenty days ago and
+      // next year begins in forty; Hed taught eleven lessons of 7A, three with a register, in the weeks before.
+      const ys = reportingRateYearSlug(marker);
+      await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [ys]);
+      const s2 = (await one<{ id: string }>(`INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`, [`${marker} rapportering ar`, ys])).id;
+      const first = await one<{ id: string; yearStart: string; yearEnd: string }>(
+        `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+         VALUES ($1, 'RJ ett', $2::date - 200, $2::date - 20, true, 'NIOARIG', now()) RETURNING id, "startDate"::text AS "yearStart", "endDate"::text AS "yearEnd"`,
+        [s2, today],
+      );
+      const second = (
+        await one<{ id: string }>(
+          `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "predecessorId", "updatedAt")
+           VALUES ($1, 'RJ tva', $2::date + 40, $2::date + 300, false, 'NIOARIG', $3, now()) RETURNING id`,
+          [s2, today, first.id],
+        )
+      ).id;
+      const class7 = (
+        await one<{ id: string }>(`INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES ($1, $2, 'RJ7A', 'CLASS', 7, now()) RETURNING id`, [s2, first.id])
+      ).id;
+      const class8 = (
+        await one<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "predecessorId", "updatedAt") VALUES ($1, $2, 'RJ8A', 'CLASS', 8, $3, now()) RETURNING id`,
+          [s2, second, class7],
+        )
+      ).id;
+      const subject2 = (await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES ($1, 'Matte', 'RJMA', now()) RETURNING id`, [s2])).id;
+      const who = async (role: string, label: string, groupId: string | null, adminProfile: string | null = null): Promise<AuthenticatedUser> => {
+        const authId = randomUUID();
+        const row = await one<{ id: string }>(
+          `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "adminProfile", "updatedAt")
+           VALUES ($1, $2, $3, 'Probe', $4, $5, true, $6, $7::"AdminProfile", now()) RETURNING id`,
+          [s2, `${marker}-rapportering-ar-${label}@example.invalid`, label, role, authId, groupId, adminProfile],
+        );
+        return { authId, role: role as Role, userId: row.id, schoolId: s2, channel: 'WEB', ...(role === 'SCHOOL_ADMIN' ? { adminProfile: adminProfile as never, hrRead: false } : {}) };
+      };
+      const admin2 = await who('SCHOOL_ADMIN', 'Admin', null, 'FULL');
+      const hed = await who('TEACHER', 'Hed', null);
+      const pupil1 = await who('STUDENT', 'Elev1', class7);
+      const pupil2 = await who('STUDENT', 'Elev2', class7);
+      // The pupils were created after their year ended, so the history trigger recorded them from the day after it; they sat
+      // in 7A for the whole year. The history is written only by the database, so the owner plants it with triggers held off.
+      await owner.query('BEGIN');
+      await owner.query(`SET LOCAL session_replication_role = replica`);
+      await owner.query(`UPDATE "StudentEnrollments" SET "validFrom" = $2::date WHERE "schoolId" = $1 AND "studentGroupId" = $3 AND "validTo" IS NULL`, [s2, first.yearStart, class7]);
+      await owner.query('COMMIT');
+
+      for (let offset = -60; offset <= -50; offset++) {
+        const date = await dayOf(today, offset);
+        const lessonId = (
+          await one<{ id: string }>(
+            `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+             VALUES ($1, $2, $3, $4::date, ($4::date + make_time(8, 0, 0)) AT TIME ZONE 'Europe/Stockholm', ($4::date + make_time(8, 50, 0)) AT TIME ZONE 'Europe/Stockholm', 'SCHEDULED', now()) RETURNING id`,
+            [s2, subject2, class7, date],
+          )
+        ).id;
+        await owner.query(`INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, 'LEAD')`, [s2, lessonId, hed.userId]);
+        if (offset <= -58) {
+          await owner.query(
+            `INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES ($1, $2, $3, 'PRESENT', now()), ($1, $2, $4, 'PRESENT', now())`,
+            [s2, lessonId, pupil1.userId, pupil2.userId],
+          );
+        }
+      }
+      const yesterday = await dayOf(today, -1);
+      const night = async () =>
+        (await api.withDeliveryService((tx) => tx.$queryRaw<Array<{ written: number; removed: number; held: number; reported: number }>>`SELECT * FROM app.reporting_compute(${s2}::uuid, ${yesterday}::date)`))[0]!;
+      const stored = async () =>
+        one<{ held: string; reported: string }>(`SELECT coalesce(sum(held), 0) AS held, coalesce(sum(reported), 0) AS reported FROM "TeacherReportingDays" WHERE "schoolId" = $1`, [s2]);
+
+      const before = await night();
+      assert.deepEqual([before.held, before.reported], [11, 3], 'the lessons were not counted as planted');
+      const viewBefore = await service.overview({ period: 'YEAR', anchor: await dayOf(today, -55) }, admin2);
+      assert.deepEqual(viewBefore.total, { held: 11, reported: 3 });
+
+      // The activation, through the real service: 7A's pupils move to 8A and 7A is empty.
+      const rollover = new YearRolloverService(api);
+      const options = { today };
+      const preview = await rollover.previewActivation(second, admin2, options);
+      assert.deepEqual(preview.moves.map((move) => [move.fromGroupName, move.toGroupName, move.count]), [['RJ7A', 'RJ8A', 2]]);
+      await rollover.executeActivation(second, { planHash: preview.planHash }, admin2, options);
+      assert.equal(await count(`SELECT count(*) AS n FROM "Users" WHERE "schoolId" = $1 AND "studentGroupId" = $2`, [s2, class7]), 0, 'last year\'s class still has pupils');
+      assert.equal(await count(`SELECT count(*) AS n FROM "Users" WHERE "schoolId" = $1 AND "studentGroupId" = $2`, [s2, class8]), 2);
+      assert.equal(
+        (await one<{ closed: string }>(`SELECT min("validTo")::text AS closed FROM "StudentEnrollments" WHERE "schoolId" = $1 AND "studentGroupId" = $2`, [s2, class7])).closed,
+        await dayOf(first.yearEnd, 1),
+        'the class history did not close last year\'s segment at the year\'s end',
+      );
+
+      // The next night counts the same 90 days again: nothing is written, nothing is removed, the share is the same.
+      const after = await night();
+      assert.deepEqual([after.written, after.removed, after.held, after.reported], [0, 0, 11, 3], 'the activation moved last year\'s share');
+      assert.deepEqual(await stored(), { held: '11', reported: '3' });
+      const viewAfter = await service.overview({ period: 'YEAR', anchor: await dayOf(today, -55) }, admin2);
+      assert.deepEqual(viewAfter.total, { held: 11, reported: 3 });
+
+      // The control: without the class history the unregistered lessons would have gone with the pupils, and the share with them.
+      await owner.query('BEGIN');
+      await owner.query(`SET LOCAL session_replication_role = replica`);
+      await owner.query(`DELETE FROM "StudentEnrollments" WHERE "schoolId" = $1 AND "studentGroupId" = $2`, [s2, class7]);
+      await owner.query('COMMIT');
+      const without = await night();
+      assert.deepEqual([without.held, without.reported], [3, 3], 'the control did not show what the history keeps');
     });
   } finally {
     await sweepReportingRateSchool(owner, marker);

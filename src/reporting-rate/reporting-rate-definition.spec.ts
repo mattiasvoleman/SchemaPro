@@ -111,30 +111,46 @@ describe('a held lesson is defined once: SCHEDULED or COMPLETED', () => {
  * A lesson no pupil can be marked on is nobody's: it can never be reported, so
  * the rate leaves it out (app.reporting_lessons). Which pupils can be marked is
  * the register's reader (calendar/lesson-roster.ts), TypeScript behind
- * Prisma, a place no call graph reaches from the SQL. Both ask the active
- * pupils of the same sources: the class and the groups joined to the lesson,
- * the members of those groups, and the pupils the lesson names. If the reader
- * learns a source, or a role, this fails first; the SQL then has to learn it too.
+ * Prisma, a place no call graph reaches from the SQL. Both ask the same
+ * sources: the class and the groups joined to the lesson, the members of those
+ * groups, and the pupils the lesson names. If the reader learns a source, or a
+ * role, this fails first; the SQL then has to learn it too.
+ *
+ * The SQL reads them so that a day already counted does not move. The reader
+ * answers for now; the läsårsaktivering moves every pupil to next year's class
+ * and empties last year's, so the class is also asked as it was on the
+ * lesson's day (StudentEnrollments, the class history). Members of a teaching
+ * group and named pupils have no dates, so they count as recorded, whether the
+ * pupil is active or not (RECORDED in the reader, which is what the register
+ * accepts for saving).
  */
 describe('who attends a lesson is read the way the register reads it', () => {
   const body = () => functionBody(migration('20270112090100'), 'app.reporting_lessons');
+  const count = (text: string, part: string) => text.split(compact(part)).length - 1;
 
-  it('app.reporting_lessons asks five sources, each for active pupils only', () => {
+  it('app.reporting_lessons asks five sources, and the class twice: as it is and as it was', () => {
     const text = compact(body());
-    const pupil = compact(`p."role" = 'STUDENT' AND p."isActive"`);
-    expect(text.split(pupil)).toHaveLength(6);
-    for (const table of ['Users', 'StudentGroupMembers', 'CalendarLessonGroups', 'CalendarLessonStudents']) {
+    for (const table of ['Users', 'StudentEnrollments', 'StudentGroupMembers', 'CalendarLessonGroups', 'CalendarLessonStudents']) {
       expect(text).toContain(compact(`"public"."${table}"`));
     }
+    // Every source is of pupils; the class as it is asks for active ones, the groups' members and the named pupils do not.
+    expect(count(text, `p."role" = 'STUDENT'`)).toBe(5);
+    expect(count(text, `p."role" = 'STUDENT' AND p."isActive"`)).toBe(2);
+    // The class as it was: the segment of the history that holds the lesson's day, [validFrom, validTo), for the lesson's class and the joined ones.
+    expect(count(text, `e."validFrom" <= cl."date" AND (e."validTo" IS NULL OR cl."date" < e."validTo")`)).toBe(2);
   });
 
-  it('a register already saved is a register whatever the roster has become', () => {
-    expect(compact(body())).toContain(compact(`AND (\n r."saved"\n OR EXISTS`));
+  it('a register already saved is a register whatever the roster has become, and is looked for on the teacher’s row', () => {
+    const text = compact(body());
+    expect(text).toContain(compact(`AND (\n r."saved"\n OR EXISTS`));
+    // Written against t."calendarLessonId" so that it runs after the join with the teacher (see the comment on the function).
+    expect(text).toContain(compact(`a."calendarLessonId" = t."calendarLessonId" AND a."status" <> 'UNKNOWN'`));
   });
 
   it('the register’s reader asks for the same pupils and reads the same stores', () => {
     const source = read('src/calendar/lesson-roster.ts');
     expect(compact(source)).toContain(compact(`const PUPIL = { role: 'STUDENT', isActive: true } as const;`));
+    expect(source).toContain(`pupils: 'ACTIVE' | 'RECORDED'`);
     expect(source).toContain('tx.user.findMany');
     expect(source).toContain('tx.studentGroupMember.findMany');
     expect(source).toMatch(/participantIds/);

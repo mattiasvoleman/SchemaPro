@@ -3172,6 +3172,7 @@ DECLARE
   kc uuid;
   kd uuid;
   ke uuid;
+  kf uuid;
   p4 uuid;
   u uuid;
 BEGIN
@@ -3185,8 +3186,9 @@ BEGIN
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
   VALUES (s1, y, 'RG7A', 7, now()) RETURNING id INTO k;
   -- The groups a lesson's roster is read from. RG7A is the class with two active pupils; RG7B has nobody;
-  -- RG7C's only pupil is deactivated; RG7D is a teaching group whose roster is its members alone (one active
-  -- pupil); RG7E is one whose only members are a deactivated pupil and a teacher.
+  -- RG7C's only pupil was deactivated before the class held a day; RG7D is a teaching group whose roster is its
+  -- members alone (one active pupil); RG7E is one whose only member is a teacher; RG7F is one whose only member
+  -- is a pupil who has since been deactivated.
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
   VALUES (s1, y, 'RG7B', 7, now()) RETURNING id INTO kb;
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
@@ -3195,6 +3197,8 @@ BEGIN
   VALUES (s1, y, 'RG7D', 7, 'TEACHING_GROUP', now()) RETURNING id INTO kd;
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
   VALUES (s1, y, 'RG7E', 7, 'TEACHING_GROUP', now()) RETURNING id INTO ke;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s1, y, 'RG7F', 7, 'TEACHING_GROUP', now()) RETURNING id INTO kf;
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'Rapportering', 'RGSUBJ', now());
 
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
@@ -3218,7 +3222,9 @@ BEGIN
   RETURNING id INTO p4;
   INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, kd, p4);
   INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId")
-  SELECT s1, ke, "id" FROM "Users" WHERE "schoolId" = s1 AND "email" IN ('rg-p3@example.invalid', 'rg-t1@example.invalid');
+  SELECT s1, ke, "id" FROM "Users" WHERE "schoolId" = s1 AND "email" = 'rg-t1@example.invalid';
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId")
+  SELECT s1, kf, "id" FROM "Users" WHERE "schoolId" = s1 AND "email" = 'rg-p3@example.invalid';
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
   VALUES (s1, 'rg-g1@example.invalid', 'Rapportering', 'Vårdnadshavare Ett', 'GUARDIAN', '00000000-0000-4000-8000-f20000000021', true, now()) RETURNING id INTO u;
   INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
