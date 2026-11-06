@@ -40,7 +40,7 @@ export function pupil(
     lastName: last,
     status,
     priorAbsentSource: absent,
-    markedAt: status === "FOUND" || status === "MISSING" ? "2027-01-12T09:20:00.000Z" : null,
+    markedAt: status === "FOUND" || status === "MISSING" || status === "AWAY" ? "2027-01-12T09:20:00.000Z" : null,
     markedBy: null,
     ...extra,
   };
@@ -112,6 +112,7 @@ export function summary(calls: CallView[], extra: Partial<AlarmSummary> = {}): A
         pupils: sum.pupils + one.counts.pupils,
         found: sum.found + one.counts.found,
         missing: sum.missing + one.counts.missing,
+        away: sum.away + one.counts.away,
         absentBefore: sum.absentBefore + one.counts.absentBefore,
         unreported: sum.unreported + one.counts.unreported,
       }),
@@ -190,7 +191,7 @@ export const myAlarm = (calls: MyCall[], extra: Partial<MyAlarm> = {}): MyAlarm 
   endNote: null,
   guardiansNotifiedAt: null,
   calls,
-  others: [],
+  foundFree: [],
   ...extra,
 });
 

@@ -21,7 +21,8 @@ import { groupLabel } from "@/lib/crisis-view";
  * the other files are (RECURRENCE_WORD, KIND_WORD). One row per pupil in a group: who was
  * asked for, how it stands, and the latest mark with its time and who made it.
  * The timeline of every mark, with the corrections, is on the printed
- * protocol.
+ * protocol. "inte i huset" is the administration's word for a pupil nobody has
+ * seen and who is not thought to be in the building: its own status, never "finns".
  *
  * THE LAST COLUMN IS NEW (hittad_hos, "found with"): the group of the teacher
  * who found the pupil, when the pupil's latest mark was made by a teacher on
@@ -63,6 +64,7 @@ const MODE_WORD: Record<CrisisMode, string> = { LIVE: "skarpt larm", DRILL: "öv
 const STATUS_WORD: Record<PupilStatus, string> = {
   FOUND: "finns",
   MISSING: "saknas",
+  AWAY: "inte i huset",
   ABSENT_BEFORE: "frånvarande sedan tidigare",
   UNREPORTED: "ej rapporterad",
 };
@@ -171,7 +173,9 @@ export function protocolRows(view: ProtocolView, held: ReadonlySet<string>, time
     const lesson = noLesson ? ["", ""] : [zoned(call.lessonStartsAt, timeZone).time, zoned(call.lessonEndsAt, timeZone).time];
     for (const pupil of call.pupils) {
       if (held.has(pupil.studentId)) continue;
-      const foundIn = latest.get(pupil.studentId)?.foundIn;
+      // Said only while the latest mark is the find: a retraction, or the pupil's own teacher saying otherwise, ends it.
+      const lastMark = latest.get(pupil.studentId);
+      const foundIn = lastMark?.state === "FOUND" ? lastMark.foundIn : null;
       rows.push([
         ...common,
         groupLabel(call, NO_LESSON_WORD),

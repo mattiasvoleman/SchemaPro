@@ -11,9 +11,11 @@ import { OPEN_SCENARIO } from "./stub/fixtures/gateway-crisis";
  * phone width, in both schemes: the large red button and its confirmation, the
  * counters and the tables of the live view with a group opened (the group of
  * pupils on no lesson is the first, and the sentence about them is above the
- * groups), and the teacher's list with its 44 px targets, a pupil marked, one
- * marked missing and one absent beforehand, a pupil found who is on another
- * list, and the picker for finding one.
+ * groups), the question "Ingen av de oprickade är i huset" with its
+ * confirmation, a pupil marked "Inte i huset", and the teacher's list with its
+ * 44 px targets, a pupil marked, one marked missing and one absent
+ * beforehand, a pupil found who is on another list (with "Ta tillbaka"), and
+ * the search for finding one.
  */
 
 const MISSES = "the backend stub could not answer these reads; each says which file to add it to or fix";
@@ -31,6 +33,18 @@ test("admin Krisläge: a live alarm, a group opened, and the end dialog", async 
   await settle(page);
   await expect(page.getByRole("heading", { level: 2, name: /Utrymning · pågår/ })).toBeVisible();
   await expect(page.getByText("2 elever är inte i lektion just nu. Ledningen svarar för dem.")).toBeVisible();
+  // The group of pupils on no lesson: no "Alla finns" there, one question behind a confirmation.
+  await page.getByRole("button", { name: "Ej i lektion just nu" }).click();
+  await expect(page.getByRole("button", { name: "Alla finns (1)" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Den oprickade eleven är inte i huset" }).click();
+  const away = page.getByRole("dialog", { name: "Är den oprickade eleven inte i huset?" });
+  await expect(away).toBeVisible();
+  await expect(away).toContainText("jag har inte sett eleven");
+  await settle(page);
+  const confirm = await scanBothSchemes(page, "away dialog", true);
+  expect(confirm.join("\n"), "WCAG 2.1 AA violations").toBe("");
+  await away.getByRole("button", { name: "Avbryt" }).click();
+  await expect(away).toBeHidden();
   await page.getByRole("button", { name: "9C" }).click();
   await expect(page.getByRole("list", { name: "Eleverna i 9C" })).toBeVisible();
   await settle(page);
@@ -96,6 +110,7 @@ test("teacher Larm: the groups of a live alarm, with pupils marked, missing and 
   for (const height of boxes) expect(height).toBeGreaterThanOrEqual(44);
 
   await expect(page.getByRole("list", { name: "Hittade hos dig som inte står på listan" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ta tillbaka: Vera Sund" })).toBeVisible();
 
   const results = await scanBothSchemes(page, "phone", true);
   await page.setViewportSize(DESKTOP);
@@ -108,8 +123,10 @@ test("teacher Larm: the groups of a live alarm, with pupils marked, missing and 
   // The picker for a pupil found who is not on the list, open with results, at phone width where it is used.
   await page.setViewportSize(PHONE);
   await page.getByRole("button", { name: "Hittat en elev som inte står på listan" }).click();
-  await page.getByRole("searchbox", { name: "Namn eller klass" }).fill("e");
+  await page.getByRole("searchbox", { name: "Namn eller klass" }).fill("ek");
+  // Searched for on the gateway, after a pause in the typing.
   await expect(page.getByRole("list", { name: "Träffar" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Finns: Wilmer Ek (9A)" })).toBeVisible();
   await settle(page);
   const picker = await scanBothSchemes(page, "picker", true);
   expect(picker.join("\n"), "WCAG 2.1 AA violations").toBe("");

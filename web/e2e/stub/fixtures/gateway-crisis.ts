@@ -12,9 +12,11 @@ import { Reply, route, type GatewayRoute } from "../gateway-routes";
  * askForScenario) a live evacuation is going: one group with every kind of
  * pupil, one in a break, one nobody answers for, and the group of pupils who
  * are on no lesson's list (basis NO_LESSON, the gateway's Swedish stand-in
- * names, nobody to answer for it). The teacher has the first two groups, one
- * pupil found with them who is on another list, and the school's other
- * pupils to pick from. An alarm that is going is a
+ * names, nobody to answer for it). The teacher has the first two groups and
+ * one pupil found with them who is on another list; the school's other pupils
+ * are searched for on the gateway (POST /crisis/mine/pupils), as they are, and
+ * are in no answer the teacher is given. One pupil of 9C is marked "inte i
+ * huset" by the administration. An alarm that is going is a
  * state the one world does not hold, because a page that reads it would
  * change every other page's counts; crisis.a11y.spec.ts asks for it by name.
  */
@@ -39,6 +41,7 @@ const counts = (pupils: Array<{ status: string }>) => ({
   pupils: pupils.length,
   found: pupils.filter((one) => one.status === "FOUND").length,
   missing: pupils.filter((one) => one.status === "MISSING").length,
+  away: pupils.filter((one) => one.status === "AWAY").length,
   absentBefore: pupils.filter((one) => one.status === "ABSENT_BEFORE").length,
   unreported: pupils.filter((one) => one.status === "UNREPORTED").length,
 });
@@ -52,7 +55,7 @@ const SEVEN_A = [
 const EIGHT_B = [pupil("00000000-0000-4000-8000-0000000c2005", "Olle", "Lind", "UNREPORTED")];
 const NINE_C = [
   pupil("00000000-0000-4000-8000-0000000c2006", "Rut", "Ek", "UNREPORTED"),
-  pupil("00000000-0000-4000-8000-0000000c2007", "Sam", "Ek", "UNREPORTED"),
+  pupil("00000000-0000-4000-8000-0000000c2007", "Sam", "Ek", "AWAY", AT(8)),
 ];
 
 const AFTER_SCHOOL = [
@@ -125,6 +128,18 @@ const other = (id: string, firstName: string, lastName: string, className: strin
   className,
 });
 
+/**
+ * The school's pupils who are on none of the teacher's lists, as the gateway's search answers (at least two
+ * characters of a name or a class, at most 25). Vera is found already, and the search does not know that.
+ */
+const ROSTER = [
+  other("001", "Vera", "Sund", "9A"),
+  other("002", "Wilmer", "Ek", "9A"),
+  other("003", "Yrsa", "Lund", "6B"),
+  ...[...NINE_C, ...AFTER_SCHOOL].map((one) => ({ studentId: one.studentId, firstName: one.firstName, lastName: one.lastName, className: null })),
+];
+const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
 const MINE = {
   asOf: AT(6),
   alarms: [
@@ -140,13 +155,7 @@ const MINE = {
         },
         { ...CALLS[2]!, colleagues: [], teachers: undefined, uncovered: undefined, foundHere: [] },
       ],
-      // Every pupil of the school who is on none of the teacher's lists (here: the other groups', and the after-school pupils).
-      others: [
-        other("001", "Vera", "Sund", "9A"),
-        other("002", "Wilmer", "Ek", "9A"),
-        other("003", "Yrsa", "Lund", "6B"),
-        ...[...NINE_C, ...AFTER_SCHOOL].map((one) => ({ studentId: one.studentId, firstName: one.firstName, lastName: one.lastName, className: null })),
-      ],
+      foundFree: [],
     },
   ],
 };
@@ -165,4 +174,11 @@ export const crisisRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/crisis/mine", ({ scenario }) =>
     scenario === OPEN_SCENARIO ? MINE : { asOf: new Date().toISOString(), alarms: [] },
   ),
+  // A POST: what was typed is in the body, and never in a URL the gateway would log.
+  route("POST", "/api/v1/crisis/mine/pupils", ({ body }) => {
+    const q = String((body as { q?: unknown } | null)?.q ?? "");
+    const words = fold(q).split(/\s+/).filter(Boolean);
+    if (q.trim().length < 2) return new Reply(400, { message: "q: minst två tecken.", code: "VALIDATION_FAILED" });
+    return ROSTER.filter((one) => words.every((word) => fold(`${one.firstName} ${one.lastName} ${one.className ?? ""}`).includes(word))).slice(0, 25);
+  }),
 ];

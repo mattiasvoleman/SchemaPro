@@ -88,9 +88,18 @@ describe("the figures", () => {
       pupils: 6,
       found: 2,
       missing: 1,
+      away: 0,
       absentBefore: 1,
       unreported: 2,
     });
+  });
+
+  it("count a pupil marked not in the building for itself: not found, not missing, and not unreported", () => {
+    expect(countPupils(["FOUND", "AWAY", "AWAY", "UNREPORTED"])).toEqual({ pupils: 4, found: 1, missing: 0, away: 2, absentBefore: 0, unreported: 1 });
+  });
+
+  it("leave a pupil marked not in the building out of 'Alla finns': they have a mark, and it is not found", () => {
+    expect(unmarkedPupils([{ studentId: "a", status: "AWAY" }, { studentId: "b", status: "UNREPORTED" }])).toEqual(["b"]);
   });
 
   it("leave 'Alla finns' the pupils nobody has marked: not the absent, not the found, and never the one marked missing", () => {

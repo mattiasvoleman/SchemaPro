@@ -16,8 +16,8 @@ import {
   type Dropped,
   type Snapshot,
 } from "@/lib/crisis-queue";
-import type { MarkInput, MarkResult, MarkState, MyCall, MyCrisisResponse } from "@/lib/crisis-types";
-import { isOpen, markTime, newMark } from "@/lib/crisis-view";
+import type { MarkResult, MyAlarm, MyCrisisResponse, OtherPupilView, QueuedMark } from "@/lib/crisis-types";
+import { isOpen, markTime, newFreeMark, newMark, targetOf } from "@/lib/crisis-view";
 
 /*
  * The teacher's reads and writes (src/crisis/crisis.controller.ts,
@@ -68,11 +68,16 @@ function deadline<T>(work: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-function send(marks: MarkInput[]): Promise<MarkResult> {
+function send(marks: QueuedMark[]): Promise<MarkResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SEND_DEADLINE_MS);
-  return api.post<MarkResult>(`${PATH}/marks`, { marks }, controller.signal).finally(() => clearTimeout(timer));
+  // What the page keeps beside a mark (the found pupil's name, to draw the row offline) is not the gateway's to be sent.
+  const wire = marks.map(({ pupil: _name, ...mark }) => mark);
+  return api.post<MarkResult>(`${PATH}/marks`, { marks: wire }, controller.signal).finally(() => clearTimeout(timer));
 }
+
+/** Where a find is attached: to one of the teacher's groups (which says whose it is), or, with none, to the alarm. */
+export type FindTarget = { callId: string } | { alarmId: string };
 
 export interface MyCrisis {
   /** The list with the queue laid over it; null before there is anything to show. */
@@ -90,7 +95,12 @@ export interface MyCrisis {
   sending: boolean;
   dropped: readonly Dropped[];
   clearDropped: () => void;
-  mark: (callId: string, studentIds: readonly string[], state: MarkState) => void;
+  /** FOUND or MISSING for pupils on a group's list. */
+  mark: (callId: string, studentIds: readonly string[], state: "FOUND" | "MISSING") => void;
+  /** A pupil who is on none of the teacher's lists, found: "found with me" on a group, or on the alarm when there is none. */
+  find: (target: FindTarget, who: OtherPupilView) => void;
+  /** Takes a find back. A find not yet sent is simply not sent. */
+  retract: (target: FindTarget, studentId: string) => void;
   refetch: () => void;
 }
 
@@ -102,12 +112,14 @@ export function useMyCrisis(userId: string): MyCrisis {
   // page is rendered on the server first, where there is no storage, and a
   // first client render that differed from it would not hydrate.
   const [kept, setKept] = useState<Snapshot | null>(null);
-  const [queue, setQueue] = useState<MarkInput[]>([]);
+  const [queue, setQueue] = useState<QueuedMark[]>([]);
   const [restored, setRestored] = useState(false);
   const [dropped, setDropped] = useState<Dropped[]>([]);
   const [sending, setSending] = useState(false);
-  const queueRef = useRef<MarkInput[]>([]);
+  const queueRef = useRef<QueuedMark[]>([]);
   const busy = useRef(false);
+  // The ids of the marks of the batch being sent: they are out of this device's hands, and a retraction cannot unsend them.
+  const inFlight = useRef<ReadonlySet<string>>(new Set());
   const loadedFor = useRef<string | null>(null);
 
   useEffect(() => {
@@ -142,7 +154,7 @@ export function useMyCrisis(userId: string): MyCrisis {
 
   const view = useMemo(() => (source ? applyQueue(source.data, queue) : null), [source, queue]);
 
-  const setQueued = useCallback((next: MarkInput[]) => {
+  const setQueued = useCallback((next: QueuedMark[]) => {
     queueRef.current = next;
     setQueue(next);
     saveQueue(userId, next);
@@ -157,7 +169,9 @@ export function useMyCrisis(userId: string): MyCrisis {
       for (;;) {
         const batch = queueRef.current;
         if (batch.length === 0) break;
+        inFlight.current = new Set(batch.map((mark) => mark.id));
         const result = await flushMarks(batch, send);
+        inFlight.current = new Set();
         const done = new Set([...result.sent, ...result.dropped.map((one) => one.mark)].map((mark) => mark.id));
         setQueued(queueRef.current.filter((mark) => !done.has(mark.id)));
         if (result.dropped.length > 0) setDropped((before) => [...before, ...result.dropped]);
@@ -202,13 +216,52 @@ export function useMyCrisis(userId: string): MyCrisis {
     };
   }, [flush, restored]);
 
+  /** The alarm a group or an alarm id belongs to, in the list as it stands. */
+  const alarmOf = (target: string): MyAlarm | undefined =>
+    sourceRef.current?.data.alarms.find((one) => one.id === target || one.calls.some((call) => call.id === target));
+
   const mark = useCallback(
-    (callId: string, studentIds: readonly string[], state: MarkState) => {
+    (callId: string, studentIds: readonly string[], state: "FOUND" | "MISSING") => {
       const now = sourceRef.current;
-      const alarm = now?.data.alarms.find((one) => one.calls.some((call: MyCall) => call.id === callId));
+      const alarm = alarmOf(callId);
       if (!now || !alarm || studentIds.length === 0) return;
       const at = markTime(Date.now(), skewOf(now), alarm.startedAt);
       setQueued([...queueRef.current, ...studentIds.map((studentId) => newMark(callId, studentId, state, at))]);
+      void flush();
+    },
+    [flush, setQueued],
+  );
+
+  const find = useCallback(
+    (target: FindTarget, who: OtherPupilView) => {
+      const now = sourceRef.current;
+      const alarm = alarmOf("callId" in target ? target.callId : target.alarmId);
+      if (!now || !alarm) return;
+      const at = markTime(Date.now(), skewOf(now), alarm.startedAt);
+      const made = "callId" in target ? newMark(target.callId, who.studentId, "FOUND", at) : newFreeMark(target.alarmId, who.studentId, "FOUND", at);
+      // The name and class go with the mark, so that the row is drawn at once and offline without a roster of the school.
+      setQueued([...queueRef.current, { ...made, pupil: { firstName: who.firstName, lastName: who.lastName, className: who.className } }]);
+      void flush();
+    },
+    [flush, setQueued],
+  );
+
+  const retract = useCallback(
+    (target: FindTarget, studentId: string) => {
+      const now = sourceRef.current;
+      const id = "callId" in target ? target.callId : target.alarmId;
+      const alarm = alarmOf(id);
+      if (!now || !alarm) return;
+      const mine = queueRef.current.filter((one) => targetOf(one) === id && one.studentId === studentId);
+      const held = [...(alarm.calls.find((call) => call.id === id)?.foundHere ?? []), ...(alarm.id === id ? alarm.foundFree ?? [] : [])];
+      // A find that only this device knows, and has not started to send: nothing was ever said, so nothing is taken back.
+      if (!held.some((one) => one.studentId === studentId) && !mine.some((one) => inFlight.current.has(one.id))) {
+        setQueued(queueRef.current.filter((one) => !mine.includes(one)));
+        return;
+      }
+      const at = markTime(Date.now(), skewOf(now), alarm.startedAt);
+      const made = "callId" in target ? newMark(target.callId, studentId, "RETRACTED", at) : newFreeMark(target.alarmId, studentId, "RETRACTED", at);
+      setQueued([...queueRef.current, made]);
       void flush();
     },
     [flush, setQueued],
@@ -226,6 +279,8 @@ export function useMyCrisis(userId: string): MyCrisis {
     dropped,
     clearDropped: () => setDropped([]),
     mark,
+    find,
+    retract,
     refetch: () => void query.refetch(),
   };
 }

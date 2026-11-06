@@ -68,10 +68,11 @@ export function uuidV4(): string {
 }
 
 export function countPupils(statuses: readonly PupilStatus[]): PupilCounts {
-  const counts: PupilCounts = { pupils: statuses.length, found: 0, missing: 0, absentBefore: 0, unreported: 0 };
+  const counts: PupilCounts = { pupils: statuses.length, found: 0, missing: 0, away: 0, absentBefore: 0, unreported: 0 };
   for (const status of statuses) {
     if (status === "FOUND") counts.found++;
     else if (status === "MISSING") counts.missing++;
+    else if (status === "AWAY") counts.away++;
     else if (status === "ABSENT_BEFORE") counts.absentBefore++;
     else counts.unreported++;
   }
@@ -93,6 +94,14 @@ export function newMark(callId: string, studentId: string, state: MarkState, at:
   return { id: uuidV4(), callId, studentId, state, at };
 }
 
+/** A mark for a teacher with no group: "found", sent by the alarm and not by a group (`alarmId` in place of `callId`). */
+export function newFreeMark(alarmId: string, studentId: string, state: MarkState, at: string): MarkInput {
+  return { id: uuidV4(), alarmId, studentId, state, at };
+}
+
+/** What a mark is about: its group, or the alarm for a mark made with no group. Always one of the two. */
+export const targetOf = (mark: Pick<MarkInput, "callId" | "alarmId">): string => mark.callId ?? mark.alarmId ?? "";
+
 /**
  * "Alla finns": the pupils nobody has marked yet. A pupil who was absent
  * before is not asked for, one already found needs no second mark, and one
@@ -107,6 +116,8 @@ export function unmarkedPupils(pupils: readonly { studentId: string; status: Pup
 export const PUPIL_STATUS_VARIANT = {
   FOUND: "success",
   MISSING: "destructive",
+  // Not found and not missing: said apart, in text and an icon, and drawn in neither of their colours.
+  AWAY: "secondary",
   ABSENT_BEFORE: "outline",
   UNREPORTED: "warning",
 } as const satisfies Record<PupilStatus, string>;

@@ -44,6 +44,7 @@ describe("the live figures", () => {
       pupils: 8,
       found: 3,
       missing: 1,
+      away: 0,
       unreported: 3,
       absentBefore: 1,
       // Anna (7A) has marked nobody; Cia (7B) has answered; 8A has no teacher.
@@ -127,5 +128,33 @@ describe("the group of pupils on no lesson", () => {
       ["UNREPORTED", "LESSON", "Pia"],
     ]);
     expect(rows[0]!.teachers).toEqual([]);
+  });
+});
+
+describe("a pupil marked not in the building", () => {
+  // Ines found, Jamal not in the building, Klara not in the building: nobody left to ask.
+  const away = call("c-7d", "7D", [pupil("s30", "Ines", "Ek", "FOUND"), pupil("s31", "Jamal", "Ali", "AWAY"), pupil("s32", "Klara", "Nyman", "AWAY")], { teachers: [ANNA] });
+
+  it("has a mark, so a group of marks is done; it says that some are not in the building, and not that all are found", () => {
+    expect(isDone(away)).toBe(true);
+    expect(callState(away)).toBe("DONE_AWAY");
+    // A missing pupil is the stronger word.
+    expect(callState(call("c", "7E", [pupil("a", "A", "A", "MISSING"), pupil("b", "B", "B", "AWAY")]))).toBe("DONE_MISSING");
+    // A group where the only mark is "not in the building" is in progress, not waiting, while someone is still to say.
+    expect(callState(call("c", "7F", [pupil("a", "A", "A", "AWAY"), pupil("b", "B", "B")]))).toBe("IN_PROGRESS");
+  });
+
+  it("is counted for itself in the figures, in neither found nor missing nor unreported", () => {
+    const figures = liveFigures([sevenA, away]);
+    expect(figures).toMatchObject({ found: 2, missing: 1, away: 2, unreported: 1 });
+    expect(figures.groupsDone).toBe(1);
+  });
+
+  it("is not among the pupils still to find: someone has said where they are not", () => {
+    expect(pupilsToFind([away])).toEqual([]);
+  });
+
+  it("does not make the teacher of a group silent, nor answer for them", () => {
+    expect(silentTeachers([away])).toEqual([]);
   });
 });

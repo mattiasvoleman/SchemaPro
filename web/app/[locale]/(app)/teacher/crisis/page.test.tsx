@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
 import { LEGACY_KEYS, queueKey, snapshotKey } from "@/lib/crisis-queue";
-import type { MarkInput } from "@/lib/crisis-types";
+import type { MarkInput, OtherPupilView, QueuedMark } from "@/lib/crisis-types";
 import { foundHere, mine, myAlarm, myCall, other, pupil } from "@/lib/__fixtures__/crisis";
 import TeacherCrisisPage from "./page";
 
@@ -20,12 +20,50 @@ import TeacherCrisisPage from "./page";
  * (the gateway said no) and what is not (it could not answer).
  */
 
+/**
+ * The school's pupils as the gateway's search sees them (POST /crisis/mine/pupils, what was typed in the body
+ * and never in a URL): the ones on none of the teacher's lists, a name or a class of at least two characters, at
+ * most 25. `slow` holds an answer back. Its own function beside the marks' `post`, so that a search is not
+ * counted among the marks sent.
+ */
+const school = vi.hoisted(() => {
+  const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const state = {
+    pupils: [] as OtherPupilView[],
+    /** What was typed, in the order it was asked. */
+    asked: [] as string[],
+    /** Every search as it was sent: the path and the body. */
+    requests: [] as { path: string; body: unknown }[],
+    fail: false,
+    slow: undefined as undefined | ((q: string) => Promise<void> | undefined),
+    async search(path: string, body: unknown): Promise<OtherPupilView[]> {
+      const { q } = body as { alarmId: string; q: string };
+      state.requests.push({ path, body });
+      state.asked.push(q);
+      await state.slow?.(q);
+      if (state.fail) throw new TypeError("Failed to fetch");
+      const words = fold(q).split(/\s+/).filter(Boolean);
+      return state.pupils
+        .filter((one) => words.every((word) => fold(`${one.firstName} ${one.lastName} ${one.className ?? ""}`).includes(word)))
+        .slice(0, 25);
+    },
+  };
+  return state;
+});
+const SEARCH = "/api/v1/crisis/mine/pupils";
+const marksPost = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
-  return { ...actual, api: { get: vi.fn(), post: vi.fn() } };
+  return {
+    ...actual,
+    api: {
+      get: vi.fn(),
+      post: (path: string, body?: unknown, signal?: AbortSignal) => (path === SEARCH ? school.search(path, body) : marksPost(path, body, signal)),
+    },
+  };
 });
 const get = api.get as unknown as Mock;
-const post = api.post as unknown as Mock;
+const post = marksPost as unknown as Mock;
 // Who is signed in: the queue and the list kept on the device are theirs (lib/crisis-queue.ts).
 const who = vi.hoisted(() => ({ id: "t-me" }));
 vi.mock("@/components/profile-context", () => ({
@@ -81,15 +119,22 @@ function renderPage() {
 }
 
 const group = (name: string) => screen.getByRole("region", { name });
+/** The page's counters: the live region that says Finns, Saknas and the rest (the picker has a status of its own). */
+const counters = () => screen.getAllByRole("status").find((one) => one.getAttribute("aria-live") === "polite" && /Finns/.test(one.textContent ?? ""))!;
 const sentMarks = (): MarkInput[] => post.mock.calls.flatMap(([, body]) => (body as { marks: MarkInput[] }).marks);
-const queuedOf = (id: string): MarkInput[] => JSON.parse(localStorage.getItem(queueKey(id)) ?? "[]");
-const queued = (): MarkInput[] => queuedOf(who.id);
+const queuedOf = (id: string): QueuedMark[] => JSON.parse(localStorage.getItem(queueKey(id)) ?? "[]");
+const queued = (): QueuedMark[] => queuedOf(who.id);
 const QUEUE_KEY = queueKey("t-me");
 const SNAPSHOT_KEY = snapshotKey("t-me");
 
 beforeEach(() => {
   vi.resetAllMocks();
   who.id = "t-me";
+  school.pupils = [];
+  school.asked = [];
+  school.requests = [];
+  school.fail = false;
+  school.slow = undefined;
   localStorage.clear();
   answerWith(going());
   post.mockResolvedValue({ stored: 1, duplicates: 0, unresolved: [] });
@@ -122,7 +167,7 @@ describe("/teacher/crisis with a network", () => {
     renderPage();
     await screen.findByRole("heading", { level: 2, name: "Utrymning" });
     // 7A: 1 found, 1 missing, 2 not reported, 1 absent before; 8B: 1 not reported.
-    const live = screen.getByRole("status");
+    const live = counters();
     expect(live).toHaveAttribute("aria-live", "polite");
     expect(live).toHaveTextContent("1 Finns");
     expect(live).toHaveTextContent("1 Saknas");
@@ -321,7 +366,7 @@ describe("/teacher/crisis on a bad network", () => {
       return { stored: body.marks.length, duplicates: 0, unresolved: [] };
     });
     renderPage();
-    expect(await screen.findByText("Eleven står inte på gruppens lista.", { exact: false })).toBeInTheDocument();
+    expect(await screen.findByText("Markeringen gick inte att ta emot: eleven står inte på gruppens lista", { exact: false })).toBeInTheDocument();
     expect(sentMarks().map((mark) => mark.id)).toContain("m-2");
     await waitFor(() => expect(queued()).toEqual([]));
   });
@@ -461,262 +506,514 @@ describe("/teacher/crisis when the gateway lost a write conflict", () => {
 });
 
 describe("/teacher/crisis: a pupil found who is not on the list", () => {
-  // 7A and 8B are the teacher's; the school's other pupils are who can be found. Olga is on no one's list but Dahl's.
+  // The school's other pupils, as the search sees them: not in the list the teacher is given, and held nowhere.
   const others = [
     other("o1", "Nils", "Holm", "9C"),
     other("o2", "Olga", "Dahl", "9C"),
     other("o3", "Åke", "Persson", "6B"),
     other("o4", "Nils", "Holmgren", null),
   ];
-  const withOthers = (calls = [sevenA(), nextLesson()], extra = {}) => mine([myAlarm(calls, { others, ...extra })], asOf);
+  const withFree = (calls = [sevenA(), nextLesson()], extra = {}) => mine([myAlarm(calls, extra)], asOf);
   const findButton = () => screen.getByRole("button", { name: "Hittat en elev som inte står på listan" });
+  const searchbox = () => screen.getByRole("searchbox", { name: "Namn eller klass" });
   /** The picker's results; the groups' own Finns buttons are on the page beside them. */
   const results = () => within(screen.getByRole("list", { name: "Träffar" }));
   const labels = () => results().getAllByRole("button").map((button) => button.getAttribute("aria-label"));
+  const open = async (user: ReturnType<typeof userEvent.setup>) => {
+    await screen.findByRole("heading", { level: 2, name: "Utrymning" });
+    await user.click(findButton());
+  };
+  /** Types into the search and waits for the answer to it. */
+  const search = async (user: ReturnType<typeof userEvent.setup>, text: string) => {
+    await user.clear(searchbox());
+    await user.type(searchbox(), text);
+    await screen.findByRole("list", { name: "Träffar" }, { timeout: 2000 });
+  };
 
-  it("offers it once per alarm, below the groups, to a teacher who has a group", async () => {
-    answerWith(withOthers());
+  beforeEach(() => {
+    school.pupils = others;
+  });
+
+  it("offers it once per alarm that is going, below the groups, to a teacher who has a group", async () => {
+    answerWith(withFree());
     renderPage();
     await screen.findByRole("region", { name: "7A" });
     expect(findButton()).toHaveAttribute("aria-expanded", "false");
     expect(screen.getAllByRole("button", { name: "Hittat en elev som inte står på listan" })).toHaveLength(1);
   });
 
-  it("does not offer it to a teacher with no group of their own to attach the pupil to, nor when the alarm is over, nor with nobody to find", async () => {
-    answerWith(withOthers([]));
+  it("offers it to a teacher with no group right now as well, and not when the alarm is over", async () => {
+    answerWith(withFree([]));
     const first = renderPage();
     await screen.findByText("Du svarar inte för någon grupp i det här larmet.");
-    expect(screen.queryByRole("button", { name: "Hittat en elev som inte står på listan" })).not.toBeInTheDocument();
+    expect(findButton()).toBeInTheDocument();
     first.unmount();
 
-    answerWith(withOthers([sevenA()], { endedAt: "2027-01-12T09:31:00.000Z", endedBy: "Rut Rektor" }));
-    const second = renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    expect(screen.queryByRole("button", { name: "Hittat en elev som inte står på listan" })).not.toBeInTheDocument();
-    second.unmount();
-
-    answerWith(withOthers([sevenA()], { others: [] }));
+    answerWith(withFree([sevenA()], { endedAt: "2027-01-12T09:31:00.000Z", endedBy: "Rut Rektor" }));
     renderPage();
     await screen.findByRole("region", { name: "7A" });
     expect(screen.queryByRole("button", { name: "Hittat en elev som inte står på listan" })).not.toBeInTheDocument();
   });
 
-  it("searches the school's other pupils by name or class, with accents and case forgiven, and shows nobody until something is typed", async () => {
-    answerWith(withOthers());
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    await user.click(findButton());
-    expect(findButton()).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("Skriv ett namn eller en klass.")).toBeInTheDocument();
-    const search = screen.getByRole("searchbox", { name: "Namn eller klass" });
-    expect(search).toHaveFocus();
-    expect(screen.queryByRole("list", { name: "Träffar" })).not.toBeInTheDocument();
-
-    await user.type(search, "nils");
-    expect(labels()).toEqual(["Finns: Nils Holm (9C)", "Finns: Nils Holmgren"]);
-    await user.clear(search);
-    await user.type(search, "9c");
-    expect(labels()).toEqual(["Finns: Nils Holm (9C)", "Finns: Olga Dahl (9C)"]);
-    await user.clear(search);
-    await user.type(search, "ake pers");
-    expect(labels()).toEqual(["Finns: Åke Persson (6B)"]);
-    await user.clear(search);
-    await user.type(search, "zzz");
-    expect(screen.getByText("Ingen träff bland eleverna som inte står på dina listor.")).toBeInTheDocument();
-  });
-
-  it("never offers Saknas for a pupil who is not on the list, and does not list a pupil of the teacher's own groups", async () => {
-    answerWith(mine([myAlarm([sevenA()], { others: [...others, ] })], asOf));
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    await user.click(findButton());
-    await user.type(screen.getByRole("searchbox", { name: "Namn eller klass" }), "e");
-    expect(labels().length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: /^Saknas: (Nils|Olga|Åke)/ })).not.toBeInTheDocument();
-    // Ines is on 7A's list (a pupil of the group, not an "other"), so she is not among the results.
-    expect(labels().join()).not.toContain("Ines");
-    expect(results().queryAllByRole("button", { name: /^Saknas/ })).toHaveLength(0);
-  });
-
-  it("queues a FOUND mark for the group with a mark of its own id, shows the pupil at once as waiting, and closes with focus back on the button", async () => {
-    let answer!: (value: unknown) => void;
-    post.mockReturnValue(new Promise((resolve) => (answer = resolve)));
-    answerWith(withOthers([sevenA()]));
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    await user.click(findButton());
-    await user.type(screen.getByRole("searchbox", { name: "Namn eller klass" }), "olga");
-    await user.click(screen.getByRole("button", { name: "Finns: Olga Dahl (9C)" }));
-
-    // At once, from the device.
-    const found = screen.getByRole("list", { name: "Hittade hos dig som inte står på listan" });
-    expect(within(found).getByText("Olga Dahl")).toBeInTheDocument();
-    expect(within(found).getByText("9C")).toBeInTheDocument();
-    expect(within(found).getByText("Väntar på att skickas")).toBeInTheDocument();
-    expect(within(found).getByText("Finns")).toBeInTheDocument();
-    expect(screen.getByText("Olga Dahl är markerad som funnen hos dig.")).toBeInTheDocument();
-    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
-    expect(findButton()).toHaveFocus();
-    // A pupil of the group is not changed by it: not the pupil's list, not its counts.
-    expect(within(group("7A")).getByRole("list", { name: "Eleverna i 7A" }).querySelectorAll("li")).toHaveLength(5);
-
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    const [path, body] = post.mock.calls[0]!;
-    expect(path).toBe(MARKS);
-    expect(body.marks).toHaveLength(1);
-    expect(body.marks[0]).toMatchObject({ callId: "c-7a", studentId: "o2", state: "FOUND" });
-    expect(body.marks[0].id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(Date.parse(body.marks[0].at)).not.toBeNaN();
-    expect(queued()).toHaveLength(1);
-
-    // The gateway has it: its next list holds the pupil under the group, and nothing waits.
-    answerWith(
-      mine([myAlarm([myCall("c-7a", "7A", sevenA().pupils, { foundHere: [foundHere("o2", "Olga", "Dahl", "9C")] })], { others })], asOf),
-    );
-    await act(async () => answer({ stored: 1, duplicates: 0, unresolved: [] }));
-    await waitFor(() => expect(screen.queryByText("Väntar på att skickas")).not.toBeInTheDocument());
-    expect(queued()).toEqual([]);
-    expect(within(screen.getByRole("list", { name: "Hittade hos dig som inte står på listan" })).getByText("Olga Dahl")).toBeInTheDocument();
-  });
-
-  it("holds the find as waiting when there is no signal, keeps it on the device, and sends it when the network is back", async () => {
-    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ receivedAt: Date.now() - 60_000, data: withOthers([sevenA()]) }));
-    answerWith(new TypeError("Failed to fetch"));
-    post.mockRejectedValue(new TypeError("Failed to fetch"));
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    await user.click(findButton());
-    await user.type(screen.getByRole("searchbox", { name: "Namn eller klass" }), "åke");
-    await user.click(screen.getByRole("button", { name: "Finns: Åke Persson (6B)" }));
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    const found = screen.getByRole("list", { name: "Hittade hos dig som inte står på listan" });
-    expect(within(found).getByText("Åke Persson")).toBeInTheDocument();
-    expect(within(found).getByText("Väntar på att skickas")).toBeInTheDocument();
-    expect(screen.getByText("1 markering väntar på att skickas.")).toBeInTheDocument();
-    expect(queued()).toHaveLength(1);
-    const id = queued()[0]!.id;
-
-    post.mockReset();
-    post.mockResolvedValue({ stored: 1, duplicates: 0, unresolved: [] });
-    await act(async () => {
-      window.dispatchEvent(new Event("online"));
+  describe("the search", () => {
+    it("is on the gateway: nothing is asked for under two characters, and the page holds no roster of the school", async () => {
+      answerWith(withFree());
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      expect(screen.getByText("Skriv minst två tecken av ett namn eller en klass.")).toBeInTheDocument();
+      expect(searchbox()).toHaveFocus();
+      await user.type(searchbox(), "o");
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(school.asked).toEqual([]);
+      expect(screen.queryByRole("list", { name: "Träffar" })).not.toBeInTheDocument();
+      // The list the teacher is given names nobody but their own pupils, and nothing else was read.
+      expect(get.mock.calls.map(([path]) => path).filter((path) => path !== "/api/v1/crisis/mine")).toEqual([]);
+      expect(school.requests).toEqual([]);
     });
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ id, callId: "c-7a", studentId: "o3", state: "FOUND" });
-    await waitFor(() => expect(queued()).toEqual([]));
+
+    it("asks after a pause in the typing, once, for the alarm and what was typed, and shows what the gateway answers", async () => {
+      answerWith(withFree());
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await user.type(searchbox(), "nils");
+      await screen.findByRole("list", { name: "Träffar" }, { timeout: 2000 });
+      // Four keys, one question.
+      expect(school.asked).toEqual(["nils"]);
+      // A POST to a path with nothing in it: what was typed is in the body, and in no URL.
+      expect(school.requests).toEqual([{ path: SEARCH, body: { alarmId: "a-1", q: "nils" } }]);
+      expect(labels()).toEqual(["Finns: Nils Holm (9C)", "Finns: Nils Holmgren"]);
+    });
+
+    it("has accents and case forgiven by the gateway, and a class found as well as a name", async () => {
+      answerWith(withFree());
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await search(user, "9c");
+      expect(labels()).toEqual(["Finns: Nils Holm (9C)", "Finns: Olga Dahl (9C)"]);
+      await search(user, "ake pers");
+      expect(labels()).toEqual(["Finns: Åke Persson (6B)"]);
+    });
+
+    it("sends what was typed in the body, whatever it holds, and never in a URL", async () => {
+      answerWith(withFree());
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await user.type(searchbox(), "a&b c");
+      await waitFor(() => expect(school.asked).toEqual(["a&b c"]));
+      expect(school.requests).toEqual([{ path: SEARCH, body: { alarmId: "a-1", q: "a&b c" } }]);
+      // No request of the page carries a name in its URL.
+      for (const [path] of [...get.mock.calls, ...post.mock.calls]) expect(String(path)).not.toMatch(/[?&]q=|nils|a&b/);
+      expect(school.requests.every((one) => !one.path.includes("?"))).toBe(true);
+    });
+
+    it("says it is searching, and says that nobody matches", async () => {
+      answerWith(withFree());
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await user.type(searchbox(), "zzz");
+      expect(screen.getByText("Söker…")).toBeInTheDocument();
+      expect(await screen.findByText("Ingen träff bland eleverna som inte står på dina listor.", {}, { timeout: 2000 })).toBeInTheDocument();
+    });
+
+    it("does not let a slow answer to an earlier word overwrite the answer to the word in the box", async () => {
+      answerWith(withFree());
+      let release!: () => void;
+      school.slow = (q) => (q === "ni" ? new Promise<void>((resolve) => (release = resolve)) : undefined);
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await user.type(searchbox(), "ni");
+      await waitFor(() => expect(school.asked).toEqual(["ni"]));
+      await user.type(searchbox(), "ls");
+      await screen.findByRole("list", { name: "Träffar" }, { timeout: 2000 });
+      expect(labels()).toEqual(["Finns: Nils Holm (9C)", "Finns: Nils Holmgren"]);
+      // Now the answer to "ni" comes, with other pupils in it: it is not the box's word any more.
+      school.pupils = [other("o9", "Nina", "Berg", "5A")];
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(labels()).toEqual(["Finns: Nils Holm (9C)", "Finns: Nils Holmgren"]);
+      expect(screen.queryByRole("button", { name: /Nina/ })).not.toBeInTheDocument();
+    });
+
+    it("says that it needs a network, when there is none, and asks again on request", async () => {
+      answerWith(withFree());
+      school.fail = true;
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await user.type(searchbox(), "olga");
+      expect(await screen.findByText("Sökningen kräver nät. Försök igen när du har kontakt.", {}, { timeout: 2000 })).toBeInTheDocument();
+      school.fail = false;
+      const picker = screen.getByRole("alert");
+      await user.click(within(picker).getByRole("button", { name: "Försök igen" }));
+      expect(await screen.findByRole("list", { name: "Träffar" })).toBeInTheDocument();
+      expect(labels()).toEqual(["Finns: Olga Dahl (9C)"]);
+    });
+
+    it("keeps no result on the device: the names of the pupils searched for are in no storage until one is picked", async () => {
+      answerWith(withFree());
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await search(user, "nils");
+      const stored = JSON.stringify(Object.fromEntries(Object.entries(localStorage)));
+      for (const name of ["Holm", "Holmgren", "Olga", "Persson"]) expect(stored).not.toContain(name);
+    });
+
+    it("shows at most what the gateway answers, and says there may be more behind it when it is the most it answers", async () => {
+      school.pupils = Array.from({ length: 40 }, (_, index) => other(`p${index}`, `Elev${String(index).padStart(3, "0")}`, "Test", "5A"));
+      answerWith(withFree());
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await search(user, "elev");
+      expect(labels()).toHaveLength(25);
+      expect(screen.getByText("Visar de 25 första. Skriv mer för att begränsa.")).toBeInTheDocument();
+      await search(user, "elev01");
+      expect(labels()).toHaveLength(10);
+      expect(screen.queryByText(/Visar de 25 första/)).not.toBeInTheDocument();
+    });
+
+    it("never offers Saknas for a pupil who is not on the list, and does not offer one already found with the teacher", async () => {
+      answerWith(
+        withFree([myCall("c-7a", "7A", sevenA().pupils, { foundHere: [foundHere("o1", "Nils", "Holm", "9C")] })], { foundFree: [foundHere("o4", "Nils", "Holmgren")] }),
+      );
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      // Both Nilses are found already: the gateway names them (it does not know) and the page leaves them out.
+      await user.type(searchbox(), "nils");
+      expect(await screen.findByText("Ingen träff bland eleverna som inte står på dina listor.", {}, { timeout: 2000 })).toBeInTheDocument();
+      await search(user, "9c");
+      expect(labels()).toEqual(["Finns: Olga Dahl (9C)"]);
+      expect(results().queryAllByRole("button", { name: /^Saknas/ })).toHaveLength(0);
+      expect(screen.queryByRole("button", { name: /^Saknas: (Nils|Olga|Åke)/ })).not.toBeInTheDocument();
+    });
+
+    it("works from the keyboard: arrows from the search into the results and between them, Enter on a result, Escape closes", async () => {
+      answerWith(withFree([sevenA()]));
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await search(user, "nils");
+      // Enter in the search marks nobody: it only moves to the first result.
+      await user.type(searchbox(), "{Enter}");
+      expect(results().getByRole("button", { name: "Finns: Nils Holm (9C)" })).toHaveFocus();
+      expect(post).not.toHaveBeenCalled();
+      await user.keyboard("{ArrowDown}");
+      expect(results().getByRole("button", { name: "Finns: Nils Holmgren" })).toHaveFocus();
+      await user.keyboard("{ArrowUp}");
+      expect(results().getByRole("button", { name: "Finns: Nils Holm (9C)" })).toHaveFocus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+      expect(findButton()).toHaveFocus();
+      expect(post).not.toHaveBeenCalled();
+
+      await user.click(findButton());
+      await search(user, "holmgren");
+      await user.keyboard("{ArrowDown}{Enter}");
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ studentId: "o4", state: "FOUND" });
+    });
   });
 
-  it("does not offer a pupil who is already found with the teacher", async () => {
-    answerWith(withOthers([myCall("c-7a", "7A", sevenA().pupils, { foundHere: [foundHere("o1", "Nils", "Holm", "9C")] })]));
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    expect(within(screen.getByRole("list", { name: "Hittade hos dig som inte står på listan" })).getByText("Nils Holm")).toBeInTheDocument();
-    await user.click(findButton());
-    await user.type(screen.getByRole("searchbox", { name: "Namn eller klass" }), "nils");
-    expect(labels()).toEqual(["Finns: Nils Holmgren"]);
+  describe("picking a pupil", () => {
+    it("queues a FOUND mark for the group, carrying the pupil's name and class in the queue and not in what is sent, and draws the row at once as waiting", async () => {
+      let answer!: (value: unknown) => void;
+      post.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      answerWith(withFree([sevenA()]));
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await search(user, "olga");
+      await user.click(results().getByRole("button", { name: "Finns: Olga Dahl (9C)" }));
+
+      // At once, from the device, with no roster to look the name up in.
+      const found = screen.getByRole("list", { name: "Hittade hos dig som inte står på listan" });
+      expect(within(found).getByText("Olga Dahl")).toBeInTheDocument();
+      expect(within(found).getByText("9C")).toBeInTheDocument();
+      expect(within(found).getByText("Väntar på att skickas")).toBeInTheDocument();
+      expect(within(found).getByText("Finns")).toBeInTheDocument();
+      expect(screen.getByText("Olga Dahl är markerad som funnen hos dig.")).toBeInTheDocument();
+      expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+      expect(findButton()).toHaveFocus();
+      // A pupil of the group is not changed by it: not the pupil's list, not its counts.
+      expect(within(group("7A")).getByRole("list", { name: "Eleverna i 7A" }).querySelectorAll("li")).toHaveLength(5);
+
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      const [path, body] = post.mock.calls[0]!;
+      expect(path).toBe(MARKS);
+      expect(body.marks).toHaveLength(1);
+      expect(body.marks[0]).toMatchObject({ callId: "c-7a", studentId: "o2", state: "FOUND" });
+      expect(body.marks[0].id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(Date.parse(body.marks[0].at)).not.toBeNaN();
+      expect(body.marks[0]).not.toHaveProperty("alarmId");
+      // What the gateway is sent is the gateway's own shape, and nothing more.
+      expect(Object.keys(body.marks[0]).sort()).toEqual(["at", "callId", "id", "state", "studentId"]);
+      // What the device keeps while it waits has the name.
+      expect(queued()).toHaveLength(1);
+      expect(queued()[0]!.pupil).toEqual({ firstName: "Olga", lastName: "Dahl", className: "9C" });
+
+      // The gateway has it: its next list holds the pupil under the group, and nothing waits.
+      answerWith(mine([myAlarm([myCall("c-7a", "7A", sevenA().pupils, { foundHere: [foundHere("o2", "Olga", "Dahl", "9C")] })])], asOf));
+      await act(async () => answer({ stored: 1, duplicates: 0, unresolved: [] }));
+      await waitFor(() => expect(screen.queryByText("Väntar på att skickas")).not.toBeInTheDocument());
+      expect(queued()).toEqual([]);
+      // The name is gone from the queue with the mark; the gateway's list is what holds the pupil now.
+      expect(localStorage.getItem(QUEUE_KEY)).toBeNull();
+      expect(within(screen.getByRole("list", { name: "Hittade hos dig som inte står på listan" })).getByText("Olga Dahl")).toBeInTheDocument();
+    });
+
+    it("holds the find as waiting when there is no signal, keeps it on the device, and sends it when the network is back", async () => {
+      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ receivedAt: Date.now() - 60_000, data: withFree([sevenA()]) }));
+      answerWith(new TypeError("Failed to fetch"));
+      post.mockRejectedValue(new TypeError("Failed to fetch"));
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByRole("region", { name: "7A" });
+      // The search needs a network; the mark does not. A pupil found before the signal went can be marked from the answer already on the screen.
+      answerWith(withFree([sevenA()]));
+      await user.click(findButton());
+      await search(user, "åke");
+      await user.click(results().getByRole("button", { name: "Finns: Åke Persson (6B)" }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      const found = screen.getByRole("list", { name: "Hittade hos dig som inte står på listan" });
+      expect(within(found).getByText("Åke Persson")).toBeInTheDocument();
+      expect(within(found).getByText("Väntar på att skickas")).toBeInTheDocument();
+      expect(screen.getByText("1 markering väntar på att skickas.")).toBeInTheDocument();
+      expect(queued()).toHaveLength(1);
+      const id = queued()[0]!.id;
+
+      post.mockReset();
+      post.mockResolvedValue({ stored: 1, duplicates: 0, unresolved: [] });
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ id, callId: "c-7a", studentId: "o3", state: "FOUND" });
+      expect(post.mock.calls[0]![1].marks[0]).not.toHaveProperty("pupil");
+      await waitFor(() => expect(queued()).toEqual([]));
+    });
+
+    it("keeps the row of a find that waits across a reload, from the name in the queue, with no roster and no search", async () => {
+      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ receivedAt: Date.now() - 60_000, data: withFree([sevenA()]) }));
+      localStorage.setItem(
+        QUEUE_KEY,
+        JSON.stringify([{ id: "m-1", callId: "c-7a", studentId: "o2", state: "FOUND", at: "2027-01-12T09:21:00.000Z", pupil: { firstName: "Olga", lastName: "Dahl", className: "9C" } }]),
+      );
+      answerWith(new TypeError("Failed to fetch"));
+      post.mockRejectedValue(new TypeError("Failed to fetch"));
+      renderPage();
+      const found = await screen.findByRole("list", { name: "Hittade hos dig som inte står på listan" });
+      expect(within(found).getByText("Olga Dahl")).toBeInTheDocument();
+      expect(within(found).getByText("Väntar på att skickas")).toBeInTheDocument();
+      expect(school.asked).toEqual([]);
+    });
+
+    it("lets a teacher with several groups say which one the pupil was found with, the lesson going on first, and files the pupil under it", async () => {
+      post.mockReturnValue(new Promise(() => {}));
+      answerWith(withFree([nextLesson(), sevenA()]));
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      const which = screen.getByRole("combobox", { name: "Hittad tillsammans med" });
+      // 8B is first in the list but the break's next lesson; 7A is the lesson going on.
+      expect(which).toHaveValue("c-7a");
+      await user.selectOptions(which, "c-8b");
+      await search(user, "åke");
+      await user.click(results().getByRole("button", { name: "Finns: Åke Persson (6B)" }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ callId: "c-8b", studentId: "o3", state: "FOUND" });
+      expect(within(group("8B")).getByText("Åke Persson")).toBeInTheDocument();
+      expect(within(group("8B")).getByText("Väntar på att skickas")).toBeInTheDocument();
+      expect(within(group("7A")).queryByText("Åke Persson")).not.toBeInTheDocument();
+    });
+
+    it("asks for no choice of group when there is only one, nor when there is none", async () => {
+      answerWith(withFree([sevenA()]));
+      const user = userEvent.setup();
+      const first = renderPage();
+      await open(user);
+      expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+      first.unmount();
+      answerWith(withFree([]));
+      renderPage();
+      await open(user);
+      expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    });
   });
 
-  it("lets a teacher with several groups say which one the pupil was found with, the lesson going on first", async () => {
-    answerWith(withOthers([nextLesson(), sevenA()]));
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    await user.click(findButton());
-    const which = screen.getByRole("combobox", { name: "Hittad tillsammans med" });
-    // 8B is first in the list but the break's next lesson; 7A is the lesson going on.
-    expect(which).toHaveValue("c-7a");
-    await user.type(screen.getByRole("searchbox", { name: "Namn eller klass" }), "olga");
-    await user.click(results().getByRole("button", { name: "Finns: Olga Dahl (9C)" }));
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ callId: "c-7a", studentId: "o2" });
+  describe("a teacher with no group right now", () => {
+    it("sends the find by the alarm, with alarmId in place of callId, and lists the pupil under the alarm as found by them, waiting", async () => {
+      let answer!: (value: unknown) => void;
+      post.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      answerWith(withFree([]));
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await search(user, "olga");
+      await user.click(results().getByRole("button", { name: "Finns: Olga Dahl (9C)" }));
+
+      const free = screen.getByRole("list", { name: "Hittade av dig" });
+      expect(within(free).getByText("Olga Dahl")).toBeInTheDocument();
+      expect(within(free).getByText("Väntar på att skickas")).toBeInTheDocument();
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      const body = post.mock.calls[0]![1];
+      expect(body.marks).toHaveLength(1);
+      expect(body.marks[0]).toMatchObject({ alarmId: "a-1", studentId: "o2", state: "FOUND" });
+      expect(body.marks[0]).not.toHaveProperty("callId");
+      expect(body.marks[0]).not.toHaveProperty("lessonId");
+      expect(Object.keys(body.marks[0]).sort()).toEqual(["alarmId", "at", "id", "state", "studentId"]);
+
+      answerWith(withFree([], { foundFree: [foundHere("o2", "Olga", "Dahl", "9C")] }));
+      await act(async () => answer({ stored: 1, duplicates: 0, unresolved: [] }));
+      await waitFor(() => expect(screen.queryByText("Väntar på att skickas")).not.toBeInTheDocument());
+      expect(within(screen.getByRole("list", { name: "Hittade av dig" })).getByText("Olga Dahl")).toBeInTheDocument();
+    });
+
+    it("lists the pupils the gateway says this teacher found with no group, with a teacher's group beside them being theirs", async () => {
+      answerWith(withFree([sevenA()], { foundFree: [foundHere("o4", "Nils", "Holmgren", "6B")] }));
+      renderPage();
+      await screen.findByRole("region", { name: "7A" });
+      const free = screen.getByRole("list", { name: "Hittade av dig" });
+      expect(within(free).getByText("Nils Holmgren").closest("li")).toHaveTextContent("6B");
+    });
   });
 
-  it("files the pupil under the group the teacher chose", async () => {
-    post.mockReturnValue(new Promise(() => {}));
-    answerWith(withOthers([nextLesson(), sevenA()]));
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    await user.click(findButton());
-    await user.selectOptions(screen.getByRole("combobox", { name: "Hittad tillsammans med" }), "c-8b");
-    await user.type(screen.getByRole("searchbox", { name: "Namn eller klass" }), "åke");
-    await user.click(results().getByRole("button", { name: "Finns: Åke Persson (6B)" }));
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ callId: "c-8b", studentId: "o3", state: "FOUND" });
-    expect(within(group("8B")).getByText("Åke Persson")).toBeInTheDocument();
-    expect(within(group("8B")).getByText("Väntar på att skickas")).toBeInTheDocument();
-    expect(within(group("7A")).queryByText("Åke Persson")).not.toBeInTheDocument();
+  describe("taking a find back (Ta tillbaka)", () => {
+    const heldBy = () => withFree([myCall("c-7a", "7A", sevenA().pupils, { foundHere: [foundHere("o1", "Nils", "Holm", "9C")] })], { foundFree: [foundHere("o4", "Nils", "Holmgren")] });
+
+    it("is offered on each pupil found, while the alarm is going, and queues a RETRACTED mark for the group or the alarm it was made on, taking the row away at once", async () => {
+      let answer!: (value: unknown) => void;
+      post.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      answerWith(heldBy());
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByRole("region", { name: "7A" });
+      expect(screen.getByRole("button", { name: "Ta tillbaka: Nils Holm" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Ta tillbaka: Nils Holmgren" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Ta tillbaka: Nils Holm" }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      const mark = post.mock.calls[0]![1].marks[0];
+      expect(mark).toMatchObject({ callId: "c-7a", studentId: "o1", state: "RETRACTED" });
+      expect(mark.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(Date.parse(mark.at)).not.toBeNaN();
+      expect(Object.keys(mark).sort()).toEqual(["at", "callId", "id", "state", "studentId"]);
+      // Gone from the list at once; the next read is the truth.
+      expect(screen.queryByText("Nils Holm", { exact: true })).not.toBeInTheDocument();
+      expect(screen.getByText("Nils Holmgren")).toBeInTheDocument();
+
+      answerWith(withFree([sevenA()], { foundFree: [foundHere("o4", "Nils", "Holmgren")] }));
+      await act(async () => answer({ stored: 1, duplicates: 0, unresolved: [] }));
+      await waitFor(() => expect(queued()).toEqual([]));
+      expect(screen.queryByText("Nils Holm", { exact: true })).not.toBeInTheDocument();
+    });
+
+    it("takes back a find made with no group by the alarm", async () => {
+      answerWith(heldBy());
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByRole("region", { name: "7A" });
+      await user.click(screen.getByRole("button", { name: "Ta tillbaka: Nils Holmgren" }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ alarmId: "a-1", studentId: "o4", state: "RETRACTED" });
+      expect(post.mock.calls[0]![1].marks[0]).not.toHaveProperty("callId");
+    });
+
+    it("is not offered once the alarm is over", async () => {
+      answerWith(mine([myAlarm([myCall("c-7a", "7A", sevenA().pupils, { foundHere: [foundHere("o1", "Nils", "Holm", "9C")] })], { endedAt: "2027-01-12T09:31:00.000Z", endedBy: "Rut Rektor", foundFree: [foundHere("o4", "Nils", "Holmgren")] })], asOf));
+      renderPage();
+      await screen.findByRole("region", { name: "7A" });
+      expect(screen.getByText("Nils Holm")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Ta tillbaka/ })).not.toBeInTheDocument();
+    });
+
+    it("sends nothing for a find that has not left the device: both marks are dropped from the queue", async () => {
+      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ receivedAt: Date.now() - 60_000, data: withFree([sevenA()]) }));
+      answerWith(new TypeError("Failed to fetch"));
+      post.mockRejectedValue(new TypeError("Failed to fetch"));
+      localStorage.setItem(
+        QUEUE_KEY,
+        JSON.stringify([{ id: "m-1", callId: "c-7a", studentId: "o2", state: "FOUND", at: "2027-01-12T09:21:00.000Z", pupil: { firstName: "Olga", lastName: "Dahl", className: "9C" } }]),
+      );
+      const user = userEvent.setup();
+      renderPage();
+      // The mark is on the device and sending fails (no network): it waits.
+      const found = await screen.findByRole("list", { name: "Hittade hos dig som inte står på listan" });
+      await waitFor(() => expect(post).toHaveBeenCalled());
+      post.mockClear();
+      expect(within(found).getByText("Väntar på att skickas")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Ta tillbaka: Olga Dahl" }));
+      expect(screen.queryByRole("list", { name: "Hittade hos dig som inte står på listan" })).not.toBeInTheDocument();
+      expect(queued()).toEqual([]);
+      expect(screen.queryByText(/väntar på att skickas/)).not.toBeInTheDocument();
+      // Back online: there is nothing to send, neither the find nor its retraction.
+      post.mockResolvedValue({ stored: 1, duplicates: 0, unresolved: [] });
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("sends the retraction after a find that is on its way, and does not drop the find that may already be stored", async () => {
+      let answer!: (value: unknown) => void;
+      post.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+      post.mockResolvedValue({ stored: 1, duplicates: 0, unresolved: [] });
+      school.pupils = others;
+      answerWith(withFree([sevenA()]));
+      const user = userEvent.setup();
+      renderPage();
+      await open(user);
+      await search(user, "olga");
+      await user.click(results().getByRole("button", { name: "Finns: Olga Dahl (9C)" }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      // The find is in the air.
+      await user.click(screen.getByRole("button", { name: "Ta tillbaka: Olga Dahl" }));
+      expect(queued().map((mark) => mark.state)).toEqual(["FOUND", "RETRACTED"]);
+      await act(async () => answer({ stored: 1, duplicates: 0, unresolved: [] }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+      expect(post.mock.calls[1]![1].marks.map((mark: MarkInput) => [mark.state, mark.studentId])).toEqual([["RETRACTED", "o2"]]);
+      await waitFor(() => expect(queued()).toEqual([]));
+    });
+
+    it("drops a retraction the gateway refuses (nothing of the teacher's to take back) and says so in words", async () => {
+      answerWith(heldBy());
+      post.mockRejectedValue(new ApiError(400, "Inget att ta tillbaka.", "CRISIS_MARK_INVALID"));
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByRole("region", { name: "7A" });
+      await user.click(screen.getByRole("button", { name: "Ta tillbaka: Nils Holm" }));
+      expect(await screen.findByText("En markering kunde inte sparas")).toBeInTheDocument();
+      expect(screen.getByText(/eller så fanns inget du hittat att ta tillbaka/)).toBeInTheDocument();
+      expect(queued()).toEqual([]);
+    });
   });
 
-  it("asks for no choice of group when there is only one", async () => {
-    answerWith(withOthers([sevenA()]));
-    const user = userEvent.setup();
+  it("never offers the administration's Inte i huset to a teacher, and shows a pupil the administration marked so in its own word", async () => {
+    answerWith(mine([myAlarm([myCall("c-7a", "7A", [pupil("s1", "Ines", "Ek", "AWAY"), pupil("s2", "Jamal", "Ali"), pupil("s3", "Klara", "Nyman", "FOUND")])], { foundFree: [] })], asOf));
     renderPage();
     await screen.findByRole("region", { name: "7A" });
-    await user.click(findButton());
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-  });
-
-  it("shows at most fifty results and says how many there are, so that a thousand names are not a thousand buttons", async () => {
-    const many = Array.from({ length: 120 }, (_, index) => other(`p${index}`, `Elev${String(index).padStart(3, "0")}`, "Test", "5A"));
-    answerWith(withOthers([sevenA()], { others: many }));
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    await user.click(findButton());
-    await user.type(screen.getByRole("searchbox", { name: "Namn eller klass" }), "elev");
-    expect(labels()).toHaveLength(50);
-    expect(screen.getByText("Visar de 50 första av 120. Skriv mer för att begränsa.")).toBeInTheDocument();
-    await user.type(screen.getByRole("searchbox", { name: "Namn eller klass" }), "01");
-    expect(labels()).toHaveLength(10);
-    expect(screen.queryByText(/Visar de 50 första/)).not.toBeInTheDocument();
-  });
-
-  it("works from the keyboard: arrows from the search into the results and between them, Enter on a result, Escape closes", async () => {
-    answerWith(withOthers([sevenA()]));
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByRole("region", { name: "7A" });
-    await user.click(findButton());
-    const search = screen.getByRole("searchbox", { name: "Namn eller klass" });
-    await user.type(search, "nils");
-    // Enter in the search marks nobody: it only moves to the first result.
-    await user.keyboard("{Enter}");
-    expect(results().getByRole("button", { name: "Finns: Nils Holm (9C)" })).toHaveFocus();
-    expect(post).not.toHaveBeenCalled();
-    await user.keyboard("{ArrowDown}");
-    expect(results().getByRole("button", { name: "Finns: Nils Holmgren" })).toHaveFocus();
-    await user.keyboard("{ArrowUp}");
-    expect(results().getByRole("button", { name: "Finns: Nils Holm (9C)" })).toHaveFocus();
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
-    expect(findButton()).toHaveFocus();
-    expect(post).not.toHaveBeenCalled();
-
-    await user.click(findButton());
-    await user.type(screen.getByRole("searchbox", { name: "Namn eller klass" }), "holmgren");
-    await user.keyboard("{ArrowDown}{Enter}");
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ studentId: "o4", state: "FOUND" });
+    expect(screen.queryByRole("button", { name: /^Inte i huset/ })).not.toBeInTheDocument();
+    const row = screen.getByText("Ines Ek").closest("li") as HTMLElement;
+    expect(row).toHaveTextContent("Inte i huset");
+    expect(within(row).getByRole("button", { name: "Finns: Ines Ek" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(row).getByRole("button", { name: "Saknas: Ines Ek" })).toHaveAttribute("aria-pressed", "false");
+    // Counted for itself, apart from the others.
+    const live = counters();
+    expect(live).toHaveTextContent("1 Finns");
+    expect(live).toHaveTextContent("1 Inte i huset");
+    expect(live).toHaveTextContent("1 Inte rapporterade");
   });
 
   it("lists the pupils the gateway says were found with the teacher under the group, with their class, also when the alarm is over", async () => {
     answerWith(
-      mine(
-        [
-          myAlarm([myCall("c-7a", "7A", sevenA().pupils, { foundHere: [foundHere("o1", "Nils", "Holm", "9C"), foundHere("o4", "Nils", "Holmgren")] })], {
-            others,
-            endedAt: "2027-01-12T09:31:00.000Z",
-            endedBy: "Rut Rektor",
-          }),
-        ],
-        asOf,
-      ),
+      mine([myAlarm([myCall("c-7a", "7A", sevenA().pupils, { foundHere: [foundHere("o1", "Nils", "Holm", "9C"), foundHere("o4", "Nils", "Holmgren")] })], { endedAt: "2027-01-12T09:31:00.000Z", endedBy: "Rut Rektor" })], asOf),
     );
     renderPage();
     await screen.findByRole("region", { name: "7A" });
@@ -724,18 +1021,29 @@ describe("/teacher/crisis: a pupil found who is not on the list", () => {
     expect(within(found).getAllByRole("listitem")).toHaveLength(2);
     expect(within(found).getByText("Nils Holm").closest("li")).toHaveTextContent("9C");
     expect(within(found).queryByText("Väntar på att skickas")).not.toBeInTheDocument();
-    // No buttons to mark anyone on an alarm that is over.
     expect(within(found).queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("says nothing about found pupils when none were, and reads a list from a gateway that does not send the fields as having none", async () => {
-    const old = JSON.parse(JSON.stringify(withOthers([sevenA()])));
-    delete old.alarms[0].others;
+  it("reads a list from a gateway that does not send the fields as having none, and offers the button all the same", async () => {
+    const old = JSON.parse(JSON.stringify(withFree([sevenA()])));
+    delete old.alarms[0].foundFree;
     delete old.alarms[0].calls[0].foundHere;
     answerWith(old);
     renderPage();
     await screen.findByRole("region", { name: "7A" });
     expect(screen.queryByText("Hittade hos dig som inte står på listan")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Hittat en elev som inte står på listan" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Hittade av dig")).not.toBeInTheDocument();
+    expect(findButton()).toBeInTheDocument();
+  });
+
+  it("keeps no roster of the school in the list it keeps on the device, though the gateway sent one", async () => {
+    const withRoster = JSON.parse(JSON.stringify(withFree([sevenA()])));
+    withRoster.alarms[0].others = [{ studentId: "z", firstName: "Zeb", lastName: "Wall", className: "9C" }];
+    answerWith(withRoster);
+    renderPage();
+    await screen.findByRole("region", { name: "7A" });
+    await waitFor(() => expect(localStorage.getItem(SNAPSHOT_KEY)).not.toBeNull());
+    expect(localStorage.getItem(SNAPSHOT_KEY)).not.toContain("Zeb");
+    expect(localStorage.getItem(SNAPSHOT_KEY)).toContain("7A");
   });
 });

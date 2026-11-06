@@ -36,6 +36,9 @@ import { ProtocolPaper } from "./protocol-paper";
  * is recorded in the läslogg.
  */
 
+/** The timeline's badge for what a mark said: AWAY and RETRACTED are neither of the colours of found and missing. */
+const MARK_VARIANT = { FOUND: "success", MISSING: "destructive", AWAY: "secondary", RETRACTED: "outline" } as const;
+
 function AlarmRows({ mode, onOpen }: { mode: CrisisMode; onOpen: (id: string) => void }) {
   const t = useTranslations("crisis");
   const locale = useLocale();
@@ -92,7 +95,7 @@ function AlarmRows({ mode, onOpen }: { mode: CrisisMode; onOpen: (id: string) =>
                 )}
               </TableCell>
               <TableCell className="tabular-nums">
-                {t("protocol.pupilsFigures", { found: alarm.counts.found, missing: alarm.counts.missing, unreported: alarm.counts.unreported })}
+                {t("protocol.pupilsFigures", { found: alarm.counts.found, missing: alarm.counts.missing, away: alarm.counts.away, unreported: alarm.counts.unreported })}
               </TableCell>
               <TableCell className="tabular-nums">{t("live.ofTotal", { done: alarm.callsComplete, total: alarm.calls })}</TableCell>
               <TableCell className="tabular-nums">{t("live.ofTotal", { done: alarm.teachersAnswered, total: alarm.teachers })}</TableCell>
@@ -210,10 +213,11 @@ function ProtocolDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </div>
         <p className="text-sm text-muted-foreground">{t("protocol.protectedNote")}</p>
 
-        <KpiStrip columns={3} className="lg:grid-cols-6">
+        <KpiStrip columns={3} className="lg:grid-cols-7">
           <KpiTile label={t("live.groupsDone")} value={t("live.ofTotal", { done: alarm.callsComplete, total: alarm.calls })} />
           <KpiTile label={t("count.found")} value={alarm.counts.found} />
           <KpiTile label={t("count.missing")} value={alarm.counts.missing} />
+          <KpiTile label={t("count.away")} value={alarm.counts.away} />
           <KpiTile label={t("count.unreported")} value={alarm.counts.unreported} />
           <KpiTile label={t("count.absentBefore")} value={alarm.counts.absentBefore} />
           <KpiTile label={t("live.teachersAnswered")} value={t("live.ofTotal", { done: alarm.teachersAnswered, total: alarm.teachers })} />
@@ -261,7 +265,7 @@ function ProtocolDetail({ id, onBack }: { id: string; onBack: () => void }) {
                     )}
                   </TableCell>
                   <TableCell className="align-top tabular-nums">
-                    {t("protocol.pupilsFigures", { found: call.counts.found, missing: call.counts.missing, unreported: call.counts.unreported })}
+                    {t("protocol.pupilsFigures", { found: call.counts.found, missing: call.counts.missing, away: call.counts.away, unreported: call.counts.unreported })}
                     {call.counts.absentBefore > 0 ? (
                       <span className="block text-xs text-muted-foreground">{t("protocol.absentFigure", { count: call.counts.absentBefore })}</span>
                     ) : null}
@@ -294,7 +298,7 @@ function ProtocolDetail({ id, onBack }: { id: string; onBack: () => void }) {
                     <TableCell>{unlisted.has(mark.studentId) ? noLesson : mark.groupName}</TableCell>
                     <TableCell>{nameOf.get(mark.studentId) ?? "—"}</TableCell>
                     <TableCell>
-                      <Badge variant={mark.state === "FOUND" ? "success" : "destructive"}>{t(`status.${mark.state}`)}</Badge>
+                      <Badge variant={MARK_VARIANT[mark.state]}>{t(`status.${mark.state}`)}</Badge>
                     </TableCell>
                     {showFoundIn ? (
                       <TableCell>{mark.foundIn ? t("protocol.foundIn", { group: groupLabel(mark.foundIn, noLesson) }) : "—"}</TableCell>

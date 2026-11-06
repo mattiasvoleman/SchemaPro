@@ -1,10 +1,10 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Check, CircleHelp, Clock, UserX, X, type LucideIcon } from "lucide-react";
+import { Check, CircleHelp, Clock, DoorOpen, UserX, X, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { MarkState, PupilStatus, PupilView } from "@/lib/crisis-types";
+import type { PupilMark, PupilStatus, PupilView } from "@/lib/crisis-types";
 import { PUPIL_STATUS_VARIANT } from "@/lib/crisis-view";
 import { cn } from "@/lib/utils";
 
@@ -15,14 +15,26 @@ import { cn } from "@/lib/utils";
  * moving (44 px), and on the administration's live view, where the
  * administration marks a group nobody answers for.
  *
- * The two buttons are a pair of toggles (aria-pressed): the one that is
- * pressed is the mark the list holds. There is no third mark to take one
- * back; pressing the other one corrects it, and the timeline keeps both.
+ * The buttons are a set of toggles (aria-pressed): the one that is pressed is
+ * the mark the list holds. There is no mark to take one back; pressing another
+ * one corrects it, and the timeline keeps both.
+ *
+ * "Inte i huset" (AWAY) is a third, and the administration's alone: a pupil
+ * nobody has seen who is not thought to be in the building. It is said apart
+ * from Finns and Saknas in words and an icon, and a teacher's page never
+ * passes `away`, because the gateway refuses it from a teacher. Its icon, the
+ * open door, is one no other page uses: LogOut, which the user menu draws, made
+ * the shell's chunk lend it to the crisis pages and cost +17 B on every
+ * admin route (measured; /admin/requirements has no bytes to spare).
+ *
+ * A pupil a teacher found who is on no list of theirs has no marks to press,
+ * only "Ta tillbaka" (`onRetract`) while the alarm is going.
  */
 
 const ICON: Record<PupilStatus, LucideIcon> = {
   FOUND: Check,
   MISSING: X,
+  AWAY: DoorOpen,
   ABSENT_BEFORE: UserX,
   UNREPORTED: CircleHelp,
 };
@@ -31,6 +43,8 @@ export function PupilRow({
   pupil,
   pending = false,
   onMark,
+  away = false,
+  onRetract,
   large = false,
   detail,
 }: {
@@ -40,7 +54,11 @@ export function PupilRow({
   /** The mark shown has not been acknowledged by the gateway yet. */
   pending?: boolean;
   /** Absent: the row is read-only (a reader, an alarm that is over). */
-  onMark?: (state: MarkState) => void;
+  onMark?: (state: PupilMark) => void;
+  /** Also offers "Inte i huset": the administration's, never a teacher's. */
+  away?: boolean;
+  /** Offers "Ta tillbaka" for a pupil found with no mark of their own to press: takes the find back. */
+  onRetract?: () => void;
   large?: boolean;
 }) {
   const t = useTranslations("crisis");
@@ -99,7 +117,27 @@ export function PupilRow({
             {pupil.status === "MISSING" ? <X aria-hidden="true" /> : null}
             {t("markMissing")}
           </Button>
+          {away ? (
+            <Button
+              type="button"
+              variant={pupil.status === "AWAY" ? "secondary" : "outline"}
+              className={cn(size, "whitespace-normal")}
+              aria-pressed={pupil.status === "AWAY"}
+              aria-label={t("markAwayFor", { name })}
+              onClick={() => {
+                if (pupil.status !== "AWAY") onMark("AWAY");
+              }}
+            >
+              {pupil.status === "AWAY" ? <DoorOpen aria-hidden="true" /> : null}
+              {t("markAway")}
+            </Button>
+          ) : null}
         </div>
+      ) : null}
+      {onRetract ? (
+        <Button type="button" variant="outline" className={size} aria-label={t("retractFor", { name })} onClick={onRetract}>
+          {t("retract")}
+        </Button>
       ) : null}
     </li>
   );

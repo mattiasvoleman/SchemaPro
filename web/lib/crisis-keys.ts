@@ -16,4 +16,10 @@ export const CRISIS_KEYS = {
   detail: (id: string) => ["crisis", "alarm", id] as const,
   protocol: (id: string) => ["crisis", "protocol", id] as const,
   mine: ["crisis", "mine"] as const,
+  /**
+   * The teacher's search for a pupil they found (POST /crisis/mine/pupils; the text is in its body, never in a URL). NOT under "crisis" on purpose:
+   * the `crisis_updated` event invalidates that prefix at every mark made, and an open search would ask
+   * again each time. It lives only while the picker is open (gcTime 0) and is held nowhere else.
+   */
+  search: (alarmId: string, q: string) => ["crisis-search", alarmId, q] as const,
 };

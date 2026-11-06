@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
-import type { MarkInput, MarkResult } from "@/lib/crisis-types";
+import type { MarkResult, PupilName, QueuedMark } from "@/lib/crisis-types";
 import { MAX_MARKS_PER_CALL } from "./crisis-view";
 import {
   LEGACY_KEYS,
@@ -19,7 +19,7 @@ import {
   skewOf,
   snapshotKey,
 } from "./crisis-queue";
-import { foundHere, mine, myAlarm, myCall, other, pupil } from "./__fixtures__/crisis";
+import { foundHere, mine, myAlarm, myCall, pupil } from "./__fixtures__/crisis";
 
 const ME = "u-me";
 const QUEUE_KEY = queueKey(ME);
@@ -49,13 +49,24 @@ const hostile = {
   },
 };
 
-const mark = (id: string, studentId: string, state: MarkInput["state"] = "FOUND", at = "2027-01-12T09:20:00.000Z", callId = "c-1"): MarkInput => ({
+const mark = (id: string, studentId: string, state: QueuedMark["state"] = "FOUND", at = "2027-01-12T09:20:00.000Z", callId = "c-1"): QueuedMark => ({
   id,
   callId,
   studentId,
   state,
   at,
 });
+/** A mark made with no group: the alarm's own. */
+const freeMark = (id: string, studentId: string, state: QueuedMark["state"] = "FOUND", at = "2027-01-12T09:20:00.000Z", alarmId = "a-1"): QueuedMark => ({
+  id,
+  alarmId,
+  studentId,
+  state,
+  at,
+});
+const named = (made: QueuedMark, pupilName: PupilName): QueuedMark => ({ ...made, pupil: pupilName });
+const NILS: PupilName = { firstName: "Nils", lastName: "Holm", className: "9C" };
+const OLGA: PupilName = { firstName: "Olga", lastName: "Dahl", className: null };
 const ok = (extra: Partial<MarkResult> = {}): MarkResult => ({ stored: 0, duplicates: 0, unresolved: [], ...extra });
 const refuse = (status: number, code?: string) => new ApiError(status, "no", code);
 
@@ -77,6 +88,29 @@ describe("what the page remembers", () => {
     expect(loadQueue(ME, memory({ [QUEUE_KEY]: "{not json" }))).toEqual([]);
     expect(loadQueue(ME, memory({ [QUEUE_KEY]: '{"a":1}' }))).toEqual([]);
     expect(loadQueue(ME, memory())).toEqual([]);
+  });
+
+  it("keeps a find with the name and class it carries, and one made with no group by the alarm, and nothing that names both or neither", () => {
+    const store = memory();
+    const queue = [named(mark("m1", "s8"), NILS), freeMark("m2", "s9"), named(freeMark("m3", "s7", "RETRACTED"), OLGA)];
+    saveQueue(ME, queue, store);
+    expect(loadQueue(ME, store)).toEqual(queue);
+    const odd = [{ ...mark("m4", "s1"), alarmId: "a-1" }, { id: "m5", studentId: "s1", state: "FOUND", at: "2027-01-12T09:20:00.000Z" }, { ...mark("m6", "s1"), pupil: { firstName: 1 } }, mark("m7", "s1", "AWAY")];
+    expect(loadQueue(ME, memory({ [QUEUE_KEY]: JSON.stringify(odd) })).map((one) => one.id)).toEqual(["m7"]);
+  });
+
+  it("never writes a roster of the school's pupils to the device, nor reads one back: the list is what the gateway gave this teacher", () => {
+    const roster = [{ studentId: "s99", firstName: "Zeb", lastName: "Wall", className: "9C" }];
+    const withRoster = { data: mine([{ ...myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")])]), others: roster } as never]), receivedAt: Date.now() - 60_000 };
+    const store = memory();
+    saveSnapshot(ME, withRoster, store);
+    expect(store.items.get(SNAPSHOT_KEY)).not.toContain("others");
+    expect(store.items.get(SNAPSHOT_KEY)).not.toContain("Zeb");
+    expect(store.items.get(SNAPSHOT_KEY)).toContain("7A");
+    // One an earlier version wrote is read without it.
+    const older = memory({ [SNAPSHOT_KEY]: JSON.stringify(withRoster) });
+    expect(JSON.stringify(loadSnapshot(ME, Date.now(), older))).not.toContain("others");
+    expect(loadSnapshot(ME, Date.now(), older)?.data.alarms[0]?.calls).toHaveLength(1);
   });
 
   it("works without a storage at all: a private window, blocked site data, a full quota", () => {
@@ -189,14 +223,11 @@ describe("the list with the queue laid over it", () => {
   });
 
   describe("a pupil found who is not on the group's list (found with me)", () => {
-    const elsewhere = mine([
-      myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")]), myCall("c-2", "7B", [pupil("s2", "Maja", "Ek")])], {
-        others: [other("s8", "Nils", "Holm", "9C"), other("s9", "Olga", "Dahl", null)],
-      }),
-    ]);
+    // No roster of the school is held anywhere: the mark itself carries the name and class that draw the row.
+    const elsewhere = mine([myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")]), myCall("c-2", "7B", [pupil("s2", "Maja", "Ek")])])]);
 
-    it("lists the pupil under the group, from the alarm's names, waiting, and counts nobody on the group's own list for it", () => {
-      const { data, pending } = applyQueue(elsewhere, [mark("m1", "s8", "FOUND", "2027-01-12T09:22:00.000Z", "c-1")]);
+    it("lists the pupil under the group by the name the mark carries, waiting, and counts nobody on the group's own list for it", () => {
+      const { data, pending } = applyQueue(elsewhere, [named(mark("m1", "s8", "FOUND", "2027-01-12T09:22:00.000Z", "c-1"), NILS)]);
       const [sevenA, sevenB] = data.alarms[0]!.calls;
       expect(sevenA!.foundHere).toEqual([{ studentId: "s8", firstName: "Nils", lastName: "Holm", className: "9C", markedAt: "2027-01-12T09:22:00.000Z" }]);
       expect(sevenB!.foundHere).toEqual([]);
@@ -206,33 +237,77 @@ describe("the list with the queue laid over it", () => {
     });
 
     it("never shows a missing mark for a pupil who is not on the list: the gateway refuses it, and it is not a find", () => {
-      const { data, pending } = applyQueue(elsewhere, [mark("m1", "s8", "MISSING", undefined, "c-1")]);
+      const { data, pending } = applyQueue(elsewhere, [named(mark("m1", "s8", "MISSING", undefined, "c-1"), NILS)]);
       expect(data.alarms[0]!.calls[0]!.foundHere).toEqual([]);
       expect(pending.size).toBe(0);
     });
 
-    it("does not list the pupil twice when the gateway's list already has them, and leaves a pupil who is not among the others out", () => {
-      const had = mine([
-        myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")], { foundHere: [foundHere("s8", "Nils", "Holm", "9C")] })], {
-          others: [other("s8", "Nils", "Holm", "9C")],
-        }),
-      ]);
-      const { data } = applyQueue(had, [mark("m1", "s8", "FOUND", undefined, "c-1"), mark("m2", "s-unknown", "FOUND", undefined, "c-1")]);
+    it("does not list the pupil twice when the gateway's list already has them, and draws nothing for a mark that carries no name", () => {
+      const had = mine([myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")], { foundHere: [foundHere("s8", "Nils", "Holm", "9C")] })])]);
+      const { data } = applyQueue(had, [named(mark("m1", "s8", "FOUND", undefined, "c-1"), NILS), mark("m2", "s-unknown", "FOUND", undefined, "c-1")]);
       expect(data.alarms[0]!.calls[0]!.foundHere.map((one) => one.studentId)).toEqual(["s8"]);
     });
 
     it("keeps the pupils the gateway listed and adds the queued ones after them, and reads a list from a gateway without the field as empty", () => {
-      const had = mine([
-        myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")], { foundHere: [foundHere("s8", "Nils", "Holm", "9C")] })], {
-          others: [other("s8", "Nils", "Holm", "9C"), other("s9", "Olga", "Dahl")],
-        }),
-      ]);
-      const { data } = applyQueue(had, [mark("m1", "s9", "FOUND", undefined, "c-1")]);
+      const had = mine([myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")], { foundHere: [foundHere("s8", "Nils", "Holm", "9C")] })])]);
+      const { data } = applyQueue(had, [named(mark("m1", "s9", "FOUND", undefined, "c-1"), OLGA)]);
       expect(data.alarms[0]!.calls[0]!.foundHere.map((one) => one.studentId)).toEqual(["s8", "s9"]);
       const old = JSON.parse(JSON.stringify(elsewhere));
-      delete old.alarms[0].others;
+      delete old.alarms[0].foundFree;
       delete old.alarms[0].calls[0].foundHere;
-      expect(applyQueue(old, [mark("m1", "s8", "FOUND", undefined, "c-1")]).data.alarms[0].calls[0].foundHere ?? []).toEqual([]);
+      const applied = applyQueue(old, [named(mark("m1", "s8", "FOUND", undefined, "c-1"), NILS)]).data.alarms[0];
+      expect(applied.calls[0].foundHere.map((one: { studentId: string }) => one.studentId)).toEqual(["s8"]);
+      expect(applied.foundFree).toEqual([]);
+    });
+
+    it("takes a pupil the gateway lists away again at once, when a retraction is queued, and shows them again if they are found again", () => {
+      const had = mine([myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")], { foundHere: [foundHere("s8", "Nils", "Holm", "9C")] })])]);
+      const taken = applyQueue(had, [mark("m1", "s8", "RETRACTED", "2027-01-12T09:25:00.000Z", "c-1")]);
+      expect(taken.data.alarms[0]!.calls[0]!.foundHere).toEqual([]);
+      const again = applyQueue(had, [
+        mark("m1", "s8", "RETRACTED", "2027-01-12T09:25:00.000Z", "c-1"),
+        named(mark("m2", "s8", "FOUND", "2027-01-12T09:26:00.000Z", "c-1"), NILS),
+      ]);
+      expect(again.data.alarms[0]!.calls[0]!.foundHere.map((one) => one.studentId)).toEqual(["s8"]);
+      // Nothing of the found pupil is left to wait for in the rows once they are gone.
+      expect(taken.pending.size).toBe(0);
+    });
+
+    it("lets a retraction touch no pupil on the group's own list: it takes back a find and nothing else", () => {
+      const { data } = applyQueue(elsewhere, [mark("m1", "s1", "RETRACTED", undefined, "c-1")]);
+      expect(data.alarms[0]!.calls[0]!.pupils[0]!.status).toBe("UNREPORTED");
+      expect(data.alarms[0]!.calls[0]!.counts).toEqual(elsewhere.alarms[0]!.calls[0]!.counts);
+    });
+  });
+
+  describe("a pupil found by a teacher with no group (the alarm's own)", () => {
+    const noGroup = mine([myAlarm([], { foundFree: [foundHere("s7", "Pia", "Sten")] })]);
+
+    it("lists the pupil under the alarm by the name the mark carries, waiting, and keeps the pupils the gateway listed", () => {
+      const { data, pending } = applyQueue(noGroup, [named(freeMark("m1", "s8", "FOUND", "2027-01-12T09:22:00.000Z"), NILS)]);
+      expect(data.alarms[0]!.foundFree.map((one) => [one.studentId, one.className])).toEqual([["s7", null], ["s8", "9C"]]);
+      expect([...pending]).toEqual([pendingKey("a-1", "s8")]);
+    });
+
+    it("takes a pupil back off the alarm when a retraction is queued, and a retraction for another alarm touches nothing", () => {
+      expect(applyQueue(noGroup, [freeMark("m1", "s7", "RETRACTED")]).data.alarms[0]!.foundFree).toEqual([]);
+      expect(applyQueue(noGroup, [freeMark("m1", "s7", "RETRACTED", undefined, "a-2")]).data.alarms[0]!.foundFree).toHaveLength(1);
+    });
+
+    it("keeps a mark for a group and a mark for the alarm apart even for the same pupil", () => {
+      const both = mine([myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")])])]);
+      const { data } = applyQueue(both, [named(mark("m1", "s8", "FOUND", undefined, "c-1"), NILS), named(freeMark("m2", "s9"), OLGA)]);
+      expect(data.alarms[0]!.calls[0]!.foundHere.map((one) => one.studentId)).toEqual(["s8"]);
+      expect(data.alarms[0]!.foundFree.map((one) => one.studentId)).toEqual(["s9"]);
+    });
+  });
+
+  describe("a pupil the administration says is not in the building", () => {
+    it("is shown so and counted for itself, never as found: not found, not missing, and not unreported", () => {
+      const base = mine([myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek"), pupil("s2", "Jamal", "Ali")])])]);
+      const { data } = applyQueue(base, [mark("m1", "s1", "AWAY")]);
+      expect(data.alarms[0]!.calls[0]!.pupils[0]).toMatchObject({ status: "AWAY" });
+      expect(data.alarms[0]!.calls[0]!.counts).toMatchObject({ found: 0, missing: 0, away: 1, unreported: 1 });
     });
   });
 
@@ -320,7 +395,7 @@ describe("sending what is queued", () => {
     const queue = [mark("m1", "s1"), mark("m2", "s2"), mark("m3", "s3")];
     let answer: "conflict" | "ok" = "conflict";
     const sent: string[][] = [];
-    const send = vi.fn(async (marks: MarkInput[]) => {
+    const send = vi.fn(async (marks: QueuedMark[]) => {
       sent.push(marks.map((one) => one.id));
       if (answer === "conflict") throw refuse(409, "WRITE_CONFLICT");
       return ok({ stored: marks.length });
@@ -358,6 +433,29 @@ describe("sending what is queued", () => {
     ]);
   });
 
+  it("sends a find with no group the way it sends the others, and drops those of an alarm that is over together, one call per alarm", async () => {
+    const queue = [freeMark("f1", "s1"), freeMark("f2", "s2"), freeMark("f3", "s3", "FOUND", undefined, "a-live")];
+    const send = vi.fn(async (marks: QueuedMark[]) => {
+      if (marks.some((one) => one.alarmId === "a-1")) throw refuse(409, "CRISIS_ALARM_ENDED");
+      return ok({ stored: marks.length });
+    });
+    const result = await flushMarks(queue, send);
+    expect(result.dropped.map((one) => [one.mark.id, one.code])).toEqual([["f1", "CRISIS_ALARM_ENDED"], ["f2", "CRISIS_ALARM_ENDED"]]);
+    expect(result.sent.map((one) => one.id)).toEqual(["f3"]);
+    // The whole batch, then a-1's two together, then a-live's.
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("drops a retraction the gateway refuses (400 CRISIS_MARK_INVALID: nothing of the teacher's to take back) and keeps the others", async () => {
+    const queue = [mark("r1", "s1", "RETRACTED"), mark("r2", "s2", "RETRACTED"), mark("m3", "s3")];
+    const result = await flushMarks(queue, async (marks) => {
+      if (marks.some((one) => one.id === "r1")) throw refuse(400, "CRISIS_MARK_INVALID");
+      return ok({ stored: marks.length });
+    });
+    expect(result.dropped.map((one) => [one.mark.id, one.code])).toEqual([["r1", "CRISIS_MARK_INVALID"]]);
+    expect(result.sent.map((one) => one.id).sort()).toEqual(["m3", "r2"]);
+  });
+
   it("finds the one refused mark of a batch by halving it, so the others still arrive", async () => {
     // The gateway stores a batch in one transaction: a pupil who is not on the list refuses the lot.
     const queue = Array.from({ length: 7 }, (_, index) => mark(`m${index}`, `s${index}`));
@@ -381,7 +479,7 @@ describe("sending what is queued", () => {
       mark("m3", "s3", "FOUND", undefined, "c-gone"),
       mark("m4", "s4", "FOUND", undefined, "c-live"),
     ];
-    const send = vi.fn(async (marks: MarkInput[]) => {
+    const send = vi.fn(async (marks: QueuedMark[]) => {
       if (marks.some((one) => one.callId === "c-gone")) throw refuse(403, "CRISIS_NOT_YOURS");
       return ok({ stored: marks.length });
     });

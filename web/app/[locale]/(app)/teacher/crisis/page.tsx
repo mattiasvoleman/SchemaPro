@@ -13,7 +13,11 @@
 // the pupil is marked FOUND on one of the teacher's groups and listed under
 // that group as "Hittade hos dig", waiting like the other marks until the
 // gateway has taken it. Only FOUND: the gateway refuses MISSING for a pupil
-// who is not on the group's list, so nothing here offers it.
+// who is not on the group's list, so nothing here offers it. A teacher with no
+// group right now can report one too (it is the alarm's, under "Hittade av
+// dig"), and a find can be taken back with "Ta tillbaka" while the alarm is
+// going. The pupil is searched for on the gateway, not picked from a list the
+// page holds.
 //
 // A BAD NETWORK IS THE CASE THIS PAGE IS DESIGNED FOR (lib/crisis-queue.ts):
 // the last list is kept on the device and shown again when the signal is gone
@@ -40,9 +44,9 @@ import { LoadFailed } from "@/components/crisis/load-failed";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { pendingKey, type Dropped } from "@/lib/crisis-queue";
-import { useMyCrisis } from "@/lib/crisis-mine";
-import type { FoundHereView, MyAlarm, MyCall, PupilCounts, PupilView } from "@/lib/crisis-types";
-import { clock, countPupils, isOpen, unmarkedPupils } from "@/lib/crisis-view";
+import { useMyCrisis, type FindTarget } from "@/lib/crisis-mine";
+import type { FoundHereView, MyAlarm, MyCall, OtherPupilView, PupilCounts, PupilView } from "@/lib/crisis-types";
+import { clock, countPupils, isOpen, targetOf, unmarkedPupils } from "@/lib/crisis-view";
 import { useCrisisRealtime } from "@/lib/use-crisis-realtime";
 
 const sum = (calls: readonly MyCall[]): PupilCounts => {
@@ -51,6 +55,7 @@ const sum = (calls: readonly MyCall[]): PupilCounts => {
     total.pupils += call.counts.pupils;
     total.found += call.counts.found;
     total.missing += call.counts.missing;
+    total.away += call.counts.away;
     total.absentBefore += call.counts.absentBefore;
     total.unreported += call.counts.unreported;
   }
@@ -68,12 +73,59 @@ const foundRow = (one: FoundHereView): PupilView => ({
   markedBy: null,
 });
 
+/**
+ * The pupils a teacher found who are on none of the list at hand: under the group they were found with, or
+ * (found with no group) under the alarm. While the alarm is going each can be taken back.
+ */
+function FoundList({
+  id,
+  title,
+  items,
+  target,
+  pending,
+  open,
+  onRetract,
+}: {
+  id: string;
+  title: string;
+  items: readonly FoundHereView[];
+  target: FindTarget;
+  pending: ReadonlySet<string>;
+  /** The alarm is going: a find can be taken back. */
+  open: boolean;
+  onRetract: (target: FindTarget, studentId: string) => void;
+}) {
+  if (items.length === 0) return null;
+  const key = "callId" in target ? target.callId : target.alarmId;
+  return (
+    <div className="space-y-2">
+      <h4 id={id} className="text-sm font-semibold">
+        {title}
+      </h4>
+      <ul className="divide-y rounded-md border" aria-labelledby={id}>
+        {items.map((one) => (
+          <PupilRow
+            key={one.studentId}
+            large
+            pupil={foundRow(one)}
+            {...(one.className ? { detail: one.className } : {})}
+            pending={pending.has(pendingKey(key, one.studentId))}
+            {...(open ? { onRetract: () => onRetract(target, one.studentId) } : {})}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** The four figures of a set of pupils, in words; never colour alone. */
 function Counts({ counts, live = false }: { counts: PupilCounts; live?: boolean }) {
   const t = useTranslations("crisis");
+  // "Inte i huset" is the administration's word, said for a pupil of the teacher's list: shown when there is one, so the figures add up.
   const items = [
     ["found", counts.found],
     ["missing", counts.missing],
+    ...(counts.away > 0 ? ([["away", counts.away]] as const) : []),
     ["unreported", counts.unreported],
     ["absentBefore", counts.absentBefore],
   ] as const;
@@ -97,6 +149,7 @@ function CallCard({
   open,
   timeZone,
   onMark,
+  onRetract,
 }: {
   call: MyCall;
   pending: ReadonlySet<string>;
@@ -104,6 +157,7 @@ function CallCard({
   open: boolean;
   timeZone: string | undefined;
   onMark: (callId: string, studentIds: readonly string[], state: "FOUND" | "MISSING") => void;
+  onRetract: (target: FindTarget, studentId: string) => void;
 }) {
   const t = useTranslations("crisis");
   const locale = useLocale();
@@ -148,29 +202,20 @@ function CallCard({
               large
               pupil={pupil}
               pending={pending.has(pendingKey(call.id, pupil.studentId))}
-              {...(open ? { onMark: (state) => onMark(call.id, [pupil.studentId], state) } : {})}
+              {...(open ? { onMark: (state) => onMark(call.id, [pupil.studentId], state === "MISSING" ? "MISSING" : "FOUND") } : {})}
             />
           ))}
         </ul>
       )}
-      {(call.foundHere ?? []).length > 0 ? (
-        <div className="space-y-2">
-          <h4 id={`found-${call.id}`} className="text-sm font-semibold">
-            {t("teacher.foundHereTitle")}
-          </h4>
-          <ul className="divide-y rounded-md border" aria-labelledby={`found-${call.id}`}>
-            {call.foundHere.map((one) => (
-              <PupilRow
-                key={one.studentId}
-                large
-                pupil={foundRow(one)}
-                {...(one.className ? { detail: one.className } : {})}
-                pending={pending.has(pendingKey(call.id, one.studentId))}
-              />
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      <FoundList
+        id={`found-${call.id}`}
+        title={t("teacher.foundHereTitle")}
+        items={call.foundHere ?? []}
+        target={{ callId: call.id }}
+        pending={pending}
+        open={open}
+        onRetract={onRetract}
+      />
     </section>
   );
 }
@@ -180,11 +225,15 @@ function AlarmSection({
   pending,
   timeZone,
   onMark,
+  onFind,
+  onRetract,
 }: {
   alarm: MyAlarm;
   pending: ReadonlySet<string>;
   timeZone: string | undefined;
   onMark: (callId: string, studentIds: readonly string[], state: "FOUND" | "MISSING") => void;
+  onFind: (target: FindTarget, who: OtherPupilView) => void;
+  onRetract: (target: FindTarget, studentId: string) => void;
 }) {
   const t = useTranslations("crisis");
   const locale = useLocale();
@@ -214,13 +263,20 @@ function AlarmSection({
         <Notice tone="neutral">{t("teacher.noGroups")}</Notice>
       ) : (
         alarm.calls.map((call) => (
-          <CallCard key={call.id} call={call} pending={pending} open={open} timeZone={timeZone} onMark={onMark} />
+          <CallCard key={call.id} call={call} pending={pending} open={open} timeZone={timeZone} onMark={onMark} onRetract={onRetract} />
         ))
       )}
-      {/* Nothing to attach a found pupil to without a group of one's own; and nobody to find when every pupil is on a list. */}
-      {open && alarm.calls.length > 0 && (alarm.others ?? []).length > 0 ? (
-        <FindOther alarm={alarm} onFound={(callId, studentId) => onMark(callId, [studentId], "FOUND")} />
-      ) : null}
+      {/* Found with no group: a teacher without one right now says so as well, and it is the alarm's. */}
+      <FoundList
+        id={`found-free-${alarm.id}`}
+        title={t("teacher.foundFreeTitle")}
+        items={alarm.foundFree ?? []}
+        target={{ alarmId: alarm.id }}
+        pending={pending}
+        open={open}
+        onRetract={onRetract}
+      />
+      {open ? <FindOther alarm={alarm} onFound={onFind} /> : null}
     </section>
   );
 }
@@ -242,7 +298,7 @@ function DroppedNotice({
     <Notice tone="destructive" title={t("teacher.droppedTitle", { count: dropped.length })} onDismiss={onDismiss} dismissLabel={t("teacher.droppedDismiss")}>
       <ul className="list-disc space-y-1 pl-5">
         {codes.map((code) => {
-          const groups = [...new Set(dropped.filter((one) => one.code === code).map((one) => groupOf(one.mark.callId)).filter(Boolean))];
+          const groups = [...new Set(dropped.filter((one) => one.code === code).map((one) => groupOf(targetOf(one.mark))).filter(Boolean))];
           return (
             <li key={code}>
               {lookup(code)}
@@ -324,7 +380,15 @@ export default function TeacherCrisisPage() {
         <EmptyState icon={ClipboardCheck} headingLevel={2} title={t("teacher.noAlarm")} description={t("teacher.noAlarmBody")} />
       ) : (
         alarms.map((alarm) => (
-          <AlarmSection key={alarm.id} alarm={alarm} pending={my.pending} timeZone={timeZone} onMark={my.mark} />
+          <AlarmSection
+            key={alarm.id}
+            alarm={alarm}
+            pending={my.pending}
+            timeZone={timeZone}
+            onMark={my.mark}
+            onFind={my.find}
+            onRetract={my.retract}
+          />
         ))
       )}
     </Page>

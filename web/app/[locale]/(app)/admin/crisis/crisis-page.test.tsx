@@ -773,16 +773,15 @@ describe("the group of pupils on no lesson", () => {
     expect(rows[1]).not.toHaveTextContent("Matematik");
   });
 
-  it("is marked by the administration from its row, like any group nobody answers for", async () => {
+  it("is marked by the administration from its row, pupil by pupil, like any group nobody answers for", async () => {
     open({}, [...calls(), nobody()]);
     const user = userEvent.setup();
     renderPage();
     const table = await screen.findByRole("table", { name: "Grupper" });
-    const toggle = within(table).getByRole("button", { name: "Ej i lektion just nu" });
-    await user.click(toggle);
+    await user.click(within(table).getByRole("button", { name: "Ej i lektion just nu" }));
     const pupils = within(table).getByRole("list", { name: "Eleverna i Ej i lektion just nu" });
     expect(within(pupils).getAllByRole("listitem")).toHaveLength(3);
-    await user.click(screen.getByRole("button", { name: "Alla finns (1)" }));
+    await user.click(within(pupils).getByRole("button", { name: "Finns: Bengt Ek" }));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     expect(post.mock.calls[0]![0]).toBe("/api/v1/crisis/alarms/a-1/marks");
     expect(post.mock.calls[0]![1].marks).toHaveLength(1);
@@ -790,6 +789,230 @@ describe("the group of pupils on no lesson", () => {
     await user.click(within(pupils).getByRole("button", { name: "Saknas: Åsa Berg" }));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     expect(post.mock.calls[1]![1].marks[0]).toMatchObject({ callId: "c-none", studentId: "s20", state: "MISSING" });
+    await user.click(within(pupils).getByRole("button", { name: "Inte i huset: Bengt Ek" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(3));
+    expect(post.mock.calls[2]![1].marks[0]).toMatchObject({ callId: "c-none", studentId: "s21", state: "AWAY" });
+  });
+
+  describe("the one question for the whole group: none of the unmarked is in the building", () => {
+    const groupRow = async (user: ReturnType<typeof userEvent.setup>) => {
+      const table = await screen.findByRole("table", { name: "Grupper" });
+      await user.click(within(table).getByRole("button", { name: "Ej i lektion just nu" }));
+      return table;
+    };
+
+    it("has no 'Alla finns' on this group, where nobody has seen the pupils, and keeps it on the others", async () => {
+      open({}, [...calls(), nobody()]);
+      const user = userEvent.setup();
+      renderPage();
+      const table = await groupRow(user);
+      expect(screen.queryByRole("button", { name: /^(Alla|Resten) finns/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Den oprickade eleven är inte i huset" })).toBeInTheDocument();
+      await user.click(within(table).getByRole("button", { name: "9C" }));
+      expect(screen.getByRole("button", { name: "Alla finns (2)" })).toBeInTheDocument();
+    });
+
+    it("asks first, with the number and the words 'jag har inte sett dem', and marks nothing when it is not confirmed", async () => {
+      open({}, [...calls(), noLessonCall("c-none", [pupil("s21", "Bengt", "Ek"), pupil("s22", "Cecilia", "Ek"), pupil("s23", "Dan", "Ek"), pupil("s24", "Eva", "Ek", "ABSENT_BEFORE")])]);
+      const user = userEvent.setup();
+      renderPage();
+      await groupRow(user);
+      await user.click(screen.getByRole("button", { name: "Ingen av de 3 oprickade är i huset" }));
+      const dialog = await screen.findByRole("dialog", { name: "Är ingen av de 3 oprickade i huset?" });
+      expect(dialog).toHaveTextContent("jag har inte sett dem");
+      expect(dialog).toHaveTextContent("3 elever");
+      expect(dialog).toHaveTextContent("inte som funna");
+      expect(within(dialog).getByRole("button", { name: "Ja, jag har inte sett dem" })).toBeInTheDocument();
+      await user.click(within(dialog).getByRole("button", { name: "Avbryt" }));
+      expect(screen.queryByRole("dialog", { name: "Är ingen av de 3 oprickade i huset?" })).not.toBeInTheDocument();
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("on confirmation marks all the unmarked, not those absent before nor those marked, as not in the building, in one request", async () => {
+      open({}, [
+        ...calls(),
+        noLessonCall("c-none", [
+          pupil("s20", "Åsa", "Berg", "FOUND"),
+          pupil("s21", "Bengt", "Ek"),
+          pupil("s22", "Cecilia", "Ek"),
+          pupil("s23", "Dan", "Ek", "MISSING"),
+          pupil("s24", "Eva", "Ek", "ABSENT_BEFORE"),
+        ]),
+      ]);
+      const user = userEvent.setup();
+      renderPage();
+      await groupRow(user);
+      await user.click(screen.getByRole("button", { name: "Ingen av de 2 oprickade är i huset" }));
+      await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ja, jag har inte sett dem" }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      expect(post.mock.calls[0]![0]).toBe("/api/v1/crisis/alarms/a-1/marks");
+      expect(post.mock.calls[0]![1].marks.map((mark: { callId: string; studentId: string; state: string }) => [mark.callId, mark.studentId, mark.state])).toEqual([
+        ["c-none", "s21", "AWAY"],
+        ["c-none", "s22", "AWAY"],
+      ]);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
+
+    it("sends a group of more than a request holds in as many requests as it takes, and no mark twice", async () => {
+      const many = Array.from({ length: 450 }, (_, index) => pupil(`p${index}`, `Elev${String(index).padStart(3, "0")}`, "Test"));
+      open({}, [...calls(), noLessonCall("c-none", many)]);
+      const user = userEvent.setup();
+      renderPage();
+      await groupRow(user);
+      await user.click(screen.getByRole("button", { name: "Ingen av de 450 oprickade är i huset" }));
+      await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ja, jag har inte sett dem" }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+      const sizes = post.mock.calls.map((call) => call[1].marks.length);
+      expect(sizes).toEqual([400, 50]);
+      const ids = new Set(post.mock.calls.flatMap((call) => call[1].marks.map((mark: { studentId: string }) => mark.studentId)));
+      expect(ids.size).toBe(450);
+    });
+
+    it("says in words that it was refused, and keeps the question open for another try", async () => {
+      open({}, [...calls(), nobody()]);
+      post.mockRejectedValue(new ApiError(409, "Larmet är redan avslutat.", "CRISIS_ALARM_ENDED"));
+      const user = userEvent.setup();
+      renderPage();
+      await groupRow(user);
+      await user.click(screen.getByRole("button", { name: "Den oprickade eleven är inte i huset" }));
+      await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ja, jag har inte sett eleven" }));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Larmet är redan avslutat")));
+    });
+
+    it("is not offered to a reader, nor when everyone in the group is marked", async () => {
+      who.readOnly = true;
+      open({}, [...calls(), nobody()]);
+      const user = userEvent.setup();
+      const first = renderPage();
+      await groupRow(user);
+      expect(screen.queryByRole("button", { name: /oprickade är i huset/ })).not.toBeInTheDocument();
+      first.unmount();
+      who.readOnly = false;
+      open({}, [...calls(), noLessonCall("c-none", [pupil("s20", "Åsa", "Berg", "FOUND")])]);
+      renderPage();
+      await groupRow(user);
+      expect(screen.queryByRole("button", { name: /oprickade är i huset|oprickade eleven/ })).not.toBeInTheDocument();
+    });
+
+    it("is said in English", async () => {
+      open({}, [...calls(), nobody()]);
+      const user = userEvent.setup();
+      renderPage(null, "en");
+      const table = await screen.findByRole("table", { name: "Groups" });
+      await user.click(within(table).getByRole("button", { name: "Not in a lesson right now" }));
+      await user.click(screen.getByRole("button", { name: "The unmarked pupil is not in the building" }));
+      const dialog = await screen.findByRole("dialog", { name: "Is the unmarked pupil not in the building?" });
+      expect(dialog).toHaveTextContent("I have not seen the pupil");
+      expect(dialog).toHaveTextContent("not as found");
+    });
+  });
+
+  describe("a pupil marked not in the building", () => {
+    /** 7A has one found, one missing, one nobody has marked: and 9C is nobody's. */
+    const withAway = () => [
+      call("c-7a", "7A", [pupil("s1", "Ines", "Ek", "FOUND"), pupil("s2", "Jamal", "Ali", "AWAY"), pupil("s3", "Klara", "Nyman")], { teachers: [ANNA] }),
+      call("c-9c", "9C", [pupil("s6", "Rut", "Ek", "AWAY"), pupil("s7", "Sam", "Ek", "AWAY")], { teachers: [teacher(null, null)], roomName: null }),
+    ];
+
+    it("is offered next to Finns and Saknas on every pupil the administration can mark, on a teacher's group too, and says what it is", async () => {
+      open({}, withAway());
+      const user = userEvent.setup();
+      renderPage();
+      const table = await screen.findByRole("table", { name: "Grupper" });
+      await user.click(within(table).getByRole("button", { name: "7A" }));
+      const pupils = within(table).getByRole("list", { name: "Eleverna i 7A" });
+      expect(within(pupils).getByRole("button", { name: "Inte i huset: Klara Nyman" })).toHaveAttribute("aria-pressed", "false");
+      const pressed = within(pupils).getByRole("button", { name: "Inte i huset: Jamal Ali" });
+      expect(pressed).toHaveAttribute("aria-pressed", "true");
+      // Its own status in words, apart from found and missing.
+      expect(within(pupils).getByText("Jamal Ali").closest("li")).toHaveTextContent("Inte i huset");
+      expect(within(pupils).getByRole("button", { name: "Finns: Jamal Ali" })).toHaveAttribute("aria-pressed", "false");
+      expect(within(pupils).getByRole("button", { name: "Saknas: Jamal Ali" })).toHaveAttribute("aria-pressed", "false");
+      await user.click(within(pupils).getByRole("button", { name: "Inte i huset: Klara Nyman" }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ callId: "c-7a", studentId: "s3", state: "AWAY" });
+    });
+
+    it("is also offered on the pupils still to find, and marks them", async () => {
+      open({}, calls());
+      const user = userEvent.setup();
+      renderPage();
+      const find = (await screen.findByRole("region", { name: "Elever som saknas eller saknar markering" })) as HTMLElement;
+      await user.click(within(find).getByRole("button", { name: "Inte i huset: Jamal Ali" }));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+      expect(post.mock.calls[0]![1].marks[0]).toMatchObject({ callId: "c-7a", studentId: "s2", state: "AWAY" });
+    });
+
+    it("is not offered to a reader", async () => {
+      who.readOnly = true;
+      open({}, withAway());
+      renderPage();
+      await screen.findByRole("heading", { level: 2, name: /Utrymning · pågår/ });
+      expect(screen.queryByRole("button", { name: /^Inte i huset:/ })).not.toBeInTheDocument();
+    });
+
+    it("counts for itself in the tiles and the sentence for a screen reader, and not as unreported: here Klara is the one", async () => {
+      open({}, withAway());
+      renderPage();
+      await screen.findByRole("heading", { level: 2, name: /Utrymning · pågår/ });
+      const tile = (label: string) => screen.getByText(label, { selector: "dt" }).parentElement as HTMLElement;
+      expect(tile("Inte i huset")).toHaveTextContent("3");
+      expect(tile("Finns")).toHaveTextContent("1");
+      expect(tile("Saknas")).toHaveTextContent("0");
+      expect(tile("Inte rapporterade")).toHaveTextContent("1");
+      expect(screen.getByRole("status")).toHaveTextContent("Finns 1, saknas 0, inte i huset 3, inte rapporterade 1.");
+    });
+
+    it("makes a group of marks done, and says that it is done with some not in the building, never 'klar' alone", async () => {
+      open({}, withAway());
+      renderPage();
+      const table = await screen.findByRole("table", { name: "Grupper" });
+      const rowOf = (group: string) => within(table).getByRole("button", { name: group }).closest("tr") as HTMLElement;
+      expect(rowOf("9C")).toHaveTextContent("Klar, 2 inte i huset");
+      expect(rowOf("9C")).toHaveTextContent("2 av 2 prickade");
+      expect(rowOf("9C")).not.toHaveTextContent("Väntar på");
+      expect(rowOf("7A")).toHaveTextContent("Pågår");
+      expect(rowOf("7A")).toHaveTextContent("2 av 3 prickade");
+      // The group counts as done for the tile, and the list of those to find holds only Klara.
+      expect(screen.getByText("Grupper klara", { selector: "dt" }).parentElement).toHaveTextContent("1 av 2");
+      const find = screen.getByRole("region", { name: "Elever som saknas eller saknar markering" });
+      expect(within(find).getAllByRole("listitem").map((row) => row.querySelector("p")?.textContent)).toEqual(["Klara Nyman"]);
+    });
+
+    it("is said in a sentence of its own when the alarm is ended, apart from the warning, and is not said to be found or missing", async () => {
+      open({}, withAway());
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByRole("button", { name: "Avsluta larmet" }));
+      const dialog = await screen.findByRole("dialog", { name: "Avsluta det skarpa larmet?" });
+      const warning = within(dialog).getByText("Alla är inte prickade").closest("div[data-tone]") as HTMLElement;
+      // The warning is about who is unreported; the pupils not in the building are not in it.
+      expect(warning).toHaveTextContent("En elev har ingen markering. Avsluta ändå bara om du vet var de är.");
+      expect(warning).not.toHaveTextContent(/inte i huset/);
+      const sentence = within(dialog).getByText(/3 elever är markerade som inte i huset/);
+      expect(sentence).toHaveTextContent("3 elever är markerade som inte i huset. De räknas inte som funna.");
+      expect(sentence).not.toHaveTextContent(/saknas|finns/);
+    });
+
+    it("is said in the end dialog even when nobody is left to ask, which is still not 'everyone is found'", async () => {
+      open({}, [call("c-9c", "9C", [pupil("s6", "Rut", "Ek", "AWAY"), pupil("s7", "Sam", "Ek", "FOUND")], { teachers: [ANNA] })]);
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByRole("button", { name: "Avsluta larmet" }));
+      const dialog = await screen.findByRole("dialog", { name: "Avsluta det skarpa larmet?" });
+      expect(within(dialog).queryByText("Alla är inte prickade")).not.toBeInTheDocument();
+      expect(within(dialog).getByText("En elev är markerad som inte i huset. Eleven räknas inte som funnen.")).toBeInTheDocument();
+    });
+
+    it("is said in English", async () => {
+      open({}, withAway());
+      const user = userEvent.setup();
+      renderPage(null, "en");
+      await user.click(await screen.findByRole("button", { name: "End the alarm" }));
+      const dialog = await screen.findByRole("dialog", { name: "End the live alarm?" });
+      expect(within(dialog).getByText("3 pupils are marked as not in the building. They do not count as found.")).toBeInTheDocument();
+      expect(screen.getByText("Not in the building", { selector: "dt" })).toBeInTheDocument();
+    });
   });
 
   describe("ending the alarm", () => {
@@ -841,7 +1064,7 @@ describe("the group of pupils on no lesson", () => {
     });
 
     it("counts against the alarm's own figures too: someone left in them is a reason to warn, whatever the groups say", async () => {
-      open({ counts: { pupils: 3, found: 1, missing: 0, absentBefore: 0, unreported: 2 } }, doneCalls());
+      open({ counts: { pupils: 3, found: 1, missing: 0, away: 0, absentBefore: 0, unreported: 2 } }, doneCalls());
       const user = userEvent.setup();
       renderPage();
       const warning = (await within(await endDialog(user)).findByText("Alla är inte prickade")).closest("div[data-tone]") as HTMLElement;
@@ -931,6 +1154,47 @@ describe("the group of pupils on no lesson", () => {
       expect(text).not.toContain("Ingen lektion pågår");
       expect(text).toContain("En elev med skyddad identitet är räknad utan namn.");
       vi.unstubAllGlobals();
+    });
+
+    it("says not in the building in its own word in the groups, the timeline and the file, and held out like any protected pupil", async () => {
+      world.protections = [{ userId: "s22", source: "MANUAL" }];
+      const group = noLessonCall("c-none", [
+        pupil("s20", "Åsa", "Berg", "AWAY", { markedBy: "Rut Rektor" }),
+        pupil("s21", "Bengt", "Ek", "FOUND", { markedBy: "Anna Berg" }),
+        pupil("s22", "Dan", "Ek", "AWAY", { markedBy: "Rut Rektor" }),
+      ]);
+      const timeline = [
+        protocolMark({ at: "2027-01-12T09:30:00.000Z", studentId: "s20", groupName: "Ej i lektion just nu", state: "AWAY", by: "Rut Rektor", onBehalf: true }),
+        protocolMark({ at: "2027-01-12T09:22:00.000Z", studentId: "s21", groupName: "Ej i lektion just nu", foundIn: { groupName: "7A", basis: "LESSON" } }),
+        protocolMark({ at: "2027-01-12T09:24:00.000Z", studentId: "s21", groupName: "Ej i lektion just nu", foundIn: { groupName: "7A", basis: "LESSON" }, state: "RETRACTED" }),
+        protocolMark({ at: "2027-01-12T09:31:00.000Z", studentId: "s22", groupName: "Ej i lektion just nu", state: "AWAY", by: "Rut Rektor", onBehalf: true }),
+      ];
+      world.lists.LIVE = [summary([...calls(), group], { id: "a-live", endedAt: ENDED, endedBy: "Rut Rektor" })];
+      world.protocols.set("a-live", protocol([...calls(), group], timeline, { id: "a-live", endedAt: ENDED, endedBy: "Rut Rektor" }));
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByRole("tab", { name: "Protokoll" }));
+      expect(await screen.findByRole("table", { name: "Skarpa larm" })).toBeInTheDocument();
+      await user.click(await screen.findByRole("button", { name: /Öppna protokollet för Utrymning/ }));
+      await screen.findByRole("heading", { level: 2, name: /Utrymning/ });
+      // The figure of the alarm and of the group, apart from found and missing.
+      expect(screen.getByText("Inte i huset", { selector: "dt" }).parentElement).toHaveTextContent("2");
+      const groups = screen.getByRole("table", { name: "Grupper" });
+      expect(within(groups).getByText("Ej i lektion just nu").closest("tr")).toHaveTextContent("1 finns · 0 saknas · 2 inte i huset · 0 inte rapporterade");
+      const rows = within(screen.getByRole("table", { name: "Tidslinje" })).getAllByRole("row").slice(1);
+      expect(rows[0]).toHaveTextContent("Åsa Berg");
+      expect(rows[0]).toHaveTextContent("Inte i huset");
+      expect(rows[0]).not.toHaveTextContent(/Finns|Saknas/);
+      expect(rows[2]).toHaveTextContent("Tillbakataget");
+
+      await user.click(screen.getByRole("button", { name: "Ladda ner CSV" }));
+      await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+      const content = (download.mock.calls[0] as [string, string])[1];
+      expect(content).toContain("Berg;Åsa;inte i huset;");
+      expect(content).not.toContain("Dan");
+      expect(content).toContain("1 elev med skyddad identitet är räknad utan namn");
+      // Taken back, so no longer 'Hittad hos 7A'.
+      expect(content.split("\r\n").find((line) => line.includes("Bengt"))).not.toContain("Hittad hos");
     });
 
     it("leaves the extra column out when nobody was found by another group", async () => {

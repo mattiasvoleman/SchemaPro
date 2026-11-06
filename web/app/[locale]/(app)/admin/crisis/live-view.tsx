@@ -3,11 +3,12 @@
 import { Fragment, useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Check, ChevronDown, ChevronRight, CircleHelp, Clock, X, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CircleHelp, Clock, DoorOpen, X, type LucideIcon } from "lucide-react";
 import { PupilRow } from "@/components/crisis/pupil-row";
 import { useProfile } from "@/components/profile-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FormField } from "@/components/ui/form-field";
 import { KpiStrip, KpiTile } from "@/components/ui/kpi";
@@ -20,8 +21,9 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { Textarea } from "@/components/ui/textarea";
 import { useAlarmDetail, useCrisisActions } from "@/lib/crisis-admin-queries";
 import { callState, groupsInOrder, isDone, liveFigures, pupilsToFind, silentTeachers, type CallState } from "@/lib/crisis-live";
-import type { AlarmSummary, CallView, MarkState } from "@/lib/crisis-types";
+import type { AlarmSummary, CallView, MarkInput, PupilMark } from "@/lib/crisis-types";
 import {
+  MAX_MARKS_PER_CALL,
   MAX_NOTE_LENGTH,
   clock,
   crisisErrorText,
@@ -55,17 +57,29 @@ import type { MessageLookup } from "@/lib/engine-message";
  * it in its own words, not the gateway's Swedish stand-in names, says how
  * many they are in a sentence of its own, and counts them in everything
  * that asks whether anyone is still unreported, ending the alarm included.
+ *
+ * "INTE I HUSET" (AWAY) is the administration's own word for a pupil nobody
+ * has seen and who is not thought to be in the building: a button beside Finns
+ * and Saknas on every pupil, counted for itself everywhere (the tiles, the
+ * groups, the end dialog) and never as found or missing. On the group of
+ * pupils on no lesson it is also the only way to mark a group: there is no
+ * "Alla finns" there (nobody has seen those pupils), but one question,
+ * "Ingen av de N oprickade är i huset", behind a confirmation that says the
+ * administration has not seen them.
  */
 
 const STATE_ICON: Record<CallState, LucideIcon> = {
   DONE: Check,
   DONE_MISSING: X,
+  DONE_AWAY: DoorOpen,
   IN_PROGRESS: Clock,
   WAITING: CircleHelp,
 };
 const STATE_VARIANT = {
   DONE: "success",
   DONE_MISSING: "destructive",
+  // Everyone is marked, and some are not in the building: done, but not "klar" in the green sense.
+  DONE_AWAY: "outline",
   IN_PROGRESS: "warning",
   WAITING: "warning",
 } as const satisfies Record<CallState, string>;
@@ -99,6 +113,9 @@ export function LiveView({
   const [hideDone, setHideDone] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [ending, setEnding] = useState(false);
+  // The group whose unmarked pupils are about to be marked "not in the building" in one go, awaiting the answer.
+  const [awayAll, setAwayAll] = useState<string | null>(null);
+  const [awaySending, setAwaySending] = useState(false);
   const [note, setNote] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const going = detail.data ? isOpen(detail.data.alarm) : false;
@@ -141,18 +158,37 @@ export function LiveView({
   const at = (instant: string) => clock(instant, locale, timeZone);
   const people = (names: readonly string[]) => names.join(", ");
 
-  const markPupils = (call: CallView, studentIds: readonly string[], state: MarkState) => {
+  /**
+   * Sends marks, MAX_MARKS_PER_CALL to a request (a group of pupils on no lesson can be a school's worth). Says in
+   * words what was refused; answers whether every mark was taken.
+   */
+  const sendMarks = async (marks: MarkInput[]): Promise<boolean> => {
+    let unresolved = 0;
+    try {
+      for (let from = 0; from < marks.length; from += MAX_MARKS_PER_CALL) {
+        const result = await mark.mutateAsync({ id: alarm.id, marks: marks.slice(from, from + MAX_MARKS_PER_CALL) });
+        unresolved += result.unresolved.length;
+      }
+    } catch (error) {
+      toast.error(crisisErrorText(tErrors, error, t("live.markFailed")));
+      return false;
+    }
+    if (unresolved > 0) toast.error(t("live.markUnresolved", { count: unresolved }));
+    return true;
+  };
+
+  const markPupils = (call: CallView, studentIds: readonly string[], state: PupilMark) => {
     if (studentIds.length === 0) return;
     const madeAt = markTime(Date.now(), 0, alarm.startedAt);
-    mark.mutate(
-      { id: alarm.id, marks: studentIds.map((studentId) => newMark(call.id, studentId, state, madeAt)) },
-      {
-        onSuccess: (result) => {
-          if (result.unresolved.length > 0) toast.error(t("live.markUnresolved", { count: result.unresolved.length }));
-        },
-        onError: (error) => toast.error(crisisErrorText(tErrors, error, t("live.markFailed"))),
-      },
-    );
+    void sendMarks(studentIds.map((studentId) => newMark(call.id, studentId, state, madeAt)));
+  };
+
+  const submitAway = async (call: CallView) => {
+    setAwaySending(true);
+    // The pupils nobody has marked as the page stands now: not those absent before, not those marked since the question was asked.
+    await sendMarks(unmarkedPupils(call.pupils).map((studentId) => newMark(call.id, studentId, "AWAY", markTime(Date.now(), 0, alarm.startedAt))));
+    setAwaySending(false);
+    setAwayAll(null);
   };
 
   const toggle = (id: string) =>
@@ -178,10 +214,14 @@ export function LiveView({
   // Against every pupil of the alarm: the groups' own figures and the alarm's, whichever says there is someone left.
   const openMissing = Math.max(figures.missing, alarm.counts.missing);
   const openUnreported = Math.max(figures.unreported, alarm.counts.unreported);
+  // Said apart: not in the building is neither found nor missing, and is not a reason to warn, but it is not "everyone is accounted for" either.
+  const openAway = Math.max(figures.away, alarm.counts.away);
   const incomplete = openMissing > 0 || openUnreported > 0;
   // Of those, the ones nobody has a lesson with: the dialog says so, as nobody but the administration is asking for them.
   const unlistedCall = calls.find((call) => call.basis === "NO_LESSON");
   const unlistedOpen = unlistedCall ? unlistedCall.counts.missing + unlistedCall.counts.unreported : 0;
+  const awayGroup = calls.find((one) => one.id === awayAll);
+  const awayCount = awayGroup ? unmarkedPupils(awayGroup.pupils).length : 0;
   const shownCalls = groupsInOrder(hideDone ? calls.filter((call) => !isDone(call)) : calls);
 
   return (
@@ -252,15 +292,17 @@ export function LiveView({
           groups: figures.groups,
           found: figures.found,
           missing: figures.missing,
+          away: figures.away,
           unreported: figures.unreported,
           teachersAnswered: figures.teachersAnswered,
           teachers: figures.teachers,
         })}
       </p>
-      <KpiStrip columns={3} className="lg:grid-cols-6">
+      <KpiStrip columns={3} className="lg:grid-cols-7">
         <KpiTile label={t("live.groupsDone")} value={t("live.ofTotal", { done: figures.groupsDone, total: figures.groups })} />
         <KpiTile label={t("count.found")} value={figures.found} />
         <KpiTile label={t("count.missing")} value={figures.missing} />
+        <KpiTile label={t("count.away")} value={figures.away} />
         <KpiTile label={t("count.unreported")} value={figures.unreported} />
         <KpiTile label={t("count.absentBefore")} value={figures.absentBefore} />
         <KpiTile label={t("live.teachersAnswered")} value={t("live.ofTotal", { done: figures.teachersAnswered, total: figures.teachers })} />
@@ -306,7 +348,7 @@ export function LiveView({
                       )
                         .filter(Boolean)
                         .join(" · ")}
-                      {...(going && canAct ? { onMark: (state: MarkState) => markPupils(call, [row.pupil.studentId], state) } : {})}
+                      {...(going && canAct ? { away: true, onMark: (state: PupilMark) => markPupils(call, [row.pupil.studentId], state) } : {})}
                     />
                   );
                 })}
@@ -393,10 +435,10 @@ export function LiveView({
                       <TableCell className="align-top">
                         <Badge variant={STATE_VARIANT[state]} className="gap-1">
                           <StateIcon className="size-3" aria-hidden="true" />
-                          {t(`live.state.${state === "WAITING" && call.uncovered ? "WAITING_ADMIN" : state}`, { missing: call.counts.missing })}
+                          {t(`live.state.${state === "WAITING" && call.uncovered ? "WAITING_ADMIN" : state}`, { missing: call.counts.missing, away: call.counts.away })}
                         </Badge>
                         <span className="block text-xs text-muted-foreground">
-                          {t("live.marked", { done: call.counts.found + call.counts.missing, total: expectedPupils })}
+                          {t("live.marked", { done: call.counts.found + call.counts.missing + call.counts.away, total: expectedPupils })}
                         </span>
                       </TableCell>
                     </TableRow>
@@ -405,16 +447,18 @@ export function LiveView({
                         <TableCell colSpan={4} className="bg-muted/30">
                           <div id={`crisis-call-${call.id}`} className="space-y-2">
                             {going && canAct && unmarked.length > 0 ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                disabled={mark.isPending}
-                                onClick={() => markPupils(call, unmarked, "FOUND")}
-                              >
-                                {call.counts.missing > 0
-                                  ? t("live.restFound", { count: unmarked.length })
-                                  : t("live.allFound", { count: unmarked.length })}
-                              </Button>
+                              call.basis === "NO_LESSON" ? (
+                                // Nobody has seen these pupils: no "Alla finns" here, only the one question that can be answered for all.
+                                <Button type="button" size="sm" variant="outline" disabled={mark.isPending} onClick={() => setAwayAll(call.id)}>
+                                  {t("live.noneInHouse", { count: unmarked.length })}
+                                </Button>
+                              ) : (
+                                <Button type="button" size="sm" disabled={mark.isPending} onClick={() => markPupils(call, unmarked, "FOUND")}>
+                                  {call.counts.missing > 0
+                                    ? t("live.restFound", { count: unmarked.length })
+                                    : t("live.allFound", { count: unmarked.length })}
+                                </Button>
+                              )
                             ) : null}
                             {call.pupils.length === 0 ? (
                               <p className="text-sm text-muted-foreground">{t("live.noPupils")}</p>
@@ -424,7 +468,7 @@ export function LiveView({
                                   <PupilRow
                                     key={pupil.studentId}
                                     pupil={pupil}
-                                    {...(going && canAct ? { onMark: (next: MarkState) => markPupils(call, [pupil.studentId], next) } : {})}
+                                    {...(going && canAct ? { away: true, onMark: (next: PupilMark) => markPupils(call, [pupil.studentId], next) } : {})}
                                   />
                                 ))}
                               </ul>
@@ -460,6 +504,11 @@ export function LiveView({
               {unlistedOpen > 0 ? <p>{t("live.endWarningUnlisted", { count: unlistedOpen })}</p> : null}
             </Notice>
           ) : null}
+          {openAway > 0 ? (
+            <Notice tone="neutral" role={null}>
+              {t("live.endAway", { count: openAway })}
+            </Notice>
+          ) : null}
           <FormField id="crisis-end-note" label={t("live.noteLabel")} optional hint={t("live.noteHint", { max: MAX_NOTE_LENGTH })}>
             <Textarea maxLength={MAX_NOTE_LENGTH} value={note} onChange={(event) => setNote(event.target.value)} rows={3} />
           </FormField>
@@ -479,6 +528,22 @@ export function LiveView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={awayAll !== null}
+        onOpenChange={(next) => {
+          if (!next && !awaySending) setAwayAll(null);
+        }}
+        title={t("live.awayConfirmTitle", { count: awayCount })}
+        description={t("live.awayConfirmBody", { count: awayCount })}
+        confirmLabel={t("live.awayConfirm", { count: awayCount })}
+        destructive={false}
+        loading={awaySending}
+        onConfirm={() => {
+          const group = calls.find((one) => one.id === awayAll);
+          if (group) void submitAway(group);
+        }}
+      />
     </section>
   );
 }

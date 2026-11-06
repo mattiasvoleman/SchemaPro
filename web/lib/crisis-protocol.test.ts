@@ -221,3 +221,49 @@ describe("the group of pupils on no lesson, and the pupils found with another gr
     expect(unlistedPupils([call("c", "7A", [pupil("s1", "Ines", "Ek")])]).size).toBe(0);
   });
 });
+
+describe("a pupil the administration marked not in the building", () => {
+  const header = [...PROTOCOL_HEADERS];
+  const field = (row: string[], name: (typeof PROTOCOL_HEADERS)[number]) => row[header.indexOf(name)];
+  const away = protocol(
+    [
+      noLessonCall("c-none", [
+        pupil("s7", "Pia", "Sten", "AWAY", { markedBy: "Rut Rektor" }),
+        pupil("s8", "Qvist", "Tor", "FOUND", { markedBy: "Anna Berg" }),
+        pupil("s9", "Rut", "Ulf"),
+      ]),
+    ],
+    [
+      protocolMark({ at: "2027-01-12T09:30:00.000Z", studentId: "s7", groupName: "Ej i lektion just nu", state: "AWAY", by: "Rut Rektor" }),
+      // Qvist was found by a teacher of 7A, and that teacher then took the find back: the file does not still say "Hittad hos 7A".
+      protocolMark({ at: "2027-01-12T09:22:00.000Z", studentId: "s8", groupName: "Ej i lektion just nu", foundIn: { groupName: "7A", basis: "LESSON" } }),
+      protocolMark({ at: "2027-01-12T09:24:00.000Z", studentId: "s8", groupName: "Ej i lektion just nu", foundIn: { groupName: "7A", basis: "LESSON" }, state: "RETRACTED" }),
+    ],
+    { endedAt: ENDED },
+  );
+
+  it("has its own word in the status column, neither 'finns' nor 'saknas', and its row says who said it", () => {
+    const rows = protocolRows(away, new Set(), ZONE);
+    const pia = rows.find((row) => field(row, "elev_fornamn") === "Pia")!;
+    expect(field(pia, "status")).toBe("inte i huset");
+    expect(field(pia, "markerad_av")).toBe("Rut Rektor");
+    expect(field(pia, "status")).not.toMatch(/finns|saknas/);
+    expect(field(pia, "hittad_hos")).toBe("");
+  });
+
+  it("does not say a pupil was found with a group once the find has been taken back", () => {
+    const rows = protocolRows(away, new Set(), ZONE);
+    expect(field(rows.find((row) => field(row, "elev_fornamn") === "Qvist")!, "hittad_hos")).toBe("");
+  });
+
+  it("is held out by name like any pupil with a protected identity, and still counted", () => {
+    const rows = protocolRows(away, new Set(["s7"]), ZONE);
+    expect(JSON.stringify(rows)).not.toContain("Pia");
+    expect(JSON.stringify(rows)).not.toContain("inte i huset");
+    expect(rows.at(-1)![header.indexOf("anmarkning")]).toBe("1 elev med skyddad identitet är räknad utan namn");
+    const paper = withoutProtected(away, new Set(["s7"]));
+    expect(paper.heldOut).toBe(1);
+    expect(paper.marks.map((one) => one.studentId)).not.toContain("s7");
+    expect(paper.calls[0]!.counts.away).toBe(1);
+  });
+});

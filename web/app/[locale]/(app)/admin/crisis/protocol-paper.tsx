@@ -61,6 +61,7 @@ export function ProtocolPaper({
             groups: alarm.calls,
             found: alarm.counts.found,
             missing: alarm.counts.missing,
+            away: alarm.counts.away,
             unreported: alarm.counts.unreported,
             absentBefore: alarm.counts.absentBefore,
             teachersAnswered: alarm.teachersAnswered,

@@ -13,6 +13,8 @@ export interface LiveFigures {
   pupils: number;
   found: number;
   missing: number;
+  /** Marked not in the building: its own figure, in neither found nor missing. */
+  away: number;
   unreported: number;
   absentBefore: number;
   /** Teachers (each once, however many groups they answer for) who owe no answer, of all. */
@@ -20,10 +22,13 @@ export interface LiveFigures {
   teachers: number;
 }
 
-/** A group is done when every expected pupil has a mark (the gateway's rule for callsComplete). */
+/**
+ * A group is done when every expected pupil has a mark, "not in the building" included (the gateway's rule for
+ * callsComplete): `unreported` never counts an AWAY pupil.
+ */
 export const isDone = (call: Pick<CallView, "counts">): boolean => call.counts.unreported === 0;
 
-export type CallState = "DONE" | "DONE_MISSING" | "IN_PROGRESS" | "WAITING";
+export type CallState = "DONE" | "DONE_MISSING" | "DONE_AWAY" | "IN_PROGRESS" | "WAITING";
 
 /**
  * Where a group stands, in one word. Said in text and an icon on the page,
@@ -31,8 +36,8 @@ export type CallState = "DONE" | "DONE_MISSING" | "IN_PROGRESS" | "WAITING";
  */
 export function callState(call: Pick<CallView, "counts">): CallState {
   const { counts } = call;
-  if (counts.unreported === 0) return counts.missing > 0 ? "DONE_MISSING" : "DONE";
-  return counts.found + counts.missing > 0 ? "IN_PROGRESS" : "WAITING";
+  if (counts.unreported === 0) return counts.missing > 0 ? "DONE_MISSING" : counts.away > 0 ? "DONE_AWAY" : "DONE";
+  return counts.found + counts.missing + counts.away > 0 ? "IN_PROGRESS" : "WAITING";
 }
 
 /**
@@ -78,6 +83,7 @@ export function liveFigures(calls: readonly CallView[]): LiveFigures {
     pupils: 0,
     found: 0,
     missing: 0,
+    away: 0,
     unreported: 0,
     absentBefore: 0,
     teachersAnswered: teachers.size - silentTeachers(calls).length,
@@ -87,6 +93,7 @@ export function liveFigures(calls: readonly CallView[]): LiveFigures {
     figures.pupils += call.counts.pupils;
     figures.found += call.counts.found;
     figures.missing += call.counts.missing;
+    figures.away += call.counts.away;
     figures.unreported += call.counts.unreported;
     figures.absentBefore += call.counts.absentBefore;
   }

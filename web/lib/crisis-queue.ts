@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api";
 import { CRISIS_STORAGE_PREFIX } from "@/lib/crisis-storage";
-import type { FoundHereView, MarkInput, MarkResult, MyCall, MyCrisisResponse, PupilView } from "@/lib/crisis-types";
-import { MAX_MARKS_PER_CALL, countPupils } from "@/lib/crisis-view";
+import type { FoundHereView, MarkResult, MyAlarm, MyCall, MyCrisisResponse, PupilName, PupilView, QueuedMark } from "@/lib/crisis-types";
+import { MAX_MARKS_PER_CALL, countPupils, targetOf } from "@/lib/crisis-view";
 
 /*
  * THE TEACHER'S PAGE ON A BAD NETWORK (Krisläge).
@@ -91,25 +91,33 @@ function write(key: string, value: unknown | null, store: Store | null): boolean
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
-function isMark(value: unknown): value is MarkInput {
+const isName = (value: unknown): value is PupilName =>
+  isRecord(value) &&
+  typeof value.firstName === "string" &&
+  typeof value.lastName === "string" &&
+  (value.className === null || typeof value.className === "string");
+
+/** A mark names its group, or (a teacher with no group) the alarm: one of the two. */
+function isMark(value: unknown): value is QueuedMark {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
-    typeof value.callId === "string" &&
+    (typeof value.callId === "string") !== (typeof value.alarmId === "string") &&
     typeof value.studentId === "string" &&
-    (value.state === "FOUND" || value.state === "MISSING") &&
+    (value.state === "FOUND" || value.state === "MISSING" || value.state === "AWAY" || value.state === "RETRACTED") &&
     typeof value.at === "string" &&
-    !Number.isNaN(Date.parse(value.at))
+    !Number.isNaN(Date.parse(value.at)) &&
+    (value.pupil === undefined || isName(value.pupil))
   );
 }
 
 /** The marks this login still has to send, oldest first. Whatever in the storage is not a mark is left out. */
-export function loadQueue(userId: string, store: Store | null = defaultStore()): MarkInput[] {
+export function loadQueue(userId: string, store: Store | null = defaultStore()): QueuedMark[] {
   const stored = read(queueKey(userId), store);
   return Array.isArray(stored) ? stored.filter(isMark) : [];
 }
 
-export function saveQueue(userId: string, queue: readonly MarkInput[], store: Store | null = defaultStore()): boolean {
+export function saveQueue(userId: string, queue: readonly QueuedMark[], store: Store | null = defaultStore()): boolean {
   return write(queueKey(userId), queue.length === 0 ? null : queue, store);
 }
 
@@ -123,21 +131,62 @@ function isSnapshot(value: unknown): value is Snapshot {
   );
 }
 
+/**
+ * The list as it is kept: what the gateway gave this teacher, and no roster. A list of the school's
+ * other pupils (`others`, which an earlier version of this page held for the picker, and which the
+ * gateway no longer sends) is never written to the device nor read back from it: the names of a
+ * whole school do not belong in plain text in a browser.
+ */
+function withoutRoster(snapshot: Snapshot): Snapshot {
+  if (!snapshot.data.alarms.some((alarm) => "others" in alarm)) return snapshot;
+  const alarms = snapshot.data.alarms.map((alarm) => {
+    const { others: _roster, ...rest } = alarm as MyAlarm & { others?: unknown };
+    return rest;
+  });
+  return { ...snapshot, data: { ...snapshot.data, alarms } };
+}
+
 export function loadSnapshot(userId: string, now: number, store: Store | null = defaultStore()): Snapshot | null {
   const stored = read(snapshotKey(userId), store);
   if (!isSnapshot(stored)) return null;
-  return now - stored.receivedAt > SNAPSHOT_MAX_AGE_MS || stored.receivedAt > now + 60_000 ? null : stored;
+  return now - stored.receivedAt > SNAPSHOT_MAX_AGE_MS || stored.receivedAt > now + 60_000 ? null : withoutRoster(stored);
 }
 
 export function saveSnapshot(userId: string, snapshot: Snapshot, store: Store | null = defaultStore()): boolean {
-  return write(snapshotKey(userId), snapshot, store);
+  return write(snapshotKey(userId), withoutRoster(snapshot), store);
 }
 
 /** How far the gateway's clock was from this device's when the list came: added to a mark's time. */
 export const skewOf = (snapshot: Snapshot | null): number => (snapshot ? Date.parse(snapshot.data.asOf) - snapshot.receivedAt : 0);
 
-/** The key a pupil in a group is waiting under. */
-export const pendingKey = (callId: string, studentId: string): string => `${callId}:${studentId}`;
+/** The key a pupil is waiting under: in a group, or (a teacher with no group) in the alarm. */
+export const pendingKey = (target: string, studentId: string): string => `${target}:${studentId}`;
+
+/**
+ * The pupils a teacher found who are on none of the list at hand (`kept`: what the gateway has, in the
+ * group's `foundHere` or the alarm's `foundFree`), with the queue laid over them: a queued FOUND adds the
+ * pupil, by the name and class the mark carries, a queued RETRACTED takes them away. Whatever is not about
+ * `target` is left alone. Returns `kept` itself when the queue changes nothing.
+ */
+function foundAmong(
+  kept: readonly FoundHereView[],
+  target: string,
+  latest: ReadonlyMap<string, QueuedMark>,
+  pending: Set<string>,
+  listed?: ReadonlySet<string>,
+): readonly FoundHereView[] {
+  let next = kept;
+  for (const mark of latest.values()) {
+    if (targetOf(mark) !== target || listed?.has(mark.studentId)) continue;
+    if (mark.state === "RETRACTED") {
+      next = next.filter((one) => one.studentId !== mark.studentId);
+    } else if (mark.state === "FOUND" && mark.pupil) {
+      pending.add(pendingKey(target, mark.studentId));
+      if (!next.some((one) => one.studentId === mark.studentId)) next = [...next, { studentId: mark.studentId, ...mark.pupil, markedAt: mark.at }];
+    }
+  }
+  return next;
+}
 
 /**
  * The list as the teacher has left it: every queued mark laid over the
@@ -148,24 +197,27 @@ export const pendingKey = (callId: string, studentId: string): string => `${call
  *
  * A FOUND mark for a pupil who is not on the call's list is a pupil the
  * teacher found who stands elsewhere ("found with me"): the pupil is
- * added to the call's `foundHere` from the alarm's `others`, waiting like
- * the other marks, and counted nowhere on this page (the count is of the
- * pupil's own list). The gateway refuses MISSING for such a pupil, so the
- * page never queues one and none is shown here.
+ * added to the call's `foundHere`, or (a mark made with no group, by the
+ * alarm) to the alarm's `foundFree`, waiting like the other marks, by the
+ * name and class the mark itself carries, so that no roster of the school's
+ * pupils is needed to draw the row, and counted nowhere on this page (the
+ * count is of the pupil's own list). A RETRACTED mark takes such a pupil away
+ * again. The gateway refuses MISSING for a pupil who is not on the list, so
+ * the page never queues one and none is shown here.
  */
 export function applyQueue(
   data: MyCrisisResponse,
-  queue: readonly MarkInput[],
+  queue: readonly QueuedMark[],
 ): { data: MyCrisisResponse; pending: Set<string> } {
-  const latest = new Map<string, MarkInput>();
+  const latest = new Map<string, QueuedMark>();
   for (const mark of queue) {
-    const key = pendingKey(mark.callId, mark.studentId);
+    const key = pendingKey(targetOf(mark), mark.studentId);
     const before = latest.get(key);
     if (!before || Date.parse(mark.at) >= Date.parse(before.at)) latest.set(key, mark);
   }
   if (latest.size === 0) return { data, pending: new Set() };
   const pending = new Set<string>();
-  const alarms = data.alarms.map((alarm) => ({
+  const alarms = data.alarms.map((alarm): MyAlarm => ({
     ...alarm,
     calls: alarm.calls.map((call): MyCall => {
       let touched = false;
@@ -173,23 +225,18 @@ export function applyQueue(
       const pupils = call.pupils.map((pupil): PupilView => {
         listed.add(pupil.studentId);
         const mark = latest.get(pendingKey(call.id, pupil.studentId));
-        if (!mark) return pupil;
+        // A retraction is of a find elsewhere, never of a pupil on the list.
+        if (!mark || mark.state === "RETRACTED") return pupil;
         touched = true;
         pending.add(pendingKey(call.id, pupil.studentId));
         return { ...pupil, status: mark.state, markedAt: mark.at };
       });
       const kept = call.foundHere ?? [];
-      const found: FoundHereView[] = [];
-      for (const mark of latest.values()) {
-        if (mark.callId !== call.id || mark.state !== "FOUND" || listed.has(mark.studentId)) continue;
-        const who = (alarm.others ?? []).find((one) => one.studentId === mark.studentId);
-        if (!who) continue;
-        pending.add(pendingKey(call.id, mark.studentId));
-        if (!kept.some((one) => one.studentId === mark.studentId)) found.push({ ...who, markedAt: mark.at });
-      }
-      if (found.length > 0) return { ...call, pupils, foundHere: [...kept, ...found], counts: countPupils(pupils.map((pupil) => pupil.status)) };
+      const found = foundAmong(kept, call.id, latest, pending, listed);
+      if (found !== kept) return { ...call, pupils, foundHere: [...found], counts: countPupils(pupils.map((pupil) => pupil.status)) };
       return touched ? { ...call, pupils, counts: countPupils(pupils.map((pupil) => pupil.status)) } : call;
     }),
+    foundFree: [...foundAmong(alarm.foundFree ?? [], alarm.id, latest, pending)],
   }));
   return { data: { ...data, alarms }, pending };
 }
@@ -221,20 +268,20 @@ const CALL_LEVEL = new Set(["CRISIS_ALARM_ENDED", "CRISIS_ALARM_NOT_FOUND", "CRI
 export const UNRESOLVED = "CRISIS_MARK_UNRESOLVED";
 
 export interface Dropped {
-  mark: MarkInput;
+  mark: QueuedMark;
   code: string;
 }
 
 export interface FlushResult {
   /** Acknowledged by the gateway (stored, or already there). */
-  sent: MarkInput[];
+  sent: QueuedMark[];
   /** Refused for good: to be thrown away and told. */
   dropped: Dropped[];
   /** Still to send: the network did not answer. */
-  unsent: MarkInput[];
+  unsent: QueuedMark[];
 }
 
-type Send = (marks: MarkInput[]) => Promise<MarkResult>;
+type Send = (marks: QueuedMark[]) => Promise<MarkResult>;
 
 const empty = (): FlushResult => ({ sent: [], dropped: [], unsent: [] });
 
@@ -256,7 +303,7 @@ function join(...parts: FlushResult[]): FlushResult {
  * split by group, and a group that is refused so is dropped whole. The first
  * time the network does not answer, nothing after it is tried.
  */
-async function deliver(batch: MarkInput[], send: Send): Promise<FlushResult> {
+async function deliver(batch: QueuedMark[], send: Send): Promise<FlushResult> {
   if (batch.length === 0) return empty();
   try {
     const result = await send(batch);
@@ -270,10 +317,11 @@ async function deliver(batch: MarkInput[], send: Send): Promise<FlushResult> {
     const failure = classify(error);
     if (failure.kind === "transient") return { sent: [], dropped: [], unsent: batch };
     if (batch.length === 1) return { sent: [], dropped: [{ mark: batch[0]!, code: failure.code }], unsent: [] };
-    const calls = new Set(batch.map((mark) => mark.callId));
+    // Per group, or (marks made with no group) per alarm: what a refusal about the whole is about.
+    const targets = new Set(batch.map(targetOf));
     if (CALL_LEVEL.has(failure.code)) {
-      if (calls.size === 1) return { sent: [], dropped: batch.map((mark) => ({ mark, code: failure.code })), unsent: [] };
-      return deliverInOrder([...calls].map((callId) => batch.filter((mark) => mark.callId === callId)), send);
+      if (targets.size === 1) return { sent: [], dropped: batch.map((mark) => ({ mark, code: failure.code })), unsent: [] };
+      return deliverInOrder([...targets].map((target) => batch.filter((mark) => targetOf(mark) === target)), send);
     }
     const middle = Math.ceil(batch.length / 2);
     return deliverInOrder([batch.slice(0, middle), batch.slice(middle)], send);
@@ -281,7 +329,7 @@ async function deliver(batch: MarkInput[], send: Send): Promise<FlushResult> {
 }
 
 /** Batches one after another; once one is left unsent, the rest are too. */
-async function deliverInOrder(batches: MarkInput[][], send: Send): Promise<FlushResult> {
+async function deliverInOrder(batches: QueuedMark[][], send: Send): Promise<FlushResult> {
   const results: FlushResult[] = [];
   let stalled = false;
   for (const batch of batches) {
@@ -297,8 +345,8 @@ async function deliverInOrder(batches: MarkInput[][], send: Send): Promise<Flush
 }
 
 /** The whole queue, MAX_MARKS_PER_CALL at a time. */
-export async function flushMarks(queue: readonly MarkInput[], send: Send): Promise<FlushResult> {
-  const batches: MarkInput[][] = [];
+export async function flushMarks(queue: readonly QueuedMark[], send: Send): Promise<FlushResult> {
+  const batches: QueuedMark[][] = [];
   for (let at = 0; at < queue.length; at += MAX_MARKS_PER_CALL) batches.push(queue.slice(at, at + MAX_MARKS_PER_CALL));
   return deliverInOrder(batches, send);
 }
