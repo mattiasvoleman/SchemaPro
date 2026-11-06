@@ -3,21 +3,27 @@ import { ApiError } from "@/lib/api";
 import type { MarkInput, MarkResult } from "@/lib/crisis-types";
 import { MAX_MARKS_PER_CALL } from "./crisis-view";
 import {
-  QUEUE_KEY,
-  SNAPSHOT_KEY,
+  LEGACY_KEYS,
   SNAPSHOT_MAX_AGE_MS,
   UNRESOLVED,
   applyQueue,
   classify,
   flushMarks,
+  forgetLegacy,
   loadQueue,
   loadSnapshot,
   pendingKey,
+  queueKey,
   saveQueue,
   saveSnapshot,
   skewOf,
+  snapshotKey,
 } from "./crisis-queue";
-import { mine, myAlarm, myCall, pupil } from "./__fixtures__/crisis";
+import { foundHere, mine, myAlarm, myCall, other, pupil } from "./__fixtures__/crisis";
+
+const ME = "u-me";
+const QUEUE_KEY = queueKey(ME);
+const SNAPSHOT_KEY = snapshotKey(ME);
 
 /** A storage in memory, with the three calls the queue makes. */
 function memory(initial: Record<string, string> = {}) {
@@ -56,47 +62,92 @@ const refuse = (status: number, code?: string) => new ApiError(status, "no", cod
 describe("what the page remembers", () => {
   it("keeps the queue and reads it back, oldest first", () => {
     const store = memory();
-    expect(saveQueue([mark("m1", "s1"), mark("m2", "s2", "MISSING")], store)).toBe(true);
-    expect(loadQueue(store).map((one) => one.id)).toEqual(["m1", "m2"]);
+    expect(saveQueue(ME, [mark("m1", "s1"), mark("m2", "s2", "MISSING")], store)).toBe(true);
+    expect(loadQueue(ME, store).map((one) => one.id)).toEqual(["m1", "m2"]);
   });
 
   it("forgets an empty queue rather than keeping '[]'", () => {
     const store = memory({ [QUEUE_KEY]: "[]" });
-    saveQueue([], store);
+    saveQueue(ME, [], store);
     expect(store.items.has(QUEUE_KEY)).toBe(false);
   });
 
   it("reads whatever in the storage is not a mark as nothing, and a broken value as an empty queue", () => {
-    expect(loadQueue(memory({ [QUEUE_KEY]: JSON.stringify([mark("m1", "s1"), { id: 3 }, "x", null, { ...mark("m2", "s2"), state: "UNKNOWN" }]) }))).toHaveLength(1);
-    expect(loadQueue(memory({ [QUEUE_KEY]: "{not json" }))).toEqual([]);
-    expect(loadQueue(memory({ [QUEUE_KEY]: '{"a":1}' }))).toEqual([]);
-    expect(loadQueue(memory())).toEqual([]);
+    expect(loadQueue(ME, memory({ [QUEUE_KEY]: JSON.stringify([mark("m1", "s1"), { id: 3 }, "x", null, { ...mark("m2", "s2"), state: "UNKNOWN" }]) }))).toHaveLength(1);
+    expect(loadQueue(ME, memory({ [QUEUE_KEY]: "{not json" }))).toEqual([]);
+    expect(loadQueue(ME, memory({ [QUEUE_KEY]: '{"a":1}' }))).toEqual([]);
+    expect(loadQueue(ME, memory())).toEqual([]);
   });
 
   it("works without a storage at all: a private window, blocked site data, a full quota", () => {
-    expect(loadQueue(hostile)).toEqual([]);
-    expect(saveQueue([mark("m1", "s1")], hostile)).toBe(false);
-    expect(loadSnapshot(Date.now(), hostile)).toBeNull();
-    expect(saveSnapshot({ data: mine([]), receivedAt: Date.now() }, hostile)).toBe(false);
-    expect(loadQueue(null)).toEqual([]);
-    expect(saveQueue([mark("m1", "s1")], null)).toBe(false);
+    expect(loadQueue(ME, hostile)).toEqual([]);
+    expect(saveQueue(ME, [mark("m1", "s1")], hostile)).toBe(false);
+    expect(loadSnapshot(ME, Date.now(), hostile)).toBeNull();
+    expect(saveSnapshot(ME, { data: mine([]), receivedAt: Date.now() }, hostile)).toBe(false);
+    expect(loadQueue(ME, null)).toEqual([]);
+    expect(saveQueue(ME, [mark("m1", "s1")], null)).toBe(false);
+    expect(() => forgetLegacy(hostile)).not.toThrow();
   });
 
   it("keeps the last list and shows it again, unless it is hours old or from the future", () => {
     const now = Date.parse("2027-01-12T10:00:00.000Z");
     const store = memory();
-    saveSnapshot({ data: mine([myAlarm([])]), receivedAt: now - 60_000 }, store);
-    expect(loadSnapshot(now, store)?.data.alarms).toHaveLength(1);
-    expect(loadSnapshot(now + SNAPSHOT_MAX_AGE_MS, store)).toBeNull();
-    expect(loadSnapshot(now - 10 * 60_000, store)).toBeNull();
-    expect(loadSnapshot(now, memory({ [SNAPSHOT_KEY]: JSON.stringify({ receivedAt: now, data: { asOf: 1 } }) }))).toBeNull();
-    expect(loadSnapshot(now, memory({ [SNAPSHOT_KEY]: "nope" }))).toBeNull();
+    saveSnapshot(ME, { data: mine([myAlarm([])]), receivedAt: now - 60_000 }, store);
+    expect(loadSnapshot(ME, now, store)?.data.alarms).toHaveLength(1);
+    expect(loadSnapshot(ME, now + SNAPSHOT_MAX_AGE_MS, store)).toBeNull();
+    expect(loadSnapshot(ME, now - 10 * 60_000, store)).toBeNull();
+    expect(loadSnapshot(ME, now, memory({ [SNAPSHOT_KEY]: JSON.stringify({ receivedAt: now, data: { asOf: 1 } }) }))).toBeNull();
+    expect(loadSnapshot(ME, now, memory({ [SNAPSHOT_KEY]: "nope" }))).toBeNull();
   });
 
   it("tells how far the gateway's clock was from the device's when the list came", () => {
     const snapshot = { data: mine([], "2027-01-12T09:20:05.000Z"), receivedAt: Date.parse("2027-01-12T09:20:00.000Z") };
     expect(skewOf(snapshot)).toBe(5_000);
     expect(skewOf(null)).toBe(0);
+  });
+});
+
+describe("whose queue and list these are: one browser, several logins", () => {
+  const now = Date.parse("2027-01-12T10:00:00.000Z");
+  const list = (label: string) => ({ data: mine([myAlarm([myCall("c-1", label, [pupil("s1", "Ines", "Ek")])])]), receivedAt: now - 60_000 });
+
+  it("keeps each login's marks and list apart in the one storage, and reads and sends only the signed-in login's", () => {
+    const store = memory();
+    saveQueue("u-anna", [mark("m-anna", "s1")], store);
+    saveQueue("u-bo", [mark("m-bo", "s2"), mark("m-bo-2", "s3")], store);
+    saveSnapshot("u-anna", list("7A"), store);
+    saveSnapshot("u-bo", list("8B"), store);
+
+    expect(loadQueue("u-anna", store).map((one) => one.id)).toEqual(["m-anna"]);
+    expect(loadQueue("u-bo", store).map((one) => one.id)).toEqual(["m-bo", "m-bo-2"]);
+    expect(loadSnapshot("u-anna", now, store)?.data.alarms[0]?.calls[0]?.groupName).toBe("7A");
+    expect(loadSnapshot("u-bo", now, store)?.data.alarms[0]?.calls[0]?.groupName).toBe("8B");
+    // A third login finds nothing, and what it saves is its own.
+    expect(loadQueue("u-cia", store)).toEqual([]);
+    expect(loadSnapshot("u-cia", now, store)).toBeNull();
+    saveQueue("u-anna", [], store);
+    expect(loadQueue("u-bo", store)).toHaveLength(2);
+    expect(store.items.has(queueKey("u-anna"))).toBe(false);
+  });
+
+  it("puts nothing of a login under the keys of another, or of the first version", () => {
+    expect(new Set([queueKey("a"), queueKey("b"), snapshotKey("a"), snapshotKey("b"), ...LEGACY_KEYS]).size).toBe(6);
+    expect(queueKey("a")).toMatch(/^rastra\.crisis\./);
+  });
+
+  it("does not read the first version's un-keyed queue and list as anybody's, and removes them when it sees them", () => {
+    const store = memory({
+      [LEGACY_KEYS[0]]: JSON.stringify([mark("m-old", "s1")]),
+      [LEGACY_KEYS[1]]: JSON.stringify(list("7A")),
+    });
+    expect(loadQueue(ME, store)).toEqual([]);
+    expect(loadSnapshot(ME, now, store)).toBeNull();
+    forgetLegacy(store);
+    expect(store.items.size).toBe(0);
+    // Another login's current keys are not touched by it.
+    const other = memory({ [queueKey("u-bo")]: JSON.stringify([mark("m-bo", "s2")]), [LEGACY_KEYS[0]]: "[]" });
+    forgetLegacy(other);
+    expect([...other.items.keys()]).toEqual([queueKey("u-bo")]);
   });
 });
 
@@ -137,6 +188,54 @@ describe("the list with the queue laid over it", () => {
     expect(applyQueue(base, [mark("m1", "s9")]).pending.size).toBe(0);
   });
 
+  describe("a pupil found who is not on the group's list (found with me)", () => {
+    const elsewhere = mine([
+      myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")]), myCall("c-2", "7B", [pupil("s2", "Maja", "Ek")])], {
+        others: [other("s8", "Nils", "Holm", "9C"), other("s9", "Olga", "Dahl", null)],
+      }),
+    ]);
+
+    it("lists the pupil under the group, from the alarm's names, waiting, and counts nobody on the group's own list for it", () => {
+      const { data, pending } = applyQueue(elsewhere, [mark("m1", "s8", "FOUND", "2027-01-12T09:22:00.000Z", "c-1")]);
+      const [sevenA, sevenB] = data.alarms[0]!.calls;
+      expect(sevenA!.foundHere).toEqual([{ studentId: "s8", firstName: "Nils", lastName: "Holm", className: "9C", markedAt: "2027-01-12T09:22:00.000Z" }]);
+      expect(sevenB!.foundHere).toEqual([]);
+      expect(sevenA!.counts).toEqual(elsewhere.alarms[0]!.calls[0]!.counts);
+      expect(sevenA!.pupils).toEqual(elsewhere.alarms[0]!.calls[0]!.pupils);
+      expect([...pending]).toEqual([pendingKey("c-1", "s8")]);
+    });
+
+    it("never shows a missing mark for a pupil who is not on the list: the gateway refuses it, and it is not a find", () => {
+      const { data, pending } = applyQueue(elsewhere, [mark("m1", "s8", "MISSING", undefined, "c-1")]);
+      expect(data.alarms[0]!.calls[0]!.foundHere).toEqual([]);
+      expect(pending.size).toBe(0);
+    });
+
+    it("does not list the pupil twice when the gateway's list already has them, and leaves a pupil who is not among the others out", () => {
+      const had = mine([
+        myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")], { foundHere: [foundHere("s8", "Nils", "Holm", "9C")] })], {
+          others: [other("s8", "Nils", "Holm", "9C")],
+        }),
+      ]);
+      const { data } = applyQueue(had, [mark("m1", "s8", "FOUND", undefined, "c-1"), mark("m2", "s-unknown", "FOUND", undefined, "c-1")]);
+      expect(data.alarms[0]!.calls[0]!.foundHere.map((one) => one.studentId)).toEqual(["s8"]);
+    });
+
+    it("keeps the pupils the gateway listed and adds the queued ones after them, and reads a list from a gateway without the field as empty", () => {
+      const had = mine([
+        myAlarm([myCall("c-1", "7A", [pupil("s1", "Ines", "Ek")], { foundHere: [foundHere("s8", "Nils", "Holm", "9C")] })], {
+          others: [other("s8", "Nils", "Holm", "9C"), other("s9", "Olga", "Dahl")],
+        }),
+      ]);
+      const { data } = applyQueue(had, [mark("m1", "s9", "FOUND", undefined, "c-1")]);
+      expect(data.alarms[0]!.calls[0]!.foundHere.map((one) => one.studentId)).toEqual(["s8", "s9"]);
+      const old = JSON.parse(JSON.stringify(elsewhere));
+      delete old.alarms[0].others;
+      delete old.alarms[0].calls[0].foundHere;
+      expect(applyQueue(old, [mark("m1", "s8", "FOUND", undefined, "c-1")]).data.alarms[0].calls[0].foundHere ?? []).toEqual([]);
+    });
+  });
+
   it("does not touch the list it was given", () => {
     const before = JSON.stringify(base);
     applyQueue(base, [mark("m1", "s1", "MISSING")]);
@@ -145,11 +244,21 @@ describe("the list with the queue laid over it", () => {
 });
 
 describe("what a failure means", () => {
-  it("is final when the gateway answered no to the mark: refused, not yours, not found, ended, or too big", () => {
-    for (const status of [400, 403, 404, 409, 410, 413, 422]) {
-      expect(classify(refuse(status, "CRISIS_ALARM_ENDED"))).toEqual({ kind: "permanent", code: "CRISIS_ALARM_ENDED" });
+  it("is final when the gateway answered no to the mark: refused, not yours, too big, or the alarm is gone or over", () => {
+    for (const status of [400, 403, 410, 413, 422]) {
+      expect(classify(refuse(status, "CRISIS_MARK_INVALID"))).toEqual({ kind: "permanent", code: "CRISIS_MARK_INVALID" });
     }
     expect(classify(refuse(400))).toEqual({ kind: "permanent", code: "HTTP_400" });
+    expect(classify(refuse(403, "CRISIS_NOT_YOURS"))).toEqual({ kind: "permanent", code: "CRISIS_NOT_YOURS" });
+    expect(classify(refuse(409, "CRISIS_ALARM_ENDED"))).toEqual({ kind: "permanent", code: "CRISIS_ALARM_ENDED" });
+    expect(classify(refuse(404, "CRISIS_ALARM_NOT_FOUND"))).toEqual({ kind: "permanent", code: "CRISIS_ALARM_NOT_FOUND" });
+  });
+
+  it("is not final for a 404 or a 409 without the code that says why, as the phone's queue does not drop them either", () => {
+    // A deadlock the gateway lost (409 WRITE_CONFLICT), a gateway without the route, a proxy's page.
+    for (const error of [refuse(409, "WRITE_CONFLICT"), refuse(409), refuse(404), refuse(404, "NOT_FOUND"), refuse(404, "CRISIS_ALARM_ENDED"), refuse(409, "CRISIS_ALARM_NOT_FOUND")]) {
+      expect(classify(error)).toEqual({ kind: "transient" });
+    }
   });
 
   it("is not final when the network, the session or the gateway could not answer", () => {
@@ -204,6 +313,36 @@ describe("sending what is queued", () => {
         throw error;
       });
       expect(result.unsent).toHaveLength(1);
+    }
+  });
+
+  it("keeps the marks of a request that lost a deadlock (409 WRITE_CONFLICT), whole and in order, and sends them again with the same ids", async () => {
+    const queue = [mark("m1", "s1"), mark("m2", "s2"), mark("m3", "s3")];
+    let answer: "conflict" | "ok" = "conflict";
+    const sent: string[][] = [];
+    const send = vi.fn(async (marks: MarkInput[]) => {
+      sent.push(marks.map((one) => one.id));
+      if (answer === "conflict") throw refuse(409, "WRITE_CONFLICT");
+      return ok({ stored: marks.length });
+    });
+    const first = await flushMarks(queue, send);
+    expect(first.unsent.map((one) => one.id)).toEqual(["m1", "m2", "m3"]);
+    expect(first.dropped).toEqual([]);
+    // Not halved, not split: one call, and nothing after it is tried.
+    expect(send).toHaveBeenCalledTimes(1);
+    answer = "ok";
+    const second = await flushMarks(first.unsent, send);
+    expect(second.sent.map((one) => one.id)).toEqual(["m1", "m2", "m3"]);
+    expect(sent).toEqual([["m1", "m2", "m3"], ["m1", "m2", "m3"]]);
+  });
+
+  it("keeps a mark answered with a 404 or a 409 that names no reason, as the phone does", async () => {
+    for (const error of [refuse(404), refuse(409)]) {
+      const result = await flushMarks([mark("m1", "s1")], async () => {
+        throw error;
+      });
+      expect(result.unsent.map((one) => one.id)).toEqual(["m1"]);
+      expect(result.dropped).toEqual([]);
     }
   });
 

@@ -1,9 +1,9 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { withoutProtected } from "@/lib/crisis-protocol";
+import { unlistedPupils, withoutProtected } from "@/lib/crisis-protocol";
 import type { ProtocolView } from "@/lib/crisis-types";
-import { clock } from "@/lib/crisis-view";
+import { clock, groupLabel } from "@/lib/crisis-view";
 
 /*
  * The protocol on paper: A4, one flow of text and tables, in the browser's
@@ -15,6 +15,11 @@ import { clock } from "@/lib/crisis-view";
  * without a name. The screen's own view of the protocol is print:hidden, so a
  * print that did not start from the button (Ctrl+P) is a page that says where
  * the button is, and not the same protocol with the names in it.
+ *
+ * The group of pupils on no lesson is said in the reader's language, with the
+ * lesson times it has none of left out; and the timeline has a column
+ * "Anmärkning" when a teacher found a pupil who stands on another list, which
+ * says "Hittad hos <the teacher's group>".
  */
 
 export function ProtocolPaper({
@@ -34,6 +39,9 @@ export function ProtocolPaper({
   const { alarm } = view;
   const stamp = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", { dateStyle: "medium", timeStyle: "medium", ...(timeZone ? { timeZone } : {}) });
   const nameOf = new Map(calls.flatMap((call) => call.pupils.map((pupil) => [pupil.studentId, `${pupil.firstName} ${pupil.lastName}`.trim()] as const)));
+  const noLesson = t("noLesson.group");
+  const unlisted = unlistedPupils(calls);
+  const showFoundIn = marks.some((mark) => mark.foundIn !== null);
   return (
     <article className="hidden space-y-4 text-sm print:block" aria-label={t("protocol.paperLabel")}>
       <header className="space-y-1">
@@ -63,11 +71,17 @@ export function ProtocolPaper({
       </header>
 
       {calls.map((call) => (
-        <section key={call.id} className="break-inside-avoid space-y-1" aria-label={call.groupName}>
+        <section key={call.id} className="break-inside-avoid space-y-1" aria-label={groupLabel(call, noLesson)}>
           <h2 className="text-base font-semibold">
-            {call.groupName} · {call.subjectName}
-            {call.roomName ? ` · ${call.roomName}` : ""} · {clock(call.lessonStartsAt, locale, timeZone)}–{clock(call.lessonEndsAt, locale, timeZone)}
-            {call.basis === "NEXT_LESSON" ? ` · ${t("live.nextLesson")}` : ""}
+            {call.basis === "NO_LESSON" ? (
+              groupLabel(call, noLesson)
+            ) : (
+              <>
+                {call.groupName} · {call.subjectName}
+                {call.roomName ? ` · ${call.roomName}` : ""} · {clock(call.lessonStartsAt, locale, timeZone)}–{clock(call.lessonEndsAt, locale, timeZone)}
+                {call.basis === "NEXT_LESSON" ? ` · ${t("live.nextLesson")}` : ""}
+              </>
+            )}
           </h2>
           <p>
             {call.uncovered
@@ -113,6 +127,7 @@ export function ProtocolPaper({
                 <th scope="col" className="py-0.5 pr-3">{t("live.colGroup")}</th>
                 <th scope="col" className="py-0.5 pr-3">{t("protocol.colPupil")}</th>
                 <th scope="col" className="py-0.5 pr-3">{t("protocol.colMark")}</th>
+                {showFoundIn ? <th scope="col" className="py-0.5 pr-3">{t("protocol.colNote")}</th> : null}
                 <th scope="col" className="py-0.5">{t("protocol.colBy")}</th>
               </tr>
             </thead>
@@ -120,9 +135,12 @@ export function ProtocolPaper({
               {marks.map((mark, index) => (
                 <tr key={`${mark.studentId}-${mark.at}-${index}`} className="break-inside-avoid border-b">
                   <td className="py-0.5 pr-3 tabular-nums">{stamp.format(new Date(mark.at))}</td>
-                  <td className="py-0.5 pr-3">{mark.groupName}</td>
+                  <td className="py-0.5 pr-3">{unlisted.has(mark.studentId) ? noLesson : mark.groupName}</td>
                   <td className="py-0.5 pr-3">{nameOf.get(mark.studentId) ?? "—"}</td>
                   <td className="py-0.5 pr-3">{t(`status.${mark.state}`)}</td>
+                  {showFoundIn ? (
+                    <td className="py-0.5 pr-3">{mark.foundIn ? t("protocol.foundIn", { group: groupLabel(mark.foundIn, noLesson) }) : "—"}</td>
+                  ) : null}
                   <td className="py-0.5">
                     {mark.by ?? "—"}
                     {mark.onBehalf ? ` (${t("protocol.onBehalf")})` : ""}

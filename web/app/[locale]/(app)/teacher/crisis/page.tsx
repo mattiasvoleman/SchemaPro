@@ -8,6 +8,13 @@
 // In a break the list is of the lesson the pupils are on their way to, said so
 // on the group. The administration sees every mark as it is made.
 //
+// A teacher who meets a pupil who is on none of their lists says so with
+// "Hittat en elev som inte står på listan" (components/crisis/find-other.tsx):
+// the pupil is marked FOUND on one of the teacher's groups and listed under
+// that group as "Hittade hos dig", waiting like the other marks until the
+// gateway has taken it. Only FOUND: the gateway refuses MISSING for a pupil
+// who is not on the group's list, so nothing here offers it.
+//
 // A BAD NETWORK IS THE CASE THIS PAGE IS DESIGNED FOR (lib/crisis-queue.ts):
 // the last list is kept on the device and shown again when the signal is gone
 // ("Listan hämtades kl 10:32"), and a mark is kept as "Väntar på att skickas"
@@ -21,6 +28,7 @@
 
 import { useTranslations, useLocale } from "next-intl";
 import { ClipboardCheck, WifiOff } from "lucide-react";
+import { FindOther } from "@/components/crisis/find-other";
 import { PupilRow } from "@/components/crisis/pupil-row";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -33,7 +41,7 @@ import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { pendingKey, type Dropped } from "@/lib/crisis-queue";
 import { useMyCrisis } from "@/lib/crisis-mine";
-import type { MyAlarm, MyCall, PupilCounts } from "@/lib/crisis-types";
+import type { FoundHereView, MyAlarm, MyCall, PupilCounts, PupilView } from "@/lib/crisis-types";
 import { clock, countPupils, isOpen, unmarkedPupils } from "@/lib/crisis-view";
 import { useCrisisRealtime } from "@/lib/use-crisis-realtime";
 
@@ -48,6 +56,17 @@ const sum = (calls: readonly MyCall[]): PupilCounts => {
   }
   return total;
 };
+
+/** A pupil found with the teacher, as a row: found, and by whom is theirs to know. */
+const foundRow = (one: FoundHereView): PupilView => ({
+  studentId: one.studentId,
+  firstName: one.firstName,
+  lastName: one.lastName,
+  status: "FOUND",
+  priorAbsentSource: null,
+  markedAt: one.markedAt,
+  markedBy: null,
+});
 
 /** The four figures of a set of pupils, in words; never colour alone. */
 function Counts({ counts, live = false }: { counts: PupilCounts; live?: boolean }) {
@@ -134,6 +153,24 @@ function CallCard({
           ))}
         </ul>
       )}
+      {(call.foundHere ?? []).length > 0 ? (
+        <div className="space-y-2">
+          <h4 id={`found-${call.id}`} className="text-sm font-semibold">
+            {t("teacher.foundHereTitle")}
+          </h4>
+          <ul className="divide-y rounded-md border" aria-labelledby={`found-${call.id}`}>
+            {call.foundHere.map((one) => (
+              <PupilRow
+                key={one.studentId}
+                large
+                pupil={foundRow(one)}
+                {...(one.className ? { detail: one.className } : {})}
+                pending={pending.has(pendingKey(call.id, one.studentId))}
+              />
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -180,6 +217,10 @@ function AlarmSection({
           <CallCard key={call.id} call={call} pending={pending} open={open} timeZone={timeZone} onMark={onMark} />
         ))
       )}
+      {/* Nothing to attach a found pupil to without a group of one's own; and nobody to find when every pupil is on a list. */}
+      {open && alarm.calls.length > 0 && (alarm.others ?? []).length > 0 ? (
+        <FindOther alarm={alarm} onFound={(callId, studentId) => onMark(callId, [studentId], "FOUND")} />
+      ) : null}
     </section>
   );
 }
@@ -217,10 +258,11 @@ function DroppedNotice({
 export default function TeacherCrisisPage() {
   const t = useTranslations("crisis");
   const locale = useLocale();
-  const { school } = useProfile();
+  const { school, profile } = useProfile();
   const timeZone = school?.timezone;
   useCrisisRealtime();
-  const my = useMyCrisis();
+  // The queue and the list kept on this device are this login's (lib/crisis-queue.ts).
+  const my = useMyCrisis(profile.id);
 
   const alarms = [...(my.data?.alarms ?? [])].sort(
     (a, b) => Number(isOpen(b)) - Number(isOpen(a)) || Date.parse(b.startedAt) - Date.parse(a.startedAt),

@@ -1,0 +1,43 @@
+import { createTranslator } from "next-intl";
+import { describe, expect, it } from "vitest";
+import en from "@/messages/en.json";
+import sv from "@/messages/sv.json";
+import { noticeText, type NotificationRow } from "./notice-text";
+
+/*
+ * What a notice about an alarm says, with the real messages. A guardian is told
+ * THAT the school had an alarm and that it ended, and when: never what kind of
+ * alarm it was (the product's decision), whatever the notice's meta carries.
+ */
+
+const startedAt = "2027-01-12T09:14:00.000Z";
+const endedAt = "2027-01-12T09:31:00.000Z";
+const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+const row = (type: NotificationRow["type"], meta: Record<string, unknown>): NotificationRow => ({ id: "n-1", type, meta, readAt: null, createdAt: startedAt });
+const say = (language: "sv" | "en", entry: NotificationRow) => {
+  const t = createTranslator({ locale: language, messages: language === "sv" ? sv : en, namespace: "notifications" });
+  return noticeText(entry, (key, values) => t(key as never, values as never));
+};
+
+describe("the guardian's notice after an alarm", () => {
+  for (const kind of ["EVACUATION", "LOCKDOWN"]) {
+    it(`says that there was an alarm and that it ended, and when, and not what kind (${kind})`, () => {
+      const entry = row("CRISIS_GUARDIAN_AFTER", { kind, startedAt, endedAt });
+      expect(say("sv", entry)).toBe(`Skolan hade ett larm kl ${time(startedAt)}–${time(endedAt)}. Det är avslutat.`);
+      expect(say("en", entry)).toBe(`The school had an alarm at ${time(startedAt)}–${time(endedAt)}. It has ended.`);
+      for (const text of [say("sv", entry), say("en", entry)]) expect(text).not.toMatch(/inrymning|utrymning|lockdown|evacuation|skarpt|övning|drill|live/i);
+    });
+  }
+
+  it("is the same sentence whatever the meta holds, even a kind and a mode it should not", () => {
+    const plain = say("sv", row("CRISIS_GUARDIAN_AFTER", { startedAt, endedAt }));
+    expect(say("sv", row("CRISIS_GUARDIAN_AFTER", { kind: "LOCKDOWN", mode: "DRILL", startedAt, endedAt }))).toBe(plain);
+  });
+
+  it("keeps the staff's notices naming the kind, which they are to act on", () => {
+    expect(say("sv", row("CRISIS_ALARM", { kind: "LOCKDOWN", mode: "LIVE", startedAt }))).toContain("inrymning");
+    expect(say("sv", row("CRISIS_ENDED", { kind: "EVACUATION", mode: "DRILL", startedAt, endedAt }))).toBe(`Övningen (utrymning) avslutades kl ${time(endedAt)}.`);
+    expect(say("en", row("CRISIS_ALARM", { kind: "EVACUATION", mode: "DRILL", startedAt }))).toContain("evacuation");
+  });
+});

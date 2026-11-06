@@ -18,7 +18,8 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAlarmList, useProtocol } from "@/lib/crisis-admin-queries";
 import type { AlarmSummary, CrisisMode, ProtocolView } from "@/lib/crisis-types";
-import { clock, dayAndClock, isOpen, stopwatch } from "@/lib/crisis-view";
+import { unlistedPupils } from "@/lib/crisis-protocol";
+import { clock, dayAndClock, groupLabel, isOpen, stopwatch } from "@/lib/crisis-view";
 import { exportProtocol, printProtocol, protectedAmongPupils } from "./protocol-actions";
 import { ProtocolPaper } from "./protocol-paper";
 
@@ -151,6 +152,10 @@ function ProtocolDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const live = alarm.mode === "LIVE";
   const at = (instant: string) => clock(instant, locale, timeZone);
   const nameOf = new Map(view.calls.flatMap((call) => call.pupils.map((pupil) => [pupil.studentId, `${pupil.firstName} ${pupil.lastName}`.trim()] as const)));
+  // The group of pupils on no lesson comes with Swedish stand-in names; the page says it in its own language.
+  const noLesson = t("noLesson.group");
+  const unlisted = unlistedPupils(view.calls);
+  const showFoundIn = view.marks.some((mark) => mark.foundIn !== null);
 
   const download = async () => {
     try {
@@ -228,8 +233,10 @@ function ProtocolDetail({ id, onBack }: { id: string; onBack: () => void }) {
               {view.calls.map((call) => (
                 <TableRow key={call.id}>
                   <TableCell className="align-top font-medium">
-                    {call.groupName}
-                    <span className="block text-xs font-normal text-muted-foreground">{call.subjectName}</span>
+                    {groupLabel(call, noLesson)}
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {call.basis === "NO_LESSON" ? t("noLesson.owner") : call.subjectName}
+                    </span>
                     {call.basis === "NEXT_LESSON" ? (
                       <Badge variant="outline" className="mt-1">
                         {t("live.nextLesson")}
@@ -276,6 +283,7 @@ function ProtocolDetail({ id, onBack }: { id: string; onBack: () => void }) {
                   <TableHead scope="col">{t("live.colGroup")}</TableHead>
                   <TableHead scope="col">{t("protocol.colPupil")}</TableHead>
                   <TableHead scope="col">{t("protocol.colMark")}</TableHead>
+                  {showFoundIn ? <TableHead scope="col">{t("protocol.colNote")}</TableHead> : null}
                   <TableHead scope="col">{t("protocol.colBy")}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -283,11 +291,14 @@ function ProtocolDetail({ id, onBack }: { id: string; onBack: () => void }) {
                 {view.marks.map((mark, index) => (
                   <TableRow key={`${mark.studentId}-${mark.at}-${index}`}>
                     <TableCell className="tabular-nums">{new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", { timeStyle: "medium", ...(timeZone ? { timeZone } : {}) }).format(new Date(mark.at))}</TableCell>
-                    <TableCell>{mark.groupName}</TableCell>
+                    <TableCell>{unlisted.has(mark.studentId) ? noLesson : mark.groupName}</TableCell>
                     <TableCell>{nameOf.get(mark.studentId) ?? "—"}</TableCell>
                     <TableCell>
                       <Badge variant={mark.state === "FOUND" ? "success" : "destructive"}>{t(`status.${mark.state}`)}</Badge>
                     </TableCell>
+                    {showFoundIn ? (
+                      <TableCell>{mark.foundIn ? t("protocol.foundIn", { group: groupLabel(mark.foundIn, noLesson) }) : "—"}</TableCell>
+                    ) : null}
                     <TableCell>
                       {mark.by ?? "—"}
                       {mark.onBehalf ? <span className="block text-xs text-muted-foreground">{t("protocol.onBehalf")}</span> : null}

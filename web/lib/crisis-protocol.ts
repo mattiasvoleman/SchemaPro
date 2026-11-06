@@ -1,4 +1,5 @@
 import type { CallView, CrisisKind, CrisisMode, ProtocolMark, ProtocolView, PupilStatus } from "@/lib/crisis-types";
+import { groupLabel } from "@/lib/crisis-view";
 
 /*
  * THE PROTOCOL AS A FILE AND AS PAPER (Krisläge).
@@ -21,6 +22,14 @@ import type { CallView, CrisisKind, CrisisMode, ProtocolMark, ProtocolView, Pupi
  * asked for, how it stands, and the latest mark with its time and who made it.
  * The timeline of every mark, with the corrections, is on the printed
  * protocol.
+ *
+ * THE LAST COLUMN IS NEW (hittad_hos, "found with"): the group of the teacher
+ * who found the pupil, when the pupil's latest mark was made by a teacher on
+ * another group than the pupil's own. It is last so that a reader of the first
+ * sixteen columns, by position or by name, reads the file as before; the
+ * sentence about the pupils left out stays in `anmarkning`. The group of
+ * pupils who are on no lesson (basis NO_LESSON) is a group like the others,
+ * under the words of this file, with no subject, room or lesson times.
  */
 
 export const PROTOCOL_HEADERS = [
@@ -40,7 +49,14 @@ export const PROTOCOL_HEADERS = [
   "markerad",
   "markerad_av",
   "anmarkning",
+  "hittad_hos",
 ] as const;
+
+/** The file's words for the group of pupils on no lesson: the gateway names it with Swedish stand-ins that are not relied on. */
+export const NO_LESSON_WORD = "Ej i lektion just nu";
+const FOUND_WITH_WORD = "Hittad hos";
+/** The column the sentence about the pupils left out is in. */
+const NOTE_COLUMN = PROTOCOL_HEADERS.indexOf("anmarkning");
 
 const KIND_WORD: Record<CrisisKind, string> = { EVACUATION: "utrymning", LOCKDOWN: "inrymning" };
 const MODE_WORD: Record<CrisisMode, string> = { LIVE: "skarpt larm", DRILL: "övning" };
@@ -113,12 +129,30 @@ export function withoutProtected(view: ProtocolView, marked: ReadonlySet<string>
   };
 }
 
+/**
+ * The pupils of the group nobody has a lesson with. A mark names its pupil's own group only by the
+ * gateway's Swedish stand-in name, so a page that says that group in its own words looks the pupil up here.
+ */
+export function unlistedPupils(calls: readonly Pick<CallView, "basis" | "pupils">[]): Set<string> {
+  return new Set(calls.filter((call) => call.basis === "NO_LESSON").flatMap((call) => call.pupils.map((pupil) => pupil.studentId)));
+}
+
 /** "Anna Berg (09:14)" / "Bo Ek (ej svarat)": who answered for the group, and when they first marked. */
 function teachersCell(call: CallView, timeZone: string): string {
   if (call.uncovered) return "ingen lärare";
   return call.teachers
     .flatMap((teacher) => (teacher.name ? [`${teacher.name} (${teacher.answeredAt ? zoned(teacher.answeredAt, timeZone).time : "ej svarat"})`] : []))
     .join(" / ");
+}
+
+/** The latest mark of each pupil, by the time it was made (the later in the list when two have the same). */
+function latestMarks(marks: readonly ProtocolMark[]): Map<string, ProtocolMark> {
+  const latest = new Map<string, ProtocolMark>();
+  for (const mark of marks) {
+    const before = latest.get(mark.studentId);
+    if (!before || Date.parse(mark.at) >= Date.parse(before.at)) latest.set(mark.studentId, mark);
+  }
+  return latest;
 }
 
 /**
@@ -129,18 +163,22 @@ export function protocolRows(view: ProtocolView, held: ReadonlySet<string>, time
   const { alarm } = view;
   const start = zoned(alarm.startedAt, timeZone);
   const common = [`${start.date} ${start.seconds}`, KIND_WORD[alarm.kind], MODE_WORD[alarm.mode]];
+  const latest = latestMarks(view.marks);
   const rows: string[][] = [];
   for (const call of view.calls) {
-    const lesson = [zoned(call.lessonStartsAt, timeZone).time, zoned(call.lessonEndsAt, timeZone).time];
+    const noLesson = call.basis === "NO_LESSON";
+    // A group with no lesson has no times, room or subject to say: the gateway's stand-ins for them are not repeated.
+    const lesson = noLesson ? ["", ""] : [zoned(call.lessonStartsAt, timeZone).time, zoned(call.lessonEndsAt, timeZone).time];
     for (const pupil of call.pupils) {
       if (held.has(pupil.studentId)) continue;
+      const foundIn = latest.get(pupil.studentId)?.foundIn;
       rows.push([
         ...common,
-        call.groupName,
-        call.subjectName,
+        groupLabel(call, NO_LESSON_WORD),
+        noLesson ? "" : call.subjectName,
         call.roomName ?? "",
         ...lesson,
-        call.basis === "NEXT_LESSON" ? "nästa lektion (rast)" : "pågående lektion",
+        noLesson ? "ej i lektion" : call.basis === "NEXT_LESSON" ? "nästa lektion (rast)" : "pågående lektion",
         teachersCell(call, timeZone),
         pupil.lastName,
         pupil.firstName,
@@ -148,10 +186,15 @@ export function protocolRows(view: ProtocolView, held: ReadonlySet<string>, time
         pupil.markedAt ? `${zoned(pupil.markedAt, timeZone).date} ${zoned(pupil.markedAt, timeZone).seconds}` : "",
         pupil.markedBy ?? "",
         "",
+        foundIn ? `${FOUND_WITH_WORD} ${groupLabel(foundIn, NO_LESSON_WORD)}` : "",
       ]);
     }
   }
   const heldOut = pupilIds(view).filter((id) => held.has(id)).length;
-  if (heldOut > 0) rows.push([...PROTOCOL_HEADERS.slice(0, -1).map(() => ""), heldOutSentence(heldOut)]);
+  if (heldOut > 0) {
+    const note = PROTOCOL_HEADERS.map(() => "");
+    note[NOTE_COLUMN] = heldOutSentence(heldOut);
+    rows.push(note);
+  }
   return rows;
 }

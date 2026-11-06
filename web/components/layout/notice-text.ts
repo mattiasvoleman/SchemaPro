@@ -162,10 +162,14 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
     case "CRISIS_ENDED":
     case "CRISIS_GUARDIAN_AFTER": {
       // Krisläge: that an alarm is going or is over, whether it is an exercise,
-      // its kind and when; never a pupil, a group, a room or a teacher.
+      // its kind and when; never a pupil, a group, a room or a teacher. A
+      // guardian is told THAT it happened and ended and when, and not what
+      // kind of alarm it was (the product's decision): the kind is not even
+      // handed to their sentence, whatever the notice's meta carries.
       const at = (key: string) =>
         meta[key] ? new Date(str(key)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-      return t(`crisis.${entry.type}`, { mode: str("mode"), kind: str("kind"), when: at("startedAt"), end: at("endedAt") });
+      const times = { when: at("startedAt"), end: at("endedAt") };
+      return t(`crisis.${entry.type}`, entry.type === "CRISIS_GUARDIAN_AFTER" ? times : { mode: str("mode"), kind: str("kind"), ...times });
     }
     case "TEACHER_ABSENCE_REPORTED": {
       // Who and when; the reason is never in a notice. Whole days end at

@@ -1,4 +1,4 @@
-import type { CallView, PupilStatus, PupilView } from "@/lib/crisis-types";
+import type { CallBasis, CallView, PupilStatus, PupilView } from "@/lib/crisis-types";
 
 /*
  * The figures of the administration's live view, worked out from the groups
@@ -33,6 +33,14 @@ export function callState(call: Pick<CallView, "counts">): CallState {
   const { counts } = call;
   if (counts.unreported === 0) return counts.missing > 0 ? "DONE_MISSING" : "DONE";
   return counts.found + counts.missing > 0 ? "IN_PROGRESS" : "WAITING";
+}
+
+/**
+ * The groups as the live view lists them: the one of pupils on no lesson first (nobody answers for
+ * it, so it is the administration's own list), the rest in the order the gateway gave.
+ */
+export function groupsInOrder<T extends Pick<CallView, "basis">>(calls: readonly T[]): T[] {
+  return [...calls.filter((call) => call.basis === "NO_LESSON"), ...calls.filter((call) => call.basis !== "NO_LESSON")];
 }
 
 export interface SilentTeacher {
@@ -88,6 +96,7 @@ export function liveFigures(calls: readonly CallView[]): LiveFigures {
 export interface PupilToFind {
   callId: string;
   pupil: PupilView;
+  basis: CallBasis;
   groupName: string;
   subjectName: string;
   roomName: string | null;
@@ -95,7 +104,10 @@ export interface PupilToFind {
   teachers: string[];
 }
 
-/** The pupils still to find, or still to hear about: the missing first, then the unreported, each by group and name. */
+/**
+ * The pupils still to find, or still to hear about: the missing first, then the unreported, each by
+ * group and name; within each, the pupils on no lesson before the groups with a teacher to ask.
+ */
 export function pupilsToFind(calls: readonly CallView[]): PupilToFind[] {
   const rows: PupilToFind[] = [];
   for (const call of calls) {
@@ -104,6 +116,7 @@ export function pupilsToFind(calls: readonly CallView[]): PupilToFind[] {
       rows.push({
         callId: call.id,
         pupil,
+        basis: call.basis,
         groupName: call.groupName,
         subjectName: call.subjectName,
         roomName: call.roomName,
@@ -113,9 +126,11 @@ export function pupilsToFind(calls: readonly CallView[]): PupilToFind[] {
   }
   const rank = (status: PupilStatus) => (status === "MISSING" ? 0 : 1);
   const name = (row: PupilToFind) => `${row.pupil.lastName} ${row.pupil.firstName}`;
+  const unlisted = (row: PupilToFind) => (row.basis === "NO_LESSON" ? 0 : 1);
   return rows.sort(
     (a, b) =>
       rank(a.pupil.status) - rank(b.pupil.status) ||
+      unlisted(a) - unlisted(b) ||
       a.groupName.localeCompare(b.groupName, "sv") ||
       name(a).localeCompare(name(b), "sv"),
   );

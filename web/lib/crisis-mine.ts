@@ -7,6 +7,7 @@ import { CRISIS_KEYS } from "@/lib/crisis-keys";
 import {
   applyQueue,
   flushMarks,
+  forgetLegacy,
   loadQueue,
   loadSnapshot,
   saveQueue,
@@ -31,6 +32,11 @@ import { isOpen, markTime, newMark } from "@/lib/crisis-view";
  * phone with a bar that carries nothing: the request is tried and it fails.
  * Neither a read nor a send may hang the page: both give up after a deadline
  * and are tried again by the timer.
+ *
+ * WHOSE. The hook is given the id of the signed-in profile and keeps, reads
+ * and sends only that login's queue and list (lib/crisis-queue.ts). The
+ * react-query key carries the id as well, so a cache that outlived a
+ * sign-out cannot show the next login the last one's pupils.
  */
 
 const PATH = "/api/v1/crisis/mine";
@@ -88,8 +94,10 @@ export interface MyCrisis {
   refetch: () => void;
 }
 
-export function useMyCrisis(): MyCrisis {
+export function useMyCrisis(userId: string): MyCrisis {
   const queryClient = useQueryClient();
+  // Under CRISIS_KEYS.mine, so that the `crisis_updated` event (which invalidates the prefix) still reaches it.
+  const queryKey = useMemo(() => [...CRISIS_KEYS.mine, userId], [userId]);
   // What the device kept is read after the first render, not during it: the
   // page is rendered on the server first, where there is no storage, and a
   // first client render that differed from it would not hydrate.
@@ -100,25 +108,30 @@ export function useMyCrisis(): MyCrisis {
   const [sending, setSending] = useState(false);
   const queueRef = useRef<MarkInput[]>([]);
   const busy = useRef(false);
+  const loadedFor = useRef<string | null>(null);
 
   useEffect(() => {
-    // A mark made before this ran (a tap in the first moment) goes after the old ones.
-    const next = [...loadQueue(), ...queueRef.current];
+    // The first version kept one queue for the browser, whoever was signed in: nobody's to send.
+    forgetLegacy();
+    // A mark made before this ran (a tap in the first moment) goes after the old ones; but never another login's.
+    const carried = loadedFor.current === null ? queueRef.current : [];
+    loadedFor.current = userId;
+    const next = [...loadQueue(userId), ...carried];
     queueRef.current = next;
     setQueue(next);
-    setKept(loadSnapshot(Date.now()));
+    setKept(loadSnapshot(userId, Date.now()));
     setRestored(true);
-  }, []);
+  }, [userId]);
 
   const query = useQuery<Stamped>({
-    queryKey: CRISIS_KEYS.mine,
+    queryKey,
     networkMode: "always",
     retry: false,
     refetchInterval: (query) => (query.state.data?.data.alarms.some(isOpen) ? OPEN_POLL_MS : IDLE_POLL_MS),
     queryFn: async () => {
       const data = await deadline(api.get<MyCrisisResponse>(PATH), READ_DEADLINE_MS);
       const stamped: Stamped = { data, receivedAt: Date.now() };
-      saveSnapshot(stamped);
+      saveSnapshot(userId, stamped);
       return stamped;
     },
   });
@@ -132,8 +145,8 @@ export function useMyCrisis(): MyCrisis {
   const setQueued = useCallback((next: MarkInput[]) => {
     queueRef.current = next;
     setQueue(next);
-    saveQueue(next);
-  }, []);
+    saveQueue(userId, next);
+  }, [userId]);
 
   /** Sends what is queued, in as few calls as it takes; one at a time. */
   const flush = useCallback(async () => {
@@ -151,14 +164,14 @@ export function useMyCrisis(): MyCrisis {
         if (result.sent.length > 0) {
           // What the gateway took is true of the list now; the read that follows confirms it.
           const patch = (snapshot: Snapshot): Snapshot => ({ ...snapshot, data: applyQueue(snapshot.data, result.sent).data });
-          const current = queryClient.getQueryData<Stamped>(CRISIS_KEYS.mine);
+          const current = queryClient.getQueryData<Stamped>(queryKey);
           if (current) {
             const patched = patch(current);
-            queryClient.setQueryData<Stamped>(CRISIS_KEYS.mine, patched);
-            saveSnapshot(patched);
+            queryClient.setQueryData<Stamped>(queryKey, patched);
+            saveSnapshot(userId, patched);
           }
           setKept((before) => (before ? patch(before) : before));
-          void queryClient.invalidateQueries({ queryKey: CRISIS_KEYS.mine });
+          void queryClient.invalidateQueries({ queryKey });
         }
         if (result.unsent.length > 0) break;
       }
@@ -166,7 +179,7 @@ export function useMyCrisis(): MyCrisis {
       busy.current = false;
       setSending(false);
     }
-  }, [queryClient, setQueued]);
+  }, [queryClient, queryKey, setQueued, userId]);
 
   // The queue of an earlier visit is sent at once; then whenever the network
   // is back, the page is looked at again, and on the timer.

@@ -509,7 +509,8 @@ describe("NotificationBell inbox", () => {
     ];
     const alarmText = `crisis.CRISIS_ALARM(mode=LIVE|kind=EVACUATION|when=${clock(startedAt)}|end=)`;
     const endedText = `crisis.CRISIS_ENDED(mode=LIVE|kind=EVACUATION|when=${clock(startedAt)}|end=${clock(endedAt)})`;
-    const guardianText = `crisis.CRISIS_GUARDIAN_AFTER(mode=|kind=LOCKDOWN|when=${clock(startedAt)}|end=${clock(endedAt)})`;
+    // A guardian's sentence is handed the times only: never the kind of alarm, though the notice's meta carries it.
+    const guardianText = `crisis.CRISIS_GUARDIAN_AFTER(when=${clock(startedAt)}|end=${clock(endedAt)})`;
 
     for (const [role, page] of [
       ["TEACHER", "/teacher/crisis"],

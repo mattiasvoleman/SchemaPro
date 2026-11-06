@@ -96,4 +96,19 @@ describe("SignOutButton", () => {
     await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/sv/login"));
     expect(screen.queryByText(failed)).not.toBeInTheDocument();
   });
+
+  it("wipes what Krisläge kept on the device once the session has ended, and keeps it when it has not", async () => {
+    localStorage.setItem("rastra.crisis.queue.v2:u-anna", '[{"id":"m"}]');
+    authMocks.signOut.mockResolvedValueOnce({ error: { message: "Failed to fetch" } });
+    const user = userEvent.setup();
+    renderButton();
+    await user.click(screen.getByRole("button", { name: "Logga ut" }));
+    expect(await screen.findByText(failed)).toBeInTheDocument();
+    expect(localStorage.getItem("rastra.crisis.queue.v2:u-anna")).not.toBeNull();
+
+    authMocks.signOut.mockResolvedValueOnce({ error: null });
+    await user.click(screen.getByRole("button", { name: "Logga ut" }));
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/sv/login"));
+    expect(localStorage.getItem("rastra.crisis.queue.v2:u-anna")).toBeNull();
+  });
 });

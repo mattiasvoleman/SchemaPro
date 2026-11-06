@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { callState, liveFigures, pupilsToFind, silentTeachers } from "./crisis-live";
-import { call, pupil, teacher } from "./__fixtures__/crisis";
+import { callState, groupsInOrder, isDone, liveFigures, pupilsToFind, silentTeachers } from "./crisis-live";
+import { call, noLessonCall, pupil, teacher } from "./__fixtures__/crisis";
 
 const ANNA = teacher("t-anna", "Anna Berg");
 const BO = teacher("t-bo", "Bo Ek");
@@ -90,5 +90,42 @@ describe("the pupils still to find", () => {
   it("carry who answers for the group, for the administration to ask", () => {
     expect(pupilsToFind([sevenA])[0]).toMatchObject({ callId: "c-7a", teachers: ["Anna Berg"], subjectName: "Matematik", roomName: "Sal 12" });
     expect(pupilsToFind([eightA])[0]?.teachers).toEqual([]);
+  });
+});
+
+describe("the group of pupils on no lesson", () => {
+  // Three pupils on no lesson's list: one found by the administration, one missing, one nobody has said anything about.
+  const nobody = noLessonCall("c-none", [pupil("s20", "Åsa", "Berg", "FOUND"), pupil("s21", "Bengt", "Ek", "MISSING"), pupil("s22", "Cecilia", "Ek")]);
+
+  it("is listed first, and the others keep the order the gateway gave", () => {
+    expect(groupsInOrder([sevenA, eightA, nobody, sevenB]).map((one) => one.id)).toEqual(["c-none", "c-7a", "c-8a", "c-7b"]);
+    expect(groupsInOrder([sevenA, sevenB]).map((one) => one.id)).toEqual(["c-7a", "c-7b"]);
+  });
+
+  it("is counted in the figures like any group: its pupils, its marks, and that it is not done while one is unreported", () => {
+    const figures = liveFigures([sevenA, nobody]);
+    expect(figures.groups).toBe(2);
+    expect(figures.pupils).toBe(7);
+    expect(figures.found).toBe(2);
+    expect(figures.missing).toBe(2);
+    expect(figures.unreported).toBe(2);
+    expect(isDone(nobody)).toBe(false);
+    expect(callState(nobody)).toBe("IN_PROGRESS");
+    // Nobody answers for it, so no teacher is waited for because of it.
+    expect(silentTeachers([nobody])).toEqual([]);
+    expect(figures.teachers).toBe(1);
+  });
+
+  it("puts its pupils first among the pupils still to find of the same kind, and says which group they are on", () => {
+    const rows = pupilsToFind([sevenA, eightA, nobody]);
+    expect(rows.map((row) => [row.pupil.status, row.basis, row.pupil.firstName])).toEqual([
+      ["MISSING", "NO_LESSON", "Bengt"],
+      ["MISSING", "LESSON", "Jamal"],
+      ["UNREPORTED", "NO_LESSON", "Cecilia"],
+      ["UNREPORTED", "LESSON", "Klara"],
+      ["UNREPORTED", "LESSON", "Olle"],
+      ["UNREPORTED", "LESSON", "Pia"],
+    ]);
+    expect(rows[0]!.teachers).toEqual([]);
   });
 });

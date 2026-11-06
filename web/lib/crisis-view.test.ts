@@ -8,6 +8,7 @@ import {
   clock,
   countPupils,
   crisisErrorText,
+  groupLabel,
   markTime,
   mayAct,
   newMark,
@@ -147,5 +148,14 @@ describe("the alarm that refused a start", () => {
     expect(blockingAlarmId(new ApiError(409, "Ett larm pågår", "CRISIS_ALARM_OPEN", { alarmId: "../../x" }))).toBeNull();
     expect(blockingAlarmId(new ApiError(409, "Slut", "CRISIS_ALARM_ENDED", { alarmId: ID }))).toBeNull();
     expect(blockingAlarmId(new Error("x"))).toBeNull();
+  });
+});
+
+describe("a group's name as the page says it", () => {
+  it("is the gateway's name, except for the group of pupils on no lesson, which is said in the page's own words", () => {
+    expect(groupLabel({ basis: "LESSON", groupName: "7A" }, "Ej i lektion just nu")).toBe("7A");
+    expect(groupLabel({ basis: "NEXT_LESSON", groupName: "8B" }, "Ej i lektion just nu")).toBe("8B");
+    // The gateway's stand-in is Swedish whatever the reader's language is.
+    expect(groupLabel({ basis: "NO_LESSON", groupName: "Ej i lektion just nu" }, "Not in a lesson right now")).toBe("Not in a lesson right now");
   });
 });

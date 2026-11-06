@@ -3,6 +3,7 @@ import type { MessageLookup } from "@/lib/engine-message";
 import type { AdminProfile } from "@/lib/admin-areas";
 import type {
   AlarmView,
+  CallBasis,
   CrisisKind,
   CrisisMode,
   MarkInput,
@@ -47,6 +48,13 @@ export function mayAct(
 }
 
 export const isOpen = (alarm: Pick<AlarmView, "endedAt">): boolean => alarm.endedAt === null;
+
+/**
+ * A group's name as the page says it. The group of pupils on no lesson comes from the gateway with
+ * Swedish stand-in names; a page shows `noLesson` (crisis.noLesson.group) in the reader's language instead.
+ */
+export const groupLabel = (call: { basis: CallBasis; groupName: string }, noLesson: string): string =>
+  call.basis === "NO_LESSON" ? noLesson : call.groupName;
 
 /** A random v4 uuid, which the gateway wants of a mark's id (randomUUID exists on secure pages only). */
 export function uuidV4(): string {

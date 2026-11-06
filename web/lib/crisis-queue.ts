@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api";
-import type { MarkInput, MarkResult, MyCall, MyCrisisResponse, PupilView } from "@/lib/crisis-types";
+import { CRISIS_STORAGE_PREFIX } from "@/lib/crisis-storage";
+import type { FoundHereView, MarkInput, MarkResult, MyCall, MyCrisisResponse, PupilView } from "@/lib/crisis-types";
 import { MAX_MARKS_PER_CALL, countPupils } from "@/lib/crisis-view";
 
 /*
@@ -17,16 +18,33 @@ import { MAX_MARKS_PER_CALL, countPupils } from "@/lib/crisis-view";
  * EVERY storage access is in a try/catch: a private window, blocked site data
  * or a full quota must leave the page working, just without memory.
  *
+ * WHOSE. The device may be shared: one browser, one teacher after another.
+ * Both keys carry the id of the signed-in profile, a login reads and sends
+ * only its own, and signing out wipes every login's
+ * (lib/crisis-storage.ts clearCrisisStorage). A mark sent under another
+ * teacher's token would be signed by someone who was never there, and the
+ * list holds the names of every pupil of the school.
+ *
  * WHAT A FAILURE MEANS. A mark carries its own uuid, so sending it twice
  * stores it once (skipDuplicates in the gateway): a request whose answer was
  * lost is simply sent again. Only an answer from the gateway that says "no"
- * is permanent (400, 403, 404, 409: the alarm is over, the group is not yours,
- * the pupil is not on its list); a refusal to talk (no network, a timeout, 401
- * while the session wakes, 429, 5xx) is not, and the mark stays queued.
+ * to the mark itself is permanent (400, 403: the group is not yours, the
+ * pupil may not be marked so; 404 CRISIS_ALARM_NOT_FOUND and 409
+ * CRISIS_ALARM_ENDED: the alarm is gone or over); a refusal to talk (no
+ * network, a timeout, 401 while the session wakes, 429, 5xx) is not, and the
+ * mark stays queued. Neither is a 404 or a 409 without those codes: a
+ * deadlock the gateway lost answers 409 WRITE_CONFLICT and the same mark
+ * goes through on the next try. The phone's queue (mobile/src/services/
+ * crisisQueue.ts classifyFailure) draws the line in the same place.
  */
 
-export const QUEUE_KEY = "rastra.crisis.queue.v1";
-export const SNAPSHOT_KEY = "rastra.crisis.mine.v1";
+/** The prefix of every key, whoever it is kept for; the ids follow after a colon. */
+const QUEUE_PREFIX = `${CRISIS_STORAGE_PREFIX}queue.v2:`;
+const SNAPSHOT_PREFIX = `${CRISIS_STORAGE_PREFIX}mine.v2:`;
+export const queueKey = (userId: string): string => `${QUEUE_PREFIX}${userId}`;
+export const snapshotKey = (userId: string): string => `${SNAPSHOT_PREFIX}${userId}`;
+/** The keys of the first version, which had no user in them: whatever is under them is nobody's, and is removed when seen. */
+export const LEGACY_KEYS = [`${CRISIS_STORAGE_PREFIX}queue.v1`, `${CRISIS_STORAGE_PREFIX}mine.v1`] as const;
 /** A list older than this is not shown as the truth about an alarm: it is hours since anyone was asked. */
 export const SNAPSHOT_MAX_AGE_MS = 4 * 3_600_000;
 
@@ -55,6 +73,11 @@ function read(key: string, store: Store | null): unknown {
   }
 }
 
+/** Removes the keys of the first version, which nobody can own. */
+export function forgetLegacy(store: Store | null = defaultStore()): void {
+  for (const key of LEGACY_KEYS) write(key, null, store);
+}
+
 function write(key: string, value: unknown | null, store: Store | null): boolean {
   try {
     if (!store) return false;
@@ -80,14 +103,14 @@ function isMark(value: unknown): value is MarkInput {
   );
 }
 
-/** The marks still to send, oldest first. Whatever in the storage is not a mark is left out. */
-export function loadQueue(store: Store | null = defaultStore()): MarkInput[] {
-  const stored = read(QUEUE_KEY, store);
+/** The marks this login still has to send, oldest first. Whatever in the storage is not a mark is left out. */
+export function loadQueue(userId: string, store: Store | null = defaultStore()): MarkInput[] {
+  const stored = read(queueKey(userId), store);
   return Array.isArray(stored) ? stored.filter(isMark) : [];
 }
 
-export function saveQueue(queue: readonly MarkInput[], store: Store | null = defaultStore()): boolean {
-  return write(QUEUE_KEY, queue.length === 0 ? null : queue, store);
+export function saveQueue(userId: string, queue: readonly MarkInput[], store: Store | null = defaultStore()): boolean {
+  return write(queueKey(userId), queue.length === 0 ? null : queue, store);
 }
 
 function isSnapshot(value: unknown): value is Snapshot {
@@ -100,14 +123,14 @@ function isSnapshot(value: unknown): value is Snapshot {
   );
 }
 
-export function loadSnapshot(now: number, store: Store | null = defaultStore()): Snapshot | null {
-  const stored = read(SNAPSHOT_KEY, store);
+export function loadSnapshot(userId: string, now: number, store: Store | null = defaultStore()): Snapshot | null {
+  const stored = read(snapshotKey(userId), store);
   if (!isSnapshot(stored)) return null;
   return now - stored.receivedAt > SNAPSHOT_MAX_AGE_MS || stored.receivedAt > now + 60_000 ? null : stored;
 }
 
-export function saveSnapshot(snapshot: Snapshot, store: Store | null = defaultStore()): boolean {
-  return write(SNAPSHOT_KEY, snapshot, store);
+export function saveSnapshot(userId: string, snapshot: Snapshot, store: Store | null = defaultStore()): boolean {
+  return write(snapshotKey(userId), snapshot, store);
 }
 
 /** How far the gateway's clock was from this device's when the list came: added to a mark's time. */
@@ -122,6 +145,13 @@ export const pendingKey = (callId: string, studentId: string): string => `${call
  * so, and its key in `pending` so the page can say that it has not arrived.
  * A pupil with several queued marks takes the latest (by the time they were
  * made; the later one of two equal times).
+ *
+ * A FOUND mark for a pupil who is not on the call's list is a pupil the
+ * teacher found who stands elsewhere ("found with me"): the pupil is
+ * added to the call's `foundHere` from the alarm's `others`, waiting like
+ * the other marks, and counted nowhere on this page (the count is of the
+ * pupil's own list). The gateway refuses MISSING for such a pupil, so the
+ * page never queues one and none is shown here.
  */
 export function applyQueue(
   data: MyCrisisResponse,
@@ -139,13 +169,25 @@ export function applyQueue(
     ...alarm,
     calls: alarm.calls.map((call): MyCall => {
       let touched = false;
+      const listed = new Set<string>();
       const pupils = call.pupils.map((pupil): PupilView => {
+        listed.add(pupil.studentId);
         const mark = latest.get(pendingKey(call.id, pupil.studentId));
         if (!mark) return pupil;
         touched = true;
         pending.add(pendingKey(call.id, pupil.studentId));
         return { ...pupil, status: mark.state, markedAt: mark.at };
       });
+      const kept = call.foundHere ?? [];
+      const found: FoundHereView[] = [];
+      for (const mark of latest.values()) {
+        if (mark.callId !== call.id || mark.state !== "FOUND" || listed.has(mark.studentId)) continue;
+        const who = (alarm.others ?? []).find((one) => one.studentId === mark.studentId);
+        if (!who) continue;
+        pending.add(pendingKey(call.id, mark.studentId));
+        if (!kept.some((one) => one.studentId === mark.studentId)) found.push({ ...who, markedAt: mark.at });
+      }
+      if (found.length > 0) return { ...call, pupils, foundHere: [...kept, ...found], counts: countPupils(pupils.map((pupil) => pupil.status)) };
       return touched ? { ...call, pupils, counts: countPupils(pupils.map((pupil) => pupil.status)) } : call;
     }),
   }));
@@ -154,12 +196,21 @@ export function applyQueue(
 
 export type Failure = { kind: "permanent"; code: string } | { kind: "transient" };
 
-/** The statuses in which the gateway has answered "no" to the mark itself, and not to the way it was sent. */
-const REFUSED = new Set([400, 403, 404, 409, 410, 413, 422]);
+/** The statuses in which the gateway has answered "no" to the mark itself, whatever it says in the body. */
+const REFUSED = new Set([400, 403, 410, 413, 422]);
+
+/**
+ * A 404 and a 409 are final only with the code that says the alarm is gone or over. Without it they
+ * are the way the mark was sent, not the mark: a gateway without the route, a proxy, a deadlock lost
+ * (409 WRITE_CONFLICT). Such a mark is kept and sent again.
+ */
+const REFUSED_WITH_CODE: Readonly<Record<number, string>> = { 404: "CRISIS_ALARM_NOT_FOUND", 409: "CRISIS_ALARM_ENDED" };
 
 /** What a failed send means for the marks in it. */
 export function classify(error: unknown): Failure {
-  if (error instanceof ApiError && REFUSED.has(error.status)) return { kind: "permanent", code: error.code ?? `HTTP_${error.status}` };
+  if (error instanceof ApiError && (REFUSED.has(error.status) || (error.code !== undefined && error.code === REFUSED_WITH_CODE[error.status]))) {
+    return { kind: "permanent", code: error.code ?? `HTTP_${error.status}` };
+  }
   return { kind: "transient" };
 }
 

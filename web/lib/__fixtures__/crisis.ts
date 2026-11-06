@@ -2,10 +2,13 @@ import type {
   AlarmDetail,
   AlarmSummary,
   CallView,
+  FoundHereView,
   MyAlarm,
   MyCall,
   MyCrisisResponse,
+  OtherPupilView,
   PriorSource,
+  ProtocolMark,
   ProtocolView,
   PupilStatus,
   PupilView,
@@ -70,6 +73,24 @@ export function call(id: string, groupName: string, pupils: PupilView[], extra: 
   };
 }
 
+/**
+ * The alarm's one group of pupils on no lesson's list, as the gateway words it: Swedish stand-in names, no
+ * teacher, no room, and the lesson's times both the alarm's start.
+ */
+export function noLessonCall(id: string, pupils: PupilView[], extra: Partial<CallView> = {}): CallView {
+  return call(id, "Ej i lektion just nu", pupils, {
+    lessonId: null,
+    basis: "NO_LESSON",
+    subjectName: "Ingen lektion pågår",
+    roomName: null,
+    lessonStartsAt: STARTED,
+    lessonEndsAt: STARTED,
+    uncovered: true,
+    teachers: [],
+    ...extra,
+  });
+}
+
 export function summary(calls: CallView[], extra: Partial<AlarmSummary> = {}): AlarmSummary {
   const teachers = calls.flatMap((one) => one.teachers.filter((row) => row.userId !== null));
   return {
@@ -83,6 +104,7 @@ export function summary(calls: CallView[], extra: Partial<AlarmSummary> = {}): A
     autoEnded: false,
     endNote: null,
     guardiansNotifiedAt: null,
+    unlisted: calls.filter((one) => one.basis === "NO_LESSON").reduce((sum, one) => sum + one.counts.pupils, 0),
     calls: calls.length,
     callsComplete: calls.filter((one) => one.counts.unreported === 0).length,
     counts: calls.reduce(
@@ -106,6 +128,17 @@ export const detail = (calls: CallView[], extra: Partial<AlarmSummary> = {}): Al
   calls,
 });
 
+export const protocolMark = (extra: Partial<ProtocolMark> & Pick<ProtocolMark, "studentId" | "groupName">): ProtocolMark => ({
+  at: "2027-01-12T09:20:03.000Z",
+  receivedAt: "2027-01-12T09:20:04.000Z",
+  foundIn: null,
+  state: "FOUND",
+  by: "Anna Berg",
+  onBehalf: false,
+  late: false,
+  ...extra,
+});
+
 export const protocol = (calls: CallView[], marks: ProtocolView["marks"] = [], extra: Partial<AlarmSummary> = {}): ProtocolView => ({
   ...detail(calls, extra),
   marks,
@@ -125,9 +158,25 @@ export function myCall(id: string, groupName: string, pupils: PupilView[], extra
     colleagues: [],
     counts: countPupils(pupils.map((one) => one.status)),
     pupils,
+    foundHere: [],
     ...extra,
   };
 }
+
+export const foundHere = (id: string, first: string, last: string, className: string | null = null): FoundHereView => ({
+  studentId: id,
+  firstName: first,
+  lastName: last,
+  className,
+  markedAt: "2027-01-12T09:21:00.000Z",
+});
+
+export const other = (id: string, first: string, last: string, className: string | null = null): OtherPupilView => ({
+  studentId: id,
+  firstName: first,
+  lastName: last,
+  className,
+});
 
 export const myAlarm = (calls: MyCall[], extra: Partial<MyAlarm> = {}): MyAlarm => ({
   id: "a-1",
@@ -141,6 +190,7 @@ export const myAlarm = (calls: MyCall[], extra: Partial<MyAlarm> = {}): MyAlarm 
   endNote: null,
   guardiansNotifiedAt: null,
   calls,
+  others: [],
   ...extra,
 });
 

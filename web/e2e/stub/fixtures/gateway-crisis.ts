@@ -10,7 +10,11 @@ import { Reply, route, type GatewayRoute } from "../gateway-routes";
  *
  * With the scenario "crisis-open" (x-stub-scenario, e2e/signed-in.ts
  * askForScenario) a live evacuation is going: one group with every kind of
- * pupil, one in a break, one nobody answers for. An alarm that is going is a
+ * pupil, one in a break, one nobody answers for, and the group of pupils who
+ * are on no lesson's list (basis NO_LESSON, the gateway's Swedish stand-in
+ * names, nobody to answer for it). The teacher has the first two groups, one
+ * pupil found with them who is on another list, and the school's other
+ * pupils to pick from. An alarm that is going is a
  * state the one world does not hold, because a page that reads it would
  * change every other page's counts; crisis.a11y.spec.ts asks for it by name.
  */
@@ -51,6 +55,11 @@ const NINE_C = [
   pupil("00000000-0000-4000-8000-0000000c2007", "Sam", "Ek", "UNREPORTED"),
 ];
 
+const AFTER_SCHOOL = [
+  pupil("00000000-0000-4000-8000-0000000c2008", "Tove", "Åberg", "UNREPORTED"),
+  pupil("00000000-0000-4000-8000-0000000c2009", "Ulf", "Nord", "ABSENT_BEFORE"),
+];
+
 const call = (id: string, groupName: string, pupils: ReturnType<typeof pupil>[], extra: Record<string, unknown>) => ({
   id: `00000000-0000-4000-8000-0000000c30${id}`,
   lessonId: null,
@@ -71,6 +80,16 @@ const BO = { userId: "00000000-0000-4000-8000-0000000c4002", name: "Bo Ek", role
 const CIA = { userId: "00000000-0000-4000-8000-0000000c4003", name: "Cia Dahl", role: "LEAD", answeredAt: null };
 
 const CALLS = [
+  call("00", "Ej i lektion just nu", AFTER_SCHOOL, {
+    lessonId: null,
+    basis: "NO_LESSON",
+    subjectName: "Ingen lektion pågår",
+    roomName: null,
+    lessonStartsAt: STARTED,
+    lessonEndsAt: STARTED,
+    uncovered: true,
+    teachers: [],
+  }),
   call("01", "7A", SEVEN_A, { uncovered: false, teachers: [ANNA, BO] }),
   call("02", "8B", EIGHT_B, { basis: "NEXT_LESSON", subjectName: "Engelska", uncovered: false, teachers: [CIA] }),
   call("03", "9C", NINE_C, { roomName: null, uncovered: true, teachers: [{ userId: null, name: null, role: "LEAD", answeredAt: null }] }),
@@ -91,12 +110,20 @@ const ALARM = {
 
 const SUMMARY = {
   ...ALARM,
+  unlisted: AFTER_SCHOOL.length,
   calls: CALLS.length,
   callsComplete: 0,
-  counts: counts([...SEVEN_A, ...EIGHT_B, ...NINE_C]),
+  counts: counts([...AFTER_SCHOOL, ...SEVEN_A, ...EIGHT_B, ...NINE_C]),
   teachers: 3,
   teachersAnswered: 1,
 };
+
+const other = (id: string, firstName: string, lastName: string, className: string | null) => ({
+  studentId: `00000000-0000-4000-8000-0000000c5${id}`,
+  firstName,
+  lastName,
+  className,
+});
 
 const MINE = {
   asOf: AT(6),
@@ -104,8 +131,21 @@ const MINE = {
     {
       ...ALARM,
       calls: [
-        { ...CALLS[0]!, colleagues: ["Bo Ek"], teachers: undefined, uncovered: undefined },
-        { ...CALLS[1]!, colleagues: [], teachers: undefined, uncovered: undefined },
+        {
+          ...CALLS[1]!,
+          colleagues: ["Bo Ek"],
+          teachers: undefined,
+          uncovered: undefined,
+          foundHere: [{ ...other("001", "Vera", "Sund", "9A"), markedAt: AT(5) }],
+        },
+        { ...CALLS[2]!, colleagues: [], teachers: undefined, uncovered: undefined, foundHere: [] },
+      ],
+      // Every pupil of the school who is on none of the teacher's lists (here: the other groups', and the after-school pupils).
+      others: [
+        other("001", "Vera", "Sund", "9A"),
+        other("002", "Wilmer", "Ek", "9A"),
+        other("003", "Yrsa", "Lund", "6B"),
+        ...[...NINE_C, ...AFTER_SCHOOL].map((one) => ({ studentId: one.studentId, firstName: one.firstName, lastName: one.lastName, className: null })),
       ],
     },
   ],

@@ -16,7 +16,13 @@ import type { AdminProfile } from "@/lib/admin-areas";
 
 export type CrisisKind = "EVACUATION" | "LOCKDOWN";
 export type CrisisMode = "LIVE" | "DRILL";
-export type CallBasis = "LESSON" | "NEXT_LESSON";
+/**
+ * Why a pupil is on a group: the lesson going on, the lesson they are on their way to in a break, or no
+ * lesson at all (NO_LESSON): the alarm's one group of every pupil who is on no lesson's list, answered for
+ * by the administration. Its `groupName` and `subjectName` are Swedish stand-ins from the gateway; a page
+ * says it in its own language (lib/crisis-view.ts groupLabel).
+ */
+export type CallBasis = "LESSON" | "NEXT_LESSON" | "NO_LESSON";
 export type PupilStatus = "FOUND" | "MISSING" | "ABSENT_BEFORE" | "UNREPORTED";
 export type PriorSource = "ATTENDANCE" | "REPORTED";
 export type MarkState = "FOUND" | "MISSING";
@@ -85,6 +91,8 @@ export interface AlarmView {
 }
 
 export interface AlarmSummary extends AlarmView {
+  /** Pupils on the NO_LESSON group; they are in `counts` like all the others. */
+  unlisted: number;
   calls: number;
   /** Calls that are complete, or have nobody to ask. */
   callsComplete: number;
@@ -96,6 +104,25 @@ export interface AlarmSummary extends AlarmView {
 export interface AlarmDetail {
   alarm: AlarmSummary;
   calls: CallView[];
+}
+
+/** A pupil a teacher on the call found who is on another list (or none): "found with me". */
+export interface FoundHereView {
+  studentId: string;
+  firstName: string;
+  lastName: string;
+  /** The pupil's own class, so that two of the same name can be told apart. */
+  className: string | null;
+  /** When the teacher marked them, by the sender's clock. */
+  markedAt: string;
+}
+
+/** A pupil of the school who is on none of a teacher's lists: who a teacher can say they found. */
+export interface OtherPupilView {
+  studentId: string;
+  firstName: string;
+  lastName: string;
+  className: string | null;
 }
 
 /** A teacher's group, as the page shows it and keeps it offline. */
@@ -113,10 +140,17 @@ export interface MyCall {
   colleagues: string[];
   counts: PupilCounts;
   pupils: PupilView[];
+  /** Pupils not on this list whom a teacher on the call found; they count on the pupil's own list, not here. */
+  foundHere: FoundHereView[];
 }
 
 export interface MyAlarm extends AlarmView {
   calls: MyCall[];
+  /**
+   * Every other pupil of the school, by name: a teacher who finds a pupil who is not on their lists picks them
+   * here. May hold a thousand names, and is kept offline with the lists.
+   */
+  others: OtherPupilView[];
 }
 
 export interface MyCrisisResponse {
@@ -129,7 +163,10 @@ export interface ProtocolMark {
   at: string;
   receivedAt: string;
   studentId: string;
+  /** The pupil's own group. */
   groupName: string;
+  /** The group of the teacher who found them, when that is not the pupil's own ("found with me"). */
+  foundIn: { groupName: string; basis: CallBasis } | null;
   state: MarkState;
   by: string | null;
   onBehalf: boolean;

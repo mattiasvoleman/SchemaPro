@@ -19,13 +19,14 @@ import { TableCard } from "@/components/ui/table-card";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useAlarmDetail, useCrisisActions } from "@/lib/crisis-admin-queries";
-import { callState, isDone, liveFigures, pupilsToFind, silentTeachers, type CallState } from "@/lib/crisis-live";
+import { callState, groupsInOrder, isDone, liveFigures, pupilsToFind, silentTeachers, type CallState } from "@/lib/crisis-live";
 import type { AlarmSummary, CallView, MarkState } from "@/lib/crisis-types";
 import {
   MAX_NOTE_LENGTH,
   clock,
   crisisErrorText,
   errorCodeOf,
+  groupLabel,
   isOpen,
   markTime,
   newMark,
@@ -45,6 +46,15 @@ import type { MessageLookup } from "@/lib/engine-message";
  * counters, the lists and the table cannot disagree. A group nobody answers
  * for ("Ingen lärare") is marked by the administration, from its row; so is
  * any pupil in the lists, for a teacher who cannot reach their phone.
+ *
+ * THE GROUP OF PUPILS ON NO LESSON ("Ej i lektion just nu", basis NO_LESSON)
+ * is one of those, and the first: every pupil of the school who is on no
+ * lesson's list is on it (before the first lesson, after the last, at the
+ * after-school club), because the school does not know where they are and a
+ * roll call that drops them is the worst mistake it can make. The page says
+ * it in its own words, not the gateway's Swedish stand-in names, says how
+ * many they are in a sentence of its own, and counts them in everything
+ * that asks whether anyone is still unreported, ending the alarm included.
  */
 
 const STATE_ICON: Record<CallState, LucideIcon> = {
@@ -126,6 +136,7 @@ export function LiveView({
   const figures = liveFigures(calls);
   const silent = silentTeachers(calls);
   const toFind = pupilsToFind(calls);
+  const noLesson = t("noLesson.group");
   const shownToFind = showAll ? toFind : toFind.slice(0, LIST_LIMIT);
   const at = (instant: string) => clock(instant, locale, timeZone);
   const people = (names: readonly string[]) => names.join(", ");
@@ -164,8 +175,14 @@ export function LiveView({
     );
   };
 
-  const incomplete = figures.missing > 0 || figures.unreported > 0;
-  const shownCalls = hideDone ? calls.filter((call) => !isDone(call)) : calls;
+  // Against every pupil of the alarm: the groups' own figures and the alarm's, whichever says there is someone left.
+  const openMissing = Math.max(figures.missing, alarm.counts.missing);
+  const openUnreported = Math.max(figures.unreported, alarm.counts.unreported);
+  const incomplete = openMissing > 0 || openUnreported > 0;
+  // Of those, the ones nobody has a lesson with: the dialog says so, as nobody but the administration is asking for them.
+  const unlistedCall = calls.find((call) => call.basis === "NO_LESSON");
+  const unlistedOpen = unlistedCall ? unlistedCall.counts.missing + unlistedCall.counts.unreported : 0;
+  const shownCalls = groupsInOrder(hideDone ? calls.filter((call) => !isDone(call)) : calls);
 
   return (
     <section aria-labelledby="live-title" className="space-y-4">
@@ -249,6 +266,12 @@ export function LiveView({
         <KpiTile label={t("live.teachersAnswered")} value={t("live.ofTotal", { done: figures.teachersAnswered, total: figures.teachers })} />
       </KpiStrip>
 
+      {going && alarm.unlisted > 0 ? (
+        <Notice tone="warning" role={null}>
+          {t("live.unlisted", { count: alarm.unlisted })}
+        </Notice>
+      ) : null}
+
       <div className="grid gap-4 lg:grid-cols-2">
         <SectionCard id="live-silent" title={t("live.silentTitle")} description={t("live.silentBody")}>
           {silent.length === 0 ? (
@@ -277,7 +300,10 @@ export function LiveView({
                     <PupilRow
                       key={`${row.callId}:${row.pupil.studentId}`}
                       pupil={row.pupil}
-                      detail={[row.groupName, row.subjectName, row.roomName, row.teachers.length > 0 ? people(row.teachers) : t("live.noTeacher")]
+                      detail={(row.basis === "NO_LESSON"
+                        ? [noLesson, t("live.noTeacher")]
+                        : [row.groupName, row.subjectName, row.roomName, row.teachers.length > 0 ? people(row.teachers) : t("live.noTeacher")]
+                      )
                         .filter(Boolean)
                         .join(" · ")}
                       {...(going && canAct ? { onMark: (state: MarkState) => markPupils(call, [row.pupil.studentId], state) } : {})}
@@ -336,9 +362,11 @@ export function LiveView({
                           onClick={() => toggle(call.id)}
                         >
                           {isExpanded ? <ChevronDown className="size-4" aria-hidden="true" /> : <ChevronRight className="size-4" aria-hidden="true" />}
-                          {call.groupName}
+                          {groupLabel(call, noLesson)}
                         </button>
-                        <span className="block pl-5 text-xs text-muted-foreground">{call.subjectName}</span>
+                        <span className="block pl-5 text-xs text-muted-foreground">
+                          {call.basis === "NO_LESSON" ? t("noLesson.owner") : call.subjectName}
+                        </span>
                         {call.basis === "NEXT_LESSON" ? (
                           <Badge variant="outline" className="ml-5 mt-1">
                             {t("live.nextLesson")}
@@ -365,7 +393,7 @@ export function LiveView({
                       <TableCell className="align-top">
                         <Badge variant={STATE_VARIANT[state]} className="gap-1">
                           <StateIcon className="size-3" aria-hidden="true" />
-                          {t(`live.state.${state}`, { missing: call.counts.missing })}
+                          {t(`live.state.${state === "WAITING" && call.uncovered ? "WAITING_ADMIN" : state}`, { missing: call.counts.missing })}
                         </Badge>
                         <span className="block text-xs text-muted-foreground">
                           {t("live.marked", { done: call.counts.found + call.counts.missing, total: expectedPupils })}
@@ -391,7 +419,7 @@ export function LiveView({
                             {call.pupils.length === 0 ? (
                               <p className="text-sm text-muted-foreground">{t("live.noPupils")}</p>
                             ) : (
-                              <ul className="divide-y rounded-md border bg-card" aria-label={t("live.pupilsOf", { group: call.groupName })}>
+                              <ul className="divide-y rounded-md border bg-card" aria-label={t("live.pupilsOf", { group: groupLabel(call, noLesson) })}>
                                 {call.pupils.map((pupil) => (
                                   <PupilRow
                                     key={pupil.studentId}
@@ -428,7 +456,8 @@ export function LiveView({
           </DialogHeader>
           {incomplete ? (
             <Notice tone="warning" title={t("live.endWarningTitle")}>
-              {t("live.endWarning", { missing: figures.missing, unreported: figures.unreported })}
+              <p>{t("live.endWarning", { missing: openMissing, unreported: openUnreported })}</p>
+              {unlistedOpen > 0 ? <p>{t("live.endWarningUnlisted", { count: unlistedOpen })}</p> : null}
             </Notice>
           ) : null}
           <FormField id="crisis-end-note" label={t("live.noteLabel")} optional hint={t("live.noteHint", { max: MAX_NOTE_LENGTH })}>
