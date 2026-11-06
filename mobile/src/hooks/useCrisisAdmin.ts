@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
+import * as ExpoCrypto from 'expo-crypto';
 import { useFocusEffect } from 'expo-router';
 import { useSync } from '../context/SyncContext';
 import {
@@ -8,6 +9,7 @@ import {
   fetchAlarmDetail,
   fetchAlarmList,
   isTransportFailure,
+  markAway,
   openAlarms,
   startAlarm,
   type AdminFailure,
@@ -29,18 +31,26 @@ import { noNetwork } from '../services/network/deviceOffline';
  * answered and the pupils marked missing are the roll call as it is now.
  * Every read asks for the school's open alarms and then each one's detail.
  *
- * ONE ACTION AT A TIME. A start and an end are single-flight: while one is in
- * the air the buttons are disabled, and a second tap that gets in before the
- * render is dropped by the ref.
+ * ONE ACTION AT A TIME. A start, an end and a pupil marked "inte i huset" are
+ * single-flight: while one is in the air the buttons are disabled, and a second
+ * tap that gets in before the render is dropped by the ref.
+ *
+ * NOT IN THE BUILDING. The administration alone can say a pupil is not in the
+ * building (state AWAY, on the pupil's own group): a pupil nobody has seen. It
+ * is live like everything here, never queued, and the pupil is then counted for
+ * themselves, never as found.
  */
 
 /** How often the roll call is read while an alarm is going. */
 export const POLL_MS = 5_000;
 
-export type AdminAction = { readonly kind: 'START'; readonly mode: CrisisMode } | { readonly kind: 'END'; readonly alarmId: string };
+export type AdminAction =
+  | { readonly kind: 'START'; readonly mode: CrisisMode }
+  | { readonly kind: 'END'; readonly alarmId: string }
+  | { readonly kind: 'AWAY'; readonly alarmId: string; readonly studentId: string };
 
 export interface AdminFailureNote {
-  readonly action: 'START' | 'END';
+  readonly action: 'START' | 'END' | 'AWAY';
   readonly code: AdminFailure;
   /** For a start refused because one is going: which mode. */
   readonly mode?: CrisisMode;
@@ -61,6 +71,8 @@ export interface CrisisAdminState {
   readonly refresh: () => void;
   readonly start: (kind: CrisisKind, mode: CrisisMode) => Promise<void>;
   readonly end: (alarmId: string) => Promise<void>;
+  /** Says a pupil is not in the building, on the pupil's own group. */
+  readonly away: (alarm: { readonly id: string; readonly startedAt: string }, callId: string, studentId: string) => Promise<void>;
   readonly dismissFailure: () => void;
 }
 
@@ -183,7 +195,32 @@ export function useCrisisAdmin(enabled: boolean): CrisisAdminState {
     [load],
   );
 
+  const away = useCallback(
+    async (alarm: { readonly id: string; readonly startedAt: string }, callId: string, studentId: string): Promise<void> => {
+      if (acting.current) return;
+      acting.current = true;
+      setBusy({ kind: 'AWAY', alarmId: alarm.id, studentId });
+      setFailure(null);
+      try {
+        const markId = ExpoCrypto.randomUUID();
+        const result = await markAway(alarm, callId, studentId, markId);
+        // Taken by the gateway, or refused as belonging to no alarm of the school's.
+        if (result.unresolved.includes(markId) && alive.current) setFailure({ action: 'AWAY', code: 'FAILED' });
+        if (alive.current) await load();
+      } catch (error) {
+        const code = adminFailureOf(error);
+        if (alive.current) setFailure({ action: 'AWAY', code });
+        // Over already, or gone: the list is not what it was.
+        if ((code === 'ENDED' || code === 'NOT_FOUND') && alive.current) await load();
+      } finally {
+        acting.current = false;
+        if (alive.current) setBusy(null);
+      }
+    },
+    [load],
+  );
+
   const dismissFailure = useCallback((): void => setFailure(null), []);
 
-  return { isLoading, isRefreshing, details, problem, hasLoaded, updatedAt, busy, failure, refresh, start, end, dismissFailure };
+  return { isLoading, isRefreshing, details, problem, hasLoaded, updatedAt, busy, failure, refresh, start, end, away, dismissFailure };
 }

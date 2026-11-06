@@ -31,8 +31,8 @@ import type { CalendarLesson } from '../types';
  * is refused and the mark dropped (services/crisisQueue.ts).
  *
  * "Found with me" (a pupil on no list of the teacher's) is not offered on this
- * list: the cache holds the pupils of lessons, not the school, so there is no
- * one to pick from (the alarm's `others` comes only with the gateway's list).
+ * list: the picker asks the gateway about the alarm, and this list has no alarm
+ * of the gateway's to ask about.
  *
  * Pure: the caller reads the cache and hands it here.
  */

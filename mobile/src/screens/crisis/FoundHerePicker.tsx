@@ -1,30 +1,59 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { FlatList, Modal, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
 import { useI18n } from '../../context/LocaleContext';
-import { indexPupils, pupilName, searchPupils, type AlarmBlock, type MyCall, type OtherPupil } from '../../services/crisis';
+import type { FoundTarget } from '../../hooks/useCrisis';
+import {
+  SEARCH_LIMIT,
+  SEARCH_MIN_CHARS,
+  isTransportFailure,
+  pupilName,
+  searchOtherPupils,
+  type AlarmBlock,
+  type MyCall,
+  type OtherPupil,
+} from '../../services/crisis';
+import { noNetwork } from '../../services/network/deviceOffline';
 import { callTitle } from './crisisParts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // "Found with me" (Krisläge, F2): a teacher meets a pupil who is on none of
-// their lists, and says so. The pupils are the alarm's `others`, kept on the
-// phone with the lists, so the picker works with no network: a search field
-// (name or class, case and accents ignored) over a list that is drawn at most
-// PICKER_LIMIT names at a time, a thousand names being a thing to search and not
-// to scroll. Only FOUND is ever offered: a pupil who is not on the list cannot
-// be missing from it.
+// their lists, and says so. The pupil is looked up at the gateway as the teacher
+// types (POST /crisis/mine/pupils: name or class, at least two characters, at
+// most 25 names, the teacher's own pupils left out, a pupil whose identity is
+// protected included), because the school's pupils are not kept on the phone.
+// The question waits for the typing to pause (DEBOUNCE_MS), a question that
+// is overtaken is abandoned and its answer, if it comes, is not looked at, and the
+// answer is kept in this component and nowhere else. With no network the search
+// cannot be made, and the picker says so rather than show an empty list.
+//
+// Only FOUND is ever offered: a pupil who is not on the list cannot be missing
+// from it.
 //
 // A teacher with more than one group in the alarm says which of them the pupil
 // was found with; the group that is going on (LESSON) is chosen to begin with.
+// A teacher with none right now says only that they found the pupil in the alarm.
 // The picker is mounted when it is opened and gone when it is closed, so the
 // search starts empty each time.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** How long the typing must pause before the gateway is asked. */
+export const DEBOUNCE_MS = 250;
+/** A question not answered by then is a network that is not there. */
+export const SEARCH_TIMEOUT_MS = 8_000;
 
 /** The group a pupil is most likely found with: the lesson that is going on, else the first. */
 export function defaultCall(calls: readonly MyCall[]): MyCall | undefined {
   return calls.find((call) => call.basis === 'LESSON') ?? calls[0];
 }
+
+type Search =
+  | { readonly kind: 'IDLE' }
+  | { readonly kind: 'SEARCHING' }
+  | { readonly kind: 'RESULT'; readonly pupils: readonly OtherPupil[] }
+  | { readonly kind: 'OFFLINE' }
+  | { readonly kind: 'FAILED' };
 
 export function FoundHerePicker({
   block,
@@ -32,7 +61,7 @@ export function FoundHerePicker({
   onClose,
 }: {
   readonly block: AlarmBlock;
-  readonly onPick: (call: MyCall, pupil: OtherPupil) => void;
+  readonly onPick: (target: FoundTarget, pupil: OtherPupil) => void;
   readonly onClose: () => void;
 }): React.JSX.Element {
   const { colors } = useAppTheme();
@@ -41,13 +70,51 @@ export function FoundHerePicker({
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [chosen, setChosen] = useState<string | null>(null);
+  const [search, setSearch] = useState<Search>({ kind: 'IDLE' });
 
   const call = block.calls.find((candidate) => candidate.id === chosen) ?? defaultCall(block.calls);
-  const index = useMemo(() => indexPupils(block.others), [block.others]);
-  // A pupil already found with this teacher on the group is in "Hittade hos dig", not offered again.
-  const skip = useMemo(() => new Set((call?.foundHere ?? []).map((held) => held.studentId)), [call]);
-  const result = useMemo(() => searchPupils(index, query, { skip }), [index, query, skip]);
-  const typed = query.trim() !== '';
+  const alarmId = block.key;
+
+  useEffect(() => {
+    const text = query.trim();
+    if ([...text].length < SEARCH_MIN_CHARS) {
+      setSearch({ kind: 'IDLE' });
+      return undefined;
+    }
+    const controller = new AbortController();
+    let current = true;
+    let giveUp: ReturnType<typeof setTimeout> | undefined;
+    const pause = setTimeout(() => {
+      setSearch({ kind: 'SEARCHING' });
+      giveUp = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+      searchOtherPupils(alarmId, text, { signal: controller.signal })
+        .then((pupils) => {
+          if (current) setSearch({ kind: 'RESULT', pupils });
+        })
+        .catch(async (error: unknown) => {
+          if (!current) return;
+          const offline = isTransportFailure(error) || (await noNetwork());
+          if (current) setSearch({ kind: offline ? 'OFFLINE' : 'FAILED' });
+        })
+        .finally(() => clearTimeout(giveUp));
+    }, DEBOUNCE_MS);
+    // A newer question, or the picker closing, abandons this one: nothing it answers is looked at.
+    return () => {
+      current = false;
+      clearTimeout(pause);
+      clearTimeout(giveUp);
+      controller.abort();
+    };
+  }, [query, alarmId]);
+
+  // A pupil already found with this teacher is in the list under the alarm, not offered again.
+  const skip = useMemo(
+    () => new Set((call ? call.foundHere : block.foundFree).map((held) => held.studentId)),
+    [call, block.foundFree],
+  );
+  const pupils = search.kind === 'RESULT' ? search.pupils.filter((pupil) => !skip.has(pupil.studentId)) : [];
+  const target: FoundTarget = call ? { call } : { alarmId };
+  const where = call ? callTitle(call, t) : '';
 
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -100,18 +167,19 @@ export function FoundHerePicker({
           returnKeyType="search"
         />
 
-        {block.others.length === 0 ? (
-          <Text style={styles.note}>{t('crisis.foundHere.noOthers')}</Text>
-        ) : !typed ? (
-          <Text style={styles.note}>{t('crisis.foundHere.hint')}</Text>
-        ) : result.total === 0 ? (
-          <Text style={styles.note}>{t('crisis.foundHere.none')}</Text>
-        ) : result.total > result.shown.length ? (
-          <Text style={styles.note}>{t('crisis.foundHere.more', { shown: result.shown.length, total: result.total })}</Text>
-        ) : null}
+        <View accessibilityLiveRegion="polite">
+          {search.kind === 'IDLE' ? <Text style={styles.note}>{t('crisis.foundHere.hint')}</Text> : null}
+          {search.kind === 'SEARCHING' ? <Text style={styles.note}>{t('crisis.foundHere.searching')}</Text> : null}
+          {search.kind === 'OFFLINE' ? <Text style={[styles.note, { color: colors.warning, fontWeight: '700' }]}>{t('crisis.foundHere.needsNetwork')}</Text> : null}
+          {search.kind === 'FAILED' ? <Text style={[styles.note, { color: colors.danger, fontWeight: '700' }]}>{t('crisis.foundHere.searchFailed')}</Text> : null}
+          {search.kind === 'RESULT' && pupils.length === 0 ? <Text style={styles.note}>{t('crisis.foundHere.none')}</Text> : null}
+          {search.kind === 'RESULT' && search.pupils.length >= SEARCH_LIMIT ? (
+            <Text style={styles.note}>{t('crisis.foundHere.more', { count: SEARCH_LIMIT })}</Text>
+          ) : null}
+        </View>
 
         <FlatList<OtherPupil>
-          data={result.shown}
+          data={pupils}
           keyExtractor={(pupil) => pupil.studentId}
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
@@ -120,10 +188,9 @@ export function FoundHerePicker({
             return (
               <TouchableOpacity
                 style={styles.row}
-                onPress={() => call && onPick(call, item)}
-                disabled={!call}
+                onPress={() => onPick(target, item)}
                 accessibilityRole="button"
-                accessibilityLabel={t('crisis.foundHere.pickA11y', { name, group: call ? callTitle(call, t) : '' })}
+                accessibilityLabel={call ? t('crisis.foundHere.pickA11y', { name, group: where }) : t('crisis.foundHere.pickFreeA11y', { name })}
               >
                 <Text style={styles.name} numberOfLines={2}>
                   {name}

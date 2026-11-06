@@ -15,7 +15,7 @@ import {
 } from './database/localDatabase';
 import { noNetwork } from './network/deviceOffline';
 import { getAccessToken } from './supabase';
-import type { CrisisMarkState, PendingCrisisMark } from '../types';
+import type { PendingCrisisMark, PendingCrisisPupil, QueuedMarkState } from '../types';
 
 /**
  * THE ROLL CALL'S OUTBOX (Krisläge, F2).
@@ -37,15 +37,19 @@ import type { CrisisMarkState, PendingCrisisMark } from '../types';
  *
  * WHOSE. The signed-in teacher's rows only: a tablet is shared, the gateway
  * stamps the sender from the bearer, and a colleague's marks sent under this
- * teacher's token would be signed by someone who was never there.
+ * teacher's token would be signed by someone who was never there. That holds for
+ * every mark, whether it names a call, a lesson or (a teacher with no group who
+ * found a pupil) the alarm, and for a taking-back (RETRACTED) as for a found.
  *
  * WHAT A FAILURE MEANS. The gateway's answer decides, and a mark is never
  * dropped for a reason that is only about the network or about a moment:
  *   * FINAL, and only these four, by status AND code (crisis.service.ts):
  *     409 CRISIS_ALARM_ENDED (an hour after the end), 404 CRISIS_ALARM_NOT_FOUND,
  *     403 CRISIS_NOT_YOURS, 400 CRISIS_MARK_INVALID (a mark the group cannot
- *     take: a pupil it will not hold, or MISSING for a pupil who is not on the
- *     list, which "found with me" never sends). The marks cannot be taken, now
+ *     take: a pupil it will not hold, MISSING for a pupil who is not on the
+ *     list, a taking-back (RETRACTED) with nothing of the teacher's to take back,
+ *     or "not in the building", which only the administration may say; the app
+ *     sends none of the last three on purpose). The marks cannot be taken, now
  *     or ever: they are deleted and counted, and the screen says so. The
  *     web's queue (web/lib/crisis-queue.ts) is to classify 404 and 409 the
  *     same way, so that the two never disagree about a mark;
@@ -161,29 +165,38 @@ export function takeUnseenDrops(): Dropped[] {
 /**
  * A tap as a row. A mark on a list the gateway gave names the call; on a list
  * the phone built it names the lesson, and the gateway finds its call by the
- * alarm that was going at `at`. `notBefore` (the time of the push that began the
- * alarm, which comes from the push service's clock) keeps a phone whose clock
- * trails from timing a mark before the alarm it belongs to.
+ * alarm that was going at `at`; for a teacher with no group right now who found
+ * a pupil it names the alarm itself (`alarmId` in place of `call`). `notBefore`
+ * (the time of the push that began the alarm, which comes from the push
+ * service's clock) keeps a phone whose clock trails from timing a mark before the
+ * alarm it belongs to. `pupil` is the name and class of a pupil picked in the
+ * search for "found with me", so that the pending row can name them until the
+ * gateway has the mark.
  */
 export function newCrisisMark(args: {
-  readonly call: Pick<MyCall, 'id' | 'lessonId'>;
+  readonly call?: Pick<MyCall, 'id' | 'lessonId'>;
+  readonly alarmId?: string;
   readonly studentId: string;
-  readonly state: CrisisMarkState;
+  readonly state: QueuedMarkState;
   readonly teacherId: string;
+  readonly pupil?: PendingCrisisPupil;
   readonly notBefore?: number | null;
   readonly now?: number;
 }): Omit<PendingCrisisMark, 'retryCount'> {
   const now = args.now ?? Date.now();
-  const local = isLocalCall(args.call);
+  if (!args.call === !args.alarmId) throw new Error('A mark names a call or an alarm, and one of them.');
+  const local = args.call ? isLocalCall(args.call) : false;
   return {
     id: ExpoCrypto.randomUUID(),
-    callId: local ? null : args.call.id,
-    lessonId: local ? args.call.lessonId : null,
+    callId: args.call && !local ? args.call.id : null,
+    lessonId: args.call && local ? args.call.lessonId : null,
+    alarmId: args.alarmId ?? null,
     studentId: args.studentId,
     state: args.state,
-    // Only a mark by lesson is resolved by its time; a mark by call needs no clamp.
+    // Only a mark by lesson is resolved by its time; a mark by call or by alarm needs no clamp.
     at: new Date(local ? Math.max(now, args.notBefore ?? 0) : now).toISOString(),
     teacherId: args.teacherId,
+    ...(args.pupil ? { pupil: args.pupil } : {}),
   };
 }
 
@@ -192,6 +205,29 @@ export async function queueCrisisMarks(marks: readonly Omit<PendingCrisisMark, '
   await enqueueCrisisMarks(marks);
   emit({ type: 'ENQUEUED' });
   void flushCrisisQueue();
+}
+
+/**
+ * Takes back a "found with me" that has not left the phone: the unsent marks for the pupil on that
+ * group (the found, and any taking-back already queued) are deleted, and nothing is sent about them.
+ * False when there is nothing to delete, or when a pass is in the air, which may have sent the found
+ * mark already: the taking-back is then a mark of its own, sent after it. Only for a pupil the gateway
+ * does not hold as found here; for one it holds, a RETRACTED mark is what takes them back.
+ */
+export async function cancelQueuedFound(
+  teacherId: string,
+  group: { readonly callId: string } | { readonly alarmId: string },
+  studentId: string,
+): Promise<boolean> {
+  if (running) return false;
+  await whenDatabaseReady();
+  const rows = (await getPendingCrisisMarks(teacherId)).filter(
+    (row) => row.studentId === studentId && ('callId' in group ? row.callId === group.callId : row.alarmId === group.alarmId),
+  );
+  if (rows.length === 0) return false;
+  await deleteCrisisMarks(rows.map((row) => row.id));
+  emit({ type: 'ENQUEUED' });
+  return true;
 }
 
 // ─── Sending ─────────────────────────────────────────────────────────────────

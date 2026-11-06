@@ -68,6 +68,24 @@ function getDb(): SQLite.SQLiteDatabase {
 
 // ─── Schema ──────────────────────────────────────────────────────────────────
 
+/** The queue's table. One text, for the schema and for the rebuild of a table made before alarm marks existed. */
+const CRISIS_QUEUE_TABLE = `CREATE TABLE IF NOT EXISTS crisis_queue (
+    id          TEXT    PRIMARY KEY NOT NULL,
+    call_id     TEXT,
+    lesson_id   TEXT,
+    alarm_id    TEXT,
+    student_id  TEXT    NOT NULL,
+    state       TEXT    NOT NULL CHECK(state IN ('FOUND', 'MISSING', 'RETRACTED')),
+    at          TEXT    NOT NULL,
+    teacher_id  TEXT    NOT NULL,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    is_synced   INTEGER NOT NULL DEFAULT 0,
+    first_name  TEXT,
+    last_name   TEXT,
+    class_name  TEXT,
+    CHECK ((call_id IS NOT NULL) + (lesson_id IS NOT NULL) + (alarm_id IS NOT NULL) = 1)
+  );`;
+
 const SCHEMA_SQL = `
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
@@ -116,20 +134,13 @@ const SCHEMA_SQL = `
   );
 
   -- The roll call's own offline queue: every tap is written here first and
-  -- sent when the network allows. A mark names its group by call OR by lesson
-  -- (the gateway refuses both and neither), so the same rule is held here.
-  CREATE TABLE IF NOT EXISTS crisis_queue (
-    id          TEXT    PRIMARY KEY NOT NULL,
-    call_id     TEXT,
-    lesson_id   TEXT,
-    student_id  TEXT    NOT NULL,
-    state       TEXT    NOT NULL CHECK(state IN ('FOUND', 'MISSING')),
-    at          TEXT    NOT NULL,
-    teacher_id  TEXT    NOT NULL,
-    retry_count INTEGER NOT NULL DEFAULT 0,
-    is_synced   INTEGER NOT NULL DEFAULT 0,
-    CHECK ((call_id IS NULL) <> (lesson_id IS NULL))
-  );
+  -- sent when the network allows. A mark names its group by call, by lesson or,
+  -- for a teacher with no group who found a pupil, by alarm (the gateway
+  -- refuses a mark that names more than one, or none), so the same rule is held
+  -- here. first_name, last_name and class_name are set only on a mark of a pupil
+  -- picked in the search for "found with me", for the pending row, and emptied
+  -- when the gateway has the mark.
+  ${CRISIS_QUEUE_TABLE}
   CREATE INDEX IF NOT EXISTS crisis_queue_unsent ON crisis_queue (teacher_id, is_synced, at);
 
   -- When the phone was told that an alarm began and that it ended (the time a
@@ -159,7 +170,31 @@ export async function initDatabase(): Promise<void> {
     );
   }
   await _db.execAsync(SCHEMA_SQL);
+  await rebuildCrisisQueueIfOld(_db);
   _ready?.resolve();
+}
+
+/**
+ * A phone that ran a build from before "found with me" with no group holds a crisis_queue that
+ * can name only a call or a lesson, and states only found or missing; CREATE TABLE IF NOT EXISTS
+ * leaves it as it is. SQLite cannot change a CHECK, so the table is made again beside it and the
+ * rows copied (the unsent marks may be the only copy: all of them, in one transaction), then
+ * the old one is dropped. Found by the column it lacks, so it runs once and a new table is never touched.
+ */
+async function rebuildCrisisQueueIfOld(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(crisis_queue)');
+  if (columns.length === 0 || columns.some((column) => column.name === 'alarm_id')) return;
+  await db.withTransactionAsync(async () => {
+    await db.execAsync(`
+      ALTER TABLE crisis_queue RENAME TO crisis_queue_before_alarm_marks;
+      DROP INDEX IF EXISTS crisis_queue_unsent;
+      ${CRISIS_QUEUE_TABLE}
+      INSERT INTO crisis_queue (id, call_id, lesson_id, student_id, state, at, teacher_id, retry_count, is_synced)
+        SELECT id, call_id, lesson_id, student_id, state, at, teacher_id, retry_count, is_synced FROM crisis_queue_before_alarm_marks;
+      DROP TABLE crisis_queue_before_alarm_marks;
+      CREATE INDEX IF NOT EXISTS crisis_queue_unsent ON crisis_queue (teacher_id, is_synced, at);
+    `);
+  });
 }
 
 // ─── Students ─────────────────────────────────────────────────────────────────
@@ -424,7 +459,10 @@ export async function clearCachedSchoolData(): Promise<void> {
   // groups, and the next person to sign in must not read it. crisis_queue is
   // deliberately NOT touched, for the reason above: an unsent mark of a pupil
   // found or missing may be the only copy, and it is owned and scoped by its
-  // teacher, so it is neither shown nor sent to whoever signs in next.
+  // teacher, so it is neither shown nor sent to whoever signs in next. (A mark of
+  // a pupil picked in the search for "found with me" carries that pupil's name
+  // until it is sent, and so waits with it: the price of a pending row that can
+  // say who it is about.)
   await db.execAsync(
     'DELETE FROM lesson_students; DELETE FROM calendar_lessons; DELETE FROM students; DELETE FROM crisis_lists; DELETE FROM crisis_hint;',
   );
@@ -463,9 +501,21 @@ export async function enqueueCrisisMarks(marks: readonly Omit<PendingCrisisMark,
     for (const mark of marks) {
       await db.runAsync(
         `INSERT OR REPLACE INTO crisis_queue
-           (id, call_id, lesson_id, student_id, state, at, teacher_id, retry_count, is_synced)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)`,
-        [mark.id, mark.callId, mark.lessonId, mark.studentId, mark.state, mark.at, mark.teacherId],
+           (id, call_id, lesson_id, alarm_id, student_id, state, at, teacher_id, retry_count, is_synced, first_name, last_name, class_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+        [
+          mark.id,
+          mark.callId,
+          mark.lessonId,
+          mark.alarmId ?? null,
+          mark.studentId,
+          mark.state,
+          mark.at,
+          mark.teacherId,
+          mark.pupil?.firstName ?? null,
+          mark.pupil?.lastName ?? null,
+          mark.pupil?.className ?? null,
+        ],
       );
     }
   });
@@ -483,31 +533,46 @@ export async function getPendingCrisisMarks(teacherId: string): Promise<PendingC
     id: string;
     call_id: string | null;
     lesson_id: string | null;
+    alarm_id: string | null;
     student_id: string;
-    state: 'FOUND' | 'MISSING';
+    state: 'FOUND' | 'MISSING' | 'RETRACTED';
     at: string;
     teacher_id: string;
     retry_count: number;
+    first_name: string | null;
+    last_name: string | null;
+    class_name: string | null;
   }>('SELECT * FROM crisis_queue WHERE is_synced = 0 AND teacher_id = ? ORDER BY at ASC, rowid ASC', [teacherId]);
   return rows.map((row) => ({
     id: row.id,
     callId: row.call_id,
     lessonId: row.lesson_id,
+    alarmId: row.alarm_id ?? null,
     studentId: row.student_id,
     state: row.state,
     at: row.at,
     teacherId: row.teacher_id,
     retryCount: row.retry_count,
+    pupil:
+      (row.first_name ?? null) !== null || (row.last_name ?? null) !== null
+        ? { firstName: row.first_name ?? '', lastName: row.last_name ?? '', className: row.class_name ?? null }
+        : null,
   }));
 }
 
 const placeholders = (ids: readonly string[]): string => ids.map(() => '?').join(', ');
 
-/** The marks the gateway has taken (stored, or already held): kept a while as sent, never sent again. */
+/**
+ * The marks the gateway has taken (stored, or already held): kept a while as sent, never sent again. The
+ * name and class of a pupil picked in the search go now: the gateway holds them, and the phone does not.
+ */
 export async function markCrisisMarksSynced(ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return;
   const db = getDb();
-  await db.runAsync(`UPDATE crisis_queue SET is_synced = 1 WHERE id IN (${placeholders(ids)})`, [...ids]);
+  await db.runAsync(
+    `UPDATE crisis_queue SET is_synced = 1, first_name = NULL, last_name = NULL, class_name = NULL WHERE id IN (${placeholders(ids)})`,
+    [...ids],
+  );
 }
 
 /** Marks the gateway answered with something that is not about the network, counted so a row's history is visible. */

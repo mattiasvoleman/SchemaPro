@@ -29,6 +29,10 @@ const MODES: readonly CrisisMode[] = ['DRILL', 'LIVE'];
 
 /** Words for a refusal. A start refused because one is going says which. */
 function failureKey(note: AdminFailureNote): MessageKey {
+  if (note.action === 'AWAY') {
+    if (note.code === 'ENDED' || note.code === 'NOT_FOUND') return `crisis.admin.endFailed.${note.code}` as MessageKey;
+    return note.code === 'OFFLINE' ? 'crisis.admin.awayOffline' : 'crisis.admin.awayFailed';
+  }
   if (note.action === 'END') {
     return note.code === 'ENDED' || note.code === 'NOT_FOUND' || note.code === 'OFFLINE'
       ? (`crisis.admin.endFailed.${note.code}` as MessageKey)
@@ -82,9 +86,20 @@ export function CrisisAdminView({ gutter }: { readonly gutter: number }): React.
 
   const confirmEnd = (detail: AlarmDetail): void => {
     const drill = detail.alarm.mode === 'DRILL';
-    Alert.alert(t(drill ? 'crisis.admin.confirmEndDrillTitle' : 'crisis.admin.confirmEndTitle'), t('crisis.admin.confirmEndBody'), [
+    // What the alarm stands at when it is ended, each figure for itself: a pupil not in the building is neither found nor missing.
+    const { found, missing, away, unreported } = detail.alarm.counts;
+    const message = `${t('crisis.admin.confirmEndBody')}\n\n${t('crisis.admin.confirmEndCounts', { found, missing, away, unreported })}`;
+    Alert.alert(t(drill ? 'crisis.admin.confirmEndDrillTitle' : 'crisis.admin.confirmEndTitle'), message, [
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('crisis.admin.confirmEndYes'), style: 'destructive', onPress: () => void state.end(detail.alarm.id) },
+    ]);
+  };
+
+  const confirmAway = (detail: AlarmDetail, pupil: { readonly studentId: string; readonly name: string; readonly callId: string }): void => {
+    // "Not in the building" takes a pupil off the list of those missing: asked once, with what it means.
+    Alert.alert(t('crisis.admin.awayConfirmTitle'), t('crisis.admin.awayConfirmBody', { name: pupil.name }), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('crisis.admin.awayConfirmYes'), style: 'destructive', onPress: () => void state.away(detail.alarm, pupil.callId, pupil.studentId) },
     ]);
   };
 
@@ -121,7 +136,16 @@ export function CrisisAdminView({ gutter }: { readonly gutter: number }): React.
           ) : null}
 
           {state.details.map((detail) => (
-            <Going key={detail.alarm.id} detail={detail} ending={state.busy?.kind === 'END' && state.busy.alarmId === detail.alarm.id} disabled={state.busy !== null} onEnd={() => confirmEnd(detail)} />
+            <Going
+              key={detail.alarm.id}
+              detail={detail}
+              ending={state.busy?.kind === 'END' && state.busy.alarmId === detail.alarm.id}
+              awayId={state.busy?.kind === 'AWAY' && state.busy.alarmId === detail.alarm.id ? state.busy.studentId : null}
+              failure={state.failure?.action === 'AWAY' ? state.failure : null}
+              disabled={state.busy !== null}
+              onEnd={() => confirmEnd(detail)}
+              onAway={(pupil) => confirmAway(detail, pupil)}
+            />
           ))}
 
           <Text style={styles.sectionHeader} accessibilityRole="header">
@@ -149,7 +173,7 @@ export function CrisisAdminView({ gutter }: { readonly gutter: number }): React.
           </View>
           <Text style={styles.hint}>{t(live ? 'crisis.admin.modeLiveHint' : 'crisis.admin.modeDrillHint')}</Text>
 
-          {state.failure ? (
+          {state.failure && state.failure.action !== 'AWAY' ? (
             <View style={[styles.note, { backgroundColor: colors.toneTint.danger, borderColor: colors.danger }]} accessibilityLiveRegion="polite">
               <Text style={styles.noteText}>{t(failureKey(state.failure))}</Text>
             </View>
@@ -211,17 +235,28 @@ function Choice({
   );
 }
 
-/** An alarm that is going: the banner, the counts, who has not answered, who is missing, and the end. */
+/**
+ * An alarm that is going: the banner, the counts (not in the building among them, for itself), who has not
+ * answered, who is missing, with "Inte i huset" for each of them, and the end.
+ */
 function Going({
   detail,
   ending,
+  awayId,
+  failure,
   disabled,
   onEnd,
+  onAway,
 }: {
   readonly detail: AlarmDetail;
   readonly ending: boolean;
+  /** The pupil whose "inte i huset" is in the air. */
+  readonly awayId: string | null;
+  /** Why the last "inte i huset" did not go through. */
+  readonly failure: AdminFailureNote | null;
   readonly disabled: boolean;
   readonly onEnd: () => void;
+  readonly onAway: (pupil: { readonly studentId: string; readonly name: string; readonly callId: string }) => void;
 }): React.JSX.Element {
   const { colors } = useAppTheme();
   const styles = useStyles();
@@ -245,6 +280,7 @@ function Going({
         <Text style={styles.progress}>{t('crisis.admin.groupsDone', { done: alarm.callsComplete, total: alarm.calls })}</Text>
         <Text style={styles.progressSub}>{t('crisis.admin.teachersAnswered', { answered: alarm.teachersAnswered, total: alarm.teachers })}</Text>
         <CountChips counts={alarm.counts} />
+        {alarm.unlisted > 0 ? <Text style={styles.line}>{t('crisis.admin.unlisted', { count: alarm.unlisted })}</Text> : null}
 
         <Text style={styles.cardHeader} accessibilityRole="header">
           {t('crisis.admin.missingTitle')}
@@ -253,11 +289,28 @@ function Going({
           <Text style={styles.line}>{t('crisis.admin.noneMissing')}</Text>
         ) : (
           missing.map((pupil) => (
-            <Text key={`${pupil.studentId}:${pupil.groupName}`} style={[styles.line, { color: colors.danger, fontWeight: '700' }]}>
-              {`${STATUS_GLYPH.MISSING} ${t('crisis.admin.missingLine', { name: pupil.name, group: pupil.basis === 'NO_LESSON' ? t('crisis.noLesson') : pupil.groupName })}`}
-            </Text>
+            <View key={`${pupil.studentId}:${pupil.callId}`} style={styles.missingRow}>
+              <Text style={[styles.line, styles.missingName, { color: colors.danger, fontWeight: '700' }]}>
+                {`${STATUS_GLYPH.MISSING} ${t('crisis.admin.missingLine', { name: pupil.name, group: pupil.basis === 'NO_LESSON' ? t('crisis.noLesson') : pupil.groupName })}`}
+              </Text>
+              <TouchableOpacity
+                style={[styles.away, (disabled || awayId === pupil.studentId) && styles.disabled]}
+                onPress={() => onAway(pupil)}
+                disabled={disabled}
+                accessibilityRole="button"
+                accessibilityLabel={t('crisis.admin.awayA11y', { name: pupil.name })}
+                accessibilityState={{ disabled, busy: awayId === pupil.studentId }}
+              >
+                {awayId === pupil.studentId ? (
+                  <ActivityIndicator color={colors.text} />
+                ) : (
+                  <Text style={styles.awayText}>{`${STATUS_GLYPH.AWAY} ${t('crisis.admin.away')}`}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           ))
         )}
+        {failure ? <Text style={[styles.line, { color: colors.danger, fontWeight: '700' }]}>{t(failureKey(failure))}</Text> : null}
 
         <Text style={styles.cardHeader} accessibilityRole="header">
           {t('crisis.admin.silentTitle')}
@@ -319,6 +372,20 @@ const useStyles = makeStyles((c) => ({
   progressSub: { fontSize: 14, color: c.textMuted, marginTop: 2 },
   cardHeader: { fontSize: 13, fontWeight: '800', color: c.textMuted, marginTop: 16, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.4 },
   line: { fontSize: 15, color: c.text, marginTop: 3, lineHeight: 21 },
+  missingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 4 },
+  missingName: { flex: 1 },
+  away: {
+    minHeight: 48,
+    minWidth: 112,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: c.borderStrong,
+    backgroundColor: c.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  awayText: { fontSize: 14, fontWeight: '800', color: c.text },
   end: {
     marginTop: 12,
     minHeight: 52,

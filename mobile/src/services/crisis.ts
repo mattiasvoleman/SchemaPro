@@ -34,17 +34,23 @@ export type CrisisMode = 'LIVE' | 'DRILL';
  */
 export type CallBasis = 'LESSON' | 'NEXT_LESSON' | 'NO_LESSON';
 /**
- * FOUND / MISSING: marked. ABSENT_BEFORE: not marked and absent before the
- * alarm (the register of the day, a report or a leave), so nobody is asked to
- * find them. UNREPORTED: not marked and expected, so someone still has to say.
+ * FOUND / MISSING: marked by a teacher (or the administration). AWAY: marked "not
+ * in the building" (not seen today) by the administration, and only by it: a
+ * teacher cannot say it, the gateway refuses it (CRISIS_MARK_INVALID). It is
+ * counted for itself and never as found: a pupil nobody has seen is not a pupil
+ * who was found. ABSENT_BEFORE: not marked and absent before the alarm (the
+ * register of the day, a report or a leave), so nobody is asked to find them.
+ * UNREPORTED: not marked and expected, so someone still has to say.
  */
-export type PupilStatus = 'FOUND' | 'MISSING' | 'ABSENT_BEFORE' | 'UNREPORTED';
+export type PupilStatus = 'FOUND' | 'MISSING' | 'AWAY' | 'ABSENT_BEFORE' | 'UNREPORTED';
 export type PriorSource = 'ATTENDANCE' | 'REPORTED';
 
 export interface PupilCounts {
   readonly pupils: number;
   readonly found: number;
   readonly missing: number;
+  /** Marked not in the building by the administration: its own figure, never added to `found`. */
+  readonly away: number;
   readonly absentBefore: number;
   readonly unreported: number;
 }
@@ -72,7 +78,10 @@ export interface FoundHere {
   readonly markedAt: string;
 }
 
-/** A pupil of the school who is on none of the teacher's lists: who a teacher can say they found. */
+/**
+ * A pupil of the school who is on none of the teacher's lists, as the search for "found with me" answers
+ * (POST /crisis/mine/pupils). Held nowhere: not in the list, not on the phone's disk.
+ */
 export interface OtherPupil {
   readonly studentId: string;
   readonly firstName: string;
@@ -115,10 +124,11 @@ export interface AlarmView {
 export interface MyAlarm extends AlarmView {
   readonly calls: readonly MyCall[];
   /**
-   * Every other pupil of the school, by name: kept offline with the lists, so that a teacher who finds a
-   * pupil who is not on their list can say so without a network. May be a thousand names.
+   * Pupils this teacher found who are on none of their lists and were found with no group: a teacher with no
+   * group right now (a gap, a duty, a timetable that lacks them) can say they found a pupil too, and the
+   * mark names the alarm in place of a call.
    */
-  readonly others: readonly OtherPupil[];
+  readonly foundFree: readonly FoundHere[];
 }
 
 export interface MyCrisisResponse {
@@ -181,7 +191,7 @@ export const MAX_MARKS_PER_CALL = 400;
 
 // ─── Counting, as the gateway counts ─────────────────────────────────────────
 
-export function statusOf(state: CrisisMarkState | null, prior: PriorSource | null): PupilStatus {
+export function statusOf(state: CrisisMarkState | 'AWAY' | null, prior: PriorSource | null): PupilStatus {
   if (state) return state;
   return prior ? 'ABSENT_BEFORE' : 'UNREPORTED';
 }
@@ -189,15 +199,17 @@ export function statusOf(state: CrisisMarkState | null, prior: PriorSource | nul
 export function countPupils(statuses: readonly PupilStatus[]): PupilCounts {
   let found = 0;
   let missing = 0;
+  let away = 0;
   let absentBefore = 0;
   let unreported = 0;
   for (const status of statuses) {
     if (status === 'FOUND') found++;
     else if (status === 'MISSING') missing++;
+    else if (status === 'AWAY') away++;
     else if (status === 'ABSENT_BEFORE') absentBefore++;
     else unreported++;
   }
-  return { pupils: statuses.length, found, missing, absentBefore, unreported };
+  return { pupils: statuses.length, found, missing, away, absentBefore, unreported };
 }
 
 export function pupilName(pupil: { readonly firstName: string; readonly lastName: string }): string {
@@ -231,22 +243,49 @@ function listOf<T>(raw: unknown, read: (item: unknown) => T | null): T[] {
   return items;
 }
 
+/** Figures from a gateway that does not count `away` (older than "not in the building") read it as nought. */
+function countsOf(raw: unknown): PupilCounts {
+  const c = (raw ?? {}) as Partial<Record<keyof PupilCounts, unknown>>;
+  const n = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+  return { pupils: n(c.pupils), found: n(c.found), missing: n(c.missing), away: n(c.away), absentBefore: n(c.absentBefore), unreported: n(c.unreported) };
+}
+
 /**
  * The alarms as the phone works with them. A gateway older than "found with me"
- * sends neither `foundHere` on a group nor `others` on an alarm, and a list the
- * phone kept before then has neither: both read as an empty list, and a malformed
+ * sends no `foundHere` on a group and no `foundFree` on an alarm, one older than
+ * "not in the building" no `away` in the figures, and a list the phone kept before
+ * then has none of them: they read as an empty list and nought, and a malformed
  * entry is left out rather than taken down with the screen that is needed most.
- * (An unknown `basis` is left as it is: a screen words anything but NO_LESSON as a lesson.)
+ * A list kept by a build that held every other pupil of the school in it (`others`)
+ * loses them here: the picker asks the gateway now, and nothing of the school is kept
+ * beyond the teacher's own groups. (An unknown `basis` is left as it is: a screen
+ * words anything but NO_LESSON as a lesson.)
  */
 export function normalizeAlarms(alarms: readonly unknown[]): MyAlarm[] {
   return alarms.map((raw) => {
-    const alarm = raw as MyAlarm;
+    const { others: _held, ...alarm } = raw as MyAlarm & { others?: unknown };
     return {
       ...alarm,
-      calls: (Array.isArray(alarm.calls) ? alarm.calls : []).map((call) => ({ ...call, foundHere: listOf(call.foundHere, foundHereOf) })),
-      others: listOf(alarm.others, otherPupilOf),
+      calls: (Array.isArray(alarm.calls) ? alarm.calls : []).map((call) => ({
+        ...call,
+        counts: countsOf(call.counts),
+        foundHere: listOf(call.foundHere, foundHereOf),
+      })),
+      foundFree: listOf(alarm.foundFree, foundHereOf),
     };
   });
+}
+
+/** The administration's figures with `away` read as nought where the gateway does not say it. */
+function normalizeSummary<T extends AlarmSummary>(alarm: T): T {
+  return { ...alarm, counts: countsOf(alarm.counts), unlisted: typeof alarm.unlisted === 'number' ? alarm.unlisted : 0 };
+}
+
+function normalizeDetail(detail: AlarmDetail): AlarmDetail {
+  return {
+    alarm: normalizeSummary(detail.alarm),
+    calls: (Array.isArray(detail.calls) ? detail.calls : []).map((call) => ({ ...call, counts: countsOf(call.counts) })),
+  };
 }
 
 // ─── The gateway ─────────────────────────────────────────────────────────────
@@ -269,15 +308,17 @@ export async function fetchMyCrisis(options: { readonly signal?: AbortSignal } =
   }
 }
 
-/** A mark as the gateway takes it: the group by call OR lesson, never both. */
+/**
+ * A mark as the gateway takes it: the group by call OR lesson OR alarm, exactly one. The alarm is for a
+ * teacher with no group, who says they found a pupil all the same.
+ */
 export function markBody(mark: PendingCrisisMark): Record<string, string> {
-  return {
-    id: mark.id,
-    ...(mark.callId ? { callId: mark.callId } : { lessonId: mark.lessonId as string }),
-    studentId: mark.studentId,
-    state: mark.state,
-    at: mark.at,
-  };
+  const group: Record<string, string> = mark.callId
+    ? { callId: mark.callId }
+    : mark.lessonId
+      ? { lessonId: mark.lessonId }
+      : { alarmId: mark.alarmId as string };
+  return { id: mark.id, ...group, studentId: mark.studentId, state: mark.state, at: mark.at };
 }
 
 /** POST /api/v1/crisis/mine/marks, at most MAX_MARKS_PER_CALL; idempotent per mark id. */
@@ -298,21 +339,60 @@ export async function postMyMarks(
   };
 }
 
-export function startAlarm(kind: CrisisKind, mode: CrisisMode): Promise<AlarmDetail> {
-  return apiRequest<AlarmDetail>(`${BASE}/alarms`, { method: 'POST', body: { kind, mode } });
+/** The shortest search the gateway answers, and the most names it gives back (POST /crisis/mine/pupils). */
+export const SEARCH_MIN_CHARS = 2;
+export const SEARCH_LIMIT = 25;
+
+/**
+ * The pupils of the school who are on none of this teacher's lists, whose name or class begins as `query`
+ * does: the picker for "found with me" asks as the teacher types. The gateway excludes the teacher's own
+ * pupils and includes the pupils whose identity is protected. Nothing of the answer is kept anywhere: it is
+ * on the screen while the picker is, and gone with it. The question is a POST with the alarm and the text in
+ * the body, never in the URL: what a teacher types is part of a pupil's name, and the gateway logs and
+ * echoes URLs (and keeps no personal data in its logs).
+ */
+export async function searchOtherPupils(alarmId: string, query: string, options: { readonly signal?: AbortSignal } = {}): Promise<OtherPupil[]> {
+  const answer = await apiRequest<unknown>(`${BASE}/mine/pupils`, {
+    method: 'POST',
+    body: { alarmId, q: query.trim() },
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  return listOf(answer, otherPupilOf).slice(0, SEARCH_LIMIT);
+}
+
+export async function startAlarm(kind: CrisisKind, mode: CrisisMode): Promise<AlarmDetail> {
+  return normalizeDetail(await apiRequest<AlarmDetail>(`${BASE}/alarms`, { method: 'POST', body: { kind, mode } }));
 }
 
 /** The school's newest alarms, open ones included. */
 export async function fetchAlarmList(limit = 5): Promise<AlarmSummary[]> {
-  return (await apiRequest<AlarmSummary[] | undefined>(`${BASE}/alarms?limit=${limit}`)) ?? [];
+  return ((await apiRequest<AlarmSummary[] | undefined>(`${BASE}/alarms?limit=${limit}`)) ?? []).map(normalizeSummary);
 }
 
-export function fetchAlarmDetail(alarmId: string): Promise<AlarmDetail> {
-  return apiRequest<AlarmDetail>(`${BASE}/alarms/${encodeURIComponent(alarmId)}`);
+export async function fetchAlarmDetail(alarmId: string): Promise<AlarmDetail> {
+  return normalizeDetail(await apiRequest<AlarmDetail>(`${BASE}/alarms/${encodeURIComponent(alarmId)}`));
 }
 
-export function endAlarm(alarmId: string): Promise<AlarmDetail> {
-  return apiRequest<AlarmDetail>(`${BASE}/alarms/${encodeURIComponent(alarmId)}/end`, { method: 'POST', body: {} });
+export async function endAlarm(alarmId: string): Promise<AlarmDetail> {
+  return normalizeDetail(await apiRequest<AlarmDetail>(`${BASE}/alarms/${encodeURIComponent(alarmId)}/end`, { method: 'POST', body: {} }));
+}
+
+/**
+ * The administration says a pupil is not in the building (POST /crisis/alarms/:id/marks, state AWAY), by
+ * the pupil's own group. Live, never queued, like everything the administration does; only the
+ * administration may say it: the teacher's route refuses AWAY (CRISIS_MARK_INVALID).
+ */
+export function markAway(alarm: { readonly id: string; readonly startedAt: string }, callId: string, studentId: string, markId: string): Promise<MarkResult> {
+  // Not before the alarm began: the gateway holds a mark between the alarm's start and now.
+  const at = new Date(Math.max(Date.now(), Date.parse(alarm.startedAt))).toISOString();
+  return apiRequest<Partial<MarkResult> | undefined>(`${BASE}/alarms/${encodeURIComponent(alarm.id)}/marks`, {
+    method: 'POST',
+    body: { marks: [{ id: markId, callId, studentId, state: 'AWAY', at }] },
+  }).then((answer) => ({
+    stored: Number(answer?.stored ?? 0),
+    duplicates: Number(answer?.duplicates ?? 0),
+    unresolved: Array.isArray(answer?.unresolved) ? answer.unresolved : [],
+  }));
 }
 
 // ─── Why a call failed ───────────────────────────────────────────────────────
@@ -378,10 +458,15 @@ export function stillRelevant(alarm: AlarmView, now: number): boolean {
 
 interface Resolved {
   readonly alarm: MyAlarm;
-  readonly call: MyCall;
+  /** Null for a mark that names the alarm itself: a teacher with no group. */
+  readonly call: MyCall | null;
 }
 
 function resolveTarget(alarms: readonly MyAlarm[], mark: PendingCrisisMark): Resolved | null {
+  if (mark.alarmId) {
+    const alarm = alarms.find((candidate) => candidate.id === mark.alarmId);
+    return alarm ? { alarm, call: null } : null;
+  }
   if (mark.callId) {
     for (const alarm of alarms) {
       const call = alarm.calls.find((candidate) => candidate.id === mark.callId);
@@ -405,19 +490,33 @@ function resolveTarget(alarms: readonly MyAlarm[], mark: PendingCrisisMark): Res
 
 export interface Overlaid {
   readonly alarms: readonly MyAlarm[];
-  /** `${callId}:${studentId}` of every pupil with a mark the phone has not sent. */
+  /**
+   * `${callId}:${studentId}` of every pupil with a mark the phone has not sent; for a pupil found with no
+   * group, `alarm:${alarmId}:${studentId}` (waitingKey).
+   */
   readonly waiting: ReadonlySet<string>;
 }
 
-/** A pupil by name, from what the alarm holds: the others first, then the groups of the teacher. */
-function nameOf(alarm: MyAlarm, studentId: string): OtherPupil | null {
-  const other = alarm.others.find((candidate) => candidate.studentId === studentId);
-  if (other) return other;
+/** Where a pupil found with the teacher is held: on a call, or, for a teacher with no group, on the alarm. */
+export const foundPlace = (alarmId: string, call: { readonly id: string } | null): string => (call ? call.id : `alarm:${alarmId}`);
+export const waitingKey = (place: string, studentId: string): string => `${place}:${studentId}`;
+
+/** A pupil by name from what a mark holds, else from the groups of the teacher (a pupil of another of their own). */
+function nameOf(alarm: MyAlarm, mark: PendingCrisisMark): OtherPupil | null {
+  if (mark.pupil) return { studentId: mark.studentId, ...mark.pupil };
   for (const call of alarm.calls) {
-    const pupil = call.pupils.find((candidate) => candidate.studentId === studentId);
-    if (pupil) return { studentId, firstName: pupil.firstName, lastName: pupil.lastName, className: null };
+    const pupil = call.pupils.find((candidate) => candidate.studentId === mark.studentId);
+    if (pupil) return { studentId: mark.studentId, firstName: pupil.firstName, lastName: pupil.lastName, className: null };
   }
   return null;
+}
+
+/** A list of pupils found with the teacher, the taken-back ones out (null) and the new ones in. */
+function withFound(held: readonly FoundHere[], effects: ReadonlyMap<string, FoundHere | null> | undefined): readonly FoundHere[] {
+  if (!effects || effects.size === 0) return held;
+  const kept = held.filter((entry) => effects.get(entry.studentId) !== null);
+  const added = [...effects.values()].filter((entry): entry is FoundHere => entry !== null);
+  return [...kept, ...added];
 }
 
 /**
@@ -432,48 +531,62 @@ function nameOf(alarm: MyAlarm, studentId: string): OtherPupil | null {
  * the gateway's without the teacher marking again.
  *
  * A FOUND mark for a pupil who is not on the call's list is "found with me":
- * the gateway keeps it on the call as such, and here the pupil is put in the
- * call's `foundHere` (by name, from the alarm's `others`) until the list that
- * comes back carries them. A MISSING mark for such a pupil is not drawn: the
- * gateway refuses it (CRISIS_MARK_INVALID), because a pupil who is on no list of
- * the teacher's cannot be missing from it.
+ * the gateway keeps it on the call as such (or, for a teacher with no group, on
+ * the alarm: `foundFree`), and here the pupil is put there, by the name the mark
+ * carries, until the list that comes back carries them. A RETRACTED mark takes
+ * such a pupil out again, and a FOUND after it puts them back; the order is the
+ * order of the taps. A MISSING mark for such a pupil is not drawn: the gateway
+ * refuses it (CRISIS_MARK_INVALID), because a pupil who is on no list of the
+ * teacher's cannot be missing from it. RETRACTED is nothing to a pupil of a list.
  */
 export function overlayMarks(alarms: readonly MyAlarm[], marks: readonly PendingCrisisMark[]): Overlaid {
   const waiting = new Set<string>();
   const changes = new Map<string, Map<string, { state: CrisisMarkState; at: string }>>();
-  const here = new Map<string, Map<string, FoundHere>>();
+  // place -> pupil -> the entry to add, or null to take the one the gateway holds away
+  const here = new Map<string, Map<string, FoundHere | null>>();
   const ordered = [...marks].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   for (const mark of ordered) {
     const target = resolveTarget(alarms, mark);
     if (!target) continue;
-    const pupil = target.call.pupils.find((candidate) => candidate.studentId === mark.studentId);
+    const pupil = target.call?.pupils.find((candidate) => candidate.studentId === mark.studentId);
     if (!pupil) {
-      if (mark.state !== 'FOUND') continue;
-      const who = nameOf(target.alarm, mark.studentId);
-      if (!who) continue;
-      waiting.add(`${target.call.id}:${mark.studentId}`);
-      // The gateway already holds them found here: the row is its own, and this mark only waits.
-      if (target.call.foundHere.some((held) => held.studentId === mark.studentId)) continue;
-      const forCall = here.get(target.call.id) ?? new Map<string, FoundHere>();
-      forCall.set(mark.studentId, { ...who, markedAt: mark.at });
-      here.set(target.call.id, forCall);
+      if (mark.state === 'MISSING') continue;
+      const place = foundPlace(target.alarm.id, target.call);
+      const onServer = (target.call ? target.call.foundHere : target.alarm.foundFree).some((held) => held.studentId === mark.studentId);
+      const effects = here.get(place) ?? new Map<string, FoundHere | null>();
+      if (mark.state === 'RETRACTED') {
+        // Out of sight at once. What the gateway does not hold has nothing to take away.
+        if (onServer) effects.set(mark.studentId, null);
+        else effects.delete(mark.studentId);
+        waiting.delete(waitingKey(place, mark.studentId));
+      } else {
+        const who = nameOf(target.alarm, mark);
+        if (!who) continue;
+        waiting.add(waitingKey(place, mark.studentId));
+        // The gateway already holds them found here: the row is its own, and this mark only waits.
+        if (onServer) effects.delete(mark.studentId);
+        else effects.set(mark.studentId, { studentId: who.studentId, firstName: who.firstName, lastName: who.lastName, className: who.className, markedAt: mark.at });
+      }
+      here.set(place, effects);
       continue;
     }
-    waiting.add(`${target.call.id}:${mark.studentId}`);
+    if (mark.state === 'RETRACTED') continue;
+    waiting.add(waitingKey(target.call!.id, mark.studentId));
     if (pupil.markedAt !== null && Date.parse(pupil.markedAt) > Date.parse(mark.at)) continue;
-    const forCall = changes.get(target.call.id) ?? new Map<string, { state: CrisisMarkState; at: string }>();
+    const forCall = changes.get(target.call!.id) ?? new Map<string, { state: CrisisMarkState; at: string }>();
     forCall.set(mark.studentId, { state: mark.state, at: mark.at });
-    changes.set(target.call.id, forCall);
+    changes.set(target.call!.id, forCall);
   }
-  if (changes.size === 0 && here.size === 0) return { alarms, waiting };
+  if (changes.size === 0 && [...here.values()].every((effects) => effects.size === 0)) return { alarms, waiting };
   return {
     waiting,
     alarms: alarms.map((alarm) => ({
       ...alarm,
+      foundFree: withFound(alarm.foundFree, here.get(foundPlace(alarm.id, null))),
       calls: alarm.calls.map((call) => {
         const forCall = changes.get(call.id);
-        const extra = here.get(call.id);
-        if (!forCall && !extra) return call;
+        const effects = here.get(call.id);
+        if (!forCall && !effects) return call;
         const pupils = forCall
           ? call.pupils.map((pupil) => {
               const change = forCall.get(pupil.studentId);
@@ -484,7 +597,7 @@ export function overlayMarks(alarms: readonly MyAlarm[], marks: readonly Pending
           ...call,
           pupils,
           counts: forCall ? countPupils(pupils.map((pupil) => pupil.status)) : call.counts,
-          foundHere: extra ? [...call.foundHere, ...extra.values()] : call.foundHere,
+          foundHere: withFound(call.foundHere, effects),
         };
       }),
     })),
@@ -507,8 +620,8 @@ export interface AlarmBlock {
   readonly startedAt: string | null;
   readonly endedAt: string | null;
   readonly calls: readonly MyCall[];
-  /** The pupils of the school on none of the teacher's lists; none for a list the phone built itself. */
-  readonly others: readonly OtherPupil[];
+  /** The pupils the teacher found with no group; none for a list the phone built itself. */
+  readonly foundFree: readonly FoundHere[];
 }
 
 export interface AlarmHint {
@@ -562,9 +675,9 @@ export function teacherBlocks(input: ViewInput): { blocks: AlarmBlock[]; waiting
           endNote: null,
           guardiansNotifiedAt: null,
           calls: local,
-          // The cache holds the pupils of the lessons, not the school: a pupil found who is on no
-          // list cannot be named here, so the screen does not offer it on a list the phone built.
-          others: [],
+          // A pupil found who is on no list cannot be searched for without the gateway, so the
+          // screen does not offer it on a list the phone built.
+          foundFree: [],
         }
       : null;
 
@@ -581,7 +694,7 @@ export function teacherBlocks(input: ViewInput): { blocks: AlarmBlock[]; waiting
         startedAt: alarm.startedAt,
         endedAt: alarm.endedAt,
         calls: alarm.calls,
-        others: alarm.others,
+        foundFree: alarm.foundFree,
       };
     }),
   };
@@ -597,74 +710,11 @@ export function markedCount(counts: PupilCounts): number {
   return counts.found + counts.missing;
 }
 
-// ─── Finding a pupil who is on no list of the teacher's ──────────────────────
+// ─── Pupils found with the teacher ───────────────────────────────────────────
 
-/** The picker draws at most this many names: a thousand rows would be a list nobody reads, and slow to draw. */
-export const PICKER_LIMIT = 50;
-
-/** The pupils found with the teacher on one call, by name. */
-export function foundHereSorted(call: MyCall): FoundHere[] {
-  return [...call.foundHere].sort((a, b) => compareSwedish(pupilName(a), pupilName(b)) || (a.studentId < b.studentId ? -1 : 1));
-}
-
-/**
- * Lower case without accents, so that "asa" finds Åsa and "RENEE" finds Renée. Only the combining
- * marks are removed (U+0300-U+036F), by a plain range: Hermes' regular expressions are not relied on
- * for Unicode property classes.
- */
-export function foldForSearch(value: string): string {
-  const lower = value.toLowerCase();
-  const plain = typeof lower.normalize === 'function' ? lower.normalize('NFD') : lower;
-  return plain.replace(/[\u0300-\u036f]/g, '');
-}
-
-export interface PupilIndex {
-  readonly pupil: OtherPupil;
-  /** The words of name and class, folded: a search word must begin one of them. */
-  readonly words: readonly string[];
-}
-
-/** The picker's index, in the order of the names: built once for a list of a thousand, then searched on every key. */
-export function indexPupils(pupils: readonly OtherPupil[]): PupilIndex[] {
-  return [...pupils]
-    .sort((a, b) => compareSwedish(pupilName(a), pupilName(b)) || (a.studentId < b.studentId ? -1 : 1))
-    .map((pupil) => ({
-      pupil,
-      words: foldForSearch(`${pupilName(pupil)} ${pupil.className ?? ''}`)
-        .split(/[\s-]+/)
-        .filter((word) => word !== ''),
-    }));
-}
-
-export interface PupilSearch {
-  /** At most `limit`, in the order of the names. */
-  readonly shown: readonly OtherPupil[];
-  /** How many matched in all. */
-  readonly total: number;
-}
-
-/**
- * The pupils whose name or class begins with every word of the query ("ann be" finds Anna Berg, "7a" a
- * class). No query matches nothing: a thousand names are searched for, not scrolled. `skip` holds the
- * pupils already found with this teacher.
- */
-export function searchPupils(
-  index: readonly PupilIndex[],
-  query: string,
-  options: { readonly skip?: ReadonlySet<string>; readonly limit?: number } = {},
-): PupilSearch {
-  const wanted = foldForSearch(query).split(/\s+/).filter((word) => word !== '');
-  if (wanted.length === 0) return { shown: [], total: 0 };
-  const limit = options.limit ?? PICKER_LIMIT;
-  const shown: OtherPupil[] = [];
-  let total = 0;
-  for (const entry of index) {
-    if (options.skip?.has(entry.pupil.studentId)) continue;
-    if (!wanted.every((word) => entry.words.some((candidate) => candidate.startsWith(word)))) continue;
-    total++;
-    if (shown.length < limit) shown.push(entry.pupil);
-  }
-  return { shown, total };
+/** The pupils found with the teacher (on a call, or on the alarm for a teacher with no group), by name, Swedish order. */
+export function foundHereSorted(found: readonly FoundHere[]): FoundHere[] {
+  return [...found].sort((a, b) => compareSwedish(pupilName(a), pupilName(b)) || (a.studentId < b.studentId ? -1 : 1));
 }
 
 // ─── What the administration's screen draws ──────────────────────────────────
@@ -677,11 +727,11 @@ export const openAlarms = (alarms: readonly AlarmSummary[]): AlarmSummary[] => a
  * a NO_LESSON call has no name of its own (the gateway's is a Swedish stand-in): `basis` says so, and
  * the screen words it.
  */
-export function missingPupils(detail: AlarmDetail): Array<{ studentId: string; name: string; groupName: string; basis: CallBasis }> {
+export function missingPupils(detail: AlarmDetail): Array<{ studentId: string; name: string; groupName: string; basis: CallBasis; callId: string }> {
   return detail.calls.flatMap((call) =>
     call.pupils
       .filter((pupil) => pupil.status === 'MISSING')
-      .map((pupil) => ({ studentId: pupil.studentId, name: pupilName(pupil), groupName: call.groupName, basis: call.basis })),
+      .map((pupil) => ({ studentId: pupil.studentId, name: pupilName(pupil), groupName: call.groupName, basis: call.basis, callId: call.id })),
   );
 }
 

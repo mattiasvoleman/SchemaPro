@@ -12,7 +12,7 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { translatorFor } from '../../i18n';
 import { alarm, at, callView, detailOf, gateway, pupil, summary } from '../../services/__testing__/crisisGateway';
 import { POLL_MS } from '../../hooks/useCrisisAdmin';
-import type { AlarmDetail, AlarmSummary } from '../../services/crisis';
+import { countPupils, type AlarmDetail, type AlarmSummary } from '../../services/crisis';
 
 let mockRole = 'SCHOOL_ADMIN';
 let mockFocusEffect: (() => void | (() => void)) | null = null;
@@ -39,6 +39,7 @@ jest.mock('../../context/SyncContext', () => ({ useSync: () => ({ crisisUpdate: 
 jest.mock('expo-notifications', () => ({ getPresentedNotificationsAsync: jest.fn(async () => []) }));
 jest.mock('../../services/database/localDatabase', () => require('../../services/__testing__/crisisDatabase').api);
 jest.mock('../../services/supabase', () => ({ getAccessToken: jest.fn(async () => 'token'), getSupabase: jest.fn() }));
+jest.mock('expo-crypto', () => ({ randomUUID: () => '00000000-0000-4000-8000-0000000000aa' }));
 jest.mock('../../services/network/deviceOffline', () => ({
   deviceOffline: jest.fn(async () => false),
   noNetwork: jest.fn(async () => false),
@@ -69,6 +70,13 @@ function touchable(tree: Tree, label: string): Instance {
       throw new Error(`nothing to press holds "${label}"`);
     });
   if (found.length !== 1) throw new Error(`expected one "${label}" to press, found ${found.length}`);
+  return found[0]!;
+}
+
+/** What a finger presses where the accessibility label is: the nearest holder of an onPress. */
+function pressable(tree: Tree, label: string): Instance {
+  const found = tree.root.findAll((n) => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function');
+  if (found.length === 0) throw new Error(`nothing to press is labelled "${label}"`);
   return found[0]!;
 }
 
@@ -350,6 +358,129 @@ describe('CrisisScreen, the administration’s side', () => {
       expect(texts(tree).some((text) => text.includes('Utan lektion'))).toBe(false);
     });
 
+    describe('a pupil not in the building', () => {
+      const AWAY_BUTTON = t('crisis.admin.awayA11y', { name: 'Eva Ek' });
+      const marks = () => gateway.to('POST', `${ALARMS}/a1/marks`);
+
+      /** The roll call after the administration said Eva Ek is not in the building. */
+      const afterAway = (): AlarmDetail => {
+        const detail = going();
+        const calls = detail.calls.map((c) =>
+          c.id === 'c1' ? { ...c, pupils: c.pupils.map((p) => (p.studentId === 's2' ? pupil('s2', 'Eva', 'Ek', 'AWAY') : p)), counts: countPupils(['FOUND', 'AWAY', 'UNREPORTED']) } : c,
+        );
+        return { alarm: { ...detail.alarm, counts: countPupils(['FOUND', 'FOUND', 'AWAY', 'ABSENT_BEFORE', 'UNREPORTED', 'UNREPORTED']) }, calls };
+      };
+
+      it('is a figure of its own among the counts, never among those found', async () => {
+        hold(going({ counts: countPupils(['FOUND', 'FOUND', 'AWAY', 'AWAY', 'AWAY', 'MISSING', 'UNREPORTED']) }));
+        tree = await render();
+        for (const chip of ['✓ Finns 2', '✕ Saknas 1', '○ Inte i huset 3', '? Inte markerade 1']) expect(texts(tree)).toContain(chip);
+        // Nothing of the figure is said as found or as missing.
+        expect(texts(tree)).not.toContain('✓ Finns 5');
+        expect(texts(tree)).not.toContain('✕ Saknas 4');
+      });
+
+      it('is read from a gateway that does not count them as none, with no figure for them', async () => {
+        const older = going();
+        const { away: _away, ...counts } = older.alarm.counts;
+        hold({ ...older, alarm: { ...older.alarm, counts: counts as never } });
+        tree = await render();
+        expect(texts(tree).some((text) => /^○ Inte i huset \d/.test(text))).toBe(false);
+        for (const chip of ['✓ Finns 2', '✕ Saknas 1']) expect(texts(tree)).toContain(chip);
+      });
+
+      it('says how many pupils are not in a lesson right now, when there are some', async () => {
+        hold(going({ unlisted: 14 }));
+        tree = await render();
+        expect(hasText(tree, '14 elever är inte i lektion just nu.')).toBe(true);
+        hold(going({ unlisted: 1 }));
+        await refocus();
+        expect(hasText(tree, '1 elev är inte i lektion just nu.')).toBe(true);
+        hold(going({ unlisted: 0 }));
+        await refocus();
+        expect(texts(tree).some((text) => text.includes('inte i lektion just nu.'))).toBe(false);
+      });
+
+      it('is offered for each pupil marked missing, asks first and says what it means, and sends nothing if the answer is no', async () => {
+        tree = await render();
+        await press(pressable(tree, AWAY_BUTTON));
+        expect(jest.mocked(Alert.alert).mock.calls[0]![0]).toBe('Inte i huset?');
+        expect(jest.mocked(Alert.alert).mock.calls[0]![1]).toContain('Eva Ek markeras som inte i huset: jag har inte sett eleven.');
+        expect(jest.mocked(Alert.alert).mock.calls[0]![1]).toContain('varken som hittad eller som saknad');
+        expect(marks()).toEqual([]);
+        await act(async () => alertButtons()[0]!.onPress?.());
+        expect(marks()).toEqual([]);
+        expect(hasText(tree, '✕ Eva Ek (7A)')).toBe(true);
+      });
+
+      it('says a pupil is not in the building on the pupil’s own group, as the state AWAY, and the roll call shows them in their own figure', async () => {
+        tree = await render();
+        gateway.adminMarks = (_alarm, sent) => {
+          hold(afterAway());
+          return { status: 200, body: { stored: sent.length, duplicates: 0, unresolved: [] } };
+        };
+        await press(pressable(tree, AWAY_BUTTON));
+        await act(async () => alertButtons()[1]!.onPress!());
+        await settle();
+
+        expect(marks()).toHaveLength(1);
+        expect(marks()[0]!.body).toEqual({
+          marks: [{ id: '00000000-0000-4000-8000-0000000000aa', callId: 'c1', studentId: 's2', state: 'AWAY', at: expect.any(String) }],
+        });
+        // No longer in the list of those missing, and not found: counted for themselves.
+        expect(hasText(tree, '✕ Eva Ek (7A)')).toBe(false);
+        expect(hasText(tree, t('crisis.admin.noneMissing'))).toBe(true);
+        expect(texts(tree)).toContain('○ Inte i huset 1');
+        expect(texts(tree)).toContain('✓ Finns 2');
+      });
+
+      it('is one action at a time: the buttons are off while it is in the air', async () => {
+        const answer = deferred<void>();
+        tree = await render();
+        gateway.adminMarks = async (_alarm, sent) => {
+          await answer.promise;
+          return { status: 200, body: { stored: sent.length, duplicates: 0, unresolved: [] } };
+        };
+        await press(pressable(tree, AWAY_BUTTON));
+        await act(async () => alertButtons()[1]!.onPress!());
+        expect(pressable(tree, AWAY_BUTTON).props.disabled).toBe(true);
+        expect(pressable(tree, AWAY_BUTTON).props.accessibilityState).toEqual({ disabled: true, busy: true });
+        expect(touchable(tree, 'Avsluta larmet').props.disabled).toBe(true);
+        await act(async () => answer.resolve());
+        await settle();
+        expect(pressable(tree, AWAY_BUTTON).props.disabled).toBe(false);
+      });
+
+      it.each([
+        ['the alarm had ended', { status: 409, body: { message: 'x', code: 'CRISIS_ALARM_ENDED' } }, 'Larmet var redan avslutat.'],
+        ['the alarm is gone', { status: 404, body: { message: 'x', code: 'CRISIS_ALARM_NOT_FOUND' } }, 'Larmet finns inte längre.'],
+        ['the gateway cannot do it', { status: 500, body: { message: 'x' } }, 'Markeringen gick inte att skicka. Försök igen.'],
+        ['the role may not', { status: 403, body: { message: 'x', code: 'CRISIS_NOT_YOURS' } }, 'Markeringen gick inte att skicka. Försök igen.'],
+        ['the phone has no network', 'network' as const, 'Inget nät. Markeringen skickades inte.'],
+      ])('says so, next to the pupil, when %s: the pupil is still missing', async (_name, refusal, words) => {
+        tree = await render();
+        gateway.adminMarks = () => refusal as never;
+        await press(pressable(tree, AWAY_BUTTON));
+        await act(async () => alertButtons()[1]!.onPress!());
+        await settle();
+        expect(hasText(tree, words)).toBe(true);
+        expect(hasText(tree, '✕ Eva Ek (7A)')).toBe(true);
+      });
+
+      it('is not a bulk action: the administration marks one pupil at a time, and the group of pupils on no lesson has no “all found”', async () => {
+        hold(
+          detailOf(summary('a1', { unlisted: 2 }), [
+            callView('c9', 'Utan lektion', [pupil('s8', 'Siv', 'Sjö', 'UNREPORTED'), pupil('s9', 'Tor', 'Tall', 'MISSING')], { basis: 'NO_LESSON', lessonId: null, uncovered: true }),
+          ]),
+        );
+        tree = await render();
+        const labels = tree.root.findAll((n) => typeof n.props.accessibilityLabel === 'string' && typeof n.props.onPress === 'function').map((n) => String(n.props.accessibilityLabel));
+        expect(labels.filter((label) => /alla|finns/i.test(label) && !/Avsluta/.test(label))).toEqual([]);
+        expect(labels).toContain(t('crisis.admin.awayA11y', { name: 'Tor Tall' }));
+        expect(labels).not.toContain(t('crisis.admin.awayA11y', { name: 'Siv Sjö' }));
+      });
+    });
+
     it('says when nobody is', async () => {
       hold(detailOf(summary('a1'), [callView('c1', '7A', [pupil('s1', 'Anna', 'Andersson', 'FOUND')])]));
       tree = await render();
@@ -451,6 +582,16 @@ describe('CrisisScreen, the administration’s side', () => {
       // The roll call is gone and the form to start another is there.
       expect(hasText(tree, '1 av 2 grupper klara')).toBe(false);
       expect(hasText(tree, t('crisis.admin.startTitle'))).toBe(true);
+    });
+
+    it('states what the alarm stands at when it is asked, each figure for itself: a pupil not in the building is neither found nor missing', async () => {
+      hold(going({ counts: countPupils(['FOUND', 'FOUND', 'MISSING', 'AWAY', 'AWAY', 'AWAY', 'UNREPORTED']) }));
+      tree = await render();
+      await press(touchable(tree, 'Avsluta larmet'));
+      const [title, body] = jest.mocked(Alert.alert).mock.calls[0]!;
+      expect(title).toBe('Avsluta larmet?');
+      expect(body).toContain(t('crisis.admin.confirmEndBody'));
+      expect(body).toContain('Hittade 2. Saknas 1. Inte i huset 3. Inte markerade 1.');
     });
 
     it('asks about a drill as a drill', async () => {

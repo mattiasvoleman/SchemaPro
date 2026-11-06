@@ -15,12 +15,16 @@ import type { CallBasis, CrisisKind, CrisisMode, PupilCounts, PupilStatus } from
  * before or not yet marked, and each has its tone, a glyph AND words: a
  * teacher in a schoolyard in low sun, or one who sees no red from green, reads
  * the same list. One meaning per colour, as the rest of the app: green found,
- * red missing, grey absent since before, amber not yet marked.
+ * red missing, grey absent since before or not in the building (told apart by
+ * glyph and words), amber not yet marked.
  */
 
 export const STATUS_TONE: Record<PupilStatus, Tone> = {
   FOUND: 'success',
   MISSING: 'danger',
+  // Not in the building is grey, as absent since before is, and told apart from it by its glyph and its words:
+  // never green, which would say found, and never red, which would say missing.
+  AWAY: 'neutral',
   ABSENT_BEFORE: 'neutral',
   UNREPORTED: 'warning',
 };
@@ -28,6 +32,7 @@ export const STATUS_TONE: Record<PupilStatus, Tone> = {
 export const STATUS_GLYPH: Record<PupilStatus, string> = {
   FOUND: '✓',
   MISSING: '✕',
+  AWAY: '○',
   ABSENT_BEFORE: '–',
   UNREPORTED: '?',
 };
@@ -116,6 +121,7 @@ export function CountChips({ counts }: { readonly counts: PupilCounts }): React.
   const chips: Array<{ status: PupilStatus; text: string; count: number }> = [
     { status: 'FOUND', text: t('crisis.counts.found', { count: counts.found }), count: counts.found },
     { status: 'MISSING', text: t('crisis.counts.missing', { count: counts.missing }), count: counts.missing },
+    { status: 'AWAY', text: t('crisis.counts.away', { count: counts.away }), count: counts.away },
     { status: 'ABSENT_BEFORE', text: t('crisis.counts.absentBefore', { count: counts.absentBefore }), count: counts.absentBefore },
     { status: 'UNREPORTED', text: t('crisis.counts.unreported', { count: counts.unreported }), count: counts.unreported },
   ];

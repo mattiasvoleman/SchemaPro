@@ -7,7 +7,7 @@ import { DISABLED_OPACITY, type Tone } from '../../theme/tokens';
 import { useI18n } from '../../context/LocaleContext';
 import { useCrisis } from '../../hooks/useCrisis';
 import { formatTime, formatTimeRange } from '../../i18n/format';
-import { foundHereSorted, pupilName, type AlarmBlock, type FoundHere, type MyCall, type PupilView } from '../../services/crisis';
+import { foundHereSorted, foundPlace, pupilName, waitingKey, type AlarmBlock, type FoundHere, type MyCall, type PupilView } from '../../services/crisis';
 import type { CrisisMarkState } from '../../types';
 import { AlarmBanner, CountChips, STATUS_GLYPH, STATUS_TONE, WAITING_GLYPH, ageText, callTitle } from './crisisParts';
 import { FoundHerePicker } from './FoundHerePicker';
@@ -21,9 +21,11 @@ import { FoundHerePicker } from './FoundHerePicker';
 // gateway has it (hooks/useCrisis.ts, services/crisisQueue.ts).
 //
 // A pupil the teacher finds who is on none of their lists is said with one
-// button per alarm ("Hittat en elev som inte står på listan"), a picker over the
-// school's other pupils (FoundHerePicker), and the pupil then shows under the
-// group as "Hittade hos dig", with a clock until the gateway has it.
+// button per alarm ("Hittat en elev som inte står på listan"), a search of the
+// school's other pupils at the gateway (FoundHerePicker), and the pupil then shows
+// under the group as "Hittade hos dig" (a teacher with no group right now: under
+// the alarm, "Hittade av dig"), with a clock until the gateway has it. While the
+// alarm is going each of them can be taken back ("Ta tillbaka").
 //
 // A tap target is 52 pt, above the 48 the platforms ask for: this is used
 // standing, in a crowd, on a cold hand.
@@ -34,11 +36,14 @@ type Row =
   | { readonly key: string; readonly kind: 'CALL'; readonly block: AlarmBlock; readonly call: MyCall }
   | { readonly key: string; readonly kind: 'PUPIL'; readonly block: AlarmBlock; readonly call: MyCall; readonly pupil: PupilView }
   | { readonly key: string; readonly kind: 'HERE_HEADER'; readonly block: AlarmBlock; readonly call: MyCall }
-  | { readonly key: string; readonly kind: 'HERE'; readonly block: AlarmBlock; readonly call: MyCall; readonly found: FoundHere };
+  | { readonly key: string; readonly kind: 'HERE'; readonly block: AlarmBlock; readonly call: MyCall; readonly found: FoundHere }
+  | { readonly key: string; readonly kind: 'FREE_HEADER'; readonly block: AlarmBlock }
+  | { readonly key: string; readonly kind: 'FREE'; readonly block: AlarmBlock; readonly found: FoundHere };
 
 function rowsOf(blocks: readonly AlarmBlock[]): Row[] {
   return blocks.flatMap((block): Row[] => [
     { key: `alarm:${block.key}`, kind: 'ALARM', block },
+    ...freeRowsOf(block),
     ...block.calls.flatMap((call): Row[] => [
       { key: `call:${block.key}:${call.id}`, kind: 'CALL', block, call },
       ...call.pupils.map((pupil): Row => ({ key: `pupil:${block.key}:${call.id}:${pupil.studentId}`, kind: 'PUPIL', block, call, pupil })),
@@ -52,12 +57,27 @@ function hereRowsOf(block: AlarmBlock, call: MyCall): Row[] {
   if (call.foundHere.length === 0) return [];
   return [
     { key: `here:${block.key}:${call.id}`, kind: 'HERE_HEADER', block, call },
-    ...foundHereSorted(call).map((found): Row => ({ key: `found:${block.key}:${call.id}:${found.studentId}`, kind: 'HERE', block, call, found })),
+    ...foundHereSorted(call.foundHere).map((found): Row => ({ key: `found:${block.key}:${call.id}:${found.studentId}`, kind: 'HERE', block, call, found })),
   ];
 }
 
-/** Whether a teacher can say "found with me" in an alarm: the gateway's list, still open, with a group of theirs. */
-const canFindElsewhere = (block: AlarmBlock): boolean => !block.local && block.endedAt === null && block.calls.length > 0;
+/** The pupils a teacher with no group found, under the alarm; nothing when there are none. */
+function freeRowsOf(block: AlarmBlock): Row[] {
+  if (block.foundFree.length === 0) return [];
+  return [
+    { key: `free:${block.key}`, kind: 'FREE_HEADER', block },
+    ...foundHereSorted(block.foundFree).map((found): Row => ({ key: `free:${block.key}:${found.studentId}`, kind: 'FREE', block, found })),
+  ];
+}
+
+/**
+ * Whether a teacher can say "found with me" in an alarm: the gateway's list, still open. A teacher with no
+ * group right now can too: the pupil is then found in the alarm, not with a group.
+ */
+const canFindElsewhere = (block: AlarmBlock): boolean => !block.local && block.endedAt === null;
+
+/** Whether a pupil found with the teacher can be taken back: while the alarm is going, and not on a list the phone built. */
+const canRetract = (block: AlarmBlock): boolean => canFindElsewhere(block);
 
 export function CrisisTeacherView({ gutter }: { readonly gutter: number }): React.JSX.Element {
   const { colors } = useAppTheme();
@@ -198,7 +218,30 @@ export function CrisisTeacherView({ gutter }: { readonly gutter: number }): Reac
                 </View>
               );
             case 'HERE':
-              return <FoundHereRow found={item.found} waiting={state.waiting.has(`${item.call.id}:${item.found.studentId}`)} />;
+              return (
+                <FoundHereRow
+                  found={item.found}
+                  waiting={state.waiting.has(waitingKey(item.call.id, item.found.studentId))}
+                  onRetract={canRetract(item.block) ? () => void state.retractFoundHere({ call: item.call }, item.found.studentId) : null}
+                />
+              );
+            case 'FREE_HEADER':
+              return (
+                <View style={styles.hereHeader}>
+                  <Text style={styles.hereTitle} accessibilityRole="header">
+                    {t('crisis.foundHere.freeTitle', { count: item.block.foundFree.length })}
+                  </Text>
+                  <Text style={styles.callMeta}>{t('crisis.foundHere.freeTitleHint')}</Text>
+                </View>
+              );
+            case 'FREE':
+              return (
+                <FoundHereRow
+                  found={item.found}
+                  waiting={state.waiting.has(waitingKey(foundPlace(item.block.key, null), item.found.studentId))}
+                  onRetract={canRetract(item.block) ? () => void state.retractFoundHere({ alarmId: item.block.key }, item.found.studentId) : null}
+                />
+              );
             case 'PUPIL':
               return (
                 <PupilRow
@@ -222,9 +265,9 @@ export function CrisisTeacherView({ gutter }: { readonly gutter: number }): Reac
         <FoundHerePicker
           block={picking}
           onClose={() => setPickingKey(null)}
-          onPick={(call, pupil) => {
+          onPick={(target, pupil) => {
             setPickingKey(null);
-            void state.markFoundHere(call, pupil);
+            void state.markFoundHere(target, pupil);
           }}
         />
       ) : null}
@@ -341,20 +384,29 @@ function PupilRow({
 
 /**
  * A pupil found with this teacher who is on another list: the name, the class, the state in words with its
- * glyph (and the clock while the gateway has not got the mark). No buttons: only "found" is ever said of them.
+ * glyph (and the clock while the gateway has not got the mark). Not found or missing buttons: only "found" is
+ * ever said of them. While the alarm is going, "Ta tillbaka" takes them back (the pupil is unmarked again).
  */
-function FoundHereRow({ found, waiting }: { readonly found: FoundHere; readonly waiting: boolean }): React.JSX.Element {
+function FoundHereRow({
+  found,
+  waiting,
+  onRetract,
+}: {
+  readonly found: FoundHere;
+  readonly waiting: boolean;
+  readonly onRetract: (() => void) | null;
+}): React.JSX.Element {
   const { colors } = useAppTheme();
   const styles = useStyles();
   const { t } = useI18n();
   const name = pupilName(found) || t('common.noValue');
   return (
-    <View
-      style={[styles.pupil, { borderLeftColor: colors.success }]}
-      accessible
-      accessibilityLabel={t(waiting ? 'crisis.foundHere.rowWaitingA11y' : 'crisis.foundHere.rowA11y', { name })}
-    >
-      <View style={styles.pupilInfo}>
+    <View style={[styles.pupil, { borderLeftColor: colors.success }]}>
+      <View
+        style={styles.pupilInfo}
+        accessible
+        accessibilityLabel={t(waiting ? 'crisis.foundHere.rowWaitingA11y' : 'crisis.foundHere.rowA11y', { name })}
+      >
         <Text style={styles.pupilName} numberOfLines={2}>
           {name}
         </Text>
@@ -362,6 +414,17 @@ function FoundHereRow({ found, waiting }: { readonly found: FoundHere; readonly 
         <Text style={[styles.pupilStatus, { color: colors.success }]}>{`${STATUS_GLYPH.FOUND} ${t('crisis.foundHere.row')}`}</Text>
         {waiting ? <Text style={[styles.pupilWaiting, { color: colors.warning }]}>{`${WAITING_GLYPH} ${t('crisis.waitingRow')}`}</Text> : null}
       </View>
+      {onRetract ? (
+        <TouchableOpacity
+          style={styles.retract}
+          onPress={onRetract}
+          hitSlop={{ top: 4, bottom: 4, left: 2, right: 2 }}
+          accessibilityRole="button"
+          accessibilityLabel={t('crisis.foundHere.retractA11y', { name })}
+        >
+          <Text style={styles.retractText}>{t('crisis.foundHere.retract')}</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -453,6 +516,18 @@ const useStyles = makeStyles((c) => ({
     paddingHorizontal: 16,
   },
   findElsewhereText: { color: c.primary, fontSize: 16, fontWeight: '800', textAlign: 'center' },
+  retract: {
+    minWidth: 92,
+    minHeight: 52,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: c.borderStrong,
+    backgroundColor: c.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  retractText: { fontSize: 15, fontWeight: '800', color: c.text },
   hereHeader: { marginTop: 14 },
   hereTitle: { fontSize: 16, fontWeight: '800', color: c.text },
   pupil: {

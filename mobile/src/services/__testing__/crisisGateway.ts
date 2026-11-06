@@ -40,8 +40,12 @@ export const gateway = {
   mine: empty as Handler,
   marks: ((marks: Array<{ id: string }>) => ({ status: 200, body: { stored: marks.length, duplicates: 0, unresolved: [] } })) as Handler<[Array<{ id: string }>]>,
   alarms: (() => ({ status: 200, body: [] })) as Handler,
+  /** The search for "found with me": the alarm and the text asked for. */
+  pupils: (() => ({ status: 200, body: [] })) as Handler<[string, string]>,
   detail: empty as Handler<[string]>,
   start: empty as Handler<[{ kind: string; mode: string }]>,
+  /** The administration's marks on an alarm (POST /alarms/:id/marks). */
+  adminMarks: ((_alarm: string, marks: Array<{ id: string }>) => ({ status: 200, body: { stored: marks.length, duplicates: 0, unresolved: [] } })) as Handler<[string, Array<{ id: string }>]>,
   end: empty as Handler<[string]>,
   fetch: jest.fn(),
 
@@ -62,8 +66,10 @@ export const gateway = {
     this.mine = empty;
     this.marks = (marks) => ({ status: 200, body: { stored: marks.length, duplicates: 0, unresolved: [] } });
     this.alarms = () => ({ status: 200, body: [] });
+    this.pupils = () => ({ status: 200, body: [] });
     this.detail = empty;
     this.start = empty;
+    this.adminMarks = (_alarm, marks) => ({ status: 200, body: { stored: marks.length, duplicates: 0, unresolved: [] } });
     this.end = empty;
     this.fetch.mockReset();
     this.fetch.mockImplementation(async (url: string, init: RequestInit = {}) => {
@@ -86,8 +92,11 @@ export const gateway = {
   async route(method: string, path: string, body: Record<string, unknown> | undefined): Promise<Answer> {
     if (method === 'GET' && path === '/api/v1/crisis/mine') return this.mine();
     if (method === 'POST' && path === '/api/v1/crisis/mine/marks') return this.marks((body?.['marks'] ?? []) as Array<{ id: string }>);
+    if (method === 'POST' && path === '/api/v1/crisis/mine/pupils') return this.pupils(String(body?.['alarmId'] ?? ''), String(body?.['q'] ?? ''));
     if (method === 'GET' && path.startsWith('/api/v1/crisis/alarms?')) return this.alarms();
     if (method === 'POST' && path === '/api/v1/crisis/alarms') return this.start(body as { kind: string; mode: string });
+    const adminMarks = /^\/api\/v1\/crisis\/alarms\/([^/]+)\/marks$/.exec(path);
+    if (method === 'POST' && adminMarks) return this.adminMarks(decodeURIComponent(adminMarks[1]!), (body?.['marks'] ?? []) as Array<{ id: string }>);
     const end = /^\/api\/v1\/crisis\/alarms\/([^/]+)\/end$/.exec(path);
     if (method === 'POST' && end) return this.end(decodeURIComponent(end[1]!));
     const detail = /^\/api\/v1\/crisis\/alarms\/([^/?]+)$/.exec(path);
@@ -133,7 +142,7 @@ export function call(id: string, lessonId: string | null, pupils: PupilView[], o
   };
 }
 
-/** A pupil of the school on none of the teacher's lists: who "found with me" is said of. */
+/** A pupil of the school on none of the teacher's lists, as the search for "found with me" answers. */
 export function other(id: string, first: string, last: string, className: string | null = null): OtherPupil {
   return { studentId: id, firstName: first, lastName: last, className };
 }
@@ -156,7 +165,7 @@ export function alarm(id: string, calls: MyCall[], over: Partial<MyAlarm> = {}):
     endNote: null,
     guardiansNotifiedAt: null,
     calls,
-    others: [],
+    foundFree: [],
     ...over,
   };
 }

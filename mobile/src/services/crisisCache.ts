@@ -11,14 +11,11 @@ import type { PendingCrisisMark } from '../types';
  * the cache (clearCachedSchoolData). A list the phone cannot read, from a
  * build whose shape has since changed, is none rather than a crash on the
  * screen that is needed most. A list kept by a build that did not yet know
- * "found with me" has neither `foundHere` nor `others`: they read as empty.
- *
- * The list is one JSON text per teacher, `others` included (every other pupil
- * of the school, a hundred bytes or so each: some hundred kilobytes for a
- * school of a thousand, once per alarm), so that the picker works without a
- * network. It is written whole each time the gateway answers; the kept list
- * needs no table of its own and no schema step, and the reading above is what
- * makes an older row safe.
+ * "found with me" has no `foundHere`, no `foundFree` and no `away` in its
+ * figures: they read as empty and nought. One kept by a build that held every
+ * other pupil of the school (`others`) is read without them: the list is the
+ * teacher's own groups and the pupils they found, and nothing of the school
+ * beyond that is kept on the phone; the picker asks the gateway.
  */
 
 export interface CachedCrisis {

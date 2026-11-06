@@ -71,6 +71,17 @@ const GUARDIAN = {
 /** Plugins that write a Face ID purpose text of their own (an English default) unless told not to. */
 const FACE_ID_PLUGINS: readonly string[] = ['expo-secure-store', 'expo-local-authentication'];
 
+/**
+ * Time-sensitive notifications (iOS). Krisläge's alarm push goes out with interruptionLevel
+ * "time-sensitive" (the gateway's expo-push.client), which iOS honours only for an app that carries this entitlement; without it
+ * the alarm is an ordinary banner that a Focus or the notification summary can hold back. It asks the person
+ * for nothing, and the person can still turn it off for the app in iOS Settings. It is Rastra's alone: the
+ * guardian app is never sent an alarm. Declared here, with the identity, rather than in app.json, so that
+ * the guardian build carries none; EAS syncs the capability to the App ID when it builds with its managed
+ * credentials, and nothing about credentials or signing is set here.
+ */
+const TIME_SENSITIVE_ENTITLEMENT = 'com.apple.developer.usernotifications.time-sensitive';
+
 /** What expo-local-authentication's library manifest asks for on Android. */
 const BIOMETRIC_PERMISSIONS: readonly string[] = ['android.permission.USE_BIOMETRIC', 'android.permission.USE_FINGERPRINT'];
 
@@ -209,6 +220,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     ios: {
       ...config.ios,
       bundleIdentifier: `${identity.ios}${suffix.id}`,
+      ...(guardian ? {} : { entitlements: { ...config.ios?.entitlements, [TIME_SENSITIVE_ENTITLEMENT]: true } }),
       infoPlist: variant === 'development' ? { ...infoPlist, NSLocalNetworkUsageDescription: DEV_LOCAL_NETWORK_TEXT } : infoPlist,
     },
     android: {

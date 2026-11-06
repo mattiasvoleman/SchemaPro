@@ -340,7 +340,7 @@ describe('handleCrisisPush: a push is put to the gateway before it is believed',
 describe('needsLocalList', () => {
   const alarm = (startedAt: number): MyAlarm => ({
     id: 'a1', kind: 'EVACUATION', mode: 'LIVE', startedAt: new Date(startedAt).toISOString(), startedBy: null, endedAt: null,
-    endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [], others: [],
+    endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [], foundFree: [],
   });
   const list = (asOf: number, ...alarms: MyAlarm[]): MyCrisisResponse => ({ asOf: new Date(asOf).toISOString(), alarms });
   const told = { alarmAt: T0, endedAt: null };
@@ -409,7 +409,7 @@ describe('the kept list', () => {
   const response: MyCrisisResponse = {
     asOf: '2027-01-12T09:10:00.000Z',
     alarms: [
-      { id: 'a1', kind: 'EVACUATION', mode: 'LIVE', startedAt: '2027-01-12T09:05:00.000Z', startedBy: null, endedAt: null, endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [call], others: [] },
+      { id: 'a1', kind: 'EVACUATION', mode: 'LIVE', startedAt: '2027-01-12T09:05:00.000Z', startedBy: null, endedAt: null, endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [call], foundFree: [] },
     ],
   };
 
@@ -439,31 +439,42 @@ describe('the kept list', () => {
     wait.mockRestore();
   });
 
-  it('reads a list kept before "found with me" with neither `foundHere` nor `others` as lists that are empty', async () => {
-    const before = JSON.parse(JSON.stringify(response)) as { alarms: Array<{ others?: unknown; calls: Array<{ foundHere?: unknown }> }> };
-    delete before.alarms[0]!.others;
+  it('reads a list kept before "found with me" and "not in the building" with their lists empty and their figure nought', async () => {
+    const before = JSON.parse(JSON.stringify(response)) as { alarms: Array<{ foundFree?: unknown; calls: Array<{ foundHere?: unknown; counts: Record<string, number> }> }> };
+    delete before.alarms[0]!.foundFree;
     delete before.alarms[0]!.calls[0]!.foundHere;
+    delete before.alarms[0]!.calls[0]!.counts['away'];
     fake.lists.set('t-1', { asOf: response.asOf, payload: JSON.stringify(before) });
     const kept = await readCachedCrisis('t-1');
-    expect(kept?.response.alarms[0]!.others).toEqual([]);
+    expect(kept?.response.alarms[0]!.foundFree).toEqual([]);
     expect(kept?.response.alarms[0]!.calls[0]!.foundHere).toEqual([]);
+    expect(kept?.response.alarms[0]!.calls[0]!.counts.away).toBe(0);
   });
 
-  it('keeps the alarm’s other pupils and the pupils found here with the list, for the picker without a network', async () => {
-    const withOthers: MyCrisisResponse = {
+  it('keeps the pupils found with the teacher, on a call and on the alarm, and nothing of the school beyond the teacher’s groups', async () => {
+    const found = (id: string) => ({ studentId: id, firstName: 'Maj', lastName: 'Moa', className: '7B', markedAt: '2027-01-12T09:08:00.000Z' });
+    const withFound: MyCrisisResponse = {
       ...response,
+      alarms: [{ ...response.alarms[0]!, calls: [{ ...call, foundHere: [found('s7')] }], foundFree: [found('s8')] }],
+    };
+    await saveCachedCrisis('t-1', withFound);
+    expect((await readCachedCrisis('t-1'))?.response).toEqual(withFound);
+    // Some hundred bytes a pupil found, and no list of the school’s pupils: the list stays small.
+    expect(fake.lists.get('t-1')!.payload.length).toBeLessThan(3_000);
+  });
+
+  it('lets go of the pupils of the whole school that an earlier build kept with the list, and does not write them back', async () => {
+    const earlier = {
+      asOf: response.asOf,
       alarms: [
-        {
-          ...response.alarms[0]!,
-          calls: [{ ...call, foundHere: [{ studentId: 's7', firstName: 'Maj', lastName: 'Moa', className: '7B', markedAt: '2027-01-12T09:08:00.000Z' }] }],
-          others: Array.from({ length: 1000 }, (_, i) => ({ studentId: `o${i}`, firstName: `Elev${i}`, lastName: 'Test', className: `${(i % 9) + 1}A` })),
-        },
+        { ...response.alarms[0], others: Array.from({ length: 1000 }, (_, i) => ({ studentId: `o${i}`, firstName: `Elev${i}`, lastName: 'Test', className: '7A' })) },
       ],
     };
-    await saveCachedCrisis('t-1', withOthers);
-    expect((await readCachedCrisis('t-1'))?.response).toEqual(withOthers);
-    // A school of a thousand is some hundred kilobytes of JSON, written once per answer.
-    expect(fake.lists.get('t-1')!.payload.length).toBeLessThan(150_000);
+    fake.lists.set('t-1', { asOf: response.asOf, payload: JSON.stringify(earlier) });
+    const kept = await readCachedCrisis('t-1');
+    expect(kept?.response.alarms[0]).not.toHaveProperty('others');
+    await saveCachedCrisis('t-1', kept!.response);
+    expect(fake.lists.get('t-1')!.payload).not.toContain('Elev999');
   });
 
   it('is none, not a crash, when what is kept cannot be read', async () => {

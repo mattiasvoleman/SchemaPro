@@ -53,25 +53,47 @@ export interface PendingAttendanceRecord {
 
 // ─── Krisläge ─────────────────────────────────────────────────────────────────
 
+/** What a teacher can say of a pupil on their list. (Not in the building is the administration's to say.) */
 export type CrisisMarkState = 'FOUND' | 'MISSING';
 
 /**
+ * What a queued mark says: found or missing, or RETRACTED, the taking back of the
+ * teacher's own "found with me" (the pupil is unmarked again on the gateway).
+ */
+export type QueuedMarkState = CrisisMarkState | 'RETRACTED';
+
+/** A pupil picked in the search for "found with me", for the pending row alone: the queue is not a list of pupils. */
+export interface PendingCrisisPupil {
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly className: string | null;
+}
+
+/**
  * A mark in the local Krisläge queue that has not yet been sent. It names its
- * group by the call (a list the gateway gave the phone) or by the lesson (a
- * list the phone built from its own cache), never both: the gateway refuses a
- * mark that names both or neither.
+ * group by the call (a list the gateway gave the phone), by the lesson (a
+ * list the phone built from its own cache) or, for a teacher with no group right
+ * now who found a pupil, by the alarm: exactly one of the three, as the gateway
+ * refuses a mark that names more or none.
  */
 export interface PendingCrisisMark {
   /** The phone's own id: sending it twice stores it once. */
   readonly id: string;
   readonly callId: string | null;
   readonly lessonId: string | null;
+  /** The alarm itself, for "found with me" with no group. Absent reads as null. */
+  readonly alarmId?: string | null;
   readonly studentId: string;
-  readonly state: CrisisMarkState;
+  readonly state: QueuedMarkState;
   /** When the teacher tapped, by the phone's clock. */
   readonly at: string; // ISO 8601
   readonly teacherId: string;
   readonly retryCount: number;
+  /**
+   * The pupil's name and class, kept only while the mark is unsent so that the pending row can name
+   * them (the lists the phone holds do not): the queue drops them when the gateway has the mark.
+   */
+  readonly pupil?: PendingCrisisPupil | null;
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────

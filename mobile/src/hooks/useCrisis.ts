@@ -26,6 +26,7 @@ import {
   subscribeAlarmHint,
 } from '../services/crisisOffline';
 import {
+  cancelQueuedFound,
   flushCrisisQueue,
   newCrisisMark,
   queueCrisisMarks,
@@ -56,11 +57,16 @@ import type { CrisisMarkState, PendingCrisisMark } from '../types';
  * queue: after the tap, and on the timer below while this screen is open.
  *
  * A PUPIL WHO IS ON NO LIST. markFoundHere() says "found with me" for a pupil
- * from the alarm's `others`: the same queue, the same route, a FOUND mark naming
- * the teacher's call and the pupil. Only FOUND: a pupil who is not on the list
- * cannot be missing from it, the gateway refuses MISSING for one, and mark()
- * therefore never writes it. The pupil shows in the call's "Hittade hos dig"
- * (crisis.ts overlayMarks) with a clock until the gateway has the mark.
+ * the teacher picked in the search (services/crisis.ts searchOtherPupils, which the
+ * picker asks the gateway for as the teacher types; nothing of it is kept here):
+ * the same queue, the same route, a FOUND mark naming the teacher's call, or,
+ * for a teacher with no group right now, the alarm. Only FOUND: a pupil who is
+ * not on the list cannot be missing from it, the gateway refuses MISSING for one,
+ * and mark() therefore never writes it. The pupil shows under the call ("Hittade
+ * hos dig"), or under the alarm ("Hittade av dig"), with a clock until the gateway
+ * has the mark (crisis.ts overlayMarks). retractFoundHere() takes the pupil back
+ * while the alarm is going: a RETRACTED mark, and the row is gone at once; a found
+ * that has not left the phone is simply deleted, and nothing is sent about it.
  *
  * READ AGAIN. When the tab is shown, when the app returns to the front, when the
  * network returns, when the gateway says an alarm began or ended
@@ -97,13 +103,18 @@ export interface CrisisState {
   readonly saveFailed: boolean;
   readonly refresh: () => void;
   readonly mark: (call: MyCall, studentId: string, state: CrisisMarkState) => Promise<void>;
-  /** "Found with me": a pupil who is on none of the teacher's lists, found by this teacher on this call. */
-  readonly markFoundHere: (call: MyCall, pupil: OtherPupil) => Promise<void>;
+  /** "Found with me": a pupil who is on none of the teacher's lists, found by this teacher on this call (or, with no group, in this alarm). */
+  readonly markFoundHere: (target: FoundTarget, pupil: OtherPupil) => Promise<void>;
+  /** Takes a pupil found with the teacher back, while the alarm is going. */
+  readonly retractFoundHere: (target: FoundTarget, studentId: string) => Promise<void>;
   readonly markAllFound: (call: MyCall) => Promise<void>;
   readonly dismissDropped: () => void;
 }
 
 const NO_CALLS: readonly MyCall[] = [];
+
+/** Where a pupil is found: with one of the teacher's groups, or, with no group right now, in the alarm. */
+export type FoundTarget = { readonly call: MyCall } | { readonly alarmId: string };
 
 export function useCrisis(enabled: boolean): CrisisState {
   const { authState } = useAuth();
@@ -334,18 +345,54 @@ export function useCrisis(enabled: boolean): CrisisState {
     [teacherId, write],
   );
 
+  /** The block of the screen a target is in (the alarm of its call, or the alarm itself). */
+  const blockOf = useCallback(
+    (target: FoundTarget): AlarmBlock | undefined =>
+      blocksRef.current.find((block) => ('alarmId' in target ? block.key === target.alarmId : block.calls.some((candidate) => candidate.id === target.call.id))),
+    [],
+  );
+
   const markFoundHere = useCallback(
-    async (call: MyCall, pupil: OtherPupil): Promise<void> => {
+    async (target: FoundTarget, pupil: OtherPupil): Promise<void> => {
       if (!teacherId) return;
-      // A list the phone built has no names to pick from, and its marks name a lesson, not a call.
-      if (isLocalCall(call)) return;
-      const shown = blocksRef.current.flatMap((block) => block.calls).find((candidate) => candidate.id === call.id) ?? call;
+      const block = blockOf(target);
+      // A list the phone built has no search to pick from, and its marks name a lesson, not a call.
+      if (block?.local || ('call' in target && isLocalCall(target.call))) return;
+      const who = { firstName: pupil.firstName, lastName: pupil.lastName, className: pupil.className };
+      const notBefore = hintRef.current?.alarmAt ?? null;
+      if ('alarmId' in target) {
+        if (block?.foundFree.some((held) => held.studentId === pupil.studentId)) return;
+        await write([newCrisisMark({ alarmId: target.alarmId, studentId: pupil.studentId, state: 'FOUND', teacherId, pupil: who, notBefore })]);
+        return;
+      }
+      const shown = block?.calls.find((candidate) => candidate.id === target.call.id) ?? target.call;
       // Already found with this teacher, or a pupil of this very list: no news to send.
       if (shown.foundHere.some((held) => held.studentId === pupil.studentId)) return;
-      if (shown.pupils.some((held) => held.studentId === pupil.studentId)) return mark(call, pupil.studentId, 'FOUND');
-      await write([newCrisisMark({ call, studentId: pupil.studentId, state: 'FOUND', teacherId, notBefore: hintRef.current?.alarmAt ?? null })]);
+      if (shown.pupils.some((held) => held.studentId === pupil.studentId)) return mark(target.call, pupil.studentId, 'FOUND');
+      await write([newCrisisMark({ call: target.call, studentId: pupil.studentId, state: 'FOUND', teacherId, pupil: who, notBefore })]);
     },
-    [teacherId, write, mark],
+    [teacherId, write, mark, blockOf],
+  );
+
+  const retractFoundHere = useCallback(
+    async (target: FoundTarget, studentId: string): Promise<void> => {
+      if (!teacherId) return;
+      const block = blockOf(target);
+      // Only while the alarm is going, and not on a list the phone built.
+      if (!block || block.local || block.endedAt !== null) return;
+      const group = 'alarmId' in target ? { alarmId: target.alarmId } : { callId: target.call.id };
+      // What the gateway holds (the list as read, with the marks it has taken written in), not what is shown with the queue on it.
+      const read = responseRef.current?.alarms.find((alarm) => alarm.id === block.key);
+      const held = 'alarmId' in target ? read?.foundFree : read?.calls.find((candidate) => candidate.id === target.call.id)?.foundHere;
+      const onGateway = held?.some((entry) => entry.studentId === studentId) ?? false;
+      // A found that never left the phone is deleted, and nothing is sent; otherwise it is taken back with a mark.
+      if (!onGateway && (await cancelQueuedFound(teacherId, group, studentId))) {
+        await reloadPending();
+        return;
+      }
+      await write([newCrisisMark({ ...('alarmId' in target ? { alarmId: target.alarmId } : { call: target.call }), studentId, state: 'RETRACTED', teacherId })]);
+    },
+    [teacherId, write, blockOf, reloadPending],
   );
 
   const markAllFound = useCallback(
@@ -377,6 +424,7 @@ export function useCrisis(enabled: boolean): CrisisState {
     refresh,
     mark,
     markFoundHere,
+    retractFoundHere,
     markAllFound,
     dismissDropped,
   };

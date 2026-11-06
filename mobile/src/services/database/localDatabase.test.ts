@@ -75,6 +75,9 @@ beforeEach(async () => {
     withTransactionAsync,
   } as unknown as SQLite.SQLiteDatabase);
   await initDatabase();
+  // What the opening asked of the store (the shape of the alarm queue) is not what a test asks it.
+  getAllAsync.mockClear();
+  withTransactionAsync.mockClear();
 });
 
 describe('the offline attendance queue', () => {
@@ -242,14 +245,14 @@ describe('the schema', () => {
     expect(lists.match(/^\s+\w+\s+\w+/gm)!.map((line) => line.trim().split(/\s+/)[0])).toEqual(['teacher_id', 'as_of', 'payload']);
   });
 
-  it('keeps the queue’s columns, a mark’s state to two values and its group to a call or a lesson, not both', async () => {
+  it('keeps the queue’s columns, a mark’s state to found, missing or taken back, and its group to one of a call, a lesson and an alarm', async () => {
     const schema = (execAsync.mock.calls as unknown as Array<[string]>).map(([sql]) => String(sql)).join('\n');
     const queue = /CREATE TABLE IF NOT EXISTS crisis_queue \(([\s\S]*?)\n  \);/.exec(schema)![1]!;
-    for (const column of ['id', 'call_id', 'lesson_id', 'student_id', 'state', 'at', 'teacher_id', 'retry_count', 'is_synced']) {
+    for (const column of ['id', 'call_id', 'lesson_id', 'alarm_id', 'student_id', 'state', 'at', 'teacher_id', 'retry_count', 'is_synced', 'first_name', 'last_name', 'class_name']) {
       expect(queue).toMatch(new RegExp(`\\b${column}\\b`));
     }
-    expect(queue).toContain("CHECK(state IN ('FOUND', 'MISSING'))");
-    expect(queue).toContain('CHECK ((call_id IS NULL) <> (lesson_id IS NULL))');
+    expect(queue).toContain("CHECK(state IN ('FOUND', 'MISSING', 'RETRACTED'))");
+    expect(queue).toContain('CHECK ((call_id IS NOT NULL) + (lesson_id IS NOT NULL) + (alarm_id IS NOT NULL) = 1)');
   });
 
   it('says when the database is open, at once if it is, and to a caller that came before it was', async () => {
@@ -284,14 +287,23 @@ describe('the alarm’s queue', () => {
   });
 
   it('writes every tap in one transaction, a row each, by the phone’s own id', async () => {
-    await enqueueCrisisMarks([mark('m1'), mark('m2', { callId: null, lessonId: 'l1', state: 'MISSING' })]);
+    await enqueueCrisisMarks([
+      mark('m1'),
+      mark('m2', { callId: null, lessonId: 'l1', state: 'MISSING' }),
+      mark('m3', { callId: null, alarmId: 'a1', pupil: { firstName: 'Åsa', lastName: 'Lind', className: '7B' } }),
+      mark('m4', { state: 'RETRACTED' }),
+    ]);
 
     expect(withTransactionAsync).toHaveBeenCalledTimes(1);
     const inserts = runAsync.mock.calls as unknown as Array<[string, unknown[]]>;
-    expect(inserts).toHaveLength(2);
+    expect(inserts).toHaveLength(4);
     expect(inserts[0]![0].replace(/\s+/g, ' ')).toContain('INSERT OR REPLACE INTO crisis_queue');
-    expect(inserts[0]![1]).toEqual(['m1', 'c1', null, 's1', 'FOUND', '2027-01-12T09:15:00.000Z', 'teacher-a']);
-    expect(inserts[1]![1]).toEqual(['m2', null, 'l1', 's1', 'MISSING', '2027-01-12T09:15:00.000Z', 'teacher-a']);
+    const at = '2027-01-12T09:15:00.000Z';
+    expect(inserts[0]![1]).toEqual(['m1', 'c1', null, null, 's1', 'FOUND', at, 'teacher-a', null, null, null]);
+    expect(inserts[1]![1]).toEqual(['m2', null, 'l1', null, 's1', 'MISSING', at, 'teacher-a', null, null, null]);
+    // The alarm in place of a call, and the name of the pupil picked in the search for the pending row.
+    expect(inserts[2]![1]).toEqual(['m3', null, null, 'a1', 's1', 'FOUND', at, 'teacher-a', 'Åsa', 'Lind', '7B']);
+    expect(inserts[3]![1]).toEqual(['m4', 'c1', null, null, 's1', 'RETRACTED', at, 'teacher-a', null, null, null]);
   });
 
   it('writes nothing for no taps', async () => {
@@ -303,6 +315,7 @@ describe('the alarm’s queue', () => {
     // The gateway stamps the sender from the bearer: a colleague's marks sent under this
     // teacher's token would be signed by someone who was never there.
     rows.push({ id: 'm1', call_id: 'c1', lesson_id: null, student_id: 's1', state: 'FOUND', at: 'x', teacher_id: 'teacher-a', retry_count: 2 });
+    rows.push({ id: 'm2', call_id: null, lesson_id: null, alarm_id: 'a1', student_id: 's2', state: 'FOUND', at: 'y', teacher_id: 'teacher-a', retry_count: 0, first_name: 'Åsa', last_name: 'Lind', class_name: '7B' });
     const marks = await getPendingCrisisMarks('teacher-a');
 
     const [sql, params] = lastQuery();
@@ -310,7 +323,13 @@ describe('the alarm’s queue', () => {
     expect(sql).toContain('teacher_id = ?');
     expect(sql).toContain('ORDER BY at ASC');
     expect(params).toEqual(['teacher-a']);
-    expect(marks).toEqual([{ id: 'm1', callId: 'c1', lessonId: null, studentId: 's1', state: 'FOUND', at: 'x', teacherId: 'teacher-a', retryCount: 2 }]);
+    expect(marks).toEqual([
+      { id: 'm1', callId: 'c1', lessonId: null, alarmId: null, studentId: 's1', state: 'FOUND', at: 'x', teacherId: 'teacher-a', retryCount: 2, pupil: null },
+      {
+        id: 'm2', callId: null, lessonId: null, alarmId: 'a1', studentId: 's2', state: 'FOUND', at: 'y', teacherId: 'teacher-a', retryCount: 0,
+        pupil: { firstName: 'Åsa', lastName: 'Lind', className: '7B' },
+      },
+    ]);
   });
 
   it('counts only this teacher’s unsent rows', async () => {
@@ -326,7 +345,11 @@ describe('the alarm’s queue', () => {
 
   it('marks sent rows by id, counts a refusal, deletes the dropped, and forgets old sent rows', async () => {
     await markCrisisMarksSynced(['a', 'b']);
-    expect(runAsync).toHaveBeenLastCalledWith('UPDATE crisis_queue SET is_synced = 1 WHERE id IN (?, ?)', ['a', 'b']);
+    // The name of a pupil picked in the search goes with the sending: the gateway holds it, the phone does not.
+    expect(runAsync).toHaveBeenLastCalledWith(
+      'UPDATE crisis_queue SET is_synced = 1, first_name = NULL, last_name = NULL, class_name = NULL WHERE id IN (?, ?)',
+      ['a', 'b'],
+    );
     await incrementCrisisRetry(['a']);
     expect(runAsync).toHaveBeenLastCalledWith('UPDATE crisis_queue SET retry_count = retry_count + 1 WHERE id IN (?)', ['a']);
     await deleteCrisisMarks(['a', 'b', 'c']);
@@ -432,5 +455,46 @@ describe('the list the phone builds', () => {
     getAllAsync.mockClear();
     await expect(getRegisterAbsentees('teacher-a', [])).resolves.toEqual(new Map());
     expect(getAllAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('a queue made before a teacher with no group could say they found a pupil', () => {
+  const oldQueue = ['id', 'call_id', 'lesson_id', 'student_id', 'state', 'at', 'teacher_id', 'retry_count', 'is_synced'].map((name) => ({ name }));
+  const rebuilds = (): string[] => (execAsync.mock.calls as unknown as Array<[string]>).map(([sql]) => String(sql)).filter((sql) => sql.includes('crisis_queue_before_alarm_marks'));
+
+  it('is made again beside the old one, the rows copied, the old one dropped, in one transaction', async () => {
+    execAsync.mockClear();
+    rows.push(...oldQueue);
+    await initDatabase();
+    expect(withTransactionAsync).toHaveBeenCalledTimes(1);
+    const [sql] = rebuilds();
+    const text = String(sql).replace(/\s+/g, ' ');
+    expect(text).toContain('ALTER TABLE crisis_queue RENAME TO crisis_queue_before_alarm_marks');
+    expect(text).toContain('CREATE TABLE IF NOT EXISTS crisis_queue');
+    expect(text).toContain('CHECK(state IN (\'FOUND\', \'MISSING\', \'RETRACTED\'))');
+    // Every unsent mark is carried over, with what it had.
+    expect(text).toContain(
+      'INSERT INTO crisis_queue (id, call_id, lesson_id, student_id, state, at, teacher_id, retry_count, is_synced) SELECT id, call_id, lesson_id, student_id, state, at, teacher_id, retry_count, is_synced FROM crisis_queue_before_alarm_marks',
+    );
+    expect(text.indexOf('INSERT INTO crisis_queue')).toBeLessThan(text.indexOf('DROP TABLE crisis_queue_before_alarm_marks'));
+    expect(text.indexOf('DROP TABLE crisis_queue_before_alarm_marks')).toBeLessThan(text.indexOf('CREATE INDEX IF NOT EXISTS crisis_queue_unsent'));
+    expect(text).toContain('DROP INDEX IF EXISTS crisis_queue_unsent');
+  });
+
+  it('is asked of the store by its columns, and left alone once it has the alarm’s', async () => {
+    getAllAsync.mockClear();
+    rows.push(...oldQueue, { name: 'alarm_id' }, { name: 'first_name' });
+    execAsync.mockClear();
+    await initDatabase();
+    expect(getAllAsync).toHaveBeenCalledWith('PRAGMA table_info(crisis_queue)');
+    expect(withTransactionAsync).not.toHaveBeenCalled();
+    expect(rebuilds()).toEqual([]);
+  });
+
+  it('is left alone when the store says nothing of it (a store just made)', async () => {
+    execAsync.mockClear();
+    await initDatabase();
+    expect(withTransactionAsync).not.toHaveBeenCalled();
+    expect(rebuilds()).toEqual([]);
   });
 });

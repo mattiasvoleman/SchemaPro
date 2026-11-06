@@ -4,8 +4,9 @@ import type { CalendarLesson, PendingCrisisMark } from '../../types';
  * The Krisläge half of services/database/localDatabase.ts, in memory, for the
  * tests that are about what the queue, the cache and the screen DO with it
  * rather than about its SQL (localDatabase.test.ts reads the SQL). It keeps
- * the rules the SQL keeps: a row is its id, the queue is owned and read by
- * teacher, oldest tap first, sent rows are not pending, and the hint keeps the
+ * the rules the SQL keeps: a row is its id, a mark names one of a call, a lesson
+ * or an alarm, the queue is owned and read by teacher, oldest tap first, sent
+ * rows are not pending and have lost the name of the pupil they carried, and the hint keeps the
  * latest time. Used as
  *
  *   jest.mock('../database/localDatabase', () => require('../__testing__/crisisDatabase').api);
@@ -49,11 +50,11 @@ export const api = {
   },
   // All or none, as the transaction is: a row the CHECK refuses writes nothing.
   enqueueCrisisMarks: async (marks: readonly Omit<PendingCrisisMark, 'retryCount'>[]): Promise<void> => {
-    if (marks.some((mark) => (mark.callId === null) === (mark.lessonId === null))) {
-      throw new Error('CHECK constraint failed: a mark names a call or a lesson');
+    if (marks.some((mark) => [mark.callId, mark.lessonId, mark.alarmId ?? null].filter((group) => group !== null).length !== 1)) {
+      throw new Error('CHECK constraint failed: a mark names a call, a lesson or an alarm, and one of them');
     }
     for (const mark of marks) {
-      fake.queue = [...fake.queue.filter((row) => row.id !== mark.id), { ...mark, retryCount: 0, isSynced: false }];
+      fake.queue = [...fake.queue.filter((row) => row.id !== mark.id), { ...mark, alarmId: mark.alarmId ?? null, pupil: mark.pupil ?? null, retryCount: 0, isSynced: false }];
     }
   },
   getPendingCrisisMarks: async (teacherId: string): Promise<PendingCrisisMark[]> =>
@@ -61,8 +62,9 @@ export const api = {
       .pending(teacherId)
       .map(({ isSynced: _synced, ...mark }) => mark)
       .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)),
+  // The name of a pupil picked in the search goes when the gateway has the mark.
   markCrisisMarksSynced: async (ids: readonly string[]): Promise<void> => {
-    for (const row of fake.queue) if (ids.includes(row.id)) row.isSynced = true;
+    fake.queue = fake.queue.map((row) => (ids.includes(row.id) ? { ...row, isSynced: true, pupil: null } : row));
   },
   incrementCrisisRetry: async (ids: readonly string[]): Promise<void> => {
     fake.queue = fake.queue.map((row) => (ids.includes(row.id) ? { ...row, retryCount: row.retryCount + 1 } : row));

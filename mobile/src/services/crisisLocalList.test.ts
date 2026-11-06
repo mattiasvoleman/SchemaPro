@@ -51,7 +51,7 @@ describe('localCalls: the lesson that is going on answers for its pupils', () =>
       ['a', 'Elev A', 'UNREPORTED'],
       ['b', 'Elev B', 'UNREPORTED'],
     ]);
-    expect(call!.counts).toEqual({ pupils: 2, found: 0, missing: 0, absentBefore: 0, unreported: 2 });
+    expect(call!.counts).toEqual({ pupils: 2, found: 0, missing: 0, away: 0, absentBefore: 0, unreported: 2 });
   });
 
   it('counts the start but not the end of a lesson', () => {

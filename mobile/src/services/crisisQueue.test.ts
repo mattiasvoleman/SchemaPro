@@ -5,6 +5,7 @@ import { getAccessToken } from './supabase';
 import { fake, api as database } from './__testing__/crisisDatabase';
 import { saveCachedCrisis, readCachedCrisis } from './crisisCache';
 import {
+  cancelQueuedFound,
   classifyFailure,
   flushCrisisQueue,
   newCrisisMark,
@@ -41,7 +42,7 @@ const colleague = 't-2';
 
 interface Sent {
   readonly url: string;
-  readonly marks: Array<{ id: string; callId?: string; lessonId?: string; studentId: string; state: string; at: string }>;
+  readonly marks: Array<{ id: string; callId?: string; lessonId?: string; alarmId?: string; studentId: string; state: string; at: string }>;
   readonly auth: string | undefined;
 }
 const sent: Sent[] = [];
@@ -225,7 +226,7 @@ describe('sending', () => {
       alarms: [
         {
           id: ALARM, kind: 'EVACUATION', mode: 'LIVE', startedAt: '2027-01-12T09:05:00.000Z', startedBy: null, endedAt: null,
-          endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [call], others: [],
+          endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [call], foundFree: [],
         },
       ],
     };
@@ -381,7 +382,7 @@ describe('"found with me": a mark for a pupil who is not on the call’s list', 
     expect(takeUnseenDrops()).toEqual([{ reason: 'INVALID', count: 1 }]);
   });
 
-  it('leaves the kept list as it was for a pupil the list cannot name, without a crash', async () => {
+  it('is written into the kept list by the name it carried, and the list cannot name one that came without', async () => {
     const call: MyCall = {
       id: 'c1', lessonId: 'l1', basis: 'LESSON', groupName: '7A', subjectName: 'Matematik', roomName: null,
       lessonStartsAt: '2027-01-12T09:00:00.000Z', lessonEndsAt: '2027-01-12T09:50:00.000Z', completedAt: null, colleagues: [],
@@ -394,16 +395,173 @@ describe('"found with me": a mark for a pupil who is not on the call’s list', 
       alarms: [
         {
           id: ALARM, kind: 'EVACUATION', mode: 'LIVE', startedAt: '2027-01-12T09:05:00.000Z', startedBy: null, endedAt: null,
-          endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [call],
-          others: [{ studentId: 'known', firstName: 'Kim', lastName: 'Kvist', className: '7C' }],
+          endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [call], foundFree: [],
         },
       ],
     });
-    await enqueue(foundHere('m-1', 'known'), foundHere('m-2', 'not-in-the-others'));
+    const kim = { firstName: 'Kim', lastName: 'Kvist', className: '7C' };
+    await enqueue(
+      row({ id: 'm-1', studentId: 'known', pupil: kim }),
+      row({ id: 'm-2', studentId: 'nameless' }),
+      row({ id: 'm-3', studentId: 'free', callId: null, alarmId: ALARM, pupil: { firstName: 'Fri', lastName: 'Elev', className: null } }),
+    );
     await flushCrisisQueue();
-    const kept = (await readCachedCrisis(mine))!.response.alarms[0]!.calls[0]!;
-    expect(kept.foundHere.map((f) => [f.studentId, f.firstName, f.className])).toEqual([['known', 'Kim', '7C']]);
-    expect(kept.pupils[0]!.status).toBe('UNREPORTED');
+    const kept = (await readCachedCrisis(mine))!.response.alarms[0]!;
+    expect(kept.calls[0]!.foundHere.map((f) => [f.studentId, f.firstName, f.className])).toEqual([['known', 'Kim', '7C']]);
+    expect(kept.foundFree.map((f) => [f.studentId, f.firstName])).toEqual([['free', 'Fri']]);
+    expect(kept.calls[0]!.pupils[0]!.status).toBe('UNREPORTED');
+  });
+
+  it('loses the name of the pupil it carried when the gateway has the mark, and keeps it while the mark waits', async () => {
+    await enqueue(row({ id: 'm-1', pupil: { firstName: 'Kim', lastName: 'Kvist', className: '7C' } }));
+    respond = () => 'network';
+    await flushCrisisQueue();
+    expect(fake.pending()[0]!.pupil).toEqual({ firstName: 'Kim', lastName: 'Kvist', className: '7C' });
+    respond = okFor;
+    await flushCrisisQueue();
+    expect(fake.queue.map((r) => [r.id, r.isSynced, r.pupil])).toEqual([['m-1', true, null]]);
+  });
+});
+
+describe('a teacher with no group: a found pupil is sent with the alarm in place of a call', () => {
+  const free = (id: string, studentId: string, over: Partial<PendingCrisisMark> = {}) => row({ id, studentId, callId: null, alarmId: ALARM, ...over });
+
+  it('is sent with `alarmId` and none of `callId` or `lessonId`, in the same route and the same call as any mark', async () => {
+    await enqueue(free('m-1', 's-free'), row({ id: 'm-2' }));
+    await flushCrisisQueue();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.marks[0]).toEqual({ id: 'm-1', alarmId: ALARM, studentId: 's-free', state: 'FOUND', at: expect.any(String) });
+    expect(sent[0]!.marks[1]).toMatchObject({ id: 'm-2', callId: 'c1' });
+  });
+
+  it('is the signed-in teacher’s own, like every mark: a colleague’s is neither sent, counted nor dropped', async () => {
+    await enqueue(free('m-mine', 's-1'), free('m-theirs', 's-2', { teacherId: colleague }));
+    const result = await flushCrisisQueue();
+    expect(result.sent.map((m) => m.id)).toEqual(['m-mine']);
+    expect(fake.pending(colleague).map((r) => r.id)).toEqual(['m-theirs']);
+    // Not dropped either, whatever the gateway says of the teacher’s own.
+    respond = () => ({ status: 409, body: { message: 'x', code: 'CRISIS_ALARM_ENDED' } });
+    await flushCrisisQueue();
+    expect(fake.pending(colleague)).toHaveLength(1);
+  });
+
+  it('is written as a row only if it names the alarm and nothing else', async () => {
+    await expect(enqueue(row({ id: 'm-x', callId: 'c1', alarmId: ALARM }))).rejects.toThrow('CHECK constraint');
+    await expect(enqueue(row({ id: 'm-y', callId: null, alarmId: null }))).rejects.toThrow('CHECK constraint');
+    expect(fake.queue).toEqual([]);
+  });
+
+  it('is dropped, and only it, when the gateway refuses it as CRISIS_MARK_INVALID', async () => {
+    await enqueue(row({ id: 'm-1' }), free('m-2', 'stranger'));
+    respond = (marks) =>
+      marks.some((m) => m.studentId === 'stranger')
+        ? { status: 400, body: { message: 'x', code: 'CRISIS_MARK_INVALID' } }
+        : { status: 200, body: { stored: marks.length, duplicates: 0, unresolved: [] } };
+    const result = await flushCrisisQueue();
+    expect(result.sent.map((m) => m.id)).toEqual(['m-1']);
+    expect(result.dropped).toEqual([{ reason: 'INVALID', count: 1 }]);
+  });
+});
+
+describe('taking a pupil found with me back', () => {
+  const found = (id: string, studentId: string, at: number, over: Partial<PendingCrisisMark> = {}) =>
+    row({ id, studentId, state: 'FOUND', at: new Date(T0 + at).toISOString(), ...over });
+  const back = (id: string, studentId: string, at: number, over: Partial<PendingCrisisMark> = {}) =>
+    row({ id, studentId, state: 'RETRACTED', at: new Date(T0 + at).toISOString(), ...over });
+
+  it('is sent as a mark of state RETRACTED, after the found it takes back, naming the same call', async () => {
+    await enqueue(found('m-1', 's-x', 1_000), back('m-2', 's-x', 2_000));
+    await flushCrisisQueue();
+    expect(sent[0]!.marks.map((m) => [m.id, m.state, m.callId, m.studentId])).toEqual([
+      ['m-1', 'FOUND', 'c1', 's-x'],
+      ['m-2', 'RETRACTED', 'c1', 's-x'],
+    ]);
+  });
+
+  it('is sent with the alarm, for a pupil found with no group', async () => {
+    await enqueue(back('m-1', 's-x', 1_000, { callId: null, alarmId: ALARM }));
+    await flushCrisisQueue();
+    expect(sent[0]!.marks[0]).toEqual({ id: 'm-1', alarmId: ALARM, studentId: 's-x', state: 'RETRACTED', at: expect.any(String) });
+  });
+
+  it('is dropped without a crash when there is nothing of the teacher’s to take back (CRISIS_MARK_INVALID), and the rest are sent', async () => {
+    await enqueue(row({ id: 'm-1' }), back('m-2', 'nothing-to-retract', 2_000), row({ id: 'm-3' }));
+    respond = (marks) =>
+      marks.some((m) => m.state === 'RETRACTED')
+        ? { status: 400, body: { message: 'Det finns inget att ta tillbaka.', code: 'CRISIS_MARK_INVALID' } }
+        : { status: 200, body: { stored: marks.length, duplicates: 0, unresolved: [] } };
+    const result = await flushCrisisQueue();
+    expect(result.sent.map((m) => m.id).sort()).toEqual(['m-1', 'm-3']);
+    expect(result.dropped).toEqual([{ reason: 'INVALID', count: 1 }]);
+    expect(fake.pending()).toEqual([]);
+  });
+
+  it('is kept across a WRITE_CONFLICT like any mark', async () => {
+    await enqueue(back('m-1', 's-x', 1_000));
+    respond = () => ({ status: 409, body: { message: 'x', code: 'WRITE_CONFLICT' } });
+    expect(await flushCrisisQueue()).toMatchObject({ stopped: 'RETRY', remaining: 1, dropped: [] });
+  });
+
+  describe('a found that has not left the phone', () => {
+    it('is deleted with what it was queued with, and nothing is sent about it', async () => {
+      await enqueue(found('m-1', 's-x', 1_000, { pupil: { firstName: 'Kim', lastName: 'Kvist', className: null } }), found('m-keep', 's-other', 1_500));
+      await expect(cancelQueuedFound(mine, { callId: 'c1' }, 's-x')).resolves.toBe(true);
+      expect(fake.queue.map((r) => r.id)).toEqual(['m-keep']);
+      await flushCrisisQueue();
+      expect(sent.flatMap((s) => s.marks.map((m) => m.id))).toEqual(['m-keep']);
+    });
+
+    it('takes a taking-back that was already queued with it, so that no mark is sent for a pupil the gateway never heard of', async () => {
+      await enqueue(found('m-1', 's-x', 1_000), back('m-2', 's-x', 2_000), found('m-3', 's-x', 3_000));
+      await expect(cancelQueuedFound(mine, { callId: 'c1' }, 's-x')).resolves.toBe(true);
+      expect(fake.queue).toEqual([]);
+    });
+
+    it('is deleted for the group it was found with and no other, and for the alarm for a pupil found with no group', async () => {
+      await enqueue(found('m-1', 's-x', 1_000, { callId: 'c2' }), found('m-2', 's-x', 2_000, { callId: null, alarmId: ALARM }));
+      await expect(cancelQueuedFound(mine, { callId: 'c1' }, 's-x')).resolves.toBe(false);
+      await expect(cancelQueuedFound(mine, { alarmId: ALARM }, 's-x')).resolves.toBe(true);
+      expect(fake.queue.map((r) => r.id)).toEqual(['m-1']);
+    });
+
+    it('is never another teacher’s on the same tablet', async () => {
+      await enqueue(found('m-1', 's-x', 1_000, { teacherId: colleague }));
+      await expect(cancelQueuedFound(mine, { callId: 'c1' }, 's-x')).resolves.toBe(false);
+      expect(fake.queue).toHaveLength(1);
+    });
+
+    it('is not deleted while a pass is in the air, which may have sent it: the taking-back must go after it', async () => {
+      await enqueue(found('m-1', 's-x', 1_000));
+      let release!: () => void;
+      const gate = new Promise<void>((done) => {
+        release = done;
+      });
+      fetchMock.mockImplementationOnce(async (url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string) as { marks: Sent['marks'] };
+        sent.push({ url, marks: body.marks, auth: undefined });
+        await gate;
+        const answer = JSON.stringify({ stored: 1, duplicates: 0, unresolved: [] });
+        return { ok: true, status: 200, json: async () => JSON.parse(answer), text: async () => answer } as never;
+      });
+      const passing = flushCrisisQueue();
+      while (fetchMock.mock.calls.length === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      await expect(cancelQueuedFound(mine, { callId: 'c1' }, 's-x')).resolves.toBe(false);
+      expect(fake.queue.map((r) => r.id)).toEqual(['m-1']);
+      release();
+      await passing;
+    });
+
+    it('says there is nothing to delete when nothing is queued for the pupil', async () => {
+      await expect(cancelQueuedFound(mine, { callId: 'c1' }, 's-x')).resolves.toBe(false);
+    });
+
+    it('tells the screen, which reads the queue again', async () => {
+      await enqueue(found('m-1', 's-x', 1_000));
+      const events: QueueEvent[] = [];
+      subscribeCrisisQueue((event) => events.push(event));
+      await cancelQueuedFound(mine, { callId: 'c1' }, 's-x');
+      expect(events).toEqual([{ type: 'ENQUEUED' }]);
+    });
   });
 });
 
@@ -573,6 +731,23 @@ describe('newCrisisMark', () => {
     expect(server).toMatchObject({ callId: 'c1', lessonId: null, studentId: 's1', state: 'FOUND', teacherId: mine, at: new Date(T0).toISOString() });
     const local = newCrisisMark({ call: { id: 'local:l1', lessonId: 'l1' }, studentId: 's1', state: 'MISSING', teacherId: mine, now: T0 });
     expect(local).toMatchObject({ callId: null, lessonId: 'l1', state: 'MISSING' });
+  });
+
+  it('names the alarm in place of a call for a teacher with no group, with the pupil’s name for the pending row', () => {
+    const who = { firstName: 'Kim', lastName: 'Kvist', className: '7C' };
+    const mark = newCrisisMark({ alarmId: ALARM, studentId: 's1', state: 'FOUND', teacherId: mine, pupil: who, now: T0 });
+    expect(mark).toMatchObject({ callId: null, lessonId: null, alarmId: ALARM, state: 'FOUND', at: new Date(T0).toISOString(), pupil: who });
+  });
+
+  it('carries a taking-back as the state RETRACTED, on the call or the alarm of the found it takes back', () => {
+    const call = { id: 'c1', lessonId: 'l1' };
+    expect(newCrisisMark({ call, studentId: 's1', state: 'RETRACTED', teacherId: mine, now: T0 })).toMatchObject({ callId: 'c1', alarmId: null, state: 'RETRACTED' });
+    expect(newCrisisMark({ alarmId: ALARM, studentId: 's1', state: 'RETRACTED', teacherId: mine, now: T0 })).toMatchObject({ callId: null, alarmId: ALARM, state: 'RETRACTED' });
+  });
+
+  it('names a call or an alarm, and one of them', () => {
+    expect(() => newCrisisMark({ studentId: 's1', state: 'FOUND', teacherId: mine })).toThrow();
+    expect(() => newCrisisMark({ call: { id: 'c1', lessonId: 'l1' }, alarmId: ALARM, studentId: 's1', state: 'FOUND', teacherId: mine })).toThrow();
   });
 
   it('makes an id of its own for each tap, in the shape the gateway takes', () => {
