@@ -359,6 +359,18 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Rapporteringsgrad 2 nov – 8 nov: veckans sammanställning för skolan finns i Rastra Schema på webben.',
     "Reporting rate 2 Nov – 8 Nov: the week's summary for the school is in Rastra timetable on the web.",
   ],
+  [
+    'ACK_REQUESTED, the title of the message (behind the login), not the text, the sender or the child',
+    row('ACK_REQUESTED', { requestId: 'r-1', title: 'Utflykten är på torsdag' }),
+    'Skolan ber dig bekräfta: Utflykten är på torsdag',
+    'The school asks you to confirm: Utflykten är på torsdag',
+  ],
+  [
+    'ACK_REMINDER, once, with the same title',
+    row('ACK_REMINDER', { requestId: 'r-1', title: 'Utflykten är på torsdag' }),
+    'Påminnelse: skolan väntar på din bekräftelse av Utflykten är på torsdag',
+    'Reminder: the school is waiting for your confirmation of Utflykten är på torsdag',
+  ],
 ];
 
 describe('notificationText', () => {
@@ -367,9 +379,32 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all twenty-four types the gateway writes', () => {
+  it('covers all twenty-six types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(24);
+    expect(types.size).toBe(26);
+  });
+
+  it.each([
+    ['no meta at all', null],
+    ['meta without a title', { requestId: 'r-1' }],
+    ['a title that is not a string', { requestId: 'r-1', title: { text: 'x' } }],
+    ['a title of only spaces', { requestId: 'r-1', title: '   ' }],
+  ])('words a Kvittens notice with %s as a message, not as a sentence that ends on a colon', (_name, meta) => {
+    const sv = translatorFor('sv');
+    const en = translatorFor('en');
+    expect(notificationText(row('ACK_REQUESTED', meta), sv, 'sv')).toBe('Skolan ber dig bekräfta ett meddelande.');
+    expect(notificationText(row('ACK_REQUESTED', meta), en, 'en')).toBe('The school asks you to confirm a message.');
+    expect(notificationText(row('ACK_REMINDER', meta), sv, 'sv')).toBe('Påminnelse: skolan väntar på din bekräftelse av ett meddelande.');
+    expect(notificationText(row('ACK_REMINDER', meta), en, 'en')).toBe('Reminder: the school is waiting for your confirmation of a message.');
+  });
+
+  it('trims the title of a Kvittens notice and says nothing else the meta carries', () => {
+    const text = notificationText(
+      row('ACK_REQUESTED', { title: '  Beslutet om ledighet ', body: 'Hemlig text', authorName: 'Anna Lind', studentName: 'Alva Elev' }),
+      translatorFor('sv'),
+      'sv',
+    );
+    expect(text).toBe('Skolan ber dig bekräfta: Beslutet om ledighet');
   });
 
   it('words an alarm notice written without its time by the time it was written', () => {

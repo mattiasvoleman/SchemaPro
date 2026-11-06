@@ -15,7 +15,8 @@ import type { NotificationRow } from '../types';
  *
  * The three cover-request types (Vikariefrågan) are worded from their meta in
  * the catalogue's own block, coverRequests.notice; the three of Krisläge in
- * crisis.notice.
+ * crisis.notice. The two of Kvittens (a request to confirm a message, and its
+ * one reminder) in acks.notice.
  */
 export function notificationText(entry: NotificationRow, t: Translate, locale: Locale): string {
   const meta = entry.meta ?? {};
@@ -191,6 +192,19 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
       const drill = meta['mode'] === 'DRILL';
       if (entry.type === 'CRISIS_ALARM') return t(drill ? 'crisis.notice.alarmDrill' : 'crisis.notice.alarm', params);
       return t(drill ? 'crisis.notice.endedDrill' : 'crisis.notice.ended', params);
+    }
+    case 'ACK_REQUESTED':
+    case 'ACK_REMINDER': {
+      // Kvittens: the message's title, which is behind the login as the
+      // inbox is (the push says only that a message waits). Never the text,
+      // the sender or the child. A title that is missing or not a string is
+      // left out, and the sentence says "a message" instead of ending on a
+      // colon.
+      const title = typeof meta['title'] === 'string' ? meta['title'].trim() : '';
+      if (entry.type === 'ACK_REQUESTED') {
+        return title ? t('acks.notice.requested', { title }) : t('acks.notice.requestedNoTitle');
+      }
+      return title ? t('acks.notice.reminder', { title }) : t('acks.notice.reminderNoTitle');
     }
     default:
       return t('notifications.text.fallback');

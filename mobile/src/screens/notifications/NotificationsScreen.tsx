@@ -7,11 +7,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
 import { fetchNotifications, markAllRead as markOwnRead } from '../../services/notifications';
 import { notificationText } from '../../services/notificationText';
+import { ackTarget } from '../../services/auth/appGate';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { formatDateTime } from '../../i18n/format';
@@ -23,6 +25,11 @@ import type { NotificationRow } from '../../types';
  * (services/notifications.ts: an admin's RLS reaches the whole school's), for
  * every role — the tab a push opens. Each row is worded by services/notificationText.ts, all nine
  * types in the reader's language.
+ *
+ * A guardian's row that asks them to confirm a message (ACK_REQUESTED, and its
+ * reminder ACK_REMINDER, Kvittens) is a button: it opens the Meddelanden tab,
+ * where the message is read and confirmed, as the push about it does. No other
+ * row goes anywhere.
  */
 export function NotificationsScreen(): React.JSX.Element {
   const { colors } = useAppTheme();
@@ -30,6 +37,8 @@ export function NotificationsScreen(): React.JSX.Element {
   const { t, locale } = useI18n();
   const { authState } = useAuth();
   const userId = authState.teacherId;
+  const role = authState.role;
+  const router = useRouter();
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -90,12 +99,28 @@ export function NotificationsScreen(): React.JSX.Element {
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
-        renderItem={({ item }) => (
-          <View style={[styles.card, item.readAt === null && styles.cardUnread]}>
-            <Text style={styles.cardText}>{notificationText(item, t, locale)}</Text>
-            <Text style={styles.cardMeta}>{formatDateTime(item.createdAt, locale)}</Text>
-          </View>
-        )}
+        renderItem={({ item }) => {
+          const target = ackTarget(role, item.type);
+          const cardStyle = [styles.card, item.readAt === null && styles.cardUnread];
+          const words = (
+            <>
+              <Text style={styles.cardText}>{notificationText(item, t, locale)}</Text>
+              <Text style={styles.cardMeta}>{formatDateTime(item.createdAt, locale)}</Text>
+            </>
+          );
+          return target === null ? (
+            <View style={cardStyle}>{words}</View>
+          ) : (
+            <TouchableOpacity
+              style={cardStyle}
+              accessibilityRole="button"
+              accessibilityHint={t('acks.openHint')}
+              onPress={() => router.push(target)}
+            >
+              {words}
+            </TouchableOpacity>
+          );
+        }}
         ListEmptyComponent={
           <View style={styles.center}>
             <Text style={styles.emptyTitle}>{t('notifications.empty')}</Text>
