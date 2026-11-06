@@ -76,7 +76,7 @@ describe('Krisläge (e2e)', () => {
     ];
     const teachers: Array<readonly [string, string, Record<string, unknown> | null]> = [
       ['get', '/api/v1/crisis/mine', null],
-      ['get', `/api/v1/crisis/mine/pupils?alarmId=${ALARM}&q=anna`, null],
+      ['post', '/api/v1/crisis/mine/pupils', { alarmId: ALARM, q: 'anna' }],
       ['post', '/api/v1/crisis/mine/marks', { marks: [mark()] }],
     ];
 
@@ -156,12 +156,13 @@ describe('Krisläge (e2e)', () => {
     });
 
     it.each([
-      ['no search words', `alarmId=${ALARM}`],
-      ['one character', `alarmId=${ALARM}&q=a`],
-      ['sixty-one characters', `alarmId=${ALARM}&q=${'a'.repeat(61)}`],
-      ['an alarm that is no id', 'alarmId=larmet&q=anna'],
-    ])('refuses a teacher\'s pupil search with %s', async (_label, query) => {
-      await send('get', `/api/v1/crisis/mine/pupils?${query}`, teacher()).expect(400);
+      ['no search words', { alarmId: ALARM }],
+      ['one character', { alarmId: ALARM, q: 'a' }],
+      ['sixty-one characters', { alarmId: ALARM, q: 'a'.repeat(61) }],
+      ['an alarm that is no id', { alarmId: 'larmet', q: 'anna' }],
+      ['anything more than the alarm and the words', { alarmId: ALARM, q: 'anna', classId: ALARM }],
+    ])('refuses a teacher\'s pupil search with %s', async (_label, payload) => {
+      await send('post', '/api/v1/crisis/mine/pupils', teacher(), payload).expect(400);
       expect(harness.tx.user.findMany).not.toHaveBeenCalled();
     });
 

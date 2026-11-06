@@ -9,7 +9,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { CrisisService } from './crisis.service';
 import type { AlarmDetail, AlarmSummary, CrisisSettingsView, MyCrisisResponse, OtherPupilView, ProtocolView } from './crisis-views';
-import { AlarmListQueryDto, EndAlarmDto, MarksDto, PupilSearchQueryDto, StartAlarmDto, UpdateCrisisSettingsDto } from './dto/crisis.dto';
+import { AlarmListQueryDto, EndAlarmDto, MarksDto, PupilSearchDto, StartAlarmDto, UpdateCrisisSettingsDto } from './dto/crisis.dto';
 
 const uuid = () => new ParseUUIDPipe({ version: '4' });
 
@@ -102,12 +102,14 @@ export class CrisisTeacherController {
   /**
    * The pupils of the school (not on the teacher's own lists) whose name or class matches `q`: who a teacher
    * picks from to say "found with me". A search and not a list, so that a thousand names are not sent to every
-   * phone at every read nor kept on any.
+   * phone at every read nor kept on any. A POST with a body: what is typed is part of a pupil's name, and a
+   * URL is logged and echoed by the error filter (the logs are free of people by design).
    */
-  @Get('pupils')
+  @Post('pupils')
+  @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 120, ttl: 60_000 } })
-  pupils(@Query() query: PupilSearchQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<OtherPupilView[]> {
-    return this.crisis.searchPupils(query.alarmId, query.q, user);
+  pupils(@Body() dto: PupilSearchDto, @CurrentUser() user: AuthenticatedUser): Promise<OtherPupilView[]> {
+    return this.crisis.searchPupils(dto.alarmId, dto.q, user);
   }
 
   @Post('marks')

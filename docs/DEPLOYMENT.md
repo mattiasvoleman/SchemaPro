@@ -1269,7 +1269,7 @@ Walk the full product loop once, in order:
   teacher keeps the pupil in a list of their own. Only *found* can be said
   that way (a pupil of someone else's list cannot be said to be missing by a
   teacher who does not have them). The teacher finds the pupil by a search
-  (`GET /api/v1/crisis/mine/pupils?alarmId=&q=`: name or class, two characters
+  (`POST /api/v1/crisis/mine/pupils, body {alarmId, q}`: name or class, two characters
   at least, 25 results at most, never the teacher's own list, recorded in the
   läslogg as a read of people); the school's pupils are not sent to every phone
   and not kept on any, so the search needs a network (a teacher who has no

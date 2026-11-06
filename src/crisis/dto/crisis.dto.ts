@@ -135,8 +135,8 @@ export class AlarmListQueryDto {
   mode?: 'LIVE' | 'DRILL';
 }
 
-/** A teacher's search for a pupil they found who is not on their list. */
-export class PupilSearchQueryDto {
+/** A teacher's search for a pupil they found who is not on their list (a body, not a query: the words are part of a name). */
+export class PupilSearchDto {
   @Transform(lower)
   @IsUUID('4', { message: 'alarmId: larmet anges med sitt id.' })
   alarmId!: string;
