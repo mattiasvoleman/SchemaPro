@@ -1191,6 +1191,50 @@ that is the contract in the rest of this file. The OpenAPI document is the
 reference for the first: generated from the code, so it describes the routes
 as they are, not as a separate text says they are.
 
+## Taking a school's data out: the whole-school export and the registerutdrag
+
+Two questions a data protection officer and an IT department ask before an
+agreement is signed: can we take everything out when we leave, and can we answer
+a person who asks for theirs (GDPR art. 15)? Both are answered on
+`/admin/dataskydd` and through `/api/v1/school-exports`, for **rektor and a full
+administrator** only (the profiles that decide; the huvudman's reader, who reads
+a school as a läsare, decides nothing and is refused).
+
+**The whole-school export** is a zip built by a background job as the
+administrator who ordered it (`POST /api/v1/school-exports`; the job runs every
+30 s and reads under that person's login and school, so row-level security keeps
+every other school's rows out of the file). It is stored in the database in
+pieces, can be fetched for **72 hours** (`GET /api/v1/school-exports/:id/file`,
+which says its length and SHA-256 and is written to the läslogg before the first
+byte), and is then deleted. One order is in hand per school at a time, and a
+school may order three times a day. It holds:
+
+- `csv/`: the lists the pages export, as the pages write them and in the format
+  the CSV import reads (#260), so a school can read them into another Rastra
+  school or any system that reads CSV;
+- `schema/grundschema.csv`: the base timetable as a table (Schema som fil);
+- `data/`: people, guardian links, attendance, absence reports, leave requests,
+  notices and the read log, for every läsår the school keeps, with ids and the
+  address beside each id. A file over a million rows is split in parts;
+- `README.txt`, `FORMAT.md` (every column; committed as
+  [school-export-format.md](school-export-format.md) and held equal by a test) and
+  `manifest.json` (rows, size and SHA-256 per file, and what was held out).
+
+Persons with a protected identity (skyddad identitet) are not in it, and
+neither are rows about them; the manifest counts what was held out.
+Measured on 1 000 pupils with a year of attendance (1.14 million marks): 1.18
+million rows, a 33 MB zip, built in under a minute, in a process whose heap stays
+about 40 MB above idle (`scripts/bench/school-export.ts`).
+
+**The registerutdrag** (`POST /api/v1/school-exports/subject-access`) is the same
+files for one person's rows, optionally with their guardians or children, and one
+file per table that holds a row about a person (`data/person/`). Which tables
+those are is the removal inventory's (`src/common/removal-inventory.ts`): a test
+fails when a table is added there and not decided in
+`src/school-export/person-tables.ts`. An extract about a protected person holds
+no one else. What the person's own account holds and no administrator can read
+(notice settings, push devices, calendar feeds) is named in the README.
+
 ## Security model
 
 **A key resolves to one school.** `IntegrationKeyGuard` hashes the
