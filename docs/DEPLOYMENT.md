@@ -1176,7 +1176,7 @@ Walk the full product loop once, in order:
   each such read is written to the school's läslogg (EMPLOYMENT and PEOPLE for the
   teachers listed). The first night counts the last 90 days back, so the page has
   its history from the first morning. A teacher reads their own days and open
-  lessons only. The user and teacher manuals (6.13 and 4.6) say the same.
+  lessons only. The user and teacher manuals (6.14 and 4.7) say the same.
   **Release note** (in these words or others): *From the first night after this
   release Rastra counts, every night, what share of each teacher's held lessons
   have a saved register, for the last 90 days. Rektor and all of the school's
@@ -1358,28 +1358,37 @@ Walk the full product loop once, in order:
   **Before the migration**, as the owner: `SHOW server_version` is the 17.x
   production runs; `prisma migrate status` lists exactly the two new
   migrations as pending (their stamps, 20270113090000 and 20270113091000, sort
-  after Skyddad identitet's 20270107090000 and its register kind's
-  20270111090000, which are applied, so production and a fresh database
-  run them in one order); `SELECT to_regclass('"CrisisAlarms"')` is NULL and
+  after Skyddad identitet's 20270107090000, its register kind's 20270111090000
+  and Rapporteringsgrad's 20270112090000 and 20270112090100, which are applied,
+  so production and a fresh database run them in one order); the files'
+  checksums (sha256, what Prisma records) are
+  `19c464b8ed67850e1135939c2bcc142d9a316320332c679866fd201f11bab9d6` for
+  20270113090000 and
+  `4cc51e83d74111d7526c0769d0ff0341e899db6eef99fbdfa6513f2d6d8ae2f4` for
+  20270113091000; `SELECT to_regclass('"CrisisAlarms"')` is NULL and
   `SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE
   t.typname IN ('NotificationType', 'RetentionDataType') AND e.enumlabel LIKE
   'CRISIS%'` returns no row; and no session sits idle in a transaction that
   holds one of the three tables, nor an autovacuum worker on them (the query
   of the Vikariefrågan entry above). **Gallring:** `SELECT proname,
   md5(prosrc) FROM pg_proc WHERE pronamespace = 'app'::regnamespace AND
-  proname IN ('gallring_due', 'gallring_purge') ORDER BY 1` must show Skyddad
-  identitet's bodies (20270107090000): `gallring_due`
-  `7efba42244c71937b4cb82ffc23a6ba1`, `gallring_purge`
-  `de359f739e3908c9a36e41ff541cdf13`. The second file replaces both functions
-  whole, built on exactly those bodies, so they carry every branch: the
-  absence watch's findings, the cover requests, the marks' history and now the
-  alarms. `app.gallring_pseudonymise` is not touched: its `md5(prosrc)` is
-  `6f18f62fc354bde849aa2e8b01eeceda` before and after. After the migration the values are `gallring_due`
-  `08e09acc4717b1aa5dc8302c5c63b1ee` and `gallring_purge`
-  `2e371cfd8ed4559d87ae706d73040d3b`. Other values before it mean a release has
-  restated them since: its branch must be carried into 20270113091000's
-  bodies, or its rows are no longer purged (the RLS suite, section 350, fails
-  when a body has lost a branch).
+  proname IN ('gallring_due', 'gallring_purge') ORDER BY 1` must show
+  Rapporteringsgrad's bodies (20270112090100): `gallring_due`
+  `2b009a76211cdb7f51b2e4c7c96b0acf`, `gallring_purge`
+  `827d5ff597528338710ebaa0a9253d96`. The second file replaces both functions
+  whole, built on exactly those bodies with one branch added to each (the
+  diff against Rapporteringsgrad's bodies is additions only: 7 lines in
+  `gallring_due`, 6 in `gallring_purge`, all marked `-- krisläge`), so they
+  carry every branch: the absence watch's findings, the reporting rate's days
+  and reminders, the cover requests, the marks' history and now the alarms.
+  `app.gallring_pseudonymise` is not touched: its `md5(prosrc)` is
+  `6f18f62fc354bde849aa2e8b01eeceda` before and after. After the migration the
+  values are `gallring_due` `1d002a81c954ccda01acc9bf0cabdbb3` and
+  `gallring_purge` `21b7b43da05c4ff63f045ee769b1ba5c`. Other values before it
+  mean a release has restated them since: its branch must be carried into
+  20270113091000's bodies, or its rows are no longer purged (the RLS suite,
+  section 350, fails when a body has lost a branch or a table, or a branch is
+  dead or only a comment).
   **After it, before the merge:** both migrations are applied;
   `SELECT count(*) FROM pg_policies WHERE tablename LIKE 'Crisis%'` is 24;
   `app_authenticated` holds SELECT, INSERT and UPDATE on `CrisisSettings` and
