@@ -1170,11 +1170,13 @@ Walk the full product loop once, in order:
   else (a value cannot be used in the transaction that adds it, so it is a
   file of its own: never run the two files in one `psql -1`). 20270113091000
   adds the tables `CrisisSettings`, `CrisisAlarms`, `CrisisCalls`,
-  `CrisisCallTeachers`, `CrisisPupils` and `CrisisReports` with 20 policies,
-  the triggers that start an alarm in its writer's name, let it end once and
-  stamp and apply a mark, the functions `app.crisis_may_start`,
+  `CrisisCallTeachers`, `CrisisPupils` and `CrisisReports` with 22 policies,
+  the triggers that start an alarm in its writer's name (and refuse an
+  exercise beside a real alarm, KL412), let it end once and stamp and apply a
+  mark, the functions `app.crisis_may_start`,
   `app.crisis_window_open`, `app.crisis_call_window_open`,
-  `app.crisis_lists_are_open`, `app.crisis_answers_for` and
+  `app.crisis_lists_are_open`, `app.crisis_answers_for`,
+  `app.crisis_pupil_call` and
   `app.crisis_settle` (executable by `app_authenticated` alone), and
   `app.gallring_due` and `app.gallring_purge` again with the alarms' branch.
   No existing row is touched and no existing table gains a column. The new
@@ -1215,10 +1217,10 @@ Walk the full product loop once, in order:
   bodies, or its rows are no longer purged (the RLS suite, section 350, fails
   when a body has lost a branch).
   **After it, before the merge:** both migrations are applied;
-  `SELECT count(*) FROM pg_policies WHERE tablename LIKE 'Crisis%'` is 20;
+  `SELECT count(*) FROM pg_policies WHERE tablename LIKE 'Crisis%'` is 22;
   `app_authenticated` holds SELECT, INSERT and UPDATE on `CrisisSettings` and
   `CrisisAlarms`, SELECT and INSERT on the other four and nothing else (no
-  MAINTAIN, no DELETE), `anon` and `authenticated` nothing at all; the six
+  MAINTAIN, no DELETE), `anon` and `authenticated` nothing at all; the seven
   functions answer `app_authenticated` alone (`SELECT
   has_function_privilege('anon', 'app.crisis_may_start()', 'EXECUTE'),
   has_function_privilege('authenticated', 'app.crisis_settle()', 'EXECUTE'),
@@ -1251,21 +1253,54 @@ Walk the full product loop once, in order:
   call with nobody to answer for it, and the administration marks it. A
   vikarie the board or a cover request placed has taken the absent teacher's
   row already, and the replacement lesson of a schemabrytande aktivitet is a
-  lesson like any other. **Known limits:** a pupil whose lesson was cancelled
-  and who has no other around the moment is on no list (the school does not
-  know they are in the building); a pupil on two lessons at once is on the one
-  that sorts first; teachers with no group right now answer for nothing and
-  are only told that an alarm is going.
+  lesson like any other. **Nobody is left out:** every active pupil of the
+  school is on the roll call. A pupil no lesson's list has (before the first
+  lesson, after the last, a gap longer than a break, a cancelled lesson, the
+  after-school club) stands on one more group of the alarm, *Ej i lektion just
+  nu* (`CrisisCalls.basis = 'NO_LESSON'`, one to an alarm, no teacher, no
+  span), which the administration answers for and marks like any group whose
+  teacher is away. The live view, the end and the protocol count against every
+  active pupil, so "everyone is marked" is said only when it is true. A pupil
+  absent before (the register, a report, a leave) is on it too, as absent
+  before. **A teacher who finds a pupil who is not on their list** says so
+  ("hittad hos mig"): the mark is stored on the pupil's own group, with the
+  teacher's group in `CrisisReports.foundInCallId`, so the pupil's own
+  teacher and the administration see that they are found and by whom, and the
+  teacher keeps the pupil in a list of their own. Only *found* can be said
+  that way (a pupil of someone else's list cannot be said to be missing by a
+  teacher who does not have them), and the picker lists every pupil of the
+  school, names and class only, which staff read directly already. **Known
+  limits:** a pupil on two lessons at once is on the one that sorts first;
+  teachers with no group right now answer for nothing and are only told that an
+  alarm is going (they cannot mark; a teacher with no group has no call to
+  find a pupil with); the 120 minutes that separate a break from a gap are
+  fixed; a pupil who becomes active after the alarm began is not on it (the
+  lists are the moment's).
   **Notices** say that an alarm (or an exercise) is going and nothing else:
   the push has no kind of alarm, no group, no place and no pupil, and the
-  inbox row has the alarm's id, kind, mode and time. The alarm and its end are
-  delivered whatever a person chose and have no switch; a guardian's notice
-  can be switched off in their settings. There is no e-mail.
+  inbox row has the alarm's id, kind, mode and time (a guardian's row, after a
+  real alarm, says only that it happened and ended, no kind). The alarm and its
+  end are delivered whatever a person chose and have no switch; a guardian's
+  notice can be switched off in their settings. There is no e-mail. **The push
+  has the alarm's priority:** high priority (FCM high, APNs 10), its own
+  Android channel `crisis` (importance max, sound, vibration, asks to pass
+  Do-not-disturb), iOS `time-sensitive` (not `critical`, which needs Apple's
+  entitlement), and a time to live of 10 minutes instead of 24 hours, so a
+  phone that was off does not get "Ett larm pågår" for an alarm that ended
+  hours ago. The app also asks the gateway whether the alarm is still going
+  before it shows a list from a push. Neither can wake a phone the person has
+  turned silent in the operating system; the live view's *lärare som inte
+  svarat* is what covers that.
   **Offline:** the phone keeps the list it last read in its encrypted store
   and its marks in a queue of their own, sends them when the network is back
   (a mark carries its own id, so sending twice stores it once), and for an hour
   after the end the database still takes them (they say `late`); after that the
-  phone is told the mark belongs to no alarm and drops it.
+  phone is told the mark belongs to no alarm and drops it. Two phones of one
+  group that send at once take the pupils in one order (call, then pupil), so
+  they wait for each other; if the database still aborts one (a deadlock), the
+  answer is `409 WRITE_CONFLICT`, which the phone and the web keep and send
+  again. The web keeps its queue and the last list per signed-in person in the
+  browser and clears them at sign-out.
   **Retention:** exercises (`CRISIS_DRILLS`) and real alarms
   (`CRISIS_ALARMS`) are two kinds on `/admin/dataskydd`, undecided in every
   school, and nothing is purged until the school records a period for each. An

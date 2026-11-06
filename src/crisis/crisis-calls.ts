@@ -24,8 +24,12 @@
  *     between them, is between the two: the group goes with the lesson it is
  *     going to (NEXT_LESSON), so the teacher who will meet them answers for
  *     them. A pupil with no lesson around the moment (before the first, after
- *     the last, or a gap longer than a break) is not on any list: the school
- *     does not know that they are in the building.
+ *     the last, or a gap longer than a break) is on no lesson's list, and is
+ *     still counted: the service gathers everyone `withoutList` returns on the
+ *     alarm's one NO_LESSON group, because a roll call that drops a pupil who
+ *     is in the building (a lesson that ended at twelve and a pupil who stays
+ *     on at the after-school club, a lesson that is cancelled) is the worst
+ *     mistake it can make. The administration answers for that group.
  *
  * The answer is per pupil, then gathered per lesson, so a group split across
  * lessons (half of 7A at slöjd, the other half at idrott) is two calls, each
@@ -157,4 +161,14 @@ export function priorAbsences(now: Date, marks: readonly StartedMark[], reports:
     if (covers) result.set(report.studentId, 'REPORTED');
   }
   return result;
+}
+
+/**
+ * The pupils to gather on the group nobody has a lesson with: every active pupil of the school
+ * that no call has, sorted by id like the others. Nobody is left out for being absent; a pupil who
+ * is absent before is on the list with that said, like on every other.
+ */
+export function withoutList(everyone: Iterable<string>, calls: readonly Pick<Call, 'pupilIds'>[]): string[] {
+  const listed = new Set(calls.flatMap((call) => call.pupilIds));
+  return [...new Set(everyone)].filter((id) => !listed.has(id)).sort();
 }

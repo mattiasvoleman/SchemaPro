@@ -41487,8 +41487,8 @@ DROP TABLE sk364;
 -- (CrisisSettings, CrisisAlarms, CrisisCalls, CrisisCallTeachers, CrisisPupils,
 -- CrisisReports, 20270113091000), och vem som får starta ett larm.
 --
--- Sex tabeller, 20 armar, ingen DELETE för någon roll, UPDATE bara på
--- inställningarna och larmet, ingenting för PostgREST:s roller, och sex
+-- Sex tabeller, 22 armar, ingen DELETE för någon roll, UPDATE bara på
+-- inställningarna och larmet, ingenting för PostgREST:s roller, och sju
 -- funktioner som bara API:ts roll får anropa. Migrationens egen vakt
 -- (CRISIS_REACH) körs när migreringen läggs på; här står samma sak mot den
 -- databas sviten kör mot, och med rättigheterna, triggrarna, det partiella
@@ -41507,7 +41507,8 @@ DECLARE
   n integer;
   tables text[] := ARRAY['CrisisSettings', 'CrisisAlarms', 'CrisisCalls', 'CrisisCallTeachers', 'CrisisPupils', 'CrisisReports'];
   functions text[] := ARRAY['app.crisis_may_start()', 'app.crisis_window_open(uuid)', 'app.crisis_call_window_open(uuid)',
-                            'app.crisis_lists_are_open(uuid)', 'app.crisis_answers_for(uuid)', 'app.crisis_settle()'];
+                            'app.crisis_lists_are_open(uuid)', 'app.crisis_answers_for(uuid)', 'app.crisis_pupil_call(uuid, uuid)',
+                            'app.crisis_settle()'];
   src text;
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -41539,7 +41540,7 @@ BEGIN
   END LOOP;
 
   SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables);
-  IF n <> 20 THEN RAISE EXCEPTION 'krisläge: the six tables have % arms, not 20', n; END IF;
+  IF n <> 22 THEN RAISE EXCEPTION 'krisläge: the six tables have % arms, not 22', n; END IF;
   SELECT count(*) INTO n FROM pg_policies
    WHERE schemaname = 'public' AND tablename = ANY (tables) AND (roles <> '{app_authenticated}'::name[] OR cmd = 'DELETE' OR cmd = 'ALL');
   IF n <> 0 THEN RAISE EXCEPTION 'krisläge: % arm(s) reach beyond the API role or delete', n; END IF;
@@ -41616,20 +41617,44 @@ BEGIN
     RAISE EXCEPTION 'gallring: app.gallring_purge has lost the branch for the alarms (Krisläge, 20270113091000)';
   END IF;
 
-  -- The same for a kind no section here names: every kind of data a school sets a period for (but the
-  -- people, who are pseudonymised) has a branch in both bodies. A release that restates the two
-  -- functions from an older body drops the kind of the release before it; this fails on that, for
-  -- every kind there is after all migrations, whoever added it.
+  -- The same for what no section here names, read from the bodies as they stand (comments left out: a
+  -- branch that is only in a comment, of either kind, is not one). Every kind of data a school sets a period for (but the
+  -- people, who are pseudonymised) has a line in gallring_due and a branch in gallring_purge; every table
+  -- the earlier releases purged is still deleted from in the purge and counted in the due; every table the
+  -- purge deletes from is one the due counts; and no branch is dead by a predicate that cannot be true.
+  -- A release that restates the two functions from an older body drops the branch of the release before
+  -- it; this fails on that, for every kind and table there is after all migrations, whoever added it.
   DECLARE
     k text;
+    tbl text;
     lost text[] := '{}';
-    due text := (SELECT p.prosrc FROM pg_proc p WHERE p.oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure);
-    purge text := (SELECT p.prosrc FROM pg_proc p WHERE p.oid = 'app.gallring_purge(uuid, "RetentionDataType", integer)'::regprocedure);
+    due text := regexp_replace(regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure),
+                                              '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g');
+    purge text := regexp_replace(regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = 'app.gallring_purge(uuid, "RetentionDataType", integer)'::regprocedure),
+                                                '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g');
+    -- What main's bodies purged when Krisläge was written (D1, Frånvarobevakningen, Vikariefrågan, Skyddad
+    -- identitet) and what Krisläge purges.
+    tables text[] := ARRAY['AttendanceRecords', 'AbsenceWatchFindings', 'AbsenceReports', 'LeaveRequests', 'Notifications',
+                           'ScheduleChangeLogs', 'TeacherEmploymentLogs', 'GuardianStudentHistory', 'PersonProtectionEvents',
+                           'PersonalDataAccess', 'CoverRequests', 'CoverConfirmations', 'CrisisAlarms'];
   BEGIN
+    -- Tables a release after Krisläge's stamp adds a branch for: once the table is there the branch must be.
+    -- Rapporteringsgrad (D2, 20270112090000) purges TeacherReportingDays under ATTENDANCE.
+    IF to_regclass('public."TeacherReportingDays"') IS NOT NULL THEN tables := array_append(tables, 'TeacherReportingDays'); END IF;
     FOR k IN SELECT e::text FROM unnest(enum_range(NULL::"RetentionDataType")) e WHERE e::text <> 'DEPARTED_PEOPLE' LOOP
       IF due NOT LIKE format('%%p_type = ''%s''%%', k) THEN lost := lost || format('gallring_due has no line for %s', k); END IF;
       IF purge !~ format('WHEN[^\n]*''%s''', k) THEN lost := lost || format('gallring_purge has no branch for %s', k); END IF;
     END LOOP;
+    FOREACH tbl IN ARRAY tables LOOP
+      IF purge NOT LIKE format('%%DELETE FROM "%s"%%', tbl) THEN lost := lost || format('gallring_purge no longer deletes from %s', tbl); END IF;
+      IF due NOT LIKE format('%%"%s"%%', tbl) THEN lost := lost || format('gallring_due no longer counts %s', tbl); END IF;
+    END LOOP;
+    FOR tbl IN SELECT m[1] FROM regexp_matches(purge, 'DELETE FROM "([A-Za-z]+)"', 'g') m LOOP
+      IF due NOT LIKE format('%%"%s"%%', tbl) THEN lost := lost || format('gallring_purge deletes from %s, which gallring_due does not count', tbl); END IF;
+    END LOOP;
+    IF due ~* '\m(and|where)\s+(false|null)\M|\m1\s*=\s*0\M' OR purge ~* '\m(and|where)\s+(false|null)\M|\m1\s*=\s*0\M' THEN
+      lost := array_append(lost, 'a branch of gallring_due or gallring_purge is dead (AND false, WHERE false, 1 = 0)');
+    END IF;
     IF cardinality(lost) > 0 THEN
       RAISE EXCEPTION 'gallring: a kind of data is no longer purged: %', array_to_string(lost, '; ');
     END IF;
@@ -41852,6 +41877,12 @@ DECLARE
 BEGIN
   SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
 
+  -- The exercise comes first: a real alarm may begin beside one (the gateway cuts it short), but an
+  -- exercise is not started beside a real alarm (351b).
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (school, 'LOCKDOWN', 'DRILL') RETURNING id INTO d;
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (%L, 'EVACUATION', 'DRILL')$q$, school),
+                          '23505', 'a second exercise');
+
   -- 351a: everything a writer should not choose is chosen; none of it is kept.
   INSERT INTO "CrisisAlarms" ("schoolId", kind, mode, "startedAt", "startedByUserId", "endedAt", "endedByUserId", "autoEnded", "endNote", "guardiansNotifiedAt", "listsSealedAt")
   VALUES (school, 'EVACUATION', 'LIVE', now() - interval '3 days', t1, now(), t1, true, 'x', now(), now()) RETURNING * INTO r;
@@ -41864,12 +41895,12 @@ BEGIN
   END IF;
   al := r.id;
 
-  -- 351b: one open alarm of each mode, and an exercise beside a real one.
+  -- 351b: one open alarm of each mode, and no exercise beside a real one (the real alarm cuts one short;
+  -- KL412 is the database's answer to the other way round).
   PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (%L, 'LOCKDOWN', 'LIVE')$q$, school),
                           '23505', 'a second real alarm');
-  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (school, 'LOCKDOWN', 'DRILL') RETURNING id INTO d;
   PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (%L, 'EVACUATION', 'DRILL')$q$, school),
-                          '23505', 'a second exercise');
+                          'KL412', 'an exercise beside a real alarm');
 
   -- 351c: what is fixed, and what an open alarm has no end to describe.
   PERFORM pg_temp.refuses(format($q$UPDATE "CrisisAlarms" SET kind = 'LOCKDOWN' WHERE id = %L$q$, al), 'KL422', 'a changed kind');
@@ -41910,8 +41941,8 @@ BEGIN
   PERFORM pg_temp.refuses(format($q$UPDATE "CrisisAlarms" SET "guardiansNotifiedAt" = now() + interval '1 minute' WHERE id = %L$q$, al), 'KL409', 'the guardians told twice');
 
   -- Both are over, so a new alarm of each kind can begin; one is left open for the readers below.
-  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (school, 'EVACUATION', 'LIVE') RETURNING id INTO al2;
   INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (school, 'EVACUATION', 'DRILL') RETURNING id INTO d2;
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (school, 'EVACUATION', 'LIVE') RETURNING id INTO al2;
 
   -- 351f: the hour's window as the function states it. The fixtures plant an
   -- exercise that ended three hours ago.
@@ -42023,7 +42054,7 @@ DECLARE
   school uuid := app.current_school_id();
   me uuid := app.current_user_id();
   t1 uuid; t2 uuid; t3 uuid; t4 uuid; p1 uuid; p2 uuid; p3 uuid; p4 uuid;
-  lesson uuid; al uuid; c1 uuid; c2 uuid; c3 uuid; n bigint;
+  lesson uuid; al uuid; d0 uuid; c1 uuid; c2 uuid; c3 uuid; n bigint;
 BEGIN
   SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
   SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1) ORDER BY "authId" LIMIT 1;
@@ -42043,6 +42074,9 @@ BEGIN
          DATE '2096-03-01', timestamptz '2096-03-01 08:00 UTC', timestamptz '2096-03-01 09:00 UTC', now()
   RETURNING id INTO lesson;
 
+  -- An open exercise for 352c, planted first: an exercise is not started beside a real alarm.
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (school, 'LOCKDOWN', 'DRILL') RETURNING id INTO d0;
+  PERFORM set_config('app.test_rls352_drill', d0::text, true);
   INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (school, 'EVACUATION', 'LIVE') RETURNING id INTO al;
   INSERT INTO "CrisisCalls" ("schoolId", "alarmId", "calendarLessonId", basis, "groupName", "subjectName", "roomName", "lessonStartsAt", "lessonEndsAt")
   VALUES (school, al, lesson, 'LESSON', '7A', 'Matematik', 'Sal 101', now() - interval '30 minutes', now() + interval '30 minutes') RETURNING id INTO c1;
@@ -42111,7 +42145,7 @@ DECLARE
   p1 uuid := current_setting('app.test_rls352_p1')::uuid;
   d uuid; call uuid; call2 uuid;
 BEGIN
-  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (school, 'LOCKDOWN', 'DRILL') RETURNING id INTO d;
+  d := current_setting('app.test_rls352_drill')::uuid;
   INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
   VALUES (school, d, 'LESSON', 'Gruppen', 'Matematik', now(), now() + interval '1 hour') RETURNING id INTO call;
   INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
@@ -42319,8 +42353,10 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM "CrisisCallTeachers" WHERE "callId" = c1 AND "teacherId" = t1 AND "answeredAt" = started) THEN
     RAISE EXCEPTION 'krisläge: the teacher''s answer was not stamped';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM "CrisisCalls" WHERE id = c1 AND "completedAt" = started) THEN
-    RAISE EXCEPTION 'krisläge: the group was not complete when the one pupil who was expected had a mark';
+  -- The group's completion is read from its pupils, never stored: a column of the call that every mark of the
+  -- group changed would be a row they all lock (two phones sending one group in different orders deadlocked on it).
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'CrisisCalls' AND column_name = 'completedAt') THEN
+    RAISE EXCEPTION 'krisläge: the call has a completedAt that every mark of the group would lock';
   END IF;
 
   -- A later mark overtakes (a time in the future is held at the receipt), an older one that comes late does not.
@@ -42425,8 +42461,8 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM "CrisisReports" WHERE id = 'c0000000-0000-4000-8000-0000000f2305' AND "byUserId" = me AND "onBehalf") THEN
     RAISE EXCEPTION 'krisläge: the administration''s mark for a group nobody answers for is not marked as made on their behalf';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM "CrisisCalls" WHERE id = c3 AND "completedAt" IS NOT NULL) THEN
-    RAISE EXCEPTION 'krisläge: a group with a mark for its one pupil is not complete';
+  IF NOT EXISTS (SELECT 1 FROM "CrisisPupils" WHERE "callId" = c3 AND "studentId" = p4 AND state = 'FOUND' AND "stateByUserId" = me) THEN
+    RAISE EXCEPTION 'krisläge: the pupil of the group nobody answers for did not follow the administration''s mark';
   END IF;
   IF (SELECT count(*) FROM "CrisisReports" WHERE "alarmId" = al) <> 5 THEN
     RAISE EXCEPTION 'krisläge: the administration reads % mark(s), not 5', (SELECT count(*) FROM "CrisisReports" WHERE "alarmId" = al);
@@ -42562,6 +42598,204 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM "CrisisAlarms" WHERE id = 'c0000000-0000-4000-8000-0000000f2103') THEN
     RAISE EXCEPTION 'krisläge gallring: the exercise the job ended is gone';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 355: ingen elev står utanför uppropet, och en lärare kan säga att
+-- hen hittat en elev som inte står på hens lista (CrisisCalls NO_LESSON,
+-- CrisisReports.foundInCallId, app.crisis_pupil_call, 20270113091000).
+--
+-- Gruppen utan lektion är larmets egen, en per larm, utan lärare och utan
+-- spann. En hittad elev markeras på sin egen grupp, med läraren vars grupp
+-- hen hittades hos i foundInCallId: bara en hittad markering, bara av den
+-- som svarar för den gruppen. En övning startas inte medan ett skarpt larm
+-- pågår.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'krisläge: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  t1 uuid; t2 uuid; t4 uuid; p1 uuid; p2 uuid; p3 uuid; p4 uuid;
+  lesson uuid; al uuid; c1 uuid; c2 uuid; cn uuid;
+BEGIN
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1) ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t4 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1, t2) ORDER BY "authId" LIMIT 1;
+  SELECT id INTO p1 FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO p2 FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" AND id NOT IN (p1) ORDER BY "authId" LIMIT 1;
+  SELECT id INTO p3 FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" AND id NOT IN (p1, p2) ORDER BY "authId" LIMIT 1;
+  SELECT id INTO p4 FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" AND id NOT IN (p1, p2, p3) ORDER BY "authId" LIMIT 1;
+  IF t4 IS NULL OR p4 IS NULL THEN RAISE EXCEPTION 'krisläge: the primary school lacks three teachers or four pupils'; END IF;
+
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT school, (SELECT id FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+         (SELECT id FROM "StudentGroups" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+         DATE '2096-03-02', timestamptz '2096-03-02 08:00 UTC', timestamptz '2096-03-02 09:00 UTC', now()
+  RETURNING id INTO lesson;
+
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (school, 'EVACUATION', 'LIVE') RETURNING id INTO al;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", "calendarLessonId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (school, al, lesson, 'LESSON', '7A', 'Matematik', now() - interval '30 minutes', now() + interval '30 minutes') RETURNING id INTO c1;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (school, al, 'NEXT_LESSON', '8B', 'Svenska', now() + interval '10 minutes', now() + interval '60 minutes') RETURNING id INTO c2;
+
+  -- 355a: the group of pupils with no lesson has no span (the alarm's start in both), no lesson and no
+  -- teacher; there is one to an alarm; any other group needs a span.
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (school, al, 'NO_LESSON', 'Ej i lektion just nu', 'Ingen lektion pågår', now(), now()) RETURNING id INTO cn;
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt") VALUES (%L, %L, 'NO_LESSON', 'En till', 'Ingen lektion pågår', now(), now())$q$, school, al),
+                          '23505', 'a second group of pupils with no lesson in one alarm');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt") VALUES (%L, %L, 'LESSON', '7B', 'Bild', now(), now())$q$, school, al),
+                          '23514', 'a lesson with no span');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt") VALUES (%L, %L, 'NO_LESSON', 'Baklänges', 'x', now(), now() - interval '1 minute')$q$, school, al),
+                          '23514', 'a group with no lesson that ends before it starts');
+  INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId", role) VALUES (school, c1, t1, 'LEAD'), (school, c2, t2, 'LEAD');
+  INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId", "priorAbsentSource")
+  VALUES (school, al, c1, p1, NULL), (school, al, c1, p2, NULL), (school, al, c2, p3, NULL), (school, al, cn, p4, NULL);
+  UPDATE "CrisisAlarms" SET "listsSealedAt" = now() WHERE id = al;
+
+  PERFORM set_config('app.test_rls355_school', school::text, true);
+  PERFORM set_config('app.test_rls355_al', al::text, true);
+  PERFORM set_config('app.test_rls355_c1', c1::text, true);
+  PERFORM set_config('app.test_rls355_c2', c2::text, true);
+  PERFORM set_config('app.test_rls355_cn', cn::text, true);
+  PERFORM set_config('app.test_rls355_t1', t1::text, true);
+  PERFORM set_config('app.test_rls355_p1', p1::text, true);
+  PERFORM set_config('app.test_rls355_p3', p3::text, true);
+  PERFORM set_config('app.test_rls355_p4', p4::text, true);
+  PERFORM set_config('app.test_rls355_t1_auth', (SELECT "authId"::text FROM "Users" WHERE id = t1), true);
+  PERFORM set_config('app.test_rls355_t2_auth', (SELECT "authId"::text FROM "Users" WHERE id = t2), true);
+  PERFORM set_config('app.test_rls355_t4_auth', (SELECT "authId"::text FROM "Users" WHERE id = t4), true);
+  PERFORM set_config('app.test_rls355_p1_auth', (SELECT "authId"::text FROM "Users" WHERE id = p1), true);
+  PERFORM set_config('app.test_rls355_guardian_auth', (SELECT "authId"::text FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+
+  -- 355b: an exercise is not started while a real alarm is going; once it has ended, it may.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (%L, 'EVACUATION', 'DRILL')$q$, school),
+                          'KL412', 'an exercise during a real alarm');
+END $$;
+
+-- 355c: the teacher on 7A found a pupil who is on no teacher's list. The mark is on the pupil's own group,
+-- with 7A beside it; the pupil follows, and the teacher's first answer is stamped on the call she stands on.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_t1_auth'))::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls355_school')::uuid;
+  al uuid := current_setting('app.test_rls355_al')::uuid;
+  c1 uuid := current_setting('app.test_rls355_c1')::uuid;
+  c2 uuid := current_setting('app.test_rls355_c2')::uuid;
+  cn uuid := current_setting('app.test_rls355_cn')::uuid;
+  t1 uuid := current_setting('app.test_rls355_t1')::uuid;
+  p1 uuid := current_setting('app.test_rls355_p1')::uuid;
+  p3 uuid := current_setting('app.test_rls355_p3')::uuid;
+  p4 uuid := current_setting('app.test_rls355_p4')::uuid;
+  r "CrisisReports";
+BEGIN
+  -- The teacher cannot see the pupil's own group, so the lookup is the database's.
+  IF app.crisis_pupil_call(al, p4) IS DISTINCT FROM cn THEN RAISE EXCEPTION 'krisläge: the teacher is not told the group of the pupil she found'; END IF;
+  IF app.crisis_pupil_call(al, p3) IS DISTINCT FROM c2 THEN RAISE EXCEPTION 'krisläge: the teacher is not told the group of a pupil of a colleague''s list'; END IF;
+  IF app.crisis_pupil_call(al, gen_random_uuid()) IS NOT NULL THEN RAISE EXCEPTION 'krisläge: the lookup answers for a pupil who is in no alarm'; END IF;
+  IF EXISTS (SELECT 1 FROM "CrisisPupils" WHERE "studentId" = p4) THEN RAISE EXCEPTION 'krisläge: the teacher reads the pupil row of a list that is not hers'; END IF;
+
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at)
+  VALUES ('c0000000-0000-4000-8000-0000000f2501', school, al, cn, c1, p4, 'FOUND', now()) RETURNING * INTO r;
+  IF r."byUserId" <> t1 OR r."onBehalf" THEN
+    RAISE EXCEPTION 'krisläge: a found-with-me mark of a teacher on the call she stands on is on behalf of someone (%, %)', r."byUserId", r."onBehalf";
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "CrisisReports" WHERE id = r.id AND "foundInCallId" = c1 AND "callId" = cn) THEN
+    RAISE EXCEPTION 'krisläge: the teacher does not read the mark she made about a pupil of another list';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "CrisisCallTeachers" WHERE "callId" = c1 AND "teacherId" = t1 AND "answeredAt" IS NOT NULL) THEN
+    RAISE EXCEPTION 'krisläge: the teacher''s answer was not stamped on the call she stands on';
+  END IF;
+
+  -- 355d: only found, only with a call she answers for, only for a pupil who is in the alarm, and the
+  -- ordinary mark on a pupil of someone else's list stays refused.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'MISSING', now())$q$, school, al, cn, c1, p4),
+                          '42501', 'a missing mark for a pupil of another list');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'FOUND', now())$q$, school, al, cn, c2, p4),
+                          '42501', 'a found mark made with a call she does not answer for');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'FOUND', now())$q$, school, al, cn, p4),
+                          '42501', 'an ordinary mark on a list she does not answer for');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'FOUND', now())$q$, school, al, c1, c1, p4),
+                          '23503', 'a found mark naming a group the pupil is not on as their own');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'FOUND', now())$q$, school, al, cn, c1, gen_random_uuid()),
+                          '23503', 'a found mark for a pupil who is in no part of the alarm');
+  IF t1 IS NULL OR p1 IS NULL THEN RAISE EXCEPTION 'krisläge: setup'; END IF;
+END $$;
+
+-- 355e: the one who is not on 7A reads nothing of it; the administration reads it with who found them.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_t2_auth'))::text, true);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "CrisisReports" WHERE "foundInCallId" IS NOT NULL) THEN RAISE EXCEPTION 'krisläge: a teacher on another call reads the found mark'; END IF;
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'FOUND', now())$q$,
+                          current_setting('app.test_rls355_school'), current_setting('app.test_rls355_al'), current_setting('app.test_rls355_cn'), current_setting('app.test_rls355_c1'), current_setting('app.test_rls355_p4')),
+                          '42501', 'a found mark made with the call of a colleague');
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_t4_auth'))::text, true);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "CrisisReports") THEN RAISE EXCEPTION 'krisläge: a teacher who answers for nothing reads a mark'; END IF;
+  IF app.crisis_pupil_call(current_setting('app.test_rls355_al')::uuid, current_setting('app.test_rls355_p4')::uuid) IS NULL THEN
+    RAISE EXCEPTION 'krisläge: a teacher who answers for nothing cannot learn the group of a pupil she finds';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM "CrisisReports" WHERE id = 'c0000000-0000-4000-8000-0000000f2501' AND "foundInCallId" = current_setting('app.test_rls355_c1')::uuid) THEN
+    RAISE EXCEPTION 'krisläge: the administration does not read who found the pupil';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "CrisisPupils" WHERE "callId" = current_setting('app.test_rls355_cn')::uuid AND "studentId" = current_setting('app.test_rls355_p4')::uuid
+                    AND state = 'FOUND' AND "stateByUserId" = current_setting('app.test_rls355_t1')::uuid) THEN
+    RAISE EXCEPTION 'krisläge: the pupil of the group with no lesson did not follow the teacher''s found mark';
+  END IF;
+  -- Not even the administration can make a missing mark found elsewhere: the table says so.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'MISSING', now())$q$,
+                          current_setting('app.test_rls355_school'), current_setting('app.test_rls355_al'), current_setting('app.test_rls355_cn'), current_setting('app.test_rls355_c1'), current_setting('app.test_rls355_p4')),
+                          '23514', 'a missing mark found elsewhere, by the administration');
+  -- 355b, the other half: once the real alarm has ended the exercise may start.
+  UPDATE "CrisisAlarms" SET "endedAt" = now() WHERE id = current_setting('app.test_rls355_al')::uuid;
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (current_setting('app.test_rls355_school')::uuid, 'EVACUATION', 'DRILL');
+END $$;
+
+-- 355f: a pupil and a guardian learn the group of nobody.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_p1_auth'))::text, true);
+DO $$
+BEGIN
+  IF app.crisis_pupil_call(current_setting('app.test_rls355_al')::uuid, current_setting('app.test_rls355_p4')::uuid) IS NOT NULL THEN
+    RAISE EXCEPTION 'krisläge: a pupil learns the group of a pupil';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_guardian_auth'))::text, true);
+DO $$
+BEGIN
+  IF app.crisis_pupil_call(current_setting('app.test_rls355_al')::uuid, current_setting('app.test_rls355_p4')::uuid) IS NOT NULL THEN
+    RAISE EXCEPTION 'krisläge: a guardian learns the group of a pupil';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+BEGIN
+  IF app.crisis_pupil_call(current_setting('app.test_rls355_al')::uuid, current_setting('app.test_rls355_p4')::uuid) IS NOT NULL THEN
+    RAISE EXCEPTION 'krisläge: another school''s administrator learns the group of a pupil';
   END IF;
 END $$;
 ROLLBACK;

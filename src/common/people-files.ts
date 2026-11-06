@@ -19,7 +19,12 @@
  * a pupil nobody looked for. The files made from them, the protocol as CSV and
  * on paper, are the web's, and there the rule is HOLDS_OUT: a marked pupil is
  * not named and is counted (web/lib/people-files.ts, protocol-actions.ts). The
- * app has no export. A route of Krisläge that ever answers a file belongs in
+ * same goes for the teacher's route (GET /api/v1/crisis/mine): its `others` is
+ * every pupil of the school by name and class, so that a teacher who finds a
+ * pupil who is on nobody's list of hers can say so; a protected pupil is in it,
+ * because the pupil nobody can pick is the pupil nobody finds, and staff read
+ * the school's pupils directly already. It is JSON for the phone's encrypted
+ * store, not a file. The app has no export. A route of Krisläge that ever answers a file belongs in
  * the list below, by name, before it ships.
  *
  * Why the database cannot hold this instead: an export is built in the

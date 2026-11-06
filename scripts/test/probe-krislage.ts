@@ -38,11 +38,19 @@
  *         the protocol is the marks in order, and an hour after the end a mark
  *         is refused;
  *   kl-e  one alarm of each mode at a time: a real alarm cuts an exercise
- *         short, two starts at once give one alarm and one 409, and the
- *         lists cannot be added to afterwards;
+ *         short, an exercise is not started beside a real alarm, two starts
+ *         at once give one alarm and one 409, and the lists cannot be added to
+ *         afterwards;
  *   kl-f  who may start: the school's choice of profiles, the deciders always,
  *         a teacher never;
- *   kl-g  the job ends an alarm left open.
+ *   kl-g  the job ends an alarm left open;
+ *   kl-h  nobody is left out of the roll call: the pupils on no lesson's list
+ *         (no lesson yet, none left, a gap, the after-school club) stand on
+ *         a group of their own that the administration answers for, a
+ *         teacher says she found one and is not refused, and the counts and
+ *         the end count against every pupil of the school;
+ *   kl-i  two phones of one group send in opposite orders at once and nothing
+ *         deadlocks (a 409 that says to send again is the worst it may be).
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -397,10 +405,11 @@ export async function krislageChecks(owner: Client, api: PrismaService, marker: 
       assert.ok(stored[1]!.at.getTime() <= stored[1]!.receivedAt.getTime() && stored[1]!.at.getTime() > startedAt.getTime());
       assert.ok(stored.every((r) => r.byUserId === vera.id && !r.onBehalf && !r.late));
 
-      // Refused: a pupil who is not on the group's list; a group that is not theirs is not found (the
-      // phone is told it belongs to no alarm of theirs, and drops the mark).
+      // Refused: a pupil who is not on the group's list cannot be said to be missing (they can be said to be
+      // found, kl-h); a group that is not theirs is not found (the phone is told it belongs to no alarm of
+      // theirs, and drops the mark).
       await assert.rejects(
-        crisis.markMine([{ id: randomUUID(), callId: c7.id, studentId: q1.id, state: 'FOUND', at: early }], asTeacher(vera)),
+        crisis.markMine([{ id: randomUUID(), callId: c7.id, studentId: q1.id, state: 'MISSING', at: early }], asTeacher(vera)),
         (e: unknown) => codeOf(e) === 'CRISIS_MARK_INVALID',
       );
       const foreign = randomUUID();
@@ -470,7 +479,7 @@ export async function krislageChecks(owner: Client, api: PrismaService, marker: 
       // The guardians of the pupils on the lists, once each (r3's guardian has the one child on a list), no name in it.
       const guardians = await noticesOf('CRISIS_GUARDIAN_AFTER');
       assert.deepEqual(guardians.map((n) => n.userId).sort(), [guardianP1, guardianQ1, guardianR3].map((p) => p.id).sort());
-      for (const n of guardians) assert.deepEqual(Object.keys(n.meta).sort(), ['endedAt', 'kind', 'startedAt']);
+      for (const n of guardians) assert.deepEqual(Object.keys(n.meta).sort(), ['endedAt', 'startedAt']); // that it happened and ended: no kind of alarm
 
       // A phone that got its signal after the end: taken in, and it says so; the list follows the later mark.
       const c7 = callOf(alarm, '7A');
@@ -515,11 +524,17 @@ export async function krislageChecks(owner: Client, api: PrismaService, marker: 
       );
       assert.ok(cut.endedAt !== null && cut.endNote === 'Avbröts av ett skarpt larm.' && cut.endedByUserId === admin.id);
       await assert.rejects(crisis.start({ kind: 'LOCKDOWN', mode: 'LIVE' }, asAdminOf(admin2)), (e: unknown) => codeOf(e) === 'CRISIS_ALARM_OPEN');
-      // A drill can go on beside the real one.
+      // An exercise is not started beside the real one, and the answer names the real one.
+      await assert.rejects(
+        crisis.start({ kind: 'EVACUATION', mode: 'DRILL' }, asAdmin),
+        (e: unknown) =>
+          codeOf(e) === 'CRISIS_ALARM_OPEN' && (e as { getResponse: () => { params?: { alarmId?: string } } }).getResponse().params?.alarmId === real.alarm.id,
+      );
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CrisisAlarms" WHERE "schoolId" = $1 AND mode = 'DRILL' AND "endedAt" IS NULL`, [s])).n, 0);
+      await crisis.end(real.alarm.id, {}, asAdmin);
       const drill2 = await crisis.start({ kind: 'EVACUATION', mode: 'DRILL' }, asAdmin);
       await crisis.end(drill2.alarm.id, {}, asAdmin);
       assert.equal((await one<{ g: Date | null }>(`SELECT "guardiansNotifiedAt" AS g FROM "CrisisAlarms" WHERE id = $1`, [drill2.alarm.id])).g, null);
-      await crisis.end(real.alarm.id, {}, asAdmin);
 
       // The race: two administrators start a real alarm in the same moment, through two pools.
       const outcomes = await Promise.allSettled([
@@ -578,6 +593,113 @@ export async function krislageChecks(owner: Client, api: PrismaService, marker: 
       // The exercise is over, so a new one can begin.
       const next = await crisis.start({ kind: 'EVACUATION', mode: 'DRILL' }, asAdmin);
       await crisis.end(next.alarm.id, {}, asAdmin);
+    });
+
+    await check('(kl-h) nobody is left out: the pupils on no list stand on a group of their own, a teacher can say she found one, and every count is against every pupil', async () => {
+      await endOpenAlarms();
+      // Four pupils of an 11th class that has no lesson today; one of them is reported absent by a guardian.
+      const g11e = await groupOf('11E');
+      const [u1, u2, u3, u4] = [await pupil('u1', g11e), await pupil('u2', g11e), await pupil('u3', g11e), await pupil('u4', g11e)];
+      await owner.query(`INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date) VALUES ($1, $2, $3, (now() AT TIME ZONE $4)::date)`, [s, u4.id, guardianR3.id, zone]);
+      const live = await crisis.start({ kind: 'EVACUATION', mode: 'LIVE' }, asAdmin);
+      const none = live.calls.find((call) => call.basis === 'NO_LESSON')!;
+      assert.ok(none, 'the pupils with no lesson have a group');
+      assert.deepEqual(none.pupils.map((p) => p.studentId).sort(), [u1.id, u2.id, u3.id, u4.id].sort());
+      assert.equal(none.lessonId, null);
+      assert.equal(none.uncovered, true);
+      assert.deepEqual(none.teachers, []);
+      assert.equal(none.pupils.find((p) => p.studentId === u4.id)!.status, 'ABSENT_BEFORE');
+      assert.equal(live.alarm.unlisted, 4);
+      // The eleven on a lesson and the four with none: the alarm counts all fifteen.
+      assert.equal(live.alarm.counts.pupils, 15);
+      assert.equal(live.calls.filter((call) => call.basis === 'NO_LESSON').length, 1);
+
+      // Dan teaches 9C. He finds u1 in the corridor: not on his list, and not a 400.
+      const danCall = callOf(live, '9C');
+      const foundMark = randomUUID();
+      const nowIso = new Date().toISOString();
+      assert.deepEqual(await crisis.markMine([{ id: foundMark, callId: danCall.id, studentId: u1.id, state: 'FOUND', at: nowIso }], asTeacher(dan)), {
+        stored: 1,
+        duplicates: 0,
+        unresolved: [],
+      });
+      // ... and the same mark sent again is stored once.
+      assert.equal((await crisis.markMine([{ id: foundMark, callId: danCall.id, studentId: u1.id, state: 'FOUND', at: nowIso }], asTeacher(dan))).stored, 0);
+      // A teacher cannot say a pupil of someone else's list is missing.
+      await assert.rejects(
+        crisis.markMine([{ id: randomUUID(), callId: danCall.id, studentId: u2.id, state: 'MISSING', at: nowIso }], asTeacher(dan)),
+        (e: unknown) => codeOf(e) === 'CRISIS_MARK_INVALID',
+      );
+      // A pupil who is in no part of the alarm (another school's id, or none) is refused too.
+      await assert.rejects(
+        crisis.markMine([{ id: randomUUID(), callId: danCall.id, studentId: randomUUID(), state: 'FOUND', at: nowIso }], asTeacher(dan)),
+        (e: unknown) => codeOf(e) === 'CRISIS_MARK_INVALID',
+      );
+
+      const mineDan = (await crisis.mine(asTeacher(dan))).alarms.find((a) => a.id === live.alarm.id)!;
+      const danMine = mineDan.calls.find((call) => call.id === danCall.id)!;
+      assert.deepEqual(danMine.foundHere.map((f) => [f.studentId, f.className]), [[u1.id, '11E']]);
+      // Dan picks from every pupil who is not on his list; u1 is among them (he is also on the live list of the administration).
+      assert.ok(mineDan.others.some((o) => o.studentId === u2.id && o.className === '11E'));
+      assert.ok(!mineDan.others.some((o) => danCall.pupils.some((p) => p.studentId === o.studentId)));
+      assert.equal(danMine.counts.pupils, danCall.pupils.length, 'the pupil he found does not count on his own list');
+
+      const afterFound = await crisis.detail(live.alarm.id, asAdmin);
+      const noneAfter = afterFound.calls.find((call) => call.basis === 'NO_LESSON')!;
+      const u1After = noneAfter.pupils.find((p) => p.studentId === u1.id)!;
+      assert.equal(u1After.status, 'FOUND');
+      assert.equal(u1After.markedBy, 'dan Probe');
+      assert.equal((await one<{ f: string | null }>(`SELECT "foundInCallId"::text AS f FROM "CrisisReports" WHERE id = $1`, [foundMark])).f, danCall.id);
+      const proto = await crisis.protocol(live.alarm.id, asAdmin);
+      const protoMark = proto.marks.find((m) => m.studentId === u1.id)!;
+      assert.equal(protoMark.foundIn?.groupName, '9C');
+      assert.equal(protoMark.groupName, 'Ej i lektion just nu');
+
+      // The end counts against every pupil: u2 and u3 are unreported, and everyone else on the lists is too.
+      assert.ok(afterFound.alarm.counts.unreported >= 2);
+      // The administration marks the rest of the group nobody answers for; it is complete when each expected pupil has a mark.
+      await crisis.markAsAdministration(
+        live.alarm.id,
+        [u2, u3].map((u) => ({ id: randomUUID(), callId: noneAfter.id, studentId: u.id, state: 'FOUND' as const, at: new Date().toISOString() })),
+        asAdmin,
+      );
+      const done = (await crisis.detail(live.alarm.id, asAdmin)).calls.find((call) => call.basis === 'NO_LESSON')!;
+      assert.equal(done.counts.unreported, 0);
+      assert.ok(done.completedAt !== null);
+
+      // A pupil of the school who was never in a lesson today and an active pupil after the alarm began are not in
+      // its lists (the lists are the moment's): the alarm does not grow.
+      await crisis.end(live.alarm.id, {}, asAdmin);
+    });
+
+    await check('(kl-i) two phones of one group send in opposite orders at once: no deadlock, nothing lost', async () => {
+      await endOpenAlarms();
+      // A group big enough for two batches to meet in the middle: forty pupils with no lesson, who stand on the group of their own.
+      const g12f = await groupOf('12F');
+      for (let i = 0; i < 40; i++) await pupil(`w${i}`, g12f);
+      const live = await crisis.start({ kind: 'EVACUATION', mode: 'LIVE' }, asAdmin);
+      const call = live.calls.find((c) => c.basis === 'NO_LESSON')!;
+      const ids = call.pupils.map((p) => p.studentId);
+      assert.ok(ids.length >= 40);
+      const stamp = () => new Date().toISOString();
+      const batch = (order: string[]) => order.map((studentId) => ({ id: randomUUID(), callId: call.id, studentId, state: 'FOUND' as const, at: stamp() }));
+      // Two administrators (each through a pool of its own) send the same pupils, one in each order, at the same time:
+      // the shape of two phones of one group that get their network back together.
+      const rounds = 20;
+      let stored = 0;
+      for (let round = 0; round < rounds; round++) {
+        const outcomes = await Promise.allSettled([
+          crisis.markAsAdministration(live.alarm.id, batch(ids), asAdmin),
+          raced.markAsAdministration(live.alarm.id, batch([...ids].reverse()), asAdminOf(admin2)),
+        ]);
+        for (const outcome of outcomes) {
+          if (outcome.status === 'fulfilled') stored += outcome.value.stored;
+          else assert.equal(codeOf(outcome.reason), 'WRITE_CONFLICT', `a refusal other than the 409 that says to send again: ${String(outcome.reason)}`);
+        }
+      }
+      // The sorted order leaves no deadlock to refuse: every mark of every round is stored.
+      assert.equal(stored, rounds * ids.length * 2);
+      await crisis.end(live.alarm.id, {}, asAdmin);
     });
   } finally {
     await racer.onModuleDestroy?.();

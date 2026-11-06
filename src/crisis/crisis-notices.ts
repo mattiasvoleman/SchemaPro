@@ -68,7 +68,11 @@ export async function sendEnded(
   });
 }
 
-/** That it happened and ended, to the guardians of the pupils on the lists. No alarm id: they read none. */
+/**
+ * That it happened and ended, to the guardians of the pupils on the lists. No alarm id: they read none; and no kind
+ * of alarm: a guardian is told that the school had one, not whether it was an evacuation or a lockdown (a school
+ * that wants to say more writes to the guardians itself).
+ */
 export async function sendGuardianAfter(
   notifications: NotificationsService,
   tx: PrismaClient,
@@ -78,6 +82,6 @@ export async function sendGuardianAfter(
     schoolId: args.schoolId,
     userIds: [...args.guardianIds],
     type: 'CRISIS_GUARDIAN_AFTER',
-    meta: { kind: args.kind, startedAt: args.startedAt.toISOString(), endedAt: args.endedAt.toISOString() },
+    meta: { startedAt: args.startedAt.toISOString(), endedAt: args.endedAt.toISOString() },
   });
 }

@@ -8,11 +8,16 @@
 -- they are (a vikarie D4 or the board placed has taken the absent teacher's
 -- row; a replacement lesson of a schemabrytande aktivitet, D3, has its own
 -- teachers) and the pupils on it, each marked if the register of the day or a
--- report already says they are absent. The teachers mark their pupils found or
--- missing, offline if they must; the administration sees the groups, the
--- pupils still missing and the teachers who have not answered; afterwards the
--- protocol is exported. This migration is the stored half;
--- src/crisis/*.ts is the other.
+-- report already says they are absent. Every other active pupil of the school
+-- (before the first lesson, after the last, a gap longer than a break, a lesson
+-- that is cancelled, the after-school club) is on one more group, NO_LESSON,
+-- with no teacher: the administration answers for it, because a roll call that
+-- leaves out a pupil who is in the building is the worst mistake it can make.
+-- The teachers mark their pupils found or missing, offline if they must, and a
+-- teacher who finds a pupil who is not on their list says "found with me"; the
+-- administration sees the groups, the pupils still missing and the teachers who
+-- have not answered; afterwards the protocol is exported. This migration is the
+-- stored half; src/crisis/*.ts is the other.
 --
 --   * CrisisSettings      who may start an alarm, and whether the guardians are
 --                         told afterwards. One row per school; no row = the
@@ -21,7 +26,8 @@
 --                         who ended it, and how.
 --   * CrisisCalls         one group on the list: the lesson's group, subject and
 --                         room as they were named, and whether the lesson was
---                         going on (LESSON) or is the group's next (NEXT_LESSON).
+--                         going on (LESSON) or is the group's next (NEXT_LESSON);
+--                         or the one group of pupils with no lesson (NO_LESSON).
 --   * CrisisCallTeachers  the teachers who answer for the call.
 --   * CrisisPupils        the pupils on the call, with their latest mark.
 --   * CrisisReports       every mark ever made, appended and never changed.
@@ -36,12 +42,20 @@
 -- (held between the alarm's start and the moment the gateway got it) and a
 -- primary key the phone chose, so a mark sent twice is stored once. The
 -- triggers on CrisisReports keep the rest: the pupil's latest mark by time
--- (an old mark that arrives late never covers a newer one), the teacher's
--- first answer and the time the group had all its marks. No arm updates
+-- (an old mark that arrives late never covers a newer one) and the teacher's
+-- first answer. When the group had all its marks is read from the pupils, not
+-- stored: a column on the call would be a row every mark of the group locks,
+-- and two phones sending in a different order would deadlock on it. No arm updates
 -- CrisisPupils, CrisisCalls or CrisisCallTeachers, and the API's role holds no
 -- UPDATE on them. Who marked, whether they are one of the call's teachers
 -- (onBehalf) and whether the alarm had ended when the mark arrived (late) are
 -- stamped by the database from the login, whatever the writer sends.
+--
+-- A teacher who finds a pupil who is not on their list marks them found with
+-- the call they stand on in foundInCallId; the mark itself is on the pupil's own
+-- call (callId), where the pupil's latest mark and the counts are kept. Only a
+-- found mark can be made that way (a teacher cannot say a pupil of someone
+-- else's list is missing), and only by a teacher who answers for foundInCallId.
 --
 -- ## Nothing is added to an alarm after it has begun
 --
@@ -88,6 +102,9 @@
 --   crisis_reports_teacher_select / _insert
 --       a TEACHER the marks on the calls they answer for, and marks for the
 --       pupils on those calls.
+--   crisis_reports_teacher_found_select / _insert
+--       a TEACHER the found marks made with a call they answer for, and a found
+--       mark for any pupil of the alarm, made with a call they answer for.
 --
 -- A pupil and a guardian have no arm: they read nothing of an alarm. When the
 -- school has chosen to tell the guardians, they get a notice (CRISIS_GUARDIAN_AFTER)
@@ -148,7 +165,7 @@ $$;
 
 CREATE TYPE "CrisisAlarmKind" AS ENUM ('EVACUATION', 'LOCKDOWN');
 CREATE TYPE "CrisisAlarmMode" AS ENUM ('LIVE', 'DRILL');
-CREATE TYPE "CrisisCallBasis" AS ENUM ('LESSON', 'NEXT_LESSON');
+CREATE TYPE "CrisisCallBasis" AS ENUM ('LESSON', 'NEXT_LESSON', 'NO_LESSON');
 CREATE TYPE "CrisisPupilState" AS ENUM ('FOUND', 'MISSING');
 
 -- ---------------------------------------------------------------------------
@@ -245,14 +262,13 @@ CREATE TABLE "CrisisCalls" (
     "groupName"        TEXT NOT NULL,
     "subjectName"      TEXT NOT NULL,
     "roomName"         TEXT,
+    -- The lesson's span; the NO_LESSON group has none and carries the alarm's start in both.
     "lessonStartsAt"   TIMESTAMPTZ(6) NOT NULL,
     "lessonEndsAt"     TIMESTAMPTZ(6) NOT NULL,
-    -- When the group had a mark for every pupil who was not absent before:
-    -- kept by app.crisis_report_applies, the sender's clock.
-    "completedAt"      TIMESTAMPTZ(6),
 
     CONSTRAINT "CrisisCalls_pkey" PRIMARY KEY ("id"),
-    CONSTRAINT "CrisisCalls_lesson_has_a_span" CHECK ("lessonEndsAt" > "lessonStartsAt"),
+    CONSTRAINT "CrisisCalls_lesson_has_a_span" CHECK (
+        "lessonEndsAt" > "lessonStartsAt" OR ("basis" = 'NO_LESSON' AND "lessonEndsAt" = "lessonStartsAt")),
     CONSTRAINT "CrisisCalls_names_are_short" CHECK (
         char_length("groupName") BETWEEN 1 AND 200 AND char_length("subjectName") BETWEEN 1 AND 200
         AND ("roomName" IS NULL OR char_length("roomName") BETWEEN 1 AND 200))
@@ -263,6 +279,10 @@ CREATE UNIQUE INDEX "CrisisCalls_id_alarmId_key" ON "CrisisCalls"("id", "alarmId
 -- One call per lesson and alarm (a lesson removed leaves a null, and nulls differ).
 CREATE UNIQUE INDEX "CrisisCalls_alarmId_calendarLessonId_key" ON "CrisisCalls"("alarmId", "calendarLessonId");
 -- The alarm key's cascade and the alarm's lists.
+-- One group of pupils with no lesson to an alarm.
+CREATE UNIQUE INDEX "CrisisCalls_one_no_lesson_per_alarm" ON "CrisisCalls"("alarmId") WHERE "basis" = 'NO_LESSON';
+
+CREATE INDEX "CrisisCalls_schoolId_idx" ON "CrisisCalls"("schoolId");
 CREATE INDEX "CrisisCalls_alarmId_schoolId_idx" ON "CrisisCalls"("alarmId", "schoolId");
 -- The lesson key's SET NULL.
 CREATE INDEX "CrisisCalls_calendarLessonId_schoolId_idx" ON "CrisisCalls"("calendarLessonId", "schoolId");
@@ -296,6 +316,7 @@ CREATE TABLE "CrisisCallTeachers" (
 
 CREATE UNIQUE INDEX "CrisisCallTeachers_callId_teacherId_key" ON "CrisisCallTeachers"("callId", "teacherId");
 -- A teacher's calls; the person key's SET NULL.
+CREATE INDEX "CrisisCallTeachers_schoolId_idx" ON "CrisisCallTeachers"("schoolId");
 CREATE INDEX "CrisisCallTeachers_teacherId_schoolId_idx" ON "CrisisCallTeachers"("teacherId", "schoolId");
 -- The call key's cascade.
 CREATE INDEX "CrisisCallTeachers_callId_schoolId_idx" ON "CrisisCallTeachers"("callId", "schoolId");
@@ -338,6 +359,7 @@ CREATE UNIQUE INDEX "CrisisPupils_alarmId_studentId_key" ON "CrisisPupils"("alar
 -- The target of a mark's key.
 CREATE UNIQUE INDEX "CrisisPupils_callId_studentId_key" ON "CrisisPupils"("callId", "studentId");
 -- The call key's cascade and a call's pupils.
+CREATE INDEX "CrisisPupils_schoolId_idx" ON "CrisisPupils"("schoolId");
 CREATE INDEX "CrisisPupils_callId_schoolId_idx" ON "CrisisPupils"("callId", "schoolId");
 -- A pupil's alarms (the person key's cascade).
 CREATE INDEX "CrisisPupils_studentId_schoolId_idx" ON "CrisisPupils"("studentId", "schoolId");
@@ -368,9 +390,13 @@ CREATE TABLE "CrisisReports" (
     "id"         UUID NOT NULL,
     "schoolId"   UUID NOT NULL,
     "alarmId"    UUID NOT NULL,
+    -- The pupil's own call: where their latest mark and the counts are kept.
     "callId"     UUID NOT NULL,
     "studentId"  UUID NOT NULL,
     "state"      "CrisisPupilState" NOT NULL,
+    -- Found with another group than the pupil's own: the call of the teacher who found
+    -- them ("found with me"). Only a found mark can say so.
+    "foundInCallId" UUID,
     -- The sender's time, held in [alarm start, receivedAt] by the trigger.
     "at"         TIMESTAMPTZ(6) NOT NULL,
     "receivedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT clock_timestamp(),
@@ -378,11 +404,15 @@ CREATE TABLE "CrisisReports" (
     "onBehalf"   BOOLEAN NOT NULL DEFAULT false,
     "late"       BOOLEAN NOT NULL DEFAULT false,
 
-    CONSTRAINT "CrisisReports_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "CrisisReports_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "CrisisReports_only_found_is_found_elsewhere" CHECK ("foundInCallId" IS NULL OR "state" = 'FOUND')
 );
 
+CREATE INDEX "CrisisReports_schoolId_idx" ON "CrisisReports"("schoolId");
 -- The protocol's timeline.
 CREATE INDEX "CrisisReports_alarmId_schoolId_at_idx" ON "CrisisReports"("alarmId", "schoolId", "at");
+-- The call key's SET NULL, and a teacher's found marks.
+CREATE INDEX "CrisisReports_foundInCallId_idx" ON "CrisisReports"("foundInCallId") WHERE "foundInCallId" IS NOT NULL;
 -- The pupil key's cascade and a pupil's marks.
 CREATE INDEX "CrisisReports_callId_studentId_idx" ON "CrisisReports"("callId", "studentId");
 -- The person key's SET NULL.
@@ -397,6 +427,10 @@ ALTER TABLE "CrisisReports"
 ALTER TABLE "CrisisReports"
     ADD CONSTRAINT "CrisisReports_callId_alarmId_fkey" FOREIGN KEY ("callId", "alarmId")
     REFERENCES "CrisisCalls"("id", "alarmId") ON DELETE CASCADE ON UPDATE NO ACTION;
+-- Found with a call of the same alarm.
+ALTER TABLE "CrisisReports"
+    ADD CONSTRAINT "CrisisReports_foundInCallId_alarmId_fkey" FOREIGN KEY ("foundInCallId", "alarmId")
+    REFERENCES "CrisisCalls"("id", "alarmId") ON DELETE SET NULL ("foundInCallId") ON UPDATE NO ACTION;
 -- A mark names a pupil who is on the call it is made on.
 ALTER TABLE "CrisisReports"
     ADD CONSTRAINT "CrisisReports_callId_studentId_fkey" FOREIGN KEY ("callId", "studentId")
@@ -480,13 +514,27 @@ $$;
 COMMENT ON FUNCTION app.crisis_answers_for(uuid) IS
   'Whether the caller is one of the teachers of call p_call.';
 
+-- The call a pupil is on in alarm p_alarm, for a teacher who found them and does not see
+-- that call (a pupil has one call in an alarm). The id alone, and only while the alarm's
+-- window is open and to a teacher or an administrator of the school: it says nothing of the pupil.
+CREATE FUNCTION app.crisis_pupil_call(p_alarm uuid, p_student uuid) RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT p."callId" FROM "CrisisPupils" p
+   WHERE p."alarmId" = p_alarm AND p."studentId" = p_student AND p."schoolId" = app.current_school_id()
+     AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+     AND app.crisis_window_open(p_alarm)
+$$;
+
+COMMENT ON FUNCTION app.crisis_pupil_call(uuid, uuid) IS
+  'The id of the call pupil p_student is on in alarm p_alarm of the caller''s school, while the alarm''s window is open; null otherwise.';
+
 -- ---------------------------------------------------------------------------
 -- An alarm begins in the name of its starter, ends once, and says so itself
 -- ---------------------------------------------------------------------------
 
 -- A writer with a login starts an alarm at the transaction's time, in its own
--- name, with nothing of its end filled in. A writer with no login (the owner,
--- a fixture) states what it likes.
+-- name, with nothing of its end filled in; KL412 an exercise while a real alarm
+-- is going. A writer with no login (the owner, a fixture) states what it likes.
 CREATE FUNCTION app.crisis_alarm_is_born_open_and_started_by_its_writer() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
@@ -499,6 +547,14 @@ BEGIN
     NEW."endNote" := NULL;
     NEW."guardiansNotifiedAt" := NULL;
     NEW."listsSealedAt" := NULL;
+    -- An exercise is not started while a real alarm is going: the staff would be told "Övning
+    -- pågår" in the middle of the real one. (The other way round, a real alarm cuts an exercise.)
+    IF NEW."mode" = 'DRILL' AND EXISTS (
+         SELECT 1 FROM "CrisisAlarms" a
+          WHERE a."schoolId" = NEW."schoolId" AND a."mode" = 'LIVE' AND a."endedAt" IS NULL) THEN
+      RAISE EXCEPTION 'CRISIS_LIVE_IS_GOING: en övning startas inte medan ett skarpt larm pågår'
+        USING ERRCODE = 'KL412';
+    END IF;
   END IF;
   RETURN NEW;
 END
@@ -576,7 +632,7 @@ CREATE TRIGGER "CrisisAlarms_b_ends_once" BEFORE UPDATE ON "CrisisAlarms"
 -- ---------------------------------------------------------------------------
 
 -- The writer's login decides who marked, and whether they are one of the
--- call's teachers; the alarm decides whether the mark is late; the sender's
+-- teachers of the call the mark was made with (the pupil's, or the one that found them); the alarm decides whether the mark is late; the sender's
 -- clock is held between the alarm's start and now. KL404 the call is not a
 -- call of this alarm in this school, KL410 the hour after the end has passed.
 CREATE FUNCTION app.crisis_report_is_stamped() RETURNS trigger
@@ -599,7 +655,7 @@ BEGIN
     NEW."byUserId" := app.current_user_id();
     NEW."onBehalf" := NOT EXISTS (
       SELECT 1 FROM "CrisisCallTeachers" t
-       WHERE t."callId" = NEW."callId" AND t."teacherId" = app.current_user_id());
+       WHERE t."callId" = coalesce(NEW."foundInCallId", NEW."callId") AND t."teacherId" = app.current_user_id());
   END IF;
   NEW."at" := least(greatest(NEW."at", al."startedAt"), NEW."receivedAt");
   RETURN NEW;
@@ -611,29 +667,26 @@ CREATE TRIGGER "CrisisReports_a_stamped" BEFORE INSERT ON "CrisisReports"
     FOR EACH ROW EXECUTE FUNCTION app.crisis_report_is_stamped();
 
 -- The lists follow the marks. The pupil's mark is the latest by time (a tie
--- goes to the one that arrived last), the teacher's answer is their first mark,
--- and the call is complete at the latest mark of the pupils who were not
--- absent before once each of them has one.
+-- goes to the one that arrived last) and the teacher's answer is their first
+-- mark, on the call they made it with. The teacher's row is taken before the
+-- pupil's: two phones of one teacher sending at once then wait in the same
+-- order. A call has no row of its own that a mark changes, so marks on one call
+-- do not queue behind each other beyond the pupil they name (the gateway
+-- sends a batch in (call, pupil) order, so two batches take their pupils in the
+-- same order too).
 CREATE FUNCTION app.crisis_report_applies() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
+  IF NEW."byUserId" IS NOT NULL THEN
+    UPDATE "CrisisCallTeachers" t
+       SET "answeredAt" = NEW."at"
+     WHERE t."callId" = coalesce(NEW."foundInCallId", NEW."callId") AND t."teacherId" = NEW."byUserId" AND t."answeredAt" IS NULL;
+  END IF;
+
   UPDATE "CrisisPupils" p
      SET "state" = NEW."state", "stateAt" = NEW."at", "stateByUserId" = NEW."byUserId"
    WHERE p."callId" = NEW."callId" AND p."studentId" = NEW."studentId"
      AND (p."stateAt" IS NULL OR NEW."at" >= p."stateAt");
-
-  IF NEW."byUserId" IS NOT NULL THEN
-    UPDATE "CrisisCallTeachers" t
-       SET "answeredAt" = NEW."at"
-     WHERE t."callId" = NEW."callId" AND t."teacherId" = NEW."byUserId" AND t."answeredAt" IS NULL;
-  END IF;
-
-  UPDATE "CrisisCalls" c
-     SET "completedAt" = (
-           SELECT CASE WHEN bool_and(p."state" IS NOT NULL) THEN max(p."stateAt") END
-             FROM "CrisisPupils" p
-            WHERE p."callId" = c."id" AND p."priorAbsentSource" IS NULL)
-   WHERE c."id" = NEW."callId";
   RETURN NULL;
 END
 $$;
@@ -800,6 +853,22 @@ BEGIN
                AND (select app.current_user_role()) = 'TEACHER'
                AND app.crisis_answers_for("callId")
                AND app.crisis_call_window_open("callId"));
+    -- Found with a call the teacher answers for: read, and written (found marks only) for a
+    -- pupil on any call of the alarm. The pupil's own call is checked by the key to CrisisPupils;
+    -- a mark with no foundInCallId meets crisis_answers_for(null), which is false.
+    CREATE POLICY "crisis_reports_teacher_found_select" ON "CrisisReports"
+        FOR SELECT TO "app_authenticated"
+        USING ("schoolId" = (select app.current_school_id())
+               AND (select app.current_user_role()) = 'TEACHER'
+               AND app.crisis_answers_for("foundInCallId")
+               AND app.crisis_call_window_open("foundInCallId"));
+    CREATE POLICY "crisis_reports_teacher_found_insert" ON "CrisisReports"
+        FOR INSERT TO "app_authenticated"
+        WITH CHECK ("schoolId" = (select app.current_school_id())
+                    AND (select app.current_user_role()) = 'TEACHER'
+                    AND "state" = 'FOUND'
+                    AND app.crisis_answers_for("foundInCallId")
+                    AND app.crisis_call_window_open("foundInCallId"));
     CREATE POLICY "crisis_reports_admin_insert" ON "CrisisReports"
         FOR INSERT TO "app_authenticated"
         WITH CHECK ("schoolId" = (select app.current_school_id())
@@ -831,6 +900,7 @@ BEGIN
     GRANT EXECUTE ON FUNCTION app.crisis_call_window_open(uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.crisis_lists_are_open(uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.crisis_answers_for(uuid) TO "app_authenticated";
+    GRANT EXECUTE ON FUNCTION app.crisis_pupil_call(uuid, uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.crisis_settle() TO "app_authenticated";
   END IF;
 
@@ -855,7 +925,8 @@ BEGIN
 
   -- The functions answer the API's role alone.
   FOREACH t IN ARRAY ARRAY['app.crisis_may_start()', 'app.crisis_window_open(uuid)', 'app.crisis_call_window_open(uuid)',
-                           'app.crisis_lists_are_open(uuid)', 'app.crisis_answers_for(uuid)', 'app.crisis_settle()'] LOOP
+                           'app.crisis_lists_are_open(uuid)', 'app.crisis_answers_for(uuid)', 'app.crisis_pupil_call(uuid, uuid)',
+                           'app.crisis_settle()'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', t);
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
       IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
@@ -908,6 +979,8 @@ BEGIN
                  ('CrisisPupils', 'crisis_pupils_admin_insert', 'INSERT'),
                  ('CrisisReports', 'crisis_reports_admin_select', 'SELECT'),
                  ('CrisisReports', 'crisis_reports_teacher_select', 'SELECT'),
+                 ('CrisisReports', 'crisis_reports_teacher_found_select', 'SELECT'),
+                 ('CrisisReports', 'crisis_reports_teacher_found_insert', 'INSERT'),
                  ('CrisisReports', 'crisis_reports_admin_insert', 'INSERT'),
                  ('CrisisReports', 'crisis_reports_teacher_insert', 'INSERT'))
            AND (SELECT bool_and(
@@ -937,8 +1010,8 @@ BEGIN
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'CRISIS_REACH: these arms reach the krisläge beyond the administration''s, the teacher''s own group and the start rule''s writes: %', bad;
   END IF;
-  IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables)) <> 20 THEN
-    RAISE EXCEPTION 'CRISIS_REACH: the six tables have % arms, not the twenty above',
+  IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables)) <> 22 THEN
+    RAISE EXCEPTION 'CRISIS_REACH: the six tables have % arms, not the twenty-two above',
       (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables));
   END IF;
 END

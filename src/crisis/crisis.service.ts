@@ -4,13 +4,14 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { calendarLessonRosters, type CalendarRosterLesson } from '../calendar/lesson-roster';
+import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { todayInZone, toWallClock, zonedTimeToUtc } from '../common/utils/time';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { sqlStateOf } from '../cover/cover-errors';
-import { callsAt, priorAbsences, type DayLesson, type ReportedSpan, type StartedMark } from './crisis-calls';
+import { callsAt, priorAbsences, withoutList, type DayLesson, type ReportedSpan, type StartedMark } from './crisis-calls';
 import { sendAlarm, sendEnded, sendGuardianAfter } from './crisis-notices';
 import {
   DEFAULT_START_PROFILES,
@@ -21,11 +22,14 @@ import {
   type AlarmDetail,
   type AlarmSummary,
   type AlarmView,
+  type CallBasisView,
   type CallView,
   type CrisisSettingsView,
+  type FoundHereView,
   type MyAlarm,
   type MyCall,
   type MyCrisisResponse,
+  type OtherPupilView,
   type PriorSourceView,
   type ProtocolView,
   type PupilView,
@@ -44,6 +48,9 @@ const LIST_LIMIT = 50;
 const PHONE_CLOCK_SKEW_MS = 10 * 60_000;
 /** The note an exercise gets when a real alarm cuts it short. */
 const CUT_SHORT_NOTE = 'Avbröts av ett skarpt larm.';
+/** The stand-in names of the group of pupils with no lesson; the screens say it in their own words (basis NO_LESSON). */
+const NO_LESSON_GROUP = 'Ej i lektion just nu';
+const NO_LESSON_SUBJECT = 'Ingen lektion pågår';
 
 interface Names {
   get(id: string | null | undefined): { firstName: string; lastName: string } | null;
@@ -100,6 +107,16 @@ function pupilViews(call: CallRow, names: Names, withMarker: boolean): PupilView
     .sort(byName);
 }
 
+/**
+ * When the group had a mark for every pupil who was not absent before: the time of the last. Read from the
+ * pupils, not kept on the call: a column the marks of a group all changed would be a row they all lock.
+ */
+function completedAtOf(call: CallRow): string | null {
+  const expected = call.pupils.filter((pupil) => pupil.priorAbsentSource === null);
+  if (expected.length === 0 || expected.some((pupil) => pupil.state === null || pupil.stateAt === null)) return null;
+  return new Date(Math.max(...expected.map((pupil) => pupil.stateAt!.getTime()))).toISOString();
+}
+
 function callView(call: CallRow, names: Names): CallView {
   const pupils = pupilViews(call, names, true);
   const teachers = call.teachers.map((teacher) => ({
@@ -117,7 +134,7 @@ function callView(call: CallRow, names: Names): CallView {
     roomName: call.roomName,
     lessonStartsAt: call.lessonStartsAt.toISOString(),
     lessonEndsAt: call.lessonEndsAt.toISOString(),
-    completedAt: call.completedAt?.toISOString() ?? null,
+    completedAt: completedAtOf(call),
     uncovered: teachers.every((teacher) => teacher.userId === null),
     teachers,
     counts: countPupils(pupils.map((pupil) => pupil.status)),
@@ -132,6 +149,7 @@ function summaryOf(alarm: AlarmRow, names: Names, calls: readonly CallView[]): A
   const teachers = calls.flatMap((call) => call.teachers.filter((teacher) => teacher.userId !== null));
   return {
     ...alarmView(alarm, names),
+    unlisted: calls.filter((call) => call.basis === 'NO_LESSON').reduce((sum, call) => sum + call.counts.pupils, 0),
     calls: calls.length,
     callsComplete: calls.filter(isDone).length,
     counts: sumCounts(calls.map((call) => call.counts)),
@@ -207,11 +225,23 @@ export class CrisisService {
       // statement that fails in a transaction ends it, and the unique index below answers only a race.
       const going = await tx.crisisAlarm.findFirst({ where: { schoolId, mode: dto.mode, endedAt: null }, select: { id: true } });
       if (going) throw alarmOpen(dto.mode, going.id);
+      // An exercise is not started in the middle of a real alarm (the staff would read "Övning pågår" beside it).
+      if (dto.mode === 'DRILL') {
+        const live = await tx.crisisAlarm.findFirst({ where: { schoolId, mode: 'LIVE', endedAt: null }, select: { id: true } });
+        if (live) throw alarmOpen('LIVE', live.id, 'Ett skarpt larm pågår. En övning startas inte under ett skarpt larm.');
+      }
       // The transaction's time is the alarm's start and the moment the lists are taken at.
       const at = (await tx.$queryRaw<{ now: Date }[]>(Prisma.sql`SELECT now() AS now`))[0]!.now;
       if (dto.mode === 'LIVE') {
         const exercise = await tx.crisisAlarm.findFirst({ where: { schoolId, mode: 'DRILL', endedAt: null }, select: { id: true } });
-        if (exercise) await tx.crisisAlarm.update({ where: { id: exercise.id }, data: { endedAt: at, endNote: CUT_SHORT_NOTE } });
+        if (exercise) {
+          try {
+            await tx.crisisAlarm.update({ where: { id: exercise.id }, data: { endedAt: at, endNote: CUT_SHORT_NOTE } });
+          } catch (error) {
+            // Somebody ended the exercise in the same moment: what we wanted done is done.
+            if (sqlStateOf(error) !== 'KL409') throw error;
+          }
+        }
       }
 
       const school = await tx.school.findUnique({ where: { id: schoolId }, select: { timezone: true } });
@@ -227,6 +257,8 @@ export class CrisisService {
         if (sqlStateOf(error) === '23505' || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) {
           throw alarmOpen(dto.mode, null);
         }
+        // A real alarm began between our look and our insert (the trigger's KL412).
+        if (sqlStateOf(error) === 'KL412') throw alarmOpen('LIVE', null, 'Ett skarpt larm pågår. En övning startas inte under ett skarpt larm.');
         throw error;
       }
 
@@ -330,27 +362,49 @@ export class CrisisService {
     }));
     const calls = callsAt(at, dayLessons, new Set(absences.map((row) => row.userId)));
     const byId = new Map(lessons.map((lesson) => [lesson.id, lesson]));
-    const pupilIds = [...new Set(calls.flatMap((call) => call.pupilIds))];
+    // Every active pupil of the school is on the roll call: the ones no lesson has are one more group, with no
+    // teacher, that the administration answers for.
+    const everyone = await tx.user.findMany({ where: { schoolId, role: 'STUDENT', isActive: true }, select: { id: true } });
+    const unlisted = withoutList(
+      everyone.map((row) => row.id),
+      calls,
+    );
+    const pupilIds = [...new Set([...calls.flatMap((call) => call.pupilIds), ...unlisted])];
     const prior = await this.absentBefore(tx, schoolId, timezone, dayString, day, at, pupilIds);
-    return {
-      prior,
-      calls: calls.map((call) => {
-        const lesson = byId.get(call.lessonId)!;
-        const groupNames = [lesson.studentGroup.name, ...lesson.extraGroups.map((group) => group.studentGroup.name)];
-        return {
-          id: randomUUID(),
-          lessonId: call.lessonId,
-          basis: call.basis,
-          groupName: groupNames.join(' + ').slice(0, 200),
-          subjectName: lesson.subject.name.slice(0, 200),
-          roomName: lesson.room?.name?.slice(0, 200) ?? null,
-          lessonStartsAt: lesson.startsAt,
-          lessonEndsAt: lesson.endsAt,
-          teachers: call.teachers,
-          pupilIds: call.pupilIds,
-        };
-      }),
-    };
+    const lessonCalls = calls.map((call) => {
+      const lesson = byId.get(call.lessonId)!;
+      const groupNames = [lesson.studentGroup.name, ...lesson.extraGroups.map((group) => group.studentGroup.name)];
+      return {
+        id: randomUUID(),
+        lessonId: call.lessonId as string | null,
+        basis: call.basis as CallBasisView,
+        groupName: groupNames.join(' + ').slice(0, 200),
+        subjectName: lesson.subject.name.slice(0, 200),
+        roomName: lesson.room?.name?.slice(0, 200) ?? null,
+        lessonStartsAt: lesson.startsAt,
+        lessonEndsAt: lesson.endsAt,
+        teachers: call.teachers,
+        pupilIds: call.pupilIds,
+      };
+    });
+    const noLesson =
+      unlisted.length === 0
+        ? []
+        : [
+            {
+              id: randomUUID(),
+              lessonId: null as string | null,
+              basis: 'NO_LESSON' as CallBasisView,
+              groupName: NO_LESSON_GROUP,
+              subjectName: NO_LESSON_SUBJECT,
+              roomName: null as string | null,
+              lessonStartsAt: at,
+              lessonEndsAt: at,
+              teachers: [] as { teacherId: string; role: 'LEAD' | 'ASSISTANT' | 'SUBSTITUTE' }[],
+              pupilIds: unlisted,
+            },
+          ];
+    return { prior, calls: [...lessonCalls, ...noLesson] };
   }
 
   /** Who was absent before the alarm: the register of the day first, then a guardian's report or a leave. */
@@ -473,15 +527,16 @@ export class CrisisService {
       const ids = alarms.map((alarm) => alarm.id);
       const names = await namesOf(tx, alarms.flatMap((alarm) => [alarm.startedByUserId, alarm.endedByUserId]));
       const counts = await tx.$queryRaw<
-        { alarmId: string; pupils: bigint; found: bigint; missing: bigint; absentBefore: bigint; unreported: bigint }[]
+        { alarmId: string; pupils: bigint; unlisted: bigint; found: bigint; missing: bigint; absentBefore: bigint; unreported: bigint }[]
       >(Prisma.sql`
         SELECT p."alarmId",
                count(*) AS pupils,
+               count(*) FILTER (WHERE c."basis" = 'NO_LESSON') AS unlisted,
                count(*) FILTER (WHERE p."state" = 'FOUND') AS found,
                count(*) FILTER (WHERE p."state" = 'MISSING') AS missing,
                count(*) FILTER (WHERE p."state" IS NULL AND p."priorAbsentSource" IS NOT NULL) AS "absentBefore",
                count(*) FILTER (WHERE p."state" IS NULL AND p."priorAbsentSource" IS NULL) AS unreported
-          FROM "CrisisPupils" p
+          FROM "CrisisPupils" p JOIN "CrisisCalls" c ON c."id" = p."callId"
          WHERE p."alarmId" = ANY (${ids}::uuid[])
          GROUP BY p."alarmId"`);
       const calls = await tx.$queryRaw<{ alarmId: string; calls: bigint; done: bigint }[]>(Prisma.sql`
@@ -505,6 +560,7 @@ export class CrisisService {
         const t = teachersBy.get(alarm.id);
         return {
           ...alarmView(alarm, names),
+          unlisted: Number(c?.unlisted ?? 0),
           calls: Number(k?.calls ?? 0),
           callsComplete: Number(k?.done ?? 0),
           counts: {
@@ -542,7 +598,7 @@ export class CrisisService {
         orderBy: [{ at: 'asc' }, { receivedAt: 'asc' }, { id: 'asc' }],
       });
       const names = await namesOf(tx, reports.map((report) => report.byUserId));
-      const groupOf = new Map(built.detail.calls.map((call) => [call.id, call.groupName]));
+      const groupOf = new Map(built.detail.calls.map((call) => [call.id, { groupName: call.groupName, basis: call.basis }]));
       await recordRead(tx, 'ROSTER', built.pupilIds, user.channel);
       await recordRead(tx, 'PEOPLE', built.pupilIds, user.channel);
       return {
@@ -551,7 +607,8 @@ export class CrisisService {
           at: report.at.toISOString(),
           receivedAt: report.receivedAt.toISOString(),
           studentId: report.studentId,
-          groupName: groupOf.get(report.callId) ?? '',
+          groupName: groupOf.get(report.callId)?.groupName ?? '',
+          foundIn: report.foundInCallId ? (groupOf.get(report.foundInCallId) ?? null) : null,
           state: report.state,
           by: nameOf(names, report.byUserId),
           onBehalf: report.onBehalf,
@@ -606,12 +663,47 @@ export class CrisisService {
             orderBy: [{ lessonStartsAt: 'asc' }, { groupName: 'asc' }, { id: 'asc' }],
           })
         : [];
+      // The pupils a teacher on one of these calls found who are not on its list ("found with me").
+      const foundMarks = rows.length
+        ? await tx.crisisReport.findMany({
+            where: { schoolId, foundInCallId: { in: rows.map((call) => call.id) } },
+            orderBy: [{ at: 'asc' }, { receivedAt: 'asc' }, { id: 'asc' }],
+            select: { foundInCallId: true, studentId: true, at: true },
+          })
+        : [];
+      const foundBy = new Map<string, Map<string, Date>>();
+      for (const mark of foundMarks) {
+        const perCall = foundBy.get(mark.foundInCallId!) ?? new Map<string, Date>();
+        perCall.set(mark.studentId, mark.at);
+        foundBy.set(mark.foundInCallId!, perCall);
+      }
+      // Every pupil of the school, by name: what a teacher picks from to say "found with me". Staff read the
+      // school's pupils directly already (the register, the class lists), so this reaches no further than that.
+      const everyone = alarms.length
+        ? await tx.user.findMany({
+            where: { schoolId, role: 'STUDENT', isActive: true },
+            select: { id: true, firstName: true, lastName: true, studentGroup: { select: { name: true } } },
+          })
+        : [];
       const names = await namesOf(tx, [
         ...alarms.flatMap((alarm) => [alarm.startedByUserId, alarm.endedByUserId]),
         ...rows.flatMap((call) => [...call.teachers.map((teacher) => teacher.teacherId), ...call.pupils.map((pupil) => pupil.studentId)]),
       ]);
+      const pupilById = new Map(everyone.map((row) => [row.id, row]));
       const mineOf = (call: CallRow): MyCall => {
         const pupils = pupilViews(call, names, false);
+        const foundHere: FoundHereView[] = [...(foundBy.get(call.id) ?? new Map<string, Date>())]
+          .map(([studentId, markedAt]) => {
+            const person = pupilById.get(studentId);
+            return {
+              studentId,
+              firstName: person?.firstName ?? '',
+              lastName: person?.lastName ?? '',
+              className: person?.studentGroup?.name ?? null,
+              markedAt: markedAt.toISOString(),
+            } satisfies FoundHereView;
+          })
+          .sort(byName);
         return {
           id: call.id,
           lessonId: call.calendarLessonId,
@@ -621,19 +713,25 @@ export class CrisisService {
           roomName: call.roomName,
           lessonStartsAt: call.lessonStartsAt.toISOString(),
           lessonEndsAt: call.lessonEndsAt.toISOString(),
-          completedAt: call.completedAt?.toISOString() ?? null,
+          completedAt: completedAtOf(call),
           colleagues: call.teachers
             .filter((teacher) => teacher.teacherId !== me)
             .map((teacher) => nameOf(names, teacher.teacherId))
             .filter((name): name is string => name !== null),
           counts: countPupils(pupils.map((pupil) => pupil.status)),
           pupils,
+          foundHere,
         };
       };
-      const result: MyAlarm[] = alarms.map((alarm) => ({
-        ...alarmView(alarm, names),
-        calls: rows.filter((call) => call.alarmId === alarm.id).map(mineOf),
-      }));
+      const result: MyAlarm[] = alarms.map((alarm) => {
+        const calls = rows.filter((call) => call.alarmId === alarm.id);
+        const onMyLists = new Set(calls.flatMap((call) => call.pupils.map((pupil) => pupil.studentId)));
+        const others: OtherPupilView[] = everyone
+          .filter((row) => !onMyLists.has(row.id))
+          .map((row) => ({ studentId: row.id, firstName: row.firstName, lastName: row.lastName, className: row.studentGroup?.name ?? null }))
+          .sort(byName);
+        return { ...alarmView(alarm, names), calls: calls.map(mineOf), others };
+      });
       return { asOf: new Date().toISOString(), alarms: result };
     });
   }
@@ -682,7 +780,7 @@ export class CrisisService {
           if (!call.calendarLessonId) continue;
           byLesson.set(call.calendarLessonId, [...(byLesson.get(call.calendarLessonId) ?? []), call]);
         }
-        const rows: Prisma.CrisisReportCreateManyInput[] = [];
+        const resolved: { mark: MarkDto; call: (typeof known)[number]; at: Date }[] = [];
         const unresolved: string[] = [];
         for (const mark of marks) {
           const at = new Date(mark.at);
@@ -697,8 +795,49 @@ export class CrisisService {
             unresolved.push(mark.id);
             continue;
           }
-          rows.push({ id: mark.id, schoolId, alarmId: call.alarmId, callId: call.id, studentId: mark.studentId, state: mark.state, at });
+          resolved.push({ mark, call, at });
         }
+
+        // A pupil who is not on the list of the call the mark is made with can be said to be found with it ("found
+        // with me"): the mark is then on the pupil's own call, with the finder's call beside it. Only found:
+        // nobody can say a pupil of someone else's list is missing.
+        const listed = new Set<string>();
+        if (resolved.length > 0) {
+          const onLists = await tx.crisisPupil.findMany({
+            where: { callId: { in: [...new Set(resolved.map((r) => r.call.id))] }, studentId: { in: [...new Set(resolved.map((r) => r.mark.studentId))] } },
+            select: { callId: true, studentId: true },
+          });
+          for (const row of onLists) listed.add(`${row.callId}:${row.studentId}`);
+        }
+        const elsewhere = resolved.filter((r) => !listed.has(`${r.call.id}:${r.mark.studentId}`));
+        if (elsewhere.some((r) => r.mark.state !== 'FOUND')) throw notOnTheList();
+        const ownCall = new Map<string, string | null>();
+        if (elsewhere.length > 0) {
+          const looked = await tx.$queryRaw<{ alarmId: string; studentId: string; callId: string | null }[]>(Prisma.sql`
+            SELECT t.alarm AS "alarmId", t.student AS "studentId", app.crisis_pupil_call(t.alarm, t.student) AS "callId"
+              FROM unnest(${elsewhere.map((r) => r.call.alarmId)}::uuid[], ${elsewhere.map((r) => r.mark.studentId)}::uuid[]) AS t(alarm, student)`);
+          for (const row of looked) ownCall.set(`${row.alarmId}:${row.studentId}`, row.callId);
+        }
+        const rows: Prisma.CrisisReportCreateManyInput[] = [];
+        for (const { mark, call, at } of resolved) {
+          const base = { id: mark.id, schoolId, alarmId: call.alarmId, studentId: mark.studentId, state: mark.state, at };
+          if (listed.has(`${call.id}:${mark.studentId}`)) {
+            rows.push({ ...base, callId: call.id });
+            continue;
+          }
+          const own = ownCall.get(`${call.alarmId}:${mark.studentId}`);
+          if (!own) throw notOnTheList('Eleven finns inte i larmet.');
+          rows.push({ ...base, callId: own, foundInCallId: call.id });
+        }
+        // Every batch takes its pupils in the same order, so two phones that send the same group at once, each in
+        // the order it marked them in, wait for each other instead of deadlocking.
+        rows.sort(
+          (a, b) =>
+            (a.callId < b.callId ? -1 : a.callId > b.callId ? 1 : 0) ||
+            (a.studentId < b.studentId ? -1 : a.studentId > b.studentId ? 1 : 0) ||
+            (a.at as Date).getTime() - (b.at as Date).getTime() ||
+            (a.id! < b.id! ? -1 : 1),
+        );
         let stored = 0;
         if (rows.length > 0) {
           const created = await tx.crisisReport.createMany({ data: rows, skipDuplicates: true });
@@ -739,12 +878,16 @@ function notFound(): NotFoundException {
 }
 
 /** The alarm that is going is in `params`, the one member of a coded refusal the global filter lets through. */
-function alarmOpen(mode: 'LIVE' | 'DRILL', alarmId: string | null): ConflictException {
+function alarmOpen(mode: 'LIVE' | 'DRILL', alarmId: string | null, message?: string): ConflictException {
   return new ConflictException({
-    message: mode === 'LIVE' ? 'Ett skarpt larm pågår redan.' : 'En övning pågår redan.',
+    message: message ?? (mode === 'LIVE' ? 'Ett skarpt larm pågår redan.' : 'En övning pågår redan.'),
     code: CRISIS_ALARM_OPEN,
     ...(alarmId ? { params: { alarmId } } : {}),
   });
+}
+
+function notOnTheList(message = 'Eleven står inte på gruppens lista, och en elev som inte står där kan bara sägas vara funnen.'): BadRequestException {
+  return new BadRequestException({ message, code: CRISIS_MARK_INVALID });
 }
 
 function ended409(): ConflictException {
@@ -754,6 +897,8 @@ function ended409(): ConflictException {
 /** The database's refusals on a mark, as coded answers. */
 function mapMarkError(error: unknown): unknown {
   if (error instanceof BadRequestException || error instanceof ConflictException || error instanceof ForbiddenException) return error;
+  // A deadlock or a serialization failure is a 409 that says to send again: nothing was stored.
+  if (isWriteConflict(error)) return writeConflict();
   switch (sqlStateOf(error)) {
     case 'KL404':
       return new NotFoundException({ message: 'Larmet finns inte.', code: CRISIS_ALARM_NOT_FOUND });

@@ -1,4 +1,4 @@
-import { callsAt, MAX_BREAK_GAP_MS, priorAbsences, type DayLesson } from './crisis-calls';
+import { callsAt, MAX_BREAK_GAP_MS, priorAbsences, withoutList, type DayLesson } from './crisis-calls';
 
 const at = (hhmm: string): Date => new Date(`2027-01-12T${hhmm}:00.000Z`);
 
@@ -162,5 +162,30 @@ describe('priorAbsences: who was absent before the alarm', () => {
     );
     expect([...result.keys()].sort()).toEqual(['span', 'whole']);
     expect(result.get('whole')).toBe('REPORTED');
+  });
+});
+
+describe('withoutList', () => {
+  // The review's day: three pupils of a school of five stand on no list at 10:00 and are still in the building.
+  const day = [
+    lesson('L1', '08:00', '09:00', ['early', 'gap', 'ends']),
+    lesson('L2', '09:00', '10:30', ['early', 'ends']),
+    lesson('L3', '13:00', '14:00', ['gap']),
+    lesson('L4', '11:00', '12:00', ['canceled-later']),
+  ];
+
+  it('is every pupil that no call has: before the first lesson, after the last, a gap longer than a break', () => {
+    const everyone = ['early', 'gap', 'ends', 'canceled-later', 'club', 'after'];
+    // At 07:30 nobody has begun; at 10:00 two are in L2, 'gap' has 4 h to L3, 'canceled-later' has nothing earlier to be between.
+    expect(withoutList(everyone, callsAt(at('07:30'), day, new Set()))).toEqual(['after', 'canceled-later', 'club', 'early', 'ends', 'gap']);
+    const at10 = callsAt(at('10:00'), day, new Set());
+    expect(at10.flatMap((call) => call.pupilIds).sort()).toEqual(['early', 'ends']);
+    expect(withoutList(everyone, at10)).toEqual(['after', 'canceled-later', 'club', 'gap']);
+  });
+
+  it('counts a pupil once, sorts them, and leaves nobody out for being absent', () => {
+    expect(withoutList(['b', 'a', 'b'], [])).toEqual(['a', 'b']);
+    expect(withoutList([], [{ pupilIds: ['a'] }])).toEqual([]);
+    expect(withoutList(['a', 'b'], [{ pupilIds: ['a'] }])).toEqual(['b']);
   });
 });

@@ -12,6 +12,8 @@ const TEACHER = '33333333-3333-4333-8333-333333333333';
 const TEACHER2 = '33333333-3333-4333-8333-333333333334';
 const PUPIL = '44444444-4444-4444-8444-444444444441';
 const PUPIL2 = '44444444-4444-4444-8444-444444444442';
+const PUPIL3 = '44444444-4444-4444-8444-444444444443';
+const OTHER_CALL = '88888888-8888-4888-8888-888888888889';
 const GROUP = '55555555-5555-4555-8555-555555555555';
 const LESSON = '66666666-6666-4666-8666-666666666666';
 const ALARM = '77777777-7777-4777-8777-777777777777';
@@ -113,6 +115,8 @@ describe('CrisisService', () => {
         },
       ]);
       tx.user.findMany.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+        // Every active pupil of the school: the third is on no lesson.
+        if (args.where['role'] === 'STUDENT' && !args.where['studentGroupId']) return [{ id: PUPIL }, { id: PUPIL2 }, { id: PUPIL3 }];
         if (args.where['studentGroupId']) return [{ id: PUPIL, studentGroupId: GROUP }, { id: PUPIL2, studentGroupId: GROUP }];
         // The staff, as the query asks for them: everyone but the one who started the alarm.
         if (args.where['role']) return [{ id: ADMIN }, { id: TEACHER }, { id: TEACHER2 }].filter((row) => row.id !== (args.where['id'] as { not?: string }).not);
@@ -129,7 +133,17 @@ describe('CrisisService', () => {
       await service.start({ kind: 'EVACUATION', mode: 'LIVE' }, admin);
 
       const calls = (tx.crisisCall.createMany.mock.calls[0]![0] as { data: Array<Record<string, unknown>> }).data;
-      expect(calls).toHaveLength(1);
+      expect(calls).toHaveLength(2);
+      // Every active pupil is on the roll call: the one no lesson has stands on a group of her own, with no teacher.
+      expect(calls[1]).toMatchObject({
+        schoolId: SCHOOL,
+        alarmId: ALARM,
+        calendarLessonId: null,
+        basis: 'NO_LESSON',
+        groupName: 'Ej i lektion just nu',
+        lessonStartsAt: NOW,
+        lessonEndsAt: NOW,
+      });
       expect(calls[0]).toMatchObject({
         schoolId: SCHOOL,
         alarmId: ALARM,
@@ -143,9 +157,10 @@ describe('CrisisService', () => {
         data: [{ schoolId: SCHOOL, callId: calls[0]!['id'], teacherId: TEACHER, role: 'LEAD' }],
       });
       const pupils = (tx.crisisPupil.createMany.mock.calls[0]![0] as { data: Array<Record<string, unknown>> }).data;
-      expect(pupils.map((p) => [p['studentId'], p['priorAbsentSource']])).toEqual([
-        [PUPIL, 'ATTENDANCE'],
-        [PUPIL2, null],
+      expect(pupils.map((p) => [p['studentId'], p['priorAbsentSource'], p['callId'] === calls[1]!['id']])).toEqual([
+        [PUPIL, 'ATTENDANCE', false],
+        [PUPIL2, null, false],
+        [PUPIL3, null, true],
       ]);
       // Sealed in the same transaction, and the alarm is the first thing written.
       expect(tx.crisisAlarm.update).toHaveBeenCalledWith({ where: { id: ALARM }, data: { listsSealedAt: NOW } });
@@ -180,6 +195,37 @@ describe('CrisisService', () => {
       expect(notifications.notifyUsers).not.toHaveBeenCalled();
     });
 
+    it('refuses an exercise while a real alarm is going, naming the real one', async () => {
+      tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]);
+      // No exercise is going; a real alarm is.
+      tx.crisisAlarm.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: ALARM });
+      const error = await service.start({ kind: 'EVACUATION', mode: 'DRILL' }, admin).then(() => null, (e: unknown) => e);
+      expect((error as { getResponse: () => unknown }).getResponse()).toMatchObject({ code: 'CRISIS_ALARM_OPEN', params: { alarmId: ALARM } });
+      expect(tx.crisisAlarm.create).not.toHaveBeenCalled();
+    });
+
+    it('is the same refusal for the exercise a real alarm beat to the insert (the database\'s KL412)', async () => {
+      tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]).mockResolvedValueOnce([{ now: NOW }]);
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      tx.crisisAlarm.findFirst.mockResolvedValue(null);
+      tx.crisisAlarm.create.mockRejectedValue(sqlError('KL412'));
+      expect(await code(service.start({ kind: 'EVACUATION', mode: 'DRILL' }, admin))).toBe('CRISIS_ALARM_OPEN');
+    });
+
+    it('goes on when the exercise it would cut short ended in the same moment', async () => {
+      tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]).mockResolvedValueOnce([{ now: NOW }]);
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      tx.crisisAlarm.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'drill-1' }).mockResolvedValue(alarmRow());
+      tx.crisisAlarm.create.mockResolvedValue(alarmRow());
+      tx.crisisAlarm.update.mockImplementation(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        if (where.id === 'drill-1') throw sqlError('KL409');
+        return alarmRow(data);
+      });
+      tx.crisisCall.findMany.mockResolvedValue([]);
+      await service.start({ kind: 'EVACUATION', mode: 'LIVE' }, admin);
+      expect(tx.crisisAlarm.create).toHaveBeenCalledTimes(1);
+    });
+
     it('cuts an exercise that is going short when a real alarm starts', async () => {
       tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]).mockResolvedValueOnce([{ now: NOW }]);
       tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
@@ -211,7 +257,8 @@ describe('CrisisService', () => {
       expect(types).toEqual(['CRISIS_ENDED', 'CRISIS_GUARDIAN_AFTER']);
       const guardian = notifications.notifyUsers.mock.calls[1]![1] as { userIds: string[]; meta: Record<string, unknown> };
       expect(guardian.userIds).toEqual(['g1', 'g2']);
-      expect(Object.keys(guardian.meta).sort()).toEqual(['endedAt', 'kind', 'startedAt']);
+      // That it happened and ended, and when: no kind of alarm, no alarm to open, no pupil.
+      expect(Object.keys(guardian.meta).sort()).toEqual(['endedAt', 'startedAt']);
     });
 
     it('tells no guardian after an exercise, or when the school did not choose to', async () => {
@@ -242,6 +289,15 @@ describe('CrisisService', () => {
       calendarLessonId: LESSON,
       alarm: { startedAt: new Date('2027-01-12T09:10:00Z') },
       ...extra,
+    });
+
+    beforeEach(() => {
+      // Both pupils are on the list of the call the marks are made on, unless a test says otherwise.
+      tx.crisisPupil.findMany.mockResolvedValue([
+        { callId: CALL, studentId: PUPIL },
+        { callId: 'older', studentId: PUPIL },
+        { callId: 'newer', studentId: PUPIL },
+      ]);
     });
 
     it('names the group by its call or by its lesson, not both and not neither', async () => {
@@ -297,6 +353,47 @@ describe('CrisisService', () => {
       expect(await code(send())).toBe('CRISIS_NOT_YOURS');
     });
 
+    it('stores a found mark for a pupil who is not on the list as found with the teacher\'s call, on the pupil\'s own', async () => {
+      tx.crisisCall.findMany.mockResolvedValue([call()]);
+      tx.$queryRaw.mockResolvedValueOnce([{ alarmId: ALARM, studentId: PUPIL2, callId: OTHER_CALL }]);
+      tx.crisisReport.createMany.mockResolvedValue({ count: 1 });
+      await service.markMine([{ id: MARK, callId: CALL, studentId: PUPIL2, state: 'FOUND', at }], teacher);
+      expect(tx.crisisReport.createMany).toHaveBeenCalledWith({
+        data: [{ id: MARK, schoolId: SCHOOL, alarmId: ALARM, callId: OTHER_CALL, foundInCallId: CALL, studentId: PUPIL2, state: 'FOUND', at: new Date(at) }],
+        skipDuplicates: true,
+      });
+    });
+
+    it('refuses a missing mark for a pupil who is not on the list, and a pupil who is in no part of the alarm', async () => {
+      tx.crisisCall.findMany.mockResolvedValue([call()]);
+      expect(await code(service.markMine([{ id: MARK, callId: CALL, studentId: PUPIL2, state: 'MISSING', at }], teacher))).toBe('CRISIS_MARK_INVALID');
+      tx.$queryRaw.mockResolvedValueOnce([{ alarmId: ALARM, studentId: PUPIL2, callId: null }]);
+      expect(await code(service.markMine([{ id: MARK, callId: CALL, studentId: PUPIL2, state: 'FOUND', at }], teacher))).toBe('CRISIS_MARK_INVALID');
+      expect(tx.crisisReport.createMany).not.toHaveBeenCalled();
+    });
+
+    it('sends a batch in (call, pupil) order, whatever order the teacher marked them in', async () => {
+      tx.crisisCall.findMany.mockResolvedValue([call()]);
+      tx.crisisPupil.findMany.mockResolvedValue([{ callId: CALL, studentId: PUPIL }, { callId: CALL, studentId: PUPIL2 }, { callId: CALL, studentId: PUPIL3 }]);
+      tx.crisisReport.createMany.mockResolvedValue({ count: 3 });
+      const id = (n: number) => `99999999-9999-4999-8999-99999999990${n}`;
+      await service.markMine(
+        [
+          { id: id(1), callId: CALL, studentId: PUPIL3, state: 'FOUND', at },
+          { id: id(2), callId: CALL, studentId: PUPIL, state: 'FOUND', at },
+          { id: id(3), callId: CALL, studentId: PUPIL2, state: 'MISSING', at },
+        ],
+        teacher,
+      );
+      expect((tx.crisisReport.createMany.mock.calls[0]![0] as { data: Array<{ studentId: string }> }).data.map((row) => row.studentId)).toEqual([PUPIL, PUPIL2, PUPIL3]);
+    });
+
+    it('answers a deadlock between two batches as a 409 that says to send again', async () => {
+      tx.crisisCall.findMany.mockResolvedValue([call()]);
+      tx.crisisReport.createMany.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('deadlock', { code: 'P2034', clientVersion: 'x' }));
+      expect(await code(service.markMine([{ id: MARK, callId: CALL, studentId: PUPIL, state: 'FOUND', at }], teacher))).toBe('WRITE_CONFLICT');
+    });
+
     it('reaches only the alarm the administration names', async () => {
       tx.crisisCall.findMany.mockResolvedValue([call()]);
       tx.crisisReport.createMany.mockResolvedValue({ count: 1 });
@@ -319,7 +416,6 @@ describe('CrisisService', () => {
           roomName: null,
           lessonStartsAt: new Date('2027-01-12T09:20:00Z'),
           lessonEndsAt: new Date('2027-01-12T10:05:00Z'),
-          completedAt: null,
           teachers: [
             { teacherId: TEACHER, role: 'LEAD', answeredAt: null },
             { teacherId: TEACHER2, role: 'ASSISTANT', answeredAt: null },
@@ -330,12 +426,19 @@ describe('CrisisService', () => {
           ],
         },
       ]);
-      tx.user.findMany.mockResolvedValue([
-        { id: TEACHER, firstName: 'Anna', lastName: 'Lind' },
-        { id: TEACHER2, firstName: 'Bo', lastName: 'Berg' },
-        { id: PUPIL, firstName: 'Zeb', lastName: 'Öst' },
-        { id: PUPIL2, firstName: 'Al', lastName: 'Ek' },
-      ]);
+      // A teacher on the call found a pupil of another list, and the school has one more pupil.
+      tx.crisisReport.findMany.mockResolvedValue([{ foundInCallId: CALL, studentId: PUPIL3, at: new Date('2027-01-12T09:13:00Z') }]);
+      const people = [
+        { id: TEACHER, firstName: 'Anna', lastName: 'Lind', studentGroup: null },
+        { id: TEACHER2, firstName: 'Bo', lastName: 'Berg', studentGroup: null },
+        { id: PUPIL, firstName: 'Zeb', lastName: 'Öst', studentGroup: { name: '7A' } },
+        { id: PUPIL2, firstName: 'Al', lastName: 'Ek', studentGroup: { name: '7A' } },
+        { id: PUPIL3, firstName: 'Cy', lastName: 'Dal', studentGroup: { name: '8B' } },
+        { id: 'p4', firstName: 'Di', lastName: 'Bro', studentGroup: null },
+      ];
+      tx.user.findMany.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+        args.where['role'] === 'STUDENT' ? people.filter((person) => person.studentGroup !== undefined && ![TEACHER, TEACHER2].includes(person.id)) : people,
+      );
       const result = await service.mine(teacher);
       expect(result.alarms).toHaveLength(1);
       const mine = result.alarms[0]!.calls[0]!;
@@ -345,6 +448,14 @@ describe('CrisisService', () => {
       // Surname order in Swedish, and a phone is not told who made a mark.
       expect(mine.pupils.map((p) => p.lastName)).toEqual(['Ek', 'Öst']);
       expect(mine.pupils.every((p) => p.markedBy === null)).toBe(true);
+      // Found with this call: named, with their own class; and every pupil not on a list of the teacher's is one to pick from.
+      expect(mine.foundHere).toEqual([{ studentId: PUPIL3, firstName: 'Cy', lastName: 'Dal', className: '8B', markedAt: '2027-01-12T09:13:00.000Z' }]);
+      expect(result.alarms[0]!.others.map((o) => [o.studentId, o.className])).toEqual([
+        ['p4', null],
+        [PUPIL3, '8B'],
+      ]);
+      // The call is not complete: the second pupil has a mark, the first was absent before and needs none; so it is.
+      expect(mine.completedAt).toBe('2027-01-12T09:12:00.000Z');
       expect(new Date(result.asOf).getTime()).toBeGreaterThan(0);
     });
   });
