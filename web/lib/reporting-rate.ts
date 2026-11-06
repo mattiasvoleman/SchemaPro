@@ -10,7 +10,7 @@
  *
  * Nothing here is a verdict on a person: the figures are lessons and a share
  * of them. The page says what is counted, and a notice or an e-mail never says
- * who (migration 20270108090100).
+ * who (migration 20270112090100).
  */
 
 export const REPORTING_PERIODS = ["WEEK", "MONTH", "YEAR"] as const;

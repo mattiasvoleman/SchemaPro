@@ -15,7 +15,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * /teacher/reporting-rate — Rapporteringsgrad (20270108090100), the teacher's
+ * /teacher/reporting-rate — Rapporteringsgrad (20270112090100), the teacher's
  * own: the lessons whose register is not saved yet, the oldest first, each a
  * link to the register, and the share of the lessons held that were reported
  * this week, this month and this läsår.

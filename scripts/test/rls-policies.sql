@@ -2897,7 +2897,7 @@ END $$;
 -- the app.*webhook_secret* functions touch, with no grant (section 31f);
 -- `JobRuns` and `JobClaims` (20261021090000) hold the job runner's counts and
 -- nightly claims that only the app.job_* functions touch, with no grant
--- (section 80); `ReportingReminders` (20270108090100) holds the ledger of the
+-- (section 80); `ReportingReminders` (20270112090100) holds the ledger of the
 -- lessons a teacher was reminded of, which only app.reporting_remind touches,
 -- likewise with no grant (section 347). A new table cannot be added
 -- without either satisfying the rule or changing it on purpose.
@@ -41483,7 +41483,7 @@ ROLLBACK;
 DROP TABLE sk364;
 
 -- ---------------------------------------------------------------------------
--- Sections 345-349: Rapporteringsgrad (20270108090100).
+-- Sections 345-349: Rapporteringsgrad (20270112090100).
 --
 -- Varje lärares andel hållna lektioner med sparat register, lagrad per lärare
 -- och dag, och två påminnelser som skolan slår på. The school is

@@ -485,7 +485,7 @@ const NAMED_CHECKS: Record<string, string> = {
   // Frånvarobevakning (20261231090100): a limit's figures follow its kind.
   AbsenceWatchLimits_a_kind_has_its_figures:
     'percent, windowDays och consecutiveDays: en andelsgräns har en andel på 1 till 100 % och 7 till 60 dagar, en gräns i följd 2 till 30 skoldagar.',
-  // Rapporteringsgrad (20270108090100): how long a register may wait before a lesson is open too long.
+  // Rapporteringsgrad (20270112090100): how long a register may wait before a lesson is open too long.
   ReportingSettings_open_after_days_is_sane: 'openAfterDays: gränsen för en öppen lektion är 1 till 30 dagar.',
   AcademicYears_tioarig_from_2028: TIOARIG_TOO_EARLY,
   TeachingRequirements_teacher_load_percent_is_sane:

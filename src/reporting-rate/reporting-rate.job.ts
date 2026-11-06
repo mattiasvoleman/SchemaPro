@@ -26,7 +26,7 @@ const COUNTED = ['written', 'removed', 'held', 'reported', 'reminders', 'digests
 const isoDay = (value: Date) => value.toISOString().slice(0, 10);
 
 /**
- * Rapporteringsgrad's nightly job (20270108090100), a job of the JobRunner.
+ * Rapporteringsgrad's nightly job (20270112090100), a job of the JobRunner.
  * Off when REPORTING_RATE_BACKGROUND=off (the test setup). Unlike
  * Frånvarobevakning's it has work for every school with a lesson in the last
  * 90 days: the count is the figures the view reads. Only the reminders and the

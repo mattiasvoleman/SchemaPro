@@ -3149,7 +3149,7 @@ BEGIN
   SELECT id, m, 'SS12000' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
 END $$;
 
--- Rapporteringsgrad (20270108090100), sections 345-349: a school of its own, so
+-- Rapporteringsgrad (20270112090100), sections 345-349: a school of its own, so
 -- the counting is proved over lessons the sections plant themselves, on fixed
 -- past days inside their own transactions, and the people never age.
 --
@@ -3215,7 +3215,7 @@ BEGIN
   SELECT s2, "id", '2026-09-15', 4, 3 FROM "Users" WHERE "schoolId" = s2 AND "email" = 'rg-annan-t@example.invalid';
 END $$;
 
--- The matrix school's rows for Rapporteringsgrad (20270108090100), so the role
+-- The matrix school's rows for Rapporteringsgrad (20270112090100), so the role
 -- matrix (section 116) has a row of each table to probe. Written by the owner:
 -- no role has a write arm on the days or the week's ledger, and the reminders'
 -- ledger has no arm at all.

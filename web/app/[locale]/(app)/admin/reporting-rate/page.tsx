@@ -29,7 +29,7 @@ import { RateTable } from "./rate-table";
 import { SettingsCard } from "./settings-card";
 
 /**
- * Rapporteringsgrad (20270108090100): the share of the lessons each teacher
+ * Rapporteringsgrad (20270112090100): the share of the lessons each teacher
  * held whose register is saved, for a week, a month or the läsår, and the two
  * notices the school can turn on.
  *

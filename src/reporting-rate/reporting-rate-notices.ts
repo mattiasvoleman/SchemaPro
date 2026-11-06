@@ -2,7 +2,7 @@ import type { OutboxEntry } from '../notifications/notification-outbox';
 
 /*
  * The reminders and the weekly notice, as the delivery has them
- * (Rapporteringsgrad, 20270108090100).
+ * (Rapporteringsgrad, 20270112090100).
  *
  * The database writes the notices (app.reporting_remind, app.reporting_digest)
  * and hands them back with the addresses; the e-mail and the push go after the

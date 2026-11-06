@@ -98,7 +98,7 @@ const sums = (sum: { held?: number | null; reported?: number | null } | null | u
 });
 
 /**
- * Rapporteringsgrad (20270108090100): what a teacher's lessons with a saved
+ * Rapporteringsgrad (20270112090100): what a teacher's lessons with a saved
  * register come to, from the days the nightly job (reporting-rate.job.ts)
  * has stored.
  *

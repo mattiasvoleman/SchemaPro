@@ -1,4 +1,4 @@
--- Rapporteringsgrad (20270108090100): the nightly job on a school of 500 pupils
+-- Rapporteringsgrad (20270112090100): the nightly job on a school of 500 pupils
 -- with a year of lessons.
 --
 --   docker compose exec -T db psql -U postgres -d <a throwaway database> -v ON_ERROR_STOP=1 -f /dev/stdin < scripts/bench/reporting-rate.sql

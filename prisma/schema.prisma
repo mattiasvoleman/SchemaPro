@@ -109,9 +109,9 @@ enum NotificationType {
   COVER_REQUEST_CLOSED
   /// A week's or month's count of pupils over the school's absence limits: only numbers, to a mentor, rektor, kansli or guardian (20261231090000).
   ABSENCE_WATCH_DIGEST
-  /// A teacher's lessons that stood open longer than the school's limit: a count and the limit, to the teacher (20270108090000).
+  /// A teacher's lessons that stood open longer than the school's limit: a count and the limit, to the teacher (20270112090000).
   LESSON_REPORT_REMINDER
-  /// Last week's share of held lessons with a saved register in the school as a whole: only numbers, to rektor (20270108090000).
+  /// Last week's share of held lessons with a saved register in the school as a whole: only numbers, to rektor (20270112090000).
   REPORTING_RATE_DIGEST
 }
 
@@ -429,7 +429,7 @@ model User {
   studentLinks        GuardianStudent[] @relation("StudentSide")
   /// The limits this pupil has passed (Frånvarobevakning, 20261231090100).
   absenceWatchFindings AbsenceWatchFinding[] @relation("AbsenceWatchStudent")
-  /// A teacher's held and reported lessons per day, and the lessons they were reminded of (Rapporteringsgrad, 20270108090100).
+  /// A teacher's held and reported lessons per day, and the lessons they were reminded of (Rapporteringsgrad, 20270112090100).
   reportingDays       TeacherReportingDay[] @relation("ReportingTeacher")
   reportingReminders  ReportingReminder[]   @relation("ReportingTeacher")
   absenceReports      AbsenceReport[]   @relation("AbsenceStudent")
@@ -5244,7 +5244,7 @@ model AbsenceWatchDigest {
 }
 
 // -----------------------------------------------------------------------------
-// Rapporteringsgrad (20270108090100)
+// Rapporteringsgrad (20270112090100)
 // -----------------------------------------------------------------------------
 
 /// Whether the school's reminders and the rektor's weekly notice are on (both

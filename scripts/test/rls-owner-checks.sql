@@ -862,7 +862,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Sections 345-349 on the owner's side: Rapporteringsgrad (20270108090100).
+-- Sections 345-349 on the owner's side: Rapporteringsgrad (20270112090100).
 --
 -- What rls-policies.sql cannot ask: the tables' own constraints (no role
 -- writes the days, the ledgers or the dates), the definition's edges that

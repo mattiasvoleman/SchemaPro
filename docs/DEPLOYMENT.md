@@ -1137,10 +1137,10 @@ Walk the full product loop once, in order:
   again after the release returns). The marks and their history may stay: an
   older API never reads them, and the exports simply stop leaving the marked
   out.
-- **Rapporteringsgrad**: 20270108090000 adds the `NotificationType` values
+- **Rapporteringsgrad**: 20270112090000 adds the `NotificationType` values
   `LESSON_REPORT_REMINDER` and `REPORTING_RATE_DIGEST` and nothing else (a value
   cannot be used in the transaction that adds it, so it is a file of its own).
-  20270108090100 adds the tables `ReportingSettings`, `TeacherReportingDays`,
+  20270112090100 adds the tables `ReportingSettings`, `TeacherReportingDays`,
   `ReportingReminders` and `ReportingDigests`, eight `app.reporting_*` functions
   (seven SECURITY DEFINER with a pinned `search_path`, and `app.reporting_lessons`,
   the one definition of a reported lesson, which runs as its caller and is the
@@ -1151,7 +1151,7 @@ Walk the full product loop once, in order:
   loop: reads and foreign-key checks go on, writes to the two wait for the file,
   and if both are not free at once in 30 s it stops with nothing changed
   (`prisma migrate resolve --rolled-back
-  20270108090100_rapporteringsgrad_per_larare_och_paminnelser_for_oppna_lektioner`,
+  20270112090100_rapporteringsgrad_per_larare_och_paminnelser_for_oppna_lektioner`,
   then deploy again). `CalendarLessons` is not locked: a reminder names its lesson
   by id, with no key. The API before the release knows none of the objects and
   writes no notice of the new types, so it keeps working between the migration and

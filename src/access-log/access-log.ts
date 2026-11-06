@@ -23,7 +23,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   LEAVE_REASON_AS_MENTOR   a mentor read a leave request's reason (Skoldagen)
  *   GUARDIANS                who is whose guardian
  *   EMPLOYMENT               tjänst and anställning; and a teacher's reporting
- *                            rate (Rapporteringsgrad, 20270108090100): the
+ *                            rate (Rapporteringsgrad, 20270112090100): the
  *                            view at /admin/reporting-rate says how large a
  *                            share of each teacher's held lessons has a saved
  *                            register, which is how each person does their

@@ -1,5 +1,5 @@
 /**
- * The adapter probe's checks for Rapporteringsgrad (20270108090000–20270108090100),
+ * The adapter probe's checks for Rapporteringsgrad (20270112090000–20270112090100),
  * through the real ReportingRateService, ReportingRateJob and JobRunner, and the real
  * services that make the lessons it counts (AttendanceService's register save,
  * ScheduleActivitiesService's replacement lessons, CoverService's substitutes), on the

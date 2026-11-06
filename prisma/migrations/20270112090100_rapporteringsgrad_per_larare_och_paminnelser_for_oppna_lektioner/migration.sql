@@ -127,7 +127,7 @@ BEGIN
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Schools and Users were not free at once in 30 s: nothing is changed. Prisma now holds this migration as failed, so run "prisma migrate resolve --rolled-back 20270108090100_rapporteringsgrad_per_larare_och_paminnelser_for_oppna_lektioner" and then "prisma migrate deploy" again';
+        RAISE EXCEPTION 'Schools and Users were not free at once in 30 s: nothing is changed. Prisma now holds this migration as failed, so run "prisma migrate resolve --rolled-back 20270112090100_rapporteringsgrad_per_larare_och_paminnelser_for_oppna_lektioner" and then "prisma migrate deploy" again';
       END IF;
       PERFORM pg_sleep(0.05);
     END;

@@ -54,7 +54,7 @@ function deliveredBranch(source: string): string {
 
 describe('a held lesson is defined once: SCHEDULED or COMPLETED', () => {
   it('app.reporting_lessons (Rapporteringsgrad) tests the statuses, and only them', () => {
-    const body = functionBody(migration('20270108090100'), 'app.reporting_lessons');
+    const body = functionBody(migration('20270112090100'), 'app.reporting_lessons');
     expect(body.length).toBeGreaterThan(200);
     expect(compact(body)).toContain(STATUSES);
     // One test of the lesson's status, not a second one beside it.
