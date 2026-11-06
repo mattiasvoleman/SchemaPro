@@ -1168,6 +1168,24 @@ Walk the full product loop once, in order:
   and a pupil and a guardian read nothing. That is new information for a school's
   staff: say so in the release note, and tell the schools that it is theirs to
   use as a basis for a conversation.
+  **Decision, 2026-11-06 (the owner's, on the review's M2):** this stays as it is.
+  The count is on for every school from the first night, with no switch per school,
+  and *every* administrator profile (full administrator, rektor, expedition,
+  schemaläggare and läsare) reads every teacher's share on `/admin/reporting-rate`;
+  each such read is written to the school's läslogg (EMPLOYMENT and PEOPLE for the
+  teachers listed). The first night counts the last 90 days back, so the page has
+  its history from the first morning. A teacher reads their own days and open
+  lessons only. The user and teacher manuals (6.13 and 4.6) say the same.
+  **Release note** (in these words or others): *From the first night after this
+  release Rastra counts, every night, what share of each teacher's held lessons
+  have a saved register, for the last 90 days. Rektor and all of the school's
+  administrators see the share per teacher; each teacher sees their own; pupils
+  and guardians see nothing. Nobody is reminded or told anything until the school
+  turns the reminders or the weekly notice on under Drift › Rapporteringsgrad. The
+  figure is a basis for a conversation, not a verdict.* The emergency brake is
+  `REPORTING_RATE_BACKGROUND=off` (the environment table above): nothing is
+  counted, reminded or sent, the days already stored stay, and the pages show them
+  as of the last night.
   **Before the migration**, as the owner: no `app.reporting_%` function and no
   `ReportingSettings`, `TeacherReportingDays`, `ReportingReminders` or
   `ReportingDigests` table exist (`SELECT count(*) FROM pg_proc WHERE proname LIKE
