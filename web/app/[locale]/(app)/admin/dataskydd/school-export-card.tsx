@@ -123,9 +123,9 @@ function Orders({ timeZone }: { timeZone: string }) {
                   <Button
                     size="sm"
                     disabled={fetchFile.isPending}
-                    onClick={() => fetchFile.mutate(row.id, { onError: (error) => toast.error(problem(error)) })}
+                    onClick={() => fetchFile.mutate({ id: row.id, finishedAt: row.finishedAt }, { onError: (error) => toast.error(problem(error)) })}
                   >
-                    {fetchFile.isPending && fetchFile.variables === row.id ? t("fetching") : t("fetch")}
+                    {fetchFile.isPending && fetchFile.variables?.id === row.id ? t("fetching") : t("fetch")}
                   </Button>
                 ) : null}
                 <Button

@@ -96,7 +96,7 @@ describe("Hela skolans data", () => {
     expect(screen.getByText("2 personer med skyddad identitet finns inte i filen.")).toBeInTheDocument();
     expect(screen.getByText(`SHA-256 ${"a".repeat(64)}`)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Hämta" }));
-    expect(download.downloadSchoolExport).toHaveBeenCalledWith("e1");
+    expect(download.downloadSchoolExport).toHaveBeenCalledWith("e1", "rastra-skolexport-2026-11-05.zip");
   });
 
   it("offers no fetch for a file that has expired or failed, and says why", async () => {

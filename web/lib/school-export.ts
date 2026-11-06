@@ -43,16 +43,18 @@ export interface SubjectAccessAnswer {
   relatedHeldOut: number;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "");
-
-/** The finished file, saved by the browser under the name the gateway gave it. */
-export async function downloadSchoolExport(id: string): Promise<void> {
-  if (!API_BASE_URL) throw new ApiError(0, "NEXT_PUBLIC_API_BASE_URL is not configured.");
+/**
+ * The finished file, saved by the browser under `filename`. The gateway names it too (Content-Disposition), but the
+ * web is another origin and a header the gateway does not expose cannot be read, so the page names the file itself.
+ */
+export async function downloadSchoolExport(id: string, filename: string): Promise<void> {
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "");
+  if (!base) throw new ApiError(0, "NEXT_PUBLIC_API_BASE_URL is not configured.");
   const {
     data: { session },
   } = await createClient().auth.getSession();
   if (!session) throw new ApiError(401, "Not authenticated.");
-  const response = await fetch(`${API_BASE_URL}/api/v1/school-exports/${encodeURIComponent(id)}/file`, {
+  const response = await fetch(`${base}/api/v1/school-exports/${encodeURIComponent(id)}/file`, {
     headers: { Authorization: `Bearer ${session.access_token}`, ...schoolHeaders(pageSchool()) },
   });
   if (!response.ok) {
@@ -67,7 +69,6 @@ export async function downloadSchoolExport(id: string): Promise<void> {
     }
     throw new ApiError(response.status, detail, code);
   }
-  const filename = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ?? "rastra-skolexport.zip";
   const blob = await response.blob();
   const expected = Number(response.headers.get("Content-Length"));
   // A body cut short is a corrupt zip: say so here rather than let the school open it.

@@ -232,6 +232,8 @@ export const miscRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/retention", () => RETENTION_OVERVIEW),
   route("GET", "/api/v1/retention/purged-before", () => PURGED_BEFORE),
   route("GET", "/api/v1/retention/preview", ({ query }) => retentionPreview(Number(query.get("months") ?? 12))),
+  // Hela skolans data: the stub's school has ordered nothing.
+  route("GET", "/api/v1/school-exports", () => []),
 
   // --- Integrationer -----------------------------------------------------------------------------
   route("GET", "/api/v1/ss12000-source", () => SS12000_SOURCE),

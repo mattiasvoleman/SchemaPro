@@ -43,7 +43,10 @@ export function useWithdrawSchoolExport() {
 }
 
 export function useFetchSchoolExport() {
-  return useMutation({ mutationFn: (id: string) => downloadSchoolExport(id) });
+  return useMutation({
+    mutationFn: ({ id, finishedAt }: { id: string; finishedAt: string | null }) =>
+      downloadSchoolExport(id, `rastra-skolexport-${(finishedAt ?? new Date().toISOString()).slice(0, 10)}.zip`),
+  });
 }
 
 /** A registerutdrag, built in the request and saved at once. The answer tells the card what was held out. */
