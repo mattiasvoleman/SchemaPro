@@ -29,7 +29,12 @@ export interface NotificationRow {
     | "COVER_REQUESTED"
     | "COVER_REQUEST_CLOSED"
     | "COVER_REQUEST_ACCEPTED"
-    | "ABSENCE_WATCH_DIGEST";
+    | "ABSENCE_WATCH_DIGEST"
+    | "CRISIS_ALARM"
+    | "CRISIS_ENDED"
+    | "CRISIS_GUARDIAN_AFTER"
+    | "LESSON_REPORT_REMINDER"
+    | "REPORTING_RATE_DIGEST";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -46,7 +51,20 @@ const HREF: Partial<Record<NotificationRow["type"], string>> = {
   COVER_REQUESTED: "/teacher/franvaro",
   COVER_REQUEST_CLOSED: "/teacher/franvaro",
   COVER_REQUEST_ACCEPTED: "/admin/cover",
+  // Rapporteringsgrad (D2): the teacher to the lessons that stand open, rektor to the week's figures.
+  LESSON_REPORT_REMINDER: "/teacher/reporting-rate",
+  REPORTING_RATE_DIGEST: "/admin/reporting-rate",
 };
+
+/**
+ * Krisläge: an alarm that is going or is over leads to the page where it is
+ * read, which is not the same page for a teacher (their groups) and for an
+ * administrator (the live view). The notice carries no id of its own that the
+ * pages would need: both show the alarm that is open. The guardian's notice
+ * (CRISIS_GUARDIAN_AFTER) leads nowhere: it says that something happened and
+ * ended, and there is nothing a guardian could open.
+ */
+const CRISIS_HREF = { SCHOOL_ADMIN: "/admin/crisis", TEACHER: "/teacher/crisis" } as const;
 
 /** The notice as one sentence, in the reader's language. */
 export function noticeText(entry: NotificationRow, t: NoticeTranslator): string {
@@ -87,6 +105,19 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
         crossed: Number(meta.crossed ?? 0),
         from: str("periodStart").slice(0, 10),
         to: str("periodEnd").slice(0, 10),
+      });
+    case "LESSON_REPORT_REMINDER":
+      // Rapporteringsgrad: how many lessons and the school's limit, never which
+      // lesson, its subject, its class or its time (the e-mail says no more).
+      return t("lessonReportReminder", { count: Number(meta.count ?? 0), limitDays: Number(meta.limitDays ?? 0) });
+    case "REPORTING_RATE_DIGEST":
+      // Last week's lessons held and reported for the school as a whole and the
+      // week's dates, never a teacher.
+      return t("reportingRateDigest", {
+        from: str("periodStart").slice(0, 10),
+        to: str("periodEnd").slice(0, 10),
+        held: Number(meta.held ?? 0),
+        reported: Number(meta.reported ?? 0),
       });
     case "LESSON_CANCELLED":
       return t("lessonCancelled", {
@@ -145,6 +176,19 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
         reason: str("reason"),
         name: str("acceptedByName"),
       });
+    case "CRISIS_ALARM":
+    case "CRISIS_ENDED":
+    case "CRISIS_GUARDIAN_AFTER": {
+      // Krisläge: that an alarm is going or is over, whether it is an exercise,
+      // its kind and when; never a pupil, a group, a room or a teacher. A
+      // guardian is told THAT it happened and ended and when, and not what
+      // kind of alarm it was (the product's decision): the kind is not even
+      // handed to their sentence, whatever the notice's meta carries.
+      const at = (key: string) =>
+        meta[key] ? new Date(str(key)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+      const times = { when: at("startedAt"), end: at("endedAt") };
+      return t(`crisis.${entry.type}`, entry.type === "CRISIS_GUARDIAN_AFTER" ? times : { mode: str("mode"), kind: str("kind"), ...times });
+    }
     case "TEACHER_ABSENCE_REPORTED": {
       // Who and when; the reason is never in a notice. Whole days end at
       // the midnight after the last day, which is said as that last day.
@@ -174,7 +218,14 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
   }
 }
 
-/** The page a notice leads to, or undefined for one that has none of its own. */
-export function noticeHref(entry: NotificationRow): string | undefined {
+/**
+ * The page a notice leads to, or undefined for one that has none of its own.
+ * `role` is the reader's (an alarm leads a teacher and an administrator to
+ * different pages).
+ */
+export function noticeHref(entry: NotificationRow, role?: string): string | undefined {
+  if (entry.type === "CRISIS_ALARM" || entry.type === "CRISIS_ENDED") {
+    return role === "SCHOOL_ADMIN" ? CRISIS_HREF.SCHOOL_ADMIN : CRISIS_HREF.TEACHER;
+  }
   return entry.meta?.reason === "UNANSWERED" ? "/admin/cover" : HREF[entry.type];
 }

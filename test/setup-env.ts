@@ -53,9 +53,13 @@ process.env['SCHOOL_EXPORT_BACKGROUND'] = 'off';
 // The vikarieförfrågningar's settling (src/cover/cover-requests.job.ts): no
 // 5-minute tick in tests; a spec drives CoverRequestsJob.tick itself.
 process.env['COVER_REQUESTS_BACKGROUND'] = 'off';
+process.env['CRISIS_BACKGROUND'] = 'off';
 // The nightly absence watch (src/absence-watch): no tick in tests either; a
 // spec drives AbsenceWatchJob.tick itself.
 process.env['ABSENCE_WATCH_BACKGROUND'] = 'off';
+// The nightly reporting rate (src/reporting-rate): no tick in tests either; a
+// spec drives ReportingRateJob.tick itself.
+process.env['REPORTING_RATE_BACKGROUND'] = 'off';
 // The schemaförslag sweep (src/optimization/schedule-candidates.service.ts):
 // no quarter-hourly tick either; a spec drives sweep() and tick() itself.
 process.env['CANDIDATES_BACKGROUND'] = 'off';

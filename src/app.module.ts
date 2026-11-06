@@ -39,7 +39,9 @@ import { TimplanModule } from './timplan/timplan.module';
 import { PublicationModule } from './publication/publication.module';
 import { YearRolloverModule } from './year-rollover/year-rollover.module';
 import { CoverModule } from './cover/cover.module';
+import { CrisisModule } from './crisis/crisis.module';
 import { AbsenceWatchModule } from './absence-watch/absence-watch.module';
+import { ReportingRateModule } from './reporting-rate/reporting-rate.module';
 import { GallringModule } from './gallring/gallring.module';
 import { SchoolExportModule } from './school-export/school-export.module';
 import { AccessLogModule } from './access-log/access-log.module';
@@ -143,9 +145,11 @@ import type { ThrottleConfig } from './config/configuration';
     YearRolloverModule,
     PublicationModule,
     CoverModule,
+    CrisisModule,
     GallringModule,
     SchoolExportModule,
     AbsenceWatchModule,
+    ReportingRateModule,
     AccessLogModule,
     OpenApiModule,
     SchoolUnitsModule,

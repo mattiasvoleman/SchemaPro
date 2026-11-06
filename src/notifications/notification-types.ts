@@ -21,6 +21,14 @@ import type { NotificationKind } from './notifications.service';
  * (SUPERVISION_COVER, SUPERVISION_COVER_WITHDRAWN, Rastvakt i vardagen): both
  * listed, both always sent.
  *
+ * Krisläge (F2): an alarm that is going (CRISIS_ALARM) and its end (CRISIS_ENDED)
+ * reach all the school's staff whatever they chose, and are offered no switch:
+ * a notice a person could turn off would be a teacher who never learnt that the
+ * building was being emptied. They say only that, never a pupil, a group or a
+ * place. After a real alarm, and only if the school chose to tell them, a
+ * guardian is told that it happened and ended (CRISIS_GUARDIAN_AFTER); that one
+ * is a choice, and names nobody.
+ *
  * Vikariefrågan (D4): a teacher is asked to cover (COVER_REQUESTED) and told
  * when the lesson went to somebody else, the question was taken back or the
  * absence went away (COVER_REQUEST_CLOSED); the administrator who asked is
@@ -29,6 +37,12 @@ import type { NotificationKind } from './notifications.service';
  * (COVER_REQUEST_CLOSED, reason UNANSWERED). All three are choices: the in-app
  * row is always written, and a colleague who would rather not be pushed still
  * finds the question in the app.
+ *
+ * Rapporteringsgrad (D2): a teacher is told when lessons have stood without a
+ * saved register longer than the school's limit (LESSON_REPORT_REMINDER), and
+ * a rektor or full administrator gets last week's share for the school as a
+ * whole (REPORTING_RATE_DIGEST). Both are choices and both only numbers; each
+ * goes to one role, so the other role's list does not offer it.
  */
 
 export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
@@ -51,6 +65,11 @@ export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
   'COVER_REQUEST_ACCEPTED',
   'COVER_REQUEST_CLOSED',
   'ABSENCE_WATCH_DIGEST',
+  'CRISIS_ALARM',
+  'CRISIS_ENDED',
+  'CRISIS_GUARDIAN_AFTER',
+  'LESSON_REPORT_REMINDER',
+  'REPORTING_RATE_DIGEST',
 ];
 
 type ChoosingRole = 'GUARDIAN' | 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN';
@@ -80,10 +99,10 @@ const LESSONS: readonly NotificationKind[] = [
 ];
 
 export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = {
-  GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST'],
+  GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST', 'CRISIS_GUARDIAN_AFTER'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
-  TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED'],
-  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED'],
+  TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'LESSON_REPORT_REMINDER'],
+  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED', 'REPORTING_RATE_DIGEST'],
 };
 
 /**
@@ -110,11 +129,14 @@ export const REQUIRED_BY_ROLE: Record<ChoosingRole, ReadonlySet<NotificationKind
  * Whether one notice is delivered whatever its recipients chose: the unreported
  * absence, a substitute's own booking (LESSON_SUBSTITUTE with meta.cover ===
  * true — the type also carries the class's "has a substitute") and its
- * withdrawal, and a rastvaktspass booked and withdrawn (20261210090000).
+ * withdrawal, a rastvaktspass booked and withdrawn (20261210090000), and an
+ * alarm and its end (Krisläge, 20270113090000).
  */
 export function deliveredRegardless(type: NotificationKind, meta: Record<string, unknown>): boolean {
   return (
     type === 'ABSENCE_UNREPORTED' ||
+    type === 'CRISIS_ALARM' ||
+    type === 'CRISIS_ENDED' ||
     type === 'LESSON_COVER_WITHDRAWN' ||
     type === 'SUPERVISION_COVER' ||
     type === 'SUPERVISION_COVER_WITHDRAWN' ||

@@ -175,6 +175,59 @@ jest.mock('../services/coverRequests', () => {
     confirmCoverPass: jest.fn(),
   };
 });
+// The roll call of an alarm (Krisläge): the teacher's list with a pupil in each state, one tap waiting for the
+// network, and the administration's view of an alarm going, so that every state is drawn in both appearances.
+// The hooks are replaced: what is pinned here is what the screens ask of the layout and the palette.
+jest.mock('../hooks/useCrisis', () => {
+  const pupil = (studentId: string, firstName: string, status: string) => ({
+    studentId, firstName, lastName: 'Elev', status, priorAbsentSource: status === 'ABSENT_BEFORE' ? 'ATTENDANCE' : null, markedAt: null,
+  });
+  const pupils = [pupil('s1', 'Ada', 'FOUND'), pupil('s2', 'Bo', 'MISSING'), pupil('s3', 'Cia', 'ABSENT_BEFORE'), pupil('s4', 'Dan', 'UNREPORTED'), pupil('s5', 'Eli', 'AWAY')];
+  const call = {
+    id: 'c1', lessonId: 'l1', basis: 'NEXT_LESSON', groupName: '7A', subjectName: 'Matematik', roomName: 'B204',
+    lessonStartsAt: '2027-01-12T09:00:00Z', lessonEndsAt: '2027-01-12T09:50:00Z', completedAt: null, colleagues: ['Karin Lind'],
+    counts: { pupils: 5, found: 1, missing: 1, away: 1, absentBefore: 1, unreported: 1 }, pupils,
+    // A pupil found with the teacher who is on another list: the "Hittade hos dig" rows.
+    foundHere: [{ studentId: 's9', firstName: 'Maj', lastName: 'Elev', className: '7B', markedAt: '2027-01-12T09:08:00Z' }],
+  };
+  const block = (key: string, mode: string, endedAt: string | null, local = false) => ({
+    key, local, kind: local ? null : 'EVACUATION', mode: local ? null : mode, startedAt: '2027-01-12T09:05:00Z', endedAt, calls: [call],
+    // A pupil the teacher found with no group: the "Hittade av dig" rows, each with "Ta tillbaka".
+    foundFree: local ? [] : [{ studentId: 's10', firstName: 'Nils', lastName: 'Elev', className: '7C', markedAt: '2027-01-12T09:09:00Z' }],
+  });
+  const state = {
+    isLoading: false, isRefreshing: false, hasLoaded: true, problem: 'OFFLINE', waitingCount: 1, listAsOf: '2027-01-12T09:08:00Z',
+    now: Date.parse('2027-01-12T09:20:00Z'),
+    blocks: [block('a1', 'LIVE', null), block('a2', 'DRILL', null), block('a3', 'LIVE', '2027-01-12T09:30:00Z'), block('local', 'LIVE', null, true)],
+    waiting: new Set(['c1:s4']), saveFailed: true, dropped: [{ reason: 'ENDED', count: 1 }],
+    refresh: jest.fn(), mark: jest.fn(), markFoundHere: jest.fn(), retractFoundHere: jest.fn(), markAllFound: jest.fn(), dismissDropped: jest.fn(),
+  };
+  return { RETRY_MS: 5000, useCrisis: () => state };
+});
+jest.mock('../hooks/useCrisisAdmin', () => {
+  const pupil = (studentId: string, status: string) => ({ studentId, firstName: 'Eva', lastName: 'Ek', status, priorAbsentSource: null, markedAt: null });
+  const detail = {
+    alarm: {
+      id: 'a1', kind: 'LOCKDOWN', mode: 'LIVE', startedAt: '2027-01-12T09:05:00Z', startedBy: 'Rita Rektor', endedAt: null, endedBy: null,
+      autoEnded: false, endNote: null, guardiansNotifiedAt: null, unlisted: 3, calls: 2, callsComplete: 1,
+      counts: { pupils: 4, found: 1, missing: 1, away: 1, absentBefore: 0, unreported: 1 }, teachers: 2, teachersAnswered: 1,
+    },
+    calls: [
+      {
+        id: 'c1', lessonId: 'l1', basis: 'LESSON', groupName: '7A', subjectName: 'Matematik', roomName: null,
+        lessonStartsAt: '2027-01-12T09:00:00Z', lessonEndsAt: '2027-01-12T09:50:00Z', completedAt: null, uncovered: true,
+        teachers: [{ userId: 'u1', name: 'Anna Lind', role: 'LEAD', answeredAt: null }],
+        counts: { pupils: 3, found: 1, missing: 1, away: 0, absentBefore: 0, unreported: 1 }, pupils: [pupil('s1', 'FOUND'), pupil('s2', 'MISSING'), pupil('s3', 'UNREPORTED')],
+      },
+    ],
+  };
+  const state = {
+    isLoading: false, isRefreshing: false, hasLoaded: true, problem: 'OFFLINE', updatedAt: '2027-01-12T09:10:00Z', busy: null,
+    failure: { action: 'START', code: 'NOT_YOURS' }, details: [detail],
+    refresh: jest.fn(), start: jest.fn(), end: jest.fn(), away: jest.fn(), dismissFailure: jest.fn(),
+  };
+  return { POLL_MS: 5000, useCrisisAdmin: () => state };
+});
 /** A subject's own colour, from the school's data: the one colour a screen draws that the palette does not hold. */
 const mockSubjectColour = '#0e7490';
 jest.mock('../services/familySchedule', () => {
@@ -236,6 +289,7 @@ import { GuardianHomeScreen } from './guardian/GuardianHomeScreen';
 import { ChildScheduleScreen } from './guardian/ChildScheduleScreen';
 import { LeaveRequestsScreen } from './guardian/LeaveRequestsScreen';
 import { CoverRequestsScreen } from './cover/CoverRequestsScreen';
+import { CrisisScreen } from './crisis/CrisisScreen';
 // A route file outside jest's roots; importing it from here is fine.
 import LoginScreen from '../../app/(auth)/login';
 
@@ -351,6 +405,8 @@ const SCREENS: ReadonlyArray<[string, React.ComponentType, string, 'list' | 'col
   ['attendance', AttendanceScreen, 'TEACHER', 'list'],
   ['notifications', NotificationsScreen, 'TEACHER', 'list'],
   ['cover requests', CoverRequestsScreen, 'TEACHER', 'list'],
+  ['alarm, a teacher’s roll call', CrisisScreen, 'TEACHER', 'list'],
+  ['alarm, the administration’s', CrisisScreen, 'SCHOOL_ADMIN', 'column'],
   ['settings', SettingsScreen, 'TEACHER', 'column'],
   ['student schedule', StudentScheduleScreen, 'STUDENT', 'list'],
   ['guardian home', GuardianHomeScreen, 'GUARDIAN', 'split'],

@@ -121,7 +121,7 @@ describe('app.config: two apps, three variants each', () => {
         const { name: _n, scheme: _s, plugins: basePlugins, ios: baseIos, android: baseAndroid, extra: _extra, locales: _l, ...baseRest } = linked;
         expect(rest).toEqual(baseRest);
         if (app !== 'rastra') continue;
-        const { bundleIdentifier: _id, infoPlist, ...iosRest } = ios ?? {};
+        const { bundleIdentifier: _id, infoPlist, entitlements: _entitlements, ...iosRest } = ios ?? {};
         const { package: _package, googleServicesFile: _file, ...androidRest } = android ?? {};
         const { bundleIdentifier: _bid, infoPlist: basePlist, ...baseIosRest } = baseIos ?? {};
         const { package: _bp, ...baseAndroidRest } = baseAndroid ?? {};
@@ -132,6 +132,29 @@ describe('app.config: two apps, three variants each', () => {
         expect(plist).toEqual(basePlist);
       }
     }
+  });
+
+  it('gives Rastra, and not the guardian app, the entitlement for time-sensitive notifications in every variant: the alarm push asks for it', () => {
+    const TIME_SENSITIVE = 'com.apple.developer.usernotifications.time-sensitive';
+    for (const variant of VARIANTS) {
+      expect(resolve({ APP: 'rastra', APP_VARIANT: variant }).ios?.entitlements).toEqual({ [TIME_SENSITIVE]: true });
+      expect(resolve({ APP: 'vardnadshavare', APP_VARIANT: variant }).ios?.entitlements).toBeUndefined();
+    }
+    // The unset build is Rastra in production, as app.json describes it, and carries it.
+    expect(resolve({}).ios?.entitlements).toEqual({ [TIME_SENSITIVE]: true });
+  });
+
+  it('adds to the entitlements app.json holds, and leaves the guardian app with exactly those', () => {
+    const held: ExpoConfig = { ...base, ios: { ...base.ios, entitlements: { 'com.apple.developer.associated-domains': ['applinks:rastra.example'] } } };
+    expect(resolve({ APP: 'rastra' }, held).ios?.entitlements).toEqual({
+      'com.apple.developer.associated-domains': ['applinks:rastra.example'],
+      'com.apple.developer.usernotifications.time-sensitive': true,
+    });
+    expect(resolve({ APP: 'vardnadshavare' }, held).ios?.entitlements).toEqual({ 'com.apple.developer.associated-domains': ['applinks:rastra.example'] });
+  });
+
+  it('declares nothing of the entitlement in app.json, whose guardian build would otherwise carry it', () => {
+    expect(JSON.stringify(staticConfig)).not.toContain('time-sensitive');
   });
 
   it('gives the guardian app, which takes no attendance, no Face ID text and no biometric permission', () => {

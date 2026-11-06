@@ -69,6 +69,11 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     rule: "HOLDS_OUT",
     why: "A row per pupil: a marked pupil's row is left out.",
   },
+  "app/[locale]/(app)/admin/crisis/protocol-actions.ts": {
+    files: "larmprotokoll-<yyyy-mm-dd>-<hhmm>.csv, and the alarm protocol printed (Skriv ut, which is also how a PDF is made)",
+    rule: "HOLDS_OUT",
+    why: "A row per pupil: a marked pupil's row and every mark that names them are left out, and the page and the file say how many pupils were counted without a name (lib/crisis-protocol.ts).",
+  },
   "app/[locale]/(app)/admin/reports/staffing-report.tsx": {
     files: "tjanstefordelning-….csv (samverkan), scb-pedagogisk-personal-….txt and .csv",
     rule: "KEEPS_AND_SAYS",

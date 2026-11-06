@@ -16,6 +16,11 @@ import { TabGlyph } from '../../src/screens/TabGlyph';
  * the school asks them and the passes they hold. The administrator shares
  * this shell but is not asked, so the tab is hidden for them (href: null
  * keeps the route and takes the tab off the bar).
+ *
+ * Both have Larm (Krisläge): a teacher counts their groups when an alarm is
+ * going, an administrator starts it, watches the count and ends it. It sits
+ * beside the tabs a teacher works in all day, and a push about an alarm opens
+ * it (services/auth/appGate.ts tapTarget).
  */
 export default function AppLayout(): React.JSX.Element {
   const { t } = useI18n();
@@ -45,6 +50,14 @@ export default function AppLayout(): React.JSX.Element {
           title: t('coverRequests.tab'),
           href: authState.role === 'TEACHER' ? undefined : null,
           tabBarIcon: ({ color, focused }) => <TabGlyph glyph="⇄" color={color} focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="crisis"
+        options={{
+          title: t('crisis.tab'),
+          href: authState.role === 'TEACHER' || authState.role === 'SCHOOL_ADMIN' ? undefined : null,
+          tabBarIcon: ({ color, focused }) => <TabGlyph glyph="⚠" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen

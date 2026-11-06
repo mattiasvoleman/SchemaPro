@@ -125,6 +125,10 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/lessons": "DRIFT",
   "/admin/teacher-absence": "DRIFT",
   "/admin/cover": "DRIFT",
+  // Krisläge: starting, ending and marking an alarm are Drift's (and the school chooses which of
+  // the profiles that write Drift may start one); the settings on the page are a decision, which
+  // the page asks of the profile itself (lib/crisis-view.ts mayAct, the settings tab).
+  "/admin/crisis": "DRIFT",
   "/admin/cancellations": "DRIFT",
   // Schemabrytande aktivitet: an avbokning it owns, so Drift's as that is.
   "/admin/activities": "DRIFT",
@@ -133,6 +137,8 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/reports": "DRIFT",
   // Frånvarobevakning: the switch and the limits are Drift's, as the attendance they count.
   "/admin/absence-watch": "DRIFT",
+  // Rapporteringsgrad: the two switches and the limit are Drift's, as the attendance whose registers it counts.
+  "/admin/reporting-rate": "DRIFT",
   // Lektionslogg: the klassbok reads for everyone; removing a log is drift's.
   "/admin/klassbok": "DRIFT",
   "/admin/dataskydd": "DECIDES",

@@ -275,6 +275,25 @@ describe('NotificationDeliveryService (push)', () => {
     expect(JSON.stringify(expo.send.mock.calls[0][0])).not.toContain('Matematik');
   });
 
+  it('sends an alarm and its end as an alarm: high priority, a channel of its own, a short life and time-sensitive on iOS; nothing else is', async () => {
+    const alarm = (type: 'CRISIS_ALARM' | 'CRISIS_ENDED', meta: Record<string, unknown>) =>
+      lesson({ type, meta: { alarmId: 'a1', kind: 'EVACUATION', mode: 'LIVE', startedAt: '2027-01-12T09:10:00.000Z', ...meta }, recipients: [{ userId: 'u1', notificationId: `n-${type}` }] });
+    tx.$queryRaw.mockImplementation(async (sql: { strings: string[]; values: unknown[] }) => {
+      if (!sql.strings.join('?').includes('app.push_targets(')) return [];
+      targetCalls.push(sql);
+      return [{ token_id: 't-u1', user_id: 'u1', token: 'ExponentPushToken[u1aaaaaaaa]', locale: 'sv', timezone: 'Europe/Stockholm' }];
+    });
+    delivery.enqueue([alarm('CRISIS_ALARM', {}), alarm('CRISIS_ENDED', { endedAt: '2027-01-12T09:40:00.000Z' }), lesson()]);
+    await delivery.idle();
+    const sent = expo.send.mock.calls.flatMap(([messages]) => messages as Array<Record<string, unknown>>);
+    const by = (type: string) => sent.find((m) => (m['data'] as { type: string }).type === type)!;
+    for (const type of ['CRISIS_ALARM', 'CRISIS_ENDED']) {
+      expect(by(type)).toMatchObject({ priority: 'high', channelId: 'crisis', ttl: 600, interruptionLevel: 'time-sensitive' });
+    }
+    expect(by('LESSON_CANCELLED')).toMatchObject({ priority: 'default', channelId: 'default', ttl: 86_400 });
+    expect(by('LESSON_CANCELLED')['interruptionLevel']).toBeUndefined();
+  });
+
   it('asks each school for its own rows’ phones, so a login with a row at two schools hears only from the school its phone is registered at, never named', async () => {
     // A phone has one owner row, the row the app claimed it under (the school
     // the request chose); push_targets answers a school's rows' tokens only.

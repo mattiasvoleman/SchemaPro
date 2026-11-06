@@ -14,7 +14,8 @@ import type { NotificationRow } from '../types';
  * Instants are the device's clock in the reader's format (format.ts).
  *
  * The three cover-request types (Vikariefrågan) are worded from their meta in
- * the catalogue's own block, coverRequests.notice.
+ * the catalogue's own block, coverRequests.notice; the three of Krisläge in
+ * crisis.notice.
  */
 export function notificationText(entry: NotificationRow, t: Translate, locale: Locale): string {
   const meta = entry.meta ?? {};
@@ -103,6 +104,26 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
         ? t('notifications.text.absenceWatchDigestOpen', { span, count: open, crossed })
         : t('notifications.text.absenceWatchDigestBack', { span, count: crossed });
     }
+    case 'LESSON_REPORT_REMINDER': {
+      // Rapporteringsgrad: how many lessons stand open and the school's limit,
+      // never which lesson, its subject, its class or its time. The count is
+      // the teacher's own and is of the lessons that crossed the limit since
+      // the last notice ("new": older ones may remain), so it may be said;
+      // where to save the register is the attendance tab.
+      const count = Math.max(0, Math.trunc(Number(meta['count'])) || 0);
+      const limitDays = Math.max(0, Math.trunc(Number(meta['limitDays'])) || 0);
+      return t('notifications.text.lessonReportReminder', {
+        count,
+        limit: t('notifications.text.lessonReportLimit', { count: limitDays }),
+      });
+    }
+    case 'REPORTING_RATE_DIGEST': {
+      // The rektor's weekly note: the week it concerns and nothing else. The
+      // share, the lessons and the teachers are read on the web, behind the
+      // login; a lock screen shows no figure of the school's.
+      const day = (key: string): string => (/^\d{4}-\d{2}-\d{2}/.test(str(key)) ? formatShortDate(str(key).slice(0, 10), locale) : str(key));
+      return t('notifications.text.reportingRateDigest', { span: `${day('periodStart')} – ${day('periodEnd')}` });
+    }
     case 'LESSON_ROOM_CHANGED':
       return t('notifications.text.lessonRoomChanged', { subject: str('subjectName'), when: when('startsAt') });
     case 'SCHEDULE_CHANGED':
@@ -154,6 +175,22 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
       // How many and from when, as the push and the web's bell say it: the
       // lesson itself (subject, group, room) is on the card behind the login.
       return t('coverRequests.notice.requested', { when: when('startsAt'), until: when('expiresAt'), count });
+    }
+    case 'CRISIS_ALARM':
+    case 'CRISIS_ENDED':
+    case 'CRISIS_GUARDIAN_AFTER': {
+      // Krisläge: that an alarm (or a drill) began, that it ended, or, to a
+      // guardian after a real one, that the school had one and it is over.
+      // Never the kind, a group, a pupil or a place: the inbox is read on a
+      // lock screen as a push is, and what a teacher has to do is read behind
+      // the login, in their own groups. The time is when it began; a notice
+      // written without it is worded by the time it was written.
+      const began = str('startedAt') || entry.createdAt;
+      const params = { when: formatDateTime(began, locale) };
+      if (entry.type === 'CRISIS_GUARDIAN_AFTER') return t('crisis.notice.guardianAfter', params);
+      const drill = meta['mode'] === 'DRILL';
+      if (entry.type === 'CRISIS_ALARM') return t(drill ? 'crisis.notice.alarmDrill' : 'crisis.notice.alarm', params);
+      return t(drill ? 'crisis.notice.endedDrill' : 'crisis.notice.ended', params);
     }
     default:
       return t('notifications.text.fallback');

@@ -394,10 +394,12 @@ const STAFF_NOTICES: NotificationTypeName[] = [
 ];
 const OFFERED: Record<Persona, NotificationTypeName[]> = {
   // The week's or month's count of pupils over a limit (Frånvarobevakning): everyone but a pupil.
-  guardian: [...LESSON_NOTICES, "LEAVE_DECIDED", "ABSENCE_UNREPORTED", "ABSENCE_WATCH_DIGEST"],
+  // After a live alarm, if the school chose to tell them (Krisläge): that it happened and ended.
+  guardian: [...LESSON_NOTICES, "LEAVE_DECIDED", "ABSENCE_UNREPORTED", "ABSENCE_WATCH_DIGEST", "CRISIS_GUARDIAN_AFTER"],
   student: [...LESSON_NOTICES, "LEAVE_DECIDED"],
-  teacher: [...STAFF_NOTICES, "ABSENCE_WATCH_DIGEST"],
-  admin: [...STAFF_NOTICES, "ABSENCE_WATCH_DIGEST"],
+  // Rapporteringsgrad: a teacher is told of lessons left open, a rektor or full administrator of the week's share.
+  teacher: [...STAFF_NOTICES, "ABSENCE_WATCH_DIGEST", "LESSON_REPORT_REMINDER"],
+  admin: [...STAFF_NOTICES, "ABSENCE_WATCH_DIGEST", "REPORTING_RATE_DIGEST"],
 };
 /** Sent whatever is chosen: the unreported absence to a guardian, a cover lesson's withdrawal to staff. */
 const REQUIRED: Record<Persona, NotificationTypeName[]> = {

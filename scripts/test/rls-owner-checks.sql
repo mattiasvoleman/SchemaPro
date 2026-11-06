@@ -860,3 +860,601 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 345-349 on the owner's side: Rapporteringsgrad (20270112090100).
+--
+-- What rls-policies.sql cannot ask: the tables' own constraints (no role
+-- writes the days, the ledgers or the dates), the definition's edges that
+-- only the owner may call, the reminders over a switch dated back, which weeks
+-- are due, and gallring's reach over the days and the reminders.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.rgo_refuses(p_sql text, p_constraint text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE p_sql;
+  RAISE EXCEPTION 'rapporteringsgrad: accepted: %', p_sql;
+EXCEPTION WHEN check_violation OR unique_violation OR foreign_key_violation THEN
+  IF position(p_constraint IN SQLERRM) = 0 THEN
+    RAISE EXCEPTION 'rapporteringsgrad: % was refused, but not by %: %', p_sql, p_constraint, SQLERRM;
+  END IF;
+END $$;
+CREATE FUNCTION pg_temp.rgo_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'rapporteringsgrad %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+
+-- A lesson of the school, as the policy side's rg_lesson plants it (the owner has no principal to name the school).
+CREATE FUNCTION pg_temp.rgo_lesson(p_school uuid, p_day date, p_hour integer, p_teachers uuid[] DEFAULT '{}', p_marks text[] DEFAULT '{}',
+                                   p_status "LessonStatus" DEFAULT 'SCHEDULED', p_group text DEFAULT 'RG7A', p_extra text[] DEFAULT '{}')
+RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  l uuid;
+  starts timestamptz := (p_day + make_time(p_hour, 0, 0)) AT TIME ZONE 'Europe/Stockholm';
+  i integer;
+  subj uuid := (SELECT id FROM "Subjects" WHERE "schoolId" = p_school AND code = 'RGSUBJ');
+  grp uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = p_school AND name = p_group);
+  pupils uuid[] := ARRAY(SELECT id FROM "Users" WHERE "schoolId" = p_school AND role = 'STUDENT' ORDER BY email);
+BEGIN
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (p_school, subj, grp, p_day, starts, starts + interval '50 minutes', p_status, now()) RETURNING id INTO l;
+  FOR i IN 1..coalesce(cardinality(p_teachers), 0) LOOP
+    INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (p_school, l, p_teachers[i], 'LEAD');
+  END LOOP;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId")
+  SELECT p_school, l, g."id" FROM "StudentGroups" g WHERE g."schoolId" = p_school AND g."name" = ANY (p_extra);
+  FOR i IN 1..coalesce(cardinality(p_marks), 0) LOOP
+    INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (p_school, l, pupils[i], p_marks[i]::"AttendanceStatus", now());
+  END LOOP;
+  RETURN l;
+END $$;
+
+-- What the reminders told, as 'xx count/limit', one per teacher, in the order of their addresses.
+CREATE FUNCTION pg_temp.rgo_reminded(p_school uuid, p_today date) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(substr(r.email, 4, 2) || ' ' || (r.meta ->> 'count') || '/' || (r.meta ->> 'limitDays'), ', ' ORDER BY r.email), '')
+    FROM app.reporting_remind(p_school, p_today) r
+$$;
+
+-- 345o: the tables' constraints, the keys, the indexes, the privileges and the functions.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-annan');
+  t1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t1@example.invalid');
+  t_other uuid := (SELECT id FROM "Users" WHERE "schoolId" = other AND email = 'rg-annan-t@example.invalid');
+  lesson uuid := gen_random_uuid();
+  leaving uuid;
+  bad text;
+  fk record;
+BEGIN
+  -- A day is a held lesson or more, and reported never exceeds held.
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (%L, %L, ''2026-01-05'', 0, 0)', school, t1), 'counts_are_counts');
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (%L, %L, ''2026-01-05'', 3, 4)', school, t1), 'counts_are_counts');
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (%L, %L, ''2026-01-05'', 3, -1)', school, t1), 'counts_are_counts');
+  INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (school, t1, '2026-01-05', 3, 3), (school, t1, '2026-01-06', 1, 0);
+  -- One row per teacher and day.
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (%L, %L, ''2026-01-05'', 1, 1)', school, t1), 'teacherId_schoolId_day_key');
+  -- A teacher of another school is no teacher of this one's days, nor of its reminders.
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (%L, %L, ''2026-01-05'', 1, 1)', school, t_other), 'TeacherReportingDays_teacherId_schoolId_fkey');
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingReminders" ("schoolId", "teacherId", "calendarLessonId", "lessonDate") VALUES (%L, %L, %L, ''2026-01-05'')', school, t_other, lesson), 'ReportingReminders_teacherId_schoolId_fkey');
+  -- A lesson is reminded of once for a teacher, and another teacher is another reminder.
+  INSERT INTO "ReportingReminders" ("schoolId", "teacherId", "calendarLessonId", "lessonDate") VALUES (school, t1, lesson, '2026-01-05');
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingReminders" ("schoolId", "teacherId", "calendarLessonId", "lessonDate") VALUES (%L, %L, %L, ''2026-01-06'')', school, t1, lesson), 'ReportingReminders_lesson_teacher_key');
+  -- The week's ledger: ordered, with counts that are counts, one row per school and week end.
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported) VALUES (%L, ''2026-01-12'', ''2026-01-11'', 1, 1, 1, 1)', school), 'period_is_ordered');
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported) VALUES (%L, ''2026-01-05'', ''2026-01-11'', 1, 1, 3, 4)', school), 'counts_are_counts');
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported) VALUES (%L, ''2026-01-05'', ''2026-01-11'', -1, 1, 3, 3)', school), 'counts_are_counts');
+  INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported) VALUES (school, '2026-01-05', '2026-01-11', 1, 1, 3, 3);
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported) VALUES (%L, ''2026-01-05'', ''2026-01-11'', 1, 1, 3, 3)', school), 'ReportingDigests_pkey');
+
+  -- The settings: a switch that is on has a date, which the trigger writes even for the owner, and the
+  -- limit has its range. With the trigger held off an on-switch without a date is the table's refusal.
+  DELETE FROM "ReportingSettings" WHERE "schoolId" = school;
+  INSERT INTO "ReportingSettings" ("schoolId", "teacherReminders", "rektorDigest") VALUES (school, true, true);
+  IF (SELECT "teacherRemindersOn" FROM "ReportingSettings" WHERE "schoolId" = school) IS DISTINCT FROM (now() AT TIME ZONE 'Europe/Stockholm')::date
+     OR (SELECT "rektorDigestOn" FROM "ReportingSettings" WHERE "schoolId" = school) IS DISTINCT FROM (now() AT TIME ZONE 'Europe/Stockholm')::date THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345o: a row inserted with both on was not dated at once';
+  END IF;
+  DELETE FROM "ReportingSettings" WHERE "schoolId" = school;
+  SET LOCAL session_replication_role = replica;
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingSettings" ("schoolId", "teacherReminders") VALUES (%L, true)', school), 'on_has_a_date');
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingSettings" ("schoolId", "rektorDigest") VALUES (%L, true)', school), 'on_has_a_date');
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingSettings" ("schoolId", "openAfterDays") VALUES (%L, 0)', school), 'open_after_days_is_sane');
+  PERFORM pg_temp.rgo_refuses(format('INSERT INTO "ReportingSettings" ("schoolId", "openAfterDays") VALUES (%L, 31)', school), 'open_after_days_is_sane');
+  SET LOCAL session_replication_role = origin;
+
+  -- Removing a person takes their days and their reminders with them: the keys' indexes serve the cascade.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'rg-leaving@example.invalid', 'Rapportering', 'Lämnar', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO leaving;
+  INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (school, leaving, '2026-01-05', 2, 1);
+  INSERT INTO "ReportingReminders" ("schoolId", "teacherId", "calendarLessonId", "lessonDate") VALUES (school, leaving, gen_random_uuid(), '2026-01-05');
+  DELETE FROM "Users" WHERE id = leaving;
+  IF EXISTS (SELECT 1 FROM "TeacherReportingDays" WHERE "teacherId" = leaving) OR EXISTS (SELECT 1 FROM "ReportingReminders" WHERE "teacherId" = leaving) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345o: a removed person left a day or a reminder';
+  END IF;
+
+  -- Every foreign key of the three tables has an index that starts with its columns (the FK index audit).
+  FOR fk IN
+    SELECT c.conname, c.conrelid::regclass::text AS tbl
+      FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid::regclass::text IN ('"TeacherReportingDays"', '"ReportingReminders"', '"ReportingDigests"', '"ReportingSettings"')
+       AND NOT EXISTS (
+             SELECT 1 FROM pg_index i
+              WHERE i.indrelid = c.conrelid AND i.indisvalid
+                AND (i.indkey::int2[])[0:cardinality(c.conkey) - 1] = c.conkey)
+  LOOP
+    RAISE EXCEPTION 'rapporteringsgrad 345o: % on % has no index that starts with its columns', fk.conname, fk.tbl;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid
+              WHERE c.relname IN ('TeacherReportingDays', 'ReportingReminders', 'ReportingDigests', 'ReportingSettings') AND NOT i.indisvalid) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345o: an index is invalid';
+  END IF;
+
+  -- Row security is on for all four, and the settings keep their trigger.
+  SELECT string_agg(c.relname, ', ') INTO bad FROM pg_class c
+   WHERE c.relname IN ('TeacherReportingDays', 'ReportingReminders', 'ReportingDigests', 'ReportingSettings') AND NOT c.relrowsecurity;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'rapporteringsgrad 345o: row security is off for %', bad; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'ReportingSettings_stamp' AND tgrelid = '"ReportingSettings"'::regclass AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345o: the settings'' trigger is missing or off';
+  END IF;
+
+  -- The definers pin their search path, and the definition is not a definer at all (it runs as its caller, the owner).
+  SELECT string_agg(p.proname, ', ' ORDER BY p.proname) INTO bad FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND p.proname LIKE 'reporting\_%' AND p.proname <> 'reporting_lessons'
+     AND (NOT p.prosecdef OR NOT EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%'));
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'rapporteringsgrad 345o: not a definer with a pinned search path: %', bad; END IF;
+  IF (SELECT prosecdef FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname = 'reporting_lessons') THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345o: the definition is a definer, and so hands its rows to whoever may run it';
+  END IF;
+
+  -- PostgreSQL 17's MAINTAIN (REINDEX, CLUSTER, VACUUM, LOCK): the owner's alone.
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    SELECT string_agg(r.rolname || ' on ' || t.t, ', ') INTO bad
+      FROM pg_roles r, (VALUES ('TeacherReportingDays'), ('ReportingReminders'), ('ReportingDigests'), ('ReportingSettings')) t(t)
+     WHERE r.rolname IN ('authenticated', 'app_authenticated', 'service_role', 'anon')
+       AND has_table_privilege(r.rolname, format('public.%I', t.t), 'MAINTAIN');
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'rapporteringsgrad 345o: MAINTAIN is held by %', bad; END IF;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 346o: the definition's edges that only the owner may ask.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-annan');
+  admin uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-full@example.invalid');
+  t1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t1@example.invalid');
+  t2 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t2@example.invalid');
+  t_other uuid := (SELECT id FROM "Users" WHERE "schoolId" = other AND email = 'rg-annan-t@example.invalid');
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  l uuid;
+  starts timestamptz;
+  cutoff date;
+  n integer;
+  got text;
+BEGIN
+  -- A lesson counts when it has ended: at its end, not a second before.
+  l := pg_temp.rgo_lesson(school, '2026-09-15', 8, ARRAY[t1]);
+  starts := ('2026-09-15 08:00')::timestamp AT TIME ZONE 'Europe/Stockholm';
+  PERFORM pg_temp.rgo_expect('346o not ended', (SELECT count(*)::text FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', starts + interval '49 minutes 59 seconds')), '0');
+  PERFORM pg_temp.rgo_expect('346o ended', (SELECT count(*)::text FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', starts + interval '50 minutes')), '1');
+  PERFORM pg_temp.rgo_expect('346o not on the day', (SELECT count(*)::text FROM app.reporting_lessons(school, '2026-09-16', '2026-09-30', now())), '0');
+  PERFORM pg_temp.rgo_expect('346o the other school', (SELECT count(*)::text FROM app.reporting_lessons(other, '2026-09-15', '2026-09-15', now())), '0');
+  PERFORM pg_temp.rgo_expect('346o what a row says', (SELECT reported::text FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), 'false');
+
+  -- A teacher of another school stands on a lesson of this one (the key to the teacher is a single column):
+  -- the lesson is not theirs to report here, and the night does not stop for it.
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, l, t_other, 'ASSISTANT');
+  PERFORM pg_temp.rgo_expect('346o a stranger', (SELECT string_agg(teacher_id::text, ',' ORDER BY teacher_id) FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), t1::text);
+  PERFORM app.reporting_compute(school, '2026-09-30');
+  IF EXISTS (SELECT 1 FROM "TeacherReportingDays" WHERE "teacherId" = t_other AND "schoolId" = school) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 346o: a teacher of another school has a day here';
+  END IF;
+  PERFORM pg_temp.rgo_expect('346o the days beside a stranger', (SELECT string_agg(day || ' ' || reported || '/' || held, ', ') FROM "TeacherReportingDays" WHERE "schoolId" = school), '2026-09-15 0/1');
+
+  -- A row that puts a teacher of this school on the lesson under another school's id (the key to the lesson is a
+  -- single column, so the database takes it): the lesson's own school decides, and the row is no one's here.
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (other, l, t2, 'ASSISTANT');
+  PERFORM pg_temp.rgo_expect('346o a row of another school', (SELECT string_agg(teacher_id::text, ',' ORDER BY teacher_id) FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), t1::text);
+  DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = l AND "schoolId" = other;
+
+  -- The window is 90 days up to and including the day asked for: a day inside it with no lesson is removed,
+  -- one before it is final and stays as it was.
+  INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES
+    (school, t2, '2026-07-02', 5, 5), (school, t2, '2026-07-03', 5, 5);
+  PERFORM pg_temp.rgo_expect('346o window', (SELECT written || '/' || removed FROM app.reporting_compute(school, '2026-09-30')), '0/1');
+  PERFORM pg_temp.rgo_expect('346o final', (SELECT string_agg(day::text, ',' ORDER BY day) FROM "TeacherReportingDays" WHERE "teacherId" = t2), '2026-07-02');
+
+  -- A school that purges attendance: the count leaves the days before the cutoff of the shortest period it has
+  -- chosen as they are, whatever the lessons of those days look like now, and counts the days from the cutoff
+  -- on. Without a decision it counts them all again.
+  cutoff := (today - interval '2 months')::date;
+  DELETE FROM "TeacherReportingDays" WHERE "schoolId" = school;
+  DELETE FROM "CalendarLessons" WHERE "schoolId" = school AND date >= '2026-09-01';
+  INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (school, t1, cutoff - 10, 1, 1);
+  PERFORM pg_temp.rgo_lesson(school, cutoff - 10, 8, ARRAY[t1]);       -- its register is long gone
+  PERFORM pg_temp.rgo_lesson(school, cutoff + 1, 8, ARRAY[t1]);        -- inside what is kept
+  PERFORM pg_temp.rgo_expect('346o without a decision', (SELECT written || '/' || removed FROM app.reporting_compute(school, today - 1)), '2/0');
+  PERFORM pg_temp.rgo_expect('346o without a decision, the old day', (SELECT reported || '/' || held FROM "TeacherReportingDays" WHERE day = cutoff - 10), '0/1');
+  UPDATE "TeacherReportingDays" SET held = 1, reported = 1 WHERE day = cutoff - 10;
+  DELETE FROM "TeacherReportingDays" WHERE day = cutoff + 1;
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (school, 'ATTENDANCE', 'PURGE_AFTER', 2, 'RG 346', admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  PERFORM pg_temp.rgo_expect('346o with a decision', (SELECT written || '/' || removed FROM app.reporting_compute(school, today - 1)), '1/0');
+  PERFORM pg_temp.rgo_expect('346o with a decision, the old day', (SELECT reported || '/' || held FROM "TeacherReportingDays" WHERE day = cutoff - 10), '1/1');
+  PERFORM pg_temp.rgo_expect('346o with a decision, the kept day', (SELECT reported || '/' || held FROM "TeacherReportingDays" WHERE day = cutoff + 1), '0/1');
+  -- A day inside the window with no lesson is still removed under the decision.
+  INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (school, t2, cutoff + 5, 2, 2);
+  PERFORM pg_temp.rgo_expect('346o with a decision, a day with no lesson', (SELECT written || '/' || removed FROM app.reporting_compute(school, today - 1)), '0/1');
+  -- A decision to keep afterwards does not give the marks back: the days before the cutoff stay as they were.
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, reference, "decidedById", "decidedAt")
+  VALUES (school, 'ATTENDANCE', 'KEEP', 'RG 346 keep', admin, now() - interval '1 hour');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  PERFORM pg_temp.rgo_expect('346o keep', (SELECT written || '/' || removed FROM app.reporting_compute(school, today - 1)), '0/0');
+END $$;
+ROLLBACK;
+
+-- 346o, the class as it was. The class history (StudentEnrollments) says who sat in a class on a lesson's day,
+-- as the segment [validFrom, validTo) that holds the date, so a lesson of a class that is empty today still has a
+-- roster when pupils sat in it then, to the day. The läsårsaktivering moves every pupil to next year's class
+-- (Users.studentGroupId) and empties last year's, and a lesson that nobody could mark must not be taken out of
+-- days that were already counted because of it. The history is written by a trigger and guarded against every other
+-- writer, so the rows are planted with the triggers held off (session_replication_role), and so is the pupils' move.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  yr uuid := (SELECT id FROM "AcademicYears" WHERE "schoolId" = school);
+  t1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t1@example.invalid');
+  p1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-p1@example.invalid');
+  p2 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-p2@example.invalid');
+  gb uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name = 'RG7B');
+  n integer;
+BEGIN
+  -- RG7B has nobody today; p1 sat in it from the 17th of August up to, not including, the 20th of September.
+  INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom", "validTo")
+  VALUES (school, p1, yr, gb, 7, '2026-08-17', '2026-09-20');
+  PERFORM pg_temp.rgo_lesson(school, '2026-08-14', 8, ARRAY[t1], '{}', 'SCHEDULED', 'RG7B');           -- the Friday before: nobody sat there
+  PERFORM pg_temp.rgo_lesson(school, '2026-08-17', 8, ARRAY[t1], '{}', 'SCHEDULED', 'RG7B');           -- the first day: they did
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-19', 8, ARRAY[t1], '{}', 'SCHEDULED', 'RG7B');           -- the last day: they did
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-20', 8, ARRAY[t1], '{}', 'SCHEDULED', 'RG7B');           -- the day the segment ends: not inside it
+  PERFORM pg_temp.rgo_expect('346o the class as it was', (SELECT string_agg(day::text, ',' ORDER BY day) FROM app.reporting_lessons(school, '2026-08-01', '2026-09-30', now())), '2026-08-17,2026-09-19');
+  -- A class joined to a lesson of another class counts as it was too.
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-01', 9, ARRAY[t1], '{}', 'SCHEDULED', 'RG7C', ARRAY['RG7B']);   -- inside
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-21', 9, ARRAY[t1], '{}', 'SCHEDULED', 'RG7C', ARRAY['RG7B']);   -- after
+  PERFORM pg_temp.rgo_expect('346o a joined class as it was', (SELECT string_agg(day::text, ',' ORDER BY day) FROM app.reporting_lessons(school, '2026-08-01', '2026-09-30', now())), '2026-08-17,2026-09-01,2026-09-19');
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "schoolId" = school AND "studentGroupId" = gb;
+  IF n <> 1 THEN RAISE EXCEPTION 'rapporteringsgrad 346o: the fixture history of the class is % rows, not 1', n; END IF;
+END $$;
+ROLLBACK;
+
+-- 346o, the läsårsaktivering: stored days stand still. RG7A's pupils sat in it for the whole year; the activation
+-- moves them to a class of the next year and closes their segment at the year's end. The lessons of RG7A, the
+-- unregistered one too, are counted as before, and the night writes nothing.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  yr uuid := (SELECT id FROM "AcademicYears" WHERE "schoolId" = school);
+  t1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t1@example.invalid');
+  gb uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name = 'RG7B');
+  ga uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name = 'RG7A');
+BEGIN
+  -- The pupils' open segments begin on the day the fixtures were made; the year's pupils were there from its start.
+  UPDATE "StudentEnrollments" SET "validFrom" = '2026-01-01'
+   WHERE "schoolId" = school AND "studentGroupId" = ga AND "validTo" IS NULL;
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-15', 8, ARRAY[t1], ARRAY['PRESENT', 'PRESENT']);
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-15', 9, ARRAY[t1]);
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-16', 8, ARRAY[t1]);
+  PERFORM pg_temp.rgo_expect('346o before the activation', (SELECT written || '/' || held || '/' || reported FROM app.reporting_compute(school, '2026-09-30')), '2/3/1');
+
+  -- The activation, as the service does it: the pupils move, and the history follows in the same statements.
+  UPDATE "StudentEnrollments" SET "validTo" = '2027-01-01' WHERE "schoolId" = school AND "studentGroupId" = ga AND "validTo" IS NULL;
+  INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom")
+  SELECT school, u."id", yr, gb, 8, '2027-01-01' FROM "Users" u WHERE u."schoolId" = school AND u."studentGroupId" = ga;
+  UPDATE "Users" SET "studentGroupId" = gb WHERE "schoolId" = school AND "studentGroupId" = ga;
+  IF EXISTS (SELECT 1 FROM "Users" WHERE "schoolId" = school AND "studentGroupId" = ga) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 346o: the old class still has pupils, so the activation was not simulated';
+  END IF;
+  PERFORM pg_temp.rgo_expect('346o after the activation', (SELECT written || '/' || removed || '/' || held || '/' || reported FROM app.reporting_compute(school, '2026-09-30')), '0/0/3/1');
+
+  -- Without the history the unregistered lessons would have gone with the pupils: the stored day moves.
+  DELETE FROM "StudentEnrollments" WHERE "schoolId" = school AND "studentGroupId" = ga;
+  PERFORM pg_temp.rgo_expect('346o without the history', (SELECT written || '/' || removed || '/' || held || '/' || reported FROM app.reporting_compute(school, '2026-09-30')), '1/1/1/1');
+END $$;
+ROLLBACK;
+
+-- 348o: the reminders over a switch dated back, to the day. The date the switch went on is the trigger's, so
+-- the trigger is held off (session_replication_role) and the owner writes it. A lesson is open past the limit
+-- when its day is the limit's number of days back or more; the school's day is what is passed in.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  t1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t1@example.invalid');
+  t2 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t2@example.invalid');
+  t3 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t3@example.invalid');
+  t4 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t4@example.invalid');
+  got text;
+BEGIN
+  INSERT INTO "ReportingSettings" ("schoolId", "teacherReminders", "teacherRemindersOn", "rektorDigest", "rektorDigestOn", "openAfterDays")
+  VALUES (school, true, '2026-09-01', true, '2026-09-10', 2);
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-14', 8, ARRAY[t1]);                          -- Monday, open
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-15', 8, ARRAY[t1]);                          -- Tuesday, open
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-16', 8, ARRAY[t1], ARRAY['PRESENT']);        -- Wednesday, saved
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-15', 9, ARRAY[t2]);                          -- Tuesday, T2's
+  PERFORM pg_temp.rgo_lesson(school, '2026-08-20', 8, ARRAY[t1]);                          -- before the switch went on
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-14', 9, ARRAY[t4]);                          -- a teacher who has left
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-15', 10, ARRAY[t1], ARRAY[]::text[], 'CANCELLED');
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-15', 11, ARRAY[t3]);                         -- T3 is away
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "updatedAt")
+  VALUES (school, t3, ('2026-09-15 07:00')::timestamp AT TIME ZONE 'Europe/Stockholm', ('2026-09-15 17:00')::timestamp AT TIME ZONE 'Europe/Stockholm', now());
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-17', 8, ARRAY[t1]);                          -- Thursday, open
+
+  -- The weekend: nothing, whatever is open.
+  PERFORM pg_temp.rgo_expect('348o Saturday', pg_temp.rgo_reminded(school, '2026-09-19'), '');
+  PERFORM pg_temp.rgo_expect('348o Sunday', pg_temp.rgo_reminded(school, '2026-09-20'), '');
+  -- Friday 18: lessons up to Wednesday are past the limit of two days. T1 has two (the Monday and the Tuesday),
+  -- T2 one; the one before the switch, the cancelled one, the absent teacher's, the departed teacher's and the
+  -- saved one are not reminded of, and Thursday's is within the limit.
+  PERFORM pg_temp.rgo_expect('348o Friday', pg_temp.rgo_reminded(school, '2026-09-18'), 't1 2/2, t2 1/2');
+  IF (SELECT count(*) FROM "ReportingReminders" WHERE "schoolId" = school) <> 3 THEN RAISE EXCEPTION 'rapporteringsgrad 348o: the ledger has % rows, not 3', (SELECT count(*) FROM "ReportingReminders" WHERE "schoolId" = school); END IF;
+  IF (SELECT count(*) FROM "Notifications" WHERE "schoolId" = school AND type = 'LESSON_REPORT_REMINDER') <> 2 THEN RAISE EXCEPTION 'rapporteringsgrad 348o: not two notices written'; END IF;
+  IF EXISTS (SELECT 1 FROM "Notifications" WHERE "schoolId" = school AND type = 'LESSON_REPORT_REMINDER' AND meta::text ~* '(Rapportering|rg-|@|2026-)') THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348o: a reminder names a subject, a class, a person or a day';
+  END IF;
+  -- Told once: the same day again, and the next, say nothing of them.
+  PERFORM pg_temp.rgo_expect('348o again', pg_temp.rgo_reminded(school, '2026-09-18'), '');
+  -- Monday 21: Thursday's lesson is past the limit now, and only it.
+  PERFORM pg_temp.rgo_expect('348o Monday', pg_temp.rgo_reminded(school, '2026-09-21'), 't1 1/2');
+  -- A register saved after the reminder changes nothing; one saved before it spares the reminder.
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-18', 8, ARRAY[t1], ARRAY['PRESENT']);
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-18', 9, ARRAY[t1]);
+  PERFORM pg_temp.rgo_expect('348o Tuesday', pg_temp.rgo_reminded(school, '2026-09-22'), 't1 1/2');
+  -- On the limit to the day: a lesson on Monday 21 is within two days on Tuesday 22, past them on Wednesday 23.
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-21', 8, ARRAY[t2]);
+  PERFORM pg_temp.rgo_expect('348o not yet', pg_temp.rgo_reminded(school, '2026-09-22'), '');
+  PERFORM pg_temp.rgo_expect('348o on the limit', pg_temp.rgo_reminded(school, '2026-09-23'), 't2 1/2');
+  -- The limit is the school's: five days, and a lesson of the 21st waits until the 26th, a Saturday, and so the 28th.
+  UPDATE "ReportingSettings" SET "openAfterDays" = 5;
+  PERFORM pg_temp.rgo_lesson(school, '2026-09-22', 8, ARRAY[t2]);
+  PERFORM pg_temp.rgo_expect('348o five days, short', pg_temp.rgo_reminded(school, '2026-09-25'), '');
+  PERFORM pg_temp.rgo_expect('348o five days, the Saturday', pg_temp.rgo_reminded(school, '2026-09-26'), '');
+  PERFORM pg_temp.rgo_expect('348o five days, the Monday', pg_temp.rgo_reminded(school, '2026-09-28'), 't2 1/5');
+  UPDATE "ReportingSettings" SET "openAfterDays" = 2;
+  -- The ledger keeps a lesson for 60 days: older rows are cleared, and the rest are left.
+  INSERT INTO "ReportingReminders" ("schoolId", "teacherId", "calendarLessonId", "lessonDate") VALUES
+    (school, t1, gen_random_uuid(), '2026-07-20'), (school, t1, gen_random_uuid(), '2026-07-26');
+  PERFORM pg_temp.rgo_reminded(school, '2026-09-24');
+  got := (SELECT string_agg("lessonDate"::text, ',' ORDER BY "lessonDate") FROM "ReportingReminders" WHERE "lessonDate" < '2026-08-01');
+  PERFORM pg_temp.rgo_expect('348o the ledger is cleared', got, '2026-07-26');
+  -- Thirty days back and no further: a lesson that stood open longer is let go of, not reminded of in a month.
+  DELETE FROM "ReportingReminders" WHERE "schoolId" = school;
+  DELETE FROM "Notifications" WHERE "schoolId" = school;
+  PERFORM pg_temp.rgo_lesson(school, '2026-10-30', 8, ARRAY[t1]);
+  PERFORM pg_temp.rgo_expect('348o a month on', pg_temp.rgo_reminded(school, '2026-11-02'), 't1 1/2');
+  -- The switch's own day is the first day reminded of, and the day before it is not.
+  DELETE FROM "ReportingReminders" WHERE "schoolId" = school;
+  UPDATE "ReportingSettings" SET "teacherRemindersOn" = '2026-09-15';
+  PERFORM pg_temp.rgo_expect('348o dated the 15th', pg_temp.rgo_reminded(school, '2026-09-18'), 't1 1/2, t2 1/2');
+  DELETE FROM "ReportingReminders" WHERE "schoolId" = school;
+  UPDATE "ReportingSettings" SET "teacherRemindersOn" = '2026-09-16';
+  PERFORM pg_temp.rgo_expect('348o dated the 16th', pg_temp.rgo_reminded(school, '2026-09-18'), '');
+  -- Switched off: nothing, and nothing is written.
+  DELETE FROM "ReportingReminders" WHERE "schoolId" = school;
+  UPDATE "ReportingSettings" SET "teacherRemindersOn" = '2026-09-01', "teacherReminders" = false;
+  PERFORM pg_temp.rgo_expect('348o off', pg_temp.rgo_reminded(school, '2026-09-18'), '');
+  IF EXISTS (SELECT 1 FROM "ReportingReminders" WHERE "schoolId" = school) THEN RAISE EXCEPTION 'rapporteringsgrad 348o: a switch that is off wrote a ledger row'; END IF;
+  UPDATE "ReportingSettings" SET "teacherReminders" = true;
+
+  -- The switch back over the end of summer time (Sunday 25 October): the limit counts calendar days, so
+  -- Friday's lesson is past three days on Monday and Thursday's lesson is too, whatever the Sunday's 25 hours.
+  DELETE FROM "ReportingReminders" WHERE "schoolId" = school;
+  DELETE FROM "CalendarLessons" WHERE "schoolId" = school AND date >= '2026-09-01';
+  UPDATE "ReportingSettings" SET "openAfterDays" = 3, "teacherRemindersOn" = '2026-10-01';
+  PERFORM pg_temp.rgo_lesson(school, '2026-10-22', 8, ARRAY[t1]);
+  PERFORM pg_temp.rgo_lesson(school, '2026-10-23', 8, ARRAY[t1]);
+  PERFORM pg_temp.rgo_lesson(school, '2026-10-24', 8, ARRAY[t2]);
+  PERFORM pg_temp.rgo_expect('348o autumn Sunday', pg_temp.rgo_reminded(school, '2026-10-25'), '');
+  PERFORM pg_temp.rgo_expect('348o autumn Monday', pg_temp.rgo_reminded(school, '2026-10-26'), 't1 2/3');
+  PERFORM pg_temp.rgo_expect('348o autumn Tuesday', pg_temp.rgo_reminded(school, '2026-10-27'), 't2 1/3');
+  -- And over the switch to summer time (Sunday 29 March): Thursday and Friday before it, Monday after.
+  DELETE FROM "ReportingReminders" WHERE "schoolId" = school;
+  DELETE FROM "CalendarLessons" WHERE "schoolId" = school AND date >= '2026-03-01' AND date < '2026-04-30';
+  UPDATE "ReportingSettings" SET "teacherRemindersOn" = '2026-03-01';
+  PERFORM pg_temp.rgo_lesson(school, '2026-03-26', 8, ARRAY[t1]);
+  PERFORM pg_temp.rgo_lesson(school, '2026-03-27', 8, ARRAY[t1]);
+  PERFORM pg_temp.rgo_expect('348o spring Monday', pg_temp.rgo_reminded(school, '2026-03-30'), 't1 2/3');
+
+  -- Which weeks are due, to the day. Weeks run Monday to Sunday.
+  DELETE FROM "ReportingDigests" WHERE "schoolId" = school;
+  PERFORM pg_temp.rgo_expect('348o Monday 09-14', (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, '2026-09-14')), '2026-09-07 2026-09-13');
+  PERFORM pg_temp.rgo_expect('348o Sunday 09-13', (SELECT count(*)::text FROM app.reporting_digest_due(school, '2026-09-13')), '0');
+  PERFORM pg_temp.rgo_expect('348o Tuesday 09-15', (SELECT period_end::text FROM app.reporting_digest_due(school, '2026-09-15')), '2026-09-13');
+  INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported) VALUES (school, '2026-09-07', '2026-09-13', 1, 1, 3, 3);
+  PERFORM pg_temp.rgo_expect('348o written', (SELECT count(*)::text FROM app.reporting_digest_due(school, '2026-09-15')), '0');
+  PERFORM pg_temp.rgo_expect('348o next Monday', (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, '2026-09-21')), '2026-09-14 2026-09-20');
+  -- The switch on a Sunday: the week that ended that day is due on the Monday; on the Monday, the one after.
+  DELETE FROM "ReportingDigests" WHERE "schoolId" = school;
+  UPDATE "ReportingSettings" SET "rektorDigestOn" = '2026-09-13';
+  PERFORM pg_temp.rgo_expect('348o switch on the Sunday', (SELECT count(*)::text FROM app.reporting_digest_due(school, '2026-09-14')), '1');
+  UPDATE "ReportingSettings" SET "rektorDigestOn" = '2026-09-14';
+  PERFORM pg_temp.rgo_expect('348o switch on the Monday', (SELECT count(*)::text FROM app.reporting_digest_due(school, '2026-09-14')), '0');
+  PERFORM pg_temp.rgo_expect('348o switch on the Monday, a week on', (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, '2026-09-21')), '2026-09-14 2026-09-20');
+  -- A week over the new year, and the weeks of the summer-time switches are seven calendar days all the same.
+  UPDATE "ReportingSettings" SET "rektorDigestOn" = '2025-01-01';
+  PERFORM pg_temp.rgo_expect('348o new year', (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, '2026-01-05')), '2025-12-29 2026-01-04');
+  PERFORM pg_temp.rgo_expect('348o spring week', (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, '2026-03-30')), '2026-03-23 2026-03-29');
+  PERFORM pg_temp.rgo_expect('348o fall week', (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, '2026-10-26')), '2026-10-19 2026-10-25');
+  -- Off: nothing is due.
+  UPDATE "ReportingSettings" SET "rektorDigest" = false;
+  PERFORM pg_temp.rgo_expect('348o off', (SELECT count(*)::text FROM app.reporting_digest_due(school, '2026-10-26')), '0');
+  -- The job asks for every school with a lesson in the last 90 days, switches or not.
+  DELETE FROM "CalendarLessons" WHERE "schoolId" = school;
+  PERFORM pg_temp.rgo_expect('348o not listed without a lesson', (SELECT count(*)::text FROM app.reporting_schools() s WHERE s = school), '0');
+  PERFORM pg_temp.rgo_lesson(school, (now() AT TIME ZONE 'Europe/Stockholm')::date - 91, 8, ARRAY[t1]);
+  PERFORM pg_temp.rgo_expect('348o not listed with a lesson 91 days back', (SELECT count(*)::text FROM app.reporting_schools() s WHERE s = school), '0');
+  PERFORM pg_temp.rgo_lesson(school, (now() AT TIME ZONE 'Europe/Stockholm')::date - 90, 8, ARRAY[t1]);
+  PERFORM pg_temp.rgo_expect('348o listed with a lesson 90 days back', (SELECT count(*)::text FROM app.reporting_schools() s WHERE s = school), '1');
+END $$;
+ROLLBACK;
+
+-- 348o, the weekly notice: only for a whole week that is over, Monday to Sunday in the school's dates. The
+-- ledger's row for a week stops the real notice of it, so a week to come, a stretch that is no week, and a
+-- school that is not there are refused, and write nothing.
+BEGIN;
+CREATE FUNCTION pg_temp.rgo_digest_state(p_school uuid, p_start date, p_end date) RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM app.reporting_digest(p_school, p_start, p_end);
+  RETURN 'accepted';
+EXCEPTION WHEN OTHERS THEN
+  RETURN SQLSTATE;
+END $$;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  monday date := (now() AT TIME ZONE 'Europe/Stockholm')::date - (extract(isodow FROM (now() AT TIME ZONE 'Europe/Stockholm')::date)::integer - 1);
+  zone text;
+  sunday date;
+BEGIN
+  INSERT INTO "ReportingSettings" ("schoolId", "rektorDigest") VALUES (school, true);
+  PERFORM pg_temp.rgo_expect('348o this week', pg_temp.rgo_digest_state(school, monday, monday + 6), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o next week', pg_temp.rgo_digest_state(school, monday + 7, monday + 13), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o a Tuesday to a Monday', pg_temp.rgo_digest_state(school, monday - 6, monday), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o eight days', pg_temp.rgo_digest_state(school, monday - 14, monday - 7), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o six days', pg_temp.rgo_digest_state(school, monday - 14, monday - 9), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o the end before the start', pg_temp.rgo_digest_state(school, monday - 7, monday - 14), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o no start', pg_temp.rgo_digest_state(school, NULL, monday - 1), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o no end', pg_temp.rgo_digest_state(school, monday - 7, NULL), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o no such school', pg_temp.rgo_digest_state(gen_random_uuid(), monday - 7, monday - 1), 'RR404');
+  -- On a Sunday the week that ends today is not over yet, and the day before is. The clock is the database's own,
+  -- so a school's timezone finds the Sunday: one of these zones has one whenever it is a Saturday, Sunday or
+  -- Monday somewhere in the world (the other days of the week cannot reach the edge, and then nothing is asked).
+  FOR zone IN SELECT unnest(ARRAY['Etc/GMT+12', 'Europe/Stockholm', 'Pacific/Kiritimati']) LOOP
+    sunday := (clock_timestamp() AT TIME ZONE zone)::date;
+    IF extract(isodow FROM sunday) = 7 THEN
+      UPDATE "Schools" SET "timezone" = zone WHERE "id" = school;
+      PERFORM pg_temp.rgo_expect('348o the Sunday itself, in ' || zone, pg_temp.rgo_digest_state(school, sunday - 6, sunday), 'RR400');
+      PERFORM pg_temp.rgo_expect('348o the Sunday before, in ' || zone, pg_temp.rgo_digest_state(school, sunday - 13, sunday - 7), 'accepted');
+      DELETE FROM "ReportingDigests" WHERE "schoolId" = school;
+      UPDATE "Schools" SET "timezone" = 'Europe/Stockholm' WHERE "id" = school;
+      EXIT;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM "ReportingDigests" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348o: a refused week wrote a ledger row';
+  END IF;
+  -- The week that is over: accepted, and entered once.
+  PERFORM pg_temp.rgo_expect('348o last week', pg_temp.rgo_digest_state(school, monday - 7, monday - 1), 'accepted');
+  PERFORM pg_temp.rgo_expect('348o last week, entered', (SELECT "periodStart"::text FROM "ReportingDigests" WHERE "schoolId" = school), (monday - 7)::text);
+  PERFORM pg_temp.rgo_expect('348o a week long ago', pg_temp.rgo_digest_state(school, '2026-09-14', '2026-09-20'), 'accepted');
+END $$;
+ROLLBACK;
+
+-- 349o: gallring. The days and the reminders go with the attendance they are counted from: under ATTENDANCE,
+-- by the day they stand for and by the lesson's day, in the same batch.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-annan');
+  admin uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-full@example.invalid');
+  t1 uuid := (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'rg-t1@example.invalid');
+  t_other uuid := (SELECT id FROM "Users" WHERE "schoolId" = other AND email = 'rg-annan-t@example.invalid');
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  run uuid;
+  n integer;
+  counts jsonb;
+  tbls text[];
+BEGIN
+  -- Days and reminders at three ages, here and at the school with no decision (which has its fixture day too).
+  INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES
+    (school, t1, today - 900, 3, 2), (school, t1, today - 400, 3, 2), (school, t1, today - 30, 3, 2),
+    (other, t_other, today - 900, 3, 2);
+  INSERT INTO "ReportingReminders" ("schoolId", "teacherId", "calendarLessonId", "lessonDate") VALUES
+    (school, t1, gen_random_uuid(), today - 900), (school, t1, gen_random_uuid(), today - 400), (school, t1, gen_random_uuid(), today - 30),
+    (other, t_other, gen_random_uuid(), today - 900);
+  INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported) VALUES
+    (school, today - 910, today - 904, 1, 1, 3, 2);
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (school, 'ATTENDANCE', 'PURGE_AFTER', 12, 'RG 349', admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+
+  -- What is due, as the one predicate answers it: the two old days and the two old reminders of this school.
+  SELECT array_agg(DISTINCT d.tbl ORDER BY d.tbl) INTO tbls FROM app.gallring_due(school, 'ATTENDANCE', today - 365, today) d;
+  IF tbls IS DISTINCT FROM ARRAY['ReportingReminders', 'TeacherReportingDays'] THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: the kinds due are % (the week''s ledger is counts and is not gallring''s)', tbls;
+  END IF;
+  IF (SELECT count(*) FROM app.gallring_due(school, 'ATTENDANCE', today - 365, today) d WHERE d.tbl = 'TeacherReportingDays') <> 2
+     OR (SELECT count(*) FROM app.gallring_due(school, 'ATTENDANCE', today - 365, today) d WHERE d.tbl = 'ReportingReminders') <> 2 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: not the two days and the two reminders before the cutoff are due';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.gallring_due(school, 'ABSENCE_REPORTS', today - 365, today) d WHERE d.tbl IN ('TeacherReportingDays', 'ReportingReminders'))
+     OR EXISTS (SELECT 1 FROM app.gallring_due(school, 'NOTIFICATIONS', today - 365, today) d WHERE d.tbl IN ('TeacherReportingDays', 'ReportingReminders'))
+     OR EXISTS (SELECT 1 FROM app.gallring_due(school, 'CHANGE_LOGS', today - 365, today) d WHERE d.tbl IN ('TeacherReportingDays', 'ReportingReminders')) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: the days or the reminders are due under another kind than ATTENDANCE';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.gallring_due(other, 'ATTENDANCE', today - 365, today) d
+              WHERE d.id IN (SELECT id FROM "TeacherReportingDays" WHERE "schoolId" = school UNION ALL SELECT id FROM "ReportingReminders" WHERE "schoolId" = school)) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: a school''s days are due under another school''s run';
+  END IF;
+
+  -- The night: the old ones go, the one thirty days back stays, the other school's stay, the ledger is not touched.
+  run := app.gallring_begin(school, now());
+  LOOP
+    n := app.gallring_purge(run, 'ATTENDANCE', 1);
+    EXIT WHEN n = 0;
+  END LOOP;
+  PERFORM app.gallring_finish(run, '{}', now());
+  IF (SELECT count(*) FROM "TeacherReportingDays" WHERE "schoolId" = school) <> 1 OR (SELECT count(*) FROM "ReportingReminders" WHERE "schoolId" = school) <> 1 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: gallring left % days and % reminders of the school, not the one of each from 30 days ago',
+      (SELECT count(*) FROM "TeacherReportingDays" WHERE "schoolId" = school), (SELECT count(*) FROM "ReportingReminders" WHERE "schoolId" = school);
+  END IF;
+  IF (SELECT day FROM "TeacherReportingDays" WHERE "schoolId" = school) <> today - 30 OR (SELECT "lessonDate" FROM "ReportingReminders" WHERE "schoolId" = school) <> today - 30 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: gallring kept the wrong day';
+  END IF;
+  IF (SELECT count(*) FROM "TeacherReportingDays" WHERE "schoolId" = other) <> 2 OR (SELECT count(*) FROM "ReportingReminders" WHERE "schoolId" = other) <> 1 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: a school with no decision lost its days or reminders';
+  END IF;
+  IF (SELECT count(*) FROM "ReportingDigests" WHERE "schoolId" = school) <> 1 THEN RAISE EXCEPTION 'rapporteringsgrad 349o: gallring took the week''s ledger'; END IF;
+  SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
+  IF (counts ->> 'ATTENDANCE')::integer <> 4 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: the run counts % rows under ATTENDANCE, not the four', counts ->> 'ATTENDANCE';
+  END IF;
+
+  -- The batch is shared with the attendance: with a budget of one the run is not complete until nothing is left.
+  INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (school, t1, today - 800, 1, 1), (school, t1, today - 799, 1, 1);
+  INSERT INTO "ReportingReminders" ("schoolId", "teacherId", "calendarLessonId", "lessonDate") VALUES (school, t1, gen_random_uuid(), today - 800);
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'ATTENDANCE', 1) <> 1 THEN RAISE EXCEPTION 'rapporteringsgrad 349o: a batch of one took more or less than one row'; END IF;
+  IF (SELECT (complete ->> 'ATTENDANCE')::boolean FROM "GallringRuns" WHERE id = run) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: a full batch said nothing was left';
+  END IF;
+  IF app.gallring_purge(run, 'ATTENDANCE', 1) <> 1 OR app.gallring_purge(run, 'ATTENDANCE', 1) <> 1 OR app.gallring_purge(run, 'ATTENDANCE', 1) <> 0 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 349o: the three rows were not taken in the next batches';
+  END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+
+  -- KEEP stops it at once.
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, reference, "decidedById", "decidedAt")
+  VALUES (school, 'ATTENDANCE', 'KEEP', 'RG 349 keep', admin, now() - interval '1 hour');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (school, t1, today - 800, 1, 1);
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'ATTENDANCE', 100) <> 0 THEN RAISE EXCEPTION 'rapporteringsgrad 349o: a school that keeps its attendance lost a day'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+END $$;
+ROLLBACK;

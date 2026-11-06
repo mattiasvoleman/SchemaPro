@@ -97,4 +97,40 @@ describe("UserMenu dropdown", () => {
       routerMocks.replace.mock.invocationCallOrder[0],
     );
   });
+
+  it("wipes what Krisläge kept on the device for every login, once the session is gone, and nothing else", async () => {
+    localStorage.setItem("rastra.crisis.queue.v2:u-anna", "[]");
+    localStorage.setItem("rastra.crisis.mine.v2:u-bo", "{}");
+    localStorage.setItem("rastra.crisis.queue.v1", "[]");
+    localStorage.setItem("schemapro.scheduleRules", "{}");
+    authMocks.signOut.mockImplementation(async () => {
+      // Still there while the session is being ended: the wipe comes after it.
+      expect(localStorage.getItem("rastra.crisis.queue.v2:u-anna")).not.toBeNull();
+      return { error: null };
+    });
+    const user = userEvent.setup();
+    render(<UserMenu userName="Alma Berg" email="alma@example.com" role="TEACHER" />);
+
+    await user.click(screen.getByRole("button", { name: "Alma Berg" }));
+    await user.click(screen.getByRole("menuitem", { name: "common.signOut" }));
+
+    await waitFor(() => expect(routerMocks.replace).toHaveBeenCalledWith("/login"));
+    expect(Object.keys(localStorage).filter((key) => key.startsWith("rastra.crisis."))).toEqual([]);
+    expect(localStorage.getItem("schemapro.scheduleRules")).toBe("{}");
+    localStorage.clear();
+  });
+
+  it("leaves the marks of a login whose session did not end where they are", async () => {
+    localStorage.setItem("rastra.crisis.queue.v2:u-anna", '[{"id":"m"}]');
+    authMocks.signOut.mockResolvedValue({ error: { message: "Failed to fetch" } });
+    const user = userEvent.setup();
+    render(<UserMenu userName="Alma Berg" email="alma@example.com" role="TEACHER" />);
+
+    await user.click(screen.getByRole("button", { name: "Alma Berg" }));
+    await user.click(screen.getByRole("menuitem", { name: "common.signOut" }));
+
+    await waitFor(() => expect(authMocks.signOut).toHaveBeenCalled());
+    expect(localStorage.getItem("rastra.crisis.queue.v2:u-anna")).toBe('[{"id":"m"}]');
+    localStorage.clear();
+  });
 });

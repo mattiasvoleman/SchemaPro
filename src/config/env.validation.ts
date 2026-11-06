@@ -235,6 +235,14 @@ export class EnvironmentVariables {
   COVER_REQUESTS_BACKGROUND: string = 'on';
 
   /**
+   * The look at alarms left open (src/crisis/crisis.job.ts, Krisläge). `on`
+   * unless set to `off`; the test setup turns it off. An alarm nobody ended
+   * is ended by the pass after 12 hours (a real one) or 3 (an exercise).
+   */
+  @IsIn(['on', 'off'])
+  CRISIS_BACKGROUND: string = 'on';
+
+  /**
    * The nightly absence watch (src/absence-watch/absence-watch.job.ts). `on`
    * unless set to `off`; the test setup turns it off. A school is watched only
    * when its administrator has turned the bevakning on (off until then), so
@@ -242,6 +250,16 @@ export class EnvironmentVariables {
    */
   @IsIn(['on', 'off'])
   ABSENCE_WATCH_BACKGROUND: string = 'on';
+
+  /**
+   * The nightly reporting rate (src/reporting-rate/reporting-rate.job.ts):
+   * it stores each teacher's held and reported lessons for the last 90 days
+   * for every school with lessons, and sends the reminders and the weekly
+   * notice of the schools that turned them on. `on` unless set to `off`; the
+   * test setup turns it off.
+   */
+  @IsIn(['on', 'off'])
+  REPORTING_RATE_BACKGROUND: string = 'on';
 
   /**
    * Schemaförslag (src/optimization/schedule-candidates.service.ts): the solve

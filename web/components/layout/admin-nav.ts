@@ -125,6 +125,11 @@ export const ADMIN_NAV: NavSection[] = [
   {
     labelKey: "operations",
     items: [
+      // Krisläge: the roll call of an utrymning or inrymning, first in the phase
+      // because it is the page nobody should have to look for. The attendance
+      // icon (Ledighetsansökningar), already in the shell: the same act of
+      // ticking pupils off, in a different hour.
+      { labelKey: "crisis", href: "/admin/crisis", icon: ClipboardCheck },
       { labelKey: "dayPlanner", href: "/admin/lessons", icon: CalendarClock },
       { labelKey: "teacherAbsence", href: "/admin/teacher-absence", icon: UserX },
       // Beside the absence register whose lessons it covers. The day
@@ -145,6 +150,11 @@ export const ADMIN_NAV: NavSection[] = [
       // one, counted from the attendance Rapporter reads. The reports' icon,
       // already in the shell: both are figures over the same attendance.
       { labelKey: "absenceWatch", href: "/admin/absence-watch", icon: BarChart3 },
+      // Rapporteringsgrad: each teacher's share of the lessons held whose
+      // register is saved, beside Frånvarobevakning, which counts the same
+      // registers from the pupils' side. The reports' icon again, already in
+      // the shell.
+      { labelKey: "reportingRate", href: "/admin/reporting-rate", icon: BarChart3 },
       // Lektionslogg's klassbok: a class's lessons over a period, printed. The subjects' book.
       { labelKey: "classBook", href: "/admin/klassbok", icon: BookOpen },
     ],

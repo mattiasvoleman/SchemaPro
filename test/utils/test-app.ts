@@ -49,6 +49,7 @@ import { TimplanModule } from '../../src/timplan/timplan.module';
 import { YearRolloverModule } from '../../src/year-rollover/year-rollover.module';
 import { PublicationModule } from '../../src/publication/publication.module';
 import { CoverModule } from '../../src/cover/cover.module';
+import { CrisisModule } from '../../src/crisis/crisis.module';
 import { SignInModule } from '../../src/sign-in/sign-in.module';
 import { SchoolUnitsModule } from '../../src/school-units/school-units.module';
 import { SitesModule } from '../../src/sites/sites.module';
@@ -56,6 +57,7 @@ import { SharingModule } from '../../src/sharing/sharing.module';
 import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
 import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module';
+import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { SchoolExportModule } from '../../src/school-export/school-export.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
@@ -171,6 +173,7 @@ export const FEATURE_MODULES = [
   PublicationModule,
   CalendarFeedModule,
   CoverModule,
+  CrisisModule,
   SchoolUnitsModule,
   SitesModule,
   SharingModule,
@@ -183,6 +186,8 @@ export const FEATURE_MODULES = [
   SchoolExportModule,
   // Frånvarobevakning's job is @Optional on the runner too, and the setup turns it off.
   AbsenceWatchModule,
+  // Rapporteringsgrad's job is @Optional on the runner too, and the setup turns it off.
+  ReportingRateModule,
   SignInModule,
   HuvudmanModule,
   AccessLogModule,

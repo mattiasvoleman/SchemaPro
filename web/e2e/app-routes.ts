@@ -76,6 +76,8 @@ const QUERY: Record<string, string> = {
   "/teacher/tjanst/uppdragsbeskrivning": `year=${YEAR.id}`,
   // Today by day; ?date= and ?view=week come from the board's own controls.
   "/admin/cover": "",
+  // Krisläge; ?alarm= opens the live view on an alarm, from a refused start's link.
+  "/admin/crisis": "",
   // Närvaro; ?tab= opens another tab.
   "/admin/reports": "",
   // The active year; ?year= comes from links that pick another.

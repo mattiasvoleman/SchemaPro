@@ -64,9 +64,10 @@ vi.mock("@/utils/supabase/client", () => ({
 
 // The signed-in person, whose own rows the inbox reads.
 // The words and links of the notices come from the same module (see the note there), so it is the real one but for the profile.
+const who = vi.hoisted(() => ({ role: "TEACHER" as string }));
 vi.mock("@/components/profile-context", async (importActual) => ({
   ...(await importActual<typeof import("@/components/profile-context")>()),
-  useProfile: () => ({ profile: { id: "me-1" }, school: null }),
+  useProfile: () => ({ profile: { id: "me-1", role: who.role }, school: null }),
 }));
 
 // next-intl's Link needs the intl provider; an anchor is what it renders.
@@ -162,6 +163,7 @@ const bellButton = () =>
   screen.getByRole("button", { name: /^title/, hidden: true });
 
 beforeEach(() => {
+  who.role = "TEACHER";
   router.push.mockClear();
   seq = 0;
   supabaseState.selectResults.length = 0;
@@ -495,6 +497,51 @@ describe("NotificationBell inbox", () => {
     expect(router.push).toHaveBeenCalledTimes(4);
   });
 
+  it("tells an alarm and its end by mode, kind and time, never a pupil, a group or a place, and takes a teacher to Larm and an administrator to Krisläge", async () => {
+    const startedAt = "2027-01-12T09:14:00.000Z";
+    const endedAt = "2027-01-12T09:31:00.000Z";
+    const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const rows = [
+      // The gateway's meta (src/crisis/crisis-notices.ts): ids, kind, mode and times, and nothing about a pupil or a group.
+      notif({ type: "CRISIS_ALARM", meta: { alarmId: "a-1", kind: "EVACUATION", mode: "LIVE", startedAt } }),
+      notif({ type: "CRISIS_ENDED", meta: { alarmId: "a-1", kind: "EVACUATION", mode: "LIVE", startedAt, endedAt } }),
+      notif({ type: "CRISIS_GUARDIAN_AFTER", meta: { kind: "LOCKDOWN", startedAt, endedAt } }),
+    ];
+    const alarmText = `crisis.CRISIS_ALARM(mode=LIVE|kind=EVACUATION|when=${clock(startedAt)}|end=)`;
+    const endedText = `crisis.CRISIS_ENDED(mode=LIVE|kind=EVACUATION|when=${clock(startedAt)}|end=${clock(endedAt)})`;
+    // A guardian's sentence is handed the times only: never the kind of alarm, though the notice's meta carries it.
+    const guardianText = `crisis.CRISIS_GUARDIAN_AFTER(when=${clock(startedAt)}|end=${clock(endedAt)})`;
+
+    for (const [role, page] of [
+      ["TEACHER", "/teacher/crisis"],
+      ["SCHOOL_ADMIN", "/admin/crisis"],
+    ] as const) {
+      who.role = role;
+      router.push.mockClear();
+      supabaseState.selectResults.push(ok(rows));
+      const user = userEvent.setup();
+      const { view } = renderBell();
+      await waitFor(() => expect(argsFor("select").length).toBeGreaterThan(0));
+      await user.click(bellButton());
+
+      expect(screen.getByText(alarmText)).toBeInTheDocument();
+      expect(screen.getByText(endedText)).toBeInTheDocument();
+      expect(screen.getByText(guardianText)).toBeInTheDocument();
+
+      await user.click(screen.getByText(alarmText));
+      expect(router.push).toHaveBeenLastCalledWith(page);
+      await user.click(bellButton());
+      await user.click(screen.getByText(endedText));
+      expect(router.push).toHaveBeenLastCalledWith(page);
+      // A guardian's is a notice with nothing to open: the menu stays and nobody is sent anywhere.
+      await user.click(bellButton());
+      await user.click(screen.getByText(guardianText));
+      expect(router.push).toHaveBeenCalledTimes(2);
+      view.unmount();
+      supabaseState.calls.length = 0;
+    }
+  });
+
   it("leaves the menu open and goes nowhere on a notice that has no page of its own", async () => {
     const user = userEvent.setup();
     supabaseState.selectResults.push(ok([notif({ meta: { subjectName: "Biologi" } })]));
@@ -544,6 +591,49 @@ describe("NotificationBell inbox", () => {
     // A notice with no meta is a sentence of zeros, not a crash and not "undefined".
     expect(screen.getByText("absenceWatchDigest(open=0|crossed=0|from=|to=)")).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(/Alva|Sjuk/);
+  });
+
+  it("tells a teacher the number of lessons left open and the limit, and the rektor the week's lessons held and reported, never a subject, a class, a time or a name, and takes each to its page (Rapporteringsgrad)", async () => {
+    const user = userEvent.setup();
+    supabaseState.selectResults.push(
+      ok([
+        notif({
+          type: "LESSON_REPORT_REMINDER",
+          meta: { count: 3, limitDays: 2, subjectName: "Matematik", groupName: "7A", startsAt: "2026-11-02T08:10:00.000Z", teacherName: "Anna Lind" },
+        }),
+        notif({
+          type: "REPORTING_RATE_DIGEST",
+          meta: {
+            periodStart: "2026-11-02",
+            periodEnd: "2026-11-08T00:00:00.000Z",
+            held: 120,
+            reported: 96,
+            teachers: 14,
+            teacherName: "Anna Lind",
+          },
+        }),
+        // No meta is a sentence of zeros, not a crash and not "undefined".
+        notif({ type: "LESSON_REPORT_REMINDER", meta: null }),
+        notif({ type: "REPORTING_RATE_DIGEST", meta: null }),
+      ]),
+    );
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    const reminder = screen.getByText("lessonReportReminder(count=3|limitDays=2)");
+    const digestText = "reportingRateDigest(from=2026-11-02|to=2026-11-08|held=120|reported=96)";
+    expect(screen.getByText(digestText)).toBeInTheDocument();
+    expect(screen.getByText("lessonReportReminder(count=0|limitDays=0)")).toBeInTheDocument();
+    expect(screen.getByText("reportingRateDigest(from=|to=|held=0|reported=0)")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/Matematik|7A|Anna|Lind/);
+
+    await user.click(reminder);
+    expect(router.push).toHaveBeenLastCalledWith("/teacher/reporting-rate");
+    await user.click(bellButton());
+    await user.click(screen.getByText(digestText));
+    expect(router.push).toHaveBeenLastCalledWith("/admin/reporting-rate");
   });
 
   it("says a notice of a type this build does not know as a notice, never an empty line", async () => {

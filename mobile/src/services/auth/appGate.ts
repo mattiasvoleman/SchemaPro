@@ -36,8 +36,8 @@ export function homeOf(role: string | null): { group: '(guardian)' | '(student)'
   return { group: '(app)', home: '/(app)/schedule', notifications: '/(app)/notifications' };
 }
 
-/** Where a push tap goes: the role's Notiser tab, or the cover requests a teacher is asked in. */
-export type TapTarget = ReturnType<typeof homeOf>['notifications'] | '/(app)/cover-requests';
+/** Where a push tap goes: the role's Notiser tab, the cover requests a teacher is asked in, or the roll call of an alarm. */
+export type TapTarget = ReturnType<typeof homeOf>['notifications'] | '/(app)/cover-requests' | '/(app)/crisis';
 
 /**
  * The notice types whose push is a question for a teacher (Vikariefrågan):
@@ -48,12 +48,22 @@ export type TapTarget = ReturnType<typeof homeOf>['notifications'] | '/(app)/cov
 const COVER_QUESTION_TYPES: ReadonlySet<string> = new Set(['COVER_REQUESTED', 'COVER_REQUEST_CLOSED']);
 
 /**
+ * The notice types whose push is an alarm (Krisläge): that one is going and
+ * that it is over. The staff who get them, the teacher who counts and the
+ * administrator who started it and watches it, read them in the Larm tab. The
+ * guardian's CRISIS_GUARDIAN_AFTER has no such tab and is an inbox row.
+ */
+const CRISIS_ALARM_TYPES: ReadonlySet<string> = new Set(['CRISIS_ALARM', 'CRISIS_ENDED']);
+
+/**
  * What a tap on a push opens. The type is what the gateway put in the push's
  * data (notification-delivery.service: { notificationId, type }); a tap that
  * carries none, or one the role has no screen for, opens the Notiser tab as
- * every tap did before. Only a TEACHER has the Vikarie tab.
+ * every tap did before. Only a TEACHER has the Vikarie tab; both kinds of
+ * staff have Larm, and a student or a guardian never leaves their own shell.
  */
 export function tapTarget(role: string | null, type: string | null): TapTarget {
+  if (type !== null && (role === 'TEACHER' || role === 'SCHOOL_ADMIN') && CRISIS_ALARM_TYPES.has(type)) return '/(app)/crisis';
   if (role === 'TEACHER' && type !== null && COVER_QUESTION_TYPES.has(type)) return '/(app)/cover-requests';
   return homeOf(role).notifications;
 }

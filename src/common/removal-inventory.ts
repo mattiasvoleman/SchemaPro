@@ -169,10 +169,20 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('SupervisionCovers', ['substituteId', 'schoolId'], 'CASCADE', others),
   // Vikariefrågan (20270102091000): a question they were asked and a pass they confirmed.
   key('CoverRequestRecipients', ['userId', 'schoolId'], 'CASCADE', others),
+  // Krisläge (20270113091000): a pupil is on no list once removed; the marks and answers they made are kept without them.
+  key('CrisisPupils', ['studentId', 'schoolId'], 'CASCADE', others),
   key('CoverConfirmations', ['userId', 'schoolId'], 'CASCADE', others),
   key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),
   // Skyddad identitet (20270107090000): the mark goes with the person, counted like any other row.
   key('PersonProtections', ['userId', 'schoolId'], 'CASCADE', others),
+  // Rapporteringsgrad (20270112090100): a teacher's held and reported lessons per day, counted like any
+  // other row a person holds. The ledger of the lessons they were reminded of is read by no role at all
+  // (only app.reporting_remind touches it, and the API role holds no grant on it), so a dry run under an
+  // administrator's RLS cannot count it.
+  key('TeacherReportingDays', ['teacherId', 'schoolId'], 'CASCADE', others),
+  key('ReportingReminders', ['teacherId', 'schoolId'], 'CASCADE', {
+    uncounted: 'a ledger of the lessons a teacher was reminded of, read by no role (RLS 347): the rows go with the person',
+  }),
   key('Notifications', ['userId'], 'CASCADE', account('notices')),
   key('NotificationOptOuts', ['userId', 'schoolId'], 'CASCADE', account('noticeSettings')),
   key('DevicePushTokens', ['userId', 'schoolId'], 'CASCADE', account('pushDevices')),
@@ -207,6 +217,11 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('SupervisionCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['requestedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['acceptedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('CrisisAlarms', ['startedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('CrisisAlarms', ['endedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('CrisisCallTeachers', ['teacherId', 'schoolId'], 'SET NULL', kept),
+  key('CrisisPupils', ['stateByUserId', 'schoolId'], 'SET NULL', kept),
+  key('CrisisReports', ['byUserId', 'schoolId'], 'SET NULL', kept),
   key('HuvudmanSchools', ['acceptedById', 'schoolId'], 'SET NULL', kept),
   key('HuvudmanSchoolEvents', ['byUserId', 'schoolId'], 'SET NULL', kept),
   // Hela skolans data (20270114090000): who ordered a copy of the school's data; the order stays without them.
@@ -276,6 +291,9 @@ export const GROUP_BELOW: readonly BelowKey<GroupBelowKind>[] = [
   below('CalendarLessons', 'TeacherAbsenceCovers', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'CoverRequestLessons', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'CoverConfirmations', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
+  below('CalendarLessons', 'CrisisCalls', ['calendarLessonId', 'schoolId'], 'SET NULL', {
+    unlinked: 'a group on the list of an alarm that was going keeps its names and loses its lesson (Krisläge)',
+  }),
   below('MasterLessons', 'MasterLessonGroups', ['masterLessonId'], 'CASCADE', onTheLessons),
   below('MasterLessons', 'MasterLessonStudents', ['masterLessonId'], 'CASCADE', onTheLessons),
   below('MasterLessons', 'CalendarLessons', ['masterLessonId'], 'SET NULL', {
@@ -313,6 +331,7 @@ export const STUDENT_BELOW: readonly BelowKey<never>[] = [
   below('TeacherAbsences', 'TeacherAbsenceCovers', ['absenceId', 'absentTeacherId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherAbsences', 'CoverRequestLessons', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherAbsences', 'CoverConfirmations', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  below('CrisisPupils', 'CrisisReports', ['callId', 'studentId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherEmployments', 'TeacherEmploymentPeriods', ['employmentId', 'schoolId', 'userId', 'academicYearId'], 'CASCADE', {
     with: 'otherRows',
   }),

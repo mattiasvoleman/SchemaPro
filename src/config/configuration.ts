@@ -78,8 +78,18 @@ export interface CoverRequestsConfig {
   background: boolean;
 }
 
+export interface CrisisConfig {
+  /** The quarter-hourly look at alarms left open (CRISIS_BACKGROUND, default on). */
+  background: boolean;
+}
+
 export interface AbsenceWatchConfig {
   /** The nightly absence watch (ABSENCE_WATCH_BACKGROUND, default on). */
+  background: boolean;
+}
+
+export interface ReportingRateConfig {
+  /** The nightly reporting rate (REPORTING_RATE_BACKGROUND, default on). */
   background: boolean;
 }
 
@@ -119,7 +129,9 @@ export interface Configuration {
   gallring: GallringConfig;
   schoolExport: SchoolExportConfig;
   coverRequests: CoverRequestsConfig;
+  crisis: CrisisConfig;
   absenceWatch: AbsenceWatchConfig;
+  reportingRate: ReportingRateConfig;
   candidates: CandidatesConfig;
 }
 
@@ -189,8 +201,14 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     coverRequests: {
       background: env.COVER_REQUESTS_BACKGROUND !== 'off',
     },
+    crisis: {
+      background: env.CRISIS_BACKGROUND !== 'off',
+    },
     absenceWatch: {
       background: env.ABSENCE_WATCH_BACKGROUND !== 'off',
+    },
+    reportingRate: {
+      background: env.REPORTING_RATE_BACKGROUND !== 'off',
     },
     candidates: {
       maxSeconds: env.CANDIDATE_MAX_SECONDS ?? DEFAULT_CANDIDATES_CONFIG.maxSeconds,
