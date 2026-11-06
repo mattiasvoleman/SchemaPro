@@ -853,6 +853,8 @@ describe("the group of pupils on no lesson", () => {
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     });
 
+    // 450 rows, more than one request's 400, rendered in jsdom: about 5 s on a loaded runner, so the
+    // file's 5 s default is not this test's limit (main's CI run 42205039683 timed out at it).
     it("sends a group of more than a request holds in as many requests as it takes, and no mark twice", async () => {
       const many = Array.from({ length: 450 }, (_, index) => pupil(`p${index}`, `Elev${String(index).padStart(3, "0")}`, "Test"));
       open({}, [...calls(), noLessonCall("c-none", many)]);
@@ -866,7 +868,7 @@ describe("the group of pupils on no lesson", () => {
       expect(sizes).toEqual([400, 50]);
       const ids = new Set(post.mock.calls.flatMap((call) => call[1].marks.map((mark: { studentId: string }) => mark.studentId)));
       expect(ids.size).toBe(450);
-    });
+    }, 30_000);
 
     it("says in words that it was refused, and keeps the question open for another try", async () => {
       open({}, [...calls(), nobody()]);
