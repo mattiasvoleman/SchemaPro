@@ -88,6 +88,7 @@
       <li><span>6.12 Frånvarobevakning</span><span class="dots"></span><span class="pg" data-pg="s612"></span></li>
       <li><span>6.13 Rapporteringsgrad</span><span class="dots"></span><span class="pg" data-pg="s613"></span></li>
       <li><span>6.14 Krisläge: larm vid utrymning och inrymning</span><span class="dots"></span><span class="pg" data-pg="s614"></span></li>
+      <li><span>6.15 Kvittens: be en vårdnadshavare bekräfta ett meddelande</span><span class="dots"></span><span class="pg" data-pg="s615"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -6564,6 +6565,61 @@
       alltid även personal och besökare på skolans vanliga sätt.
     </p>
   </div>
+
+  <h3 id="s615"><span class="num">6.15</span>Kvittens: be en vårdnadshavare bekräfta ett meddelande</h3>
+  <p>
+    Med <strong>kvittens</strong> kan personal be vårdnadshavarna till en eller flera
+    elever bekräfta att de har sett ett meddelande: en lapp om en utflykt, beskedet
+    om en ledighet, eller vad som hände vid ett larm. Vårdnadshavaren bekräftar med ett
+    tryck i appen eller på webben, och den som bad ser vem som har bekräftat och när.
+    Funktionen är <strong>avstängd</strong> tills en administratör som skriver Drift slår på
+    den under <span class="path">Kvittens</span>; en läsare ser sidan men ändrar ingenting.
+  </p>
+  <ul>
+    <li><strong>Inställningar.</strong> Reglaget <span class="ui">Kvittens</span> och
+      <span class="ui">Påminnelse</span>: efter hur många dygn (1–30) en vårdnadshavare som
+      inte har bekräftat påminns, en gång, eller <em>Ingen påminnelse</em>. Valet gäller
+      förfrågningar som skickas efter att du sparat; en förfrågan som redan gått ut
+      behåller sin tid.</li>
+    <li><strong>Ny förfrågan.</strong> <span class="ui">Be om kvittens</span>: en rubrik
+      (högst 120 tecken), ett meddelande (högst 2 000) och de elever det gäller; en
+      administratör kan välja vilka elever som helst, en mentor bara sina egna. Samma
+      text går till alla vårdnadshavare, så nämn inga enskilda elever. Du väljer också
+      <span class="ui">Räcker att en vårdnadshavare bekräftar</span> eller
+      <span class="ui">Alla vårdnadshavare ska bekräfta</span>. En elev utan vårdnadshavare
+      lämnas utanför och sägs när förfrågan skickas. En förfrågan ändras eller tas inte
+      bort efteråt: texten är det vårdnadshavaren såg.</li>
+    <li><strong>Vem som är klar</strong> avgörs per elev. Räcker en: klar när någon
+      vårdnadshavare har bekräftat. Alla: klar när någon har bekräftat och ingen vårdnadshavare
+      som fortfarande kan bekräfta väntar. En vårdnadshavare vars vårdnad har upphört kan inte
+      bekräfta och håller inte upp någon (det står <em>Vårdnaden har upphört</em>), men en
+      bekräftelse hen gjorde innan dess står kvar. Har eleven inga vårdnadshavare kvar står
+      det <em>Ingen kan bekräfta</em>.</li>
+    <li><strong>Vyn.</strong> Listan visar antal klara elever och antal vårdnadshavare som väntar.
+      Öppnar du en förfrågan ser du varje elev och vårdnadshavare: <em>Bekräftade</em> med
+      tid, <em>Väntar</em>, eller <em>Vårdnaden har upphört</em>, och när påminnelsen gick.
+      Att du öppnar en förfrågan skrivs i läsloggen. En elev med skyddad identitet står vid namn
+      i vyn, som i registret, och det finns ingen fil att hämta: ingen lista över vem som
+      bekräftat lämnar systemet.</li>
+  </ul>
+  <div class="note">
+    <span class="label">Det här sparas, och det här sparas inte</span>
+    <p>
+      Det enda som sparas är en <em>bekräftelse</em>: att en vårdnadshavare tryckte, och när.
+      Rastra sparar inte att en vårdnadshavare öppnade eller läste meddelandet. En vanlig notis
+      (ett ledighetsbeslut, en oanmäld frånvaro, ett larms efterbesked) har ingen kvittens, och
+      när den lästs visar ingen skärm för någon annan än mottagaren. Inte heller personalens egna notiser har kvittens, så
+      funktionen går inte att använda som mått på vem som läser vad. Vårdnadshavaren ser aldrig
+      att den andra vårdnadshavaren har bekräftat eller inte.
+    </p>
+  </div>
+  <p>
+    Notisen till vårdnadshavaren har rubriken; push och e-post säger bara att ett meddelande
+    väntar, aldrig vilket eller om vilket barn, och påminnelsen säger likadant. Förfrågningar
+    och bekräftelser gallras med skolans val för <em>Notiser</em> under Dataskydd (7.4); det finns
+    ingen gallringstyp för dem. Stängs kvittens av finns tidigare förfrågningar kvar och går att
+    bekräfta.
+  </p>
 
 </section>
 
