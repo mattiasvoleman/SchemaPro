@@ -41615,6 +41615,25 @@ BEGIN
   IF src NOT LIKE '%WHEN ''CRISIS_DRILLS'', ''CRISIS_ALARMS'' THEN%' OR src NOT LIKE '%DELETE FROM "CrisisAlarms"%' THEN
     RAISE EXCEPTION 'gallring: app.gallring_purge has lost the branch for the alarms (Krisläge, 20270113091000)';
   END IF;
+
+  -- The same for a kind no section here names: every kind of data a school sets a period for (but the
+  -- people, who are pseudonymised) has a branch in both bodies. A release that restates the two
+  -- functions from an older body drops the kind of the release before it; this fails on that, for
+  -- every kind there is after all migrations, whoever added it.
+  DECLARE
+    k text;
+    lost text[] := '{}';
+    due text := (SELECT p.prosrc FROM pg_proc p WHERE p.oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure);
+    purge text := (SELECT p.prosrc FROM pg_proc p WHERE p.oid = 'app.gallring_purge(uuid, "RetentionDataType", integer)'::regprocedure);
+  BEGIN
+    FOR k IN SELECT e::text FROM unnest(enum_range(NULL::"RetentionDataType")) e WHERE e::text <> 'DEPARTED_PEOPLE' LOOP
+      IF due NOT LIKE format('%%p_type = ''%s''%%', k) THEN lost := lost || format('gallring_due has no line for %s', k); END IF;
+      IF purge !~ format('WHEN[^\n]*''%s''', k) THEN lost := lost || format('gallring_purge has no branch for %s', k); END IF;
+    END LOOP;
+    IF cardinality(lost) > 0 THEN
+      RAISE EXCEPTION 'gallring: a kind of data is no longer purged: %', array_to_string(lost, '; ');
+    END IF;
+  END;
 END $$;
 ROLLBACK;
 
