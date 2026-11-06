@@ -526,9 +526,12 @@ export async function coverRequestsChecks(owner: Client, api: PrismaService, mar
     await check('(cr-j) the fairness view counts what the database holds', async () => {
       // The requests were born today, outside last year: nothing in it.
       assert.deepEqual((await requests.fairness('2020-01-01', '2020-12-31', asAdmin)).rows, []);
-      const today = new Date().toISOString().slice(0, 10);
-      const from = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-      const fair = await requests.fairness(from, today, asAdmin);
+      // The view reads its dates as the school's days, and the requests were born on the school's
+      // today. The UTC date of now is a day behind that from midnight to 01:00 in Stockholm, which
+      // left every request outside the window, so take the UTC days two either side of now.
+      const from = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+      const to = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+      const fair = await requests.fairness(from, to, asAdmin);
       const truth = await rows<{ userId: string; received: number; accepted: number; declined: number; waiting: number }>(
         `SELECT x."userId", count(*)::int AS received,
                 count(*) FILTER (WHERE x.answer = 'ACCEPTED')::int AS accepted,
