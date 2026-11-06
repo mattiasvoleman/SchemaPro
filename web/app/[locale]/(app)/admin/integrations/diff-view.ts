@@ -258,7 +258,9 @@ export function readChange(
       const subject = byAddress
         ? (byLocal(after?.["userLocalId"]) ?? byExternal(after?.["personExternalId"]))
         : (byExternal(after?.["personExternalId"]) ?? byLocal(after?.["userLocalId"]));
-      const key = change.op === "END" ? "protectionEnd" : "protectionAdd";
+      // UPDATE: the register's kind on the sync's mark (20270111090000), which
+      // the review does not name: no page shows which protection.
+      const key = change.op === "END" ? "protectionEnd" : change.op === "UPDATE" ? "protectionUpdate" : "protectionAdd";
       return { subject, detail: { key: byAddress ? `${key}ByAddress` : key, values: {} } };
     }
     case "ORGANISATION": {

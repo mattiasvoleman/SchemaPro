@@ -2702,6 +2702,7 @@
         "unitMismatch": "Årskurs {grade}: {local} här, {source} i registret",
         "protectionAdd": "Markeras med skyddad identitet: registret skyddar personen, som hålls utanför filerna Rastra skriver.",
         "protectionEnd": "Markeringen tas bort: registret säger nu Ingen.",
+        "protectionUpdate": "Registret anger nu en annan sorts skydd för personen. Sorten skickas vidare till de system skolan anslutit via SS12000; personen är markerad som förut.",
         "protectionAddByAddress": "Markeras med skyddad identitet: en skyddad person i registret har samma e-postadress som den här raden, som inte är kopplad till registret.",
         "protectionEndByAddress": "Markeringen tas bort: synken satte den på e-postadressen, och ingen skyddad person i registret har den adressen längre."
       },
@@ -7392,8 +7393,8 @@
       "both": "Markerad för hand och av elevregistret (SS12000)."
     },
     "explain": "En markerad person finns inte i filerna Rastra skriver om personer, som elever.csv, vardnadshavare.csv och närvarorapporten. Vilket skydd personen har sparas inte.",
-    "integrations": "System som skolan anslutit via SS12000 får personen som förut, utan markering.",
-    "byAddress": "Personen är inte kopplad till registret: markeringen sattes för att en skyddad person i registret har samma e-postadress. Är det fel person: rätta e-postadressen och ta bort markeringen. Nästa fullständiga synk föreslår också att den tas bort när ingen skyddad person har adressen längre.",
+    "integrations": "System som skolan anslutit via SS12000 får registrets markering med personen, så att de kan skydda personen. En markering för hand skickas inte vidare, och vilket skydd det är visas inte här.",
+    "byAddress": "Personen är inte kopplad till registret: markeringen sattes för att en skyddad person i registret har samma e-postadress. Är det fel person: rätta e-postadressen och ta bort markeringen. Nästa fullständiga synk föreslår också att den tas bort när ingen skyddad person har adressen längre. Markeringen skickas inte vidare till system som skolan anslutit förrän personen är kopplad.",
     "registerOwns": "Markeringen följer registret: säger registret Ingen föreslår synken att den tas bort. En markering för hand står kvar tills en administratör tar bort den.",
     "set": "Markera skyddad identitet",
     "setAlongside": "Markera för hand också",

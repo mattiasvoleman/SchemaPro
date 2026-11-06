@@ -63,6 +63,7 @@ describe("Skyddad identitet on a person's row", () => {
     renderMark(true, true);
     expect(await screen.findByText(/en skyddad person i registret har samma e-postadress/)).toBeInTheDocument();
     expect(screen.getByText(/Är det fel person: rätta e-postadressen och ta bort markeringen/)).toBeInTheDocument();
+    expect(screen.getByText(/skickas inte vidare till system som skolan anslutit förrän personen är kopplad/)).toBeInTheDocument();
   });
 
   it("says nothing of an address match for a linked person, or for a mark by hand alone", async () => {
@@ -92,10 +93,14 @@ describe("Skyddad identitet on a person's row", () => {
     expect(history).toHaveTextContent("registrets markering borttagen av Rastra (synken eller gallringen)");
   });
 
-  it("says the systems connected over SS12000 still get the person (#263, M1), offers no button to a profile that writes nothing, and never names which protection", async () => {
-    api.get.mockResolvedValue(view(["MANUAL"]));
+  it("says the connected systems get the register's marking and not a mark by hand (20270111090000), offers no button to a profile that writes nothing, and never names which protection", async () => {
+    api.get.mockResolvedValue(view(["MANUAL", "SS12000"]));
     renderMark(false, false);
-    expect(await screen.findByText("System som skolan anslutit via SS12000 får personen som förut, utan markering.")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "System som skolan anslutit via SS12000 får registrets markering med personen, så att de kan skydda personen. En markering för hand skickas inte vidare, och vilket skydd det är visas inte här.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button")).toBeNull();
     expect(document.body.textContent).not.toMatch(/Sekretessmarkering|folkbokföring/);
   });

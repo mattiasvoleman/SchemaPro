@@ -151,6 +151,9 @@ export interface LessonRow {
   updatedAt: Date;
 }
 
+/** S1 SecurityMarking's two values that protect: what the provider passes on (20270111090000). */
+export type SecurityMarking = 'Sekretessmarkering' | 'Skyddad folkbokföring';
+
 export interface Version {
   createdAt: Date;
   modifiedAt: Date;
@@ -214,6 +217,27 @@ export class SchoolSlice {
       organisationIds: (row?.organisation_ids ?? []).map((id) => id.toLowerCase()),
       schoolUnitCodes: row?.school_unit_codes ?? [],
     };
+  });
+
+  /**
+   * The register's kind of protection on the sync's marks
+   * (app.ss12000_security_markings, 20270111090000): user id to S1's
+   * securityMarking, for a person linked to the register. Never a mark by
+   * hand, never a row the sync marked on its address alone; the function
+   * gives the service principal its own school's and nothing else.
+   */
+  readonly securityMarkings = memo(async (): Promise<ReadonlyMap<string, SecurityMarking>> => {
+    const rows = await this.tx.$queryRaw<{ userId: string; kind: string }[]>(
+      Prisma.sql`SELECT "userId", "kind"::text AS kind FROM app.ss12000_security_markings()`,
+    );
+    const marking = (kind: string): SecurityMarking | null =>
+      kind === 'SKYDDAD_FOLKBOKFORING' ? 'Skyddad folkbokföring' : kind === 'SEKRETESSMARKERING' ? 'Sekretessmarkering' : null;
+    return new Map(
+      (rows ?? []).flatMap((row) => {
+        const value = marking(row.kind);
+        return value ? [[row.userId, value] as const] : [];
+      }),
+    );
   });
 
   /** The school's skolenheter, under school_units_service_select. */

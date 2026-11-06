@@ -513,6 +513,7 @@ export class Ss12000V2Service {
         meta: metaOf(versions.get(user.id), user.createdAt, user.updatedAt),
         givenName: user.firstName,
         familyName: user.lastName,
+        ...model.securityMarking(user.id),
         emails: [{ value: user.email, type: EMAIL_TYPE[user.role] }],
         ...(enrolment ? { enrolments: [enrolment] } : {}),
         ...(theirs.length > 0 ? { responsibles: theirs.map((person) => ({ person })) } : {}),

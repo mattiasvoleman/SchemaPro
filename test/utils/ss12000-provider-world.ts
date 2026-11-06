@@ -168,6 +168,8 @@ export class ProviderWorld {
   publishMode: 'DIRECT' | 'DRAFT' = 'DIRECT';
   /** The school's AttendanceSharingDecisions in force (none: not shared, the default). */
   attendanceShared = false;
+  /** app.ss12000_security_markings (20270111090000): the sync's kinds, as the function gives them. */
+  securityMarkings: Array<{ userId: string; kind: string }> = [];
   /** When the current run of sharing began (app.attendance_shared_since), while it shares. */
   sharedSince = t('2026-10-12T09:30:00Z');
   /** Whether any decision ever shared (app.attendance_ever_shared): a school that has stopped. */
@@ -589,6 +591,7 @@ export class ProviderWorld {
       const { text, values } = sqlOf(statement);
       this.rawStatements.push(text);
       if (text.includes('app.ss12000_provider_identity')) return [this.identity];
+      if (text.includes('app.ss12000_security_markings')) return this.securityMarkings;
       // Before app.service_reads_attendance, whose name begins it.
       if (text.includes('app.service_reads_attendance_removals')) return [{ reads: this.readsRemovals(tx, values[0] as string) }];
       if (text.includes('app.service_reads_attendance')) return [{ reads: this.readsAttendance(tx, values[0] as string) }];

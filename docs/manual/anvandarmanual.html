@@ -1275,10 +1275,11 @@
     ett skydd. Övriga administratörer ser markeringen. En markerad person
     finns inte i filerna Rastra Schema skriver om personer (3.6, 6.9): inte i
     elevfilen, lärarfilen, vårdnadshavarfilen eller närvarorapporten, och
-    inte heller i en rad som nämner personen. Rastra Schema sparar bara att
-    skyddet finns, aldrig vilket skydd det är (sekretessmarkering eller
-    skyddad folkbokföring). Lärare, elever och vårdnadshavare ser inte
-    markeringen. En markering för hand står kvar tills en administratör tar
+    inte heller i en rad som nämner personen. Vilket skydd det är
+    (sekretessmarkering eller skyddad folkbokföring) sparas bara för
+    registrets markering, för att skickas vidare till de system skolan
+    anslutit (se nedan), och visas inte här. Lärare, elever och
+    vårdnadshavare ser inte markeringen. En markering för hand står kvar tills en administratör tar
     bort den, också om registret senare säger att personen inte är skyddad;
     markera därför för hand också en person som registret redan markerat, om
     du vill att skyddet ska stå kvar. Tar du bort en markering som kommer
@@ -1292,13 +1293,21 @@
     skolans ändringsloggar.
   </p>
   <p>
-    <strong>Andra system får personen som förut.</strong> Markeringen
+    <strong>Andra system får registrets markering.</strong> Markeringen
     hindrar inte de system skolan anslutit via SS12000 (7.3): de får den
     markerade personen med namn, e-post, grupper och vårdnadshavare som
-    vanligt, och utan någon markering. Rastra Schema skickar inte vidare att
-    personen är skyddad, eftersom SS12000 bara kan säga vilket skydd det är,
-    och det sparas inte. Den som ansluter ett system som läser personer får
-    själv se till att det hanterar skyddade personer.
+    vanligt. Har markeringen kommit från elevregistret och är personen
+    kopplad till registret får de också veta att personen är skyddad och
+    vilket skydd registret anger, så att systemet kan skydda personen. En
+    person som synken markerat på e-postadressen men inte kopplat skickas
+    utan markering tills kopplingen är gjord, eftersom adressen kan vara
+    någon annans. En markering du satt för hand skickas inte vidare:
+    den kan vara skolans egen bedömning, och SS12000 kan bara säga vilket
+    skydd Skatteverket har gett. Lyfts registrets markering försvinner den
+    också hos de anslutna systemen. Ett system som bara får läsa grupper,
+    tjänster eller närvaro, inte personer, får inte veta vem som är skyddad.
+    Den som ansluter ett system får själv se till att det hanterar skyddade
+    personer.
   </p>
   <p>
     Sidan visar varje profil det den ändrar. Expeditionen lägger upp och
@@ -6675,8 +6684,9 @@
       exempel för att adressen rättats), föreslås att markeringen tas bort.
       Det är inte förvalt, natten gör det aldrig, och det föreslås bara vid en
       full synk; kryssa i det när du vill lyfta skyddet. En markering du satt
-      för hand tar synken aldrig bort. Rastra Schema
-      sparar bara att skyddet finns, aldrig vilket (3.6).</li>
+      för hand tar synken aldrig bort. Byter registret sort av skydd för en
+      person som synken markerat, byter synken den också, förvald och på
+      natten: sorten skickas bara vidare till de anslutna systemen (3.6).</li>
     <li>En ändrad <strong>e-postadress</strong> för någon som redan är
       inbjuden. Personen loggar in med den gamla adressen tills du skickar
       inbjudan igen. Då flyttar personens egen inloggning till den nya, och

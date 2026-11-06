@@ -437,6 +437,33 @@ endDate}`), and `placements`/`ownedPlacements` (always `[]`; Rastra timetable ha
 förskola or fritids). `relationship.*` filters act on enrolment, duty,
 responsibleFor.enrolment and groupMembership relations.
 
+**`securityMarking`** (since 20270111090000): `Sekretessmarkering` or
+`Skyddad folkbokföring` on a Person whose protection the school's SS12000 sync
+read from the register, and who is linked to the register; the value is the
+register's own, the stronger where the register names the person in two
+places with different values. Nothing otherwise, and **never `Ingen`**: no
+field means Rastra passes no marking on, not that the person is unprotected.
+A mark the school set by hand is not passed on (it may be the school's own
+judgement, with no marking behind it), nor is a marking the sync did not
+recognise, nor a mark the sync set on a person in Rastra it matched by
+e-mail address but has not linked (the address may be another person's):
+that person is sent with the marking once the link is applied. The field
+follows Rastra's mark, not the register's latest answer: when the register
+says `Ingen`, the old value is sent until the school applies the lift (never
+automatic), and then the field disappears; the old value is never sent
+again. An incremental run only raises the value; a lower one waits for a
+full run. A change of the field moves the Person's
+`meta.modified`. A reference to a person (`responsibles[].person`,
+`groupMemberships[].person`, `Duty.person`, `studentExceptions[].student`,
+`Attendance.student`, `Absence.student`) carries it only with its
+`displayName`, that is with `expandReferenceNames=true` and `persons.read`;
+like the name, it does not move the embedding object's `meta.modified` (S1:
+"Attribut som kan tas fram med parametrarna expand eller expandReferenceNames
+räknas inte"). Read `securityMarking` from the Person. A key without
+`persons.read` learns nothing of who is protected. Rastra itself keeps every
+marked person out of the files it writes, whatever the kind; v1 has no field
+for it.
+
 **Groups** (`groups.read`): classes and teaching groups of the **active and
 past** läsår. A rolled-over year that is not yet active is a draft and never
 leaves. `displayName`, `startDate`/`endDate` (the year's bounds), `groupType`
@@ -868,7 +895,8 @@ subscription.
 | `Absence.organisation` | Optional in S1. The skolenhet of an absence would be the pupil's class's, which moves at every rollover without the absence changing; the `organisation` filter matches the pupil's class instead |
 | `Programme`, `StudyPlan`, `SchoolUnitOffering`, `Resource`, `Grade`, `/log`, `/statistics` | No source in Rastra timetable |
 | A token endpoint for this provider | S1 requires only a bearer; the key is one. A JWT issuer would need a signing key of its own |
-| civicNo, addresses, phone numbers, securityMarking, middleName | Not stored, or not stored for this |
+| civicNo, addresses, phone numbers, middleName | Not stored, or not stored for this |
+| `securityMarking` = `Ingen`, or a mark set by hand | Rastra knows no more than the register said; a mark by hand is not a marking (see Persons) |
 
 ## Pulling the roster from a source (SS12000 consumer)
 
@@ -973,7 +1001,7 @@ record is parsed.
 | `Duty.id` | `Ss12000DutyLinks` | no HR figure; an ended duty gets `endedAt` |
 | a chosen `Organisation` of type `Skolenhet` | `SchoolUnits` (`ss12000Id`, name, `code`, `schoolTypes`) | matched by id, else LINKed to the one unlinked unit with the same skolenhetskod (or, without a code, the same name), else CREATEd; the source owns the name, a valid eight-digit code and the skolformer Rastra timetable holds; never automatic |
 | active enrolments' `schoolYear` at the skolenhet | the unit's årskurs span | a FULL run only: set where the unit has none, widened to hold them, never narrowed; deselected after a local edit |
-| `securityMarking` ≠ Ingen | — | every change for the person deselected, never automatic, not stored; any value other than `Ingen` (another Unicode form, case, an unknown value) counts as protected |
+| `securityMarking` ≠ Ingen | `PersonProtections` (source SS12000, and `kind` when the value is `Sekretessmarkering` or `Skyddad folkbokföring`) | every other change for the person deselected, never automatic; any value other than `Ingen` (another Unicode form, case, an unknown value) counts as protected, with no kind. The mark is set (PROTECTION ADD), its kind kept as the register's (PROTECTION UPDATE, automatic) and lifted on an explicit `Ingen` in a FULL run (PROTECTION END, never automatic); the kind is what the provider sends as `securityMarking` |
 
 Without a stored id, a LINK by email is proposed only for exactly one active
 local row with the same role and an address no other source person claims (a
@@ -1032,7 +1060,13 @@ record of a FULL run was refused, a deactivation inferred from absence
   night records `SKIPPED` (`REVIEW_PENDING`). A night that applies nothing says
   why in `autoApplyBlockedReason`: `MASS_DEACTIVATION`, `STALE` (the school
   changed between fetch and apply) or `REVIEW_REQUIRED` (all that is left needs
-  an admin). A night that applies part of a diff sets the run's `appliedAt`, so
+  an admin). `PROTECTION_REVIEW` says the run waits for an administrator's
+  decision on a protected identity: a protected person in the register whose
+  address matches a row in Rastra whose name differs, or several rows. The
+  mark is proposed unticked and never made at night, the person stays in the
+  files until somebody decides, so the run stays `DIFF_READY` (also after a
+  night that applied the rest) and the cursors stay where they were; it names
+  nobody. A night that applies part of a diff sets the run's `appliedAt`, so
   its deactivations read as the sync's (and may be reactivated by a later sync)
   also after a newer run supersedes it.
 
