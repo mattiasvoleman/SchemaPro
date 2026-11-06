@@ -149,7 +149,7 @@ function Orders({ timeZone }: { timeZone: string }) {
 }
 
 function SubjectAccess() {
-  const t = useTranslations("schoolExport.extract");
+  const t = useTranslations("schoolExport");
   const people = useSchoolPeople();
   const extract = useSubjectAccess();
   const [personId, setPersonId] = useState("");
@@ -163,23 +163,23 @@ function SubjectAccess() {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!personId) return;
-    extract.mutate({ personId, withRelated }, { onError: () => toast.error(t("failed")) });
+    extract.mutate({ personId, withRelated }, { onError: () => toast.error(t("extract.failed")) });
   };
 
   return (
     <form className="space-y-3 border-t pt-6" onSubmit={submit}>
-      <h3 className="text-base font-semibold">{t("title")}</h3>
-      <p className="text-sm text-muted-foreground">{t("description")}</p>
+      <h3 className="text-base font-semibold">{t("extract.title")}</h3>
+      <p className="text-sm text-muted-foreground">{t("extract.description")}</p>
       <div className="flex flex-wrap items-end gap-4">
-        <FormField id="extract-person" label={t("person")}>
+        <FormField id="extract-person" label={t("extract.person")}>
           <NativeSelect value={personId} onChange={(event) => setPersonId(event.target.value)} disabled={people.isLoading || people.isError}>
-            <option value="">{t("choose")}</option>
+            <option value="">{t("extract.choose")}</option>
             {groups.map((group) => (
-              <optgroup key={group.role} label={t(`groups.${group.role}`)}>
+              <optgroup key={group.role} label={t(`extract.groups.${group.role}`)}>
                 {group.people.map((person) => (
                   <option key={person.id} value={person.id}>
                     {`${person.lastName}, ${person.firstName}`}
-                    {person.isActive ? "" : ` (${t("inactive")})`}
+                    {person.isActive ? "" : ` (${t("extract.inactive")})`}
                   </option>
                 ))}
               </optgroup>
@@ -188,16 +188,16 @@ function SubjectAccess() {
         </FormField>
         <label className="flex items-center gap-2 pb-2 text-sm">
           <input type="checkbox" checked={withRelated} onChange={(event) => setWithRelated(event.target.checked)} />
-          {t("withRelated")}
+          {t("extract.withRelated")}
         </label>
         <Button type="submit" disabled={!personId || extract.isPending}>
-          {extract.isPending ? t("building") : t("fetch")}
+          {extract.isPending ? t("extract.building") : t("extract.fetch")}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">{t("recorded")}</p>
-      {answer?.subjectIsMarked ? <Notice tone="warning">{t("subjectMarked")}</Notice> : null}
-      {answer && answer.relatedHeldOut > 0 ? <Notice tone="neutral">{t("relatedHeldOut", { count: answer.relatedHeldOut })}</Notice> : null}
-      {answer && !answer.subjectIsMarked ? <p className="text-sm">{t("done", { count: answer.relatedIncluded })}</p> : null}
+      <p className="text-xs text-muted-foreground">{t("extract.recorded")}</p>
+      {answer?.subjectIsMarked ? <Notice tone="warning">{t("extract.subjectMarked")}</Notice> : null}
+      {answer && answer.relatedHeldOut > 0 ? <Notice tone="neutral">{t("extract.relatedHeldOut", { count: answer.relatedHeldOut })}</Notice> : null}
+      {answer && !answer.subjectIsMarked ? <p className="text-sm">{t("extract.done", { count: answer.relatedIncluded })}</p> : null}
     </form>
   );
 }

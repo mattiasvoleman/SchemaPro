@@ -73,6 +73,8 @@ describe('loadConfiguration', () => {
       ss12000: { secretsKey: undefined, secretsKeyPrevious: undefined, background: true, allowInsecureLocal: false },
       // Unset: the nightly gallring ticks (and removes nothing until a school decides).
       gallring: { background: true },
+      // Unset: the whole-school export's job polls for an order every 30 seconds.
+      schoolExport: { background: true },
       // Unset: the settling of vikarieförfrågningar ticks.
       coverRequests: { background: true },
       // Unset: the nightly absence watch ticks (and watches no school until its administrator turns it on).

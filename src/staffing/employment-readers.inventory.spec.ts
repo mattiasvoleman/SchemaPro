@@ -93,6 +93,14 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'POST',
     why: 'whether a pool member has a post at all (STAFF or POOL); a period never removes a post',
   },
+  'src/school-export/lists.ts': {
+    basis: 'WRITES',
+    why: 'hela skolans data: the teachers file as the importer reads it back, from the base row of the active year, as the page’s export writes it; read by the administrators who decide, who read tjänst % and nedsättning',
+  },
+  'src/school-export/csv-files.ts': {
+    basis: 'WRITES',
+    why: 'the gateway’s copy of web/lib/csv-export.ts’s teachersToCsv: the base row’s percentages in larare.csv, so a round trip changes nothing',
+  },
   'src/schedule-exchange/exchange.service.ts': {
     basis: 'POST',
     why: 'the signature a teacher is matched on in a timetable file and written as in one: the base row’s alone (userId and signature), so a period never changes it',
