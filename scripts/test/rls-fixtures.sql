@@ -1767,7 +1767,15 @@ BEGIN
       ('fe000000-0000-4000-8000-000000000248'::uuid, m, 'STUDENT',                  NULL,                     true,  timestamptz '2026-02-01', 'flera-p-m')
     ) v(auth_id, school, role, profile, active, created, label)
   LOOP
-    row_id := gen_random_uuid();
+    -- Random, except school A's pupil: the max uuid sorts after every other
+    -- pupil there. Section 30b links the lowest-id pupil that is not the
+    -- fixture guardian's child to that guardian as an SS12000 link, and 30g
+    -- unlinks the guardian's lowest-id child expecting a MANUAL one. A random
+    -- id for this pupil sorted below the guardian's child one run in eighty-one
+    -- and 30g then unlinked the SS12000 link and found no MANUAL history row.
+    row_id := CASE WHEN rec.label = 'flera-p-a'
+                   THEN 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid
+                   ELSE gen_random_uuid() END;
     PERFORM set_config('app.login_join', row_id::text, true);
     INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "adminProfile", "authId",
                          "isActive", "invitedAt", "createdAt", "updatedAt")
