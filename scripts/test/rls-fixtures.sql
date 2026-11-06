@@ -3145,6 +3145,95 @@ BEGIN
   SELECT id, m, 'MANUAL' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
 END $$;
 
+-- Rapporteringsgrad (20270108090100), sections 345-349: a school of its own, so
+-- the counting is proved over lessons the sections plant themselves, on fixed
+-- past days inside their own transactions, and the people never age.
+--
+--   …f20000000001  FULL                       …f20000000006  T1, teacher
+--   …f20000000002  REKTOR                     …f20000000007  T2, teacher (the substitute)
+--   …f20000000003  EXPEDITION                 …f20000000008  T3, teacher with no lessons
+--   …f20000000004  SCHEMALAGGARE              …f20000000009  T4, deactivated teacher
+--   …f20000000005  LASARE
+--   …f20000000011  P1 (RG7A)   …f20000000012  P2 (RG7A)   …f20000000021  G1 (P1)
+--   …f20000000031  the other school's admin, …32 its teacher
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  y2 uuid;
+  k uuid;
+  k2 uuid;
+  u uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Rapporteringsgrad', 'rls-rapporteringsgrad-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Rapportering', '2026-01-01', '2026-12-31', true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'RG7A', 7, now()) RETURNING id INTO k;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'Rapportering', 'RGSUBJ', now());
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s1, 'rg-full@example.invalid', 'Rapportering', 'Full', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-f20000000001', true, now()),
+    (s1, 'rg-rektor@example.invalid', 'Rapportering', 'Rektor', 'SCHOOL_ADMIN', 'REKTOR', '00000000-0000-4000-8000-f20000000002', true, now()),
+    (s1, 'rg-expedition@example.invalid', 'Rapportering', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-f20000000003', true, now()),
+    (s1, 'rg-schemalaggare@example.invalid', 'Rapportering', 'Schemaläggare', 'SCHOOL_ADMIN', 'SCHEMALAGGARE', '00000000-0000-4000-8000-f20000000004', true, now()),
+    (s1, 'rg-lasare@example.invalid', 'Rapportering', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-f20000000005', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (s1, 'rg-t1@example.invalid', 'Rapportering', 'Lärare Ett', 'TEACHER', '00000000-0000-4000-8000-f20000000006', true, now()),
+    (s1, 'rg-t2@example.invalid', 'Rapportering', 'Lärare Två', 'TEACHER', '00000000-0000-4000-8000-f20000000007', true, now()),
+    (s1, 'rg-t3@example.invalid', 'Rapportering', 'Lärare Tre', 'TEACHER', '00000000-0000-4000-8000-f20000000008', true, now()),
+    (s1, 'rg-t4@example.invalid', 'Rapportering', 'Lärare Fyra', 'TEACHER', '00000000-0000-4000-8000-f20000000009', false, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    (s1, 'rg-p1@example.invalid', 'Rapportering', 'Elev Ett', 'STUDENT', '00000000-0000-4000-8000-f20000000011', true, k, now()),
+    (s1, 'rg-p2@example.invalid', 'Rapportering', 'Elev Två', 'STUDENT', '00000000-0000-4000-8000-f20000000012', true, k, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'rg-g1@example.invalid', 'Rapportering', 'Vårdnadshavare Ett', 'GUARDIAN', '00000000-0000-4000-8000-f20000000021', true, now()) RETURNING id INTO u;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT s1, u, p."id" FROM "Users" p WHERE p."schoolId" = s1 AND p."email" = 'rg-p1@example.invalid';
+
+  -- The other school: its own admin and teacher, so a day there can be shown to reach nobody here.
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Rapporteringsgrad annan', 'rls-rapporteringsgrad-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'Rapportering annan', '2026-01-01', '2026-12-31', true, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s2, y2, 'RG9A', 9, now()) RETURNING id INTO k2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'rg-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-f20000000031', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'rg-annan-t@example.invalid', 'Annan', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-f20000000032', true, now());
+  INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", "day", held, reported)
+  SELECT s2, "id", '2026-09-15', 4, 3 FROM "Users" WHERE "schoolId" = s2 AND "email" = 'rg-annan-t@example.invalid';
+END $$;
+
+-- The matrix school's rows for Rapporteringsgrad (20270108090100), so the role
+-- matrix (section 116) has a row of each table to probe. Written by the owner:
+-- no role has a write arm on the days or the week's ledger, and the reminders'
+-- ledger has no arm at all.
+DO $$
+DECLARE
+  m uuid;
+  t uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "ReportingSettings" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO t FROM "Users" WHERE "schoolId" = m AND role = 'TEACHER' ORDER BY "createdAt", id LIMIT 1;
+  INSERT INTO "ReportingSettings" ("schoolId", "teacherReminders", "rektorDigest", "openAfterDays") VALUES (m, true, true, 3);
+  IF t IS NOT NULL THEN
+    INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", "day", held, reported) VALUES (m, t, '2030-09-05', 4, 3);
+    INSERT INTO "ReportingReminders" ("schoolId", "teacherId", "calendarLessonId", "lessonDate") VALUES (m, t, gen_random_uuid(), '2030-09-05');
+  END IF;
+  INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported)
+  VALUES (m, '2030-09-02', '2030-09-08', 1, 1, 4, 3);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
