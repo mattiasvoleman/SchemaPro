@@ -48,7 +48,10 @@
  *          school's file and in another person's extract, and counted;
  *   (k-o)  the history that keeps a person without a key to Users (a guardian link that was
  *          cut, who set a mark) is in the extract, and the catalogue holds no person column
- *          without a key that the extract has not decided.
+ *          without a key that the extract has not decided;
+ *   (k-p)  a lesson held by someone who is neither teacher nor administrator by role is in the
+ *          grundschema with the holder named, and with a protected holder it is without them in
+ *          every file of the school's export, said in the README, the manifest and the order.
  *
  * Cleans up after itself: the two schools (everything in them goes with them).
  * The läslogg rows a fetch leaves are append-only and go with their school.
@@ -458,7 +461,7 @@ async function main(): Promise<void> {
           JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
          WHERE a.attnum > 0 AND NOT a.attisdropped
            AND a.atttypid IN ('uuid'::regtype, '_uuid'::regtype, 'jsonb'::regtype)
-           AND a.attname ~* '(user|teacher|student|guardian|actor|author|substitute|person)ids?$|by(user)?id$|teachers$'
+           AND a.attname ~* '(user|teacher|student|guardian|actor|author|substitute|person|mentor|owner|reviewer|assignee|creator|approver|decider|reporter|requester|recorder|writer|sender|recipient|member|holder|supervisor|principal)ids?$|by(user)?id$|teachers$'
            AND a.attname !~* 'group'
            AND NOT EXISTS (
              SELECT 1 FROM pg_constraint k
@@ -642,6 +645,18 @@ async function main(): Promise<void> {
       await owner.absenceReport.updateMany({ where: { schoolId: a.schoolId, studentId: sibling.id }, data: { note: `Anmäld via ${teacherName}` } });
       await leave({ studentId: sibling.id, requestedById: siblingGuardian.id, decidedById: a.admins.FULL.userId!, decidedAs: 'ADMIN', reason: `Följer med ${teacherName} på läger`, decisionNote: `Hänvisad till ${protectedTeacher.id}` });
       const needles = [name.toLowerCase(), teacherName.toLowerCase(), protectedTeacher.id, protectedPupil.id];
+      // The other forms free text takes (R2-L2): each in a cell of its own, led by a marker that stays only if the cell does.
+      const forms = ['NOTEA', 'NOTEB', 'NOTEC', 'NOTED', 'NOTEE', 'NOTEF'];
+      const pupilZero = await owner.attendanceRecord.findMany({ where: { schoolId: a.schoolId, studentId: a.students[0]!.id }, orderBy: { recordedAt: 'asc' }, take: 5 });
+      const planted = [
+        'NOTEA Ring EfternamnA,  Elev2 (föräldern)', // reverse order, comma, two spaces
+        'NOTEB Elev2\u00a0\u00a0EfternamnA ringde', // hard spaces
+        'NOTEC Elev2-EfternamnA ringde', // hyphen between the names
+        `NOTED ${protectedPupil.id.toUpperCase()}`, // upper-case id
+        `NOTEE ${protectedPupil.id.replace(/-/g, '')}`, // id without hyphens
+      ];
+      for (const [index, note] of planted.entries()) await owner.attendanceRecord.update({ where: { id: pupilZero[index]!.id }, data: { note } });
+      await owner.absenceReport.updateMany({ where: { schoolId: a.schoolId, studentId: a.students[0]!.id }, data: { note: `NOTEF ${protectedTeacher.email.toUpperCase()}` } });
 
       await owner.schoolExport.deleteMany({ where: { schoolId: a.schoolId, id: { not: first.id } } });
       const order = await service.order(a.admins.FULL);
@@ -658,7 +673,12 @@ async function main(): Promise<void> {
       assert.ok(emptied('data/narvaro.csv') >= 3, 'two notes and the protected recorder');
       assert.ok(emptied('data/franvaroanmalningar.csv') >= 1 && emptied('data/ledigheter.csv') >= 2, 'the absence note, the reason and the decision note');
       assert.ok(csvLines(school.files.get('data/narvaro.csv')).join('\n').includes('Kom sent, bussen'), 'a note that names nobody stays');
-      assert.match(school.files.get('README.txt')!.toString('utf8'), /vid id eller fullständigt namn är tom/);
+      for (const [file, content] of school.files) {
+        const text = content.toString('utf8');
+        for (const marker of forms) assert.ok(!text.includes(marker), `${file} keeps a note of form ${marker}: it names a protected person`);
+      }
+      assert.ok(emptied('data/narvaro.csv') >= 8 && emptied('data/franvaroanmalningar.csv') >= 2, 'every form counted');
+      assert.match(school.files.get('README.txt')!.toString('utf8'), /med id, fullständigt namn \(i båda ordningarna\) eller e-postadress är tom/);
 
       const person = await extractZip(a.admins.FULL, sibling.id, false);
       for (const [file, content] of person.files) {
@@ -666,6 +686,11 @@ async function main(): Promise<void> {
         for (const needle of needles) assert.ok(!text.includes(needle), `${file} names ${needle} in another person's extract`);
       }
       assert.ok(csvLines(person.files.get('data/narvaro.csv')).join('\n').includes('Kom sent, bussen'));
+      const pupilOne = await extractZip(a.admins.FULL, a.students[0]!.id, false);
+      for (const [file, content] of pupilOne.files) {
+        const text = content.toString('utf8');
+        for (const marker of forms) assert.ok(!text.includes(marker), `${file} keeps a note of form ${marker} in another person's extract`);
+      }
     });
 
     await check('(k-o) history that outlives its keys is in the extract, with the other parties held out for a protected person', async () => {
@@ -679,6 +704,38 @@ async function main(): Promise<void> {
       const events = own.files.get('data/person/personprotectionevents.csv');
       assert.ok(events && events.toString('utf8').includes(protectedPupil.id), 'that the person was marked, and when, is theirs to know (the database wrote the event)');
       assert.match(own.files.get('README.txt')!.toString('utf8'), /PublishedLessons: En kopia av lektionerna/, 'a table left out says why');
+    });
+
+    await check('(k-p) a lesson held by a guardian is named in the grundschema; a protected holder is in no file, and the export says so', async () => {
+      const group = await owner.studentGroup.findFirstOrThrow({ where: { schoolId: a.schoolId, academicYearId: a.yearId } });
+      const subject = await owner.subject.findFirstOrThrow({ where: { schoolId: a.schoolId } });
+      const open = a.guardians[5]!;
+      const closed = a.guardians[3]!; // marked in (k-i)
+      const lesson = (teacherId: string, dayOfWeek: number) =>
+        owner.masterLesson.create({
+          data: { schoolId: a.schoolId, academicYearId: a.yearId, subjectId: subject.id, studentGroupId: group.id, teacherId, dayOfWeek, startTime: time('1970-01-01', '08:10'), endTime: time('1970-01-01', '09:10') },
+        });
+      await lesson(open.id, 2);
+      await lesson(closed.id, 3);
+      await owner.schoolExport.deleteMany({ where: { schoolId: a.schoolId, id: { not: first.id } } });
+      const order = await service.order(a.admins.FULL);
+      await runJobUntilIdle(job);
+      const school = unzip(await fetchFile(service, order.id, a.admins.FULL));
+      cleanup.push(async () => rmSync(school.dir, { recursive: true, force: true }));
+      const schema = school.files.get('schema/grundschema.csv');
+      assert.ok(schema, 'the grundschema is in the file');
+      assert.ok(schema.toString('utf8').includes(open.email), "an unprotected holder is named: the lesson is theirs");
+      for (const [name, content] of school.files) {
+        const text = content.toString('utf8').toLowerCase();
+        assert.ok(!text.includes(closed.id) && !text.includes(closed.email.toLowerCase()), `${name} names the protected holder`);
+      }
+      const note = '1 lektion hålls av en person med skyddad identitet som inte är lärare eller administratör';
+      const manifest = JSON.parse(school.files.get('manifest.json')!.toString('utf8')) as { anmarkningar?: string[] };
+      assert.ok(manifest.anmarkningar?.some((line) => line.includes(note)), 'the manifest says it');
+      const readme = school.files.get('README.txt')!.toString('utf8');
+      assert.ok(readme.includes('Delar som saknas') && readme.includes(note), 'the README says it first');
+      const row = await owner.schoolExport.findUniqueOrThrow({ where: { id: order.id } });
+      assert.ok(((row.heldOut as { notes?: string[] }).notes ?? []).some((line) => line.includes(note)), "and the order's row, which the card shows");
     });
 
     await check('(k-j) only those who decide ask for one, and only about their own school', async () => {

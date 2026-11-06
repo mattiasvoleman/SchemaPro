@@ -45,7 +45,7 @@ export interface BuildContext {
   /** Whom the scope is about: not held out of their own file. */
   exempt: readonly string[];
   /** Marked persons' full names, lower-cased, for the notices. */
-  markedNames: readonly string[];
+  markedTerms: readonly string[];
   read: <T>(fn: (tx: PrismaClient) => Promise<T>) => Promise<T>;
   checkpoint: () => Promise<void>;
   /** The lists, built when the archive reaches them. School export only. */
@@ -231,7 +231,7 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
     schoolId: ctx.schoolId,
     scope: ctx.scope,
     markedOut,
-    markedNames: ctx.markedNames,
+    markedTerms: ctx.markedTerms,
     isolate,
     read: ctx.read,
     named: (kind, ids) => audit.named(kind, ids),
@@ -263,7 +263,7 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
             .filter((id) => !idSet.has(id)),
         )
       : undefined;
-    const rules: CellRules = { markedOut: new Set(markedOut), markedNames: ctx.markedNames, strangers };
+    const rules: CellRules = { markedOut: new Set(markedOut), markedTerms: ctx.markedTerms, strangers };
     for (const table of ctx.tables) {
       const rows = await ctx.read((tx) => readTable(tx, ctx.schoolId, table, ids));
       if (rows.length === 0) continue;

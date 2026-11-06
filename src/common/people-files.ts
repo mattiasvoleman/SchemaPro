@@ -22,7 +22,7 @@ export type PeopleRouteRule =
   | 'HOLDS_OUT'
   /** The recipient is to have everyone: the marked are in it, and the answer counts them. */
   | 'KEEPS_AND_SAYS'
-  /** Names staff and no pupil or guardian (pupils, if at all, as a count). Not filtered: see `why`. */
+  /** Names staff and no pupil or guardian (pupils, if at all, as a count); the one exception, a user who holds a lesson without being staff by role, is said in that route's `why`. Not filtered: see `why`. */
   | 'NAMES_STAFF'
   /** About one person, for that person's own sake or the person's guardian's. */
   | 'ONE_PERSON'
@@ -69,7 +69,10 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
   },
   'POST /api/v1/schedule-exchange/export': {
     rule: 'NAMES_STAFF',
-    why: 'The timetable for Untis, aSc or a spreadsheet: teachers by signature, name and e-mail, lessons by group, no pupil.',
+    why:
+      'The timetable for Untis, aSc or a spreadsheet: teachers by signature, name and e-mail, lessons by group. A user who holds a lesson without being a teacher or ' +
+      'administrator by role (a pupil or guardian put on it by hand) is named like a teacher, since the lesson is theirs, unless the person is marked: a marked one is ' +
+      'left out, the lesson stands without a teacher, and the file\'s notes say how many. A marked teacher stays, as in every schedule file.',
   },
   'GET /api/v1/print/timetables': {
     rule: 'NAMES_STAFF',

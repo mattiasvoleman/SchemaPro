@@ -7122,12 +7122,17 @@
       bara i en kolumn som inte är det raden handlar om, till exempel som den
       som registrerade en närvaro, är cellen tom och räknas. Beställningen och
       manifestet säger hur många. En anteckning, ett skäl eller en notis som
-      nämner en markerad person vid id eller fullständigt namn är också tom och
-      räknas; ett förnamn eller ett smeknamn hittas inte, så fritext är inte
-      garanterat fri från markerade personer. En skola som lämnar tjänsten och
-      behöver också dessa personer hämtar dem ur sitt eget register. Grundschemat
-      nämner lärare vid namn som <em>Schema som fil</em> gör, och en markerad lärare
-      finns kvar där.
+      nämner en markerad person med id, fullständigt namn (i båda ordningarna) eller
+      e-postadress är också tom och räknas, hur mellanrum, bindestreck och stora
+      bokstäver än är skrivna. Ett förnamn ensamt, ett smeknamn, en annan stavning
+      (ett namn utan prickar) och ord som <em>mamma</em> hittas inte, så fritext är
+      inte garanterat fri från markerade personer och bör läsas innan filen
+      lämnas vidare. En skola som lämnar tjänsten och behöver också dessa personer
+      hämtar dem ur sitt eget register. Grundschemat nämner lärare vid namn som
+      <em>Schema som fil</em> gör, och en markerad lärare finns kvar där. En markerad
+      person som håller en lektion utan att vara lärare eller administratör (en elev
+      eller vårdnadshavare som lagts på lektionen) nämns inte: lektionen står utan
+      lärare, och det står på beställningen, i README.txt och i manifestet.
     </p>
   </div>
   <p>
@@ -7188,9 +7193,10 @@
       någon läste, inte vem. Det beror på att den som tar emot utdraget kan vara
       just den skyddet gäller mot. Anteckningar som personalen skrivit om
       personen är personens egna uppgifter och finns kvar, utom där de nämner en
-      annan markerad person vid id eller fullständigt namn. En anteckning kan
-      ändå nämna någon vid förnamn eller med ord som <em>mamma</em>, så läs den
-      innan du lämnar ut utdraget. Sidan säger det, och du kontrollerar vem som
+      annan markerad person med id, fullständigt namn eller e-postadress. En
+      anteckning kan ändå nämna någon vid förnamn eller med ord som
+      <em>mamma</em>, och notisernas innehåll kontrolleras inte för andra
+      personers namn eller adresser, så läs dem innan du lämnar ut utdraget. Sidan säger det, och du kontrollerar vem som
       frågar. En markerad närstående utelämnas ur ett annat utdrag och räknas.
     </p>
   </div>

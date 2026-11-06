@@ -24,7 +24,7 @@ describe('SubjectAccessService', () => {
 
   /** The protected persons of the school, as the marks query answers; every other statement answers nothing. */
   const textOf = (sql: unknown): string => (Array.isArray(sql) ? sql.join('?') : (((sql as { strings?: string[] }).strings ?? []).join('?')));
-  const marks = (rows: Array<{ id: string; first: string; last: string }>) =>
+  const marks = (rows: Array<{ id: string; first: string; last: string; email: string }>) =>
     tx.$queryRaw.mockImplementation(async (sql: unknown) => (textOf(sql).includes('FROM "PersonProtections" p') ? rows : []));
 
   const unzip = (base64: string) => readZip(Buffer.from(base64, 'base64'), { maxEntryBytes: 1 << 26, maxTotalBytes: 1 << 27, maxEntries: 500 });
@@ -64,7 +64,7 @@ describe('SubjectAccessService', () => {
       { guardianId: GUARDIAN, studentId: PUPIL },
       { guardianId: GUARDIAN_2, studentId: PUPIL },
     ]);
-    marks([{ id: GUARDIAN_2, first: 'Skyddad', last: 'Person' }]);
+    marks([{ id: GUARDIAN_2, first: 'Skyddad', last: 'Person', email: 'skyddad@x.example' }]);
     const answer = await service.extract(testUser({ schoolId: SCHOOL }), PUPIL, true);
     expect(answer).toMatchObject({ relatedIncluded: 1, relatedHeldOut: 1, subjectIsMarked: false });
     // The link query asks for both directions.
@@ -76,7 +76,7 @@ describe('SubjectAccessService', () => {
 
   it('gives a protected person their own data and no one else\'s, and says so', async () => {
     tx.guardianStudent.findMany.mockResolvedValue([{ guardianId: GUARDIAN, studentId: PUPIL }]);
-    marks([{ id: PUPIL, first: 'Skyddad', last: 'Elev' }]);
+    marks([{ id: PUPIL, first: 'Skyddad', last: 'Elev', email: 'elev@x.example' }]);
     const answer = await service.extract(testUser({ schoolId: SCHOOL }), PUPIL, true);
     expect(answer).toMatchObject({ subjectIsMarked: true, relatedIncluded: 0, relatedHeldOut: 1 });
     expect(unzip(answer.contentBase64).get('README.txt')!.toString('utf8')).toContain('Personen har en markering för skyddad identitet');

@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type { AccessKind } from '../access-log/access-log';
 import { STUDENT_BELOW, STUDENT_KEYS } from '../common/removal-inventory';
+import { idForms, normalize } from './free-text';
 
 /**
  * Registerutdrag (GDPR art. 15): every table that holds a row about a person,
@@ -207,6 +208,8 @@ export const NOT_A_USER: Readonly<Record<string, string>> = {
   'HuvudmanApiKeys.createdById': 'a member of the huvudman (HuvudmanMembers)',
   'HuvudmanSchoolRequests.requestedById': 'a member of the huvudman (HuvudmanMembers)',
   'HuvudmanSchools.requestedById': 'a member of the huvudman (HuvudmanMembers)',
+  'HuvudmanSchoolEvents.byMemberId': 'a member of the huvudman (HuvudmanMembers)',
+  'PersonalDataAccess.huvudmanMemberId': 'a member of the huvudman (HuvudmanMembers); the läslogg file carries it as huvudmannens_medlem',
 };
 
 /** Every table the removal's inventory names: a key to Users, or a table a level down from one. */
@@ -265,8 +268,8 @@ export async function readTable(tx: PrismaClient, schoolId: string, file: TableF
 export interface CellRules {
   /** Marked persons the extract is not about: their ids are never written. */
   markedOut: ReadonlySet<string>;
-  /** Their full names, lower-cased: free text that names one is not written. */
-  markedNames: readonly string[];
+  /** Their names in both orders and their addresses, normalized (free-text.ts): free text that holds one is not written. */
+  markedTerms: readonly string[];
   /** The extract of a protected person: the id of any user of the school who is not asked for is not written. */
   strangers?: ReadonlySet<string>;
 }
@@ -274,10 +277,11 @@ export interface CellRules {
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 function carries(value: string, rules: CellRules): boolean {
-  for (const id of rules.markedOut) if (value.includes(id)) return true;
-  if (rules.markedNames.length > 0) {
-    const lower = value.toLowerCase();
-    for (const name of rules.markedNames) if (name !== '' && lower.includes(name)) return true;
+  const lower = value.toLowerCase();
+  for (const id of idForms([...rules.markedOut])) if (lower.includes(id)) return true;
+  if (rules.markedTerms.length > 0) {
+    const spaced = normalize(value);
+    for (const term of rules.markedTerms) if (term !== '' && spaced.includes(term)) return true;
   }
   if (rules.strangers && rules.strangers.size > 0) {
     for (const found of value.match(UUID) ?? []) if (rules.strangers.has(found.toLowerCase())) return true;

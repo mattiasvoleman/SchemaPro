@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type { AccessKind } from '../access-log/access-log';
+import { idForms, SPACING_SQL } from './free-text';
 
 /**
  * The files of the whole-school export that no page exports: the school's
@@ -62,8 +63,8 @@ export interface DataEnv {
   scope: DataScope;
   /** Marked persons, less `exempt`: those whose rows are held out. */
   markedOut: readonly string[];
-  /** Their full names, lower-cased, for the notices' content. */
-  markedNames: readonly string[];
+  /** What to look for in free text besides their ids: their names in both orders and their addresses, normalized (free-text.ts). */
+  markedTerms: readonly string[];
   read<T>(fn: (tx: PrismaClient) => Promise<T>): Promise<T>;
   /** The persons a file holds rows about, for the läslogg of the download. */
   named(kind: AccessKind, ids: Iterable<string | null | undefined>): void;
@@ -120,12 +121,17 @@ function hides(env: DataEnv, column: Prisma.Sql, about: Prisma.Sql | null = null
 const notAbout = (env: DataEnv, about: Prisma.Sql): Prisma.Sql =>
   env.scope.ids === null ? Prisma.sql`false` : Prisma.sql`NOT (${about} = ANY(${idList(env.scope.ids)}))`;
 
-/** SQL: true when the text names a marked person, by id or by full name. False outright when nobody is marked. */
+/**
+ * SQL: true when the text names a marked person: the id (in any case, with or without hyphens), the full name in either
+ * order, or the address, with runs of spaces, hard spaces, commas and hyphens counted as one space (free-text.ts). False
+ * outright when nobody is marked.
+ */
 const mentions = (env: DataEnv, value: Prisma.Sql): Prisma.Sql =>
-  env.markedOut.length === 0 && env.markedNames.length === 0
+  env.markedOut.length === 0 && env.markedTerms.length === 0
     ? Prisma.sql`false`
-    : Prisma.sql`(${value} IS NOT NULL AND (EXISTS (SELECT 1 FROM unnest(${[...env.markedOut]}::text[]) m WHERE position(m in ${value}) > 0)
-                                          OR EXISTS (SELECT 1 FROM unnest(${[...env.markedNames]}::text[]) m WHERE m <> '' AND position(m in lower(${value})) > 0)))`;
+    : Prisma.sql`(${value} IS NOT NULL AND (EXISTS (SELECT 1 FROM unnest(${idForms(env.markedOut)}::text[]) m WHERE position(m in lower(${value})) > 0)
+                                          OR EXISTS (SELECT 1 FROM unnest(${[...env.markedTerms]}::text[]) m
+                                                      WHERE m <> '' AND position(m in lower(regexp_replace(${value}, ${SPACING_SQL}::text, ' ', 'g'))) > 0)))`;
 
 /** SQL: true when free text is not to be written: it names a marked person, or the row is not the person's own. */
 const textHides = (env: DataEnv, value: Prisma.Sql, about: Prisma.Sql | null = null): Prisma.Sql =>

@@ -38,7 +38,7 @@ function harness(answers: unknown[][], over: Partial<DataEnv> = {}): Harness {
     schoolId: SCHOOL,
     scope: { ids: null },
     markedOut: [],
-    markedNames: [],
+    markedTerms: [],
     isolate: false,
     read: (fn) => fn(tx as never),
     named: (kind, ids) => void named.push([kind, [...ids].filter((id): id is string => typeof id === 'string')]),
@@ -220,7 +220,7 @@ describe('the data files', () => {
     it('empties free text that names a marked person, by id or by full name, in every file that has any', async () => {
       const h = harness(
         [[], [{ held: 0 }], [], [{ held: 0 }], [{ tz: 'Europe/Stockholm' }], [{ d: '2026-10-05' }], [], [{ held: 0 }]],
-        { markedOut: [MARKED], markedNames: ['anna ek'] },
+        { markedOut: [MARKED], markedTerms: ['anna ek'] },
       );
       await rowsOf(FRANVARO, h.env);
       await rowsOf(LEDIGHETER, h.env);
@@ -238,7 +238,7 @@ describe('the data files', () => {
     const notice = (over: object) => ({ id: 'n1', recipient: PUPIL, recipientEmail: 's@x', type: 'LEAVE_DECIDED', content: '{"a":1}', mentionsMarked: false, readAt: null, emailedAt: null, created: 'c', at: 'x', ...over });
 
     it('keeps a notice\'s type and time but not its content when the content names a marked person', async () => {
-      const h = harness([[notice({}), notice({ id: 'n2', mentionsMarked: true, content: '{"student":"Anna Ek"}' })], [{ n: 2 }]], { markedOut: [MARKED], markedNames: ['anna ek'] });
+      const h = harness([[notice({}), notice({ id: 'n2', mentionsMarked: true, content: '{"student":"Anna Ek"}' })], [{ n: 2 }]], { markedOut: [MARKED], markedTerms: ['anna ek'] });
       expect(await rowsOf(NOTISER, h.env)).toEqual([
         ['n1', PUPIL, 's@x', 'LEAVE_DECIDED', '{"a":1}', '', '', 'c'],
         ['n2', PUPIL, 's@x', 'LEAVE_DECIDED', '', '', '', 'c'],

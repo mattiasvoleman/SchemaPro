@@ -1257,9 +1257,14 @@ school may order three times a day. It holds:
 Persons with a protected identity (skyddad identitet) are not in it, and
 neither are rows about them; the manifest counts what was held out. A free-text
 cell (an attendance or absence note, a leave's reason or decision note, a
-notice) that names a protected person by id or by full name is empty and
-counted; a first name or a nickname is not found, so free text is not
-guaranteed to be free of them. A part the job could not make (the base timetable,
+notice) that names a protected person by id (any case, with or without hyphens),
+by full name (either order, any spacing, case or hyphen) or by address is empty
+and counted; a first name alone, a nickname, another spelling (a name without
+its diacritics) and a description ("mamma") are not found, so free text is not
+guaranteed to be free of them. A protected person who holds a lesson without
+being a teacher or administrator by role (a pupil or guardian put on it by hand)
+is not named in the grundschema; the lesson stands without a teacher and the
+order says so. A part the job could not make (the base timetable,
 or a school with no active year has none) does not stop the rest: it is said in
 `manifest.json` (`anmarkningar`), first in `README.txt` (which then does not name
 the folder), and on the order (`heldOut.notes`, shown on the card).

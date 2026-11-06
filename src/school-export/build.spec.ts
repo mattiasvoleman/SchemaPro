@@ -37,7 +37,7 @@ const context = (over: Partial<BuildContext>): BuildContext => ({
   scope: { ids: null },
   marked: [],
   exempt: [],
-  markedNames: [],
+  markedTerms: [],
   read: async () => {
     throw new Error('no database here');
   },
@@ -196,7 +196,7 @@ describe('buildArchive notes', () => {
       lists: async () => ({ files: [], linksHeldOut: 0 }),
     });
     const readme = missing.files.get('README.txt')!.toString('utf8');
-    expect(readme).toContain('Delar som saknas');
+    expect(readme).toContain('Delar som saknas\r\n----------------');
     expect(readme).toContain('Grundschemat (schema/grundschema.csv) skrevs inte (TypeError)');
     expect(readme.indexOf('Delar som saknas')).toBeLessThan(readme.indexOf('Vad som finns var'));
     expect(readme).not.toContain('schema/      Grundschemat som en tabell');
@@ -205,7 +205,12 @@ describe('buildArchive notes', () => {
     const whole = await build({ schema: async () => ({ path: 'schema/grundschema.csv', body: Buffer.from('s\r\n') }), lists: async () => ({ files: [], linksHeldOut: 0 }) });
     const complete = whole.files.get('README.txt')!.toString('utf8');
     expect(complete).toContain('schema/      Grundschemat som en tabell');
-    expect(complete).not.toContain('Delar som saknas');
+    // No empty line inside the list of what is where, whichever parts there are.
+    for (const readme of [complete, missing.files.get('README.txt')!.toString('utf8')]) {
+      const block = readme.split('Vad som finns var\r\n------------------\r\n')[1]!.split('\r\n\r\n')[0]!;
+      expect(block.split('\r\n').every((line) => line !== '')).toBe(true);
+    }
+    expect(complete).not.toContain('Delar som saknas\r\n----------------');
     expect(whole.result.heldOut).not.toHaveProperty('notes');
   });
 });

@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { Audit, buildArchive, type BuildContext } from './build';
 import { DATA_FILES } from './data-files';
+import { termsOf } from './free-text';
 import { tableFiles } from './person-tables';
 import { SCHOOL_EXPORT_CODES } from './school-export.service';
 import { StreamingZip, type ByteSink } from './zip-stream';
@@ -82,8 +83,8 @@ export class SubjectAccessService {
       const person = await tx.user.findUnique({ where: { id: personId }, select: { id: true } });
       if (!person) throw new NotFoundException('Personen finns inte.');
       const school = await tx.school.findUniqueOrThrow({ where: { id: schoolId }, select: { name: true } });
-      const marks = await tx.$queryRaw<Array<{ id: string; first: string; last: string }>>`
-        SELECT DISTINCT u."id"::text AS id, u."firstName" AS first, u."lastName" AS last
+      const marks = await tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string }>>`
+        SELECT DISTINCT u."id"::text AS id, u."firstName" AS first, u."lastName" AS last, u."email" AS email
           FROM "PersonProtections" p JOIN "Users" u ON u."id" = p."userId" AND u."schoolId" = p."schoolId"
          WHERE p."schoolId" = ${schoolId}::uuid`;
       const links = withRelated
@@ -114,7 +115,7 @@ export class SubjectAccessService {
       marked,
       exempt: [personId],
       // The person asked for is not looked for in free text: a note about them is theirs.
-      markedNames: head.marks.filter((row) => row.id !== personId).map((row) => `${row.first} ${row.last}`.trim().toLowerCase()).filter((name) => name.includes(' ')),
+      markedTerms: termsOf(head.marks.filter((row) => row.id !== personId)),
       read: (fn) => this.prisma.withRls(user, fn),
       checkpoint: async () => undefined,
       dataFiles: DATA_FILES,

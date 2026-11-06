@@ -72,10 +72,10 @@ export function readmeText(input: ReadmeInput): string {
       : []),
     'Vad som finns var',
     '------------------',
-    person ? '' : 'csv/         Listorna som sidorna exporterar som CSV, i det format som importen läser (se "Läs in listorna igen").',
-    person || !input.hasSchema ? '' : 'schema/      Grundschemat som en tabell (samma fil som Schema som fil ger).',
+    ...(person ? [] : ['csv/         Listorna som sidorna exporterar som CSV, i det format som importen läser (se "Läs in listorna igen").']),
+    ...(person || !input.hasSchema ? [] : ['schema/      Grundschemat som en tabell (samma fil som Schema som fil ger).']),
     'data/        Personer, kopplingar, närvaro, frånvaroanmälningar, ledigheter, notiser och läsloggen. Kolumnerna står i FORMAT.md.',
-    person ? 'data/person/ Övriga tabeller där Rastra har en rad om personen, en fil per tabell.' : '',
+    ...(person ? ['data/person/ Övriga tabeller där Rastra har en rad om personen, en fil per tabell.'] : []),
     'manifest.json  Varje fils sökväg, antal rader, storlek och SHA-256, och hur många personer med skyddad identitet som hålls utanför.',
     'FORMAT.md    Vad varje kolumn i data/ innehåller.',
     '',
@@ -103,13 +103,13 @@ export function readmeText(input: ReadmeInput): string {
     'Skyddad identitet',
     '-----------------',
     person && input.subjectIsMarked
-      ? 'Personen har en markering för skyddad identitet. Utdraget är personens egna uppgifter, och ingen annan person pekas ut i det: kolumner som skulle ha pekat ut en vårdnadshavare, en lärare eller en kollega (motparten i en koppling, vem som registrerade, anmälde, ansökte, beslutade eller läste) är tomma, i data/ och i data/person/, och manifestet räknar dem. Anteckningar som skolans personal skrivit om personen är personens egna uppgifter och finns kvar som de skrevs, utom där de nämner en annan person med skyddad identitet vid id eller fullständigt namn; en anteckning kan ändå nämna en annan person vid förnamn eller med ord som "mamma", så läs den innan utdraget lämnas ut. Lämna utdraget till personen själv och till ingen annan innan du har kontrollerat vem som frågar.'
+      ? 'Personen har en markering för skyddad identitet. Utdraget är personens egna uppgifter, och ingen annan person pekas ut i det: kolumner som skulle ha pekat ut en vårdnadshavare, en lärare eller en kollega (motparten i en koppling, vem som registrerade, anmälde, ansökte, beslutade eller läste) är tomma, i data/ och i data/person/, och manifestet räknar dem. Anteckningar som skolans personal skrivit om personen är personens egna uppgifter och finns kvar som de skrevs, utom där de nämner en annan person med skyddad identitet med id, fullständigt namn (i båda ordningarna) eller e-postadress; en anteckning kan ändå nämna en annan person vid förnamn eller med ord som "mamma", så läs den innan utdraget lämnas ut. Notisernas innehåll (data/notiser.csv) kontrolleras inte för andra personers namn eller adresser: läs det också. Lämna utdraget till personen själv och till ingen annan innan du har kontrollerat vem som frågar.'
       : input.markedPeople === 0
         ? 'Skolan har inte markerat någon person med skyddad identitet, så ingen är utelämnad.'
-        : `${input.markedPeople} ${input.markedPeople === 1 ? 'person' : 'personer'} med skyddad identitet finns inte i filen, och inte heller raderna som handlar om ${input.markedPeople === 1 ? 'personen' : 'dem'}. Där en markerad person bara nämns i en kolumn som inte är det raden handlar om (vem som registrerade en närvaro, vem som beslutade en ledighet) är cellen tom. En anteckning, ett skäl eller en notis som nämner en markerad person vid id eller fullständigt namn är tom; ett förnamn eller ett smeknamn hittas inte. Manifestet säger hur många rader och celler det gäller i varje fil.`,
+        : `${input.markedPeople} ${input.markedPeople === 1 ? 'person' : 'personer'} med skyddad identitet finns inte i filen, och inte heller raderna som handlar om ${input.markedPeople === 1 ? 'personen' : 'dem'}. Där en markerad person bara nämns i en kolumn som inte är det raden handlar om (vem som registrerade en närvaro, vem som beslutade en ledighet) är cellen tom. En anteckning, ett skäl eller en notis som nämner en markerad person med id, fullständigt namn (i båda ordningarna) eller e-postadress är tom, hur mellanrum, bindestreck och stora bokstäver än är skrivna. Ett förnamn ensamt, ett smeknamn, en annan stavning (ett namn utan prickar) och ord som "mamma" hittas inte, så läs fritext innan filen lämnas vidare. Manifestet säger hur många rader och celler det gäller i varje fil.`,
     person
       ? ''
-      : 'Grundschemat nämner lärare vid signatur, namn och e-postadress, som Schema som fil gör, och en markerad lärare finns kvar där.',
+      : 'Grundschemat nämner lärare vid signatur, namn och e-postadress, som Schema som fil gör, och en markerad lärare finns kvar där. En markerad person som håller en lektion utan att vara lärare eller administratör (en elev eller vårdnadshavare som lagts på lektionen) nämns inte; lektionen står utan lärare, och det står under Delar som saknas.',
     '',
     'Vad filen inte innehåller',
     '-------------------------',
