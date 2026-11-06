@@ -1,5 +1,5 @@
 import { STUDENT_BELOW, STUDENT_KEYS } from '../common/removal-inventory';
-import { ACCOUNT_KINDS, SUBJECT_ACCESS, WITHOUT_SCHOOL_COLUMN, cellOf, inventoriedTables, tableFiles } from './person-tables';
+import { ACCOUNT_KINDS, NOT_A_USER, SUBJECT_ACCESS, WITHOUT_KEY, WITHOUT_SCHOOL_COLUMN, cellOf, excludedTables, inventoriedTables, tableFiles, type CellRules } from './person-tables';
 
 /**
  * "All your data" is only true while the extract knows every table that holds
@@ -16,8 +16,29 @@ describe('the registerutdrag decides every table the removal inventory names', (
     expect(inventoried.filter((table) => !(table in SUBJECT_ACCESS))).toEqual([]);
   });
 
-  it('decides no table the removal inventory does not name', () => {
-    expect(Object.keys(SUBJECT_ACCESS).filter((table) => !inventoried.includes(table))).toEqual([]);
+  it('decides no table the removal inventory does not name, but the ones that keep a person without a key to Users', () => {
+    expect(Object.keys(SUBJECT_ACCESS).filter((table) => !inventoried.includes(table) && !(table in WITHOUT_KEY))).toEqual([]);
+  });
+
+  it('decides every table that keeps a person without a key, and reads each such column of a table it dumps', () => {
+    for (const [table, columns] of Object.entries(WITHOUT_KEY)) {
+      const decision = SUBJECT_ACCESS[table];
+      expect(decision).toBeDefined();
+      if (!decision || !('dump' in decision)) {
+        // Left out, with the reason the README states.
+        expect(decision && 'excluded' in decision ? decision.excluded.length : 0).toBeGreaterThan(20);
+        continue;
+      }
+      const read = [...decision.dump.columns, ...(decision.dump.inside ?? [])];
+      expect(columns.filter((column) => !read.includes(column))).toEqual([]);
+    }
+  });
+
+  it('names the reason of every table it leaves out, for the README', () => {
+    const left = excludedTables();
+    expect(left.map((item) => item.table)).toEqual(['IntegrationKeyWebhookSecrets', 'PublishedLessons', 'Ss12000SourceSecrets']);
+    for (const item of left) expect(item.reason.endsWith('.')).toBe(true);
+    expect(Object.keys(NOT_A_USER).every((key) => /^[A-Za-z0-9]+\.[A-Za-z]+$/.test(key))).toBe(true);
   });
 
   it("dumps every person column the removal names for a table it dumps (a key added to a table is a column here)", () => {
@@ -73,19 +94,39 @@ describe('the registerutdrag decides every table the removal inventory names', (
 });
 
 describe('a cell of a dumped row', () => {
-  const marked = new Set(['11111111-1111-4111-8111-111111111111']);
+  const MARKED = '11111111-1111-4111-8111-111111111111';
+  const STRANGER = '33333333-3333-4333-8333-333333333333';
+  const SUBJECT = '22222222-2222-4222-8222-222222222222';
+  const marked: CellRules = { markedOut: new Set([MARKED]), markedNames: ['anna ek'] };
+  const protectedSubject: CellRules = { ...marked, strangers: new Set([STRANGER, MARKED]) };
 
-  it('is empty for a marked person, and counted', () => {
-    expect(cellOf('decidedById', '11111111-1111-4111-8111-111111111111', marked)).toEqual({ text: '', held: true });
-    expect(cellOf('meta', { by: '11111111-1111-4111-8111-111111111111' }, marked)).toEqual({ text: '', held: true });
+  it('is empty for a marked person, in a column of its own, inside json and in free text, and counted', () => {
+    expect(cellOf('decidedById', MARKED, marked)).toEqual({ text: '', held: true });
+    expect(cellOf('meta', { by: MARKED }, marked)).toEqual({ text: '', held: true });
+    expect(cellOf('note', `Ringde om ${MARKED}`, marked)).toEqual({ text: '', held: true });
+    expect(cellOf('note', 'Syskon till Anna Ek.', marked)).toEqual({ text: '', held: true });
   });
 
   it('is kept for anyone else, and a number or a boolean is its text', () => {
-    expect(cellOf('decidedById', '22222222-2222-4222-8222-222222222222', marked)).toEqual({ text: '22222222-2222-4222-8222-222222222222', held: false });
+    expect(cellOf('decidedById', SUBJECT, marked)).toEqual({ text: SUBJECT, held: false });
     expect(cellOf('minutes', 60, marked)).toEqual({ text: '60', held: false });
     expect(cellOf('active', false, marked)).toEqual({ text: 'false', held: false });
     expect(cellOf('note', null, marked)).toEqual({ text: '', held: false });
     expect(cellOf('meta', { a: 1 }, marked)).toEqual({ text: '{"a":1}', held: false });
+    expect(cellOf('note', 'Anna kom sent.', marked)).toEqual({ text: 'Anna kom sent.', held: false });
+  });
+
+  it('is empty, in the extract of a protected person, wherever it carries another user of the school, whatever the column', () => {
+    expect(cellOf('actorId', STRANGER, protectedSubject)).toEqual({ text: '', held: true });
+    expect(cellOf('actorId', STRANGER.toUpperCase(), protectedSubject)).toEqual({ text: '', held: true });
+    expect(cellOf('studentIds', [SUBJECT, STRANGER], protectedSubject)).toEqual({ text: '', held: true });
+    expect(cellOf('removedTeachers', { ids: [STRANGER] }, protectedSubject)).toEqual({ text: '', held: true });
+    expect(cellOf('note', `Överfört till ${STRANGER} i går`, protectedSubject)).toEqual({ text: '', held: true });
+    // The person asked for, and ids that are no user's, stay.
+    expect(cellOf('userId', SUBJECT, protectedSubject)).toEqual({ text: SUBJECT, held: false });
+    expect(cellOf('lessonId', '44444444-4444-4444-8444-444444444444', protectedSubject)).toEqual({ text: '44444444-4444-4444-8444-444444444444', held: false });
+    // Without the rule (an extract of anybody else) another user's id stays.
+    expect(cellOf('actorId', STRANGER, marked)).toEqual({ text: STRANGER, held: false });
   });
 
   it.each(['token', 'apiKeyHash', 'webhookSecret', 'passwordHash'])('hides the column %s', (column) => {

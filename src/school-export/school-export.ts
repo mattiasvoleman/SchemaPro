@@ -71,4 +71,6 @@ export interface HeldOutSummary {
   people: number;
   /** Guardian links left out because one end is marked. */
   links: number;
+  /** Parts of the archive that could not be made while the rest went on without them: the manifest's `anmarkningar`, said on the card too. */
+  notes?: string[];
 }

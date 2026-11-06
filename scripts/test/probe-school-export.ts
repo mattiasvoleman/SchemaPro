@@ -38,7 +38,17 @@
  *          pupil's rows and the guardian's and no other pupil's, none of B's, a protected related
  *          person held out and counted, a protected person's own extract with no one else, a
  *          teacher's with the post and the lessons, and each recorded in the läslogg;
- *   (k-j)  who may ask for one: the same two profiles, and not across schools.
+ *   (k-j)  who may ask for one: the same two profiles, and not across schools;
+ *   (k-l)  a protected person's extract names nobody else: the id and the address of every
+ *          other user of the school is searched for in every file, with and without the
+ *          guardians asked for, for a protected pupil and a protected teacher;
+ *   (k-m)  a teacher who decided a pupil's leave gets the decision, not the pupil's id, address
+ *          or reason, nor the guardian's; a guardian alone, the same for the child;
+ *   (k-n)  free text that names a protected person, by id or full name, is empty in the
+ *          school's file and in another person's extract, and counted;
+ *   (k-o)  the history that keeps a person without a key to Users (a guardian link that was
+ *          cut, who set a mark) is in the extract, and the catalogue holds no person column
+ *          without a key that the extract has not decided.
  *
  * Cleans up after itself: the two schools (everything in them goes with them).
  * The läslogg rows a fetch leaves are append-only and go with their school.
@@ -61,7 +71,7 @@ import type { RealtimeService } from '../../src/realtime/realtime.service';
 import { ScheduleExchangeService } from '../../src/schedule-exchange/exchange.service';
 import { SchoolExportJob } from '../../src/school-export/school-export.job';
 import { SubjectAccessService } from '../../src/school-export/subject-access.service';
-import { WITHOUT_SCHOOL_COLUMN, tableFiles } from '../../src/school-export/person-tables';
+import { NOT_A_USER, SUBJECT_ACCESS, WITHOUT_KEY, WITHOUT_SCHOOL_COLUMN, tableFiles } from '../../src/school-export/person-tables';
 import { MAX_ORDERS_PER_DAY, SchoolExportService } from '../../src/school-export/school-export.service';
 
 type Owner = PrismaClient;
@@ -430,7 +440,7 @@ async function main(): Promise<void> {
         const columns = await owner.$queryRaw<Array<{ name: string }>>`
           SELECT attname AS name FROM pg_attribute WHERE attrelid = ${`public."${file.table}"`}::regclass AND attnum > 0 AND NOT attisdropped`;
         const names = new Set(columns.map((column) => column.name));
-        for (const column of file.dump.columns) assert.ok(names.has(column), `${file.table}.${column} is a column`);
+        for (const column of [...file.dump.columns, ...(file.dump.inside ?? [])]) assert.ok(names.has(column), `${file.table}.${column} is a column`);
         for (const [column, parent, parentColumn] of file.dump.through ?? []) {
           assert.ok(names.has(column), `${file.table}.${column} is a column`);
           const parentNames = await owner.$queryRaw<Array<{ name: string }>>`
@@ -438,6 +448,34 @@ async function main(): Promise<void> {
           assert.ok(parentNames.some((p) => p.name === parentColumn), `${parent}.${parentColumn} is a column`);
         }
       }
+    });
+
+    await check('(k-i1) no person column without a key to Users is undecided: the catalogue against WITHOUT_KEY and the dumps', async () => {
+      const found = await owner.$queryRaw<Array<{ tbl: string; col: string }>>`
+        SELECT c.relname AS tbl, a.attname AS col
+          FROM pg_attribute a
+          JOIN pg_class c ON c.oid = a.attrelid AND c.relkind = 'r'
+          JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+         WHERE a.attnum > 0 AND NOT a.attisdropped
+           AND a.atttypid IN ('uuid'::regtype, '_uuid'::regtype, 'jsonb'::regtype)
+           AND a.attname ~* '(user|teacher|student|guardian|actor|author|substitute|person)ids?$|by(user)?id$|teachers$'
+           AND a.attname !~* 'group'
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_constraint k
+              WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = '"Users"'::regclass AND a.attnum = ANY (k.conkey))`;
+      const decided = new Set<string>();
+      for (const [table, decision] of Object.entries(SUBJECT_ACCESS)) {
+        if ('dump' in decision) for (const column of [...decision.dump.columns, ...(decision.dump.inside ?? []), ...(decision.dump.through ?? []).map(([c]) => c)]) decided.add(`${table}.${column}`);
+      }
+      for (const [table, columns] of Object.entries(WITHOUT_KEY)) for (const column of columns) decided.add(`${table}.${column}`);
+      const undecided = found.map((row) => `${row.tbl}.${row.col}`).filter((name) => !decided.has(name) && !(name in NOT_A_USER));
+      assert.deepEqual(undecided, [], 'a person column with no key to Users that the extract has not decided (add it to WITHOUT_KEY and SUBJECT_ACCESS)');
+      // And the list is no longer than the catalogue: every column named exists and still has no key.
+      const present = new Set(found.map((row) => `${row.tbl}.${row.col}`));
+      for (const [table, columns] of Object.entries(WITHOUT_KEY)) {
+        for (const column of columns) assert.ok(present.has(`${table}.${column}`), `${table}.${column} is a person column without a key (remove it from WITHOUT_KEY if it has one now)`);
+      }
+      for (const name of Object.keys(NOT_A_USER)) assert.ok(present.has(name), `${name} is in the catalogue`);
     });
 
     await check('(k-i) a registerutdrag is the same files for the person, and a protected person is held out', async () => {
@@ -496,6 +534,151 @@ async function main(): Promise<void> {
       assert.match(teacher.files.get('data/person/teacheremployments.csv')!.toString('utf8'), /employmentPercent/);
       const rowsAbout = await owner.personalDataAccess.count({ where: { schoolId: a.schoolId, actorId: a.admins.FULL.userId!, kind: 'EMPLOYMENT', subjectIds: { has: a.teacher } } });
       assert.ok(rowsAbout >= 1, "the extract of the teacher's post is recorded as a read of EMPLOYMENT about them");
+    });
+
+    // ---- the third parties of an extract (the review of #269) ------------------------------------------------------
+    const extractZip = async (who: AuthenticatedUser, personId: string, withRelated: boolean) => {
+      const answer = await access.extract(who, personId, withRelated);
+      const { dir, files } = unzip(Buffer.from(answer.contentBase64, 'base64'));
+      cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
+      const manifest = JSON.parse(files.get('manifest.json')!.toString('utf8')) as { files: Array<{ path: string; tommaCeller?: number }> };
+      return { answer, files, emptied: (path: string) => manifest.files.find((file) => file.path === path)?.tommaCeller ?? 0 };
+    };
+    /** Every file of the archive, searched for the id and the address of each user of school A who is not `allowed`. */
+    const assertNames = async (files: Map<string, Buffer>, allowed: string[], label: string) => {
+      const others = await owner.user.findMany({ where: { schoolId: a.schoolId, id: { notIn: allowed } }, select: { id: true, email: true } });
+      assert.ok(others.length > 10, 'there are users to look for');
+      for (const [name, content] of files) {
+        const text = content.toString('utf8').toLowerCase();
+        for (const other of others) {
+          assert.ok(!text.includes(other.id), `${label}: ${name} holds the id of ${other.id}`);
+          assert.ok(!text.includes(other.email.toLowerCase()), `${label}: ${name} holds the address ${other.email}`);
+        }
+      }
+    };
+    const lineWith = (files: Map<string, Buffer>, name: string, needle: string): string[] | undefined =>
+      csvLines(files.get(name)).slice(1).map((line) => line.split(';')).find((cells) => cells.includes(needle));
+
+    // The rows these checks are about: leaves a teacher decided, history that outlives its keys, a note that names.
+    const pupilE = a.students[4]!;
+    const guardianE = a.guardians[4]!;
+    const pupilF = a.students[5]!;
+    const guardianF = a.guardians[5]!;
+    const sibling = a.students[2]!;
+    const siblingGuardian = a.guardians[2]!;
+    const leave = (data: Record<string, unknown>) =>
+      owner.leaveRequest.create({
+        data: { schoolId: a.schoolId, startDate: new Date('2026-11-09'), endDate: new Date('2026-11-10'), status: 'APPROVED', decidedAt: time('2026-10-21', '09:00'), ...data } as never,
+      });
+    await leave({ studentId: pupilE.id, requestedById: guardianE.id, decidedById: a.teacher, decidedAs: 'MENTOR', reason: 'Känsligt läkarbesök E4', decisionNote: 'Tala med mamma E4' });
+    await leave({ studentId: pupilF.id, requestedById: guardianF.id, decidedById: protectedTeacher.id, decidedAs: 'MENTOR', reason: 'Orsak E5' });
+    await leave({ studentId: protectedPupil.id, requestedById: a.guardians[1]!.id, decidedById: a.admins.FULL.userId!, decidedAs: 'ADMIN', reason: 'Orsak skyddad' });
+    // The history of a cut guardian link is written by the database, when the link is deleted.
+    const formerGuardian = await owner.user.create({
+      data: { schoolId: a.schoolId, authId: randomUUID(), role: 'GUARDIAN', firstName: 'Tidigare', lastName: 'Vardnadshavare', email: `tidigare@${a.slug}.example.com` },
+    });
+    for (const kid of [protectedPupil, a.students[0]!]) {
+      const link = await owner.guardianStudent.create({ data: { schoolId: a.schoolId, guardianId: formerGuardian.id, studentId: kid.id } });
+      await owner.guardianStudent.delete({ where: { id: link.id } });
+    }
+
+    await check("(k-l) a protected person's extract names nobody else: not the guardian, the teacher, the reader or the decider", async () => {
+      for (const withRelated of [true, false]) {
+        const pupil = await extractZip(a.admins.FULL, protectedPupil.id, withRelated);
+        await assertNames(pupil.files, [protectedPupil.id], `protected pupil, withRelated=${withRelated}`);
+        // What the person is entitled to is still there, with the other party empty and counted.
+        const link = lineWith(pupil.files, 'data/kopplingar.csv', protectedPupil.id)!;
+        assert.ok(link, 'the link is the pupil\'s own row');
+        assert.equal(link[1], '', "the guardian's id is empty");
+        assert.equal(link[2], '', "the guardian's address is empty");
+        assert.ok(pupil.emptied('data/kopplingar.csv') >= 1 && pupil.emptied('data/narvaro.csv') >= 1 && pupil.emptied('data/franvaroanmalningar.csv') >= 1, 'counted');
+        assert.ok(pupil.emptied('data/ledigheter.csv') >= 2, 'the requester and the decider of the leave');
+        assert.ok(csvLines(pupil.files.get('data/laslogg.csv')).length > 1, 'the readers are in the läslogg, unnamed');
+        assert.ok(csvLines(pupil.files.get('data/laslogg.csv')).slice(1).every((line) => line.split(';')[2] === '' && line.split(';')[3] === ''), 'no reader is named');
+        assert.match(pupil.files.get('README.txt')!.toString('utf8'), /ingen annan person pekas ut i det/);
+      }
+      const teacher = await extractZip(a.admins.FULL, protectedTeacher.id, true);
+      await assertNames(teacher.files, [protectedTeacher.id], 'protected teacher');
+    });
+
+    await check("(k-m) a teacher who decided a leave gets the decision and not the pupil's id, address or reason; a guardian alone, the same for the child", async () => {
+      const teacher = await extractZip(a.admins.FULL, a.teacher, false);
+      const decided = lineWith(teacher.files, 'data/ledigheter.csv', a.teacher)!;
+      assert.ok(decided, "the leave the teacher decided is in the teacher's extract");
+      assert.equal(decided[1], '', "the pupil's id is empty");
+      assert.equal(decided[2], '', "the pupil's address is empty");
+      assert.equal(decided[3], '', "the guardian's id is empty");
+      assert.equal(decided[7], '', 'the reason is empty');
+      assert.equal(decided[12], '', "the decision's note is empty");
+      assert.ok(decided[8] === 'APPROVED' && decided[13] === 'MENTOR', 'the decision itself stays');
+      assert.ok(teacher.emptied('data/ledigheter.csv') >= 4);
+      for (const [name, content] of teacher.files) {
+        const text = content.toString('utf8');
+        for (const secret of [pupilE.id, pupilE.email, guardianE.id, guardianE.email, 'Känsligt läkarbesök E4', 'Tala med mamma E4']) assert.ok(!text.includes(secret), `${name} holds ${secret} in the teacher's extract`);
+      }
+      // The guardian alone: the leave she asked for, the absence she reported, and nothing of the child's.
+      const alone = await extractZip(a.admins.FULL, guardianE.id, false);
+      for (const [name, content] of alone.files) {
+        const text = content.toString('utf8');
+        for (const secret of [a.teacher, 'Känsligt läkarbesök E4', 'Tala med mamma E4', 'Sjuk A4']) assert.ok(!text.includes(secret), `${name} holds ${secret} in the guardian's extract`);
+        // Whose guardian she is stays in the link; nothing else of the child's.
+        if (name !== 'data/kopplingar.csv') for (const secret of [pupilE.id, pupilE.email]) assert.ok(!text.includes(secret), `${name} holds ${secret} in the guardian's extract`);
+      }
+      assert.ok(lineWith(alone.files, 'data/ledigheter.csv', 'APPROVED'), 'the leave is still there, as her own act');
+      assert.ok(csvLines(alone.files.get('data/franvaroanmalningar.csv')).length > 1, 'and the absence she reported');
+      // With the child asked for, the rows are about the child and whole.
+      const both = await extractZip(a.admins.FULL, guardianE.id, true);
+      const whole = lineWith(both.files, 'data/ledigheter.csv', pupilE.id)!;
+      assert.ok(whole && whole.includes('Känsligt läkarbesök E4') && whole.includes('Tala med mamma E4'), 'the child\'s own leave is whole in the child\'s extract');
+    });
+
+    await check('(k-n) free text that names a protected person is empty, in the school\'s file and in another person\'s extract, and counted', async () => {
+      const name = 'Elev2 EfternamnA';
+      const teacherName = 'Skyddad Lärare';
+      const records = await owner.attendanceRecord.findMany({ where: { schoolId: a.schoolId, studentId: sibling.id }, orderBy: { recordedAt: 'asc' }, take: 3 });
+      await owner.attendanceRecord.update({ where: { id: records[0]!.id }, data: { note: `Syskon till ${name} ringde` } });
+      await owner.attendanceRecord.update({ where: { id: records[1]!.id }, data: { note: `Se ${protectedTeacher.id}` } });
+      await owner.attendanceRecord.update({ where: { id: records[2]!.id }, data: { note: 'Kom sent, bussen' } });
+      await owner.absenceReport.updateMany({ where: { schoolId: a.schoolId, studentId: sibling.id }, data: { note: `Anmäld via ${teacherName}` } });
+      await leave({ studentId: sibling.id, requestedById: siblingGuardian.id, decidedById: a.admins.FULL.userId!, decidedAs: 'ADMIN', reason: `Följer med ${teacherName} på läger`, decisionNote: `Hänvisad till ${protectedTeacher.id}` });
+      const needles = [name.toLowerCase(), teacherName.toLowerCase(), protectedTeacher.id, protectedPupil.id];
+
+      await owner.schoolExport.deleteMany({ where: { schoolId: a.schoolId, id: { not: first.id } } });
+      const order = await service.order(a.admins.FULL);
+      await runJobUntilIdle(job);
+      const bytes = await fetchFile(service, order.id, a.admins.FULL);
+      const school = unzip(bytes);
+      cleanup.push(async () => rmSync(school.dir, { recursive: true, force: true }));
+      const manifest = JSON.parse(school.files.get('manifest.json')!.toString('utf8')) as { files: Array<{ path: string; tommaCeller?: number }> };
+      const emptied = (path: string) => manifest.files.find((file) => file.path === path)?.tommaCeller ?? 0;
+      for (const [file, content] of school.files) {
+        const text = content.toString('utf8').toLowerCase();
+        for (const needle of needles) assert.ok(!text.includes(needle), `${file} names ${needle} in the school's file`);
+      }
+      assert.ok(emptied('data/narvaro.csv') >= 3, 'two notes and the protected recorder');
+      assert.ok(emptied('data/franvaroanmalningar.csv') >= 1 && emptied('data/ledigheter.csv') >= 2, 'the absence note, the reason and the decision note');
+      assert.ok(csvLines(school.files.get('data/narvaro.csv')).join('\n').includes('Kom sent, bussen'), 'a note that names nobody stays');
+      assert.match(school.files.get('README.txt')!.toString('utf8'), /vid id eller fullständigt namn är tom/);
+
+      const person = await extractZip(a.admins.FULL, sibling.id, false);
+      for (const [file, content] of person.files) {
+        const text = content.toString('utf8').toLowerCase();
+        for (const needle of needles) assert.ok(!text.includes(needle), `${file} names ${needle} in another person's extract`);
+      }
+      assert.ok(csvLines(person.files.get('data/narvaro.csv')).join('\n').includes('Kom sent, bussen'));
+    });
+
+    await check('(k-o) history that outlives its keys is in the extract, with the other parties held out for a protected person', async () => {
+      const pupil = await extractZip(a.admins.FULL, a.students[0]!.id, false);
+      const history = pupil.files.get('data/person/guardianstudenthistory.csv');
+      assert.ok(history && history.toString('utf8').includes(a.students[0]!.id) && history.toString('utf8').includes(formerGuardian.id), 'a cut guardian link is data about the pupil');
+      const own = await extractZip(a.admins.FULL, protectedPupil.id, false);
+      const cut = own.files.get('data/person/guardianstudenthistory.csv');
+      assert.ok(cut && cut.toString('utf8').includes(protectedPupil.id), "the protected pupil's own cut link is in it");
+      assert.ok(!cut.toString('utf8').includes(formerGuardian.id), 'without the guardian who was cut');
+      const events = own.files.get('data/person/personprotectionevents.csv');
+      assert.ok(events && events.toString('utf8').includes(protectedPupil.id), 'that the person was marked, and when, is theirs to know (the database wrote the event)');
+      assert.match(own.files.get('README.txt')!.toString('utf8'), /PublishedLessons: En kopia av lektionerna/, 'a table left out says why');
     });
 
     await check('(k-j) only those who decide ask for one, and only about their own school', async () => {

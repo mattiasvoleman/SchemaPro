@@ -7121,12 +7121,21 @@
       filen, och inte heller rader som handlar om dem. Står en markerad person
       bara i en kolumn som inte är det raden handlar om, till exempel som den
       som registrerade en närvaro, är cellen tom och räknas. Beställningen och
-      manifestet säger hur många. En skola som lämnar tjänsten och behöver också
-      dessa personer hämtar dem ur sitt eget register. Grundschemat nämner lärare
-      vid namn som <em>Schema som fil</em> gör, och en markerad lärare finns
-      kvar där.
+      manifestet säger hur många. En anteckning, ett skäl eller en notis som
+      nämner en markerad person vid id eller fullständigt namn är också tom och
+      räknas; ett förnamn eller ett smeknamn hittas inte, så fritext är inte
+      garanterat fri från markerade personer. En skola som lämnar tjänsten och
+      behöver också dessa personer hämtar dem ur sitt eget register. Grundschemat
+      nämner lärare vid namn som <em>Schema som fil</em> gör, och en markerad lärare
+      finns kvar där.
     </p>
   </div>
+  <p>
+    Kan en del av filen inte göras (grundschemat, till exempel) blir resten ändå
+    hel. Då står det på beställningen under <em>Saknas i filen</em>, först i
+    README.txt under <em>Delar som saknas</em> och i manifestet, och README.txt
+    nämner inte mappen som saknas.
+  </p>
   <p>
     Filen innehåller inte lösenord, personnummer (Rastra lagrar inga),
     notisinställningar, enheter för push-notiser, kalenderflödens adresser, de
@@ -7150,19 +7159,39 @@
     tjänster, uppdrag, behörigheter, frånvaro och vikarieuppdrag, lektionsloggar
     personen skrivit, beslut personen fattat, och personens egen markering. Att
     inget saknas hålls av ett test mot förteckningen över allt som hänger på en
-    person (samma som visas när en person tas bort). Det som personen själv ser i
-    appen under Inställningar, men som ingen administratör kan läsa, nämns i
-    README.txt: notisinställningar, enheter och kalenderflöden.
+    person (samma som visas när en person tas bort) och av ett prov mot
+    databasens katalog för de tabeller som sparar en person utan nyckel, som
+    historiken över bortkopplade vårdnadshavare och över markeringar. Det som
+    personen själv ser i appen under Inställningar, men som ingen administratör
+    kan läsa, nämns i README.txt: notisinställningar, enheter och kalenderflöden.
+    En tabell som utelämnas med avsikt, som de publicerade lektionernas kopior,
+    står där med sitt skäl.
+  </p>
+  <p>
+    <strong>Utdraget gäller en person, inte dem runt omkring.</strong> I en rad
+    som inte handlar om personen själv, till exempel en ledighet som en lärare
+    beslutat eller en frånvaro som en vårdnadshavare anmält, är elevens id och
+    e-postadress, ledighetens skäl, frånvarons typ och anteckningar tomma. Det
+    som finns kvar är personens egen handling: datum, status och beslut. Vill du
+    ha barnets uppgifter beställer du utdraget för barnet, med vårdnadshavarna om
+    de ska vara med.
   </p>
   <div class="note">
     <span class="label">Är personen skyddad</span>
     <p>
       Den som utdraget gäller hålls aldrig ute ur sitt eget utdrag. Men ett utdrag
-      om en person med skyddad identitet innehåller <strong>ingen annan</strong>,
-      inte heller vårdnadshavare, eftersom den som tar emot utdraget kan vara
-      just den skyddet gäller mot. Sidan säger det, och du kontrollerar vem som
-      frågar innan du lämnar ut det. En markerad närstående utelämnas ur ett annat
-      utdrag och räknas.
+      om en person med skyddad identitet <strong>pekar inte ut någon annan</strong>,
+      inte heller vårdnadshavare: ingen följer med, och id och e-postadress till
+      var och en som inte är personen själv är tomma i varje fil, i
+      kopplingen till vårdnadshavaren, hos den som registrerade, anmälde,
+      ansökte eller beslutade och hos den som läste. Det går att se att och när
+      någon läste, inte vem. Det beror på att den som tar emot utdraget kan vara
+      just den skyddet gäller mot. Anteckningar som personalen skrivit om
+      personen är personens egna uppgifter och finns kvar, utom där de nämner en
+      annan markerad person vid id eller fullständigt namn. En anteckning kan
+      ändå nämna någon vid förnamn eller med ord som <em>mamma</em>, så läs den
+      innan du lämnar ut utdraget. Sidan säger det, och du kontrollerar vem som
+      frågar. En markerad närstående utelämnas ur ett annat utdrag och räknas.
     </p>
   </div>
 

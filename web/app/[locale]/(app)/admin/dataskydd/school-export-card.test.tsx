@@ -99,6 +99,13 @@ describe("Hela skolans data", () => {
     expect(download.downloadSchoolExport).toHaveBeenCalledWith("e1", "rastra-skolexport-2026-11-05.zip");
   });
 
+  it("says what a finished file lacks, beside the people it held out", async () => {
+    orders = [order({ heldOut: { people: 0, links: 0, notes: ["Grundschemat (schema/grundschema.csv) skrevs inte (TypeError). Resten av filen är hel."] } })];
+    renderCard();
+    expect(await screen.findByText("Saknas i filen: Grundschemat (schema/grundschema.csv) skrevs inte (TypeError). Resten av filen är hel.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hämta" })).toBeInTheDocument();
+  });
+
   it("offers no fetch for a file that has expired or failed, and says why", async () => {
     orders = [order({ id: "x", status: "FAILED", fetchable: false, byteSize: null, sha256: null, errorClass: "RequesterGone", heldOut: null }), order({ id: "y", fetchable: false, expiresAt: "2026-11-05T08:00:00.000Z" })];
     renderCard();

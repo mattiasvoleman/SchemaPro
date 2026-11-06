@@ -73,10 +73,10 @@ Källa: AttendanceRecords med lektionen ur CalendarLessons.
 | `elev_id` | Elevens id (personer.csv). |
 | `elev_epost` | Elevens e-postadress. |
 | `status` | PRESENT, ABSENT, LATE, EXCUSED eller UNKNOWN (inte registrerad). |
-| `registrerad_av_id` | Id på den som registrerade. Tomt om personen är borttagen eller har skyddad identitet. |
+| `registrerad_av_id` | Id på den som registrerade. Tomt om personen är borttagen eller har skyddad identitet. I ett utdrag om en person med skyddad identitet är den alltid tom. |
 | `registrerad_av_epost` | E-postadress till den som registrerade. |
 | `registrerad` | När registreringen gjordes (UTC). |
-| `anteckning` | Anteckning till raden, om det finns en. |
+| `anteckning` | Anteckning till raden, om det finns en. Tom om den nämner en person med skyddad identitet. |
 
 ## `data/franvaroanmalningar.csv`: Frånvaroanmälningar
 
@@ -88,12 +88,12 @@ Källa: AbsenceReports.
 | `datum` | Dagen frånvaron gäller (ÅÅÅÅ-MM-DD). |
 | `fran` | Klockslag frånvaron börjar (TT:MM:SS), tomt för hela dagen. |
 | `till` | Klockslag frånvaron slutar (TT:MM:SS), tomt för hela dagen. |
-| `typ` | Typ av frånvaro: SICK (sjukdom), APPOINTMENT (besök) eller OTHER. |
-| `elev_id` | Elevens id (personer.csv). |
+| `typ` | Typ av frånvaro: SICK (sjukdom), APPOINTMENT (besök) eller OTHER. Tom i ett registerutdrag om anmälan inte gäller personen utdraget är om. |
+| `elev_id` | Elevens id (personer.csv). Tomt i ett registerutdrag om anmälan inte gäller personen utdraget är om. |
 | `elev_epost` | Elevens e-postadress. |
-| `anmald_av_id` | Id på den som anmälde (vårdnadshavare eller eleven). Tomt om personen har skyddad identitet. |
+| `anmald_av_id` | Id på den som anmälde (vårdnadshavare eller eleven). Tomt om personen har skyddad identitet. I ett utdrag om en person med skyddad identitet är den alltid tom, utom när personen själv anmälde. |
 | `anmald_av_epost` | E-postadress till den som anmälde. |
-| `anteckning` | Anteckning till anmälan, om det finns en. |
+| `anteckning` | Anteckning till anmälan, om det finns en. Tom om den nämner en person med skyddad identitet, och i ett registerutdrag om anmälan inte gäller personen utdraget är om. |
 | `beviljad_ledighet` | ja om skolan beviljat frånvaron som ledighet. |
 | `skapad` | När anmälan gjordes (UTC). |
 
@@ -104,18 +104,18 @@ Källa: LeaveRequests.
 | Kolumn | Innehåll |
 |---|---|
 | `id` | Ansökans id. |
-| `elev_id` | Elevens id (personer.csv). |
+| `elev_id` | Elevens id (personer.csv). Tomt i ett registerutdrag om ansökan inte gäller personen utdraget är om (en lärare som beslutat, en vårdnadshavare som ansökt). |
 | `elev_epost` | Elevens e-postadress. |
-| `begard_av_id` | Id på den som ansökte. Tomt om personen har skyddad identitet. |
+| `begard_av_id` | Id på den som ansökte. Tomt om personen har skyddad identitet. I ett utdrag om en person med skyddad identitet är den alltid tom, utom när personen själv ansökte. |
 | `begard_av_epost` | E-postadress till den som ansökte. |
 | `fran` | Första dagen (ÅÅÅÅ-MM-DD). |
 | `till` | Sista dagen (ÅÅÅÅ-MM-DD). |
-| `skal` | Skälet som ansökan gavs. |
+| `skal` | Skälet som ansökan gavs. Tomt om det nämner en person med skyddad identitet, och i ett registerutdrag om ansökan inte gäller personen utdraget är om. |
 | `status` | PENDING (väntar), APPROVED (beviljad) eller REJECTED (avslagen). |
 | `beslut_av_id` | Id på den som beslutade. Tomt om personen är borttagen eller har skyddad identitet. |
 | `beslut_av_epost` | E-postadress till den som beslutade. |
 | `beslut_tid` | När beslutet fattades (UTC). |
-| `beslut_anteckning` | Beslutets anteckning. |
+| `beslut_anteckning` | Beslutets anteckning. Tom på samma villkor som skälet. |
 | `beslut_som` | I vilken egenskap beslutet fattades: MENTOR eller ADMIN. |
 | `hanvisad_av_id` | Id på mentorn som lämnade vidare till rektor. Tomt om ingen, eller skyddad identitet. |
 | `hanvisad_tid` | När ansökan lämnades vidare (UTC). |
@@ -144,10 +144,10 @@ Källa: PersonalDataAccess.
 |---|---|
 | `tid` | När läsningen gjordes (UTC). |
 | `kanal` | WEB, APP, OTHER, INTEGRATION eller CALENDAR. |
-| `laste_id` | Id på den som läste. Tomt för en integration och för en person med skyddad identitet. |
+| `laste_id` | Id på den som läste. Tomt för en integration och för en person med skyddad identitet. I ett utdrag om en person med skyddad identitet är den tom, utom när personen själv läste: det går att se att och när någon läste, inte vem. |
 | `laste_epost` | E-postadress till den som läste. |
 | `laste_roll` | Läsarens roll när läsningen gjordes. |
-| `huvudmannens_medlem` | Huvudmannens medlem som läste, när det var huvudmannens läsare. |
+| `huvudmannens_medlem` | Huvudmannens medlem som läste, när det var huvudmannens läsare. Tomt i ett utdrag om en person med skyddad identitet. |
 | `nyckel` | Id på den integrationsnyckel som läste, när det var en integration. |
 | `slag` | Slag av uppgift: PEOPLE, ROSTER, ATTENDANCE, ABSENCE_REPORTS, LEAVE_REQUESTS, GUARDIANS, EMPLOYMENT, STAFF_ABSENCES, ACCESS_LOG, SCHEDULE, TEACHING_TIME. |
 | `antal` | Hur många personer läsningen gällde. I ett registerutdrag är det läsningens hela storlek, medan personer bara listar dem utdraget gäller. |
@@ -155,4 +155,4 @@ Källa: PersonalDataAccess.
 
 ## `data/person/`: övriga tabeller
 
-Det Rastra i övrigt har om personen skrivs som en fil per tabell. Kolumnerna är tabellens egna, i tabellens ordning, och id:n är Rastras interna id:n (de som `data/personer.csv` bär). En kolumn som innehåller en nyckel, ett hemligt värde eller en kontrollsumma står som `(dold)`. En tabell utan rader för personen skrivs inte. Tabellerna: `AbsenceWatchFindings`, `AttendanceSharingDecisions`, `AvailabilityConstraints`, `CalendarLessonStudents`, `CalendarLessonTeachers`, `CancellationBatches`, `CoverConfirmations`, `CoverRequestLessons`, `CoverRequestRecipients`, `CoverRequests`, `HuvudmanSchoolEvents`, `HuvudmanSchools`, `LeaveDelegationDecisions`, `LessonLogs`, `LessonSubstituteNotes`, `LocalTimplans`, `MasterLessons`, `MasterLessonStudents`, `PersonProtections`, `PublicTimetableLinks`, `RetentionDecisions`, `RoomBookings`, `RoomLoans`, `ScheduleActivities`, `ScheduleActivityTeachers`, `SchoolExports`, `SharedTeacherMarks`, `Ss12000DutyLinks`, `StudentEnrollments`, `StudentGroupMembers`, `SubstituteAvailabilities`, `SubstitutePoolMembers`, `SupervisionCovers`, `SupervisionShifts`, `TeacherAbsenceCovers`, `TeacherAbsences`, `TeacherDuties`, `TeacherDutySlots`, `TeacherEmploymentLogs`, `TeacherEmploymentPeriods`, `TeacherEmployments`, `TeacherPublicLabels`, `TeacherSubjectQualifications`, `TeacherWorkRules`, `TeachingRequirements`, `TeachingRequirementShares`, `TimetablePublications`, `TimplanStatementPublications`, `TimplanStatements`, `UserRoleChanges`.
+Det Rastra i övrigt har om personen skrivs som en fil per tabell. Kolumnerna är tabellens egna, i tabellens ordning, och id:n är Rastras interna id:n (de som `data/personer.csv` bär). En kolumn som innehåller en nyckel, ett hemligt värde eller en kontrollsumma står som `(dold)`. En tabell utan rader för personen skrivs inte. Tabellerna: `AbsenceWatchFindings`, `AttendanceSharingDecisions`, `AvailabilityConstraints`, `CalendarLessonStudents`, `CalendarLessonTeachers`, `CancellationBatches`, `CoverConfirmations`, `CoverRequestLessons`, `CoverRequestRecipients`, `CoverRequests`, `GuardianStudentHistory`, `HuvudmanSchoolEvents`, `HuvudmanSchools`, `IntegrationApiKeys`, `LeaveDelegationDecisions`, `LessonLogs`, `LessonSubstituteNotes`, `LocalTimplans`, `MasterLessons`, `MasterLessonStudents`, `OptimizationJobs`, `PersonProtectionEvents`, `PersonProtections`, `PublicTimetableLinks`, `RetentionDecisions`, `RoomBookings`, `RoomLoans`, `ScheduleActivities`, `ScheduleActivityTeachers`, `ScheduleCandidateRuns`, `ScheduleChangeLogs`, `ScheduleVersions`, `SchoolExports`, `SharedTeacherMarks`, `Ss12000DutyLinks`, `Ss12000Sources`, `Ss12000SyncRuns`, `StudentEnrollments`, `StudentGroupMembers`, `SubstituteAvailabilities`, `SubstitutePoolMembers`, `SupervisionCovers`, `SupervisionShifts`, `TeacherAbsenceCovers`, `TeacherAbsences`, `TeacherDuties`, `TeacherDutySlots`, `TeacherEmploymentLogs`, `TeacherEmploymentPeriods`, `TeacherEmployments`, `TeacherPublicLabels`, `TeacherSubjectQualifications`, `TeacherWorkRules`, `TeachingRequirements`, `TeachingRequirementShares`, `TimetablePublications`, `TimplanStatementPublications`, `TimplanStatements`, `UserRoleChanges`.

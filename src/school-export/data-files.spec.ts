@@ -39,6 +39,7 @@ function harness(answers: unknown[][], over: Partial<DataEnv> = {}): Harness {
     scope: { ids: null },
     markedOut: [],
     markedNames: [],
+    isolate: false,
     read: (fn) => fn(tx as never),
     named: (kind, ids) => void named.push([kind, [...ids].filter((id): id is string => typeof id === 'string')]),
     held: (file, what, count) => void held.push([file, what, count]),
@@ -55,6 +56,7 @@ async function rowsOf(file: DataFile, env: DataEnv): Promise<string[][]> {
 }
 
 const valuesOf = (sql: Prisma.Sql): unknown[] => sql.values;
+const textOf = (sql: Prisma.Sql): string => sql.strings.join('?').replace(/\s+/g, ' ');
 
 describe('the data files', () => {
   it('have a column for every cell a row yields, in the order the header names them', async () => {
@@ -100,7 +102,7 @@ describe('the data files', () => {
   });
 
   describe('kopplingar.csv', () => {
-    const link = { id: 'l1', guardian: OTHER, guardianEmail: 'g@x', student: PUPIL, studentEmail: 's@x', origin: 'MANUAL', created: 'c' };
+    const link = { id: 'l1', guardian: OTHER, guardianEmail: 'g@x', student: PUPIL, studentEmail: 's@x', origin: 'MANUAL', created: 'c', hid: 0 };
 
     it('writes a link and names both ends, and counts the links held out only when someone is marked', async () => {
       const none = harness([[link]]);
@@ -112,17 +114,34 @@ describe('the data files', () => {
       await rowsOf(KOPPLINGAR, marked.env);
       expect(marked.held).toEqual([['data/kopplingar.csv', 'rows', 3]]);
     });
+
+    it('writes the other end as empty cells, and counts them, where the database hid it for a protected person', async () => {
+      const h = harness([[{ ...link, guardian: null, guardianEmail: null, hid: 1 }], [{ n: 0 }]], { scope: { ids: [PUPIL] }, isolate: true, markedOut: [MARKED] });
+      expect(await rowsOf(KOPPLINGAR, h.env)).toEqual([['l1', '', '', PUPIL, 's@x', 'MANUAL', 'c']]);
+      expect(h.held).toContainEqual(['data/kopplingar.csv', 'blanked', 1]);
+      // The condition: anyone outside the persons asked for is hidden, in the id and the address both.
+      const sql = textOf(h.calls[0]!);
+      expect(sql).toContain('NOT (l."guardianId" = ANY(');
+      expect(sql).toContain('CASE WHEN ((l."guardianId" = ANY(?::uuid[])) OR (NOT (l."guardianId" = ANY(?::uuid[])))) THEN NULL ELSE l."guardianId" END');
+      expect(valuesOf(h.calls[0]!)).toEqual(expect.arrayContaining([[PUPIL], [MARKED]]));
+    });
+
+    it('does not hide the other end in the extract of someone who is not protected', async () => {
+      const h = harness([[link]], { scope: { ids: [PUPIL] }, isolate: false });
+      await rowsOf(KOPPLINGAR, h.env);
+      expect(textOf(h.calls[0]!).split(' FROM ')[0]).not.toContain('NOT (');
+    });
   });
 
   describe('narvaro.csv', () => {
     const mark = {
       date: '2026-10-05', start: '09:00', end: '10:00', subject: 'Matematik', code: null, grp: '7A', lesson: 'L1', lessonStatus: 'SCHEDULED',
-      student: PUPIL, studentEmail: 's@x', status: 'PRESENT', recorder: null, recorderEmail: null, recordedAt: null, note: null,
+      student: PUPIL, studentEmail: 's@x', status: 'PRESENT', recorder: null, recorderEmail: null, recordedAt: null, note: null, hid: 0,
     };
 
     it('reads a school a day at a time, in the school\'s own zone, and counts what it held out and blanked', async () => {
       const h = harness(
-        [[{ tz: 'Europe/Stockholm' }], [{ d: '2026-10-05' }, { d: '2026-10-06' }], [mark], [], [{ held: 4, blanked: 2 }]],
+        [[{ tz: 'Europe/Stockholm' }], [{ d: '2026-10-05' }, { d: '2026-10-06' }], [{ ...mark, hid: 2 }], [], [{ held: 4 }]],
         { markedOut: [MARKED] },
       );
       expect(await rowsOf(NARVARO, h.env)).toEqual([['2026-10-05', '09:00', '10:00', 'Matematik', '', '7A', 'L1', 'SCHEDULED', PUPIL, 's@x', 'PRESENT', '', '', '', '']]);
@@ -130,7 +149,7 @@ describe('the data files', () => {
       expect(h.calls).toHaveLength(5);
       expect(valuesOf(h.calls[2]!)).toEqual(expect.arrayContaining([['2026-10-05'], 'Europe/Stockholm']));
       expect(valuesOf(h.calls[3]!)).toEqual(expect.arrayContaining([['2026-10-06']]));
-      expect(h.held).toEqual([['data/narvaro.csv', 'rows', 4], ['data/narvaro.csv', 'blanked', 2]]);
+      expect(h.held).toEqual([['data/narvaro.csv', 'blanked', 2], ['data/narvaro.csv', 'rows', 4]]);
       expect(h.named).toContainEqual(['ATTENDANCE', [PUPIL]]);
     });
 
@@ -153,18 +172,18 @@ describe('the data files', () => {
 
   describe('franvaroanmalningar.csv and ledigheter.csv', () => {
     it('write the reporter and the decider as empty cells when the database blanked them, and count', async () => {
-      const absence = { id: 'a1', date: '2026-10-05', from: null, to: null, type: 'SICK', student: PUPIL, studentEmail: 's@x', reporter: null, reporterEmail: null, note: 'feber', granted: false, created: 'c', key: '2026-10-05' };
-      const a = harness([[absence], [{ held: 1, blanked: 2 }]], { markedOut: [MARKED] });
+      const absence = { id: 'a1', date: '2026-10-05', from: null, to: null, type: 'SICK', student: PUPIL, studentEmail: 's@x', reporter: null, reporterEmail: null, note: 'feber', granted: false, created: 'c', key: '2026-10-05', hid: 2 };
+      const a = harness([[absence], [{ held: 1 }]], { markedOut: [MARKED] });
       expect(await rowsOf(FRANVARO, a.env)).toEqual([['a1', '2026-10-05', '', '', 'SICK', PUPIL, 's@x', '', '', 'feber', 'nej', 'c']]);
-      expect(a.held).toEqual([['data/franvaroanmalningar.csv', 'rows', 1], ['data/franvaroanmalningar.csv', 'blanked', 2]]);
+      expect(a.held).toEqual([['data/franvaroanmalningar.csv', 'blanked', 2], ['data/franvaroanmalningar.csv', 'rows', 1]]);
 
       const leave = {
         id: 'v1', student: PUPIL, studentEmail: 's@x', requester: OTHER, requesterEmail: 'g@x', start: '2026-11-02', end: '2026-11-03', reason: 'släkt', status: 'APPROVED',
-        decider: null, deciderEmail: null, decidedAt: 'd', decisionNote: null, decidedAs: 'ADMIN', referrer: null, referredAt: null, created: 'c', at: 'x',
+        decider: null, deciderEmail: null, decidedAt: 'd', decisionNote: null, decidedAs: 'ADMIN', referrer: null, referredAt: null, created: 'c', at: 'x', hid: 1,
       };
-      const l = harness([[leave], [{ held: 0, blanked: 1 }]], { markedOut: [MARKED] });
+      const l = harness([[leave], [{ held: 0 }]], { markedOut: [MARKED] });
       expect(await rowsOf(LEDIGHETER, l.env)).toEqual([['v1', PUPIL, 's@x', OTHER, 'g@x', '2026-11-02', '2026-11-03', 'släkt', 'APPROVED', '', '', 'd', '', 'ADMIN', '', '', 'c']]);
-      expect(l.held).toEqual([['data/ledigheter.csv', 'rows', 0], ['data/ledigheter.csv', 'blanked', 1]]);
+      expect(l.held).toEqual([['data/ledigheter.csv', 'blanked', 1], ['data/ledigheter.csv', 'rows', 0]]);
       expect(l.named).toContainEqual(['LEAVE_REQUESTS', [PUPIL]]);
     });
 
@@ -172,7 +191,46 @@ describe('the data files', () => {
       const h = harness([[]], { scope: { ids: [OTHER] } });
       await rowsOf(LEDIGHETER, h.env);
       // The person is the student, the requester, the decider and the one who passed it on.
-      expect(valuesOf(h.calls[0]!).filter((v) => Array.isArray(v) && v.length === 1 && v[0] === OTHER)).toHaveLength(4);
+      const where = textOf(h.calls[0]!).split(' WHERE ')[1]!;
+      for (const column of ['studentId', 'requestedById', 'decidedById', 'referredById']) expect(where).toContain(`l."${column}" = ANY(`);
+      expect(valuesOf(h.calls[0]!).filter((v) => Array.isArray(v) && v.length === 1 && v[0] === OTHER).length).toBeGreaterThanOrEqual(4);
+    });
+
+    it('writes nothing of the pupil in a leave the person only decided, and asks the database for it', async () => {
+      const h = harness([[]], { scope: { ids: [OTHER] } });
+      await rowsOf(LEDIGHETER, h.env);
+      const select = textOf(h.calls[0]!).split(' FROM ')[0]!;
+      // The pupil's id and address, the reason and the decision's note are hidden when the row is not about the persons asked for.
+      expect(select).toContain('CASE WHEN ((l."studentId" = ANY(?::uuid[])) OR ((NOT (l."studentId" = ANY(?::uuid[])) AND NOT (l."studentId" = ANY(?::uuid[]))))) THEN NULL ELSE l."studentId" END');
+      expect(select).toContain('CASE WHEN (NOT (l."studentId" = ANY(?::uuid[])) OR false) THEN NULL ELSE l."reason" END');
+      expect(select).toContain('l."decisionNote"');
+      // The person's own act stays: nobody but a marked person (or, in a protected extract, a stranger) is hidden from the decider's column.
+      expect(select).toContain('CASE WHEN ((l."decidedById" = ANY(?::uuid[])) OR ((NOT (l."studentId" = ANY(?::uuid[])) AND NOT (l."decidedById" = ANY(?::uuid[]))))) THEN NULL ELSE l."decidedById" END');
+    });
+
+    it('does not hide the pupil of a leave in the school\'s own file', async () => {
+      const h = harness([[]]);
+      await rowsOf(LEDIGHETER, h.env);
+      const select = textOf(h.calls[0]!).split(' FROM ')[0]!;
+      expect(select).toContain('CASE WHEN ((l."studentId" = ANY(?::uuid[]))) THEN NULL ELSE l."studentId" END');
+      expect(select).not.toContain('NOT (l."studentId" = ANY');
+      expect(select).toContain('CASE WHEN (false OR false) THEN NULL ELSE l."reason" END');
+    });
+
+    it('empties free text that names a marked person, by id or by full name, in every file that has any', async () => {
+      const h = harness(
+        [[], [{ held: 0 }], [], [{ held: 0 }], [{ tz: 'Europe/Stockholm' }], [{ d: '2026-10-05' }], [], [{ held: 0 }]],
+        { markedOut: [MARKED], markedNames: ['anna ek'] },
+      );
+      await rowsOf(FRANVARO, h.env);
+      await rowsOf(LEDIGHETER, h.env);
+      await rowsOf(NARVARO, h.env);
+      const selects = h.calls.map((sql) => textOf(sql)).filter((text) => text.includes('position('));
+      expect(selects).toHaveLength(3);
+      expect(selects[0]).toContain('a."note"');
+      expect(selects[1]).toContain('l."reason"');
+      expect(selects[2]).toContain('ar."note"');
+      expect(valuesOf(h.calls[0]!)).toEqual(expect.arrayContaining([['anna ek']]));
     });
   });
 

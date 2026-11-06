@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readZip } from '../schedule-exchange/zip';
 import { Audit, buildArchive, partPath, type BuildContext } from './build';
 import type { DataFile } from './data-files';
+import { tableFiles } from './person-tables';
 import { StreamingZip, type ByteSink } from './zip-stream';
 
 class MemorySink implements ByteSink {
@@ -182,5 +183,77 @@ describe('buildArchive notes', () => {
     expect(JSON.parse(quiet.files.get('manifest.json')!.toString('utf8'))).not.toHaveProperty('anmarkningar');
     const noisy = await build({ notes: ['Grundschemat skrevs inte (TypeError).'] });
     expect(JSON.parse(noisy.files.get('manifest.json')!.toString('utf8')).anmarkningar).toEqual(['Grundschemat skrevs inte (TypeError).']);
+  });
+
+  it('says it in the README, first, and on the export\'s own row, and does not name the schema folder when there is none', async () => {
+    const notes: string[] = [];
+    const missing = await build({
+      notes,
+      schema: async () => {
+        notes.push('Grundschemat (schema/grundschema.csv) skrevs inte (TypeError). Resten av filen är hel.');
+        return null;
+      },
+      lists: async () => ({ files: [], linksHeldOut: 0 }),
+    });
+    const readme = missing.files.get('README.txt')!.toString('utf8');
+    expect(readme).toContain('Delar som saknas');
+    expect(readme).toContain('Grundschemat (schema/grundschema.csv) skrevs inte (TypeError)');
+    expect(readme.indexOf('Delar som saknas')).toBeLessThan(readme.indexOf('Vad som finns var'));
+    expect(readme).not.toContain('schema/      Grundschemat som en tabell');
+    expect(missing.result.heldOut.notes).toEqual(notes);
+
+    const whole = await build({ schema: async () => ({ path: 'schema/grundschema.csv', body: Buffer.from('s\r\n') }), lists: async () => ({ files: [], linksHeldOut: 0 }) });
+    const complete = whole.files.get('README.txt')!.toString('utf8');
+    expect(complete).toContain('schema/      Grundschemat som en tabell');
+    expect(complete).not.toContain('Delar som saknas');
+    expect(whole.result.heldOut).not.toHaveProperty('notes');
+  });
+});
+
+describe('buildArchive for a protected person', () => {
+  const SUBJECT = '22222222-2222-4222-8222-222222222222';
+  const STRANGER = '33333333-3333-4333-8333-333333333333';
+  const MARKED_OTHER = '44444444-4444-4444-8444-444444444444';
+
+  /** A data file that says what it was told about the persons it may name. */
+  const probing = (seen: Array<{ isolate: boolean; markedOut: readonly string[] }>): DataFile => ({
+    ...counting('data/a.csv', 0),
+    async *rows(env) {
+      seen.push({ isolate: env.isolate, markedOut: env.markedOut });
+    },
+  });
+
+  it('tells the data files to name nobody else, and the README says so, only when the person asked for is protected', async () => {
+    const seen: Array<{ isolate: boolean; markedOut: readonly string[] }> = [];
+    const protectedPerson = await build({ kind: 'person', marked: [SUBJECT, MARKED_OTHER], exempt: [SUBJECT], scope: { ids: [SUBJECT] }, dataFiles: [probing(seen)] });
+    const unprotected = await build({ kind: 'person', marked: [MARKED_OTHER], exempt: [SUBJECT], scope: { ids: [SUBJECT] }, dataFiles: [probing(seen)] });
+    const school = await build({ marked: [MARKED_OTHER], dataFiles: [probing(seen)] });
+    expect(seen).toEqual([
+      { isolate: true, markedOut: [MARKED_OTHER] },
+      { isolate: false, markedOut: [MARKED_OTHER] },
+      { isolate: false, markedOut: [MARKED_OTHER] },
+    ]);
+    expect(protectedPerson.files.get('README.txt')!.toString('utf8')).toContain('ingen annan person pekas ut i det');
+    expect(unprotected.files.get('README.txt')!.toString('utf8')).not.toContain('ingen annan person pekas ut i det');
+    expect(unprotected.files.get('README.txt')!.toString('utf8')).toContain('Andra personer i utdraget');
+    expect(school.files.get('README.txt')!.toString('utf8')).not.toContain('Andra personer i utdraget');
+  });
+
+  it('empties, in the table files, every cell that carries another user of the school, whatever the column, and counts them', async () => {
+    const table = tableFiles().find((file) => file.table === 'ScheduleChangeLogs')!;
+    const tx = {
+      $queryRaw: jest.fn(async (sql: { strings?: string[] } | TemplateStringsArray) => {
+        const text = Array.isArray(sql) ? (sql as TemplateStringsArray).join('?') : ((sql as { strings: string[] }).strings ?? []).join('?');
+        if (text.includes('FROM "Users"')) return [{ id: SUBJECT }, { id: STRANGER }, { id: MARKED_OTHER }];
+        return [{ j: JSON.stringify({ id: 'r1', actorId: STRANGER, note: `flyttade ${STRANGER} till rum 4`, userId: SUBJECT, lessonId: '55555555-5555-4555-8555-555555555555' }) }];
+      }),
+    };
+    const { files, result } = await build({
+      kind: 'person', marked: [SUBJECT, MARKED_OTHER], exempt: [SUBJECT], scope: { ids: [SUBJECT] }, dataFiles: [], tables: [table],
+      read: (fn) => fn(tx as never),
+    });
+    const csv = files.get(table.path)!.toString('utf8');
+    expect(csv).toBe('﻿id;actorId;note;userId;lessonId\r\nr1;;;22222222-2222-4222-8222-222222222222;55555555-5555-4555-8555-555555555555\r\n');
+    expect(result.files.find((file) => file.path === table.path)?.blankedCells).toBe(2);
   });
 });

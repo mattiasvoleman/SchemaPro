@@ -51,9 +51,14 @@ class MemorySink implements ByteSink {
  * are in it too, and a related person with a protected identity is held out
  * and counted. The person the extract is about is never held out of their own
  * extract, even when they are marked: it is their data. But an extract about a
- * marked person carries no one else, since whoever receives it may be exactly
- * the person the protection is from; the administrator is told, and checks who
- * asks.
+ * marked person carries no one else: no related person, and no id or address of
+ * anyone but the person in any file (build.ts, data-files.ts, person-tables.ts),
+ * since whoever receives it may be exactly the person the protection is from;
+ * the administrator is told, and checks who asks.
+ *
+ * Whoever the extract is about, a row that is not about them (a leave a teacher
+ * decided, an absence a guardian reported) carries the act and not the pupil's
+ * details: GDPR art. 15.4, the copy must not harm anyone else's rights.
  *
  * Built in the request, as the administrator, under row-level security. It is
  * one person's rows, tens of thousands at most. The read is recorded in the
@@ -108,7 +113,8 @@ export class SubjectAccessService {
       scope: { ids },
       marked,
       exempt: [personId],
-      markedNames: head.marks.map((row) => `${row.first} ${row.last}`.trim().toLowerCase()).filter((name) => name.includes(' ')),
+      // The person asked for is not looked for in free text: a note about them is theirs.
+      markedNames: head.marks.filter((row) => row.id !== personId).map((row) => `${row.first} ${row.last}`.trim().toLowerCase()).filter((name) => name.includes(' ')),
       read: (fn) => this.prisma.withRls(user, fn),
       checkpoint: async () => undefined,
       dataFiles: DATA_FILES,

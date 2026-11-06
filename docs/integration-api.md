@@ -1255,7 +1255,14 @@ school may order three times a day. It holds:
   `manifest.json` (rows, size and SHA-256 per file, and what was held out).
 
 Persons with a protected identity (skyddad identitet) are not in it, and
-neither are rows about them; the manifest counts what was held out.
+neither are rows about them; the manifest counts what was held out. A free-text
+cell (an attendance or absence note, a leave's reason or decision note, a
+notice) that names a protected person by id or by full name is empty and
+counted; a first name or a nickname is not found, so free text is not
+guaranteed to be free of them. A part the job could not make (the base timetable,
+or a school with no active year has none) does not stop the rest: it is said in
+`manifest.json` (`anmarkningar`), first in `README.txt` (which then does not name
+the folder), and on the order (`heldOut.notes`, shown on the card).
 Measured on 1 000 pupils with a year of attendance (1.14 million marks): 1.18
 million rows, a 33 MB zip, built in under a minute, in a process whose heap stays
 about 40 MB above idle (`scripts/bench/school-export.ts`).
@@ -1265,9 +1272,25 @@ files for one person's rows, optionally with their guardians or children, and on
 file per table that holds a row about a person (`data/person/`). Which tables
 those are is the removal inventory's (`src/common/removal-inventory.ts`): a test
 fails when a table is added there and not decided in
-`src/school-export/person-tables.ts`. An extract about a protected person holds
-no one else. What the person's own account holds and no administrator can read
-(notice settings, push devices, calendar feeds) is named in the README.
+`src/school-export/person-tables.ts`. The tables that keep a person's id without
+a key to Users (the history of cut guardian links and of marks, the acts of a
+school's integrations, snapshots) are listed in `WITHOUT_KEY` there, and
+`scripts/test/probe-school-export.ts` (k-i1) holds the list to the catalogue: a
+column named like a person with no key to Users that nobody decided fails the
+probe. A table left out on purpose says why in the README.
+
+The extract is one person's, not the people around them (GDPR art. 15.4). In a
+row that is not about the person (a leave a teacher decided, an absence a
+guardian reported) the pupil's id and address, the leave's reason, the
+absence's kind and the notes are empty, and what stays is the person's own
+act. **An extract about a protected person names no one else:** every id and
+address of anyone but the person (the guardian in a link, whoever recorded,
+reported, applied, decided or read) is empty in every file, in `data/` and in
+`data/person/`, and counted in the manifest; no related person comes along. The
+probe searches every file of such an extract for the id and the address of each
+other user of the school, with and without the guardians asked for. What the
+person's own account holds and no administrator can read (notice settings, push
+devices, calendar feeds) is named in the README.
 
 ## Security model
 

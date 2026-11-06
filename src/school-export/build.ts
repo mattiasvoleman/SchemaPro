@@ -5,7 +5,7 @@ import { CSV_BOM, csvLine } from './csv-writer';
 import type { DataEnv, DataFile, DataScope } from './data-files';
 import { formatDocument, readmeText } from './docs';
 import type { ListFile } from './lists';
-import { cellOf, readTable, type TableFile } from './person-tables';
+import { cellOf, excludedTables, readTable, type CellRules, type TableFile } from './person-tables';
 import {
   FORMAT_VERSION,
   ROWS_PER_PART,
@@ -25,7 +25,9 @@ import { StreamingZip, type EntryWriter } from './zip-stream';
  * Order in the zip: README.txt and FORMAT.md first, so a reader who opens the
  * file finds what it is before the data; then the lists, the schedule and the
  * data files; manifest.json last, because it holds what the others turned out
- * to hold (rows, bytes, SHA-256, what was held out).
+ * to hold (rows, bytes, SHA-256, what was held out). The lists and the schedule
+ * are made before the README is written, since they are held in memory anyway
+ * and the README must not name a part that could not be made.
  *
  * Memory: a text file the lists make is held (they are small: a school's
  * people are thousands of rows); a data file is a generator written as it is
@@ -184,7 +186,21 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
   const exempt = new Set(ctx.exempt);
   const markedOut = ctx.marked.filter((id) => !exempt.has(id));
   const subjectIsMarked = ctx.exempt.some((id) => ctx.marked.includes(id));
+  // The extract of a protected person names nobody else (data-files.ts): the receiver may be the person the protection is from.
+  const isolate = ctx.kind === 'person' && subjectIsMarked;
   const files: ManifestFile[] = [];
+
+  // The parts only a school has are made first and written after the README, which says which of them there are.
+  let linksHeldOut = 0;
+  let lists: ListFile[] = [];
+  if (ctx.lists) {
+    const built = await ctx.lists();
+    linksHeldOut = built.linksHeldOut;
+    lists = built.files;
+    await ctx.checkpoint();
+  }
+  const schema = ctx.schema ? await ctx.schema() : null;
+  if (ctx.schema) await ctx.checkpoint();
 
   files.push(
     await writeText(
@@ -196,33 +212,27 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
         kind: ctx.kind,
         markedPeople: ctx.kind === 'person' ? 0 : markedOut.length,
         subjectIsMarked,
+        hasSchema: schema !== null,
+        notes: ctx.notes ?? [],
+        excluded: ctx.kind === 'person' ? excludedTables() : [],
       }),
     ),
   );
   files.push(await writeText(zip, 'FORMAT.md', formatDocument(ctx.dataFiles, ctx.tables ?? [])));
   await ctx.checkpoint();
 
-  let linksHeldOut = 0;
-  if (ctx.lists) {
-    const built = await ctx.lists();
-    linksHeldOut = built.linksHeldOut;
-    for (const list of built.files) {
-      const written = await writeText(zip, list.path, list.content);
-      files.push({ ...written, rows: list.rows });
-    }
-    await ctx.checkpoint();
+  for (const list of lists) {
+    const written = await writeText(zip, list.path, list.content);
+    files.push({ ...written, rows: list.rows });
   }
-  if (ctx.schema) {
-    const schema = await ctx.schema();
-    if (schema) files.push(await writeText(zip, schema.path, schema.body));
-    await ctx.checkpoint();
-  }
+  if (schema) files.push(await writeText(zip, schema.path, schema.body));
 
   const env: DataEnv = {
     schoolId: ctx.schoolId,
     scope: ctx.scope,
     markedOut,
     markedNames: ctx.markedNames,
+    isolate,
     read: ctx.read,
     named: (kind, ids) => audit.named(kind, ids),
     held: (file, what, count) => audit.held(file, what, count),
@@ -241,7 +251,19 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
   if (ctx.tables && ctx.scope.ids !== null) {
     const ids = [...ctx.scope.ids];
     const idSet = new Set(ids);
-    const hidden = new Set(markedOut);
+    // In a protected person's extract every other user of the school is a stranger to it: their ids are not written.
+    const strangers = isolate
+      ? new Set(
+          (
+            await ctx.read((tx) =>
+              tx.$queryRaw<Array<{ id: string }>>`SELECT "id"::text AS id FROM "Users" WHERE "schoolId" = ${ctx.schoolId}::uuid`,
+            )
+          )
+            .map((row) => row.id)
+            .filter((id) => !idSet.has(id)),
+        )
+      : undefined;
+    const rules: CellRules = { markedOut: new Set(markedOut), markedNames: ctx.markedNames, strangers };
     for (const table of ctx.tables) {
       const rows = await ctx.read((tx) => readTable(tx, ctx.schoolId, table, ids));
       if (rows.length === 0) continue;
@@ -250,7 +272,7 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
       const lines = rows.map((row) =>
         csvLine(
           columns.map((column) => {
-            const made = cellOf(column, row[column], hidden);
+            const made = cellOf(column, row[column], rules);
             if (made.held) emptied += 1;
             return made.text;
           }),
@@ -267,7 +289,11 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
   }
 
   // README and FORMAT are the first two entries; "rows" is meaningful for the tables only.
-  const heldOut: HeldOutSummary = { people: ctx.kind === 'person' ? 0 : markedOut.length, links: audit.heldRows.get('data/kopplingar.csv') ?? linksHeldOut };
+  const heldOut: HeldOutSummary = {
+    people: ctx.kind === 'person' ? 0 : markedOut.length,
+    links: audit.heldRows.get('data/kopplingar.csv') ?? linksHeldOut,
+    ...(ctx.notes && ctx.notes.length > 0 ? { notes: [...ctx.notes] } : {}),
+  };
   const manifest = JSON.stringify(
     {
       format: 'rastra-skolexport',

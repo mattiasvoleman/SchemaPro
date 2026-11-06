@@ -7425,6 +7425,7 @@
     "expired": "has expired",
     "failed": "Failed ({reason}). Order again.",
     "heldOut": "{count, plural, one {# person with a protected identity is not in the file.} other {# persons with a protected identity are not in the file.}}",
+    "partMissing": "Missing from the file: {note}",
     "checksum": "SHA-256 {sha}",
     "fetch": "Fetch",
     "fetching": "Fetching…",

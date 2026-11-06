@@ -30,8 +30,20 @@ import { STUDENT_BELOW, STUDENT_KEYS } from '../common/removal-inventory';
  *     in the app. The removal's dialog says the same of them.
  *   - EXCLUDED, with its reason.
  *
+ * THE TABLES WITHOUT A KEY. A table that keeps a person's id without a foreign
+ * key to Users (history that has to outlive the person, snapshots, the logs of
+ * a school's own integrations) is not in the removal's inventory, since the
+ * catalogue does not name it, and an extract that went by the inventory alone
+ * would leave it out while saying "all". WITHOUT_KEY lists those columns, each
+ * table decided the same four ways, and scripts/test/probe-school-export.ts
+ * (k-i0) holds the list to the catalogue: a uuid column named like a person
+ * (…UserId, …TeacherId, …StudentId, …GuardianId, …ById, actorId) with no key to
+ * Users that is not decided here fails the probe.
+ *
  * Skyddad identitet: a cell that holds a marked person's id (other than the
- * person the extract is about) is emptied, and counted in the manifest.
+ * person the extract is about), or names one in free text, is emptied and
+ * counted in the manifest. In the extract of a protected person every cell that
+ * holds the id of any other user of the school is.
  */
 
 export type PersonTableDecision =
@@ -43,6 +55,8 @@ export type PersonTableDecision =
 export interface PersonDump {
   /** Columns holding a person: a row is the person's when any of them is one asked for. */
   columns: readonly string[];
+  /** Columns of json holding person ids: a row is the person's when the json names one asked for. */
+  inside?: readonly string[];
   /** Rows that belong to a person through a parent row: [column, parent table, parent's person column]. */
   through?: ReadonlyArray<readonly [string, string, string]>;
   kind: AccessKind;
@@ -52,7 +66,8 @@ const dump = (
   columns: readonly string[],
   kind: AccessKind = 'PEOPLE',
   through: PersonDump['through'] = [],
-): PersonTableDecision => ({ dump: { columns, kind, through } });
+  inside: readonly string[] = [],
+): PersonTableDecision => ({ dump: { columns, kind, through, inside } });
 
 const staff = (columns: readonly string[], through?: PersonDump['through']) => dump(columns, 'EMPLOYMENT', through);
 const away = (columns: readonly string[], through?: PersonDump['through']) => dump(columns, 'STAFF_ABSENCES', through);
@@ -79,7 +94,7 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   TimplanStatements: dump(['studentId'], 'TEACHING_TIME'),
 
   // Anyone.
-  UserRoleChanges: dump(['userId']),
+  UserRoleChanges: dump(['userId', 'actorId']),
   PersonProtections: dump(['userId']),
   RoomBookings: dump(['bookedById', 'decidedById']),
   RoomLoans: dump(['decidedById', 'requestedById']),
@@ -90,7 +105,7 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   // Staff: the post, the duties, the lessons and the cover.
   TeacherEmployments: staff(['userId']),
   TeacherEmploymentPeriods: staff(['userId']),
-  TeacherEmploymentLogs: staff(['userId']),
+  TeacherEmploymentLogs: staff(['userId', 'actorId']),
   TeacherDuties: staff(['userId']),
   TeacherDutySlots: staff([], [
     ['teacherDutyId', 'TeacherDuties', 'userId'],
@@ -108,7 +123,7 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   SupervisionShifts: away(['userId']),
   SupervisionCovers: away(['substituteId', 'decidedByUserId', 'absentTeacherId'], [['shiftId', 'SupervisionShifts', 'userId']]),
   TeacherAbsences: away(['userId', 'createdByUserId', 'withdrawnByUserId']),
-  TeacherAbsenceCovers: away(['decidedByUserId', 'substituteId', 'absentTeacherId']),
+  TeacherAbsenceCovers: dump(['decidedByUserId', 'substituteId', 'absentTeacherId'], 'STAFF_ABSENCES', [], ['removedTeachers']),
   SubstitutePoolMembers: away(['userId', 'createdByUserId']),
   SubstituteAvailabilities: away(['userId']),
   CoverRequestRecipients: away(['userId']),
@@ -131,6 +146,23 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   LessonLogs: dump(['writtenById']),
   LessonSubstituteNotes: dump(['writtenById']),
 
+  // Tables that keep a person's id without a key to Users (WITHOUT_KEY): history, logs and the acts of a school's integrations.
+  GuardianStudentHistory: dump(['guardianId', 'studentId', 'unlinkedById'], 'GUARDIANS'),
+  PersonProtectionEvents: dump(['userId', 'actorId']),
+  IntegrationApiKeys: dump(['createdById']),
+  OptimizationJobs: dump(['actorId']),
+  ScheduleCandidateRuns: dump(['createdById']),
+  ScheduleChangeLogs: dump(['actorId']),
+  ScheduleVersions: dump(['createdById']),
+  Ss12000Sources: dump(['createdById']),
+  Ss12000SyncRuns: dump(['appliedById', 'requestedById']),
+  IntegrationKeyWebhookSecrets: { excluded: 'Bär bara en krypterad hemlighet och vem som satte den. Ingen administratör kan läsa tabellen och hemligheten lämnas aldrig ut.' },
+  Ss12000SourceSecrets: { excluded: 'Bär bara en krypterad hemlighet och vem som satte den. Ingen administratör kan läsa tabellen och hemligheten lämnas aldrig ut.' },
+  PublishedLessons: {
+    excluded:
+      'En kopia av lektionerna så som de såg ut vid varje publicering (lärare, grupper och elever per lektion). Personens lektioner står i MasterLessons, MasterLessonStudents och närvaron; kopian tillför inga uppgifter om personen utöver vilka versioner som publicerats.',
+  },
+
   // The person's own account: no administrator reads it.
   NotificationOptOuts: { account: 'noticeSettings' },
   DevicePushTokens: { account: 'pushDevices' },
@@ -147,9 +179,46 @@ export const ACCOUNT_KINDS: Readonly<Record<string, string>> = {
   calendarFeeds: 'Kalenderflöden som personen har skapat',
 };
 
+/**
+ * The person columns that have no foreign key to Users, by table: history that outlives the person, snapshots, and the
+ * acts of a school's integrations. Every table here is decided in SUBJECT_ACCESS, and every column of a table that is
+ * dumped is one that table's dump reads. Held to the catalogue by scripts/test/probe-school-export.ts (k-i0).
+ */
+export const WITHOUT_KEY: Readonly<Record<string, readonly string[]>> = {
+  GuardianStudentHistory: ['guardianId', 'studentId', 'unlinkedById'],
+  IntegrationApiKeys: ['createdById'],
+  IntegrationKeyWebhookSecrets: ['setById'],
+  OptimizationJobs: ['actorId'],
+  PersonProtectionEvents: ['actorId', 'userId'],
+  PublishedLessons: ['coTeacherId', 'studentIds', 'teacherId'],
+  ScheduleCandidateRuns: ['createdById'],
+  ScheduleChangeLogs: ['actorId'],
+  ScheduleVersions: ['createdById'],
+  Ss12000SourceSecrets: ['setById'],
+  Ss12000Sources: ['createdById'],
+  Ss12000SyncRuns: ['appliedById', 'requestedById'],
+  TeacherAbsenceCovers: ['removedTeachers'],
+  TeacherEmploymentLogs: ['actorId'],
+  UserRoleChanges: ['actorId'],
+};
+
+/** Columns the probe's catalogue scan finds by name that do not hold a user of the school, and why. */
+export const NOT_A_USER: Readonly<Record<string, string>> = {
+  'HuvudmanApiKeys.createdById': 'a member of the huvudman (HuvudmanMembers)',
+  'HuvudmanSchoolRequests.requestedById': 'a member of the huvudman (HuvudmanMembers)',
+  'HuvudmanSchools.requestedById': 'a member of the huvudman (HuvudmanMembers)',
+};
+
 /** Every table the removal's inventory names: a key to Users, or a table a level down from one. */
 export function inventoriedTables(): string[] {
   return [...new Set([...STUDENT_KEYS.map((key) => key.table), ...STUDENT_BELOW.map((key) => key.table)])].sort();
+}
+
+/** The tables an extract leaves out, with the reason it states. */
+export function excludedTables(): Array<{ table: string; reason: string }> {
+  return Object.entries(SUBJECT_ACCESS)
+    .flatMap(([table, decision]) => ('excluded' in decision ? [{ table, reason: decision.excluded }] : []))
+    .sort((a, b) => a.table.localeCompare(b.table));
 }
 
 /** A table an extract dumps, with its file. */
@@ -180,6 +249,9 @@ export async function readTable(tx: PrismaClient, schoolId: string, file: TableF
       ([column, parent, parentColumn]) =>
         Prisma.sql`t.${identifier(column)} IN (SELECT p."id" FROM ${identifier(parent)} p WHERE p.${identifier(parentColumn)} = ANY(${list}))`,
     ),
+    ...(file.dump.inside ?? []).map(
+      (column) => Prisma.sql`EXISTS (SELECT 1 FROM unnest(${[...ids]}::text[]) i WHERE t.${identifier(column)}::text LIKE '%' || i || '%')`,
+    ),
   ];
   const rows = await tx.$queryRaw<Array<{ j: string }>>(
     Prisma.sql`SELECT to_json(t)::text AS j FROM ${identifier(file.table)} t
@@ -189,15 +261,35 @@ export async function readTable(tx: PrismaClient, schoolId: string, file: TableF
   return rows.map((row) => JSON.parse(row.j) as Record<string, unknown>);
 }
 
-/** A cell of a dumped row. A token, secret or hash is hidden; a marked person's id is emptied. */
-export function cellOf(column: string, value: unknown, markedOut: ReadonlySet<string>): { text: string; held: boolean } {
+/** What a dumped cell must not carry. */
+export interface CellRules {
+  /** Marked persons the extract is not about: their ids are never written. */
+  markedOut: ReadonlySet<string>;
+  /** Their full names, lower-cased: free text that names one is not written. */
+  markedNames: readonly string[];
+  /** The extract of a protected person: the id of any user of the school who is not asked for is not written. */
+  strangers?: ReadonlySet<string>;
+}
+
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+function carries(value: string, rules: CellRules): boolean {
+  for (const id of rules.markedOut) if (value.includes(id)) return true;
+  if (rules.markedNames.length > 0) {
+    const lower = value.toLowerCase();
+    for (const name of rules.markedNames) if (name !== '' && lower.includes(name)) return true;
+  }
+  if (rules.strangers && rules.strangers.size > 0) {
+    for (const found of value.match(UUID) ?? []) if (rules.strangers.has(found.toLowerCase())) return true;
+  }
+  return false;
+}
+
+/** A cell of a dumped row. A token, secret or hash is hidden; so is a cell that carries a person the extract must not. */
+export function cellOf(column: string, value: unknown, rules: CellRules): { text: string; held: boolean } {
   if (value === null || value === undefined) return { text: '', held: false };
   if (SECRET.test(column)) return { text: '(dold)', held: false };
-  if (typeof value === 'string') return markedOut.has(value) ? { text: '', held: true } : { text: value, held: false };
-  if (typeof value === 'object') {
-    const text = JSON.stringify(value);
-    for (const id of markedOut) if (text.includes(id)) return { text: '', held: true };
-    return { text, held: false };
-  }
-  return { text: String(value), held: false };
+  const text = typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value);
+  if (typeof value !== 'number' && typeof value !== 'boolean' && carries(text, rules)) return { text: '', held: true };
+  return { text, held: false };
 }

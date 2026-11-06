@@ -7425,6 +7425,7 @@
     "expired": "har gått ut",
     "failed": "Misslyckades ({reason}). Beställ igen.",
     "heldOut": "{count, plural, one {# person med skyddad identitet finns inte i filen.} other {# personer med skyddad identitet finns inte i filen.}}",
+    "partMissing": "Saknas i filen: {note}",
     "checksum": "SHA-256 {sha}",
     "fetch": "Hämta",
     "fetching": "Hämtar…",

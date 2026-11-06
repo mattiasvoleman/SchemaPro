@@ -27,7 +27,7 @@ export interface SchoolExportOrder {
   byteSize: number | null;
   sha256: string | null;
   files: Array<{ path: string; rows: number; bytes: number }> | null;
-  heldOut: { people: number; links: number } | null;
+  heldOut: { people: number; links: number; notes?: string[] } | null;
   errorClass: string | null;
   requestedBy: { id: string; name: string } | null;
   fetchable: boolean;

@@ -224,7 +224,10 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
       // data even when Schema som fil cannot write this year's table, so a failure here is said in the manifest and the
       // build goes on (and is logged, by class).
       schema: async () => {
-        if (!activeYearId) return null;
+        if (!activeYearId) {
+          ctx.notes!.push('Skolan har inget aktivt läsår, så det finns inget grundschema (schema/grundschema.csv).');
+          return null;
+        }
         try {
           const file = await this.exchange.export(activeYearId, 'TABLE_CSV', user);
           return { path: 'schema/grundschema.csv', body: file.body };

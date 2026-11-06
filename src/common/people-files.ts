@@ -60,7 +60,8 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
   'POST /api/v1/school-exports/subject-access': {
     rule: 'ONE_PERSON',
     why:
-      'Registerutdrag (GDPR art. 15): one person\'s own data, the person themselves included if marked, and no other marked person (held out and counted).',
+      'Registerutdrag (GDPR art. 15): one person\'s own data, the person themselves included if marked, and no other marked person (held out and counted). ' +
+      'The extract of a marked person names nobody else, by id or address, in any file; any extract leaves out the pupil\'s part of a row that is not about the person.',
   },
   'GET /api/v1/staffing/scb-file': {
     rule: 'KEEPS_AND_SAYS',

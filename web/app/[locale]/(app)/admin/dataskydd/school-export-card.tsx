@@ -116,6 +116,11 @@ function Orders({ timeZone }: { timeZone: string }) {
                 ) : null}
                 {row.status === "FAILED" ? <p className="text-sm text-destructive">{t("failed", { reason: row.errorClass ?? "" })}</p> : null}
                 {row.heldOut && row.heldOut.people > 0 ? <p className="text-sm">{t("heldOut", { count: row.heldOut.people })}</p> : null}
+                {row.heldOut?.notes?.map((note) => (
+                  <p key={note} className="text-sm font-medium text-warning-foreground dark:text-warning" role="note">
+                    {t("partMissing", { note })}
+                  </p>
+                ))}
                 {row.status === "READY" && row.sha256 ? <p className="break-all font-mono text-xs text-muted-foreground">{t("checksum", { sha: row.sha256 })}</p> : null}
               </div>
               <div className="flex gap-2">

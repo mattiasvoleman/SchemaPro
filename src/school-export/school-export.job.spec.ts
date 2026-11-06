@@ -82,7 +82,8 @@ describe('SchoolExportJob', () => {
     expect(chunks).toBe(1);
     expect(sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.parse(files).map((f: { path: string }) => f.path)).toEqual(expect.arrayContaining(['README.txt', 'FORMAT.md', 'data/personer.csv', 'data/laslogg.csv']));
-    expect(JSON.parse(heldOut)).toEqual({ people: 0, links: 0 });
+    // No active year: no grundschema, and the file says so beside the people and links it held out.
+    expect(JSON.parse(heldOut)).toEqual({ people: 0, links: 0, notes: ['Skolan har inget aktivt läsår, så det finns inget grundschema (schema/grundschema.csv).'] });
     expect(JSON.parse(readAbout)).toEqual({});
     expect(keep).toBe('72 hours');
     // Every call names the attempt it holds the export by, so a builder taken over cannot write into the second's file.
