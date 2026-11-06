@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
-import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
@@ -96,6 +96,13 @@ function open(extra: Partial<AlarmSummary> = {}, list = calls()) {
   world.details.set(one.alarm.id, one);
   return one;
 }
+
+// This page renders whole lists of pupils, and on a loaded CI runner a find or a waitFor here has
+// taken over a second (granskning-270: "takes two taps to start a live alarm" failed at 2,15 s).
+// The library's 1 s default is the wrong bound for this file; restored after it.
+const defaultAsyncTimeout = 1000;
+beforeAll(() => configure({ asyncUtilTimeout: 5000 }));
+afterAll(() => configure({ asyncUtilTimeout: defaultAsyncTimeout }));
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -853,6 +860,8 @@ describe("the group of pupils on no lesson", () => {
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     });
 
+    // 450 rows, more than one request's 400, rendered in jsdom: about 5 s on a loaded runner, so the
+    // file's 5 s default is not this test's limit (main's CI run 42205039683 timed out at it).
     it("sends a group of more than a request holds in as many requests as it takes, and no mark twice", async () => {
       const many = Array.from({ length: 450 }, (_, index) => pupil(`p${index}`, `Elev${String(index).padStart(3, "0")}`, "Test"));
       open({}, [...calls(), noLessonCall("c-none", many)]);
@@ -861,12 +870,12 @@ describe("the group of pupils on no lesson", () => {
       await groupRow(user);
       await user.click(screen.getByRole("button", { name: "Ingen av de 450 oprickade är i huset" }));
       await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ja, jag har inte sett dem" }));
-      await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(2), { timeout: 10_000 });
       const sizes = post.mock.calls.map((call) => call[1].marks.length);
       expect(sizes).toEqual([400, 50]);
       const ids = new Set(post.mock.calls.flatMap((call) => call[1].marks.map((mark: { studentId: string }) => mark.studentId)));
       expect(ids.size).toBe(450);
-    });
+    }, 30_000);
 
     it("says in words that it was refused, and keeps the question open for another try", async () => {
       open({}, [...calls(), nobody()]);
