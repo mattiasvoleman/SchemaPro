@@ -47,7 +47,7 @@ const NAMES = TABLES.join("|");
 /**
  * The three ways a source reads a table from PostgREST: `.from("Users")`, the paging helper
  * `selectAll<Person>("Users", …)` in lib/queries.ts, and an embed in another table's select —
- * `student:Users!AttendanceRecords_studentId_fkey(…)` reads Users rows just the same.
+ * `student:Users!AttendanceRecords_studentId_schoolId_fkey(…)` reads Users rows just the same.
  */
 const PATTERNS = [
   new RegExp(String.raw`\.from\(\s*["'\x60](${NAMES})["'\x60]\s*\)`, "g"),
@@ -132,7 +132,7 @@ describe("the läslogg's tables are read through the gateway", () => {
       'supabase.from("LeaveRequests").select("id")',
       "supabase\n  .from('GuardianStudents')\n  .select('id')",
       'selectAll<Person>(\n  "Users",\n  "id, firstName",\n  "lastName",\n)',
-      '.select("studentId, student:Users!AttendanceRecords_studentId_fkey!inner(studentGroupId)")',
+      '.select("studentId, student:Users!AttendanceRecords_studentId_schoolId_fkey!inner(studentGroupId)")',
       '.select("id, members:StudentGroupMembers(studentId)")',
       'supabase.from("TeacherEmployments").select("userId, employmentPercent")',
     ];

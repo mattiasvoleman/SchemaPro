@@ -375,7 +375,7 @@ describe('CalendarService', () => {
         endsAt: new Date('2026-08-10T10:00:00.000Z'),
         status: 'SCHEDULED',
         teachers: {
-          create: [{ schoolId: SCHOOL_ID, teacherId: TEACHER_ID, role: 'LEAD' }],
+          create: [{ teacherId: TEACHER_ID, role: 'LEAD' }],
         },
       });
       // Empty relations are omitted entirely, not created as empty lists.
@@ -1643,7 +1643,7 @@ describe('CalendarService', () => {
       expect(data.endsAt).toEqual(new Date('2026-08-10T08:00:00.000Z'));
     });
 
-    it('materializes co-teacher, extra groups and participants with the tenant stamped', async () => {
+    it('materializes co-teacher, extra groups and participants, the tenant taken from the lesson they hang on', async () => {
       arrangePublish([
         template({
           coTeacherId: CO_TEACHER_ID,
@@ -1660,15 +1660,15 @@ describe('CalendarService', () => {
       const { data } = tx.calendarLesson.create.mock.calls[0][0];
       expect(data.teachers).toEqual({
         create: [
-          { schoolId: SCHOOL_ID, teacherId: TEACHER_ID, role: 'LEAD' },
-          { schoolId: SCHOOL_ID, teacherId: CO_TEACHER_ID, role: 'ASSISTANT' },
+          { teacherId: TEACHER_ID, role: 'LEAD' },
+          { teacherId: CO_TEACHER_ID, role: 'ASSISTANT' },
         ],
       });
       expect(data.extraGroups).toEqual({
-        create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
+        create: [{ studentGroupId: EXTRA_GROUP_ID }],
       });
       expect(data.participants).toEqual({
-        create: [{ schoolId: SCHOOL_ID, studentId: STUDENT_ID }],
+        create: [{ studentId: STUDENT_ID }],
       });
     });
 
@@ -1682,7 +1682,7 @@ describe('CalendarService', () => {
 
       const { data } = tx.calendarLesson.create.mock.calls[0][0];
       expect(data.teachers).toEqual({
-        create: [{ schoolId: SCHOOL_ID, teacherId: CO_TEACHER_ID, role: 'ASSISTANT' }],
+        create: [{ teacherId: CO_TEACHER_ID, role: 'ASSISTANT' }],
       });
     });
 

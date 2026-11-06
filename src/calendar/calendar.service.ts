@@ -667,7 +667,6 @@ export class CalendarService {
                 ? {
                     extraGroups: {
                       create: template.extraGroups.map((entry) => ({
-                        schoolId,
                         studentGroupId: entry.studentGroupId,
                       })),
                     },
@@ -677,7 +676,6 @@ export class CalendarService {
                 ? {
                     participants: {
                       create: template.participants.map((entry) => ({
-                        schoolId,
                         studentId: entry.studentId,
                       })),
                     },
@@ -688,12 +686,11 @@ export class CalendarService {
                     teachers: {
                       create: [
                         ...(template.teacherId
-                          ? [{ schoolId, teacherId: template.teacherId, role: 'LEAD' as const }]
+                          ? [{ teacherId: template.teacherId, role: 'LEAD' as const }]
                           : []),
                         ...(template.coTeacherId
                           ? [
                               {
-                                schoolId,
                                 teacherId: template.coTeacherId,
                                 role: 'ASSISTANT' as const,
                               },
