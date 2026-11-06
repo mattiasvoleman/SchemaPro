@@ -173,6 +173,8 @@ describe('Route guard coverage (e2e)', () => {
     // Frånvarobevakning: the switch and the limits are Drift's, the findings are read by three roles.
     expect(of('AbsenceWatchController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('AbsenceWatchController', 'createLimit')).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    // Rapporteringsgrad: the switches and the limit are Drift's; a teacher reads their own page.
+    expect(of('ReportingRateController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('PublicationsController', 'publish')).toEqual({ kind: 'area', areas: ['PUBLICERING', 'DRIFT'] });
     // Schemaförslag: a run and a discard write the candidate tables alone;
     // an apply replaces the draft as Generera does, which in DIRECT takes
@@ -180,6 +182,17 @@ describe('Route guard coverage (e2e)', () => {
     expect(of('OptimizationController', 'startCandidates')).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING'] });
     expect(of('OptimizationController', 'discardCandidates')).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING'] });
     expect(of('OptimizationController', 'applyCandidate')).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING', 'DRIFT'] });
+  });
+
+  // Rapporteringsgrad: the school's figures and the switches are the administrators',
+  // and a teacher's own page is the teacher's alone; the class's @Roles is
+  // overridden by the one route that names another.
+  it('keeps the reporting rate’s school routes to the administrators and a teacher’s own page to teachers', () => {
+    const rolesOf = (method: string) => routes.find((r) => r.controller === 'ReportingRateController' && r.method === method)?.roles;
+    expect(rolesOf('overview')).toEqual(['SCHOOL_ADMIN']);
+    expect(rolesOf('settings')).toEqual(['SCHOOL_ADMIN']);
+    expect(rolesOf('updateSettings')).toEqual(['SCHOOL_ADMIN']);
+    expect(rolesOf('mine')).toEqual(['TEACHER']);
   });
 
   it('keeps the public surface to the health probes, the public viewer and SS12000', () => {

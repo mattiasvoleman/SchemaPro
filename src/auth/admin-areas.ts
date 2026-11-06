@@ -233,6 +233,15 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   AbsenceWatchFindings: readOnly,
   AbsenceWatchLimits: only('DRIFT'),
   AbsenceWatchSettings: just('DRIFT', 'insert', 'update'),
+  // Rapporteringsgrad (20270108090100): the switches and the limit are Drift's, as
+  // the attendance they count. The days are written by app.reporting_compute and
+  // the weekly ledger by app.reporting_digest: no administrator's write reaches
+  // either, and the settings are never deleted. ReportingReminders is not here:
+  // it has no administrator's arm at all (only app.reporting_remind reads or
+  // writes it), and section 106 lists the tables an arm reaches.
+  ReportingDigests: readOnly,
+  ReportingSettings: just('DRIFT', 'insert', 'update'),
+  TeacherReportingDays: readOnly,
   AttendanceRecords: only('DRIFT'),
   CalendarLessonGroups: only('DRIFT'),
   CalendarLessonStudents: only('DRIFT'),

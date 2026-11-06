@@ -29,6 +29,12 @@ import type { NotificationKind } from './notifications.service';
  * (COVER_REQUEST_CLOSED, reason UNANSWERED). All three are choices: the in-app
  * row is always written, and a colleague who would rather not be pushed still
  * finds the question in the app.
+ *
+ * Rapporteringsgrad (D2): a teacher is told when lessons have stood without a
+ * saved register longer than the school's limit (LESSON_REPORT_REMINDER), and
+ * a rektor or full administrator gets last week's share for the school as a
+ * whole (REPORTING_RATE_DIGEST). Both are choices and both only numbers; each
+ * goes to one role, so the other role's list does not offer it.
  */
 
 export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
@@ -51,6 +57,8 @@ export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
   'COVER_REQUEST_ACCEPTED',
   'COVER_REQUEST_CLOSED',
   'ABSENCE_WATCH_DIGEST',
+  'LESSON_REPORT_REMINDER',
+  'REPORTING_RATE_DIGEST',
 ];
 
 type ChoosingRole = 'GUARDIAN' | 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN';
@@ -82,8 +90,8 @@ const LESSONS: readonly NotificationKind[] = [
 export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = {
   GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
-  TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED'],
-  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED'],
+  TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'LESSON_REPORT_REMINDER'],
+  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED', 'REPORTING_RATE_DIGEST'],
 };
 
 /**

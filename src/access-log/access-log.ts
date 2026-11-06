@@ -22,7 +22,16 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   LEAVE_REQUESTS           leave requests, with their reason and decision
  *   LEAVE_REASON_AS_MENTOR   a mentor read a leave request's reason (Skoldagen)
  *   GUARDIANS                who is whose guardian
- *   EMPLOYMENT               tjänst and anställning
+ *   EMPLOYMENT               tjänst and anställning; and a teacher's reporting
+ *                            rate (Rapporteringsgrad, 20270108090100): the
+ *                            view at /admin/reporting-rate says how large a
+ *                            share of each teacher's held lessons has a saved
+ *                            register, which is how each person does their
+ *                            post. Written by the service with recordRead
+ *                            (with PEOPLE, for the names), about the teachers
+ *                            the view lists. A teacher reading their own rate
+ *                            (GET /api/v1/reporting-rate/mine) reads no one
+ *                            else's data and is not recorded
  *   STAFF_ABSENCES           when a member of staff is away, and why; and
  *                            when a substitute can come (their availability,
  *                            the other half of the same fact)
