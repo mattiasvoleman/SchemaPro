@@ -279,7 +279,8 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // Skyddad identitet (20270107090000): a mark is set by Personal's writers
   // and removed by those who decide (lifting a protection is a decision),
   // never changed. Its history is written by a trigger.
-  PersonProtections: { insert: ['PERSONAL'], update: [], delete: ['DECIDES'] },
+  // update: the register's kind on the sync's mark, in an administrator's apply (20270111090000).
+  PersonProtections: { insert: ['PERSONAL'], update: ['PERSONAL'], delete: ['DECIDES'] },
   PersonProtectionEvents: readOnly,
   // Hela skolans data (20270110090000): ordered, read and withdrawn by those who decide, and by nobody else;
   // the pieces are read by them while the file is fresh and written by the job's functions alone.

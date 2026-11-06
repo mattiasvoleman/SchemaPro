@@ -80,6 +80,20 @@ describe('PersonProtectionsService', () => {
     });
   });
 
+  it('takes the school\'s people lock before the person\'s row, to set or remove a mark (20270111090000)', async () => {
+    tx.user.findFirst.mockResolvedValue({ id: PUPIL, ss12000Id: null });
+    const firstStatement = () => (tx.$executeRaw.mock.calls[0]![0] as { strings: string[] }).strings.join('?');
+    await service.set(PUPIL, admin);
+    expect(firstStatement()).toContain('pg_advisory_xact_lock_shared(hashtextextended(');
+    expect(tx.$executeRaw.mock.calls[0]![0].values).toEqual([`Users:${SCHOOL}`]);
+    expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.user.findFirst.mock.invocationCallOrder[0]!);
+    tx.$executeRaw.mockClear();
+    tx.user.findFirst.mockClear();
+    await service.remove(PUPIL, admin);
+    expect(firstStatement()).toContain('pg_advisory_xact_lock_shared(hashtextextended(');
+    expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.user.findFirst.mock.invocationCallOrder[0]!);
+  });
+
   it('answers 404 for a person the school does not have, and writes and records nothing', async () => {
     await expect(service.set(OTHER, admin)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.remove(OTHER, admin)).rejects.toBeInstanceOf(NotFoundException);

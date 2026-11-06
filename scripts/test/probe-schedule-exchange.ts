@@ -1055,7 +1055,11 @@ async function reviewChecks(
         row[header.indexOf(column)] = form;
         const csv = Buffer.from(writeCsv([header, row]), 'utf8');
         const plan = await exchange.preview({ academicYearId: school.yearId, format: 'TABLE_CSV', files: [{ name: 'pn.csv', bytes: csv }] }, school.admin);
-        const answer = JSON.stringify(plan);
+        // The answer's own ids and fingerprint are random hex, and one of them now and then holds
+        // "1234" or a date-shaped run of digits; that is not the number, so they are left out.
+        const answer = JSON.stringify(plan)
+          .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<id>')
+          .replace(/(?<![0-9a-z])[0-9a-f]{32}(?![0-9a-z])/gi, '<hex>');
         assert.ok(!hasPersonalNumber(answer) && !/1234/.test(answer) && !/\uff11\uff12\uff13\uff14/.test(answer), `the answer to ${JSON.stringify(form)} in ${column} holds the number`);
         assert.equal(plan.canApply, false, `${column}: a row with a number in it was applicable`);
       }
