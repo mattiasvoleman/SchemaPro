@@ -76,6 +76,7 @@ describe('Krisläge (e2e)', () => {
     ];
     const teachers: Array<readonly [string, string, Record<string, unknown> | null]> = [
       ['get', '/api/v1/crisis/mine', null],
+      ['get', `/api/v1/crisis/mine/pupils?alarmId=${ALARM}&q=anna`, null],
       ['post', '/api/v1/crisis/mine/marks', { marks: [mark()] }],
     ];
 
@@ -141,6 +142,8 @@ describe('Krisläge (e2e)', () => {
       ['more than 400', { marks: Array.from({ length: 401 }, () => mark()) }],
       ['a mark with no id', { marks: [mark({ id: undefined })] }],
       ['a mark that names a group twice over', { marks: [mark({ lessonId: LESSON })] }],
+      ['a mark that names a group and the alarm', { marks: [mark({ alarmId: ALARM })] }],
+      ['a mark that names no group and no alarm', { marks: [mark({ callId: undefined })] }],
       ['a state that is not one', { marks: [mark({ state: 'ABSENT' })] }],
       ['a time that is no time', { marks: [mark({ at: 'nu' })] }],
       ['a pupil that is not an id', { marks: [mark({ studentId: 'anna' })] }],
@@ -150,6 +153,28 @@ describe('Krisläge (e2e)', () => {
     ])('refuses a teacher\'s %s', async (_label, payload) => {
       await send('post', '/api/v1/crisis/mine/marks', teacher(), payload).expect(400);
       expect(harness.tx.crisisReport.createMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['no search words', `alarmId=${ALARM}`],
+      ['one character', `alarmId=${ALARM}&q=a`],
+      ['sixty-one characters', `alarmId=${ALARM}&q=${'a'.repeat(61)}`],
+      ['an alarm that is no id', 'alarmId=larmet&q=anna'],
+    ])('refuses a teacher\'s pupil search with %s', async (_label, query) => {
+      await send('get', `/api/v1/crisis/mine/pupils?${query}`, teacher()).expect(400);
+      expect(harness.tx.user.findMany).not.toHaveBeenCalled();
+    });
+
+    it('takes a mark that names the alarm alone, for a teacher with no group, and one that withdraws a find or says a pupil is not in the building (the service decides who may)', async () => {
+      harness.tx.crisisAlarm.findMany.mockResolvedValue([]);
+      for (const state of ['FOUND', 'RETRACTED']) {
+        const response = await send('post', '/api/v1/crisis/mine/marks', teacher(), { marks: [mark({ callId: undefined, alarmId: ALARM, state })] }).expect(200);
+        expect(response.body).toEqual({ stored: 0, duplicates: 0, unresolved: [MARK] });
+      }
+      await send('post', '/api/v1/crisis/mine/marks', teacher(), { marks: [mark({ state: 'AWAY' })] }).expect(400);
+      harness.tx.crisisCall.findMany.mockResolvedValue([]);
+      await send('post', `/api/v1/crisis/alarms/${ALARM}/marks`, admin(), { marks: [mark({ state: 'AWAY' })] }).expect(200);
+      await send('post', `/api/v1/crisis/alarms/${ALARM}/marks`, admin(), { marks: [mark({ state: 'RETRACTED' })] }).expect(400);
     });
 
     it('takes a mark by lesson too, for a phone that built its list from its own schedule', async () => {

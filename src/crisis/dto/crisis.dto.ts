@@ -76,12 +76,25 @@ export class MarkDto {
   @IsUUID('4', { message: 'lessonId: lektionen anges med sitt id.' })
   lessonId?: string;
 
+  /**
+   * Or by the alarm alone, for a teacher with no group right now who found a pupil: a found mark with no group
+   * to find them with. Exactly one of callId, lessonId and alarmId.
+   */
+  @IsOptional()
+  @Transform(lower)
+  @IsUUID('4', { message: 'alarmId: larmet anges med sitt id.' })
+  alarmId?: string;
+
   @Transform(lower)
   @IsUUID('4', { message: 'studentId: eleven anges med sitt id.' })
   studentId!: string;
 
-  @IsIn(['FOUND', 'MISSING'], { message: 'state: FOUND (finns) eller MISSING (saknas).' })
-  state!: 'FOUND' | 'MISSING';
+  /**
+   * FOUND (finns), MISSING (saknas), AWAY (inte i huset: the administration's alone) or RETRACTED (ta tillbaka:
+   * withdraws the sender's own found mark, a teacher's alone). The service refuses the one the sender may not send.
+   */
+  @IsIn(['FOUND', 'MISSING', 'AWAY', 'RETRACTED'], { message: 'state: FOUND (finns), MISSING (saknas), AWAY (inte i huset) eller RETRACTED (ta tillbaka).' })
+  state!: 'FOUND' | 'MISSING' | 'AWAY' | 'RETRACTED';
 
   /** When the mark was made, by the sender's clock; the database holds it between the alarm's start and now. */
   @IsISO8601({ strict: true }, { message: 'at: en tidpunkt, till exempel 2027-01-12T09:14:03Z.' })
@@ -120,4 +133,18 @@ export class AlarmListQueryDto {
   @IsOptional()
   @Matches(/^(LIVE|DRILL)$/, { message: 'mode: LIVE eller DRILL.' })
   mode?: 'LIVE' | 'DRILL';
+}
+
+/** A teacher's search for a pupil they found who is not on their list. */
+export class PupilSearchQueryDto {
+  @Transform(lower)
+  @IsUUID('4', { message: 'alarmId: larmet anges med sitt id.' })
+  alarmId!: string;
+
+  /** Words of the name or the class; at least two characters so that one letter does not list the school. */
+  @Transform(trimmed)
+  @IsString()
+  @MinLength(2, { message: 'q: minst två tecken.' })
+  @MaxLength(60, { message: 'q: högst 60 tecken.' })
+  q!: string;
 }

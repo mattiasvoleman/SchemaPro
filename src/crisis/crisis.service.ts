@@ -221,6 +221,10 @@ export class CrisisService {
           code: CRISIS_NOT_YOURS,
         });
       }
+      // One start at a time in a school. The checks below read what has been committed, so two starts at once
+      // (an exercise and a real alarm, two administrators) would each see the other's alarm as not there and both
+      // begin; the second waits for the first here and then sees it. Held to the end of the transaction.
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`crisis-start:${schoolId}`}, 0))`);
       // One alarm of each mode at a time. Asked first, so the answer can name the alarm that is going: a
       // statement that fails in a transaction ends it, and the unique index below answers only a race.
       const going = await tx.crisisAlarm.findFirst({ where: { schoolId, mode: dto.mode, endedAt: null }, select: { id: true } });
@@ -233,15 +237,13 @@ export class CrisisService {
       // The transaction's time is the alarm's start and the moment the lists are taken at.
       const at = (await tx.$queryRaw<{ now: Date }[]>(Prisma.sql`SELECT now() AS now`))[0]!.now;
       if (dto.mode === 'LIVE') {
-        const exercise = await tx.crisisAlarm.findFirst({ where: { schoolId, mode: 'DRILL', endedAt: null }, select: { id: true } });
-        if (exercise) {
-          try {
-            await tx.crisisAlarm.update({ where: { id: exercise.id }, data: { endedAt: at, endNote: CUT_SHORT_NOTE } });
-          } catch (error) {
-            // Somebody ended the exercise in the same moment: what we wanted done is done.
-            if (sqlStateOf(error) !== 'KL409') throw error;
-          }
-        }
+        // The exercise's row is locked first: if somebody is ending it in this moment we wait for them, and it no
+        // longer matches (it has ended), so there is nothing to cut. (A statement that fails ends the transaction,
+        // so the refusal of a second end cannot be caught and gone on from.)
+        const [exercise] = await tx.$queryRaw<{ id: string }[]>(
+          Prisma.sql`SELECT "id" FROM "CrisisAlarms" WHERE "schoolId" = ${schoolId}::uuid AND "mode" = 'DRILL' AND "endedAt" IS NULL FOR UPDATE`,
+        );
+        if (exercise) await tx.crisisAlarm.update({ where: { id: exercise.id }, data: { endedAt: at, endNote: CUT_SHORT_NOTE } });
       }
 
       const school = await tx.school.findUnique({ where: { id: schoolId }, select: { timezone: true } });
@@ -527,13 +529,14 @@ export class CrisisService {
       const ids = alarms.map((alarm) => alarm.id);
       const names = await namesOf(tx, alarms.flatMap((alarm) => [alarm.startedByUserId, alarm.endedByUserId]));
       const counts = await tx.$queryRaw<
-        { alarmId: string; pupils: bigint; unlisted: bigint; found: bigint; missing: bigint; absentBefore: bigint; unreported: bigint }[]
+        { alarmId: string; pupils: bigint; unlisted: bigint; found: bigint; missing: bigint; away: bigint; absentBefore: bigint; unreported: bigint }[]
       >(Prisma.sql`
         SELECT p."alarmId",
                count(*) AS pupils,
                count(*) FILTER (WHERE c."basis" = 'NO_LESSON') AS unlisted,
                count(*) FILTER (WHERE p."state" = 'FOUND') AS found,
                count(*) FILTER (WHERE p."state" = 'MISSING') AS missing,
+               count(*) FILTER (WHERE p."state" = 'AWAY') AS away,
                count(*) FILTER (WHERE p."state" IS NULL AND p."priorAbsentSource" IS NOT NULL) AS "absentBefore",
                count(*) FILTER (WHERE p."state" IS NULL AND p."priorAbsentSource" IS NULL) AS unreported
           FROM "CrisisPupils" p JOIN "CrisisCalls" c ON c."id" = p."callId"
@@ -567,6 +570,7 @@ export class CrisisService {
             pupils: Number(c?.pupils ?? 0),
             found: Number(c?.found ?? 0),
             missing: Number(c?.missing ?? 0),
+            away: Number(c?.away ?? 0),
             absentBefore: Number(c?.absentBefore ?? 0),
             unreported: Number(c?.unreported ?? 0),
           },
@@ -663,36 +667,44 @@ export class CrisisService {
             orderBy: [{ lessonStartsAt: 'asc' }, { groupName: 'asc' }, { id: 'asc' }],
           })
         : [];
-      // The pupils a teacher on one of these calls found who are not on its list ("found with me").
-      const foundMarks = rows.length
+      // The pupils this teacher (or a colleague on the call) found who are not on its list ("found with me"), and the
+      // ones this teacher found with no group at all. A withdrawal takes a pupil off again, so each pupil is
+      // followed through the marks in order.
+      const callIds = new Set(rows.map((call) => call.id));
+      const foundMarks = alarms.length
         ? await tx.crisisReport.findMany({
-            where: { schoolId, foundInCallId: { in: rows.map((call) => call.id) } },
+            where: {
+              schoolId,
+              state: { in: ['FOUND', 'RETRACTED'] },
+              OR: [{ foundInCallId: { in: [...callIds] } }, { byUserId: me, foundInCallId: null, alarmId: { in: alarms.map((alarm) => alarm.id) } }],
+            },
             orderBy: [{ at: 'asc' }, { receivedAt: 'asc' }, { id: 'asc' }],
-            select: { foundInCallId: true, studentId: true, at: true },
+            select: { alarmId: true, callId: true, foundInCallId: true, studentId: true, state: true, at: true, byUserId: true },
           })
         : [];
       const foundBy = new Map<string, Map<string, Date>>();
+      const freeBy = new Map<string, Map<string, Date>>();
+      const follow = (into: Map<string, Map<string, Date>>, key: string, mark: { studentId: string; state: string; at: Date }) => {
+        const perKey = into.get(key) ?? new Map<string, Date>();
+        if (mark.state === 'RETRACTED') perKey.delete(mark.studentId);
+        else perKey.set(mark.studentId, mark.at);
+        into.set(key, perKey);
+      };
       for (const mark of foundMarks) {
-        const perCall = foundBy.get(mark.foundInCallId!) ?? new Map<string, Date>();
-        perCall.set(mark.studentId, mark.at);
-        foundBy.set(mark.foundInCallId!, perCall);
+        if (mark.foundInCallId && callIds.has(mark.foundInCallId)) follow(foundBy, mark.foundInCallId, mark);
+        // With no group: this teacher's own, and not a pupil on one of their own lists (that is an ordinary mark).
+        else if (!mark.foundInCallId && mark.byUserId === me && !callIds.has(mark.callId)) follow(freeBy, mark.alarmId, mark);
       }
-      // Every pupil of the school, by name: what a teacher picks from to say "found with me". Staff read the
-      // school's pupils directly already (the register, the class lists), so this reaches no further than that.
-      const everyone = alarms.length
+      const foundIds = [...new Set([...foundBy.values(), ...freeBy.values()].flatMap((perKey) => [...perKey.keys()]))];
+      const found = foundIds.length
         ? await tx.user.findMany({
-            where: { schoolId, role: 'STUDENT', isActive: true },
+            where: { schoolId, id: { in: foundIds } },
             select: { id: true, firstName: true, lastName: true, studentGroup: { select: { name: true } } },
           })
         : [];
-      const names = await namesOf(tx, [
-        ...alarms.flatMap((alarm) => [alarm.startedByUserId, alarm.endedByUserId]),
-        ...rows.flatMap((call) => [...call.teachers.map((teacher) => teacher.teacherId), ...call.pupils.map((pupil) => pupil.studentId)]),
-      ]);
-      const pupilById = new Map(everyone.map((row) => [row.id, row]));
-      const mineOf = (call: CallRow): MyCall => {
-        const pupils = pupilViews(call, names, false);
-        const foundHere: FoundHereView[] = [...(foundBy.get(call.id) ?? new Map<string, Date>())]
+      const pupilById = new Map(found.map((row) => [row.id, row]));
+      const foundViews = (perKey: Map<string, Date> | undefined): FoundHereView[] =>
+        [...(perKey ?? new Map<string, Date>())]
           .map(([studentId, markedAt]) => {
             const person = pupilById.get(studentId);
             return {
@@ -704,6 +716,12 @@ export class CrisisService {
             } satisfies FoundHereView;
           })
           .sort(byName);
+      const names = await namesOf(tx, [
+        ...alarms.flatMap((alarm) => [alarm.startedByUserId, alarm.endedByUserId]),
+        ...rows.flatMap((call) => [...call.teachers.map((teacher) => teacher.teacherId), ...call.pupils.map((pupil) => pupil.studentId)]),
+      ]);
+      const mineOf = (call: CallRow): MyCall => {
+        const pupils = pupilViews(call, names, false);
         return {
           id: call.id,
           lessonId: call.calendarLessonId,
@@ -720,19 +738,52 @@ export class CrisisService {
             .filter((name): name is string => name !== null),
           counts: countPupils(pupils.map((pupil) => pupil.status)),
           pupils,
-          foundHere,
+          foundHere: foundViews(foundBy.get(call.id)),
         };
       };
-      const result: MyAlarm[] = alarms.map((alarm) => {
-        const calls = rows.filter((call) => call.alarmId === alarm.id);
-        const onMyLists = new Set(calls.flatMap((call) => call.pupils.map((pupil) => pupil.studentId)));
-        const others: OtherPupilView[] = everyone
-          .filter((row) => !onMyLists.has(row.id))
-          .map((row) => ({ studentId: row.id, firstName: row.firstName, lastName: row.lastName, className: row.studentGroup?.name ?? null }))
-          .sort(byName);
-        return { ...alarmView(alarm, names), calls: calls.map(mineOf), others };
-      });
+      const result: MyAlarm[] = alarms.map((alarm) => ({
+        ...alarmView(alarm, names),
+        calls: rows.filter((call) => call.alarmId === alarm.id).map(mineOf),
+        foundFree: foundViews(freeBy.get(alarm.id)),
+      }));
       return { asOf: new Date().toISOString(), alarms: result };
+    });
+  }
+
+  /**
+   * The pupils of the school, not on the teacher's own lists, whose name or class matches every word of `q`
+   * (at most 25): who a teacher picks from to say "found with me". A search and not a list: a thousand names would
+   * be sent to every phone at every read, and kept there. Staff read the school's pupils directly already, so this
+   * reaches no further than that; it is recorded as the read of people it is.
+   */
+  async searchPupils(alarmId: string, q: string, user: AuthenticatedUser): Promise<OtherPupilView[]> {
+    const schoolId = requireSchoolId(user);
+    const words = q.split(/\s+/).filter((word) => word.length > 0).slice(0, 4);
+    return this.prisma.withRls(user, async (tx) => {
+      // The alarm must be one this teacher may read (the window), and the lists they answer for are left out.
+      const alarm = await tx.crisisAlarm.findFirst({ where: { id: alarmId, schoolId }, select: { id: true } });
+      if (!alarm) throw notFound();
+      const mine = await tx.crisisPupil.findMany({ where: { alarmId }, select: { studentId: true } });
+      const rows = await tx.user.findMany({
+        where: {
+          schoolId,
+          role: 'STUDENT',
+          isActive: true,
+          id: { notIn: mine.map((row) => row.studentId) },
+          AND: words.map((word) => ({
+            OR: [
+              { firstName: { contains: word, mode: 'insensitive' as const } },
+              { lastName: { contains: word, mode: 'insensitive' as const } },
+              { studentGroup: { name: { contains: word, mode: 'insensitive' as const } } },
+            ],
+          })),
+        },
+        select: { id: true, firstName: true, lastName: true, studentGroup: { select: { name: true } } },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+        take: 25,
+      });
+      await recordRead(tx, 'PEOPLE', rows.map((row) => row.id), user.channel);
+      return rows.map((row) => ({ studentId: row.id, firstName: row.firstName, lastName: row.lastName, className: row.studentGroup?.name ?? null }));
     });
   }
 
@@ -757,8 +808,18 @@ export class CrisisService {
   ): Promise<{ stored: number; duplicates: number; unresolved: string[] }> {
     const schoolId = requireSchoolId(user);
     for (const mark of marks) {
-      if ((mark.callId === undefined) === (mark.lessonId === undefined)) {
-        throw new BadRequestException({ message: 'En markering anger gruppen med callId eller lessonId, inte båda och inte ingen.', code: CRISIS_MARK_INVALID });
+      if ([mark.callId, mark.lessonId, mark.alarmId].filter((named) => named !== undefined).length !== 1) {
+        throw new BadRequestException({
+          message: 'En markering anger gruppen med callId eller lessonId, eller larmet med alarmId: ett av dem, inte flera och inte inget.',
+          code: CRISIS_MARK_INVALID,
+        });
+      }
+      // What each side may say. The database holds the same line (the teacher's arms), this is the answer in words.
+      if (onlyAlarmId === null && mark.state === 'AWAY') {
+        throw notOnTheList('Bara ledningen kan markera en elev som inte i huset.');
+      }
+      if (onlyAlarmId !== null && mark.state === 'RETRACTED') {
+        throw notOnTheList('Ledningen markerar om en elev; att ta tillbaka en egen hittad-markering är lärarens.');
       }
     }
     let alarmsTouched: string[] = [];
@@ -766,6 +827,7 @@ export class CrisisService {
       .withRls(user, async (tx) => {
         const callIds = [...new Set(marks.flatMap((mark) => (mark.callId ? [mark.callId] : [])))];
         const lessonIds = [...new Set(marks.flatMap((mark) => (mark.lessonId ? [mark.lessonId] : [])))];
+        const alarmIds = [...new Set(marks.flatMap((mark) => (mark.alarmId ? [mark.alarmId] : [])))];
         const known = await tx.crisisCall.findMany({
           where: {
             schoolId,
@@ -774,6 +836,10 @@ export class CrisisService {
           },
           select: { id: true, alarmId: true, calendarLessonId: true, alarm: { select: { startedAt: true } } },
         });
+        const knownAlarms = alarmIds.length
+          ? await tx.crisisAlarm.findMany({ where: { schoolId, id: { in: onlyAlarmId ? alarmIds.filter((id) => id === onlyAlarmId) : alarmIds } }, select: { id: true } })
+          : [];
+        const alarmKnown = new Set(knownAlarms.map((alarm) => alarm.id));
         const byId = new Map(known.map((call) => [call.id, call]));
         const byLesson = new Map<string, typeof known>();
         for (const call of known) {
@@ -781,9 +847,16 @@ export class CrisisService {
           byLesson.set(call.calendarLessonId, [...(byLesson.get(call.calendarLessonId) ?? []), call]);
         }
         const resolved: { mark: MarkDto; call: (typeof known)[number]; at: Date }[] = [];
+        // A mark with no group to find the pupil with: a teacher with no group right now says they found one.
+        const free: { mark: MarkDto; alarmId: string; at: Date }[] = [];
         const unresolved: string[] = [];
         for (const mark of marks) {
           const at = new Date(mark.at);
+          if (mark.alarmId) {
+            if (alarmKnown.has(mark.alarmId)) free.push({ mark, alarmId: mark.alarmId, at });
+            else unresolved.push(mark.id);
+            continue;
+          }
           const call = mark.callId
             ? byId.get(mark.callId)
             : // The alarm that was going when the mark was made: the latest that had started by then, give or
@@ -799,8 +872,8 @@ export class CrisisService {
         }
 
         // A pupil who is not on the list of the call the mark is made with can be said to be found with it ("found
-        // with me"): the mark is then on the pupil's own call, with the finder's call beside it. Only found:
-        // nobody can say a pupil of someone else's list is missing.
+        // with me"): the mark is then on the pupil's own call, with the finder's call beside it. Only found, or the
+        // withdrawal of it: nobody can say a pupil of someone else's list is missing, or not in the building.
         const listed = new Set<string>();
         if (resolved.length > 0) {
           const onLists = await tx.crisisPupil.findMany({
@@ -810,12 +883,16 @@ export class CrisisService {
           for (const row of onLists) listed.add(`${row.callId}:${row.studentId}`);
         }
         const elsewhere = resolved.filter((r) => !listed.has(`${r.call.id}:${r.mark.studentId}`));
-        if (elsewhere.some((r) => r.mark.state !== 'FOUND')) throw notOnTheList();
+        const findings: ('FOUND' | 'RETRACTED')[] = ['FOUND', 'RETRACTED'];
+        if (elsewhere.some((r) => !findings.includes(r.mark.state as 'FOUND' | 'RETRACTED'))) throw notOnTheList();
+        // Only a found mark can be said with no group, by a teacher; the administration can say anything of any pupil.
+        if (onlyAlarmId === null && free.some((f) => !findings.includes(f.mark.state as 'FOUND' | 'RETRACTED'))) throw notOnTheList('Utan grupp kan du bara säga att du hittat en elev.');
         const ownCall = new Map<string, string | null>();
-        if (elsewhere.length > 0) {
+        const lookups = [...elsewhere.map((r) => ({ alarmId: r.call.alarmId, studentId: r.mark.studentId })), ...free.map((f) => ({ alarmId: f.alarmId, studentId: f.mark.studentId }))];
+        if (lookups.length > 0) {
           const looked = await tx.$queryRaw<{ alarmId: string; studentId: string; callId: string | null }[]>(Prisma.sql`
             SELECT t.alarm AS "alarmId", t.student AS "studentId", app.crisis_pupil_call(t.alarm, t.student) AS "callId"
-              FROM unnest(${elsewhere.map((r) => r.call.alarmId)}::uuid[], ${elsewhere.map((r) => r.mark.studentId)}::uuid[]) AS t(alarm, student)`);
+              FROM unnest(${lookups.map((l) => l.alarmId)}::uuid[], ${lookups.map((l) => l.studentId)}::uuid[]) AS t(alarm, student)`);
           for (const row of looked) ownCall.set(`${row.alarmId}:${row.studentId}`, row.callId);
         }
         const rows: Prisma.CrisisReportCreateManyInput[] = [];
@@ -828,6 +905,11 @@ export class CrisisService {
           const own = ownCall.get(`${call.alarmId}:${mark.studentId}`);
           if (!own) throw notOnTheList('Eleven finns inte i larmet.');
           rows.push({ ...base, callId: own, foundInCallId: call.id });
+        }
+        for (const { mark, alarmId, at } of free) {
+          const own = ownCall.get(`${alarmId}:${mark.studentId}`);
+          if (!own) throw notOnTheList('Eleven finns inte i larmet.');
+          rows.push({ id: mark.id, schoolId, alarmId, studentId: mark.studentId, state: mark.state, at, callId: own });
         }
         // Every batch takes its pupils in the same order, so two phones that send the same group at once, each in
         // the order it marked them in, wait for each other instead of deadlocking.
@@ -906,6 +988,8 @@ function mapMarkError(error: unknown): unknown {
       return new ConflictException({ message: 'Larmet avslutades för mer än en timme sedan och tar inte emot fler markeringar.', code: CRISIS_ALARM_ENDED });
     case '23503':
       return new BadRequestException({ message: 'Eleven står inte på gruppens lista.', code: CRISIS_MARK_INVALID });
+    case 'KL413':
+      return notOnTheList('Du har ingen markering av eleven som funnen att ta tillbaka, eller en senare markering har ersatt den.');
     case '42501':
       return new ForbiddenException({ message: 'Du svarar inte för den gruppen, eller larmet är över.', code: CRISIS_NOT_YOURS });
     default:

@@ -8,8 +8,8 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { CrisisService } from './crisis.service';
-import type { AlarmDetail, AlarmSummary, CrisisSettingsView, MyCrisisResponse, ProtocolView } from './crisis-views';
-import { AlarmListQueryDto, EndAlarmDto, MarksDto, StartAlarmDto, UpdateCrisisSettingsDto } from './dto/crisis.dto';
+import type { AlarmDetail, AlarmSummary, CrisisSettingsView, MyCrisisResponse, OtherPupilView, ProtocolView } from './crisis-views';
+import { AlarmListQueryDto, EndAlarmDto, MarksDto, PupilSearchQueryDto, StartAlarmDto, UpdateCrisisSettingsDto } from './dto/crisis.dto';
 
 const uuid = () => new ParseUUIDPipe({ version: '4' });
 
@@ -97,6 +97,17 @@ export class CrisisTeacherController {
   @Get()
   mine(@CurrentUser() user: AuthenticatedUser): Promise<MyCrisisResponse> {
     return this.crisis.mine(user);
+  }
+
+  /**
+   * The pupils of the school (not on the teacher's own lists) whose name or class matches `q`: who a teacher
+   * picks from to say "found with me". A search and not a list, so that a thousand names are not sent to every
+   * phone at every read nor kept on any.
+   */
+  @Get('pupils')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  pupils(@Query() query: PupilSearchQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<OtherPupilView[]> {
+    return this.crisis.searchPupils(query.alarmId, query.q, user);
   }
 
   @Post('marks')

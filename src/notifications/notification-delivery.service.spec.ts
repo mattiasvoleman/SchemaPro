@@ -276,7 +276,7 @@ describe('NotificationDeliveryService (push)', () => {
   });
 
   it('sends an alarm and its end as an alarm: high priority, a channel of its own, a short life and time-sensitive on iOS; nothing else is', async () => {
-    const alarm = (type: string, meta: Record<string, unknown>) =>
+    const alarm = (type: 'CRISIS_ALARM' | 'CRISIS_ENDED', meta: Record<string, unknown>) =>
       lesson({ type, meta: { alarmId: 'a1', kind: 'EVACUATION', mode: 'LIVE', startedAt: '2027-01-12T09:10:00.000Z', ...meta }, recipients: [{ userId: 'u1', notificationId: `n-${type}` }] });
     tx.$queryRaw.mockImplementation(async (sql: { strings: string[]; values: unknown[] }) => {
       if (!sql.strings.join('?').includes('app.push_targets(')) return [];

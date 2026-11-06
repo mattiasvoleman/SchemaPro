@@ -104,7 +104,12 @@
 --       pupils on those calls.
 --   crisis_reports_teacher_found_select / _insert
 --       a TEACHER the found marks made with a call they answer for, and a found
---       mark for any pupil of the alarm, made with a call they answer for.
+--       mark (or its withdrawal) for any pupil of the alarm, made with a call
+--       they answer for.
+--   crisis_reports_teacher_free_insert / _own_select
+--       a TEACHER with no group right now: a found mark (or its withdrawal) for
+--       any pupil of the alarm with no group to find them with; and any TEACHER
+--       the marks they made themselves while the alarm's window is open.
 --
 -- A pupil and a guardian have no arm: they read nothing of an alarm. When the
 -- school has chosen to tell the guardians, they get a notice (CRISIS_GUARDIAN_AFTER)
@@ -166,7 +171,10 @@ $$;
 CREATE TYPE "CrisisAlarmKind" AS ENUM ('EVACUATION', 'LOCKDOWN');
 CREATE TYPE "CrisisAlarmMode" AS ENUM ('LIVE', 'DRILL');
 CREATE TYPE "CrisisCallBasis" AS ENUM ('LESSON', 'NEXT_LESSON', 'NO_LESSON');
-CREATE TYPE "CrisisPupilState" AS ENUM ('FOUND', 'MISSING');
+-- FOUND and MISSING are what a teacher says; AWAY ("inte i huset", not seen today) is the administration's alone and
+-- counts for itself, never as found; RETRACTED is a mark that withdraws the sender's own found mark and is never a
+-- pupil's state.
+CREATE TYPE "CrisisPupilState" AS ENUM ('FOUND', 'MISSING', 'AWAY', 'RETRACTED');
 
 -- ---------------------------------------------------------------------------
 -- CrisisSettings
@@ -351,7 +359,10 @@ CREATE TABLE "CrisisPupils" (
 
     CONSTRAINT "CrisisPupils_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "CrisisPupils_prior_source_is_known" CHECK ("priorAbsentSource" IS NULL OR "priorAbsentSource" IN ('ATTENDANCE', 'REPORTED')),
-    CONSTRAINT "CrisisPupils_marked_iff_stamped" CHECK (("state" IS NULL) = ("stateAt" IS NULL))
+    -- A mark has its time. An unmarked pupil may have one too: the time a mark was withdrawn, so that an older mark
+    -- that arrives late does not bring it back.
+    CONSTRAINT "CrisisPupils_marked_has_a_time" CHECK ("state" IS NULL OR "stateAt" IS NOT NULL),
+    CONSTRAINT "CrisisPupils_state_is_a_state" CHECK ("state" IS NULL OR "state" <> 'RETRACTED')
 );
 
 -- A pupil is on one list of an alarm.
@@ -395,7 +406,7 @@ CREATE TABLE "CrisisReports" (
     "studentId"  UUID NOT NULL,
     "state"      "CrisisPupilState" NOT NULL,
     -- Found with another group than the pupil's own: the call of the teacher who found
-    -- them ("found with me"). Only a found mark can say so.
+    -- them ("found with me"). Only a found mark, or its withdrawal, can say so.
     "foundInCallId" UUID,
     -- The sender's time, held in [alarm start, receivedAt] by the trigger.
     "at"         TIMESTAMPTZ(6) NOT NULL,
@@ -405,7 +416,7 @@ CREATE TABLE "CrisisReports" (
     "late"       BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "CrisisReports_pkey" PRIMARY KEY ("id"),
-    CONSTRAINT "CrisisReports_only_found_is_found_elsewhere" CHECK ("foundInCallId" IS NULL OR "state" = 'FOUND')
+    CONSTRAINT "CrisisReports_only_found_is_found_elsewhere" CHECK ("foundInCallId" IS NULL OR "state" IN ('FOUND', 'RETRACTED'))
 );
 
 CREATE INDEX "CrisisReports_schoolId_idx" ON "CrisisReports"("schoolId");
@@ -528,6 +539,18 @@ $$;
 COMMENT ON FUNCTION app.crisis_pupil_call(uuid, uuid) IS
   'The id of the call pupil p_student is on in alarm p_alarm of the caller''s school, while the alarm''s window is open; null otherwise.';
 
+-- The caller answers for no call of alarm p_alarm: a teacher with no group right now (a gap, a duty, a timetable
+-- that lacks them). They can still say they found a pupil, with no group to find them with.
+CREATE FUNCTION app.crisis_has_no_call_in(p_alarm uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT NOT EXISTS (
+    SELECT 1 FROM "CrisisCallTeachers" t JOIN "CrisisCalls" c ON c."id" = t."callId"
+     WHERE c."alarmId" = p_alarm AND t."schoolId" = app.current_school_id() AND t."teacherId" = app.current_user_id())
+$$;
+
+COMMENT ON FUNCTION app.crisis_has_no_call_in(uuid) IS
+  'Whether the caller is a teacher of no call of alarm p_alarm of their school.';
+
 -- ---------------------------------------------------------------------------
 -- An alarm begins in the name of its starter, ends once, and says so itself
 -- ---------------------------------------------------------------------------
@@ -631,8 +654,8 @@ CREATE TRIGGER "CrisisAlarms_b_ends_once" BEFORE UPDATE ON "CrisisAlarms"
 -- A mark: stamped by the database, then applied to the lists
 -- ---------------------------------------------------------------------------
 
--- The writer's login decides who marked, and whether they are one of the
--- teachers of the call the mark was made with (the pupil's, or the one that found them); the alarm decides whether the mark is late; the sender's
+-- The writer's login decides who marked, and whether the administration marked for
+-- a group it does not answer for (the pupil's call, or the one that found them); the alarm decides whether the mark is late; the sender's
 -- clock is held between the alarm's start and now. KL404 the call is not a
 -- call of this alarm in this school, KL410 the hour after the end has passed.
 CREATE FUNCTION app.crisis_report_is_stamped() RETURNS trigger
@@ -653,7 +676,9 @@ BEGIN
   NEW."late" := al."endedAt" IS NOT NULL;
   IF app.current_user_id() IS NOT NULL THEN
     NEW."byUserId" := app.current_user_id();
-    NEW."onBehalf" := NOT EXISTS (
+    -- On behalf: the administration marks for a group it does not answer for. A teacher is never on behalf of
+    -- anyone (their arms reach only their own calls, a pupil they found, or, with no group, a found mark).
+    NEW."onBehalf" := app.current_user_role() = 'SCHOOL_ADMIN' AND NOT EXISTS (
       SELECT 1 FROM "CrisisCallTeachers" t
        WHERE t."callId" = coalesce(NEW."foundInCallId", NEW."callId") AND t."teacherId" = app.current_user_id());
   END IF;
@@ -681,6 +706,22 @@ BEGIN
     UPDATE "CrisisCallTeachers" t
        SET "answeredAt" = NEW."at"
      WHERE t."callId" = coalesce(NEW."foundInCallId", NEW."callId") AND t."teacherId" = NEW."byUserId" AND t."answeredAt" IS NULL;
+  END IF;
+
+  IF NEW."state" = 'RETRACTED' THEN
+    -- Withdraws the sender's own found mark and nothing else: the pupil is unmarked again (the time stays, so a
+    -- mark older than the withdrawal that arrives late does not bring it back). KL413: there is no found mark of
+    -- the sender's to withdraw, or a later mark of anyone's has covered it. Checked here and not in the stamp
+    -- because a batch is one statement, and the marks before it have applied only when its row triggers fire.
+    UPDATE "CrisisPupils" p
+       SET "state" = NULL, "stateAt" = NEW."at", "stateByUserId" = NULL
+     WHERE p."callId" = NEW."callId" AND p."studentId" = NEW."studentId"
+       AND p."state" = 'FOUND' AND p."stateByUserId" = NEW."byUserId" AND NEW."at" >= p."stateAt";
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'CRISIS_NOTHING_TO_RETRACT: eleven har ingen markering som funnen av dig att ta tillbaka'
+        USING ERRCODE = 'KL413';
+    END IF;
+    RETURN NULL;
   END IF;
 
   UPDATE "CrisisPupils" p
@@ -866,9 +907,25 @@ BEGIN
         FOR INSERT TO "app_authenticated"
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'TEACHER'
-                    AND "state" = 'FOUND'
+                    AND "state" IN ('FOUND', 'RETRACTED')
                     AND app.crisis_answers_for("foundInCallId")
                     AND app.crisis_call_window_open("foundInCallId"));
+    -- A teacher with no group right now: found, or a withdrawal of it, for any pupil of the alarm, with no group
+    -- to find them with. And the teacher reads the marks they made themselves, for as long as the alarm's window is open.
+    CREATE POLICY "crisis_reports_teacher_free_insert" ON "CrisisReports"
+        FOR INSERT TO "app_authenticated"
+        WITH CHECK ("schoolId" = (select app.current_school_id())
+                    AND (select app.current_user_role()) = 'TEACHER'
+                    AND "state" IN ('FOUND', 'RETRACTED')
+                    AND "foundInCallId" IS NULL
+                    AND app.crisis_has_no_call_in("alarmId")
+                    AND app.crisis_window_open("alarmId"));
+    CREATE POLICY "crisis_reports_teacher_own_select" ON "CrisisReports"
+        FOR SELECT TO "app_authenticated"
+        USING ("schoolId" = (select app.current_school_id())
+               AND (select app.current_user_role()) = 'TEACHER'
+               AND "byUserId" = (select app.current_user_id())
+               AND app.crisis_window_open("alarmId"));
     CREATE POLICY "crisis_reports_admin_insert" ON "CrisisReports"
         FOR INSERT TO "app_authenticated"
         WITH CHECK ("schoolId" = (select app.current_school_id())
@@ -881,7 +938,8 @@ BEGIN
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'TEACHER'
                     AND app.crisis_answers_for("callId")
-                    AND app.crisis_call_window_open("callId"));
+                    AND app.crisis_call_window_open("callId")
+                    AND "state" <> 'AWAY');
 
     -- Settings and alarms are changed by an arm; the snapshot and the marks are
     -- appended, and the lists that follow them are kept by the triggers (owner):
@@ -901,6 +959,7 @@ BEGIN
     GRANT EXECUTE ON FUNCTION app.crisis_lists_are_open(uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.crisis_answers_for(uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.crisis_pupil_call(uuid, uuid) TO "app_authenticated";
+    GRANT EXECUTE ON FUNCTION app.crisis_has_no_call_in(uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.crisis_settle() TO "app_authenticated";
   END IF;
 
@@ -926,7 +985,7 @@ BEGIN
   -- The functions answer the API's role alone.
   FOREACH t IN ARRAY ARRAY['app.crisis_may_start()', 'app.crisis_window_open(uuid)', 'app.crisis_call_window_open(uuid)',
                            'app.crisis_lists_are_open(uuid)', 'app.crisis_answers_for(uuid)', 'app.crisis_pupil_call(uuid, uuid)',
-                           'app.crisis_settle()'] LOOP
+                           'app.crisis_has_no_call_in(uuid)', 'app.crisis_settle()'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', t);
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
       IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
@@ -981,6 +1040,8 @@ BEGIN
                  ('CrisisReports', 'crisis_reports_teacher_select', 'SELECT'),
                  ('CrisisReports', 'crisis_reports_teacher_found_select', 'SELECT'),
                  ('CrisisReports', 'crisis_reports_teacher_found_insert', 'INSERT'),
+                 ('CrisisReports', 'crisis_reports_teacher_free_insert', 'INSERT'),
+                 ('CrisisReports', 'crisis_reports_teacher_own_select', 'SELECT'),
                  ('CrisisReports', 'crisis_reports_admin_insert', 'INSERT'),
                  ('CrisisReports', 'crisis_reports_teacher_insert', 'INSERT'))
            AND (SELECT bool_and(
@@ -992,6 +1053,8 @@ BEGIN
                                          ELSE '%current_user_role()%= ''TEACHER''::"UserRole"%' END
                          AND e LIKE CASE
                                       WHEN p.policyname = 'crisis_alarms_teacher_select' THEN '%crisis_window_open(%'
+                                      WHEN p.policyname = 'crisis_reports_teacher_free_insert' THEN '%crisis_has_no_call_in(%crisis_window_open(%'
+                                      WHEN p.policyname = 'crisis_reports_teacher_own_select' THEN '%current_user_id()%crisis_window_open(%'
                                       WHEN p.policyname LIKE '%\_teacher\_%' ESCAPE '\' THEN '%crisis_answers_for(%crisis_call_window_open(%'
                                       ELSE '%' END)
                   FROM unnest(ARRAY[p.qual, p.with_check]) e
@@ -1010,8 +1073,8 @@ BEGIN
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'CRISIS_REACH: these arms reach the krisläge beyond the administration''s, the teacher''s own group and the start rule''s writes: %', bad;
   END IF;
-  IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables)) <> 22 THEN
-    RAISE EXCEPTION 'CRISIS_REACH: the six tables have % arms, not the twenty-two above',
+  IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables)) <> 24 THEN
+    RAISE EXCEPTION 'CRISIS_REACH: the six tables have % arms, not the twenty-four above',
       (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables));
   END IF;
 END

@@ -4388,6 +4388,10 @@ enum CrisisCallBasis {
 enum CrisisPupilState {
   FOUND
   MISSING
+  /// "Inte i huset": the administration's alone; counted for itself, never as found.
+  AWAY
+  /// A mark that withdraws the sender's own found mark; never a pupil's state (a CHECK).
+  RETRACTED
 }
 
 /// How the school lets the alarm be started and whether it tells the guardians

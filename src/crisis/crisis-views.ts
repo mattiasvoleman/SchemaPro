@@ -16,6 +16,10 @@ import type { AdminProfile } from '@prisma/client';
  *
  *   FOUND            marked found
  *   MISSING          marked missing
+ *   AWAY             marked not in the building / not seen today, by the
+ *                    administration (a teacher cannot say it): counted for
+ *                    itself, never as found. A pupil nobody has seen is not a
+ *                    pupil who was found.
  *   ABSENT_BEFORE    not marked, and absent before the alarm (the register of
  *                    the day, a report or a leave): nobody is asked to find them
  *   UNREPORTED       not marked, and expected: someone still has to say
@@ -35,7 +39,9 @@ export type CrisisMode = 'LIVE' | 'DRILL';
  * administration answers for them. Its names are Swedish stand-ins; a screen says it in its own words.
  */
 export type CallBasisView = 'LESSON' | 'NEXT_LESSON' | 'NO_LESSON';
-export type PupilStatus = 'FOUND' | 'MISSING' | 'ABSENT_BEFORE' | 'UNREPORTED';
+export type PupilStatus = 'FOUND' | 'MISSING' | 'AWAY' | 'ABSENT_BEFORE' | 'UNREPORTED';
+/** What a mark says. RETRACTED withdraws the sender's own found mark (the pupil is unmarked again); it is never a pupil's state. */
+export type MarkState = 'FOUND' | 'MISSING' | 'AWAY' | 'RETRACTED';
 export type PriorSourceView = 'ATTENDANCE' | 'REPORTED';
 
 export interface CrisisSettingsView {
@@ -50,6 +56,8 @@ export interface PupilCounts {
   pupils: number;
   found: number;
   missing: number;
+  /** Marked not in the building by the administration: its own count, never added to `found`. */
+  away: number;
   absentBefore: number;
   unreported: number;
 }
@@ -133,7 +141,7 @@ export interface FoundHereView {
   markedAt: string;
 }
 
-/** A pupil of the school who is on none of a teacher's lists: who a teacher can say they found. */
+/** A pupil of the school who is on none of a teacher's lists, as the search for "found with me" answers. Held nowhere. */
 export interface OtherPupilView {
   studentId: string;
   firstName: string;
@@ -163,10 +171,11 @@ export interface MyCall {
 export interface MyAlarm extends AlarmView {
   calls: MyCall[];
   /**
-   * Every other pupil of the school, by name: a teacher who finds a pupil who is not on their list picks
-   * them here and says "found with me". Held offline with the lists.
+   * Pupils this teacher found who are on no list of theirs and were found with no group: a teacher with no
+   * group right now (a gap, a duty, a timetable that lacks them) can say they found a pupil too (send the mark
+   * with `alarmId` in place of `callId`).
    */
-  others: OtherPupilView[];
+  foundFree: FoundHereView[];
 }
 
 export interface MyCrisisResponse {
@@ -176,18 +185,20 @@ export interface MyCrisisResponse {
 }
 
 export function statusOf(
-  state: 'FOUND' | 'MISSING' | null,
+  state: 'FOUND' | 'MISSING' | 'AWAY' | 'RETRACTED' | null,
   priorAbsentSource: PriorSourceView | null,
 ): PupilStatus {
-  if (state) return state;
+  // RETRACTED is never kept as a pupil's state (a CHECK); read as unmarked all the same.
+  if (state && state !== 'RETRACTED') return state;
   return priorAbsentSource ? 'ABSENT_BEFORE' : 'UNREPORTED';
 }
 
 export function countPupils(statuses: readonly PupilStatus[]): PupilCounts {
-  const counts: PupilCounts = { pupils: statuses.length, found: 0, missing: 0, absentBefore: 0, unreported: 0 };
+  const counts: PupilCounts = { pupils: statuses.length, found: 0, missing: 0, away: 0, absentBefore: 0, unreported: 0 };
   for (const status of statuses) {
     if (status === 'FOUND') counts.found++;
     else if (status === 'MISSING') counts.missing++;
+    else if (status === 'AWAY') counts.away++;
     else if (status === 'ABSENT_BEFORE') counts.absentBefore++;
     else counts.unreported++;
   }
@@ -200,10 +211,11 @@ export function sumCounts(all: readonly PupilCounts[]): PupilCounts {
       pupils: total.pupils + c.pupils,
       found: total.found + c.found,
       missing: total.missing + c.missing,
+      away: total.away + c.away,
       absentBefore: total.absentBefore + c.absentBefore,
       unreported: total.unreported + c.unreported,
     }),
-    { pupils: 0, found: 0, missing: 0, absentBefore: 0, unreported: 0 },
+    { pupils: 0, found: 0, missing: 0, away: 0, absentBefore: 0, unreported: 0 },
   );
 }
 
@@ -221,7 +233,7 @@ export interface ProtocolMark {
   groupName: string;
   /** The group of the teacher who found them, when that is not the pupil's own ("found with me"). */
   foundIn: { groupName: string; basis: CallBasisView } | null;
-  state: 'FOUND' | 'MISSING';
+  state: MarkState;
   by: string | null;
   onBehalf: boolean;
   late: boolean;

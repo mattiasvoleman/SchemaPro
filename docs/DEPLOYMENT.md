@@ -1170,13 +1170,13 @@ Walk the full product loop once, in order:
   else (a value cannot be used in the transaction that adds it, so it is a
   file of its own: never run the two files in one `psql -1`). 20270113091000
   adds the tables `CrisisSettings`, `CrisisAlarms`, `CrisisCalls`,
-  `CrisisCallTeachers`, `CrisisPupils` and `CrisisReports` with 22 policies,
+  `CrisisCallTeachers`, `CrisisPupils` and `CrisisReports` with 24 policies,
   the triggers that start an alarm in its writer's name (and refuse an
   exercise beside a real alarm, KL412), let it end once and stamp and apply a
   mark, the functions `app.crisis_may_start`,
   `app.crisis_window_open`, `app.crisis_call_window_open`,
   `app.crisis_lists_are_open`, `app.crisis_answers_for`,
-  `app.crisis_pupil_call` and
+  `app.crisis_pupil_call`, `app.crisis_has_no_call_in` and
   `app.crisis_settle` (executable by `app_authenticated` alone), and
   `app.gallring_due` and `app.gallring_purge` again with the alarms' branch.
   No existing row is touched and no existing table gains a column. The new
@@ -1217,10 +1217,10 @@ Walk the full product loop once, in order:
   bodies, or its rows are no longer purged (the RLS suite, section 350, fails
   when a body has lost a branch).
   **After it, before the merge:** both migrations are applied;
-  `SELECT count(*) FROM pg_policies WHERE tablename LIKE 'Crisis%'` is 22;
+  `SELECT count(*) FROM pg_policies WHERE tablename LIKE 'Crisis%'` is 24;
   `app_authenticated` holds SELECT, INSERT and UPDATE on `CrisisSettings` and
   `CrisisAlarms`, SELECT and INSERT on the other four and nothing else (no
-  MAINTAIN, no DELETE), `anon` and `authenticated` nothing at all; the seven
+  MAINTAIN, no DELETE), `anon` and `authenticated` nothing at all; the eight
   functions answer `app_authenticated` alone (`SELECT
   has_function_privilege('anon', 'app.crisis_may_start()', 'EXECUTE'),
   has_function_privilege('authenticated', 'app.crisis_settle()', 'EXECUTE'),
@@ -1268,14 +1268,35 @@ Walk the full product loop once, in order:
   teacher and the administration see that they are found and by whom, and the
   teacher keeps the pupil in a list of their own. Only *found* can be said
   that way (a pupil of someone else's list cannot be said to be missing by a
-  teacher who does not have them), and the picker lists every pupil of the
-  school, names and class only, which staff read directly already. **Known
-  limits:** a pupil on two lessons at once is on the one that sorts first;
+  teacher who does not have them). The teacher finds the pupil by a search
+  (`GET /api/v1/crisis/mine/pupils?alarmId=&q=`: name or class, two characters
+  at least, 25 results at most, never the teacher's own list, recorded in the
+  läslogg as a read of people); the school's pupils are not sent to every phone
+  and not kept on any, so the search needs a network (a teacher who has no
+  network says it to the administration). **A teacher with no group right now**
+  (a gap, a duty) can say it too, with the alarm alone to name (`alarmId` in
+  place of `callId`): a found mark on the pupil's own group with no group to
+  find them with, which the database allows a teacher who answers for no call of
+  the alarm (`app.crisis_has_no_call_in`) and no one else. **Taking it back:**
+  the teacher who said a pupil was found can take it back while it is still the
+  pupil's latest mark (a `RETRACTED` mark, `KL413` otherwise): the pupil is
+  unmarked again, and an older mark that arrives late does not bring it back.
+  **"Inte i huset"** (`AWAY`) is a third mark, the administration's alone, for a
+  pupil nobody has seen (a group of pupils with no lesson on a Saturday or at
+  night is most of the school): it is counted for itself in the live view, the
+  end dialog and the protocol and is never added to the found, and the group of
+  pupils with no lesson has no "alla finns" (a button that wrote *found* for
+  pupils nobody saw), only a bulk "ingen av de oprickade är i huset" behind a
+  confirmation that states the number. **Known limits:** a pupil on two lessons at once is on the one that sorts first;
   teachers with no group right now answer for nothing and are only told that an
   alarm is going (they cannot mark; a teacher with no group has no call to
   find a pupil with); the 120 minutes that separate a break from a gap are
   fixed; a pupil who becomes active after the alarm began is not on it (the
-  lists are the moment's).
+  lists are the moment's). **Starting is one at a time in a school:** `start()`
+  takes a transaction-scoped advisory lock for the school first (and locks the
+  exercise's row `FOR UPDATE` before a real alarm ends it), so an exercise and a
+  real alarm that start in the same moment leave one open, and a real alarm that
+  meets the end of an exercise waits for it and goes on instead of failing.
   **Notices** say that an alarm (or an exercise) is going and nothing else:
   the push has no kind of alarm, no group, no place and no pupil, and the
   inbox row has the alarm's id, kind, mode and time (a guardian's row, after a
@@ -1290,7 +1311,17 @@ Walk the full product loop once, in order:
   hours ago. The app also asks the gateway whether the alarm is still going
   before it shows a list from a push. Neither can wake a phone the person has
   turned silent in the operating system; the live view's *lärare som inte
-  svarat* is what covers that.
+  svarat* is what covers that. **iOS `time-sensitive`** needs the capability
+  *Time Sensitive Notifications* on the app's identifier: the teacher app's
+  `app.config.ts` asks for the entitlement
+  `com.apple.developer.usernotifications.time-sensitive`, which needs no new
+  agreement with Apple (unlike *critical* alerts, which the app does not use).
+  The first build after the change registers the capability on the App ID
+  through EAS and regenerates the provisioning profile; if a build stops on a
+  profile that lacks the entitlement, switch the capability on under
+  Certificates, Identifiers & Profiles › Identifiers › the app › Capabilities
+  and let EAS regenerate the profile (ad hoc profiles too, §15.9). Until a build
+  carries it iOS treats the push as an ordinary one.
   **Offline:** the phone keeps the list it last read in its encrypted store
   and its marks in a queue of their own, sends them when the network is back
   (a mark carries its own id, so sending twice stores it once), and for an hour

@@ -97,7 +97,8 @@ describe('CrisisService', () => {
     });
 
     it('takes the lists from the timetable at the transaction\'s time, writes them with the alarm, seals them and tells the staff but the starter', async () => {
-      tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]).mockResolvedValueOnce([{ now: NOW }]);
+      // Allowed to start, the moment, and no exercise to cut short (the row lock finds none).
+      tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]).mockResolvedValueOnce([{ now: NOW }]).mockResolvedValueOnce([]);
       tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
       // One lesson going on at 09:10Z (10:10 in Stockholm in January), its teacher, and two pupils on its class.
       tx.calendarLesson.findMany.mockResolvedValue([
@@ -126,8 +127,8 @@ describe('CrisisService', () => {
       tx.attendanceRecord.findMany.mockResolvedValue([{ studentId: PUPIL, status: 'ABSENT', calendarLesson: { startsAt: new Date('2027-01-12T07:00:00Z') } }]);
       tx.crisisAlarm.create.mockResolvedValue(alarmRow());
       tx.crisisAlarm.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => alarmRow(data));
-      // No exercise to cut short; then detail() reads the alarm back, and nothing else of it matters here.
-      tx.crisisAlarm.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValue(alarmRow({ listsSealedAt: NOW }));
+      // None going; then detail() reads the alarm back, and nothing else of it matters here.
+      tx.crisisAlarm.findFirst.mockResolvedValueOnce(null).mockResolvedValue(alarmRow({ listsSealedAt: NOW }));
       tx.crisisCall.findMany.mockResolvedValue([]);
 
       await service.start({ kind: 'EVACUATION', mode: 'LIVE' }, admin);
@@ -162,6 +163,8 @@ describe('CrisisService', () => {
         [PUPIL2, null, false],
         [PUPIL3, null, true],
       ]);
+      // One start at a time in a school.
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       // Sealed in the same transaction, and the alarm is the first thing written.
       expect(tx.crisisAlarm.update).toHaveBeenCalledWith({ where: { id: ALARM }, data: { listsSealedAt: NOW } });
       expect(tx.crisisAlarm.create.mock.invocationCallOrder[0]).toBeLessThan(tx.crisisCall.createMany.mock.invocationCallOrder[0]!);
@@ -212,25 +215,23 @@ describe('CrisisService', () => {
       expect(await code(service.start({ kind: 'EVACUATION', mode: 'DRILL' }, admin))).toBe('CRISIS_ALARM_OPEN');
     });
 
-    it('goes on when the exercise it would cut short ended in the same moment', async () => {
-      tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]).mockResolvedValueOnce([{ now: NOW }]);
+    it('goes on when the exercise it would cut short ended in the same moment: its row lock waits for the end and finds nothing to cut', async () => {
+      tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]).mockResolvedValueOnce([{ now: NOW }]).mockResolvedValueOnce([]);
       tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
-      tx.crisisAlarm.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'drill-1' }).mockResolvedValue(alarmRow());
+      tx.crisisAlarm.findFirst.mockResolvedValueOnce(null).mockResolvedValue(alarmRow());
       tx.crisisAlarm.create.mockResolvedValue(alarmRow());
-      tx.crisisAlarm.update.mockImplementation(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-        if (where.id === 'drill-1') throw sqlError('KL409');
-        return alarmRow(data);
-      });
+      tx.crisisAlarm.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => alarmRow(data));
       tx.crisisCall.findMany.mockResolvedValue([]);
       await service.start({ kind: 'EVACUATION', mode: 'LIVE' }, admin);
       expect(tx.crisisAlarm.create).toHaveBeenCalledTimes(1);
+      expect(tx.crisisAlarm.update).toHaveBeenCalledTimes(1); // the seal alone
     });
 
     it('cuts an exercise that is going short when a real alarm starts', async () => {
-      tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]).mockResolvedValueOnce([{ now: NOW }]);
+      // Nothing of the real kind is going; an exercise is, and its row is locked before it is ended.
+      tx.$queryRaw.mockResolvedValueOnce([{ allowed: true }]).mockResolvedValueOnce([{ now: NOW }]).mockResolvedValueOnce([{ id: 'drill-1' }]);
       tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
-      // Nothing of the real kind is going; an exercise is.
-      tx.crisisAlarm.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'drill-1' }).mockResolvedValue(alarmRow());
+      tx.crisisAlarm.findFirst.mockResolvedValueOnce(null).mockResolvedValue(alarmRow());
       tx.crisisAlarm.create.mockResolvedValue(alarmRow());
       tx.crisisAlarm.update.mockResolvedValue(alarmRow());
       await service.start({ kind: 'EVACUATION', mode: 'LIVE' }, admin).catch(() => undefined);
@@ -394,6 +395,51 @@ describe('CrisisService', () => {
       expect(await code(service.markMine([{ id: MARK, callId: CALL, studentId: PUPIL, state: 'FOUND', at }], teacher))).toBe('WRITE_CONFLICT');
     });
 
+    it('lets only the administration say a pupil is not in the building, and only a teacher take back a found mark', async () => {
+      tx.crisisCall.findMany.mockResolvedValue([call()]);
+      expect(await code(service.markMine([{ id: MARK, callId: CALL, studentId: PUPIL, state: 'AWAY', at }], teacher))).toBe('CRISIS_MARK_INVALID');
+      expect(await code(service.markAsAdministration(ALARM, [{ id: MARK, callId: CALL, studentId: PUPIL, state: 'RETRACTED', at }], admin))).toBe('CRISIS_MARK_INVALID');
+      expect(tx.crisisReport.createMany).not.toHaveBeenCalled();
+      tx.crisisReport.createMany.mockResolvedValue({ count: 1 });
+      await service.markAsAdministration(ALARM, [{ id: MARK, callId: CALL, studentId: PUPIL, state: 'AWAY', at }], admin);
+      expect((tx.crisisReport.createMany.mock.calls[0]![0] as { data: Array<{ state: string }> }).data[0]!.state).toBe('AWAY');
+    });
+
+    it('takes a mark that names the alarm alone from a teacher with no group: found, on the pupil\'s own group, with no group to find them with', async () => {
+      tx.crisisAlarm.findMany.mockResolvedValue([{ id: ALARM }]);
+      tx.crisisCall.findMany.mockResolvedValue([]);
+      tx.$queryRaw.mockResolvedValueOnce([{ alarmId: ALARM, studentId: PUPIL2, callId: OTHER_CALL }]);
+      tx.crisisReport.createMany.mockResolvedValue({ count: 1 });
+      await service.markMine([{ id: MARK, alarmId: ALARM, studentId: PUPIL2, state: 'FOUND', at }], teacher);
+      expect(tx.crisisReport.createMany).toHaveBeenCalledWith({
+        data: [{ id: MARK, schoolId: SCHOOL, alarmId: ALARM, callId: OTHER_CALL, studentId: PUPIL2, state: 'FOUND', at: new Date(at) }],
+        skipDuplicates: true,
+      });
+      // Not missing, not away; an alarm the teacher cannot read belongs to none of theirs; a pupil who is in no part of it is refused.
+      expect(await code(service.markMine([{ id: MARK, alarmId: ALARM, studentId: PUPIL2, state: 'MISSING', at }], teacher))).toBe('CRISIS_MARK_INVALID');
+      tx.crisisAlarm.findMany.mockResolvedValue([]);
+      const gone = '99999999-9999-4999-8999-999999999996';
+      expect((await service.markMine([{ id: gone, alarmId: ALARM, studentId: PUPIL2, state: 'FOUND', at }], teacher)).unresolved).toEqual([gone]);
+      tx.crisisAlarm.findMany.mockResolvedValue([{ id: ALARM }]);
+      tx.$queryRaw.mockResolvedValueOnce([{ alarmId: ALARM, studentId: PUPIL2, callId: null }]);
+      expect(await code(service.markMine([{ id: MARK, alarmId: ALARM, studentId: PUPIL2, state: 'FOUND', at }], teacher))).toBe('CRISIS_MARK_INVALID');
+    });
+
+    it('names the group in exactly one way, the alarm too', async () => {
+      expect(await code(service.markMine([{ id: MARK, callId: CALL, alarmId: ALARM, studentId: PUPIL, state: 'FOUND', at }], teacher))).toBe('CRISIS_MARK_INVALID');
+    });
+
+    it('sends a withdrawal like a found mark, and answers one with nothing to withdraw as a coded refusal', async () => {
+      tx.crisisCall.findMany.mockResolvedValue([call()]);
+      tx.$queryRaw.mockResolvedValueOnce([{ alarmId: ALARM, studentId: PUPIL2, callId: OTHER_CALL }]);
+      tx.crisisReport.createMany.mockResolvedValue({ count: 1 });
+      await service.markMine([{ id: MARK, callId: CALL, studentId: PUPIL2, state: 'RETRACTED', at }], teacher);
+      expect((tx.crisisReport.createMany.mock.calls[0]![0] as { data: Array<Record<string, unknown>> }).data[0]).toMatchObject({ callId: OTHER_CALL, foundInCallId: CALL, state: 'RETRACTED' });
+      tx.$queryRaw.mockResolvedValueOnce([{ alarmId: ALARM, studentId: PUPIL2, callId: OTHER_CALL }]);
+      tx.crisisReport.createMany.mockRejectedValue(sqlError('KL413'));
+      expect(await code(service.markMine([{ id: MARK, callId: CALL, studentId: PUPIL2, state: 'RETRACTED', at }], teacher))).toBe('CRISIS_MARK_INVALID');
+    });
+
     it('reaches only the alarm the administration names', async () => {
       tx.crisisCall.findMany.mockResolvedValue([call()]);
       tx.crisisReport.createMany.mockResolvedValue({ count: 1 });
@@ -426,8 +472,16 @@ describe('CrisisService', () => {
           ],
         },
       ]);
-      // A teacher on the call found a pupil of another list, and the school has one more pupil.
-      tx.crisisReport.findMany.mockResolvedValue([{ foundInCallId: CALL, studentId: PUPIL3, at: new Date('2027-01-12T09:13:00Z') }]);
+      // This teacher found two pupils with the call (one of them withdrawn again), and one with no group.
+      const find = (extra: Record<string, unknown>) => ({ alarmId: ALARM, callId: OTHER_CALL, foundInCallId: null, byUserId: TEACHER, state: 'FOUND', ...extra });
+      tx.crisisReport.findMany.mockResolvedValue([
+        find({ foundInCallId: CALL, studentId: PUPIL3, at: new Date('2027-01-12T09:13:00Z') }),
+        find({ foundInCallId: CALL, studentId: 'p5', at: new Date('2027-01-12T09:13:30Z') }),
+        find({ foundInCallId: CALL, studentId: 'p5', state: 'RETRACTED', at: new Date('2027-01-12T09:14:00Z') }),
+        find({ studentId: 'p4', at: new Date('2027-01-12T09:15:00Z') }),
+        // An ordinary mark of the teacher's own list is not a find.
+        find({ callId: CALL, studentId: PUPIL2, at: new Date('2027-01-12T09:12:00Z') }),
+      ]);
       const people = [
         { id: TEACHER, firstName: 'Anna', lastName: 'Lind', studentGroup: null },
         { id: TEACHER2, firstName: 'Bo', lastName: 'Berg', studentGroup: null },
@@ -435,28 +489,45 @@ describe('CrisisService', () => {
         { id: PUPIL2, firstName: 'Al', lastName: 'Ek', studentGroup: { name: '7A' } },
         { id: PUPIL3, firstName: 'Cy', lastName: 'Dal', studentGroup: { name: '8B' } },
         { id: 'p4', firstName: 'Di', lastName: 'Bro', studentGroup: null },
+        { id: 'p5', firstName: 'Ed', lastName: 'Sol', studentGroup: { name: '9C' } },
       ];
-      tx.user.findMany.mockImplementation(async (args: { where: Record<string, unknown> }) =>
-        args.where['role'] === 'STUDENT' ? people.filter((person) => person.studentGroup !== undefined && ![TEACHER, TEACHER2].includes(person.id)) : people,
-      );
+      tx.user.findMany.mockImplementation(async (args: { where: { id?: { in?: string[] } } }) => people.filter((person) => !args.where.id?.in || args.where.id.in.includes(person.id)));
       const result = await service.mine(teacher);
       expect(result.alarms).toHaveLength(1);
       const mine = result.alarms[0]!.calls[0]!;
       expect(mine.colleagues).toEqual(['Bo Berg']);
       expect(mine.basis).toBe('NEXT_LESSON');
-      expect(mine.counts).toEqual({ pupils: 2, found: 1, missing: 0, absentBefore: 1, unreported: 0 });
+      expect(mine.counts).toEqual({ pupils: 2, found: 1, missing: 0, away: 0, absentBefore: 1, unreported: 0 });
       // Surname order in Swedish, and a phone is not told who made a mark.
       expect(mine.pupils.map((p) => p.lastName)).toEqual(['Ek', 'Öst']);
       expect(mine.pupils.every((p) => p.markedBy === null)).toBe(true);
-      // Found with this call: named, with their own class; and every pupil not on a list of the teacher's is one to pick from.
+      // Found with this call: named, with their own class; the withdrawn one is gone. Found with no group: listed on the alarm.
       expect(mine.foundHere).toEqual([{ studentId: PUPIL3, firstName: 'Cy', lastName: 'Dal', className: '8B', markedAt: '2027-01-12T09:13:00.000Z' }]);
-      expect(result.alarms[0]!.others.map((o) => [o.studentId, o.className])).toEqual([
-        ['p4', null],
-        [PUPIL3, '8B'],
-      ]);
-      // The call is not complete: the second pupil has a mark, the first was absent before and needs none; so it is.
+      expect(result.alarms[0]!.foundFree).toEqual([{ studentId: 'p4', firstName: 'Di', lastName: 'Bro', className: null, markedAt: '2027-01-12T09:15:00.000Z' }]);
+      expect(result.alarms[0]).not.toHaveProperty('others');
+      // The call is complete: the second pupil has a mark, the first was absent before and needs none.
       expect(mine.completedAt).toBe('2027-01-12T09:12:00.000Z');
       expect(new Date(result.asOf).getTime()).toBeGreaterThan(0);
+    });
+  });
+
+  describe('searchPupils', () => {
+    it('finds pupils of the school who are not on the teacher\'s lists by every word of the name or the class, at most 25, and records the read', async () => {
+      tx.crisisAlarm.findFirst.mockResolvedValue({ id: ALARM });
+      tx.crisisPupil.findMany.mockResolvedValue([{ studentId: PUPIL }]);
+      tx.user.findMany.mockResolvedValue([{ id: PUPIL3, firstName: 'Cy', lastName: 'Dal', studentGroup: { name: '8B' } }]);
+      const found = await service.searchPupils(ALARM, 'cy 8b', teacher);
+      expect(found).toEqual([{ studentId: PUPIL3, firstName: 'Cy', lastName: 'Dal', className: '8B' }]);
+      const query = tx.user.findMany.mock.calls[0]![0] as { where: { id: { notIn: string[] }; AND: unknown[]; role: string; isActive: boolean; schoolId: string }; take: number };
+      expect(query.where).toMatchObject({ schoolId: SCHOOL, role: 'STUDENT', isActive: true, id: { notIn: [PUPIL] } });
+      expect(query.where.AND).toHaveLength(2); // one clause per word
+      expect(query.take).toBe(25);
+    });
+
+    it('is a 404 for an alarm the teacher may not read', async () => {
+      tx.crisisAlarm.findFirst.mockResolvedValue(null);
+      expect(await code(service.searchPupils(ALARM, 'cy', teacher))).toBe('CRISIS_ALARM_NOT_FOUND');
+      expect(tx.user.findMany).not.toHaveBeenCalled();
     });
   });
 

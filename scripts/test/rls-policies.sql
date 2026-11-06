@@ -41487,8 +41487,8 @@ DROP TABLE sk364;
 -- (CrisisSettings, CrisisAlarms, CrisisCalls, CrisisCallTeachers, CrisisPupils,
 -- CrisisReports, 20270113091000), och vem som får starta ett larm.
 --
--- Sex tabeller, 22 armar, ingen DELETE för någon roll, UPDATE bara på
--- inställningarna och larmet, ingenting för PostgREST:s roller, och sju
+-- Sex tabeller, 24 armar, ingen DELETE för någon roll, UPDATE bara på
+-- inställningarna och larmet, ingenting för PostgREST:s roller, och åtta
 -- funktioner som bara API:ts roll får anropa. Migrationens egen vakt
 -- (CRISIS_REACH) körs när migreringen läggs på; här står samma sak mot den
 -- databas sviten kör mot, och med rättigheterna, triggrarna, det partiella
@@ -41508,7 +41508,7 @@ DECLARE
   tables text[] := ARRAY['CrisisSettings', 'CrisisAlarms', 'CrisisCalls', 'CrisisCallTeachers', 'CrisisPupils', 'CrisisReports'];
   functions text[] := ARRAY['app.crisis_may_start()', 'app.crisis_window_open(uuid)', 'app.crisis_call_window_open(uuid)',
                             'app.crisis_lists_are_open(uuid)', 'app.crisis_answers_for(uuid)', 'app.crisis_pupil_call(uuid, uuid)',
-                            'app.crisis_settle()'];
+                            'app.crisis_has_no_call_in(uuid)', 'app.crisis_settle()'];
   src text;
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -41540,7 +41540,7 @@ BEGIN
   END LOOP;
 
   SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY (tables);
-  IF n <> 22 THEN RAISE EXCEPTION 'krisläge: the six tables have % arms, not 22', n; END IF;
+  IF n <> 24 THEN RAISE EXCEPTION 'krisläge: the six tables have % arms, not 24', n; END IF;
   SELECT count(*) INTO n FROM pg_policies
    WHERE schemaname = 'public' AND tablename = ANY (tables) AND (roles <> '{app_authenticated}'::name[] OR cmd = 'DELETE' OR cmd = 'ALL');
   IF n <> 0 THEN RAISE EXCEPTION 'krisläge: % arm(s) reach beyond the API role or delete', n; END IF;
@@ -42174,6 +42174,8 @@ BEGIN
                           '23514', 'an unknown reason for being absent before');
   PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId", state) VALUES (%L, %L, %L, %L, 'FOUND')$q$, school, d, call2, current_setting('app.test_rls352_p2')),
                           '23514', 'a mark with no time');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId", state, "stateAt") VALUES (%L, %L, %L, %L, 'RETRACTED', now())$q$, school, d, call2, current_setting('app.test_rls352_p2')),
+                          '23514', 'a withdrawn mark kept as a pupil''s state');
   PERFORM pg_temp.refuses(format($q$UPDATE "CrisisCalls" SET "groupName" = 'X' WHERE id = %L$q$, call), '42501', 'a changed call');
   PERFORM pg_temp.refuses(format($q$DELETE FROM "CrisisCalls" WHERE id = %L$q$, call), '42501', 'a deleted call');
   PERFORM pg_temp.refuses(format($q$UPDATE "CrisisCallTeachers" SET role = 'ASSISTANT' WHERE "callId" = %L$q$, call), '42501', 'a changed call teacher');
@@ -42418,9 +42420,10 @@ END $$;
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls352_t4_auth'))::text, true);
 DO $$
 BEGIN
-  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'FOUND', now())$q$,
+  -- Found is the one thing she can say (355i); missing is for the one who has the group.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'MISSING', now())$q$,
                                  current_setting('app.test_rls352_school'), current_setting('app.test_rls352_al'), current_setting('app.test_rls352_c1'), current_setting('app.test_rls352_p1')),
-                          '42501', 'a teacher who answers for nothing marking');
+                          '42501', 'a teacher who answers for nothing saying a pupil is missing');
 END $$;
 
 -- 354c: a pupil, a guardian and another school's administrator mark nothing.
@@ -42680,6 +42683,7 @@ BEGIN
   PERFORM set_config('app.test_rls355_p1', p1::text, true);
   PERFORM set_config('app.test_rls355_p3', p3::text, true);
   PERFORM set_config('app.test_rls355_p4', p4::text, true);
+  PERFORM set_config('app.test_rls355_admin_auth', (SELECT "authId"::text FROM "Users" WHERE id = app.current_user_id()), true);
   PERFORM set_config('app.test_rls355_t1_auth', (SELECT "authId"::text FROM "Users" WHERE id = t1), true);
   PERFORM set_config('app.test_rls355_t2_auth', (SELECT "authId"::text FROM "Users" WHERE id = t2), true);
   PERFORM set_config('app.test_rls355_t4_auth', (SELECT "authId"::text FROM "Users" WHERE id = t4), true);
@@ -42796,6 +42800,156 @@ DO $$
 BEGIN
   IF app.crisis_pupil_call(current_setting('app.test_rls355_al')::uuid, current_setting('app.test_rls355_p4')::uuid) IS NOT NULL THEN
     RAISE EXCEPTION 'krisläge: another school''s administrator learns the group of a pupil';
+  END IF;
+END $$;
+
+-- 355g: "inte i huset" is the administration's alone, for itself; a teacher cannot say it, with a group or without,
+-- and it cannot be said as a find.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_t1_auth'))::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls355_school')::uuid;
+  al uuid := current_setting('app.test_rls355_al')::uuid;
+  c1 uuid := current_setting('app.test_rls355_c1')::uuid;
+  cn uuid := current_setting('app.test_rls355_cn')::uuid;
+  p1 uuid := current_setting('app.test_rls355_p1')::uuid;
+  p4 uuid := current_setting('app.test_rls355_p4')::uuid;
+BEGIN
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'AWAY', now())$q$, school, al, c1, p1),
+                          '42501', 'a teacher saying a pupil of their own list is not in the building');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'AWAY', now())$q$, school, al, cn, c1, p4),
+                          '42501', 'a teacher saying a pupil of another list is not in the building');
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls355_school')::uuid;
+  al uuid := current_setting('app.test_rls355_al')::uuid;
+  cn uuid := current_setting('app.test_rls355_cn')::uuid;
+  c2 uuid := current_setting('app.test_rls355_c2')::uuid;
+  p3 uuid := current_setting('app.test_rls355_p3')::uuid;
+  me uuid := app.current_user_id();
+BEGIN
+  -- The administration says it, and the pupil is marked as such by it, for itself.
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
+  VALUES ('c0000000-0000-4000-8000-0000000f2502', school, al, c2, p3, 'AWAY', now());
+  IF NOT EXISTS (SELECT 1 FROM "CrisisPupils" WHERE "callId" = c2 AND "studentId" = p3 AND state = 'AWAY' AND "stateByUserId" = me) THEN
+    RAISE EXCEPTION 'krisläge: the pupil did not follow the administration''s "not in the building"';
+  END IF;
+  -- And not as a find: the table says so.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'AWAY', now())$q$, school, al, cn, c2, current_setting('app.test_rls355_p4')),
+                          '23514', 'an administrator''s "not in the building" said as a find');
+END $$;
+
+-- 355h: a teacher takes back their own find. Only theirs, only while it is the pupil's latest mark; the pupil is
+-- unmarked again, and a mark older than the withdrawal that arrives late does not bring it back.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_t1_auth'))::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls355_school')::uuid;
+  al uuid := current_setting('app.test_rls355_al')::uuid;
+  c1 uuid := current_setting('app.test_rls355_c1')::uuid;
+  c2 uuid := current_setting('app.test_rls355_c2')::uuid;
+  cn uuid := current_setting('app.test_rls355_cn')::uuid;
+  p3 uuid := current_setting('app.test_rls355_p3')::uuid;
+  p4 uuid := current_setting('app.test_rls355_p4')::uuid;
+  stamp timestamptz;
+BEGIN
+  -- Not the administration's "not in the building" of 355g, and not a pupil nobody found.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'RETRACTED', now())$q$, school, al, c2, c1, p3),
+                          'KL413', 'a withdrawal of a pupil the administration marked');
+  -- Her find of 355c is hers to take back.
+  -- (now() is the transaction's start in this script, so a time after the find is clock_timestamp().)
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at)
+  VALUES ('c0000000-0000-4000-8000-0000000f2503', school, al, cn, c1, p4, 'RETRACTED', clock_timestamp());
+  -- (She reads the mark she made, not the pupil's row on a list that is not hers: the administration checks that below.)
+  SELECT "at" INTO stamp FROM "CrisisReports" WHERE id = 'c0000000-0000-4000-8000-0000000f2503';
+  IF stamp IS NULL THEN RAISE EXCEPTION 'krisläge: the teacher does not read the withdrawal she made'; END IF;
+  PERFORM set_config('app.test_rls355_stamp', stamp::text, true);
+  -- A withdrawal older than the find it withdraws is not one (a pupil of her own list this time).
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
+  VALUES (gen_random_uuid(), school, al, c1, current_setting('app.test_rls355_p1')::uuid, 'FOUND', clock_timestamp());
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'RETRACTED', clock_timestamp() - interval '5 milliseconds')$q$,
+                                 school, al, c1, current_setting('app.test_rls355_p1')),
+                          'KL413', 'a withdrawal older than the find');
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
+  VALUES (gen_random_uuid(), school, al, c1, current_setting('app.test_rls355_p1')::uuid, 'RETRACTED', clock_timestamp());
+  -- Twice is nothing to withdraw.
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'RETRACTED', now())$q$, school, al, cn, c1, p4),
+                          'KL413', 'a second withdrawal');
+  -- An older mark that arrives late does not bring the find back.
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at)
+  VALUES (gen_random_uuid(), school, al, cn, c1, p4, 'FOUND', stamp - interval '5 milliseconds');
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls355_school')::uuid;
+  al uuid := current_setting('app.test_rls355_al')::uuid;
+  cn uuid := current_setting('app.test_rls355_cn')::uuid;
+  c1 uuid := current_setting('app.test_rls355_c1')::uuid;
+  p4 uuid := current_setting('app.test_rls355_p4')::uuid;
+BEGIN
+  -- The pupil is unmarked, with the time of the withdrawal, and a find older than it did not bring them back.
+  IF NOT EXISTS (SELECT 1 FROM "CrisisPupils" WHERE "callId" = cn AND "studentId" = p4 AND state IS NULL AND "stateByUserId" IS NULL
+                    AND "stateAt" = current_setting('app.test_rls355_stamp')::timestamptz) THEN
+    RAISE EXCEPTION 'krisläge: a withdrawn find did not leave the pupil unmarked with the time of the withdrawal, or an older find brought them back';
+  END IF;
+  -- Found again, by the administration this time: the teacher's withdrawal is no longer hers to make.
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
+  VALUES (gen_random_uuid(), school, al, cn, p4, 'FOUND', clock_timestamp());
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_t1_auth'))::text, true);
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'RETRACTED', clock_timestamp())$q$, school, al, cn, c1, p4),
+                          'KL413', 'a withdrawal of a find that is the administration''s');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_admin_auth'))::text, true);
+END $$;
+
+-- 355i: a teacher with no group right now (t4 answers for no call) says she found a pupil with no group to find
+-- them with, reads what she marked herself and nobody else's, and takes it back. A teacher with a group does not
+-- (she marks through hers), and nobody says missing this way.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_t4_auth'))::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls355_school')::uuid;
+  al uuid := current_setting('app.test_rls355_al')::uuid;
+  c2 uuid := current_setting('app.test_rls355_c2')::uuid;
+  p3 uuid := current_setting('app.test_rls355_p3')::uuid;
+  r "CrisisReports";
+BEGIN
+  IF NOT app.crisis_has_no_call_in(al) THEN RAISE EXCEPTION 'krisläge: a teacher with no group is said to have one'; END IF;
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
+  VALUES ('c0000000-0000-4000-8000-0000000f2504', school, al, c2, p3, 'FOUND', now());
+  SELECT * INTO r FROM "CrisisReports" WHERE id = 'c0000000-0000-4000-8000-0000000f2504';
+  IF r."foundInCallId" IS NOT NULL OR r."onBehalf" OR r."byUserId" IS DISTINCT FROM app.current_user_id() THEN
+    RAISE EXCEPTION 'krisläge: a free find of a teacher with no group is on behalf of someone, or not in her name (%, %)', r."onBehalf", r."byUserId";
+  END IF;
+  IF (SELECT count(*) FROM "CrisisReports") <> 1 THEN
+    RAISE EXCEPTION 'krisläge: a teacher with no group reads % mark(s), not her one', (SELECT count(*) FROM "CrisisReports");
+  END IF;
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'MISSING', now())$q$, school, al, c2, p3),
+                          '42501', 'a teacher with no group saying a pupil is missing');
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'AWAY', now())$q$, school, al, c2, p3),
+                          '42501', 'a teacher with no group saying a pupil is not in the building');
+  -- And takes it back.
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
+  VALUES (gen_random_uuid(), school, al, c2, p3, 'RETRACTED', now());
+  IF EXISTS (SELECT 1 FROM "CrisisPupils" WHERE "callId" = c2 AND "studentId" = p3 AND state IS NOT NULL) THEN
+    RAISE EXCEPTION 'krisläge: a free find was not taken back';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls355_t1_auth'))::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls355_school')::uuid;
+  al uuid := current_setting('app.test_rls355_al')::uuid;
+  c2 uuid := current_setting('app.test_rls355_c2')::uuid;
+  p3 uuid := current_setting('app.test_rls355_p3')::uuid;
+BEGIN
+  IF app.crisis_has_no_call_in(al) THEN RAISE EXCEPTION 'krisläge: a teacher with a group is said to have none'; END IF;
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'FOUND', now())$q$, school, al, c2, p3),
+                          '42501', 'a teacher with a group finding a pupil with no group of hers');
+  IF EXISTS (SELECT 1 FROM "CrisisReports" WHERE "byUserId" = (SELECT id FROM "Users" WHERE "authId" = current_setting('app.test_rls355_t4_auth')::uuid)) THEN
+    RAISE EXCEPTION 'krisläge: a teacher reads a mark another teacher made with no group';
   END IF;
 END $$;
 ROLLBACK;
