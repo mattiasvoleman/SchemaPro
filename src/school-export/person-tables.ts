@@ -141,6 +141,11 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   CoverConfirmations: away(['userId']),
   CoverRequestLessons: away([], [['absenceId', 'TeacherAbsences', 'userId']]),
   CoverRequests: dump(['requestedByUserId', 'acceptedByUserId']),
+  // Kvittens (20270117091000): what a guardian was asked and when they confirmed (and the pupil it was about), and the
+  // requests a member of staff wrote. The text of a request addressed to a person reaches them through their notices
+  // (data/notiser.csv carries the title); the body is the sender's own writing and is in the sender's extract.
+  AckReceipts: dump(['guardianId', 'studentId'], 'GUARDIANS'),
+  AckRequests: dump(['authorId']),
   SharedTeacherMarks: dump(['teacherId']),
   ScheduleActivityTeachers: dump(['teacherId']),
 

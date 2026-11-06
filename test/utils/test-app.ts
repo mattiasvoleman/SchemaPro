@@ -58,6 +58,7 @@ import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
 import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module';
 import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.module';
+import { AckModule } from '../../src/ack/ack.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { SchoolExportModule } from '../../src/school-export/school-export.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
@@ -188,6 +189,7 @@ export const FEATURE_MODULES = [
   AbsenceWatchModule,
   // Rapporteringsgrad's job is @Optional on the runner too, and the setup turns it off.
   ReportingRateModule,
+  AckModule,
   SignInModule,
   HuvudmanModule,
   AccessLogModule,

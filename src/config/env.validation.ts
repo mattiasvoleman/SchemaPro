@@ -262,6 +262,15 @@ export class EnvironmentVariables {
   REPORTING_RATE_BACKGROUND: string = 'on';
 
   /**
+   * Kvittens' reminder pass (src/ack/ack.job.ts): once to each guardian who has
+   * not confirmed a request whose time the school chose has come. `on` unless
+   * set to `off`; the test setup turns it off. A school without kvittens, or
+   * with no reminder time, has nothing for it to do.
+   */
+  @IsIn(['on', 'off'])
+  ACK_BACKGROUND: string = 'on';
+
+  /**
    * Schemaförslag (src/optimization/schedule-candidates.service.ts): the solve
    * budget, in seconds, of every candidate, KEEP's included, so the emphases
    * are compared at one budget (the engine takes the smaller of this and its

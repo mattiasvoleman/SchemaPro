@@ -27,6 +27,18 @@
  * store, not a file. The app has no export. A route of Krisläge that ever answers a file belongs in
  * the list below, by name, before it ships.
  *
+ * KVITTENS (20270117091000) IS DECIDED HERE TOO, though no route of it is
+ * listed: the requests, their receipts and the staff's overview answer the
+ * screen in JSON (GET /api/v1/acknowledgements/:id), and no path of them is a
+ * file or a feed. The overview names the pupils and guardians a request asked,
+ * a marked pupil among them, because the staff member who asked has the pupil
+ * in their register already and the request is only the answer to "did the
+ * guardian see it". A guardian of a marked pupil is asked and confirms like any
+ * other. There is no export of the receipts, on purpose: a list of who
+ * confirmed would be a file naming pupils and their guardians, and the first
+ * one to be written belongs in the list below, by name, as HOLDS_OUT, before
+ * it ships.
+ *
  * Why the database cannot hold this instead: an export is built in the
  * gateway or the browser from ordinary reads under RLS, and nothing in the
  * catalogue says which reads become a file. The rule that can be held there

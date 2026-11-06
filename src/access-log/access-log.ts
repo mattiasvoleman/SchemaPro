@@ -43,6 +43,19 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   TEACHING_TIME            undervisningstid per pupil: timplan coverage and
  *                            the pupil's statement (20261026110000)
  *
+ * KVITTENS (20270117091000). A staff member opening a request for a guardian's
+ * confirmation (GET /api/v1/acknowledgements/:id) reads who confirmed it and
+ * when, for named pupils and their named guardians: PEOPLE for both, GUARDIANS
+ * for whose guardian is whose. So is the list of pupils a request can be about
+ * (PEOPLE). The list of requests names nobody (a title and counts) and is not
+ * recorded. A guardian reading their own requests, and confirming one, reads
+ * what the school wrote to them and is not recorded; no route gives a guardian
+ * another's confirmation, so there is nothing of another person's to record.
+ * No read receipt of an ordinary notice (a leave decision, an unreported
+ * absence, an alarm's afterword) is shown to anyone but its recipient by any
+ * route or screen: a notice's readAt stays the recipient's, and a staff
+ * member's own notices have no receipt at all.
+ *
  * A GUARDIAN'S CALENDAR FEED. A feed of a child is the family's week again,
  * delivered to the guardian's calendar app instead of their screen, so it is
  * recorded as viewing it is: SCHEDULE, the guardian the reader, about the

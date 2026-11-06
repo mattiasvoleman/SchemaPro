@@ -93,6 +93,11 @@ export interface ReportingRateConfig {
   background: boolean;
 }
 
+export interface AckConfig {
+  /** The reminder pass of Kvittens (ACK_BACKGROUND, default on). */
+  background: boolean;
+}
+
 /** Schemaförslag (src/optimization/schedule-candidates.service.ts). */
 export interface CandidatesConfig {
   /** CANDIDATE_MAX_SECONDS: the solve budget of every candidate, KEEP's included, 5..120 (30). */
@@ -132,6 +137,7 @@ export interface Configuration {
   crisis: CrisisConfig;
   absenceWatch: AbsenceWatchConfig;
   reportingRate: ReportingRateConfig;
+  ack: AckConfig;
   candidates: CandidatesConfig;
 }
 
@@ -209,6 +215,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     reportingRate: {
       background: env.REPORTING_RATE_BACKGROUND !== 'off',
+    },
+    ack: {
+      background: env.ACK_BACKGROUND !== 'off',
     },
     candidates: {
       maxSeconds: env.CANDIDATE_MAX_SECONDS ?? DEFAULT_CANDIDATES_CONFIG.maxSeconds,

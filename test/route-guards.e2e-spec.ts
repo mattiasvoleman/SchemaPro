@@ -173,6 +173,9 @@ describe('Route guard coverage (e2e)', () => {
     // Frånvarobevakning: the switch and the limits are Drift's, the findings are read by three roles.
     expect(of('AbsenceWatchController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('AbsenceWatchController', 'createLimit')).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    // Kvittens: the switch is Drift's; a request is written by a teacher or an administrator under Drift.
+    expect(of('AckController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    expect(of('AckController', 'create')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     // Rapporteringsgrad: the switches and the limit are Drift's; a teacher reads their own page.
     expect(of('ReportingRateController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('PublicationsController', 'publish')).toEqual({ kind: 'area', areas: ['PUBLICERING', 'DRIFT'] });
