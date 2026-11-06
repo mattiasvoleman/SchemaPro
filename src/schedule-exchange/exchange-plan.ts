@@ -200,6 +200,18 @@ export interface PlanContext {
   subjects: SubjectRow[];
   rooms: RoomRow[];
   teachers: TeacherRow[];
+  /**
+   * Users who hold a lesson or a requirement without being a teacher or an administrator by role (a guardian
+   * or a pupil put on a lesson by hand, or by an old import). The export names them, since the lesson is theirs;
+   * the import never matches a file's teacher to one, so they are not in `teachers`.
+   */
+  holders?: TeacherRow[];
+  /**
+   * Holders left out of the file because they have a protected identity (skyddad identitet): the export names no one
+   * who is marked unless they are staff by role (a marked teacher stays in the schedule files, as it always has:
+   * people-files.ts, NAMES_STAFF). The lessons they hold stay, without a teacher.
+   */
+  withheld?: string[];
   existing: ExistingLesson[];
   frames: FrameRow[];
   rasts: RastRow[];

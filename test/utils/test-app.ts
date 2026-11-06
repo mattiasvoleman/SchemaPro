@@ -59,9 +59,11 @@ import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module';
 import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
+import { SchoolExportModule } from '../../src/school-export/school-export.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
 import { HuvudmanModule } from '../../src/huvudman/huvudman.module';
 import { AccessLogModule } from '../../src/access-log/access-log.module';
+import { OpenApiModule } from '../../src/openapi/openapi.module';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RealtimeService } from '../../src/realtime/realtime.service';
@@ -180,6 +182,8 @@ export const FEATURE_MODULES = [
   // Without JobsModule: GallringJob takes the runner as @Optional and
   // registers nothing, so the controller is routed and no timer starts.
   GallringModule,
+  // Hela skolans data: its job is @Optional on the runner and the setup turns it off, as the gallring's.
+  SchoolExportModule,
   // Frånvarobevakning's job is @Optional on the runner too, and the setup turns it off.
   AbsenceWatchModule,
   // Rapporteringsgrad's job is @Optional on the runner too, and the setup turns it off.
@@ -187,6 +191,7 @@ export const FEATURE_MODULES = [
   SignInModule,
   HuvudmanModule,
   AccessLogModule,
+  OpenApiModule,
 ];
 
 /** Everything global AppModule applies, minus the throttler (see below). */

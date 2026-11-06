@@ -39,7 +39,7 @@ export type PeopleRouteRule =
   | 'HOLDS_OUT'
   /** The recipient is to have everyone: the marked are in it, and the answer counts them. */
   | 'KEEPS_AND_SAYS'
-  /** Names staff and no pupil or guardian (pupils, if at all, as a count). Not filtered: see `why`. */
+  /** Names staff and no pupil or guardian (pupils, if at all, as a count); the one exception, a user who holds a lesson without being staff by role, is said in that route's `why`. Not filtered: see `why`. */
   | 'NAMES_STAFF'
   /** About one person, for that person's own sake or the person's guardian's. */
   | 'ONE_PERSON'
@@ -57,7 +57,7 @@ export interface PeopleRoute {
  * itself (@Res), whatever its path.
  */
 export const FILE_ROUTE =
-  /\/export\b|scb-file|\/print\/|class-book|^\/public\/v1\/(calendar-feeds|timetables)\/|^\/ss12000\/|^\/api\/v1\/access-log$|\.(csv|tsv|txt|xlsx?|ics|pdf|zip|xml)$/i;
+  /\/export\b|\/subject-access\b|scb-file|\/print\/|class-book|^\/public\/v1\/(calendar-feeds|timetables)\/|^\/ss12000\/|^\/api\/v1\/access-log$|\.(csv|tsv|txt|xlsx?|ics|pdf|zip|xml)$/i;
 
 /**
  * Keyed `VERB /path` as the routing table has it; a key ending in `/*` holds
@@ -68,13 +68,28 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
     rule: 'HOLDS_OUT',
     why: 'vardnadshavare.csv: a link where the pupil or the guardian is marked is held out, and counted (heldOut).',
   },
+  'GET /api/v1/school-exports/:id/file': {
+    rule: 'HOLDS_OUT',
+    why:
+      'Hela skolans data: the zip holds out every marked person and every row about one (the build reads the marks first; the manifest counts them, ' +
+      'heldOut). Fetched only by rektor and a full administrator, and recorded in the läslogg before the first byte.',
+  },
+  'POST /api/v1/school-exports/subject-access': {
+    rule: 'ONE_PERSON',
+    why:
+      'Registerutdrag (GDPR art. 15): one person\'s own data, the person themselves included if marked, and no other marked person (held out and counted). ' +
+      'The extract of a marked person names nobody else, by id or address, in any file; any extract leaves out the pupil\'s part of a row that is not about the person.',
+  },
   'GET /api/v1/staffing/scb-file': {
     rule: 'KEEPS_AND_SAYS',
     why: 'SCB is to have every teacher (lärarregistret): the file keeps them, and protectedInFile says how many.',
   },
   'POST /api/v1/schedule-exchange/export': {
     rule: 'NAMES_STAFF',
-    why: 'The timetable for Untis, aSc or a spreadsheet: teachers by signature, name and e-mail, lessons by group, no pupil.',
+    why:
+      'The timetable for Untis, aSc or a spreadsheet: teachers by signature, name and e-mail, lessons by group. A user who holds a lesson without being a teacher or ' +
+      'administrator by role (a pupil or guardian put on it by hand) is named like a teacher, since the lesson is theirs, unless the person is marked: a marked one is ' +
+      'left out, the lesson stands without a teacher, and the file\'s notes say how many. A marked teacher stays, as in every schedule file.',
   },
   'GET /api/v1/print/timetables': {
     rule: 'NAMES_STAFF',

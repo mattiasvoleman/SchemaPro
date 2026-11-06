@@ -24,7 +24,12 @@ export type PeopleFileRule =
   /** About one person, read for that person's own sake (the läslogg of a data subject). */
   | "ONE_PERSON"
   /** The download itself, which the sources listed here call. */
-  | "PRIMITIVE";
+  | "PRIMITIVE"
+  /**
+   * The gateway built the file and has held the marked out before a byte left it (hela skolans data, 20270114090000;
+   * src/common/people-files.ts); the web only hands it over, and the order says how many were held out.
+   */
+  | "HANDS_OVER";
 
 export interface PeopleFile {
   files: string;
@@ -127,6 +132,16 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
   "components/import/csv-import-dialog.tsx": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only." },
   "components/timplan/timplan-import-dialog.tsx": { files: "the timplan template", rule: "NAMES_NOBODY", why: "Headers only." },
   "lib/csv.ts": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only (downloadTemplate)." },
+  "lib/school-export.ts": {
+    files: "rastra-skolexport-<skola>-<datum>.zip",
+    rule: "HANDS_OVER",
+    why: "The gateway's zip of the whole school: it holds out every marked person and every row about one, counts them on the order (heldOut), and records the fetch in the läslogg before the first byte.",
+  },
+  "app/[locale]/(app)/admin/dataskydd/use-school-exports.ts": {
+    files: "registerutdrag-<datum>-<id>.zip",
+    rule: "ONE_PERSON",
+    why: "One person's own data (GDPR art. 15), built by the gateway: the person is never held out of their own extract, but an extract of a marked person carries no one else, and a marked relative is left out and counted.",
+  },
   "lib/csv-export.ts": { files: "—", rule: "PRIMITIVE", why: "downloadCsv." },
   "lib/ics.ts": { files: "—", rule: "PRIMITIVE", why: "downloadIcs." },
   "lib/pdf.ts": { files: "—", rule: "PRIMITIVE", why: "The PDF's save." },

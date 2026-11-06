@@ -7433,6 +7433,67 @@
       }
     }
   },
+  "schoolExport": {
+    "title": "Hela skolans data",
+    "description": "Skolans listor, grundschemat och all närvaro, alla frånvaroanmälningar, ledigheter, notiser och läsloggen i en zip, för ett avslut eller en begäran om utdrag. Rektor och fullständiga administratörer beställer. Filen byggs i bakgrunden och går att hämta i 72 timmar.",
+    "notDecider": "Hela skolans data och registerutdrag lämnas ut av rektor och fullständiga administratörer.",
+    "order": "Beställ hela skolans data",
+    "ordering": "Beställer…",
+    "orderHint": "Det tar några minuter. Sidan följer beställningen.",
+    "none": "Ingen beställning ännu.",
+    "loadFailed": "Beställningarna kunde inte läsas.",
+    "orderedAt": "Beställd {when}",
+    "by": "av {name}",
+    "size": "{size}",
+    "expires": "hämtas senast {when}",
+    "expired": "har gått ut",
+    "failed": "Misslyckades ({reason}). Beställ igen.",
+    "heldOut": "{count, plural, one {# person med skyddad identitet finns inte i filen.} other {# personer med skyddad identitet finns inte i filen.}}",
+    "partMissing": "Saknas i filen: {note}",
+    "checksum": "SHA-256 {sha}",
+    "fetch": "Hämta",
+    "fetching": "Hämtar…",
+    "cancel": "Avbryt",
+    "remove": "Ta bort filen",
+    "whatItHolds": "Filen innehåller listorna sidorna exporterar (att läsa in igen), grundschemat och data/ med närvaro, frånvaroanmälningar, ledigheter, notiser och läslogg. README.txt i filen säger vad den inte innehåller. Varje hämtning skrivs i läsloggen.",
+    "status": {
+      "QUEUED": "I kö",
+      "RUNNING": "Byggs",
+      "READY": "Klar",
+      "FAILED": "Misslyckades",
+      "EXPIRED": "Gått ut"
+    },
+    "errors": {
+      "generic": "Det gick inte. Försök igen om en stund.",
+      "SCHOOL_EXPORT_IN_HAND": "En beställning pågår redan. Vänta tills den är klar.",
+      "SCHOOL_EXPORT_TOO_MANY": "Skolan har redan beställt tre gånger det senaste dygnet. Hämta en av de beställda filerna.",
+      "SCHOOL_EXPORT_EXPIRED": "Filen har gått ut och är raderad. Beställ en ny.",
+      "SCHOOL_EXPORT_NOT_READY": "Filen är inte klar än.",
+      "SCHOOL_EXPORT_INCOMPLETE": "Filen kom inte fram hel. Försök hämta igen.",
+      "SCHOOL_EXPORT_DECIDES": "Hela skolans data lämnas ut av rektor och fullständiga administratörer."
+    },
+    "extract": {
+      "title": "Registerutdrag (GDPR artikel 15)",
+      "description": "Alla uppgifter Rastra har om en person, i filer som går att öppna i Excel: samma filer som hela skolans data, för personens rader, och därtill en fil för varje tabell som har en rad om personen.",
+      "person": "Person",
+      "choose": "Välj person",
+      "inactive": "avaktiverad",
+      "withRelated": "Ta med vårdnadshavare eller barn",
+      "fetch": "Hämta registerutdrag",
+      "building": "Bygger…",
+      "recorded": "Utdraget skrivs i läsloggen för de personer det innehåller uppgifter om. En person med skyddad identitet finns inte i någon annans utdrag.",
+      "failed": "Utdraget kunde inte hämtas.",
+      "subjectMarked": "Personen har skyddad identitet. Utdraget innehåller bara personens egna uppgifter och ingen annan. Lämna det till personen själv, efter att du kontrollerat vem som frågar.",
+      "relatedHeldOut": "{count, plural, one {# närstående med skyddad identitet är utelämnad.} other {# närstående med skyddad identitet är utelämnade.}}",
+      "done": "{count, plural, =0 {Utdraget är hämtat.} one {Utdraget är hämtat, med # närstående.} other {Utdraget är hämtat, med # närstående.}}",
+      "groups": {
+        "STUDENT": "Elever",
+        "GUARDIAN": "Vårdnadshavare",
+        "TEACHER": "Lärare",
+        "SCHOOL_ADMIN": "Administratörer"
+      }
+    }
+  },
   "reportingRate": {
     "title": "Rapporteringsgrad",
     "subtitle": "Hur stor andel av de hållna lektionerna som har ett sparat register, per lärare",

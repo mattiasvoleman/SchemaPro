@@ -8,5 +8,7 @@ import { LeaveService } from './leave.service';
 @Module({
   controllers: [FamilyController],
   providers: [FamilyService, FamilyReadsService, FamilyScheduleService, LeaveService],
+  // The whole-school export builds vardnadshavare.csv with the gateway's own read of the links.
+  exports: [FamilyReadsService],
 })
 export class FamilyModule {}

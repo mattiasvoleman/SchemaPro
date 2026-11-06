@@ -53,6 +53,41 @@ const e2e = {
 };
 
 /**
+ * The OpenAPI document (src/openapi). Its own project because it alone needs
+ * the @nestjs/swagger CLI plugin, and the plugin needs a type checker: it reads
+ * the types of the DTOs' properties, which the per-file transpile of the other
+ * projects (isolatedModules) cannot answer. Here every file goes through
+ * ts-jest's language service, with the plugin as an AST transformer
+ * (test/swagger-plugin.cjs reads its options from nest-cli.json, so `nest
+ * build` and this compile the DTOs alike).
+ *
+ * Why not the language service for the DTOs and controllers alone, and the
+ * quick transpile for the rest, as two transform entries: ts-jest keeps one
+ * configuration per Jest project, whichever entry reaches it first, so the
+ * second entry's options are silently the first's. Keeping the slower compile
+ * out of `unit` and `e2e` is what a project of its own is for;
+ * `npm run test:openapi` runs it alone, through jest.openapi.config.js: it is not one of
+ * jest.config.js's projects, since the plugin's generated functions and branches would
+ * be merged into the coverage of the DTOs and controllers (see that file).
+ */
+const openapi = {
+  ...common,
+  displayName: 'openapi',
+  roots: ['<rootDir>/test'],
+  testRegex: '\\.openapi-spec\\.ts$',
+  transform: {
+    '^.+\\.ts$': [
+      'ts-jest',
+      {
+        tsconfig: '<rootDir>/test/tsconfig.openapi.json',
+        diagnostics: false,
+        astTransformers: { before: ['<rootDir>/test/swagger-plugin.cjs'] },
+      },
+    ],
+  },
+};
+
+/**
  * §2 mandates ≥95% coverage. **That remains the target.** The defaults below
  * are a ratchet, not the goal: each sits just under the figure the suite
  * actually achieves today, so the gate blocks regression while the suite is
@@ -105,4 +140,4 @@ const coverage = {
   coverageThreshold: { global: coverageMin },
 };
 
-module.exports = { common, globals, unit, e2e, coverage };
+module.exports = { common, globals, unit, e2e, openapi, coverage };

@@ -1151,6 +1151,158 @@ the browser refuses says so. Each key lists its subscriptions
 *Pausa* / *Återuppta* (`POST /:id/subscriptions/:sid/pause|resume`). Revoking
 a key asks first.
 
+## The administration API (`/api/v1`) and its OpenAPI document
+
+Everything above is the SS12000 side: `/ss12000/v1` and `/ss12000/v2.0`, reached
+with an integration key. The gateway has a second surface, `/api/v1`, which
+Rastra's own web and app use and which a school's administrator signs in to. It
+is described in an **OpenAPI 3 document**, generated from the gateway's
+controllers and DTO classes (`@nestjs/swagger`, no hand-written spec, no
+Swagger UI).
+
+**Where it is.**
+
+- `GET /api/v1/openapi.json`, for a signed-in administrator of a school: any
+  profile, the läsare (`LASARE`) too, and the huvudman's reader at a school.
+  Teachers, pupils, guardians, a huvudman's member with no school chosen, an
+  integration key and a caller with no login are refused (403, or 401 without
+  a login). The document is built once per process and served as the same
+  bytes every time.
+- `docs/api/openapi.json` in this repository: the same document, committed,
+  two-space indented, with no timestamp, host or environment in it, so a pull
+  request that changes the API shows the change in the file.
+
+**How it is generated and kept in step.** `nest build` runs the
+`@nestjs/swagger` plugin named in `nest-cli.json`, which reads each DTO's
+properties and its class-validator decorators (bounds, formats, enums,
+required) off the TypeScript types: no controller or DTO carries a decorator for
+the document. `src/openapi/` turns what the library derives into the document
+(only `/api/v1`; the `X-School-Id` header and the common errors on every
+operation; `x-roles`, `x-admin-write` and `x-rate-limit` read from `@Roles`,
+`@Area`/`@Decides` and `@Throttle`; paths typed by the pipes on them; a route
+that answers a file described as one). To refresh the committed file after a
+change to a route, a DTO or a role:
+
+```bash
+npm run openapi:generate   # rewrites docs/api/openapi.json
+```
+
+The `openapi` Jest project (`npm run test:openapi`, its own config `jest.openapi.config.js` and its own step in CI, without coverage) fails
+with the missing `VERB /path` when a route under `/api/v1` is not in the
+document, when the document has an operation that is no route, when the
+committed file differs from what the code generates, and when the document is
+not a valid OpenAPI 3.0 document. It runs apart from the unit and e2e projects
+because the plugin needs a type checker. The built application
+(`dist/`, from `nest build`) produces the same bytes as the test.
+
+**What it does not cover.**
+
+- The SS12000 providers `/ss12000/v1` and `/ss12000/v2.0`: they are keyed with
+  `X-API-Key`, and are described in this file (v2.0 follows the standard's own
+  OpenAPI, SIS TK450). An integration key is **not** accepted on `/api/v1`.
+- The public routes under `/public/v1` (the Schemavisaren, calendar feeds, the
+  lookup of a domain's sign-in method) and the `/health` probes.
+- Response bodies are described as JSON objects: most routes return the
+  database's rows or a service's summary, which have no class to read a schema
+  from. Request bodies and query parameters, which are DTO classes, are
+  described in full. The two bodies typed inline in
+  `IntegrationKeysController` carry an `@ApiBody` (the only hand-written
+  schemas).
+- The mobile app's own helpers (device registration, push) are routes under
+  `/api/v1` like the rest, and are in the document.
+
+**What to tell an IT department that asks about the API.** The administration
+API is the one the web and the app use; it is authenticated with the person's
+own login (a Supabase JWT as a Bearer token, plus `X-School-Id` when the login
+has roles at several schools), not with a shared key, and everything a person
+may do is bounded by their role and, for an administrator, their profile. It is
+rate limited (120 requests a minute per address by default, tighter on some
+routes), every read of personal data is written to the läslogg, errors are
+RFC 7807, ids are UUIDs and dates ISO 8601. A system that needs data from the
+school without a person's login uses the SS12000 provider and an integration
+key, which is scoped to one school and to the scopes the administrator ticked;
+that is the contract in the rest of this file. The OpenAPI document is the
+reference for the first: generated from the code, so it describes the routes
+as they are, not as a separate text says they are.
+
+## Taking a school's data out: the whole-school export and the registerutdrag
+
+Two questions a data protection officer and an IT department ask before an
+agreement is signed: can we take everything out when we leave, and can we answer
+a person who asks for theirs (GDPR art. 15)? Both are answered on
+`/admin/dataskydd` and through `/api/v1/school-exports`, for **rektor and a full
+administrator** only (the profiles that decide; the huvudman's reader, who reads
+a school as a läsare, decides nothing and is refused).
+
+**The whole-school export** is a zip built by a background job as the
+administrator who ordered it (`POST /api/v1/school-exports`; the job runs every
+30 s and reads under that person's login and school, so row-level security keeps
+every other school's rows out of the file). It is stored in the database in
+pieces, can be fetched for **72 hours** (`GET /api/v1/school-exports/:id/file`,
+which says its length and SHA-256 and is written to the läslogg before the first
+byte), and is then deleted. One order is in hand per school at a time, and a
+school may order three times a day. It holds:
+
+- `csv/`: the lists the pages export, as the pages write them and in the format
+  the CSV import reads (#260), so a school can read them into another Rastra
+  school or any system that reads CSV;
+- `schema/grundschema.csv`: the base timetable as a table (Schema som fil);
+- `data/`: people, guardian links, attendance, absence reports, leave requests,
+  notices and the read log, for every läsår the school keeps, with ids and the
+  address beside each id. A file over a million rows is split in parts;
+- `README.txt`, `FORMAT.md` (every column; committed as
+  [school-export-format.md](school-export-format.md) and held equal by a test) and
+  `manifest.json` (rows, size and SHA-256 per file, and what was held out).
+
+Persons with a protected identity (skyddad identitet) are not in it, and
+neither are rows about them; the manifest counts what was held out. A free-text
+cell (an attendance or absence note, a leave's reason or decision note, a
+notice) that names a protected person by id (any case, with or without hyphens),
+by full name (either order, any spacing, case or hyphen) or by address is empty
+and counted; a first name alone, a nickname, another spelling (a name without
+its diacritics) and a description ("mamma") are not found, so free text is not
+guaranteed to be free of them. A protected person who holds a lesson without
+being a teacher or administrator by role (a pupil or guardian put on it by hand)
+is not named in the grundschema; the lesson stands without a teacher and the
+order says so. A part the job could not make (the base timetable,
+or a school with no active year has none) does not stop the rest: it is said in
+`manifest.json` (`anmarkningar`), first in `README.txt` (which then does not name
+the folder), and on the order (`heldOut.notes`, shown on the card).
+Measured on 1 000 pupils with a year of attendance (1.14 million marks): 1.18
+million rows, a 33 MB zip, built in under a minute, in a process whose heap stays
+about 40 MB above idle (`scripts/bench/school-export.ts`).
+
+**The registerutdrag** (`POST /api/v1/school-exports/subject-access`) is the same
+files for one person's rows, optionally with their guardians or children, and one
+file per table that holds a row about a person (`data/person/`). Which tables
+those are is the removal inventory's (`src/common/removal-inventory.ts`): a test
+fails when a table is added there and not decided in
+`src/school-export/person-tables.ts`. The tables that keep a person's id without
+a key to Users (the history of cut guardian links and of marks, the acts of a
+school's integrations, snapshots) are listed in `WITHOUT_KEY` there, and
+`scripts/test/probe-school-export.ts` (k-i1) holds the list to the catalogue: a
+column named like a person with no key to Users that nobody decided fails the
+probe. A table left out on purpose says why in the README.
+
+The extract is one person's, not the people around them (GDPR art. 15.4). In a
+row that is not about the person (a leave a teacher decided, an absence a
+guardian reported) the pupil's id and address, the leave's reason, the
+absence's kind and the notes are empty, and what stays is the person's own
+act. The same holds for the tables of `data/person/` that are about a pupil
+(`PersonDump.pupil`: the crisis tables, where a teacher marks a pupil found in a
+drill): the pupil and the pupil's state are empty and the act stays. A note the
+person wrote that names another pupil or guardian by full name (either order) or
+address is empty too (`TermIndex`, `free-text.ts`); in the extract of a protected
+person, so is a note that names any other user. **An extract about a protected
+person names no one else:** every id and
+address of anyone but the person (the guardian in a link, whoever recorded,
+reported, applied, decided or read) is empty in every file, in `data/` and in
+`data/person/`, and counted in the manifest; no related person comes along. The
+probe searches every file of such an extract for the id and the address of each
+other user of the school, with and without the guardians asked for. What the
+person's own account holds and no administrator can read (notice settings, push
+devices, calendar feeds) is named in the README.
+
 ## Security model
 
 **A key resolves to one school.** `IntegrationKeyGuard` hashes the

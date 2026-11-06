@@ -302,6 +302,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // update: the register's kind on the sync's mark, in an administrator's apply (20270111090000).
   PersonProtections: { insert: ['PERSONAL'], update: ['PERSONAL'], delete: ['DECIDES'] },
   PersonProtectionEvents: readOnly,
+  // Hela skolans data (20270114090000): ordered, read and withdrawn by those who decide, and by nobody else;
+  // the pieces are read by them while the file is fresh and written by the job's functions alone.
+  SchoolExports: { insert: ['DECIDES'], update: [], delete: ['DECIDES'], read: ['DECIDES'] },
+  SchoolExportChunks: { ...readOnly, read: ['DECIDES'] },
   Users: { insert: ['PERSONAL'], update: ['PERSONAL', 'PLANERING'], delete: ['PERSONAL'] },
 
   // Integrationer: keys, SS12000 and the school's sign-in.

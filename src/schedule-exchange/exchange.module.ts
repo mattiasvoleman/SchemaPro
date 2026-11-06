@@ -8,5 +8,7 @@ import { ScheduleExchangeService } from './exchange.service';
   imports: [CalendarModule],
   controllers: [ScheduleExchangeController],
   providers: [ScheduleExchangeService],
+  // The whole-school export writes the grundschema with Schema som fil's own export.
+  exports: [ScheduleExchangeService],
 })
 export class ScheduleExchangeModule {}

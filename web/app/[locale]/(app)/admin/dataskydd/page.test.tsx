@@ -28,6 +28,8 @@ const get = api.get as unknown as Mock;
 const post = api.post as unknown as Mock;
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
+// Hela skolans data asks who the signed-in administrator is (school-export-card.test.tsx has its own cases).
+vi.mock("@/components/profile-context", () => ({ useProfile: () => ({ profile: { adminProfile: "FULL" } }) }));
 
 const undecided = (): RetentionKind[] =>
   RETENTION_DATA_TYPES.map((dataType) => ({ dataType, current: null, waitsUntil: null, preview: null, purgedBefore: null }));
@@ -61,6 +63,7 @@ describe("/admin/dataskydd", () => {
       if (path === "/api/v1/retention") return overview();
       // The read log's picker (access-log-card.test.tsx has its own cases).
       if (path === "/api/v1/users") return [];
+      if (path === "/api/v1/school-exports") return [];
       if (path.startsWith("/api/v1/retention/preview")) {
         const months = Number(new URLSearchParams(path.split("?")[1]).get("months"));
         return { cutoff: months === 12 ? "2025-10-21" : "2026-04-21", due: months === 12 ? 1234 : 0, held: 0 };
@@ -192,6 +195,7 @@ describe("/admin/dataskydd", () => {
             },
           ],
         });
+      if (path === "/api/v1/school-exports") return [];
       throw new Error(`unexpected GET ${path}`);
     });
     renderPage();

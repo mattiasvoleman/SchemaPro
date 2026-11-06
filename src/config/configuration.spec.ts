@@ -73,6 +73,8 @@ describe('loadConfiguration', () => {
       ss12000: { secretsKey: undefined, secretsKeyPrevious: undefined, background: true, allowInsecureLocal: false },
       // Unset: the nightly gallring ticks (and removes nothing until a school decides).
       gallring: { background: true },
+      // Unset: the whole-school export's job polls for an order every 30 seconds.
+      schoolExport: { background: true },
       // Unset: the settling of vikarieförfrågningar ticks.
       coverRequests: { background: true },
       crisis: { background: true },
@@ -109,6 +111,12 @@ describe('loadConfiguration', () => {
   it('turns the gallring tick off only for GALLRING_BACKGROUND=off', () => {
     expect(loadConfiguration(env({ GALLRING_BACKGROUND: 'off' })).gallring.background).toBe(false);
     expect(loadConfiguration(env({ GALLRING_BACKGROUND: 'on' })).gallring.background).toBe(true);
+  });
+
+  it('turns the whole-school export job off only for SCHOOL_EXPORT_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ SCHOOL_EXPORT_BACKGROUND: 'off' })).schoolExport.background).toBe(false);
+    expect(loadConfiguration(env({ SCHOOL_EXPORT_BACKGROUND: 'on' })).schoolExport.background).toBe(true);
+    expect(loadConfiguration(env({})).schoolExport.background).toBe(true);
   });
 
   it('turns the absence watch tick off only for ABSENCE_WATCH_BACKGROUND=off', () => {

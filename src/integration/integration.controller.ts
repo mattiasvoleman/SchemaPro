@@ -18,6 +18,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { ApiBody, type SchemaObject } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -32,10 +33,19 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { IntegrationKeyGuard, type IntegrationRequest } from './integration-key.guard';
 import { IntegrationScopeGuard, RequireScope } from './integration-scope.guard';
 import { Ss12000Service } from './ss12000.service';
-import { parseScopes } from './ss12000-v2/scopes';
+import { parseScopes, SCOPES } from './ss12000-v2/scopes';
 import { newWebhookSecret, webhookSecretAad } from './ss12000-v2/signing';
 import { Ss12000Secrets } from './ss12000-sync/ss12000-sync.providers';
 import { sqlStateOf } from './ss12000-sync/errors';
+
+/**
+ * The two bodies below are typed inline (`{ scopes?: unknown }`), which a
+ * document cannot read a schema from; @ApiBody says it, once, beside the
+ * handler. The scopes are the list parseScopes accepts.
+ */
+const SCOPES_SCHEMA: SchemaObject = { type: 'array', minItems: 1, items: { type: 'string', enum: [...SCOPES] } };
+const CREATE_KEY_BODY: SchemaObject = { type: 'object', properties: { name: { type: 'string', maxLength: 120 }, scopes: SCOPES_SCHEMA } };
+const UPDATE_SCOPES_BODY: SchemaObject = { type: 'object', properties: { scopes: SCOPES_SCHEMA }, required: ['scopes'] };
 
 /**
  * Admin management of integration API keys. The plaintext key is returned
@@ -73,6 +83,7 @@ export class IntegrationKeysController {
    * scopes existed (20261014120000). With it, exactly those (scopes.ts).
    */
   @Post()
+  @ApiBody({ schema: CREATE_KEY_BODY })
   async create(
     @Body() body: { name?: string; scopes?: unknown },
     @CurrentUser() user: AuthenticatedUser,
@@ -167,6 +178,7 @@ export class IntegrationKeysController {
 
   /** PATCH {scopes}: what the key may reach from now on. */
   @Patch(':id')
+  @ApiBody({ schema: UPDATE_SCOPES_BODY })
   async updateScopes(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() body: { scopes?: unknown },

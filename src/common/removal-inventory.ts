@@ -224,6 +224,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('CrisisReports', ['byUserId', 'schoolId'], 'SET NULL', kept),
   key('HuvudmanSchools', ['acceptedById', 'schoolId'], 'SET NULL', kept),
   key('HuvudmanSchoolEvents', ['byUserId', 'schoolId'], 'SET NULL', kept),
+  // Hela skolans data (20270114090000): who ordered a copy of the school's data; the order stays without them.
+  key('SchoolExports', ['requestedById', 'schoolId'], 'SET NULL', kept),
   key('RoomLoans', ['decidedById', 'ownerSchoolId'], 'SET NULL', kept),
   key('RoomLoans', ['requestedById', 'borrowerSchoolId'], 'SET NULL', kept),
   key('PersonalDataAccess', ['actorId', 'schoolId'], 'SET NULL', {

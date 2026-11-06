@@ -47,6 +47,9 @@ process.env['SS12000_BACKGROUND'] = 'off';
 // The nightly gallring (src/gallring): no background tick in tests either; a
 // spec drives GallringJob.tick itself.
 process.env['GALLRING_BACKGROUND'] = 'off';
+// The whole-school export's job (src/school-export): no 30-second poll in
+// tests; a spec drives SchoolExportJob.tick itself.
+process.env['SCHOOL_EXPORT_BACKGROUND'] = 'off';
 // The vikarieförfrågningar's settling (src/cover/cover-requests.job.ts): no
 // 5-minute tick in tests; a spec drives CoverRequestsJob.tick itself.
 process.env['COVER_REQUESTS_BACKGROUND'] = 'off';
