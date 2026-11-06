@@ -122,7 +122,7 @@ export const REQUIRED_BY_ROLE: Record<ChoosingRole, ReadonlySet<NotificationKind
  * absence, a substitute's own booking (LESSON_SUBSTITUTE with meta.cover ===
  * true — the type also carries the class's "has a substitute") and its
  * withdrawal, a rastvaktspass booked and withdrawn (20261210090000), and an
- * alarm and its end (Krisläge, 20270109090000).
+ * alarm and its end (Krisläge, 20270113090000).
  */
 export function deliveredRegardless(type: NotificationKind, meta: Record<string, unknown>): boolean {
   return (

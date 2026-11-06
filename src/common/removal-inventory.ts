@@ -169,7 +169,7 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('SupervisionCovers', ['substituteId', 'schoolId'], 'CASCADE', others),
   // Vikariefrågan (20270102091000): a question they were asked and a pass they confirmed.
   key('CoverRequestRecipients', ['userId', 'schoolId'], 'CASCADE', others),
-  // Krisläge (20270109091000): a pupil is on no list once removed; the marks and answers they made are kept without them.
+  // Krisläge (20270113091000): a pupil is on no list once removed; the marks and answers they made are kept without them.
   key('CrisisPupils', ['studentId', 'schoolId'], 'CASCADE', others),
   key('CoverConfirmations', ['userId', 'schoolId'], 'CASCADE', others),
   key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),

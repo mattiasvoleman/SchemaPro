@@ -147,7 +147,7 @@ const CALL_INCLUDE = { teachers: true, pupils: true } as const;
  * timetable in the transaction that starts the alarm (crisis-calls.ts says by
  * what rule) and never added to afterwards (the database holds the insert to
  * that transaction); a mark is appended and the lists follow it (migration
- * 20270109091000 says how). What a teacher reads is their own groups, and what
+ * 20270113091000 says how). What a teacher reads is their own groups, and what
  * the administration reads is everything: row-level security gives each their
  * rows, and this service builds the same views from what it was allowed to read.
  */

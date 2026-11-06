@@ -41485,7 +41485,7 @@ DROP TABLE sk364;
 -- ---------------------------------------------------------------------------
 -- Section 350: krisläget står i katalogen som migreringen skrev det
 -- (CrisisSettings, CrisisAlarms, CrisisCalls, CrisisCallTeachers, CrisisPupils,
--- CrisisReports, 20270109091000), och vem som får starta ett larm.
+-- CrisisReports, 20270113091000), och vem som får starta ett larm.
 --
 -- Sex tabeller, 20 armar, ingen DELETE för någon roll, UPDATE bara på
 -- inställningarna och larmet, ingenting för PostgREST:s roller, och sex
@@ -41586,7 +41586,7 @@ BEGIN
   END LOOP;
   -- app.gallring_due and app.gallring_purge are replaced whole by every release
   -- that adds a kind (20261026091000, 20261231090100, 20270102091000,
-  -- 20270107090000, 20270109091000), so the one that comes last must carry
+  -- 20270107090000, 20270113091000), so the one that comes last must carry
   -- every branch before it. The branches' behaviour is the sections' (319,
   -- 343, 354); this is that none is missing from the bodies in force.
   SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure;
@@ -41600,7 +41600,7 @@ BEGIN
     RAISE EXCEPTION 'gallring: app.gallring_due has lost the branch for the marks'' history (Skyddad identitet, 20270107090000)';
   END IF;
   IF src NOT LIKE '%"CrisisAlarms"%' OR src NOT LIKE '%CRISIS_DRILLS%' OR src NOT LIKE '%CRISIS_ALARMS%' THEN
-    RAISE EXCEPTION 'gallring: app.gallring_due has lost the branch for the alarms (Krisläge, 20270109091000)';
+    RAISE EXCEPTION 'gallring: app.gallring_due has lost the branch for the alarms (Krisläge, 20270113091000)';
   END IF;
   SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = 'app.gallring_purge(uuid, "RetentionDataType", integer)'::regprocedure;
   IF src NOT LIKE '%DELETE FROM "AbsenceWatchFindings"%' THEN
@@ -41613,7 +41613,7 @@ BEGIN
     RAISE EXCEPTION 'gallring: app.gallring_purge has lost the branch for the marks'' history (Skyddad identitet, 20270107090000)';
   END IF;
   IF src NOT LIKE '%WHEN ''CRISIS_DRILLS'', ''CRISIS_ALARMS'' THEN%' OR src NOT LIKE '%DELETE FROM "CrisisAlarms"%' THEN
-    RAISE EXCEPTION 'gallring: app.gallring_purge has lost the branch for the alarms (Krisläge, 20270109091000)';
+    RAISE EXCEPTION 'gallring: app.gallring_purge has lost the branch for the alarms (Krisläge, 20270113091000)';
   END IF;
 END $$;
 ROLLBACK;
@@ -41786,7 +41786,7 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Section 351: ett larm börjar i sin skrivares namn, slutar en gång, och ses
--- av dem det angår (CrisisAlarms, 20270109091000).
+-- av dem det angår (CrisisAlarms, 20270113091000).
 --
 -- Allt en skrivare inte ska välja väljs, och inget av det stannar: starttiden
 -- är transaktionens, starter är den inloggade, och slutet, anteckningen, att
@@ -41964,7 +41964,7 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Section 352: grupperna och deras lärare (CrisisCalls, CrisisCallTeachers,
--- 20270109091000), and with it the alarm that 352-354 build and read from
+-- 20270113091000), and with it the alarm that 352-354 build and read from
 -- every side.
 --
 -- The administrator writes an alarm for the primary school the way the
@@ -42203,7 +42203,7 @@ END $$;
 
 -- ---------------------------------------------------------------------------
 -- Section 353: en lärare ser sin grupps elever och ingen annans
--- (CrisisPupils, 20270109091000).
+-- (CrisisPupils, 20270113091000).
 --
 -- De fyra eleverna ligger på tre listor. Ledningen läser alla fyra; läraren på
 -- 7A och dess biträdande läser de två på sin lista; vikarien på 8B den
@@ -42252,7 +42252,7 @@ END $$;
 
 -- ---------------------------------------------------------------------------
 -- Section 354: en markering läggs till, och listorna följer den
--- (CrisisReports, 20270109091000), och gallringen av larm.
+-- (CrisisReports, 20270113091000), och gallringen av larm.
 --
 -- Läraren på 7A markerar eleven som inte var frånvarande: i sitt eget namn
 -- (det hon skickar om vem som markerade räknas inte), med tiden hållen mellan

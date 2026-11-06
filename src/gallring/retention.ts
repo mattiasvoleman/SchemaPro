@@ -5,7 +5,7 @@ import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
  * page lists them (RetentionDataType, 20261021110000; ACCESS_LOG, the read
  * log, 20261026090000; COVER_REQUESTS, vikarieförfrågningar, 20270102090000;
  * CRISIS_DRILLS and CRISIS_ALARMS, krisläget's exercises and real alarms,
- * 20270109090000). Ten are rows that go; DEPARTED_PEOPLE are pseudonymised in place.
+ * 20270113090000). Ten are rows that go; DEPARTED_PEOPLE are pseudonymised in place.
  */
 export const RETENTION_DATA_TYPES = [
   'ATTENDANCE',

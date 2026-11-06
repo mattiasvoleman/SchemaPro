@@ -1164,11 +1164,11 @@ Walk the full product loop once, in order:
   never reads the column or the function, writes its marks with no kind, and
   sends no `securityMarking`; a `DIFF_READY` run holding a PROTECTION UPDATE is
   applied without it. The column, the arms and the function may stay.
-- **Krisläge**: 20270109090000 adds the `NotificationType` values
+- **Krisläge**: 20270113090000 adds the `NotificationType` values
   `CRISIS_ALARM`, `CRISIS_ENDED` and `CRISIS_GUARDIAN_AFTER` and the
   `RetentionDataType` values `CRISIS_DRILLS` and `CRISIS_ALARMS` and nothing
   else (a value cannot be used in the transaction that adds it, so it is a
-  file of its own: never run the two files in one `psql -1`). 20270109091000
+  file of its own: never run the two files in one `psql -1`). 20270113091000
   adds the tables `CrisisSettings`, `CrisisAlarms`, `CrisisCalls`,
   `CrisisCallTeachers`, `CrisisPupils` and `CrisisReports` with 20 policies,
   the triggers that start an alarm in its writer's name, let it end once and
@@ -1183,7 +1183,7 @@ Walk the full product loop once, in order:
   the three wait for the file (about 50 ms once the locks are taken), and if
   all three are not free at once in 30 s it stops with nothing changed in the
   second file (`prisma migrate resolve --rolled-back
-  20270109091000_ett_larm_raknar_eleverna_utifran_schemat`, then deploy
+  20270113091000_ett_larm_raknar_eleverna_utifran_schemat`, then deploy
   again). NOWAIT never queues, so it does not make an autovacuum give way:
   look first (below). The API before the release knows none of the objects
   and writes no notice of the new types, so it keeps working between the
@@ -1191,7 +1191,10 @@ Walk the full product loop once, in order:
   outside an SS12000 sync window.
   **Before the migration**, as the owner: `SHOW server_version` is the 17.x
   production runs; `prisma migrate status` lists exactly the two new
-  migrations as pending; `SELECT to_regclass('"CrisisAlarms"')` is NULL and
+  migrations as pending (their stamps, 20270113090000 and 20270113091000, sort
+  after Skyddad identitet's 20270107090000 and its register kind's
+  20270111090000, which are applied, so production and a fresh database
+  run them in one order); `SELECT to_regclass('"CrisisAlarms"')` is NULL and
   `SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE
   t.typname IN ('NotificationType', 'RetentionDataType') AND e.enumlabel LIKE
   'CRISIS%'` returns no row; and no session sits idle in a transaction that
@@ -1204,10 +1207,11 @@ Walk the full product loop once, in order:
   `de359f739e3908c9a36e41ff541cdf13`. The second file replaces both functions
   whole, built on exactly those bodies, so they carry every branch: the
   absence watch's findings, the cover requests, the marks' history and now the
-  alarms. After the migration the values are `gallring_due`
+  alarms. `app.gallring_pseudonymise` is not touched: its `md5(prosrc)` is
+  `6f18f62fc354bde849aa2e8b01eeceda` before and after. After the migration the values are `gallring_due`
   `08e09acc4717b1aa5dc8302c5c63b1ee` and `gallring_purge`
   `2e371cfd8ed4559d87ae706d73040d3b`. Other values before it mean a release has
-  restated them since: its branch must be carried into 20270109091000's
+  restated them since: its branch must be carried into 20270113091000's
   bodies, or its rows are no longer purged (the RLS suite, section 350, fails
   when a body has lost a branch).
   **After it, before the merge:** both migrations are applied;

@@ -3149,7 +3149,7 @@ BEGIN
   SELECT id, m, 'SS12000' FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
 END $$;
 
--- Krisläge (20270109091000), the matrix school's rows: the settings, one open
+-- Krisläge (20270113091000), the matrix school's rows: the settings, one open
 -- exercise whose lists are not sealed (so the role matrix, section 116, can
 -- copy a row into each of the lists the way an administrator writes them in
 -- the transaction that starts an alarm), its call, the school's teacher on it,

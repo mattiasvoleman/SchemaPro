@@ -16,7 +16,7 @@ export const CRISIS_INTERVAL_MS = 15 * 60 * 1000;
 
 /**
  * Ends the alarms that have stood open longer than one can (app.crisis_settle,
- * 20270109091000), a job of the JobRunner. Off when CRISIS_BACKGROUND=off (the
+ * 20270113091000), a job of the JobRunner. Off when CRISIS_BACKGROUND=off (the
  * test setup). Never throws; each pass is counted in JobRuns.
  */
 @Injectable()

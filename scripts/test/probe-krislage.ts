@@ -1,5 +1,5 @@
 /**
- * The adapter probe's checks for Krisläge (20270109091000), through the real
+ * The adapter probe's checks for Krisläge (20270113091000), through the real
  * services on the API's role and real Postgres as CI runs it — the part the
  * unit specs and the e2e cannot see, since both run on the Prisma mock. In a
  * school of its own (slug <marker>-krislage), swept whole before and after.

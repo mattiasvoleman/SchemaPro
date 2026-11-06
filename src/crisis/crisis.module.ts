@@ -4,7 +4,7 @@ import { CrisisJob } from './crisis.job';
 import { CrisisService } from './crisis.service';
 
 /**
- * Krisläge (F2, 20270109091000): an alarm for utrymning or inrymning that
+ * Krisläge (F2, 20270113091000): an alarm for utrymning or inrymning that
  * starts from the timetable, the teachers' marks, the live view and the
  * protocol. NotificationsModule and RealtimeModule are global.
  */

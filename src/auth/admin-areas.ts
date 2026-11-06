@@ -263,7 +263,7 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   CoverRequestLessons: just('DRIFT', 'insert'),
   CoverRequestRecipients: just('DRIFT', 'insert', 'update'),
   CoverRequests: just('DRIFT', 'insert', 'update'),
-  // Krisläge (20270109091000): an alarm is started and ended by those who write
+  // Krisläge (20270113091000): an alarm is started and ended by those who write
   // Drift and whom the school let start one (app.crisis_may_start, a narrower
   // question than the area, held in section 351); its lists are written once, in
   // the alarm's own transaction, and a mark is appended. Nothing is changed or
@@ -311,7 +311,7 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // and sharing tjänst % (SS12000-närvaro, 20261114090000).
   AttendanceSharingDecisions: just('DECIDES', 'insert'),
   // Krisläge: who may start an alarm and whether the guardians are told is a
-  // decision (20270109091000).
+  // decision (20270113091000).
   CrisisSettings: just('DECIDES', 'insert', 'update'),
   LeaveDelegationDecisions: just('DECIDES', 'insert'),
   RetentionDecisions: just('DECIDES', 'insert'),

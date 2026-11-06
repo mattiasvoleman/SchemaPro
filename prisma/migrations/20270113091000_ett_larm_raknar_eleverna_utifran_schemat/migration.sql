@@ -138,7 +138,7 @@ BEGIN
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Schools, Users and CalendarLessons were not free at once in 30 s: nothing is changed, run the migration again (prisma migrate resolve --rolled-back 20270109091000_ett_larm_raknar_eleverna_utifran_schemat, then deploy)';
+        RAISE EXCEPTION 'Schools, Users and CalendarLessons were not free at once in 30 s: nothing is changed, run the migration again (prisma migrate resolve --rolled-back 20270113091000_ett_larm_raknar_eleverna_utifran_schemat, then deploy)';
       END IF;
       PERFORM pg_sleep(0.05);
     END;
@@ -945,7 +945,7 @@ END
 $$;
 
 -- ---------------------------------------------------------------------------
--- Gallring: CRISIS_DRILLS and CRISIS_ALARMS (20270109090000). Both bodies are
+-- Gallring: CRISIS_DRILLS and CRISIS_ALARMS (20270113090000). Both bodies are
 -- 20270107090000's (Skyddad identitet's, which carry Frånvarobevakning's
 -- findings under ATTENDANCE, the vikarieförfrågningar under COVER_REQUESTS and
 -- the marks' history under CHANGE_LOGS) plus the one branch marked "krisläge",

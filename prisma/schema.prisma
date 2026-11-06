@@ -109,11 +109,11 @@ enum NotificationType {
   COVER_REQUEST_CLOSED
   /// A week's or month's count of pupils over the school's absence limits: only numbers, to a mentor, rektor, kansli or guardian (20261231090000).
   ABSENCE_WATCH_DIGEST
-  /// An alarm is going: to the school's staff, saying only that (never a pupil, a group or a place) (20270109090000).
+  /// An alarm is going: to the school's staff, saying only that (never a pupil, a group or a place) (20270113090000).
   CRISIS_ALARM
-  /// The alarm is over: to the school's staff (20270109090000).
+  /// The alarm is over: to the school's staff (20270113090000).
   CRISIS_ENDED
-  /// After a real alarm, when the school chose to tell the guardians: that it happened and ended, nothing of any pupil (20270109090000).
+  /// After a real alarm, when the school chose to tell the guardians: that it happened and ended, nothing of any pupil (20270113090000).
   CRISIS_GUARDIAN_AFTER
 }
 
@@ -4353,7 +4353,7 @@ model CoverConfirmation {
 }
 
 // -----------------------------------------------------------------------------
-// Krisläge (F2, 20270109091000): a roll call for utrymning and inrymning that
+// Krisläge (F2, 20270113091000): a roll call for utrymning and inrymning that
 // starts from the timetable. The alarm, the snapshot of who stands before which
 // group when it starts, the teachers' marks and the guardians' notice are the
 // migration's; Prisma knows the columns. Nothing is updated by a gateway
@@ -4887,9 +4887,9 @@ enum RetentionDataType {
   ACCESS_LOG
   /// Vikarieförfrågningar and the vikarie's confirmations (20270102090000).
   COVER_REQUESTS
-  /// Krisläge, the drills (övningar): alarms with mode DRILL and what hangs on them (20270109090000).
+  /// Krisläge, the drills (övningar): alarms with mode DRILL and what hangs on them (20270113090000).
   CRISIS_DRILLS
-  /// Krisläge, the real alarms (skarpa larm): kept as the school decides (20270109090000).
+  /// Krisläge, the real alarms (skarpa larm): kept as the school decides (20270113090000).
   CRISIS_ALARMS
 }
 
