@@ -39,7 +39,11 @@ COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
 RUN npm run build \
     # Drop dev dependencies but keep the generated Prisma client.
-    && npm prune --omit=dev
+    && npm prune --omit=dev \
+    # @nestjs/swagger pulls in swagger-ui-dist (11 MB of browser assets) for SwaggerModule.setup, which serves a UI. The
+    # gateway serves the OpenAPI document only (GET /api/v1/openapi.json) and never calls setup, which is the one place
+    # that loads it, lazily; src/openapi/no-swagger-ui.spec.ts fails if a call to it appears.
+    && rm -rf node_modules/swagger-ui-dist
 
 
 # =============================================================================
