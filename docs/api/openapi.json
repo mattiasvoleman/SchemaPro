@@ -49,6 +49,12 @@
       "name": "CoverRequestsTeacher"
     },
     {
+      "name": "CrisisAdmin"
+    },
+    {
+      "name": "CrisisTeacher"
+    },
+    {
       "name": "Devices"
     },
     {
@@ -119,6 +125,9 @@
     },
     {
       "name": "Rasts"
+    },
+    {
+      "name": "ReportingRate"
     },
     {
       "name": "RoomBookings"
@@ -4185,6 +4194,609 @@
           "areas": [
             "DRIFT"
           ]
+        }
+      }
+    },
+    "/api/v1/crisis/alarms": {
+      "get": {
+        "tags": [
+          "CrisisAdmin"
+        ],
+        "operationId": "CrisisAdminController_list",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "mode",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DRILL",
+                "LIVE"
+              ],
+              "pattern": "^(LIVE|DRILL)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "post": {
+        "tags": [
+          "CrisisAdmin"
+        ],
+        "operationId": "CrisisAdminController_start",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartAlarmDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 10,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/crisis/alarms/{id}": {
+      "get": {
+        "tags": [
+          "CrisisAdmin"
+        ],
+        "operationId": "CrisisAdminController_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/crisis/alarms/{id}/end": {
+      "post": {
+        "tags": [
+          "CrisisAdmin"
+        ],
+        "operationId": "CrisisAdminController_end",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndAlarmDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 20,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/crisis/alarms/{id}/marks": {
+      "post": {
+        "tags": [
+          "CrisisAdmin"
+        ],
+        "operationId": "CrisisAdminController_mark",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarksDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 120,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/crisis/alarms/{id}/protocol": {
+      "get": {
+        "tags": [
+          "CrisisAdmin"
+        ],
+        "operationId": "CrisisAdminController_protocol",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/crisis/mine": {
+      "get": {
+        "tags": [
+          "CrisisTeacher"
+        ],
+        "operationId": "CrisisTeacherController_mine",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/crisis/mine/marks": {
+      "post": {
+        "tags": [
+          "CrisisTeacher"
+        ],
+        "operationId": "CrisisTeacherController_mark",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarksDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ],
+        "x-rate-limit": {
+          "limit": 240,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/crisis/mine/pupils": {
+      "post": {
+        "tags": [
+          "CrisisTeacher"
+        ],
+        "operationId": "CrisisTeacherController_pupils",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PupilSearchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ],
+        "x-rate-limit": {
+          "limit": 120,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/crisis/settings": {
+      "get": {
+        "tags": [
+          "CrisisAdmin"
+        ],
+        "operationId": "CrisisAdminController_settings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "CrisisAdmin"
+        ],
+        "operationId": "CrisisAdminController_updateSettings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCrisisSettingsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
+        },
+        "x-rate-limit": {
+          "limit": 20,
+          "ttlSeconds": 60
         }
       }
     },
@@ -10790,6 +11402,200 @@
         }
       }
     },
+    "/api/v1/reporting-rate": {
+      "get": {
+        "tags": [
+          "ReportingRate"
+        ],
+        "operationId": "ReportingRateController_overview",
+        "parameters": [
+          {
+            "name": "period",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "MONTH",
+                "WEEK",
+                "YEAR"
+              ]
+            }
+          },
+          {
+            "name": "anchor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/reporting-rate/mine": {
+      "get": {
+        "tags": [
+          "ReportingRate"
+        ],
+        "operationId": "ReportingRateController_mine",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/reporting-rate/settings": {
+      "get": {
+        "tags": [
+          "ReportingRate"
+        ],
+        "operationId": "ReportingRateController_settings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "ReportingRate"
+        ],
+        "operationId": "ReportingRateController_updateSettings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportingSettingsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      }
+    },
     "/api/v1/retention": {
       "get": {
         "tags": [
@@ -10903,6 +11709,8 @@
                 "ATTENDANCE",
                 "CHANGE_LOGS",
                 "COVER_REQUESTS",
+                "CRISIS_ALARMS",
+                "CRISIS_DRILLS",
                 "DEPARTED_PEOPLE",
                 "LEAVE_REQUESTS",
                 "NOTIFICATIONS"
@@ -22099,6 +22907,16 @@
           "at"
         ]
       },
+      "EndAlarmDto": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      },
       "ExecuteActivationDto": {
         "type": "object",
         "properties": {
@@ -23306,6 +24124,64 @@
           "isLocked"
         ]
       },
+      "MarkDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "callId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "alarmId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "studentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "AWAY",
+              "FOUND",
+              "MISSING",
+              "RETRACTED"
+            ]
+          },
+          "at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "studentId",
+          "state",
+          "at"
+        ]
+      },
+      "MarksDto": {
+        "type": "object",
+        "properties": {
+          "marks": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/MarkDto"
+            }
+          }
+        },
+        "required": [
+          "marks"
+        ]
+      },
       "MoveBlockCardDto": {
         "type": "object",
         "properties": {
@@ -23385,14 +24261,19 @@
                 "COVER_REQUESTED",
                 "COVER_REQUEST_ACCEPTED",
                 "COVER_REQUEST_CLOSED",
+                "CRISIS_ALARM",
+                "CRISIS_ENDED",
+                "CRISIS_GUARDIAN_AFTER",
                 "LEAVE_DECIDED",
                 "LEAVE_REQUESTED",
                 "LESSON_CANCELLED",
                 "LESSON_COVER_WITHDRAWN",
                 "LESSON_REINSTATED",
+                "LESSON_REPORT_REMINDER",
                 "LESSON_ROOM_CHANGED",
                 "LESSON_SUBSTITUTE",
                 "LESSON_SUPERVISED_STUDY",
+                "REPORTING_RATE_DIGEST",
                 "ROOM_BOOKING_DECIDED",
                 "SCHEDULE_CHANGED",
                 "SUPERVISION_COVER",
@@ -23717,6 +24598,24 @@
           "academicYearId"
         ]
       },
+      "PupilSearchDto": {
+        "type": "object",
+        "properties": {
+          "alarmId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "q": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 60
+          }
+        },
+        "required": [
+          "alarmId",
+          "q"
+        ]
+      },
       "PutLessonLogDto": {
         "type": "object",
         "properties": {
@@ -23931,6 +24830,22 @@
           "records"
         ]
       },
+      "ReportingSettingsDto": {
+        "type": "object",
+        "properties": {
+          "teacherReminders": {
+            "type": "boolean"
+          },
+          "rektorDigest": {
+            "type": "boolean"
+          },
+          "openAfterDays": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 30
+          }
+        }
+      },
       "RequestLessonDto": {
         "type": "object",
         "properties": {
@@ -23995,6 +24910,8 @@
               "ATTENDANCE",
               "CHANGE_LOGS",
               "COVER_REQUESTS",
+              "CRISIS_ALARMS",
+              "CRISIS_DRILLS",
               "DEPARTED_PEOPLE",
               "LEAVE_REQUESTS",
               "NOTIFICATIONS"
@@ -24637,6 +25554,29 @@
           }
         }
       },
+      "StartAlarmDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "EVACUATION",
+              "LOCKDOWN"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "DRILL",
+              "LIVE"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "mode"
+        ]
+      },
       "StartCandidatesDto": {
         "type": "object",
         "properties": {
@@ -24953,6 +25893,31 @@
             "maxLength": 300
           }
         }
+      },
+      "UpdateCrisisSettingsDto": {
+        "type": "object",
+        "properties": {
+          "startProfiles": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "EXPEDITION",
+                "FULL",
+                "REKTOR",
+                "SCHEMALAGGARE"
+              ]
+            }
+          },
+          "notifyGuardiansAfter": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "startProfiles",
+          "notifyGuardiansAfter"
+        ]
       },
       "UpdateFrameTimeDto": {
         "type": "object",

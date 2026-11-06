@@ -47,7 +47,7 @@ const OUT = [
   'Personnummer. Rastra lagrar inga.',
   'Notisinställningar, enheter för push-notiser och kalenderflödens adresser. De hör till varje persons eget konto och ingen administratör kan läsa dem.',
   'De publicerade lektionerna dag för dag. Grundschemat ingår, och de lektioner som närvaron hör till.',
-  'Tjänster, tjänstelogg, lärares frånvaro och vikarieuppdrag, lektionsloggar och rastvakter. De ingår i registerutdraget för en person, inte i skolans fil.',
+  'Tjänster, tjänstelogg, lärares frånvaro och vikarieuppdrag, lektionsloggar, rastvakter, rapporteringsgrad per lärare och dag, och krislägets larm, uppropslistor och rapporter. De ingår i registerutdraget för en person, inte i skolans fil.',
   'Genereringsloggar, schemaförslag och synkningens körningar.',
 ];
 

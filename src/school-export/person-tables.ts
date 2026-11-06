@@ -147,6 +147,19 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   LessonLogs: dump(['writtenById']),
   LessonSubstituteNotes: dump(['writtenById']),
 
+  // Rapporteringsgrad (20270112090100): a teacher's held and reported lessons per day, and the ledger of the reminders.
+  TeacherReportingDays: dump(['teacherId'], 'EMPLOYMENT'),
+  ReportingReminders: {
+    excluded:
+      'En liggare över vilka lektioner en lärare påmints om. Ingen roll kan läsa tabellen (bara databasens påminnelsefunktion rör den), så en administratör kan inte lämna ut den; raderna följer med personen när hen tas bort.',
+  },
+  // Krisläge (20270113091000): who started and ended an alarm, the teacher on a call, the pupil on its list and the state they
+  // were reported in, and the reports themselves. A person who is removed keeps their rows without them; the rows are theirs.
+  CrisisAlarms: dump(['startedByUserId', 'endedByUserId']),
+  CrisisCallTeachers: dump(['teacherId']),
+  CrisisPupils: dump(['studentId', 'stateByUserId'], 'ROSTER'),
+  CrisisReports: dump(['studentId', 'byUserId'], 'ROSTER'),
+
   // Tables that keep a person's id without a key to Users (WITHOUT_KEY): history, logs and the acts of a school's integrations.
   GuardianStudentHistory: dump(['guardianId', 'studentId', 'unlinkedById'], 'GUARDIANS'),
   PersonProtectionEvents: dump(['userId', 'actorId']),
