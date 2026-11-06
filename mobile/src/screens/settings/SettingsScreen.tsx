@@ -19,7 +19,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { Column } from '../../layout/Column';
 import { READABLE_MAX } from '../../layout/responsive';
-import { LOCALES, translatorFor, type Locale, type MessageKey } from '../../i18n';
+import { LOCALES, type Locale, type MessageKey } from '../../i18n';
 import {
   fetchPreferences,
   preferenceLabel,
@@ -114,7 +114,7 @@ export function SettingsScreen(): React.JSX.Element {
       if (next === locale) return;
       await setLocale(next);
       // The push texts and the Android channel follow the language.
-      await ensureAndroidChannel(translatorFor(next)('push.channelName'));
+      await ensureAndroidChannel(next);
       if (userId) await refreshRegistration(userId, next);
     },
     [locale, setLocale, userId],

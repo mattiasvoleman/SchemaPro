@@ -3,8 +3,9 @@ import { Text, View } from 'react-native';
 import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
 import type { Tone } from '../../theme/tokens';
 import { useI18n } from '../../context/LocaleContext';
+import type { Translate } from '../../i18n';
 import { formatTime } from '../../i18n/format';
-import type { CrisisKind, CrisisMode, PupilCounts, PupilStatus } from '../../services/crisis';
+import type { CallBasis, CrisisKind, CrisisMode, PupilCounts, PupilStatus } from '../../services/crisis';
 
 /**
  * What the teacher's and the administrator's views of an alarm draw alike
@@ -33,6 +34,25 @@ export const STATUS_GLYPH: Record<PupilStatus, string> = {
 
 /** The clock on a tap the gateway has not yet taken. */
 export const WAITING_GLYPH = '◷';
+
+/**
+ * A group in words. The group of an alarm that gathers the pupils who are on no
+ * lesson's list (NO_LESSON) comes with a Swedish stand-in for a name, which
+ * an English reader must not be handed: it is said in the reader's own language.
+ */
+export function callTitle(call: { readonly basis: CallBasis; readonly groupName: string; readonly subjectName: string }, t: Translate): string {
+  if (call.basis === 'NO_LESSON') return t('crisis.noLesson');
+  const subject = call.subjectName || t('common.lesson');
+  return call.groupName ? `${call.groupName} · ${subject}` : subject;
+}
+
+/** How long ago, in the reader's words: "nyss", "för 12 min sedan", "för 2 tim sedan". */
+export function ageText(ms: number, t: Translate): string {
+  const minutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (minutes < 1) return t('crisis.age.justNow');
+  if (minutes < 120) return t('crisis.age.minutes', { count: minutes });
+  return t('crisis.age.hours', { count: Math.floor(minutes / 60) });
+}
 
 interface BannerProps {
   /** The phone built the list itself: it does not know the kind of alarm or whether it is a drill. */

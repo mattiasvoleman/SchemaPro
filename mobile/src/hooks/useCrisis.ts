@@ -6,6 +6,7 @@ import { useNetwork } from '../context/NetworkContext';
 import { useSync } from '../context/SyncContext';
 import {
   fetchMyCrisis,
+  isLocalCall,
   isTransportFailure,
   teacherBlocks,
   unmarkedPupils,
@@ -14,9 +15,16 @@ import {
   type AlarmHint,
   type MyCall,
   type MyCrisisResponse,
+  type OtherPupil,
 } from '../services/crisis';
 import { readCachedCrisis, saveCachedCrisis } from '../services/crisisCache';
-import { loadLocalCalls, needsLocalList, readAlarmHint, rememberPresentedCrisisPushes } from '../services/crisisOffline';
+import {
+  loadLocalCalls,
+  needsLocalList,
+  readAlarmHint,
+  rememberPresentedCrisisPushes,
+  subscribeAlarmHint,
+} from '../services/crisisOffline';
 import {
   flushCrisisQueue,
   newCrisisMark,
@@ -47,6 +55,13 @@ import type { CrisisMarkState, PendingCrisisMark } from '../types';
  * or not, with a clock on it until the gateway has it. Sending is left to the
  * queue: after the tap, and on the timer below while this screen is open.
  *
+ * A PUPIL WHO IS ON NO LIST. markFoundHere() says "found with me" for a pupil
+ * from the alarm's `others`: the same queue, the same route, a FOUND mark naming
+ * the teacher's call and the pupil. Only FOUND: a pupil who is not on the list
+ * cannot be missing from it, the gateway refuses MISSING for one, and mark()
+ * therefore never writes it. The pupil shows in the call's "Hittade hos dig"
+ * (crisis.ts overlayMarks) with a clock until the gateway has the mark.
+ *
  * READ AGAIN. When the tab is shown, when the app returns to the front, when the
  * network returns, when the gateway says an alarm began or ended
  * (crisis_updated), after marks were taken, and on a timer: every RETRY_MS the
@@ -71,6 +86,8 @@ export interface CrisisState {
   readonly waitingCount: number;
   /** When the list shown was read, when it is not this moment's (kept, or the last read failed). */
   readonly listAsOf: string | null;
+  /** The screen's clock, moved on every tick: what a list's age is counted from. */
+  readonly now: number;
   /** Why the last read failed; the list shown, if any, is then the one read before. */
   readonly problem: 'OFFLINE' | 'FAILED' | null;
   readonly hasLoaded: boolean;
@@ -80,6 +97,8 @@ export interface CrisisState {
   readonly saveFailed: boolean;
   readonly refresh: () => void;
   readonly mark: (call: MyCall, studentId: string, state: CrisisMarkState) => Promise<void>;
+  /** "Found with me": a pupil who is on none of the teacher's lists, found by this teacher on this call. */
+  readonly markFoundHere: (call: MyCall, pupil: OtherPupil) => Promise<void>;
   readonly markAllFound: (call: MyCall) => Promise<void>;
   readonly dismissDropped: () => void;
 }
@@ -216,6 +235,15 @@ export function useCrisis(enabled: boolean): CrisisState {
     });
   }, [enabled, teacherId, reloadPending, refreshLocal, load]);
 
+  // The hint changed (a push was put to the gateway and remembered, or forgotten): read again, which
+  // also builds or drops the phone's own list from the hint as it now stands.
+  useEffect(() => {
+    if (!enabled || !teacherId) return;
+    return subscribeAlarmHint(() => {
+      void load();
+    });
+  }, [enabled, teacherId, load]);
+
   // The tab is shown: read, send, and keep sending while it is.
   useFocusEffect(
     useCallback(() => {
@@ -297,10 +325,27 @@ export function useCrisis(enabled: boolean): CrisisState {
       if (!teacherId) return;
       // A tap on what the pupil already shows as is no news: it would only send a mark nobody needs.
       const shown = blocksRef.current.flatMap((block) => block.calls).find((candidate) => candidate.id === call.id);
-      if (shown?.pupils.find((pupil) => pupil.studentId === studentId)?.status === state) return;
+      const onList = shown?.pupils.find((pupil) => pupil.studentId === studentId);
+      if (onList?.status === state) return;
+      // A pupil who is not on the list cannot be missing from it: the gateway would refuse the mark.
+      if (shown && !onList && state === 'MISSING') return;
       await write([newCrisisMark({ call, studentId, state, teacherId, notBefore: hintRef.current?.alarmAt ?? null })]);
     },
     [teacherId, write],
+  );
+
+  const markFoundHere = useCallback(
+    async (call: MyCall, pupil: OtherPupil): Promise<void> => {
+      if (!teacherId) return;
+      // A list the phone built has no names to pick from, and its marks name a lesson, not a call.
+      if (isLocalCall(call)) return;
+      const shown = blocksRef.current.flatMap((block) => block.calls).find((candidate) => candidate.id === call.id) ?? call;
+      // Already found with this teacher, or a pupil of this very list: no news to send.
+      if (shown.foundHere.some((held) => held.studentId === pupil.studentId)) return;
+      if (shown.pupils.some((held) => held.studentId === pupil.studentId)) return mark(call, pupil.studentId, 'FOUND');
+      await write([newCrisisMark({ call, studentId: pupil.studentId, state: 'FOUND', teacherId, notBefore: hintRef.current?.alarmAt ?? null })]);
+    },
+    [teacherId, write, mark],
   );
 
   const markAllFound = useCallback(
@@ -324,12 +369,14 @@ export function useCrisis(enabled: boolean): CrisisState {
     waiting: view.waiting,
     waitingCount,
     listAsOf,
+    now,
     problem,
     hasLoaded,
     dropped,
     saveFailed,
     refresh,
     mark,
+    markFoundHere,
     markAllFound,
     dismissDropped,
   };

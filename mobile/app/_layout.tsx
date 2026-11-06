@@ -8,23 +8,19 @@ import { NetworkProvider } from '../src/context/NetworkContext';
 import { SyncProvider } from '../src/context/SyncContext';
 import { AppThemeProvider, useAppTheme } from '../src/theme/ThemeContext';
 import { homeOf, tapTarget, tapTypeOf } from '../src/services/auth/appGate';
-import { rememberCrisisPush } from '../src/services/crisisOffline';
+import { handleCrisisPush } from '../src/services/crisisOffline';
 import {
   ensureAndroidChannel,
+  foregroundPresentation,
   forgetTap,
   startSignedIn,
   takeLastTap,
 } from '../src/services/pushRegistration';
 
 // A push that arrives while the app is open is shown as a banner and kept in
-// the list, silently: the inbox tab is where it is read.
+// the list, silently: the inbox tab is where it is read. An alarm also sounds.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
+  handleNotification: async (notification) => foregroundPresentation(notification),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,21 +63,24 @@ function AuthGate(): React.JSX.Element {
 // tab of a teacher or an administrator (tapTarget); the tap is then
 // forgotten, so no later sign-in replays it.
 //
-// An alarm push is also remembered for WHEN it arrived, whether it is tapped
+// An alarm push is also remembered for WHEN it was sent, whether it is tapped
 // or only shown (services/crisisOffline.ts): a phone with no coverage when the
-// alarm began builds its list from that moment.
+// alarm began builds its list from that moment. A push is never taken for the
+// alarm still going: a phone that was off gets it late, so the gateway is asked
+// first (handleCrisisPush) and a list is shown only for an alarm that stands.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PushBridge(): null {
   const { authState } = useAuth();
-  const { t } = useI18n();
+  const { locale } = useI18n();
   const router = useRouter();
   const userId = authState.isAuthenticated ? authState.teacherId : null;
   const role = authState.role;
 
+  // The alarm's channel is made here too, before the first alarm push can arrive.
   useEffect(() => {
-    void ensureAndroidChannel(t('push.channelName'));
-  }, [t]);
+    void ensureAndroidChannel(locale);
+  }, [locale]);
 
   useEffect(() => {
     if (!userId) return;
@@ -95,17 +94,17 @@ function PushBridge(): null {
     const open = (type: string | null): void => router.push(tapTarget(role, type));
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       forgetTap();
-      void rememberCrisisPush((response as { notification?: unknown } | null)?.notification);
+      void handleCrisisPush((response as { notification?: unknown } | null)?.notification);
       open(tapTypeOf(response));
     });
     // A push that arrives while the app is open is not a tap, and is still the news.
     const arrival = Notifications.addNotificationReceivedListener((notification) => {
-      void rememberCrisisPush(notification);
+      void handleCrisisPush(notification);
     });
     // A tap that launched the app arrived before this listener existed.
     const launching = takeLastTap();
     if (launching) {
-      void rememberCrisisPush(launching.notification);
+      void handleCrisisPush(launching.notification);
       open(launching.type);
     }
     return () => {

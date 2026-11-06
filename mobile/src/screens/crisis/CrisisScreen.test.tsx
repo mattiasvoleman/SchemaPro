@@ -11,11 +11,11 @@
  * written.
  */
 import React from 'react';
-import { AppState, RefreshControl, StyleSheet } from 'react-native';
+import { AppState, FlatList, RefreshControl, StyleSheet } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 import { translatorFor } from '../../i18n';
 import { fake } from '../../services/__testing__/crisisDatabase';
-import { alarm, at, call, gateway, mineOf, pupil, sevenA } from '../../services/__testing__/crisisGateway';
+import { alarm, at, call, foundWith, gateway, mineOf, other, pupil, sevenA } from '../../services/__testing__/crisisGateway';
 import { flushCrisisQueue, resetCrisisQueueForTests } from '../../services/crisisQueue';
 import { enqueueCrisisMarks } from '../../services/database/localDatabase';
 import { resetAlarmHintForTests } from '../../services/crisisOffline';
@@ -62,8 +62,9 @@ let mockUuid = 0;
 jest.mock('expo-crypto', () => ({ randomUUID: () => `00000000-0000-4000-8000-${String(++mockUuid).padStart(12, '0')}` }));
 
 import { getPresentedNotificationsAsync } from 'expo-notifications';
-import { RETRY_MS } from '../../hooks/useCrisis';
+import { RETRY_MS, useCrisis, type CrisisState } from '../../hooks/useCrisis';
 import { CrisisScreen } from './CrisisScreen';
+import { callTitle } from './crisisParts';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Instance = TestRenderer.ReactTestInstance;
@@ -411,7 +412,7 @@ describe('CrisisScreen, a teacher’s roll call', () => {
       tree = await render();
       expect(hasText(tree, 'Utrymning – skarpt larm')).toBe(true);
       expect(rowLabel(tree, 'Anna Andersson')).toBe('Anna Andersson, Inte markerad');
-      expect(hasText(tree, 'Listan hämtades kl 09:08')).toBe(true);
+      expect(hasText(tree, 'Listan hämtades kl 09:08 (för 12 min sedan)')).toBe(true);
       expect(hasText(tree, t('crisis.problemOffline'))).toBe(true);
     });
 
@@ -421,10 +422,10 @@ describe('CrisisScreen, a teacher’s roll call', () => {
       gateway.mine = () => answer.promise as never;
       tree = await render();
       expect(hasText(tree, 'Anna Andersson')).toBe(true);
-      expect(hasText(tree, 'Listan hämtades kl 09:08')).toBe(true);
+      expect(hasText(tree, 'Listan hämtades kl 09:08 (för 12 min sedan)')).toBe(true);
       await act(async () => answer.resolve({ status: 200, body: mineOf([alarm('a1', [sevenA()])]) }));
       await settle();
-      expect(hasText(tree, 'Listan hämtades kl 09:08')).toBe(false);
+      expect(texts(tree).some((text) => text.startsWith('Listan hämtades'))).toBe(false);
     });
 
     it('keeps the list it had when a later read fails, and says it may be old', async () => {
@@ -436,7 +437,7 @@ describe('CrisisScreen, a teacher’s roll call', () => {
       await settle();
       expect(hasText(tree, 'Anna Andersson')).toBe(true);
       expect(hasText(tree, t('crisis.problemOffline'))).toBe(true);
-      expect(hasText(tree, 'Listan hämtades kl 09:10')).toBe(true);
+      expect(hasText(tree, 'Listan hämtades kl 09:10 (för 10 min sedan)')).toBe(true);
     });
 
     it('says a read that failed otherwise, and tries again', async () => {
@@ -681,6 +682,519 @@ describe('CrisisScreen, a teacher’s roll call', () => {
       ] as never);
       tree = await render();
       expect(hasText(tree, t('crisis.localList'))).toBe(true);
+    });
+  });
+
+  describe('a pupil who is on none of the teacher’s lists: "found with me"', () => {
+    const OTHERS = [other('s20', 'Åsa', 'Lind', '7B'), other('s21', 'Kalle', 'Lund', '7C'), other('s22', 'Maja', 'Moa', '7B')];
+    const BUTTON = t('crisis.foundHere.button');
+    const withOthers = (calls = [sevenA()], over = {}): void => serve(mineOf([alarm('a1', calls, { others: OTHERS, ...over })]));
+
+    const searchBox = (tree: Tree): Instance => {
+      const found = tree.root.findAll((n) => n.props.accessibilityLabel === t('crisis.foundHere.searchLabel') && typeof n.props.onChangeText === 'function');
+      if (found.length === 0) throw new Error('the picker is not open');
+      return found[0]!;
+    };
+    const type = async (tree: Tree, query: string): Promise<void> => {
+      await act(async () => {
+        searchBox(tree).props.onChangeText(query);
+      });
+    };
+    const pick = (tree: Tree, name: string, group = '7A · Matematik') => pressable(tree, t('crisis.foundHere.pickA11y', { name, group }));
+    const pickerOpen = (tree: Tree): boolean => tree.root.findAll((n) => n.props.accessibilityLabel === t('crisis.foundHere.searchLabel')).length > 0;
+    const foundHereRow = (tree: Tree, name: string, waiting = false): string | undefined =>
+      tree.root.findAll(
+        (n) => isHostOf(n, 'View') && n.props.accessibilityLabel === t(waiting ? 'crisis.foundHere.rowWaitingA11y' : 'crisis.foundHere.rowA11y', { name }),
+      )[0]?.props.accessibilityLabel;
+
+    describe('the button', () => {
+      it('is offered once per open alarm that has a group of the teacher’s', async () => {
+        withOthers();
+        tree = await render();
+        expect(pressable(tree, BUTTON).props.accessibilityRole).toBe('button');
+        expect(tree.root.findAll((n) => isHostOf(n, 'Text') && textOf(n) === BUTTON)).toHaveLength(1);
+        expect(pickerOpen(tree)).toBe(false);
+      });
+
+      it('is a tap target of at least 48 pt', async () => {
+        withOthers();
+        tree = await render();
+        expect((StyleSheet.flatten(pressable(tree, BUTTON).props.style) as { minHeight?: number }).minHeight).toBeGreaterThanOrEqual(48);
+      });
+
+      it('is not offered once the alarm has ended', async () => {
+        withOthers([sevenA()], { endedAt: at('09:18') });
+        tree = await render();
+        expect(hasText(tree, 'Larmet är avslutat')).toBe(true);
+        expect(() => pressable(tree!, BUTTON)).toThrow();
+      });
+
+      it('is not offered for an alarm in which the teacher has no group', async () => {
+        withOthers([]);
+        tree = await render();
+        expect(() => pressable(tree!, BUTTON)).toThrow();
+      });
+
+      it('is not offered on a list the phone built itself: the cache cannot name a pupil who is on none', async () => {
+        fake.lessons = [{ id: 'l1', startTime: at('09:00'), endTime: at('09:50'), subjectName: 'Matematik', roomName: 'B204', studentIds: ['s1'] }];
+        fake.names.set('s1', 'Anna Andersson');
+        fake.hint = { alarmAt: at('09:15'), endedAt: null };
+        gateway.down = true;
+        tree = await render();
+        expect(hasText(tree, t('crisis.localList'))).toBe(true);
+        expect(() => pressable(tree!, BUTTON)).toThrow();
+        expect(rowLabel(tree, 'Anna Andersson')).toBe('Anna Andersson, Inte markerad');
+      });
+    });
+
+    describe('the picker', () => {
+      it('searches the other pupils by name or class, ignoring case and accents, and works with no network at all', async () => {
+        // The list as the phone kept it, and a phone that reaches nothing.
+        fake.lists.set('t-1', { asOf: at('09:08'), payload: JSON.stringify(mineOf([alarm('a1', [sevenA()], { others: OTHERS })], at('09:08'))) });
+        gateway.down = true;
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        expect(pickerOpen(tree)).toBe(true);
+        expect(hasText(tree, t('crisis.foundHere.hint'))).toBe(true);
+
+        await type(tree, 'asa');
+        expect(hasText(tree, 'Åsa Lind')).toBe(true);
+        expect(hasText(tree, 'Kalle Lund')).toBe(false);
+        await type(tree, 'KALLE');
+        expect(hasText(tree, 'Kalle Lund')).toBe(true);
+        await type(tree, '7b');
+        expect(hasText(tree, 'Åsa Lind')).toBe(true);
+        expect(hasText(tree, 'Maja Moa')).toBe(true);
+        expect(hasText(tree, 'Kalle Lund')).toBe(false);
+        // The class is there to tell two of a name apart.
+        expect(hasText(tree, '7B')).toBe(true);
+        await type(tree, 'zzz');
+        expect(hasText(tree, t('crisis.foundHere.none'))).toBe(true);
+      });
+
+      it('draws at most fifty names of a school’s thousand, and says how many matched', async () => {
+        const many = Array.from({ length: 1000 }, (_, i) => other(`o${i}`, `Elev${String(i).padStart(4, '0')}`, 'Test', '7B'));
+        withOthers([sevenA()], { others: many });
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'elev');
+        // The list is given fifty names to draw, however many matched (the list itself draws only as many as fit).
+        const shown = tree.root.findAllByType(FlatList).map((list) => (list.props.data as unknown[]).length);
+        expect(shown).toEqual([expect.any(Number), 50]);
+        expect(hasText(tree, t('crisis.foundHere.more', { shown: 50, total: 1000 }))).toBe(true);
+        await type(tree, 'elev0999');
+        expect(hasText(tree, 'Elev0999 Test')).toBe(true);
+        expect(texts(tree).some((text) => text.startsWith('Visar'))).toBe(false);
+      });
+
+      it('says so when the phone holds no list of the other pupils, as it does from a gateway without them', async () => {
+        const old = JSON.parse(JSON.stringify(mineOf([alarm('a1', [sevenA()])]))) as { alarms: Array<{ others?: unknown; calls: Array<{ foundHere?: unknown }> }> };
+        delete old.alarms[0]!.others;
+        delete old.alarms[0]!.calls[0]!.foundHere;
+        gateway.mine = () => ({ status: 200, body: old });
+        tree = await render();
+        // Drawn as it always was.
+        expect(rowLabel(tree, 'Anna Andersson')).toBe('Anna Andersson, Inte markerad');
+        expect(hasText(tree, '✓ Alla finns')).toBe(true);
+        await press(pressable(tree, BUTTON));
+        expect(hasText(tree, t('crisis.foundHere.noOthers'))).toBe(true);
+      });
+
+      it('closes without a mark', async () => {
+        withOthers();
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'asa');
+        await press(pressable(tree, t('crisis.foundHere.close')));
+        expect(pickerOpen(tree)).toBe(false);
+        expect(fake.queue).toEqual([]);
+        expect(gateway.to('POST', MARKS)).toEqual([]);
+        // And opens empty the next time.
+        await press(pressable(tree, BUTTON));
+        expect(hasText(tree, 'Åsa Lind')).toBe(false);
+        expect(hasText(tree, t('crisis.foundHere.hint'))).toBe(true);
+      });
+
+      it('closes by itself when the alarm ends under it', async () => {
+        withOthers();
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        expect(pickerOpen(tree)).toBe(true);
+        withOthers([sevenA()], { endedAt: at('09:21') });
+        await act(async () => {
+          tree!.root.findByType(RefreshControl).props.onRefresh();
+        });
+        await settle();
+        expect(pickerOpen(tree)).toBe(false);
+      });
+    });
+
+    describe('saying it', () => {
+      it('queues a FOUND mark naming the teacher’s call, shows the pupil at once under "Hittade hos dig", and sends it like any mark', async () => {
+        withOthers();
+        tree = await render();
+        expect(hasText(tree, 'Hittade hos dig (1)')).toBe(false);
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'asa');
+        await press(pick(tree, 'Åsa Lind'));
+
+        expect(pickerOpen(tree)).toBe(false);
+        const [post] = gateway.to('POST', MARKS);
+        expect(post!.body).toEqual({
+          marks: [{ id: '00000000-0000-4000-8000-000000000001', callId: 'c1', studentId: 's20', state: 'FOUND', at: NOW.toISOString() }],
+        });
+        expect(hasText(tree, 'Hittade hos dig (1)')).toBe(true);
+        expect(hasText(tree, t('crisis.foundHere.titleHint'))).toBe(true);
+        expect(foundHereRow(tree, 'Åsa Lind')).toBeDefined();
+        expect(hasText(tree, '✓ Hittad hos dig')).toBe(true);
+        expect(hasText(tree, '7B')).toBe(true);
+        // The group’s own count is the group’s: the pupil counts on their own list.
+        for (const chip of ['✓ Finns 1', '✕ Saknas 1', '– Frånvarande 1', '? Inte markerade 2']) expect(texts(tree)).toContain(chip);
+        // Sent: nothing waits, and the gateway’s next list carries the pupil as found here.
+        expect(fake.pending()).toEqual([]);
+        expect(texts(tree).some((text) => text.includes('väntar på nät'))).toBe(false);
+      });
+
+      it('shows the pupil with a clock until the gateway has the mark, and keeps it when the list comes back carrying them', async () => {
+        const answer = deferred<void>();
+        withOthers();
+        gateway.marks = async (marks) => {
+          await answer.promise;
+          return take(marks);
+        };
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'kalle');
+        await press(pick(tree, 'Kalle Lund'));
+
+        expect(fake.pending('t-1').map((row) => [row.studentId, row.state, row.callId])).toEqual([['s21', 'FOUND', 'c1']]);
+        expect(foundHereRow(tree, 'Kalle Lund', true)).toBeDefined();
+        expect(hasText(tree, '◷ Väntar på nät')).toBe(true);
+        expect(hasText(tree, '◷ 1 markering väntar på nät')).toBe(true);
+
+        await act(async () => answer.resolve());
+        await settle();
+        expect(foundHereRow(tree, 'Kalle Lund')).toBeDefined();
+        expect(hasText(tree, '◷ Väntar på nät')).toBe(false);
+        // The server now holds it, and its list carries it.
+        expect(server.alarms[0]!.calls[0]!.foundHere.map((f) => f.studentId)).toEqual(['s21']);
+      });
+
+      it('works with no network: kept on the phone, shown with a clock, sent when the network is back', async () => {
+        allTimers();
+        withOthers();
+        tree = await render();
+        gateway.down = true;
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'maja');
+        await press(pick(tree, 'Maja Moa'));
+
+        expect(fake.pending('t-1')).toMatchObject([{ callId: 'c1', lessonId: null, studentId: 's22', state: 'FOUND' }]);
+        expect(foundHereRow(tree, 'Maja Moa', true)).toBeDefined();
+        expect(hasText(tree, '◷ 1 markering väntar på nät')).toBe(true);
+
+        gateway.down = false;
+        await settle(RETRY_MS);
+        const sentMarks = gateway.to('POST', MARKS).filter((call) => !gateway.down).at(-1)!.body as { marks: Array<{ callId: string; studentId: string; state: string }> };
+        expect(sentMarks.marks.map((m) => [m.callId, m.studentId, m.state])).toEqual([['c1', 's22', 'FOUND']]);
+        expect(fake.pending()).toEqual([]);
+        expect(foundHereRow(tree, 'Maja Moa')).toBeDefined();
+        expect(texts(tree).some((text) => text.includes('väntar på nät'))).toBe(false);
+      });
+
+      it('shows it again from the phone’s own copy after the network goes, once the gateway has taken the mark', async () => {
+        withOthers();
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'asa');
+        await press(pick(tree, 'Åsa Lind'));
+        await act(async () => tree!.unmount());
+        // The kept list now carries the pupil as found here.
+        gateway.down = true;
+        tree = await render();
+        expect(foundHereRow(tree, 'Åsa Lind')).toBeDefined();
+        expect(hasText(tree, 'Hittade hos dig (1)')).toBe(true);
+      });
+
+      it('never offers "missing" for them: the row has no buttons, and a tap on the pupil of a list cannot be turned into one', async () => {
+        withOthers();
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'asa');
+        await press(pick(tree, 'Åsa Lind'));
+        expect(() => pressable(tree!, t('crisis.markMissingA11y', { name: 'Åsa Lind' }))).toThrow();
+        expect(() => pressable(tree!, t('crisis.markFoundA11y', { name: 'Åsa Lind' }))).toThrow();
+        // The picker offers one thing: that they were found.
+        await press(pressable(tree, BUTTON));
+        expect(tree.root.findAll((n) => typeof n.props.accessibilityLabel === 'string' && n.props.accessibilityLabel.includes('saknas')).filter((n) => n.props.accessibilityLabel.includes('Åsa'))).toEqual([]);
+        expect(gateway.to('POST', MARKS)).toHaveLength(1);
+      });
+
+      it('does not offer a pupil already found with the teacher again, and says nothing twice', async () => {
+        withOthers();
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'asa');
+        await press(pick(tree, 'Åsa Lind'));
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'asa');
+        expect(hasText(tree, t('crisis.foundHere.none'))).toBe(true);
+        expect(gateway.to('POST', MARKS)).toHaveLength(1);
+      });
+
+      it('asks which group when the teacher has more than one, begins with the lesson that is going on, and marks on the one chosen', async () => {
+        const next = call('c1', 'l1', [pupil('s1', 'Anna', 'Andersson')], { basis: 'NEXT_LESSON', groupName: '7A' });
+        const now = call('c2', 'l2', [pupil('s2', 'Bo', 'Berg')], { basis: 'LESSON', groupName: '8B' });
+        withOthers([next, now]);
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        expect(hasText(tree, t('crisis.foundHere.whichGroup'))).toBe(true);
+        expect(pressable(tree, '8B · Matematik').props.accessibilityState).toEqual({ selected: true });
+        expect(pressable(tree, '7A · Matematik').props.accessibilityState).toEqual({ selected: false });
+
+        await type(tree, 'asa');
+        await press(pick(tree, 'Åsa Lind', '8B · Matematik'));
+        await press(pressable(tree, BUTTON));
+        await press(pressable(tree, '7A · Matematik'));
+        await type(tree, 'kalle');
+        await press(pick(tree, 'Kalle Lund', '7A · Matematik'));
+
+        const marks = gateway.to('POST', MARKS).flatMap((c) => (c.body as { marks: Array<{ callId: string; studentId: string }> }).marks);
+        expect(marks.map((m) => [m.callId, m.studentId])).toEqual([['c2', 's20'], ['c1', 's21']]);
+      });
+
+      it('does not ask which group when there is one', async () => {
+        withOthers();
+        tree = await render();
+        await press(pressable(tree, BUTTON));
+        expect(hasText(tree, t('crisis.foundHere.whichGroup'))).toBe(false);
+      });
+    });
+
+    describe('the hook behind the screen', () => {
+      /** The state the screen is given, and a way to act on it as the screen does. */
+      async function probe(): Promise<{ state: () => CrisisState }> {
+        let latest!: CrisisState;
+        const Probe = (): null => {
+          latest = useCrisis(true);
+          return null;
+        };
+        await act(async () => {
+          tree = TestRenderer.create(<Probe />);
+        });
+        await settle();
+        return { state: () => latest };
+      }
+      const theCall = (state: CrisisState) => state.blocks[0]!.calls[0]!;
+
+      it('refuses to write "missing" for a pupil who is not on the call’s list, and writes "found" for them as found here', async () => {
+        withOthers();
+        const { state } = await probe();
+        await act(async () => state().mark(theCall(state()), 's20', 'MISSING'));
+        expect(fake.queue).toEqual([]);
+        expect(gateway.to('POST', MARKS)).toEqual([]);
+        await act(async () => state().mark(theCall(state()), 's20', 'FOUND'));
+        expect(fake.queue.map((row) => [row.studentId, row.state, row.callId])).toEqual([['s20', 'FOUND', 'c1']]);
+      });
+
+      it('writes nothing for a pupil already found with the teacher, and treats a pupil of the list as a tap on the list', async () => {
+        withOthers([{ ...sevenA(), foundHere: [foundWith('s20', 'Åsa', 'Lind', '7B')] }]);
+        const { state } = await probe();
+        await act(async () => state().markFoundHere(theCall(state()), OTHERS[0]!));
+        expect(fake.queue).toEqual([]);
+        await act(async () => state().markFoundHere(theCall(state()), other('s1', 'Anna', 'Andersson')));
+        expect(fake.queue.map((row) => [row.studentId, row.state, row.callId])).toEqual([['s1', 'FOUND', 'c1']]);
+      });
+
+      it('does not say "found with me" on a list the phone built: it has no names of the others, and its marks name a lesson', async () => {
+        fake.lessons = [{ id: 'l1', startTime: at('09:00'), endTime: at('09:50'), subjectName: 'Matematik', roomName: 'B204', studentIds: ['s1'] }];
+        fake.names.set('s1', 'Anna Andersson');
+        fake.hint = { alarmAt: at('09:15'), endedAt: null };
+        gateway.down = true;
+        const { state } = await probe();
+        expect(state().blocks[0]!.local).toBe(true);
+        await act(async () => state().markFoundHere(theCall(state()), OTHERS[0]!));
+        expect(fake.queue).toEqual([]);
+      });
+    });
+
+    describe('what the gateway already holds', () => {
+      it('shows the pupils it holds as found here, in Swedish order with their class, and waits on none of them', async () => {
+        const held = sevenA();
+        withOthers([{ ...held, foundHere: [foundWith('s20', 'Örjan', 'Berg', '9A'), foundWith('s21', 'Åsa', 'Berg', '7B'), foundWith('s22', 'Anna', 'Berg')] }]);
+        tree = await render();
+        expect(hasText(tree, 'Hittade hos dig (3)')).toBe(true);
+        const names = texts(tree).filter((text) => text.endsWith(' Berg') && !text.startsWith('Bo'));
+        expect(names).toEqual(['Anna Berg', 'Åsa Berg', 'Örjan Berg']);
+        expect(foundHereRow(tree, 'Åsa Berg')).toBeDefined();
+        expect(hasText(tree, '9A')).toBe(true);
+        expect(texts(tree).some((text) => text.includes('väntar på nät'))).toBe(false);
+      });
+
+      it('draws no heading for a group where nobody has been found', async () => {
+        withOthers();
+        tree = await render();
+        expect(texts(tree).some((text) => text.startsWith('Hittade hos dig'))).toBe(false);
+      });
+    });
+
+    describe('a mark the gateway will not take', () => {
+      it('is forgotten with a notice, the taps beside it are sent, and nothing crashes', async () => {
+        withOthers();
+        gateway.marks = (marks) =>
+          marks.some((m) => (m as { studentId?: string }).studentId === 's22')
+            ? { status: 400, body: { message: 'Eleven står inte på gruppens lista.', code: 'CRISIS_MARK_INVALID' } }
+            : take(marks);
+        tree = await render();
+        await press(found(tree, 'Anna Andersson'));
+        await press(pressable(tree, BUTTON));
+        await type(tree, 'maja');
+        await press(pick(tree, 'Maja Moa'));
+
+        expect(hasText(tree, '1 markering skickades inte')).toBe(true);
+        expect(fake.queue.filter((row) => row.studentId === 's22')).toEqual([]);
+        expect(foundHereRow(tree, 'Maja Moa')).toBeUndefined();
+        expect(foundHereRow(tree, 'Maja Moa', true)).toBeUndefined();
+        expect(rowLabel(tree, 'Anna Andersson')).toBe('Anna Andersson, Finns');
+        expect(fake.pending()).toEqual([]);
+      });
+    });
+  });
+
+  describe('the group of pupils who are on no lesson', () => {
+    const NO_LESSON = (): ReturnType<typeof call> =>
+      call('c9', null, [pupil('s9', 'Siv', 'Sjö')], {
+        basis: 'NO_LESSON',
+        groupName: 'Utan lektion',
+        subjectName: 'Ej i lektion',
+        roomName: null,
+        lessonStartsAt: at('09:05'),
+        lessonEndsAt: at('09:05'),
+      });
+
+    it('is worded as "Ej i lektion just nu", with no lesson time and not the gateway’s Swedish stand-in', async () => {
+      serve(mineOf([alarm('a1', [NO_LESSON()])]));
+      tree = await render();
+      expect(hasText(tree, t('crisis.noLesson'))).toBe(true);
+      expect(hasText(tree, t('crisis.noLessonHint'))).toBe(true);
+      expect(texts(tree).some((text) => text.includes('Utan lektion') || text === 'Ej i lektion')).toBe(false);
+      expect(texts(tree).some((text) => text.includes('09:05–09:05'))).toBe(false);
+      expect(rowLabel(tree, 'Siv Sjö')).toBe('Siv Sjö, Inte markerad');
+    });
+
+    it('is marked like any group, by its call', async () => {
+      serve(mineOf([alarm('a1', [NO_LESSON()])]));
+      tree = await render();
+      await press(found(tree, 'Siv Sjö'));
+      expect((gateway.to('POST', MARKS)[0]!.body as { marks: Array<{ callId: string }> }).marks[0]!.callId).toBe('c9');
+    });
+
+    it('is worded in English for an English reader', () => {
+      const english = translatorFor('en');
+      expect(callTitle({ basis: 'NO_LESSON', groupName: 'Utan lektion', subjectName: 'Ej i lektion' }, english)).toBe('Not in a lesson right now');
+      expect(callTitle({ basis: 'LESSON', groupName: '7A', subjectName: 'Maths' }, english)).toBe('7A · Maths');
+      expect(callTitle({ basis: 'NEXT_LESSON', groupName: '', subjectName: '' }, english)).toBe('Lesson');
+    });
+
+    it('does not fail on a basis from a gateway newer than this app: it is drawn as a lesson', async () => {
+      serve(mineOf([alarm('a1', [call('c1', 'l1', [pupil('s1', 'Anna', 'Andersson')], { basis: 'SOMETHING_NEW' as never })])]));
+      tree = await render();
+      expect(hasText(tree, '7A · Matematik')).toBe(true);
+    });
+  });
+
+  describe('a push that says an alarm began, and the gateway that knows better', () => {
+    const lesson = { id: 'l1', startTime: at('09:00'), endTime: at('09:50'), subjectName: 'Matematik', roomName: 'B204', studentIds: ['s1', 's2'] };
+    const alarmPush = (date: string) => ({ date: Date.parse(date), request: { content: { data: { notificationId: 'n', type: 'CRISIS_ALARM' } } } });
+
+    beforeEach(() => {
+      fake.lessons = [lesson];
+      fake.names.set('s1', 'Anna Andersson');
+      fake.names.set('s2', 'Bo Berg');
+    });
+
+    it('shows no list for a late push whose alarm has ended, only the alarm as the gateway shows it, and forgets the push', async () => {
+      // The push in the tray was sent at 09:15 and is read at 09:20; the gateway says the alarm ended at 09:18.
+      jest.mocked(getPresentedNotificationsAsync).mockResolvedValue([alarmPush(at('09:15'))] as never);
+      serve(mineOf([alarm('a1', [sevenA()], { startedAt: at('09:14'), endedAt: at('09:18') })], at('09:19')));
+      tree = await render();
+      expect(hasText(tree, t('crisis.localList'))).toBe(false);
+      expect(hasText(tree, 'Larmet är avslutat')).toBe(true);
+      expect(fake.hint?.alarmAt ?? null).toBeNull();
+      expect(rowLabel(tree, 'Anna Andersson')).toBe('Anna Andersson, Inte markerad');
+      expect(found(tree, 'Anna Andersson').props.disabled).toBe(true);
+    });
+
+    it('shows no list at all for a late push when the gateway knows of no alarm', async () => {
+      jest.mocked(getPresentedNotificationsAsync).mockResolvedValue([alarmPush(at('09:15'))] as never);
+      serve(mineOf([], at('09:19')));
+      tree = await render();
+      expect(hasText(tree, t('crisis.localList'))).toBe(false);
+      expect(hasText(tree, t('crisis.emptyTitle'))).toBe(true);
+      expect(fake.hint?.alarmAt ?? null).toBeNull();
+    });
+
+    it('does not show the phone’s own list while the gateway has not yet said whether the alarm is going, and not at all once it says it is over', async () => {
+      jest.mocked(getPresentedNotificationsAsync).mockResolvedValue([alarmPush(at('09:15'))] as never);
+      // The screen’s own read fails (a patchy network); the question about the push is still in the air.
+      const answer = deferred<{ status: number; body: unknown }>();
+      let asked = 0;
+      gateway.mine = () => (++asked === 1 ? 'network' : (answer.promise as never));
+      tree = await render();
+      expect(asked).toBe(2);
+      expect(hasText(tree, t('crisis.noListTitle'))).toBe(true);
+      expect(hasText(tree, t('crisis.localList'))).toBe(false);
+      expect(fake.hint).toBeNull();
+
+      await act(async () => answer.resolve({ status: 200, body: mineOf([], at('09:19')) }));
+      await settle();
+      expect(hasText(tree, t('crisis.localList'))).toBe(false);
+      expect(fake.hint?.alarmAt ?? null).toBeNull();
+    });
+
+    it('shows the phone’s own list as soon as the gateway cannot be asked after all', async () => {
+      jest.mocked(getPresentedNotificationsAsync).mockResolvedValue([alarmPush(at('09:15'))] as never);
+      gateway.mine = () => 'network';
+      tree = await render();
+      expect(hasText(tree, t('crisis.localList'))).toBe(true);
+    });
+
+    it('shows the gateway’s list, not its own, when the alarm is going, and has it kept for the next time the network is gone', async () => {
+      jest.mocked(getPresentedNotificationsAsync).mockResolvedValue([alarmPush(at('09:15'))] as never);
+      serve(mineOf([alarm('a1', [sevenA()], { startedAt: at('09:14') })], at('09:19')));
+      tree = await render();
+      expect(hasText(tree, t('crisis.localList'))).toBe(false);
+      expect(hasText(tree, 'Utrymning – skarpt larm')).toBe(true);
+      expect(fake.lists.get('t-1')).toBeDefined();
+      expect(fake.hint?.alarmAt).toBe(new Date(at('09:15')).toISOString());
+    });
+
+    it('keeps working with no network when the push is fresh: the list the phone builds, with how long ago the alarm was announced', async () => {
+      jest.mocked(getPresentedNotificationsAsync).mockResolvedValue([alarmPush(at('09:15'))] as never);
+      gateway.down = true;
+      tree = await render();
+      expect(hasText(tree, t('crisis.localList'))).toBe(true);
+      expect(hasText(tree, 'Larmet meddelades kl 09:15 (för 5 min sedan)')).toBe(true);
+      expect(rowLabel(tree, 'Anna Andersson')).toBe('Anna Andersson, Inte markerad');
+    });
+
+    it('believes no push sent more than a quarter of an hour ago when it cannot ask: no list is built from it', async () => {
+      jest.mocked(getPresentedNotificationsAsync).mockResolvedValue([alarmPush(at('09:04'))] as never);
+      gateway.down = true;
+      tree = await render();
+      expect(hasText(tree, t('crisis.localList'))).toBe(false);
+      expect(hasText(tree, t('crisis.noListTitle'))).toBe(true);
+    });
+
+    it('says how old a kept list is, in minutes and in hours', async () => {
+      fake.lists.set('t-1', { asOf: at('09:19'), payload: JSON.stringify(mineOf([alarm('a1', [sevenA()])], at('09:19'))) });
+      gateway.down = true;
+      tree = await render();
+      expect(hasText(tree, 'Listan hämtades kl 09:19 (för 1 min sedan)')).toBe(true);
+      await act(async () => tree!.unmount());
+      fake.lists.set('t-1', { asOf: at('09:20'), payload: JSON.stringify(mineOf([alarm('a1', [sevenA()])], at('09:20'))) });
+      tree = await render();
+      expect(hasText(tree, 'Listan hämtades kl 09:20 (nyss)')).toBe(true);
     });
   });
 

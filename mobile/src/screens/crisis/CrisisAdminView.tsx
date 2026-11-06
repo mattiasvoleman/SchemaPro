@@ -254,7 +254,7 @@ function Going({
         ) : (
           missing.map((pupil) => (
             <Text key={`${pupil.studentId}:${pupil.groupName}`} style={[styles.line, { color: colors.danger, fontWeight: '700' }]}>
-              {`${STATUS_GLYPH.MISSING} ${t('crisis.admin.missingLine', { name: pupil.name, group: pupil.groupName })}`}
+              {`${STATUS_GLYPH.MISSING} ${t('crisis.admin.missingLine', { name: pupil.name, group: pupil.basis === 'NO_LESSON' ? t('crisis.noLesson') : pupil.groupName })}`}
             </Text>
           ))
         )}

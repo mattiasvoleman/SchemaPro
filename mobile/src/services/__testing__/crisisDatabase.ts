@@ -78,6 +78,9 @@ export const api = {
   saveCrisisAlarmHint: async (atIso: string): Promise<void> => {
     fake.hint = { alarmAt: later(fake.hint?.alarmAt ?? null, atIso), endedAt: fake.hint?.endedAt ?? null };
   },
+  clearCrisisAlarmHint: async (atIso: string): Promise<void> => {
+    if (fake.hint?.alarmAt && fake.hint.alarmAt <= atIso) fake.hint = { alarmAt: null, endedAt: fake.hint.endedAt };
+  },
   saveCrisisEndedHint: async (atIso: string): Promise<void> => {
     fake.hint = { alarmAt: fake.hint?.alarmAt ?? null, endedAt: later(fake.hint?.endedAt ?? null, atIso) };
   },

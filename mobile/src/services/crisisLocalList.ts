@@ -30,6 +30,10 @@ import type { CalendarLesson } from '../types';
  * the gateway finds its call; a pupil the gateway does not have on that call
  * is refused and the mark dropped (services/crisisQueue.ts).
  *
+ * "Found with me" (a pupil on no list of the teacher's) is not offered on this
+ * list: the cache holds the pupils of lessons, not the school, so there is no
+ * one to pick from (the alarm's `others` comes only with the gateway's list).
+ *
  * Pure: the caller reads the cache and hands it here.
  */
 
@@ -139,6 +143,8 @@ export function localCalls(
         colleagues: [],
         counts: countPupils(pupils.map((pupil) => pupil.status)),
         pupils,
+        // Nobody has been found "with me" on a list the phone built, and the cache cannot name a pupil who is on none.
+        foundHere: [],
       };
     });
 }

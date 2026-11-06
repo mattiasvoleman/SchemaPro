@@ -218,13 +218,14 @@ describe('sending', () => {
       colleagues: [],
       counts: countPupils(['UNREPORTED']),
       pupils: [{ studentId: 's-1', firstName: 'Alva', lastName: 'Elev', status: 'UNREPORTED', priorAbsentSource: null, markedAt: null }],
+      foundHere: [],
     };
     const response: MyCrisisResponse = {
       asOf: '2027-01-12T09:10:00.000Z',
       alarms: [
         {
           id: ALARM, kind: 'EVACUATION', mode: 'LIVE', startedAt: '2027-01-12T09:05:00.000Z', startedBy: null, endedAt: null,
-          endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [call],
+          endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [call], others: [],
         },
       ],
     };
@@ -265,6 +266,10 @@ describe('a failure that is only about the network keeps the marks', () => {
     ['a 401 (the next pass renews the sign-in)', { status: 401, body: { message: 'x' } }],
     ['a 404 without a code (a gateway without the route)', { status: 404, body: { message: 'Not Found' } }],
     ['a 409 that is not "ended"', { status: 409, body: { message: 'x', code: 'SOMETHING_ELSE' } }],
+    ['a 409 without a code', { status: 409, body: { message: 'Conflict' } }],
+    // The gateway answers two requests that deadlocked with this, and the next one goes through.
+    ['a 409 WRITE_CONFLICT (a deadlock at the gateway)', { status: 409, body: { message: 'x', code: 'WRITE_CONFLICT' } }],
+    ['a 404 with a code that is not "alarm not found"', { status: 404, body: { message: 'x', code: 'SOMETHING_ELSE' } }],
   ])('keeps them after %s, and sends them again', async (_name, answer) => {
     await enqueue(row({ id: 'm-1' }), row({ id: 'm-2' }));
     respond = () => answer;
@@ -319,6 +324,86 @@ describe('a failure that is only about the network keeps the marks', () => {
     const flushing = flushCrisisQueue();
     await jest.advanceTimersByTimeAsync(15_000);
     expect(await flushing).toMatchObject({ stopped: 'RETRY', remaining: 1 });
+  });
+});
+
+describe('a conflict is waited out, an ended alarm is not', () => {
+  it('keeps a mark across a WRITE_CONFLICT and sends it with the same id when the gateway has let go', async () => {
+    await enqueue(row({ id: 'm-1' }));
+    respond = () => ({ status: 409, body: { message: 'x', code: 'WRITE_CONFLICT' } });
+    const first = await flushCrisisQueue();
+    expect(first).toMatchObject({ stopped: 'RETRY', remaining: 1, dropped: [] });
+    expect(takeUnseenDrops()).toEqual([]);
+    // It was the gateway that answered, so the row's history says so.
+    expect(fake.queue[0]!.retryCount).toBe(1);
+
+    respond = okFor;
+    const second = await flushCrisisQueue();
+    expect(second).toMatchObject({ stopped: 'DONE', remaining: 0 });
+    expect(sent.map((s) => s.marks.map((m) => m.id))).toEqual([['m-1'], ['m-1']]);
+  });
+
+  it('is not halved and not dropped: a conflict is no verdict on any mark in the call', async () => {
+    await enqueue(...Array.from({ length: 6 }, (_, i) => row({ id: `m-${i}` })));
+    respond = () => ({ status: 409, body: { message: 'x', code: 'WRITE_CONFLICT' } });
+    const result = await flushCrisisQueue();
+    expect(sent).toHaveLength(1);
+    expect(result).toMatchObject({ remaining: 6, dropped: [] });
+  });
+
+  it('drops the marks of an alarm that has ended, and keeps going with the ones after', async () => {
+    await enqueue(row({ id: 'm-1' }));
+    respond = () => ({ status: 409, body: { message: 'x', code: 'CRISIS_ALARM_ENDED' } });
+    expect(await flushCrisisQueue()).toMatchObject({ dropped: [{ reason: 'ENDED', count: 1 }], remaining: 0 });
+  });
+});
+
+describe('"found with me": a mark for a pupil who is not on the call’s list', () => {
+  const foundHere = (id: string, studentId: string) => row({ id, studentId, state: 'FOUND', callId: 'c1' });
+
+  it('is sent as any mark is: the same route and body, FOUND, naming the call', async () => {
+    await enqueue(foundHere('m-1', 'off-list-pupil'));
+    await flushCrisisQueue();
+    expect(sent[0]!.url).toBe('https://api.example.test/api/v1/crisis/mine/marks');
+    expect(sent[0]!.marks).toEqual([{ id: 'm-1', callId: 'c1', studentId: 'off-list-pupil', state: 'FOUND', at: expect.any(String) }]);
+  });
+
+  it('is dropped, and only it, when the gateway refuses it as CRISIS_MARK_INVALID: the marks beside it are sent', async () => {
+    await enqueue(row({ id: 'm-1' }), foundHere('m-2', 'stranger'), row({ id: 'm-3' }));
+    respond = (marks) =>
+      marks.some((m) => m.studentId === 'stranger')
+        ? { status: 400, body: { message: 'Eleven står inte på gruppens lista.', code: 'CRISIS_MARK_INVALID' } }
+        : { status: 200, body: { stored: marks.length, duplicates: 0, unresolved: [] } };
+    const result = await flushCrisisQueue();
+    expect(result.sent.map((m) => m.id).sort()).toEqual(['m-1', 'm-3']);
+    expect(result.dropped).toEqual([{ reason: 'INVALID', count: 1 }]);
+    expect(fake.pending()).toEqual([]);
+    expect(takeUnseenDrops()).toEqual([{ reason: 'INVALID', count: 1 }]);
+  });
+
+  it('leaves the kept list as it was for a pupil the list cannot name, without a crash', async () => {
+    const call: MyCall = {
+      id: 'c1', lessonId: 'l1', basis: 'LESSON', groupName: '7A', subjectName: 'Matematik', roomName: null,
+      lessonStartsAt: '2027-01-12T09:00:00.000Z', lessonEndsAt: '2027-01-12T09:50:00.000Z', completedAt: null, colleagues: [],
+      counts: countPupils(['UNREPORTED']),
+      pupils: [{ studentId: 's-1', firstName: 'Alva', lastName: 'Elev', status: 'UNREPORTED', priorAbsentSource: null, markedAt: null }],
+      foundHere: [],
+    };
+    await saveCachedCrisis(mine, {
+      asOf: '2027-01-12T09:10:00.000Z',
+      alarms: [
+        {
+          id: ALARM, kind: 'EVACUATION', mode: 'LIVE', startedAt: '2027-01-12T09:05:00.000Z', startedBy: null, endedAt: null,
+          endedBy: null, autoEnded: false, endNote: null, guardiansNotifiedAt: null, calls: [call],
+          others: [{ studentId: 'known', firstName: 'Kim', lastName: 'Kvist', className: '7C' }],
+        },
+      ],
+    });
+    await enqueue(foundHere('m-1', 'known'), foundHere('m-2', 'not-in-the-others'));
+    await flushCrisisQueue();
+    const kept = (await readCachedCrisis(mine))!.response.alarms[0]!.calls[0]!;
+    expect(kept.foundHere.map((f) => [f.studentId, f.firstName, f.className])).toEqual([['known', 'Kim', '7C']]);
+    expect(kept.pupils[0]!.status).toBe('UNREPORTED');
   });
 });
 
@@ -514,6 +599,13 @@ describe('classifyFailure', () => {
     ['a 500', new ApiError(500, 'x'), { kind: 'RETRY', answered: true }],
     ['a 401', new ApiError(401, 'x'), { kind: 'RETRY', answered: true }],
     ['a 429', new ApiError(429, 'x'), { kind: 'WAIT' }],
+    // Exactly four refusals are final, by status and code; a 404 or a 409 that is not one of them is not.
+    ['an uncoded 404', new ApiError(404, 'x'), { kind: 'RETRY', answered: true }],
+    ['an uncoded 409', new ApiError(409, 'x'), { kind: 'RETRY', answered: true }],
+    ['a 409 WRITE_CONFLICT', new ApiError(409, 'x', 'WRITE_CONFLICT'), { kind: 'RETRY', answered: true }],
+    ['a 404 with another code', new ApiError(404, 'x', 'SOMETHING_ELSE'), { kind: 'RETRY', answered: true }],
+    ['a 500 that carries the code of an ended alarm', new ApiError(500, 'x', 'CRISIS_ALARM_ENDED'), { kind: 'RETRY', answered: true }],
+    ['a 503', new ApiError(503, 'x'), { kind: 'RETRY', answered: true }],
     ['a 409 CRISIS_ALARM_ENDED', new ApiError(409, 'x', 'CRISIS_ALARM_ENDED'), { kind: 'PERMANENT', reason: 'ENDED' }],
     ['a 404 CRISIS_ALARM_NOT_FOUND', new ApiError(404, 'x', 'CRISIS_ALARM_NOT_FOUND'), { kind: 'PERMANENT', reason: 'NOT_FOUND' }],
     ['a 403 CRISIS_NOT_YOURS', new ApiError(403, 'x', 'CRISIS_NOT_YOURS'), { kind: 'PERMANENT', reason: 'NOT_YOURS' }],

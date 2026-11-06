@@ -1,6 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import {
   clearCachedSchoolData,
+  clearCrisisAlarmHint,
   countPendingCrisisMarks,
   deleteCrisisMarks,
   discardRefusedRecords,
@@ -235,6 +236,12 @@ describe('the schema', () => {
     }
   });
 
+  it('keeps the alarm’s other pupils and the pupils found here in the list’s own row, as JSON: three columns, as before', async () => {
+    const schema = (execAsync.mock.calls as unknown as Array<[string]>).map(([sql]) => String(sql)).join('\n');
+    const lists = /CREATE TABLE IF NOT EXISTS crisis_lists \(([\s\S]*?)\n  \);/.exec(schema)![1]!;
+    expect(lists.match(/^\s+\w+\s+\w+/gm)!.map((line) => line.trim().split(/\s+/)[0])).toEqual(['teacher_id', 'as_of', 'payload']);
+  });
+
   it('keeps the queue’s columns, a mark’s state to two values and its group to a call or a lesson, not both', async () => {
     const schema = (execAsync.mock.calls as unknown as Array<[string]>).map(([sql]) => String(sql)).join('\n');
     const queue = /CREATE TABLE IF NOT EXISTS crisis_queue \(([\s\S]*?)\n  \);/.exec(schema)![1]!;
@@ -365,6 +372,13 @@ describe('when the phone was told of an alarm', () => {
     const [endSql, endParams] = runAsync.mock.calls.at(-1) as unknown as [string, unknown[]];
     expect(endSql.replace(/\s+/g, ' ')).toContain('SET ended_at = CASE WHEN ended_at IS NULL OR excluded.ended_at > ended_at');
     expect(endParams).toEqual(['2027-01-12T09:30:00.000Z']);
+  });
+
+  it('forgets the time of an alarm push the gateway says is over, and only that of a push sent no later, leaving the end', async () => {
+    await clearCrisisAlarmHint('2027-01-12T09:15:00.000Z');
+    const [sql, params] = runAsync.mock.calls.at(-1) as unknown as [string, unknown[]];
+    expect(sql.replace(/\s+/g, ' ')).toBe('UPDATE crisis_hint SET alarm_at = NULL WHERE id = 1 AND alarm_at <= ?');
+    expect(params).toEqual(['2027-01-12T09:15:00.000Z']);
   });
 
   it('reads it, or nothing', async () => {

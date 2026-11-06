@@ -278,6 +278,9 @@ export const sv = {
   },
   push: {
     channelName: 'Skolans notiser',
+    // The alarm's own channel (Android), named in the phone's notification settings.
+    crisisChannelName: 'Larm',
+    crisisChannelDescription: 'Larm från skolan om utrymning och inrymning, med ljud och kraftig vibration.',
   },
   // Vikariefrågan (D4): the colleague's side. A request names the lessons and
   // the time to answer by, never who is away or why.
@@ -371,7 +374,12 @@ export const sv = {
     endedAt: 'Avslutat kl {time}. Listan visas bara, men markeringar som väntar skickas ändå.',
     localList: 'Lokal lista — hämtas igen när nätet är tillbaka',
     localListHint: 'Byggd av lektionerna som finns sparade i telefonen. Kontrollera mot din vanliga lista.',
-    fromCache: 'Listan hämtades kl {time}',
+    localListAge: 'Larmet meddelades kl {time} ({age})',
+    fromCache: 'Listan hämtades kl {time} ({age})',
+    age: { justNow: 'nyss', minutes: 'för {count} min sedan', hours: 'för {count} tim sedan' },
+    // The group of an alarm that gathers the pupils who are on no lesson's list. The gateway's own name for it is a stand-in.
+    noLesson: 'Ej i lektion just nu',
+    noLessonHint: 'Elever som inte har någon lektion just nu. Skolans ledning ansvarar för dem.',
     waiting_one: '{count} markering väntar på nät',
     waiting_other: '{count} markeringar väntar på nät',
     waitingRow: 'Väntar på nät',
@@ -399,6 +407,25 @@ export const sv = {
     markMissingA11y: 'Markera {name} som saknas',
     rowA11y: '{name}, {status}',
     rowWaitingA11y: '{name}, {status}, väntar på nät',
+    // "Found with me": a pupil who is on none of the teacher's lists, found by the teacher.
+    foundHere: {
+      button: 'Hittat en elev som inte står på listan',
+      title: 'Hittade hos dig ({count})',
+      titleHint: 'Står på en annan lista och räknas där.',
+      row: 'Hittad hos dig',
+      rowA11y: '{name}, hittad hos dig',
+      rowWaitingA11y: '{name}, hittad hos dig, väntar på nät',
+      pickerTitle: 'Hittat en elev som inte står på listan',
+      close: 'Stäng',
+      whichGroup: 'I vilken grupp?',
+      searchLabel: 'Sök elev',
+      searchPlaceholder: 'Namn eller klass',
+      hint: 'Skriv namn eller klass. Bara elever som inte står på någon av dina listor visas.',
+      none: 'Ingen elev matchar.',
+      noOthers: 'Telefonen har ingen lista över andra elever.',
+      more: 'Visar {shown} av {total}. Skriv mer för att välja.',
+      pickA11y: 'Markera {name} som hittad hos dig i {group}',
+    },
     emptyTitle: 'Inget larm pågår',
     emptyBody: 'När skolan startar ett larm får du en notis, och din lista dyker upp här.',
     noListTitle: 'Ingen lista i telefonen',

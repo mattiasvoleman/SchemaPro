@@ -559,6 +559,15 @@ export async function saveCrisisAlarmHint(atIso: string): Promise<void> {
   );
 }
 
+/**
+ * The gateway says no alarm is open, so a hint of an alarm push sent at or before `atIso` is not about
+ * one going: the time is forgotten. A push sent later is another alarm's, and stays.
+ */
+export async function clearCrisisAlarmHint(atIso: string): Promise<void> {
+  const db = getDb();
+  await db.runAsync('UPDATE crisis_hint SET alarm_at = NULL WHERE id = 1 AND alarm_at <= ?', [atIso]);
+}
+
 /** An end push arrived at `atIso`. */
 export async function saveCrisisEndedHint(atIso: string): Promise<void> {
   const db = getDb();

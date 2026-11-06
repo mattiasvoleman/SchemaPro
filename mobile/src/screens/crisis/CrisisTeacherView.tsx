@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
@@ -7,9 +7,10 @@ import { DISABLED_OPACITY, type Tone } from '../../theme/tokens';
 import { useI18n } from '../../context/LocaleContext';
 import { useCrisis } from '../../hooks/useCrisis';
 import { formatTime, formatTimeRange } from '../../i18n/format';
-import { pupilName, type AlarmBlock, type MyCall, type PupilView } from '../../services/crisis';
+import { foundHereSorted, pupilName, type AlarmBlock, type FoundHere, type MyCall, type PupilView } from '../../services/crisis';
 import type { CrisisMarkState } from '../../types';
-import { AlarmBanner, CountChips, STATUS_GLYPH, STATUS_TONE, WAITING_GLYPH } from './crisisParts';
+import { AlarmBanner, CountChips, STATUS_GLYPH, STATUS_TONE, WAITING_GLYPH, ageText, callTitle } from './crisisParts';
+import { FoundHerePicker } from './FoundHerePicker';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The teacher's roll call (Krisläge, F2). Their own groups, each pupil with
@@ -19,6 +20,11 @@ import { AlarmBanner, CountChips, STATUS_GLYPH, STATUS_TONE, WAITING_GLYPH } fro
 // is written to the phone first and shows at once with a clock until the
 // gateway has it (hooks/useCrisis.ts, services/crisisQueue.ts).
 //
+// A pupil the teacher finds who is on none of their lists is said with one
+// button per alarm ("Hittat en elev som inte står på listan"), a picker over the
+// school's other pupils (FoundHerePicker), and the pupil then shows under the
+// group as "Hittade hos dig", with a clock until the gateway has it.
+//
 // A tap target is 52 pt, above the 48 the platforms ask for: this is used
 // standing, in a crowd, on a cold hand.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,7 +32,9 @@ import { AlarmBanner, CountChips, STATUS_GLYPH, STATUS_TONE, WAITING_GLYPH } fro
 type Row =
   | { readonly key: string; readonly kind: 'ALARM'; readonly block: AlarmBlock }
   | { readonly key: string; readonly kind: 'CALL'; readonly block: AlarmBlock; readonly call: MyCall }
-  | { readonly key: string; readonly kind: 'PUPIL'; readonly block: AlarmBlock; readonly call: MyCall; readonly pupil: PupilView };
+  | { readonly key: string; readonly kind: 'PUPIL'; readonly block: AlarmBlock; readonly call: MyCall; readonly pupil: PupilView }
+  | { readonly key: string; readonly kind: 'HERE_HEADER'; readonly block: AlarmBlock; readonly call: MyCall }
+  | { readonly key: string; readonly kind: 'HERE'; readonly block: AlarmBlock; readonly call: MyCall; readonly found: FoundHere };
 
 function rowsOf(blocks: readonly AlarmBlock[]): Row[] {
   return blocks.flatMap((block): Row[] => [
@@ -34,9 +42,22 @@ function rowsOf(blocks: readonly AlarmBlock[]): Row[] {
     ...block.calls.flatMap((call): Row[] => [
       { key: `call:${block.key}:${call.id}`, kind: 'CALL', block, call },
       ...call.pupils.map((pupil): Row => ({ key: `pupil:${block.key}:${call.id}:${pupil.studentId}`, kind: 'PUPIL', block, call, pupil })),
+      ...hereRowsOf(block, call),
     ]),
   ]);
 }
+
+/** The pupils found with the teacher on a group, under a heading of their own; nothing when there are none. */
+function hereRowsOf(block: AlarmBlock, call: MyCall): Row[] {
+  if (call.foundHere.length === 0) return [];
+  return [
+    { key: `here:${block.key}:${call.id}`, kind: 'HERE_HEADER', block, call },
+    ...foundHereSorted(call).map((found): Row => ({ key: `found:${block.key}:${call.id}:${found.studentId}`, kind: 'HERE', block, call, found })),
+  ];
+}
+
+/** Whether a teacher can say "found with me" in an alarm: the gateway's list, still open, with a group of theirs. */
+const canFindElsewhere = (block: AlarmBlock): boolean => !block.local && block.endedAt === null && block.calls.length > 0;
 
 export function CrisisTeacherView({ gutter }: { readonly gutter: number }): React.JSX.Element {
   const { colors } = useAppTheme();
@@ -44,6 +65,9 @@ export function CrisisTeacherView({ gutter }: { readonly gutter: number }): Reac
   const { t } = useI18n();
   const state = useCrisis(true);
   const rows = useMemo(() => rowsOf(state.blocks), [state.blocks]);
+  // The alarm whose picker is open, by key: read from the blocks each time, so an alarm that ends under it closes it.
+  const [pickingKey, setPickingKey] = useState<string | null>(null);
+  const picking = pickingKey === null ? undefined : state.blocks.find((block) => block.key === pickingKey && canFindElsewhere(block));
 
   if (state.isLoading) {
     return (
@@ -111,7 +135,9 @@ export function CrisisTeacherView({ gutter }: { readonly gutter: number }): Reac
               </Note>
             ) : null}
             {state.listAsOf !== null && state.blocks.some((block) => !block.local) ? (
-              <Text style={styles.asOf}>{t('crisis.fromCache', { time: formatTime(state.listAsOf) })}</Text>
+              <Text style={styles.asOf}>
+                {t('crisis.fromCache', { time: formatTime(state.listAsOf), age: ageText(state.now - Date.parse(state.listAsOf), t) })}
+              </Text>
             ) : null}
             {state.waitingCount > 0 ? (
               <Note tone="warning">
@@ -138,12 +164,41 @@ export function CrisisTeacherView({ gutter }: { readonly gutter: number }): Reac
                     <Note tone="warning">
                       <Text style={styles.noteTitle}>{t('crisis.localList')}</Text>
                       <Text style={styles.noteText}>{t('crisis.localListHint')}</Text>
+                      {item.block.startedAt ? (
+                        <Text style={styles.noteText}>
+                          {t('crisis.localListAge', {
+                            time: formatTime(item.block.startedAt),
+                            age: ageText(state.now - Date.parse(item.block.startedAt), t),
+                          })}
+                        </Text>
+                      ) : null}
                     </Note>
+                  ) : null}
+                  {canFindElsewhere(item.block) ? (
+                    <TouchableOpacity
+                      style={styles.findElsewhere}
+                      onPress={() => setPickingKey(item.block.key)}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('crisis.foundHere.button')}
+                    >
+                      <Text style={styles.findElsewhereText}>{t('crisis.foundHere.button')}</Text>
+                    </TouchableOpacity>
                   ) : null}
                 </View>
               );
             case 'CALL':
               return <CallHeader call={item.call} ended={item.block.endedAt !== null} onAllFound={() => void state.markAllFound(item.call)} />;
+            case 'HERE_HEADER':
+              return (
+                <View style={styles.hereHeader}>
+                  <Text style={styles.hereTitle} accessibilityRole="header">
+                    {t('crisis.foundHere.title', { count: item.call.foundHere.length })}
+                  </Text>
+                  <Text style={styles.callMeta}>{t('crisis.foundHere.titleHint')}</Text>
+                </View>
+              );
+            case 'HERE':
+              return <FoundHereRow found={item.found} waiting={state.waiting.has(`${item.call.id}:${item.found.studentId}`)} />;
             case 'PUPIL':
               return (
                 <PupilRow
@@ -163,6 +218,16 @@ export function CrisisTeacherView({ gutter }: { readonly gutter: number }): Reac
         }
         contentContainerStyle={[rows.length === 0 ? styles.listEmpty : styles.list, { paddingHorizontal: gutter }]}
       />
+      {picking ? (
+        <FoundHerePicker
+          block={picking}
+          onClose={() => setPickingKey(null)}
+          onPick={(call, pupil) => {
+            setPickingKey(null);
+            void state.markFoundHere(call, pupil);
+          }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -192,16 +257,20 @@ function CallHeader({
   const { colors } = useAppTheme();
   const styles = useStyles();
   const { t } = useI18n();
-  const subject = call.subjectName || t('common.lesson');
-  const title = call.groupName ? `${call.groupName} · ${subject}` : subject;
-  const meta = [formatTimeRange(call.lessonStartsAt, call.lessonEndsAt), call.roomName].filter((part): part is string => !!part).join('  ·  ');
+  const title = callTitle(call, t);
+  // The group of pupils on no lesson has no lesson time or room: its two times are the moment of the alarm.
+  const noLesson = call.basis === 'NO_LESSON';
+  const meta = [noLesson ? '' : formatTimeRange(call.lessonStartsAt, call.lessonEndsAt), call.roomName]
+    .filter((part): part is string => !!part)
+    .join('  ·  ');
   const open = call.counts.unreported;
   return (
     <View style={styles.callHeader}>
       <Text style={styles.callTitle} accessibilityRole="header" numberOfLines={2}>
         {title}
       </Text>
-      <Text style={styles.callMeta}>{meta}</Text>
+      {meta !== '' ? <Text style={styles.callMeta}>{meta}</Text> : null}
+      {noLesson ? <Text style={styles.callMeta}>{t('crisis.noLessonHint')}</Text> : null}
       {call.basis === 'NEXT_LESSON' ? (
         <Text style={[styles.nextLesson, { color: colors.warning }]}>{t('crisis.nextLesson')}</Text>
       ) : null}
@@ -265,6 +334,33 @@ function PupilRow({
       <View style={styles.buttons}>
         <MarkButton state="FOUND" selected={pupil.status === 'FOUND'} disabled={ended} name={name} onPress={() => onMark('FOUND')} />
         <MarkButton state="MISSING" selected={pupil.status === 'MISSING'} disabled={ended} name={name} onPress={() => onMark('MISSING')} />
+      </View>
+    </View>
+  );
+}
+
+/**
+ * A pupil found with this teacher who is on another list: the name, the class, the state in words with its
+ * glyph (and the clock while the gateway has not got the mark). No buttons: only "found" is ever said of them.
+ */
+function FoundHereRow({ found, waiting }: { readonly found: FoundHere; readonly waiting: boolean }): React.JSX.Element {
+  const { colors } = useAppTheme();
+  const styles = useStyles();
+  const { t } = useI18n();
+  const name = pupilName(found) || t('common.noValue');
+  return (
+    <View
+      style={[styles.pupil, { borderLeftColor: colors.success }]}
+      accessible
+      accessibilityLabel={t(waiting ? 'crisis.foundHere.rowWaitingA11y' : 'crisis.foundHere.rowA11y', { name })}
+    >
+      <View style={styles.pupilInfo}>
+        <Text style={styles.pupilName} numberOfLines={2}>
+          {name}
+        </Text>
+        {found.className ? <Text style={styles.callMeta}>{found.className}</Text> : null}
+        <Text style={[styles.pupilStatus, { color: colors.success }]}>{`${STATUS_GLYPH.FOUND} ${t('crisis.foundHere.row')}`}</Text>
+        {waiting ? <Text style={[styles.pupilWaiting, { color: colors.warning }]}>{`${WAITING_GLYPH} ${t('crisis.waitingRow')}`}</Text> : null}
       </View>
     </View>
   );
@@ -345,6 +441,20 @@ const useStyles = makeStyles((c) => ({
     paddingHorizontal: 16,
   },
   allFoundText: { color: c.onTone, fontSize: 17, fontWeight: '800' },
+  findElsewhere: {
+    marginTop: 12,
+    minHeight: 52,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: c.primary,
+    backgroundColor: c.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  findElsewhereText: { color: c.primary, fontSize: 16, fontWeight: '800', textAlign: 'center' },
+  hereHeader: { marginTop: 14 },
+  hereTitle: { fontSize: 16, fontWeight: '800', color: c.text },
   pupil: {
     flexDirection: 'row',
     alignItems: 'center',

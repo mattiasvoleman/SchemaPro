@@ -339,6 +339,17 @@ describe('CrisisScreen, the administration’s side', () => {
       expect(hasText(tree, '✕ Eva Ek (7A)')).toBe(true);
     });
 
+    it('words the group of pupils on no lesson in its own words, not in the gateway’s Swedish stand-in', async () => {
+      hold(
+        detailOf(summary('a1', { unlisted: 1 }), [
+          callView('c9', 'Utan lektion', [pupil('s9', 'Siv', 'Sjö', 'MISSING')], { basis: 'NO_LESSON', lessonId: null, uncovered: true, lessonEndsAt: at('09:00') }),
+        ]),
+      );
+      tree = await render();
+      expect(hasText(tree, '✕ Siv Sjö (Ej i lektion just nu)')).toBe(true);
+      expect(texts(tree).some((text) => text.includes('Utan lektion'))).toBe(false);
+    });
+
     it('says when nobody is', async () => {
       hold(detailOf(summary('a1'), [callView('c1', '7A', [pupil('s1', 'Anna', 'Andersson', 'FOUND')])]));
       tree = await render();

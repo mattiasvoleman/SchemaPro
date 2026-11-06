@@ -2,9 +2,11 @@ import type {
   AlarmDetail,
   AlarmSummary,
   CallView,
+  FoundHere,
   MyAlarm,
   MyCall,
   MyCrisisResponse,
+  OtherPupil,
   PupilStatus,
   PupilView,
 } from '../crisis';
@@ -126,8 +128,19 @@ export function call(id: string, lessonId: string | null, pupils: PupilView[], o
     colleagues: [],
     counts: countPupils(pupils.map((p) => p.status)),
     pupils,
+    foundHere: [],
     ...over,
   };
+}
+
+/** A pupil of the school on none of the teacher's lists: who "found with me" is said of. */
+export function other(id: string, first: string, last: string, className: string | null = null): OtherPupil {
+  return { studentId: id, firstName: first, lastName: last, className };
+}
+
+/** A pupil the gateway holds as found with a teacher of the call. */
+export function foundWith(id: string, first: string, last: string, className: string | null = null, markedAt: string = at('09:08')): FoundHere {
+  return { studentId: id, firstName: first, lastName: last, className, markedAt };
 }
 
 export function alarm(id: string, calls: MyCall[], over: Partial<MyAlarm> = {}): MyAlarm {
@@ -143,6 +156,7 @@ export function alarm(id: string, calls: MyCall[], over: Partial<MyAlarm> = {}):
     endNote: null,
     guardiansNotifiedAt: null,
     calls,
+    others: [],
     ...over,
   };
 }
@@ -163,6 +177,7 @@ export function sevenA(): MyCall {
 export function summary(id: string, over: Partial<AlarmSummary> = {}): AlarmSummary {
   return {
     ...alarm(id, []),
+    unlisted: 0,
     calls: 2,
     callsComplete: 1,
     counts: countPupils(['FOUND', 'FOUND', 'MISSING', 'ABSENT_BEFORE', 'UNREPORTED', 'UNREPORTED']),

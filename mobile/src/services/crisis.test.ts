@@ -2,19 +2,25 @@ import {
   ENDED_GRACE_MS,
   LOCAL_ALARM_ID,
   LOCAL_CALL_PREFIX,
+  PICKER_LIMIT,
   adminFailureOf,
   countPupils,
   endAlarm,
   fetchAlarmDetail,
   fetchAlarmList,
   fetchMyCrisis,
+  foldForSearch,
+  foundHereSorted,
+  indexPupils,
   isLocalCall,
   markBody,
   missingPupils,
+  normalizeAlarms,
   openAlarms,
   overlayMarks,
   postMyMarks,
   pupilName,
+  searchPupils,
   silentTeachers,
   startAlarm,
   statusOf,
@@ -26,9 +32,11 @@ import {
   type AlarmDetail,
   type AlarmSummary,
   type CallView,
+  type FoundHere,
   type MyAlarm,
   type MyCall,
   type MyCrisisResponse,
+  type OtherPupil,
   type PupilStatus,
   type PupilView,
 } from './crisis';
@@ -86,6 +94,7 @@ const call = (id: string, lessonId: string | null, pupils: PupilView[], over: Pa
   colleagues: [],
   counts: countPupils(pupils.map((p) => p.status)),
   pupils,
+  foundHere: [],
   ...over,
 });
 
@@ -101,6 +110,7 @@ const alarm = (id: string, calls: MyCall[], over: Partial<MyAlarm> = {}): MyAlar
   endNote: null,
   guardiansNotifiedAt: null,
   calls,
+  others: [],
   ...over,
 });
 
@@ -403,6 +413,7 @@ describe('what the administration reads', () => {
   });
   const summary = (over: Partial<AlarmSummary> = {}): AlarmSummary => ({
     ...alarm('a1', []),
+    unlisted: 0,
     calls: 0,
     callsComplete: 0,
     counts: countPupils([]),
@@ -424,8 +435,8 @@ describe('what the administration reads', () => {
       ],
     };
     expect(missingPupils(detail)).toEqual([
-      { studentId: 's1', name: 'Fs1 Ls1', groupName: '7A' },
-      { studentId: 's3', name: 'Fs3 Ls3', groupName: '8B' },
+      { studentId: 's1', name: 'Fs1 Ls1', groupName: '7A', basis: 'LESSON' },
+      { studentId: 's3', name: 'Fs3 Ls3', groupName: '8B', basis: 'LESSON' },
     ]);
   });
 
@@ -456,5 +467,236 @@ describe('what the administration reads', () => {
       ],
     };
     expect(uncoveredCalls(detail).map((c) => c.id)).toEqual(['c1']);
+  });
+});
+
+// ─── Found with me: a pupil who is on none of the teacher's lists ────────────
+
+const other = (id: string, first: string, last: string, className: string | null = null): OtherPupil => ({
+  studentId: id,
+  firstName: first,
+  lastName: last,
+  className,
+});
+const foundWith = (id: string, first: string, last: string, markedAt = iso(3_000)): FoundHere => ({
+  studentId: id,
+  firstName: first,
+  lastName: last,
+  className: null,
+  markedAt,
+});
+
+describe('reading a list from a gateway before and after "found with me"', () => {
+  const old = (): unknown => ({
+    asOf: iso(0),
+    alarms: [
+      {
+        id: 'a1', kind: 'EVACUATION', mode: 'LIVE', startedAt: iso(0), startedBy: null, endedAt: null, endedBy: null, autoEnded: false, endNote: null,
+        guardiansNotifiedAt: null,
+        calls: [{ id: 'c1', lessonId: 'l1', basis: 'LESSON', groupName: '7A', subjectName: 'Matematik', roomName: null, lessonStartsAt: iso(0), lessonEndsAt: iso(1),
+          completedAt: null, colleagues: [], counts: countPupils([]), pupils: [] }],
+      },
+    ],
+  });
+
+  it('reads a list from a gateway that has neither `foundHere` nor `others` as lists that are empty', async () => {
+    fetchMock.mockResolvedValueOnce(answer(200, old()));
+    const mine = await fetchMyCrisis();
+    expect(mine.alarms[0]!.others).toEqual([]);
+    expect(mine.alarms[0]!.calls[0]!.foundHere).toEqual([]);
+  });
+
+  it('reads both from a gateway that has them, and keeps the order they came in', async () => {
+    const response = old() as { alarms: Array<{ others?: unknown; calls: Array<{ foundHere?: unknown }> }> };
+    response.alarms[0]!.others = [other('s9', 'Zeta', 'Zander', '7B'), other('s8', 'Åke', 'Ek')];
+    response.alarms[0]!.calls[0]!.foundHere = [foundWith('s7', 'Maj', 'Moa')];
+    fetchMock.mockResolvedValueOnce(answer(200, response));
+    const mine = await fetchMyCrisis();
+    expect(mine.alarms[0]!.others).toEqual([other('s9', 'Zeta', 'Zander', '7B'), other('s8', 'Åke', 'Ek')]);
+    expect(mine.alarms[0]!.calls[0]!.foundHere).toEqual([foundWith('s7', 'Maj', 'Moa')]);
+  });
+
+  it('leaves out an entry it cannot read rather than fail, and reads a blank class as none', () => {
+    const [read] = normalizeAlarms([
+      {
+        ...alarm('a1', [call('c1', 'l1', [])]),
+        others: [other('s1', 'Ok', 'Ok', ''), { firstName: 'No id' }, null, 'text', { studentId: '', firstName: 'Blank' }],
+        calls: [{ ...call('c1', 'l1', []), foundHere: [{ studentId: 's2', firstName: 'No time' }, null, foundWith('s3', 'Fine', 'Fin')] }],
+      },
+    ]);
+    expect(read!.others).toEqual([other('s1', 'Ok', 'Ok', null)]);
+    expect(read!.calls[0]!.foundHere).toEqual([foundWith('s3', 'Fine', 'Fin')]);
+  });
+
+  it('reads an alarm with no calls, a list that is not a list, and a basis it does not know without failing', () => {
+    const odd = { ...alarm('a1', []), calls: undefined, others: 'many' } as unknown;
+    expect(normalizeAlarms([odd])[0]).toMatchObject({ calls: [], others: [] });
+    const future = { ...call('c1', 'l1', []), basis: 'SOMETHING_NEW' } as unknown as MyCall;
+    expect(normalizeAlarms([alarm('a1', [future])])[0]!.calls[0]!.basis).toBe('SOMETHING_NEW');
+  });
+
+  it('takes the group of pupils on no lesson (NO_LESSON) as any other, with no lesson of its own', async () => {
+    const nobody = call('c9', null, [pupil('s1')], { basis: 'NO_LESSON', groupName: 'Utan lektion', subjectName: 'Ej i lektion', lessonStartsAt: iso(0), lessonEndsAt: iso(0) });
+    fetchMock.mockResolvedValueOnce(answer(200, { asOf: iso(0), alarms: [alarm('a1', [nobody])] }));
+    const mine = await fetchMyCrisis();
+    expect(mine.alarms[0]!.calls[0]).toMatchObject({ basis: 'NO_LESSON', lessonId: null });
+    const marks = overlayMarks(mine.alarms, [mark('m1', { callId: 'c9', studentId: 's1' })]);
+    expect(marks.alarms[0]!.calls[0]!.pupils[0]!.status).toBe('FOUND');
+  });
+
+  it('asks with the signal it is given, so that a slow gateway can be given up on', async () => {
+    const controller = new AbortController();
+    fetchMock.mockResolvedValueOnce(answer(200, old()));
+    await fetchMyCrisis({ signal: controller.signal });
+    expect((fetchMock.mock.calls[0] as [string, RequestInit])[1].signal).toBe(controller.signal);
+  });
+
+  it('puts the missing-pupil list of the administration in words for the group of pupils on no lesson', () => {
+    const detail: AlarmDetail = {
+      alarm: { ...alarm('a1', []), unlisted: 1, calls: 1, callsComplete: 0, counts: countPupils(['MISSING']), teachers: 0, teachersAnswered: 0 },
+      calls: [
+        {
+          id: 'c9', lessonId: null, basis: 'NO_LESSON', groupName: 'Utan lektion', subjectName: 'Ej i lektion', roomName: null, lessonStartsAt: iso(0),
+          lessonEndsAt: iso(0), completedAt: null, uncovered: true, teachers: [], counts: countPupils(['MISSING']), pupils: [pupil('s1', 'MISSING')],
+        },
+      ],
+    };
+    expect(missingPupils(detail)).toEqual([{ studentId: 's1', name: 'Fs1 Ls1', groupName: 'Utan lektion', basis: 'NO_LESSON' }]);
+  });
+});
+
+describe('overlayMarks: "found with me"', () => {
+  const list = (over: Partial<MyAlarm> = {}): MyAlarm[] => [
+    alarm('a1', [call('c1', 'l1', [pupil('s1'), pupil('s2')])], {
+      others: [other('s20', 'Åsa', 'Lind', '7B'), other('s21', 'Kalle', 'Lund', '7C')],
+      ...over,
+    }),
+  ];
+
+  it('puts a FOUND mark for a pupil who is not on the list under the call as found here, by name, waiting', () => {
+    const { alarms, waiting } = overlayMarks(list(), [mark('m1', { studentId: 's20' })]);
+    const c = alarms[0]!.calls[0]!;
+    expect(c.foundHere).toEqual([{ studentId: 's20', firstName: 'Åsa', lastName: 'Lind', className: '7B', markedAt: iso(5_000) }]);
+    expect([...waiting]).toEqual(['c1:s20']);
+    // They count on their own list, not on this one.
+    expect(c.counts).toEqual({ pupils: 2, found: 0, missing: 0, absentBefore: 0, unreported: 2 });
+    expect(c.pupils.map((p) => p.status)).toEqual(['UNREPORTED', 'UNREPORTED']);
+  });
+
+  it('never draws MISSING for a pupil who is not on the list: the gateway refuses it', () => {
+    const { alarms, waiting } = overlayMarks(list(), [mark('m1', { studentId: 's20', state: 'MISSING' })]);
+    expect(alarms).toEqual(list());
+    expect(waiting.size).toBe(0);
+  });
+
+  it('shows a pupil once, whatever the number of taps, and not at all without a name to show', () => {
+    const twice = overlayMarks(list(), [mark('m1', { studentId: 's20', at: iso(1_000) }), mark('m2', { studentId: 's20', at: iso(2_000) })]);
+    expect(twice.alarms[0]!.calls[0]!.foundHere).toHaveLength(1);
+    expect(twice.alarms[0]!.calls[0]!.foundHere[0]!.markedAt).toBe(iso(2_000));
+    const nameless = overlayMarks(list(), [mark('m3', { studentId: 'nobody-knows' })]);
+    expect(nameless.alarms[0]!.calls[0]!.foundHere).toEqual([]);
+    expect(nameless.waiting.size).toBe(0);
+  });
+
+  it('leaves the gateway’s own entry as it is, and only says the mark waits', () => {
+    const held = list();
+    const withHeld = [{ ...held[0]!, calls: [{ ...held[0]!.calls[0]!, foundHere: [foundWith('s20', 'Åsa', 'Lind', iso(1_000))] }] }];
+    const { alarms, waiting } = overlayMarks(withHeld, [mark('m1', { studentId: 's20' })]);
+    expect(alarms[0]!.calls[0]!.foundHere).toEqual([foundWith('s20', 'Åsa', 'Lind', iso(1_000))]);
+    expect(waiting.has('c1:s20')).toBe(true);
+  });
+
+  it('names a pupil of another of the teacher’s groups from that group’s list', () => {
+    const two = [alarm('a1', [call('c1', 'l1', [pupil('s1')]), call('c2', 'l2', [pupil('s5')])])];
+    const { alarms } = overlayMarks(two, [mark('m1', { callId: 'c1', studentId: 's5' })]);
+    expect(alarms[0]!.calls[0]!.foundHere).toMatchObject([{ studentId: 's5', firstName: 'Fs5', lastName: 'Ls5', className: null }]);
+  });
+
+  it('writes a sent mark into the kept list, so that the pupil is there when the network is gone', () => {
+    const kept = withSentMarks({ asOf: iso(1_000), alarms: list() }, [mark('m1', { studentId: 's21' })]);
+    expect(kept.alarms[0]!.calls[0]!.foundHere.map((f) => f.studentId)).toEqual(['s21']);
+    expect(kept.asOf).toBe(iso(1_000));
+  });
+
+  it('lets a mark for a call the list does not hold, or for a list the phone built, change nothing', () => {
+    const lonely = list();
+    expect(overlayMarks(lonely, [mark('m1', { callId: 'elsewhere', studentId: 's20' })]).alarms).toBe(lonely);
+    const local = [alarm(LOCAL_ALARM_ID, [call(`${LOCAL_CALL_PREFIX}l1`, 'l1', [pupil('s1')])])];
+    expect(overlayMarks(local, [mark('m2', { callId: null, lessonId: 'l1', studentId: 's20' })]).alarms).toBe(local);
+  });
+
+  it('sorts the pupils found here by name, Swedish order', () => {
+    const c = call('c1', 'l1', [], { foundHere: [foundWith('a', 'Örjan', 'Berg'), foundWith('b', 'Åsa', 'Berg'), foundWith('c', 'Anna', 'Berg')] });
+    expect(foundHereSorted(c).map((f) => f.firstName)).toEqual(['Anna', 'Åsa', 'Örjan']);
+  });
+});
+
+describe('teacherBlocks and the alarm’s other pupils', () => {
+  it('carries the others of a list from the gateway, and none for a list the phone built', () => {
+    const response: MyCrisisResponse = { asOf: iso(0), alarms: [alarm('a1', [call('c1', 'l1', [pupil('s1')])], { others: [other('s9', 'Nils', 'Ek')] })] };
+    const local = [call(`${LOCAL_CALL_PREFIX}l7`, 'l7', [pupil('s2')])];
+    const { blocks } = teacherBlocks({ response, local, pending: [], hint: { alarmAt: T0, endedAt: null }, now: T0 + 60_000 });
+    expect(blocks.map((b) => [b.key, b.others.length])).toEqual([['a1', 1], [LOCAL_ALARM_ID, 0]]);
+  });
+});
+
+describe('finding a pupil in the picker', () => {
+  const school: OtherPupil[] = [
+    other('1', 'Åsa', 'Lind', '7B'),
+    other('2', 'Asta', 'Lund', '7C'),
+    other('3', 'Anna', 'Åkesson', '8A'),
+    other('4', 'Renée', 'Bergström', '7B'),
+    other('5', 'Örjan', 'Nilsson', '9A'),
+    other('6', 'Karin', 'Andersson-Berg', '7B'),
+  ];
+  const names = (query: string, skip?: ReadonlySet<string>) => searchPupils(indexPupils(school), query, skip ? { skip } : {}).shown.map(pupilName);
+
+  it('ignores case and accents in the pupil and in the question', () => {
+    expect(foldForSearch('ÅSA Renée Örjan')).toBe('asa renee orjan');
+    expect(names('asa')).toEqual(['Åsa Lind']);
+    expect(names('ÅSA')).toEqual(['Åsa Lind']);
+    expect(names('renee')).toEqual(['Renée Bergström']);
+    expect(names('RENÉE')).toEqual(['Renée Bergström']);
+    expect(names('orjan')).toEqual(['Örjan Nilsson']);
+  });
+
+  it('wants every word of the question to begin a word of the name or the class', () => {
+    // In Swedish order, where Å comes after Z.
+    expect(names('as')).toEqual(['Asta Lund', 'Åsa Lind']);
+    expect(names('anna ak')).toEqual(['Anna Åkesson']);
+    expect(names('anna lind')).toEqual([]);
+    expect(names('berg')).toEqual(['Karin Andersson-Berg', 'Renée Bergström']);
+  });
+
+  it('finds the pupils of a class by the class', () => {
+    expect(names('7b')).toEqual(['Karin Andersson-Berg', 'Renée Bergström', 'Åsa Lind']);
+    expect(names('7B anna')).toEqual([]);
+  });
+
+  it('matches nothing for no question, and in the order of the names for any other', () => {
+    expect(names('')).toEqual([]);
+    expect(names('   ')).toEqual([]);
+    expect(searchPupils(indexPupils(school), '', {}).total).toBe(0);
+  });
+
+  it('leaves out the pupils already found with the teacher', () => {
+    expect(names('7b', new Set(['1']))).toEqual(['Karin Andersson-Berg', 'Renée Bergström']);
+  });
+
+  it('shows at most PICKER_LIMIT names of a thousand and says how many matched', () => {
+    const many = Array.from({ length: 1000 }, (_, i) => other(`s${i}`, `Elev${String(i).padStart(4, '0')}`, 'Test', `${(i % 9) + 1}A`));
+    const result = searchPupils(indexPupils(many), 'elev', {});
+    expect(PICKER_LIMIT).toBe(50);
+    expect(result.shown).toHaveLength(50);
+    expect(result.total).toBe(1000);
+    expect(result.shown[0]!.firstName).toBe('Elev0000');
+    expect(searchPupils(indexPupils(many), 'elev0999', {})).toMatchObject({ total: 1 });
+    expect(searchPupils(indexPupils(many), 'elev', { limit: 5 }).shown).toHaveLength(5);
+  });
+
+  it('is not troubled by a pupil with no class or only a first name', () => {
+    const odd = [other('1', 'Cher', '', null), other('2', '', 'Madonna', null)];
+    expect(searchPupils(indexPupils(odd), 'm', {}).shown.map((p) => p.studentId)).toEqual(['2']);
+    expect(searchPupils(indexPupils(odd), 'cher', {}).shown.map((p) => p.studentId)).toEqual(['1']);
   });
 });

@@ -3,10 +3,12 @@ import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { apiRequest, ApiError } from './api';
 import {
+  CRISIS_CHANNEL_ID,
   disablePush,
   easProjectId,
   enablePush,
   ensureAndroidChannel,
+  foregroundPresentation,
   forgetTap,
   isPushEnabledFor,
   refreshRegistration,
@@ -54,7 +56,8 @@ jest.mock('expo-notifications', () => ({
   getExpoPushTokenAsync: jest.fn(),
   unregisterForNotificationsAsync: jest.fn(async () => undefined),
   setNotificationChannelAsync: jest.fn(async () => null),
-  AndroidImportance: { DEFAULT: 3 },
+  AndroidImportance: { DEFAULT: 3, MAX: 7 },
+  AndroidNotificationVisibility: { PUBLIC: 1 },
 }));
 // The app config as the build carries it: app.json's extra.eas.projectId
 // (written by eas init) and an EAS Update manifest's easConfig. Getters, so
@@ -420,12 +423,55 @@ describe('a notification tap', () => {
 
 describe('the Android channel', () => {
   it('is named in the reader’s language', async () => {
-    await ensureAndroidChannel('Skolans notiser');
+    await ensureAndroidChannel('sv');
     expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledWith('default', {
       name: 'Skolans notiser',
       importance: 3,
       lightColor: '#6366f1',
     });
+    await ensureAndroidChannel('en');
+    expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledWith('default', expect.objectContaining({ name: 'School notifications' }));
+  });
+
+  it('gives the alarm a channel of its own: the highest importance, through Do Not Disturb, with sound and a strong vibration, named in the reader’s language', async () => {
+    await ensureAndroidChannel('sv');
+    expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledWith('crisis', {
+      name: 'Larm',
+      description: 'Larm från skolan om utrymning och inrymning, med ljud och kraftig vibration.',
+      importance: 7,
+      bypassDnd: true,
+      sound: 'default',
+      enableVibrate: true,
+      vibrationPattern: [0, 600, 250, 600, 250, 600],
+      enableLights: true,
+      lightColor: '#6366f1',
+      lockscreenVisibility: 1,
+      showBadge: true,
+    });
+    await ensureAndroidChannel('en');
+    expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledWith('crisis', expect.objectContaining({ name: 'Alarm' }));
+    // The id is the one the gateway puts on the push.
+    expect(CRISIS_CHANNEL_ID).toBe('crisis');
+  });
+
+  it('is made after the ordinary channel, and both even when the first cannot be made', async () => {
+    (Notifications.setNotificationChannelAsync as jest.Mock).mockRejectedValueOnce(new Error('no channel service'));
+    await expect(ensureAndroidChannel('sv')).resolves.toBeUndefined();
+    expect((Notifications.setNotificationChannelAsync as jest.Mock).mock.calls.map(([id]) => id)).toEqual(['default', 'crisis']);
+  });
+
+  it('is not made in the guardian app, which is never sent an alarm', async () => {
+    mockExpoConfig = { extra: { app: { id: 'vardnadshavare', name: 'Rastra vårdnadshavare', otherName: 'Rastra' } } };
+    await ensureAndroidChannel('sv');
+    expect((Notifications.setNotificationChannelAsync as jest.Mock).mock.calls.map(([id]) => id)).toEqual(['default']);
+  });
+
+  it('exists, like the ordinary one, before push is asked for', async () => {
+    (Notifications.getPermissionsAsync as jest.Mock).mockImplementationOnce(async () => {
+      expect((Notifications.setNotificationChannelAsync as jest.Mock).mock.calls.map(([id]) => id)).toEqual(['default', 'crisis']);
+      return { granted: false, canAskAgain: true };
+    });
+    await expect(enablePush(A, 'sv')).resolves.toBe('ENABLED');
   });
 
   it('exists, in the reader’s language, before push is asked for and before the token is fetched', async () => {
@@ -466,6 +512,21 @@ describe('the Android channel', () => {
     } finally {
       (Platform as { OS: string }).OS = os;
     }
+  });
+});
+
+describe('a push that arrives while the app is open', () => {
+  const push = (type: string): unknown => ({ request: { content: { data: { type } } } });
+
+  it('is a silent banner, kept in the list, for an ordinary notice', () => {
+    expect(foregroundPresentation(push('LESSON_CANCELLED'))).toEqual({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false });
+    expect(foregroundPresentation(null).shouldPlaySound).toBe(false);
+    expect(foregroundPresentation({}).shouldPlaySound).toBe(false);
+  });
+
+  it('sounds for an alarm and for its end', () => {
+    expect(foregroundPresentation(push('CRISIS_ALARM'))).toMatchObject({ shouldShowBanner: true, shouldPlaySound: true });
+    expect(foregroundPresentation(push('CRISIS_ENDED')).shouldPlaySound).toBe(true);
   });
 });
 

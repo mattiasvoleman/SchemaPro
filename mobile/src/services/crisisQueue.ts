@@ -40,15 +40,24 @@ import type { CrisisMarkState, PendingCrisisMark } from '../types';
  * teacher's token would be signed by someone who was never there.
  *
  * WHAT A FAILURE MEANS. The gateway's answer decides, and a mark is never
- * dropped for a reason that is only about the network:
- *   * no answer, 5xx, 408, 401 (the next pass renews the sign-in), a 404
- *     without a code (a gateway without the route), a 409 that is not "ended":
- *     the marks stay and are sent again;
- *   * 429: the pass stops and waits (WAIT_MS) before trying again;
- *   * 409 CRISIS_ALARM_ENDED (an hour after the end), 404 CRISIS_ALARM_NOT_FOUND,
- *     403 CRISIS_NOT_YOURS, 400 (CRISIS_MARK_INVALID, or a body the gateway
- *     refuses): the marks cannot be taken, now or ever. Those are deleted and
- *     counted, and the screen says so.
+ * dropped for a reason that is only about the network or about a moment:
+ *   * FINAL, and only these four, by status AND code (crisis.service.ts):
+ *     409 CRISIS_ALARM_ENDED (an hour after the end), 404 CRISIS_ALARM_NOT_FOUND,
+ *     403 CRISIS_NOT_YOURS, 400 CRISIS_MARK_INVALID (a mark the group cannot
+ *     take: a pupil it will not hold, or MISSING for a pupil who is not on the
+ *     list, which "found with me" never sends). The marks cannot be taken, now
+ *     or ever: they are deleted and counted, and the screen says so. The
+ *     web's queue (web/lib/crisis-queue.ts) is to classify 404 and 409 the
+ *     same way, so that the two never disagree about a mark;
+ *   * everything else is KEPT and sent again: no answer, 5xx, 408, 401 (the
+ *     next pass renews the sign-in), a 404 or 409 WITHOUT one of those codes (a
+ *     gateway without the route; a 409 WRITE_CONFLICT, which the gateway
+ *     answers when two requests deadlocked and the next one goes through);
+ *   * 429: the pass stops and waits (WAIT_MS) before trying again.
+ * A 400 or 403 without a code, and a 410, 413 or 422, are the gateway refusing
+ * the request itself (a body it will not read, a role that is gone): the same
+ * call would be refused again and, kept, would hold every mark behind it, so
+ * they are dropped as the four are.
  * The first difference from attendance: the gateway answers a whole call with
  * one status, so one refused mark in a call of four hundred refuses all of
  * them. A permanent refusal therefore HALVES the call and sends the halves on
@@ -95,16 +104,24 @@ export type Failure =
   | { readonly kind: 'WAIT' }
   | { readonly kind: 'PERMANENT'; readonly reason: DropReason };
 
+/** The gateway's own refusals of a mark: the status and the code that together make a refusal final. */
+const FINAL: Readonly<Record<string, { readonly status: number; readonly reason: DropReason }>> = {
+  CRISIS_ALARM_ENDED: { status: 409, reason: 'ENDED' },
+  CRISIS_ALARM_NOT_FOUND: { status: 404, reason: 'NOT_FOUND' },
+  CRISIS_NOT_YOURS: { status: 403, reason: 'NOT_YOURS' },
+  CRISIS_MARK_INVALID: { status: 400, reason: 'INVALID' },
+};
+
 /** What a failed call means for the marks in it. See the header. */
 export function classifyFailure(error: unknown): Failure {
   if (!(error instanceof ApiError)) return { kind: 'RETRY', answered: false };
   const { status, code } = error;
   if (status === 429) return { kind: 'WAIT' };
-  if (status === 409 && code === 'CRISIS_ALARM_ENDED') return { kind: 'PERMANENT', reason: 'ENDED' };
-  if (status === 404 && code === 'CRISIS_ALARM_NOT_FOUND') return { kind: 'PERMANENT', reason: 'NOT_FOUND' };
+  const final = code ? FINAL[code] : undefined;
+  if (final && final.status === status) return { kind: 'PERMANENT', reason: final.reason };
+  // 401 renews with the next pass, 408 and 5xx are the network or the server, and a 404 or 409 that
+  // is none of the codes above (WRITE_CONFLICT among them) is not about the marks themselves.
   if (status === 403) return { kind: 'PERMANENT', reason: 'NOT_YOURS' };
-  if (status === 400) return { kind: 'PERMANENT', reason: 'INVALID' };
-  // 401 renews with the next pass, 408 and 5xx are the network or the server, an uncoded 404 or 409 is not about the marks.
   if (status >= 400 && status < 500 && ![401, 404, 408, 409].includes(status)) return { kind: 'PERMANENT', reason: 'INVALID' };
   return { kind: 'RETRY', answered: status > 0 };
 }

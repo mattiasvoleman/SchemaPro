@@ -274,6 +274,9 @@ export const en: Messages = {
   },
   push: {
     channelName: 'School notifications',
+    // The alarm's own channel (Android), named in the phone's notification settings.
+    crisisChannelName: 'Alarm',
+    crisisChannelDescription: 'Alarms from the school about evacuation and lockdown, with sound and strong vibration.',
   },
   // Cover requests (D4): the colleague's side. A request names the lessons and
   // the time to answer by, never who is away or why.
@@ -367,7 +370,12 @@ export const en: Messages = {
     endedAt: 'Ended at {time}. The list is read-only, but marks that are waiting are still sent.',
     localList: 'Local list — fetched again when the network is back',
     localListHint: 'Built from the lessons saved on this phone. Check it against your usual list.',
-    fromCache: 'List fetched at {time}',
+    localListAge: 'The alarm was announced at {time} ({age})',
+    fromCache: 'List fetched at {time} ({age})',
+    age: { justNow: 'just now', minutes: '{count} min ago', hours: '{count} h ago' },
+    // The group of an alarm that gathers the pupils who are on no lesson's list. The gateway's own name for it is a stand-in.
+    noLesson: 'Not in a lesson right now',
+    noLessonHint: 'Pupils who have no lesson right now. The school’s management answers for them.',
     waiting_one: '{count} mark waiting for network',
     waiting_other: '{count} marks waiting for network',
     waitingRow: 'Waiting for network',
@@ -395,6 +403,25 @@ export const en: Messages = {
     markMissingA11y: 'Mark {name} as missing',
     rowA11y: '{name}, {status}',
     rowWaitingA11y: '{name}, {status}, waiting for network',
+    // "Found with me": a pupil who is on none of the teacher's lists, found by the teacher.
+    foundHere: {
+      button: 'Found a pupil who is not on the list',
+      title: 'Found with you ({count})',
+      titleHint: 'On another list, and counted there.',
+      row: 'Found with you',
+      rowA11y: '{name}, found with you',
+      rowWaitingA11y: '{name}, found with you, waiting for network',
+      pickerTitle: 'Found a pupil who is not on the list',
+      close: 'Close',
+      whichGroup: 'In which group?',
+      searchLabel: 'Search pupil',
+      searchPlaceholder: 'Name or class',
+      hint: 'Type a name or a class. Only pupils who are on none of your lists are shown.',
+      none: 'No pupil matches.',
+      noOthers: 'This phone holds no list of other pupils.',
+      more: 'Showing {shown} of {total}. Type more to choose.',
+      pickA11y: 'Mark {name} as found with you in {group}',
+    },
     emptyTitle: 'No alarm is going',
     emptyBody: 'When the school starts an alarm you get a notification, and your list appears here.',
     noListTitle: 'No list on this phone',
