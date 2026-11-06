@@ -5,6 +5,7 @@ import { blankLesson, type ExchangeLesson } from './exchange-model';
 import { writeCsv } from './csv';
 import { lessonsToTable } from './lesson-table';
 import { writeXlsx } from './xlsx';
+import { readZip } from './zip';
 import { documentOf, IMPORT_HAS_REFUSALS, IMPORT_PLAN_CHANGED, ScheduleExchangeService } from './exchange.service';
 import { indexContext, type PlanContext } from './exchange-plan';
 import * as exchangeFiles from './exchange-files';
@@ -29,6 +30,10 @@ jest.mock('../access-log/access-log', () => ({ ...jest.requireActual('../access-
 import { enterGrundschemaWrite, publishModeOf } from '../publication/publish-mode';
 import { lockYearForRegeneration, scheduleBusy } from '../optimization/regeneration-lock';
 import { recordRead } from '../access-log/access-log';
+
+/** Every entry of a zip (an xlsx, an Untis GPU archive) as one text. */
+const readZipText = (body: Buffer): string =>
+  [...readZip(body, { maxEntryBytes: 1 << 26, maxTotalBytes: 1 << 27, maxEntries: 500 }).values()].map((entry) => entry.toString('utf8')).join('\n');
 
 const SCHOOL = 'school-1';
 const YEAR = 'year-1';
@@ -119,6 +124,7 @@ function world(over: { lessons?: unknown[]; requirements?: unknown[]; blocks?: u
     lunchServing: { findMany: jest.fn().mockResolvedValue([]) },
     lunchSitting: { findMany: jest.fn().mockResolvedValue(over.sittings ?? []) },
     teachingRequirement: { findMany: jest.fn().mockResolvedValue(over.requirements ?? []), create: jest.fn().mockResolvedValue({}), createMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    personProtection: { findMany: jest.fn().mockResolvedValue([]) },
     teachingBlock: {
       findMany: jest.fn().mockResolvedValue(over.blocks ?? []),
       create: jest.fn().mockImplementation(({ data }: { data: { name: string } }) => Promise.resolve({ id: `b-${data.name}`, name: data.name })),
@@ -686,6 +692,48 @@ describe('ScheduleExchangeService.export and summary', () => {
     w.tx.teacherEmployment.findMany.mockResolvedValue([]);
     await w.service.export(YEAR, 'TABLE_CSV', user);
     expect(recordRead).toHaveBeenLastCalledWith(w.tx, 'PEOPLE', new Set(), 'WEB');
+  });
+
+  describe('a lesson held by a user who is neither a teacher nor an administrator by role', () => {
+    const staff = [
+      { id: 't-abe', firstName: 'Anna', lastName: 'Berg', email: 'anna@skolan.example', isActive: true },
+      { id: 't-blu', firstName: 'Bo', lastName: 'Lund', email: 'bo@skolan.example', isActive: true },
+      { id: 't-nosig', firstName: 'Nina', lastName: 'Utan', email: 'nina@skolan.example', isActive: true },
+      { id: 't-oga', firstName: 'Olle', lastName: 'Gammal', email: 'olle@skolan.example', isActive: false },
+    ];
+    const holder = { id: 'h-1', firstName: 'Gun', lastName: 'Vårdnads', email: 'gun@skolan.example', isActive: true };
+    /** A school whose second lesson has the holder as its co-teacher; the staff query answers staff, the query by id answers the holder. */
+    const withHolder = () => {
+      const w = world({ lessons: [masterRow(), masterRow({ id: 'm2', dayOfWeek: 2, coTeacherId: 'h-1' })] });
+      w.tx.user.findMany.mockImplementation(async (args?: { where?: { id?: unknown } }) => (args?.where?.id ? [holder] : staff));
+      return w;
+    };
+
+    it('is read by id and named in the file, since the lesson is theirs', async () => {
+      const w = withHolder();
+      const file = await w.service.export(YEAR, 'TABLE_CSV', user);
+      // The line that reads them: without it the file names a nameless id, and nothing else in the suite notices.
+      expect(w.tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['h-1'] } } }));
+      expect(file.body.toString('utf8')).toContain('gun@skolan.example');
+      expect(file.notes).toEqual([]);
+      expect(w.tx.personProtection.findMany).toHaveBeenCalledTimes(1);
+      expect((recordRead as jest.Mock).mock.calls.at(-1)![2].has('h-1')).toBe(true);
+    });
+
+    it('is left out of every file when they have a protected identity, the lesson stays without a teacher, and the file says so', async () => {
+      const w = withHolder();
+      w.tx.personProtection.findMany.mockResolvedValue([{ userId: 'h-1' }]);
+      // A signed holder would be listed in the directory of teachers even with no lesson named: the mark keeps them out of that too.
+      w.tx.teacherEmployment.findMany.mockResolvedValue([{ userId: 't-abe', signature: 'ABE' }, { userId: 'h-1', signature: 'GUV' }]);
+      for (const format of ['TABLE_CSV', 'TABLE_XLSX', 'UNTIS_GPU', 'ASC_XML'] as const) {
+        const file = await w.service.export(YEAR, format, user);
+        const everything = format === 'UNTIS_GPU' || format === 'TABLE_XLSX' ? readZipText(file.body) : file.body.toString('utf8');
+        for (const secret of ['h-1', 'gun@skolan.example', 'Vårdnads', 'GUV']) expect(everything).not.toContain(secret);
+        expect(everything).toContain('Matematik');
+        expect(file.notes).toContain('1 lektion hålls av en person med skyddad identitet som inte är lärare eller administratör. Personen nämns inte i filen och lektionen står utan lärare.');
+      }
+      expect((recordRead as jest.Mock).mock.calls.at(-1)![2].has('h-1')).toBe(false);
+    });
   });
 
   it('writes every format, and refuses one it does not know', async () => {

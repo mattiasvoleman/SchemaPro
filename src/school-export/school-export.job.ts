@@ -11,6 +11,7 @@ import { ScheduleExchangeService } from '../schedule-exchange/exchange.service';
 import { Audit, buildArchive, type BuildContext } from './build';
 import { ChunkSink } from './chunk-sink';
 import { DATA_FILES } from './data-files';
+import { termsOf } from './free-text';
 import { listFiles, readLists } from './lists';
 import {
   CHUNK_BYTES,
@@ -192,15 +193,15 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
     if (!standing?.decides || !standing.name) throw new RequesterNotAllowed();
 
     const marked = await read((tx) =>
-      tx.$queryRaw<Array<{ id: string; first: string; last: string }>>(
-        Prisma.sql`SELECT DISTINCT u."id"::text AS id, u."firstName" AS first, u."lastName" AS last
+      tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string }>>(
+        Prisma.sql`SELECT DISTINCT u."id"::text AS id, u."firstName" AS first, u."lastName" AS last, u."email" AS email
                      FROM "PersonProtections" p JOIN "Users" u ON u."id" = p."userId" AND u."schoolId" = p."schoolId"
                     WHERE p."schoolId" = ${claim.school_id}::uuid`,
       ),
     );
     const markedIds = marked.map((row) => row.id);
     const markedSet = new Set(markedIds);
-    const markedNames = marked.map((row) => `${row.first} ${row.last}`.trim().toLowerCase()).filter((name) => name.includes(' '));
+    const markedTerms = termsOf(marked);
 
     let activeYearId: string | null = null;
     const ctx: BuildContext = {
@@ -211,7 +212,7 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
       scope: { ids: null },
       marked: markedIds,
       exempt: [],
-      markedNames,
+      markedTerms,
       read,
       checkpoint: () => heartbeat(),
       lists: async () => {
@@ -230,6 +231,8 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
         }
         try {
           const file = await this.exchange.export(activeYearId, 'TABLE_CSV', user);
+          // What the schedule's own export says about the file (a lesson left without its teacher, say) is said about it here too.
+          for (const note of file.notes) ctx.notes!.push(`Grundschemat: ${note}`);
           return { path: 'schema/grundschema.csv', body: file.body };
         } catch (error) {
           if (error instanceof ExportWithdrawn) throw error;

@@ -13,6 +13,7 @@ import { loadRosters, gradeSpanOf } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rosters';
 import { toNioarigSpan } from '../common/grade-numbering';
 import { recordRead } from '../access-log/access-log';
+import { markedIds } from '../users/person-protections';
 import { redactPersonalNumbers, scrubPersonalNumbers } from './file-safety';
 import { clockOfMinutes, type ExchangeDocument, type ExchangeLesson, type ReadProblem, type TeacherRef, type WeekPattern } from './exchange-model';
 import {
@@ -177,7 +178,14 @@ export class ScheduleExchangeService {
       const named = new Set<string>();
       for (const t of doc.teachers) if (t.id) named.add(t.id);
       await recordRead(tx, 'PEOPLE', named, user.channel);
-      return renderExport(format, doc);
+      const file = renderExport(format, doc);
+      // Said, so that a lesson with no teacher in the file is not taken for one that has none.
+      const withheld = new Set(loaded.ctx.withheld ?? []);
+      const lessons = loaded.ctx.existing.filter((e) => (e.teacherId !== null && withheld.has(e.teacherId)) || (e.coTeacherId !== null && withheld.has(e.coTeacherId))).length;
+      if (lessons > 0) {
+        file.notes.push(`${lessons} ${lessons === 1 ? 'lektion hålls' : 'lektioner hålls'} av en person med skyddad identitet som inte är lärare eller administratör. Personen nämns inte i filen och lektionen står utan lärare.`);
+      }
+      return file;
     }, { timeoutMs: PLAN_TIMEOUT_MS });
   }
 
@@ -747,7 +755,11 @@ export class ScheduleExchangeService {
     // who holds it, so those users are read by id (and kept apart from `teachers`: an import never matches to them).
     const known = new Set(users.map((u) => u.id));
     const heldBy = [...new Set([...lessons, ...requirements].flatMap((l) => [l.teacherId, l.coTeacherId]))].filter((id): id is string => id !== null && !known.has(id));
-    const holders = heldBy.length === 0 ? [] : await tx.user.findMany({ where: { id: { in: heldBy } }, select: { id: true, firstName: true, lastName: true, email: true, isActive: true } });
+    const heldByRows = heldBy.length === 0 ? [] : await tx.user.findMany({ where: { id: { in: heldBy } }, select: { id: true, firstName: true, lastName: true, email: true, isActive: true } });
+    // ...but not one with a protected identity: a pupil or guardian who holds a lesson is not named in a file of staff.
+    const marked = heldByRows.length === 0 ? new Set<string>() : await markedIds(tx, year.schoolId);
+    const holders = heldByRows.filter((u) => !marked.has(u.id));
+    const withheld = heldByRows.filter((u) => marked.has(u.id)).map((u) => u.id);
 
     const signature = new Map(employments.map((e) => [e.userId, (e.signature ?? '').trim() || null]));
     const participants = new Map<string, string[]>();
@@ -767,6 +779,7 @@ export class ScheduleExchangeService {
       rooms,
       teachers: users.map((u) => ({ ...u, signature: signature.get(u.id) ?? null })),
       holders: holders.map((u) => ({ ...u, signature: signature.get(u.id) ?? null })),
+      withheld,
       existing: lessons.map((l): ExistingLesson => ({
         id: l.id,
         groupId: l.studentGroupId,
@@ -908,6 +921,7 @@ export function documentOf(schoolName: string, ctx: PlanContext, blocks: Readonl
   const used = new Set(ctx.teachers.map((t) => (t.signature ?? '').toLowerCase()).filter((s) => s !== ''));
   const shortOf = new Map<string, string>();
   const holders = new Map((ctx.holders ?? []).map((h) => [h.id, h]));
+  const withheld = new Set(ctx.withheld ?? []);
   const teacherRef = (id: string): TeacherRef => {
     // A holder row hidden from the reader (row-level security) leaves nothing to name but the id.
     const t = idx.teachersById.get(id) ?? holders.get(id) ?? { id, firstName: '', lastName: '', email: '', signature: null, isActive: false };
@@ -936,7 +950,7 @@ export function documentOf(schoolName: string, ctx: PlanContext, blocks: Readonl
       extraGroups: extras.map((g) => g.name),
       subject: subject.name,
       subjectCode: subject.code,
-      teachers: [e.teacherId, e.coTeacherId].filter((id): id is string => id !== null).map(teacherRef),
+      teachers: [e.teacherId, e.coTeacherId].filter((id): id is string => id !== null && !withheld.has(id)).map(teacherRef),
       room: room?.name ?? null,
       day: e.day,
       start: clockOfMinutes(e.startMin),
