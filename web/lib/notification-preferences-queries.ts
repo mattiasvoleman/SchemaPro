@@ -36,7 +36,9 @@ export type NotificationTypeName =
   | "COVER_REQUESTED"
   | "COVER_REQUEST_CLOSED"
   | "COVER_REQUEST_ACCEPTED"
-  | "ABSENCE_WATCH_DIGEST";
+  | "ABSENCE_WATCH_DIGEST"
+  | "LESSON_REPORT_REMINDER"
+  | "REPORTING_RATE_DIGEST";
 
 export interface NotificationPreference {
   type: NotificationTypeName;

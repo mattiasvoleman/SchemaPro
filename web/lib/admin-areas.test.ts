@@ -29,6 +29,14 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/absence-watch")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("gates Rapporteringsgrad by Drift, as the attendance whose registers it counts: the läsare reads the figures and changes no switch", () => {
+    expect(PAGE_GATES["/admin/reporting-rate"]).toBe("DRIFT");
+    expect(gateOfPath("/sv/admin/reporting-rate")).toBe("DRIFT");
+    expect(profileOpens("EXPEDITION", "DRIFT")).toBe(true);
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/reporting-rate");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/reporting-rate")?.areas).toEqual(["DRIFT"]);
+  });
+
   it("reads a page's gate through the locale prefix and from its sub-pages", () => {
     expect(gateOfPath("/sv/admin/rooms")).toBe("PLANERING");
     // Personer has two areas' buttons, and gates each control instead.

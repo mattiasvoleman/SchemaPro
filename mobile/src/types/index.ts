@@ -162,7 +162,9 @@ export type NotificationType =
   | 'COVER_REQUESTED'
   | 'COVER_REQUEST_ACCEPTED'
   | 'COVER_REQUEST_CLOSED'
-  | 'ABSENCE_WATCH_DIGEST';
+  | 'ABSENCE_WATCH_DIGEST'
+  | 'LESSON_REPORT_REMINDER'
+  | 'REPORTING_RATE_DIGEST';
 
 export interface NotificationRow {
   readonly id: string;

@@ -223,7 +223,9 @@
     "calendarFeeds": "Kalenderprenumeration",
     "classBook": "Klassbok",
     "scheduleExchange": "Schema som fil",
-    "absenceWatch": "Frånvarobevakning"
+    "absenceWatch": "Frånvarobevakning",
+    "reportingRate": "Rapporteringsgrad",
+    "myReporting": "Min rapportering"
   },
   "dashboard": {
     "title": "Översikt",
@@ -2332,6 +2334,8 @@
     "unreadMarker": "Oläst.",
     "absenceWatchDigest": "Frånvarosammanställning {from} – {to}: {open, plural, =0 {ingen elev är över en gräns} one {# elev är över en gräns} other {# elever är över en gräns}}, {crossed, plural, =0 {ingen passerade en gräns} one {# passerade en gräns} other {# passerade en gräns}} under perioden. Se Frånvarobevakning.",
     "absenceWatchDigestGuardian": "Frånvarosammanställning {from} – {to}: {open, plural, =0 {{crossed, plural, one {ett av dina barn har} other {# av dina barn har}} kommit under en gräns för frånvaro igen} one {ett av dina barn har frånvaro över en gräns som skolan har satt} other {# av dina barn har frånvaro över en gräns som skolan har satt}}. Se Frånvarobevakning.",
+    "lessonReportReminder": "{count, plural, one {# lektion hölls} other {# lektioner hölls}} för minst {limitDays, plural, one {# dag} other {# dagar}} sedan och saknar sparat register. Se Min rapportering.",
+    "reportingRateDigest": "Rapporteringsgrad {from} – {to}: {reported, number} av {held, plural, one {# hållen lektion} other {# hållna lektioner}} hade ett sparat register. Se Rapporteringsgrad.",
     "cover": {
       "COVER_REQUESTED": "Kan du vikariera? {count, plural, one {En lektion} other {# lektioner}} från {when}.",
       "COVER_REQUEST_CLOSED": "{reason, select, TAKEN {Förfrågan om vikariepass från {when} är tillsatt: en kollega tackade ja först.} NOT_NEEDED {Förfrågan om vikariepass från {when} behövs inte längre. Du behöver inte svara.} UNANSWERED {Ingen har tackat ja till vikariefrågan från {when}. {count, plural, one {Passet behöver} other {Passen behöver}} fortfarande en vikarie.} other {Förfrågan om vikariepass från {when} är tillbakadragen. Du behöver inte svara.}}",
@@ -5978,7 +5982,9 @@
       "COVER_REQUESTED": "Förfrågningar om vikariepass",
       "COVER_REQUEST_CLOSED": "Förfrågningar som tillsatts, dragits tillbaka eller gått ut utan svar",
       "COVER_REQUEST_ACCEPTED": "Kollegor som tackat ja till min förfrågan",
-      "ABSENCE_WATCH_DIGEST": "Frånvarosammanställning"
+      "ABSENCE_WATCH_DIGEST": "Frånvarosammanställning",
+      "LESSON_REPORT_REMINDER": "Påminnelser om öppna lektioner",
+      "REPORTING_RATE_DIGEST": "Veckobesked om rapporteringsgrad"
     },
     "loadFailed": "Dina val kunde inte hämtas",
     "loadFailedHint": "Inget har ändrats i vad som skickas till dig. Ladda om sidan om en stund."
@@ -7405,6 +7411,105 @@
       "REMOVED": {
         "MANUAL": "markeringen för hand borttagen av {who}",
         "SS12000": "registrets markering borttagen av {who}"
+      }
+    }
+  },
+  "reportingRate": {
+    "title": "Rapporteringsgrad",
+    "subtitle": "Hur stor andel av de hållna lektionerna som har ett sparat register, per lärare",
+    "intro": "Registret är sparat när minst en elev har fått en markering. Inställda lektioner räknas inte, och inte heller lektioner när läraren är frånvarande. Räkningen görs varje natt för dagarna fram till och med i går.",
+    "percent": "{percent} %",
+    "retry": "Försök igen",
+    "loadFailed": "Rapporteringsgraden kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "updatedThrough": "Uppdaterad t.o.m. {date}",
+    "notCountedYet": "Ingen dag är räknad ännu. Räkningen görs varje natt.",
+    "period": {
+      "label": "Period",
+      "WEEK": "Vecka",
+      "MONTH": "Månad",
+      "YEAR": "Läsår",
+      "previous": {
+        "WEEK": "Föregående vecka",
+        "MONTH": "Föregående månad",
+        "YEAR": "Föregående läsår"
+      },
+      "next": {
+        "WEEK": "Nästa vecka",
+        "MONTH": "Nästa månad",
+        "YEAR": "Nästa läsår"
+      },
+      "current": "Idag",
+      "none": "Inget läsår",
+      "weekNumber": "Vecka {week}",
+      "yearName": "Läsåret {name}"
+    },
+    "noYear": {
+      "title": "Det finns inget läsår för den här dagen",
+      "body": "Välj vecka eller månad, eller gå till idag."
+    },
+    "kpi": {
+      "share": "Skolans rapporteringsgrad",
+      "noLessons": "Inga hållna lektioner",
+      "shareDetail": "{reported} av {held} lektioner",
+      "held": "Hållna lektioner",
+      "open": "Öppna lektioner"
+    },
+    "table": {
+      "title": "Lärare",
+      "caption": "Rapporteringsgrad per lärare",
+      "sortedBy": "Sorterad efter {column}, {direction, select, asc {stigande} other {fallande}}",
+      "column": {
+        "teacher": "Lärare",
+        "held": "Hållna",
+        "reported": "Rapporterade",
+        "open": "Öppna",
+        "share": "Rapporteringsgrad"
+      }
+    },
+    "empty": {
+      "title": "Inga hållna lektioner i perioden",
+      "body": "Här visas lärare som har haft minst en hållen lektion i perioden. Välj en annan period om du väntade dig fler."
+    },
+    "settings": {
+      "title": "Påminnelser och veckobesked",
+      "description": "Båda är avstängda tills du slår på dem. Beskeden innehåller bara antal och period, aldrig namn, ämne eller klass.",
+      "remindersLabel": "Påminn lärare om öppna lektioner",
+      "remindersOff": "Av. Ingen lärare påminns.",
+      "remindersOn": "På. En lärare påminns när en lektion hölls för minst {days, plural, one {# dag} other {# dagar}} sedan och registret inte är sparat.",
+      "remindersTurnedOn": "Påminnelserna är på.",
+      "remindersTurnedOff": "Påminnelserna är av.",
+      "digestLabel": "Skicka rektor ett veckobesked",
+      "digestOff": "Av. Rektor får inget veckobesked.",
+      "digestOn": "På. Varje måndag får rektor förra veckans rapporteringsgrad för skolan som helhet, som antal lektioner.",
+      "digestTurnedOn": "Veckobeskedet är på.",
+      "digestTurnedOff": "Veckobeskedet är av.",
+      "openAfterLabel": "Öppen för länge efter",
+      "openAfterOption": "{days, plural, one {# dag} other {# dagar}}",
+      "openAfterHint": "Kalenderdagar efter lektionen: en lektion som hölls för så många dagar sedan eller mer är öppen för länge. Gränsen gäller påminnelsen och märket Öppen för länge på lärarens sida. Påminnelser skickas inte på helger, och aldrig för lektioner som är äldre än 30 dagar.",
+      "openAfterSaved": "Gränsen är sparad.",
+      "loadFailed": "Inställningarna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund."
+    },
+    "teacher": {
+      "title": "Min rapportering",
+      "subtitle": "Dina öppna lektioner och hur stor andel du har registrerat",
+      "intro": "Registret är sparat när minst en elev har fått en markering. Har en kollega på samma lektion sparat det, räknas det för dig också. Inställda lektioner och tid då du är frånvarande räknas inte.",
+      "loadFailed": "Din rapportering kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund.",
+      "open": {
+        "title": "Öppna lektioner",
+        "description": "Lektioner från de senaste 30 dagarna där ingen har sparat ett register, de äldsta först. En lektion som hölls för minst {days, plural, one {# dag} other {# dagar}} sedan märks Öppen för länge.",
+        "listLabel": "Dina öppna lektioner",
+        "summary": "{count, plural, one {# öppen lektion} other {# öppna lektioner}}{overdue, plural, =0 {} other {, varav # öppen för länge}}",
+        "overdue": "Öppen för länge",
+        "emptyTitle": "Inga öppna lektioner",
+        "emptyBody": "Alla dina lektioner från de senaste 30 dagarna har ett sparat register."
+      },
+      "mine": {
+        "title": "Min rapporteringsgrad",
+        "listLabel": "Din rapporteringsgrad per period",
+        "figures": "{reported} av {held} lektioner"
       }
     }
   }
