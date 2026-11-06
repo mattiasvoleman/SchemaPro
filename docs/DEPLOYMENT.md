@@ -236,6 +236,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `COVER_REQUESTS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that settles the open vikarieförfrågningar: the ones whose time is out end `EXPIRED` and the administrator who asked is told nobody said yes, the ones whose lesson or absence went away end `CLOSED` and the colleagues they waited on are told. A question past its time cannot be answered whether or not it has run; the tick settles the stored status, frees the lesson for a new question and tells who it concerns |
 | `GALLRING_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of the nightly gallring. A school's run starts at 03:00 its local time, once a night, and only for the kinds its admin has given a period on `/admin/dataskydd`; a school that has decided nothing loses nothing |
 | `ABSENCE_WATCH_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarobevakning's nightly count. A school's night starts at 05:00 its local time, once a night, and only for a school whose administrator has turned the bevakning on (`/admin/absence-watch`; off for every school until then). The night counts the pupils over the school's limits as of yesterday and, on the first day after a whole week or month, writes the digest of each group that has a limit. Off, nothing is counted or sent and the findings already made stay |
+| `REPORTING_RATE_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Rapporteringsgrad's nightly job. A school's night starts at 06:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch; only the reminders and the weekly notice are, under `/admin/reporting-rate`). The night stores each teacher's held and reported lessons per day, tells the teachers of lessons that stood open past the school's limit (if the school turned that on) and, on Mondays, tells rektor and the full administrators the week's totals (likewise). **Off, this is the emergency brake:** nothing is counted, reminded or sent, the days already stored stay and the pages show them unchanged (they stop getting newer), and a teacher's list of open lessons, which reads the lessons live, still answers. A value that is neither `on` nor `off` is refused at start |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -1213,10 +1214,16 @@ Walk the full product loop once, in order:
   teachers writes some 3 000 the first night and nothing on the nights after, until a
   register is saved late), `held` and `reported` the lessons of the last 90 days. Count
   time on a school of 25 classes and 50 teachers with a year of lessons (33 000
-  lessons, 200 000 marks, `scripts/bench/reporting-rate.sql`) is 0.7 s the first night
-  and 0.3 s every night after, the reminders 0.16 s the first night and 0.08 s after,
-  the week's notice 10 ms, and the rektor's view of a läsår (one grouped sum over 3 200
-  rows) 3 ms; the job lifts the delivery door's 5 s statement limit to 9 s for the count.
+  lessons, 200 000 marks, `scripts/bench/reporting-rate.sql`, Postgres 17.11) is 0.2-0.3 s
+  the first night and 0.1 s every night after on a quiet host (0.7 s and 0.3 s on a loaded
+  one), the reminders 0.09 s the first night and 0.03-0.05 s after, the week's notice
+  3-6 ms, and the rektor's view of a läsår (one grouped sum over 3 200 rows) 3 ms; the job
+  lifts the delivery door's 5 s statement limit to 9 s for the count. A teacher's list of
+  open lessons (every page view of *Min rapportering*) takes 10 ms for 30 days and 34 ms
+  for 90 on the same school, where the first version took 26 and 94 ms: it asks for the
+  school, the person and the day once and hands them to the definition as values, because
+  those helpers are SECURITY DEFINER lookups and were called for every lesson of the
+  school's month when left in a filter.
   The first version of the count deleted vanished days with a NOT EXISTS against the
   counted days and was planned as a nested loop (1.1–1.3 s on the nights after the
   first, quadratic in the school's days); a FULL JOIN of stored and counted days cannot
@@ -1237,10 +1244,16 @@ Walk the full product loop once, in order:
   after it switches to keeping (the marks of the days before may be gone, and counted
   again they would read as days nobody reported). The reminders' ledger is cleared by
   the reminding itself after 60 days.
-  **Known limits:** a lesson that has no pupil on its roster can never have a register
-  saved and is never reported (the roster is the gateway's reader, not SQL, so the count
-  does not exclude it); a register saved more than 90 days after its lesson does not move
-  the stored day; the e-mail and the push go to the delivery's in-memory queue after the
+  **The roster:** a lesson with no active pupil on its roster can never have a register
+  saved, so it is neither held, open nor reported (the class's pupils, the groups joined
+  to it and their members, and the pupils the lesson names: the register's own three
+  sources, read in SQL), unless a register was already saved on it, which stays a register
+  whatever the roster has become. The roster is read as it is now, so the unreported
+  lessons of a class whose pupils have all left drop out of the 90 days that are counted
+  again the next night.
+  **Known limits:** the roster does not subtract the pupils a replacing group (ersättande
+  grupper) takes off a lesson, so a lesson where every pupil is taken off still counts as
+  held; a register saved more than 90 days after its lesson does not move the stored day; the e-mail and the push go to the delivery's in-memory queue after the
   commit, as every other notice does, so a process that stops between the commit and the
   send loses them for that night, and the ledger keeps the reminder from being written
   again.
