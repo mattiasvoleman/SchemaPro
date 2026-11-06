@@ -86,8 +86,10 @@ export interface GridLesson {
 export type BlockKind =
   /** A room booking (PENDING or APPROVED), on the room and on the person who booked it. */
   | 'BOOKING'
-  /** A room closed by a TEACHER-independent UNAVAILABLE row. */
+  /** A room that cannot be used then: a closure, or a borrowed room outside what the loan gives. */
   | 'CLOSED'
+  /** A room lent to another school of the huvudman in an approved window of the loan (Delade lokaler). */
+  | 'LOAN'
   /** A rastvaktspass (administrators). */
   | 'PASS'
   /** An uppdrag's slot (administrators; the label is the uppdrag's name, never its note). */
@@ -134,7 +136,14 @@ export type TeacherBusyCode =
   | 'BOOKED_ROOM'
   | 'POOL_NOT_DECLARED';
 
-export type RoomBusyCode = 'ROOM_IN_USE' | 'ROOM_BOOKED' | 'ROOM_CLOSED';
+export type RoomBusyCode =
+  | 'ROOM_IN_USE'
+  | 'ROOM_BOOKED'
+  | 'ROOM_CLOSED'
+  /** Lent to another school in an approved window of a loan (room-bookings/loan-holds.ts ROOM_LENT). */
+  | 'ROOM_LENT'
+  /** The school's own room for a borrowed one, and the approved loans do not cover the interval (ROOM_BORROWED_OUTSIDE_LOAN). */
+  | 'ROOM_BORROWED_OUTSIDE_LOAN';
 
 export interface FreeTeacher {
   id: string;

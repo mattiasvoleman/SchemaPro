@@ -20,9 +20,13 @@ import type { RoomBusyCode, TeacherBusyCode } from './school-day.types';
  *
  * A room is free when no lesson that holds its time uses it (ROOM_IN_USE),
  * no booking in PENDING or APPROVED holds it (ROOM_BOOKED: the EXCLUDE
- * constraint of RoomBookings holds a room for a request too), and no closure
- * for the room covers the time (ROOM_CLOSED). The test for "holds its time" is
- * the Vikarietavla's holdsTime.
+ * constraint of RoomBookings holds a room for a request too), no closure for
+ * the room covers the time (ROOM_CLOSED), and the loans between this school
+ * and another leave it to this school then (the booking page's own rule,
+ * room-bookings/loan-holds.ts: ROOM_LENT when it is lent out in an approved
+ * window, ROOM_BORROWED_OUTSIDE_LOAN when it is the school's room for a
+ * borrowed one and the loans do not cover the interval). The test for "holds
+ * its time" is the Vikarietavla's holdsTime.
  *
  * Touching is free everywhere: a lesson that ends at 10:00 does not make its
  * teacher busy at 10:00 (cover-rules.ts overlaps).
@@ -33,6 +37,8 @@ export interface RoomDay {
   lessons: Array<{ id: string; start: number; end: number; status: 'SCHEDULED' | 'CANCELLED' | 'COMPLETED' | 'RESCHEDULED' }>;
   bookings: Span[];
   closures: Span[];
+  /** What loanBookingRefusal says of the interval for this room; none for a room no loan names. */
+  loan?: 'ROOM_LENT' | 'ROOM_BORROWED_OUTSIDE_LOAN' | null;
 }
 
 /** The rules that say a room is not free over the span, each once, in the order of the header. */
@@ -43,6 +49,7 @@ export function roomFindings(day: RoomDay, span: Span): RoomBusyCode[] {
   }
   if (day.bookings.some((booking) => overlaps(booking, span))) codes.push('ROOM_BOOKED');
   if (day.closures.some((closure) => overlaps(closure, span))) codes.push('ROOM_CLOSED');
+  if (day.loan) codes.push(day.loan);
   return codes;
 }
 
@@ -76,7 +83,7 @@ export const TEACHER_RULES: readonly TeacherBusyCode[] = [
   'POOL_NOT_DECLARED',
 ];
 
-export const ROOM_RULES: readonly RoomBusyCode[] = ['ROOM_IN_USE', 'ROOM_BOOKED', 'ROOM_CLOSED'];
+export const ROOM_RULES: readonly RoomBusyCode[] = ['ROOM_IN_USE', 'ROOM_BOOKED', 'ROOM_CLOSED', 'ROOM_LENT', 'ROOM_BORROWED_OUTSIDE_LOAN'];
 
 /**
  * Minutes since the school's local midnight, by the wall clock. Cached per

@@ -34,6 +34,7 @@ interface World {
   windows?: Array<Record<string, unknown>>;
   posts?: Array<Record<string, unknown>>;
   years?: Array<Record<string, unknown>>;
+  loans?: Array<Record<string, unknown>>;
   marked?: string[];
 }
 
@@ -65,6 +66,7 @@ function setup(world: World = {}) {
   stub('substitutePoolMember', 'findMany', world.members ?? []);
   stub('substituteAvailability', 'findMany', world.windows ?? []);
   stub('teacherEmployment', 'findMany', world.posts ?? []);
+  stub('roomLoan', 'findMany', world.loans ?? []);
   stub('academicYear', 'findMany', world.years ?? [{ id: 'year-1', startDate: day('2026-08-17'), endDate: day('2027-06-11'), isActive: true }]);
   stub('academicYear', 'findFirst', { id: 'year-1' });
   tx.$queryRaw = jest.fn(async (statement: unknown) => {
@@ -249,6 +251,27 @@ describe('SchoolDayService', () => {
       ]);
     });
 
+    it('draws a lent room as lent in each approved window, and a borrowed one as closed outside them', async () => {
+      const wall = (value: string) => new Date(`1970-01-01T${value}:00.000Z`);
+      const window = { status: 'APPROVED', dayOfWeek: 1, startDate: day('2027-03-01'), endDate: day('2027-06-01') };
+      const { service } = setup({
+        ...world,
+        loans: [
+          { ...window, roomId: 'r2', localRoomId: null, startTime: wall('10:00'), endTime: wall('12:00') },
+          { ...window, roomId: 'other-room', localRoomId: 'r10', startTime: wall('13:00'), endTime: wall('15:00') },
+        ],
+      });
+      const view = await service.grid({ from: SUMMER, to: '2027-03-30' }, admin);
+      const rows = view.blocks.map((block) => [block.resourceId, block.date, block.kind, block.start, block.end]);
+      expect(rows).toEqual([
+        ['r2', SUMMER, 'LOAN', 600, 720],
+        ['r10', SUMMER, 'CLOSED', 0, 780],
+        ['r10', SUMMER, 'CLOSED', 900, 1440],
+        // Tuesday: no loan runs, so the borrowed room is no one’s to use all day.
+        ['r10', '2027-03-30', 'CLOSED', 0, 1440],
+      ]);
+    });
+
     it('tells a lov by the publication’s own rule: the whole school, or the groups of its årskurs', async () => {
       const { service } = setup({
         ...world,
@@ -392,6 +415,32 @@ describe('SchoolDayService', () => {
       const view = await service.free({ date: SUMMER, from: '10:00', to: '11:00' }, admin);
       expect(view.teachers!.map((one) => one.name)).toEqual(['Anna Berg', 'Bo Pool', 'Åke Ek']);
       expect(view.poolLeftOut).toBe(0);
+    });
+
+    it('leaves a room out that is lent to another school then, or is the school’s only inside a borrowed loan, and says which', async () => {
+      const wall = (value: string) => new Date(`1970-01-01T${value}:00.000Z`);
+      const window = { status: 'APPROVED', dayOfWeek: 1, startDate: day('2027-03-01'), endDate: day('2027-06-01') };
+      const { service } = setup({
+        ...world,
+        bookings: [],
+        lessons: [],
+        roomConstraints: [],
+        loans: [
+          // Sal 1 is lent to another school on Mondays 10:00-12:00.
+          { ...window, roomId: 'r1', localRoomId: null, startTime: wall('10:00'), endTime: wall('12:00') },
+          // Sal 2 is this school’s room for a borrowed one: its own only Mondays 13:00-15:00.
+          { ...window, roomId: 'other-room', localRoomId: 'r2', startTime: wall('13:00'), endTime: wall('15:00') },
+        ],
+      });
+      const morning = await service.free({ date: SUMMER, from: '10:00', to: '11:00' }, admin);
+      expect(morning.rooms.map((room) => room.id)).toEqual(['r3', 'r4']);
+      expect(morning.busyRooms!.map((room) => [room.id, room.reasons])).toEqual([
+        ['r1', ['ROOM_LENT']],
+        ['r2', ['ROOM_BORROWED_OUTSIDE_LOAN']],
+      ]);
+      const afternoon = await service.free({ date: SUMMER, from: '13:00', to: '14:00' }, admin);
+      expect(afternoon.rooms.map((room) => room.id)).toEqual(['r1', 'r2', 'r3', 'r4']);
+      expect(morning.rules.rooms).toContain('ROOM_LENT');
     });
 
     it('answers nobody free on a lov that closes the school, and everyone as usual on a studiedag', async () => {

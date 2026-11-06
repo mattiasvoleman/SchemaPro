@@ -40,7 +40,14 @@ describe('roomFindings', () => {
   it('names each reason once, in the order of the header', () => {
     const busy = room({ lessons: [lesson('SCHEDULED'), lesson('SCHEDULED')], bookings: [span('10:00', '12:00'), span('10:15', '10:30')], closures: [span('09:00', '12:00')] });
     expect(roomFindings(busy, span('10:00', '11:00'))).toEqual(['ROOM_IN_USE', 'ROOM_BOOKED', 'ROOM_CLOSED']);
-    expect(ROOM_RULES).toEqual(['ROOM_IN_USE', 'ROOM_BOOKED', 'ROOM_CLOSED']);
+    expect(roomFindings({ ...busy, loan: 'ROOM_LENT' }, span('10:00', '11:00'))).toEqual(['ROOM_IN_USE', 'ROOM_BOOKED', 'ROOM_CLOSED', 'ROOM_LENT']);
+    expect(ROOM_RULES).toEqual(['ROOM_IN_USE', 'ROOM_BOOKED', 'ROOM_CLOSED', 'ROOM_LENT', 'ROOM_BORROWED_OUTSIDE_LOAN']);
+  });
+
+  it('is not free when the loans between this school and another leave it to the other', () => {
+    expect(roomFindings(room({ loan: 'ROOM_LENT' }), span('10:00', '11:00'))).toEqual(['ROOM_LENT']);
+    expect(roomFindings(room({ loan: 'ROOM_BORROWED_OUTSIDE_LOAN' }), span('10:00', '11:00'))).toEqual(['ROOM_BORROWED_OUTSIDE_LOAN']);
+    expect(roomFindings(room({ loan: null }), span('10:00', '11:00'))).toEqual([]);
   });
 });
 

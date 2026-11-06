@@ -1589,7 +1589,10 @@ Walk the full product loop once, in order:
   a rastvaktspass, inside an uppdrag or a closure, holding a room booking, and
   for a pool member without a post, inside a window they declared); a room is
   free when no lesson that holds its time uses it, no booking in PENDING or
-  APPROVED holds it and no closure covers it. Lunch, rest, the daily cap, the
+  APPROVED holds it, no closure covers it, and the loans between this school
+  and another leave it to this school then (the booking page's own rule: lent
+  out in an approved window, or the school's room for a borrowed one outside
+  what the loans give). Lunch, rest, the daily cap, the
   stretch of teaching and the days (the Vikarietavla's other rules, which
   answer "may we ask them to cover") are not part of "free". **Known limit,
   as in the Vikarietavla:** a shared teacher's lessons at the huvudman's other

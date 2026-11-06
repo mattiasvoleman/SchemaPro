@@ -6,6 +6,8 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { breakCoversGroup, breakDaysOf, isoWeekday, iterateDates } from '../calendar/publish-days';
 import { requireSchoolId } from '../common/utils/request-context';
 import { zonedTimeToUtc } from '../common/utils/time';
+import { loanBookingRefusal, type LoanRow } from '../room-bookings/loan-holds';
+import { coverOn, minutesOfClock, type CoverLoan } from '../sharing/loan-coverage';
 import { asDay, dayBounds, dayDate, liftWindow, readPersonDays, schoolTimezone } from '../cover/cover-context';
 import type { Span } from '../cover/cover-rules';
 import { PrismaService } from '../database/prisma.service';
@@ -165,6 +167,7 @@ export class SchoolDayService {
       const blocks: GridBlock[] = [];
       this.bookingBlocks(await this.bookingRows(tx, rangeStart, rangeEnd), dates, timezone, clock, access, held, blocks);
       await this.closureBlocks(tx, dates, timezone, clock, blocks);
+      this.loanBlocks(await this.loanRows(tx), new Set(roomRows.map((room) => room.id)), dates, blocks);
 
       const absent = new Set<string>();
       let poolMembers = new Set<string>();
@@ -253,6 +256,12 @@ export class SchoolDayService {
       }
 
       const rooms = await this.roomDays(tx, date, span, bounds, timezone, roomRows.map((room) => room.id));
+      // The loans between this school and another: the booking page's rule, asked of each room the loans name.
+      const loans = await this.loanRows(tx);
+      for (const room of roomRows) {
+        const named = loans.filter((loan) => loan.roomId === room.id || loan.localRoomId === room.id);
+        if (named.length > 0) rooms.get(room.id)!.loan = loanBookingRefusal(named, room.id, new Date(span.start), new Date(span.end), timezone);
+      }
       const freeRooms: FreeRoom[] = [];
       const busyRooms: BusyRoom[] = [];
       for (const room of roomRows.slice().sort((a, b) => byName(a.name, b.name))) {
@@ -386,6 +395,54 @@ export class SchoolDayService {
         if (access.grids && !held.has(row.bookedById)) {
           out.push({ resource: 'TEACHER', resourceId: row.bookedById, date, ...clipped, kind: 'BOOKING', label: row.title });
         }
+      }
+    }
+  }
+
+  /** The approved loans this school is a party to, as the booking page reads them (room-bookings.service assertLoansAllow). */
+  private async loanRows(tx: PrismaClient): Promise<LoanRow[]> {
+    const loans = await tx.roomLoan.findMany({
+      where: { status: 'APPROVED' },
+      select: { status: true, roomId: true, localRoomId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
+    });
+    return loans.map((loan) => ({
+      status: loan.status,
+      roomId: loan.roomId,
+      localRoomId: loan.localRoomId,
+      dayOfWeek: loan.dayOfWeek,
+      startTime: loan.startTime.toISOString().slice(11, 16),
+      endTime: loan.endTime.toISOString().slice(11, 16),
+      startDate: loan.startDate.toISOString().slice(0, 10),
+      endDate: loan.endDate.toISOString().slice(0, 10),
+    }));
+  }
+
+  /**
+   * What the loans do to the rooms' days. A room lent out is the other
+   * school's in each approved window (LOAN, on the owner's room); the school's
+   * own room for a borrowed one is the school's only inside the windows, so
+   * the rest of each day is closed (CLOSED). The same rules the search asks
+   * through loanBookingRefusal.
+   */
+  private loanBlocks(loans: readonly LoanRow[], ownRooms: ReadonlySet<string>, dates: readonly string[], out: GridBlock[]): void {
+    // A loan names two rooms, the owner's and the borrower's; only this school's own are on its rows.
+    const borrowed = new Set(loans.flatMap((loan) => (loan.localRoomId && ownRooms.has(loan.localRoomId) ? [loan.localRoomId] : [])));
+    for (const date of dates) {
+      const weekday = isoWeekday(date);
+      for (const loan of loans) {
+        if (!ownRooms.has(loan.roomId) || loan.dayOfWeek !== weekday || loan.startDate > date || date > loan.endDate) continue;
+        out.push({ resource: 'ROOM', resourceId: loan.roomId, date, start: minutesOfClock(loan.startTime), end: minutesOfClock(loan.endTime), kind: 'LOAN', label: null });
+      }
+      for (const roomId of borrowed) {
+        const held: CoverLoan[] = loans
+          .filter((loan) => loan.localRoomId === roomId)
+          .map((loan) => ({ dayOfWeek: loan.dayOfWeek, start: minutesOfClock(loan.startTime), end: minutesOfClock(loan.endTime), startDate: loan.startDate, endDate: loan.endDate }));
+        let cursor = 0;
+        for (const [from, to] of coverOn(held, date, weekday)) {
+          if (from > cursor) out.push({ resource: 'ROOM', resourceId: roomId, date, start: cursor, end: from, kind: 'CLOSED', label: null });
+          cursor = Math.max(cursor, to);
+        }
+        if (cursor < 1440) out.push({ resource: 'ROOM', resourceId: roomId, date, start: cursor, end: 1440, kind: 'CLOSED', label: null });
       }
     }
   }

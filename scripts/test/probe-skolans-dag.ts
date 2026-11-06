@@ -43,7 +43,9 @@
  *         ALL has the grids without absence, uppdrag or free colleagues, and the
  *         marked teacher is in none of it (and a teacher cannot read the marks
  *         but the gateway can ask for them);
- *   sd-j  the decision: those who decide write it, nobody else.
+ *   sd-j  the decision: those who decide write it, nobody else;
+ *   sd-k  a room lent to another school of the huvudman is not free in the loan's
+ *         window (the booking page's own rule), and is drawn as lent.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -68,7 +70,7 @@ export function skolansDagSlug(marker: string): string {
 }
 
 export async function sweepSkolansDagSchool(owner: Client, marker: string): Promise<void> {
-  await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [skolansDagSlug(marker)]);
+  await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1, $2)`, [skolansDagSlug(marker), `${skolansDagSlug(marker)}-2`]);
 }
 
 export async function skolansDagChecks(owner: Client, api: PrismaService, marker: string, check: Check): Promise<void> {
@@ -243,6 +245,20 @@ export async function skolansDagChecks(owner: Client, api: PrismaService, marker
      VALUES ($1, $2, 'Lov', 'HOLIDAY', $3::date, $3::date, NULL, NULL, now()),
             ($1, $2, 'Studiedag åk 9', 'STAFF_DAY', $4::date, $4::date, 9, 9, now())`,
     [s, year, thursdayAfter, fridayAfter],
+  );
+
+  // Sal 2 is lent to another school on Mondays 12:00-14:00 (an approved loan, the borrower's room standing for it there).
+  const other = (
+    await one<{ id: string }>(`INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`, [
+      `${marker} skolans dag två`,
+      `${skolansDagSlug(marker)}-2`,
+    ])
+  ).id;
+  const borrowedRoom = (await one<{ id: string }>(`INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES ($1, 'Lånad sal', now()) RETURNING id`, [other])).id;
+  await owner.query(
+    `INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", status, "decidedAt")
+     VALUES ($1, $2, $3, $4, 1, '12:00', '14:00', $5::date - 30, $5::date + 60, 'APPROVED', now())`,
+    [s, sal2, other, borrowedRoom, mondayAfter],
   );
 
   const realtime = {
@@ -463,6 +479,24 @@ export async function skolansDagChecks(owner: Client, api: PrismaService, marker
     }
     assert.deepEqual(await day.settings(expedition), { teacherView: 'NONE' });
     assert.equal((await all(`SELECT 1 FROM "SchoolDaySettings" WHERE "schoolId" = $1`, [s])).length, 1);
+  });
+
+  await check('(sd-k) a room lent to another school is not free in the loan’s window, and is drawn as lent', async () => {
+    const during = await free(admin, mondayAfter, '12:30', '13:00');
+    assert.deepEqual(during.busyRooms!.find((one) => one.name === 'Sal 2')!.reasons, ['ROOM_LENT']);
+    assert.ok(!during.rooms.some((one) => one.name === 'Sal 2'));
+    // Touching is free: it is lent until 14:00.
+    assert.ok((await free(admin, mondayAfter, '14:00', '15:00')).rooms.some((one) => one.name === 'Sal 2'));
+    assert.ok((await free(admin, mondayAfter, '11:00', '12:00')).rooms.some((one) => one.name === 'Sal 2'));
+    // Another Monday outside the loan's dates, and another weekday: the loan holds nothing.
+    assert.ok((await free(admin, await plus(mondayAfter, 77), '12:30', '13:00')).rooms.some((one) => one.name === 'Sal 2'));
+    assert.ok((await free(admin, tuesdayAfter, '12:30', '13:00')).rooms.some((one) => one.name === 'Sal 2'));
+    const lent = (await day.grid({ from: mondayAfter }, admin)).blocks.filter((block) => block.kind === 'LOAN');
+    assert.deepEqual(lent.map((block) => [block.resourceId, block.start, block.end]), [[sal2, 12 * 60, 14 * 60]]);
+    // A teacher with ROOMS reads the loans between the school and another too, and is told the same.
+    await day.updateSettings({ teacherView: 'ROOMS' }, admin);
+    assert.ok(!(await free(anna, mondayAfter, '12:30', '13:00')).rooms.some((one) => one.name === 'Sal 2'));
+    await day.updateSettings({ teacherView: 'NONE' }, admin);
   });
 
   await sweepSkolansDagSchool(owner, marker);
