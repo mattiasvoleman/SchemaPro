@@ -9,6 +9,7 @@ import { lessonLogRoutes } from "./gateway-lesson-logs";
 import { miscRoutes } from "./gateway-misc";
 import { publicRoutes } from "./gateway-public";
 import { readRoutes } from "./gateway-reads";
+import { reportingRateRoutes } from "./gateway-reporting-rate";
 import { roleRoutes } from "./gateway-roles";
 import { staffingRoutes } from "./gateway-staffing";
 import { timplanRoutes } from "./gateway-timplan";
@@ -36,6 +37,7 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-lesson-logs.ts", routes: lessonLogRoutes },
   { file: "gateway-huvudman.ts", routes: huvudmanRoutes },
   { file: "gateway-absence-watch.ts", routes: absenceWatchRoutes },
+  { file: "gateway-reporting-rate.ts", routes: reportingRateRoutes },
 ];
 
 export const gatewayRoutes: GatewayRoute[] = ROUTE_FILES.flatMap((entry) => entry.routes);

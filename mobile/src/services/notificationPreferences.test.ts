@@ -43,6 +43,10 @@ describe('notification preferences', () => {
     expect(preferenceLabel(t, 'SUPERVISION_COVER', true)).toBe('Rastvaktspass som vikarie');
     expect(preferenceLabel(t, 'ABSENCE_WATCH_DIGEST', true)).toBe('Frånvarosammanställning');
     expect(preferenceLabel(translatorFor('en'), 'ABSENCE_WATCH_DIGEST', true)).toBe('Absence summary');
+    expect(preferenceLabel(t, 'LESSON_REPORT_REMINDER', true)).toBe('Påminnelser om öppna lektioner');
+    expect(preferenceLabel(translatorFor('en'), 'LESSON_REPORT_REMINDER', true)).toBe('Reminders about open lessons');
+    expect(preferenceLabel(t, 'REPORTING_RATE_DIGEST', true)).toBe('Veckobesked om rapporteringsgrad');
+    expect(preferenceLabel(translatorFor('en'), 'REPORTING_RATE_DIGEST', true)).toBe('Weekly reporting-rate note');
     expect(preferenceLabel(t, 'LESSON_SUBSTITUTE', true)).toBe('Vikarier på mina lektioner');
     expect(preferenceLabel(t, 'FROM_A_NEWER_GATEWAY', false)).toBe('Andra notiser');
     expect(preferenceLabel(translatorFor('en'), 'FROM_A_NEWER_GATEWAY', false)).toBe('Other notifications');

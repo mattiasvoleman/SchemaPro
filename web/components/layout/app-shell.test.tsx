@@ -214,6 +214,8 @@ describe("AppShell navigation", () => {
     expect(link("nav.myLeave")).toHaveAttribute("href", "/teacher/ledighet");
     // Frånvarobevakning: the mentor's pupils over a limit, in the menu always.
     expect(link("nav.absenceWatch")).toHaveAttribute("href", "/teacher/absence-watch");
+    // Rapporteringsgrad: the lessons whose register is not saved, and the teacher's own share.
+    expect(link("nav.myReporting")).toHaveAttribute("href", "/teacher/reporting-rate");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
@@ -221,7 +223,7 @@ describe("AppShell navigation", () => {
     expect(screen.queryByRole("link", { name: "nav.leaveRequests" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
     // Counted inside the nav: the skip link is a link too, and not an entry.
-    expect(navLinks()).toHaveLength(9);
+    expect(navLinks()).toHaveLength(10);
 
   });
 
@@ -292,6 +294,7 @@ describe("AppShell navigation", () => {
       "nav.roomBookings",
       "nav.reports",
       "nav.absenceWatch",
+      "nav.reportingRate",
       "nav.classBook",
     ]);
 
@@ -305,7 +308,7 @@ describe("AppShell navigation", () => {
     expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
     expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(35);
+    expect(all).toHaveLength(36);
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {

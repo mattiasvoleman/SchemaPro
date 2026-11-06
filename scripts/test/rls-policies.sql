@@ -2897,7 +2897,9 @@ END $$;
 -- the app.*webhook_secret* functions touch, with no grant (section 31f);
 -- `JobRuns` and `JobClaims` (20261021090000) hold the job runner's counts and
 -- nightly claims that only the app.job_* functions touch, with no grant
--- (section 80). A new table cannot be added
+-- (section 80); `ReportingReminders` (20270112090100) holds the ledger of the
+-- lessons a teacher was reminded of, which only app.reporting_remind touches,
+-- likewise with no grant (section 347). A new table cannot be added
 -- without either satisfying the rule or changing it on purpose.
 --
 -- The floor guards the query itself: a catalog filter that quietly stopped
@@ -2935,7 +2937,7 @@ BEGIN
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
     AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets', 'IntegrationKeyWebhookSecrets',
-                          'JobRuns', 'JobClaims', 'LeaveRequestNotices')
+                          'JobRuns', 'JobClaims', 'LeaveRequestNotices', 'ReportingReminders')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -20212,6 +20214,8 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('PublishedLessons', '{PUBLICERING}', '{PUBLICERING}', '{}', '{}'),
   ('PublishedLunchSittings', '{PUBLICERING}', '{}', '{}', '{}'),
   ('Rasts', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('ReportingDigests', '{}', '{}', '{}', '{}'),
+  ('ReportingSettings', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('RetentionDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('RoomBookings', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('RoomLoans', '{}', '{}', '{}', '{}'),
@@ -20259,6 +20263,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('TeacherEmploymentPeriods', '{DECIDES}', '{DECIDES}', '{DECIDES}', '{}'),
   ('TeacherEmployments', '{DECIDES}', '{DECIDES}', '{DECIDES}', '{}'),
   ('TeacherPublicLabels', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
+  ('TeacherReportingDays', '{}', '{}', '{}', '{}'),
   ('TeacherSubjectQualifications', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeacherWorkRules', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeachingBlocks', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -31182,8 +31187,9 @@ ROLLBACK;
 -- (pg_stat_xact_all_tables), or is one of the gateway's jobs below and
 -- writes no more than the same call writes with no principal at all. The
 -- jobs (gallring, the job runner, push receipts, the candidates' sweep,
--- SS12000 housekeeping and delivery, and the absence watch's count and
--- digest, Frånvarobevakning) ask for no principal and no route
+-- SS12000 housekeeping and delivery, the absence watch's count and
+-- digest, Frånvarobevakning, and Rapporteringsgrad's count, reminders and
+-- weekly notice) ask for no principal and no route
 -- calls them: the reader gets nothing through them that an empty session
 -- would not. They are named rather than inferred from the writes, since
 -- which of them write depends on the arguments a call happens to get; a
@@ -31220,6 +31226,7 @@ DECLARE
     'app.cover_requests_settle',
     'app.job_claim_finished', 'app.job_claim_nightly', 'app.job_run_settled',
     'app.push_due_receipts', 'app.push_receipts_settled', 'app.push_settle',
+    'app.reporting_compute', 'app.reporting_digest', 'app.reporting_remind',
     'app.schedule_candidates_sweep',
     'app.ss12000_due_notifications', 'app.ss12000_due_sources', 'app.ss12000_housekeeping',
     'app.ss12000_notification_settled', 'app.ss12000_provider_housekeeping'];
@@ -41474,3 +41481,899 @@ DO $$ BEGIN
 END $$;
 ROLLBACK;
 DROP TABLE sk364;
+
+-- ---------------------------------------------------------------------------
+-- Sections 345-349: Rapporteringsgrad (20270112090100).
+--
+-- Varje lärares andel hållna lektioner med sparat register, lagrad per lärare
+-- och dag, och två påminnelser som skolan slår på. The school is
+-- rls-rapporteringsgrad-school (fixtures: …f20000000001 and on), a full
+-- administrator, rektor, expedition, schemaläggare and läsare, four teachers
+-- (the last deactivated), two pupils and a guardian, and a second school of
+-- its own. Lessons are planted by each section, on fixed past days (the
+-- Tuesday 2026-09-15 is where the count starts) inside its own transaction,
+-- so nothing ages and nothing stays. The teacher's own list of open lessons
+-- is the one thing measured from today, and is planted relative to it.
+--
+--   345  the tables: defaults, the switches' dates, the limit's range
+--   346  the count: what a held lesson is and what a saved register is, a
+--        cancelled and a rescheduled lesson, a substitute, a co-teacher, an
+--        absent teacher, a lov, the summer-time switches, and the night's
+--        rewrite (late registers, lessons that go, days that vanish)
+--   347  who reads and who writes, role by role, the teacher's own list, and
+--        the roles PostgREST uses
+--   348  the weekly notice and the reminders' switches
+--   (on the owner's side, in rls-owner-checks.sql: 345o the tables' own
+--   constraints, keys, indexes, grants and functions, 346o the definition's
+--   edges only the owner can ask, 348o the reminders over backdated switches
+--   and which weeks are due, 349o gallring over the days and the reminders)
+-- ---------------------------------------------------------------------------
+
+-- The helpers the sections share. Temporary, so they die with the session.
+CREATE FUNCTION pg_temp.rg_as(p_auth text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_auth)::text, true)
+$$;
+
+-- The fixtures' login of a person, by the number they end in.
+CREATE FUNCTION pg_temp.rg_auth(p_n integer) RETURNS text LANGUAGE sql AS $$
+  SELECT '00000000-0000-4000-8000-f2' || lpad(p_n::text, 10, '0')
+$$;
+
+CREATE FUNCTION pg_temp.rg_id(p_email text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT id FROM "Users" WHERE "schoolId" = app.current_school_id() AND email = p_email
+$$;
+
+-- A lesson of 50 minutes from p_hour (local time) on p_day, with the teachers p_teachers
+-- (as LEAD, or in the roles of p_roles) and a mark for the first pupils, one status each in
+-- p_marks. Planted the way publish and the register do. Its roster is read from the class
+-- p_group (RG7A, with two active pupils, unless it says otherwise), the groups p_extra joined to
+-- it and the pupils (by e-mail) p_named on it.
+CREATE FUNCTION pg_temp.rg_lesson(p_day date, p_hour integer, p_teachers uuid[] DEFAULT '{}', p_marks text[] DEFAULT '{}',
+                                  p_status "LessonStatus" DEFAULT 'SCHEDULED', p_roles text[] DEFAULT NULL,
+                                  p_cause "LessonCancelCause" DEFAULT NULL, p_group text DEFAULT 'RG7A',
+                                  p_extra text[] DEFAULT '{}', p_named text[] DEFAULT '{}')
+RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  s uuid := app.current_school_id();
+  l uuid;
+  starts timestamptz := (p_day + make_time(p_hour, 0, 0)) AT TIME ZONE 'Europe/Stockholm';
+  i integer;
+  subj uuid := (SELECT id FROM "Subjects" WHERE "schoolId" = s AND code = 'RGSUBJ');
+  grp uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = s AND name = p_group);
+  pupils uuid[] := ARRAY(SELECT id FROM "Users" WHERE "schoolId" = s AND role = 'STUDENT' ORDER BY email);
+BEGIN
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "cancelCause", "updatedAt")
+  VALUES (s, subj, grp, p_day, starts, starts + interval '50 minutes', p_status, p_cause, now()) RETURNING id INTO l;
+  FOR i IN 1..coalesce(cardinality(p_teachers), 0) LOOP
+    INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role)
+    VALUES (s, l, p_teachers[i], coalesce(p_roles[i], 'LEAD')::"TeacherAssignmentRole");
+  END LOOP;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId")
+  SELECT s, l, g."id" FROM "StudentGroups" g WHERE g."schoolId" = s AND g."name" = ANY (p_extra);
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId")
+  SELECT s, l, u."id" FROM "Users" u WHERE u."schoolId" = s AND u."email" = ANY (p_named);
+  FOR i IN 1..coalesce(cardinality(p_marks), 0) LOOP
+    INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+    VALUES (s, l, pupils[i], p_marks[i]::"AttendanceStatus", now());
+  END LOOP;
+  RETURN l;
+END $$;
+
+-- An absence of a teacher between two local wall-clock times.
+CREATE FUNCTION pg_temp.rg_absent(p_teacher uuid, p_from timestamp, p_to timestamp, p_status text DEFAULT 'ACTIVE') RETURNS void LANGUAGE sql AS $$
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", status, "withdrawnAt", "updatedAt")
+  VALUES (app.current_school_id(), p_teacher, p_from AT TIME ZONE 'Europe/Stockholm', p_to AT TIME ZONE 'Europe/Stockholm',
+          p_status::"TeacherAbsenceStatus", CASE WHEN p_status = 'WITHDRAWN' THEN now() END, now())
+$$;
+
+-- The school's stored days as one readable text: teacher, day, reported/held.
+CREATE FUNCTION pg_temp.rg_days() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(substr(u.email, 4, 2) || ' ' || d.day || ' ' || d.reported || '/' || d.held, E'\n' ORDER BY u.email, d.day), '')
+    FROM "TeacherReportingDays" d JOIN "Users" u ON u.id = d."teacherId" AND u."schoolId" = d."schoolId"
+   WHERE d."schoolId" = app.current_school_id()
+$$;
+
+-- A teacher's reported/held over a stretch of days, as the view adds them up.
+CREATE FUNCTION pg_temp.rg_sum(p_teacher text, p_from date, p_to date) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(sum(d.reported), 0) || '/' || coalesce(sum(d.held), 0)
+    FROM "TeacherReportingDays" d JOIN "Users" u ON u.id = d."teacherId" AND u."schoolId" = d."schoolId"
+   WHERE d."schoolId" = app.current_school_id() AND substr(u.email, 4, 2) = p_teacher AND d.day BETWEEN p_from AND p_to
+$$;
+
+-- The night's count, as the job asks it: what it wrote, removed, and the totals.
+CREATE FUNCTION pg_temp.rg_compute(p_as_of date) RETURNS text LANGUAGE sql AS $$
+  SELECT 'written ' || written || ', removed ' || removed || ', teachers ' || teachers || ', held ' || held || ', reported ' || reported
+    FROM app.reporting_compute(app.current_school_id(), p_as_of)
+$$;
+
+-- A statement a CHECK or a unique index must refuse, by the constraint's name.
+CREATE FUNCTION pg_temp.rg_refuses(p_sql text, p_constraint text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE p_sql;
+  RAISE EXCEPTION 'rapporteringsgrad: accepted: %', p_sql;
+EXCEPTION WHEN check_violation OR unique_violation THEN
+  IF position(p_constraint IN SQLERRM) = 0 THEN
+    RAISE EXCEPTION 'rapporteringsgrad: % was refused, but not by %: %', p_sql, p_constraint, SQLERRM;
+  END IF;
+END $$;
+
+-- A statement the caller is refused: a missing privilege, a policy's check, or an
+-- UPDATE or DELETE that no policy lets reach a row.
+CREATE FUNCTION pg_temp.rg_denied(p_sql text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+BEGIN
+  EXECUTE p_sql;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF p_sql ~* '^(UPDATE|DELETE)' AND n = 0 THEN RETURN; END IF;
+  RAISE EXCEPTION 'rapporteringsgrad: not denied (% rows): %', n, p_sql;
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+
+CREATE FUNCTION pg_temp.rg_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'rapporteringsgrad %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 345: the tables and what their trigger does.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.rg_as(pg_temp.rg_auth(1));
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  s record;
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'rapporteringsgrad 345: expected the full administrator'; END IF;
+
+  -- No row: both off and two days, as for every school before this migration.
+  IF EXISTS (SELECT 1 FROM "ReportingSettings") THEN RAISE EXCEPTION 'rapporteringsgrad 345: the school starts with a row'; END IF;
+  -- The row is inserted by those who write Drift: not by the läsare, a teacher, a guardian or a pupil.
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(5));
+  PERFORM pg_temp.rg_denied(format('INSERT INTO "ReportingSettings" ("schoolId") VALUES (%L)', school));
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(6));
+  PERFORM pg_temp.rg_denied(format('INSERT INTO "ReportingSettings" ("schoolId") VALUES (%L)', school));
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(21));
+  PERFORM pg_temp.rg_denied(format('INSERT INTO "ReportingSettings" ("schoolId") VALUES (%L)', school));
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(11));
+  PERFORM pg_temp.rg_denied(format('INSERT INTO "ReportingSettings" ("schoolId") VALUES (%L)', school));
+  IF EXISTS (SELECT 1 FROM "ReportingSettings") THEN RAISE EXCEPTION 'rapporteringsgrad 345: a refused insert left a row'; END IF;
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(1));
+  INSERT INTO "ReportingSettings" ("schoolId") VALUES (school);
+  SELECT * INTO s FROM "ReportingSettings";
+  IF s."teacherReminders" OR s."rektorDigest" OR s."teacherRemindersOn" IS NOT NULL OR s."rektorDigestOn" IS NOT NULL OR s."openAfterDays" <> 2 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345: the defaults are both off, no dates and two days: %', s;
+  END IF;
+
+  -- Each switch is dated with the school's own day when it goes on; a writer's date is the trigger's.
+  UPDATE "ReportingSettings" SET "teacherReminders" = true, "teacherRemindersOn" = '2020-01-01', "rektorDigestOn" = '2020-01-01';
+  SELECT * INTO s FROM "ReportingSettings";
+  IF NOT s."teacherReminders" OR s."teacherRemindersOn" IS DISTINCT FROM today THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345: turning the reminders on set the date to %, not %', s."teacherRemindersOn", today;
+  END IF;
+  IF s."rektorDigest" OR s."rektorDigestOn" IS NOT NULL THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345: the weekly notice was dated without being turned on: %', s."rektorDigestOn";
+  END IF;
+  UPDATE "ReportingSettings" SET "rektorDigest" = true;
+  IF (SELECT "rektorDigestOn" FROM "ReportingSettings") IS DISTINCT FROM today THEN RAISE EXCEPTION 'rapporteringsgrad 345: turning the weekly notice on did not date it'; END IF;
+  UPDATE "ReportingSettings" SET "openAfterDays" = 5, "teacherRemindersOn" = '2020-01-01', "rektorDigestOn" = '2020-01-01';
+  SELECT * INTO s FROM "ReportingSettings";
+  IF s."teacherRemindersOn" IS DISTINCT FROM today OR s."rektorDigestOn" IS DISTINCT FROM today OR s."openAfterDays" <> 5 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345: another change moved a date the switches went on: %', s;
+  END IF;
+  -- Off keeps the date, and a switch left on without a date is not possible.
+  UPDATE "ReportingSettings" SET "teacherReminders" = false, "rektorDigest" = false;
+  SELECT * INTO s FROM "ReportingSettings";
+  IF s."teacherRemindersOn" IS DISTINCT FROM today OR s."rektorDigestOn" IS DISTINCT FROM today THEN
+    RAISE EXCEPTION 'rapporteringsgrad 345: turning them off cleared a date: %', s;
+  END IF;
+
+  -- The limit: both ends of its range, and nothing outside it.
+  UPDATE "ReportingSettings" SET "openAfterDays" = 1;
+  UPDATE "ReportingSettings" SET "openAfterDays" = 30;
+  PERFORM pg_temp.rg_refuses('UPDATE "ReportingSettings" SET "openAfterDays" = 0', 'open_after_days_is_sane');
+  PERFORM pg_temp.rg_refuses('UPDATE "ReportingSettings" SET "openAfterDays" = 31', 'open_after_days_is_sane');
+  UPDATE "ReportingSettings" SET "openAfterDays" = 2;
+
+  -- One row per school (the key), and the school's own.
+  BEGIN
+    INSERT INTO "ReportingSettings" ("schoolId") VALUES (school);
+    RAISE EXCEPTION 'rapporteringsgrad 345: a second row for the school was accepted';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "ReportingSettings" ("schoolId") VALUES (gen_random_uuid());
+    RAISE EXCEPTION 'rapporteringsgrad 345: a row for another school was accepted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 346: the count.
+--
+-- One teacher-day per teacher with a held lesson: held lessons, and how many
+-- of them have a saved register. Every case below is a lesson on the
+-- Tuesday 2026-09-15 unless it says otherwise; the hour is the local one.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.rg_as(pg_temp.rg_auth(1));
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  t1 uuid := pg_temp.rg_id('rg-t1@example.invalid');
+  t2 uuid := pg_temp.rg_id('rg-t2@example.invalid');
+  t3 uuid := pg_temp.rg_id('rg-t3@example.invalid');
+  t4 uuid := pg_temp.rg_id('rg-t4@example.invalid');
+  t5 uuid := pg_temp.rg_id('rg-t5@example.invalid');
+  d date := '2026-09-15';
+  open_one uuid;
+  unknown_one uuid;
+  held_one uuid;
+  yr uuid := (SELECT id FROM "AcademicYears" WHERE "schoolId" = school);
+  wd date;
+BEGIN
+  -- The kinds of lesson. T1 teaches 8, 9, 12, 13 and 15 (held), not 10 and 11 (never held), and 7 and 19 (cancelled).
+  PERFORM pg_temp.rg_lesson(d, 8, ARRAY[t1], ARRAY['PRESENT', 'PRESENT']);                       -- held, register saved
+  open_one := pg_temp.rg_lesson(d, 9, ARRAY[t1]);                                                  -- held, nothing saved
+  PERFORM pg_temp.rg_lesson(d, 10, ARRAY[t1], ARRAY['PRESENT'], 'CANCELLED', NULL, 'MANUAL');      -- cancelled: never, whatever was saved
+  PERFORM pg_temp.rg_lesson(d, 11, ARRAY[t1], ARRAY['PRESENT'], 'RESCHEDULED');                    -- rescheduled: never
+  unknown_one := pg_temp.rg_lesson(d, 12, ARRAY[t1], ARRAY['UNKNOWN', 'UNKNOWN']);                 -- held; UNKNOWN is no mark
+  PERFORM pg_temp.rg_lesson(d, 13, ARRAY[t1], ARRAY['EXCUSED', 'UNKNOWN'], 'COMPLETED');           -- COMPLETED is held, one mark is a register
+  PERFORM pg_temp.rg_lesson(d, 7, ARRAY[t1], ARRAY['PRESENT'], 'CANCELLED', NULL, 'TEACHER_UNAVAILABLE');
+  PERFORM pg_temp.rg_lesson(d, 19, ARRAY[t1], ARRAY['PRESENT'], 'CANCELLED', NULL, 'EVENT');       -- an activity's cancelled lesson
+  -- A replacement lesson (Schemabrytande aktivitet) is a lesson no template made, held by the teacher it names.
+  PERFORM pg_temp.rg_lesson(d, 14, ARRAY[t2], ARRAY['ABSENT'], 'SCHEDULED', ARRAY['SUBSTITUTE']);  -- the substitute's own
+  PERFORM pg_temp.rg_lesson(d, 15, ARRAY[t1, t3], ARRAY['LATE'], 'SCHEDULED', ARRAY['LEAD', 'ASSISTANT']); -- co-taught, saved by either: both
+  PERFORM pg_temp.rg_lesson(d, 16, ARRAY[t2, t3]);                                                 -- co-taught, open for both
+  PERFORM pg_temp.rg_lesson(d, 17, ARRAY[t4], ARRAY['PRESENT']);                                   -- a teacher who has since left: nobody's
+  PERFORM pg_temp.rg_lesson(d, 20, ARRAY[t5], ARRAY['PRESENT']);                                   -- a teacher whose only lesson it is
+  PERFORM pg_temp.rg_lesson(d, 18, ARRAY[]::uuid[], ARRAY['PRESENT']);                             -- nobody teaches it: nobody's
+
+  PERFORM pg_temp.rg_expect('346 first night', pg_temp.rg_compute('2026-09-30'),
+    'written 4, removed 0, teachers 4, held 10, reported 6');
+  PERFORM pg_temp.rg_expect('346 the days', pg_temp.rg_days(),
+    E't1 2026-09-15 3/5\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2\nt5 2026-09-15 1/1');
+  -- Again: the same rows, so nothing is rewritten.
+  PERFORM pg_temp.rg_expect('346 again', pg_temp.rg_compute('2026-09-30'), 'written 0, removed 0, teachers 4, held 10, reported 6');
+
+  -- A register saved late moves the day on the next night, and only that row.
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  VALUES (school, open_one, pg_temp.rg_id('rg-p1@example.invalid'), 'PRESENT', now());
+  PERFORM pg_temp.rg_expect('346 late register', pg_temp.rg_compute('2026-09-30'), 'written 1, removed 0, teachers 4, held 10, reported 7');
+  UPDATE "AttendanceRecords" SET status = 'PRESENT' WHERE "calendarLessonId" = unknown_one AND status = 'UNKNOWN';
+  PERFORM pg_temp.rg_expect('346 UNKNOWN made a mark', pg_temp.rg_compute('2026-09-30'), 'written 1, removed 0, teachers 4, held 10, reported 8');
+  PERFORM pg_temp.rg_expect('346 the days, late', pg_temp.rg_days(),
+    E't1 2026-09-15 5/5\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2\nt5 2026-09-15 1/1');
+  -- A lesson that is cancelled afterwards stops counting, saved or not; and a teacher whose only lesson goes loses the day.
+  UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'MANUAL'
+   WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'RG7A') AND date = d
+     AND "startsAt" = (d + time '08:00') AT TIME ZONE 'Europe/Stockholm';
+  UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'MANUAL'
+   WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'RG7A') AND date = d
+     AND "startsAt" = (d + time '20:00') AT TIME ZONE 'Europe/Stockholm';
+  PERFORM pg_temp.rg_expect('346 cancelled afterwards', pg_temp.rg_compute('2026-09-30'), 'written 1, removed 1, teachers 3, held 8, reported 6');
+  PERFORM pg_temp.rg_expect('346 the days, after', pg_temp.rg_days(),
+    E't1 2026-09-15 4/4\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2');
+  -- Reinstated: back, with the register it had.
+  UPDATE "CalendarLessons" SET status = 'SCHEDULED', "cancelCause" = NULL
+   WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'RG7A') AND date = d
+     AND "startsAt" = (d + time '20:00') AT TIME ZONE 'Europe/Stockholm';
+  PERFORM pg_temp.rg_expect('346 reinstated', pg_temp.rg_compute('2026-09-30'), 'written 1, removed 0, teachers 4, held 9, reported 7');
+
+  -- A teacher who is themself away cannot have taken the register: the lesson is not theirs to report while
+  -- an active absence overlaps it. 2026-09-16, T1 away 12:00-18:00.
+  wd := '2026-09-16';
+  PERFORM pg_temp.rg_absent(t1, wd + time '12:00', wd + time '18:00');
+  PERFORM pg_temp.rg_lesson(wd, 8, ARRAY[t1]);                              -- before the absence: counted
+  PERFORM pg_temp.rg_lesson(wd, 11, ARRAY[t1]);                             -- ends 11:50, ten minutes before: counted
+  PERFORM pg_temp.rg_lesson(wd, 12, ARRAY[t1], ARRAY['PRESENT']);           -- starts when the absence does: not counted
+  PERFORM pg_temp.rg_lesson(wd, 17, ARRAY[t1]);                             -- inside it: not counted
+  PERFORM pg_temp.rg_lesson(wd, 18, ARRAY[t1], ARRAY['PRESENT']);           -- starts when the absence ends: counted
+  -- An absence that only touches a lesson does not overlap it, at either end. 2026-09-18, T3 away 09:50-12:00.
+  wd := '2026-09-18';
+  PERFORM pg_temp.rg_absent(t3, wd + time '09:50', wd + time '12:00');
+  PERFORM pg_temp.rg_lesson(wd, 9, ARRAY[t3]);                              -- ends 09:50, as the absence begins: counted
+  PERFORM pg_temp.rg_lesson(wd, 10, ARRAY[t3]);                             -- inside it: not counted
+  PERFORM pg_temp.rg_lesson(wd, 12, ARRAY[t3]);                             -- starts as it ends: counted
+  wd := '2026-09-16';
+  -- The substitute who is away too is not counted for the lesson either.
+  PERFORM pg_temp.rg_absent(t2, wd + time '09:00', wd + time '10:00');
+  PERFORM pg_temp.rg_lesson(wd, 9, ARRAY[t2], ARRAY[]::text[], 'SCHEDULED', ARRAY['SUBSTITUTE']);
+  -- A withdrawn absence is no absence.
+  PERFORM pg_temp.rg_absent(t1, '2026-09-17'::date + time '08:00', '2026-09-17'::date + time '18:00', 'WITHDRAWN');
+  PERFORM pg_temp.rg_lesson('2026-09-17', 13, ARRAY[t1]);
+  PERFORM pg_temp.rg_compute('2026-09-30');
+  PERFORM pg_temp.rg_expect('346 absent teachers', pg_temp.rg_days(),
+    E't1 2026-09-15 4/4\nt1 2026-09-16 1/3\nt1 2026-09-17 0/1\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2\nt3 2026-09-18 0/2\nt5 2026-09-15 1/1');
+
+  -- Lov. The week of 21-25 September is a lov: its lessons are cancelled, with registers or without, and give
+  -- no rows; the week after loses Monday to Wednesday and keeps Thursday and Friday.
+  INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, kind, "startDate", "endDate", "updatedAt")
+  VALUES (school, yr, 'Höstlov', 'HOLIDAY', '2026-09-21', '2026-09-25', now());
+  INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, kind, "startDate", "endDate", "updatedAt")
+  VALUES (school, yr, 'Studiedagar', 'STAFF_DAY', '2026-09-28', '2026-09-30', now());
+  FOR wd IN SELECT g::date FROM generate_series('2026-09-21'::date, '2026-09-30'::date, interval '1 day') g WHERE extract(isodow FROM g) < 6 LOOP
+    PERFORM pg_temp.rg_lesson(wd, 8, ARRAY[t1], CASE WHEN extract(day FROM wd)::integer % 2 = 0 THEN ARRAY['PRESENT'] ELSE ARRAY[]::text[] END,
+                              'CANCELLED', NULL, 'MANUAL');
+  END LOOP;
+  PERFORM pg_temp.rg_lesson('2026-10-01', 8, ARRAY[t1]);
+  PERFORM pg_temp.rg_lesson('2026-10-02', 8, ARRAY[t1], ARRAY['PRESENT']);
+  PERFORM pg_temp.rg_compute('2026-10-04');
+  PERFORM pg_temp.rg_expect('346 lov week', pg_temp.rg_sum('t1', '2026-09-21', '2026-09-27'), '0/0');
+  IF EXISTS (SELECT 1 FROM "TeacherReportingDays" d WHERE d."schoolId" = school AND d.day BETWEEN '2026-09-21' AND '2026-09-30') THEN
+    RAISE EXCEPTION 'rapporteringsgrad 346: a day of the lov has a row';
+  END IF;
+  PERFORM pg_temp.rg_expect('346 half lov week', pg_temp.rg_sum('t1', '2026-09-28', '2026-10-04'), '1/2');
+  -- A week of the lov in the middle of a month leaves the month's figure to the weeks around it.
+  PERFORM pg_temp.rg_expect('346 the month', pg_temp.rg_sum('t1', '2026-09-01', '2026-09-30'), '5/8');
+  PERFORM pg_temp.rg_expect('346 the läsår so far', pg_temp.rg_sum('t1', '2026-01-01', '2026-12-31'), '6/10');
+
+  -- The night refuses a day that has not passed, and a school it does not know.
+  BEGIN
+    PERFORM * FROM app.reporting_compute(school, (now() AT TIME ZONE 'Europe/Stockholm')::date);
+    RAISE EXCEPTION 'rapporteringsgrad 346: today was counted';
+  EXCEPTION WHEN SQLSTATE 'RR400' THEN NULL;
+  END;
+  BEGIN
+    PERFORM * FROM app.reporting_compute(school, (now() AT TIME ZONE 'Europe/Stockholm')::date + 3);
+    RAISE EXCEPTION 'rapporteringsgrad 346: a day to come was counted';
+  EXCEPTION WHEN SQLSTATE 'RR400' THEN NULL;
+  END;
+  BEGIN
+    PERFORM * FROM app.reporting_compute(school, NULL);
+    RAISE EXCEPTION 'rapporteringsgrad 346: no day was counted';
+  EXCEPTION WHEN SQLSTATE 'RR400' THEN NULL;
+  END;
+  BEGIN
+    PERFORM * FROM app.reporting_compute(gen_random_uuid(), '2026-09-30');
+    RAISE EXCEPTION 'rapporteringsgrad 346: an unknown school was counted';
+  EXCEPTION WHEN SQLSTATE 'RR404' THEN NULL;
+  END;
+END $$;
+
+-- Summer time. The switch to summer time (Sunday 29 March 2026) and back (Sunday 25 October) are days of
+-- 23 and 25 hours; a lesson is on the day it was written for whatever its instant says, a week is seven
+-- calendar days, and an absence is compared by instants, so one that spans the night is neither longer nor
+-- shorter than it says. All of this in the school's own times.
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  t1 uuid := pg_temp.rg_id('rg-t1@example.invalid');
+  t2 uuid := pg_temp.rg_id('rg-t2@example.invalid');
+  t3 uuid := pg_temp.rg_id('rg-t3@example.invalid');
+BEGIN
+  -- Spring. Friday the 27th and Monday the 30th; Monday's first lesson (T3's) starts at midnight, which is
+  -- Sunday 22:00 in UTC and still Monday's.
+  PERFORM pg_temp.rg_lesson('2026-03-27', 8, ARRAY[t1], ARRAY['PRESENT']);
+  PERFORM pg_temp.rg_lesson('2026-03-27', 23, ARRAY[t1]);
+  PERFORM pg_temp.rg_lesson('2026-03-30', 0, ARRAY[t3]);
+  PERFORM pg_temp.rg_lesson('2026-03-30', 8, ARRAY[t1], ARRAY['PRESENT']);
+  -- Monday's 07:00 lesson falls inside T1's absence from Saturday evening to 07:30 on Monday, over the night
+  -- that has 23 hours; the one at 08:00 does not.
+  PERFORM pg_temp.rg_absent(t1, '2026-03-28 20:00', '2026-03-30 07:30');
+  PERFORM pg_temp.rg_lesson('2026-03-30', 7, ARRAY[t1], ARRAY['PRESENT']);
+  -- T2 is away from Saturday 20:00 to Sunday 12:00 local time, which is 15 hours of the clock but 14 of time.
+  PERFORM pg_temp.rg_absent(t2, '2026-03-28 20:00', '2026-03-29 12:00');
+  PERFORM pg_temp.rg_lesson('2026-03-28', 22, ARRAY[t2]);                  -- inside the absence
+  PERFORM pg_temp.rg_lesson('2026-03-29', 11, ARRAY[t2]);                  -- inside it, the morning after the switch
+  PERFORM pg_temp.rg_lesson('2026-03-29', 12, ARRAY[t2], ARRAY['PRESENT']); -- starts when it ends
+  PERFORM pg_temp.rg_compute('2026-04-05');
+  PERFORM pg_temp.rg_expect('346 spring week one', pg_temp.rg_sum('t1', '2026-03-23', '2026-03-29'), '1/2');
+  PERFORM pg_temp.rg_expect('346 spring week two', pg_temp.rg_sum('t1', '2026-03-30', '2026-04-05'), '1/1');
+  PERFORM pg_temp.rg_expect('346 midnight is Monday''s', pg_temp.rg_sum('t3', '2026-03-30', '2026-03-30') || ' ' || pg_temp.rg_sum('t3', '2026-03-29', '2026-03-29'), '0/1 0/0');
+  PERFORM pg_temp.rg_expect('346 spring days', (SELECT string_agg(d.day::text || ' ' || d.reported || '/' || d.held, ', ' ORDER BY d.day)
+      FROM "TeacherReportingDays" d WHERE d."teacherId" = t1 AND d.day BETWEEN '2026-03-01' AND '2026-04-30'),
+    '2026-03-27 1/2, 2026-03-30 1/1');
+  PERFORM pg_temp.rg_expect('346 spring across the night', pg_temp.rg_sum('t2', '2026-03-23', '2026-04-05'), '1/1');
+
+  -- Autumn. Friday the 23rd and Monday the 26th; the Sunday in between has 25 hours.
+  PERFORM pg_temp.rg_lesson('2026-10-23', 8, ARRAY[t1], ARRAY['PRESENT']);
+  PERFORM pg_temp.rg_lesson('2026-10-26', 8, ARRAY[t1]);
+  PERFORM pg_temp.rg_absent(t2, '2026-10-24 20:00', '2026-10-25 12:00');
+  PERFORM pg_temp.rg_lesson('2026-10-25', 11, ARRAY[t2]);                  -- inside
+  PERFORM pg_temp.rg_lesson('2026-10-25', 12, ARRAY[t2]);                  -- starts as it ends
+  PERFORM pg_temp.rg_compute('2026-11-01');
+  PERFORM pg_temp.rg_expect('346 autumn weeks', pg_temp.rg_sum('t1', '2026-10-19', '2026-10-25') || ' ' || pg_temp.rg_sum('t1', '2026-10-26', '2026-11-01'), '1/1 0/1');
+  PERFORM pg_temp.rg_expect('346 autumn across the night', pg_temp.rg_sum('t2', '2026-10-19', '2026-11-01'), '0/1');
+END $$;
+ROLLBACK;
+-- ---------------------------------------------------------------------------
+-- Section 346, the roster: a lesson no pupil can be marked on is nobody's.
+--
+-- The roster is the register's own (calendar/lesson-roster.ts), the active pupils of the lesson's
+-- class, of the groups joined to it, the members of those groups and the pupils the lesson names.
+-- A lesson with none is neither held nor open nor reported, however long it stands, because the
+-- teacher can do nothing about it; unless its register was saved before the roster emptied, which
+-- stays a register. Every case below is a lesson on the Tuesday 2026-09-22.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.rg_as(pg_temp.rg_auth(1));
+DO $$
+DECLARE
+  t1 uuid := pg_temp.rg_id('rg-t1@example.invalid');
+  d date := '2026-09-22';
+BEGIN
+  -- Nobody on the roster: a class with no pupil, a class whose only pupil was deactivated before it held a day
+  -- (no segment of the class history, and not active), a teaching group whose only member is a teacher, a
+  -- lesson that names a teacher, and a lesson whose joined groups are two of those.
+  PERFORM pg_temp.rg_lesson(d, 8, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B');
+  PERFORM pg_temp.rg_lesson(d, 9, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7C');
+  PERFORM pg_temp.rg_lesson(d, 10, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7E');
+  PERFORM pg_temp.rg_lesson(d, 12, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-t2@example.invalid']);
+  PERFORM pg_temp.rg_lesson(d, 7, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7C', 'RG7E']);        -- groups joined to it that have nobody to list
+  PERFORM pg_temp.rg_expect('346r nobody on the roster', pg_temp.rg_compute('2026-09-30'),
+    'written 0, removed 0, teachers 0, held 0, reported 0');
+
+  -- Each source is enough on its own, and each is a lesson the others do not reach.
+  PERFORM pg_temp.rg_lesson(d, 13, ARRAY[t1]);                                                                      -- the class's pupils
+  PERFORM pg_temp.rg_lesson(d, 14, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7D');                               -- a teaching group's members
+  PERFORM pg_temp.rg_lesson(d, 15, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7A']);                -- the pupils of a class joined to it
+  PERFORM pg_temp.rg_lesson(d, 16, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7D']);                -- the members of a group joined to it
+  PERFORM pg_temp.rg_lesson(d, 17, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-p4@example.invalid']); -- a pupil it names
+  -- A pupil who has been deactivated since is still a pupil of a group or a lesson: the lesson was held with them
+  -- on it, and a day that was counted does not change when they leave.
+  PERFORM pg_temp.rg_lesson(d, 18, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7F');                              -- a member who has left
+  PERFORM pg_temp.rg_lesson(d, 19, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-p3@example.invalid']); -- a named pupil who has left
+  PERFORM pg_temp.rg_lesson(d, 20, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7F']);               -- the members of a joined group who have left
+  PERFORM pg_temp.rg_expect('346r each source', pg_temp.rg_compute('2026-09-30'),
+    'written 1, removed 0, teachers 1, held 8, reported 0');
+
+  -- A register saved on a lesson stays a register, whatever the roster has become: reported, and held.
+  PERFORM pg_temp.rg_lesson(d, 21, ARRAY[t1], ARRAY['PRESENT'], 'SCHEDULED', NULL, NULL, 'RG7B');
+  PERFORM pg_temp.rg_expect('346r a saved register on an empty roster', pg_temp.rg_compute('2026-09-30'),
+    'written 1, removed 0, teachers 1, held 9, reported 1');
+
+  -- An administrator on a lesson is no teacher: no row, no count.
+  PERFORM pg_temp.rg_lesson(d, 22, ARRAY[pg_temp.rg_id('rg-full@example.invalid')]);
+  PERFORM pg_temp.rg_expect('346r an administrator on a lesson', pg_temp.rg_compute('2026-09-30'),
+    'written 0, removed 0, teachers 1, held 9, reported 1');
+  PERFORM pg_temp.rg_expect('346r the day', pg_temp.rg_days(), 't1 2026-09-22 1/9');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 347: who reads and who writes.
+--
+-- Every administrator reads every teacher's days, the läsare too, and the
+-- switch and the limit are Drift's to write; a teacher reads their own days
+-- and the limit, a pupil and a guardian read nothing, and nobody writes a day,
+-- the week's ledger or the reminders' ledger. The teacher's own list of open
+-- lessons answers for the teacher it is asked by.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.rg_as(pg_temp.rg_auth(1));
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  t1 uuid := pg_temp.rg_id('rg-t1@example.invalid');
+  t2 uuid := pg_temp.rg_id('rg-t2@example.invalid');
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'rapporteringsgrad 347: expected the full administrator'; END IF;
+  PERFORM pg_temp.rg_lesson('2026-09-15', 8, ARRAY[t1], ARRAY['PRESENT']);
+  PERFORM pg_temp.rg_lesson('2026-09-15', 9, ARRAY[t1]);
+  PERFORM pg_temp.rg_lesson('2026-09-15', 14, ARRAY[t2], ARRAY['PRESENT'], 'SCHEDULED', ARRAY['SUBSTITUTE']);
+  PERFORM pg_temp.rg_compute('2026-09-30');
+  INSERT INTO "ReportingSettings" ("schoolId", "rektorDigest", "openAfterDays") VALUES (school, true, 3);
+  IF (SELECT count(*) FROM app.reporting_digest(school, '2026-09-14', '2026-09-20')) <> 2 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 347: the week was not told to the two who decide';
+  END IF;
+  -- The lessons of the teacher's own list, measured from today: the limit is three days.
+  PERFORM pg_temp.rg_lesson(today - 1, 8, ARRAY[t1]);                                       -- open, newer than the limit
+  PERFORM pg_temp.rg_lesson(today - 3, 9, ARRAY[t1]);                                       -- open, on the limit
+  PERFORM pg_temp.rg_lesson(today - 10, 10, ARRAY[t1]);                                     -- open, past it
+  PERFORM pg_temp.rg_lesson(today - 40, 11, ARRAY[t1]);                                     -- further back than a month
+  PERFORM pg_temp.rg_lesson(today - 95, 16, ARRAY[t1]);                                     -- further back than the list ever goes
+  PERFORM pg_temp.rg_lesson(today - 2, 12, ARRAY[t1], ARRAY['PRESENT']);                    -- saved
+  PERFORM pg_temp.rg_lesson(today - 2, 13, ARRAY[t1], ARRAY[]::text[], 'CANCELLED', NULL, 'MANUAL'); -- cancelled
+  PERFORM pg_temp.rg_lesson(today - 4, 14, ARRAY[t2]);                                      -- the other teacher's
+  PERFORM pg_temp.rg_lesson(today - 4, 15, ARRAY[t1, t2]);                                  -- both
+  PERFORM pg_temp.rg_lesson(today - 2, 16, ARRAY[pg_temp.rg_id('rg-full@example.invalid')]); -- an administrator who also teaches
+  PERFORM pg_temp.rg_lesson(today - 5, 17, ARRAY[t1], ARRAY[]::text[], 'SCHEDULED', NULL, NULL, 'RG7B'); -- nobody to mark: not open
+  PERFORM set_config('app.test_rg_school', school::text, true);
+END $$;
+
+SELECT pg_temp.rg_as(pg_temp.rg_auth(31));
+DO $$
+BEGIN
+  IF app.current_school_id() = current_setting('app.test_rg_school')::uuid THEN RAISE EXCEPTION 'rapporteringsgrad 347: the other administrator is at the first school'; END IF;
+  INSERT INTO "ReportingSettings" ("schoolId") VALUES (app.current_school_id());
+  PERFORM set_config('app.test_rg_other', app.current_school_id()::text, true);
+END $$;
+
+CREATE FUNCTION pg_temp.rg_count(p_auth text, p_table text) RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE
+  n integer;
+BEGIN
+  PERFORM pg_temp.rg_as(p_auth);
+  EXECUTE format('SELECT count(*) FROM %I', p_table) INTO n;
+  RETURN n;
+END $$;
+
+-- The days the reader reads, as 'day reported/held', and how many of them are not theirs.
+CREATE FUNCTION pg_temp.rg_sees(p_auth text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  seen text;
+BEGIN
+  PERFORM pg_temp.rg_as(p_auth);
+  SELECT coalesce(string_agg(d.day || ' ' || d.reported || '/' || d.held, ', ' ORDER BY d.day, d.held, d.reported), '')
+    INTO seen FROM "TeacherReportingDays" d;
+  RETURN seen;
+END $$;
+
+-- The reader's open lessons: how many days back, and a bang for one past the limit.
+CREATE FUNCTION pg_temp.rg_open(p_auth text, p_days integer DEFAULT 30) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  seen text;
+BEGIN
+  PERFORM pg_temp.rg_as(p_auth);
+  SELECT coalesce(string_agg((((now() AT TIME ZONE 'Europe/Stockholm')::date - o.day)::text || CASE WHEN o.overdue THEN '!' ELSE '' END),
+                             ', ' ORDER BY o.starts_at DESC, o.lesson_id), '')
+    INTO seen FROM app.reporting_open_lessons(p_days) o;
+  RETURN seen;
+END $$;
+
+DO $$
+DECLARE
+  who record;
+  t record;
+BEGIN
+  -- Every administrator reads the school's days, its switch and its ledger, and none of the other school's.
+  FOR who IN SELECT * FROM (VALUES ('full', 1), ('rektor', 2), ('expedition', 3), ('schemaläggare', 4), ('läsare', 5)) v(name, n) LOOP
+    IF pg_temp.rg_count(pg_temp.rg_auth(who.n), 'TeacherReportingDays') <> 2
+       OR pg_temp.rg_count(pg_temp.rg_auth(who.n), 'ReportingSettings') <> 1
+       OR pg_temp.rg_count(pg_temp.rg_auth(who.n), 'ReportingDigests') <> 1 THEN
+      RAISE EXCEPTION 'rapporteringsgrad 347: the % does not read the 2 days, the switch and the 1 ledger row of the school', who.name;
+    END IF;
+  END LOOP;
+  PERFORM pg_temp.rg_expect('347 admin', pg_temp.rg_sees(pg_temp.rg_auth(1)), '2026-09-15 1/1, 2026-09-15 1/2');
+  -- The other school's administrator reads its own day, its own switch, and nothing of this school's.
+  PERFORM pg_temp.rg_expect('347 the other school', pg_temp.rg_sees(pg_temp.rg_auth(31)), '2026-09-15 3/4');
+  IF pg_temp.rg_count(pg_temp.rg_auth(31), 'ReportingSettings') <> 1 OR pg_temp.rg_count(pg_temp.rg_auth(31), 'ReportingDigests') <> 0 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 347: the other school''s administrator reads this school''s switch or ledger';
+  END IF;
+
+  -- A teacher reads their own days and no one else's, and the limit, which is no one's data.
+  PERFORM pg_temp.rg_expect('347 T1', pg_temp.rg_sees(pg_temp.rg_auth(6)), '2026-09-15 1/2');
+  PERFORM pg_temp.rg_expect('347 T2', pg_temp.rg_sees(pg_temp.rg_auth(7)), '2026-09-15 1/1');
+  PERFORM pg_temp.rg_expect('347 T3', pg_temp.rg_sees(pg_temp.rg_auth(8)), '');
+  PERFORM pg_temp.rg_expect('347 a teacher who has left', pg_temp.rg_sees(pg_temp.rg_auth(9)), '');
+  PERFORM pg_temp.rg_expect('347 the other school''s teacher', pg_temp.rg_sees(pg_temp.rg_auth(32)), '2026-09-15 3/4');
+  FOR who IN SELECT * FROM (VALUES (6), (7), (8)) v(n) LOOP
+    PERFORM pg_temp.rg_as(pg_temp.rg_auth(who.n));
+    IF (SELECT count(*) FROM "TeacherReportingDays" WHERE "teacherId" IS DISTINCT FROM app.current_user_id()) <> 0 THEN
+      RAISE EXCEPTION 'rapporteringsgrad 347: a teacher reads a day that is not theirs';
+    END IF;
+    IF pg_temp.rg_count(pg_temp.rg_auth(who.n), 'ReportingSettings') <> 1 OR pg_temp.rg_count(pg_temp.rg_auth(who.n), 'ReportingDigests') <> 0 THEN
+      RAISE EXCEPTION 'rapporteringsgrad 347: a teacher reads other than the limit';
+    END IF;
+  END LOOP;
+  IF (SELECT "openAfterDays" FROM "ReportingSettings") <> 3 THEN RAISE EXCEPTION 'rapporteringsgrad 347: the teacher reads another limit than the school''s'; END IF;
+  IF pg_temp.rg_count(pg_temp.rg_auth(9), 'ReportingSettings') <> 0 THEN RAISE EXCEPTION 'rapporteringsgrad 347: a teacher who has left reads the limit'; END IF;
+  IF pg_temp.rg_count(pg_temp.rg_auth(32), 'ReportingSettings') <> 1 THEN RAISE EXCEPTION 'rapporteringsgrad 347: the other school''s teacher does not read their own limit'; END IF;
+
+  -- A pupil, a guardian, an unknown login and no login read nothing, and nothing is theirs to see in the ledger.
+  FOR who IN SELECT * FROM (VALUES (11), (21), (99)) v(n) LOOP
+    IF pg_temp.rg_count(pg_temp.rg_auth(who.n), 'TeacherReportingDays') <> 0 OR pg_temp.rg_count(pg_temp.rg_auth(who.n), 'ReportingSettings') <> 0
+       OR pg_temp.rg_count(pg_temp.rg_auth(who.n), 'ReportingDigests') <> 0 THEN
+      RAISE EXCEPTION 'rapporteringsgrad 347: …% reads days, the switch or the ledger', who.n;
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF (SELECT count(*) FROM "TeacherReportingDays") <> 0 OR (SELECT count(*) FROM "ReportingSettings") <> 0 OR (SELECT count(*) FROM "ReportingDigests") <> 0 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 347: no principal reads days, the switch or the ledger';
+  END IF;
+
+  -- The reminders' ledger is read by nobody: the table is closed to the API role itself.
+  FOR who IN SELECT * FROM (VALUES (1), (2), (5), (6), (11), (21)) v(n) LOOP
+    PERFORM pg_temp.rg_as(pg_temp.rg_auth(who.n));
+    PERFORM pg_temp.rg_denied('SELECT count(*) FROM "ReportingReminders"');
+    PERFORM pg_temp.rg_denied('INSERT INTO "ReportingReminders" ("schoolId", "teacherId", "calendarLessonId", "lessonDate") VALUES (app.current_school_id(), app.current_user_id(), gen_random_uuid(), current_date)');
+    PERFORM pg_temp.rg_denied('UPDATE "ReportingReminders" SET "lessonDate" = current_date');
+    PERFORM pg_temp.rg_denied('DELETE FROM "ReportingReminders"');
+  END LOOP;
+END $$;
+
+-- The teacher's own list of open lessons.
+DO $$
+BEGIN
+  PERFORM pg_temp.rg_expect('347 T1 open', pg_temp.rg_open(pg_temp.rg_auth(6)), '1, 3!, 4!, 10!');
+  PERFORM pg_temp.rg_expect('347 T2 open', pg_temp.rg_open(pg_temp.rg_auth(7)), '4!, 4!');
+  PERFORM pg_temp.rg_expect('347 T1 open, five days', pg_temp.rg_open(pg_temp.rg_auth(6), 5), '1, 3!, 4!');
+  PERFORM pg_temp.rg_expect('347 T1 open, no days', pg_temp.rg_open(pg_temp.rg_auth(6), 0), '1');
+  -- (The first day of the school's fixed-date lessons is 52 days or more back, so 45 days is stable.)
+  PERFORM pg_temp.rg_expect('347 T1 open, forty-five days', pg_temp.rg_open(pg_temp.rg_auth(6), 45), '1, 3!, 4!, 10!, 40!');
+  IF pg_temp.rg_open(pg_temp.rg_auth(6), 1000) ~ '(^|, )95!' THEN RAISE EXCEPTION 'rapporteringsgrad 347: the list went back further than 90 days'; END IF;
+  IF pg_temp.rg_open(pg_temp.rg_auth(6), 1000) !~ '(^|, )40!' THEN RAISE EXCEPTION 'rapporteringsgrad 347: the list did not go back 90 days'; END IF;
+  PERFORM pg_temp.rg_expect('347 T3 open', pg_temp.rg_open(pg_temp.rg_auth(8)), '');
+  PERFORM pg_temp.rg_expect('347 an administrator''s open list', pg_temp.rg_open(pg_temp.rg_auth(1)), '');
+  PERFORM pg_temp.rg_expect('347 the läsare''s open list', pg_temp.rg_open(pg_temp.rg_auth(5)), '');
+  PERFORM pg_temp.rg_expect('347 a pupil''s open list', pg_temp.rg_open(pg_temp.rg_auth(11)), '');
+  PERFORM pg_temp.rg_expect('347 a guardian''s open list', pg_temp.rg_open(pg_temp.rg_auth(21)), '');
+  PERFORM pg_temp.rg_expect('347 a departed teacher''s open list', pg_temp.rg_open(pg_temp.rg_auth(9)), '');
+  PERFORM pg_temp.rg_expect('347 the other school''s teacher', pg_temp.rg_open(pg_temp.rg_auth(32)), '');
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF EXISTS (SELECT 1 FROM app.reporting_open_lessons(30)) THEN RAISE EXCEPTION 'rapporteringsgrad 347: no principal was handed an open list'; END IF;
+  -- The names the list carries: the subject and the class, nothing of the lesson's pupils or marks.
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(6));
+  IF (SELECT count(*) FROM app.reporting_open_lessons(30) o WHERE o.subject_name = 'Rapportering' AND o.group_name = 'RG7A') <> 4 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 347: the list does not name the subject and the class';
+  END IF;
+  -- The limit is the school's: two days makes the lesson of three days ago past it still, and a lesson of the day before not.
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(1));
+  UPDATE "ReportingSettings" SET "openAfterDays" = 1;
+  PERFORM pg_temp.rg_expect('347 T1 open, a day', pg_temp.rg_open(pg_temp.rg_auth(6)), '1!, 3!, 4!, 10!');
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(1));
+  UPDATE "ReportingSettings" SET "openAfterDays" = 30;
+  PERFORM pg_temp.rg_expect('347 T1 open, thirty days', pg_temp.rg_open(pg_temp.rg_auth(6)), '1, 3, 4, 10');
+END $$;
+
+-- Nobody writes a day, the week's ledger or the reminders' ledger, not even the full administrator. The
+-- switch and the limit are Drift's: every profile that writes Drift writes them and the läsare does not;
+-- the row is never deleted; no teacher, guardian or pupil writes it.
+DO $$
+DECLARE
+  who record;
+  school uuid;
+  mine uuid := current_setting('app.test_rg_school')::uuid;
+  other uuid := current_setting('app.test_rg_other')::uuid;
+  suffix integer;
+BEGIN
+  FOR who IN SELECT * FROM (VALUES ('full', 1, true), ('rektor', 2, true), ('expedition', 3, true),
+                                   ('schemaläggare', 4, true), ('läsare', 5, false)) v(name, n, writes) LOOP
+    PERFORM pg_temp.rg_as(pg_temp.rg_auth(who.n));
+    school := app.current_school_id();
+    PERFORM pg_temp.rg_denied(format('INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (%L, %L, current_date, 1, 1)', school, app.current_user_id()));
+    PERFORM pg_temp.rg_denied('UPDATE "TeacherReportingDays" SET reported = 0');
+    PERFORM pg_temp.rg_denied('DELETE FROM "TeacherReportingDays"');
+    PERFORM pg_temp.rg_denied(format('INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported) VALUES (%L, current_date, current_date, 0, 0, 0, 0)', school));
+    PERFORM pg_temp.rg_denied('UPDATE "ReportingDigests" SET recipients = 9');
+    PERFORM pg_temp.rg_denied('DELETE FROM "ReportingDigests"');
+    PERFORM pg_temp.rg_denied('DELETE FROM "ReportingSettings"');
+    BEGIN
+      UPDATE "ReportingSettings" SET "openAfterDays" = 4 WHERE "schoolId" = school;
+      IF NOT who.writes THEN RAISE EXCEPTION 'rapporteringsgrad 347: the % changed the limit', who.name; END IF;
+      UPDATE "ReportingSettings" SET "openAfterDays" = 30 WHERE "schoolId" = school;
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF who.writes THEN RAISE EXCEPTION 'rapporteringsgrad 347: the % was refused the limit', who.name; END IF;
+    END;
+    BEGIN
+      UPDATE "ReportingSettings" SET "teacherReminders" = true, "rektorDigest" = true WHERE "schoolId" = school;
+      IF NOT who.writes THEN RAISE EXCEPTION 'rapporteringsgrad 347: the % turned a switch on', who.name; END IF;
+      UPDATE "ReportingSettings" SET "teacherReminders" = false WHERE "schoolId" = school;
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF who.writes THEN RAISE EXCEPTION 'rapporteringsgrad 347: the % was refused a switch', who.name; END IF;
+    END;
+    -- And another school's row is not theirs to write.
+    PERFORM pg_temp.rg_denied(format('UPDATE "ReportingSettings" SET "openAfterDays" = 9 WHERE "schoolId" = %L', other));
+    PERFORM pg_temp.rg_denied(format('INSERT INTO "ReportingSettings" ("schoolId") VALUES (%L)', other));
+  END LOOP;
+  -- The other school's administrator: its own row, and this school's is not theirs.
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(31));
+  UPDATE "ReportingSettings" SET "openAfterDays" = 5;
+  PERFORM pg_temp.rg_denied(format('UPDATE "ReportingSettings" SET "openAfterDays" = 9 WHERE "schoolId" = %L', mine));
+  PERFORM pg_temp.rg_denied(format('DELETE FROM "ReportingSettings" WHERE "schoolId" = %L', mine));
+  -- Teachers, a guardian and a pupil write none of the four.
+  FOREACH suffix IN ARRAY ARRAY[6, 8, 21, 11] LOOP
+    PERFORM pg_temp.rg_as(pg_temp.rg_auth(suffix));
+    PERFORM pg_temp.rg_denied(format('INSERT INTO "ReportingSettings" ("schoolId") VALUES (%L)', other));
+    PERFORM pg_temp.rg_denied(format('UPDATE "ReportingSettings" SET "openAfterDays" = 9 WHERE "schoolId" = %L', mine));
+    PERFORM pg_temp.rg_denied('DELETE FROM "ReportingSettings"');
+    PERFORM pg_temp.rg_denied(format('INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (%L, app.current_user_id(), current_date, 1, 1)', mine));
+    PERFORM pg_temp.rg_denied('UPDATE "TeacherReportingDays" SET reported = 0');
+    PERFORM pg_temp.rg_denied('DELETE FROM "TeacherReportingDays"');
+    PERFORM pg_temp.rg_denied(format('INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported) VALUES (%L, current_date, current_date, 0, 0, 0, 0)', mine));
+    PERFORM pg_temp.rg_denied('DELETE FROM "ReportingDigests"');
+  END LOOP;
+END $$;
+
+-- PostgREST's roles reach none of the four tables and none of the functions: authenticated is tried, and
+-- the catalogue is asked for anon, service_role and PUBLIC (the API's role cannot become anon, so a
+-- catalogue answer is the proof). The API's role holds what the migration gives it and no more.
+DO $$
+DECLARE
+  stmt text;
+  tbl text;
+  fn text;
+  r text;
+  bad text;
+BEGIN
+  PERFORM pg_temp.rg_as(pg_temp.rg_auth(1));
+  SET LOCAL ROLE authenticated;
+  FOREACH stmt IN ARRAY ARRAY[
+    'SELECT count(*) FROM "ReportingSettings"', 'SELECT count(*) FROM "TeacherReportingDays"',
+    'SELECT count(*) FROM "ReportingReminders"', 'SELECT count(*) FROM "ReportingDigests"',
+    'DELETE FROM "TeacherReportingDays"', 'DELETE FROM "ReportingSettings"',
+    'SELECT * FROM app.reporting_lessons(gen_random_uuid(), current_date - 1, current_date, now())',
+    'SELECT * FROM app.reporting_schools()',
+    'SELECT * FROM app.reporting_compute(gen_random_uuid(), current_date - 1)',
+    'SELECT * FROM app.reporting_open_lessons(30)',
+    'SELECT * FROM app.reporting_remind(gen_random_uuid(), current_date)',
+    'SELECT * FROM app.reporting_digest_due(gen_random_uuid(), current_date)',
+    'SELECT * FROM app.reporting_digest(gen_random_uuid(), current_date, current_date)'
+  ] LOOP
+    BEGIN
+      EXECUTE stmt;
+      RAISE EXCEPTION 'rapporteringsgrad 347: authenticated was allowed to run %', stmt;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+  -- The definition is read by the owner's functions alone: the API's role cannot ask it for anyone's rows.
+  PERFORM pg_temp.rg_denied('SELECT * FROM app.reporting_lessons(app.current_school_id(), current_date - 1, current_date, now())');
+
+  FOREACH tbl IN ARRAY ARRAY['ReportingSettings', 'TeacherReportingDays', 'ReportingReminders', 'ReportingDigests'] LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+      IF has_table_privilege(r, format('public.%I', tbl), 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+        RAISE EXCEPTION 'rapporteringsgrad 347: % holds a privilege on %', r, tbl;
+      END IF;
+    END LOOP;
+    IF has_table_privilege('service_role', format('public.%I', tbl), 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+      RAISE EXCEPTION 'rapporteringsgrad 347: service_role writes %', tbl;
+    END IF;
+    IF has_table_privilege('app_authenticated', format('public.%I', tbl), 'TRUNCATE, REFERENCES, TRIGGER') THEN
+      RAISE EXCEPTION 'rapporteringsgrad 347: the API role truncates, references or triggers %', tbl;
+    END IF;
+  END LOOP;
+  -- What the API's role holds: the switch is read and written but not deleted, the days and the week's ledger
+  -- are read, and the reminders' ledger is not touched at all.
+  IF NOT has_table_privilege('app_authenticated', 'public."ReportingSettings"', 'SELECT')
+     OR NOT has_table_privilege('app_authenticated', 'public."ReportingSettings"', 'INSERT')
+     OR NOT has_table_privilege('app_authenticated', 'public."ReportingSettings"', 'UPDATE')
+     OR has_table_privilege('app_authenticated', 'public."ReportingSettings"', 'DELETE')
+     OR NOT has_table_privilege('app_authenticated', 'public."TeacherReportingDays"', 'SELECT')
+     OR has_table_privilege('app_authenticated', 'public."TeacherReportingDays"', 'INSERT, UPDATE, DELETE')
+     OR NOT has_table_privilege('app_authenticated', 'public."ReportingDigests"', 'SELECT')
+     OR has_table_privilege('app_authenticated', 'public."ReportingDigests"', 'INSERT, UPDATE, DELETE')
+     OR has_table_privilege('app_authenticated', 'public."ReportingReminders"', 'SELECT, INSERT, UPDATE, DELETE') THEN
+    RAISE EXCEPTION 'rapporteringsgrad 347: the API role holds other privileges than the migration gives it';
+  END IF;
+
+  -- The functions: PUBLIC and PostgREST's roles hold none; the API's role holds the six it calls and not the
+  -- definition or the trigger's body.
+  FOR fn, bad IN
+    SELECT p.oid::regprocedure::text,
+           concat_ws(',',
+             CASE WHEN has_function_privilege('anon', p.oid, 'EXECUTE') THEN 'anon' END,
+             CASE WHEN has_function_privilege('authenticated', p.oid, 'EXECUTE') THEN 'authenticated' END,
+             CASE WHEN has_function_privilege('service_role', p.oid, 'EXECUTE') THEN 'service_role' END,
+             CASE WHEN EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE a.grantee = 0) THEN 'PUBLIC' END)
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'app' AND p.proname LIKE 'reporting\_%'
+  LOOP
+    IF bad <> '' THEN RAISE EXCEPTION 'rapporteringsgrad 347: % may be run by %', fn, bad; END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.reporting_schools()', 'app.reporting_compute(uuid, date)', 'app.reporting_open_lessons(integer)',
+                            'app.reporting_remind(uuid, date)', 'app.reporting_digest_due(uuid, date)', 'app.reporting_digest(uuid, date, date)'] LOOP
+    IF NOT has_function_privilege('app_authenticated', fn::regprocedure, 'EXECUTE') THEN
+      RAISE EXCEPTION 'rapporteringsgrad 347: the API role cannot run %', fn;
+    END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.reporting_lessons(uuid, date, date, timestamptz)', 'app.reporting_settings_stamp()'] LOOP
+    IF has_function_privilege('app_authenticated', fn::regprocedure, 'EXECUTE') THEN
+      RAISE EXCEPTION 'rapporteringsgrad 347: the API role can run %, which is the owner''s', fn;
+    END IF;
+  END LOOP;
+
+  -- Every policy on the four tables is the API role's alone, and these are the arms.
+  SELECT string_agg(tablename || '.' || policyname, ', ') INTO bad
+    FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('ReportingSettings', 'TeacherReportingDays', 'ReportingReminders', 'ReportingDigests')
+     AND roles <> ARRAY['app_authenticated']::name[];
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'rapporteringsgrad 347: policies not for app_authenticated alone: %', bad; END IF;
+  SELECT string_agg(tablename || '.' || policyname, ', ' ORDER BY tablename, policyname) INTO bad
+    FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('ReportingSettings', 'TeacherReportingDays', 'ReportingReminders', 'ReportingDigests');
+  IF bad <> 'ReportingDigests.reporting_digests_admin_select, ReportingSettings.reporting_settings_admin_insert, ReportingSettings.reporting_settings_admin_select, '
+         || 'ReportingSettings.reporting_settings_admin_update, ReportingSettings.reporting_settings_teacher_select, '
+         || 'TeacherReportingDays.reporting_days_admin_select, TeacherReportingDays.reporting_days_teacher_select' THEN
+    RAISE EXCEPTION 'rapporteringsgrad 347: the arms are %, and the reminders'' ledger has none', bad;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 348: the weekly notice, and the switches the reminders hang on.
+--
+-- The reminders themselves are asked on the owner's side (348o): they hang on
+-- the date the switch went on, which a trigger stamps with today.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.rg_as(pg_temp.rg_auth(1));
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  t1 uuid := pg_temp.rg_id('rg-t1@example.invalid');
+  t2 uuid := pg_temp.rg_id('rg-t2@example.invalid');
+  t3 uuid := pg_temp.rg_id('rg-t3@example.invalid');
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  next_monday date := (now() AT TIME ZONE 'Europe/Stockholm')::date + (8 - extract(isodow FROM (now() AT TIME ZONE 'Europe/Stockholm')::date)::integer);
+  who text;
+  metas jsonb;
+  led record;
+BEGIN
+  PERFORM pg_temp.rg_lesson('2026-09-15', 8, ARRAY[t1], ARRAY['PRESENT']);
+  PERFORM pg_temp.rg_lesson('2026-09-15', 9, ARRAY[t1]);
+  PERFORM pg_temp.rg_lesson('2026-09-15', 14, ARRAY[t2], ARRAY['PRESENT'], 'SCHEDULED', ARRAY['SUBSTITUTE']);
+  PERFORM pg_temp.rg_lesson('2026-09-16', 10, ARRAY[t3]);
+  PERFORM pg_temp.rg_compute('2026-09-30');
+
+  -- No row at all: both off. Nothing is told and nothing written.
+  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-09-14', '2026-09-20')) OR EXISTS (SELECT 1 FROM "ReportingDigests") THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348: a school with no switch was told, or a ledger row written';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-23')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a school with no switch was reminded'; END IF;
+  IF EXISTS (SELECT 1 FROM app.reporting_digest_due(school, next_monday + 7)) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a notice was due for a school with no switch'; END IF;
+
+  -- A row with both off is no different.
+  INSERT INTO "ReportingSettings" ("schoolId") VALUES (school);
+  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-09-14', '2026-09-20')) OR EXISTS (SELECT 1 FROM "ReportingDigests")
+     OR EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-23')) OR EXISTS (SELECT 1 FROM app.reporting_digest_due(school, next_monday + 7)) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348: a school with both off was told';
+  END IF;
+
+  -- On, today: the reminders skip every lesson dated before today, and the weekend.
+  UPDATE "ReportingSettings" SET "teacherReminders" = true, "rektorDigest" = true;
+  IF EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-23')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a lesson from before the switch was reminded of'; END IF;
+  IF EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-26')) OR EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-27')) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348: the weekend was reminded';
+  END IF;
+
+  -- Which week is due: the one that ended on or after the day the switch went on, and written once.
+  IF (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, next_monday)) IS DISTINCT FROM ((next_monday - 7) || ' ' || (next_monday - 1)) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348: the week due on % is %', next_monday, (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, next_monday));
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.reporting_digest_due(school, next_monday - 1 - 7)) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348: a week that ended before the switch was due';
+  END IF;
+
+  -- The notice: to rektor and full alone, with the school's totals and nothing that names anyone.
+  SELECT string_agg(split_part(d.email, '@', 1), ', ' ORDER BY d.email), jsonb_agg(DISTINCT d.meta)
+    INTO who, metas FROM app.reporting_digest(school, '2026-09-14', '2026-09-20') d;
+  PERFORM pg_temp.rg_expect('348 recipients', who, 'rg-full, rg-rektor');
+  IF metas <> '[{"held": 4, "reported": 2, "teachers": 3, "periodEnd": "2026-09-20", "periodStart": "2026-09-14"}]'::jsonb THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348: the notice says %', metas;
+  END IF;
+  IF metas::text ~* '(lärare|rg-|@|rapportering)' THEN RAISE EXCEPTION 'rapporteringsgrad 348: the notice names someone or something: %', metas; END IF;
+  SELECT * INTO led FROM "ReportingDigests";
+  IF led."periodStart" <> '2026-09-14' OR led."periodEnd" <> '2026-09-20' OR led.recipients <> 2 OR led.teachers <> 3 OR led.held <> 4 OR led.reported <> 2 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348: the ledger says %', led;
+  END IF;
+  -- Written once: the same week again says nothing, and writes nothing.
+  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-09-14', '2026-09-20')) OR (SELECT count(*) FROM "ReportingDigests") <> 1 THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348: the same week was told twice';
+  END IF;
+
+  -- A week with no held lesson is entered and told to nobody; entered, it is not asked again.
+  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-09-21', '2026-09-27')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: an empty week was told'; END IF;
+  SELECT * INTO led FROM "ReportingDigests" WHERE "periodEnd" = '2026-09-27';
+  IF led.recipients <> 0 OR led.held <> 0 OR led.reported <> 0 OR led.teachers <> 0 THEN RAISE EXCEPTION 'rapporteringsgrad 348: the empty week''s ledger row says %', led; END IF;
+
+  -- A rektor who has left is not told; the full administrator still is.
+  UPDATE "Users" SET "isActive" = false WHERE email = 'rg-rektor@example.invalid';
+  PERFORM pg_temp.rg_lesson('2026-10-01', 8, ARRAY[t1], ARRAY['PRESENT']);
+  PERFORM pg_temp.rg_compute('2026-10-04');
+  SELECT string_agg(split_part(d.email, '@', 1), ', ' ORDER BY d.email) INTO who FROM app.reporting_digest(school, '2026-09-28', '2026-10-04') d;
+  PERFORM pg_temp.rg_expect('348 recipients, one has left', who, 'rg-full');
+
+  -- Off again: nothing is told, and no ledger row is written for the week.
+  UPDATE "ReportingSettings" SET "rektorDigest" = false;
+  PERFORM pg_temp.rg_lesson('2026-10-06', 8, ARRAY[t1], ARRAY['PRESENT']);
+  PERFORM pg_temp.rg_compute('2026-10-11');
+  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-10-05', '2026-10-11')) OR EXISTS (SELECT 1 FROM "ReportingDigests" WHERE "periodEnd" = '2026-10-11') THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348: a switch that is off was told';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.reporting_digest_due(school, next_monday + 7)) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a notice was due with the switch off'; END IF;
+  -- The reminders' switch is its own: the notice off, the reminders still on.
+  UPDATE "ReportingSettings" SET "teacherReminders" = false;
+  IF EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-23')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a switch that is off reminded'; END IF;
+END $$;
+ROLLBACK;

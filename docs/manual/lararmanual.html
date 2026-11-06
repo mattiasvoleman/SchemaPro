@@ -54,6 +54,7 @@
       <li><span>4.3 Snabbaste arbetssättet</span><span class="dots"></span><span class="pg" data-pg="s43"></span></li>
       <li><span>4.4 Ledighetsansökningar som mentor</span><span class="dots"></span><span class="pg" data-pg="s44"></span></li>
       <li><span>4.5 Frånvarobevakning som mentor</span><span class="dots"></span><span class="pg" data-pg="s45"></span></li>
+      <li><span>4.6 Öppna lektioner och din rapporteringsgrad</span><span class="dots"></span><span class="pg" data-pg="s46"></span></li>
     </ol>
     <li><span>5 · Boka lokal</span><span class="dots"></span><span class="pg" data-pg="ch5"></span></li>
     <li><span>6 · Notiser</span><span class="dots"></span><span class="pg" data-pg="ch6"></span></li>
@@ -533,6 +534,58 @@
       med eleven att göra.
     </p>
   </div>
+
+  <h3 id="s46"><span class="num">4.6</span>Öppna lektioner och din rapporteringsgrad</h3>
+  <p>
+    Under <span class="path">Min rapportering</span> i menyn ser du lektioner
+    där ingen har sparat närvaron, och hur stor del av dina lektioner som har
+    fått sitt register sparat. Sidan är bara din: ingen annan lärare ser den.
+  </p>
+  <p>
+    <strong>Räkningen börjar första natten</strong> efter att Rastra har
+    uppdaterats för er skola, och den är på för alla skolor. Den första
+    körningen räknar de senaste 90 dagarna, så din rapporteringsgrad finns
+    redan första morgonen. <strong>Rektor, fullständig administratör,
+    expedition, schemaläggare och läsare</strong>, alltså alla
+    administratörsprofiler, ser varje lärares andel (6.13 i
+    användarmanualen), och varje sådan läsning skrivs i skolans läslogg. Du ser
+    din egen. Elever och vårdnadshavare ser ingenting.
+  </p>
+  <p>
+    <strong>Öppna lektioner</strong> listar de senaste 30 dagarnas lektioner
+    som du står på och som du inte sparat något register för, de äldsta först.
+    Klicka på en rad för att öppna registret (4.1) och spara det. En lektion
+    märkt <span class="ui">Öppen för länge</span> har väntat lika många dagar
+    som skolans gräns, eller fler. Gränsen står på sidan. Du kan spara ett register i efterhand, och graden
+    flyttas vid nästa natts körning.
+  </p>
+  <p>
+    <strong>Min rapporteringsgrad</strong> visar den här veckan, den här månaden
+    och läsåret: hur många av dina hållna lektioner som har ett sparat register.
+    Siffrorna räknas varje natt till och med i går.
+  </p>
+  <table>
+    <thead><tr><th style="width:36%">Lektionen</th><th>Räknas för dig?</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Hållen lektion, register sparat</td><td>Ja, som rapporterad. Det räcker att en elev fått en markering som inte är <em>Okänd</em>.</td></tr>
+      <tr><td class="k">Hållen lektion, inget sparat</td><td>Ja, som öppen.</td></tr>
+      <tr><td class="k">Inställd lektion</td><td>Aldrig, inte heller om du hunnit registrera.</td></tr>
+      <tr><td class="k">Ersättningslektion</td><td>Ja, om du är ansvarig lärare för den.</td></tr>
+      <tr><td class="k">Lektion du vikarierar på</td><td>Ja, för de lektioner du tagit. Läraren du ersätter räknas inte för dem.</td></tr>
+      <tr><td class="k">Lektion när du själv är frånvarande</td><td>Nej, så länge frånvaron gäller.</td></tr>
+      <tr><td class="k">Lektion med flera lärare</td><td>Ja, för alla på lektionen. Sparar en av er registret är lektionen rapporterad för båda.</td></tr>
+      <tr><td class="k">Lektion utan en enda elev på listan</td><td>Nej. Ingen kan få en markering där (klassen räknas både som den är nu och som den var lektionens dag, så ett läsårsskifte ändrar inget i efterhand), och därför står den varken som öppen eller som hållen. Har ett register redan sparats räknas den som rapporterad.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Skolan kan slå på en <strong>påminnelse</strong>: när en lektion stått öppen
+    längre än gränsen får du en notis (och e-post och push, om du valt det) med
+    antalet <em>nya</em> lektioner som passerat gränsen sedan förra notisen;
+    äldre öppna lektioner kan finnas kvar, och de står alla på sidan Min
+    rapportering. Påminnelsen nämner inget ämne och ingen klass. Du kan
+    stänga av e-post och push för den under Inställningar. Den är avstängd tills
+    skolan slår på den, så den kanske inte finns hos er.
+  </p>
 </section>
 
 <!-- ============================ 5 ============================ -->
@@ -600,6 +653,7 @@
       <tr><td class="k">Rastvaktspasset är avbokat</td><td>Du behöver inte ta passet. Det försvinner ur ditt schema.</td></tr>
       <tr><td class="k">Lektionen har flyttat till en annan sal</td><td>Notera den nya salen. Salen i schemat är alltid den aktuella.</td></tr>
       <tr><td class="k">Din bokning godkändes eller avslogs</td><td>Vid avslag: boka en annan lokal eller tid.</td></tr>
+      <tr><td class="k">Lektioner väntar på närvaro</td><td>Skolan har slagit på påminnelser, och några av dina lektioner har stått utan sparat register längre än skolans gräns. Öppna <span class="path">Min rapportering</span> och spara registren. Se 4.6.</td></tr>
       <tr><td class="k">Ny ledighetsansökan väntar på ditt beslut</td><td>Du är elevens mentor och ansökan är så kort att rektor har delegerat beslutet till dig. Se 4.4.</td></tr>
     </tbody>
   </table>

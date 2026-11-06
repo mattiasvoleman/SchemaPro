@@ -77,6 +77,8 @@ describe('loadConfiguration', () => {
       coverRequests: { background: true },
       // Unset: the nightly absence watch ticks (and watches no school until its administrator turns it on).
       absenceWatch: { background: true },
+      // Unset: the nightly reporting rate ticks (it counts every school; only the reminders and the weekly notice are switches).
+      reportingRate: { background: true },
       // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
       candidates: { maxSeconds: 30, runsMax: 2, solverWorkers: 4, background: true },
     });
@@ -107,6 +109,12 @@ describe('loadConfiguration', () => {
     expect(loadConfiguration(env({ ABSENCE_WATCH_BACKGROUND: 'off' })).absenceWatch.background).toBe(false);
     expect(loadConfiguration(env({ ABSENCE_WATCH_BACKGROUND: 'on' })).absenceWatch.background).toBe(true);
     expect(loadConfiguration(env({})).absenceWatch.background).toBe(true);
+  });
+
+  it('turns the reporting rate tick off only for REPORTING_RATE_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ REPORTING_RATE_BACKGROUND: 'off' })).reportingRate.background).toBe(false);
+    expect(loadConfiguration(env({ REPORTING_RATE_BACKGROUND: 'on' })).reportingRate.background).toBe(true);
+    expect(loadConfiguration(env({})).reportingRate.background).toBe(true);
   });
 
   it('turns push on only for PUSH_NOTIFICATIONS=expo, with the token when set and the URL without its trailing slash', () => {

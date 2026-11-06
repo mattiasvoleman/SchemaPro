@@ -109,6 +109,10 @@ enum NotificationType {
   COVER_REQUEST_CLOSED
   /// A week's or month's count of pupils over the school's absence limits: only numbers, to a mentor, rektor, kansli or guardian (20261231090000).
   ABSENCE_WATCH_DIGEST
+  /// A teacher's lessons that stood open longer than the school's limit: a count and the limit, to the teacher (20270112090000).
+  LESSON_REPORT_REMINDER
+  /// Last week's share of held lessons with a saved register in the school as a whole: only numbers, to rektor (20270112090000).
+  REPORTING_RATE_DIGEST
 }
 
 /// A decision on an absent rastvakt's pass (20261210090000).
@@ -265,6 +269,10 @@ model School {
   absenceWatchLimits      AbsenceWatchLimit[]
   absenceWatchFindings    AbsenceWatchFinding[]
   absenceWatchDigests     AbsenceWatchDigest[]
+  reportingSettings       ReportingSetting?
+  teacherReportingDays    TeacherReportingDay[]
+  reportingReminders      ReportingReminder[]
+  reportingDigests        ReportingDigest[]
   absenceReports          AbsenceReport[]
   leaveRequests           LeaveRequest[]
   notifications           Notification[]
@@ -421,6 +429,9 @@ model User {
   studentLinks        GuardianStudent[] @relation("StudentSide")
   /// The limits this pupil has passed (Frånvarobevakning, 20261231090100).
   absenceWatchFindings AbsenceWatchFinding[] @relation("AbsenceWatchStudent")
+  /// A teacher's held and reported lessons per day, and the lessons they were reminded of (Rapporteringsgrad, 20270112090100).
+  reportingDays       TeacherReportingDay[] @relation("ReportingTeacher")
+  reportingReminders  ReportingReminder[]   @relation("ReportingTeacher")
   absenceReports      AbsenceReport[]   @relation("AbsenceStudent")
   reportedAbsences    AbsenceReport[]   @relation("AbsenceReporter")
   leaveRequests       LeaveRequest[]    @relation("LeaveStudent")
@@ -5230,4 +5241,93 @@ model AbsenceWatchDigest {
 
   @@id([schoolId, recipientGroup, periodEnd])
   @@map("AbsenceWatchDigests")
+}
+
+// -----------------------------------------------------------------------------
+// Rapporteringsgrad (20270112090100)
+// -----------------------------------------------------------------------------
+
+/// Whether the school's reminders and the rektor's weekly notice are on (both
+/// off until an administrator who writes Drift turns them on), and the limit:
+/// how many calendar days a register may wait before a lesson counts as open too
+/// long. One row per school; no row = both off and two days. The two *On dates
+/// are the trigger's: the school's date each switch last went on.
+model ReportingSetting {
+  schoolId           String    @id @db.Uuid
+  teacherReminders   Boolean   @default(false)
+  teacherRemindersOn DateTime? @db.Date
+  rektorDigest       Boolean   @default(false)
+  rektorDigestOn     DateTime? @db.Date
+  openAfterDays      Int       @default(2) @db.SmallInt
+  updatedAt          DateTime  @default(now()) @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@map("ReportingSettings")
+}
+
+/// A teacher's day: how many held lessons they had and how many of them have a
+/// saved register (app.reporting_lessons says which lessons those are). Written
+/// by app.reporting_compute and nothing else, for the last 90 days every night;
+/// read only through the gateway, which records the read of other people's rows.
+/// Personal data: gallring takes it with the attendance (ATTENDANCE). Not
+/// visible here, and load-bearing: the check that ties reported to held.
+model TeacherReportingDay {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String   @db.Uuid
+  teacherId String   @db.Uuid
+  day       DateTime @db.Date
+  held      Int
+  reported  Int
+  changedAt DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  school  School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teacher User   @relation("ReportingTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  /// One row per teacher and day: the ON CONFLICT of app.reporting_compute, and
+  /// the foreign key's index.
+  @@unique([teacherId, schoolId, day], map: "TeacherReportingDays_teacherId_schoolId_day_key")
+  /// The rektor's view of a period, and gallring's predicate.
+  @@index([schoolId, day])
+  @@map("TeacherReportingDays")
+}
+
+/// The lessons a teacher was already reminded of, so that none is reminded of
+/// twice. The lesson is an id with no key, on purpose; the row is cleared after
+/// 60 days by app.reporting_remind. No arm reads it: only that function does.
+model ReportingReminder {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String   @db.Uuid
+  teacherId        String   @db.Uuid
+  calendarLessonId String   @db.Uuid
+  lessonDate       DateTime @db.Date
+  remindedAt       DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  school  School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teacher User   @relation("ReportingTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([calendarLessonId, teacherId], map: "ReportingReminders_lesson_teacher_key")
+  /// Removing a person finds the reminders that name them.
+  @@index([teacherId, schoolId])
+  /// The clearing's and gallring's predicate.
+  @@index([schoolId, lessonDate])
+  @@map("ReportingReminders")
+}
+
+/// The ledger of written weekly notices: one row per school and week end, so a
+/// notice is written once. Counts only.
+model ReportingDigest {
+  schoolId    String   @db.Uuid
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+  composedAt  DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  recipients  Int
+  teachers    Int
+  held        Int
+  reported    Int
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@id([schoolId, periodEnd])
+  @@map("ReportingDigests")
 }

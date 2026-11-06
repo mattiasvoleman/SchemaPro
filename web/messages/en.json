@@ -223,7 +223,9 @@
     "calendarFeeds": "Calendar subscriptions",
     "classBook": "Class book",
     "scheduleExchange": "Schedule as a file",
-    "absenceWatch": "Absence watch"
+    "absenceWatch": "Absence watch",
+    "reportingRate": "Reporting rate",
+    "myReporting": "My reporting"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -2332,6 +2334,8 @@
     "unreadMarker": "Unread.",
     "absenceWatchDigest": "Absence summary {from} – {to}: {open, plural, =0 {no pupil is over a limit} one {# pupil is over a limit} other {# pupils are over a limit}}, {crossed, plural, =0 {none passed a limit} one {# passed a limit} other {# passed a limit}} in the period. See Absence watch.",
     "absenceWatchDigestGuardian": "Absence summary {from} – {to}: {open, plural, =0 {{crossed, plural, one {one of your children is} other {# of your children are}} under an absence limit again} one {one of your children has absence over a limit the school has set} other {# of your children have absence over a limit the school has set}}. See Absence watch.",
+    "lessonReportReminder": "{count, plural, one {# new lesson was held} other {# new lessons were held}} at least {limitDays, plural, one {# day} other {# days}} ago with no saved register. Older open lessons may remain. See My reporting.",
+    "reportingRateDigest": "Reporting rate {from} – {to}: {reported, number} of {held, plural, one {# lesson held} other {# lessons held}} had a saved register. See Reporting rate.",
     "cover": {
       "COVER_REQUESTED": "Can you substitute? {count, plural, one {One lesson} other {# lessons}} from {when}.",
       "COVER_REQUEST_CLOSED": "{reason, select, TAKEN {The request to substitute from {when} is filled: a colleague said yes first.} NOT_NEEDED {The request to substitute from {when} is no longer needed. You need not answer.} UNANSWERED {Nobody said yes to the request from {when}. {count, plural, one {The lesson still needs} other {The lessons still need}} a substitute.} other {The request to substitute from {when} is withdrawn. You need not answer.}}",
@@ -5979,7 +5983,9 @@
       "COVER_REQUESTED": "Requests to substitute",
       "COVER_REQUEST_CLOSED": "Requests filled, withdrawn or run out unanswered",
       "COVER_REQUEST_ACCEPTED": "Colleagues who said yes to my request",
-      "ABSENCE_WATCH_DIGEST": "Absence summary"
+      "ABSENCE_WATCH_DIGEST": "Absence summary",
+      "LESSON_REPORT_REMINDER": "Reminders about open lessons",
+      "REPORTING_RATE_DIGEST": "Weekly reporting-rate note"
     },
     "loadFailed": "Your choices could not be loaded",
     "loadFailedHint": "Nothing has changed in what is sent to you. Reload the page in a moment."
@@ -7406,6 +7412,105 @@
       "REMOVED": {
         "MANUAL": "the mark by hand removed by {who}",
         "SS12000": "the register's mark removed by {who}"
+      }
+    }
+  },
+  "reportingRate": {
+    "title": "Reporting rate",
+    "subtitle": "The share of the lessons held that have a saved register, per teacher",
+    "intro": "A register is saved once at least one pupil has a mark. Cancelled lessons do not count, nor do lessons with no pupil on the list or while the teacher is absent, and only active teachers are shown. The count runs every night, for the days up to and including yesterday.",
+    "percent": "{percent}%",
+    "retry": "Try again",
+    "loadFailed": "The reporting rate could not be loaded",
+    "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment.",
+    "updatedThrough": "Updated through {date}",
+    "notCountedYet": "No day has been counted yet. The count runs every night.",
+    "period": {
+      "label": "Period",
+      "WEEK": "Week",
+      "MONTH": "Month",
+      "YEAR": "School year",
+      "previous": {
+        "WEEK": "Previous week",
+        "MONTH": "Previous month",
+        "YEAR": "Previous school year"
+      },
+      "next": {
+        "WEEK": "Next week",
+        "MONTH": "Next month",
+        "YEAR": "Next school year"
+      },
+      "current": "Today",
+      "none": "No school year",
+      "weekNumber": "Week {week}",
+      "yearName": "School year {name}"
+    },
+    "noYear": {
+      "title": "There is no school year for this day",
+      "body": "Choose a week or a month, or go to today."
+    },
+    "kpi": {
+      "share": "The school's reporting rate",
+      "noLessons": "No lessons held",
+      "shareDetail": "{reported} of {held} lessons",
+      "held": "Lessons held",
+      "open": "Open lessons"
+    },
+    "table": {
+      "title": "Teachers",
+      "caption": "Reporting rate per teacher",
+      "sortedBy": "Sorted by {column}, {direction, select, asc {ascending} other {descending}}",
+      "column": {
+        "teacher": "Teacher",
+        "held": "Held",
+        "reported": "Reported",
+        "open": "Open",
+        "share": "Reporting rate"
+      }
+    },
+    "empty": {
+      "title": "No lessons held in the period",
+      "body": "Teachers with at least one lesson held in the period are listed here. Choose another period if you expected more."
+    },
+    "settings": {
+      "title": "Reminders and weekly note",
+      "description": "Both are off until you turn them on. The notices hold only a count and a period, never a name, a subject or a class.",
+      "remindersLabel": "Remind teachers about open lessons",
+      "remindersOff": "Off. No teacher is reminded.",
+      "remindersOn": "On. A teacher is reminded when a lesson was held at least {days, plural, one {# day} other {# days}} ago and its register is not saved.",
+      "remindersTurnedOn": "The reminders are on.",
+      "remindersTurnedOff": "The reminders are off.",
+      "digestLabel": "Send the head teacher a weekly note",
+      "digestOff": "Off. The head teacher gets no weekly note.",
+      "digestOn": "On. Every Monday the head teacher gets last week's reporting rate for the whole school, as a count of lessons.",
+      "digestTurnedOn": "The weekly note is on.",
+      "digestTurnedOff": "The weekly note is off.",
+      "openAfterLabel": "Open for long after",
+      "openAfterOption": "{days, plural, one {# day} other {# days}}",
+      "openAfterHint": "Calendar days after the lesson: a lesson held that many days ago or more is open for long. The limit applies to the reminder and to the Open for long mark on the teacher's page. Reminders are not sent on weekends, and never for lessons older than 30 days.",
+      "openAfterSaved": "The limit is saved.",
+      "loadFailed": "The settings could not be loaded",
+      "loadFailedHint": "Nothing has changed. Reload the page in a moment."
+    },
+    "teacher": {
+      "title": "My reporting",
+      "subtitle": "Your open lessons and the share you have registered",
+      "intro": "A register is saved once at least one pupil has a mark. If a colleague on the same lesson saved it, it counts for you too. Cancelled lessons, lessons with no pupil on the list and time when you are absent do not count.",
+      "loadFailed": "Your reporting could not be loaded",
+      "loadFailedHint": "Nothing has changed. Reload the page in a moment.",
+      "open": {
+        "title": "Open lessons",
+        "description": "Lessons from the last 30 days where nobody has saved a register, oldest first. A lesson held at least {days, plural, one {# day} other {# days}} ago is marked Open for long.",
+        "listLabel": "Your open lessons",
+        "summary": "{count, plural, one {# open lesson} other {# open lessons}}{overdue, plural, =0 {} other {, of which # open for long}}",
+        "overdue": "Open for long",
+        "emptyTitle": "No open lessons",
+        "emptyBody": "All your lessons from the last 30 days have a saved register."
+      },
+      "mine": {
+        "title": "My reporting rate",
+        "listLabel": "Your reporting rate per period",
+        "figures": "{reported} of {held} lessons"
       }
     }
   }

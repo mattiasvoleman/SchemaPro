@@ -103,6 +103,26 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
         ? t('notifications.text.absenceWatchDigestOpen', { span, count: open, crossed })
         : t('notifications.text.absenceWatchDigestBack', { span, count: crossed });
     }
+    case 'LESSON_REPORT_REMINDER': {
+      // Rapporteringsgrad: how many lessons stand open and the school's limit,
+      // never which lesson, its subject, its class or its time. The count is
+      // the teacher's own and is of the lessons that crossed the limit since
+      // the last notice ("new": older ones may remain), so it may be said;
+      // where to save the register is the attendance tab.
+      const count = Math.max(0, Math.trunc(Number(meta['count'])) || 0);
+      const limitDays = Math.max(0, Math.trunc(Number(meta['limitDays'])) || 0);
+      return t('notifications.text.lessonReportReminder', {
+        count,
+        limit: t('notifications.text.lessonReportLimit', { count: limitDays }),
+      });
+    }
+    case 'REPORTING_RATE_DIGEST': {
+      // The rektor's weekly note: the week it concerns and nothing else. The
+      // share, the lessons and the teachers are read on the web, behind the
+      // login; a lock screen shows no figure of the school's.
+      const day = (key: string): string => (/^\d{4}-\d{2}-\d{2}/.test(str(key)) ? formatShortDate(str(key).slice(0, 10), locale) : str(key));
+      return t('notifications.text.reportingRateDigest', { span: `${day('periodStart')} – ${day('periodEnd')}` });
+    }
     case 'LESSON_ROOM_CHANGED':
       return t('notifications.text.lessonRoomChanged', { subject: str('subjectName'), when: when('startsAt') });
     case 'SCHEDULE_CHANGED':
