@@ -994,6 +994,8 @@ describe('StudentGroupsService', () => {
         CalendarRasts: 4,
         TimplanCredits: 1,
         PublicTimetableLinks: 2,
+        // The mark that hides a group from Schemavisaren is counted with the group's links (20270118090000).
+        PublicTimetableHidden: 1,
         StudentEnrollments: 25,
         TeacherDuties: 1,
       };
@@ -1088,7 +1090,7 @@ describe('StudentGroupsService', () => {
             lunchSittings: 5,
             calendarBreaks: 10,
             timplanCredits: 1,
-            publicLinks: 2,
+            publicLinks: 3,
             successors: 1,
             attendanceMarks: 1000,
             lessonLogs: 9,
@@ -1170,7 +1172,7 @@ describe('StudentGroupsService', () => {
         const dryRunCounts = {
           halves: 0, homePupils: 12, memberships: 30, requirements: 4, masterLessons: 7, sharedLessons: 3,
           calendarLessons: 200, availabilityConstraints: 3, lunchSittings: 5, calendarBreaks: 10, timplanCredits: 1,
-          publicLinks: 2, successors: 1, attendanceMarks: 1000, lessonLogs: 9, enrolments: 25, mentorDuties: 1, fromSource: 0,
+          publicLinks: 3, successors: 1, attendanceMarks: 1000, lessonLogs: 9, enrolments: 25, mentorDuties: 1, fromSource: 0,
         };
 
         it('deletes when nothing grew since the dry run, and answers no counts', async () => {
