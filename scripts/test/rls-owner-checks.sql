@@ -1043,7 +1043,7 @@ BEGIN
   PERFORM pg_temp.rgo_expect('346o ended', (SELECT count(*)::text FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', starts + interval '50 minutes')), '1');
   PERFORM pg_temp.rgo_expect('346o not on the day', (SELECT count(*)::text FROM app.reporting_lessons(school, '2026-09-16', '2026-09-30', now())), '0');
   PERFORM pg_temp.rgo_expect('346o the other school', (SELECT count(*)::text FROM app.reporting_lessons(other, '2026-09-15', '2026-09-15', now())), '0');
-  PERFORM pg_temp.rgo_expect('346o what a row says', (SELECT teacher_active::text || ' ' || reported::text FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), 'true false');
+  PERFORM pg_temp.rgo_expect('346o what a row says', (SELECT reported::text FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), 'false');
 
   -- A teacher of another school stands on a lesson of this one (the key to the teacher is a single column):
   -- the lesson is not theirs to report here, and the night does not stop for it.
@@ -1054,6 +1054,12 @@ BEGIN
     RAISE EXCEPTION 'rapporteringsgrad 346o: a teacher of another school has a day here';
   END IF;
   PERFORM pg_temp.rgo_expect('346o the days beside a stranger', (SELECT string_agg(day || ' ' || reported || '/' || held, ', ') FROM "TeacherReportingDays" WHERE "schoolId" = school), '2026-09-15 0/1');
+
+  -- A row that puts a teacher of this school on the lesson under another school's id (the key to the lesson is a
+  -- single column, so the database takes it): the lesson's own school decides, and the row is no one's here.
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (other, l, t2, 'ASSISTANT');
+  PERFORM pg_temp.rgo_expect('346o a row of another school', (SELECT string_agg(teacher_id::text, ',' ORDER BY teacher_id) FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), t1::text);
+  DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = l AND "schoolId" = other;
 
   -- The window is 90 days up to and including the day asked for: a day inside it with no lesson is removed,
   -- one before it is final and stays as it was.
@@ -1227,6 +1233,58 @@ BEGIN
   PERFORM pg_temp.rgo_expect('348o not listed with a lesson 91 days back', (SELECT count(*)::text FROM app.reporting_schools() s WHERE s = school), '0');
   PERFORM pg_temp.rgo_lesson(school, (now() AT TIME ZONE 'Europe/Stockholm')::date - 90, 8, ARRAY[t1]);
   PERFORM pg_temp.rgo_expect('348o listed with a lesson 90 days back', (SELECT count(*)::text FROM app.reporting_schools() s WHERE s = school), '1');
+END $$;
+ROLLBACK;
+
+-- 348o, the weekly notice: only for a whole week that is over, Monday to Sunday in the school's dates. The
+-- ledger's row for a week stops the real notice of it, so a week to come, a stretch that is no week, and a
+-- school that is not there are refused, and write nothing.
+BEGIN;
+CREATE FUNCTION pg_temp.rgo_digest_state(p_school uuid, p_start date, p_end date) RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM app.reporting_digest(p_school, p_start, p_end);
+  RETURN 'accepted';
+EXCEPTION WHEN OTHERS THEN
+  RETURN SQLSTATE;
+END $$;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school');
+  monday date := (now() AT TIME ZONE 'Europe/Stockholm')::date - (extract(isodow FROM (now() AT TIME ZONE 'Europe/Stockholm')::date)::integer - 1);
+  zone text;
+  sunday date;
+BEGIN
+  INSERT INTO "ReportingSettings" ("schoolId", "rektorDigest") VALUES (school, true);
+  PERFORM pg_temp.rgo_expect('348o this week', pg_temp.rgo_digest_state(school, monday, monday + 6), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o next week', pg_temp.rgo_digest_state(school, monday + 7, monday + 13), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o a Tuesday to a Monday', pg_temp.rgo_digest_state(school, monday - 6, monday), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o eight days', pg_temp.rgo_digest_state(school, monday - 14, monday - 7), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o six days', pg_temp.rgo_digest_state(school, monday - 14, monday - 9), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o the end before the start', pg_temp.rgo_digest_state(school, monday - 7, monday - 14), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o no start', pg_temp.rgo_digest_state(school, NULL, monday - 1), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o no end', pg_temp.rgo_digest_state(school, monday - 7, NULL), 'RR400');
+  PERFORM pg_temp.rgo_expect('348o no such school', pg_temp.rgo_digest_state(gen_random_uuid(), monday - 7, monday - 1), 'RR404');
+  -- On a Sunday the week that ends today is not over yet, and the day before is. The clock is the database's own,
+  -- so a school's timezone finds the Sunday: one of these zones has one whenever it is a Saturday, Sunday or
+  -- Monday somewhere in the world (the other days of the week cannot reach the edge, and then nothing is asked).
+  FOR zone IN SELECT unnest(ARRAY['Etc/GMT+12', 'Europe/Stockholm', 'Pacific/Kiritimati']) LOOP
+    sunday := (clock_timestamp() AT TIME ZONE zone)::date;
+    IF extract(isodow FROM sunday) = 7 THEN
+      UPDATE "Schools" SET "timezone" = zone WHERE "id" = school;
+      PERFORM pg_temp.rgo_expect('348o the Sunday itself, in ' || zone, pg_temp.rgo_digest_state(school, sunday - 6, sunday), 'RR400');
+      PERFORM pg_temp.rgo_expect('348o the Sunday before, in ' || zone, pg_temp.rgo_digest_state(school, sunday - 13, sunday - 7), 'accepted');
+      DELETE FROM "ReportingDigests" WHERE "schoolId" = school;
+      UPDATE "Schools" SET "timezone" = 'Europe/Stockholm' WHERE "id" = school;
+      EXIT;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM "ReportingDigests" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'rapporteringsgrad 348o: a refused week wrote a ledger row';
+  END IF;
+  -- The week that is over: accepted, and entered once.
+  PERFORM pg_temp.rgo_expect('348o last week', pg_temp.rgo_digest_state(school, monday - 7, monday - 1), 'accepted');
+  PERFORM pg_temp.rgo_expect('348o last week, entered', (SELECT "periodStart"::text FROM "ReportingDigests" WHERE "schoolId" = school), (monday - 7)::text);
+  PERFORM pg_temp.rgo_expect('348o a week long ago', pg_temp.rgo_digest_state(school, '2026-09-14', '2026-09-20'), 'accepted');
 END $$;
 ROLLBACK;
 

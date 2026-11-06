@@ -53,6 +53,7 @@ import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-
 import { CalendarLessonsService } from '../../src/calendar/calendar-lessons.service';
 import { CoverService } from '../../src/cover/cover.service';
 import type { PrismaService } from '../../src/database/prisma.service';
+import { sqlStateOf } from '../../src/integration/ss12000-sync/errors';
 import { JobRunner } from '../../src/jobs/job-runner';
 import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
 import type { OutboxEntry } from '../../src/notifications/notification-outbox';
@@ -150,21 +151,27 @@ export async function reportingRateChecks(owner: Client, api: PrismaService, mar
     const service = new ReportingRateService(api);
 
     /** A lesson of one hour from `hour` (local) on `date` for a teacher, as publish leaves it, with a master. */
-    const lesson = async (date: string, hour: number, teachers: AuthenticatedUser[], opts: { status?: string; cause?: string; subjectId?: string } = {}): Promise<string> => {
+    const lesson = async (
+      date: string,
+      hour: number,
+      teachers: AuthenticatedUser[],
+      opts: { status?: string; cause?: string; subjectId?: string; groupId?: string } = {},
+    ): Promise<string> => {
       const subjectId = opts.subjectId ?? matte;
+      const groupId = opts.groupId ?? group;
       const id = (
         await one<{ id: string }>(
           `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "cancelCause", "updatedAt")
            VALUES ($1, $2, $3, $4::date, ($4::date + make_time($5::int, 0, 0)) AT TIME ZONE 'Europe/Stockholm',
                    ($4::date + make_time($5::int, 50, 0)) AT TIME ZONE 'Europe/Stockholm', $6::"LessonStatus", $7::"LessonCancelCause", now()) RETURNING id`,
-          [s, subjectId, group, date, hour, opts.status ?? 'SCHEDULED', opts.cause ?? null],
+          [s, subjectId, groupId, date, hour, opts.status ?? 'SCHEDULED', opts.cause ?? null],
         )
       ).id;
       const master = (
         await one<{ id: string }>(
           `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
            VALUES ($1, $2, $3, $4, $5, extract(isodow FROM $6::date)::int, make_time($7::int, 0, 0), make_time($7::int, 50, 0), now()) RETURNING id`,
-          [s, year.id, subjectId, group, teachers[0]?.userId ?? null, date, hour],
+          [s, year.id, subjectId, groupId, teachers[0]?.userId ?? null, date, hour],
         )
       ).id;
       await owner.query(`UPDATE "CalendarLessons" SET "masterLessonId" = $2 WHERE id = $1`, [id, master]);
@@ -535,6 +542,61 @@ export async function reportingRateChecks(owner: Client, api: PrismaService, mar
       const autumn2 = await service.overview({ period: 'WEEK', anchor: '2026-10-26' }, admin);
       assert.deepEqual([autumn1.from, autumn1.to, autumn2.from, autumn2.to], ['2026-10-19', '2026-10-25', '2026-10-26', '2026-11-01']);
       assert.deepEqual([names(autumn1), names(autumn2)], [['Dag 1/1'], ['Dag 0/1']]);
+    });
+
+    await check('(ri) who counts: a class nobody is in, a teacher who has left and an administrator on a lesson are no one\'s; a week that is not over is refused', async () => {
+      // Three days back, a lesson of Fia's in a class with pupils and one in a class with none; a teacher who has since left
+      // and an administrator, each on a lesson of the class with pupils.
+      const empty = (
+        await one<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES ($1, $2, 'RP7B', 'CLASS', 7, now()) RETURNING id`,
+          [s, year.id],
+        )
+      ).id;
+      const fia = await person('TEACHER', 'Fia');
+      const gunnar = await person('TEACHER', 'Gunnar');
+      await owner.query(`UPDATE "Users" SET "isActive" = false WHERE id = $1`, [gunnar.userId]);
+      const d3 = await dayOf(today, -3);
+      const held = await lesson(d3, 10, [fia]);
+      const nobodys = await lesson(d3, 11, [fia], { groupId: empty });
+      await lesson(d3, 12, [gunnar]);
+      await lesson(d3, 13, [admin]);
+      // The register that was saved before the class emptied stays a register.
+      const saved = await lesson(d3, 14, [fia], { groupId: empty });
+      await mark(saved);
+
+      const mine = await service.mine(fia);
+      const ids = mine.open.map((item) => item.lessonId);
+      assert.ok(ids.includes(held), 'a held lesson of a class with pupils is not open');
+      assert.ok(!ids.includes(nobodys), 'a lesson nobody can be marked on is open');
+      assert.ok(!ids.includes(saved), 'a saved register is open');
+
+      const yesterday = await dayOf(today, -1);
+      await api.withDeliveryService((tx) => tx.$queryRaw`SELECT * FROM app.reporting_compute(${s}::uuid, ${yesterday}::date)`);
+      const days = await rows<{ who: string; held: number; reported: number }>(
+        `SELECT u."firstName" AS who, d.held, d.reported FROM "TeacherReportingDays" d JOIN "Users" u ON u.id = d."teacherId"
+          WHERE d."schoolId" = $1 AND d.day = $2::date AND u."firstName" IN ('Fia', 'Gunnar', 'Admin') ORDER BY u."firstName"`,
+        [s, d3],
+      );
+      assert.deepEqual(days, [{ who: 'Fia', held: 2, reported: 1 }], 'the day counts the lesson of the class with pupils and the saved register, and no one else');
+
+      // The week that is not over is refused with the code the database gives it, through the adapter; a week that is over is told once.
+      const monday = (await one<{ d: string }>(`SELECT date_trunc('week', $1::date)::date::text AS d`, [today])).d;
+      const sunday = await dayOf(monday, 6);
+      const refused = await api
+        .withDeliveryService((tx) => tx.$queryRaw`SELECT * FROM app.reporting_digest(${s}::uuid, ${monday}::date, ${sunday}::date)`)
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      assert.ok(refused, 'the week that is not over was accepted');
+      assert.equal(sqlStateOf(refused), 'RR400', JSON.stringify(refused));
+      assert.equal(await count(`SELECT count(*) AS n FROM "ReportingDigests" WHERE "schoolId" = $1 AND "periodStart" = $2::date`, [s, monday]), 0, 'a refused week left a ledger row');
+      const lastMonday = await dayOf(monday, -7);
+      const lastSunday = await dayOf(monday, -1);
+      await owner.query(`UPDATE "ReportingSettings" SET "rektorDigest" = true WHERE "schoolId" = $1`, [s]);
+      await api.withDeliveryService((tx) => tx.$queryRaw`SELECT * FROM app.reporting_digest(${s}::uuid, ${lastMonday}::date, ${lastSunday}::date)`);
+      assert.equal(await count(`SELECT count(*) AS n FROM "ReportingDigests" WHERE "schoolId" = $1 AND "periodStart" = $2::date`, [s, lastMonday]), 1);
     });
   } finally {
     await sweepReportingRateSchool(owner, marker);

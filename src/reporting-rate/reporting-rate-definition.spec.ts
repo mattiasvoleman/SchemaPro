@@ -104,3 +104,39 @@ describe('a held lesson is defined once: SCHEDULED or COMPLETED', () => {
     });
   });
 });
+
+/**
+ * WHO ATTENDS A LESSON, ASKED TWICE, AND THE TWO ARE ONE.
+ *
+ * A lesson no pupil can be marked on is nobody's: it can never be reported, so
+ * the rate leaves it out (app.reporting_lessons). Which pupils can be marked is
+ * the register's reader (calendar/lesson-roster.ts), TypeScript behind
+ * Prisma, a place no call graph reaches from the SQL. Both ask the active
+ * pupils of the same sources: the class and the groups joined to the lesson,
+ * the members of those groups, and the pupils the lesson names. If the reader
+ * learns a source, or a role, this fails first; the SQL then has to learn it too.
+ */
+describe('who attends a lesson is read the way the register reads it', () => {
+  const body = () => functionBody(migration('20270112090100'), 'app.reporting_lessons');
+
+  it('app.reporting_lessons asks five sources, each for active pupils only', () => {
+    const text = compact(body());
+    const pupil = compact(`p."role" = 'STUDENT' AND p."isActive"`);
+    expect(text.split(pupil)).toHaveLength(6);
+    for (const table of ['Users', 'StudentGroupMembers', 'CalendarLessonGroups', 'CalendarLessonStudents']) {
+      expect(text).toContain(compact(`"public"."${table}"`));
+    }
+  });
+
+  it('a register already saved is a register whatever the roster has become', () => {
+    expect(compact(body())).toContain(compact(`AND (\n r."saved"\n OR EXISTS`));
+  });
+
+  it('the register’s reader asks for the same pupils and reads the same stores', () => {
+    const source = read('src/calendar/lesson-roster.ts');
+    expect(compact(source)).toContain(compact(`const PUPIL = { role: 'STUDENT', isActive: true } as const;`));
+    expect(source).toContain('tx.user.findMany');
+    expect(source).toContain('tx.studentGroupMember.findMany');
+    expect(source).toMatch(/participantIds/);
+  });
+});

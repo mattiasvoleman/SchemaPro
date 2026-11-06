@@ -41525,10 +41525,13 @@ $$;
 
 -- A lesson of 50 minutes from p_hour (local time) on p_day, with the teachers p_teachers
 -- (as LEAD, or in the roles of p_roles) and a mark for the first pupils, one status each in
--- p_marks. Planted the way publish and the register do.
+-- p_marks. Planted the way publish and the register do. Its roster is read from the class
+-- p_group (RG7A, with two active pupils, unless it says otherwise), the groups p_extra joined to
+-- it and the pupils (by e-mail) p_named on it.
 CREATE FUNCTION pg_temp.rg_lesson(p_day date, p_hour integer, p_teachers uuid[] DEFAULT '{}', p_marks text[] DEFAULT '{}',
                                   p_status "LessonStatus" DEFAULT 'SCHEDULED', p_roles text[] DEFAULT NULL,
-                                  p_cause "LessonCancelCause" DEFAULT NULL)
+                                  p_cause "LessonCancelCause" DEFAULT NULL, p_group text DEFAULT 'RG7A',
+                                  p_extra text[] DEFAULT '{}', p_named text[] DEFAULT '{}')
 RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE
   s uuid := app.current_school_id();
@@ -41536,7 +41539,7 @@ DECLARE
   starts timestamptz := (p_day + make_time(p_hour, 0, 0)) AT TIME ZONE 'Europe/Stockholm';
   i integer;
   subj uuid := (SELECT id FROM "Subjects" WHERE "schoolId" = s AND code = 'RGSUBJ');
-  grp uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = s AND name = 'RG7A');
+  grp uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = s AND name = p_group);
   pupils uuid[] := ARRAY(SELECT id FROM "Users" WHERE "schoolId" = s AND role = 'STUDENT' ORDER BY email);
 BEGIN
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "cancelCause", "updatedAt")
@@ -41545,6 +41548,10 @@ BEGIN
     INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role)
     VALUES (s, l, p_teachers[i], coalesce(p_roles[i], 'LEAD')::"TeacherAssignmentRole");
   END LOOP;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId")
+  SELECT s, l, g."id" FROM "StudentGroups" g WHERE g."schoolId" = s AND g."name" = ANY (p_extra);
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId")
+  SELECT s, l, u."id" FROM "Users" u WHERE u."schoolId" = s AND u."email" = ANY (p_named);
   FOR i IN 1..coalesce(cardinality(p_marks), 0) LOOP
     INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
     VALUES (s, l, pupils[i], p_marks[i]::"AttendanceStatus", now());
@@ -41704,6 +41711,7 @@ DECLARE
   t2 uuid := pg_temp.rg_id('rg-t2@example.invalid');
   t3 uuid := pg_temp.rg_id('rg-t3@example.invalid');
   t4 uuid := pg_temp.rg_id('rg-t4@example.invalid');
+  t5 uuid := pg_temp.rg_id('rg-t5@example.invalid');
   d date := '2026-09-15';
   open_one uuid;
   unknown_one uuid;
@@ -41724,13 +41732,14 @@ BEGIN
   PERFORM pg_temp.rg_lesson(d, 14, ARRAY[t2], ARRAY['ABSENT'], 'SCHEDULED', ARRAY['SUBSTITUTE']);  -- the substitute's own
   PERFORM pg_temp.rg_lesson(d, 15, ARRAY[t1, t3], ARRAY['LATE'], 'SCHEDULED', ARRAY['LEAD', 'ASSISTANT']); -- co-taught, saved by either: both
   PERFORM pg_temp.rg_lesson(d, 16, ARRAY[t2, t3]);                                                 -- co-taught, open for both
-  PERFORM pg_temp.rg_lesson(d, 17, ARRAY[t4], ARRAY['PRESENT']);                                   -- a teacher who has since left
+  PERFORM pg_temp.rg_lesson(d, 17, ARRAY[t4], ARRAY['PRESENT']);                                   -- a teacher who has since left: nobody's
+  PERFORM pg_temp.rg_lesson(d, 20, ARRAY[t5], ARRAY['PRESENT']);                                   -- a teacher whose only lesson it is
   PERFORM pg_temp.rg_lesson(d, 18, ARRAY[]::uuid[], ARRAY['PRESENT']);                             -- nobody teaches it: nobody's
 
   PERFORM pg_temp.rg_expect('346 first night', pg_temp.rg_compute('2026-09-30'),
     'written 4, removed 0, teachers 4, held 10, reported 6');
   PERFORM pg_temp.rg_expect('346 the days', pg_temp.rg_days(),
-    E't1 2026-09-15 3/5\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2\nt4 2026-09-15 1/1');
+    E't1 2026-09-15 3/5\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2\nt5 2026-09-15 1/1');
   -- Again: the same rows, so nothing is rewritten.
   PERFORM pg_temp.rg_expect('346 again', pg_temp.rg_compute('2026-09-30'), 'written 0, removed 0, teachers 4, held 10, reported 6');
 
@@ -41741,21 +41750,21 @@ BEGIN
   UPDATE "AttendanceRecords" SET status = 'PRESENT' WHERE "calendarLessonId" = unknown_one AND status = 'UNKNOWN';
   PERFORM pg_temp.rg_expect('346 UNKNOWN made a mark', pg_temp.rg_compute('2026-09-30'), 'written 1, removed 0, teachers 4, held 10, reported 8');
   PERFORM pg_temp.rg_expect('346 the days, late', pg_temp.rg_days(),
-    E't1 2026-09-15 5/5\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2\nt4 2026-09-15 1/1');
+    E't1 2026-09-15 5/5\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2\nt5 2026-09-15 1/1');
   -- A lesson that is cancelled afterwards stops counting, saved or not; and a teacher whose only lesson goes loses the day.
   UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'MANUAL'
    WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'RG7A') AND date = d
      AND "startsAt" = (d + time '08:00') AT TIME ZONE 'Europe/Stockholm';
   UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'MANUAL'
    WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'RG7A') AND date = d
-     AND "startsAt" = (d + time '17:00') AT TIME ZONE 'Europe/Stockholm';
+     AND "startsAt" = (d + time '20:00') AT TIME ZONE 'Europe/Stockholm';
   PERFORM pg_temp.rg_expect('346 cancelled afterwards', pg_temp.rg_compute('2026-09-30'), 'written 1, removed 1, teachers 3, held 8, reported 6');
   PERFORM pg_temp.rg_expect('346 the days, after', pg_temp.rg_days(),
     E't1 2026-09-15 4/4\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2');
   -- Reinstated: back, with the register it had.
   UPDATE "CalendarLessons" SET status = 'SCHEDULED', "cancelCause" = NULL
    WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'RG7A') AND date = d
-     AND "startsAt" = (d + time '17:00') AT TIME ZONE 'Europe/Stockholm';
+     AND "startsAt" = (d + time '20:00') AT TIME ZONE 'Europe/Stockholm';
   PERFORM pg_temp.rg_expect('346 reinstated', pg_temp.rg_compute('2026-09-30'), 'written 1, removed 0, teachers 4, held 9, reported 7');
 
   -- A teacher who is themself away cannot have taken the register: the lesson is not theirs to report while
@@ -41782,7 +41791,7 @@ BEGIN
   PERFORM pg_temp.rg_lesson('2026-09-17', 13, ARRAY[t1]);
   PERFORM pg_temp.rg_compute('2026-09-30');
   PERFORM pg_temp.rg_expect('346 absent teachers', pg_temp.rg_days(),
-    E't1 2026-09-15 4/4\nt1 2026-09-16 1/3\nt1 2026-09-17 0/1\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2\nt3 2026-09-18 0/2\nt4 2026-09-15 1/1');
+    E't1 2026-09-15 4/4\nt1 2026-09-16 1/3\nt1 2026-09-17 0/1\nt2 2026-09-15 1/2\nt3 2026-09-15 1/2\nt3 2026-09-18 0/2\nt5 2026-09-15 1/1');
 
   -- Lov. The week of 21-25 September is a lov: its lessons are cancelled, with registers or without, and give
   -- no rows; the week after loses Monday to Wednesday and keeps Thursday and Friday.
@@ -41876,6 +41885,57 @@ BEGIN
 END $$;
 ROLLBACK;
 -- ---------------------------------------------------------------------------
+-- Section 346, the roster: a lesson no pupil can be marked on is nobody's.
+--
+-- The roster is the register's own (calendar/lesson-roster.ts), the active pupils of the lesson's
+-- class, of the groups joined to it, the members of those groups and the pupils the lesson names.
+-- A lesson with none is neither held nor open nor reported, however long it stands, because the
+-- teacher can do nothing about it; unless its register was saved before the roster emptied, which
+-- stays a register. Every case below is a lesson on the Tuesday 2026-09-22.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.rg_as(pg_temp.rg_auth(1));
+DO $$
+DECLARE
+  t1 uuid := pg_temp.rg_id('rg-t1@example.invalid');
+  d date := '2026-09-22';
+BEGIN
+  -- Nobody on the roster: a class with no pupil, a class whose only pupil has left, a teaching group whose
+  -- members are a pupil who has left and a teacher, a lesson that names a pupil who has left and one that
+  -- names a teacher, and a lesson whose joined groups are two of those.
+  PERFORM pg_temp.rg_lesson(d, 8, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B');
+  PERFORM pg_temp.rg_lesson(d, 9, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7C');
+  PERFORM pg_temp.rg_lesson(d, 10, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7E');
+  PERFORM pg_temp.rg_lesson(d, 11, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-p3@example.invalid']);
+  PERFORM pg_temp.rg_lesson(d, 12, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-t2@example.invalid']);
+  PERFORM pg_temp.rg_lesson(d, 7, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7C', 'RG7E']);        -- groups joined to it that have nobody to list
+  PERFORM pg_temp.rg_expect('346r nobody on the roster', pg_temp.rg_compute('2026-09-30'),
+    'written 0, removed 0, teachers 0, held 0, reported 0');
+
+  -- Each source is enough on its own, and each is a lesson the others do not reach.
+  PERFORM pg_temp.rg_lesson(d, 13, ARRAY[t1]);                                                                      -- the class's pupils
+  PERFORM pg_temp.rg_lesson(d, 14, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7D');                               -- a teaching group's members
+  PERFORM pg_temp.rg_lesson(d, 15, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7A']);                -- the pupils of a class joined to it
+  PERFORM pg_temp.rg_lesson(d, 16, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', ARRAY['RG7D']);                -- the members of a group joined to it
+  PERFORM pg_temp.rg_lesson(d, 17, ARRAY[t1], '{}', 'SCHEDULED', NULL, NULL, 'RG7B', '{}', ARRAY['rg-p4@example.invalid']); -- a pupil it names
+  PERFORM pg_temp.rg_expect('346r each source', pg_temp.rg_compute('2026-09-30'),
+    'written 1, removed 0, teachers 1, held 5, reported 0');
+
+  -- A register saved on a lesson stays a register, whatever the roster has become: reported, and held.
+  PERFORM pg_temp.rg_lesson(d, 18, ARRAY[t1], ARRAY['PRESENT'], 'SCHEDULED', NULL, NULL, 'RG7B');
+  PERFORM pg_temp.rg_expect('346r a saved register on an empty roster', pg_temp.rg_compute('2026-09-30'),
+    'written 1, removed 0, teachers 1, held 6, reported 1');
+
+  -- An administrator on a lesson is no teacher: no row, no count.
+  PERFORM pg_temp.rg_lesson(d, 19, ARRAY[pg_temp.rg_id('rg-full@example.invalid')]);
+  PERFORM pg_temp.rg_expect('346r an administrator on a lesson', pg_temp.rg_compute('2026-09-30'),
+    'written 0, removed 0, teachers 1, held 6, reported 1');
+  PERFORM pg_temp.rg_expect('346r the day', pg_temp.rg_days(), 't1 2026-09-22 1/6');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 347: who reads and who writes.
 --
 -- Every administrator reads every teacher's days, the läsare too, and the
@@ -41914,6 +41974,7 @@ BEGIN
   PERFORM pg_temp.rg_lesson(today - 4, 14, ARRAY[t2]);                                      -- the other teacher's
   PERFORM pg_temp.rg_lesson(today - 4, 15, ARRAY[t1, t2]);                                  -- both
   PERFORM pg_temp.rg_lesson(today - 2, 16, ARRAY[pg_temp.rg_id('rg-full@example.invalid')]); -- an administrator who also teaches
+  PERFORM pg_temp.rg_lesson(today - 5, 17, ARRAY[t1], ARRAY[]::text[], 'SCHEDULED', NULL, NULL, 'RG7B'); -- nobody to mark: not open
   PERFORM set_config('app.test_rg_school', school::text, true);
 END $$;
 

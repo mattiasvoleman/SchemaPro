@@ -18,8 +18,8 @@
 --
 -- then times, each three times, what the job asks of the database in a night:
 -- the count (app.reporting_compute), the reminders (app.reporting_remind, with
--- the switch dated 40 days back so the lessons count) and the week's notice. \timing
--- is on. The first count writes the days, the second and third keep them: that is
+-- the switch dated 40 days back so the lessons count) and the week's notice, and
+-- what a teacher's page view asks (app.reporting_open_lessons). \timing is on. The first count writes the days, the second and third keep them: that is
 -- every night after the first. The count is also run once with the school's
 -- attendance gallring decided, to show that the guard costs nothing.
 
@@ -141,6 +141,15 @@ SELECT count(*) AS notices FROM app.reporting_digest((SELECT id FROM "Schools" W
        date_trunc('week', (now() AT TIME ZONE 'Europe/Stockholm')::date - 7)::date, (date_trunc('week', (now() AT TIME ZONE 'Europe/Stockholm')::date - 7) + interval '6 days')::date);
 SELECT count(*) AS notices FROM app.reporting_digest((SELECT id FROM "Schools" WHERE slug = 'bench-reporting-rate'),
        date_trunc('week', (now() AT TIME ZONE 'Europe/Stockholm')::date - 7)::date, (date_trunc('week', (now() AT TIME ZONE 'Europe/Stockholm')::date - 7) + interval '6 days')::date);
+
+\echo -- the teachers own list (what Min rapportering asks on every page view), as a teacher, three times: it must
+\echo -- cost what the teachers lessons cost, not the schools (an inlined definition takes the teacher into the scan)
+SELECT set_config('request.jwt.claims', json_build_object('sub', (SELECT "authId" FROM "Users" WHERE email = 'bench-t20@example.invalid'))::text, true);
+SET LOCAL ROLE app_authenticated;
+SELECT count(*) AS open_lessons FROM app.reporting_open_lessons(30);
+SELECT count(*) AS open_lessons FROM app.reporting_open_lessons(30);
+SELECT count(*) AS open_lessons FROM app.reporting_open_lessons(30);
+RESET ROLE;
 
 \echo -- the view the rektor opens: a lasar added up per teacher, and the teachers own list
 EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF, SUMMARY ON)

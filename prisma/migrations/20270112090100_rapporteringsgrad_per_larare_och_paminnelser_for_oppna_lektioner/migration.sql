@@ -17,10 +17,13 @@
 --      räknas aldrig, vad som än sparats på den, och inte heller en lektion
 --      som ett lov tagit bort, för lovet tar bort lektionerna (det är inga
 --      rader att räkna) eller ställer in dem;
---   3. läraren står på den (CalendarLessonTeachers). Det är samma tre villkor
---      som levererad tid (P3, src/timplan/timplan-delivered.sql.ts) ställer
---      på en hållen lektion med lärare, och samma statusar som
---      Frånvarobevakning räknar (20261231090100). Ingen ny gren: en
+--   3. läraren står på den (CalendarLessonTeachers), är en aktiv lärare och
+--      hör till skolan. Villkor 1-3 är, utom lärarens roll, de levererad tid
+--      (P3, src/timplan/timplan-delivered.sql.ts) ställer på en hållen lektion
+--      med lärare, och samma statusar som Frånvarobevakning räknar
+--      (20261231090100). En avaktiverad lärare och en administratör som står
+--      på en lektion är ingen lärare här: ingen kan påminnas, och en rad med
+--      noll procent för någon som slutat är ett mått på ingen. Ingen ny gren: en
 --      ersättningslektion (Schemabrytande aktivitet, 20270101090000) är en
 --      lektion som alla andra och räknas hos de lärare som står på den, och en
 --      vikarie står på de lektioner den tagit, i stället för den frånvarande
@@ -29,7 +32,24 @@
 --   4. läraren inte själv är frånvarande då: en aktiv frånvaro
 --      (TeacherAbsences) som överlappar lektionen tar den ur räkningen för
 --      den läraren. En lektion som ingen tagit beslut om ligger kvar på den
---      frånvarande, som inte kan ha tagit närvaro.
+--      frånvarande, som inte kan ha tagit närvaro;
+--   5. lektionen har minst en aktiv elev på sin lista. Ett register kan bara
+--      sparas för en elev på listan, så en lektion utan elever kan aldrig
+--      bli rapporterad, och läraren kan inte göra något åt det: den räknas
+--      varken som hållen, som öppen eller som rapporterad. Listan är samma tre
+--      källor som registrets egen (calendar/lesson-roster.ts, de aktiva
+--      eleverna): hemklassens elever i lektionens grupp och i grupperna som
+--      är lagda på den, medlemmarna i de grupperna, och elever lektionen
+--      namnger. Ett register som redan är sparat är alltid ett register, vad
+--      listan än har blivit sedan (en klass vars elever alla slutat): den
+--      lektionen är hållen och rapporterad, så att en dag som en gång räknats
+--      inte försvinner av att eleverna tas bort.
+--      Listan läses som den är nu, som registrets: en lektion utan register
+--      i en klass vars elever alla slutat faller ur de 90 dagar som räknas om
+--      nästa natt. Ersättande grupper (SvA7 tar eleverna ur svenskan) räknas
+--      inte av här: en lektion där varje elev tas bort av en sådan grupp
+--      räknas ändå som hållen. Det ger sällan noll, och regeln är för lång att
+--      skriva två gånger.
 --
 -- Lektionen är rapporterad när dess register är sparat: minst en markering
 -- som inte är UNKNOWN. Det är registrets enda skrivare
@@ -301,27 +321,51 @@ CREATE TRIGGER "ReportingSettings_stamp"
 -- ---------------------------------------------------------------------------
 
 -- A row per held lesson of the school dated p_from..p_to that has ended by
--- p_now, and per teacher on it: whether its register is saved, and whether the
--- teacher is active. See the preamble; this is the one place the rule is
--- written. Not SECURITY DEFINER and with no SET, so the callers (all the
--- owner's) inline it; every name is schema-qualified for the same reason. The
--- owner's alone: nobody else may ask it for another person's rows.
+-- p_now, and per active teacher on it: whether its register is saved. See the
+-- preamble; this is the one place the rule is written. Not SECURITY DEFINER and
+-- with no SET, so it can be inlined, which the planner does when p_now is no
+-- volatile call. The teacher's list passes now() and is inlined, so that its
+-- filter on the teacher reaches the lessons' scan; the nightly callers pass
+-- clock_timestamp() and get it as a function scan, run once for the whole
+-- school, which is what they ask for. Every name is schema-qualified because
+-- an inlined body runs under its caller's search path. The owner's alone:
+-- nobody else may ask it for another person's rows.
 CREATE FUNCTION app.reporting_lessons(p_school uuid, p_from date, p_to date, p_now timestamptz)
-RETURNS TABLE (lesson_id uuid, teacher_id uuid, teacher_active boolean, day date,
+RETURNS TABLE (lesson_id uuid, teacher_id uuid, day date,
                starts_at timestamptz, ends_at timestamptz, reported boolean)
 LANGUAGE sql STABLE AS $$
-  SELECT cl."id", t."teacherId", u."isActive", cl."date", cl."startsAt", cl."endsAt",
-         EXISTS (SELECT 1 FROM "public"."AttendanceRecords" a
-                  WHERE a."calendarLessonId" = cl."id" AND a."status" <> 'UNKNOWN')
+  SELECT cl."id", t."teacherId", cl."date", cl."startsAt", cl."endsAt", r."saved"
     FROM "public"."CalendarLessons" cl
     JOIN "public"."CalendarLessonTeachers" t
       ON t."calendarLessonId" = cl."id" AND t."schoolId" = cl."schoolId"
     JOIN "public"."Users" u
       ON u."id" = t."teacherId" AND u."schoolId" = cl."schoolId"
+     AND u."role" = 'TEACHER' AND u."isActive"
+   CROSS JOIN LATERAL (
+           SELECT EXISTS (SELECT 1 FROM "public"."AttendanceRecords" a
+                           WHERE a."calendarLessonId" = cl."id" AND a."status" <> 'UNKNOWN') AS "saved") r
    WHERE cl."schoolId" = p_school
      AND cl."date" BETWEEN p_from AND p_to
      AND cl."status" IN ('SCHEDULED', 'COMPLETED')
      AND cl."endsAt" <= p_now
+     AND (
+           r."saved"
+        OR EXISTS (SELECT 1 FROM "public"."Users" p
+                    WHERE p."studentGroupId" = cl."studentGroupId" AND p."role" = 'STUDENT' AND p."isActive")
+        OR EXISTS (SELECT 1 FROM "public"."StudentGroupMembers" m
+                    JOIN "public"."Users" p ON p."id" = m."studentId"
+                   WHERE m."studentGroupId" = cl."studentGroupId" AND p."role" = 'STUDENT' AND p."isActive")
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
+                    JOIN "public"."Users" p ON p."studentGroupId" = x."studentGroupId"
+                   WHERE x."calendarLessonId" = cl."id" AND p."role" = 'STUDENT' AND p."isActive")
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
+                    JOIN "public"."StudentGroupMembers" m ON m."studentGroupId" = x."studentGroupId"
+                    JOIN "public"."Users" p ON p."id" = m."studentId"
+                   WHERE x."calendarLessonId" = cl."id" AND p."role" = 'STUDENT' AND p."isActive")
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonStudents" n
+                    JOIN "public"."Users" p ON p."id" = n."studentId"
+                   WHERE n."calendarLessonId" = cl."id" AND p."role" = 'STUDENT' AND p."isActive")
+         )
      AND NOT EXISTS (
            SELECT 1 FROM "public"."TeacherAbsences" ab
             WHERE ab."schoolId" = cl."schoolId" AND ab."userId" = t."teacherId"
@@ -444,23 +488,32 @@ $$;
 -- alone: the identity is the claims', so the function can be asked by the
 -- gateway in anybody's request and answers that person only. A caller who is
 -- not a teacher, and the delivery's principal, get nothing.
+--
+-- It asks for the school, the person and the day once, in a CTE the planner may
+-- not fold back, and hands them to the definition as values. The helpers are
+-- SECURITY DEFINER functions that look the caller up, so left in a filter they
+-- are called for every lesson the planner reads (a school's lessons of a month,
+-- not the teacher's own), and a first version took 26 ms where this takes 10.
+-- The definition runs inlined, which it only does for a stable p_now (now(),
+-- never clock_timestamp()): the planner then starts from the teacher's lessons.
+-- scripts/bench/reporting-rate.sql times it.
 CREATE FUNCTION app.reporting_open_lessons(p_days integer DEFAULT 30)
 RETURNS TABLE (lesson_id uuid, day date, starts_at timestamptz, ends_at timestamptz,
                subject_name text, group_name text, overdue boolean)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  WITH me AS MATERIALIZED (
+    SELECT app.current_school_id() AS school, app.current_user_id() AS teacher, app.school_today() AS today
+  )
   SELECT l.lesson_id, l.day, l.starts_at, l.ends_at, sj."name", g."name",
-         l.day <= app.school_today() - coalesce(
-           (SELECT st."openAfterDays" FROM "ReportingSettings" st WHERE st."schoolId" = app.current_school_id()), 2)
-    FROM app.reporting_lessons(
-           app.current_school_id(),
-           app.school_today() - least(greatest(p_days, 1), 90),
-           app.school_today(),
-           clock_timestamp()) l
+         l.day <= me.today - coalesce(
+           (SELECT st."openAfterDays" FROM "ReportingSettings" st WHERE st."schoolId" = me.school), 2)
+    FROM me
+   CROSS JOIN LATERAL app.reporting_lessons(
+           me.school, me.today - least(greatest(p_days, 1), 90), me.today, now()) l
     JOIN "CalendarLessons" cl ON cl."id" = l.lesson_id
     JOIN "Subjects" sj ON sj."id" = cl."subjectId"
     JOIN "StudentGroups" g ON g."id" = cl."studentGroupId"
-   WHERE app.current_user_role() = 'TEACHER'
-     AND l.teacher_id = app.current_user_id()
+   WHERE l.teacher_id = me.teacher
      AND NOT l.reported
    ORDER BY l.starts_at DESC, l.lesson_id
 $$;
@@ -495,8 +548,7 @@ BEGIN
     SELECT l.lesson_id, l.teacher_id, l.day
       FROM app.reporting_lessons(
              p_school, greatest(p_today - 30, st."teacherRemindersOn"), p_today - st."openAfterDays", clock_timestamp()) l
-      JOIN "Users" u ON u."id" = l.teacher_id AND u."schoolId" = p_school AND u."role" = 'TEACHER'
-     WHERE NOT l.reported AND l.teacher_active
+     WHERE NOT l.reported
   ),
   -- Once per lesson and teacher: the ledger's key says so, and a lesson already in it adds no row here.
   ledger AS (
@@ -546,12 +598,25 @@ $$;
 -- days: held and reported lessons, and how many teachers they are spread over.
 -- A week with no held lesson is entered in the ledger and told to nobody. Never
 -- a name. Answers the notices with the addresses, for the delivery after the
--- commit.
+-- commit. Only for a whole week that is over, Monday to Sunday in the school's
+-- dates: the ledger's row for a week stops the real notice of it, so a week to
+-- come, or a stretch that is no week, is refused (RR400).
 CREATE FUNCTION app.reporting_digest(p_school uuid, p_start date, p_end date)
 RETURNS TABLE (notification_id uuid, user_id uuid, email text, meta jsonb)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 #variable_conflict use_column
+DECLARE
+  tz text;
 BEGIN
+  SELECT s."timezone" INTO tz FROM "Schools" s WHERE s."id" = p_school;
+  IF tz IS NULL THEN
+    RAISE EXCEPTION 'REPORTING_NO_SCHOOL' USING ERRCODE = 'RR404';
+  END IF;
+  IF p_start IS NULL OR p_end IS NULL OR extract(isodow FROM p_start) <> 1 OR p_end <> p_start + 6
+     OR p_end >= (clock_timestamp() AT TIME ZONE tz)::date THEN
+    RAISE EXCEPTION 'REPORTING_WEEK_IS_NOT_OVER: veckobeskedet gäller en hel vecka, måndag till söndag, som gått'
+      USING ERRCODE = 'RR400';
+  END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('reporting-digest:' || p_school::text, 0));
   PERFORM 1 FROM "ReportingSettings" s WHERE s."schoolId" = p_school AND s."rektorDigest" FOR SHARE;
   IF NOT FOUND THEN
@@ -916,7 +981,7 @@ $$;
 -- ---------------------------------------------------------------------------
 
 COMMENT ON FUNCTION app.reporting_lessons(uuid, date, date, timestamptz) IS
-  'Rapporteringsgrad: the one definition. A row per held lesson (SCHEDULED or COMPLETED, ended, with a teacher) and teacher on it, whose teacher is not themself absent, with whether its register is saved (a mark that is not UNKNOWN). The owner''s alone.';
+  'Rapporteringsgrad: the one definition. A row per held lesson (SCHEDULED or COMPLETED, ended, with at least one active pupil on its roster) and active teacher on it, whose teacher is not themself absent, with whether its register is saved (a mark that is not UNKNOWN). The owner''s alone.';
 COMMENT ON FUNCTION app.reporting_compute(uuid, date) IS
   'Rapporteringsgrad: the school''s last 90 days up to p_as_of (a day that has passed), one row per teacher and day with a held lesson; rewrites what changed, removes what lost its lessons; from the cutoff of the shortest period the school has ever chosen to purge attendance after, when it has. Answers what it wrote.';
 COMMENT ON FUNCTION app.reporting_open_lessons(integer) IS
@@ -926,7 +991,7 @@ COMMENT ON FUNCTION app.reporting_remind(uuid, date) IS
 COMMENT ON FUNCTION app.reporting_digest_due(uuid, date) IS
   'Rapporteringsgrad: the last completed week, if the school has the weekly notice on and it has no entry yet.';
 COMMENT ON FUNCTION app.reporting_digest(uuid, date, date) IS
-  'Rapporteringsgrad: writes the week''s notice once, to the active rektor and full administrators, with the school''s totals and never a name; answers the notices with the addresses.';
+  'Rapporteringsgrad: writes the week''s notice once, for a whole week (Monday to Sunday) that is over, to the active rektor and full administrators, with the school''s totals and never a name; answers the notices with the addresses.';
 
 DO $$
 DECLARE

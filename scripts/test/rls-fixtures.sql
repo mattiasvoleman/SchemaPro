@@ -3168,6 +3168,11 @@ DECLARE
   y2 uuid;
   k uuid;
   k2 uuid;
+  kb uuid;
+  kc uuid;
+  kd uuid;
+  ke uuid;
+  p4 uuid;
   u uuid;
 BEGIN
   IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-rapporteringsgrad-school') THEN
@@ -3179,6 +3184,17 @@ BEGIN
   VALUES (s1, 'Rapportering', '2026-01-01', '2026-12-31', true, now()) RETURNING id INTO y;
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
   VALUES (s1, y, 'RG7A', 7, now()) RETURNING id INTO k;
+  -- The groups a lesson's roster is read from. RG7A is the class with two active pupils; RG7B has nobody;
+  -- RG7C's only pupil is deactivated; RG7D is a teaching group whose roster is its members alone (one active
+  -- pupil); RG7E is one whose only members are a deactivated pupil and a teacher.
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'RG7B', 7, now()) RETURNING id INTO kb;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'RG7C', 7, now()) RETURNING id INTO kc;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s1, y, 'RG7D', 7, 'TEACHING_GROUP', now()) RETURNING id INTO kd;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s1, y, 'RG7E', 7, 'TEACHING_GROUP', now()) RETURNING id INTO ke;
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'Rapportering', 'RGSUBJ', now());
 
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
@@ -3191,10 +3207,18 @@ BEGIN
     (s1, 'rg-t1@example.invalid', 'Rapportering', 'Lärare Ett', 'TEACHER', '00000000-0000-4000-8000-f20000000006', true, now()),
     (s1, 'rg-t2@example.invalid', 'Rapportering', 'Lärare Två', 'TEACHER', '00000000-0000-4000-8000-f20000000007', true, now()),
     (s1, 'rg-t3@example.invalid', 'Rapportering', 'Lärare Tre', 'TEACHER', '00000000-0000-4000-8000-f20000000008', true, now()),
-    (s1, 'rg-t4@example.invalid', 'Rapportering', 'Lärare Fyra', 'TEACHER', '00000000-0000-4000-8000-f20000000009', false, now());
+    (s1, 'rg-t4@example.invalid', 'Rapportering', 'Lärare Fyra', 'TEACHER', '00000000-0000-4000-8000-f20000000009', false, now()),
+    (s1, 'rg-t5@example.invalid', 'Rapportering', 'Lärare Fem', 'TEACHER', '00000000-0000-4000-8000-f20000000010', true, now());
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
     (s1, 'rg-p1@example.invalid', 'Rapportering', 'Elev Ett', 'STUDENT', '00000000-0000-4000-8000-f20000000011', true, k, now()),
-    (s1, 'rg-p2@example.invalid', 'Rapportering', 'Elev Två', 'STUDENT', '00000000-0000-4000-8000-f20000000012', true, k, now());
+    (s1, 'rg-p2@example.invalid', 'Rapportering', 'Elev Två', 'STUDENT', '00000000-0000-4000-8000-f20000000012', true, k, now()),
+    (s1, 'rg-p3@example.invalid', 'Rapportering', 'Elev Tre', 'STUDENT', '00000000-0000-4000-8000-f20000000013', false, kc, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'rg-p4@example.invalid', 'Rapportering', 'Elev Fyra', 'STUDENT', '00000000-0000-4000-8000-f20000000014', true, now())
+  RETURNING id INTO p4;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, kd, p4);
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId")
+  SELECT s1, ke, "id" FROM "Users" WHERE "schoolId" = s1 AND "email" IN ('rg-p3@example.invalid', 'rg-t1@example.invalid');
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
   VALUES (s1, 'rg-g1@example.invalid', 'Rapportering', 'Vårdnadshavare Ett', 'GUARDIAN', '00000000-0000-4000-8000-f20000000021', true, now()) RETURNING id INTO u;
   INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
