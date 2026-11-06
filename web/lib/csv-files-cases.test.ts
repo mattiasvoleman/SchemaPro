@@ -203,7 +203,7 @@ function build(): Case[] {
   const names = (id: string | null) => (id ? (roomTypeNames[id] ?? "") : "");
   const className = (id: string | null) => (id ? (classNames[id] ?? "") : "");
   const yearGroups = groups;
-  const cases: Omit<Case, "expected">[] & { expected?: string }[] = [];
+  const cases: Case[] = [];
   const add = (name: string, builder: string, args: unknown[], expected: string) => cases.push({ name, builder, args, expected });
 
   add("serializeCsv: every awkward cell", "serializeCsv", [["a", "b"], nasty.map((v) => [v, v])], serializeCsv(["a", "b"], nasty.map((v) => [v, v])));
@@ -223,7 +223,7 @@ function build(): Case[] {
   add("requirementsToCsv: a split post adds the column", "requirementsToCsv", [splitRequirements, groups, subjects, people], requirementsToCsv(splitRequirements as never, groups, subjects, people));
   add("guardiansToCsv", "guardiansToCsv", [guardianRows], guardiansToCsv(guardianRows));
   add("timplanToCsv", "timplanToCsv", [timplanEntries, subjects], timplanToCsv(timplanEntries, subjects));
-  return cases as Case[];
+  return cases;
 }
 
 describe("the gateway's copies of the CSV writers", () => {

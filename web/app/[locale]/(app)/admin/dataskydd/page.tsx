@@ -23,6 +23,7 @@ import { HuvudmanCard } from "./huvudman-card";
 import { HistoryCard } from "./history-card";
 import { KindsCard } from "./kinds-card";
 import { RunsCard } from "./runs-card";
+import { SchoolExportCard } from "./school-export-card";
 import { useRetentionOverview } from "./use-retention";
 
 export default function DataProtectionPage() {
@@ -64,6 +65,9 @@ export default function DataProtectionPage() {
       {/* Its own reads: the question is answered whether or not the
           retention overview above could be read. */}
       <AccessLogCard />
+
+      {/* Hela skolans data and registerutdrag: for rektor and a full administrator, asked on its own. */}
+      <SchoolExportCard timeZone={data?.timezone} />
     </Page>
   );
 }

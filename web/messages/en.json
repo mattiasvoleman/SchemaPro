@@ -7407,5 +7407,65 @@
         "SS12000": "the register's mark removed by {who}"
       }
     }
+  },
+  "schoolExport": {
+    "title": "The whole school's data",
+    "description": "The school's lists, the base timetable and all attendance, absence reports, leave, notices and the read log in one zip, for an exit or a subject access request. Rektor and full administrators order it. It is built in the background and can be fetched for 72 hours.",
+    "notDecider": "The whole school's data and subject access extracts are released by rektor and full administrators.",
+    "order": "Order the whole school's data",
+    "ordering": "Ordering…",
+    "orderHint": "It takes a few minutes. The page follows the order.",
+    "none": "No order yet.",
+    "loadFailed": "The orders could not be read.",
+    "orderedAt": "Ordered {when}",
+    "by": "by {name}",
+    "size": "{size}",
+    "expires": "fetch by {when}",
+    "expired": "has expired",
+    "failed": "Failed ({reason}). Order again.",
+    "heldOut": "{count, plural, one {# person with a protected identity is not in the file.} other {# persons with a protected identity are not in the file.}}",
+    "checksum": "SHA-256 {sha}",
+    "fetch": "Fetch",
+    "fetching": "Fetching…",
+    "cancel": "Cancel",
+    "remove": "Remove the file",
+    "whatItHolds": "The file holds the lists the pages export (to read back in), the base timetable and data/ with attendance, absence reports, leave, notices and the read log. README.txt in the file says what it does not hold. Every fetch is written to the read log.",
+    "status": {
+      "QUEUED": "Queued",
+      "RUNNING": "Being built",
+      "READY": "Ready",
+      "FAILED": "Failed",
+      "EXPIRED": "Expired"
+    },
+    "errors": {
+      "generic": "That did not work. Try again in a moment.",
+      "SCHOOL_EXPORT_IN_HAND": "An order is already in progress. Wait until it is done.",
+      "SCHOOL_EXPORT_TOO_MANY": "The school has already ordered three times in the last day. Fetch one of the ordered files.",
+      "SCHOOL_EXPORT_EXPIRED": "The file has expired and been deleted. Order a new one.",
+      "SCHOOL_EXPORT_NOT_READY": "The file is not ready yet.",
+      "SCHOOL_EXPORT_INCOMPLETE": "The file did not arrive whole. Try fetching it again.",
+      "SCHOOL_EXPORT_DECIDES": "The whole school's data is released by rektor and full administrators."
+    },
+    "extract": {
+      "title": "Subject access extract (GDPR article 15)",
+      "description": "Everything Rastra holds about one person, in files that open in Excel: the same files as the whole school's data, for the person's rows, and beside them one file for each table that holds a row about the person.",
+      "person": "Person",
+      "choose": "Choose a person",
+      "inactive": "deactivated",
+      "withRelated": "Include guardians or children",
+      "fetch": "Fetch the extract",
+      "building": "Building…",
+      "recorded": "The extract is written to the read log for the persons it holds data about. A person with a protected identity is in nobody else's extract.",
+      "failed": "The extract could not be fetched.",
+      "subjectMarked": "The person has a protected identity. The extract holds only the person's own data and no one else's. Hand it to the person themself, after checking who is asking.",
+      "relatedHeldOut": "{count, plural, one {# related person with a protected identity is left out.} other {# related persons with a protected identity are left out.}}",
+      "done": "{count, plural, =0 {The extract is fetched.} one {The extract is fetched, with # related person.} other {The extract is fetched, with # related persons.}}",
+      "groups": {
+        "STUDENT": "Pupils",
+        "GUARDIAN": "Guardians",
+        "TEACHER": "Teachers",
+        "SCHOOL_ADMIN": "Administrators"
+      }
+    }
   }
 }

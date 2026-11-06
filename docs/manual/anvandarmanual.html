@@ -7068,6 +7068,94 @@
     ovan) står med sitt pseudonym.
   </p>
 
+  <h4>Hela skolans data</h4>
+  <p>
+    En skola som avslutar sitt avtal, eller som vill kunna visa vad den
+    lämnar ifrån sig, tar ut allt i en zip. På
+    <span class="path">Dataskydd</span> finns <span class="ui">Hela skolans
+    data</span>. <strong>Bara rektor och fullständiga administratörer</strong>
+    beställer och hämtar den, eftersom filen är en kopia av varje elevs och
+    varje vårdnadshavares uppgifter. Huvudmannens läsare, läsaren, expeditionen
+    och schemaläggaren ser inte ens beställningarna.
+  </p>
+  <ol>
+    <li>Klicka på <span class="ui">Beställ hela skolans data</span>. Filen
+      byggs i bakgrunden som du, med din behörighet, och sidan följer
+      beställningen. För en skola med tusen elever och ett års närvaro tar det
+      någon minut och ger en fil på ungefär 35 MB.</li>
+    <li>Klicka på <span class="ui">Hämta</span> när beställningen är
+      <em>Klar</em>. <strong>Filen går att hämta i 72 timmar</strong> och
+      raderas sedan. Beställ en ny vid behov: en skola får beställa tre gånger
+      per dygn, en i taget.</li>
+    <li>Kontrollera filen mot kontrollsumman (SHA-256) som står på beställningen.
+      Varje hämtning skrivs i läsloggen, en post per slag av uppgift, med de
+      personer filen innehåller uppgifter om.</li>
+  </ol>
+  <p>
+    Zip-filen har <code>README.txt</code> (vad som finns och vad som inte
+    finns), <code>FORMAT.md</code> (varje kolumn), <code>manifest.json</code>
+    (rader, storlek och SHA-256 för varje fil) och tre mappar:
+  </p>
+  <table>
+    <thead><tr><th style="width:24%">Mapp</th><th>Det här får du</th></tr></thead>
+    <tbody>
+      <tr><td class="k">csv/</td><td>Listorna som sidorna exporterar som CSV, <strong>på exakt samma sätt som sidorna skriver dem</strong>: ämnen, salar, salstyper, klasser, lärare, behörigheter, uppdrag, elever, undervisningsgrupper, vårdnadshavare, timplansposter och lokala timplaner. De läses in med <span class="ui">Importera CSV</span> på respektive sida, i den ordning README.txt säger. De gäller det aktiva läsåret.</td></tr>
+      <tr><td class="k">schema/</td><td>Grundschemat som tabell, samma fil som <em>Schema som fil</em> ger (7.7).</td></tr>
+      <tr><td class="k">data/</td><td>Personer, kopplingar mellan vårdnadshavare och elever, närvaro, frånvaroanmälningar, ledighetsansökningar, notiser och läsloggen, med id:n och e-postadress bredvid varje id, för alla läsår skolan har kvar. En fil delas vid en miljon rader, eftersom Excel öppnar 1&nbsp;048&nbsp;576.</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <span class="label">Skyddad identitet</span>
+    <p>
+      Personer med <a href="#skyddad-identitet">skyddad identitet</a> finns <strong>inte</strong> i
+      filen, och inte heller rader som handlar om dem. Står en markerad person
+      bara i en kolumn som inte är det raden handlar om, till exempel som den
+      som registrerade en närvaro, är cellen tom och räknas. Beställningen och
+      manifestet säger hur många. En skola som lämnar tjänsten och behöver också
+      dessa personer hämtar dem ur sitt eget register. Grundschemat nämner lärare
+      vid namn som <em>Schema som fil</em> gör, och en markerad lärare finns
+      kvar där.
+    </p>
+  </div>
+  <p>
+    Filen innehåller inte lösenord, personnummer (Rastra lagrar inga),
+    notisinställningar, enheter för push-notiser, kalenderflödens adresser, de
+    publicerade lektionerna dag för dag, tjänster och lärares frånvaro, eller
+    körningsloggar. README.txt säger det, och vad som gäller för en enskild person
+    står i registerutdraget.
+  </p>
+
+  <h4>Registerutdrag</h4>
+  <p>
+    När en elev, en vårdnadshavare eller en anställd begär ut sina uppgifter
+    (artikel 15 i dataskyddsförordningen) tar du ut dem under
+    <span class="ui">Registerutdrag</span> på samma sida. Rektor och fullständiga
+    administratörer kan göra det. Välj personen och om vårdnadshavare eller barn
+    ska följa med, och klicka på <span class="ui">Hämta registerutdrag</span>:
+    zip-filen byggs direkt.
+  </p>
+  <p>
+    Utdraget är <strong>samma filer som hela skolans data, för personens rader</strong>,
+    och därtill en fil för varje tabell som har en rad om personen: inskrivningar,
+    tjänster, uppdrag, behörigheter, frånvaro och vikarieuppdrag, lektionsloggar
+    personen skrivit, beslut personen fattat, och personens egen markering. Att
+    inget saknas hålls av ett test mot förteckningen över allt som hänger på en
+    person (samma som visas när en person tas bort). Det som personen själv ser i
+    appen under Inställningar, men som ingen administratör kan läsa, nämns i
+    README.txt: notisinställningar, enheter och kalenderflöden.
+  </p>
+  <div class="note">
+    <span class="label">Är personen skyddad</span>
+    <p>
+      Den som utdraget gäller hålls aldrig ute ur sitt eget utdrag. Men ett utdrag
+      om en person med skyddad identitet innehåller <strong>ingen annan</strong>,
+      inte heller vårdnadshavare, eftersom den som tar emot utdraget kan vara
+      just den skyddet gäller mot. Sidan säger det, och du kontrollerar vem som
+      frågar innan du lämnar ut det. En markerad närstående utelämnas ur ett annat
+      utdrag och räknas.
+    </p>
+  </div>
+
   <h3 id="s75"><span class="num">7.5</span>Logga in med skolkonto</h3>
   <p>
     Personalen kan logga in med kontot de redan har i skolans

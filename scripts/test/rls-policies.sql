@@ -41260,6 +41260,13 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'export 356: the other school withdrew this school''s order'; END IF;
   SELECT count(*) INTO n FROM "SchoolExports" WHERE id = theirs;
   IF n <> 1 THEN RAISE EXCEPTION 'export 356: the other school cannot read its own order'; END IF;
+  -- A delete with no WHERE reads no column, so the select arm does not hide the rows from the delete arm: it alone decides.
+  DELETE FROM "SchoolExports";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'export 356: the other school''s bare delete took % orders, not its own one', n; END IF;
+  PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "SchoolExports" WHERE id = mine;
+  IF n <> 1 THEN RAISE EXCEPTION 'export 356: the other school''s delete took this school''s order'; END IF;
 
   -- The decisions read the pieces of a finished file; nobody else does, nor reads the order.
   FOREACH who IN ARRAY ARRAY['01', '02'] LOOP
@@ -41274,7 +41281,8 @@ BEGIN
     IF n <> 0 THEN RAISE EXCEPTION 'export 356: % …% reads % orders or pieces', app.current_user_role(), who, n; END IF;
     PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (%L, %L)$q$, school, app.current_user_id()),
                                '42501', format('%s …%s ordering', app.current_user_role(), who));
-    DELETE FROM "SchoolExports" WHERE "schoolId" = school;
+    -- Bare, so that the delete arm answers alone (a WHERE on a column would be hidden by the select arm first).
+    DELETE FROM "SchoolExports";
     GET DIAGNOSTICS n = ROW_COUNT;
     IF n <> 0 THEN RAISE EXCEPTION 'export 356: % …% withdrew % orders', app.current_user_role(), who, n; END IF;
   END LOOP;
