@@ -40,6 +40,8 @@ export const CRISIS_MARK_INVALID = 'CRISIS_MARK_INVALID';
 
 /** The protocol list reads this many alarms unless it is asked for fewer. */
 const LIST_LIMIT = 50;
+/** How far ahead of a phone's clock an alarm may have started and still own a mark the phone made by lesson. */
+const PHONE_CLOCK_SKEW_MS = 10 * 60_000;
 /** The note an exercise gets when a real alarm cuts it short. */
 const CUT_SHORT_NOTE = 'Avbröts av ett skarpt larm.';
 
@@ -686,9 +688,10 @@ export class CrisisService {
           const at = new Date(mark.at);
           const call = mark.callId
             ? byId.get(mark.callId)
-            : // The alarm that was going when the mark was made: the latest that had started by then.
+            : // The alarm that was going when the mark was made: the latest that had started by then, give or
+              // take the minutes a phone's clock can be wrong (the database holds the time at the start).
               (byLesson.get(mark.lessonId!) ?? [])
-                .filter((candidate) => candidate.alarm.startedAt.getTime() <= at.getTime())
+                .filter((candidate) => candidate.alarm.startedAt.getTime() <= at.getTime() + PHONE_CLOCK_SKEW_MS)
                 .sort((a, b) => b.alarm.startedAt.getTime() - a.alarm.startedAt.getTime())[0];
           if (!call) {
             unresolved.push(mark.id);

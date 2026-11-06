@@ -269,16 +269,19 @@ describe('CrisisService', () => {
       tx.crisisCall.findMany.mockResolvedValue([older, newer]);
       tx.crisisReport.createMany.mockResolvedValue({ count: 1 });
       const lost = '99999999-9999-4999-8999-999999999998';
+      const skewed = '99999999-9999-4999-8999-999999999997';
       const result = await service.markMine(
         [
           { id: MARK, lessonId: LESSON, studentId: PUPIL, state: 'FOUND', at },
-          // Made before either alarm started: it belongs to neither.
+          // Made long before either alarm started: it belongs to neither.
           { id: lost, lessonId: LESSON, studentId: PUPIL, state: 'FOUND', at: '2027-01-12T07:00:00.000Z' },
+          // Made by a phone whose clock is three minutes behind the gateway's, just before the newer alarm began: it is that alarm's.
+          { id: skewed, lessonId: LESSON, studentId: PUPIL, state: 'FOUND', at: '2027-01-12T08:57:00.000Z' },
         ],
         teacher,
       );
       expect(result.unresolved).toEqual([lost]);
-      expect((tx.crisisReport.createMany.mock.calls[0]![0] as { data: Array<{ callId: string }> }).data.map((row) => row.callId)).toEqual(['newer']);
+      expect((tx.crisisReport.createMany.mock.calls[0]![0] as { data: Array<{ callId: string }> }).data.map((row) => row.callId)).toEqual(['newer', 'newer']);
     });
 
     it('answers the database\'s refusals as coded answers', async () => {
