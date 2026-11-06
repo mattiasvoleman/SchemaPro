@@ -115,6 +115,9 @@
         - link "Rapporteringsgrad":
           - /url: /sv/admin/reporting-rate
       - listitem:
+        - link "Kvittens":
+          - /url: /sv/admin/acknowledgements
+      - listitem:
         - link "Klassbok":
           - /url: /sv/admin/klassbok
     - list:

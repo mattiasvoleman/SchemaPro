@@ -2,7 +2,7 @@ import { createTranslator } from "next-intl";
 import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
-import { noticeText, type NotificationRow } from "./notice-text";
+import { noticeHref, noticeText, type NotificationRow } from "./notice-text";
 
 /*
  * What a notice about an alarm says, with the real messages. A guardian is told
@@ -39,5 +39,34 @@ describe("the guardian's notice after an alarm", () => {
     expect(say("sv", row("CRISIS_ALARM", { kind: "LOCKDOWN", mode: "LIVE", startedAt }))).toContain("inrymning");
     expect(say("sv", row("CRISIS_ENDED", { kind: "EVACUATION", mode: "DRILL", startedAt, endedAt }))).toBe(`Övningen (utrymning) avslutades kl ${time(endedAt)}.`);
     expect(say("en", row("CRISIS_ALARM", { kind: "EVACUATION", mode: "DRILL", startedAt }))).toContain("evacuation");
+  });
+});
+
+describe("the guardian's notice of a message to confirm (Kvittens)", () => {
+  const title = "Utflykten på torsdag";
+  // A pupil's name and the text of the message are not in a notice's meta; if a newer gateway puts them there, the sentence still must not say them.
+  const meta = { requestId: "r-1", title, studentName: "Ada Berg", body: "Ta med matsäck" };
+
+  it("says that the school asks for a confirmation and what it is called, in both languages", () => {
+    expect(say("sv", row("ACK_REQUESTED", meta))).toBe(`Skolan ber dig bekräfta: ${title}`);
+    expect(say("en", row("ACK_REQUESTED", meta))).toBe(`The school asks you to confirm: ${title}`);
+  });
+
+  it("reminds once, in words that tell it from the request", () => {
+    expect(say("sv", row("ACK_REMINDER", meta))).toBe(`Påminnelse: skolan väntar på din bekräftelse av ${title}`);
+    expect(say("en", row("ACK_REMINDER", meta))).toBe(`Reminder: the school is waiting for your confirmation of ${title}`);
+  });
+
+  it("never says a pupil or the text of the message", () => {
+    for (const type of ["ACK_REQUESTED", "ACK_REMINDER"] as const) {
+      for (const text of [say("sv", row(type, meta)), say("en", row(type, meta))]) expect(text).not.toMatch(/Ada|Berg|matsäck/);
+    }
+  });
+
+  it("leads both to the guardian's list, whoever the reader is", () => {
+    for (const type of ["ACK_REQUESTED", "ACK_REMINDER"] as const) {
+      expect(noticeHref(row(type, meta))).toBe("/guardian/acknowledgements");
+      expect(noticeHref(row(type, meta), "GUARDIAN")).toBe("/guardian/acknowledgements");
+    }
   });
 });

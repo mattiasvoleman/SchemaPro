@@ -11,6 +11,9 @@
         - link "Frånvarobevakning":
           - /url: /sv/guardian/absence-watch
       - listitem:
+        - link "Kvittens":
+          - /url: /sv/guardian/acknowledgements
+      - listitem:
         - link "Min kalenderprenumeration":
           - /url: /sv/calendar-feed
   - link "Tillgänglighetsredogörelse":
@@ -61,5 +64,11 @@
       - listitem:
         - text: Besked efter ett larm på skolan
         - switch "Besked efter ett larm på skolan" [checked]
+      - listitem:
+        - text: Meddelanden från skolan som du ska bekräfta
+        - switch "Meddelanden från skolan som du ska bekräfta" [checked]
+      - listitem:
+        - text: Påminnelse om ett meddelande som väntar på din bekräftelse
+        - switch "Påminnelse om ett meddelande som väntar på din bekräftelse" [checked]
 - region "Meddelanden alt+T"
 - alert

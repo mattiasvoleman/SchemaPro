@@ -46,6 +46,15 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/reporting-rate")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("gates Kvittens by Drift, as the notices it sends: the läsare reads the requests and the switch and makes no request, every other profile writes", () => {
+    expect(PAGE_GATES["/admin/acknowledgements"]).toBe("DRIFT");
+    expect(gateOfPath("/sv/admin/acknowledgements")).toBe("DRIFT");
+    expect(profileOpens("EXPEDITION", "DRIFT")).toBe(true);
+    expect(profileOpens("LASARE", "DRIFT")).toBe(false);
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/acknowledgements");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/acknowledgements")?.areas).toEqual(["DRIFT"]);
+  });
+
   it("reads a page's gate through the locale prefix and from its sub-pages", () => {
     expect(gateOfPath("/sv/admin/rooms")).toBe("PLANERING");
     // Personer has two areas' buttons, and gates each control instead.

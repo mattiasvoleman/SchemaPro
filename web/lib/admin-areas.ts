@@ -139,6 +139,8 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/absence-watch": "DRIFT",
   // Rapporteringsgrad: the two switches and the limit are Drift's, as the attendance whose registers it counts.
   "/admin/reporting-rate": "DRIFT",
+  // Kvittens: the switch and the reminder are Drift's, as the notices they send to guardians; a request is written by Drift too.
+  "/admin/acknowledgements": "DRIFT",
   // Lektionslogg: the klassbok reads for everyone; removing a log is drift's.
   "/admin/klassbok": "DRIFT",
   "/admin/dataskydd": "DECIDES",
