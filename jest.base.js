@@ -66,7 +66,9 @@ const e2e = {
  * configuration per Jest project, whichever entry reaches it first, so the
  * second entry's options are silently the first's. Keeping the slower compile
  * out of `unit` and `e2e` is what a project of its own is for;
- * `npm run test:openapi` runs it alone.
+ * `npm run test:openapi` runs it alone, through jest.openapi.config.js: it is not one of
+ * jest.config.js's projects, since the plugin's generated functions and branches would
+ * be merged into the coverage of the DTOs and controllers (see that file).
  */
 const openapi = {
   ...common,

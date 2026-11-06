@@ -10,13 +10,16 @@
  *   e2e   — `test/**\/*.e2e-spec.ts`, full Nest app over supertest
  *
  * Project definitions and the coverage gate live in jest.base.js, which
- * jest.mutation.config.js reuses.
+ * jest.mutation.config.js reuses. The OpenAPI document's tests are a third project
+ * with a config of their own (jest.openapi.config.js, `npm run test:openapi`): under
+ * coverage its swagger-plugin compile would be merged into the figures of the DTOs
+ * and controllers and pull the combined coverage under the gate.
  */
-const { globals, unit, e2e, openapi, coverage } = require('./jest.base');
+const { globals, unit, e2e, coverage } = require('./jest.base');
 
 module.exports = {
   rootDir: __dirname,
   ...globals,
   ...coverage,
-  projects: [unit, e2e, openapi],
+  projects: [unit, e2e],
 };

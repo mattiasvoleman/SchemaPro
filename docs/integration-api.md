@@ -1187,7 +1187,7 @@ change to a route, a DTO or a role:
 npm run openapi:generate   # rewrites docs/api/openapi.json
 ```
 
-The `openapi` Jest project (`npm run test:openapi`, part of `npm test`) fails
+The `openapi` Jest project (`npm run test:openapi`, its own config `jest.openapi.config.js` and its own step in CI, without coverage) fails
 with the missing `VERB /path` when a route under `/api/v1` is not in the
 document, when the document has an operation that is no route, when the
 committed file differs from what the code generates, and when the document is

@@ -88,6 +88,13 @@ jobs:
       - name: Unit + integration tests with coverage
         run: npm run test:cov
 
+      # The OpenAPI document (src/openapi): a route missing from it fails, and so does a committed
+      # docs/api/openapi.json that is not what the code generates. A step of its own, without coverage:
+      # the swagger plugin's compile would be merged into the coverage of the DTOs and controllers and
+      # pull the combined figure under the gate (jest.openapi.config.js).
+      - name: OpenAPI document (route table and committed file)
+        run: npm run test:openapi
+
       # The verdict of quality-gates.yml's nightly latency job, run on the rows
       # of fourteen real CI runs. latency-gate.mjs imports nothing, so this needs
       # neither autocannon nor the stack, and a change to the gate is proven on
