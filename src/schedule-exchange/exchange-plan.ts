@@ -200,6 +200,12 @@ export interface PlanContext {
   subjects: SubjectRow[];
   rooms: RoomRow[];
   teachers: TeacherRow[];
+  /**
+   * Users who hold a lesson or a requirement without being a teacher or an administrator by role (a guardian
+   * or a pupil put on a lesson by hand, or by an old import). The export names them, since the lesson is theirs;
+   * the import never matches a file's teacher to one, so they are not in `teachers`.
+   */
+  holders?: TeacherRow[];
   existing: ExistingLesson[];
   frames: FrameRow[];
   rasts: RastRow[];

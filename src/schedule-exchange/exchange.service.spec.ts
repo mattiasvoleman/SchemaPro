@@ -740,4 +740,26 @@ describe('documentOf', () => {
     expect(doc.teachers.map((t) => t.short)).toEqual(['ANBE2', 'ANBE3', 'ANBE']);
     expect(indexContext(ctx).groupsById.size).toBe(2);
   });
+
+  it('names a user who holds a lesson without being a teacher by role, and a holder it cannot read by id alone, instead of failing', () => {
+    const ctx = {
+      year: { id: YEAR, name: '2026/2027', start: '2026-08-17', end: '2027-06-11', numbering: 'NIOARIG' },
+      groups: [{ id: 'g1', name: '7A', kind: 'CLASS', gradeLevel: 7, halfOfId: null }],
+      subjects: [{ id: 's1', name: 'Matematik', code: 'MA' }],
+      rooms: [],
+      teachers: [{ id: 't1', firstName: 'Anna', lastName: 'Berg', email: 'a@x.example', signature: 'ANBE', isActive: true }],
+      holders: [{ id: 'h1', firstName: 'Gun', lastName: 'Vårdnads', email: 'g@x.example', signature: null, isActive: true }],
+      existing: [
+        { id: 'm1', groupId: 'g1', subjectId: 's1', teacherId: 't1', coTeacherId: 'h1', roomId: null, day: 1, startMin: 490, endMin: 550, weeks: 'ALL', from: null, to: null, extraGroupIds: [], isLocked: true, isGenerated: false },
+        { id: 'm2', groupId: 'g1', subjectId: 's1', teacherId: 'gone', coTeacherId: null, roomId: null, day: 2, startMin: 490, endMin: 550, weeks: 'ALL', from: null, to: null, extraGroupIds: [], isLocked: true, isGenerated: false },
+      ],
+      frames: [], rasts: [], lunch: null, servings: [], sittings: [], requirements: [], blocks: [], spans: new Map(),
+    } as unknown as PlanContext;
+    const doc = documentOf('Skolan', ctx, new Map());
+    expect(doc.lessons[0]!.teachers.map((t) => [t.short, t.name, t.email])).toEqual([['ANBE', 'Anna Berg', 'a@x.example'], ['GUVÅ', 'Gun Vårdnads', 'g@x.example']]);
+    expect(doc.lessons[1]!.teachers.map((t) => [t.id, t.name])).toEqual([['gone', '']]);
+    // The directory names the holder it could read, since the lesson is in the file; the import's index of teachers is untouched.
+    expect(doc.teachers.map((t) => t.id)).toEqual(['t1', 'h1']);
+    expect(indexContext(ctx).teachersById.has('h1')).toBe(false);
+  });
 });

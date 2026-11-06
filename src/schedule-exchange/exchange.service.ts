@@ -743,6 +743,12 @@ export class ScheduleExchangeService {
         tx.teachingBlock.findMany({ where: { academicYearId }, select: { id: true, name: true } }),
       ]);
 
+    // A lesson or requirement can name a user whose role is neither TEACHER nor SCHOOL_ADMIN. The file still has to say
+    // who holds it, so those users are read by id (and kept apart from `teachers`: an import never matches to them).
+    const known = new Set(users.map((u) => u.id));
+    const heldBy = [...new Set([...lessons, ...requirements].flatMap((l) => [l.teacherId, l.coTeacherId]))].filter((id): id is string => id !== null && !known.has(id));
+    const holders = heldBy.length === 0 ? [] : await tx.user.findMany({ where: { id: { in: heldBy } }, select: { id: true, firstName: true, lastName: true, email: true, isActive: true } });
+
     const signature = new Map(employments.map((e) => [e.userId, (e.signature ?? '').trim() || null]));
     const participants = new Map<string, string[]>();
     for (const l of lessons) participants.set(l.id, l.participants.map((p) => p.studentId));
@@ -760,6 +766,7 @@ export class ScheduleExchangeService {
       subjects,
       rooms,
       teachers: users.map((u) => ({ ...u, signature: signature.get(u.id) ?? null })),
+      holders: holders.map((u) => ({ ...u, signature: signature.get(u.id) ?? null })),
       existing: lessons.map((l): ExistingLesson => ({
         id: l.id,
         groupId: l.studentGroupId,
@@ -900,8 +907,10 @@ export function documentOf(schoolName: string, ctx: PlanContext, blocks: Readonl
   const idx = indexContext(ctx);
   const used = new Set(ctx.teachers.map((t) => (t.signature ?? '').toLowerCase()).filter((s) => s !== ''));
   const shortOf = new Map<string, string>();
+  const holders = new Map((ctx.holders ?? []).map((h) => [h.id, h]));
   const teacherRef = (id: string): TeacherRef => {
-    const t = idx.teachersById.get(id)!;
+    // A holder row hidden from the reader (row-level security) leaves nothing to name but the id.
+    const t = idx.teachersById.get(id) ?? holders.get(id) ?? { id, firstName: '', lastName: '', email: '', signature: null, isActive: false };
     let short = t.signature;
     if (!short) {
       short = shortOf.get(id) ?? '';
@@ -946,7 +955,7 @@ export function documentOf(schoolName: string, ctx: PlanContext, blocks: Readonl
     };
   });
   const named = new Set(lessons.flatMap((l) => l.teachers.map((t) => t.id)));
-  const teachers = ctx.teachers
+  const teachers = [...ctx.teachers, ...holders.values()]
     .filter((t) => t.isActive || named.has(t.id))
     .filter((t) => named.has(t.id) || t.signature)
     .map((t) => teacherRef(t.id));
