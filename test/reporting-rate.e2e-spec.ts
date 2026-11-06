@@ -157,6 +157,12 @@ describe('/api/v1/reporting-rate (e2e)', () => {
       expect(reads.map((read) => read.values[2])).toEqual([['t1', 't2'], ['t1', 't2']]);
     });
 
+    it.each(['2000-01-01', '2100-12-31'])('takes the edge of the years it reckons in, %s, for every period', async (anchor) => {
+      for (const period of ['WEEK', 'MONTH', 'YEAR']) {
+        await http().get(`/api/v1/reporting-rate?period=${period}&anchor=${anchor}`).set('x-test-user', admin).expect(200);
+      }
+    });
+
     it('writes nothing to the read log for a period nobody taught in', async () => {
       await http().get('/api/v1/reporting-rate?period=WEEK&anchor=2026-07-01').set('x-test-user', admin).expect(200);
       expect(harness.tx.$executeRaw).not.toHaveBeenCalled();
@@ -169,6 +175,9 @@ describe('/api/v1/reporting-rate (e2e)', () => {
       ['an anchor with a time', 'anchor=2026-10-21T10:00:00Z'],
       ['an anchor that does not exist', 'anchor=2026-02-30'],
       ['an anchor of the wrong shape', 'anchor=21-10-2026'],
+      ['an anchor before the years it reckons in', 'anchor=1999-12-31'],
+      ['an anchor after them', 'anchor=2101-01-01'],
+      ['an anchor at the end of time, whose week runs into year 10000', 'anchor=9999-12-29'],
       ['a parameter it does not know', 'period=WEEK&teacherId=t1'],
     ])('refuses %s with a 400 before the database, naming the field', async (_label, query) => {
       const response = await http().get(`/api/v1/reporting-rate?${query}`).set('x-test-user', admin).expect(400);

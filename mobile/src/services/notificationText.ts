@@ -106,8 +106,9 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
     case 'LESSON_REPORT_REMINDER': {
       // Rapporteringsgrad: how many lessons stand open and the school's limit,
       // never which lesson, its subject, its class or its time. The count is
-      // the teacher's own, so it may be said; where to save the register is
-      // the attendance tab.
+      // the teacher's own and is of the lessons that crossed the limit since
+      // the last notice ("new": older ones may remain), so it may be said;
+      // where to save the register is the attendance tab.
       const count = Math.max(0, Math.trunc(Number(meta['count'])) || 0);
       const limitDays = Math.max(0, Math.trunc(Number(meta['limitDays'])) || 0);
       return t('notifications.text.lessonReportReminder', {

@@ -1,12 +1,15 @@
 import { IsBoolean, IsIn, IsInt, IsISO8601, IsOptional, Matches, Max, Min } from 'class-validator';
 import { OPEN_AFTER_DAYS, REPORTING_PERIODS, type ReportingPeriod } from '../reporting-rate';
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** A date from 2000-01-01 to 2100-12-31: the years the week, month and läsår arithmetic stays inside. */
+const ANCHOR_DATE = /^(20\d{2}|2100)-\d{2}-\d{2}$/;
 
 /**
  * GET /api/v1/reporting-rate. `period` is WEEK without it, `anchor` the
  * school's today: any day of the week, month or läsår asked for. The date must
- * exist (2026-02-30 does not), and the message names the field.
+ * exist (2026-02-30 does not) and lie in 2000-2100 (a week of 9999-12-29 runs
+ * into year 10000, which no date column holds), and the message names the
+ * field.
  */
 export class ReportingRateQueryDto {
   @IsOptional()
@@ -14,7 +17,7 @@ export class ReportingRateQueryDto {
   period?: ReportingPeriod;
 
   @IsOptional()
-  @Matches(ISO_DATE, { message: 'anchor: ett datum ÅÅÅÅ-MM-DD.' })
+  @Matches(ANCHOR_DATE, { message: 'anchor: ett datum ÅÅÅÅ-MM-DD mellan 2000-01-01 och 2100-12-31.' })
   @IsISO8601({ strict: true }, { message: 'anchor: ett datum som finns, ÅÅÅÅ-MM-DD.' })
   anchor?: string;
 }

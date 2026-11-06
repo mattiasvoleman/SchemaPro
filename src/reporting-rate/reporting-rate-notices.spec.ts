@@ -21,19 +21,19 @@ describe('reminderSentences', () => {
   it('tells a teacher how many lessons wait and how long the school lets one wait, in both languages', () => {
     const { en, sv } = reminderSentences(3, 2);
     expect(en).toBe(
-      'You have 3 lessons held at least 2 days ago where attendance has not been saved. Log in to Rastra timetable to see which.',
+      '3 new lessons were held at least 2 days ago and have no saved attendance. Older open lessons may remain. Log in to Rastra timetable to see them all.',
     );
     expect(sv).toBe(
-      'Du har 3 lektioner som hölls för minst 2 dagar sedan och där närvaron inte är sparad. Logga in i Rastra Schema för att se vilka.',
+      '3 nya lektioner hölls för minst 2 dagar sedan och saknar sparad närvaro. Äldre öppna lektioner kan finnas kvar. Logga in i Rastra Schema för att se alla.',
     );
   });
 
   it('uses the singular for one lesson and for a limit of one day', () => {
     const { en, sv } = reminderSentences(1, 1);
-    expect(en).toContain('You have 1 lesson held at least 1 day ago');
-    expect(sv).toContain('Du har 1 lektion som hölls för minst 1 dag sedan');
-    expect(reminderSentences(1, 5).en).toContain('1 lesson held at least 5 days ago');
-    expect(reminderSentences(2, 1).sv).toContain('2 lektioner som hölls för minst 1 dag sedan');
+    expect(en).toContain('1 new lesson was held at least 1 day ago and has no saved attendance');
+    expect(sv).toContain('1 ny lektion hölls för minst 1 dag sedan');
+    expect(reminderSentences(1, 5).en).toContain('1 new lesson was held at least 5 days ago');
+    expect(reminderSentences(2, 1).sv).toContain('2 nya lektioner hölls för minst 1 dag sedan');
   });
 
   it('names no subject, class, room or time', () => {
@@ -87,7 +87,7 @@ describe('reminderEntries', () => {
     expect(entries).toHaveLength(3);
     expect(entries[0]!.recipients.map((r) => r.userId)).toEqual(['user-1', 'user-2']);
     expect(entries[1]!.recipients.map((r) => r.userId)).toEqual(['user-3']);
-    expect(entries[1]!.email!.body).toContain('5 lessons');
+    expect(entries[1]!.email!.body).toContain('5 new lessons');
     expect(entries[2]!.email!.body).toContain('at least 7 days');
   });
 
@@ -112,7 +112,7 @@ describe('reminderEntries', () => {
   it('carries no address in the text, and reads a count it cannot trust as none', () => {
     const [entry] = reminderEntries('school-1', [{ ...reminder(1, 2), meta: { count: 'many', limitDays: -3 } }]);
     expect(entry!.email!.body).not.toContain('@');
-    expect(entry!.email!.body).toContain('0 lessons held at least 0 days ago');
+    expect(entry!.email!.body).toContain('0 new lessons were held at least 0 days ago');
   });
 
   it('answers nothing for nothing written', () => {

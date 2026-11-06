@@ -29,12 +29,15 @@ const day = (value: unknown): string => (typeof value === 'string' ? value.slice
 /**
  * The two sentences (English, Swedish) a teacher is told. The limit is in
  * calendar days of the school's dates, and a lesson is told of when its day is
- * that many days back or more: "at least", not "more than".
+ * that many days back or more: "at least", not "more than". The count is the
+ * lessons that crossed the limit since the last notice (a lesson is told of
+ * once), so it says "new", and that older ones may remain: a teacher with
+ * twelve old open lessons and one new is not told they have one.
  */
 export function reminderSentences(count: number, limitDays: number): { en: string; sv: string } {
-  const en = `You have ${count === 1 ? '1 lesson' : `${count} lessons`} held at least ${limitDays === 1 ? '1 day' : `${limitDays} days`} ago where attendance has not been saved.`;
-  const sv = `Du har ${count === 1 ? '1 lektion' : `${count} lektioner`} som hölls för minst ${limitDays === 1 ? '1 dag' : `${limitDays} dagar`} sedan och där närvaron inte är sparad.`;
-  return { en: `${en} Log in to Rastra timetable to see which.`, sv: `${sv} Logga in i Rastra Schema för att se vilka.` };
+  const en = `${count === 1 ? '1 new lesson was' : `${count} new lessons were`} held at least ${limitDays === 1 ? '1 day' : `${limitDays} days`} ago and ${count === 1 ? 'has' : 'have'} no saved attendance. Older open lessons may remain.`;
+  const sv = `${count === 1 ? '1 ny lektion hölls' : `${count} nya lektioner hölls`} för minst ${limitDays === 1 ? '1 dag' : `${limitDays} dagar`} sedan och saknar sparad närvaro. Äldre öppna lektioner kan finnas kvar.`;
+  return { en: `${en} Log in to Rastra timetable to see them all.`, sv: `${sv} Logga in i Rastra Schema för att se alla.` };
 }
 
 /**

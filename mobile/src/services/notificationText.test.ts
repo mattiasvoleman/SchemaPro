@@ -314,14 +314,14 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
   [
     'LESSON_REPORT_REMINDER, several lessons: the count is the teacher’s own',
     row('LESSON_REPORT_REMINDER', { count: 3, limitDays: 2 }),
-    '3 lektioner hölls för minst 2 dagar sedan och saknar sparat register. Spara närvaron under Närvaro.',
-    '3 lessons were held at least 2 days ago and have no saved register. Save the attendance under Attendance.',
+    '3 nya lektioner hölls för minst 2 dagar sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Spara närvaron under Närvaro.',
+    '3 new lessons were held at least 2 days ago and have no saved register. Older open lessons may remain. Save the attendance under Attendance.',
   ],
   [
     'LESSON_REPORT_REMINDER, one lesson and a limit of one day',
     row('LESSON_REPORT_REMINDER', { count: 1, limitDays: 1 }),
-    'En lektion hölls för minst en dag sedan och saknar sparat register. Spara närvaron under Närvaro.',
-    'One lesson was held at least one day ago and has no saved register. Save the attendance under Attendance.',
+    'En ny lektion hölls för minst en dag sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Spara närvaron under Närvaro.',
+    'One new lesson was held at least one day ago and has no saved register. Older open lessons may remain. Save the attendance under Attendance.',
   ],
   [
     'REPORTING_RATE_DIGEST, the week only: no count, no share',
@@ -409,7 +409,7 @@ describe('notificationText', () => {
       translatorFor('sv'),
       'sv',
     );
-    expect(text).toBe('2 lektioner hölls för minst 3 dagar sedan och saknar sparat register. Spara närvaron under Närvaro.');
+    expect(text).toBe('2 nya lektioner hölls för minst 3 dagar sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Spara närvaron under Närvaro.');
     expect(text).not.toMatch(/Matematik|7A|Anna|08:00/);
   });
 

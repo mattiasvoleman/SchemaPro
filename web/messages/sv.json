@@ -2334,7 +2334,7 @@
     "unreadMarker": "Oläst.",
     "absenceWatchDigest": "Frånvarosammanställning {from} – {to}: {open, plural, =0 {ingen elev är över en gräns} one {# elev är över en gräns} other {# elever är över en gräns}}, {crossed, plural, =0 {ingen passerade en gräns} one {# passerade en gräns} other {# passerade en gräns}} under perioden. Se Frånvarobevakning.",
     "absenceWatchDigestGuardian": "Frånvarosammanställning {from} – {to}: {open, plural, =0 {{crossed, plural, one {ett av dina barn har} other {# av dina barn har}} kommit under en gräns för frånvaro igen} one {ett av dina barn har frånvaro över en gräns som skolan har satt} other {# av dina barn har frånvaro över en gräns som skolan har satt}}. Se Frånvarobevakning.",
-    "lessonReportReminder": "{count, plural, one {# lektion hölls} other {# lektioner hölls}} för minst {limitDays, plural, one {# dag} other {# dagar}} sedan och saknar sparat register. Se Min rapportering.",
+    "lessonReportReminder": "{count, plural, one {# ny lektion hölls} other {# nya lektioner hölls}} för minst {limitDays, plural, one {# dag} other {# dagar}} sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Se Min rapportering.",
     "reportingRateDigest": "Rapporteringsgrad {from} – {to}: {reported, number} av {held, plural, one {# hållen lektion} other {# hållna lektioner}} hade ett sparat register. Se Rapporteringsgrad.",
     "cover": {
       "COVER_REQUESTED": "Kan du vikariera? {count, plural, one {En lektion} other {# lektioner}} från {when}.",
@@ -7418,7 +7418,7 @@
   "reportingRate": {
     "title": "Rapporteringsgrad",
     "subtitle": "Hur stor andel av de hållna lektionerna som har ett sparat register, per lärare",
-    "intro": "Registret är sparat när minst en elev har fått en markering. Inställda lektioner räknas inte, och inte heller lektioner när läraren är frånvarande. Räkningen görs varje natt för dagarna fram till och med i går.",
+    "intro": "Registret är sparat när minst en elev har fått en markering. Inställda lektioner räknas inte, inte heller lektioner utan elever på listan eller när läraren är frånvarande, och bara aktiva lärare visas. Räkningen görs varje natt för dagarna fram till och med i går.",
     "percent": "{percent} %",
     "retry": "Försök igen",
     "loadFailed": "Rapporteringsgraden kunde inte hämtas",
@@ -7495,7 +7495,7 @@
     "teacher": {
       "title": "Min rapportering",
       "subtitle": "Dina öppna lektioner och hur stor andel du har registrerat",
-      "intro": "Registret är sparat när minst en elev har fått en markering. Har en kollega på samma lektion sparat det, räknas det för dig också. Inställda lektioner och tid då du är frånvarande räknas inte.",
+      "intro": "Registret är sparat när minst en elev har fått en markering. Har en kollega på samma lektion sparat det, räknas det för dig också. Inställda lektioner, lektioner utan elever på listan och tid då du är frånvarande räknas inte.",
       "loadFailed": "Din rapportering kunde inte hämtas",
       "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund.",
       "open": {
