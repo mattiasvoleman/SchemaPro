@@ -223,7 +223,9 @@
     "calendarFeeds": "Calendar subscriptions",
     "classBook": "Class book",
     "scheduleExchange": "Schedule as a file",
-    "absenceWatch": "Absence watch"
+    "absenceWatch": "Absence watch",
+    "crisis": "Crisis mode",
+    "myCrisis": "Alarm"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -2336,6 +2338,11 @@
       "COVER_REQUESTED": "Can you substitute? {count, plural, one {One lesson} other {# lessons}} from {when}.",
       "COVER_REQUEST_CLOSED": "{reason, select, TAKEN {The request to substitute from {when} is filled: a colleague said yes first.} NOT_NEEDED {The request to substitute from {when} is no longer needed. You need not answer.} UNANSWERED {Nobody said yes to the request from {when}. {count, plural, one {The lesson still needs} other {The lessons still need}} a substitute.} other {The request to substitute from {when} is withdrawn. You need not answer.}}",
       "COVER_REQUEST_ACCEPTED": "{name} said yes to {count, plural, one {the lesson} other {the # lessons}} from {when}."
+    },
+    "crisis": {
+      "CRISIS_ALARM": "{mode, select, DRILL {Drill} other {Live alarm}}: {kind, select, LOCKDOWN {lockdown} other {evacuation}} going since {when}. Open the alarm.",
+      "CRISIS_ENDED": "{mode, select, DRILL {The drill} other {The live alarm}} ({kind, select, LOCKDOWN {lockdown} other {evacuation}}) ended at {end}.",
+      "CRISIS_GUARDIAN_AFTER": "The school had an alarm ({kind, select, LOCKDOWN {lockdown} other {evacuation}}) at {when}–{end}. It has ended."
     }
   },
   "integrations": {
@@ -5978,7 +5985,8 @@
       "COVER_REQUESTED": "Requests to substitute",
       "COVER_REQUEST_CLOSED": "Requests filled, withdrawn or run out unanswered",
       "COVER_REQUEST_ACCEPTED": "Colleagues who said yes to my request",
-      "ABSENCE_WATCH_DIGEST": "Absence summary"
+      "ABSENCE_WATCH_DIGEST": "Absence summary",
+      "CRISIS_GUARDIAN_AFTER": "Notice after an alarm at the school"
     },
     "loadFailed": "Your choices could not be loaded",
     "loadFailedHint": "Nothing has changed in what is sent to you. Reload the page in a moment."
@@ -6029,6 +6037,14 @@
       "DEPARTED_PEOPLE": {
         "name": "People who left",
         "body": "People deactivated before the cutoff date are pseudonymised. The row stays, so attendance, decisions and the SCB return still hold together. A teacher with a post in a school year waits up to and including 30 November of that school year, so the SCB return can be filed."
+      },
+      "CRISIS_DRILLS": {
+        "name": "Crisis mode drills",
+        "body": "Evacuation and lockdown drills: which groups were ticked off, what the teachers reported and when. Drills are kept apart and can be purged sooner than live alarms. A drill that is going is never purged."
+      },
+      "CRISIS_ALARMS": {
+        "name": "Live alarms",
+        "body": "Live evacuations and lockdowns, with the protocol of who reported what and when. They are kept as the school decides, and nothing is purged without a decision. An alarm that is going is never purged."
       }
     },
     "peopleEffectsTitle": "When a person is pseudonymised:",
@@ -6239,7 +6255,9 @@
     "CHANGE_LOGS": "History before {date} has been purged under the school's decision.",
     "ABSENCE_REASONS": "Reasons for absences that ended before {date} have been purged under the school's decision.",
     "ACCESS_LOG": "Reads before {date} have been purged under the school’s decision.",
-    "COVER_REQUESTS": "Substitute requests that ended before {date} have been purged under the school's decision."
+    "COVER_REQUESTS": "Substitute requests that ended before {date} have been purged under the school's decision.",
+    "CRISIS_DRILLS": "Crisis mode drills that ended before {date} have been purged under the school's decision.",
+    "CRISIS_ALARMS": "Live alarms that ended before {date} have been purged under the school's decision."
   },
   "leaveInbox": {
     "alreadyDecided": "The request has already been decided. The list is up to date.",
@@ -7406,6 +7424,241 @@
         "MANUAL": "the mark by hand removed by {who}",
         "SS12000": "the register's mark removed by {who}"
       }
+    }
+  },
+  "crisis": {
+    "title": "Crisis mode",
+    "subtitle": "Roll call for an evacuation or a lockdown, taken from the schedule",
+    "tabs": {
+      "alarm": "Alarm",
+      "protocol": "Protocols",
+      "settings": "Settings"
+    },
+    "loadFailed": "The alarms could not be loaded",
+    "loadFailedHint": "This did not start or end any alarm. Reload the page, and start the alarm again if it is not shown.",
+    "noAlarmReader": "No alarm is going. You can read the protocols and the settings, but not start or end an alarm.",
+    "kind": {
+      "EVACUATION": "Evacuation",
+      "LOCKDOWN": "Lockdown"
+    },
+    "mode": {
+      "LIVE": "Live alarm",
+      "DRILL": "Drill"
+    },
+    "status": {
+      "FOUND": "Found",
+      "MISSING": "Missing",
+      "ABSENT_BEFORE": "Absent beforehand",
+      "UNREPORTED": "Not reported"
+    },
+    "absentSource": {
+      "ATTENDANCE": "registered absence",
+      "REPORTED": "reported absence or approved leave"
+    },
+    "pending": "Waiting to be sent",
+    "markFound": "Found",
+    "markMissing": "Missing",
+    "markFoundFor": "Found: {name}",
+    "markMissingFor": "Missing: {name}",
+    "count": {
+      "found": "Found",
+      "missing": "Missing",
+      "unreported": "Not reported",
+      "absentBefore": "Absent beforehand"
+    },
+    "errors": {
+      "CRISIS_ALARM_OPEN": "An alarm of that kind is already going.",
+      "CRISIS_ALARM_ENDED": "The alarm has already ended, or ended more than an hour ago and takes no more marks.",
+      "CRISIS_NOT_YOURS": "Your role may not start alarms, and you do not answer for that group. The principal decides who may start one, under Settings.",
+      "CRISIS_MARK_INVALID": "The pupil is not on the group's list.",
+      "CRISIS_ALARM_NOT_FOUND": "The alarm does not exist.",
+      "CRISIS_MARK_UNRESOLVED": "The mark belongs to no alarm that you answer in.",
+      "THROTTLED": "Too many requests in a short time. Wait a moment and try again.",
+      "OFFLINE": "No contact with the server. Check the connection and try again.",
+      "OTHER": "The server did not accept the mark."
+    },
+    "start": {
+      "title": "Start an alarm",
+      "description": "Teachers get the alarm at once, with their groups taken from the schedule as it is now. In a break it is the lesson the pupils are on their way to.",
+      "about": {
+        "EVACUATION": "Pupils leave the building.",
+        "LOCKDOWN": "Pupils stay in or are brought in."
+      },
+      "buttonLive": "Start live alarm: {kind}",
+      "buttonDrill": "Start drill: {kind}",
+      "drillRunning": "A drill is already going. A live alarm ends it.",
+      "notAllowed": "Your role may not start alarms. The principal decides who may, under Settings.",
+      "confirmLiveTitle": "Start live alarm: {kind}?",
+      "confirmLiveBody": "This is not a drill. All teachers get the alarm at once and are to tick off their groups. It cannot be undone, only ended.",
+      "confirmDrillTitle": "Start drill: {kind}?",
+      "confirmDrillBody": "Teachers get the alarm as a drill and tick off their groups for real. No guardians are told about a drill.",
+      "confirmCutsDrill": "The drill that is going ends.",
+      "cancel": "Cancel",
+      "starting": "Starting…",
+      "confirmLive": "Yes, start live alarm",
+      "confirmDrill": "Start the drill",
+      "failed": "The alarm did not start",
+      "failedFallback": "The alarm could not be started. Nothing was sent to the teachers. Try again.",
+      "showRunning": "Show the alarm that is going"
+    },
+    "live": {
+      "loadFailed": "The alarm could not be loaded",
+      "loadFailedHint": "The alarm is still going. Reload the page.",
+      "refetchFailed": "The alarm could not be updated",
+      "refetchFailedHint": "What is shown is what was last loaded. The figures may have changed since.",
+      "switchLabel": "Alarms that are going",
+      "going": "going",
+      "over": "ended",
+      "elapsed": "Time since the alarm started",
+      "started": "Started at {time} by {by}",
+      "endedAt": "ended at {time} by {by}",
+      "autoEnded": "The alarm ended by itself, after standing open longer than an alarm can.",
+      "note": "Note: {note}",
+      "guardiansTold": "Guardians were told at {time} that the alarm happened and ended.",
+      "end": "End the alarm",
+      "openProtocol": "Open the protocol",
+      "close": "Close",
+      "viewOnly": "You can see the alarm but not end it or tick off pupils. Only those the school lets start alarms can.",
+      "summary": "Groups done {groupsDone} of {groups}. Found {found}, missing {missing}, not reported {unreported}. Teachers who have answered {teachersAnswered} of {teachers}.",
+      "groupsDone": "Groups done",
+      "ofTotal": "{done} of {total}",
+      "teachersAnswered": "Teachers who answered",
+      "silentTitle": "Teachers who have not answered",
+      "silentBody": "They have a group where someone is not yet ticked off, and have not ticked off anyone themselves.",
+      "silentNone": "Every teacher has answered.",
+      "findTitle": "Pupils who are missing or not marked",
+      "findBody": "The missing first. Management can tick off a pupil here if the teacher cannot reach their phone.",
+      "findNone": "Every pupil is ticked off or was absent beforehand.",
+      "noTeacher": "No teacher",
+      "showAll": "Show all {count}",
+      "showFewer": "Show fewer",
+      "groupsTitle": "Groups",
+      "hideDone": "Hide groups that are done",
+      "noGroups": "No groups: no lesson was going when the alarm started.",
+      "colGroup": "Group",
+      "colRoom": "Room",
+      "colTeachers": "Teachers",
+      "colStatus": "Status",
+      "nextLesson": "Break: next lesson",
+      "answeredAt": "answered at {time}",
+      "notAnswered": "has not answered",
+      "state": {
+        "DONE": "Done",
+        "DONE_MISSING": "Done, {missing} missing",
+        "IN_PROGRESS": "In progress",
+        "WAITING": "Waiting for the teacher"
+      },
+      "marked": "{done} of {total} ticked off",
+      "allFound": "All found ({count})",
+      "restFound": "The rest are found ({count})",
+      "noPupils": "No pupils on the list.",
+      "pupilsOf": "The pupils in {group}",
+      "markFailed": "The mark could not be saved. Try again.",
+      "markUnresolved": "{count, plural, one {One mark did not belong to the alarm and was not saved.} other {# marks did not belong to the alarm and were not saved.}}",
+      "endTitleLive": "End the live alarm?",
+      "endTitleDrill": "End the drill?",
+      "endBody": "Teachers are told that the alarm is over. The protocol is kept.",
+      "endWarningTitle": "Not everyone is ticked off",
+      "endWarning": "{missing, plural, =0 {No pupil is missing} one {One pupil is missing} other {# pupils are missing}} and {unreported, plural, =0 {everyone else is ticked off} one {one pupil has no mark} other {# pupils have no mark}}. End it anyway only if you know where they are.",
+      "noteLabel": "Note",
+      "noteHint": "Shown in the protocol. At most {max} characters.",
+      "endFailed": "The alarm could not be ended. Try again.",
+      "keepGoing": "Keep the alarm going",
+      "ending": "Ending…",
+      "endConfirm": "End the alarm",
+      "endedToast": "The alarm has ended."
+    },
+    "protocol": {
+      "tabLive": "Live alarms",
+      "tabDrill": "Drills",
+      "loadFailed": "The list could not be loaded",
+      "loadFailedHint": "No protocol has changed. Reload the page.",
+      "emptyLive": "No live alarms",
+      "emptyDrill": "No drills",
+      "emptyBody": "Once an alarm has been started, its protocol is here.",
+      "colStarted": "Started",
+      "colKind": "Kind",
+      "colLength": "Length",
+      "colPupils": "Pupils",
+      "colGroups": "Groups done",
+      "colTeachers": "Teachers who answered",
+      "colOpen": "Open",
+      "open": "Open",
+      "openNamed": "Open the protocol for {name}",
+      "going": "Going",
+      "autoEnded": "Ended by itself",
+      "pupilsFigures": "{found} found · {missing} missing · {unreported} not reported",
+      "absentFigure": "{count} absent beforehand",
+      "detailFailed": "The protocol could not be loaded",
+      "detailFailedHint": "Nothing has changed. Go back to the list and try again.",
+      "backNamed": "To the list",
+      "backLive": "To live alarms",
+      "backDrill": "To drills",
+      "download": "Download CSV",
+      "print": "Print or save as PDF",
+      "protectedNote": "The file and the printout do not name pupils with a protected identity. They are counted but not listed. The screen shows everyone, as the alarm's live view does.",
+      "timeline": "Timeline",
+      "timelineBody": "Every mark in the order it was made, with corrections. The time is that of the device the mark was made on.",
+      "timelineEmpty": "No marks were made.",
+      "colTime": "Time",
+      "colPupil": "Pupil",
+      "colMark": "Mark",
+      "colBy": "By",
+      "colMarked": "Marked",
+      "onBehalf": "for a colleague",
+      "late": "after the alarm had ended",
+      "heldOutFile": "{count, plural, =0 {No pupil in the protocol is marked with a protected identity. Anyone with a protected identity who is not marked under People is included.} one {One pupil with a protected identity is counted without a name in the file.} other {# pupils with a protected identity are counted without a name in the file.}}",
+      "heldOutPaper": "{count, plural, one {One pupil with a protected identity is counted without a name.} other {# pupils with a protected identity are counted without a name.}}",
+      "exportFailed": "The protocol could not be put out. No file was downloaded and nothing was printed.",
+      "printUseButton": "Print the protocol with the Print button on the Crisis mode page. The printout leaves out pupils with a protected identity.",
+      "paperLabel": "Alarm protocol",
+      "paperTitle": "Alarm protocol",
+      "paperStarted": "Started {time} by {by}",
+      "paperEnded": "ended {time} by {by}",
+      "paperFigures": "Groups done {groupsDone} of {groups}. Found {found}, missing {missing}, not reported {unreported}, absent beforehand {absentBefore}. Teachers who answered {teachersAnswered} of {teachers}."
+    },
+    "settings": {
+      "whoTitle": "Who may start an alarm",
+      "whoBody": "Whoever may start an alarm may also end it and tick off groups for teachers. All other administrators see the alarm but change nothing.",
+      "always": "May always start an alarm",
+      "guardiansTitle": "Guardians",
+      "guardiansLabel": "Tell guardians afterwards",
+      "guardiansBody": "After a live alarm, the guardians of the pupils on the lists are told that the alarm happened and ended. The message says nothing about any pupil, group or place. Nobody is told after a drill.",
+      "readOnly": "The principal and those with full access change the settings. You see them as they stand.",
+      "loadFailed": "The settings could not be loaded",
+      "loadFailedHint": "Nothing has changed. Reload the page.",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "The settings are saved.",
+      "saveFailed": "The settings could not be saved. Nothing has changed."
+    },
+    "teacher": {
+      "title": "Alarm",
+      "subtitle": "Your groups when the school starts an alarm",
+      "nextLesson": "Break: you have the group next lesson ({time})",
+      "colleagues": "Together with {names}",
+      "allFound": "All found ({count})",
+      "restFound": "The rest are found ({count})",
+      "noPupils": "No pupils on the list.",
+      "pupilsOf": "The pupils in {group}",
+      "over": "ended",
+      "startedAt": "Started at {time}",
+      "endedAt": "Ended at {time}",
+      "overBody": "The alarm is over. What you have already ticked off is saved.",
+      "do": "Tick off every pupil in your groups: found or missing. You need not tick off anyone who was absent beforehand.",
+      "noGroups": "You do not answer for any group in this alarm.",
+      "droppedTitle": "{count, plural, one {One mark could not be saved} other {# marks could not be saved}}",
+      "droppedDismiss": "Dismiss the message",
+      "noContact": "No contact with the server",
+      "tryAgain": "Try again",
+      "asOf": "The list was loaded at {time}.",
+      "keptHere": "What you tick off is kept here and sent when you get contact.",
+      "sending": "{count, plural, one {Sending # mark…} other {Sending # marks…}}",
+      "queued": "{count, plural, one {# mark is waiting to be sent.} other {# marks are waiting to be sent.}}",
+      "loadFailed": "The alarms could not be loaded",
+      "loadFailedHint": "You seem to have no contact with the server, and no list is kept on this device. The list is shown as soon as you get contact.",
+      "noAlarm": "No alarm is going",
+      "noAlarmBody": "When the school starts an alarm your groups are shown here, and you get a notice."
     }
   }
 }

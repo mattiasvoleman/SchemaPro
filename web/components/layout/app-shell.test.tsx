@@ -120,6 +120,8 @@ describe("AppShell navigation", () => {
     expect(link("nav.timetable")).toHaveAttribute("href", "/admin/timetable");
     expect(link("nav.integrations")).toHaveAttribute("href", "/admin/integrations");
     expect(link("nav.coverBoard")).toHaveAttribute("href", "/admin/cover");
+    // Krisläge, in Drift.
+    expect(link("nav.crisis")).toHaveAttribute("href", "/admin/crisis");
   });
 
   it("gives the name Timplan to the lokal timplan and keeps the requirements route under its new label", () => {
@@ -210,6 +212,8 @@ describe("AppShell navigation", () => {
     expect(link("nav.roomBooking")).toHaveAttribute("href", "/teacher/rooms");
     expect(link("nav.myStaffing")).toHaveAttribute("href", "/teacher/tjanst");
     expect(link("nav.myCover")).toHaveAttribute("href", "/teacher/franvaro");
+    // Larm (Krisläge): the groups to tick off when the school starts an alarm.
+    expect(link("nav.myCrisis")).toHaveAttribute("href", "/teacher/crisis");
     // The mentor's leave inbox (20261023091000), whether or not the school delegates.
     expect(link("nav.myLeave")).toHaveAttribute("href", "/teacher/ledighet");
     // Frånvarobevakning: the mentor's pupils over a limit, in the menu always.
@@ -221,7 +225,7 @@ describe("AppShell navigation", () => {
     expect(screen.queryByRole("link", { name: "nav.leaveRequests" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
     // Counted inside the nav: the skip link is a link too, and not an entry.
-    expect(navLinks()).toHaveLength(9);
+    expect(navLinks()).toHaveLength(10);
 
   });
 
@@ -283,6 +287,7 @@ describe("AppShell navigation", () => {
       "nav.scheduleExchange",
     ]);
     expect(group("nav.operations")).toEqual([
+      "nav.crisis",
       "nav.dayPlanner",
       "nav.teacherAbsence",
       "nav.coverBoard",
@@ -305,7 +310,7 @@ describe("AppShell navigation", () => {
     expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
     expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(35);
+    expect(all).toHaveLength(36);
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {

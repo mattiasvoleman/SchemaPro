@@ -58,5 +58,8 @@
       - listitem:
         - text: Frånvarosammanställning
         - switch "Frånvarosammanställning" [checked]
+      - listitem:
+        - text: Besked efter ett larm på skolan
+        - switch "Besked efter ett larm på skolan" [checked]
 - region "Meddelanden alt+T"
 - alert

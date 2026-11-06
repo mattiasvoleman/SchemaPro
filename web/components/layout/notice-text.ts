@@ -29,7 +29,10 @@ export interface NotificationRow {
     | "COVER_REQUESTED"
     | "COVER_REQUEST_CLOSED"
     | "COVER_REQUEST_ACCEPTED"
-    | "ABSENCE_WATCH_DIGEST";
+    | "ABSENCE_WATCH_DIGEST"
+    | "CRISIS_ALARM"
+    | "CRISIS_ENDED"
+    | "CRISIS_GUARDIAN_AFTER";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -47,6 +50,16 @@ const HREF: Partial<Record<NotificationRow["type"], string>> = {
   COVER_REQUEST_CLOSED: "/teacher/franvaro",
   COVER_REQUEST_ACCEPTED: "/admin/cover",
 };
+
+/**
+ * Krisläge: an alarm that is going or is over leads to the page where it is
+ * read, which is not the same page for a teacher (their groups) and for an
+ * administrator (the live view). The notice carries no id of its own that the
+ * pages would need: both show the alarm that is open. The guardian's notice
+ * (CRISIS_GUARDIAN_AFTER) leads nowhere: it says that something happened and
+ * ended, and there is nothing a guardian could open.
+ */
+const CRISIS_HREF = { SCHOOL_ADMIN: "/admin/crisis", TEACHER: "/teacher/crisis" } as const;
 
 /** The notice as one sentence, in the reader's language. */
 export function noticeText(entry: NotificationRow, t: NoticeTranslator): string {
@@ -145,6 +158,15 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
         reason: str("reason"),
         name: str("acceptedByName"),
       });
+    case "CRISIS_ALARM":
+    case "CRISIS_ENDED":
+    case "CRISIS_GUARDIAN_AFTER": {
+      // Krisläge: that an alarm is going or is over, whether it is an exercise,
+      // its kind and when; never a pupil, a group, a room or a teacher.
+      const at = (key: string) =>
+        meta[key] ? new Date(str(key)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+      return t(`crisis.${entry.type}`, { mode: str("mode"), kind: str("kind"), when: at("startedAt"), end: at("endedAt") });
+    }
     case "TEACHER_ABSENCE_REPORTED": {
       // Who and when; the reason is never in a notice. Whole days end at
       // the midnight after the last day, which is said as that last day.
@@ -174,7 +196,14 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
   }
 }
 
-/** The page a notice leads to, or undefined for one that has none of its own. */
-export function noticeHref(entry: NotificationRow): string | undefined {
+/**
+ * The page a notice leads to, or undefined for one that has none of its own.
+ * `role` is the reader's (an alarm leads a teacher and an administrator to
+ * different pages).
+ */
+export function noticeHref(entry: NotificationRow, role?: string): string | undefined {
+  if (entry.type === "CRISIS_ALARM" || entry.type === "CRISIS_ENDED") {
+    return role === "SCHOOL_ADMIN" ? CRISIS_HREF.SCHOOL_ADMIN : CRISIS_HREF.TEACHER;
+  }
   return entry.meta?.reason === "UNANSWERED" ? "/admin/cover" : HREF[entry.type];
 }

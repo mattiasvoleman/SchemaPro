@@ -29,6 +29,15 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/absence-watch")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("gates Krisläge by Drift: starting, ending and marking an alarm are Drift's, the läsare reads it, and the settings are asked of the profile on the page", () => {
+    expect(PAGE_GATES["/admin/crisis"]).toBe("DRIFT");
+    expect(gateOfPath("/en/admin/crisis")).toBe("DRIFT");
+    expect(profileOpens("EXPEDITION", "DRIFT")).toBe(true);
+    expect(profileOpens("SCHEMALAGGARE", "DRIFT")).toBe(true);
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/crisis");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/crisis")?.areas).toEqual(["DRIFT"]);
+  });
+
   it("reads a page's gate through the locale prefix and from its sub-pages", () => {
     expect(gateOfPath("/sv/admin/rooms")).toBe("PLANERING");
     // Personer has two areas' buttons, and gates each control instead.

@@ -13,6 +13,8 @@ export const RETENTION_DATA_TYPES = [
   "ABSENCE_REASONS",
   "ACCESS_LOG",
   "COVER_REQUESTS",
+  "CRISIS_DRILLS",
+  "CRISIS_ALARMS",
   "DEPARTED_PEOPLE",
 ] as const;
 export type RetentionDataType = (typeof RETENTION_DATA_TYPES)[number];

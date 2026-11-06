@@ -128,6 +128,10 @@ export const TEACHER_NAV: NavSection[] = [
     labelKey: null,
     items: [
       { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
+      // Larm (Krisläge): the pupils of the teacher's groups to tick off when
+      // the school starts an alarm. Second, so that it is in reach on a phone
+      // without scrolling the menu. The attendance icon, already in the shell.
+      { labelKey: "myCrisis", href: "/teacher/crisis", icon: ClipboardCheck },
       { labelKey: "attendance", href: "/teacher/attendance", icon: ClipboardCheck },
       // Lektionslogg: a class's lessons over a period with their topic and
       // homework. The admin menu's subjects icon, already in the shell.
