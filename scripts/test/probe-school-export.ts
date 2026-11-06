@@ -43,7 +43,9 @@
  *          other user of the school is searched for in every file, with and without the
  *          guardians asked for, for a protected pupil and a protected teacher;
  *   (k-m)  a teacher who decided a pupil's leave gets the decision, not the pupil's id, address
- *          or reason, nor the guardian's; a guardian alone, the same for the child;
+ *          or reason, nor the guardian's; a guardian alone, the same for the child; a teacher who
+ *          marked pupils found in a drill gets the act in the crisis tables and not the pupils, nor
+ *          a note that names one, and no file of the extract holds any pupil or guardian;
  *   (k-n)  free text that names a protected person, by id or full name, is empty in the
  *          school's file and in another person's extract, and counted;
  *   (k-o)  the history that keeps a person without a key to Users (a guardian link that was
@@ -585,6 +587,21 @@ async function main(): Promise<void> {
       await owner.guardianStudent.delete({ where: { id: link.id } });
     }
 
+    // A drill the teacher ran: the teacher marked one pupil found and the protected pupil too, and ended it with a note that names a pupil.
+    const crisisGroup = await owner.studentGroup.findFirstOrThrow({ where: { schoolId: a.schoolId, academicYearId: a.yearId } });
+    const alarm = await owner.crisisAlarm.create({ data: { schoolId: a.schoolId, kind: 'EVACUATION', mode: 'DRILL', startedByUserId: a.teacher } });
+    const call = await owner.crisisCall.create({
+      data: { schoolId: a.schoolId, alarmId: alarm.id, basis: 'NO_LESSON', groupName: crisisGroup.name, subjectName: 'Matematik', lessonStartsAt: time('2026-10-06', '07:00'), lessonEndsAt: time('2026-10-06', '08:00') },
+    });
+    await owner.crisisCallTeacher.create({ data: { schoolId: a.schoolId, callId: call.id, teacherId: a.teacher } });
+    for (const pupil of [pupilE, protectedPupil]) {
+      await owner.crisisPupil.create({ data: { schoolId: a.schoolId, alarmId: alarm.id, callId: call.id, studentId: pupil.id } });
+      await owner.crisisReport.create({
+        data: { id: randomUUID(), schoolId: a.schoolId, alarmId: alarm.id, callId: call.id, studentId: pupil.id, state: 'FOUND', at: new Date(), byUserId: a.teacher },
+      });
+    }
+    await owner.crisisAlarm.update({ where: { id: alarm.id }, data: { endedAt: new Date(), endedByUserId: a.teacher, endNote: 'Övning klar, Elev5 EfternamnA kom sist' } });
+
     await check("(k-l) a protected person's extract names nobody else: not the guardian, the teacher, the reader or the decider", async () => {
       for (const withRelated of [true, false]) {
         const pupil = await extractZip(a.admins.FULL, protectedPupil.id, withRelated);
@@ -618,6 +635,31 @@ async function main(): Promise<void> {
       for (const [name, content] of teacher.files) {
         const text = content.toString('utf8');
         for (const secret of [pupilE.id, pupilE.email, guardianE.id, guardianE.email, 'Känsligt läkarbesök E4', 'Tala med mamma E4']) assert.ok(!text.includes(secret), `${name} holds ${secret} in the teacher's extract`);
+      }
+      // The drill: the teacher's act is there, the pupils and their state are not, and neither is a note that names a pupil.
+      const marked = teacher.files.get('data/person/crisispupils.csv');
+      const reports = teacher.files.get('data/person/crisisreports.csv');
+      assert.ok(marked && reports, 'the crisis tables are in the extract of the teacher who marked pupils found');
+      for (const [name, file] of [['crisispupils', marked], ['crisisreports', reports]] as const) {
+        const [header, ...rows] = csvLines(file).map((line) => line.split(';'));
+        assert.ok(rows.length >= 2, `${name} holds the act of marking`);
+        for (const row of rows) {
+          assert.equal(row[header!.indexOf('studentId')], '', `${name}: the pupil is empty`);
+          assert.equal(row[header!.indexOf('state')], '', `${name}: the pupil's state is empty`);
+          assert.ok(row.includes(a.teacher), `${name}: the teacher's own act stays`);
+        }
+      }
+      assert.ok(teacher.emptied('data/person/crisispupils.csv') >= 4 && teacher.emptied('data/person/crisisreports.csv') >= 4, 'counted');
+      const alarmFile = teacher.files.get('data/person/crisisalarms.csv')!.toString('utf8');
+      assert.ok(alarmFile.includes(a.teacher) && !alarmFile.includes('Övning klar'), 'the teacher started the drill, and the note that names a pupil is empty');
+      // No file of the teacher's extract holds any pupil or guardian of the school: id, address or full name (R4-L1).
+      const strangers = await owner.user.findMany({ where: { schoolId: a.schoolId, role: { in: ['STUDENT', 'GUARDIAN'] } }, select: { id: true, email: true, firstName: true, lastName: true } });
+      assert.ok(strangers.length > 10);
+      for (const [name, content] of teacher.files) {
+        const text = content.toString('utf8').toLowerCase();
+        for (const other of strangers) {
+          for (const needle of [other.id, other.email.toLowerCase(), `${other.firstName} ${other.lastName}`.toLowerCase()]) assert.ok(!text.includes(needle), `${name} holds ${needle} in the teacher's extract`);
+        }
       }
       // The guardian alone: the leave she asked for, the absence she reported, and nothing of the child's.
       const alone = await extractZip(a.admins.FULL, guardianE.id, false);

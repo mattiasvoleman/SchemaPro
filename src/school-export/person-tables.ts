@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type { AccessKind } from '../access-log/access-log';
 import { STUDENT_BELOW, STUDENT_KEYS } from '../common/removal-inventory';
-import { idForms, normalize } from './free-text';
+import { idForms, normalize, type TermIndex } from './free-text';
 
 /**
  * Registerutdrag (GDPR art. 15): every table that holds a row about a person,
@@ -58,6 +58,12 @@ export interface PersonDump {
   columns: readonly string[];
   /** Columns of json holding person ids: a row is the person's when the json names one asked for. */
   inside?: readonly string[];
+  /**
+   * The rows are about a pupil (`column`) and a member of staff acts in them. When the pupil is not one of the persons asked
+   * for, the pupil's id and the columns in `hides` (the pupil's state) are empty, and only the act is the extract's: who did
+   * it and when. Without it a teacher's extract would carry the pupils the teacher marked found in a drill (M1 of the review).
+   */
+  pupil?: { column: string; hides: readonly string[] };
   /** Rows that belong to a person through a parent row: [column, parent table, parent's person column]. */
   through?: ReadonlyArray<readonly [string, string, string]>;
   kind: AccessKind;
@@ -69,6 +75,10 @@ const dump = (
   through: PersonDump['through'] = [],
   inside: readonly string[] = [],
 ): PersonTableDecision => ({ dump: { columns, kind, through, inside } });
+
+/** The rows are about a pupil: see PersonDump.pupil. */
+const aboutPupil = (decision: PersonTableDecision, column: string, hides: readonly string[]): PersonTableDecision =>
+  'dump' in decision ? { dump: { ...decision.dump, pupil: { column, hides } } } : decision;
 
 const staff = (columns: readonly string[], through?: PersonDump['through']) => dump(columns, 'EMPLOYMENT', through);
 const away = (columns: readonly string[], through?: PersonDump['through']) => dump(columns, 'STAFF_ABSENCES', through);
@@ -157,8 +167,8 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   // were reported in, and the reports themselves. A person who is removed keeps their rows without them; the rows are theirs.
   CrisisAlarms: dump(['startedByUserId', 'endedByUserId']),
   CrisisCallTeachers: dump(['teacherId']),
-  CrisisPupils: dump(['studentId', 'stateByUserId'], 'ROSTER'),
-  CrisisReports: dump(['studentId', 'byUserId'], 'ROSTER'),
+  CrisisPupils: aboutPupil(dump(['studentId', 'stateByUserId'], 'ROSTER'), 'studentId', ['priorAbsentSource', 'state']),
+  CrisisReports: aboutPupil(dump(['studentId', 'byUserId'], 'ROSTER'), 'studentId', ['state', 'foundInCallId']),
 
   // Tables that keep a person's id without a key to Users (WITHOUT_KEY): history, logs and the acts of a school's integrations.
   GuardianStudentHistory: dump(['guardianId', 'studentId', 'unlinkedById'], 'GUARDIANS'),
@@ -285,6 +295,11 @@ export interface CellRules {
   markedTerms: readonly string[];
   /** The extract of a protected person: the id of any user of the school who is not asked for is not written. */
   strangers?: ReadonlySet<string>;
+  /**
+   * The names (both orders) and addresses of the school's other users, or in an extract of someone not protected of its
+   * other pupils and guardians: free text that holds one is not written (a teacher's note about a drill that names a pupil).
+   */
+  strangerTerms?: TermIndex;
 }
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
@@ -299,7 +314,28 @@ function carries(value: string, rules: CellRules): boolean {
   if (rules.strangers && rules.strangers.size > 0) {
     for (const found of value.match(UUID) ?? []) if (rules.strangers.has(found.toLowerCase())) return true;
   }
+  // A word or two is no name; the index is for text.
+  if (rules.strangerTerms && rules.strangerTerms.size > 0 && value.length >= 5 && rules.strangerTerms.found(value)) return true;
   return false;
+}
+
+/**
+ * The pupil's part of the rows of a table that is about a pupil, emptied in place where the pupil is not one of `asked`
+ * (PersonDump.pupil). Returns how many cells that held something were emptied.
+ */
+export function emptyPupilPart(file: TableFile, rows: Array<Record<string, unknown>>, asked: ReadonlySet<string>): number {
+  const pupil = file.dump.pupil;
+  if (!pupil) return 0;
+  let emptied = 0;
+  for (const row of rows) {
+    const about = row[pupil.column];
+    if (typeof about !== 'string' || asked.has(about)) continue;
+    for (const column of [pupil.column, ...pupil.hides]) {
+      if (row[column] !== null && row[column] !== undefined) emptied += 1;
+      row[column] = null;
+    }
+  }
+  return emptied;
 }
 
 /** A cell of a dumped row. A token, secret or hash is hidden; so is a cell that carries a person the extract must not. */

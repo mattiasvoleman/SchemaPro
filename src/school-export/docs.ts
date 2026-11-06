@@ -128,7 +128,7 @@ export function readmeText(input: ReadmeInput): string {
       ? [
           'Andra personer i utdraget',
           '-------------------------',
-          'Utdraget gäller en person. I en rad som inte handlar om personen själv (en lärare som beslutat en elevs ledighet, en vårdnadshavare som anmält en frånvaro) är elevens id, e-postadress, skäl, typ och anteckning tomma; det som finns kvar är personens egen handling: datum, status och beslut. Vill du ha barnets uppgifter beställer du utdraget för barnet, med vårdnadshavarna om de ska vara med.',
+          'Utdraget gäller en person. I en rad som inte handlar om personen själv (en lärare som beslutat en elevs ledighet, en vårdnadshavare som anmält en frånvaro) är elevens id, e-postadress, skäl, typ och anteckning tomma; det som finns kvar är personens egen handling: datum, status och beslut. Samma gäller tabellfilerna i data/person/: i en rad om en elev som utdraget inte gäller (en lärare som angett en elev som hittad i en övning) är elevens id och status tomma, och handlingen står kvar. Anteckningar som personen själv skrivit (larmets slutanteckning, lektionsloggar) är personens egna uppgifter och finns kvar, utom där de nämner en annan elev eller vårdnadshavare med fullständigt namn (i båda ordningarna) eller e-postadress; ett förnamn ensamt och en beskrivning hittas inte. Vill du ha barnets uppgifter beställer du utdraget för barnet, med vårdnadshavarna om de ska vara med.',
           '',
         ]
       : []),

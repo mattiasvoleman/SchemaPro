@@ -5,7 +5,8 @@ import { CSV_BOM, csvLine } from './csv-writer';
 import type { DataEnv, DataFile, DataScope } from './data-files';
 import { formatDocument, readmeText } from './docs';
 import type { ListFile } from './lists';
-import { cellOf, excludedTables, readTable, type CellRules, type TableFile } from './person-tables';
+import { termsOf, TermIndex } from './free-text';
+import { cellOf, emptyPupilPart, excludedTables, readTable, type CellRules, type TableFile } from './person-tables';
 import {
   FORMAT_VERSION,
   ROWS_PER_PART,
@@ -251,24 +252,24 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
   if (ctx.tables && ctx.scope.ids !== null) {
     const ids = [...ctx.scope.ids];
     const idSet = new Set(ids);
-    // In a protected person's extract every other user of the school is a stranger to it: their ids are not written.
-    const strangers = isolate
-      ? new Set(
-          (
-            await ctx.read((tx) =>
-              tx.$queryRaw<Array<{ id: string }>>`SELECT "id"::text AS id FROM "Users" WHERE "schoolId" = ${ctx.schoolId}::uuid`,
-            )
-          )
-            .map((row) => row.id)
-            .filter((id) => !idSet.has(id)),
-        )
-      : undefined;
-    const rules: CellRules = { markedOut: new Set(markedOut), markedTerms: ctx.markedTerms, strangers };
+    // The school's other users are strangers to the extract. In a protected person's, all of them: their ids are not written, and
+    // neither are their names or addresses in free text. In anybody else's, the pupils and guardians among them: a note a teacher
+    // wrote about a drill does not name a pupil the teacher's extract is not about.
+    const everyone = await ctx.read((tx) =>
+      tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string; role: string }>>`
+        SELECT "id"::text AS id, "firstName" AS first, "lastName" AS last, "email" AS email, "role"::text AS role
+          FROM "Users" WHERE "schoolId" = ${ctx.schoolId}::uuid`,
+    );
+    const others = everyone.filter((user) => !idSet.has(user.id));
+    const strangers = isolate ? new Set(others.map((user) => user.id)) : undefined;
+    const strangerTerms = new TermIndex(termsOf(others.filter((user) => isolate || user.role === 'STUDENT' || user.role === 'GUARDIAN')));
+    const rules: CellRules = { markedOut: new Set(markedOut), markedTerms: ctx.markedTerms, strangers, strangerTerms };
     for (const table of ctx.tables) {
       const rows = await ctx.read((tx) => readTable(tx, ctx.schoolId, table, ids));
       if (rows.length === 0) continue;
       const columns = Object.keys(rows[0]!);
-      let emptied = 0;
+      // The rows of a table that is about a pupil, where the pupil is not one asked for, keep the act and lose the pupil.
+      let emptied = emptyPupilPart(table, rows, idSet);
       const lines = rows.map((row) =>
         csvLine(
           columns.map((column) => {

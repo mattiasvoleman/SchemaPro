@@ -1,4 +1,4 @@
-import { idForms, normalize, termsOf } from './free-text';
+import { idForms, normalize, TermIndex, termsOf } from './free-text';
 import { cellOf, type CellRules } from './person-tables';
 
 const MARKED = '11111111-1111-4111-8111-111111111111';
@@ -45,5 +45,32 @@ describe('a dumped cell, against the forms free text takes', () => {
     ['no name at all', 'Kom sent, bussen'],
   ])('is kept for %s, which README.txt says it cannot find', (_form, value) => {
     expect(held(value)).toBe(false);
+  });
+});
+
+describe('looking for many names at once', () => {
+  const index = new TermIndex(termsOf([{ first: 'Anna-Lena', last: 'Ek', email: 'al@skolan.example' }, { first: 'Bo', last: 'Lund', email: 'bo@skolan.example' }]));
+
+  it.each([
+    ['a name', 'Anna-Lena Ek ringde'],
+    ['reversed', 'Ek, Anna Lena (mamma)'],
+    ['with the possessive s', 'Bo Lunds pappa'],
+    ['in capitals', 'BO LUND'],
+    ['an address', 'skriv till AL@skolan.example'],
+    ['a name at the end of the text', 'Sist: Bo Lund'],
+  ])('finds %s', (_what, text) => {
+    expect(index.found(text)).toBe(true);
+  });
+
+  it.each([
+    ['a first name alone', 'Anna kom sent'],
+    ['two other words', 'Lund och Ek'],
+    ['nothing', ''],
+  ])('does not find %s', (_what, text) => {
+    expect(index.found(text)).toBe(false);
+  });
+
+  it('finds nothing in an empty index', () => {
+    expect(new TermIndex([]).found('Anna-Lena Ek')).toBe(false);
   });
 });

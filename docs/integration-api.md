@@ -1288,7 +1288,13 @@ The extract is one person's, not the people around them (GDPR art. 15.4). In a
 row that is not about the person (a leave a teacher decided, an absence a
 guardian reported) the pupil's id and address, the leave's reason, the
 absence's kind and the notes are empty, and what stays is the person's own
-act. **An extract about a protected person names no one else:** every id and
+act. The same holds for the tables of `data/person/` that are about a pupil
+(`PersonDump.pupil`: the crisis tables, where a teacher marks a pupil found in a
+drill): the pupil and the pupil's state are empty and the act stays. A note the
+person wrote that names another pupil or guardian by full name (either order) or
+address is empty too (`TermIndex`, `free-text.ts`); in the extract of a protected
+person, so is a note that names any other user. **An extract about a protected
+person names no one else:** every id and
 address of anyone but the person (the guardian in a link, whoever recorded,
 reported, applied, decided or read) is empty in every file, in `data/` and in
 `data/person/`, and counted in the manifest; no related person comes along. The

@@ -249,7 +249,13 @@ describe('buildArchive for a protected person', () => {
     const tx = {
       $queryRaw: jest.fn(async (sql: { strings?: string[] } | TemplateStringsArray) => {
         const text = Array.isArray(sql) ? (sql as TemplateStringsArray).join('?') : ((sql as { strings: string[] }).strings ?? []).join('?');
-        if (text.includes('FROM "Users"')) return [{ id: SUBJECT }, { id: STRANGER }, { id: MARKED_OTHER }];
+        if (text.includes('FROM "Users"')) {
+          return [
+            { id: SUBJECT, first: 'Pia', last: 'Skyddad', email: 'pia@x.example', role: 'STUDENT' },
+            { id: STRANGER, first: 'Karin', last: 'Lund', email: 'karin@x.example', role: 'TEACHER' },
+            { id: MARKED_OTHER, first: 'Mark', last: 'Ad', email: 'mark@x.example', role: 'STUDENT' },
+          ];
+        }
         return [{ j: JSON.stringify({ id: 'r1', actorId: STRANGER, note: `flyttade ${STRANGER} till rum 4`, userId: SUBJECT, lessonId: '55555555-5555-4555-8555-555555555555' }) }];
       }),
     };
@@ -262,3 +268,68 @@ describe('buildArchive for a protected person', () => {
     expect(result.files.find((file) => file.path === table.path)?.blankedCells).toBe(2);
   });
 });
+
+describe('buildArchive for someone who is not protected, whose table rows are about a pupil', () => {
+  const TEACHER = '22222222-2222-4222-8222-222222222222';
+  const PUPIL = '55555555-5555-4555-8555-555555555555';
+  const OWN_PUPIL = '66666666-6666-4666-8666-666666666666';
+
+  /** A database that answers the users, and one table's rows by the table asked for. */
+  const databaseOf = (rowsOf: Record<string, Array<Record<string, unknown>>>) => ({
+    $queryRaw: jest.fn(async (sql: { strings?: string[] } | TemplateStringsArray) => {
+      const text = Array.isArray(sql) ? (sql as TemplateStringsArray).join('?') : ((sql as { strings: string[] }).strings ?? []).join('?');
+      if (text.includes('FROM "Users"')) {
+        return [
+          { id: TEACHER, first: 'Lena', last: 'Lärare', email: 'lena@x.example', role: 'TEACHER' },
+          { id: PUPIL, first: 'Anna', last: 'ElevA', email: 'anna@x.example', role: 'STUDENT' },
+          { id: OWN_PUPIL, first: 'Olle', last: 'Egen', email: 'olle@x.example', role: 'STUDENT' },
+          { id: '77777777-7777-4777-8777-777777777777', first: 'Kalle', last: 'Kollega', email: 'kalle@x.example', role: 'TEACHER' },
+        ];
+      }
+      const table = Object.keys(rowsOf).find((name) => text.includes(`"${name}"`));
+      return (table ? rowsOf[table]! : []).map((row) => ({ j: JSON.stringify(row) }));
+    }),
+  });
+
+  it("empties the pupil and the pupil's state in the rows a teacher only acted in, keeps the act, and keeps the rows about a pupil asked for", async () => {
+    const pupils = tableFiles().find((file) => file.table === 'CrisisPupils')!;
+    const tx = databaseOf({
+      CrisisPupils: [
+        { id: 'p1', studentId: PUPIL, state: 'FOUND', priorAbsentSource: 'LEAVE', stateAt: '2026-11-05T09:00:00Z', stateByUserId: TEACHER },
+        { id: 'p2', studentId: OWN_PUPIL, state: 'MISSING', priorAbsentSource: null, stateAt: '2026-11-05T09:01:00Z', stateByUserId: TEACHER },
+      ],
+    });
+    const { files, result } = await build({
+      kind: 'person', exempt: [TEACHER, OWN_PUPIL], scope: { ids: [TEACHER, OWN_PUPIL] }, dataFiles: [], tables: [pupils], read: (fn) => fn(tx as never),
+    });
+    expect(files.get(pupils.path)!.toString('utf8')).toBe(
+      `﻿id;studentId;state;priorAbsentSource;stateAt;stateByUserId\r\n` +
+        `p1;;;;2026-11-05T09:00:00Z;${TEACHER}\r\n` +
+        `p2;${OWN_PUPIL};MISSING;;2026-11-05T09:01:00Z;${TEACHER}\r\n`,
+    );
+    expect(result.files.find((file) => file.path === pupils.path)?.blankedCells).toBe(3);
+  });
+
+  it("empties free text that names another pupil or guardian in full, not a colleague and not a first name, and counts it", async () => {
+    const alarms = tableFiles().find((file) => file.table === 'CrisisAlarms')!;
+    const tx = databaseOf({
+      CrisisAlarms: [
+        { id: 'a1', startedByUserId: TEACHER, endNote: 'Övning klar, Anna ElevA sen' },
+        { id: 'a2', startedByUserId: TEACHER, endNote: 'ELEVA, anna hittades i hallen' },
+        { id: 'a3', startedByUserId: TEACHER, endNote: 'Kalle Kollega höll i trapphuset, Anna kom sent' },
+      ],
+    });
+    const { files, result } = await build({
+      kind: 'person', exempt: [TEACHER], scope: { ids: [TEACHER] }, dataFiles: [], tables: [alarms], read: (fn) => fn(tx as never),
+    });
+    const csv = files.get(alarms.path)!.toString('utf8');
+    expect(csv).toBe(
+      `﻿id;startedByUserId;endNote\r\n` +
+        `a1;${TEACHER};\r\n` +
+        `a2;${TEACHER};\r\n` +
+        `a3;${TEACHER};Kalle Kollega höll i trapphuset, Anna kom sent\r\n`,
+    );
+    expect(result.files.find((file) => file.path === alarms.path)?.blankedCells).toBe(2);
+  });
+});
+

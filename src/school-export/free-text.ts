@@ -42,3 +42,37 @@ export function termsOf(people: ReadonlyArray<ProtectedPerson>): string[] {
 export function idForms(ids: ReadonlyArray<string>): string[] {
   return [...new Set(ids.flatMap((id) => [id.toLowerCase(), id.toLowerCase().replace(/-/g, '')]))];
 }
+
+/**
+ * Many terms at once, looked up word by word instead of one after the other: the names (both orders) and addresses of
+ * a school's other pupils and guardians can be thousands, and a cell is checked against all of them. A term is found
+ * when its words stand in the text as consecutive words (normalized: case, spacing and hyphens as everywhere above),
+ * and also when the last word has a trailing s ("Anna Eks mamma").
+ */
+export class TermIndex {
+  private readonly terms: Set<string>;
+  private readonly longest: number;
+
+  constructor(terms: ReadonlyArray<string>) {
+    this.terms = new Set(terms.filter((term) => term !== ''));
+    this.longest = Math.min(8, Math.max(1, ...[...this.terms].map((term) => term.split(' ').length)));
+  }
+
+  get size(): number {
+    return this.terms.size;
+  }
+
+  found(text: string): boolean {
+    if (this.terms.size === 0) return false;
+    const words = normalize(text).split(' ');
+    for (let at = 0; at < words.length; at += 1) {
+      for (let length = 1; length <= this.longest && at + length <= words.length; length += 1) {
+        const gram = words.slice(at, at + length).join(' ');
+        if (this.terms.has(gram)) return true;
+        const last = words[at + length - 1]!;
+        if (length > 1 && last.length > 2 && last.endsWith('s') && this.terms.has(`${words.slice(at, at + length - 1).join(' ')} ${last.slice(0, -1)}`)) return true;
+      }
+    }
+    return false;
+  }
+}

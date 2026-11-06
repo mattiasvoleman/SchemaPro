@@ -1,5 +1,5 @@
 import { STUDENT_BELOW, STUDENT_KEYS } from '../common/removal-inventory';
-import { ACCOUNT_KINDS, NOT_A_USER, SUBJECT_ACCESS, WITHOUT_KEY, WITHOUT_SCHOOL_COLUMN, cellOf, excludedTables, inventoriedTables, tableFiles, type CellRules } from './person-tables';
+import { ACCOUNT_KINDS, NOT_A_USER, SUBJECT_ACCESS, WITHOUT_KEY, WITHOUT_SCHOOL_COLUMN, cellOf, emptyPupilPart, excludedTables, inventoriedTables, tableFiles, type CellRules } from './person-tables';
 
 /**
  * "All your data" is only true while the extract knows every table that holds
@@ -131,5 +131,36 @@ describe('a cell of a dumped row', () => {
 
   it.each(['token', 'apiKeyHash', 'webhookSecret', 'passwordHash'])('hides the column %s', (column) => {
     expect(cellOf(column, 'abc', marked)).toEqual({ text: '(dold)', held: false });
+  });
+});
+
+describe('the rows of a table that is about a pupil', () => {
+  const files = tableFiles().filter((file) => file.dump.pupil);
+  const PUPIL = '11111111-1111-4111-8111-111111111111';
+  const OTHER = '22222222-2222-4222-8222-222222222222';
+  const TEACHER = '33333333-3333-4333-8333-333333333333';
+
+  it('are the crisis tables, where a teacher marks a pupil found, and the pupil is one of the columns the dump reads', () => {
+    expect(files.map((file) => file.table)).toEqual(['CrisisPupils', 'CrisisReports']);
+    for (const file of files) expect(file.dump.columns).toContain(file.dump.pupil!.column);
+  });
+
+  it("lose the pupil and the pupil's state when the pupil is not asked for, and keep the act and everything for a pupil that is", () => {
+    const [pupils] = files;
+    const rows = [
+      { studentId: OTHER, state: 'FOUND', priorAbsentSource: null, stateAt: '2026-11-05T09:00:00Z', stateByUserId: TEACHER },
+      { studentId: PUPIL, state: 'MISSING', priorAbsentSource: 'LEAVE', stateAt: '2026-11-05T09:01:00Z', stateByUserId: TEACHER },
+    ];
+    expect(emptyPupilPart(pupils!, rows, new Set([TEACHER, PUPIL]))).toBe(2);
+    expect(rows[0]).toEqual({ studentId: null, state: null, priorAbsentSource: null, stateAt: '2026-11-05T09:00:00Z', stateByUserId: TEACHER });
+    expect(rows[1]!.studentId).toBe(PUPIL);
+    expect(rows[1]!.state).toBe('MISSING');
+  });
+
+  it('are left alone in a table that is about no pupil', () => {
+    const other = tableFiles().find((file) => !file.dump.pupil)!;
+    const rows = [{ studentId: OTHER, x: 1 }];
+    expect(emptyPupilPart(other, rows, new Set())).toBe(0);
+    expect(rows[0]!.studentId).toBe(OTHER);
   });
 });
