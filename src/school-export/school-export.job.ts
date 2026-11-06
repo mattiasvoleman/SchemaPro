@@ -145,7 +145,7 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`School export failed [export=${claimed.export_id}, school=${claimed.school_id}, ${errorName(error)}]`);
         await this.prisma
           .withDeliveryService((tx) =>
-            tx.$executeRaw(Prisma.sql`SELECT app.school_export_fail(${claimed.export_id}::uuid, ${errorName(error)})`),
+            tx.$executeRaw(Prisma.sql`SELECT app.school_export_fail(${claimed.export_id}::uuid, ${errorName(error)}, ${claimed.attempt}::integer)`),
           )
           .catch((failure: unknown) => this.logger.warn(`School export could not be marked failed [${errorName(failure)}]`));
       }
@@ -178,7 +178,7 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
       if (!force && Date.now() - beat < HEARTBEAT_EVERY_MS) return;
       beat = Date.now();
       const [row] = await this.prisma.withDeliveryService((tx) =>
-        tx.$queryRaw<Array<{ alive: boolean }>>(Prisma.sql`SELECT app.school_export_heartbeat(${id}::uuid) AS alive`),
+        tx.$queryRaw<Array<{ alive: boolean }>>(Prisma.sql`SELECT app.school_export_heartbeat(${id}::uuid, ${claim.attempt}::integer) AS alive`),
       );
       if (!row?.alive) throw new ExportWithdrawn();
     };
@@ -242,7 +242,7 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
     const sink = new ChunkSink(async (seq, bytes) => {
       await heartbeat();
       await this.prisma.withDeliveryService((tx) =>
-        tx.$executeRaw(Prisma.sql`SELECT app.school_export_put(${id}::uuid, ${seq}::integer, ${bytes}::bytea)`),
+        tx.$executeRaw(Prisma.sql`SELECT app.school_export_put(${id}::uuid, ${seq}::integer, ${bytes}::bytea, ${claim.attempt}::integer)`),
       );
     }, CHUNK_BYTES);
     const zip = new StreamingZip(sink);
@@ -256,7 +256,7 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
         Prisma.sql`SELECT app.school_export_finish(
                      ${id}::uuid, ${stored.bytes}::bigint, ${stored.chunks}::integer, ${stored.sha256},
                      ${JSON.stringify(built.summary)}::jsonb, ${JSON.stringify(built.heldOut)}::jsonb,
-                     ${JSON.stringify(built.readAbout)}::jsonb, ${EXPORT_KEEP_INTERVAL}::interval)`,
+                     ${JSON.stringify(built.readAbout)}::jsonb, ${EXPORT_KEEP_INTERVAL}::interval, ${claim.attempt}::integer)`,
       ),
     );
     this.logger.log(

@@ -285,25 +285,32 @@ BEGIN
 END
 $$;
 
+-- A builder holds its export by the attempt the claim gave it, and every
+-- function below takes that number (`p_attempt`) and refuses a builder whose
+-- attempt is not the export's current one: a builder that stalled past the
+-- lease, was taken over and then woke up must not write a piece into the
+-- second builder's file or finish or fail it. NULL asks for no check (the
+-- suite's own calls); the job always names its attempt.
+
 -- The job is alive. False when the export is no longer RUNNING (withdrawn,
 -- taken over): the job stops and writes nothing more.
-CREATE FUNCTION app.school_export_heartbeat(p_id uuid) RETURNS boolean
+CREATE FUNCTION app.school_export_heartbeat(p_id uuid, p_attempt integer DEFAULT NULL) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
   UPDATE "SchoolExports" SET "heartbeatAt" = clock_timestamp()
-   WHERE "id" = p_id AND "status" = 'RUNNING';
+   WHERE "id" = p_id AND "status" = 'RUNNING' AND (p_attempt IS NULL OR "attempts" = p_attempt);
   RETURN FOUND;
 END
 $$;
 
 -- One piece of the file. The school is the export's, never the caller's.
-CREATE FUNCTION app.school_export_put(p_id uuid, p_seq integer, p_bytes bytea) RETURNS void
+CREATE FUNCTION app.school_export_put(p_id uuid, p_seq integer, p_bytes bytea, p_attempt integer DEFAULT NULL) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
   INSERT INTO "SchoolExportChunks" ("exportId", "seq", "schoolId", "bytes")
   SELECT e."id", p_seq, e."schoolId", p_bytes
     FROM "SchoolExports" e
-   WHERE e."id" = p_id AND e."status" = 'RUNNING';
+   WHERE e."id" = p_id AND e."status" = 'RUNNING' AND (p_attempt IS NULL OR e."attempts" = p_attempt);
   IF NOT FOUND THEN
     RAISE EXCEPTION 'SCHOOL_EXPORT_NOT_RUNNING: the export is not being built' USING ERRCODE = 'SS409';
   END IF;
@@ -314,7 +321,7 @@ $$;
 -- it wrote, then READY for `p_keep`.
 CREATE FUNCTION app.school_export_finish(
   p_id uuid, p_bytes bigint, p_chunks integer, p_sha256 text,
-  p_files jsonb, p_held_out jsonb, p_read_about jsonb, p_keep interval
+  p_files jsonb, p_held_out jsonb, p_read_about jsonb, p_keep interval, p_attempt integer DEFAULT NULL
 ) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
@@ -336,22 +343,25 @@ BEGIN
          "expiresAt" = clock_timestamp() + p_keep,
          "byteSize" = p_bytes, "chunkCount" = p_chunks, "sha256" = p_sha256,
          "files" = p_files, "heldOut" = p_held_out, "readAbout" = p_read_about
-   WHERE "id" = p_id AND "status" = 'RUNNING';
+   WHERE "id" = p_id AND "status" = 'RUNNING' AND (p_attempt IS NULL OR "attempts" = p_attempt);
   IF NOT FOUND THEN
     RAISE EXCEPTION 'SCHOOL_EXPORT_NOT_RUNNING: the export is not being built' USING ERRCODE = 'SS409';
   END IF;
 END
 $$;
 
--- The build failed: its error class, and no piece of it left.
-CREATE FUNCTION app.school_export_fail(p_id uuid, p_error text) RETURNS void
+-- The build failed: its error class, and no piece of it left. Only a RUNNING
+-- export, and only by its current attempt: a finished file keeps its pieces.
+CREATE FUNCTION app.school_export_fail(p_id uuid, p_error text, p_attempt integer DEFAULT NULL) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
-  DELETE FROM "SchoolExportChunks" WHERE "exportId" = p_id;
   UPDATE "SchoolExports"
      SET "status" = 'FAILED', "finishedAt" = clock_timestamp(),
          "errorClass" = CASE WHEN p_error ~ '^[A-Za-z][A-Za-z0-9_]{0,79}$' THEN p_error ELSE 'Error' END
-   WHERE "id" = p_id AND "status" = 'RUNNING';
+   WHERE "id" = p_id AND "status" = 'RUNNING' AND (p_attempt IS NULL OR "attempts" = p_attempt);
+  IF FOUND THEN
+    DELETE FROM "SchoolExportChunks" WHERE "exportId" = p_id;
+  END IF;
 END
 $$;
 
@@ -387,9 +397,9 @@ $$;
 
 COMMENT ON FUNCTION app.school_export_claim(interval) IS
   'K5: the oldest QUEUED export, or a RUNNING one whose heartbeat is older than the lease, FOR UPDATE SKIP LOCKED, with the login of the deciding administrator who ordered it. A taken-over export restarts with no pieces; one whose person is gone or on its third attempt FAILS.';
-COMMENT ON FUNCTION app.school_export_put(uuid, integer, bytea) IS
+COMMENT ON FUNCTION app.school_export_put(uuid, integer, bytea, integer) IS
   'K5: one piece of a RUNNING export''s file, in the export''s own school.';
-COMMENT ON FUNCTION app.school_export_finish(uuid, bigint, integer, text, jsonb, jsonb, jsonb, interval) IS
+COMMENT ON FUNCTION app.school_export_finish(uuid, bigint, integer, text, jsonb, jsonb, jsonb, interval, integer) IS
   'K5: READY, after counting and summing the stored pieces against what the job says it wrote; kept for at most 14 days.';
 COMMENT ON FUNCTION app.school_export_expire(interval) IS
   'K5: READY files past their expiry lose their pieces and their list of persons (EXPIRED); finished orders past the ledger''s period are deleted.';
@@ -442,10 +452,10 @@ BEGIN
 
     FOREACH f IN ARRAY ARRAY[
       'app.school_export_claim(interval)',
-      'app.school_export_heartbeat(uuid)',
-      'app.school_export_put(uuid, integer, bytea)',
-      'app.school_export_finish(uuid, bigint, integer, text, jsonb, jsonb, jsonb, interval)',
-      'app.school_export_fail(uuid, text)',
+      'app.school_export_heartbeat(uuid, integer)',
+      'app.school_export_put(uuid, integer, bytea, integer)',
+      'app.school_export_finish(uuid, bigint, integer, text, jsonb, jsonb, jsonb, interval, integer)',
+      'app.school_export_fail(uuid, text, integer)',
       'app.school_export_expire(interval)'
     ] LOOP
       EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', f);

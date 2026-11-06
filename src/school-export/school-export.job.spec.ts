@@ -85,6 +85,10 @@ describe('SchoolExportJob', () => {
     expect(JSON.parse(heldOut)).toEqual({ people: 0, links: 0 });
     expect(JSON.parse(readAbout)).toEqual({});
     expect(keep).toBe('72 hours');
+    // Every call names the attempt it holds the export by, so a builder taken over cannot write into the second's file.
+    expect(finish![8]).toBe(1);
+    expect(sent(tx, 'app.school_export_heartbeat').every((values) => values[1] === 1)).toBe(true);
+    expect(sent(tx, 'app.school_export_put').every((values) => values[3] === 1)).toBe(true);
     // The piece went through the function that takes the school from the export.
     const [put] = sent(tx, 'app.school_export_put');
     expect(put!.slice(0, 2)).toEqual([CLAIM.export_id, 0]);
@@ -123,7 +127,7 @@ describe('SchoolExportJob', () => {
       'app.current_user_decides': [{ decides: false, name: 'Provskolan' }],
     });
     await job.tick();
-    expect(sent(tx, 'app.school_export_fail')).toEqual([[CLAIM.export_id, 'RequesterNotAllowed']]);
+    expect(sent(tx, 'app.school_export_fail')).toEqual([[CLAIM.export_id, 'RequesterNotAllowed', 1]]);
     expect(sent(tx, 'app.school_export_put')).toEqual([]);
     expect(jobs.settled).toHaveBeenCalledWith(SCHOOL_EXPORT_JOB, expect.any(Date), { ok: true, counts: expect.objectContaining({ failed: 1, built: 0 }) });
     expect(new RequesterNotAllowed().name).toBe('RequesterNotAllowed');
@@ -151,7 +155,7 @@ describe('SchoolExportJob', () => {
       },
     });
     await job.tick();
-    expect(sent(tx, 'app.school_export_fail')).toEqual([[CLAIM.export_id, 'Error']]);
+    expect(sent(tx, 'app.school_export_fail')).toEqual([[CLAIM.export_id, 'Error', 1]]);
     expect(JSON.stringify(sent(tx, 'app.school_export_fail'))).not.toContain('secret');
   });
 

@@ -90,6 +90,8 @@ export class SchoolExportService {
       const ids = [...new Set(rows.map((row) => row.requestedById).filter((id): id is string => id !== null))];
       const people = ids.length === 0 ? [] : await tx.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true } });
       const names = new Map(people.map((person) => [person.id, `${person.firstName} ${person.lastName}`.trim()]));
+      // The list names who ordered, a colleague: a read of their name, written as any is.
+      await recordRead(tx, 'PEOPLE', people.map((person) => person.id), user.channel);
       const now = Date.now();
       return rows.map((row) => ({
         id: row.id,

@@ -64,6 +64,8 @@ describe('SchoolExportService', () => {
       expect(b).toMatchObject({ fetchable: false });
       expect(c).toMatchObject({ fetchable: false, requestedBy: null, errorClass: 'RequesterGone', byteSize: null });
       expect(tx.schoolExport.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { requestedAt: 'desc' }, take: 20 }));
+      // Who ordered is a colleague's name: recorded as a read of PEOPLE.
+      expect(recordedReads(tx)).toEqual([{ kind: 'PEOPLE', channel: null, ids: [ADMIN] }]);
     });
   });
 

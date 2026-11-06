@@ -41364,6 +41364,16 @@ BEGIN
   -- Pieces: counted from zero, to a running export only, small, and in the export's own school.
   PERFORM app.school_export_put(e, 0, '\x010203'::bytea);
   PERFORM app.school_export_put(e, 1, '\x0405'::bytea);
+
+  -- A builder that was taken over and woke up holds an earlier attempt, and is fenced out of every function.
+  IF app.school_export_heartbeat(e, 2) THEN RAISE EXCEPTION 'export 357: the heartbeat answered an attempt that is not the current'; END IF;
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 9, '\x01'::bytea, 2)$q$, e), 'SS409', 'a piece from an attempt that is not the current');
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '72 hours', 2)$q$, e), 'SS409', 'a finish by an attempt that is not the current');
+  PERFORM app.school_export_fail(e, 'Stale', 2);
+  SELECT status::text INTO s FROM "SchoolExports" WHERE id = e;
+  IF s <> 'RUNNING' THEN RAISE EXCEPTION 'export 357: a stale attempt failed the export (%)', s; END IF;
+  IF NOT app.school_export_heartbeat(e, 1) THEN RAISE EXCEPTION 'export 357: the current attempt was not recognised'; END IF;
+  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 0, '\x01'::bytea, 1)$q$, e), '23505', 'a repeated piece by the current attempt (past the fence, stopped by the key)');
   PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 0, '\x01'::bytea)$q$, e), '23505', 'a piece written twice');
   PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, -1, '\x01'::bytea)$q$, e), '23514', 'a piece before the first');
   PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 2, ''::bytea)$q$, e), '23514', 'an empty piece');
@@ -41492,6 +41502,10 @@ BEGIN
   PERFORM app.school_export_finish(e, 1, 1, repeat('c', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
   SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
   IF n <> 1 THEN RAISE EXCEPTION 'export 358: a fresh file shows % pieces', n; END IF;
+  -- A late failure of a build that has finished does nothing to the file.
+  PERFORM app.school_export_fail(e, 'Error');
+  SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
+  IF n <> 1 THEN RAISE EXCEPTION 'export 358: a failure of a finished file took % pieces', 1 - n; END IF;
   DELETE FROM "SchoolExports" WHERE id = e;
   PERFORM set_config('request.jwt.claims', '', true);
   PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
