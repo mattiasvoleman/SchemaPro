@@ -326,6 +326,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // Krisläge: who may start an alarm and whether the guardians are told is a
   // decision (20270113091000).
   CrisisSettings: just('DECIDES', 'insert', 'update'),
+  // Skolans dag (20270116090000): what the school's teachers have of the page is a decision. The
+  // administrators' read of it is not a write, and the row goes with the school.
+  SchoolDaySettings: just('DECIDES', 'insert', 'update'),
   LeaveDelegationDecisions: just('DECIDES', 'insert'),
   RetentionDecisions: just('DECIDES', 'insert'),
   TeacherEmploymentPeriods: only('DECIDES'),

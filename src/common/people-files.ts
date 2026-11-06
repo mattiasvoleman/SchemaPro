@@ -27,6 +27,19 @@
  * store, not a file. The app has no export. A route of Krisläge that ever answers a file belongs in
  * the list below, by name, before it ships.
  *
+ * SKOLANS DAG (20270116090000) IS DECIDED HERE TOO, though no route of it is
+ * listed: GET /api/v1/school-day and .../free answer the screen in JSON, and
+ * no path of them is a file or a feed. They name the school's teachers, as the
+ * timetable layer does (staff read every lesson and its teachers directly:
+ * calendar_lessons_staff_select), and no pupil: a class is a row, never a
+ * person. A person the school has marked is named there for administrators
+ * only: the answer a teacher gets leaves a marked teacher out, without an id,
+ * and counts them (heldOut), because the page puts every teacher's day on one
+ * screen. The print of the grid is the web's (web/lib/people-files.ts), an
+ * administrator's alone, and there the rule is HOLDS_OUT: a marked teacher is
+ * not named and is counted. A route of Skolans dag that ever answers a file
+ * belongs in the list below, by name, before it ships.
+ *
  * Why the database cannot hold this instead: an export is built in the
  * gateway or the browser from ordinary reads under RLS, and nothing in the
  * catalogue says which reads become a file. The rule that can be held there

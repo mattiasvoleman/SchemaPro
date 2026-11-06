@@ -3449,6 +3449,20 @@ BEGIN
   VALUES (m, '2030-09-02', '2030-09-08', 1, 1, 4, 3);
 END $$;
 
+-- The matrix school's decision for Skolans dag (20270116090000), so the role
+-- matrix (section 116) has a row to probe. The school that section 366 starts
+-- from has none, and says so.
+DO $$
+DECLARE
+  m uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "SchoolDaySettings" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  INSERT INTO "SchoolDaySettings" ("schoolId", "teacherView") VALUES (m, 'ROOMS');
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
