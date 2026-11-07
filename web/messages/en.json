@@ -7676,7 +7676,7 @@
       "ACK_NOT_YOUR_PUPIL": "You can only ask for acknowledgements about pupils you are a mentor for.",
       "ACK_NO_GUARDIANS": "None of the pupils has a guardian to ask.",
       "ACK_TOO_MANY_REQUESTS": "You have sent so many requests in the last hour that no more can be sent right now. Nothing has been sent. Try again in a moment.",
-      "ACK_SENDER_DAY_LIMIT": "You have asked for so many acknowledgements in the last 24 hours that this request would go over your share of the day. Nothing has been sent. Choose fewer pupils or try again later: your share is counted over the last 24 hours.",
+      "ACK_SENDER_DAY_LIMIT": "You have asked for so many acknowledgements in the last 24 hours that this request would go over your share of the day. Nothing has been sent. Choose fewer pupils or try again later: your share is counted over the last 24 hours. If the request has to go out now, another administrator can send it, since each administrator has a share of their own.",
       "ACK_TOO_MANY_RECIPIENTS": "The school has sent so many acknowledgements today that this request would go over the day's limit. Nothing has been sent. Choose fewer pupils or try again tomorrow.",
       "THROTTLED": "You sent too many requests in a short time. Nothing has been sent. Wait a minute and try again."
     },

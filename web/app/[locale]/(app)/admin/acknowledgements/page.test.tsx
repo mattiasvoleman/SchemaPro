@@ -404,6 +404,40 @@ describe("Kvittens, the administrator's page", () => {
       expect(within(region).queryByRole("heading", { level: 3 })).not.toBeInTheDocument();
     });
 
+    // The huvudman's reader and the school's läsare read the page and cannot send. The gateway gives them no share of
+    // their own (mine: null), and "Din andel 0 av 8 000" would tell them they have one.
+    it("shows no share for a login that cannot send: the school and the senders as they are, and not a word of 'Din andel'", async () => {
+      state.usage = usage({ mine: null });
+      renderPage();
+      const region = await card();
+
+      expect(plain((await within(region).findByText("Skolan")).nextElementSibling!.textContent)).toBe("6 340 av 20 000 (31 %)");
+      expect(within(region).queryByText("Din andel")).not.toBeInTheDocument();
+      expect(within(region).queryByText(/Din andel är nådd/)).not.toBeInTheDocument();
+      expect(within(region).getByRole("heading", { level: 3, name: "De som skickat mest" })).toBeInTheDocument();
+      expect(within(region).getByRole("table", { name: "De som har begärt flest kvittenser det senaste dygnet" })).toBeInTheDocument();
+    });
+
+    // A läsare has a person row and so a share on paper (the database gives it one), and cannot make a request.
+    it("shows no share to a läsare, who has one on paper and cannot send; the school and the senders still show", async () => {
+      profile.readOnly = true;
+      state.usage = usage({ mine: { used: 0, limit: 8000 } });
+      renderPage();
+      const region = await card();
+
+      expect(plain((await within(region).findByText("Skolan")).nextElementSibling!.textContent)).toBe("6 340 av 20 000 (31 %)");
+      expect(within(region).queryByText("Din andel")).not.toBeInTheDocument();
+      expect(within(region).getByRole("table", { name: "De som har begärt flest kvittenser det senaste dygnet" })).toBeInTheDocument();
+    });
+
+    it("shows a person's share even when nothing is used, as 0 of their limit: that is a share they have", async () => {
+      state.usage = usage({ mine: { used: 0, limit: 8000 } });
+      renderPage();
+      const region = await card();
+
+      expect(plain((await within(region).findByText("Din andel")).nextElementSibling!.textContent)).toBe("0 av 8 000 (0 %)");
+    });
+
     it("is busy until the use is read", async () => {
       let release!: () => void;
       state.hold = new Promise<void>((resolve) => (release = resolve));
