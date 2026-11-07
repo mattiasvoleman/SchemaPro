@@ -694,13 +694,19 @@ export class ScheduleActivitiesService {
    * record of a day that was held: it stays, and so do the lessons it
    * replaced, because putting them back beside it would give the class two
    * lessons that day. Once.
+   *
+   * `beforeRemoval` is for the caller that has something to undo in the same
+   * transaction first (Provplanering frees an exam's rooms, which the plan below
+   * would otherwise find held): it runs after the publication lock and before
+   * the plan is read, and a throw from it removes nothing.
    */
-  async remove(id: string, user: AuthenticatedUser): Promise<RemovePreview> {
+  async remove(id: string, user: AuthenticatedUser, beforeRemoval?: (tx: PrismaClient) => Promise<void>): Promise<RemovePreview> {
     const schoolId = requireSchoolId(user);
     const done = await this.prisma.withRls(
       user,
       async (tx) => {
         await enterGrundschemaWrite(tx, schoolId);
+        if (beforeRemoval) await beforeRemoval(tx);
         const activity = await this.requireActivity(tx, id);
         const plan = await this.removalPlan(tx, schoolId, activity);
         await applyReinstatement(tx, 'EVENT', plan.reversal);

@@ -84,7 +84,7 @@ export interface PlanExamsRequest {
 
 export type PlanExamsStatus = 'OPTIMAL' | 'FEASIBLE';
 
-/** Why the engine left an exam out. The gateway adds a few of its own (see exam-reasons.ts). */
+/** Why the engine left an exam out. The gateway adds a few of its own (SlotShortage in exam-plan.ts, EXAM_GROUPS_GONE in exam-planner.service.ts). */
 export type EngineReason =
   | 'EXAM_NO_SLOT'
   | 'EXAM_NO_ROOM_SEATS'

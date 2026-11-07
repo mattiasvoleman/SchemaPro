@@ -3,7 +3,8 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 /*
  * Provplanering's named refusals. A code the web says in the reader's language
  * (the sentence beside it is the Swedish fallback); the gateway's own reasons
- * for an exam it could not even ask the engine about are in exam-reasons.ts.
+ * for an exam it could not even ask the engine about are named where they are given
+ * (SlotShortage in exam-plan.ts, EXAM_GROUPS_GONE in exam-planner.service.ts).
  */
 export const EXAM_PLANNING_OFF = 'EXAM_PLANNING_OFF';
 export const EXAM_NO_REPLACEMENT_SUBJECT = 'EXAM_NO_REPLACEMENT_SUBJECT';

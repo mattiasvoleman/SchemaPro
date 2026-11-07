@@ -8536,6 +8536,7 @@
     "unplanTitle": "Ta bort planeringen av {name}?",
     "unplanBody": "Lektionerna sätts tillbaka, och ersättningslektionerna och salsbokningarna tas bort. Provet blir olagt och kan planeras om. Fick familjerna besked om provet får de besked om detta också.",
     "unplanned": "Planeringen av {name} är borttagen.",
+    "unplannedHeld": "Planeringen av {name} är borttagen, men {count, plural, one {# lektion} other {# lektioner}} står kvar som inställd eftersom en annan lektion eller bokning håller salen. Kontrollera lektionerna i schemat.",
     "removeTitle": "Ta bort {name}?",
     "removeBody": "Provet tas bort. Åtgärden kan inte ångras.",
     "removed": "{name} är borttaget.",

@@ -83,6 +83,13 @@ export const minuteOf = (clock: string): number => {
   return Number(hours) * 60 + Number(minutes);
 };
 
+/** A YYYY-MM-DD that is a day of the calendar: the pattern alone lets 2026-11-31 through, and 2026-11-32 reaches the database. */
+export function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 /** The dates of [from, to], inclusive. */
 export function datesBetween(from: string, to: string): string[] {
   const out: string[] = [];

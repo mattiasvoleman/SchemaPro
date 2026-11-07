@@ -89,8 +89,11 @@ export function ExamsCard({
 
   const doUnplan = async (exam: Exam) => {
     try {
-      await unplan.mutateAsync(exam.id);
-      toast.success(t("unplanned", { name: exam.name }));
+      const result = await unplan.mutateAsync(exam.id);
+      const held = result?.skippedRoomTaken?.length ?? 0;
+      // A lesson whose room another lesson or booking holds is not put back: the plan is gone, and the administrator is told what is not.
+      if (held > 0) toast.warning(t("unplannedHeld", { name: exam.name, count: held }));
+      else toast.success(t("unplanned", { name: exam.name }));
     } catch (error) {
       toast.error(errorText(error));
     }

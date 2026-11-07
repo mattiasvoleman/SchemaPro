@@ -67,7 +67,7 @@ vi.mock("@/lib/queries", () => ({
   }),
   useSubjects: () => ({ data: subjects }),
 }));
-const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
 const SETTINGS_OFF: ExamSettings = {
@@ -578,6 +578,20 @@ describe("/admin/activities/exams", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Ta bort planeringen" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/exams/e-ma/unplan"));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Planeringen av Matematik, algebra är borttagen."));
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  it("says so when a lesson could not be put back because its room is held, and does not say the plan is simply gone", async () => {
+    post.mockResolvedValue({ removed: true, skippedRoomTaken: [{ lessonId: "l1", date: "2030-10-08", roomId: "r1", by: "LESSON" }] });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Ta bort planeringen Matematik, algebra" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ta bort planeringen" }));
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith(
+        "Planeringen av Matematik, algebra är borttagen, men 1 lektion står kvar som inställd eftersom en annan lektion eller bokning håller salen. Kontrollera lektionerna i schemat.",
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalledWith("Planeringen av Matematik, algebra är borttagen.");
   });
 
   // ---- the planner ------------------------------------------------------------

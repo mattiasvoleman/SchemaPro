@@ -1226,6 +1226,35 @@ describe('ScheduleActivitiesService', () => {
       expect(await code(service.remove(ACTIVITY, user))).toBe('CANCELLATION_STALE');
     });
 
+    it('lets its caller undo something in the same transaction first: after the publication lock, before the plan is read', async () => {
+      lessons();
+      const order: string[] = [];
+      tx.cancellationBatchLesson.findMany.mockImplementation(async () => {
+        order.push('plan read');
+        return [];
+      });
+      await service.remove(ACTIVITY, user, async (inside) => {
+        expect(inside).toBe(tx);
+        order.push('before removal');
+      });
+      expect(order[0]).toBe('before removal');
+      expect(order).toContain('plan read');
+      expect(tx.scheduleActivity.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('removes nothing when what the caller undid first fails', async () => {
+      lessons();
+      await expect(
+        service.remove(ACTIVITY, user, async () => {
+          throw new Error('stop');
+        }),
+      ).rejects.toThrow('stop');
+      expect(tx.calendarLesson.updateMany).not.toHaveBeenCalled();
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.scheduleActivity.update).not.toHaveBeenCalled();
+      expect(tx.cancellationBatch.update).not.toHaveBeenCalled();
+    });
+
     it('is done once: an activity already removed answers 409', async () => {
       world.activity = activityRow({ removedAt: NOW });
       expect(await code(service.remove(ACTIVITY, user))).toBe(ACTIVITY_REMOVED);

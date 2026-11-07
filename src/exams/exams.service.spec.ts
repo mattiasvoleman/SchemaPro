@@ -1,7 +1,8 @@
+import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import type { ExamDescriptionDto } from './dto/exam.dto';
-import { ExamsService, clearLeftovers, isPlanned, viewsOf, watchMinutes, type ExamRow } from './exams.service';
+import { ExamsService, clearLeftovers, isPlanned, versionIs, viewsOf, watchMinutes, type ExamRow } from './exams.service';
 
 const YEAR = 'year';
 const SUBJECT = 'math';
@@ -168,6 +169,19 @@ describe('ExamsService', () => {
       });
     });
 
+    it('gives a skrivsal no more seats than the room holds', async () => {
+      tx.room.findUnique.mockResolvedValue({ id: 'r1', name: 'Sal 1', capacity: 20 });
+      expect(await code(service.markRoom('r1', 500, user))).toBe('EXAM_ROOM');
+      expect(await code(service.markRoom('r1', 21, user))).toBe('EXAM_ROOM');
+      expect(tx.examRoom.upsert).not.toHaveBeenCalled();
+      await service.markRoom('r1', 20, user);
+      expect(tx.examRoom.upsert).toHaveBeenCalledTimes(1);
+      // A room that states no capacity takes whatever the school says.
+      tx.room.findUnique.mockResolvedValue({ id: 'r2', name: 'Sal 10', capacity: null });
+      await service.markRoom('r2', 500, user);
+      expect(tx.examRoom.upsert).toHaveBeenCalledTimes(2);
+    });
+
     it('refuses to mark a room that is not there', async () => {
       tx.room.findUnique.mockResolvedValue(null);
       expect(await code(service.markRoom('nope', 80, user))).toBe('EXAM_ROOM');
@@ -225,6 +239,13 @@ describe('ExamsService', () => {
       expect(await refused({ windowFrom: '2031-06-08', windowTo: '2031-06-12' })).toBe('EXAM_WINDOW');
     });
 
+    it('is refused for a day the calendar does not have, which the pattern lets through', async () => {
+      expect(await refused({ windowFrom: '2030-11-31', windowTo: '2030-11-31' })).toBe('EXAM_WINDOW');
+      expect(await refused({ windowFrom: '2030-11-07', windowTo: '2030-11-32' })).toBe('EXAM_WINDOW');
+      expect(await refused({ windowFrom: '2030-02-30', windowTo: '2030-03-02' })).toBe('EXAM_WINDOW');
+      expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+    });
+
     it('is refused for a fixed exam that is not a date and a start, or a week with a fixed start', async () => {
       expect(await refused({ windowKind: 'FIXED' })).toBe('EXAM_WINDOW');
       expect(await refused({ windowKind: 'FIXED', fixedStart: '08:20' })).toBe('EXAM_WINDOW');
@@ -245,12 +266,28 @@ describe('ExamsService', () => {
     it('is changed as a whole, and its last reason is forgotten', async () => {
       tx.exam.findUnique.mockResolvedValue(row({ lastReason: 'EXAM_NO_SLOT', lastPlannedAt: new Date() }));
       await service.update('e1', description({ name: 'Nytt namn' }), user);
+      // The figures of the reason go with the reason: undefined would leave them, and the check that wants all three or none refuses the row.
       expect(tx.exam.update).toHaveBeenCalledWith({
         where: { id: 'e1' },
-        data: expect.objectContaining({ name: 'Nytt namn', lastReason: null, lastPlannedAt: null }),
+        data: expect.objectContaining({ name: 'Nytt namn', lastReason: null, lastReasonParams: Prisma.DbNull, lastPlannedAt: null }),
       });
       expect(tx.examGroup.deleteMany).toHaveBeenCalledWith({ where: { examId: 'e1' } });
       expect(tx.examGroup.createMany).toHaveBeenCalledWith({ data: [{ examId: 'e1', studentGroupId: G7A, schoolId: user.schoolId }] });
+    });
+
+    it('is locked before it is read for a change or a removal, so that an apply writing its plan is finished first', async () => {
+      tx.exam.findUnique.mockResolvedValue(row());
+      await service.update('e1', description(), user);
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, id] = tx.$queryRaw.mock.calls[0];
+      expect(strings.join('?')).toContain('FOR UPDATE');
+      expect(id).toBe('e1');
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.exam.findUnique.mock.invocationCallOrder[0]);
+      tx.$queryRaw.mockClear();
+      tx.exam.findUnique.mockClear();
+      await service.remove('e1', user);
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.exam.findUnique.mock.invocationCallOrder[0]);
     });
 
     it('is not changed or removed while it is laid, and is not found when it is not there', async () => {
@@ -365,7 +402,29 @@ describe('what a gone activity leaves', () => {
     await clearLeftovers(tx as never, [row({ activityId: 'act', sittings: [{ roomId: 'r1', writers: 5, bookingId: 'b1', invigilators: [] }, { roomId: 'r2', writers: 5, bookingId: null, invigilators: [] }] })]);
     expect(tx.roomBooking.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: ['b1'] } }) }));
     expect(tx.examSitting.deleteMany).toHaveBeenCalledWith({ where: { examId: { in: ['e1'] } } });
-    expect(tx.exam.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['e1'] }, activityId: { not: null } }, data: { activityId: null } });
+    // The version stays: clearing is not a change the administrator made, and a proposal read before it is still of this exam.
+    expect(tx.exam.updateMany).toHaveBeenCalledWith({
+      where: { id: 'e1', activityId: { not: null } },
+      data: { activityId: null, updatedAt: new Date('2030-09-01T08:00:00.000Z') },
+    });
+  });
+
+  it('keeps the version of each exam it clears, and touches none that has no activity link', async () => {
+    const tx = createTxMock();
+    const first = row({ id: 'e1', activityId: 'a1', updatedAt: new Date('2030-09-01T08:00:00.000Z') });
+    const second = row({ id: 'e2', activityId: 'a2', updatedAt: new Date('2030-09-02T09:30:00.123Z') });
+    const bare = row({ id: 'e3', activityId: null, sittings: [{ roomId: 'r1', writers: 5, bookingId: null, invigilators: [] }] });
+    await clearLeftovers(tx as never, [first, second, bare]);
+    expect(tx.exam.updateMany.mock.calls.map(([args]) => [args.where.id, args.data.updatedAt.toISOString()])).toEqual([
+      ['e1', '2030-09-01T08:00:00.000Z'],
+      ['e2', '2030-09-02T09:30:00.123Z'],
+    ]);
+    expect(tx.examSitting.deleteMany).toHaveBeenCalledWith({ where: { examId: { in: ['e1', 'e2', 'e3'] } } });
+  });
+
+  it('names a version as its whole millisecond, so that a timestamp with more digits is still the same one', () => {
+    const at = new Date('2030-09-01T08:00:00.123Z');
+    expect(versionIs(at)).toEqual({ gte: at, lt: new Date('2030-09-01T08:00:00.124Z') });
   });
 
   it('leaves a laid exam and an exam that never was laid alone', async () => {

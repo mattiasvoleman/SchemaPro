@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
@@ -94,9 +95,11 @@ export class ExamDescriptionDto {
   windowKind!: ExamWindowKind;
 
   @Matches(ISO_DATE, { message: 'windowFrom: YYYY-MM-DD.' })
+  @IsISO8601({ strict: true }, { message: 'windowFrom: en dag som finns i kalendern.' })
   windowFrom!: string;
 
   @Matches(ISO_DATE, { message: 'windowTo: YYYY-MM-DD.' })
+  @IsISO8601({ strict: true }, { message: 'windowTo: en dag som finns i kalendern.' })
   windowTo!: string;
 
   /** FIXED only: the start. */
@@ -176,6 +179,7 @@ export class ApplyItemDto {
   examVersion!: string;
 
   @Matches(ISO_DATE, { message: 'date: YYYY-MM-DD.' })
+  @IsISO8601({ strict: true }, { message: 'date: en dag som finns i kalendern.' })
   date!: string;
 
   @Matches(CLOCK, { message: 'start: HH:MM.' })

@@ -255,8 +255,8 @@ describe('ExamPlannerService', () => {
         { teacherId: 't2', name: 'T2 Lärare', passes: 0, minutes: 0, addedPasses: 1, addedMinutes: 60 },
       ]);
       // A placed exam has no reason on it, and its version did not move.
-      expect(tx.exam.update).toHaveBeenCalledWith({
-        where: { id: 'e1' },
+      expect(tx.exam.updateMany).toHaveBeenCalledWith({
+        where: { id: 'e1', updatedAt: { gte: new Date('2030-09-01T08:00:00.000Z'), lt: new Date('2030-09-01T08:00:00.001Z') } },
         data: expect.objectContaining({ lastReason: null, updatedAt: new Date('2030-09-01T08:00:00.000Z') }),
       });
     });
@@ -283,10 +283,20 @@ describe('ExamPlannerService', () => {
       }));
       const proposal = await service.propose({ academicYearId: YEAR }, user);
       expect(proposal.unplaced).toEqual([{ examId: 'e1', name: 'Matematik, algebra', reason: 'EXAM_ROOMS_TAKEN', params: { rooms: 2 }, message: 'rooms taken' }]);
-      expect(tx.exam.update).toHaveBeenCalledWith({
-        where: { id: 'e1' },
+      expect(tx.exam.updateMany).toHaveBeenCalledWith({
+        where: { id: 'e1', updatedAt: { gte: new Date('2030-09-01T08:00:00.000Z'), lt: new Date('2030-09-01T08:00:00.001Z') } },
         data: expect.objectContaining({ lastReason: 'EXAM_ROOMS_TAKEN', lastReasonParams: { rooms: 2 }, updatedAt: new Date('2030-09-01T08:00:00.000Z') }),
       });
+    });
+
+    it('writes its reasons only on the exams as they were read: one saved while the engine worked keeps its own version', async () => {
+      answerFor(({ exam }) => ({ unplaced: [{ exam, reason: 'EXAM_ROOMS_TAKEN', params: {}, message: '' }] }));
+      await service.propose({ academicYearId: YEAR }, user);
+      // Every write the run makes to an exam is conditional on the version it read; there is no unconditional update left.
+      expect(tx.exam.update).not.toHaveBeenCalled();
+      const writes = tx.exam.updateMany.mock.calls.filter(([args]) => args.data.lastReason !== undefined);
+      expect(writes).toHaveLength(1);
+      expect(writes[0][0].where.updatedAt).toEqual({ gte: expect.any(Date), lt: expect.any(Date) });
     });
 
     it('does not ask the engine about an exam that has no time, and says why itself', async () => {
@@ -348,6 +358,7 @@ describe('ExamPlannerService', () => {
       tx.scheduleActivity.findUniqueOrThrow.mockResolvedValue({ batchId: 'batch-new' });
       credit.mockResolvedValue({ id: 'credit-1' } as never);
       tx.roomBooking.create.mockResolvedValue({ id: 'booking-1' });
+      tx.exam.updateMany.mockResolvedValue({ count: 1 });
       tx.scheduleActivityLesson.findFirst.mockResolvedValue({ calendarLessonId: 'cl-1' });
       tx.user.findMany.mockImplementation(async () => [{ id: 't2' }]);
       owners.mockResolvedValue({ owners: [], planOwners: [{ groupId: G7A, pupils: new Set(['p1', 'p2', 'p3']) }] });
@@ -390,8 +401,28 @@ describe('ExamPlannerService', () => {
       expect(tx.examInvigilator.createMany).toHaveBeenCalledWith({ data: [{ examId: 'e1', roomId: R1, teacherId: 't2', schoolId: user.schoolId }] });
       // The class's lesson is held where its writers sit.
       expect(tx.calendarLesson.update).toHaveBeenCalledWith({ where: { id: 'cl-1' }, data: { roomId: R1 } });
-      expect(tx.exam.update).toHaveBeenCalledWith({ where: { id: 'e1' }, data: expect.objectContaining({ activityId: 'act-new', lastReason: null }) });
+      // The last write is on the exam as the proposal read it.
+      expect(tx.exam.updateMany).toHaveBeenLastCalledWith({
+        where: { id: 'e1', updatedAt: { gte: new Date('2030-09-01T08:00:00.000Z'), lt: new Date('2030-09-01T08:00:00.001Z') } },
+        data: expect.objectContaining({ activityId: 'act-new', lastReason: null }),
+      });
       expect(activities.settleCreated).toHaveBeenCalledTimes(1);
+    });
+
+    it('is undone, and says stale, when the exam was saved after its version was compared', async () => {
+      // Another administrator saved the exam between the comparison and the last write: no row has the version any more.
+      tx.exam.updateMany.mockResolvedValue({ count: 0 });
+      const result = await service.apply(dto(), user);
+      expect(result.outcomes).toEqual([{ examId: 'e1', ok: false, code: 'EXAM_STALE', message: 'Provet har ändrats sedan förslaget gjordes: planera om.' }]);
+      expect(result).toEqual(expect.objectContaining({ applied: 0, failed: 1 }));
+      // The error rolls the transaction back with the activity it made; nothing is announced.
+      expect(activities.settleCreated).not.toHaveBeenCalled();
+    });
+
+    it('refuses a date the calendar does not have', async () => {
+      const result = await service.apply(dto([item({ date: '2030-10-32' })]), user);
+      expect(result.outcomes[0]).toEqual(expect.objectContaining({ ok: false, code: 'EXAM_PLACEMENT' }));
+      expect(activities.createWithin).not.toHaveBeenCalled();
     });
 
     it('puts every invigilator of a room on the replacement lesson of each class that sits there', async () => {
@@ -538,11 +569,58 @@ describe('ExamPlannerService', () => {
   });
 
   describe('unplanning', () => {
+    const removal = (over: Record<string, unknown> = {}) => ({ reinstate: 1, skippedRoomTaken: [], ...over });
+
     it('removes the activity by its own remove, then what the exam holds beside it', async () => {
       tx.exam.findUnique.mockResolvedValue(standing('e1', DATE, '08:20', '09:20'));
-      await service.unplan('e1', user);
-      expect(activities.remove).toHaveBeenCalledWith('act-e1', user);
+      activities.remove.mockResolvedValue(removal());
+      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: [] });
+      expect(activities.remove).toHaveBeenCalledWith('act-e1', user, expect.any(Function));
       expect(tx.exam.findUnique).toHaveBeenCalledTimes(2);
+    });
+
+    it('lets go of the exam’s rooms inside the removal, before the lessons are put back', async () => {
+      const exam = { ...standing('e1', DATE, '08:20', '09:20'), sittings: [{ roomId: R1, writers: 28, bookingId: 'b1', invigilators: [] }, { roomId: R2, writers: 2, bookingId: null, invigilators: [] }] };
+      tx.exam.findUnique.mockResolvedValue(exam);
+      tx.examSitting.findMany.mockResolvedValue([{ bookingId: 'b1' }, { bookingId: null }]);
+      tx.scheduleActivityLesson.findMany.mockResolvedValue([{ calendarLessonId: 'cl-1' }, { calendarLessonId: 'cl-2' }]);
+      const order: string[] = [];
+      tx.roomBooking.updateMany.mockImplementation(async () => order.push('bookings cancelled'));
+      tx.calendarLesson.updateMany.mockImplementation(async () => order.push('rooms taken off the replacement lessons'));
+      activities.remove.mockImplementation(async (_id: string, _user: unknown, before: (tx: unknown) => Promise<void>) => {
+        order.push('removal begins');
+        await before(tx);
+        order.push('plan read, lessons put back');
+        return removal();
+      });
+      await service.unplan('e1', user);
+      // Both would hold the room against the class's own lesson in the removal's plan (skippedRoomTaken), which then stays cancelled.
+      expect(order).toEqual(['removal begins', 'bookings cancelled', 'rooms taken off the replacement lessons', 'plan read, lessons put back']);
+      expect(tx.roomBooking.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['b1'] }, status: { in: ['PENDING', 'APPROVED'] } }, data: { status: 'CANCELLED' } });
+      const [update] = tx.calendarLesson.updateMany.mock.calls[0];
+      expect(update.data).toEqual({ roomId: null });
+      // Only the replacement lessons of this activity, and none that has begun or carries a register (those are history and keep their room).
+      expect(update.where).toEqual({ id: { in: ['cl-1', 'cl-2'] }, roomId: { not: null }, startsAt: { gt: expect.any(Date) }, attendanceRecords: { none: {} } });
+    });
+
+    it('cancels no booking and frees no lesson when the exam held none', async () => {
+      tx.exam.findUnique.mockResolvedValue(standing('e1', DATE, '08:20', '09:20'));
+      tx.examSitting.findMany.mockResolvedValue([{ bookingId: null }]);
+      tx.scheduleActivityLesson.findMany.mockResolvedValue([]);
+      activities.remove.mockImplementation(async (_id: string, _user: unknown, before: (tx: unknown) => Promise<void>) => {
+        await before(tx);
+        return removal();
+      });
+      await service.unplan('e1', user);
+      expect(tx.roomBooking.updateMany).not.toHaveBeenCalled();
+      expect(tx.calendarLesson.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('says which lessons stayed cancelled because another lesson or a booking holds their room', async () => {
+      tx.exam.findUnique.mockResolvedValue(standing('e1', DATE, '08:20', '09:20'));
+      const skipped = [{ lessonId: 'l1', date: DATE, roomId: R1, by: 'LESSON' as const }];
+      activities.remove.mockResolvedValue(removal({ skippedRoomTaken: skipped }));
+      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: skipped });
     });
 
     it('says an exam that is not laid is not laid, and cleans up an exam whose activity is gone', async () => {
@@ -550,7 +628,7 @@ describe('ExamPlannerService', () => {
       expect(await code(service.unplan('e1', user))).toBe('EXAM_NOT_PLANNED');
       expect(activities.remove).not.toHaveBeenCalled();
       tx.exam.findUnique.mockResolvedValue(row({ activityId: 'act', activity: { id: 'act', removedAt: new Date(), batch: { fromDate: day(DATE), startTime: clockOf('08:20'), endTime: clockOf('09:20'), reversedAt: null } }, sittings: [{ roomId: R1, writers: 28, bookingId: 'b1', invigilators: [] }] }));
-      expect(await service.unplan('e1', user)).toEqual({ removed: true });
+      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: [] });
       expect(activities.remove).not.toHaveBeenCalled();
       expect(tx.examSitting.deleteMany).toHaveBeenCalled();
     });

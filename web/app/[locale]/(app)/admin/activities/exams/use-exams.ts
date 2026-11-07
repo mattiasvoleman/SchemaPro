@@ -119,11 +119,17 @@ export function useRemoveExam() {
   });
 }
 
+/** What taking a plan away answers: the lessons that could not come back because another lesson or booking holds their room. */
+export interface UnplanResult {
+  removed: true;
+  skippedRoomTaken?: Array<{ lessonId: string; date: string; roomId: string; by: "LESSON" | "BOOKING" }>;
+}
+
 /** "Ta bort planeringen": the exam goes back to not laid, its lessons come back. */
 export function useUnplanExam() {
   const after = useAfterExams();
   return useMutation({
-    mutationFn: (id: string) => api.post<{ removed: true }>(`/api/v1/exams/${id}/unplan`),
+    mutationFn: (id: string) => api.post<UnplanResult>(`/api/v1/exams/${id}/unplan`),
     onSettled: () => after(true),
   });
 }

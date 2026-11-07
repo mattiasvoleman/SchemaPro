@@ -8536,6 +8536,7 @@
     "unplanTitle": "Remove the plan of {name}?",
     "unplanBody": "The lessons are put back, and the replacement lessons and room bookings are removed. The exam becomes not laid and can be planned again. If the families were told about the exam they are told about this too.",
     "unplanned": "The plan of {name} is removed.",
+    "unplannedHeld": "The plan of {name} is removed, but {count, plural, one {# lesson stays} other {# lessons stay}} cancelled because another lesson or booking holds the room. Check the lessons in the timetable.",
     "removeTitle": "Remove {name}?",
     "removeBody": "The exam is removed. This cannot be undone.",
     "removed": "{name} is removed.",

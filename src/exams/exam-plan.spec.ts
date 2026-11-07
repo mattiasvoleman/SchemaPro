@@ -4,6 +4,7 @@ import {
   datesBetween,
   indexDates,
   invigilatorsNeeded,
+  isCalendarDate,
   minuteOf,
   seatGroups,
   weekKeyOf,
@@ -55,6 +56,15 @@ describe('the clock helpers', () => {
   it('lists the dates of a span, both ends included', () => {
     expect(datesBetween('2030-10-07', '2030-10-09')).toEqual(['2030-10-07', '2030-10-08', '2030-10-09']);
     expect(datesBetween('2030-10-07', '2030-10-07')).toEqual(['2030-10-07']);
+  });
+});
+
+describe('a date', () => {
+  it('is a day of the calendar or it is not: the pattern lets 31 November and 32 November through', () => {
+    for (const real of ['2030-10-07', '2032-02-29', '2030-12-31', '2030-01-01']) expect(isCalendarDate(real)).toBe(true);
+    for (const unreal of ['2030-11-31', '2030-11-32', '2031-02-29', '2030-02-30', '2030-00-10', '2030-13-01', '0000-00-00', '2030-1-7', '2030-10-07T00:00', '', 'idag']) {
+      expect(isCalendarDate(unreal)).toBe(false);
+    }
   });
 });
 

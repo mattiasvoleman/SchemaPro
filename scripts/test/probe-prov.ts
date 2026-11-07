@@ -30,12 +30,29 @@
  *         refused, a second exam over the same hour in the same room for the
  *         same class is refused, and a stale version is refused; one exam
  *         failing leaves the others laid;
- *   pv-g  taking the plan away puts the lessons back, deletes the replacement
- *         lesson, the credit and the sitting, cancels the booking and leaves
- *         the exam to be laid again; an activity removed on the activities
- *         page leaves the exam unlaid and the next change cleans up;
+ *   pv-g  taking the plan away puts the lessons back (the lesson the exam
+ *         cancelled is SCHEDULED again: the lessons here have a template, a
+ *         lesson without one is deleted by the reversal and 0 CANCELLED would
+ *         prove nothing), deletes the replacement lesson, the credit and the
+ *         sitting, cancels the booking and leaves the exam to be laid again; an
+ *         activity removed on the activities page leaves the exam unlaid and
+ *         the next change cleans up;
  *   pv-h  the rows are the administrators’: a läsare and a teacher write
- *         nothing, another school reads nothing.
+ *         nothing, another school reads nothing;
+ *   pv-i  an exam held in the room of the lesson it cancels: taking the plan
+ *         away gives the class its lesson back in that room (the exam's
+ *         booking and the room of its replacement lesson would otherwise hold
+ *         the room against it), and says so when another lesson holds the
+ *         room and the lesson cannot come back;
+ *   pv-j  an exam the planner left out can be changed (its reason goes with its
+ *         figures, or the row is refused by Exams_reason_is_a_code);
+ *   pv-k  an exam saved while the engine solves keeps its new version: the
+ *         proposal made before is refused as stale;
+ *   pv-l  an exam saved while it is applied is not applied (the last write is
+ *         on the version read), and an exam being laid cannot be changed or
+ *         removed until the apply has finished (the row is locked);
+ *   pv-m  a day the calendar does not have, and seats a room cannot hold, are
+ *         refused with a code and not by the database.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -95,6 +112,23 @@ function greedy(request: PlanExamsRequest): PlanExamsResponse {
     invigilatorMinutes: placed.flatMap((one) => one.rooms.flatMap((room) => room.invigilators.map((teacher) => ({ teacher, minutes: request.exams.find((exam) => exam.id === one.exam)!.length })))),
     metrics: { placed: placed.length, unplaced: unplaced.length, loss: 0, roomsUsed: placed.length, invigilatorPasses: placed.length, maxLoad: 0, minLoad: 0, solveSeconds: 0 },
   };
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+/** Waits for a condition the database decides, a bounded number of times: never a sleep that stands for it. */
+async function until(what: string, condition: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    if (await condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(`never became true: ${what}`);
 }
 
 export async function examChecks(owner: Client, api: PrismaService, marker: string, check: Check): Promise<void> {
@@ -181,6 +215,21 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
     const maWed = await lesson(wednesday, '08:20', '09:20', matte, k7a, [bo]);
     const svB = await lesson(tuesday, '08:20', '09:20', svenska, k7b, [cecilia]);
     const dagL = await lesson(tuesday, '08:20', '09:20', svenska, k7c, [dag]);
+    // The lessons the exam cancels have the template a publish leaves under them. Without one a reversed avbokning cannot
+    // tell that the lesson still runs and deletes it instead of putting it back, and "no lesson is CANCELLED" proves nothing.
+    const template = async (lessonId: string, date: string, from: string, to: string, subjectId: string, groupId: string, teacher: AuthenticatedUser, roomId: string | null = null) => {
+      const master = (
+        await one<{ id: string }>(
+          `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "roomId", "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, extract(isodow FROM $6::date)::int, $7::time, $8::time, $9, now()) RETURNING id`,
+          [s, year.id, subjectId, groupId, teacher.userId, date, from, to, roomId],
+        )
+      ).id;
+      await owner.query(`UPDATE "CalendarLessons" SET "masterLessonId" = $2 WHERE id = $1`, [lessonId, master]);
+    };
+    await template(svA, tuesday, '08:20', '09:20', svenska, k7a, anna, sal1);
+    await template(maA, tuesday, '09:30', '10:30', matte, k7a, bo);
+    await template(maWed, wednesday, '08:20', '09:20', matte, k7a, bo);
     // The Wednesday hall is booked by somebody else all morning.
     await owner.query(
       `INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", status, "updatedAt")
@@ -286,6 +335,7 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
     });
 
     let activityId!: string;
+    let cancelledByTheExam!: string;
     await check('(pv-c) applying a proposal makes an activity: lessons cancelled, one replacement lesson in the room with the invigilators, the credit, the booking, the sitting', async () => {
       const place = proposed.placed[0];
       const room1 = place.rooms[0];
@@ -313,6 +363,7 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
       const cancelled = await all<{ id: string }>(`SELECT id FROM "CalendarLessons" WHERE "schoolId" = $1 AND status = 'CANCELLED' AND "cancelCause" = 'EVENT'`, [s]);
       const expected = place.date === tuesday && place.start === '08:20' ? [svA] : place.date === tuesday ? [maA] : [maWed];
       assert.deepEqual(cancelled.map((c) => c.id), expected);
+      cancelledByTheExam = expected[0];
       for (const other of [svB, dagL]) assert.equal((await one<{ status: string }>(`SELECT status FROM "CalendarLessons" WHERE id = $1`, [other])).status, 'SCHEDULED');
 
       // ONE replacement lesson for the class: the activity's, in the exam's room, held in the replacement subject.
@@ -412,7 +463,12 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
     });
 
     await check('(pv-g) taking the plan away puts the lessons back and frees the room; an activity removed elsewhere leaves the exam unlaid and the next change cleans up', async () => {
-      await planner.unplan(examId, admin);
+      const undone = await planner.unplan(examId, admin);
+      assert.deepEqual(undone.skippedRoomTaken, []);
+      // The lesson is a lesson again (SCHEDULED, no cause), not deleted: it has a template, so a reversal puts it back.
+      const back = await one<{ status: string; cause: string | null; roomId: string | null }>(`SELECT status::text, "cancelCause"::text AS cause, "roomId" FROM "CalendarLessons" WHERE id = $1`, [cancelledByTheExam]);
+      assert.deepEqual([back.status, back.cause], ['SCHEDULED', null]);
+      assert.equal(back.roomId, cancelledByTheExam === svA ? sal1 : null, 'in the room it had');
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "schoolId" = $1 AND status = 'CANCELLED'`, [s])).n, 0);
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ScheduleActivityLessons" WHERE "activityId" = $1`, [activityId])).n, 0);
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "TimplanCredits" WHERE "schoolId" = $1 AND "subjectId" = $2`, [s, matte])).n, 0);
@@ -448,6 +504,209 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
       await exams.markRoom(sal2, 20, admin);
       await exams.unmarkRoom(sal2, admin);
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ExamRooms" WHERE "roomId" = $1`, [sal2])).n, 0);
+    });
+
+    // What an exam is laid by, as the administrator would place it: a time and the rooms with their invigilators.
+    const placement = (exam: { id: string; version: string }, date: string, start: string, roomId: string, writers: number, teachers: AuthenticatedUser[]) => ({
+      examId: exam.id,
+      examVersion: exam.version,
+      date,
+      start,
+      rooms: [{ roomId, writers, teacherIds: teachers.map((teacher) => teacher.userId!) }],
+    });
+    const lessonState = (id: string) => one<{ status: string; cause: string | null; roomId: string | null }>(`SELECT status::text, "cancelCause"::text AS cause, "roomId" FROM "CalendarLessons" WHERE id = $1`, [id]);
+    const bookingsOf = async (title: string) => (await all<{ status: string }>(`SELECT status::text FROM "RoomBookings" WHERE title = $1 ORDER BY "createdAt"`, [`Prov: ${title}`])).map((b) => b.status);
+    const replacementsOf = async (id: string) =>
+      (await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ScheduleActivityLessons" WHERE "activityId" = $1`, [id])).n;
+
+    await check('(pv-i) an exam held in the room of the lesson it cancels gives the class its lesson back in that room, and says when it cannot', async () => {
+      const lessonOfTheRoom = await lesson(friday, '10:00', '11:00', svenska, k7a, [anna], sal1);
+      await template(lessonOfTheRoom, friday, '10:00', '11:00', svenska, k7a, anna, sal1);
+      const exam = await exams.create({ ...description({ name: 'Rum 1', windowFrom: friday, windowTo: friday }), academicYearId: year.id } as never, admin);
+      // The planner offers exactly this: Sal 1 is free at 10:00 because the exam cancels the lesson that holds it.
+      const laid = await planner.apply({ academicYearId: year.id, items: [placement(exam, friday, '10:00', sal1, 25, [bo])], notify: false }, admin);
+      assert.equal(laid.applied, 1, JSON.stringify(laid));
+      const activity = laid.outcomes[0].activityId!;
+      assert.deepEqual(await lessonState(lessonOfTheRoom), { status: 'CANCELLED', cause: 'EVENT', roomId: sal1 });
+      assert.deepEqual(await bookingsOf('Rum 1'), ['APPROVED']);
+      assert.equal(await replacementsOf(activity), 1);
+      assert.equal((await one<{ roomId: string }>(`SELECT cl."roomId" FROM "ScheduleActivityLessons" sal JOIN "CalendarLessons" cl ON cl.id = sal."calendarLessonId" WHERE sal."activityId" = $1`, [activity])).roomId, sal1);
+
+      const undone = await planner.unplan(exam.id, admin);
+      assert.deepEqual(undone, { removed: true, skippedRoomTaken: [] });
+      // The class has its lesson, in its room, and nothing of the exam is left in the room.
+      assert.deepEqual(await lessonState(lessonOfTheRoom), { status: 'SCHEDULED', cause: null, roomId: sal1 });
+      assert.deepEqual(await bookingsOf('Rum 1'), ['CANCELLED']);
+      assert.equal(await replacementsOf(activity), 0);
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ExamSittings" WHERE "examId" = $1`, [exam.id])).n, 0);
+
+      // Laid again, and then another lesson takes the room at that hour (a booking would not have been let in, a lesson is not asked):
+      // the class's lesson cannot come back, the plan is gone all the same, and the answer names the lesson that stayed cancelled.
+      const again = (await exams.list(year.id, admin)).find((x) => x.id === exam.id)!;
+      const second = await planner.apply({ academicYearId: year.id, items: [placement(again, friday, '10:00', sal1, 25, [bo])], notify: false }, admin);
+      assert.equal(second.applied, 1, JSON.stringify(second));
+      const blocker = await lesson(friday, '10:00', '11:00', svenska, k7c, [dag], sal1);
+      const blocked = await planner.unplan(exam.id, admin);
+      assert.equal(blocked.removed, true);
+      assert.deepEqual(blocked.skippedRoomTaken.map((one) => [one.lessonId, one.roomId, one.by]), [[lessonOfTheRoom, sal1, 'LESSON']]);
+      assert.equal((await lessonState(lessonOfTheRoom)).status, 'CANCELLED');
+      assert.equal((await lessonState(blocker)).status, 'SCHEDULED');
+      assert.equal((await exams.list(year.id, admin)).find((x) => x.id === exam.id)!.plan, null);
+      assert.deepEqual(await bookingsOf('Rum 1'), ['CANCELLED', 'CANCELLED']);
+      await exams.remove(exam.id, admin);
+    });
+
+    await check('(pv-j) an exam the planner could not place can be changed: its reason goes with its figures', async () => {
+      const big = await exams.create({ ...description({ name: 'För stort', writers: 500 }), academicYearId: year.id } as never, admin);
+      const run = await planner.propose({ academicYearId: year.id, examIds: [big.id] }, admin);
+      assert.equal(run.unplaced.length, 1, JSON.stringify(run));
+      const left = await one<{ reason: string | null; params: unknown }>(`SELECT "lastReason" AS reason, "lastReasonParams" AS params FROM "Exams" WHERE id = $1`, [big.id]);
+      assert.ok(left.reason !== null && left.params !== null, 'the run wrote a reason and its figures');
+      // The natural next step after reading the reason; undefined would have left the figures and the check Exams_reason_is_a_code would have refused the row.
+      const changed = await exams.update(big.id, description({ name: 'För stort', writers: 55 }) as never, admin);
+      assert.equal(changed.lastReason, null);
+      const after = await one<{ reason: string | null; params: unknown; at: string | null; writers: number }>(
+        `SELECT "lastReason" AS reason, "lastReasonParams" AS params, "lastPlannedAt"::text AS at, writers FROM "Exams" WHERE id = $1`,
+        [big.id],
+      );
+      assert.deepEqual(after, { reason: null, params: null, at: null, writers: 55 });
+      await exams.remove(big.id, admin);
+    });
+
+    await check('(pv-k) an exam saved while the engine solves keeps its new version: the proposal made before is refused as stale', async () => {
+      const exam = await exams.create({ ...description({ name: 'Under lösningen', windowFrom: wednesday, windowTo: wednesday, lengthMinutes: 45 }), academicYearId: year.id } as never, admin);
+      const engine = proxy.callAiEngine.bind(proxy);
+      let other: Awaited<ReturnType<typeof exams.update>> | null = null;
+      (proxy as unknown as { callAiEngine: unknown }).callAiEngine = async (...args: Parameters<typeof engine>) => {
+        // The other administrator saves the exam with 90 minutes while the engine works.
+        other = await exams.update(exam.id, description({ name: 'Under lösningen', windowFrom: wednesday, windowTo: wednesday, lengthMinutes: 90 }) as never, admin);
+        return engine(...args);
+      };
+      let proposal: Awaited<ReturnType<typeof planner.propose>>;
+      try {
+        proposal = await planner.propose({ academicYearId: year.id, examIds: [exam.id] }, admin);
+      } finally {
+        (proxy as unknown as { callAiEngine: unknown }).callAiEngine = engine;
+      }
+      assert.ok(other, 'the other administrator saved');
+      const placed = proposal.placed[0];
+      assert.ok(placed, JSON.stringify(proposal.unplaced));
+      // The proposal is of the exam as it was read, and says so; the row holds the other administrator's version, not the one read.
+      assert.equal(placed.version, exam.version);
+      const row = await one<{ version: string; minutes: number }>(`SELECT "updatedAt" AS version, "lengthMinutes" AS minutes FROM "Exams" WHERE id = $1`, [exam.id]);
+      assert.equal(row.minutes, 90);
+      assert.equal(new Date(row.version).toISOString(), (other as { version: string }).version);
+      assert.notEqual(new Date(row.version).toISOString(), exam.version);
+      // So it is refused, and the 45 minutes the administrator read are not laid on an exam of 90.
+      const applied = await planner.apply(
+        { academicYearId: year.id, items: [{ examId: exam.id, examVersion: placed.version, date: placed.date, start: placed.start, rooms: placed.rooms.map((one) => ({ roomId: one.roomId, writers: one.writers, teacherIds: one.invigilators.map((entry) => entry.teacherId) })) }], notify: false },
+        admin,
+      );
+      assert.deepEqual(applied.outcomes.map((o) => [o.ok, o.code]), [[false, 'EXAM_STALE']]);
+      assert.equal((await one<{ activityId: string | null }>(`SELECT "activityId" FROM "Exams" WHERE id = $1`, [exam.id])).activityId, null);
+      await exams.remove(exam.id, admin);
+    });
+
+    await check('(pv-l) an exam saved while it is applied is not applied, and an exam being laid is not changed or removed until the apply is done', async () => {
+      // 1. Saved between the version being compared and the plan's last write: the apply is undone with the activity it made.
+      const exam = await exams.create({ ...description({ name: 'Under tillämpningen', windowFrom: tuesday, windowTo: tuesday, lengthMinutes: 60 }), academicYearId: year.id } as never, admin);
+      const reached = deferred();
+      const release = deferred();
+      const real = activities.createWithin.bind(activities);
+      (activities as unknown as { createWithin: typeof activities.createWithin }).createWithin = async (tx, user, dto) => {
+        const made = await real(tx, user, dto);
+        reached.resolve();
+        await release.promise;
+        return made;
+      };
+      try {
+        const applying = planner.apply({ academicYearId: year.id, items: [placement(exam, tuesday, '09:30', sal1, 25, [bo])], notify: false }, admin);
+        await reached.promise;
+        // Nothing of the exam is written yet, so the exam is not laid and the other administrator may save it.
+        await exams.update(exam.id, description({ name: 'Under tillämpningen', windowFrom: tuesday, windowTo: tuesday, lengthMinutes: 90 }) as never, admin);
+        release.resolve();
+        const result = await applying;
+        assert.deepEqual(result.outcomes.map((o) => [o.ok, o.code]), [[false, 'EXAM_STALE']], JSON.stringify(result));
+      } finally {
+        (activities as unknown as { createWithin: unknown }).createWithin = real;
+        release.resolve();
+      }
+      // Nothing of the 60 minutes is left beside the 90: no activity, no credit, no booking, no sitting.
+      const left = await one<{ minutes: number; planned: boolean; activities: number; credits: number; sittings: number }>(
+        `SELECT e."lengthMinutes" AS minutes, e."activityId" IS NOT NULL AS planned,
+                (SELECT count(*)::int FROM "ScheduleActivities" WHERE "schoolId" = $2 AND "removedAt" IS NULL AND "batchId" IN (SELECT id FROM "CancellationBatches" WHERE name = 'Prov: Under tillämpningen')) AS activities,
+                (SELECT count(*)::int FROM "TimplanCredits" WHERE "schoolId" = $2 AND name = 'Prov: Under tillämpningen') AS credits,
+                (SELECT count(*)::int FROM "ExamSittings" WHERE "examId" = e.id) AS sittings
+           FROM "Exams" e WHERE e.id = $1`,
+        [exam.id, s],
+      );
+      assert.deepEqual(left, { minutes: 90, planned: false, activities: 0, credits: 0, sittings: 0 });
+      assert.deepEqual(await bookingsOf('Under tillämpningen'), []);
+
+      // 2. Changed or removed while the apply has written its plan and not committed it: the change waits for the row, then finds the exam laid.
+      //    (One at a time: the apply holds one of the pool's two connections and the waiting call the other.)
+      for (const action of ['changed', 'removed'] as const) {
+        const target = action === 'changed' ? exam : await exams.create({ ...description({ name: 'Under tillämpningen', windowFrom: tuesday, windowTo: tuesday, lengthMinutes: 60 }), academicYearId: year.id } as never, admin);
+        const fresh = (await exams.list(year.id, admin)).find((x) => x.id === target.id)!;
+        const wrote = deferred();
+        const commit = deferred();
+        const held = {
+          withRls: (user: AuthenticatedUser, body: (tx: PrismaClient) => Promise<unknown>, options?: { timeoutMs?: number }) =>
+            api.withRls(
+              user,
+              async (tx) => {
+                try {
+                  return await body(tx);
+                } finally {
+                  wrote.resolve();
+                  await commit.promise;
+                }
+              },
+              options,
+            ),
+        } as unknown as PrismaService;
+        const slow = new ExamPlannerService(held, proxy, activities);
+        let outcome = 'pending';
+        const answer = (error: unknown) => (error as { getResponse?: () => { code?: string } }).getResponse?.().code ?? String(error);
+        try {
+          const applying = slow.apply({ academicYearId: year.id, items: [placement(fresh, tuesday, '09:30', sal1, 25, [bo])], notify: false }, admin);
+          await wrote.promise;
+          const waiting =
+            action === 'changed'
+              ? exams.update(target.id, description({ name: 'Under tillämpningen', windowFrom: tuesday, windowTo: tuesday, lengthMinutes: 30 }) as never, admin).then(() => (outcome = 'changed'), (error) => (outcome = answer(error)))
+              : exams.remove(target.id, admin).then(() => (outcome = 'removed'), (error) => (outcome = answer(error)));
+          // It is waiting for the row the apply holds (the database says so) and has not answered.
+          await until(`the ${action === 'changed' ? 'change' : 'removal'} waits for the exam’s row`, async () =>
+            (await one<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%"Exams"%'`)).n >= 1,
+          );
+          assert.equal(outcome, 'pending');
+          commit.resolve();
+          const result = await applying;
+          await waiting;
+          assert.equal(result.applied, 1, JSON.stringify(result));
+        } finally {
+          commit.resolve();
+        }
+        assert.equal(outcome, 'EXAM_IS_PLANNED', `an exam laid at that moment is not ${action}`);
+        const laid = (await exams.list(year.id, admin)).find((x) => x.id === target.id)!;
+        assert.deepEqual([laid.lengthMinutes, laid.plan?.start, laid.plan?.end], [action === 'changed' ? 90 : 60, '09:30', action === 'changed' ? '11:00' : '10:30'], `as the apply laid it`);
+        await planner.unplan(target.id, admin);
+        await exams.remove(target.id, admin);
+      }
+    });
+
+    await check('(pv-m) a day the calendar does not have and seats a room cannot hold are refused with a code, not by the database', async () => {
+      for (const date of ['2030-11-31', '2030-11-32']) {
+        await assert.rejects(exams.create({ ...description({ name: 'Datum', windowFrom: date, windowTo: date }), academicYearId: year.id } as never, admin), /finns i kalendern/);
+      }
+      const first = await planner.apply({ academicYearId: year.id, items: [{ examId: randomUUID(), examVersion: new Date().toISOString(), date: '2030-11-31', start: '08:20', rooms: [{ roomId: sal1, writers: 5, teacherIds: [bo.userId!] }] }] }, admin);
+      assert.equal(first.outcomes[0].ok, false);
+      await owner.query(`UPDATE "Rooms" SET capacity = 20 WHERE id = $1`, [sal2]);
+      await assert.rejects(exams.markRoom(sal2, 500, admin), /rymmer 20/);
+      await assert.rejects(exams.markRoom(sal2, 21, admin), /rymmer 20/);
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ExamRooms" WHERE "roomId" = $1`, [sal2])).n, 0);
+      await exams.markRoom(sal2, 20, admin);
+      await exams.unmarkRoom(sal2, admin);
     });
   } finally {
     await sweepExamSchool(owner, marker);

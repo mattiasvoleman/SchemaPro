@@ -121,7 +121,7 @@ export class ExamsController {
   unplan(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<{ removed: true }> {
+  ): ReturnType<ExamPlannerService['unplan']> {
     return this.planner.unplan(id, user);
   }
 

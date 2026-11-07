@@ -7,7 +7,7 @@ import { todayInZone } from '../common/utils/time';
 import { schoolTimezone } from '../cover/cover-context';
 import { PrismaService } from '../database/prisma.service';
 import { OptimizationProxyService, type AnonMaps } from '../optimization/optimization-proxy.service';
-import { ScheduleActivitiesService } from '../publication/schedule-activities.service';
+import { ScheduleActivitiesService, type RemovePreview } from '../publication/schedule-activities.service';
 import { ownersOf } from '../publication/activity-plan';
 import { asDay, day as dayOf } from '../publication/cancellation-core';
 import { loadGroupFacts, memberHomes, ownersWithPupils } from '../publication/activity-replacements';
@@ -31,7 +31,7 @@ import {
   EXAM_TOO_MANY,
   forbiddenExam,
 } from './exam-errors';
-import { clockOf, invigilatorsNeeded, minuteOf, seatGroups } from './exam-plan';
+import { clockOf, invigilatorsNeeded, isCalendarDate, minuteOf, seatGroups } from './exam-plan';
 import {
   datesToRead,
   examFacts,
@@ -53,6 +53,7 @@ import {
   isPlanned,
   readOne,
   readSettings,
+  versionIs,
   watchMinutes,
   type ExamRow,
   type ExamSettingsView,
@@ -227,15 +228,26 @@ export class ExamPlannerService {
     return { outcomes, applied, failed: outcomes.length - applied };
   }
 
-  async unplan(examId: string, user: AuthenticatedUser): Promise<{ removed: true }> {
+  /**
+   * Takes the exam's plan away: the activity is removed (the lessons it cancelled
+   * come back, its replacement lessons and credits go) and the exam is left to be
+   * laid again. What the exam itself holds in the rooms is let go first, inside
+   * the same transaction (`freeTheRooms`). `skippedRoomTaken` is what the removal
+   * could still not put back because a lesson or a booking that is not the exam's
+   * holds the room, as the removal of any activity says it.
+   */
+  async unplan(examId: string, user: AuthenticatedUser): Promise<{ removed: true; skippedRoomTaken: RemovePreview['skippedRoomTaken'] }> {
     requireSchoolId(user);
     const row = await this.prisma.withRls(user, (tx) => readOne(tx, examId));
-    if (row.activityId && isPlanned(row)) await this.activities.remove(row.activityId, user);
-    else if (row.sittings.length === 0 && row.activityId === null) {
+    let skippedRoomTaken: RemovePreview['skippedRoomTaken'] = [];
+    if (row.activityId && isPlanned(row)) {
+      const removal = await this.activities.remove(row.activityId, user, (tx) => freeTheRooms(tx, examId));
+      skippedRoomTaken = removal.skippedRoomTaken;
+    } else if (row.sittings.length === 0 && row.activityId === null) {
       throw conflictingExam(EXAM_NOT_PLANNED, 'Provet är inte lagt.');
     }
     await this.prisma.withRls(user, async (tx) => clearLeftovers(tx, [await readOne(tx, examId)]));
-    return { removed: true };
+    return { removed: true, skippedRoomTaken };
   }
 
   // -------------------------------------------------------------------------
@@ -382,8 +394,10 @@ export class ExamPlannerService {
       const stamp = new Date();
       for (const row of read.rows) {
         const left = plan.unplaced.find((one) => one.examId === row.id);
-        await tx.exam.update({
-          where: { id: row.id },
+        // Only the exam as it was read: one that was saved while the engine worked keeps its new version and says
+        // nothing of this run (the reason was about the exam as it was), so the proposal for it is refused as stale.
+        await tx.exam.updateMany({
+          where: { id: row.id, updatedAt: versionIs(row.updatedAt) },
           data: left
             ? { lastReason: left.reason, lastReasonParams: named(left.params) as Prisma.InputJsonValue, lastPlannedAt: stamp, updatedAt: row.updatedAt }
             : { lastReason: null, lastReasonParams: Prisma.DbNull, lastPlannedAt: null, updatedAt: row.updatedAt },
@@ -437,6 +451,7 @@ export class ExamPlannerService {
     if (!exam) throw badExam(EXAM_PLACEMENT, 'Provets klasser och grupper finns inte längre i läsåret.');
 
     // The time.
+    if (!isCalendarDate(item.date)) throw badExam(EXAM_PLACEMENT, 'Datumet finns inte i kalendern.');
     const start = minuteOf(item.start);
     const end = start + exam.lengthMinutes;
     this.assertTime(exam, item.date, start, end, today);
@@ -560,10 +575,13 @@ export class ExamPlannerService {
       const link = await tx.scheduleActivityLesson.findFirst({ where: { activityId: created.id, studentGroupId: owner.id }, select: { calendarLessonId: true } });
       if (link) await tx.calendarLesson.update({ where: { id: link.calendarLessonId }, data: { roomId: mostly.roomId } });
     }
-    await tx.exam.update({
-      where: { id: row.id },
+    // The last write, and only on the exam the proposal was about: one saved since the version was compared (the read
+    // above takes no lock) makes this count 0, and the whole apply is undone with the activity it made.
+    const laid = await tx.exam.updateMany({
+      where: { id: row.id, updatedAt: versionIs(row.updatedAt) },
       data: { activityId: created.id, lastReason: null, lastReasonParams: Prisma.DbNull, lastPlannedAt: null },
     });
+    if (laid.count !== 1) throw conflictingExam(EXAM_STALE, 'Provet har ändrats sedan förslaget gjordes: planera om.');
     return { created };
   }
 
@@ -609,6 +627,34 @@ export class ExamPlannerService {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * What an exam holds in the rooms, let go before its activity is removed. The
+ * removal puts the lessons the exam cancelled back, and a lesson does not come
+ * back to a room that another lesson or a live booking holds over the same time
+ * (the reversal of any avbokning: `skippedRoomTaken`). The planner offers a room
+ * that is free only because the exam cancels the lesson that holds it, so the
+ * exam is often held in the very room of a lesson it cancels, and then the
+ * exam's own bookings and the room it gave the class's replacement lesson are
+ * what would keep that lesson cancelled for good. A replacement lesson that has
+ * begun or has a register is history and keeps its room, as the removal keeps
+ * the lesson itself.
+ */
+async function freeTheRooms(tx: PrismaClient, examId: string): Promise<void> {
+  const sittings = await tx.examSitting.findMany({ where: { examId }, select: { bookingId: true } });
+  const bookings = sittings.map((sitting) => sitting.bookingId).filter((id): id is string => id !== null);
+  if (bookings.length > 0) {
+    await tx.roomBooking.updateMany({ where: { id: { in: bookings }, status: { in: ['PENDING', 'APPROVED'] } }, data: { status: 'CANCELLED' } });
+  }
+  const exam = await tx.exam.findUnique({ where: { id: examId }, select: { activityId: true } });
+  if (!exam?.activityId) return;
+  const links = await tx.scheduleActivityLesson.findMany({ where: { activityId: exam.activityId }, select: { calendarLessonId: true } });
+  if (links.length === 0) return;
+  await tx.calendarLesson.updateMany({
+    where: { id: { in: links.map((link) => link.calendarLessonId) }, roomId: { not: null }, startsAt: { gt: new Date() }, attendanceRecords: { none: {} } },
+    data: { roomId: null },
+  });
+}
 
 /** The year's exam-apply lock, exclusive, waited for at most 5 s. */
 async function lockExamApply(tx: PrismaClient, academicYearId: string): Promise<void> {

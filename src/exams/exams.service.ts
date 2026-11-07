@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
@@ -7,7 +7,7 @@ import { markedIds } from '../users/person-protections';
 import { loadGroupFacts } from '../publication/activity-replacements';
 import { asDay, clock, day } from '../publication/cancellation-core';
 import { badExam, conflictingExam, EXAM_GROUPS, EXAM_IS_PLANNED, EXAM_REPLACEMENT_SUBJECT_COUNTS, EXAM_ROOM, EXAM_SUBJECT, EXAM_WINDOW, missingExam } from './exam-errors';
-import { datesBetween } from './exam-plan';
+import { datesBetween, isCalendarDate } from './exam-plan';
 import type { CreateExamDto, ExamDescriptionDto, ExamSettingsDto } from './dto/exam.dto';
 
 /** The school's decisions, as a page reads them. */
@@ -212,8 +212,12 @@ export class ExamsService {
   async markRoom(roomId: string, seats: number, user: AuthenticatedUser): Promise<ExamRoomView[]> {
     const schoolId = requireSchoolId(user);
     await this.prisma.withRls(user, async (tx) => {
-      const room = await tx.room.findUnique({ where: { id: roomId }, select: { id: true } });
+      const room = await tx.room.findUnique({ where: { id: roomId }, select: { id: true, name: true, capacity: true } });
       if (!room) throw badExam(EXAM_ROOM, 'Salen finns inte.');
+      // A skrivsal seats at most what the room holds (fewer when the desks stand apart): the planner fills it to `seats`.
+      if (typeof room.capacity === 'number' && seats > room.capacity) {
+        throw badExam(EXAM_ROOM, `seats: ${room.name} rymmer ${room.capacity}, så ett prov kan ha högst så många platser där.`, { capacity: room.capacity });
+      }
       await tx.examRoom.upsert({ where: { roomId }, create: { roomId, schoolId, seats }, update: { seats } });
     });
     return this.rooms(user);
@@ -261,6 +265,9 @@ export class ExamsService {
   async update(id: string, dto: ExamDescriptionDto, user: AuthenticatedUser): Promise<ExamView> {
     const schoolId = requireSchoolId(user);
     await this.prisma.withRls(user, async (tx) => {
+      // Locked before it is read: a tillämpning that is writing the exam's plan at this moment finishes first,
+      // and this then finds the exam laid. The one that comes after finds this change in the version.
+      await lockExam(tx, id);
       const row = await readOne(tx, id);
       if (isPlanned(row)) {
         throw conflictingExam(EXAM_IS_PLANNED, 'Provet är lagt: ta bort planeringen först, ändra sedan provet.');
@@ -273,7 +280,7 @@ export class ExamsService {
           ...data.columns,
           // What the last run said was about the exam as it was.
           lastReason: null,
-          lastReasonParams: undefined,
+          lastReasonParams: Prisma.DbNull,
           lastPlannedAt: null,
           updatedAt: new Date(),
         },
@@ -287,6 +294,7 @@ export class ExamsService {
   async remove(id: string, user: AuthenticatedUser): Promise<{ removed: true }> {
     requireSchoolId(user);
     await this.prisma.withRls(user, async (tx) => {
+      await lockExam(tx, id);
       const row = await readOne(tx, id);
       if (isPlanned(row)) {
         throw conflictingExam(EXAM_IS_PLANNED, 'Provet är lagt: ta bort planeringen först, ta sedan bort provet.');
@@ -348,10 +356,32 @@ export async function readOne(tx: PrismaClient, id: string): Promise<ExamRow> {
   return row;
 }
 
+/**
+ * The exam's row, locked until the transaction ends. A change and a removal read
+ * whether the exam is laid and write on what they read; without the lock the
+ * answer can be out of date by the time they write.
+ */
+export async function lockExam(tx: PrismaClient, id: string): Promise<void> {
+  await tx.$queryRaw`SELECT "id" FROM "Exams" WHERE "id" = ${id}::uuid FOR UPDATE`;
+}
+
+/**
+ * The exam as it was read, for a write that must not land on a changed one. The
+ * version is a timestamp the database holds to the microsecond and a Date holds to
+ * the millisecond: the range is the whole millisecond, so that a value written
+ * with more digits than JavaScript keeps is still the same version.
+ */
+export function versionIs(updatedAt: Date): { gte: Date; lt: Date } {
+  return { gte: updatedAt, lt: new Date(updatedAt.getTime() + 1) };
+}
+
 const wall = (value: Date | null): string | null => clock(value);
 
 /** The checks a description needs before it is written, and the columns it becomes. */
 async function checkedExam(tx: PrismaClient, academicYearId: string, dto: ExamDescriptionDto) {
+  for (const [field, value] of [['windowFrom', dto.windowFrom], ['windowTo', dto.windowTo]] as const) {
+    if (!isCalendarDate(value)) throw badExam(EXAM_WINDOW, `${field}: en dag som finns i kalendern, YYYY-MM-DD.`);
+  }
   const year = await tx.academicYear.findUnique({ where: { id: academicYearId }, select: { id: true, startDate: true, endDate: true } });
   if (!year) throw badExam(EXAM_WINDOW, 'academicYearId: läsåret finns inte.');
   const subject = await tx.subject.findUnique({ where: { id: dto.subjectId }, select: { name: true, countsTowardTimplan: true } });
@@ -418,7 +448,13 @@ export async function clearLeftovers(tx: PrismaClient, rows: ReadonlyArray<ExamR
     await tx.roomBooking.updateMany({ where: { id: { in: bookings }, status: { in: ['PENDING', 'APPROVED'] } }, data: { status: 'CANCELLED' } });
   }
   await tx.examSitting.deleteMany({ where: { examId: { in: dead.map((row) => row.id) } } });
-  await tx.exam.updateMany({ where: { id: { in: dead.map((row) => row.id) }, activityId: { not: null } }, data: { activityId: null } });
+  // The version is kept (updatedAt is given): what is cleared is not something the administrator changed, and a proposal
+  // made from the exam as it was read must still be the exam's version when it is applied.
+  for (const row of dead) {
+    if (row.activityId !== null) {
+      await tx.exam.updateMany({ where: { id: row.id, activityId: { not: null } }, data: { activityId: null, updatedAt: row.updatedAt } });
+    }
+  }
 }
 
 /** Minutes and passes of watch per teacher in a year, from the exams that stand. */
