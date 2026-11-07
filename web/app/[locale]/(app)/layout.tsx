@@ -4,6 +4,7 @@ import { redirect } from "@/i18n/navigation";
 import { localePath } from "@/i18n/paths";
 import { getSession } from "@/lib/auth";
 import { AppShell } from "@/components/layout/app-shell";
+import { navForRole } from "@/components/layout/role-nav";
 import { SchoolSwitcher } from "@/components/layout/school-switcher";
 import { SCHOOL_META } from "@/lib/school-choice";
 import { AppProviders } from "@/components/app-providers";
@@ -91,6 +92,7 @@ export default async function AppLayout({
           {style ? <style dangerouslySetInnerHTML={{ __html: style }} /> : null}
           <AppShell
             role={profile.role}
+            sections={navForRole(profile.role)}
             userName={`${profile.firstName} ${profile.lastName}`}
             email={profile.email}
             schoolName={

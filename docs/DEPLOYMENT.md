@@ -132,6 +132,67 @@ Once the access-token hook is on (§11.2), every sign-in and refresh reads
 on either starts with `SET lock_timeout = '1s';` and is rerun if it times
 out, so that it never makes every sign-in wait behind it (§11.2).
 
+### 2.1 A migration that stopped, and the index it can leave behind
+
+Prisma records a migration that stopped as failed, and the next
+`migrate deploy` refuses (P3009) until it is told what to do about it:
+`prisma migrate resolve --rolled-back <name>`, the name being in the message,
+and then `migrate deploy` again, which runs the file **from its first
+statement**. A file with a DO block runs as one transaction and leaves nothing
+behind. A file that builds an index with `CREATE INDEX CONCURRENTLY` cannot run
+in a transaction, so Prisma runs it one statement at a time, and a build that
+is cancelled (a statement timeout, `pg_cancel_backend`, a dropped connection)
+or that fails (a unique index over rows that are not unique) leaves its index in
+the catalogue **invalid**: not used by the planner, and holding its name. Whether
+writes still maintain it depends on where the build stopped. One that failed in
+its second phase (`indisready = true`) is kept up to date by every write; one
+that failed in the first, as a unique index over duplicates does, is not
+(`indisready = false`), so it is no index to rely on in either case, and the
+query in step 1 below shows both flags. The rerun then stops at the same
+statement with
+
+```
+ERROR: relation "<index>" already exists   (SQLSTATE 42P07)
+```
+
+which does not say that the index is invalid, or that the way on is to drop it.
+`IF NOT EXISTS` would not help: it sees the name, skips the statement, and the
+migration is recorded as applied with the index still invalid (tried). So the
+file does not use it, and the recovery is by hand, as the database's owner, on
+the direct connection:
+
+1. Find what a stopped build left. This reads the catalogue only:
+
+   ```sql
+   SELECT c.relname AS index, t.relname AS "table", i.indisvalid, i.indisready
+     FROM pg_index i
+     JOIN pg_class c ON c.oid = i.indexrelid
+     JOIN pg_class t ON t.oid = i.indrelid
+    WHERE NOT i.indisvalid AND c.relnamespace = 'public'::regnamespace
+    ORDER BY c.relname COLLATE "C";
+   ```
+
+   Nothing is invalid when no build was interrupted. An index in the result
+   that belongs to another migration than the one that stopped is somebody
+   else's to look at first.
+2. Drop each one the migration was building, without taking the table's writes
+   with it, and outside a transaction (`psql -c` is enough):
+   `DROP INDEX CONCURRENTLY "<index>";`
+3. Read the migration's other statements. The ones that ran before the
+   interrupted one run again, so each has to be safe to repeat (a `VALIDATE
+   CONSTRAINT` of a validated key is; a `CREATE` without `IF NOT EXISTS` of
+   something that exists is not and has to be undone first). A failed unique
+   build means rows to settle first: the error names the key that is not
+   unique.
+4. `prisma migrate resolve --rolled-back <name>`, then `prisma migrate
+   deploy`, then the query of step 1 again: no row.
+
+The files that build an index concurrently are found with `grep -l
+CONCURRENTLY prisma/migrations/*/migration.sql`. Each states its own recovery in
+its header (20270115090100 does: `DROP INDEX CONCURRENTLY
+"CalendarLessons_subjectId_schoolId_idx"` is its step 2, and its other
+statements, thirty-eight `VALIDATE CONSTRAINT`, are safe to repeat).
+
 ## 3. Create the API's least-privilege database role
 
 The API must **never** connect as `postgres` (the owner bypasses RLS). Create
@@ -1691,16 +1752,20 @@ Walk the full product loop once, in order:
   **What one person can send, and what the queue carries.** A request to a
   whole school is some 4 000 notices and 82 mails (49 on BCC, one every 500 ms:
   about 41 s of the delivery queue) and a push to each. A person therefore
-  writes at most **10 requests an hour** and a school gets at most **20 000
-  new receipts in 24 hours** (five requests to every guardian of a school of
-  2 000 pupils, far more than a school needs; under four minutes of mail a day
-  at most: 20 000 addresses, 49 to a mail, one mail every half second): the 11th request or the receipts past the day's are refused
-  whole with 429 (`ACK_TOO_MANY_REQUESTS`, `ACK_TOO_MANY_RECIPIENTS`) by the
-  database (triggers; the owner and the migrations are not counted, and the
-  two limits take an advisory lock each, the sender's first and the school's
+  writes at most **10 requests an hour**, a sender has a **share of the day**
+  (since 20270119090000: **8 000 new receipts in 24 hours for an administrator,
+  2 000 for a teacher**, counted over the receipts of the requests the person
+  wrote), and a school gets at most **20 000 new receipts in 24 hours** (five
+  requests to every guardian of a school of 2 000 pupils, far more than a school
+  needs; under four minutes of mail a day at most: 20 000 addresses, 49 to a
+  mail, one mail every half second): the 11th request, the receipts past the
+  sender's share and the receipts past the day's are refused whole with 429
+  (`ACK_TOO_MANY_REQUESTS`, `ACK_SENDER_DAY_LIMIT`, `ACK_TOO_MANY_RECIPIENTS`)
+  by the database (triggers; the owner and the migrations are not counted, and
+  the limits take an advisory lock each, the sender's first and the school's
   then, so two requests at the limit do not both pass), and `POST
   /api/v1/acknowledgements` is throttled to five a minute besides. To change a
-  number is a migration. The delivery has a second, **urgent lane** for the
+  number is a migration (`app.ack_day_limit` holds all three). The delivery has a second, **urgent lane** for the
   crisis alarm and its end (`CRISIS_ALARM`, `CRISIS_ENDED`): a wave of mails
   never stands in front of an alarm's push (ten minutes of life); the lanes
   share the providers' pace (mails go one at a time in the order they ask,
@@ -1778,6 +1843,88 @@ Walk the full product loop once, in order:
   `git grep -nE 'notification\.(findMany|findFirst|findUnique|groupBy|aggregate)'
   src` first, and delete the notices in the same transaction as the rollback
   below if one has landed.
+  **Hardening after the three reviews (20270119090000, one migration, the
+  gateway and the web in one release; Kvittens is off everywhere until a school
+  turns it on, so none of it is seen before then).** Four things the reviews
+  found, in the order they were found:
+  *(1) The delivery's mail chain survives an error.* Every mail asks for a turn
+  in one chain shared by both lanes; a turn that threw closed the e-mail of the
+  whole process until it was restarted. A turn that throws now costs only its own
+  mail (logged `Email dispatch skipped [turn, <error name>]`).
+  *(2) A request to Resend or Expo that is not answered is given up.* The
+  calls had no time limit, so a mail that never got an answer held its lane for
+  as long as the runtime waits (five minutes), and the ordinary lane carries every
+  school's notices. A mail now waits **10 s** (`EMAIL_TIMEOUT_MS`; Resend answers in
+  well under one) and is then logged (`Email dispatch failed [timeout 10000 ms]`)
+  and not sent again, like any refused mail; an Expo request waits **10 s**
+  (`REQUEST_TIMEOUT_MS`, the answer's body under the same limit), counts as a
+  network error and is retried after 1, 2 and 4 s as before, so a chunk Expo never
+  answers is given up after 47 s and its messages are answered `RequestFailed`. A
+  retry after a timeout can send a push twice if the first reached Expo; a lost push
+  is the worse of the two. A Resend that does not answer at all still costs every
+  mail of a wave its ten seconds: check it first when mail stops (`Email dispatch
+  failed [timeout` in the log).
+  *(3) A reminder reads "Skickad" only when the mail went.* The pass writes the
+  notices and marks the request SENT in one transaction, as before; the e-mail and
+  the push go after the commit through the delivery's queue. The delivery now says,
+  when it has finished the batch, whether every mail and push was taken by its
+  channel (Resend answered 2xx; Expo took the request, a device it calls gone is not
+  a refusal), or that there was nothing outside the inbox to send, and the gateway
+  records it in `AckRequests."reminderMirroredAt"` (`app.ack_reminder_mirrored`,
+  which answers nothing to a login that is a person). Until then, and for good if
+  it never comes, the gateway calls the reminder `WRITTEN` and the staff's list says
+  *Lagd i inkorgen* (the notices are in the inboxes, and nothing more is known)
+  where it said *Skickad*; the detail page says what is and is not known. **Known
+  limit:** the e-mail and the push of a reminder go to the delivery's in-memory
+  queue after the commit, as every other notice does, so a process that stops
+  between the commit and the send loses them: the inbox notices are written, the
+  request reads *Lagd i inkorgen* for good, and nothing sends the reminder again.
+  A whole-school wave is some 41 s of mail and 8 s of push, so **do not release
+  while one is going** (`SELECT count(*), min("remindAt") FROM "AckRequests" WHERE
+  "remindAt" <= now() AND "reminderOutcome" IS NULL` is empty, and the last
+  `JobRuns` row of `ack-reminders` is a few minutes old at most, when the pass has
+  just finished), and read the requests that stayed `WRITTEN` afterwards (`SELECT
+  count(*) FROM "AckRequests" WHERE "reminderOutcome" = 'SENT' AND
+  "reminderMirroredAt" IS NULL AND "reminderSentAt" < now() - interval '15
+  minutes'`). A refused batch (Resend or Expo answering with an error) leaves the
+  request `WRITTEN` the same way.
+  *(4) A sender cannot use up the school's day.* The school's 20 000 rows were
+  shared by all senders: two mentor accounts, each writing the ten requests an hour
+  for a class of 30 (66 rows each), reach 15 840 rows a day each. Each sender now has
+  a share of the day (8 000 for an administrator, 2 000 for a teacher; refused whole
+  with `KV427`, `ACK_SENDER_DAY_LIMIT`, 429, before the school's own limit is
+  looked at). The numbers: a whole-school request is pupils x guardians (4 000 for
+  2 000 pupils with two guardians each, 5 700 for the largest school counted on, 2 600
+  pupils), and an administrator's 8 000 holds one of those and a half more; a mentor
+  asks about 30 to 60 pupils, 66 to 132 rows a request, and 2 000 is fifteen to thirty
+  requests a day. Against the school's 20 000: no one sender, and no two
+  administrators, can use the day up (3 x 8 000 can; ten teachers can). An
+  administrator reads the use on the Kvittens page (`GET
+  /api/v1/acknowledgements/usage`: the school's rows of the last 24 hours, their own
+  share, and the five who used most), the same numbers the limits refuse by. The
+  share is counted per author of the request, over the requests written in the last
+  24 hours. The migration adds one nullable column and its check to the requests table (empty while no school has turned kvittens on)
+  under a 5 s `lock_timeout`, three functions (`app.ack_reminder_mirrored`,
+  `app.ack_day_limit`, `app.ack_usage`) and replaces `app.ack_receipts_limit`, so
+  there are 22 `app.ack_%` functions after it, all definer with a pinned
+  `search_path`, 16 the API role may run and six the owner's alone. It touches no
+  other table, takes no lock on `Users` or `Schools`, and the gallring functions are
+  not touched. **Before it:** `SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON
+  n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE 'ack\_%'` is 19,
+  `SELECT count(*) FROM "AckRequests"` is the number you expect (zero while no school
+  has turned kvittens on), and no session holds a lock on `AckRequests`. **After it
+  and before the merge:** the count is 22; `SELECT count(*) FROM pg_attribute WHERE
+  attrelid = '"AckRequests"'::regclass AND attname = 'reminderMirroredAt'` is 1;
+  `app.ack_day_limit('SCHOOL')`, `('SCHOOL_ADMIN')` and `('TEACHER')` are 20000, 8000
+  and 2000; `anon`, `authenticated` and `service_role` can run none of the
+  `app.ack_%` functions. **The API before the release** does not know the column or the
+  functions and writes the notices as before, so it keeps working between the migration
+  and the deploy; the web before the release does not draw `WRITTEN` and shows the
+  state's name, which is a cosmetic fault until the web is deployed (the web and the
+  gateway are one release). **Rolling it back:** a revert of the code is harmless; the
+  column and the functions stay unread, and `app.ack_receipts_limit` keeps the sender
+  shares, which only makes the database stricter than the old gateway knew
+  (it would answer `KV427` as an error and not as a 429 until the code is back).
   **Rollback of the code** is a revert; the tables stay and are unread. Rollback
   of the data, only if nothing in it is wanted: `BEGIN; DELETE FROM
   "Notifications" WHERE "type"::text IN ('ACK_REQUESTED', 'ACK_REMINDER');
@@ -1787,6 +1934,145 @@ Walk the full product loop once, in order:
   above. Count the notices first (`SELECT count(*) FROM "Notifications" WHERE
   "type"::text LIKE 'ACK\_%'`). What a rollback changes: nobody can ask or
   confirm, and the requests already made are gone.
+- **Ett läsårs lektioner tas bort först**: 20270120090000 adds the function
+  `app.academic_year_lessons_go_first()` (SECURITY DEFINER, `search_path`
+  pinned to `public, pg_temp`, EXECUTE revoked from PUBLIC and from `anon`,
+  `authenticated`, `service_role` and `app_authenticated`: a trigger needs none)
+  and the trigger `AcademicYears_a_lessons_go_first` (BEFORE DELETE, per row),
+  which deletes the lessons of the year's classes before the year goes. No
+  table, row, column, policy or grant is touched, and none of the SS12000
+  flow's functions is restated. Why: removing a year cascades into its lessons
+  by two routes, and which runs first is the order of the keys' triggers by
+  name (`RI_ConstraintTrigger_a_<oid>`); 20270115090000 moved the classes' key
+  to the end, so the master lessons' key runs first, the lessons lose their
+  master lesson before they go, and `app.ss12000_v_lessons()` files an
+  `AdhocActivity` tombstone for each (a year with two keyed lessons and one
+  ad hoc: 3, not 1). Nothing is lost: the consumers are sent ids they never
+  had. The service for removing a year did it right since #272 by deleting the
+  lessons itself, which is one way in, and judged by another policy (DRIFT) than
+  the year's (PLANERING): a profile with only the second would have deleted no
+  lesson and no error. The trigger is every way in (the service, SQL,
+  PostgREST) and every profile; the service no longer deletes the lessons
+  itself. **The trigger runs as the owner, like the cascade it comes before:**
+  the referential action deletes the same rows as the owner and passes row
+  security, row security is not forced on the tables, and the trigger fires only
+  for a year the caller's own DELETE policy let through (another school's
+  administrator and a teacher reach no row, so no trigger; RLS sections
+  386-387). It takes `AcademicYears` in SHARE ROW EXCLUSIVE, NOWAIT, in a loop
+  with a 30 s ceiling: reads and foreign-key checks go on, writes to the table
+  wait for the file (milliseconds), and if it is not free in 30 s it stops with
+  nothing changed (`prisma migrate resolve --rolled-back
+  20270120090000_ett_lasars_lektioner_tas_bort_forst_pa_varje_vag`, then deploy
+  again). **The migration goes in first, then the merge:** the API before it
+  deletes the lessons itself and the trigger then finds none; the API after it
+  leaves them to the trigger, and without the trigger a removal files the extra
+  tombstones until it is there. The file's checksum (sha256, what Prisma
+  records) is `aee367080f074e85ebb1ed43380670de25a24f1744d1f98ce286a7c6c839d108`.
+  **Before the migration**, as the owner, all of it read-only:
+  `SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL OR
+  rolled_back_at IS NOT NULL ORDER BY migration_name COLLATE "C"` returns no
+  row; `SELECT max(migration_name COLLATE "C") FROM _prisma_migrations WHERE
+  finished_at IS NOT NULL AND rolled_back_at IS NULL` is
+  `20270119090000_en_avsandare_har_en_andel_av_dygnet_och_en_paminnelse_vet_om_brevet_gick`
+  (#277's, the last one applied in production when this was written; any from
+  `20270118090000` on that is not this one passes); `prisma migrate status`
+  lists exactly this migration as pending; `SELECT to_regprocedure('app.academic_year_lessons_go_first()'),
+  (SELECT count(*) FROM pg_trigger WHERE tgrelid = '"AcademicYears"'::regclass
+  AND tgname = 'AcademicYears_a_lessons_go_first')` is NULL and 0; the BEFORE
+  DELETE triggers on the table are none (`SELECT tgname FROM pg_trigger WHERE
+  tgrelid = '"AcademicYears"'::regclass AND NOT tgisinternal AND tgtype & 10 =
+  10 ORDER BY tgname COLLATE "C"` returns no row); no session sits idle in a
+  transaction that holds `AcademicYears` (`SELECT pid, state, now() -
+  xact_start AS age, left(query, 70) FROM pg_stat_activity WHERE datname =
+  current_database() AND pid <> pg_backend_pid() AND xact_start < now() -
+  interval '3 seconds' ORDER BY age DESC`). **Information:** which of the two
+  keys the year's removal runs first in production, as the trigger names order
+  them (the database compares them as bytes, hence the collation):
+  `SELECT c.conrelid::regclass AS child, t.tgname FROM pg_trigger t JOIN
+  pg_constraint c ON c.oid = t.tgconstraint WHERE t.tgrelid =
+  '"AcademicYears"'::regclass AND t.tgisinternal AND t.tgtype & 8 = 8 AND
+  c.conrelid IN ('"StudentGroups"'::regclass, '"MasterLessons"'::regclass) ORDER
+  BY t.tgname COLLATE "C"`: with `"MasterLessons"` first a removal files the
+  extra tombstones today.
+  **After it, before the merge:** `SELECT t.tgtype, t.tgenabled, t.tgfoid::regproc
+  FROM pg_trigger t WHERE t.tgrelid = '"AcademicYears"'::regclass AND t.tgname =
+  'AcademicYears_a_lessons_go_first'` is `11` (BEFORE, DELETE, per row), `O`,
+  `app.academic_year_lessons_go_first`; `SELECT p.prosecdef, p.proconfig,
+  p.proowner = c.relowner AS owner_of_the_tables, (SELECT count(*) FROM
+  aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE a.grantee
+  <> p.proowner) AS other_grantees, md5(p.prosrc) FROM pg_proc p, pg_class c
+  WHERE p.oid = 'app.academic_year_lessons_go_first()'::regprocedure AND c.oid =
+  '"AcademicYears"'::regclass` is `true`, `{"search_path=public, pg_temp"}`,
+  `true`, `0`, `3dbf3391e7a8ec8649239b9a02054ebb`; `SELECT r,
+  has_function_privilege(r, 'app.academic_year_lessons_go_first()', 'EXECUTE')
+  FROM unnest(ARRAY['anon', 'authenticated', 'service_role',
+  'app_authenticated']) r ORDER BY r COLLATE "C"` is false four times;
+  `SELECT relname, relforcerowsecurity FROM pg_class WHERE oid IN
+  ('"AcademicYears"'::regclass, '"CalendarLessons"'::regclass,
+  '"StudentGroups"'::regclass) ORDER BY relname COLLATE "C"` is false three
+  times; and the flow's own functions are what they were,
+  `SELECT proname, md5(prosrc) FROM pg_proc WHERE pronamespace =
+  'app'::regnamespace AND proname IN ('ss12000_bury', 'ss12000_v_lessons',
+  'ss12000_year_is_emitted') ORDER BY proname COLLATE "C"` being
+  `91f0808502e6f703283c02ca1fe33c2b`, `31d7cd85b4db4a00995a4f5275f45253` and
+  `4fef216a7588f169db98a639de67193f` before and after (read on a database built
+  by the migrations). The behaviour is not tried against production (it would
+  delete): it is the adapter probe's `tk4` and RLS sections 385-387, on every
+  run of the Database job.
+  **Rolling back** is two steps, as the owner on the direct connection, and the
+  API goes back with them: the API before this release deletes a year's lessons
+  itself (it has since #272), so with the trigger gone it still files the right
+  tombstones; the API of this release leaves the lessons to the trigger, and
+  with the trigger gone and that API left in place a removal files the extra
+  tombstones again.
+  (1) Drop the two objects behind a lock guard. `DROP TRIGGER` takes ACCESS
+  EXCLUSIVE on `AcademicYears`, and a drop that waits for one open reader makes
+  every later read of the table, and every foreign-key check against it, queue
+  behind it (measured: a plain `SELECT count(*)` waited 5.2 s behind a bare
+  `DROP TRIGGER` that waited for one open reader). With the guard it gives up
+  after a second with `55P03`, drops nothing, and the reader that came meanwhile
+  waited 0.9 s; rerun it until it goes through (measured: 251 ms once the reader
+  was gone):
+
+  ```sql
+  BEGIN;
+  SET LOCAL lock_timeout = '1s';
+  DROP TRIGGER "AcademicYears_a_lessons_go_first" ON "AcademicYears";
+  DROP FUNCTION app.academic_year_lessons_go_first();
+  COMMIT;
+  ```
+
+  (2) Decide what Prisma is told, because the migration is still recorded as
+  applied after the drop, and `prisma migrate resolve --rolled-back` is not the
+  command for it: it refuses an applied migration (`P3012`, "not in a failed
+  state"; it is for one that stopped, as in the ceiling above and §2.1).
+  - To be able to bring the trigger back with `prisma migrate deploy`, delete
+    the record, deliberately, as the owner and after the drop, never before it
+    (the file creates the function and the trigger without `IF NOT EXISTS` and
+    stops at objects that are still there):
+    `DELETE FROM _prisma_migrations WHERE migration_name =
+    '20270120090000_ett_lasars_lektioner_tas_bort_forst_pa_varje_vag';` removes
+    one row; `prisma migrate status` then lists the migration as pending and
+    `migrate deploy` applies the file again from its first statement (tried:
+    the function with `md5(prosrc)` `3dbf3391e7a8ec8649239b9a02054ebb`, the
+    trigger `11`, `O`, and the checksum above come back). That is the way to
+    put the API of this release back.
+  - Or leave the record. Then the database stays rolled back: a later
+    `migrate deploy` says there is nothing to apply and does not recreate the
+    trigger (tried), so the API of this release must not be put back until the
+    file has been applied by hand (`psql -f`, as the owner).
+
+  What it changes: with the API before this release nothing; with the API of
+  this release left in place, removing a year goes back to the keys' order and
+  files the extra tombstones; nothing is lost either way.
+  **The composite keys' ON UPDATE:** the same release adds RLS section 388,
+  which fails the next composite key that holds a school and follows its parent
+  when the parent is updated (`ON UPDATE CASCADE`; make it `NO ACTION`, as
+  20270115090000 did for 38). 98 older ones are named in the section, and the
+  list only gets shorter. No migration changes any of them: moving a parent to
+  another school is not something any code path does, and the swap would take
+  ACCESS EXCLUSIVE on `Users`, `StudentGroups` and the other parents together.
+
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

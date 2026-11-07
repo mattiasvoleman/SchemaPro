@@ -1775,6 +1775,47 @@
         }
       }
     },
+    "/api/v1/acknowledgements/usage": {
+      "get": {
+        "tags": [
+          "Ack"
+        ],
+        "operationId": "AckController_usage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
     "/api/v1/acknowledgements/{id}": {
       "get": {
         "tags": [

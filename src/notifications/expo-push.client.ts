@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { isTimeoutError } from './request-timeout';
 
 /**
  * Expo's push service, by plain fetch (no SDK): POST {apiUrl}/send with at
@@ -14,6 +15,14 @@ import { Logger } from '@nestjs/common';
  *     says a 400 will not get better). A chunk that still fails is answered
  *     with an error ticket per message (RequestFailed), never thrown: one
  *     chunk's failure does not stop the next.
+ *   * A request that Expo has not answered in REQUEST_TIMEOUT_MS is given up
+ *     and counts as a network error (retried like one): without a limit it
+ *     waited as long as the runtime does, five minutes, and the lane it sits
+ *     in (the ordinary one carries every school's notices) waited with it.
+ *     The answer's body is under the same limit. A request that timed out may
+ *     still have reached Expo, so a retry can send a push twice: that is the
+ *     lesser harm, and a network error that drops the connection after the
+ *     request left has always been the same.
  *
  * Nothing here logs a token, a title or a body.
  */
@@ -45,12 +54,20 @@ export interface ExpoPushClientOptions {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   random?: () => number;
+  /** How long Expo may take to answer one request; a spec shortens it. */
+  timeoutMs?: number;
 }
 
 export const SEND_CHUNK = 100;
 export const RECEIPT_CHUNK = 1000;
 /** 200 ms between request starts: five a second. */
 export const MIN_REQUEST_INTERVAL_MS = 200;
+/**
+ * Expo answers a chunk of 100 messages or 1,000 receipt ids in a second or two; ten is five times that. A chunk that
+ * never answers costs, with the three retries, four times ten seconds and their pauses (47 s) before its messages are
+ * given up as RequestFailed.
+ */
+export const REQUEST_TIMEOUT_MS = 10_000;
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
 /** The process-wide pacing, shared by every client (there is one per app). */
@@ -62,6 +79,7 @@ export function resetExpoPacing(): void {
 }
 
 class RetryableError extends Error {}
+
 
 export class ExpoPushClient {
   private readonly logger = new Logger(ExpoPushClient.name);
@@ -132,18 +150,33 @@ export class ExpoPushClient {
       'content-type': 'application/json',
     };
     if (this.options.accessToken) headers['authorization'] = `Bearer ${this.options.accessToken}`;
+    // One signal for the request and the reading of its answer: a body that stalls is as stuck as a request that does.
+    const signal = AbortSignal.timeout(this.options.timeoutMs ?? REQUEST_TIMEOUT_MS);
     let response: Response;
     try {
-      response = await this.fetchImpl(`${this.options.apiUrl}/${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
-    } catch {
-      throw new RetryableError('network');
+      response = await this.fetchImpl(`${this.options.apiUrl}/${path}`, { method: 'POST', headers, body: JSON.stringify(body), signal });
+    } catch (error) {
+      throw this.unreachable(path, error);
     }
     if (response.status === 429 || response.status >= 500) throw new RetryableError(String(response.status));
     if (!response.ok) {
       this.logger.warn(`Expo refused a request [status=${response.status}]`);
       throw new Error('refused');
     }
-    return (await response.json()) as T;
+    try {
+      return (await response.json()) as T;
+    } catch (error) {
+      // An answer cut off by the limit is a network error; one that is not JSON stays what it was (not retried).
+      if (isTimeoutError(error)) throw this.unreachable(path, error);
+      throw error;
+    }
+  }
+
+  /** A request that got no (whole) answer: logged by its path and kind, never by its content. */
+  private unreachable(path: string, error: unknown): RetryableError {
+    const timedOut = isTimeoutError(error);
+    if (timedOut) this.logger.warn(`Expo did not answer in time [path=${path}, limit=${this.options.timeoutMs ?? REQUEST_TIMEOUT_MS} ms]`);
+    return new RetryableError(timedOut ? 'timeout' : 'network');
   }
 
   /** Waits for the next of the process's five slots a second. */

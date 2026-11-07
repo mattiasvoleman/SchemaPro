@@ -1473,6 +1473,8 @@ ROLLBACK;
 --         refuses a row that names another school's. The guard sees a table's
 --         school under any column named <something>SchoolId when it has no
 --         "schoolId" of its own (RoomLoans).
+--         What a key does when its PARENT is updated is asked of every composite
+--         key that holds a school, not only these: section 388.
 --         What these keys also hold: the policies' SELECT arms ask the school
 --         of the ROW, and the fixtures that once planted a row naming another
 --         school's (to tell an arm asking the row's school from one asking the
@@ -2492,5 +2494,876 @@ BEGIN
   run := app.gallring_begin(school, now());
   IF app.gallring_purge(run, 'NOTIFICATIONS', 100) <> 0 THEN RAISE EXCEPTION 'kvittens 374o: a school that keeps its notices lost a request'; END IF;
   PERFORM app.gallring_finish(run, '{}', now());
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Kvittens, after the review of F4 (20270119090000), owner checks.
+--
+--   380o  a reminder that has gone is marked as mailed by the delivery, and by nobody else
+--   381o  a sender's share of the school's day (KV427) beside the school's own (KV428)
+-- ---------------------------------------------------------------------------
+
+-- 380o: app.ack_reminder_mirrored. The delivery's door sets no claims, and the function answers nothing to a login
+-- that resolves to a person. Only a SENT reminder is marked, once; the first time stands.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  sent uuid; unconfirmed uuid; nobody uuid; scheduled uuid; stopped uuid;
+  first_time timestamptz;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (school, true, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET enabled = true, "remindAfterDays" = 2;
+  -- SENT: due, G1 has not confirmed, so G1 is reminded.
+  sent := pg_temp.kvo_request(school, full_, 'Skickad', 'ANY', 'p1:g1');
+  -- NOT_NEEDED: due, but everybody has confirmed.
+  nobody := pg_temp.kvo_request(school, full_, 'Ingen kvar', 'ANY', 'p3:g3');
+  UPDATE "AckReceipts" SET "ackedAt" = now() WHERE "requestId" = nobody;
+  -- Not yet due, and one that is stopped before the pass.
+  scheduled := pg_temp.kvo_request(school, full_, 'Inte än', 'ANY', 'p1:g2');
+  stopped := pg_temp.kvo_request(school, full_, 'Stoppad', 'ANY', 'p2:g1');
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id IN (sent, nobody, stopped);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  PERFORM app.ack_stop_reminder(stopped);
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM count(*) FROM app.ack_remind_request(sent);
+  PERFORM count(*) FROM app.ack_remind_request(nobody);
+  PERFORM pg_temp.kvo_expect('380o the pass', (SELECT string_agg(title || ':' || coalesce("reminderOutcome"::text, '-') || ':' || ("reminderMirroredAt" IS NOT NULL), ' ' ORDER BY title COLLATE "C")
+                                                 FROM "AckRequests" WHERE id IN (sent, nobody, scheduled, stopped)),
+                             'Ingen kvar:NOT_NEEDED:false Inte än:-:false Skickad:SENT:false Stoppad:STOPPED:false');
+
+  -- A login that resolves to a person marks nothing, whoever they are.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  PERFORM app.ack_reminder_mirrored(sent);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000021')::text, true);
+  PERFORM app.ack_reminder_mirrored(sent);
+  PERFORM pg_temp.kvo_expect('380o a person marks', (SELECT ("reminderMirroredAt" IS NOT NULL)::text FROM "AckRequests" WHERE id = sent), 'false');
+
+  -- The delivery's door (no claims) marks the SENT reminder, and nothing else.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM app.ack_reminder_mirrored(sent);
+  PERFORM app.ack_reminder_mirrored(nobody);
+  PERFORM app.ack_reminder_mirrored(scheduled);
+  PERFORM app.ack_reminder_mirrored(stopped);
+  PERFORM app.ack_reminder_mirrored(gen_random_uuid());
+  PERFORM pg_temp.kvo_expect('380o the delivery marks', (SELECT string_agg(title || ':' || ("reminderMirroredAt" IS NOT NULL), ' ' ORDER BY title COLLATE "C") FROM "AckRequests" WHERE id IN (sent, nobody, scheduled, stopped)),
+                             'Ingen kvar:false Inte än:false Skickad:true Stoppad:false');
+  IF (SELECT "reminderMirroredAt" FROM "AckRequests" WHERE id = sent) < (SELECT "reminderSentAt" FROM "AckRequests" WHERE id = sent) THEN
+    RAISE EXCEPTION 'kvittens 380o: the mail went before the notices were written';
+  END IF;
+
+  -- Marked once: a second word from the delivery does not move the time.
+  first_time := (SELECT "reminderMirroredAt" FROM "AckRequests" WHERE id = sent);
+  PERFORM pg_sleep(0.02);
+  PERFORM app.ack_reminder_mirrored(sent);
+  IF (SELECT "reminderMirroredAt" FROM "AckRequests" WHERE id = sent) IS DISTINCT FROM first_time THEN
+    RAISE EXCEPTION 'kvittens 380o: a second mark moved the time';
+  END IF;
+
+  -- The table says the same as the function: the column is only on a SENT reminder.
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderMirroredAt" = now() WHERE id = %L$q$, nobody), 'only_a_sent_reminder_is_mirrored');
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderMirroredAt" = now() WHERE id = %L$q$, scheduled), 'only_a_sent_reminder_is_mirrored');
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderOutcome" = 'STOPPED' WHERE id = %L$q$, sent), 'only_a_sent_reminder');
+END $$;
+ROLLBACK;
+
+-- 381o: the limits' numbers, and a sender's share. The numbers are the function's, and they keep the proportions the
+-- share was chosen for: no sender alone, and no two administrators, can use the school's day; an administrator's share
+-- holds a whole-school request of the largest school we count on (2 600 pupils, 2.2 guardians: 5 720 receipts); a
+-- teacher's holds fifteen requests to a class of sixty (132 receipts each). An unknown kind is an error, never "no limit".
+BEGIN;
+DO $$
+DECLARE
+  school_ integer := app.ack_day_limit('SCHOOL');
+  admin_ integer := app.ack_day_limit('SCHOOL_ADMIN');
+  teacher_ integer := app.ack_day_limit('TEACHER');
+BEGIN
+  PERFORM pg_temp.kvo_expect('381o the numbers', school_ || '/' || admin_ || '/' || teacher_, '20000/8000/2000');
+  IF NOT (2 * admin_ < school_ AND 3 * admin_ >= school_) THEN
+    RAISE EXCEPTION 'kvittens 381o: two administrators can use the school''s day, or three cannot';
+  END IF;
+  IF NOT (admin_ >= 5720 AND teacher_ >= 15 * 132 AND teacher_ < admin_) THEN
+    RAISE EXCEPTION 'kvittens 381o: a share is too small for what it was chosen to hold';
+  END IF;
+  BEGIN
+    PERFORM app.ack_day_limit('GUARDIAN');
+    RAISE EXCEPTION 'kvittens 381o: an unknown kind has a limit';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM NOT LIKE 'ACK_UNKNOWN_LIMIT%' THEN RAISE; END IF;
+  END;
+END $$;
+ROLLBACK;
+
+-- 381o: a teacher's share. Her requests of the last day count, whoever wrote their rows; the owner (no login) is not
+-- counted against and brings her to 1 996 of her 2 000, five hours ago, so the hour's limit is not in play. A request
+-- of four receipts (all her own pupils have: P1 with G1 and G2, P2 with G1, P4 with G4) makes the 2 000th, which is
+-- allowed; one more is refused whole (KV427) and writes nothing.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  m1 uuid := pg_temp.kvo_user('kv-m1');
+  req uuid;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  SELECT gen_random_uuid(), school, m1, 'Andel ' || g, 'B', now() - interval '5 hours' FROM generate_series(1, 100) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Andel %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 1996;
+  PERFORM pg_temp.kvo_expect('381o the owner''s rows', (SELECT count(*)::text FROM "AckReceipts" r JOIN "AckRequests" q ON q.id = r."requestId" WHERE q."authorId" = m1 AND q.title LIKE 'Andel %'), '1996');
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000006')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Den 2 000:e', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2')),
+         (req, school, pg_temp.kvo_user('kv-p2'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p4'), pg_temp.kvo_user('kv-g4'));
+  PERFORM pg_temp.kvo_expect('381o her day is full', (SELECT count(*)::text FROM "AckReceipts" r JOIN "AckRequests" q ON q.id = r."requestId" WHERE q."authorId" = m1), '2000');
+
+  -- One more, in a request of its own: refused, and the request with it.
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Över andelen', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+    RAISE EXCEPTION 'kvittens 381o: a teacher''s 2 001st receipt in a day was written';
+  EXCEPTION WHEN SQLSTATE 'KV427' THEN NULL;
+  END;
+  PERFORM pg_temp.kvo_expect('381o a refused share writes nothing', (SELECT count(*)::text FROM "AckRequests" WHERE title = 'Över andelen'), '0');
+
+  -- The share is hers: a colleague mentoring the other class, and an administrator, write on; and the school has room.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000007')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Kollegan', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3'));
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Administratören', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+  -- The share moves with the day: when her requests are more than 24 hours old she writes again.
+  PERFORM set_config('request.jwt.claims', '', true);
+  UPDATE "AckRequests" SET "createdAt" = now() - interval '25 hours' WHERE "authorId" = m1;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000006')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Nästa dygn', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+END $$;
+ROLLBACK;
+
+-- 381o: an administrator's share, 8 000, and the order of the two limits. Her rows brought to 7 995 the owner's way; a
+-- request of five (P1 with G1 and G2, P2 with G1, P3 with G3, P4 with G4) is the 8 000th; one more is refused (KV427).
+-- Then the school's day is brought past 20 000 with a teacher's rows, and the administrator, over her own share as well,
+-- is told it is her share (the sender's first); a mentor with room of her own is told it is the school's (KV428).
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  t3 uuid := pg_temp.kvo_user('kv-t3');
+  req uuid;
+  got text;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  SELECT gen_random_uuid(), school, full_, 'Admin ' || g, 'B', now() - interval '5 hours' FROM generate_series(1, 400) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Admin %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 7995;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Den 8 000:e', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2')),
+         (req, school, pg_temp.kvo_user('kv-p2'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3')),
+         (req, school, pg_temp.kvo_user('kv-p4'), pg_temp.kvo_user('kv-g4'));
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Över andelen', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+    RAISE EXCEPTION 'kvittens 381o: an administrator''s 8 001st receipt in a day was written';
+  EXCEPTION WHEN SQLSTATE 'KV427' THEN NULL;
+  END;
+  PERFORM pg_temp.kvo_expect('381o a refused share writes nothing', (SELECT count(*)::text FROM "AckRequests" WHERE title = 'Över andelen'), '0');
+
+  -- The school's day: 8 000 here, and 12 000 more of a teacher's the owner's way (no login: nothing is counted against
+  -- her): the school is at 20 000.
+  PERFORM set_config('request.jwt.claims', '', true);
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  SELECT gen_random_uuid(), school, t3, 'Lärare ' || g, 'B', now() - interval '5 hours' FROM generate_series(1, 600) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Lärare %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 12000;
+  PERFORM pg_temp.kvo_expect('381o the school''s day', (SELECT count(*)::text FROM "AckReceipts" WHERE "schoolId" = school AND "createdAt" > now() - interval '24 hours'), '20000');
+
+  -- Over both: the administrator is told it is her share. A mentor under her own share is told it is the school's.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Över båda', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+    RAISE EXCEPTION 'kvittens 381o: a receipt over both limits was written';
+  EXCEPTION WHEN SQLSTATE 'KV427' THEN NULL;
+  END;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000007')::text, true);
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Skolans dygn', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3'));
+    RAISE EXCEPTION 'kvittens 381o: a receipt past the school''s day was written';
+  EXCEPTION WHEN SQLSTATE 'KV428' THEN NULL;
+  END;
+  -- Another school's day is its own.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000031')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan'), 'Annans dag', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES (req, (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan'), pg_temp.kvo_user('kv-annan-p'), pg_temp.kvo_user('kv-annan-g'));
+
+  -- The usage the page shows is these rows: the school at 20 000 of 20 000 and the sender at 8 000 of 8 000.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  SELECT string_agg(u.scope || coalesce(':' || u.author_name, '') || ' ' || u.used || '/' || u.cap, ', ' ORDER BY u.n) INTO got
+    FROM app.ack_usage(5) WITH ORDINALITY u(scope, author_id, author_name, used, cap, n);
+  PERFORM pg_temp.kvo_expect('381o the usage', got, 'SCHOOL 20000/20000, ME 8000/8000, SENDER:Kvittens Utan klass 12000/2000, SENDER:Kvittens Full 8000/8000');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 385-389 on the owner's side: Ett läsårs lektioner tas bort först
+-- (20270120090000), and the composite keys' ON UPDATE (the review of #272).
+--
+-- A year's removal cascades into its lessons by two routes, and which route runs
+-- first is the order of the keys' triggers by name, which a key dropped and added
+-- again moves. Run the wrong way round, the lessons lose their master lesson
+-- before they go and app.ss12000_v_lessons() files an AdhocActivity tombstone for
+-- each of them. A BEFORE DELETE trigger on AcademicYears takes the lessons first,
+-- whoever removes the year. It runs as the owner (SECURITY DEFINER); the reasons
+-- are in the migration, and what they rest on is tested here.
+--
+--   385  the trigger and its function in the catalogue: BEFORE DELETE, per row,
+--        on, the owner's, a fixed search_path, no EXECUTE for anyone, and the
+--        premise of the owner's rights (row security is not forced on the
+--        tables it deletes from)
+--   386  every door files the same tombstones: a DELETE of the year as the
+--        owner, as the API's role and as PostgREST's, for a year that was sent
+--        and for the active one (a CalendarEvent for each lesson, an AdhocActivity
+--        only for the one that never had a master lesson; among the lessons a
+--        cancelled one, one with a teacher, one with an attendance record and one
+--        dated before today, which a trigger that chose its lessons would leave
+--        to the cascade) and for one that was never sent (none), and nothing else
+--        of the school goes
+--   387  who reaches it and who does not: a profile that writes PLANERING and
+--        not DRIFT (the year goes, and its lessons go first all the same: the
+--        service's own DELETE of them deleted nothing for it), a profile that
+--        writes DRIFT and not PLANERING, another school's administrator and a
+--        teacher (the year stays, the lessons stay), and a year whose removal is
+--        refused (the lessons come back)
+--   388  a composite key that holds a school does not follow its parent when the
+--        parent is updated (ON UPDATE CASCADE): 98 older ones are named, and the
+--        list only gets shorter
+--   389  the guard of 388 over stand-ins, and over the list
+--
+-- These run as the owner and set the role of the API and of PostgREST with the
+-- claims of a signed-in person, because they read the tombstones, which only the
+-- owner reads. The rows are this section's own (ids 7f...), in two schools of its
+-- own, and are rolled back.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.ylg_id(n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('7f' || lpad(to_hex(n), 6, '0') || '-0000-4000-8000-000000000000')::uuid
+$$;
+
+-- The number a row of this section was given, from its id.
+CREATE FUNCTION pg_temp.ylg_n(p_id uuid) RETURNS int LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('x' || substr(p_id::text, 3, 6))::bit(24)::int
+$$;
+
+CREATE FUNCTION pg_temp.ylg_auth(n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('00000000-0000-4000-8000-7f' || lpad(n::text, 10, '0'))::uuid
+$$;
+
+-- Two schools. School 1 has an active year (10), a year that was sent (11) and one that was never sent
+-- (12); a class in each (33, 30, 31) with a master lesson (53, 50, 51). The active year has two lessons, one
+-- that keeps its master lesson (67) and one that never had it (68). The sent year has three plain lessons, of
+-- which two keep their master lesson and one never had it (60-62), and four more that keep it and that a
+-- trigger written to be selective would be tempted to leave to the cascade: one that is CANCELLED (72), one
+-- with a teacher (73), one with an attendance record (74) and one dated before today and before the year
+-- began (75; 2020, the others are 2097-2099). The unsent year has three (63-65) and a lesson (66) that names
+-- the sent year's class as an extra group. Its people: a full administrator (80), a teacher (81), an
+-- administrator of the expedition (82), one of the schedulers (84), a pupil (85). School 2 has a year (20),
+-- a class (32) with two lessons (70 keyed, 71 not) and a full administrator (83).
+--
+-- A lesson that keeps its master lesson is what shows a lesson left to the cascade: the master lessons' key
+-- runs first and sets "masterLessonId" to NULL on it, and it is filed as an AdhocActivity too. A lesson that
+-- never had one is filed as one whichever way it goes, and shows nothing. So every lesson that must not be
+-- skipped is keyed (67, 72-75): a trigger that skips the active year, the lessons that have a teacher or an
+-- attendance record, the cancelled ones or the past ones leaves them to the cascade, and 386 sees it (the
+-- review of #276, M2).
+CREATE FUNCTION pg_temp.ylg_world() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  s1 uuid := pg_temp.ylg_id(1);
+  s2 uuid := pg_temp.ylg_id(2);
+  lesson record;
+BEGIN
+  INSERT INTO "Schools" (id, name, slug, timezone, "updatedAt") VALUES
+    (s1, 'YLG skola 1', 'ylg-1', 'Europe/Stockholm', now()),
+    (s2, 'YLG skola 2', 'ylg-2', 'Europe/Stockholm', now());
+  INSERT INTO "AcademicYears" (id, "schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt") VALUES
+    (pg_temp.ylg_id(10), s1, 'aktivt',  '2098-08-17', '2099-06-12', true,  'NIOARIG', now()),
+    (pg_temp.ylg_id(11), s1, 'förra',   '2097-08-18', '2098-06-12', false, 'NIOARIG', now()),
+    (pg_temp.ylg_id(12), s1, 'nästa',   '2099-08-16', '2100-06-12', false, 'NIOARIG', now()),
+    (pg_temp.ylg_id(20), s2, 'aktivt',  '2098-08-17', '2099-06-12', true,  'NIOARIG', now());
+  INSERT INTO "Subjects" (id, "schoolId", name, code, "updatedAt") VALUES
+    (pg_temp.ylg_id(40), s1, 'YLG ämne 1', 'YL1', now()),
+    (pg_temp.ylg_id(41), s2, 'YLG ämne 2', 'YL2', now());
+  INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES
+    (pg_temp.ylg_id(30), s1, pg_temp.ylg_id(11), 'YLG förra',  'TEACHING_GROUP', 7, now()),
+    (pg_temp.ylg_id(31), s1, pg_temp.ylg_id(12), 'YLG nästa',  'TEACHING_GROUP', 7, now()),
+    (pg_temp.ylg_id(32), s2, pg_temp.ylg_id(20), 'YLG andra',  'TEACHING_GROUP', 7, now()),
+    (pg_temp.ylg_id(33), s1, pg_temp.ylg_id(10), 'YLG aktivt', 'TEACHING_GROUP', 7, now());
+  INSERT INTO "MasterLessons" (id, "schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES
+    (pg_temp.ylg_id(50), s1, pg_temp.ylg_id(11), pg_temp.ylg_id(40), pg_temp.ylg_id(30), 1, '08:00', '08:50', now()),
+    (pg_temp.ylg_id(51), s1, pg_temp.ylg_id(12), pg_temp.ylg_id(40), pg_temp.ylg_id(31), 1, '08:00', '08:50', now()),
+    (pg_temp.ylg_id(52), s2, pg_temp.ylg_id(20), pg_temp.ylg_id(41), pg_temp.ylg_id(32), 1, '08:00', '08:50', now()),
+    (pg_temp.ylg_id(53), s1, pg_temp.ylg_id(10), pg_temp.ylg_id(40), pg_temp.ylg_id(33), 1, '08:00', '08:50', now());
+  FOR lesson IN SELECT * FROM (VALUES
+      (60, s1, 50, 40, 30, date '2097-08-25', 'SCHEDULED'), (61, s1, 50, 40, 30, date '2097-09-01', 'SCHEDULED'), (62, s1, NULL, 40, 30, date '2097-09-02', 'SCHEDULED'),
+      (63, s1, 51, 40, 31, date '2099-08-23', 'SCHEDULED'), (64, s1, 51, 40, 31, date '2099-08-30', 'SCHEDULED'), (65, s1, NULL, 40, 31, date '2099-09-01', 'SCHEDULED'),
+      (66, s1, 51, 40, 31, date '2099-09-06', 'SCHEDULED'),
+      (67, s1, 53, 40, 33, date '2098-08-24', 'SCHEDULED'), (68, s1, NULL, 40, 33, date '2098-08-25', 'SCHEDULED'),
+      (70, s2, 52, 41, 32, date '2098-08-24', 'SCHEDULED'), (71, s2, NULL, 41, 32, date '2098-08-25', 'SCHEDULED'),
+      (72, s1, 50, 40, 30, date '2097-09-08', 'CANCELLED'), (73, s1, 50, 40, 30, date '2097-09-15', 'SCHEDULED'),
+      (74, s1, 50, 40, 30, date '2097-09-22', 'SCHEDULED'), (75, s1, 50, 40, 30, date '2020-02-03', 'SCHEDULED')) v(n, school, master, subject, grp, day, state)
+  LOOP
+    INSERT INTO "CalendarLessons" (id, "schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+    VALUES (pg_temp.ylg_id(lesson.n), lesson.school, CASE WHEN lesson.master IS NULL THEN NULL ELSE pg_temp.ylg_id(lesson.master) END,
+            pg_temp.ylg_id(lesson.subject), pg_temp.ylg_id(lesson.grp), lesson.day,
+            (lesson.day + time '08:00') AT TIME ZONE 'Europe/Stockholm', (lesson.day + time '08:50') AT TIME ZONE 'Europe/Stockholm',
+            lesson.state::"LessonStatus", now());
+  END LOOP;
+  INSERT INTO "CalendarLessonGroups" (id, "schoolId", "calendarLessonId", "studentGroupId")
+  VALUES (pg_temp.ylg_id(90), s1, pg_temp.ylg_id(66), pg_temp.ylg_id(30));
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (pg_temp.ylg_id(80), s1, 'ylg-full@example.invalid',   'Full',  'Admin',   'SCHOOL_ADMIN', 'FULL',          pg_temp.ylg_auth(80), true, now()),
+    (pg_temp.ylg_id(81), s1, 'ylg-lararen@example.invalid', 'Lärare', 'Ett',     'TEACHER',      NULL,            pg_temp.ylg_auth(81), true, now()),
+    (pg_temp.ylg_id(82), s1, 'ylg-exp@example.invalid',    'Exp',   'Admin',   'SCHOOL_ADMIN', 'EXPEDITION',    pg_temp.ylg_auth(82), true, now()),
+    (pg_temp.ylg_id(84), s1, 'ylg-sched@example.invalid',  'Sched', 'Admin',   'SCHOOL_ADMIN', 'SCHEMALAGGARE', pg_temp.ylg_auth(84), true, now()),
+    (pg_temp.ylg_id(85), s1, 'ylg-eleven@example.invalid', 'Elev',  'Ett',     'STUDENT',      NULL,            pg_temp.ylg_auth(85), true, now()),
+    (pg_temp.ylg_id(83), s2, 'ylg-full2@example.invalid',  'Full',  'Andra',   'SCHOOL_ADMIN', 'FULL',          pg_temp.ylg_auth(83), true, now());
+  -- What hangs on a lesson: a teacher (73) and a pupil's attendance (74), which go with it.
+  INSERT INTO "CalendarLessonTeachers" (id, "schoolId", "calendarLessonId", "teacherId")
+  VALUES (pg_temp.ylg_id(91), s1, pg_temp.ylg_id(73), pg_temp.ylg_id(81));
+  INSERT INTO "AttendanceRecords" (id, "schoolId", "calendarLessonId", "studentId", "updatedAt")
+  VALUES (pg_temp.ylg_id(92), s1, pg_temp.ylg_id(74), pg_temp.ylg_id(85), now());
+  DELETE FROM "Ss12000Tombstones" WHERE "schoolId" IN (s1, s2);
+END $$;
+
+-- The tombstones a school has for the lessons of this section, as '<resource> <numbers>; <resource> <numbers>',
+-- the numbers being the lessons' (60-79): '' when there are none.
+CREATE FUNCTION pg_temp.ylg_tombs(p_school uuid) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(r.resource || ' ' || r.ids, '; ' ORDER BY r.resource COLLATE "C"), '')
+    FROM (SELECT t.resource, string_agg(pg_temp.ylg_n(t."emittedId")::text, ',' ORDER BY pg_temp.ylg_n(t."emittedId")) AS ids
+            FROM "Ss12000Tombstones" t
+           WHERE t."schoolId" = p_school AND t."emittedId" IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 79) n)
+           GROUP BY t.resource) r
+$$;
+
+-- The numbers of the lessons of this section that are left, among 60-79.
+CREATE FUNCTION pg_temp.ylg_lessons() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(pg_temp.ylg_n(l.id)::text, ',' ORDER BY pg_temp.ylg_n(l.id)), '')
+    FROM "CalendarLessons" l WHERE l.id IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 79) n)
+$$;
+
+-- Removes one year by a DELETE of its own, as <p_role> (the owner when null) with the claims of person <p_who>.
+-- Answers what the statement did: the number of rows, 'denied' for a missing privilege, or 'error: ...'.
+-- Back as the owner.
+CREATE FUNCTION pg_temp.ylg_delete_year(p_year int, p_role text, p_who int) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+  -- Everything of pg_temp's is read before the role is set: a role without the privilege to create temporary
+  -- objects does not see the schema.
+  year_id uuid := pg_temp.ylg_id(p_year);
+  claims text := json_build_object('sub', pg_temp.ylg_auth(p_who))::text;
+BEGIN
+  IF p_role IS NOT NULL THEN
+    EXECUTE format('SET LOCAL ROLE %I', p_role);
+    PERFORM set_config('request.jwt.claims', claims, true);
+  END IF;
+  BEGIN
+    DELETE FROM "AcademicYears" WHERE id = year_id;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      RESET ROLE;
+      RETURN 'denied';
+    WHEN OTHERS THEN
+      RESET ROLE;
+      RETURN 'error: ' || SQLERRM;
+  END;
+  RESET ROLE;
+  RETURN n::text;
+END $$;
+
+-- One scenario, in a subtransaction that is always rolled back: the world, then <p_prep> (SQL, as the owner),
+-- then (when p_probe) what person <p_who> does with a DELETE of lesson 60 on its own, then the DELETE of year
+-- <p_year> by person <p_who> as <p_role>. Answers what is left: the statement's answer, whether the year is,
+-- the lessons of the section, the tombstones of school 1 and of school 2, and the probe's answer.
+CREATE FUNCTION pg_temp.ylg_scenario(p_year int, p_role text, p_who int, p_prep text DEFAULT NULL, p_probe boolean DEFAULT false)
+RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  answer text;
+  probe text := NULL;
+  n bigint;
+  result jsonb;
+  lesson_60 uuid := pg_temp.ylg_id(60);
+  claims text := json_build_object('sub', pg_temp.ylg_auth(p_who))::text;
+BEGIN
+  BEGIN
+    PERFORM pg_temp.ylg_world();
+    IF p_prep IS NOT NULL THEN EXECUTE p_prep; END IF;
+    IF p_probe THEN
+      BEGIN
+        EXECUTE format('SET LOCAL ROLE %I', p_role);
+        PERFORM set_config('request.jwt.claims', claims, true);
+        DELETE FROM "CalendarLessons" WHERE id = lesson_60;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        probe := n::text;
+        RESET ROLE;
+        RAISE EXCEPTION 'rollback the probe' USING ERRCODE = 'TF998';
+      EXCEPTION WHEN SQLSTATE 'TF998' THEN NULL;
+      END;
+      RESET ROLE;
+    END IF;
+    answer := pg_temp.ylg_delete_year(p_year, p_role, p_who);
+    result := jsonb_build_object(
+      'answer', answer,
+      'year', EXISTS (SELECT 1 FROM "AcademicYears" WHERE id = pg_temp.ylg_id(p_year)),
+      'lessons', pg_temp.ylg_lessons(),
+      'tombs1', pg_temp.ylg_tombs(pg_temp.ylg_id(1)),
+      'tombs2', pg_temp.ylg_tombs(pg_temp.ylg_id(2)),
+      'probe', probe);
+    RAISE EXCEPTION 'rollback' USING ERRCODE = 'TF999';
+  EXCEPTION WHEN SQLSTATE 'TF999' THEN NULL;
+  END;
+  RETURN result;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 385: the trigger, in the catalogue.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  t record;
+  fn record;
+  grantee oid;
+  role_ text;
+BEGIN
+  SELECT * INTO t FROM pg_trigger WHERE tgrelid = '"AcademicYears"'::regclass AND tgname = 'AcademicYears_a_lessons_go_first' AND NOT tgisinternal;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'lektioner först 385: AcademicYears has no trigger AcademicYears_a_lessons_go_first';
+  END IF;
+  -- tgtype: 1 ROW, 2 BEFORE, 8 DELETE, 16 UPDATE, 4 INSERT, 32 TRUNCATE, 64 INSTEAD: BEFORE DELETE for each row, and that alone.
+  IF t.tgtype <> 1 + 2 + 8 THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger is not BEFORE DELETE FOR EACH ROW and nothing else (tgtype %)', t.tgtype;
+  END IF;
+  IF t.tgenabled <> 'O' THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger is not enabled (tgenabled %)', t.tgenabled;
+  END IF;
+  IF t.tgfoid <> 'app.academic_year_lessons_go_first()'::regprocedure THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger runs % and not app.academic_year_lessons_go_first()', t.tgfoid::regproc;
+  END IF;
+  IF t.tgattr::text <> '' OR t.tgqual IS NOT NULL THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger has a column list or a WHEN: it would not run for every year';
+  END IF;
+
+  SELECT p.prosecdef, p.proconfig, p.proowner, p.proacl, p.prorettype::regtype::text AS ret, p.prolang
+    INTO fn FROM pg_proc p WHERE p.oid = 'app.academic_year_lessons_go_first()'::regprocedure;
+  IF NOT fn.prosecdef THEN
+    RAISE EXCEPTION 'lektioner först 385: the function runs as its caller: a profile that may delete a year and not lessons would delete none (386, 387)';
+  END IF;
+  -- However the setting is spelled (public, pg_temp / "public", "pg_temp"), it is that one and no other.
+  IF fn.proconfig IS NULL OR cardinality(fn.proconfig) <> 1 OR replace(replace(fn.proconfig[1], '"', ''), ' ', '') <> 'search_path=public,pg_temp' THEN
+    RAISE EXCEPTION 'lektioner först 385: the function''s settings are %, not a fixed search_path of public, pg_temp', fn.proconfig;
+  END IF;
+  IF fn.ret <> 'trigger' THEN
+    RAISE EXCEPTION 'lektioner först 385: the function returns %', fn.ret;
+  END IF;
+
+  -- It runs as the tables' owner, whose rights are the year's own cascade's: the referential actions run as
+  -- the owner of the table whose rows they delete, and row security is not forced on an owner.
+  IF fn.proowner <> (SELECT relowner FROM pg_class WHERE oid = '"AcademicYears"'::regclass)
+     OR fn.proowner <> (SELECT relowner FROM pg_class WHERE oid = '"CalendarLessons"'::regclass)
+     OR fn.proowner <> (SELECT relowner FROM pg_class WHERE oid = '"StudentGroups"'::regclass) THEN
+    RAISE EXCEPTION 'lektioner först 385: the function is not owned by the owner of AcademicYears, CalendarLessons and StudentGroups';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid IN ('"AcademicYears"'::regclass, '"CalendarLessons"'::regclass, '"StudentGroups"'::regclass) AND relforcerowsecurity) THEN
+    RAISE EXCEPTION 'lektioner först 385: row security is forced on a table the trigger deletes from or reads: the owner is no longer outside it, and neither is the year''s cascade';
+  END IF;
+  -- Nobody holds EXECUTE on it: not PUBLIC, not the roles that are named, nobody but the owner. A trigger
+  -- needs none to fire.
+  FOR grantee IN SELECT a.grantee FROM aclexplode(coalesce(fn.proacl, acldefault('f', fn.proowner))) a WHERE a.grantee <> fn.proowner LOOP
+    RAISE EXCEPTION 'lektioner först 385: EXECUTE on the function is held by %', CASE WHEN grantee = 0 THEN 'PUBLIC' ELSE grantee::regrole::text END;
+  END LOOP;
+  FOREACH role_ IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_)
+       AND has_function_privilege(role_, 'app.academic_year_lessons_go_first()', 'EXECUTE') THEN
+      RAISE EXCEPTION 'lektioner först 385: % can execute the function', role_;
+    END IF;
+  END LOOP;
+
+  -- No other trigger on the year deletes the lessons, or the year would be deleted by two.
+  IF EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = '"AcademicYears"'::regclass AND NOT g.tgisinternal AND g.tgname <> t.tgname
+               AND g.tgtype & 8 = 8 AND g.tgtype & 2 = 2) THEN
+    RAISE EXCEPTION 'lektioner först 385: another BEFORE DELETE trigger on AcademicYears has been added: it may run before the lessons go (it is named AcademicYears_a_..., which sorts first only while it stays alone)';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 386: every door files the same tombstones.
+--
+-- A sent year (11): a CalendarEvent for each of its seven lessons (60-62, 72-75) and an AdhocActivity for the
+-- one that never had a master lesson (62). Of the seven, four are the kind a trigger that chose its lessons
+-- would leave to the cascade, which files an AdhocActivity for each of those too: 72 is CANCELLED, 73 has a
+-- teacher, 74 has an attendance record and 75 is dated before today (and before the year began). The active
+-- year (10): a CalendarEvent for each of its two lessons (67 keyed, 68 not) and an AdhocActivity for 68; a
+-- trigger that left the active year to the cascade files one for 67 as well. A year that was never sent (12):
+-- none. The lesson of the unsent year that names the sent year's class as an extra group (66) stays, and
+-- school 2 is not touched. The lessons are the rows of the section: 60-68 and 72-75 of school 1, 70-71 of
+-- school 2.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  door record;
+  r jsonb;
+  sent_tombs constant text := 'AdhocActivity 62; CalendarEvent 60,61,62,72,73,74,75';
+BEGIN
+  FOR door IN SELECT * FROM (VALUES
+      ('the owner', NULL::text, 0), ('the API''s role', 'app_authenticated', 80), ('PostgREST''s role', 'authenticated', 80)) v(who, via, person)
+  LOOP
+    r := pg_temp.ylg_scenario(11, door.via, door.person);
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 386: % did not remove the sent year: %', door.who, r;
+    END IF;
+    IF r ->> 'tombs1' <> sent_tombs THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the sent year, not [%] (an AdhocActivity for a lesson that had a master lesson: the cascade ran the master lessons'' key before the classes'', so the lesson was left to it: a cancelled one, one with a teacher or an attendance record, a past one, or all of the year''s)', door.who, r ->> 'tombs1', sent_tombs;
+    END IF;
+    IF r ->> 'lessons' <> '63,64,65,66,67,68,70,71' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the sent year went, not [63,64,65,66,67,68,70,71] (its own seven go; the other years'', the one with the extra group included, and school 2''s stay)', door.who, r ->> 'lessons';
+    END IF;
+    IF r ->> 'tombs2' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for school 2 when a year of school 1 went', door.who, r ->> 'tombs2';
+    END IF;
+
+    -- The active year is a sent year too (app.ss12000_year_is_emitted): its lessons are filed the same way.
+    r := pg_temp.ylg_scenario(10, door.via, door.person);
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 386: % did not remove the active year: %', door.who, r;
+    END IF;
+    IF r ->> 'tombs1' <> 'AdhocActivity 68; CalendarEvent 67,68' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the active year, not [AdhocActivity 68; CalendarEvent 67,68] (an AdhocActivity for the lesson that had a master lesson: the active year was left to the cascade)', door.who, r ->> 'tombs1';
+    END IF;
+    IF r ->> 'lessons' <> '60,61,62,63,64,65,66,70,71,72,73,74,75' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the active year went, not [60,61,62,63,64,65,66,70,71,72,73,74,75]', door.who, r ->> 'lessons';
+    END IF;
+    IF r ->> 'tombs2' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for school 2 when the active year of school 1 went', door.who, r ->> 'tombs2';
+    END IF;
+
+    r := pg_temp.ylg_scenario(12, door.via, door.person);
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 386: % did not remove the unsent year: %', door.who, r;
+    END IF;
+    IF r ->> 'tombs1' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the lessons of a year that was never sent, and the flow sends none', door.who, r ->> 'tombs1';
+    END IF;
+    IF r ->> 'lessons' <> '60,61,62,67,68,70,71,72,73,74,75' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the unsent year went, not [60,61,62,67,68,70,71,72,73,74,75]', door.who, r ->> 'lessons';
+    END IF;
+  END LOOP;
+
+  -- What the set is the set of: the lessons removed on their own first, with the trigger out of the way, which
+  -- is what the service did since #272. The trigger makes every door file that.
+  r := pg_temp.ylg_scenario(11, NULL, 0, 'ALTER TABLE "AcademicYears" DISABLE TRIGGER "AcademicYears_a_lessons_go_first"; DELETE FROM "CalendarLessons" WHERE id IN (SELECT pg_temp.ylg_id(n) FROM unnest(ARRAY[60, 61, 62, 72, 73, 74, 75]) n)');
+  IF r ->> 'tombs1' <> sent_tombs THEN
+    RAISE EXCEPTION 'lektioner först 386: the lessons removed first, with the trigger out of the way, filed [%], not the set the doors above are held to [%]', r ->> 'tombs1', sent_tombs;
+  END IF;
+  r := pg_temp.ylg_scenario(10, NULL, 0, 'ALTER TABLE "AcademicYears" DISABLE TRIGGER "AcademicYears_a_lessons_go_first"; DELETE FROM "CalendarLessons" WHERE id IN (SELECT pg_temp.ylg_id(n) FROM unnest(ARRAY[67, 68]) n)');
+  IF r ->> 'tombs1' <> 'AdhocActivity 68; CalendarEvent 67,68' THEN
+    RAISE EXCEPTION 'lektioner först 386: the active year''s lessons removed first, with the trigger out of the way, filed [%], not the set the doors above are held to [AdhocActivity 68; CalendarEvent 67,68]', r ->> 'tombs1';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 387: who reaches the trigger, who does not, and what a refusal does.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  r jsonb;
+  via text;
+  all_lessons constant text := '60,61,62,63,64,65,66,67,68,70,71,72,73,74,75';
+  sent_tombs constant text := 'AdhocActivity 62; CalendarEvent 60,61,62,72,73,74,75';
+BEGIN
+  -- A profile that writes PLANERING and not DRIFT (none does today: this is the next one). The simulation
+  -- must bite: its own DELETE of a lesson deletes nothing, and its DELETE of the year deletes the year, and
+  -- the lessons go first all the same.
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    r := pg_temp.ylg_scenario(11, via, 84,
+      $q$CREATE OR REPLACE FUNCTION app.admin_profile_writes(p_profile "AdminProfile") RETURNS "AdminArea"[] LANGUAGE sql IMMUTABLE AS
+         $f$ SELECT CASE p_profile WHEN 'SCHEMALAGGARE' THEN ARRAY['PLANERING']::"AdminArea"[] ELSE '{}'::"AdminArea"[] END $f$ $q$, true);
+    IF r ->> 'probe' IS DISTINCT FROM '0' THEN
+      RAISE EXCEPTION 'lektioner först 387: the profile that writes PLANERING only deleted % lesson(s) of its own by a DELETE as %: the simulation does not bite', r ->> 'probe', via;
+    END IF;
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 387: a profile that writes PLANERING only did not remove the year as %: %', via, r;
+    END IF;
+    IF r ->> 'tombs1' <> sent_tombs OR r ->> 'lessons' <> '63,64,65,66,67,68,70,71' THEN
+      RAISE EXCEPTION 'lektioner först 387: a profile that writes PLANERING only, as %, filed [%] and left lessons [%]: the lessons did not go first (the cascade ran, as the owner, in the keys'' order)', via, r ->> 'tombs1', r ->> 'lessons';
+    END IF;
+  END LOOP;
+
+  -- A profile that writes DRIFT and not PLANERING (the expedition) cannot remove the year; a teacher cannot; the
+  -- administrator of another school cannot. Nothing is removed and nothing is filed, as either role.
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    r := pg_temp.ylg_scenario(11, via, 82);
+    IF r ->> 'answer' <> '0' OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 387: the expedition, as %, removed or filed something: %', via, r;
+    END IF;
+    r := pg_temp.ylg_scenario(11, via, 83);
+    IF r ->> 'answer' <> '0' OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' OR r ->> 'tombs2' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 387: the administrator of another school, as %, reached the year or its lessons: %', via, r;
+    END IF;
+    r := pg_temp.ylg_scenario(11, via, 81);
+    IF r ->> 'answer' NOT IN ('0', 'denied') OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 387: a teacher, as %, reached the year or its lessons: %', via, r;
+    END IF;
+  END LOOP;
+
+  -- A year whose removal is refused takes nothing with it: the lessons are back (one statement, one transaction).
+  r := pg_temp.ylg_scenario(11, NULL, 0,
+    $q$CREATE FUNCTION app.ylg_refuses() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RAISE EXCEPTION 'ylg refuses'; END $f$;
+       CREATE TRIGGER "AcademicYears_z_ylg_refuses" BEFORE DELETE ON "AcademicYears" FOR EACH ROW EXECUTE FUNCTION app.ylg_refuses()$q$);
+  IF r ->> 'answer' NOT LIKE 'error: ylg refuses%' OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' THEN
+    RAISE EXCEPTION 'lektioner först 387: a removal that was refused took lessons or tombstones with it: %', r;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 388: a key that holds a school does not follow its parent.
+--
+-- Section 330 asks that a key between two tables that carry a school hold the school: (x, "schoolId") ->
+-- parent ("id", "schoolId"). It did not ask what the key does when the parent is UPDATEd. ON UPDATE CASCADE
+-- carries the child along when a parent's id or school is changed: a parent moved to another school took its
+-- rows with it, without a word (tried on 232 parents in the review of #272: with CASCADE three went, a room
+-- with its room type; with NO ACTION none moved and each refusal named the key). 20270115090000 made the
+-- thirty-eight keys it replaced NO ACTION. The composite keys before them are the ones named below, 98 on the
+-- schema of 20270118090000: 93 older, with the five that came with #273 and #274 after #272. They are named
+-- because they are, not because they are right; no code path updates an id or a school of any parent, and
+-- nothing is carried along that the owner has not asked for. The list only gets shorter: a key that is made
+-- NO ACTION (or removed) is taken off it here, and the section fails until it is. A new key that follows its
+-- parent fails by name, and adding its name to the list instead fails the list's ceiling (98): raising it is a
+-- decision that shows in the diff.
+--
+-- A key is "one that holds a school" when it has more than one column and one of them is a school column of
+-- its table: "schoolId", or in a table without one, a column named like <something>SchoolId (RoomLoans),
+-- as section 330 reads a table's school. "Follows its parent" is any ON UPDATE but NO ACTION and RESTRICT.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.tk_follows(p_schema oid) RETURNS TABLE (tbl text, conname text, cols text, on_update text)
+LANGUAGE sql AS $$
+  SELECT cl.relname::text, c.conname::text,
+         (SELECT string_agg(a.attname, ',' ORDER BY u.ord)
+            FROM unnest(c.conkey) WITH ORDINALITY u(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum),
+         CASE c.confupdtype WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END
+    FROM pg_constraint c
+    JOIN pg_class cl ON cl.oid = c.conrelid AND cl.relnamespace = p_schema
+    CROSS JOIN LATERAL (SELECT pg_temp.tk_school_cols(c.conrelid) AS cs) s
+   WHERE c.contype = 'f'
+     AND cardinality(c.conkey) > 1
+     AND s.cs IS NOT NULL
+     AND EXISTS (SELECT 1 FROM unnest(c.conkey) k WHERE k = ANY (s.cs))
+     AND c.confupdtype NOT IN ('a', 'r')
+$$;
+
+BEGIN;
+DO $$
+DECLARE
+  exempt constant text[] := ARRAY[
+    'AcademicYearTimplans.AcademicYearTimplans_academicYearId_schoolId_fkey',
+    'AcademicYearTimplans.AcademicYearTimplans_localTimplanId_schoolId_fkey',
+    'AckReceipts.AckReceipts_requestId_schoolId_fkey',  -- #273, after #272
+    'CalendarFeeds.CalendarFeeds_studentId_schoolId_fkey',
+    'CalendarFeeds.CalendarFeeds_userId_schoolId_fkey',
+    'CalendarLunches.CalendarLunches_studentGroupId_schoolId_fkey',
+    'CalendarRasts.CalendarRasts_studentGroupId_schoolId_fkey',
+    'CancellationBatchCredits.CancellationBatchCredits_batchId_schoolId_fkey',
+    'CancellationBatchCredits.CancellationBatchCredits_creditId_schoolId_fkey',
+    'CancellationBatchLessons.CancellationBatchLessons_batchId_schoolId_fkey',
+    'CancellationBatchLessons.CancellationBatchLessons_calendarLessonId_schoolId_fkey',
+    'CancellationBatches.CancellationBatches_academicYearId_schoolId_fkey',
+    'CoverConfirmations.CoverConfirmations_calendarLessonId_schoolId_fkey',
+    'CoverRequestLessons.CoverRequestLessons_calendarLessonId_schoolId_fkey',
+    'DevicePushTokens.DevicePushTokens_userId_schoolId_fkey',
+    'GuardianStudents.GuardianStudents_guardianId_schoolId_fkey',
+    'GuardianStudents.GuardianStudents_studentId_schoolId_fkey',
+    'IntegrationKeyWebhookSecrets.IntegrationKeyWebhookSecrets_keyId_schoolId_fkey',
+    'LeaveDelegationDecisions.LeaveDelegationDecisions_decidedById_schoolId_fkey',
+    'LeaveRequestNotices.LeaveRequestNotices_userId_schoolId_fkey',
+    'LocalTimplanEntries.LocalTimplanEntries_localTimplanId_schoolId_fkey',
+    'LocalTimplanEntries.LocalTimplanEntries_subjectId_schoolId_fkey',
+    'LunchSittings.LunchSittings_academicYearId_schoolId_fkey',
+    'LunchSittings.LunchSittings_studentGroupId_schoolId_fkey',
+    'MasterLessonGroups.MasterLessonGroups_studentGroupId_schoolId_fkey',
+    'MasterLessonStudents.MasterLessonStudents_studentId_schoolId_fkey',
+    'MasterLessons.MasterLessons_academicYearId_schoolId_fkey',
+    'MasterLessons.MasterLessons_coTeacherId_schoolId_fkey',
+    'MasterLessons.MasterLessons_roomId_schoolId_fkey',
+    'MasterLessons.MasterLessons_studentGroupId_schoolId_fkey',
+    'MasterLessons.MasterLessons_subjectId_schoolId_fkey',
+    'MasterLessons.MasterLessons_teacherId_schoolId_fkey',
+    'NotificationOptOuts.NotificationOptOuts_userId_schoolId_fkey',
+    'PersonalDataAccess.PersonalDataAccess_actorId_schoolId_fkey',
+    'PersonalDataAccess.PersonalDataAccess_apiKeyId_schoolId_fkey',
+    'PublicTimetableHidden.PublicTimetableHidden_targetGroupId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableHidden.PublicTimetableHidden_targetRoomId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableHidden.PublicTimetableHidden_targetStudentId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableLinks.PublicTimetableLinks_academicYearId_schoolId_fkey',
+    'PublicTimetableLinks.PublicTimetableLinks_targetGroupId_schoolId_fkey',
+    'PublicTimetableLinks.PublicTimetableLinks_targetRoomId_schoolId_fkey',
+    'PublicTimetableLinks.PublicTimetableLinks_targetStudentId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableLinks.PublicTimetableLinks_targetTeacherId_schoolId_fkey',
+    'PublicationPendingRemovals.PublicationPendingRemovals_academicYearId_schoolId_fkey',
+    'PublicationPendingRemovals.PublicationPendingRemovals_calendarLessonId_schoolId_fkey',
+    'PublishedLessons.PublishedLessons_publicationId_academicYearId_schoolId_fkey',
+    'PublishedLunchSittings.PublishedLunchSittings_publicationId_academicYearId_schoolId_fk',
+    'PushTickets.PushTickets_tokenId_schoolId_fkey',
+    'RetentionDecisions.RetentionDecisions_decidedById_schoolId_fkey',
+    'ScheduleActivities.ScheduleActivities_academicYearId_schoolId_fkey',
+    'ScheduleActivities.ScheduleActivities_batchId_schoolId_fkey',
+    'ScheduleActivities.ScheduleActivities_replacementSubjectId_schoolId_fkey',
+    'ScheduleActivityLessons.ScheduleActivityLessons_activityId_schoolId_fkey',
+    'ScheduleActivityLessons.ScheduleActivityLessons_calendarLessonId_schoolId_fkey',
+    'ScheduleActivityTeachers.ScheduleActivityTeachers_activityId_schoolId_fkey',
+    'ScheduleCandidateRuns.ScheduleCandidateRuns_academicYearId_schoolId_fkey',
+    'ScheduleCandidates.ScheduleCandidates_runId_schoolId_fkey',
+    'SchoolBreaks.SchoolBreaks_academicYearId_schoolId_fkey',
+    'Ss12000DutyLinks.Ss12000DutyLinks_academicYearId_schoolId_fkey',
+    'Ss12000DutyLinks.Ss12000DutyLinks_userId_schoolId_fkey',
+    'Ss12000SourceSecrets.Ss12000SourceSecrets_sourceId_schoolId_fkey',
+    'Ss12000SubscriptionDeliveries.Ss12000SubscriptionDeliveries_subscription_fkey',
+    'Ss12000Subscriptions.Ss12000Subscriptions_keyId_schoolId_fkey',
+    'Ss12000SyncChanges.Ss12000SyncChanges_runId_schoolId_fkey',
+    'Ss12000SyncRuns.Ss12000SyncRuns_sourceId_schoolId_fkey',
+    'StudentEnrollments.StudentEnrollments_academicYearId_schoolId_fkey',
+    'StudentEnrollments.StudentEnrollments_studentId_schoolId_fkey',
+    'SubstituteAvailabilities.SubstituteAvailabilities_member_fkey',
+    'SubstitutePoolMembers.SubstitutePoolMembers_userId_schoolId_fkey',
+    'TeacherAbsenceCovers.TeacherAbsenceCovers_calendarLessonId_schoolId_fkey',
+    'TeacherAbsences.TeacherAbsences_userId_schoolId_fkey',
+    'TeacherDuties.TeacherDuties_academicYearId_schoolId_fkey',
+    'TeacherDuties.TeacherDuties_userId_schoolId_fkey',
+    'TeacherEmploymentLogs.TeacherEmploymentLogs_academicYearId_schoolId_fkey',
+    'TeacherEmploymentLogs.TeacherEmploymentLogs_userId_schoolId_fkey',
+    'TeacherEmploymentPeriods.TeacherEmploymentPeriods_employment_fkey',
+    'TeacherEmployments.TeacherEmployments_academicYearId_schoolId_fkey',
+    'TeacherEmployments.TeacherEmployments_userId_schoolId_fkey',
+    'TeacherPublicLabels.TeacherPublicLabels_userId_schoolId_fkey',
+    'TeacherSubjectQualifications.TeacherSubjectQualifications_subjectId_schoolId_fkey',
+    'TeacherSubjectQualifications.TeacherSubjectQualifications_userId_schoolId_fkey',
+    'TeacherWorkRules.TeacherWorkRules_userId_schoolId_fkey',
+    'TeachingBlocks.TeachingBlocks_academicYearId_schoolId_fkey',
+    'TeachingRequirementShares.TeachingRequirementShares_requirementId_schoolId_fkey',
+    'TeachingRequirementShares.TeachingRequirementShares_teacherId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_academicYearId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_coTeacherId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_studentGroupId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_subjectId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_teacherId_schoolId_fkey',
+    'TimetablePublications.TimetablePublications_academicYearId_schoolId_fkey',
+    'TimplanCredits.TimplanCredits_academicYearId_schoolId_fkey',
+    'TimplanCredits.TimplanCredits_studentGroupId_schoolId_fkey',
+    'TimplanCredits.TimplanCredits_subjectId_schoolId_fkey',
+    'TimplanStatementPublications.TimplanStatementPublications_academicYearId_schoolId_fkey',
+    'TimplanStatements.TimplanStatements_publicationId_academicYearId_asOfDate_schoolI',
+    'TimplanStatements.TimplanStatements_studentId_schoolId_fkey',
+    'UserRoleChanges.UserRoleChanges_userId_schoolId_fkey'];
+  -- The list can only get shorter. It is checked to be exactly the keys that follow their parent (below), so
+  -- a new key that follows could be passed by adding its name; the ceiling (max_names) makes that a decision
+  -- that shows in the diff, a number raised on purpose with a reason in the change. 98 is what the schema of
+  -- 20270118090000 has. When the list gets shorter, lower the ceiling with it, or the next name added fits
+  -- under it.
+  max_names constant int := 98;
+  found text[];
+  extra text[];
+  gone text[];
+  dup text[];
+BEGIN
+  SELECT array_agg(f.tbl || '.' || f.conname ORDER BY f.tbl || '.' || f.conname COLLATE "C") INTO found FROM pg_temp.tk_follows('public'::regnamespace) f;
+  SELECT array_agg(f ORDER BY f COLLATE "C") INTO extra FROM unnest(found) f WHERE f <> ALL (exempt);
+  SELECT array_agg(e ORDER BY e COLLATE "C") INTO gone FROM unnest(exempt) e WHERE e <> ALL (coalesce(found, '{}'));
+  SELECT array_agg(e ORDER BY e COLLATE "C") INTO dup FROM (SELECT e FROM unnest(exempt) e GROUP BY e HAVING count(*) > 1) d;
+  IF extra IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 388: a key that holds a school follows its parent when the parent is updated (ON UPDATE is not NO ACTION): % (make it ON UPDATE NO ACTION, as 20270115090000 did for 38 others: a parent moved to another school would carry its rows along without a word)', extra;
+  END IF;
+  IF gone IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 388: a key this list names no longer follows its parent (it is gone, or it is NO ACTION now): % (take it off the list)', gone;
+  END IF;
+  IF dup IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 388: named twice in the list: %', dup;
+  END IF;
+  IF cardinality(exempt) > max_names THEN
+    RAISE EXCEPTION 'tenant keys 388: the list names % keys, more than its ceiling of %: a key that follows its parent was added to the list instead of being made ON UPDATE NO ACTION (if it has to follow, raise max_names in this change and say why)', cardinality(exempt), max_names;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 389: the guard's predicate, over stand-ins.
+--
+-- The keys that follow their parent are reported, those that do not are not: NO ACTION and RESTRICT, a key of
+-- one column, a key that holds nothing of the child's school, and a table without a school. A guard that let
+-- one of the first through, or reported one of the last, fails here.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  got text[];
+BEGIN
+  CREATE TEMP TABLE tk_up_parent (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, other uuid NOT NULL, UNIQUE (id, "schoolId"), UNIQUE (id, other));
+  -- Do not follow.
+  CREATE TEMP TABLE tk_up_noaction (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                    FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE NO ACTION);
+  CREATE TEMP TABLE tk_up_default (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                   FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId"));
+  CREATE TEMP TABLE tk_up_restrict (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                    FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE RESTRICT);
+  CREATE TEMP TABLE tk_up_single (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid REFERENCES tk_up_parent (id) ON UPDATE CASCADE);
+  -- A key that holds nothing of the child's school (the parent's school is held by a column that is not the child's).
+  CREATE TEMP TABLE tk_up_other (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid, y uuid,
+                                 FOREIGN KEY (x, y) REFERENCES tk_up_parent (id, other) ON UPDATE CASCADE);
+  -- Tables with no school of their own.
+  CREATE TEMP TABLE tk_up_bare_parent (id uuid PRIMARY KEY, y uuid NOT NULL, UNIQUE (id, y));
+  CREATE TEMP TABLE tk_up_bare (id uuid PRIMARY KEY, x uuid, y uuid, FOREIGN KEY (x, y) REFERENCES tk_up_bare_parent (id, y) ON UPDATE CASCADE);
+  -- Follow.
+  CREATE TEMP TABLE tk_up_cascade (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                   FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE CASCADE);
+  CREATE TEMP TABLE tk_up_setnull (id uuid PRIMARY KEY, "schoolId" uuid, x uuid,
+                                   FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE SET NULL);
+  -- A table whose school is not called "schoolId" (RoomLoans: ownerSchoolId, borrowerSchoolId).
+  CREATE TEMP TABLE tk_up_loan_owner (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                      FOREIGN KEY (x, "ownerSchoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE CASCADE);
+  CREATE TEMP TABLE tk_up_loan_noaction (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                         FOREIGN KEY (x, "borrowerSchoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE NO ACTION);
+  SELECT array_agg(f.tbl ORDER BY f.tbl COLLATE "C") INTO got FROM pg_temp.tk_follows(pg_my_temp_schema()) f;
+  IF got IS DISTINCT FROM ARRAY['tk_up_cascade', 'tk_up_loan_owner', 'tk_up_setnull'] THEN
+    RAISE EXCEPTION 'tenant keys 389: the guard reported % over the stand-ins, not the keys that follow their parent (tk_up_cascade, tk_up_loan_owner, tk_up_setnull)', got;
+  END IF;
 END $$;
 ROLLBACK;
