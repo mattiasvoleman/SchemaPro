@@ -171,6 +171,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('Ss12000DutyLinks', ['userId', 'schoolId'], 'CASCADE', others),
   key('SupervisionShifts', ['userId', 'schoolId'], 'CASCADE', others),
   key('ScheduleActivityTeachers', ['teacherId', 'schoolId'], 'CASCADE', others),
+  // Provplanering (20270127090000): the watch a teacher keeps at an exam goes with the person; the exam stays.
+  key('ExamInvigilators', ['teacherId', 'schoolId'], 'CASCADE', others),
   key('SupervisionCovers', ['substituteId', 'schoolId'], 'CASCADE', others),
   // Vikariefrågan (20270102091000): a question they were asked and a pass they confirmed.
   key('CoverRequestRecipients', ['userId', 'schoolId'], 'CASCADE', others),
@@ -211,6 +213,7 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('CancellationBatches', ['reversedByUserId', 'schoolId'], 'SET NULL', kept),
   key('ScheduleActivities', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('ScheduleActivities', ['removedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('Exams', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('PublicTimetableLinks', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('TeacherAbsences', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('TeacherAbsences', ['withdrawnByUserId', 'schoolId'], 'SET NULL', kept),
