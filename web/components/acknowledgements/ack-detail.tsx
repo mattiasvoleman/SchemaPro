@@ -107,8 +107,8 @@ export function AckDetailView({
   const reminder = (): string => {
     if (!detail) return "";
     const kind = reminderOf(detail);
-    // The moment a reminder went, or the one it is due: the other states have none to say.
-    const at = kind === "SENT" ? detail.reminderSentAt : kind === "SCHEDULED" ? detail.remindAt : null;
+    // The moment a reminder went (written to the inboxes, and for SENT also mailed), or the one it is due: the other states have none to say.
+    const at = kind === "SENT" || kind === "WRITTEN" ? detail.reminderSentAt : kind === "SCHEDULED" ? detail.remindAt : null;
     return t(`detail.reminderState.${kind}`, { moment: at ? moment(at) : "" });
   };
 

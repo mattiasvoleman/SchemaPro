@@ -4,7 +4,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { rostersOf, type RosterScope } from '../calendar/lesson-roster';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationDeliveryService } from './notification-delivery.service';
-import { RECIPIENT_CHUNK, type OutboxEntry } from './notification-outbox';
+import { RECIPIENT_CHUNK, type OutboxEntry, type OutboxSettled } from './notification-outbox';
 
 export type NotificationKind =
   | 'ABSENCE_UNREPORTED'
@@ -159,16 +159,19 @@ export class NotificationsService {
    * (withServicePrincipal), whose leave catch-up the database now answers
    * (20261101090000). The caller calls this after that transaction resolved,
    * never inside it, so a rolled-back write tells nobody. Filtered as
-   * deliver() filters, as one batch.
+   * deliver() filters, as one batch. `settled` hears how the batch went
+   * (OutboxSettled): true at once when nothing in it leaves the inbox, true
+   * later when the e-mail and the push were taken, false when one was
+   * refused, and never when the process stops first.
    */
-  deliverCommitted(entries: readonly OutboxEntry[]): void {
+  deliverCommitted(entries: readonly OutboxEntry[], settled?: OutboxSettled): void {
     const batch = entries.flatMap((entry) => {
       if (entry.recipients.length === 0) return [];
       if (!this.delivery.wants({ type: entry.type, email: entry.email })) return [];
       const { email, ...rest } = entry;
       return [email && this.delivery.emailConfigured() ? { ...rest, email } : rest];
     });
-    this.delivery.enqueue(batch);
+    this.delivery.enqueue(batch, settled);
   }
 
   /** The transaction's outbox, delivered by one hook after its commit; undefined outside withRls. */

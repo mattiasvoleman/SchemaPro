@@ -7601,6 +7601,26 @@
       "loadFailed": "The settings for acknowledgements could not be loaded",
       "loadFailedHint": "Nothing has changed. Reload the page in a moment."
     },
+    "usage": {
+      "title": "The day's use",
+      "description": "How many acknowledgements, one per guardian and pupil, have been asked for in the last 24 hours. The school has a limit, and everyone who sends has a share of it.",
+      "school": "The school",
+      "mine": "Your share",
+      "value": "{used, number} of {limit, number} ({percent, number, percent})",
+      "near": "Close to the limit",
+      "reached": {
+        "school": "The limit is reached: no more can be sent until older rows are more than a day old",
+        "mine": "Your share is used up: you cannot send more until older rows are more than a day old"
+      },
+      "sendersTitle": "Who has sent the most",
+      "sendersCaption": "Who has asked for the most acknowledgements in the last 24 hours",
+      "colSender": "Sender",
+      "colUsed": "Used of the share",
+      "none": "Nobody has asked for an acknowledgement in the last 24 hours.",
+      "senderReached": "The limit is reached",
+      "loadFailed": "The use could not be loaded",
+      "loadFailedHint": "Nothing has changed. Reload the page in a moment."
+    },
     "list": {
       "title": "Requests",
       "description": {
@@ -7621,6 +7641,7 @@
       "reminder": {
         "NONE": "None",
         "SCHEDULED": "Goes out {date}",
+        "WRITTEN": "In the inbox",
         "SENT": "Sent",
         "NOT_NEEDED": "Not needed",
         "LAPSED": "Not sent, too late",
@@ -7706,6 +7727,7 @@
       "ACK_NOT_YOUR_PUPIL": "You can only ask for acknowledgements about pupils you are a mentor for.",
       "ACK_NO_GUARDIANS": "None of the pupils has a guardian to ask.",
       "ACK_TOO_MANY_REQUESTS": "You have sent so many requests in the last hour that no more can be sent right now. Nothing has been sent. Try again in a moment.",
+      "ACK_SENDER_DAY_LIMIT": "You have asked for so many acknowledgements in the last 24 hours that this request would go over your share of the day. Nothing has been sent. Choose fewer pupils or try again later: your share is counted over the last 24 hours.",
       "ACK_TOO_MANY_RECIPIENTS": "The school has sent so many acknowledgements today that this request would go over the day's limit. Nothing has been sent. Choose fewer pupils or try again tomorrow.",
       "THROTTLED": "You sent too many requests in a short time. Nothing has been sent. Wait a minute and try again."
     },
@@ -7718,6 +7740,7 @@
       "reminderState": {
         "NONE": "No reminder",
         "SCHEDULED": "Goes out {moment} to whoever has not confirmed by then, also when another guardian of the same pupil has",
+        "WRITTEN": "Written to the guardians' inboxes {moment}. That the e-mail and the push went out is not confirmed: it can take a few minutes, and it does not happen if the service was restarted or the e-mail provider did not answer. The reminder is not sent again.",
         "SENT": "Sent {moment}",
         "NOT_NEEDED": "Not sent: when the time came, everyone had already confirmed or could no longer confirm",
         "LAPSED": "Not sent: it was due more than 30 days ago, and a reminder that old is not sent",

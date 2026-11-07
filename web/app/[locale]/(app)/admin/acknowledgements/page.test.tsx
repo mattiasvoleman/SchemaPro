@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
-import type { AckSettings } from "@/lib/ack";
-import { PUPILS, SETTINGS_OFF, SETTINGS_ON, detail, listItem, page } from "@/lib/__fixtures__/ack";
+import type { AckSettings, AckUsage } from "@/lib/ack";
+import { PUPILS, SETTINGS_OFF, SETTINGS_ON, detail, listItem, page, usage } from "@/lib/__fixtures__/ack";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import AcknowledgementsPage from "./page";
@@ -20,8 +20,10 @@ import AcknowledgementsPage from "./page";
  * switch and the days save as they turn and show what the gateway answered; a
  * school with Kvittens off offers no request and says so; the läsare changes
  * nothing and makes no request but reads the list and every request; and the
- * administrator's list is every request of the school. The requests, the form
- * and the detail are the teacher's too, and are tested on the teacher's page.
+ * administrator's list is every request of the school; the day's use of the
+ * limits is the school's, the reader's own share and the senders, in numbers and
+ * in words, and a failed read of it is said as such. The requests, the form and
+ * the detail are the teacher's too, and are tested on the teacher's page.
  */
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }));
@@ -39,8 +41,10 @@ const state = vi.hoisted(() => ({
   list: [] as unknown[],
   pupils: [] as unknown[],
   detail: undefined as unknown,
+  usage: undefined as unknown,
   settingsError: false,
   listError: false,
+  usageError: false,
   hold: null as null | Promise<void>,
 }));
 
@@ -69,14 +73,20 @@ beforeEach(() => {
   state.list = [listItem()];
   state.pupils = PUPILS;
   state.detail = detail();
+  state.usage = usage();
   state.settingsError = false;
   state.listError = false;
+  state.usageError = false;
   state.hold = null;
   api.get.mockImplementation(async (path: string) => {
     if (state.hold) await state.hold;
     if (path === `${BASE}/settings`) {
       if (state.settingsError) throw new ApiError(500, "boom");
       return state.settings;
+    }
+    if (path === `${BASE}/usage`) {
+      if (state.usageError) throw new ApiError(500, "boom");
+      return state.usage;
     }
     if (path === BASE) {
       if (state.listError) throw new ApiError(500, "boom");
@@ -296,6 +306,143 @@ describe("Kvittens, the administrator's page", () => {
 
     expect(await screen.findByText("Påminnelsen är stoppad.")).toBeInTheDocument();
     expect(api.post).toHaveBeenCalledWith(`${BASE}/r-1/stop-reminder`);
+  });
+
+  describe("the day's use of the limits", () => {
+    /** The page writes a space before a unit and in a thousand as a no-break space; a test reads them as spaces. */
+    const plain = (text: string | null) => (text ?? "").replace(/\s+/g, " ").trim();
+    const card = async () => screen.findByRole("region", { name: "Dygnets förbrukning" });
+
+    it("says what the school and the reader have used, and who has used most, in numbers", async () => {
+      renderPage();
+      const region = await card();
+      await within(region).findByText("Skolan");
+
+      // The school's 6 340 of 20 000 is 31 %, rounded down; the reader's own share is an administrator's 8 000.
+      expect(plain(within(region).getByText("Skolan").nextElementSibling!.textContent)).toBe("6 340 av 20 000 (31 %)");
+      expect(plain(within(region).getByText("Din andel").nextElementSibling!.textContent)).toBe("3 000 av 8 000 (37 %)");
+      expect(within(region).getByRole("heading", { level: 3, name: "De som skickat mest" })).toBeInTheDocument();
+      const table = within(region).getByRole("table", { name: "De som har begärt flest kvittenser det senaste dygnet" });
+      const rows = within(table).getAllByRole("row").slice(1);
+      // The gateway's order: the largest first.
+      expect(rows.map((row) => within(row).getAllByRole("cell").map((cell) => plain(cell.textContent)))).toEqual([
+        ["Rektor Rut", "3 000 av 8 000 (37 %)"],
+        ["Bo Berg", "1 840 av 2 000 (92 %)Nära gränsen"],
+        ["Anna Lind", "1 500 av 2 000 (75 %)Nära gränsen"],
+      ]);
+      expect(within(table).getAllByRole("columnheader").map((head) => head.textContent)).toEqual(["Avsändare", "Använt av andelen"]);
+    });
+
+    it("is a section with a heading of its own, in order under the page's, and reads the use once", async () => {
+      renderPage();
+      const region = await card();
+      expect(within(region).getByRole("heading", { level: 2, name: "Dygnets förbrukning" })).toBeInTheDocument();
+      await within(region).findByText("Skolan");
+      expect(api.get.mock.calls.filter(([path]) => path === `${BASE}/usage`)).toHaveLength(1);
+    });
+
+    it("leaves the bar to the eye: hidden from assistive tech, with the numbers and the words as the reading", async () => {
+      renderPage();
+      const region = await card();
+      await within(region).findByText("Skolan");
+
+      const bars = region.querySelectorAll('[aria-hidden="true"]');
+      expect(bars.length).toBeGreaterThanOrEqual(2);
+      for (const bar of bars) expect(bar.textContent).toBe("");
+      expect(region.querySelector('[role="meter"], [role="progressbar"], progress, meter')).toBeNull();
+    });
+
+    it("says nothing about the limit while there is room, and 'close to' from three quarters of it", async () => {
+      state.usage = usage({ school: { used: 14999, limit: 20000 }, mine: { used: 5999, limit: 8000 }, senders: [] });
+      renderPage();
+      const region = await card();
+      await within(region).findByText("Skolan");
+      expect(within(region).queryByText("Nära gränsen")).not.toBeInTheDocument();
+      expect(plain(within(region).getByText("Skolan").nextElementSibling!.textContent)).toBe("14 999 av 20 000 (74 %)");
+    });
+
+    it("says 'close to the limit' in words for the school and for the reader's share at three quarters", async () => {
+      state.usage = usage({ school: { used: 15000, limit: 20000 }, mine: { used: 6000, limit: 8000 }, senders: [] });
+      renderPage();
+      const region = await card();
+      await within(region).findByText("Skolan");
+      expect(within(region).getAllByText("Nära gränsen")).toHaveLength(2);
+      expect(within(region).queryByText(/Gränsen är nådd/)).not.toBeInTheDocument();
+    });
+
+    it("says what it means when the school's day is used up, and when the reader's share is", async () => {
+      state.usage = usage({ school: { used: 20000, limit: 20000 }, mine: { used: 8000, limit: 8000 }, senders: [{ name: "Rektor Rut", used: 8000, limit: 8000 }] });
+      renderPage();
+      const region = await card();
+      await within(region).findByText("Skolan");
+
+      expect(within(region).getByText("Gränsen är nådd: fler kan inte skickas förrän äldre rader passerat ett dygn")).toBeInTheDocument();
+      expect(within(region).getByText("Din andel är nådd: du kan inte skicka fler förrän äldre rader passerat ett dygn")).toBeInTheDocument();
+      // 20 000 of 20 000 is all of it, and says so; a share of 99.6 % would be 99.
+      expect(plain(within(region).getByText("Skolan").nextElementSibling!.textContent)).toBe("20 000 av 20 000 (100 %)");
+      expect(within(region).getByText("Gränsen är nådd")).toBeInTheDocument();
+    });
+
+    it("says that nobody has asked for anything in the last day, and shows no empty table", async () => {
+      state.usage = usage({ school: { used: 0, limit: 20000 }, mine: { used: 0, limit: 8000 }, senders: [] });
+      renderPage();
+      const region = await card();
+
+      expect(await within(region).findByText("Ingen har bett om kvittens det senaste dygnet.")).toBeInTheDocument();
+      expect(within(region).queryByRole("table")).not.toBeInTheDocument();
+      expect(plain(within(region).getByText("Skolan").nextElementSibling!.textContent)).toBe("0 av 20 000 (0 %)");
+    });
+
+    it("shows a teacher's answer (no school, no senders) as the reader's share alone", async () => {
+      const mine: AckUsage = { school: null, mine: { used: 40, limit: 2000 }, senders: null };
+      state.usage = mine;
+      renderPage();
+      const region = await card();
+
+      expect(plain((await within(region).findByText("Din andel")).nextElementSibling!.textContent)).toBe("40 av 2 000 (2 %)");
+      expect(within(region).queryByText("Skolan")).not.toBeInTheDocument();
+      expect(within(region).queryByRole("heading", { level: 3 })).not.toBeInTheDocument();
+    });
+
+    it("is busy until the use is read", async () => {
+      let release!: () => void;
+      state.hold = new Promise<void>((resolve) => (release = resolve));
+      renderPage();
+      const region = await card();
+      expect(region.querySelector('[aria-busy="true"]')).not.toBeNull();
+      release();
+      await within(region).findByText("Skolan");
+      expect(region.querySelector('[aria-busy="true"]')).toBeNull();
+    });
+
+    it("says a failed read as such and never as an empty day, while the switch and the requests still show", async () => {
+      state.usageError = true;
+      renderPage();
+      const region = await card();
+
+      expect(await within(region).findByText("Förbrukningen kunde inte hämtas")).toBeInTheDocument();
+      expect(within(region).getByText("Inget har ändrats. Ladda om sidan om en stund.")).toBeInTheDocument();
+      expect(within(region).queryByText(/Ingen har bett om kvittens/)).not.toBeInTheDocument();
+      expect(within(region).queryByText("Skolan")).not.toBeInTheDocument();
+      expect(await kvittensSwitch()).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Utflykten på torsdag" })).toBeInTheDocument();
+    });
+
+    it("is read for the page whether Kvittens is on or off: the day's rows count either way", async () => {
+      state.settings = SETTINGS_OFF;
+      renderPage();
+      const region = await card();
+      expect(await within(region).findByText("Skolan")).toBeInTheDocument();
+    });
+
+    it("speaks English too", async () => {
+      renderPage("en");
+      const region = await screen.findByRole("region", { name: "The day's use" });
+      expect(plain((await within(region).findByText("The school")).nextElementSibling!.textContent)).toBe("6,340 of 20,000 (31%)");
+      expect(within(region).getByText("Your share")).toBeInTheDocument();
+      expect(within(region).getByRole("table", { name: "Who has asked for the most acknowledgements in the last 24 hours" })).toBeInTheDocument();
+      expect(within(region).getAllByText("Close to the limit")).toHaveLength(2);
+    });
   });
 
   it("speaks English too", async () => {

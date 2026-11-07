@@ -7,6 +7,7 @@ import type {
   AckPupilChoice,
   AckPupilRow,
   AckSettings,
+  AckUsage,
 } from "../../../lib/ack";
 import { Reply, route, type GatewayContext, type GatewayRoute } from "../gateway-routes";
 import { KIND, uid } from "../sessions";
@@ -30,6 +31,9 @@ import { ADMIN, byId, GROUP_LIST, GUARDIAN_LINKS, GUARDIANS, STUDENTS, STUDENT_L
  *    administrator (who wrote it) may stop it: Anna may not.
  *  - Anna's "Vad som hände vid larmet" (every guardian), long since done, the
  *    reminder gone out.
+ * The day's use of the limits (GET /usage) is counted from the first two, which were written within the
+ * last day; the third is a week old and counts for nothing. An administrator reads the school's, their own share
+ * and the senders; a teacher only their own share.
  * A teacher sees the requests with a pupil of the class they mentor and only
  * those pupils; the guardian sees their own children's and their own time.
  *
@@ -78,6 +82,7 @@ const DETAILS: AckDetail[] = [
     createdAt: at(0, "07:30"),
     remindAt: at(2, "07:30"),
     reminderSentAt: null,
+    reminderMirroredAt: null,
     reminder: "SCHEDULED",
     mayStopReminder: false,
     pupils: [
@@ -94,6 +99,7 @@ const DETAILS: AckDetail[] = [
     createdAt: at(-1, "09:00"),
     remindAt: at(1, "09:00"),
     reminderSentAt: null,
+    reminderMirroredAt: null,
     reminder: "SCHEDULED",
     mayStopReminder: false,
     pupils: [
@@ -111,6 +117,7 @@ const DETAILS: AckDetail[] = [
     createdAt: at(-8, "13:00"),
     remindAt: at(-6, "13:00"),
     reminderSentAt: at(-6, "13:01"),
+    reminderMirroredAt: at(-6, "13:02"),
     reminder: "SENT",
     mayStopReminder: false,
     pupils: [
@@ -126,6 +133,27 @@ const AUTHOR_OF: Record<string, string> = {
   [DETAILS[1]!.id]: ADMIN.id,
   [DETAILS[2]!.id]: TEACHERS.anna.id,
 };
+
+/** The day's use: the receipts of the requests written within the last day, by who wrote them. */
+const TODAY = [DETAILS[0]!, DETAILS[1]!];
+const receiptsOf = (one: AckDetail) => one.pupils.reduce((sum, pupil) => sum + pupil.guardians.length, 0);
+const usedBy = (userId: string) => TODAY.filter((one) => AUTHOR_OF[one.id] === userId).reduce((sum, one) => sum + receiptsOf(one), 0);
+
+function usageOf(context: GatewayContext): AckUsage {
+  const person = context.person!;
+  const admin = person.persona === "admin";
+  const mine = { used: usedBy(person.userId), limit: admin ? 8000 : 2000 };
+  if (!admin) return { school: null, mine, senders: null };
+  const sender = (name: string, userId: string, limit: number) => ({ name, used: usedBy(userId), limit });
+  return {
+    school: { used: TODAY.reduce((sum, one) => sum + receiptsOf(one), 0), limit: 20000 },
+    mine,
+    senders: [
+      sender(`${ADMIN.firstName} ${ADMIN.lastName}`, ADMIN.id, 8000),
+      sender(`${TEACHERS.anna.firstName} ${TEACHERS.anna.lastName}`, TEACHERS.anna.id, 2000),
+    ].sort((a, b) => b.used - a.used),
+  };
+}
 
 /** The request as the reader gets it: they may stop a scheduled reminder if they wrote it or administer the school. */
 function withStopRight(one: AckDetail, context: GatewayContext): AckDetail {
@@ -211,6 +239,7 @@ export const ackRoutes: GatewayRoute[] = [
     if (!context.person) return new Reply(401, { message: "Not authenticated." });
     return context.person.persona === "admin" ? { ...SETTINGS, ...(context.body as Partial<AckSettings>) } : new Reply(403, { message: "Forbidden." });
   }),
+  route("GET", "/api/v1/acknowledgements/usage", (context) => staffOnly(context) ?? usageOf(context)),
   route("GET", "/api/v1/acknowledgements/pupils", (context) => staffOnly(context) ?? askable(context)),
   route("GET", "/api/v1/acknowledgements/mine", (context) => {
     if (!context.person) return new Reply(401, { message: "Not authenticated." });
