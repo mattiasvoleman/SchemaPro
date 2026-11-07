@@ -11,6 +11,9 @@ import { STUB_ORIGIN } from "./e2e/stub/sessions";
  *                   the accessibility-tree baselines of the key screens
  *   visual        — pixel diff vs committed baselines, ≤0.1% variance (§2)
  *   visual-mobile — the same baselines at a phone viewport
+ *   document-size — the gzipped HTML of a signed-in page against a ceiling:
+ *                   the cost of the menus, which are server data and so no
+ *                   longer in the bundle the bundle gate counts
  *
  * The app is built against a local stub of its two backends (e2e/stub/),
  * started in globalSetup: Supabase Auth and PostgREST, and the gateway, all
@@ -89,6 +92,11 @@ export default defineConfig({
     {
       name: "a11y",
       testMatch: /(a11y|a11y-app|aria)\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "document-size",
+      testMatch: /document-size\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
     {
