@@ -98,8 +98,7 @@ export function SwapDialog({
     } catch {
       if (mine === ask.current) setFailed(true);
     }
-    // `suggest` is a fresh object each render; the mutation function is stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `suggest` is a fresh object each render; its mutation function is the same one.
   }, [lessonId]);
 
   useEffect(() => {
