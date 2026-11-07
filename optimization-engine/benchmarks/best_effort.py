@@ -296,6 +296,16 @@ def _spawn(
     )
 
 
+def _spawn_strict(tree: Path, budget: float) -> subprocess.Popen[str]:
+    """The strict benchmark of one tree: a list of fixed words (no shell), the
+    tree's own hogstadium.py, and the budget as a float argparse has parsed."""
+    return subprocess.Popen(
+        [sys.executable, str(tree / "benchmarks" / "hogstadium.py"), "--first-solution",
+         "--teacher-day-rules", "--json", "--budget", str(budget)],
+        stdout=subprocess.PIPE, text=True, cwd=str(tree),
+    )
+
+
 def _collect(process: subprocess.Popen[str]) -> dict[str, object]:
     stdout, _ = process.communicate()
     lines = [line for line in stdout.splitlines() if line.startswith("{")]
@@ -330,14 +340,7 @@ def main() -> int:
             if args.other_tree is None:
                 parser.error("strict-ab needs --other-tree")
             # hogstadium.py exists in both trees and says the same thing in both.
-            processes = [
-                subprocess.Popen(
-                    [sys.executable, str(t / "benchmarks" / "hogstadium.py"), "--first-solution",
-                     "--teacher-day-rules", "--json", "--budget", str(args.budget)],
-                    stdout=subprocess.PIPE, text=True, cwd=str(t),
-                )
-                for t in (args.other_tree, tree)
-            ]
+            processes = [_spawn_strict(t, args.budget) for t in (args.other_tree, tree)]
             results.extend(_collect(process) for process in processes)
             continue
         else:
