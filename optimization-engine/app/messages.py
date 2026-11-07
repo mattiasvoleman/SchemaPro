@@ -892,6 +892,65 @@ MESSAGES: dict[str, str] = {
         "{time})."
     ),
 
+    # ---- Placeringsregler (G3) -------------------------------------------
+    # The school's own placement rules, named when the week cannot keep one.
+    # `requirement` and `room` are ids the gateway realises into names, as in
+    # every sentence above; no sentence names a person (a teacher's limit is
+    # named by the rule, not the teacher).
+    "SUBJECT_EDGE_CANNOT_BE_KEPT": (
+        "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} "
+        "other {from closing}} a class's day, and the week cannot hold that for every lesson of "
+        "it. Give the class lessons of other subjects to {edge, select, FIRST {start} other "
+        "{end}} the day with, allow the subject at the {edge, select, FIRST {start} other "
+        "{end}} of the day, or turn the rule to Soft under School rules."
+    ),
+    "CHANGES_CANNOT_BE_KEPT": (
+        "The school rules allow {party, select, class {a class} other {a teacher}} at most "
+        "{limit, plural, one {# {kind, select, room {room change} other {building change}}} "
+        "other {# {kind, select, room {room changes} other {building changes}}}} a day, and the "
+        "week cannot keep that for everyone. Raise the limit, turn the rule to Soft under School "
+        "rules, or let the lessons use {kind, select, room {fewer kinds of room} other "
+        "{fewer buildings}}."
+    ),
+    "SHARED_ROOM_CANNOT_BE_KEPT": (
+        "{room} is shared by several groups at once, and the week cannot place its lessons so "
+        "that their pupils together fit its seats at every moment. Move a lesson out of the room, "
+        "raise its capacity, take the shared mark off the room, or turn the rule to Soft under "
+        "School rules."
+    ),
+    "PLACEMENT_EDGE_DAY_TOO_SHORT": (
+        "{requirement} cannot be placed: the school rules keep it {edges, select, both {neither "
+        "first nor last} first {from being first} other {from being last}} in a class's day, "
+        "which takes at least {needed} lessons that day, and the class has at most {maxPerDay} a "
+        "day. Allow more lessons a day, or relax the rule for the subject."
+    ),
+    "PLACEMENT_EDGE_NO_OTHER_LESSON": (
+        "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} "
+        "other {from closing}} a class's day, but every lesson the class has is of subjects that "
+        "rule applies to, so one of them would have to {edge, select, FIRST {open} other "
+        "{close}} it. Give the class a lesson of another subject, or relax the rule."
+    ),
+    "PLACEMENT_CHANGES_FORCED_PLACES": (
+        "{party, select, class {A class} other {A teacher}} has lessons that can only be in "
+        "{places, plural, one {# {kind, select, room {kind of room} other {building}}} other "
+        "{# {kind, select, room {kinds of room} other {buildings}}}}, but the school rules allow "
+        "at most {limit, plural, one {# {kind, select, room {room change} other {building "
+        "change}}} other {# {kind, select, room {room changes} other {building changes}}}} a "
+        "day, which takes {days, plural, one {# day} other {# days}} and the week has "
+        "{open, plural, one {# day} other {# days}}. Raise the limit or let the lessons use "
+        "other rooms."
+    ),
+    "SHARED_ROOM_LOCK_OVER_CAPACITY": (
+        "A locked lesson in {room} has {pupils, plural, one {# pupil} other {# pupils}}, and the "
+        "room seats {capacity}. Move the lesson, raise the room's capacity, or turn the rule off "
+        "or to Soft under School rules."
+    ),
+    "SHARED_ROOM_LOCKS_OVER_CAPACITY": (
+        "Locked lessons in {room} put {pupils, plural, one {# pupil} other {# pupils}} in it at "
+        "once, and the room seats {capacity}. Move one of the lessons, raise the room's capacity, "
+        "or turn the rule off or to Soft under School rules."
+    ),
+
     # ---- The timeout probe ----------------------------------------------
     "PROBE_NOTHING_HELPED": (
         "No timetable was found within {budget} s, and none of the {rules, plural, "

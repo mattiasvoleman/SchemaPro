@@ -117,6 +117,7 @@ from app.solver.weeks import week_parts
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.schemas.schedule import AnonymousConstraint, AnonymousRoom, FixedLesson
+    from app.solver.placement import SharedRoom
 
 
 class RoomAllocationError(RuntimeError):
@@ -152,6 +153,17 @@ class RoomPlan:
     #: it stands there whatever happens), by lesson key: travel.site_choices's
     #: answer, kept for solve()'s planned-sites search. Empty with the rule off.
     site_choices: dict[str, dict[Hashable, cp_model.IntVar | None]] = field(default_factory=dict)
+    #: The building of each class, by class index — Placeringsregler's reading
+    #: of a lesson's class choice (app/solver/placement.py). Every class stands
+    #: in one when the partition was asked to keep buildings apart
+    #: (`building_key`), and the list is empty when it was not.
+    class_buildings: list[Hashable] = field(default_factory=list)
+    #: Placeringsregler, regel 3: the classes that are one shareable room, by
+    #: class index, and the capacity variable of each one's cumulative
+    #: (a constant where the rule is off for it): SOFT's price is the variable
+    #: above the room's capacity, HARD's is an assumption pinning it there.
+    shared: dict[int, "SharedRoom"] = field(default_factory=dict)
+    shared_capacity: dict[int, cp_model.IntVar] = field(default_factory=dict)
     # lesson key -> {class index: literal}; absent when the class is forced.
     literals: dict[str, dict[int, cp_model.IntVar]] = field(default_factory=dict)
     forced_class: dict[str, int] = field(default_factory=dict)
@@ -195,6 +207,12 @@ class RoomPlan:
         assignment: dict[str, int] = {}
         for class_index, entries in by_class.items():
             room_indices = self.classes[class_index].room_indices
+            if class_index in self.shared:
+                # A shareable room is every one of its lessons' room, at once:
+                # its cumulative over the pupils is the whole proof.
+                for _start, _duration, key, _preferred in entries:
+                    assignment[key] = room_indices[0]
+                continue
             if class_index in self.named:
                 # A mixed class: the solver named each lesson's room.
                 for _start, _duration, key, _preferred in entries:
@@ -283,6 +301,7 @@ def build_room_classes(
     profile_key: Callable[[object], tuple],
     preference_sets: list[set[UUID]] | None = None,
     site_key: Callable[[AnonymousRoom], Hashable] | None = None,
+    building_key: Callable[[AnonymousRoom], Hashable] | None = None,
 ) -> list[RoomClass]:
     """Partition rooms so that every lesson's eligible set is a union of classes.
 
@@ -337,6 +356,12 @@ def build_room_classes(
             )
             if site_key is not None:
                 signature += (site_key(room),)
+            if building_key is not None:
+                # Placeringsregler: a limit on building changes reads a
+                # lesson's building off its class choice, so no class may hold
+                # a room in each of two buildings. Joined last, so a payload
+                # without the rule has exactly the signature it had.
+                signature += (building_key(room),)
         grouped.setdefault(signature, []).append(index)
 
     return [
@@ -355,11 +380,23 @@ def add_room_allocation(
     profile_key: Callable[[object], tuple],
     preference_sets: list[set[UUID]] | None = None,
     site_key: Callable[[AnonymousRoom], Hashable] | None = None,
+    building_key: Callable[[AnonymousRoom], Hashable] | None = None,
+    shared_rooms: dict[UUID, SharedRoom] | None = None,
+    assume_shared: Callable[[UUID], cp_model.IntVar] | None = None,
 ) -> RoomPlan:
-    """Enforce room capacity without naming rooms. Replaces per-room NoOverlap."""
+    """Enforce room capacity without naming rooms. Replaces per-room NoOverlap.
+
+    `shared_rooms` (Placeringsregler, regel 3) are rooms the school has marked
+    shareable: each is its own class and its row is a cumulative over the
+    pupils of its lessons instead of a no-overlap. Absent, every room is
+    exclusive and nothing below changes.
+    """
+    shared_rooms = shared_rooms or {}
+    if shared_rooms:
+        distinguished_room_ids = distinguished_room_ids | set(shared_rooms)
     classes = build_room_classes(
         decisions, rooms, distinguished_room_ids, room_allowed, profile_key,
-        preference_sets, site_key,
+        preference_sets, site_key, building_key,
     )
     plan = RoomPlan(
         classes=classes,
@@ -368,7 +405,17 @@ def add_room_allocation(
             if site_key is not None
             else []
         ),
+        class_buildings=(
+            [building_key(rooms[room_class.room_indices[0]]) for room_class in classes]
+            if building_key is not None
+            else []
+        ),
     )
+    for room_class in classes:
+        shared = shared_rooms.get(rooms[room_class.room_indices[0]].id)
+        if shared is not None and room_class.capacity == 1:
+            plan.shared[room_class.index] = shared
+    demands: dict[int, list[int]] = defaultdict(list)
     pools: dict[int, list[cp_model.IntervalVar]] = defaultdict(list)
     # The lesson behind each pool entry, by position: the week it runs in is
     # what the class's row is cut by, and a mixed class names its rooms for
@@ -403,6 +450,7 @@ def add_room_allocation(
             only = eligible[0]
             plan.forced_class[key] = only.index
             pools[only.index].append(decision.interval)
+            demands[only.index].append(requirement.student_group_size)
             members[only.index].append(key)
             chosen_by[only.index].append((decision, None))
             if only.capacity == 1:
@@ -422,6 +470,7 @@ def add_room_allocation(
                     f"opt_{room_class.index}_{key}",
                 ),
             )
+            demands[room_class.index].append(requirement.student_group_size)
             members[room_class.index].append(key)
             chosen_by[room_class.index].append((decision, literal))
             # A singleton class is a specific room, and other builders may reify
@@ -438,6 +487,22 @@ def add_room_allocation(
         if not pool:
             continue
         entries = list(zip(pool, members[room_class.index]))
+        shared = plan.shared.get(room_class.index)
+        if shared is not None:
+            from app.solver.placement import add_shared_capacity
+
+            plan.shared_capacity[room_class.index] = add_shared_capacity(
+                model,
+                entries=[
+                    (interval, demand, plan.parity.get(key))
+                    for (interval, key), demand in zip(entries, demands[room_class.index])
+                ],
+                shared=shared,
+                assume=assume_shared,
+                name=str(room_class.index),
+                room_id=rooms[room_class.room_indices[0]].id,
+            )
+            continue
         parts = week_parts(entries, lambda entry: plan.parity.get(entry[1]))  # type: ignore[arg-type,return-value]
         if room_class.capacity == 1:
             # Same semantics as a unit cumulative, stronger propagator. One
