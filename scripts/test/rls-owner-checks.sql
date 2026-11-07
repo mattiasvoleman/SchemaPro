@@ -1473,6 +1473,8 @@ ROLLBACK;
 --         refuses a row that names another school's. The guard sees a table's
 --         school under any column named <something>SchoolId when it has no
 --         "schoolId" of its own (RoomLoans).
+--         What a key does when its PARENT is updated is asked of every composite
+--         key that holds a school, not only these: section 388.
 --         What these keys also hold: the policies' SELECT arms ask the school
 --         of the ROW, and the fixtures that once planted a row naming another
 --         school's (to tell an arm asking the row's school from one asking the
@@ -2496,8 +2498,8 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Sections 385-387 on the owner's side: Ett läsårs lektioner tas bort först
--- (20270120090000) (the review of #272).
+-- Sections 385-389 on the owner's side: Ett läsårs lektioner tas bort först
+-- (20270120090000), and the composite keys' ON UPDATE (the review of #272).
 --
 -- A year's removal cascades into its lessons by two routes, and which route runs
 -- first is the order of the keys' triggers by name, which a key dropped and added
@@ -2522,6 +2524,10 @@ ROLLBACK;
 --        writes DRIFT and not PLANERING, another school's administrator and a
 --        teacher (the year stays, the lessons stay), and a year whose removal is
 --        refused (the lessons come back)
+--   388  a composite key that holds a school does not follow its parent when the
+--        parent is updated (ON UPDATE CASCADE): 98 older ones are named, and the
+--        list only gets shorter
+--   389  the guard of 388 over stand-ins, and over the list
 --
 -- These run as the owner and set the role of the API and of PostgREST with the
 -- claims of a signed-in person, because they read the tombstones, which only the
@@ -2862,3 +2868,208 @@ BEGIN
     RAISE EXCEPTION 'lektioner först 387: a removal that was refused took lessons or tombstones with it: %', r;
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 388: a key that holds a school does not follow its parent.
+--
+-- Section 330 asks that a key between two tables that carry a school hold the school: (x, "schoolId") ->
+-- parent ("id", "schoolId"). It did not ask what the key does when the parent is UPDATEd. ON UPDATE CASCADE
+-- carries the child along when a parent's id or school is changed: a parent moved to another school took its
+-- rows with it, without a word (tried on 232 parents in the review of #272: with CASCADE three went, a room
+-- with its room type; with NO ACTION none moved and each refusal named the key). 20270115090000 made the
+-- thirty-eight keys it replaced NO ACTION. The composite keys before them are the ones named below, 98 on the
+-- schema of 20270118090000: 93 older, with the five that came with #273 and #274 after #272. They are named
+-- because they are, not because they are right; no code path updates an id or a school of any parent, and
+-- nothing is carried along that the owner has not asked for. The list only gets shorter: a key that is made
+-- NO ACTION (or removed) is taken off it here, and the section fails until it is. A new key that follows its
+-- parent fails by name.
+--
+-- A key is "one that holds a school" when it has more than one column and one of them is a school column of
+-- its table: "schoolId", or in a table without one, a column named like <something>SchoolId (RoomLoans),
+-- as section 330 reads a table's school. "Follows its parent" is any ON UPDATE but NO ACTION and RESTRICT.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.tk_follows(p_schema oid) RETURNS TABLE (tbl text, conname text, cols text, on_update text)
+LANGUAGE sql AS $$
+  SELECT cl.relname::text, c.conname::text,
+         (SELECT string_agg(a.attname, ',' ORDER BY u.ord)
+            FROM unnest(c.conkey) WITH ORDINALITY u(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum),
+         CASE c.confupdtype WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END
+    FROM pg_constraint c
+    JOIN pg_class cl ON cl.oid = c.conrelid AND cl.relnamespace = p_schema
+    CROSS JOIN LATERAL (SELECT pg_temp.tk_school_cols(c.conrelid) AS cs) s
+   WHERE c.contype = 'f'
+     AND cardinality(c.conkey) > 1
+     AND s.cs IS NOT NULL
+     AND EXISTS (SELECT 1 FROM unnest(c.conkey) k WHERE k = ANY (s.cs))
+     AND c.confupdtype NOT IN ('a', 'r')
+$$;
+
+BEGIN;
+DO $$
+DECLARE
+  exempt constant text[] := ARRAY[
+    'AcademicYearTimplans.AcademicYearTimplans_academicYearId_schoolId_fkey',
+    'AcademicYearTimplans.AcademicYearTimplans_localTimplanId_schoolId_fkey',
+    'AckReceipts.AckReceipts_requestId_schoolId_fkey',  -- #273, after #272
+    'CalendarFeeds.CalendarFeeds_studentId_schoolId_fkey',
+    'CalendarFeeds.CalendarFeeds_userId_schoolId_fkey',
+    'CalendarLunches.CalendarLunches_studentGroupId_schoolId_fkey',
+    'CalendarRasts.CalendarRasts_studentGroupId_schoolId_fkey',
+    'CancellationBatchCredits.CancellationBatchCredits_batchId_schoolId_fkey',
+    'CancellationBatchCredits.CancellationBatchCredits_creditId_schoolId_fkey',
+    'CancellationBatchLessons.CancellationBatchLessons_batchId_schoolId_fkey',
+    'CancellationBatchLessons.CancellationBatchLessons_calendarLessonId_schoolId_fkey',
+    'CancellationBatches.CancellationBatches_academicYearId_schoolId_fkey',
+    'CoverConfirmations.CoverConfirmations_calendarLessonId_schoolId_fkey',
+    'CoverRequestLessons.CoverRequestLessons_calendarLessonId_schoolId_fkey',
+    'DevicePushTokens.DevicePushTokens_userId_schoolId_fkey',
+    'GuardianStudents.GuardianStudents_guardianId_schoolId_fkey',
+    'GuardianStudents.GuardianStudents_studentId_schoolId_fkey',
+    'IntegrationKeyWebhookSecrets.IntegrationKeyWebhookSecrets_keyId_schoolId_fkey',
+    'LeaveDelegationDecisions.LeaveDelegationDecisions_decidedById_schoolId_fkey',
+    'LeaveRequestNotices.LeaveRequestNotices_userId_schoolId_fkey',
+    'LocalTimplanEntries.LocalTimplanEntries_localTimplanId_schoolId_fkey',
+    'LocalTimplanEntries.LocalTimplanEntries_subjectId_schoolId_fkey',
+    'LunchSittings.LunchSittings_academicYearId_schoolId_fkey',
+    'LunchSittings.LunchSittings_studentGroupId_schoolId_fkey',
+    'MasterLessonGroups.MasterLessonGroups_studentGroupId_schoolId_fkey',
+    'MasterLessonStudents.MasterLessonStudents_studentId_schoolId_fkey',
+    'MasterLessons.MasterLessons_academicYearId_schoolId_fkey',
+    'MasterLessons.MasterLessons_coTeacherId_schoolId_fkey',
+    'MasterLessons.MasterLessons_roomId_schoolId_fkey',
+    'MasterLessons.MasterLessons_studentGroupId_schoolId_fkey',
+    'MasterLessons.MasterLessons_subjectId_schoolId_fkey',
+    'MasterLessons.MasterLessons_teacherId_schoolId_fkey',
+    'NotificationOptOuts.NotificationOptOuts_userId_schoolId_fkey',
+    'PersonalDataAccess.PersonalDataAccess_actorId_schoolId_fkey',
+    'PersonalDataAccess.PersonalDataAccess_apiKeyId_schoolId_fkey',
+    'PublicTimetableHidden.PublicTimetableHidden_targetGroupId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableHidden.PublicTimetableHidden_targetRoomId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableHidden.PublicTimetableHidden_targetStudentId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableLinks.PublicTimetableLinks_academicYearId_schoolId_fkey',
+    'PublicTimetableLinks.PublicTimetableLinks_targetGroupId_schoolId_fkey',
+    'PublicTimetableLinks.PublicTimetableLinks_targetRoomId_schoolId_fkey',
+    'PublicTimetableLinks.PublicTimetableLinks_targetStudentId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableLinks.PublicTimetableLinks_targetTeacherId_schoolId_fkey',
+    'PublicationPendingRemovals.PublicationPendingRemovals_academicYearId_schoolId_fkey',
+    'PublicationPendingRemovals.PublicationPendingRemovals_calendarLessonId_schoolId_fkey',
+    'PublishedLessons.PublishedLessons_publicationId_academicYearId_schoolId_fkey',
+    'PublishedLunchSittings.PublishedLunchSittings_publicationId_academicYearId_schoolId_fk',
+    'PushTickets.PushTickets_tokenId_schoolId_fkey',
+    'RetentionDecisions.RetentionDecisions_decidedById_schoolId_fkey',
+    'ScheduleActivities.ScheduleActivities_academicYearId_schoolId_fkey',
+    'ScheduleActivities.ScheduleActivities_batchId_schoolId_fkey',
+    'ScheduleActivities.ScheduleActivities_replacementSubjectId_schoolId_fkey',
+    'ScheduleActivityLessons.ScheduleActivityLessons_activityId_schoolId_fkey',
+    'ScheduleActivityLessons.ScheduleActivityLessons_calendarLessonId_schoolId_fkey',
+    'ScheduleActivityTeachers.ScheduleActivityTeachers_activityId_schoolId_fkey',
+    'ScheduleCandidateRuns.ScheduleCandidateRuns_academicYearId_schoolId_fkey',
+    'ScheduleCandidates.ScheduleCandidates_runId_schoolId_fkey',
+    'SchoolBreaks.SchoolBreaks_academicYearId_schoolId_fkey',
+    'Ss12000DutyLinks.Ss12000DutyLinks_academicYearId_schoolId_fkey',
+    'Ss12000DutyLinks.Ss12000DutyLinks_userId_schoolId_fkey',
+    'Ss12000SourceSecrets.Ss12000SourceSecrets_sourceId_schoolId_fkey',
+    'Ss12000SubscriptionDeliveries.Ss12000SubscriptionDeliveries_subscription_fkey',
+    'Ss12000Subscriptions.Ss12000Subscriptions_keyId_schoolId_fkey',
+    'Ss12000SyncChanges.Ss12000SyncChanges_runId_schoolId_fkey',
+    'Ss12000SyncRuns.Ss12000SyncRuns_sourceId_schoolId_fkey',
+    'StudentEnrollments.StudentEnrollments_academicYearId_schoolId_fkey',
+    'StudentEnrollments.StudentEnrollments_studentId_schoolId_fkey',
+    'SubstituteAvailabilities.SubstituteAvailabilities_member_fkey',
+    'SubstitutePoolMembers.SubstitutePoolMembers_userId_schoolId_fkey',
+    'TeacherAbsenceCovers.TeacherAbsenceCovers_calendarLessonId_schoolId_fkey',
+    'TeacherAbsences.TeacherAbsences_userId_schoolId_fkey',
+    'TeacherDuties.TeacherDuties_academicYearId_schoolId_fkey',
+    'TeacherDuties.TeacherDuties_userId_schoolId_fkey',
+    'TeacherEmploymentLogs.TeacherEmploymentLogs_academicYearId_schoolId_fkey',
+    'TeacherEmploymentLogs.TeacherEmploymentLogs_userId_schoolId_fkey',
+    'TeacherEmploymentPeriods.TeacherEmploymentPeriods_employment_fkey',
+    'TeacherEmployments.TeacherEmployments_academicYearId_schoolId_fkey',
+    'TeacherEmployments.TeacherEmployments_userId_schoolId_fkey',
+    'TeacherPublicLabels.TeacherPublicLabels_userId_schoolId_fkey',
+    'TeacherSubjectQualifications.TeacherSubjectQualifications_subjectId_schoolId_fkey',
+    'TeacherSubjectQualifications.TeacherSubjectQualifications_userId_schoolId_fkey',
+    'TeacherWorkRules.TeacherWorkRules_userId_schoolId_fkey',
+    'TeachingBlocks.TeachingBlocks_academicYearId_schoolId_fkey',
+    'TeachingRequirementShares.TeachingRequirementShares_requirementId_schoolId_fkey',
+    'TeachingRequirementShares.TeachingRequirementShares_teacherId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_academicYearId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_coTeacherId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_studentGroupId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_subjectId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_teacherId_schoolId_fkey',
+    'TimetablePublications.TimetablePublications_academicYearId_schoolId_fkey',
+    'TimplanCredits.TimplanCredits_academicYearId_schoolId_fkey',
+    'TimplanCredits.TimplanCredits_studentGroupId_schoolId_fkey',
+    'TimplanCredits.TimplanCredits_subjectId_schoolId_fkey',
+    'TimplanStatementPublications.TimplanStatementPublications_academicYearId_schoolId_fkey',
+    'TimplanStatements.TimplanStatements_publicationId_academicYearId_asOfDate_schoolI',
+    'TimplanStatements.TimplanStatements_studentId_schoolId_fkey',
+    'UserRoleChanges.UserRoleChanges_userId_schoolId_fkey'];
+  found text[];
+  extra text[];
+  gone text[];
+  dup text[];
+BEGIN
+  SELECT array_agg(f.tbl || '.' || f.conname ORDER BY f.tbl || '.' || f.conname COLLATE "C") INTO found FROM pg_temp.tk_follows('public'::regnamespace) f;
+  SELECT array_agg(f ORDER BY f COLLATE "C") INTO extra FROM unnest(found) f WHERE f <> ALL (exempt);
+  SELECT array_agg(e ORDER BY e COLLATE "C") INTO gone FROM unnest(exempt) e WHERE e <> ALL (coalesce(found, '{}'));
+  SELECT array_agg(e ORDER BY e COLLATE "C") INTO dup FROM (SELECT e FROM unnest(exempt) e GROUP BY e HAVING count(*) > 1) d;
+  IF extra IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 388: a key that holds a school follows its parent when the parent is updated (ON UPDATE is not NO ACTION): % (make it ON UPDATE NO ACTION, as 20270115090000 did for 38 others: a parent moved to another school would carry its rows along without a word)', extra;
+  END IF;
+  IF gone IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 388: a key this list names no longer follows its parent (it is gone, or it is NO ACTION now): % (take it off the list)', gone;
+  END IF;
+  IF dup IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 388: named twice in the list: %', dup;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 389: the guard's predicate, over stand-ins.
+--
+-- The keys that follow their parent are reported, those that do not are not: NO ACTION and RESTRICT, a key of
+-- one column, a key that holds nothing of the child's school, and a table without a school. A guard that let
+-- one of the first through, or reported one of the last, fails here.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  got text[];
+BEGIN
+  CREATE TEMP TABLE tk_up_parent (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, other uuid NOT NULL, UNIQUE (id, "schoolId"), UNIQUE (id, other));
+  -- Do not follow.
+  CREATE TEMP TABLE tk_up_noaction (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                    FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE NO ACTION);
+  CREATE TEMP TABLE tk_up_default (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                   FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId"));
+  CREATE TEMP TABLE tk_up_restrict (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                    FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE RESTRICT);
+  CREATE TEMP TABLE tk_up_single (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid REFERENCES tk_up_parent (id) ON UPDATE CASCADE);
+  -- A key that holds nothing of the child's school (the parent's school is held by a column that is not the child's).
+  CREATE TEMP TABLE tk_up_other (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid, y uuid,
+                                 FOREIGN KEY (x, y) REFERENCES tk_up_parent (id, other) ON UPDATE CASCADE);
+  -- Tables with no school of their own.
+  CREATE TEMP TABLE tk_up_bare_parent (id uuid PRIMARY KEY, y uuid NOT NULL, UNIQUE (id, y));
+  CREATE TEMP TABLE tk_up_bare (id uuid PRIMARY KEY, x uuid, y uuid, FOREIGN KEY (x, y) REFERENCES tk_up_bare_parent (id, y) ON UPDATE CASCADE);
+  -- Follow.
+  CREATE TEMP TABLE tk_up_cascade (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                   FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE CASCADE);
+  CREATE TEMP TABLE tk_up_setnull (id uuid PRIMARY KEY, "schoolId" uuid, x uuid,
+                                   FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE SET NULL);
+  -- A table whose school is not called "schoolId" (RoomLoans: ownerSchoolId, borrowerSchoolId).
+  CREATE TEMP TABLE tk_up_loan_owner (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                      FOREIGN KEY (x, "ownerSchoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE CASCADE);
+  CREATE TEMP TABLE tk_up_loan_noaction (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                         FOREIGN KEY (x, "borrowerSchoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE NO ACTION);
+  SELECT array_agg(f.tbl ORDER BY f.tbl COLLATE "C") INTO got FROM pg_temp.tk_follows(pg_my_temp_schema()) f;
+  IF got IS DISTINCT FROM ARRAY['tk_up_cascade', 'tk_up_loan_owner', 'tk_up_setnull'] THEN
+    RAISE EXCEPTION 'tenant keys 389: the guard reported % over the stand-ins, not the keys that follow their parent (tk_up_cascade, tk_up_loan_owner, tk_up_setnull)', got;
+  END IF;
+END $$;
+ROLLBACK;

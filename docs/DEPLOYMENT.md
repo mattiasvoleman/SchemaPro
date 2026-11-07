@@ -1878,6 +1878,14 @@ Walk the full product loop once, in order:
   together with rolling back the API, or the API before it is the one that
   deletes the lessons itself. What it changes: removing a year goes back to the
   keys' order and files the extra tombstones; nothing is lost.
+  **The composite keys' ON UPDATE:** the same release adds RLS section 388,
+  which fails the next composite key that holds a school and follows its parent
+  when the parent is updated (`ON UPDATE CASCADE`; make it `NO ACTION`, as
+  20270115090000 did for 38). 98 older ones are named in the section, and the
+  list only gets shorter. No migration changes any of them: moving a parent to
+  another school is not something any code path does, and the swap would take
+  ACCESS EXCLUSIVE on `Users`, `StudentGroups` and the other parents together.
+
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
