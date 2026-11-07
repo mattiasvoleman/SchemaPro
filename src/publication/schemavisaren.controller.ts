@@ -1,4 +1,4 @@
-import { Controller, Get, Header, HttpException, HttpStatus, NotFoundException, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Header, NotFoundException, Param, Query, UseGuards } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Prisma } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -10,6 +10,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { tokenHashOf, viewerTokenOf } from './public-token';
 import { isViewerDate, UUID } from './public-timetable.controller';
+import { StaffViewerThrottlerGuard } from './staff-viewer-throttler.guard';
 import { ViewerMissLimiter } from './viewer-miss-limiter';
 
 /**
@@ -31,11 +32,11 @@ import { ViewerMissLimiter } from './viewer-miss-limiter';
  * as it does for the public route (redactShareToken).
  */
 @Controller('api/v1/schemavisaren')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, StaffViewerThrottlerGuard)
 @Roles(Role.TEACHER, Role.SCHOOL_ADMIN)
 // The global limit keys on the caller's address, and these asks come from the web server: every teacher
-// reading the viewer would share one bucket. A person who asks for what does not exist is limited by
-// ViewerMissLimiter, per person.
+// reading the viewer would share one bucket. StaffViewerThrottlerGuard limits per person and per link
+// instead, and a person who asks for what does not exist is refused for a while (ViewerMissLimiter).
 @SkipThrottle()
 export class SchemavisarenStaffController {
   constructor(
@@ -53,11 +54,9 @@ export class SchemavisarenStaffController {
     @Query('date') date: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<unknown> {
-    const who = `user:${user.userId ?? user.authId}`;
-    if (this.limiter.spent(who)) throw new HttpException('Too many requests', HttpStatus.TOO_MANY_REQUESTS);
     const document = await this.read(raw, target, date, user);
     if (document === null) {
-      await this.limiter.miss(who);
+      await this.limiter.miss(`user:${user.userId ?? user.authId}`);
       throw new NotFoundException('Schemat finns inte.');
     }
     return document;
@@ -70,7 +69,9 @@ export class SchemavisarenStaffController {
     if (date !== undefined && (typeof date !== 'string' || !isViewerDate(date))) return null;
     const hash = tokenHashOf(token);
     const rows = await this.prisma.withRls(user, async (tx) => {
-      // As the public door: a short statement that is not worth compiling (PrismaService.withPublicViewer).
+      // As the public door: two seconds at most, and a short statement that is not worth compiling
+      // (PrismaService.withPublicViewer). A signed-in person is not let hold a connection longer than a visitor.
+      await tx.$executeRaw`SET LOCAL statement_timeout = '2s'`;
       await tx.$executeRaw`SET LOCAL jit = off`;
       return tx.$queryRaw<{ doc: unknown }[]>(
         Prisma.sql`SELECT app.public_timetable_staff(${hash}, ${target ?? null}::uuid, ${date ?? null}::date) AS "doc"`,

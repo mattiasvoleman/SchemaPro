@@ -13,6 +13,7 @@ import {
   canGoBack,
   type PublicIndex,
   type PublicWeek,
+  type ViewerOutcome,
   type ViewerQuery,
 } from "@/lib/public-timetable";
 import { readViewer } from "./read-viewer";
@@ -41,11 +42,13 @@ import { readViewerAsStaff } from "./read-as-staff";
  * is one answer: an unknown address, a kind that is off, a schedule that is
  * hidden or protected, a viewer that is for staff.
  *
- * THAT LAST ONE has a second door. When the public answer is the 404 and the
- * visitor already carries a session, the page asks once more as that person
- * (./read-as-staff.ts) and shows what the signed-in twin answers; only when
- * that is the 404 too is the page "not found". Nobody without a session is
- * asked twice, and nobody is told which of the reasons it was.
+ * THAT LAST ONE has a second door, asked first. A visitor who already carries
+ * a session is asked as that person (./read-as-staff.ts) before the public
+ * route, so that no read by staff is ever a miss against the school's
+ * address; only when the signed-in twin has nothing to show is the public
+ * route asked, and only when that is the 404 too is the page "not found".
+ * Nobody without a session is asked twice, and nobody is told which of the
+ * reasons it was.
  *
  * THE ADDRESS may be written any way a person writes a code: the page reads
  * it (lib/viewer-token.ts) and links to the one spelling.
@@ -73,8 +76,15 @@ export default async function PublicTimetablePage({
   if (address === null) notFound();
 
   const query = viewerQueryOf({ target: search.target, date: search.date });
-  let outcome = await readViewer(address, query);
-  if (outcome.kind === "notFound") outcome = (await readViewerAsStaff(address, query)) ?? outcome;
+  // A visitor who holds a session is asked as that person FIRST. The signed-in route answers an open
+  // viewer too, and a viewer for staff only it can answer; a visitor asked first would cost the school's
+  // address a miss for every read by a teacher (the public route counts a not-found against the address),
+  // and thirty reads in a minute would shut the viewer for everyone behind it. Only when the signed-in
+  // route has nothing to show, or the visitor has no session, is the public route asked.
+  const asStaff = await readViewerAsStaff(address, query);
+  let outcome: ViewerOutcome = asStaff?.kind === "document" ? asStaff : await readViewer(address, query);
+  // Said in words rather than as "nothing there": the signed-in route could not be reached.
+  if (outcome.kind === "notFound" && asStaff?.kind === "unavailable") outcome = asStaff;
   if (outcome.kind === "notFound") notFound();
 
   return (

@@ -100,7 +100,8 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
     rule: 'NEVER_SHOWN',
     why:
       'The print set: teachers by signature or name, without a teacher hidden from public timetables (TeacherPublicLabels) and without a teacher with a protected identity, ' +
-      'in the sheets as well as the set (the week builder is Schemavisaren\'s, app.timetable_week_days); never a pupil. Uncounted: the sheet of the school\'s teachers is the school\'s own.',
+      'and without a class or room the school hides from the viewer (PublicTimetableHidden), named neither as a sheet nor on another sheet ' +
+      '(the week builder is Schemavisaren\'s, app.timetable_week_days); never a pupil. Uncounted: the sheet of the school\'s teachers is the school\'s own.',
   },
   'GET /api/v1/lesson-logs/class-book': {
     rule: 'NAMES_STAFF',

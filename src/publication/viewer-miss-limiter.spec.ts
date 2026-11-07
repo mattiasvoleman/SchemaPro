@@ -1,6 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { MISSES, ViewerMissLimiter } from './viewer-miss-limiter';
+import { clientOfAddress, MISSES, PER_PERSON, ViewerMissLimiter } from './viewer-miss-limiter';
 
 const KEY = 'k'.repeat(32);
 const limiter = (...given: [] | [undefined]) =>
@@ -64,3 +64,56 @@ describe('ViewerMissLimiter', () => {
     });
   });
 });
+
+describe('clientOfAddress (one client is what one subscriber is given)', () => {
+  it.each([
+    ['203.0.113.7', '203.0.113.7'],
+    ['2001:db8:1:2:3:4:5:6', '2001:db8:1:2::/64'],
+    ['2001:db8:1:2:ffff:ffff:ffff:ffff', '2001:db8:1:2::/64'],
+    ['2001:DB8:0001:0002::1', '2001:db8:1:2::/64'],
+    ['2001:db8::1', '2001:db8:0:0::/64'],
+    ['::1', '0:0:0:0::/64'],
+    ['fe80::', 'fe80:0:0:0::/64'],
+    ['::ffff:198.51.100.9', '198.51.100.9'],
+    ['unknown', 'unknown'],
+  ])('reads %s as %s', (address, client) => {
+    expect(clientOfAddress(address)).toBe(client);
+  });
+
+  it('is one client for a program that rolls through its own /64', () => {
+    const rolled = new Set(Array.from({ length: 500 }, (_, i) => clientOfAddress(`2001:db8:1:2:${i.toString(16)}:${(i * 7).toString(16)}::${i + 1}`)));
+    expect(rolled).toEqual(new Set(['2001:db8:1:2::/64']));
+  });
+
+  it('is two clients for two /64s', () => {
+    expect(clientOfAddress('2001:db8:1:2::1')).not.toBe(clientOfAddress('2001:db8:1:3::1'));
+  });
+});
+
+describe('ViewerMissLimiter without a proxy key', () => {
+  const noKey = () => limiter(undefined);
+
+  it('keeps no count of misses by address: every visitor then arrives as the web server, and one program would shut the viewer for all', async () => {
+    const miss = noKey();
+    for (let i = 0; i < MISSES.limit * 3; i++) await miss.miss('ip:10.0.0.1');
+    expect(miss.spent('ip:10.0.0.1')).toBe(false);
+    expect(miss.keysHeld).toBe(0);
+  });
+
+  it('counts a signed-in person all the same: they are their own client', async () => {
+    const miss = noKey();
+    for (let i = 0; i <= MISSES.limit; i++) await miss.miss('user:a');
+    expect(miss.spent('user:a')).toBe(true);
+    expect(miss.spent('user:b')).toBe(false);
+  });
+});
+
+describe('ViewerMissLimiter hits (the staff route)', () => {
+  it('lets a person read up to the limit and tells how long to wait after it', async () => {
+    const miss = limiter();
+    for (let i = 0; i < PER_PERSON.limit; i++) expect(await miss.charge('user:a', PER_PERSON)).toBe(0);
+    expect(await miss.charge('user:a', PER_PERSON)).toBeGreaterThan(0);
+    expect(await miss.charge('user:b', PER_PERSON)).toBe(0);
+  });
+});
+

@@ -44501,6 +44501,47 @@ BEGIN
   EXCEPTION WHEN check_violation THEN NULL;
   END;
 
+  -- The old switches still switch the viewer off: a write that names no mode (the old admin page, an API rolled back to) is carried to the modes.
+  DELETE FROM "PublicationSettings" WHERE "schoolId" = school;
+  INSERT INTO "PublicationSettings" ("schoolId", "publicTeacherDisplay") VALUES (school, 'SIGNATURE');
+  UPDATE "PublicationSettings" SET "publicViewerEnabled" = true, "publicGroups" = true, "publicRooms" = true, "publicTeachers" = true WHERE "schoolId" = school;
+  SELECT count(*) INTO n FROM "PublicationSettings"
+   WHERE "schoolId" = school AND "viewerAudience" = 'EVERYONE' AND "viewerClassMode" = 'LIST' AND "viewerGroupMode" = 'LIST'
+     AND "viewerRoomMode" = 'LIST' AND "viewerTeacherMode" = 'CODE' AND "viewerStudentMode" = 'OFF';
+  IF n <> 1 THEN RAISE EXCEPTION 'lägen: the old page switching the viewer on did not open it as it was (everyone, lists, teachers by code)'; END IF;
+  UPDATE "PublicationSettings" SET "publicRooms" = false WHERE "schoolId" = school;
+  SELECT count(*) INTO n FROM "PublicationSettings" WHERE "schoolId" = school AND "viewerRoomMode" = 'OFF' AND "viewerClassMode" = 'LIST' AND "viewerTeacherMode" = 'CODE';
+  IF n <> 1 THEN RAISE EXCEPTION 'lägen: the old rooms switch off did not turn rooms off alone'; END IF;
+  UPDATE "PublicationSettings" SET "viewerStudentMode" = 'CODE' WHERE "schoolId" = school;
+  UPDATE "PublicationSettings" SET "publicViewerEnabled" = false WHERE "schoolId" = school;
+  SELECT count(*) INTO n FROM "PublicationSettings"
+   WHERE "schoolId" = school AND "viewerClassMode" = 'OFF' AND "viewerGroupMode" = 'OFF' AND "viewerRoomMode" = 'OFF'
+     AND "viewerTeacherMode" = 'OFF' AND "viewerStudentMode" = 'OFF';
+  IF n <> 1 THEN RAISE EXCEPTION 'lägen: the old "stäng av visaren" left a kind open (a pupil''s code too)'; END IF;
+  -- Back on: a viewer that was off opens to everyone again, and what was switched off stays off.
+  UPDATE "PublicationSettings" SET "viewerAudience" = 'STAFF' WHERE "schoolId" = school;
+  UPDATE "PublicationSettings" SET "publicViewerEnabled" = true WHERE "schoolId" = school;
+  SELECT count(*) INTO n FROM "PublicationSettings"
+   WHERE "schoolId" = school AND "viewerAudience" = 'EVERYONE' AND "viewerClassMode" = 'LIST' AND "viewerRoomMode" = 'OFF' AND "viewerStudentMode" = 'OFF';
+  IF n <> 1 THEN RAISE EXCEPTION 'lägen: the old page switching the viewer back on did not follow the switches left on'; END IF;
+  -- A write that names a mode owns the modes, whatever the switches say.
+  UPDATE "PublicationSettings" SET "viewerClassMode" = 'CODE', "publicViewerEnabled" = false WHERE "schoolId" = school;
+  SELECT count(*) INTO n FROM "PublicationSettings" WHERE "schoolId" = school AND "viewerClassMode" = 'CODE' AND "viewerGroupMode" = 'LIST';
+  IF n <> 1 THEN RAISE EXCEPTION 'lägen: a write that named a mode had its modes rewritten from the switches'; END IF;
+  -- Teachers with no name to show stay unshown: the old switch must not trip the CHECK.
+  UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'NONE', "viewerTeacherMode" = 'OFF', "publicTeachers" = false, "publicViewerEnabled" = true WHERE "schoolId" = school;
+  UPDATE "PublicationSettings" SET "publicTeachers" = true WHERE "schoolId" = school;
+  SELECT count(*) INTO n FROM "PublicationSettings" WHERE "schoolId" = school AND "viewerTeacherMode" = 'OFF';
+  IF n <> 1 THEN RAISE EXCEPTION 'lägen: the old teachers switch showed teachers who have no name to show'; END IF;
+  -- An insert by the old API: the viewer on, no mode named.
+  DELETE FROM "PublicationSettings" WHERE "schoolId" = school;
+  INSERT INTO "PublicationSettings" ("schoolId", "publicViewerEnabled", "publicGroups") VALUES (school, true, true);
+  SELECT count(*) INTO n FROM "PublicationSettings"
+   WHERE "schoolId" = school AND "viewerAudience" = 'EVERYONE' AND "viewerClassMode" = 'LIST' AND "viewerGroupMode" = 'LIST' AND "viewerRoomMode" = 'OFF' AND "viewerTeacherMode" = 'OFF';
+  IF n <> 1 THEN RAISE EXCEPTION 'lägen: a row the old API inserted with the viewer on was not opened as it was'; END IF;
+  -- The state the checks below expect.
+  UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'SIGNATURE', "viewerTeacherMode" = 'LIST', "viewerStudentMode" = 'CODE' WHERE "schoolId" = school;
+
   -- The link's shapes.
   BEGIN
     INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash") VALUES (school, y, 'STUDENT', repeat('1', 64));
@@ -44698,7 +44739,8 @@ DECLARE
     'app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")',
     'app.calendar_feed_teacher_lessons(uuid, uuid, date, date, text)',
     'app.family_lesson_labels(uuid, "TeacherDisplay", uuid[])',
-    'app.family_lesson_labels(uuid, "TeacherDisplay", uuid[], boolean)'];
+    'app.family_lesson_labels(uuid, "TeacherDisplay", uuid[], boolean)',
+    'app.publication_settings_legacy_switches()'];
 BEGIN
   FOREACH fn IN ARRAY doors LOOP
     IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'dörrar: % is not SECURITY DEFINER', fn; END IF;
@@ -44755,6 +44797,10 @@ BEGIN
      OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")'::regprocedure) NOT LIKE '%, true) st%'
      OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.family_lesson_labels(uuid, "TeacherDisplay", uuid[])'::regprocedure) NOT LIKE '%, false)%' THEN
     RAISE EXCEPTION 'dörrar: a calendar feed names a protected teacher, or the family''s own week no longer does';
+  END IF;
+  -- A class, group or room the school hides is not named on another schedule either: the week's builder drops it where the documents are made.
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.timetable_week_days(uuid, "PublicScopeKind", uuid, date, text, "TeacherDisplay", boolean, integer)'::regprocedure) NOT LIKE '%PublicTimetableHidden%' THEN
+    RAISE EXCEPTION 'dörrar: the week''s builder names a hidden class, group or room on other pages';
   END IF;
 END $$;
 
@@ -44943,8 +44989,17 @@ BEGIN
      OR EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('tidx') -> 'targets') t WHERE (t ->> 'id')::uuid IN (SELECT id FROM "Users" WHERE "schoolId" = school)) THEN
     RAISE EXCEPTION 'lägen: a list prints an id of the database';
   END IF;
-  IF pg_temp.kv('gidx', cls) IS NOT NULL OR pg_temp.kv('gidx', tg) IS NOT NULL OR pg_temp.kv('ridx', room) IS NOT NULL OR pg_temp.kv('tidx', t1) IS NOT NULL THEN
-    RAISE EXCEPTION 'lägen: a list answers for an id of the database';
+  -- An old bookmark (/v/<index>?target=<id of the database>) still opens what the list itself shows, and the same document its handle gives;
+  -- nothing the list does not show, and nothing of another kind.
+  IF pg_temp.kv('gidx', cls) IS DISTINCT FROM pg_temp.kv('gidx', h_cls) OR pg_temp.kv('gidx', cls) IS NULL
+     OR pg_temp.kv('gidx', tg) IS DISTINCT FROM pg_temp.kv('gidx', h_tg) OR pg_temp.kv('gidx', tg) IS NULL
+     OR pg_temp.kv('ridx', room) IS DISTINCT FROM pg_temp.kv('ridx', h_room) OR pg_temp.kv('ridx', room) IS NULL
+     OR pg_temp.kv('tidx', t1) IS DISTINCT FROM pg_temp.kv('tidx', h_t1) OR pg_temp.kv('tidx', t1) IS NULL THEN
+    RAISE EXCEPTION 'lägen: an old bookmark to a listed entry no longer opens, or opens another document than the new link';
+  END IF;
+  IF pg_temp.kv('gidx', sm) IS NOT NULL OR pg_temp.kv('gidx', room) IS NOT NULL OR pg_temp.kv('ridx', cls) IS NOT NULL OR pg_temp.kv('tidx', cls) IS NOT NULL
+     OR pg_temp.kv('gidx', p1) IS NOT NULL OR pg_temp.kv('ridx', p1) IS NOT NULL OR pg_temp.kv('tidx', p1) IS NOT NULL OR pg_temp.kv('gidx', t1) IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: a list answers for an id of the database that it does not itself show';
   END IF;
   -- Another list link names the same class otherwise, and its name is no good here.
   h_cls2 := pg_temp.kt('gidx2', 'rls377 7K');
@@ -45047,6 +45102,10 @@ BEGIN
 
   -- What the school hides is found by no link and no list, and the answer is the answer for a link that is not there.
   PERFORM pg_temp.kset('"viewerAudience" = ''EVERYONE''');
+  -- A teacher who teaches the hidden group and uses the hidden room: the control that her page names both, shown.
+  IF pg_temp.kv('tidx', h_t2)::text NOT LIKE '%rls377 Ma%' OR pg_temp.kv('tidx', h_t2)::text NOT LIKE '%rls377 sal%' THEN
+    RAISE EXCEPTION 'lägen: a teacher''s page does not name her group and room (the control of the hidden-name check)';
+  END IF;
   INSERT INTO "PublicTimetableHidden" ("schoolId", "targetGroupId") VALUES (school, cls), (school, tg);
   INSERT INTO "PublicTimetableHidden" ("schoolId", "targetRoomId") VALUES (school, room);
   INSERT INTO "PublicTimetableHidden" ("schoolId", "targetStudentId") VALUES (school, p1);
@@ -45057,11 +45116,26 @@ BEGIN
   IF pg_temp.kv('gidx', h_cls) IS NOT NULL OR pg_temp.kv('gidx', h_tg) IS NOT NULL OR pg_temp.kv('ridx', h_room) IS NOT NULL OR pg_temp.kv('tidx', h_t1) IS NOT NULL THEN
     RAISE EXCEPTION 'lägen: a hidden target is found through a list';
   END IF;
+  IF pg_temp.kv('gidx', cls) IS NOT NULL OR pg_temp.kv('gidx', tg) IS NOT NULL OR pg_temp.kv('ridx', room) IS NOT NULL OR pg_temp.kv('tidx', t1) IS NOT NULL THEN
+    RAISE EXCEPTION 'lägen: a hidden target is found through a list by the id of the database';
+  END IF;
   IF pg_temp.kv('gidx') IS NULL OR pg_temp.kv('gidx') -> 'targets' <> '[]'::jsonb THEN
     RAISE EXCEPTION 'lägen: the class and group list holds % with every class and group hidden (it is empty, not gone)', pg_temp.kv('gidx') -> 'targets';
   END IF;
   IF EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('ridx') -> 'targets') t WHERE t ->> 'label' = 'rls377 sal') THEN RAISE EXCEPTION 'lägen: a hidden room is listed'; END IF;
   IF EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.kv('tidx') -> 'targets') t WHERE t ->> 'label' = 'KXA') THEN RAISE EXCEPTION 'lägen: a hidden teacher is listed'; END IF;
+  -- What is hidden is not named on another schedule either: the teacher's page keeps her lessons and drops the names of the group and the room.
+  IF pg_temp.kv('tidx', h_t2) IS NULL OR pg_temp.kv('tidx', h_t2)::text LIKE '%rls377 Ma%' OR pg_temp.kv('tidx', h_t2)::text LIKE '%rls377 sal%'
+     OR pg_temp.kv('tidx', h_t2)::text LIKE '%rls377 7K%' THEN
+    RAISE EXCEPTION 'lägen: a hidden class, group or room is named on a teacher''s page';
+  END IF;
+  -- The principal's print set follows the same hiding: no sheet for a hidden class or room, and none names them on another sheet.
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(app.print_timetables('GROUP', current_setting('app.k377_week')::date, 'SIGNATURE', true) -> 'sheets') x WHERE x ->> 'title' = 'rls377 7K')
+     OR EXISTS (SELECT 1 FROM jsonb_array_elements(app.print_timetables('ROOM', current_setting('app.k377_week')::date, 'SIGNATURE', true) -> 'sheets') x WHERE x ->> 'title' = 'rls377 sal')
+     OR app.print_timetables('TEACHER', current_setting('app.k377_week')::date, 'SIGNATURE', true)::text LIKE '%rls377 sal%'
+     OR app.print_timetables('TEACHER', current_setting('app.k377_week')::date, 'SIGNATURE', true)::text LIKE '%rls377 Ma%' THEN
+    RAISE EXCEPTION 'lägen: the print set names a class, group or room the school hides';
+  END IF;
   -- Hidden and not there read alike: a link that does not exist, a target that does not exist.
   IF pg_temp.kv('cls') IS DISTINCT FROM (SELECT app.public_timetable(repeat('0', 64), NULL, current_setting('app.k377_week')::date))
      OR pg_temp.kv('gidx', h_cls) IS DISTINCT FROM pg_temp.kv('gidx', gen_random_uuid()) THEN

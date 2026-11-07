@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import { readViewerResponse, viewerFetchOf, type ViewerOutcome, type ViewerQuery } from "@/lib/public-timetable";
+import { readViewerResponse, trustedHopsOf, viewerFetchOf, type ViewerOutcome, type ViewerQuery } from "@/lib/public-timetable";
 
 /**
  * The viewer's document as the gateway answers it, asked on the web server
@@ -11,7 +11,14 @@ import { readViewerResponse, viewerFetchOf, type ViewerOutcome, type ViewerQuery
  */
 export async function readViewer(token: string, query: ViewerQuery): Promise<ViewerOutcome> {
   const base = process.env.PUBLIC_VIEWER_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
-  const request = viewerFetchOf(base, token, query, (await headers()).get("x-forwarded-for"), process.env.PUBLIC_VIEWER_PROXY_KEY);
+  const request = viewerFetchOf(
+    base,
+    token,
+    query,
+    (await headers()).get("x-forwarded-for"),
+    process.env.PUBLIC_VIEWER_PROXY_KEY,
+    trustedHopsOf(process.env.PUBLIC_VIEWER_TRUSTED_HOPS),
+  );
   try {
     return await readViewerResponse(await fetch(request.url, { cache: "no-store", headers: request.headers }));
   } catch {

@@ -262,11 +262,9 @@ export class PublicLinksService {
     await this.prisma.withRls(user, async (tx) => {
       if (hidden) {
         // A pupil, group or room of another school is no key of this one's (composite foreign key): 23503, an unknown id.
-        await tx.publicTimetableHidden.upsert({
-          where: { [column]: id } as never,
-          create: { schoolId, [column]: id },
-          update: {},
-        });
+        // Hiding what is hidden already is a no-op: INSERT … ON CONFLICT DO NOTHING, which the API role may do
+        // (it holds no UPDATE on the table, so an upsert with an empty update would fail the second time).
+        await tx.publicTimetableHidden.createMany({ data: [{ schoolId, [column]: id }], skipDuplicates: true });
       } else {
         await tx.publicTimetableHidden.deleteMany({ where: { [column]: id } });
       }

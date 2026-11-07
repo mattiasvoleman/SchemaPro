@@ -9609,10 +9609,12 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
     await check('(pub-e) an index lists classes and big enough groups only; a small group and a hidden teacher cannot be linked', async () => {
       const doc = (await view(index.token)) as { targets: Array<{ id: string; label: string }> };
       assert.deepEqual(doc.targets.map((target) => target.label), [`${MARKER} 7A`]);
-      // A list names its entries by its own handle: that opens the class, and the database's id of it opens nothing (20270118090000).
+      // A list names its entries by its own handle, and the handle opens the class. An old bookmark with the database's id of it still opens what
+      // the list itself shows, the very document the handle gives, and nothing the list does not show (20270118090000).
       assert.ok(await view(index.token, doc.targets[0]!.id));
       assert.notEqual(doc.targets[0]!.id, school.class7a);
-      assert.equal(await view(index.token, school.class7a), null);
+      assert.deepEqual(await view(index.token, school.class7a), await view(index.token, doc.targets[0]!.id));
+      assert.ok(await view(index.token, school.class7a));
       assert.equal(await view(index.token, small.id), null);
       await assert.rejects(
         links.create({ academicYearId: school.yearId, kind: 'GROUP', targetId: small.id }, school.admin),

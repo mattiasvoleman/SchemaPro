@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { layoutDay } from "@/lib/day-lanes";
 import {
   clientIpOf,
+  trustedHopsOf,
   isIndex,
   placement,
   readStaffViewerResponse,
@@ -29,6 +30,26 @@ describe("the viewer's request to the gateway", () => {
     expect(clientIpOf("")).toBeNull();
     expect(clientIpOf(null)).toBeNull();
     expect(clientIpOf(`1.1.1.1, ${"x".repeat(65)}`)).toBeNull();
+  });
+
+  it("takes the visitor's own entry behind proxies that add their own address, as many as the deployment says", () => {
+    // A CDN in front of the platform's edge: 1.1.1.1 the browser wrote, then the visitor, then the platform's edge, then the CDN.
+    const chain = "1.1.1.1, 198.51.100.4, 203.0.113.9, 192.0.2.77";
+    expect(clientIpOf(chain)).toBe("192.0.2.77");
+    expect(clientIpOf(chain, 1)).toBe("203.0.113.9");
+    expect(clientIpOf(chain, 2)).toBe("198.51.100.4");
+    // Not that many entries: nobody, rather than a proxy's address for everyone.
+    expect(clientIpOf("203.0.113.9", 1)).toBeNull();
+    expect(clientIpOf(chain, -3)).toBe("192.0.2.77");
+    expect(viewerFetchOf("http://api/", TOKEN, { target: null, date: null }, chain, "k".repeat(40), 2).headers["X-Viewer-Client-Ip"]).toBe("198.51.100.4");
+  });
+
+  it("reads PUBLIC_VIEWER_TRUSTED_HOPS as a whole number from 0 to 5 and anything else as none", () => {
+    expect(trustedHopsOf(undefined)).toBe(0);
+    expect(trustedHopsOf("")).toBe(0);
+    expect(trustedHopsOf("2")).toBe(2);
+    expect(trustedHopsOf("5")).toBe(5);
+    for (const bad of ["6", "-1", "1.5", "two", "NaN", "1e3"]) expect(trustedHopsOf(bad)).toBe(0);
   });
 
   it("sends the address only beside the proxy key, and neither without both", () => {

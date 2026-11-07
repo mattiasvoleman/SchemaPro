@@ -253,16 +253,18 @@ maybe('Schemavisarens lägen: the open routes as every caller, in two schools (a
     const classList = (await viewer(codes['classes']!.token).expect(200)).body as { kind: string; targets: { id: string; label: string }[] };
     expect(classList.kind).toBe('GROUP');
     expect(classList.targets.map((target) => target.label)).toEqual(['7K']);
-    // A list names its entries by its own handle, never by the database's id: the handle opens the class, the id opens nothing.
+    // A list names its entries by its own handle and prints no id of the database's. An old bookmark with the database's id still opens what the
+    // list shows (the very page the handle gives), and nothing the list does not show: the group's kind is a code here, so the list holds no group.
     expect(JSON.stringify(classList)).not.toContain(a.cls);
     handles['cls'] = classList.targets[0]!.id;
-    await viewer(codes['classes']!.token, `?target=${handles['cls']}&date=${mondayOf(iso(7))}`).expect(200);
-    await viewer(codes['classes']!.token, `?target=${a.cls}&date=${mondayOf(iso(7))}`).expect(404);
+    const byHandle = (await viewer(codes['classes']!.token, `?target=${handles['cls']}&date=${mondayOf(iso(7))}`).expect(200)).body;
+    expect((await viewer(codes['classes']!.token, `?target=${a.cls}&date=${mondayOf(iso(7))}`).expect(200)).body).toEqual(byHandle);
     await viewer(codes['classes']!.token, `?target=${a.group}`).expect(404);
     const teacherList = (await viewer(codes['teachers']!.token).expect(200)).body as { targets: { id: string; label: string }[] };
     expect(teacherList.targets.map((target) => target.label)).toEqual(['KXA', 'LXB']);
     expect(JSON.stringify(teacherList)).not.toContain(a.teacher.userId!);
     handles['teacher'] = teacherList.targets[0]!.id;
+    await viewer(codes['teachers']!.token, `?target=${a.teacher.userId}`).expect(200);
     await viewer(codes['rooms']!.token).expect(200);
     // A pupil is reached by their own code and by nothing else: a list takes no pupil as its target.
     await viewer(codes['classes']!.token, `?target=${a.pupils[0]}`).expect(404);
@@ -356,11 +358,16 @@ maybe('Schemavisarens lägen: the open routes as every caller, in two schools (a
     await hide(a.admin, 'group', a.cls).expect(200);
     await hide(a.admin, 'room', a.room!).expect(200);
     await hide(a.admin, 'student', a.pupils[0]!).expect(200);
+    // Hiding what is already hidden is an answer, not an error (the table has no UPDATE for the API role, so it must not be an upsert).
+    await hide(a.admin, 'group', a.cls).expect(200);
+    await hide(a.admin, 'room', a.room!).expect(200);
+    await hide(a.admin, 'student', a.pupils[0]!).expect(200);
     expect((await request(http()).get('/api/v1/viewer-hidden').set(as(a.admin)).expect(200)).body).toEqual({ groups: [a.cls], rooms: [a.room], students: [a.pupils[0]] });
     await request(http()).get('/api/v1/viewer-hidden').set(as(a.teacher)).expect(403);
     const never = (await viewer('ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ', week).expect(404)).body;
     for (const name of ['cls', 'room', 'pupil']) expect((await viewer(codes[name]!.token, week).expect(404)).body).toEqual(never);
     await viewer(codes['classes']!.token, `?target=${handles['cls']}`).expect(404);
+    await viewer(codes['classes']!.token, `?target=${a.cls}`).expect(404);
     expect(((await viewer(codes['classes']!.token).expect(200)).body as { targets: unknown[] }).targets).toEqual([]);
     const reasons = (await request(http()).get(`/api/v1/public-links?academicYearId=${a.year}`).set(as(a.admin)).expect(200)).body as { id: string; notShownBecause: string | null }[];
     expect(reasons.find((row) => row.id === codes['cls']!.id)!.notShownBecause).toBe('TARGET_HIDDEN');

@@ -2,7 +2,7 @@ import request from 'supertest';
 import { createTestApp, type TestHarness } from './utils/test-app';
 import { tokenHashOf } from '../src/publication/public-token';
 import { OPEN_ROUTES } from '../src/publication/open-routes';
-import { MISSES } from '../src/publication/viewer-miss-limiter';
+import { MISSES, PER_PERSON, PER_STAFF_LINK } from '../src/publication/viewer-miss-limiter';
 
 /**
  * Schemavisaren over HTTP, without a principal: one identical 404 for every
@@ -226,11 +226,43 @@ describe('the public viewer (e2e)', () => {
 
     it('answers the not-found for what the database will not show, and refuses a person who asks for too many that do not exist', async () => {
       for (let i = 0; i <= MISSES.limit; i++) await request(http()).get(`/api/v1/schemavisaren/${OTHER}`).set('x-test-user', STAFF).expect(404);
-      await request(http()).get(`/api/v1/schemavisaren/${OTHER}`).set('x-test-user', STAFF).expect(429);
+      const refused = await request(http()).get(`/api/v1/schemavisaren/${OTHER}`).set('x-test-user', STAFF).expect(429);
+      // A refusal is for that caller alone and says when to come back.
+      expect(refused.headers['cache-control']).toBe('private, no-store');
+      expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
       await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', STAFF).expect(429);
       // Another person is their own.
       const other = JSON.stringify({ ...JSON.parse(STAFF), userId: '55555555-5555-4555-8555-555555555555' });
       await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', other).expect(200);
+    });
+
+    it('keeps a signed-in person to what one person reads in a minute, and counts a read as no miss', async () => {
+      // The staff of a school read many weeks: reads are hits, and a read costs the person no miss.
+      for (let i = 0; i < PER_PERSON.limit; i++) await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', STAFF).expect(200);
+      const refused = await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', STAFF).expect(429);
+      expect(refused.headers['cache-control']).toBe('private, no-store');
+      expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+      // Nobody else is slowed by it, and the web server's address is nobody's bucket.
+      const other = JSON.stringify({ ...JSON.parse(STAFF), userId: '66666666-6666-4666-8666-666666666666' });
+      await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', other).expect(200);
+      expect(harness.tx.$queryRaw.mock.calls.length).toBe(PER_PERSON.limit + 1);
+    });
+
+    it('keeps one link to what it may be read for through the staff route in a minute, whoever reads it', async () => {
+      for (let i = 0; i < PER_STAFF_LINK.limit; i++) {
+        const person = JSON.stringify({ ...JSON.parse(STAFF), userId: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}` });
+        await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', person).expect(200);
+      }
+      const person = JSON.stringify({ ...JSON.parse(STAFF), userId: '77777777-7777-4777-8777-777777777777' });
+      await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', person).expect(429);
+      // Another link is its own.
+      await request(http()).get(`/api/v1/schemavisaren/${CODE}`).set('x-test-user', person).expect(200);
+    });
+
+    it('gives the database two seconds at most for it, as it does a visitor, and no JIT', async () => {
+      await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', STAFF).expect(200);
+      const statements = harness.tx.$executeRaw.mock.calls.map((call) => (call[0] as unknown as string[]).join('?'));
+      expect(statements).toEqual(expect.arrayContaining([expect.stringContaining("statement_timeout = '2s'"), expect.stringContaining('jit = off')]));
     });
   });
 

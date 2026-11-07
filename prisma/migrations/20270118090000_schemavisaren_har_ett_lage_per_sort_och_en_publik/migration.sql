@@ -47,8 +47,10 @@
 -- ## What the schools had, and what it becomes
 --
 -- Every school's old switches stay in their columns (additive: the API that
--- runs while this migration is deployed still reads them) and are no longer
--- read by the viewer; a later migration drops them. A school with
+-- runs while this migration is deployed still reads and writes them) and are
+-- no longer read by the viewer; a trigger carries a write of them to the
+-- modes, so that they still switch the viewer off (below), and a later
+-- migration drops them. A school with
 -- publicViewerEnabled gets: audience EVERYONE (its links were public);
 -- classes and groups LIST when it has a live index link of the kind
 -- (the old index listed both) and CODE otherwise; rooms likewise; teachers
@@ -81,7 +83,10 @@
 -- uuid-shaped hash of the link and the entry, different in every list link,
 -- that cannot be turned back into an id. A page carries no id at all. So the
 -- only ids a visitor ever holds are the codes the school drew, and nothing a
--- page or a list prints is one, or leads to one.
+-- page or a list prints is one, or leads to one. A list still takes the id
+-- an older bookmark holds (/v/<list>?target=<id>), for an entry it shows and
+-- no other: that keeps every link that resolved before resolving, and tells
+-- nobody what the list does not.
 --
 -- ## A person with a protected identity is never in the viewer
 --
@@ -187,6 +192,96 @@ UPDATE "PublicationSettings" s
        "viewerTeacherMode" = CASE WHEN s."publicTeachers" AND s."publicTeacherDisplay" <> 'NONE'
                                   THEN 'CODE'::"ViewerMode" ELSE 'OFF'::"ViewerMode" END
  WHERE s."publicViewerEnabled";
+
+-- ---------------------------------------------------------------------------
+-- The old switches still switch the viewer off. The API that runs while this
+-- migration is deployed, and one that is rolled back to, writes the four
+-- switches and knows no mode; the viewer reads the modes. So a write of a
+-- switch that names no mode is carried to the modes here:
+--
+--   publicViewerEnabled -> false   every kind OFF
+--   publicGroups / publicRooms / publicTeachers -> false   that kind OFF
+--   a switch -> true (or the viewer -> true)   a kind that is OFF becomes
+--       what the switch meant before the lägen: classes, groups and rooms
+--       LIST, teachers CODE (when teachers have a name to show; the CHECK
+--       refuses a shown teacher without one); and a viewer that was off
+--       becomes open to everyone, as it was
+--
+-- A write that names a mode or the audience owns them and is left as it is:
+-- the new API writes the modes and the switches together. "Stäng av
+-- visaren" in the old admin page is the button for an incident, and it must
+-- not stop working because the viewer learnt a new way to be set.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION app.publication_settings_legacy_switches() RETURNS trigger
+LANGUAGE plpgsql SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  was_viewer boolean := false;
+  was_groups boolean := false;
+  was_teachers boolean := false;
+  was_rooms boolean := false;
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW."viewerAudience" IS DISTINCT FROM OLD."viewerAudience"
+       OR NEW."viewerClassMode" IS DISTINCT FROM OLD."viewerClassMode"
+       OR NEW."viewerGroupMode" IS DISTINCT FROM OLD."viewerGroupMode"
+       OR NEW."viewerTeacherMode" IS DISTINCT FROM OLD."viewerTeacherMode"
+       OR NEW."viewerStudentMode" IS DISTINCT FROM OLD."viewerStudentMode"
+       OR NEW."viewerRoomMode" IS DISTINCT FROM OLD."viewerRoomMode" THEN
+      RETURN NEW;
+    END IF;
+    was_viewer := OLD."publicViewerEnabled";
+    was_groups := OLD."publicGroups";
+    was_teachers := OLD."publicTeachers";
+    was_rooms := OLD."publicRooms";
+  ELSIF NEW."viewerAudience" <> 'STAFF' OR NEW."viewerClassMode" <> 'OFF' OR NEW."viewerGroupMode" <> 'OFF'
+        OR NEW."viewerTeacherMode" <> 'OFF' OR NEW."viewerStudentMode" <> 'OFF' OR NEW."viewerRoomMode" <> 'OFF' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW."publicViewerEnabled" = was_viewer AND NEW."publicGroups" = was_groups
+     AND NEW."publicTeachers" = was_teachers AND NEW."publicRooms" = was_rooms THEN
+    RETURN NEW;
+  END IF;
+
+  IF NOT NEW."publicViewerEnabled" THEN
+    NEW."viewerClassMode" := 'OFF';
+    NEW."viewerGroupMode" := 'OFF';
+    NEW."viewerTeacherMode" := 'OFF';
+    NEW."viewerStudentMode" := 'OFF';
+    NEW."viewerRoomMode" := 'OFF';
+    RETURN NEW;
+  END IF;
+
+  IF NOT was_viewer THEN NEW."viewerAudience" := 'EVERYONE'; END IF;
+  IF NEW."publicGroups" THEN
+    IF NEW."viewerClassMode" = 'OFF' THEN NEW."viewerClassMode" := 'LIST'; END IF;
+    IF NEW."viewerGroupMode" = 'OFF' THEN NEW."viewerGroupMode" := 'LIST'; END IF;
+  ELSE
+    NEW."viewerClassMode" := 'OFF';
+    NEW."viewerGroupMode" := 'OFF';
+  END IF;
+  IF NEW."publicRooms" THEN
+    IF NEW."viewerRoomMode" = 'OFF' THEN NEW."viewerRoomMode" := 'LIST'; END IF;
+  ELSE
+    NEW."viewerRoomMode" := 'OFF';
+  END IF;
+  IF NEW."publicTeachers" THEN
+    -- A teacher shown has a name (the CHECK); with no name chosen the old switch stays what it was before: nobody is shown.
+    IF NEW."viewerTeacherMode" = 'OFF' AND NEW."publicTeacherDisplay" <> 'NONE' THEN NEW."viewerTeacherMode" := 'CODE'; END IF;
+  ELSE
+    NEW."viewerTeacherMode" := 'OFF';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+COMMENT ON FUNCTION app.publication_settings_legacy_switches() IS
+  'Carries a write of the four old viewer switches that names no mode to the modes, so that the old admin page and an API rolled back to still switch the viewer off. A write that names a mode owns the modes.';
+
+CREATE TRIGGER "PublicationSettings_legacy_switches"
+    BEFORE INSERT OR UPDATE ON "PublicationSettings"
+    FOR EACH ROW EXECUTE FUNCTION app.publication_settings_legacy_switches();
 
 COMMENT ON COLUMN "PublicationSettings"."viewerAudience" IS
   'Who may read the viewer: EVERYONE (anyone with a link or code) or STAFF (a signed-in teacher or administrator of the school). STAFF until the school chooses.';
@@ -417,9 +512,13 @@ LANGUAGE sql STABLE SET search_path = "public", "pg_temp" AS $$
                                  THEN to_jsonb(g."name") ELSE 'null'::jsonb END
                             ORDER BY (g."id" <> l."studentGroupId"), g."name"), '[]'::jsonb)
                      FROM "StudentGroups" g
-                    WHERE g."id" = l."studentGroupId"
-                       OR g."id" IN (SELECT x."studentGroupId" FROM "CalendarLessonGroups" x WHERE x."calendarLessonId" = l."id")),
-                 'room', (SELECT r."name" FROM "Rooms" r WHERE r."id" = l."roomId"),
+                    WHERE (g."id" = l."studentGroupId"
+                           OR g."id" IN (SELECT x."studentGroupId" FROM "CalendarLessonGroups" x WHERE x."calendarLessonId" = l."id"))
+                      -- A class or group the school hides is named on no page.
+                      AND NOT EXISTS (SELECT 1 FROM "PublicTimetableHidden" hg WHERE hg."targetGroupId" = g."id")),
+                 -- Nor a room.
+                 'room', (SELECT r."name" FROM "Rooms" r WHERE r."id" = l."roomId"
+                             AND NOT EXISTS (SELECT 1 FROM "PublicTimetableHidden" hr WHERE hr."targetRoomId" = r."id")),
                  'teachers', CASE WHEN p_display = 'NONE' OR l."status" = 'CANCELLED' THEN '[]'::jsonb ELSE (
                    SELECT coalesce(jsonb_agg(lbl ORDER BY lbl), '[]'::jsonb) FROM (
                      SELECT CASE p_display
@@ -568,18 +667,21 @@ BEGIN
             ) t WHERE t."label" IS NOT NULL
         ), '[]'::jsonb));
     END IF;
-    -- An entry asked for by its handle in this list: the list's own name for it, never an id.
+    -- An entry asked for by its handle in this list, the list's own name for it. An older bookmark or
+    -- embed holds the entry's id instead (/v/<list>?target=<id>, from before the lägen): that is taken
+    -- too, and only for an entry the list itself shows, as the checks below decide. It gives away
+    -- nothing the list does not, and the pages the list links to now carry the handle.
     IF link."kind"::text = 'GROUP' THEN
       SELECT g."id" INTO tgt FROM "StudentGroups" g
        WHERE g."schoolId" = link."schoolId" AND g."academicYearId" = link."academicYearId"
-         AND app.viewer_handle(link."tokenHash", g."id") = target;
+         AND (app.viewer_handle(link."tokenHash", g."id") = target OR g."id" = target);
     ELSIF link."kind"::text = 'ROOM' THEN
       SELECT r."id" INTO tgt FROM "Rooms" r
-       WHERE r."schoolId" = link."schoolId" AND app.viewer_handle(link."tokenHash", r."id") = target;
+       WHERE r."schoolId" = link."schoolId" AND (app.viewer_handle(link."tokenHash", r."id") = target OR r."id" = target);
     ELSE
       SELECT u."id" INTO tgt FROM "Users" u
        WHERE u."schoolId" = link."schoolId" AND u."role" IN ('TEACHER', 'SCHOOL_ADMIN')
-         AND app.viewer_handle(link."tokenHash", u."id") = target;
+         AND (app.viewer_handle(link."tokenHash", u."id") = target OR u."id" = target);
     END IF;
     IF tgt IS NULL THEN RETURN NULL; END IF;
     via_index := true;
@@ -759,10 +861,12 @@ BEGIN
     SELECT g."id", g."name" AS title
       FROM "StudentGroups" g
      WHERE p_kind::text = 'GROUP' AND g."schoolId" = school AND g."academicYearId" = year_id AND g."kind" = 'CLASS'
+       AND NOT EXISTS (SELECT 1 FROM "PublicTimetableHidden" h WHERE h."targetGroupId" = g."id")
     UNION ALL
     SELECT r."id", r."name"
       FROM "Rooms" r
      WHERE p_kind::text = 'ROOM' AND r."schoolId" = school
+       AND NOT EXISTS (SELECT 1 FROM "PublicTimetableHidden" h WHERE h."targetRoomId" = r."id")
     UNION ALL
     SELECT u."id",
            CASE p_display
@@ -1034,6 +1138,7 @@ CREATE POLICY "public_timetable_hidden_admin_delete" ON "PublicTimetableHidden"
            AND (select app.current_user_may('PUBLICERING', true)));
 
 REVOKE ALL ON FUNCTION app.timetable_pupil_days(uuid, uuid, date, text, "TeacherDisplay") FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.publication_settings_legacy_switches() FROM PUBLIC;
 REVOKE ALL ON FUNCTION app.viewer_handle(text, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION app.viewer_person_is_protected(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION app.viewer_student_showable(uuid, uuid) FROM PUBLIC;
@@ -1048,6 +1153,7 @@ DECLARE
 BEGIN
   FOREACH fn IN ARRAY ARRAY[
     'app.timetable_pupil_days(uuid, uuid, date, text, "TeacherDisplay")',
+    'app.publication_settings_legacy_switches()',
     'app.viewer_handle(text, uuid)',
     'app.viewer_person_is_protected(uuid)',
     'app.viewer_student_showable(uuid, uuid)',

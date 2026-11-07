@@ -15,6 +15,7 @@ import { PublicLinksService } from './public-links.service';
 import { PublicTimetableController } from './public-timetable.controller';
 import { PublicViewerThrottlerGuard } from './public-viewer-throttler.guard';
 import { SchemavisarenStaffController } from './schemavisaren.controller';
+import { StaffViewerThrottlerGuard } from './staff-viewer-throttler.guard';
 import { ViewerMissLimiter } from './viewer-miss-limiter';
 import { PrintController } from './print.controller';
 import { PrintTimetablesService } from './print-timetables.service';
@@ -48,6 +49,7 @@ import { PrintTimetablesService } from './print-timetables.service';
     PublicLinksService,
     PublicViewerThrottlerGuard,
     ViewerMissLimiter,
+    StaffViewerThrottlerGuard,
     PrintTimetablesService,
   ],
   exports: [PublicationsService],

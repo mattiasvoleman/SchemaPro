@@ -3,7 +3,7 @@ import createIntlMiddleware from "next-intl/middleware";
 import { routing } from "./i18n/routing";
 import { updateSession } from "@/utils/supabase/middleware";
 import { embedOriginsOf, embedTokenOf, frameAncestorsOf } from "@/lib/embed-policy";
-import { viewerFetchOf } from "@/lib/public-timetable";
+import { trustedHopsOf, viewerFetchOf } from "@/lib/public-timetable";
 
 const intlMiddleware = createIntlMiddleware(routing);
 
@@ -67,6 +67,7 @@ export async function proxy(request: NextRequest) {
         { target: null, date: null },
         request.headers.get("x-forwarded-for"),
         process.env.PUBLIC_VIEWER_PROXY_KEY,
+        trustedHopsOf(process.env.PUBLIC_VIEWER_TRUSTED_HOPS),
       );
       const origins = await embedOriginsOf({ base, token: embedToken, headers });
       const policy = frameAncestorsOf(origins);

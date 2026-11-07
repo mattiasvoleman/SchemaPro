@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import sv from "@/messages/sv.json";
 import PublicTimetablePage from "./page";
@@ -271,13 +271,13 @@ describe("/v/[token]", () => {
       browser.getSession.mockResolvedValue({ data: { session: { access_token: token } } });
     };
 
-    it("asks once more as the person when the public answer was the 404 and the visitor holds a session", async () => {
+    it("asks as the person FIRST when the visitor holds a session, and the public route not at all when that answers", async () => {
       signedIn();
       browser.cookies.push({ name: "rastra_school", value: "7C9E6679-7425-40DE-944B-E07FC1F90AE7" });
-      respond(404, { status: 404 });
       respond(200, WEEK);
       await renderPage({ date: "2026-10-12" });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      // One ask, and it is the signed-in route's: no read by staff is a not-found counted against the school's address.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock).toHaveBeenLastCalledWith(`http://gateway.internal/api/v1/schemavisaren/${TOKEN}?date=2026-10-12`, {
         cache: "no-store",
         // The token is only forwarded, with the school the browser chose; no proxy key, no client address.
@@ -286,7 +286,22 @@ describe("/v/[token]", () => {
       expect(screen.getByRole("heading", { level: 1, name: "7A" })).toBeInTheDocument();
     });
 
-    it("is the same not-found for a visitor with no Supabase cookie, and asks nobody", async () => {
+    it("asks the public route next when the signed-in route has nothing to show (a pupil's login on an open link)", async () => {
+      signedIn();
+      for (const status of [404, 401, 403]) {
+        cleanup();
+        fetchMock.mockClear();
+        respond(status, { status });
+        respond(200, WEEK);
+        await renderPage();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(String(fetchMock.mock.calls[0]![0])).toContain("/api/v1/schemavisaren/");
+        expect(String(fetchMock.mock.calls[1]![0])).toContain("/public/v1/timetables/");
+        expect(screen.getByRole("heading", { level: 1, name: "7A" })).toBeInTheDocument();
+      }
+    });
+
+    it("is the same not-found for a visitor with no Supabase cookie, and asks nobody but the public route", async () => {
       respond(404, { status: 404 });
       await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -298,7 +313,7 @@ describe("/v/[token]", () => {
       expect(browser.getSession).not.toHaveBeenCalled();
     });
 
-    it("is the same not-found when the cookie holds no session, the session cannot be read, or the twin refuses", async () => {
+    it("is the same not-found when the cookie holds no session, the session cannot be read, or both routes refuse", async () => {
       browser.cookies = [{ name: "sb-abcdefgh-auth-token", value: "x" }];
       respond(404, {});
       await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
@@ -313,31 +328,35 @@ describe("/v/[token]", () => {
       signedIn();
       for (const status of [404, 401, 403]) {
         fetchMock.mockClear();
-        respond(404, {});
         respond(status, { status });
+        respond(404, {});
         await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
         expect(fetchMock).toHaveBeenCalledTimes(2);
       }
     });
 
-    it("does not ask as staff when the public answer was not the 404", async () => {
-      signedIn();
+    it("shows the public route's busy page to a visitor with no session, and asks the signed-in route nothing", async () => {
       respond(429, {});
       await renderPage();
       expect(screen.getByRole("heading", { name: sv.publicViewer.busyTitle })).toBeInTheDocument();
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      respond(200, WEEK);
-      await renderPage();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(browser.getSession).not.toHaveBeenCalled();
     });
 
-    it("says in words that the twin could not be reached, rather than that nothing is there", async () => {
+    it("says in words that the signed-in route could not be reached, rather than that nothing is there", async () => {
       signedIn();
-      respond(404, {});
       fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
+      respond(404, {});
       await renderPage();
       expect(screen.getByRole("heading", { name: sv.publicViewer.unavailableTitle })).toBeInTheDocument();
+    });
+
+    it("shows the public route's page if the signed-in route could not be reached and the public route has one", async () => {
+      signedIn();
+      fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
+      respond(200, WEEK);
+      await renderPage();
+      expect(screen.getByRole("heading", { level: 1, name: "7A" })).toBeInTheDocument();
     });
   });
 

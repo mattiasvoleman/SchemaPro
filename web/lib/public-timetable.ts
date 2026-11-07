@@ -108,15 +108,28 @@ export function isCalendarDay(value: string): boolean {
  * per-viewer rate limit: the RIGHTMOST X-Forwarded-For entry, the one the
  * platform's edge appended. Anything to its left is what the browser sent and
  * can be anything. Null when there is none.
+ *
+ * Behind more than one proxy that append their own address (a CDN in front
+ * of the platform's edge) the rightmost entry is a proxy's, the same for
+ * every visitor. `skipRight` is how many entries to the right of the
+ * visitor's own those proxies have added (PUBLIC_VIEWER_TRUSTED_HOPS, 0 where
+ * the platform's edge is the last; docs/DEPLOYMENT.md): the entry that many
+ * from the right is taken. Null when there are not that many.
  */
-export function clientIpOf(forwardedFor: string | null): string | null {
+export function clientIpOf(forwardedFor: string | null, skipRight = 0): string | null {
   if (!forwardedFor) return null;
   const hops = forwardedFor
     .split(",")
     .map((hop) => hop.trim())
     .filter(Boolean);
-  const last = hops[hops.length - 1];
-  return last && last.length <= 64 ? last : null;
+  const own = hops[hops.length - 1 - Math.max(0, Math.floor(skipRight))];
+  return own && own.length <= 64 ? own : null;
+}
+
+/** PUBLIC_VIEWER_TRUSTED_HOPS as a count of proxies to skip: a whole number from 0 to 5, else 0. */
+export function trustedHopsOf(value: string | undefined): number {
+  const hops = Number(value);
+  return Number.isInteger(hops) && hops >= 0 && hops <= 5 ? hops : 0;
 }
 
 export interface ViewerFetch {
@@ -137,13 +150,14 @@ export function viewerFetchOf(
   query: ViewerQuery,
   forwardedFor: string | null,
   proxyKey: string | undefined,
+  skipHops = 0,
 ): ViewerFetch {
   const search = new URLSearchParams();
   if (query.target) search.set("target", query.target);
   if (query.date) search.set("date", query.date);
   const qs = search.toString();
   const headers: Record<string, string> = { Accept: "application/json" };
-  const client = clientIpOf(forwardedFor);
+  const client = clientIpOf(forwardedFor, skipHops);
   if (proxyKey && client) {
     headers["X-Viewer-Proxy-Key"] = proxyKey;
     headers["X-Viewer-Client-Ip"] = client;

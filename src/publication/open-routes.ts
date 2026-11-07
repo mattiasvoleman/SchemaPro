@@ -25,6 +25,11 @@
  *                   (calendarFeed*). Its authority is the person's own, not the
  *                   viewer's modes; what it names besides the owner follows
  *                   the viewer's rules (hidden or protected: not named).
+ *   KEY_AUTHORITY   shows schedules, and more, to a connected system that holds
+ *                   an integration key the school issued under an agreement
+ *                   (the SS12000 providers). The key is the authority, and
+ *                   it is not a stranger's; the viewer's modes do not govern
+ *                   it (see PEOPLE_ROUTES for what it leaves out).
  *   NOT_A_SCHEDULE  shows no schedule of anyone.
  *
  * A new open route is decided here before it ships; "not a schedule" is a
@@ -34,6 +39,7 @@
 export type OpenRouteRelation =
   | { relation: 'VIEWER'; door: string; why: string }
   | { relation: 'OWN_CAPABILITY'; why: string }
+  | { relation: 'KEY_AUTHORITY'; why: string }
   | { relation: 'NOT_A_SCHEDULE'; why: string };
 
 /**
@@ -64,19 +70,19 @@ export const OPEN_ROUTES: Readonly<Record<string, OpenRouteRelation>> = {
     why: 'The login page\'s lookup of the sign-in method for an e-mail domain.',
   },
   'GET /ss12000/*': {
-    relation: 'NOT_A_SCHEDULE',
+    relation: 'KEY_AUTHORITY',
     why: 'The SS12000 providers answer a connected system that holds an integration key, under an agreement; the key is the authority, not the viewer (see PEOPLE_ROUTES).',
   },
   'POST /ss12000/*': {
-    relation: 'NOT_A_SCHEDULE',
+    relation: 'KEY_AUTHORITY',
     why: 'The providers\' lookups, behind the integration key.',
   },
   'PATCH /ss12000/*': {
-    relation: 'NOT_A_SCHEDULE',
+    relation: 'KEY_AUTHORITY',
     why: 'A webhook subscription renewed, behind the integration key.',
   },
   'DELETE /ss12000/*': {
-    relation: 'NOT_A_SCHEDULE',
+    relation: 'KEY_AUTHORITY',
     why: 'A webhook subscription ended, behind the integration key.',
   },
 };
