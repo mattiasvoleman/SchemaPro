@@ -39,6 +39,17 @@
  * one to be written belongs in the list below, by name, as HOLDS_OUT, before
  * it ships.
  *
+ * CHECKLISTOR (20270129091000) IS DECIDED HERE TOO. The templates, the proofs, the consent lists and a pupil's card
+ * (GET /api/v1/checklists/...) answer the screen in JSON, and no path of them is a file or a feed. They name pupils,
+ * a marked pupil among them, because the staff member who ticks or writes has the pupil in their register already (a
+ * teacher reads the pupils they teach and mentor, an administrator the school's) and a list that left one out would
+ * be a list nobody could trust: a consent that is not on the page is a consent nobody looked for. The SHEET FOR
+ * PAPER is the gateway's, in the two routes listed below (.../roster/print and .../consent-lists/:id/print,
+ * HOLDS_OUT): a marked pupil is left out of the rows and of the counts, and counted in heldOut. The web prints what
+ * they answer and nothing else (web/lib/people-files.ts, HANDS_OVER), so that a teacher, who cannot read the marks
+ * (they are the administrators' register), can print too. There is no export file of the proofs or the answers, on
+ * purpose; the first one to be written belongs in the list below, by name, as HOLDS_OUT, before it ships.
+ *
  * SKOLANS DAG (20270116090000) IS DECIDED HERE TOO, though no route of it is
  * listed: GET /api/v1/school-day and .../free answer the screen in JSON, and
  * no path of them is a file or a feed. They name the school's teachers, as the
@@ -94,13 +105,21 @@ export interface PeopleRoute {
  * itself (@Res), whatever its path.
  */
 export const FILE_ROUTE =
-  /\/export\b|\/subject-access\b|scb-file|\/print\/|class-book|^\/public\/v1\/(calendar-feeds|timetables)\/|^\/ss12000\/|^\/api\/v1\/access-log$|\.(csv|tsv|txt|xlsx?|ics|pdf|zip|xml)$/i;
+  /\/export\b|\/subject-access\b|scb-file|\/print(?:\/|$)|class-book|^\/public\/v1\/(calendar-feeds|timetables)\/|^\/ss12000\/|^\/api\/v1\/access-log$|\.(csv|tsv|txt|xlsx?|ics|pdf|zip|xml)$/i;
 
 /**
  * Keyed `VERB /path` as the routing table has it; a key ending in `/*` holds
  * every route under its prefix (the SS12000 providers).
  */
 export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
+  'GET /api/v1/checklists/templates/:id/roster/print': {
+    rule: 'HOLDS_OUT',
+    why: 'Bocklistan för papper (Checklistor): en elev med skyddad identitet lämnas ut ur raderna, ids och räknare, och antalet står i heldOut. Det är gatewayn som avgör, eftersom en lärare inte läser markeringarna.',
+  },
+  'GET /api/v1/checklists/consent-lists/:id/print': {
+    rule: 'HOLDS_OUT',
+    why: 'Samtyckeslistan för papper (Checklistor): en elev med skyddad identitet lämnas ut ur raderna och räknarna, och antalet står i heldOut. Det är gatewayn som avgör, eftersom en lärare inte läser markeringarna.',
+  },
   'GET /api/v1/guardian-links/export': {
     rule: 'HOLDS_OUT',
     why: 'vardnadshavare.csv: a link where the pupil or the guardian is marked is held out, and counted (heldOut).',

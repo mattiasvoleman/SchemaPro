@@ -202,8 +202,22 @@ export class AckService {
    * (the arms of AckReceipts), so this answers first with a code.
    */
   async create(dto: CreateAckRequestDto, user: AuthenticatedUser): Promise<AckCreated> {
+    return (await this.createThen(dto, user, async () => undefined)).created;
+  }
+
+  /**
+   * create, and then `then` in the same transaction, with the request just written: a request that something else
+   * must hang on (Checklistor's consent list asks the guardians through this, with the rule ALL, and links the
+   * request to the list) is written together with that link or not at all, and the limits answer as they do for
+   * create. `then` runs after the receipts and the notices are written and before the commit.
+   */
+  async createThen<T>(
+    dto: CreateAckRequestDto,
+    user: AuthenticatedUser,
+    then: (tx: PrismaClient, created: AckCreated) => Promise<T>,
+  ): Promise<{ created: AckCreated; result: T }> {
     try {
-      return await this.write(dto, user);
+      return await this.write(dto, user, then);
     } catch (error) {
       switch (sqlStateOf(error)) {
         case 'KV429':
@@ -230,7 +244,11 @@ export class AckService {
     }
   }
 
-  private async write(dto: CreateAckRequestDto, user: AuthenticatedUser): Promise<AckCreated> {
+  private async write<T>(
+    dto: CreateAckRequestDto,
+    user: AuthenticatedUser,
+    then: (tx: PrismaClient, created: AckCreated) => Promise<T>,
+  ): Promise<{ created: AckCreated; result: T }> {
     const schoolId = requireSchoolId(user);
     const authorId = requireUserId(user);
     const studentIds = [...new Set(dto.studentIds)];
@@ -277,7 +295,8 @@ export class AckService {
       const guardianIds = [...new Set(links.map((link) => link.guardianId))];
       const entry = requestedEntries(id, dto.title);
       await this.notifications.notifyUsers(tx, { schoolId, userIds: guardianIds, type: 'ACK_REQUESTED', meta: entry.meta, email: entry.email });
-      return { id, pupils: asked.size, guardians: guardianIds.length, withoutGuardian };
+      const created: AckCreated = { id, pupils: asked.size, guardians: guardianIds.length, withoutGuardian };
+      return { created, result: await then(tx, created) };
     });
   }
 

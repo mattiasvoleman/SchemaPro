@@ -79,6 +79,14 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'who attends a lesson, for every caller: the attendance check and the register’s list (real people at dated lessons, it writes rows), every lesson notice and avbokning digest, and the teacher app’s broadcast (nobody is told about next year’s class before the activation)',
   },
   'src/integration/ss12000.service.ts': { basis: 'CURRENT', why: 'an external export, of the active year by design' },
+  'src/checklists/consent.service.ts': {
+    basis: 'CURRENT',
+    why: 'Checklistor: a consent list is about its class as the class is placed now (the pupils of the home class today, and the pupils who have an answer on the list, who keep it when they move); no lesson’s roster and no history of the class',
+  },
+  'src/checklists/instruction.service.ts': {
+    basis: 'CURRENT',
+    why: 'Checklistor: a group’s pupils to tick an instruction for, as they are placed now; the proof itself belongs to the pupil and follows them through every change of class and every rollover, so it reads no class history',
+  },
   'src/ack/ack.service.ts': {
     basis: 'CURRENT',
     why: 'Kvittens: the pupils a request can be about, every active pupil of the school or a mentor’s mentees today, with their home class as it is; no lesson’s roster',

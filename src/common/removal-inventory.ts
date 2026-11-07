@@ -180,6 +180,9 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   // Kvittens (20270117091000): the requests a guardian was asked, and the ones asked about a pupil, go with the person.
   key('AckReceipts', ['guardianId', 'schoolId'], 'CASCADE', others),
   key('AckReceipts', ['studentId', 'schoolId'], 'CASCADE', others),
+  // Checklistor (20270129091000): a pupil's instruction proofs and answers on consent lists go with the pupil.
+  key('InstructionProofs', ['studentId', 'schoolId'], 'CASCADE', others),
+  key('ConsentEntries', ['studentId', 'schoolId'], 'CASCADE', others),
   key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),
   // Skyddad identitet (20270107090000): the mark goes with the person, counted like any other row.
   key('PersonProtections', ['userId', 'schoolId'], 'CASCADE', others),
@@ -224,6 +227,12 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('TeachingRequirementShares', ['teacherId', 'schoolId'], 'SET NULL', kept),
   key('SupervisionCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
   key('AckRequests', ['authorId', 'schoolId'], 'SET NULL', kept),
+  // Checklistor: what a member of staff wrote or gave stays without them (the tick, the answer, the list).
+  key('InstructionProofs', ['instructorId', 'schoolId'], 'SET NULL', kept),
+  key('InstructionProofs', ['recordedById', 'schoolId'], 'SET NULL', kept),
+  key('InstructionProofs', ['voidedById', 'schoolId'], 'SET NULL', kept),
+  key('ConsentEntries', ['recordedById', 'schoolId'], 'SET NULL', kept),
+  key('ConsentLists', ['createdById', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['requestedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['acceptedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CrisisAlarms', ['startedByUserId', 'schoolId'], 'SET NULL', kept),

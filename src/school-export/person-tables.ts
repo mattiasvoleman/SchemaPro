@@ -146,6 +146,11 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   // (data/notiser.csv carries the title); the body is the sender's own writing and is in the sender's extract.
   AckReceipts: dump(['guardianId', 'studentId'], 'GUARDIANS'),
   AckRequests: dump(['authorId']),
+  // Checklistor (20270129091000): what a pupil has been instructed in and has consented to (the pupil's own extract), and what
+  // a member of staff gave, wrote or made (theirs). A list is named by its class and its title, which are the school's.
+  InstructionProofs: dump(['studentId', 'instructorId', 'recordedById', 'voidedById']),
+  ConsentEntries: dump(['studentId', 'recordedById']),
+  ConsentLists: dump(['createdById']),
   SharedTeacherMarks: dump(['teacherId']),
   ScheduleActivityTeachers: dump(['teacherId']),
 

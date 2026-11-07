@@ -148,6 +148,7 @@ import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
 import { coverRequestsChecks, sweepCoverRequestsSchool } from './probe-cover-requests';
 import { krislageChecks, sweepKrislageSchool } from './probe-krislage';
 import { kvittensChecks, sweepKvittensSchool } from './probe-kvittens';
+import { checklistorChecks, sweepChecklistorSchool } from './probe-checklistor';
 import { skolansDagChecks, sweepSkolansDagSchool } from './probe-skolans-dag';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
@@ -5941,6 +5942,7 @@ async function runChecks(
   await coverRequestsChecks(owner, api, MARKER, check);
   await krislageChecks(owner, api, MARKER, check);
   await kvittensChecks(owner, api, MARKER, check);
+  await checklistorChecks(owner, api, MARKER, check);
   await skolansDagChecks(owner, api, MARKER, check);
   await elevlistanChecks(owner, api, MARKER, check);
   await massvalChecks(owner, api, MARKER, check);
@@ -6441,6 +6443,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepKrislageSchool(owner, MARKER);
   // Kvittens' school, likewise.
   await sweepKvittensSchool(owner, MARKER);
+  // Checklistor's school, likewise.
+  await sweepChecklistorSchool(owner, MARKER);
   // Skolans dag's school, likewise.
   await sweepSkolansDagSchool(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
