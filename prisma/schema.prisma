@@ -5804,3 +5804,56 @@ model SchoolDaySettings {
 
   @@map("SchoolDaySettings")
 }
+
+// -----------------------------------------------------------------------------
+// Analys och planering (20270130090000)
+// -----------------------------------------------------------------------------
+
+/// The personalkategorier a school states an hourly cost for (Kostnadsunderlag per elev). Fixed and
+/// derived from rows that exist, never a category kept on a person: an assignment is TEACHER or, where
+/// the school has recorded behörigheter and none covers it, UNQUALIFIED_TEACHER; a held cover lesson is
+/// SUBSTITUTE. No individual salary is stored anywhere; a rate is the school's cost of an hour in a category.
+enum StaffCostCategory {
+  TEACHER
+  UNQUALIFIED_TEACHER
+  SUBSTITUTE
+}
+
+/// A skoldel: a part of the school that is a kostnadsställe, with a name, a konto and the årskurser it holds
+/// (F–3, 4–6, 7–9). The span is stated in the nine-year numbering for good, like a skolenhet's and every other
+/// school-wide span; a tioårig läsår reads it through toNioarig. Two skoldelar of a school never share an
+/// årskurs, so a class belongs to at most one (a trigger, SQLSTATE SP409). Written by those who decide.
+model SchoolPart {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String   @db.Uuid
+  /// 1..100 characters, not blank. Unique per school.
+  name      String
+  /// The konto or kostnadsställe the payroll is booked on: 1..30 characters, no control characters.
+  account   String
+  /// 0..9, gradeFrom <= gradeTo; 0 = förskoleklass.
+  gradeFrom Int
+  gradeTo   Int
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([schoolId, name])
+  /// The target a tenant-scoped composite foreign key needs; see User.
+  @@unique([id, schoolId])
+  @@index([schoolId])
+  @@map("SchoolParts")
+}
+
+/// The school's cost of one hour in a personalkategori, in SEK, two decimals. One row per school and category;
+/// a category without a row has no rate, and the cost basis then leaves its cost out and says so. Not a salary:
+/// nothing here is about a person. Written by those who decide.
+model StaffCostRate {
+  schoolId   String            @db.Uuid
+  category   StaffCostCategory
+  /// 0..100000, two decimals.
+  hourlyCost Decimal           @db.Decimal(10, 2)
+  createdAt  DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime          @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@id([schoolId, category])
+  @@map("StaffCostRates")
+}

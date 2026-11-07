@@ -159,6 +159,9 @@ const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 /** cellXfs indexes in the styles part written below. */
 const STYLE_HEADER = 1;
 const STYLE_TEXT = 2;
+/** Only in a package that has number columns (WriteXlsxOptions.numberColumns): a whole number, and two decimals. */
+const STYLE_INTEGER = 3;
+const STYLE_DECIMAL = 4;
 
 // ---------------------------------------------------------------------------
 // Writer
@@ -171,7 +174,18 @@ export interface WriteXlsxOptions {
   widths?: number[];
   /** Freeze the first row (default true). */
   frozenHeader?: boolean;
+  /**
+   * Columns (0-based) whose cells below the header are numbers, not text: a cell that is a plain number
+   * ("12", "-3", "12.5", a point for the decimals whatever the reader's language) is written as a number
+   * with the column's format, so that a payroll file sums. A cell of such a column that is not a plain
+   * number stays text, and the header row is always text. Without this option every cell is text, as
+   * the module comment says, and the package is the one it has always been.
+   */
+  numberColumns?: Readonly<Record<number, 'integer' | 'decimal'>>;
 }
+
+/** A number as Excel stores it: optional minus, digits, an optional point and digits. */
+const PLAIN_NUMBER = /^-?\d+(\.\d+)?$/;
 
 /** 1 -> A, 26 -> Z, 27 -> AA. */
 function columnName(column: number): string {
@@ -204,7 +218,7 @@ function sheetNameOf(raw: string): string {
   return name === '' ? 'Blad1' : name;
 }
 
-function stylesXml(): string {
+function stylesXml(withNumbers: boolean): string {
   const font = (bold: boolean): string => `<font>${bold ? '<b/>' : ''}<sz val="11"/><name val="Calibri"/><family val="2"/></font>`;
   const xf = (fontId: number, fillId: number): string =>
     `<xf numFmtId="49" fontId="${fontId}" fillId="${fillId}" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>`;
@@ -217,7 +231,12 @@ function stylesXml(): string {
     '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
     // 0 = Excel's default; 1 = header (bold, grey, text); 2 = a data cell (text).
-    `<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>${xf(1, 2)}${xf(0, 0)}</cellXfs>` +
+    (withNumbers
+      ? // 3 = a whole number ("0"), 4 = two decimals ("0.00"): the number columns of a table.
+        `<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>${xf(1, 2)}${xf(0, 0)}` +
+        '<xf numFmtId="1" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+        '<xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>'
+      : `<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>${xf(1, 2)}${xf(0, 0)}</cellXfs>`) +
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
     '</styleSheet>'
   );
@@ -244,6 +263,8 @@ export function writeXlsx(rows: string[][], options: WriteXlsxOptions): Buffer {
   }
   const strings = new Map<string, number>();
   let stringCells = 0;
+  let numberCells = 0;
+  const numberColumns = options.numberColumns ?? {};
   const sheetRows: string[] = [];
   rows.forEach((row, rowIndex) => {
     const cells: string[] = [];
@@ -251,6 +272,14 @@ export function writeXlsx(rows: string[][], options: WriteXlsxOptions): Buffer {
       if (text === '') return; // an absent cell is an empty cell, and the column's own format applies
       if (text.length > XLSX_MAX_CELL_CHARS) {
         throw new XlsxError(`Cellen på rad ${rowIndex + 1}, kolumn ${columnIndex + 1} har ${text.length} tecken; högst ${XLSX_MAX_CELL_CHARS} ryms i en Excel-cell.`);
+      }
+      const numberKind = rowIndex > 0 ? numberColumns[columnIndex] : undefined;
+      if (numberKind !== undefined && PLAIN_NUMBER.test(text)) {
+        numberCells += 1;
+        cells.push(
+          `<c r="${columnName(columnIndex + 1)}${rowIndex + 1}" s="${numberKind === 'integer' ? STYLE_INTEGER : STYLE_DECIMAL}"><v>${text}</v></c>`,
+        );
+        return;
       }
       let index = strings.get(text);
       if (index === undefined) {
@@ -267,9 +296,9 @@ export function writeXlsx(rows: string[][], options: WriteXlsxOptions): Buffer {
   // What xml.ts will count when this sheet is read back: two elements per cell, one per row, the column
   // definitions and a few dozen fixed ones. Refused here, in plain words, rather than written and then
   // rejected by our own reader as "För många element".
-  const elements = 2 * stringCells + sheetRows.length + columnCount + 64;
+  const elements = 2 * (stringCells + numberCells) + sheetRows.length + columnCount + 64;
   if (elements > MAX_NODES) {
-    throw new XlsxError(`Tabellen har ${stringCells} ifyllda celler; fler än ungefär ${Math.floor((MAX_NODES - 64) / 2)} ryms inte i en Excel-fil från Rastra. Dela upp den eller använd CSV.`);
+    throw new XlsxError(`Tabellen har ${stringCells + numberCells} ifyllda celler; fler än ungefär ${Math.floor((MAX_NODES - 64) / 2)} ryms inte i en Excel-fil från Rastra. Dela upp den eller använd CSV.`);
   }
 
   const name = sheetNameOf(options.sheetName);
@@ -281,7 +310,9 @@ export function writeXlsx(rows: string[][], options: WriteXlsxOptions): Buffer {
   for (let column = 0; column < columnCount; column += 1) {
     const given = options.widths?.[column];
     const width = given !== undefined && Number.isFinite(given) && given > 0 ? Math.min(255, given) : measuredWidth(rows, column);
-    columns.push(`<col min="${column + 1}" max="${column + 1}" width="${Number(width.toFixed(2))}" style="${STYLE_TEXT}" customWidth="1"/>`);
+    const kind = numberColumns[column];
+    const style = kind === undefined ? STYLE_TEXT : kind === 'integer' ? STYLE_INTEGER : STYLE_DECIMAL;
+    columns.push(`<col min="${column + 1}" max="${column + 1}" width="${Number(width.toFixed(2))}" style="${style}" customWidth="1"/>`);
   }
 
   const view = frozen
@@ -351,7 +382,7 @@ export function writeXlsx(rows: string[][], options: WriteXlsxOptions): Buffer {
     part('_rels/.rels', rootRels),
     part('xl/workbook.xml', workbook),
     part('xl/_rels/workbook.xml.rels', workbookRels),
-    part('xl/styles.xml', stylesXml()),
+    part('xl/styles.xml', stylesXml(Object.keys(numberColumns).length > 0)),
     part('xl/sharedStrings.xml', sharedStrings),
     part('xl/worksheets/sheet1.xml', sheet),
   ];

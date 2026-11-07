@@ -20257,6 +20257,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('SchoolDaySettings', '{DECIDES}', '{DECIDES}', '{}', '{}'),
   ('SchoolExportChunks', '{}', '{}', '{}', '{DECIDES}'),
   ('SchoolExports', '{DECIDES}', '{}', '{DECIDES}', '{DECIDES}'),
+  ('SchoolParts', '{DECIDES}', '{DECIDES}', '{DECIDES}', '{}'),
   ('SchoolSignInMethods', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
   ('SchoolTravelTimes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('SchoolUnits', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -20270,6 +20271,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('Ss12000Subscriptions', '{}', '{INTEGRATIONER}', '{}', '{}'),
   ('Ss12000SyncChanges', '{}', '{INTEGRATIONER}', '{}', '{}'),
   ('Ss12000SyncRuns', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}', '{}'),
+  ('StaffCostRates', '{DECIDES}', '{DECIDES}', '{DECIDES}', '{}'),
   ('StaffingPolicies', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('StudentEnrollments', '{}', '{}', '{}', '{}'),
   ('StudentGroupMembers', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -46854,5 +46856,547 @@ BEGIN
     RAISE EXCEPTION 'flöden: the family''s own week names % for a marked teacher, not what it named before (KXB)', labels;
   END IF;
   DELETE FROM "PersonProtections";
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Analys och planering (K1, 20270130090000), sections 435-439.
+--
+--   435  the catalogue: SchoolParts and StaffCostRates with their columns,
+--        keys, checks, arms and privileges, and no other arm;
+--   436  who reads and writes a skoldel;
+--   437  who reads and writes a cost rate, and the other school and PostgREST;
+--   438  what the constraints of a skoldel do to a row;
+--   439  what the constraints of a cost rate do to a row.
+--
+-- The rows are planted by nobody: a school starts with none, and the sections
+-- make their own as the administrators of rls-skyddad-school (…e50000000001
+-- full, 02 rektor, 03 expedition, 04 schemaläggare, 05 läsare, 06 and 07
+-- teachers, 11 and 12 pupils, 21 and 22 guardians, 31 the other school's
+-- full). The helpers are pg_temp.k1_*.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Section 435: skoldelar och kostnadssatser i katalogen. Both tables with
+-- their columns, their defaults, their keys (the school's alone, cascading
+-- with it), their checks, the exclusion that gives a class at most one
+-- skoldel, row security with the four arms each and no other, the API's role
+-- holding select, insert, update and delete and no PostgREST role holding
+-- anything. PG 17's MAINTAIN is the owner's alone.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  cols text;
+  def text;
+  n integer;
+  r text;
+  t text;
+  tbl text;
+BEGIN
+  SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum) INTO cols
+    FROM pg_attribute a WHERE a.attrelid = 'public."SchoolParts"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  IF cols IS DISTINCT FROM 'id:uuid,schoolId:uuid,name:text,account:text,gradeFrom:integer,gradeTo:integer,createdAt:timestamp(6) with time zone,updatedAt:timestamp(6) with time zone' THEN
+    RAISE EXCEPTION 'k1 435: SchoolParts has the columns %', cols;
+  END IF;
+  SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum) INTO cols
+    FROM pg_attribute a WHERE a.attrelid = 'public."StaffCostRates"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  IF cols IS DISTINCT FROM 'schoolId:uuid,category:"StaffCostCategory",hourlyCost:numeric(10,2),createdAt:timestamp(6) with time zone,updatedAt:timestamp(6) with time zone' THEN
+    RAISE EXCEPTION 'k1 435: StaffCostRates has the columns %', cols;
+  END IF;
+  -- Nothing in either names a person: a rate is a category's, never a salary (BESLUT).
+  IF EXISTS (SELECT 1 FROM pg_attribute a
+              WHERE a.attrelid IN ('public."SchoolParts"'::regclass, 'public."StaffCostRates"'::regclass)
+                AND a.attnum > 0 AND NOT a.attisdropped
+                AND (a.attname ~* '(user|teacher|employment|person|salary|lon)' )) THEN
+    RAISE EXCEPTION 'k1 435: a column of SchoolParts or StaffCostRates names a person or a salary';
+  END IF;
+
+  SELECT string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder) INTO def
+    FROM pg_enum e JOIN pg_type ty ON ty.oid = e.enumtypid WHERE ty.typname = 'StaffCostCategory';
+  IF def IS DISTINCT FROM 'TEACHER,UNQUALIFIED_TEACHER,SUBSTITUTE' THEN
+    RAISE EXCEPTION 'k1 435: the categories are %, not TEACHER,UNQUALIFIED_TEACHER,SUBSTITUTE', def;
+  END IF;
+
+  -- Keys: the primary keys, the one foreign key each (the school's, cascading), the unique keys and the exclusion.
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conrelid = 'public."SchoolParts"'::regclass AND c.contype = 'p';
+  IF def IS DISTINCT FROM 'PRIMARY KEY (id)' THEN RAISE EXCEPTION 'k1 435: SchoolParts key is %', def; END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conrelid = 'public."StaffCostRates"'::regclass AND c.contype = 'p';
+  IF def IS DISTINCT FROM 'PRIMARY KEY ("schoolId", category)' THEN RAISE EXCEPTION 'k1 435: StaffCostRates key is %', def; END IF;
+  FOREACH tbl IN ARRAY ARRAY['SchoolParts', 'StaffCostRates'] LOOP
+    SELECT count(*) INTO n FROM pg_constraint c
+     WHERE c.conrelid = format('public.%I', tbl)::regclass AND c.contype = 'f' AND c.confrelid = 'public."Schools"'::regclass AND c.confdeltype = 'c';
+    IF n <> 1 THEN RAISE EXCEPTION 'k1 435: % does not cascade with its school', tbl; END IF;
+    SELECT count(*) INTO n FROM pg_constraint WHERE conrelid = format('public.%I', tbl)::regclass AND contype = 'f';
+    IF n <> 1 THEN RAISE EXCEPTION 'k1 435: % has % foreign keys, not the school''s alone', tbl, n; END IF;
+    IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('public.%I', tbl)::regclass) THEN
+      RAISE EXCEPTION 'k1 435: row security is not on for %', tbl;
+    END IF;
+  END LOOP;
+  SELECT string_agg(c.conname || ':' || c.contype::text, ',' ORDER BY c.conname COLLATE "C") INTO def
+    FROM pg_constraint c WHERE c.conrelid = 'public."SchoolParts"'::regclass AND c.contype IN ('u', 'x', 'c');
+  IF def IS DISTINCT FROM 'SchoolParts_account_check:c,SchoolParts_grades_check:c,SchoolParts_id_schoolId_key:u,SchoolParts_name_check:c,SchoolParts_no_shared_grade:x,SchoolParts_schoolId_name_key:u' THEN
+    RAISE EXCEPTION 'k1 435: SchoolParts has the constraints %', def;
+  END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conname = 'SchoolParts_no_shared_grade';
+  IF def NOT LIKE 'EXCLUDE USING gist ("schoolId" WITH =, int4range("gradeFrom", ("gradeTo" + 1)) WITH &&)%' THEN
+    RAISE EXCEPTION 'k1 435: a class may belong to two skoldelar: %', def;
+  END IF;
+  SELECT string_agg(c.conname || ':' || c.contype::text, ',' ORDER BY c.conname COLLATE "C") INTO def
+    FROM pg_constraint c WHERE c.conrelid = 'public."StaffCostRates"'::regclass AND c.contype IN ('u', 'x', 'c');
+  IF def IS DISTINCT FROM 'StaffCostRates_hourlyCost_check:c' THEN
+    RAISE EXCEPTION 'k1 435: StaffCostRates has the constraints %', def;
+  END IF;
+
+  -- The arms: four each, for the API's role alone, the deciders' for every write, the administrators' for the read.
+  SELECT string_agg(policyname || ':' || cmd || ':' || roles::text, ',' ORDER BY policyname COLLATE "C") INTO def
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'SchoolParts';
+  IF def IS DISTINCT FROM 'school_parts_admin_delete:DELETE:{app_authenticated},school_parts_admin_insert:INSERT:{app_authenticated},school_parts_admin_select:SELECT:{app_authenticated},school_parts_admin_update:UPDATE:{app_authenticated}' THEN
+    RAISE EXCEPTION 'k1 435: the arms of SchoolParts are %', def;
+  END IF;
+  SELECT string_agg(policyname || ':' || cmd || ':' || roles::text, ',' ORDER BY policyname COLLATE "C") INTO def
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'StaffCostRates';
+  IF def IS DISTINCT FROM 'staff_cost_rates_admin_delete:DELETE:{app_authenticated},staff_cost_rates_admin_insert:INSERT:{app_authenticated},staff_cost_rates_admin_select:SELECT:{app_authenticated},staff_cost_rates_admin_update:UPDATE:{app_authenticated}' THEN
+    RAISE EXCEPTION 'k1 435: the arms of StaffCostRates are %', def;
+  END IF;
+  FOR t, def IN
+    SELECT p.tablename || '.' || p.policyname, coalesce(p.qual, '') || ' | ' || coalesce(p.with_check, '')
+      FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename IN ('SchoolParts', 'StaffCostRates')
+  LOOP
+    IF def NOT LIKE '%current_school_id()%' OR def NOT LIKE '%''SCHOOL_ADMIN''::"UserRole"%' OR def LIKE '% OR %' OR def LIKE '%NOT %'
+       OR def LIKE '%TEACHER%' OR def LIKE '%STUDENT%' OR def LIKE '%GUARDIAN%' THEN
+      RAISE EXCEPTION 'k1 435: % is not the school''s administrators'' alone: %', t, def;
+    END IF;
+    IF t NOT LIKE '%_select' AND def NOT LIKE '%current_user_decides()%' THEN
+      RAISE EXCEPTION 'k1 435: the write % is not the deciders'': %', t, def;
+    END IF;
+  END LOOP;
+
+  -- Privileges: the four a gateway needs; no truncate; none for a PostgREST role; nothing of PG 17's MAINTAIN.
+  FOREACH tbl IN ARRAY ARRAY['SchoolParts', 'StaffCostRates'] LOOP
+    FOREACH t IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+      IF NOT has_table_privilege('app_authenticated', format('public.%I', tbl), t) THEN
+        RAISE EXCEPTION 'k1 435: the API role lacks % on %', t, tbl;
+      END IF;
+    END LOOP;
+    FOREACH t IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege('app_authenticated', format('public.%I', tbl), t) THEN
+        RAISE EXCEPTION 'k1 435: the API role holds % on %', t, tbl;
+      END IF;
+    END LOOP;
+    FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
+         AND (has_any_column_privilege(r, format('public.%I', tbl), 'SELECT') OR has_any_column_privilege(r, format('public.%I', tbl), 'INSERT')
+              OR has_any_column_privilege(r, format('public.%I', tbl), 'UPDATE') OR has_table_privilege(r, format('public.%I', tbl), 'DELETE')) THEN
+        RAISE EXCEPTION 'k1 435: % holds a privilege on %', r, tbl;
+      END IF;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')
+       AND has_table_privilege('service_role', format('public.%I', tbl), 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+      RAISE EXCEPTION 'k1 435: service_role writes %', tbl;
+    END IF;
+    IF current_setting('server_version_num')::int >= 170000 THEN
+      FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_table_privilege(r, format('public.%I', tbl), 'MAINTAIN') THEN
+          RAISE EXCEPTION 'k1 435: % holds MAINTAIN on %', r, tbl;
+        END IF;
+      END LOOP;
+    END IF;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 436: vem som läser och skriver en skoldel. Every administrator
+-- profile reads the school's skoldelar; full and rektor (those who decide)
+-- make, change and remove them, in no other school than their own; the
+-- expedition, the schemaläggare and the läsare read and are refused every
+-- write. A teacher, a pupil and a guardian read nothing and write nothing. The
+-- other school's administrator reads nothing of this school's and makes its
+-- own. PostgREST's role is refused all of it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.k1_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'k1: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.k1_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  who text;
+  n bigint;
+  v text;
+  part uuid;
+BEGIN
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  IF school IS NULL OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-skyddad-school' THEN
+    RAISE EXCEPTION 'k1 436: the full administrator is not in rls-skyddad-school; fixtures did not run';
+  END IF;
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  IF EXISTS (SELECT 1 FROM "SchoolParts" WHERE "schoolId" IN (school, other)) THEN
+    RAISE EXCEPTION 'k1 436: a school starts with a skoldel';
+  END IF;
+
+  -- Nobody who does not decide makes the first one: the expedition, the schemaläggare, the läsare, a teacher.
+  FOREACH who IN ARRAY ARRAY['03', '04', '05', '07'] LOOP
+    PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e500000000' || who);
+    PERFORM pg_temp.k1_refuses(format($q$INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (%L, 'Lågstadiet', '4010', 0, 3)$q$, school), '42501', format('…%s making a skoldel', who));
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM "SchoolParts" WHERE "schoolId" = school) THEN RAISE EXCEPTION 'k1 436: a refused insert left a row'; END IF;
+
+  -- Those who decide make them, in no other school.
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000002');
+  INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (school, 'Lågstadiet', '4010', 0, 3) RETURNING id INTO part;
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (school, 'Högstadiet', '4030', 7, 9);
+  SELECT count(*) INTO n FROM "SchoolParts" WHERE "schoolId" = school;
+  IF n <> 2 THEN RAISE EXCEPTION 'k1 436: the deciders made % skoldelar, not 2', n; END IF;
+  PERFORM pg_temp.k1_refuses(format($q$INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (%L, 'Mellan', '4020', 4, 6)$q$, other), '42501', 'full making a skoldel for another school');
+  PERFORM pg_temp.k1_refuses(format($q$UPDATE "SchoolParts" SET "schoolId" = %L WHERE id = %L$q$, other, part), '42501', 'full moving a skoldel to another school');
+  UPDATE "SchoolParts" SET account = '4011' WHERE id = part;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'k1 436: the full administrator could not change a konto'; END IF;
+
+  -- Every other administrator profile reads them all and writes nothing.
+  FOREACH who IN ARRAY ARRAY['03', '04', '05'] LOOP
+    PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT account INTO v FROM "SchoolParts" WHERE id = part;
+    IF v IS DISTINCT FROM '4011' THEN RAISE EXCEPTION 'k1 436: …% reads the konto as %', who, v; END IF;
+    SELECT count(*) INTO n FROM "SchoolParts";
+    IF n <> 2 THEN RAISE EXCEPTION 'k1 436: …% reads % skoldelar, not 2', who, n; END IF;
+    -- The arm lets them reach the row and its check refuses the new one: an error, not an empty update.
+    PERFORM pg_temp.k1_refuses(format($q$UPDATE "SchoolParts" SET account = '9999' WHERE id = %L$q$, part), '42501', format('…%s changing a konto', who));
+    -- A delete has only its USING, so a refused one finds nothing.
+    DELETE FROM "SchoolParts" WHERE id = part;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'k1 436: …% removed a skoldel', who; END IF;
+    PERFORM pg_temp.k1_refuses(format($q$INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (%L, 'Mellan', '4020', 4, 6)$q$, school), '42501', format('…%s making a skoldel', who));
+  END LOOP;
+
+  -- Teachers, pupils and guardians read nothing and write nothing.
+  FOREACH who IN ARRAY ARRAY['06', '07', '11', '12', '21', '22'] LOOP
+    PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT count(*) INTO n FROM "SchoolParts";
+    IF n <> 0 THEN RAISE EXCEPTION 'k1 436: % …% reads % skoldelar', app.current_user_role(), who, n; END IF;
+    UPDATE "SchoolParts" SET account = '9999';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'k1 436: % …% changed a skoldel', app.current_user_role(), who; END IF;
+    DELETE FROM "SchoolParts";
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'k1 436: % …% removed a skoldel', app.current_user_role(), who; END IF;
+    PERFORM pg_temp.k1_refuses(format($q$INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (%L, 'Mellan', '4020', 4, 6)$q$, school), '42501', format('%s …%s making a skoldel', app.current_user_role(), who));
+  END LOOP;
+
+  -- The other school: it reads nothing of this school's, changes nothing of it, and makes its own — with the same name and the same årskurser.
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "SchoolParts";
+  IF n <> 0 THEN RAISE EXCEPTION 'k1 436: the other school reads % of this school''s skoldelar', n; END IF;
+  UPDATE "SchoolParts" SET account = '9999' WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'k1 436: the other school changed a skoldel of this school'; END IF;
+  DELETE FROM "SchoolParts" WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'k1 436: the other school removed a skoldel of this school'; END IF;
+  INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (other, 'Lågstadiet', '4010', 0, 3);
+  SELECT count(*) INTO n FROM "SchoolParts";
+  IF n <> 1 THEN RAISE EXCEPTION 'k1 436: the other school reads % skoldelar, not its own one', n; END IF;
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "SchoolParts";
+  IF n <> 2 THEN RAISE EXCEPTION 'k1 436: this school reads % skoldelar, not its own two', n; END IF;
+
+  -- Those who decide remove one.
+  DELETE FROM "SchoolParts" WHERE id = part;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'k1 436: the full administrator could not remove a skoldel'; END IF;
+  PERFORM set_config('app.test_k1_school', school::text, true);
+END $$;
+
+-- PostgREST's role, as the full administrator: no grant at all.
+SELECT pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.k1_refuses('SELECT count(*) FROM "SchoolParts"', '42501', 'PostgREST''s read of the skoldelar');
+  PERFORM pg_temp.k1_refuses(format($q$INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (%L, 'Mellan', '4020', 4, 6)$q$, current_setting('app.test_k1_school')), '42501', 'PostgREST''s skoldel');
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 437: vem som läser och skriver en kostnadssats. The same arms as the
+-- skoldelar's, proved for the rates: every administrator profile reads, the
+-- deciders make, change and remove, the others are refused, a teacher, a pupil
+-- and a guardian meet nothing, the other school meets only its own, and
+-- PostgREST's role is refused.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.k1_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'k1: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.k1_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  who text;
+  n bigint;
+  v numeric;
+BEGIN
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  IF EXISTS (SELECT 1 FROM "StaffCostRates" WHERE "schoolId" IN (school, other)) THEN
+    RAISE EXCEPTION 'k1 437: a school starts with a cost rate';
+  END IF;
+
+  FOREACH who IN ARRAY ARRAY['03', '04', '05', '07'] LOOP
+    PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e500000000' || who);
+    PERFORM pg_temp.k1_refuses(format($q$INSERT INTO "StaffCostRates" ("schoolId", category, "hourlyCost") VALUES (%L, 'TEACHER', 420)$q$, school), '42501', format('…%s stating a rate', who));
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM "StaffCostRates" WHERE "schoolId" = school) THEN RAISE EXCEPTION 'k1 437: a refused insert left a row'; END IF;
+
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000002');
+  INSERT INTO "StaffCostRates" ("schoolId", category, "hourlyCost") VALUES (school, 'TEACHER', 420.50);
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  INSERT INTO "StaffCostRates" ("schoolId", category, "hourlyCost") VALUES (school, 'SUBSTITUTE', 310);
+  SELECT "hourlyCost" INTO v FROM "StaffCostRates" WHERE "schoolId" = school AND category = 'TEACHER';
+  IF v IS DISTINCT FROM 420.50 THEN RAISE EXCEPTION 'k1 437: rektor''s rate reads back as %', v; END IF;
+  PERFORM pg_temp.k1_refuses(format($q$INSERT INTO "StaffCostRates" ("schoolId", category, "hourlyCost") VALUES (%L, 'TEACHER', 500)$q$, school), '23505', 'a second rate for a category');
+  PERFORM pg_temp.k1_refuses(format($q$INSERT INTO "StaffCostRates" ("schoolId", category, "hourlyCost") VALUES (%L, 'TEACHER', 500)$q$, other), '42501', 'full stating a rate for another school');
+  PERFORM pg_temp.k1_refuses(format($q$UPDATE "StaffCostRates" SET "schoolId" = %L WHERE "schoolId" = %L AND category = 'TEACHER'$q$, other, school), '42501', 'full moving a rate to another school');
+  UPDATE "StaffCostRates" SET "hourlyCost" = 435 WHERE "schoolId" = school AND category = 'TEACHER';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'k1 437: the full administrator could not change a rate'; END IF;
+
+  FOREACH who IN ARRAY ARRAY['03', '04', '05'] LOOP
+    PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT count(*) INTO n FROM "StaffCostRates";
+    IF n <> 2 THEN RAISE EXCEPTION 'k1 437: …% reads % rates, not 2', who, n; END IF;
+    PERFORM pg_temp.k1_refuses(format($q$UPDATE "StaffCostRates" SET "hourlyCost" = 1 WHERE "schoolId" = %L$q$, school), '42501', format('…%s changing a rate', who));
+    DELETE FROM "StaffCostRates" WHERE "schoolId" = school;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'k1 437: …% removed a rate', who; END IF;
+  END LOOP;
+
+  FOREACH who IN ARRAY ARRAY['06', '07', '11', '12', '21', '22'] LOOP
+    PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT count(*) INTO n FROM "StaffCostRates";
+    IF n <> 0 THEN RAISE EXCEPTION 'k1 437: % …% reads % rates', app.current_user_role(), who, n; END IF;
+    UPDATE "StaffCostRates" SET "hourlyCost" = 1;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'k1 437: % …% changed a rate', app.current_user_role(), who; END IF;
+    DELETE FROM "StaffCostRates";
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'k1 437: % …% removed a rate', app.current_user_role(), who; END IF;
+  END LOOP;
+
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "StaffCostRates";
+  IF n <> 0 THEN RAISE EXCEPTION 'k1 437: the other school reads % of this school''s rates', n; END IF;
+  UPDATE "StaffCostRates" SET "hourlyCost" = 1 WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'k1 437: the other school changed a rate of this school'; END IF;
+  INSERT INTO "StaffCostRates" ("schoolId", category, "hourlyCost") VALUES (other, 'TEACHER', 400);
+  SELECT count(*) INTO n FROM "StaffCostRates";
+  IF n <> 1 THEN RAISE EXCEPTION 'k1 437: the other school reads % rates, not its own one', n; END IF;
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "StaffCostRates";
+  IF n <> 2 THEN RAISE EXCEPTION 'k1 437: this school reads % rates, not its own two', n; END IF;
+  DELETE FROM "StaffCostRates" WHERE "schoolId" = school AND category = 'SUBSTITUTE';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'k1 437: the full administrator could not remove a rate'; END IF;
+  PERFORM set_config('app.test_k1_school', school::text, true);
+END $$;
+
+SELECT pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.k1_refuses('SELECT count(*) FROM "StaffCostRates"', '42501', 'PostgREST''s read of the rates');
+  PERFORM pg_temp.k1_refuses(format($q$INSERT INTO "StaffCostRates" ("schoolId", category, "hourlyCost") VALUES (%L, 'SUBSTITUTE', 300)$q$, current_setting('app.test_k1_school')), '42501', 'PostgREST''s rate');
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 438: vad en skoldels begränsningar gör med en rad. A name that is
+-- blank, too long or holds a control character, a konto of the same kinds, a
+-- span outside 0–9 or backwards: each refused by its check (23514). A second
+-- skoldel of the name is the key's (23505); a different name that shares an
+-- årskurs is the exclusion's (23P01), on insert and on update, and a skoldel
+-- that ends where the next begins is not a clash. The other school may use
+-- the same name and the same årskurser. The exclusion holds for a span that
+-- is one årskurs wide, and for 0 and 9.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.k1_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'k1: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.k1_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  low uuid;
+  high uuid;
+  n bigint;
+  ins text := $q$INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (%L, %L, %L, %s, %s)$q$;
+BEGIN
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+
+  -- The checks.
+  PERFORM pg_temp.k1_refuses(format(ins, school, '', '4010', 0, 3), '23514', 'an empty name');
+  PERFORM pg_temp.k1_refuses(format(ins, school, '   ', '4010', 0, 3), '23514', 'a blank name');
+  PERFORM pg_temp.k1_refuses(format(ins, school, repeat('å', 101), '4010', 0, 3), '23514', 'a name of 101 characters');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Låg' || chr(9) || 'stadiet', '4010', 0, 3), '23514', 'a name with a tab');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Lågstadiet', '', 0, 3), '23514', 'an empty konto');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Lågstadiet', repeat('9', 31), 0, 3), '23514', 'a konto of 31 characters');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Lågstadiet', '40' || chr(10) || '10', 0, 3), '23514', 'a konto with a line break');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Lågstadiet', '4010', -1, 3), '23514', 'an årskurs below förskoleklass');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Lågstadiet', '4010', 0, 10), '23514', 'an årskurs above 9');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Lågstadiet', '4010', 3, 2), '23514', 'a backwards span');
+  -- The longest the checks allow.
+  EXECUTE format(ins, school, repeat('å', 100), repeat('9', 30), 9, 9);
+  DELETE FROM "SchoolParts" WHERE "schoolId" = school;
+
+  -- The name is the key's, the årskurser the exclusion's.
+  EXECUTE format(ins, school, 'Lågstadiet', '4010', 0, 3);
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Lågstadiet', '4011', 4, 6), '23505', 'a second skoldel of the name');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Mellan', '4020', 3, 6), '23P01', 'a skoldel sharing årskurs 3');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Allt', '4099', 0, 9), '23P01', 'a skoldel holding the others');
+  EXECUTE format(ins, school, 'Mellanstadiet', '4020', 4, 6);
+  EXECUTE format(ins, school, 'Åk 9', '4090', 9, 9);
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'Åk 9 igen', '4091', 9, 9), '23P01', 'a second skoldel of årskurs 9');
+  SELECT id INTO low FROM "SchoolParts" WHERE "schoolId" = school AND name = 'Lågstadiet';
+  SELECT id INTO high FROM "SchoolParts" WHERE "schoolId" = school AND name = 'Åk 9';
+  -- A skoldel that grows into another's årskurs is refused; one that grows into free ones is not; it never clashes with itself.
+  PERFORM pg_temp.k1_refuses(format($q$UPDATE "SchoolParts" SET "gradeTo" = 4 WHERE id = %L$q$, low), '23P01', 'a skoldel growing into the next');
+  UPDATE "SchoolParts" SET "gradeTo" = 3, account = '4012' WHERE id = low;
+  UPDATE "SchoolParts" SET "gradeFrom" = 7, "gradeTo" = 8 WHERE id = high;
+  UPDATE "SchoolParts" SET "gradeFrom" = 7, "gradeTo" = 9 WHERE id = high;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'k1 438: a skoldel could not be widened over free årskurser'; END IF;
+  PERFORM pg_temp.k1_refuses(format($q$UPDATE "SchoolParts" SET name = 'Mellanstadiet' WHERE id = %L$q$, low), '23505', 'renaming a skoldel to a name taken');
+  PERFORM pg_temp.k1_refuses(format($q$UPDATE "SchoolParts" SET "gradeFrom" = 6 WHERE id = %L$q$, high), '23P01', 'a skoldel widened into årskurs 6');
+
+  -- The other school has the same names and the same årskurser.
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  EXECUTE format(ins, other, 'Lågstadiet', '4010', 0, 3);
+  EXECUTE format(ins, other, 'Mellanstadiet', '4020', 4, 6);
+  SELECT count(*) INTO n FROM "SchoolParts";
+  IF n <> 2 THEN RAISE EXCEPTION 'k1 438: the other school reads % skoldelar, not its own two', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 439: vad en kostnadssats begränsningar gör med en rad. A rate below
+-- 0 or above 100 000 is refused by its check (23514); the edges are allowed;
+-- a third decimal is rounded to two by the column; a category that does not
+-- exist is the type's (22P02); a category is stated once per school (23505)
+-- and by each school on its own.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.k1_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'k1: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.k1_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  n bigint;
+  v numeric;
+  ins text := $q$INSERT INTO "StaffCostRates" ("schoolId", category, "hourlyCost") VALUES (%L, %L, %s)$q$;
+BEGIN
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'TEACHER', '-0.01'), '23514', 'a negative rate');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'TEACHER', '100000.01'), '23514', 'a rate above 100 000');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'TEACHER', '99999999.99'), '23514', 'a rate of eight digits');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'TEACHER', '123456789012'), '22003', 'a rate that does not fit the column');
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'LÄRARE', '400'), '22P02', 'a category that does not exist');
+  EXECUTE format(ins, school, 'TEACHER', '0');
+  EXECUTE format(ins, school, 'UNQUALIFIED_TEACHER', '100000');
+  EXECUTE format(ins, school, 'SUBSTITUTE', '420.005');
+  SELECT "hourlyCost" INTO v FROM "StaffCostRates" WHERE "schoolId" = school AND category = 'SUBSTITUTE';
+  IF v IS DISTINCT FROM 420.01 THEN RAISE EXCEPTION 'k1 439: 420.005 is stored as %, not 420.01', v; END IF;
+  PERFORM pg_temp.k1_refuses(format(ins, school, 'SUBSTITUTE', '1'), '23505', 'a second rate for a category');
+  PERFORM pg_temp.k1_refuses(format($q$UPDATE "StaffCostRates" SET "hourlyCost" = -1 WHERE "schoolId" = %L$q$, school), '23514', 'a rate changed below 0');
+  PERFORM pg_temp.k1_refuses(format($q$UPDATE "StaffCostRates" SET category = 'TEACHER' WHERE "schoolId" = %L AND category = 'SUBSTITUTE'$q$, school), '23505', 'a rate moved to a category stated');
+
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  EXECUTE format(ins, other, 'TEACHER', '400');
+  EXECUTE format(ins, other, 'SUBSTITUTE', '300');
+  SELECT count(*) INTO n FROM "StaffCostRates";
+  IF n <> 2 THEN RAISE EXCEPTION 'k1 439: the other school reads % rates, not its own two', n; END IF;
 END $$;
 ROLLBACK;

@@ -329,6 +329,49 @@ export class StaffingLoadService {
     });
   }
 
+  /**
+   * Analys och planering (src/analysis): the planned and the scheduled report
+   * from ONE read of the rows, in the caller's transaction, so that a teacher's
+   * undervisning according to the tjänstefördelning and according to the
+   * grundschema are two builds of the same arithmetic over the same moment.
+   * The scheduled report is built as readScheduledInput builds it (one
+   * requirement-shaped row per non-parked master lesson, no behörigheter) from
+   * the planned read, which was asked about the master lessons' groups too;
+   * it is null when no lesson is laid. Nothing is hidden or recorded here:
+   * who may see tjänst % and which reads the läslogg gets are the caller's.
+   */
+  async readReports(
+    tx: PrismaClient,
+    user: AuthenticatedUser,
+    academicYearId: string,
+    options: { scheduled?: boolean } = {},
+  ): Promise<{ read: LoadRead; planned: TeacherLoadReport; scheduled: TeacherLoadReport | null }> {
+    const schoolId = requireSchoolId(user);
+    // The cost basis wants the planned report alone: no master lesson is read for it.
+    const { rows: masters } =
+      options.scheduled === false
+        ? { rows: [] as MasterRow[] }
+        : await readGrundschema(tx, { role: user.role, schoolId }, academicYearId, () => readMasters(tx, academicYearId));
+    const read = await readLoadInput(tx, user, academicYearId, schoolId, { alsoGroupIds: masterGroupIds(masters) });
+    if (!read) throw new NotFoundException('Academic year not found.');
+    const planned = buildTeacherLoadReport(read.input);
+    const laid = masters.filter((master) => !master.isParked);
+    const scheduled =
+      laid.length === 0
+        ? null
+        : buildTeacherLoadReport({
+            ...read.input,
+            requirements: toScheduledRequirements(
+              masters.map((m) => toScheduledMaster(m, read)),
+              read.input.requirements,
+              (groupIds) => read.spanOf(groupIds),
+              read.loadModel === 'FACTOR' ? read.weightOf : null,
+            ),
+            qualifications: [],
+          });
+    return { read, planned, scheduled };
+  }
+
   /** The year's requirements with no lead teacher, with their minutes and span. */
   async unstaffed(
     academicYearId: string,

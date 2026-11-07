@@ -59,6 +59,13 @@
  * not named and is counted. A route of Skolans dag that ever answers a file
  * belongs in the list below, by name, before it ships.
  *
+ * ANALYS OCH PLANERING (20270130090000) IS DECIDED HERE TOO, apart from its file: its views (GET /api/v1/analysis/key-figures, .../cost-basis and
+ * .../payroll-basis) answer the screen in JSON with ids and numbers and no name, and no path of them is a file. The key figures name a teacher by id and no
+ * pupil, a protected teacher included (staff read the school's teachers directly, and the figures are the load report's, which has always named them); the
+ * cost basis is aggregates; the huvudman's reader is given the school's figures and no teacher's row. The cost basis as a file is the web's, a CSV of
+ * årskurser and kronor with no person, and NAMES_NOBODY there. A route of Analys och planering that ever answers a file naming people belongs in the
+ * list below, by name, before it ships.
+ *
  * Why the database cannot hold this instead: an export is built in the
  * gateway or the browser from ordinary reads under RLS, and nothing in the
  * catalogue says which reads become a file. The rule that can be held there
@@ -120,6 +127,13 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
   'GET /api/v1/staffing/scb-file': {
     rule: 'KEEPS_AND_SAYS',
     why: 'SCB is to have every teacher (lärarregistret): the file keeps them, and protectedInFile says how many.',
+  },
+  'POST /api/v1/analysis/payroll-basis/export': {
+    rule: 'KEEPS_AND_SAYS',
+    why:
+      'Löneunderlaget (Analys och planering): payroll pays everyone, so every person with time in the period is in the file, a person with a protected identity too, ' +
+      'and protectedInFile says how many. Named by name, e-mail and signature, with tjänstgöringsgrad: HR data, so only rektor, a full administrator or a reader with HR-läs ' +
+      'is given it (HR_NOT_YOURS before anything is read), never the huvudman\'s reader. Recorded in the läslogg (EMPLOYMENT and PEOPLE) before the answer leaves.',
   },
   'POST /api/v1/schedule-exchange/export': {
     rule: 'NAMES_STAFF',

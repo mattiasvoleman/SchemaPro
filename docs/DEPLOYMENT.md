@@ -3454,3 +3454,58 @@ anywhere else. The splash has a light and a dark ground. The native view
 behind the screens is set once, at build time, so the app repaints it
 whenever the phone switches. The device check is §15.4 step 5, on an iPhone
 and an Android phone.
+
+## 16. Analysis and planning ("Analys och planering")
+
+Key figures per teacher and school, a cost basis per pupil and a payroll basis
+with accounts, under `/admin/analysis` (route family `/api/v1/analysis`). The
+migration `20270130090000_en_skola_har_skoldelar_och_kostnadssatser_for_analys`
+adds the enum `StaffCostCategory` and two tables, `SchoolParts` (a skoldel: a
+cost centre with a name, an account and the årskurser it holds, in the
+nine-year numbering, never overlapping within a school) and `StaffCostRates`
+(the school's cost of an hour per staff category, in SEK). Neither holds a
+person: no individual salary is stored, and the category is derived when a
+basis is made. Everything else is computed per request from rows that exist,
+and no job, notice or setting is added.
+
+### 16.1 Deploy order
+
+1. Run the migration before the merge (section 2). It takes `Schools` in
+   `SHARE ROW EXCLUSIVE` with `NOWAIT` in a loop for at most 30 seconds, and
+   stops with nothing done if the table is never free (rerun it after
+   `prisma migrate resolve --rolled-back`). The API before this release is
+   unaffected: it never reads either table.
+2. Merge. The API deploys from `main`; there is no engine change and no new
+   environment variable.
+3. Verify (as the owner): `SELECT count(*) FROM pg_policies WHERE tablename IN
+   ('SchoolParts','StaffCostRates');` is 8, `app_authenticated` holds SELECT,
+   INSERT, UPDATE and DELETE on both and nothing else, and no other role holds
+   anything (PostgreSQL 17: not MAINTAIN either).
+
+### 16.2 What each reader gets
+
+- Key figures: every administrator profile, without tjänstgöringsgrad unless
+  the profile reads HR data; the huvudman's reader gets the school's figures
+  and no teacher's row. A teacher has none of it.
+- Cost basis: rektor, a full administrator, a reader with HR-läs, and the
+  huvudman's reader (as sums). Refused to the rest with
+  `ANALYSIS_COST_NOT_YOURS`.
+- Payroll basis and its file: rektor, a full administrator and a reader with
+  HR-läs, never the huvudman's reader (`HR_NOT_YOURS` before anything is read).
+  The file keeps people with a protected identity and says how many
+  (`protectedInFile`); both are recorded in the read log.
+- Writes (a skoldel, a rate): those who decide, in the gateway (`@Decides`)
+  and in the database's arms.
+
+### 16.3 Operations
+
+- The four views are limited to 20 a minute per login and route (429,
+  `ANALYSIS_RATE_LIMITED`, with `Retry-After`), not per address: a school's
+  staff share one. The global per-address bucket for these routes is 600.
+- The views are built in the API process. Measured on a school of 120
+  teachers and 2 000 pupils: see the PR for the figures and the method.
+- The payroll CSV is Windows-1252 (`text/csv; charset=windows-1252`): a
+  character it cannot hold is written as the nearest letter and counted in a
+  notice. The Excel file keeps every character.
+- Rolling back the API past this release leaves two unused tables. Nothing
+  else reads them.
