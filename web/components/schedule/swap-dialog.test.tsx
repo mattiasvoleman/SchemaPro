@@ -88,7 +88,7 @@ const suggestion = (over: Partial<SwapSuggestion> = {}): SwapSuggestion => ({
   unit: { lessonIds: ["l-a"], links: [] },
   selectedLocked: false,
   proposals: [SWAP, CHAIN],
-  stats: { partners: 9, candidates: 4, judged: 4, refused: 0, truncated: false, elapsedMs: 120 },
+  stats: { partners: 9, candidates: 4, judged: 4, refused: 0, truncated: false, chainsCut: false, elapsedMs: 120, phasesMs: { read: 20, index: 10, warm: 10, search: 80 } },
   ...over,
 });
 
@@ -131,12 +131,15 @@ describe("SwapDialog: what it shows of a proposal", () => {
     await opened();
     expect(swaps.suggest.mutateAsync).toHaveBeenCalledWith({ lessonId: "l-a" });
     expect(screen.getByText("found(2)")).toBeInTheDocument();
-    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["swap", "chain"]);
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
+      "swap: Matematik 7A, Tyska 7B, Franska 7C",
+      "chain: Matematik 7A, Tyska 7B, Svenska 7D",
+    ]);
   });
 
   it("names every moved lesson with where it goes, marks the picked one and the locked", async () => {
     await opened();
-    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: "swap" }));
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
     expect(within(swap!).getByText("Matematik 7A")).toBeInTheDocument();
     expect(within(swap!).getByText("Tyska 7B")).toBeInTheDocument();
     expect(within(swap!).getByText("Franska 7C")).toBeInTheDocument();
@@ -157,7 +160,7 @@ describe("SwapDialog: what it shows of a proposal", () => {
 
   it("lists the hard rules held and the soft costs, before and after, in the pupils' order", async () => {
     await opened();
-    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: "swap" }));
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
     expect(within(swap!).getByText(/hardTitle/)).toBeInTheDocument();
     expect(within(swap!).getByText(/hard\.CLASH; hard\.FRAME; hard\.OTHER_SCHOOL/)).toBeInTheDocument();
     const terms = within(swap!).getAllByRole("term").map((term) => term.textContent);
@@ -216,7 +219,7 @@ describe("SwapDialog: what it shows of a proposal", () => {
 describe("SwapDialog: apply", () => {
   it("sends exactly the proposal's moves, whole, as clocks, and offers Ångra", async () => {
     await opened();
-    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: "swap" }));
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
     await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
     await waitFor(() => expect(swaps.apply.mutateAsync).toHaveBeenCalledTimes(1));
     expect(swaps.apply.mutateAsync).toHaveBeenCalledWith({
@@ -238,7 +241,7 @@ describe("SwapDialog: apply", () => {
 
   it("takes it back from the toast by sending the answer's undo, and says if the timetable moved since", async () => {
     await opened();
-    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: "swap" }));
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
     await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
     const action = (toast.success as ReturnType<typeof vi.fn>).mock.calls[0]![1].action;
@@ -262,7 +265,7 @@ describe("SwapDialog: apply", () => {
   ])("on a 409 %s says so and asks for new proposals", async (code, text) => {
     await opened();
     swaps.apply.mutateAsync.mockRejectedValueOnce(new ApiError(409, "english", code));
-    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: "swap" }));
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
     await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(text));
     await waitFor(() => expect(swaps.suggest.mutateAsync).toHaveBeenCalledTimes(2));
@@ -272,7 +275,7 @@ describe("SwapDialog: apply", () => {
   it("shows the clash rule's own sentence for a double booking, and asks again", async () => {
     await opened();
     swaps.apply.mutateAsync.mockRejectedValueOnce(new ApiError(409, "Teacher already teaches X in this slot."));
-    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: "swap" }));
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
     await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Teacher already teaches X in this slot."));
   });
@@ -280,7 +283,7 @@ describe("SwapDialog: apply", () => {
   it("reports any other failure and leaves the proposals where they are", async () => {
     await opened();
     swaps.apply.mutateAsync.mockRejectedValueOnce(new Error("boom"));
-    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: "swap" }));
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
     await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("boom"));
     expect(swaps.suggest.mutateAsync).toHaveBeenCalledTimes(1);

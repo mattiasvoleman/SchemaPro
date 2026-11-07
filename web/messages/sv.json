@@ -1904,9 +1904,7 @@
     "splitsParallel": "Bytet skulle dela upp lektioner som ligger parallellt, så inget ändrades. Förslagen hämtas på nytt.",
     "lockedPartner": "Bytet skulle flytta en låst lektion, så inget ändrades. Förslagen hämtas på nytt.",
     "undoStale": "Schemat har ändrats sedan bytet, så det går inte att ångra härifrån. Återställ versionen ”Före byte” under Versioner.",
-    "versionName": "Före byte: {lesson}",
-    "openButton": "Föreslå byten",
-    "draftNote": "I utkastläge är bytet ett utkast tills du publicerar."
+    "openButton": "Föreslå byten"
   },
   "dayPlanner": {
     "title": "Dagsplanering",

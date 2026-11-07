@@ -96,8 +96,11 @@ export interface SwapSuggestion {
     candidates: number;
     judged: number;
     refused: number;
+    /** The time budget or the candidate cap ended the search: there may be more proposals. */
     truncated: boolean;
+    chainsCut: boolean;
     elapsedMs: number;
+    phasesMs: { read: number; index: number; warm: number; search: number };
   };
 }
 

@@ -79,7 +79,10 @@ export interface SwapSuggestion {
     candidates: number;
     judged: number;
     refused: number;
+    /** The time budget or the candidate cap ended the search: there may be more proposals. */
     truncated: boolean;
+    /** Chains were tried among the cheapest units on each side only. */
+    chainsCut: boolean;
     elapsedMs: number;
     /** Where the time went: the snapshot read, indexing it, warming the roster reads, the search. */
     phasesMs: { read: number; index: number; warm: number; search: number };
@@ -156,6 +159,7 @@ export class SwapsService {
           judged: 0,
           refused: 0,
           truncated: false,
+          chainsCut: false,
           elapsedMs: Date.now() - started,
           phasesMs: { read: 0, index: 0, warm: 0, search: 0 },
         },
@@ -210,6 +214,7 @@ export class SwapsService {
           judged: result.judged,
           refused: result.refused,
           truncated: result.truncated,
+          chainsCut: result.chainsCut,
           elapsedMs: Date.now() - started,
           phasesMs: { read: indexing - read, index: warming - indexing, warm: searching - warming, search: Date.now() - searching },
         },

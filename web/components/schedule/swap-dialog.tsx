@@ -244,12 +244,18 @@ export function SwapDialog({
                   {suggestion.proposals.map((proposal) => (
                     <li key={proposal.id} className="space-y-2 rounded-md border p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-sm font-semibold">
+                        <h3 id={`swap-${proposal.id}`} className="text-sm font-semibold">
                           {proposal.kind === "SWAP" ? t("swap") : t("chain")}
+                          {/* What the heading is about, for the reader of a list of twelve of them. */}
+                          <span className="sr-only">
+                            {": "}
+                            {proposal.moves.map((move) => labelOf(proposal, move.lessonId)).join(", ")}
+                          </span>
                         </h3>
                         <Button
                           size="sm"
                           onClick={() => void doApply(proposal)}
+                          aria-describedby={`swap-${proposal.id}`}
                           disabled={apply.isPending}
                           data-writes="SCHEMALAGGNING DRIFT"
                         >

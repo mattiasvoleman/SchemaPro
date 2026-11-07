@@ -36,7 +36,8 @@ import type {
  * The passes are bounded so that a school with thousands of lessons still
  * answers: `maxEdges` units per direction for chains, `maxCandidates` candidates
  * in all, and a time budget for judging, after which the list is what has been
- * judged so far and says so. The budget never cuts the first `limit` candidates
+ * judged so far and says so (`truncated`; the chain cut is `chainsCut`, which is
+ * a choice of the best and not a shortfall). The budget never cuts the first `limit` candidates
  * off: a slow host gets a short list, never an empty one.
  */
 
@@ -70,8 +71,10 @@ export interface SwapSearchResult {
   judged: number;
   /** The judge refused this many of them. */
   refused: number;
-  /** The time budget ended the search, or a cap cut the chains short. */
+  /** The time budget or the candidate cap ended the search: there may be more proposals. */
   truncated: boolean;
+  /** Chains were tried only among the cheapest units on each side. Said in the stats, not to the reader: the list is the best of them. */
+  chainsCut: boolean;
   /** The picked lesson's unit cannot be moved at all, and why. */
   immovable?: 'NOT_PLACED';
 }
@@ -120,11 +123,12 @@ export async function searchSwaps(input: SwapSearchInput): Promise<SwapSearchRes
   const started = now();
   const picked = input.unitOf.get(input.lessonId);
   if (!picked) {
-    return { proposals: [], candidates: 0, judged: 0, refused: 0, truncated: false, immovable: 'NOT_PLACED' };
+    return { proposals: [], candidates: 0, judged: 0, refused: 0, truncated: false, chainsCut: false, immovable: 'NOT_PLACED' };
   }
   const maxEdges = input.maxEdges ?? 40;
   const maxCandidates = input.maxCandidates ?? 1500;
   let truncated = false;
+  let chainsCut = false;
 
   // Partners: distinct units of one length, free to move, standing elsewhere.
   const seen = new Set<string>();
@@ -174,14 +178,16 @@ export async function searchSwaps(input: SwapSearchInput): Promise<SwapSearchRes
   // what U pays at V's slot, W by what W pays at U's. The cut is said in
   // `truncated`, and every chain that survives it is judged whole.
   const cheapest = (units: SwapUnit[], cost: (unit: SwapUnit) => number): SwapUnit[] =>
-    units
+    units.length <= maxEdges
+      ? units
+      : units
       .map((unit) => ({ unit, cost: cost(unit) }))
       .sort((a, b) => a.cost - b.cost || (a.unit.id < b.unit.id ? -1 : 1))
       .slice(0, maxEdges)
       .map((entry) => entry.unit);
   const from = cheapest(reachable, (v) => input.soft(movesOf(picked, v.slot)).score);
   const into = cheapest(reaching, (w) => input.soft(movesOf(w, picked.slot)).score);
-  if (reachable.length > from.length || reaching.length > into.length) truncated = true;
+  if (reachable.length > from.length || reaching.length > into.length) chainsCut = true;
   chains: for (const v of from) {
     for (const w of into) {
       if (candidates.length >= maxCandidates) {
@@ -218,5 +224,5 @@ export async function searchSwaps(input: SwapSearchInput): Promise<SwapSearchRes
       score: candidate.score,
     });
   }
-  return { proposals, candidates: candidates.length, judged, refused, truncated };
+  return { proposals, candidates: candidates.length, judged, refused, truncated, chainsCut };
 }

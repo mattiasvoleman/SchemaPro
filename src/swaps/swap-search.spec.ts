@@ -170,12 +170,13 @@ describe('searchSwaps', () => {
     expect(result.proposals.filter((p) => p.kind === 'SWAP')).toHaveLength(3);
   });
 
-  it('cuts the chains to the cheapest edges on each side, and says so', async () => {
+  it('cuts the chains to the cheapest edges on each side, and says so apart from a shortfall', async () => {
     const many = [a, ...Array.from({ length: 6 }, (_, i) => lesson(`p${i}`, 2 + (i % 4), 480 + 60 * Math.floor(i / 4)))];
     const cut = await search(many, { maxEdges: 2 });
     const full = await search(many, { maxEdges: 100 });
-    expect(cut.truncated).toBe(true);
-    expect(full.truncated).toBe(false);
+    expect(cut.chainsCut).toBe(true);
+    expect(cut.truncated).toBe(false);
+    expect(full.chainsCut).toBe(false);
     expect(cut.proposals.filter((p) => p.kind === 'CHAIN').length).toBeLessThan(full.proposals.filter((p) => p.kind === 'CHAIN').length);
     // Every swap survives the cut: only chains are bounded.
     expect(cut.proposals.filter((p) => p.kind === 'SWAP')).toHaveLength(full.proposals.filter((p) => p.kind === 'SWAP').length);

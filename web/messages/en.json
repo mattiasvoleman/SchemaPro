@@ -1904,9 +1904,7 @@
     "splitsParallel": "The swap would part lessons that stand in parallel, so nothing changed. The proposals are fetched again.",
     "lockedPartner": "The swap would move a locked lesson, so nothing changed. The proposals are fetched again.",
     "undoStale": "The timetable has changed since the swap, so it cannot be undone from here. Restore the version “Före byte” under Versions.",
-    "versionName": "Före byte: {lesson}",
-    "openButton": "Suggest swaps",
-    "draftNote": "In draft mode the swap is a draft until you publish."
+    "openButton": "Suggest swaps"
   },
   "dayPlanner": {
     "title": "Day planner",
