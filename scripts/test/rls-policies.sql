@@ -149,10 +149,10 @@ BEGIN
   -- them. Both halves count real rows: the fixtures plant rows in each table in
   -- both schools, and the runner refuses to start without the other school's.
   --
-  -- The five link tables also hold rows filed under the other school but
-  -- attached to this school's lessons. The policies answer by the row's own
-  -- school, so those rows belong to the second half; a policy that asked the
-  -- lesson's school instead would count them there.
+  -- (The five link tables once also held rows filed under the other school but
+  -- attached to this school's lessons, which the policies answered by the row's
+  -- own school. Their keys are composite since 20270115090000 and no such row
+  -- can be written; section 330 proves the refusal.)
   FOREACH tbl IN ARRAY ARRAY[
     'AcademicYears', 'StudentGroups', 'GuardianStudents',
     'MasterLessons', 'CalendarLessons', 'Subjects', 'Rooms',
@@ -5384,15 +5384,16 @@ BEGIN
     RAISE EXCEPTION 'rollover: an admin wrote a successor year into another school';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
-  -- A linked group filed under school B's year: the plain academicYearId key
-  -- lets it through, the trigger refuses it — and names nothing of school B.
+  -- A linked group filed under school B's year: the composite academicYearId
+  -- key refuses it (20270115090000; until then the key was plain, let it
+  -- through, and the trigger was what refused) — and names nothing of school B.
   BEGIN
     INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
     VALUES (school, current_setting('app.test_year_b')::uuid, 'RLS19 i skola B:s år', g7b, now());
     RAISE EXCEPTION 'rollover: a linked group was filed under another school''s year';
-  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+  EXCEPTION WHEN foreign_key_violation THEN
     GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
-    IF msg NOT LIKE 'ROLLOVER_LINK_MISMATCH:%' OR det NOT LIKE 'studentGroupId=%' THEN
+    IF msg NOT LIKE '%StudentGroups_academicYearId_schoolId_fkey%' THEN
       RAISE EXCEPTION 'rollover: a group in school B''s year answered % / %', msg, det;
     END IF;
     IF position(current_setting('app.test_year_b') IN msg || det) > 0
@@ -29442,8 +29443,8 @@ ROLLBACK;
 -- Section 251: en elev i SvA7, som är tillagd till 7B:s svenska, läser
 -- lektionen, dess SvA7-rad och dess logg, som PostgREST:s roll och som
 -- API:ts; en elev i ingen av grupperna gör det inte, inte en elev som slutat,
--- och inte en annan skolas elev, också när en rad i hens skola pekar över
--- skolgränsen; ett medlemskap från förra läsåret räknas, som för
+-- och inte en annan skolas elev (en rad som pekar över skolgränsen kan sedan
+-- 20270115090000 inte skrivas, avsnitt 330); ett medlemskap från förra läsåret räknas, som för
 -- vårdnadshavaren; en inloggning med en rad på varje skola läser den skola
 -- anropet namnger (inställningen eller huvudet), annars den äldsta raden;
 -- vårdnadshavarna läser som förut, och en som står i SvA7 av misstag läser
@@ -29526,11 +29527,12 @@ DECLARE
     ['00000000-0000-4000-8000-000000001410', ' |  |  | /', ' |  |  | /'],                                                           -- G4: a guardian in SvA7
     ['00000000-0000-4000-8000-000000001401', 'TG-0,TG-1,TG-2,TG-3 | TG-0/SvA6,TG-1/SvA7,TG-3/Spanska | TG ett,TG noll | /',
                                              'TG-0,TG-1,TG-2,TG-3 | TG-0/SvA6,TG-1/SvA7,TG-3/Spanska |  | /'],                -- the teacher
-    -- Q, the other school's pupil in its SvA7 and, by the row that points
-    -- across, in this school's: the arms' school checks keep TG-2 (joined
-    -- to Q's SvA7 by a row of Q's school) and TG-1's SvA7 row out.
-    ['00000000-0000-4000-8000-000000001408', 'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan | TG annan | SvA7,SvA7 annan/TG-2,TG-9',
-                                             'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan |  | SvA7,SvA7 annan/TG-2,TG-9']];
+    -- Q, the other school's pupil in its SvA7: reads that school's lesson and
+    -- nothing of this school's. (A row of Q's school once pointed across, at
+    -- this school's SvA7 and TG-2; the database refuses such a row since
+    -- 20270115090000, section 330.)
+    ['00000000-0000-4000-8000-000000001408', 'TG-9 | TG-9/SvA7 annan | TG annan | SvA7 annan/TG-9',
+                                             'TG-9 | TG-9/SvA7 annan |  | SvA7 annan/TG-9']];
 BEGIN
   IF coalesce(current_setting('app.test_tg_l1', true), '') = '' OR coalesce(current_setting('app.test_tg_l9', true), '') = ''
      OR coalesce(current_setting('app.test_tg_l0', true), '') = '' OR coalesce(current_setting('app.test_tg_sva9', true), '') = '' THEN
@@ -29568,16 +29570,16 @@ DECLARE
   cases constant text[][] := ARRAY[
     ['00000000-0000-4000-8000-000000001414', '',   'TG-1 | TG-1/SvA7 | TG ett | SvA7/TG-1', 'TG-1 | TG-1/SvA7 |  | SvA7/TG-1'],
     ['00000000-0000-4000-8000-000000001414', 'S1', 'TG-1 | TG-1/SvA7 | TG ett | SvA7/TG-1', 'TG-1 | TG-1/SvA7 |  | SvA7/TG-1'],
-    ['00000000-0000-4000-8000-000000001414', 'S2', 'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan | TG annan | /',
-                                                   'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan |  | /'],            -- M1: the teacher there
+    ['00000000-0000-4000-8000-000000001414', 'S2', 'TG-9 | TG-9/SvA7 annan | TG annan | /',
+                                                   'TG-9 | TG-9/SvA7 annan |  | /'],            -- M1: the teacher there
     ['00000000-0000-4000-8000-000000001415', '',   'TG-1 | TG-1/SvA7 | TG ett | SvA7/TG-1', 'TG-1 | TG-1/SvA7 |  | SvA7/TG-1'],
     ['00000000-0000-4000-8000-000000001415', 'S1', 'TG-1 | TG-1/SvA7 | TG ett | SvA7/TG-1', 'TG-1 | TG-1/SvA7 |  | SvA7/TG-1'],
-    ['00000000-0000-4000-8000-000000001415', 'S2', 'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan | TG annan | SvA7 annan/TG-2,TG-9',
-                                                   'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan |  | SvA7 annan/TG-2,TG-9'],  -- M2: the pupil there
+    ['00000000-0000-4000-8000-000000001415', 'S2', 'TG-9 | TG-9/SvA7 annan | TG annan | SvA7 annan/TG-9',
+                                                   'TG-9 | TG-9/SvA7 annan |  | SvA7 annan/TG-9'],  -- M2: the pupil there
     ['00000000-0000-4000-8000-000000001416', '',   ' |  |  | /', ' |  |  | /'],                                    -- M3: the guardian in SvA7 here
     ['00000000-0000-4000-8000-000000001416', 'S1', ' |  |  | /', ' |  |  | /'],
-    ['00000000-0000-4000-8000-000000001416', 'S2', 'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan | TG annan | SvA7 annan/TG-2,TG-9',
-                                                   'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan |  | SvA7 annan/TG-2,TG-9']];
+    ['00000000-0000-4000-8000-000000001416', 'S2', 'TG-9 | TG-9/SvA7 annan | TG annan | SvA7 annan/TG-9',
+                                                   'TG-9 | TG-9/SvA7 annan |  | SvA7 annan/TG-9']];
 BEGIN
   FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
     EXECUTE format('SET LOCAL ROLE %I', via);
@@ -44428,5 +44430,331 @@ BEGIN
   IF EXISTS (SELECT 1 FROM "CrisisReports" WHERE "byUserId" = (SELECT id FROM "Users" WHERE "authId" = current_setting('app.test_rls355_t4_auth')::uuid)) THEN
     RAISE EXCEPTION 'krisläge: a teacher reads a mark another teacher made with no group';
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 330-334: Nycklar mellan skolbundna tabeller (20270115090000).
+--
+-- Trettioåtta främmande nycklar mellan två tabeller som båda bär "schoolId"
+-- var enkla nycklar på "id": databasen höll att raden de pekade på fanns, inte
+-- att den var skolans egen. En administratör i skola B kunde spara en rad i B
+-- som namngav en rad i skola A (om A:s id var känt), och radens policy
+-- (WITH CHECK) frågade bara om radens egen skola. Nycklarna är nu
+-- ("x", "schoolId") -> tabell ("id", "schoolId"), och en rad kan inte namnge en
+-- annan skolas rad.
+--
+-- Skolorna är rls-tenantkey-a (A, det som pekas på) och rls-tenantkey-b (B,
+-- den som skriver), var och en med samma rader (fixtures: 7e<skola><enhet>-…),
+-- en rad i varje tabell vars nyckel avsnitten pekar om och en andra rad av
+-- varje förälder i B för nyckelns kontroll (samma skola ska gå).
+--
+--   330  katalogen och ägarens sida: rls-owner-checks.sql, "Section 330o"
+--   331  B:s fulla administratör, båda rollerna (API:ts och PostgREST:s), båda
+--        vägarna (UPDATE och INSERT), varje nyckel: en nyckelbrytning, vid
+--        nyckelns eget namn, aldrig en rad
+--   332  B:s lärare, elev, vårdnadshavare och tjänsteprincipal: ingen kommer
+--        igenom där de kan skriva alls
+--   333  kontrollen: samma skolas rad går, så att 331 inte lyckas för att
+--        skrivningen aldrig nådde nyckeln; och en grupp i en annan skolas läsår
+--        (M8, granskning 260) vägras
+--   334  nyckelns ON DELETE som förut: rls-owner-checks.sql, "Section 334o"
+-- ---------------------------------------------------------------------------
+
+-- The helpers the sections share. Temporary, so they die with the session.
+CREATE FUNCTION pg_temp.tk_id(s int, n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('7e' || lpad(s::text, 2, '0') || lpad(to_hex(n), 4, '0') || '-0000-4000-8000-000000000000')::uuid
+$$;
+
+CREATE FUNCTION pg_temp.tk_auth(s int, n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('00000000-0000-4000-8000-7e' || lpad((s * 100 + n)::text, 10, '0'))::uuid
+$$;
+
+-- The keys the sections re-point: the table, the column, the row of school B whose column is moved
+-- (its entity number), the row of school A it is pointed at, the row of school B it is moved to as
+-- the control, and what the full administrator's UPDATE of the column meets: 'key' (the foreign
+-- key), 'LV409' (a leave request's pupil and requester are fixed once saved, by
+-- LeaveRequests_request_is_fixed; an INSERT is the only way) or 'none' (a notice is updated by
+-- its recipient alone; the recipients' sections, 332, reach it).
+CREATE FUNCTION pg_temp.tk_keys() RETURNS TABLE (child text, col text, row_n int, victim_n int, control_n int, u_expect text)
+LANGUAGE sql AS $$
+  SELECT * FROM (VALUES
+    ('AbsenceReports',          'reportedById',       60,  5, 16, 'key'),
+    ('AbsenceReports',          'studentId',          60,  4, 17, 'key'),
+    ('AttendanceRecords',       'calendarLessonId',   38, 13, 23, 'key'),
+    ('AttendanceRecords',       'recordedById',       38,  3, 16, 'key'),
+    ('AttendanceRecords',       'studentId',          38,  4, 17, 'key'),
+    ('AvailabilityConstraints', 'roomId',             58, 10, 20, 'key'),
+    ('AvailabilityConstraints', 'studentGroupId',     59,  6, 26, 'key'),
+    ('AvailabilityConstraints', 'userId',             57,  3, 16, 'key'),
+    ('CalendarLessonGroups',    'calendarLessonId',   35, 13, 23, 'key'),
+    ('CalendarLessonGroups',    'studentGroupId',     35,  7, 26, 'key'),
+    ('CalendarLessonStudents',  'calendarLessonId',   36, 13, 23, 'key'),
+    ('CalendarLessonStudents',  'studentId',          36,  4, 17, 'key'),
+    ('CalendarLessonTeachers',  'calendarLessonId',   37, 13, 23, 'key'),
+    ('CalendarLessonTeachers',  'teacherId',          37,  3, 16, 'key'),
+    ('CalendarLessons',         'masterLessonId',     13, 12, 22, 'key'),
+    ('CalendarLessons',         'roomId',             13, 10, 20, 'key'),
+    ('CalendarLessons',         'studentGroupId',     13,  6, 26, 'key'),
+    ('CalendarLessons',         'subjectId',          13, 11, 21, 'key'),
+    ('LeaveRequests',           'decidedById',        15,  2,  2, 'key'),
+    ('LeaveRequests',           'referredById',       15,  3, 16, 'key'),
+    ('LeaveRequests',           'requestedById',      15,  5,  3, 'LV409'),
+    ('LeaveRequests',           'studentId',          15,  4, 17, 'LV409'),
+    ('MasterLessonGroups',      'masterLessonId',     33, 12, 22, 'key'),
+    ('MasterLessonStudents',    'masterLessonId',     34, 12, 22, 'key'),
+    ('Notifications',           'userId',             61,  3, 16, 'none'),
+    ('RoomBookings',            'bookedById',         62,  3, 16, 'key'),
+    ('RoomBookings',            'decidedById',        62,  2,  2, 'key'),
+    ('RoomBookings',            'roomId',             62, 10, 20, 'key'),
+    ('RoomPreferenceRooms',     'preferenceId',       63, 14, 24, 'key'),
+    ('RoomPreferenceRooms',     'roomId',             63, 10, 20, 'key'),
+    ('RoomPreferences',         'roomTypeId',         14,  9, 19, 'key'),
+    ('RoomPreferences',         'subjectId',          14, 11, 21, 'key'),
+    ('Rooms',                   'roomTypeId',         10,  9, 19, 'key'),
+    ('StudentGroupMembers',     'studentGroupId',     32,  7, 26, 'key'),
+    ('StudentGroupMembers',     'studentId',          32,  4, 17, 'key'),
+    ('StudentGroups',           'academicYearId',      7,  8, 18, 'key'),
+    ('Subjects',                'requiredRoomTypeId', 11,  9, 19, 'key')
+  ) v(child, col, row_n, victim_n, control_n, u_expect)
+$$;
+
+-- One attempt, in a subtransaction that is always rolled back: school B's row <child>.<row_id> gets
+-- <new_value> in <col>, as <who> of school B ('admin', 'teacher', 'student', 'guardian', or 'service'
+-- for the school's service principal) through <via> (the API's role, or PostgREST's), by UPDATE ('U')
+-- or by INSERT ('I'; the row is read and written again beside itself with the new value, by the same
+-- caller, and, where a unique key or an exclusion of its own answers first, removed and written
+-- again). Answers:
+--   OK                  the write was taken (a gap)
+--   norows              an UPDATE no policy let reach the row
+--   nosnap, nodelete    the INSERT's first steps the caller cannot take
+--   denied              a missing privilege or a policy's check
+--   fk:<constraint>     a foreign key's refusal, by the constraint's name
+--   other:<state> <msg> anything else (a trigger's refusal, a check)
+CREATE FUNCTION pg_temp.tk_attempt(p_child text, p_col text, p_row uuid, p_value uuid, p_who text, p_via text, p_path text)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+  snap jsonb;
+  outcome text;
+  cname text;
+  b_school text := pg_temp.tk_id(2, 1)::text;
+  b_claims text := json_build_object('sub', pg_temp.tk_auth(2, CASE p_who WHEN 'admin' THEN 2 WHEN 'teacher' THEN 3 WHEN 'student' THEN 4 ELSE 5 END))::text;
+BEGIN
+  BEGIN
+    EXECUTE format('SET LOCAL ROLE %I', p_via);
+    IF p_who = 'service' THEN
+      PERFORM set_config('request.jwt.claims', '{}', true);
+      PERFORM set_config('app.service_school_id', b_school, true);
+    ELSE
+      PERFORM set_config('request.jwt.claims', b_claims, true);
+    END IF;
+    IF p_path = 'I' THEN
+      EXECUTE format('SELECT to_jsonb(c) FROM %I c WHERE id = $1', p_child) INTO snap USING p_row;
+      IF snap IS NULL THEN
+        outcome := 'nosnap';
+      ELSE
+        BEGIN
+          -- A copy beside the row, under an id of its own.
+          EXECUTE format('INSERT INTO %1$I SELECT (jsonb_populate_record(NULL::%1$I, $1 || jsonb_build_object(%2$L, $2, ''id'', gen_random_uuid()))).*', p_child, p_col) USING snap, p_value;
+          outcome := 'OK';
+        EXCEPTION WHEN unique_violation OR exclusion_violation THEN
+          -- A unique key or an exclusion of its own answers before the foreign key can: the row is removed
+          -- and written again, by the same caller.
+          EXECUTE format('DELETE FROM %I WHERE id = $1', p_child) USING p_row;
+          GET DIAGNOSTICS n = ROW_COUNT;
+          IF n = 0 THEN
+            outcome := 'nodelete';
+          ELSE
+            EXECUTE format('INSERT INTO %1$I SELECT (jsonb_populate_record(NULL::%1$I, $1 || jsonb_build_object(%2$L, $2))).*', p_child, p_col) USING snap, p_value;
+            outcome := 'OK';
+          END IF;
+        END;
+      END IF;
+    ELSE
+      EXECUTE format('UPDATE %I SET %I = $1 WHERE id = $2', p_child, p_col) USING p_value, p_row;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      outcome := CASE WHEN n = 0 THEN 'norows' ELSE 'OK' END;
+    END IF;
+    -- The foreign keys' checks fire at the end of the statement; a deferred one would not be seen otherwise.
+    SET CONSTRAINTS ALL IMMEDIATE;
+    RAISE EXCEPTION 'rollback' USING ERRCODE = 'TF999';
+  EXCEPTION
+    WHEN SQLSTATE 'TF999' THEN NULL;
+    WHEN foreign_key_violation THEN
+      GET STACKED DIAGNOSTICS cname = CONSTRAINT_NAME;
+      outcome := 'fk:' || coalesce(cname, '?');
+    WHEN insufficient_privilege THEN outcome := 'denied';
+    WHEN OTHERS THEN outcome := 'other:' || SQLSTATE || ' ' || left(SQLERRM, 60);
+  END;
+  RETURN outcome;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 331: B:s fulla administratör pekar varje nyckel på A:s rad.
+--
+-- Both roles, both paths, every key: the write is refused by the key itself, named
+-- <table>_<column>_schoolId_fkey. Never taken, and never refused by something else
+-- (the leave request's pupil and requester cannot be UPDATEd at all, and say so with
+-- LV409). The API's role must reach every key on both paths, or the answer says
+-- nothing about the key; PostgREST's role may be refused earlier by a policy (it has
+-- fewer arms), which is a refusal too, but not the key's, and counts for nothing here
+-- but its absence of a gap.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  k record;
+  via text;
+  path text;
+  got text;
+  want text;
+  bad text[] := '{}';
+  reached int := 0;
+  asked int := 0;
+BEGIN
+  FOR k IN SELECT * FROM pg_temp.tk_keys() LOOP
+    FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+      FOREACH path IN ARRAY ARRAY['U', 'I'] LOOP
+        got := pg_temp.tk_attempt(k.child, k.col, pg_temp.tk_id(2, k.row_n), pg_temp.tk_id(1, k.victim_n), 'admin', via, path);
+        asked := asked + 1;
+        want := 'fk:' || k.child || '_' || k.col || '_schoolId_fkey';
+        IF got = 'OK' THEN
+          bad := bad || format('%s.%s %s/%s: taken', k.child, k.col, via, path);
+        ELSIF path = 'U' AND k.u_expect = 'LV409' THEN
+          IF via = 'app_authenticated' AND got NOT LIKE 'other:LV409%' THEN
+            bad := bad || format('%s.%s %s/%s: %s', k.child, k.col, via, path, got);
+          END IF;
+        ELSIF path = 'U' AND k.u_expect = 'none' THEN
+          NULL;
+        ELSIF got = want THEN
+          reached := reached + 1;
+        ELSIF via = 'app_authenticated' THEN
+          bad := bad || format('%s.%s %s/%s: %s', k.child, k.col, via, path, got);
+        END IF;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  IF cardinality(bad) > 0 THEN
+    RAISE EXCEPTION E'nycklar 331: an administrator of school B was not refused by the key itself:\n%', array_to_string(bad, E'\n');
+  END IF;
+  -- The API's role reaches 37 keys on both paths, less the two whose UPDATE is fixed and the one only
+  -- the recipient updates: 71 refusals by the key at least; PostgREST's role adds those its policies
+  -- let through to the key.
+  IF reached < 71 THEN
+    RAISE EXCEPTION 'nycklar 331: only % of % attempts were refused by a key, the API''s role alone is worth 71', reached, asked;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 332: B:s övriga principaler.
+--
+-- A teacher, a pupil, a guardian and the school's service principal write where their
+-- policies let them, and nowhere do they get a row that names A's. Where a policy
+-- refuses them first, that is the answer; where it does not, the key is.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  k record;
+  who text;
+  via text;
+  path text;
+  got text;
+  bad text[] := '{}';
+  refused_by_key int := 0;
+BEGIN
+  FOR k IN SELECT * FROM pg_temp.tk_keys() LOOP
+    FOREACH who IN ARRAY ARRAY['teacher', 'student', 'guardian', 'service'] LOOP
+      FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+        IF who = 'service' AND via = 'authenticated' THEN CONTINUE; END IF;
+        FOREACH path IN ARRAY ARRAY['U', 'I'] LOOP
+          got := pg_temp.tk_attempt(k.child, k.col, pg_temp.tk_id(2, k.row_n), pg_temp.tk_id(1, k.victim_n), who, via, path);
+          IF got = 'OK' THEN
+            bad := bad || format('%s.%s as %s %s/%s: taken', k.child, k.col, who, via, path);
+          ELSIF got = 'fk:' || k.child || '_' || k.col || '_schoolId_fkey' THEN
+            refused_by_key := refused_by_key + 1;
+          END IF;
+        END LOOP;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  IF cardinality(bad) > 0 THEN
+    RAISE EXCEPTION E'nycklar 332: a principal of school B named a row of school A:\n%', array_to_string(bad, E'\n');
+  END IF;
+  -- Teachers write the register and the notices; the service principal writes groups: the keys stop them.
+  IF refused_by_key < 10 THEN
+    RAISE EXCEPTION 'nycklar 332: only % attempts of the other principals reached a key', refused_by_key;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 333: kontrollen, och M8.
+--
+-- The same statements, pointed at a row of school B's own, go through for the full
+-- administrator (an UPDATE, or for the two fixed keys an INSERT), so a refusal in 331 is the
+-- key's and not a write that never reached it. Then the finding that started this: a
+-- group filed under another school's year, by the import's route (the administrator's
+-- INSERT of a group) and by an UPDATE, is refused, and the administrator's own year is not.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  k record;
+  got text;
+  bad text[] := '{}';
+  controlled int := 0;
+BEGIN
+  FOR k IN SELECT * FROM pg_temp.tk_keys() LOOP
+    got := pg_temp.tk_attempt(k.child, k.col, pg_temp.tk_id(2, k.row_n), pg_temp.tk_id(2, k.control_n), 'admin', 'app_authenticated',
+                              CASE WHEN k.u_expect = 'key' THEN 'U' ELSE 'I' END);
+    IF got = 'OK' THEN
+      controlled := controlled + 1;
+    ELSE
+      bad := bad || format('%s.%s: %s', k.child, k.col, got);
+    END IF;
+  END LOOP;
+  IF cardinality(bad) > 0 THEN
+    RAISE EXCEPTION E'nycklar 333: a row of school B''s own was refused to B''s administrator:\n%', array_to_string(bad, E'\n');
+  END IF;
+  IF controlled <> 37 THEN
+    RAISE EXCEPTION 'nycklar 333: % of 37 keys were controlled', controlled;
+  END IF;
+END $$;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', pg_temp.tk_auth(2, 2))::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  own_year uuid := pg_temp.tk_id(2, 8);
+  foreign_year uuid := pg_temp.tk_id(1, 8);
+  msg text;
+BEGIN
+  IF school IS DISTINCT FROM pg_temp.tk_id(2, 1) THEN RAISE EXCEPTION 'nycklar 333: the administrator is not school B''s'; END IF;
+  -- Their own year takes a group.
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (school, own_year, 'TK333 egen', 7, now());
+  -- Another school's year does not, whether the group is new or already there, and the refusal says
+  -- nothing of the year it was pointed at.
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (school, foreign_year, 'TK333 främmande', 7, now());
+    RAISE EXCEPTION 'nycklar 333: a group was filed under another school''s year';
+  EXCEPTION WHEN foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS msg = PG_EXCEPTION_DETAIL;
+    IF position(foreign_year::text IN coalesce(msg, '')) > 0 AND position('is not present' IN coalesce(msg, '')) = 0 THEN
+      RAISE EXCEPTION 'nycklar 333: the refusal said more than that the year is not there: %', msg;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "StudentGroups" SET "academicYearId" = foreign_year WHERE name = 'TK333 egen';
+    RAISE EXCEPTION 'nycklar 333: a group was moved into another school''s year';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- An id nobody has is answered the same way: the refusal does not tell a year of another school from none.
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (school, gen_random_uuid(), 'TK333 ingen', 7, now());
+    RAISE EXCEPTION 'nycklar 333: a group was filed under a year that does not exist';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
 END $$;
 ROLLBACK;

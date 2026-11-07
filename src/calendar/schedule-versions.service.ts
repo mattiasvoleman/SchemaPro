@@ -274,13 +274,11 @@ export class ScheduleVersionsService {
           endDate: parseDateOrNull(lesson.endDate),
           extraGroups: {
             create: (lesson.extraGroupIds ?? []).map((studentGroupId) => ({
-              schoolId: version.schoolId,
               studentGroupId,
             })),
           },
           participants: {
             create: (lesson.studentIds ?? []).map((studentId) => ({
-              schoolId: version.schoolId,
               studentId,
             })),
           },

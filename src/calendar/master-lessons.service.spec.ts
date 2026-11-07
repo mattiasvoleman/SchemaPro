@@ -603,10 +603,10 @@ describe('MasterLessonsService', () => {
           startDate: null,
           endDate: null,
           extraGroups: {
-            create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
+            create: [{ studentGroupId: EXTRA_GROUP_ID }],
           },
           participants: {
-            create: [{ schoolId: SCHOOL_ID, studentId: STUDENT_ID }],
+            create: [{ studentId: STUDENT_ID }],
           },
         },
         select: expect.any(Object),
@@ -1070,7 +1070,7 @@ describe('MasterLessonsService', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             extraGroups: {
-              create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
+              create: [{ studentGroupId: EXTRA_GROUP_ID }],
             },
           }),
         }),
@@ -1089,7 +1089,7 @@ describe('MasterLessonsService', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             participants: {
-              create: [{ schoolId: SCHOOL_ID, studentId: STUDENT_ID }],
+              create: [{ studentId: STUDENT_ID }],
             },
           }),
         }),
@@ -1113,7 +1113,7 @@ describe('MasterLessonsService', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             extraGroups: {
-              create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
+              create: [{ studentGroupId: EXTRA_GROUP_ID }],
             },
           }),
         }),
@@ -2796,7 +2796,7 @@ describe('MasterLessonsService', () => {
           dayOfWeek: 1,
           extraGroups: {
             deleteMany: {},
-            create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
+            create: [{ studentGroupId: EXTRA_GROUP_ID }],
           },
         },
         select: expect.any(Object),
@@ -2824,7 +2824,7 @@ describe('MasterLessonsService', () => {
           dayOfWeek: 1,
           extraGroups: {
             deleteMany: {},
-            create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
+            create: [{ studentGroupId: EXTRA_GROUP_ID }],
           },
         },
         select: expect.any(Object),
@@ -2846,7 +2846,7 @@ describe('MasterLessonsService', () => {
           dayOfWeek: 1,
           participants: {
             deleteMany: {},
-            create: [{ schoolId: SCHOOL_ID, studentId: STUDENT_ID }],
+            create: [{ studentId: STUDENT_ID }],
           },
         },
         select: expect.any(Object),
