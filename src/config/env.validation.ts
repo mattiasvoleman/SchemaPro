@@ -262,6 +262,15 @@ export class EnvironmentVariables {
   REPORTING_RATE_BACKGROUND: string = 'on';
 
   /**
+   * The nightly months' sums of Frånvarostatistik (src/absence-stats/absence-stats.job.ts):
+   * it counts the school's and each class's absence by month, without a pupil's
+   * id, for every school with lessons. `on` unless set to `off`; the test setup
+   * turns it off.
+   */
+  @IsIn(['on', 'off'])
+  ABSENCE_STATS_BACKGROUND: string = 'on';
+
+  /**
    * Kvittens' reminder pass (src/ack/ack.job.ts): once to each guardian who has
    * not confirmed a request whose time the school chose has come. `on` unless
    * set to `off`; the test setup turns it off. A school without kvittens, or
