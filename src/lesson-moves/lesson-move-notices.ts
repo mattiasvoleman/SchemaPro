@@ -7,10 +7,10 @@ import { swedishWhen } from '../cover/cover-notices';
  *
  * THE SUBJECT AND THE TIME ONLY. Never the pupil, the class, the room or who
  * moved them: a push is read by whoever holds the phone, and an e-mail is
- * kept. The in-app row carries the pupil's id and the two lessons, and the
- * app words it for its reader (a guardian reads their child's first name there,
- * a teacher the pupil in their register). A protected identity is named in no
- * notice at all.
+ * kept. The in-app row carries the pupil's id and the two lessons (the web
+ * and the app word it from the subjects and the time alone; neither names the
+ * pupil, and a teacher finds the pupil in their register). A protected identity
+ * is named in no notice at all.
  */
 
 export interface MoveNoticeLesson {

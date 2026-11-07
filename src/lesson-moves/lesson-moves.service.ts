@@ -327,12 +327,19 @@ export class LessonMovesService {
       });
       // The register names the pupils on its list; so do the moves on it. The read log has them as a roster read.
       await recordRead(tx, 'ROSTER', rows.map((row) => row.studentId), user.channel);
+      // A colleague on the lesson is not told who moved the pupil when the mover has a protected identity (the review
+      // of #281, LÅG-1): no list a teacher reads gathers a marked teacher. An administrator, and the mover themselves,
+      // see the name. Only asked for a teacher, and only when somebody moved a pupil.
+      const held = user.role === Role.SCHOOL_ADMIN || !rows.some((row) => row.movedById) ? new Set<string>() : await this.protectedStaff(tx);
       const view = (row: (typeof rows)[number], other: LessonRow): LessonMoveView => ({
         moveId: row.id,
         studentId: row.studentId,
         studentName: `${row.student.firstName} ${row.student.lastName}`,
         other: viewOf(other, timezone),
-        movedByName: row.movedBy ? `${row.movedBy.firstName} ${row.movedBy.lastName}` : null,
+        movedByName:
+          row.movedBy && !(row.movedById && row.movedById !== user.userId && held.has(row.movedById))
+            ? `${row.movedBy.firstName} ${row.movedBy.lastName}`
+            : null,
         createdAt: row.createdAt.toISOString(),
       });
       return {
@@ -343,6 +350,12 @@ export class LessonMovesService {
   }
 
   // ---------------------------------------------------------------------------
+
+  /** The marked staff of the school (Skolans dag's list, for a caller who may not read the marks). */
+  private async protectedStaff(tx: PrismaClient): Promise<Set<string>> {
+    const rows = (await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`SELECT app.school_day_protected_staff() AS id`)) ?? [];
+    return new Set(rows.map((row) => row.id));
+  }
 
   private async lessonOf(tx: PrismaClient, id: string): Promise<LessonRow> {
     const row = await tx.calendarLesson.findUnique({ where: { id }, select: LESSON_SELECT });

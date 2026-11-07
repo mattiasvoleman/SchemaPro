@@ -391,6 +391,33 @@ describe('LessonMovesService', () => {
       expect(atTarget.departures).toEqual([]);
       expect(atTarget.arrivals[0]).toMatchObject({ studentName: 'Alva A', other: { id: X } });
     });
+
+    it('does not name a mover with a protected identity to a colleague on the lesson, and names them to an administrator and to themselves', async () => {
+      tx['lessonPupilMove']!['findMany']!.mockResolvedValue([
+        {
+          id: MOVE,
+          studentId: PUPIL,
+          fromLessonId: X,
+          toLessonId: Y,
+          movedById: TEACHER_X,
+          createdAt: new Date('2026-11-10T07:00:00.000Z'),
+          student: { firstName: 'Alva', lastName: 'A' },
+          movedBy: { firstName: 'Skyddad', lastName: 'Lärare' },
+          fromLesson: lessons[X],
+          toLesson: lessons[Y],
+        },
+      ]);
+      // The marked staff of the school, as Skolans dag's function answers a teacher.
+      tx['$queryRaw']!.mockResolvedValue([{ id: TEACHER_X }]);
+      const asColleague = await service.forLesson(Y, teacher(TEACHER_Y));
+      expect(asColleague.arrivals[0]!.movedByName).toBeNull();
+      expect(JSON.stringify(asColleague)).not.toContain('Skyddad');
+      expect((await service.forLesson(Y, admin())).arrivals[0]!.movedByName).toBe('Skyddad Lärare');
+      expect((await service.forLesson(Y, teacher(TEACHER_X))).arrivals[0]!.movedByName).toBe('Skyddad Lärare');
+      // A mover nobody marked is named to the colleague.
+      tx['$queryRaw']!.mockResolvedValue([]);
+      expect((await service.forLesson(Y, teacher(TEACHER_Y))).arrivals[0]!.movedByName).toBe('Skyddad Lärare');
+    });
   });
 });
 
