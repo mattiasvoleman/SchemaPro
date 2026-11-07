@@ -287,8 +287,10 @@ def upper_bound(model: cp_model.CpModel, expression: cp_model.LinearExpr) -> int
     bound = objective.offset
     variables = model.Proto().variables
     for index, coefficient in zip(objective.vars, objective.coeffs, strict=True):
-        domain = variables[index].domain
-        low, high = domain[0], domain[-1]
+        # A list, because this protobuf's repeated field answers a negative
+        # index with 0 (found the hard way: a bound of 0 made the scale 2).
+        domain = list(variables[index].domain)
+        low, high = domain[0], domain[len(domain) - 1]
         bound += max(coefficient * low, coefficient * high)
     return int(bound)
 
