@@ -51,6 +51,8 @@ describe('notification preferences', () => {
     expect(preferenceLabel(translatorFor('en'), 'ACK_REQUESTED', true)).toBe('Messages that ask for confirmation');
     expect(preferenceLabel(t, 'ACK_REMINDER', true)).toBe('Påminnelse om obekräftade meddelanden');
     expect(preferenceLabel(translatorFor('en'), 'ACK_REMINDER', true)).toBe('Reminder about unconfirmed messages');
+    expect(preferenceLabel(t, 'LESSON_PUPIL_MOVED', true)).toBe('Elever som byter lektion för en dag');
+    expect(preferenceLabel(translatorFor('en'), 'LESSON_PUPIL_MOVED', true)).toBe('Pupils who change lesson for a day');
     expect(preferenceLabel(t, 'LESSON_SUBSTITUTE', true)).toBe('Vikarier på mina lektioner');
     expect(preferenceLabel(t, 'FROM_A_NEWER_GATEWAY', false)).toBe('Andra notiser');
     expect(preferenceLabel(translatorFor('en'), 'FROM_A_NEWER_GATEWAY', false)).toBe('Other notifications');

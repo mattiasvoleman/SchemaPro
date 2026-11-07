@@ -5141,6 +5141,41 @@
     går på lektionen, deras vårdnadshavare och lektionens lärare får en notis,
     också när en inställd lektion återinsätts (6.10).
   </p>
+  <h4 id="flytta-elev">Flytta en elev till en parallell lektion för en dag</h4>
+  <p>
+    Varje lektion i dagsplaneringen har en knapp <span class="ui">Flytta elev</span>.
+    Välj eleven på lektionen och sedan en lektion som överlappar den i tid
+    (en <em>parallell</em> lektion). Eleven går då på den lektionen den dagen
+    och inte på sin vanliga. Flytten gäller bara det datumet: grundschemat,
+    lektionsmallen och resten av veckan rörs inte, och flytten går att
+    <span class="ui">ångra</span> så länge eleven inte fått någon närvaromarkering
+    på den nya lektionen.
+  </p>
+  <ul>
+    <li>Bara parallella lektioner är valbara, så eleven blir aldrig dubbelbokad. Lektioner som inte går att flytta till står kvar i listan med skälet: de överlappar inte, de är inställda, de är ersatta av en schemabrytande aktivitet (6.5), eller eleven har en annan lektion då.</li>
+    <li>Blir salen överfull får du en varning, men flytten görs. Det är lärarens bedömning om det ryms.</li>
+    <li>Flyttar du eleven vidare från den nya lektionen är det fortfarande den första lektionen som eleven flyttats från. Flyttar du tillbaka till den första lektionen försvinner flytten.</li>
+    <li>Ställs en av lektionerna in, eller flyttas den så att de inte längre överlappar, faller flytten och eleven är åter på sin vanliga lektion.</li>
+    <li>Det får en administratör med Drift göra, en lärare som undervisar någon av de två lektionerna, och elevens mentor. Läsare kan se men inte flytta.</li>
+  </ul>
+  <p>
+    <strong>Närvaro och statistik.</strong> Eleven står på listan i den nya
+    lektionens register och är inte frånvarande från den gamla: lärarna ser
+    eleven som <em>flyttad</em> i ett eget avsnitt på registret. En markering som
+    redan fanns på den gamla lektionen läggs åt sidan (den räknas inte som frånvaro
+    eller närvaro) och kommer tillbaka om flytten ångras. Frånvarobevakningen,
+    närvarostatistiken, rapporteringsgraden, den levererade tiden och
+    SS12000-exporten räknar eleven på lektionen hen gick på.
+  </p>
+  <p>
+    <strong>Familjen.</strong> Elevens och barnets schema i webben och i appen,
+    kalenderflödet och Schemavisarens sida för eleven visar den nya lektionen.
+    Lärarna på de två lektionerna får en notis. Vårdnadshavaren får en notis bara
+    om skolan slagit på det under <span class="path">Drift › Skolans dag</span>
+    (<span class="ui">Berätta för vårdnadshavaren när ett barn byter lektion för en dag</span>,
+    avstängt från början). Notisen säger att ett barns lektion ändrats och när,
+    aldrig vem som flyttade eleven.
+  </p>
   <p>Använd dagsplaneringen för enstaka händelser under dagen. Vill du i stället se hela skolans dag eller vecka på en skärm, eller veta vilka lärare och salar som är lediga, finns Skolans dag (6.15).</p>
 
   <h3 id="s62"><span class="num">6.2</span>Lärarfrånvaro</h3>

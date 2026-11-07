@@ -4,6 +4,7 @@ import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { SchoolDayBody } from "@/components/school-day/school-day-view";
 import { useSchoolDayText } from "@/components/school-day/use-school-day-text";
+import { MoveNoticeCard } from "./move-notice-card";
 import { SettingsCard } from "./settings-card";
 
 /**
@@ -25,6 +26,7 @@ export default function SchoolDayPage() {
       <PageHeader title={t("title")} subtitle={t("subtitle")} intro={t("intro.admin")} />
       <SchoolDayBody />
       <SettingsCard />
+      <MoveNoticeCard />
     </Page>
   );
 }

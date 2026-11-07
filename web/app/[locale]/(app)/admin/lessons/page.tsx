@@ -9,6 +9,7 @@ import { chainLookup } from "@/lib/chain-lookup";
 import { shiftDate } from "@/lib/cover-absence-form";
 import { toDateString } from "@/lib/utils";
 import {
+  ArrowLeftRight,
   CalendarX2,
   ChevronLeft,
   ChevronRight,
@@ -60,8 +61,20 @@ const lazyLessonActionDialogs = () =>
   );
 let LessonActionDialogs = lazyLessonActionDialogs();
 
+/*
+ * Elevens lektion för dagen: the dialog that moves one pupil of the lesson to a
+ * parallel lesson, fetched on the first click (React.lazy, not next/dynamic,
+ * whose loader costs 1.4 KB of its own).
+ */
+const MovePupilDialog = lazy(() =>
+  import("@/components/lesson-moves/move-pupil-dialog").then((module) => ({ default: module.MovePupilDialog })),
+);
+
 export default function DayPlannerPage() {
   const t = useTranslations("dayPlanner");
+  const tMove = useTranslations("lessonMoves");
+  // The lesson whose pupil is being moved; null when no dialog is open.
+  const [movingLesson, setMovingLesson] = useState<string | null>(null);
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   // The vikarie's warnings mix the engine's STAFF_* with the cover's COVER_*
@@ -324,6 +337,16 @@ export default function DayPlannerPage() {
                           <MapPin />
                           {t("roomChangeAction")}
                         </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          aria-label={named(tMove("action"), lesson)}
+                          onClick={() => setMovingLesson(lesson.id)}
+                          data-writes="DRIFT"
+                        >
+                          <ArrowLeftRight />
+                          {tMove("action")}
+                        </Button>
                         {/* Neutral: the dialog it opens is the confirmation, and carries the red. */}
                         <Button
                           variant="outline"
@@ -360,6 +383,18 @@ export default function DayPlannerPage() {
           </TableBody>
         </TableCard>
       )}
+
+      {movingLesson ? (
+        <Suspense fallback={null}>
+          <MovePupilDialog
+            lessonId={movingLesson}
+            open
+            onOpenChange={(open) => {
+              if (!open) setMovingLesson(null);
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       {dialogsMounted ? (
         <DialogLoadBoundary
