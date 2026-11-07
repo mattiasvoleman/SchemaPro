@@ -1894,7 +1894,7 @@ Walk the full product loop once, in order:
   in first, then the merge.**
   **Before the migration**, as the owner: `SHOW server_version` is 17.x;
   `prisma migrate status` lists exactly this migration as pending; the file's
-  checksum (sha256, what Prisma records) is `{{SHA}}`;
+  checksum (sha256, what Prisma records) is `672ff584cc9cdfdd0c1fc90873150495abfa9e0f40cee5e3fcb0a2f129dfd4e3`;
   `SELECT to_regclass('"ClassTeacherChanges"')` is NULL; no session sits idle in
   a transaction that holds one of the seven tables above (the query of the
   Vikariefrågan entry).
