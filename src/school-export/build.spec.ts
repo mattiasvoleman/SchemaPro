@@ -310,6 +310,30 @@ describe('buildArchive for someone who is not protected, whose table rows are ab
     expect(result.files.find((file) => file.path === pupils.path)?.blankedCells).toBe(3);
   });
 
+  it("leaves a teacher's extract of the moves they made without the pupil, the lessons and the colleague's note about the child, and gives the pupil's own all of it", async () => {
+    const moves = tableFiles().find((file) => file.table === 'LessonPupilMoves')!;
+    const NOTE = 'Anmäld av mamma: kontroll på BUP';
+    const OTHER_TEACHER = '77777777-7777-4777-8777-777777777777';
+    const row = {
+      id: 'm1',
+      studentId: PUPIL,
+      fromLessonId: '88888888-8888-4888-8888-888888888881',
+      toLessonId: '88888888-8888-4888-8888-888888888882',
+      movedById: TEACHER,
+      displacedMark: { status: 'EXCUSED', note: NOTE, recordedAt: '2026-11-05T08:00:00Z', recordedById: OTHER_TEACHER },
+      createdAt: '2026-11-05T09:00:00Z',
+    };
+    const tx = databaseOf({ LessonPupilMoves: [row] });
+    const teachers = await build({ kind: 'person', exempt: [TEACHER], scope: { ids: [TEACHER] }, dataFiles: [], tables: [moves], read: (fn) => fn(tx as never) });
+    const theirs = teachers.files.get(moves.path)!.toString('utf8');
+    expect(theirs).toBe(`﻿id;studentId;fromLessonId;toLessonId;movedById;displacedMark;createdAt\r\nm1;;;;${TEACHER};;2026-11-05T09:00:00Z\r\n`);
+    for (const secret of [PUPIL, NOTE, 'BUP', OTHER_TEACHER, row.fromLessonId, row.toLessonId]) expect(theirs).not.toContain(secret);
+
+    const pupils = await build({ kind: 'person', exempt: [PUPIL], scope: { ids: [PUPIL] }, dataFiles: [], tables: [moves], read: (fn) => fn(tx as never) });
+    const own = pupils.files.get(moves.path)!.toString('utf8');
+    for (const kept of [PUPIL, NOTE, row.fromLessonId, row.toLessonId, TEACHER]) expect(own).toContain(kept);
+  });
+
   it("empties free text that names another pupil or guardian in full, not a colleague and not a first name, and counts it", async () => {
     const alarms = tableFiles().find((file) => file.table === 'CrisisAlarms')!;
     const tx = databaseOf({

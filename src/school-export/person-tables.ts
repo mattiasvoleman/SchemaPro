@@ -101,8 +101,11 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   MasterLessonStudents: dump(['studentId'], 'ROSTER'),
   CalendarLessonStudents: dump(['studentId'], 'ROSTER'),
   // Elevens lektion för dagen (20270122091000): the days a pupil was moved to a parallel lesson, and the moves a
-  // member of staff made. A pupil's lessons are theirs, whoever moved them.
-  LessonPupilMoves: dump(['studentId', 'movedById'], 'ROSTER'),
+  // member of staff made. A pupil's lessons are theirs, whoever moved them, but the row is about a pupil and a
+  // member of staff acts in it: in the extract of the one who moved the pupil, the pupil, the two lessons and the
+  // mark the move displaced (a status and a free note about a child, written by a colleague) are not the extract's,
+  // only who moved and when (the review of #281, MEDEL-2). In the pupil's own, everything stays.
+  LessonPupilMoves: aboutPupil(dump(['studentId', 'movedById'], 'ROSTER'), 'studentId', ['displacedMark', 'fromLessonId', 'toLessonId']),
   StudentGroupMembers: dump(['studentId'], 'ROSTER'),
   StudentEnrollments: dump(['studentId'], 'ROSTER'),
   TimplanStatements: dump(['studentId'], 'TEACHING_TIME'),
