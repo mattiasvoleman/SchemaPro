@@ -439,7 +439,11 @@ LANGUAGE sql STABLE SET search_path = "public", "pg_temp" AS $$
              'end', substr(l ->> 'end', 10, 2) || ':' || substr(l ->> 'end', 12, 2),
              'subject', l -> 'subject',
              'groups', '[]'::jsonb,
-             'room', l -> 'room',
+             -- A room the school hides is named on no page, a pupil's own too.
+             'room', CASE WHEN EXISTS (SELECT 1 FROM "CalendarLessons" cl
+                                         JOIN "PublicTimetableHidden" h ON h."targetRoomId" = cl."roomId"
+                                        WHERE cl."id" = (l ->> 'id')::uuid)
+                          THEN 'null'::jsonb ELSE l -> 'room' END,
              'teachers', l -> 'teachers',
              'cancelled', (l ->> 'cancelled')::boolean) AS "lesson"
       FROM jsonb_array_elements(app.calendar_feed_pupil_lessons(p_school, p_pupil, p_from, p_from + 6, p_tz, p_display)) l

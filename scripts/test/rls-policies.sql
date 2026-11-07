@@ -45146,6 +45146,13 @@ BEGIN
   IF pg_temp.kv('cls') IS NULL OR pg_temp.kv('t1') IS NULL OR pg_temp.kv('p1') IS NULL OR pg_temp.kv('ridx', h_room) IS NULL THEN
     RAISE EXCEPTION 'lägen: a target does not come back when it is shown again';
   END IF;
+  -- A pupil's own page drops a hidden room too, and keeps the lessons.
+  IF pg_temp.kv('p1')::text NOT LIKE '%rls377 sal%' THEN RAISE EXCEPTION 'lägen: a pupil''s page does not name the room (the control of the hidden-room check)'; END IF;
+  INSERT INTO "PublicTimetableHidden" ("schoolId", "targetRoomId") VALUES (school, room);
+  IF pg_temp.kv('p1') IS NULL OR pg_temp.kv('p1')::text LIKE '%rls377 sal%' THEN
+    RAISE EXCEPTION 'lägen: a hidden room is named on a pupil''s own page, or the page went with it';
+  END IF;
+  DELETE FROM "PublicTimetableHidden";
 
   -- A link that did not answer is not used; one that answers is, at most every five minutes.
   UPDATE "PublicTimetableLinks" SET "lastUsedAt" = NULL;
