@@ -42,6 +42,26 @@ describe("the guardian's notice after an alarm", () => {
   });
 });
 
+describe("the notice of a pupil moved to a parallel lesson for a day (Elevens lektion för dagen)", () => {
+  const meta = { fromSubjectName: "Svenska", toSubjectName: "Engelska", startsAt: startedAt, studentName: "Alva Andersson", movedByName: "Rektor Rask" };
+
+  it("says the two subjects and that a pupil changes lesson, in both languages", () => {
+    expect(say("sv", row("LESSON_PUPIL_MOVED", meta))).toMatch(/^En elev byter lektion .*: Engelska i stället för Svenska\.$/);
+    expect(say("en", row("LESSON_PUPIL_MOVED", meta))).toMatch(/^A pupil changes lesson .*: Engelska instead of Svenska\.$/);
+  });
+
+  it("says that the change is undone, and which lesson stands", () => {
+    expect(say("sv", row("LESSON_PUPIL_MOVED", { ...meta, undone: true }))).toMatch(/är ångrat: det är Svenska som gäller\.$/);
+    expect(say("en", row("LESSON_PUPIL_MOVED", { ...meta, undone: true }))).toMatch(/is undone: Svenska stands\.$/);
+  });
+
+  it("never says the pupil or who moved them, even if a newer gateway puts them in the meta", () => {
+    for (const text of [say("sv", row("LESSON_PUPIL_MOVED", meta)), say("en", row("LESSON_PUPIL_MOVED", meta))]) {
+      expect(text).not.toMatch(/Alva|Andersson|Rask/);
+    }
+  });
+});
+
 describe("the guardian's notice of a message to confirm (Kvittens)", () => {
   const title = "Utflykten på torsdag";
   // A pupil's name and the text of the message are not in a notice's meta; if a newer gateway puts them there, the sentence still must not say them.

@@ -283,10 +283,65 @@ describe('AttendanceService', () => {
 
       await service.reportAttendance(dto([{ studentId: STUDENT_A, status: 'PRESENT' as never }]), teacher());
 
-      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+      // The lock_timeout first, then the lesson's row FOR SHARE (Elevens lektion för dagen: a move and a save
+      // meet in one order), the second after the lesson is read and before anything else is asked of it.
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
       const [strings] = tx.$executeRaw.mock.calls[0] as [TemplateStringsArray];
       expect(strings.join('?')).toBe("SELECT set_config('lock_timeout', '5s', true)");
       expect(tx.$executeRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx.calendarLesson.findUnique.mock.invocationCallOrder[0]!);
+    });
+
+    describe('Elevens lektion för dagen: a pupil moved off the lesson', () => {
+      it('takes the lesson’s row FOR SHARE before it reads who was moved, so a move and a save meet in one order', async () => {
+        arrangeRoster([STUDENT_A]);
+
+        await service.reportAttendance(dto([{ studentId: STUDENT_A, status: 'PRESENT' as never }]), teacher());
+
+        const [lock] = tx.$executeRaw.mock.calls[1] as [Prisma.Sql];
+        expect(lock.sql).toBe('SELECT app.lesson_pupil_register_lock(?::uuid)');
+        expect(lock.values).toEqual([LESSON_ID]);
+        expect(tx.$executeRaw.mock.invocationCallOrder[1]!).toBeGreaterThan(tx.calendarLesson.findUnique.mock.invocationCallOrder[0]!);
+        expect(tx.$executeRaw.mock.invocationCallOrder[1]!).toBeLessThan(tx.lessonPupilMove.findMany.mock.invocationCallOrder[0]!);
+        expect(tx.$executeRaw.mock.invocationCallOrder[1]!).toBeLessThan(tx.attendanceRecord.createMany.mock.invocationCallOrder[0]!);
+      });
+
+      it('drops the entry of a pupil moved off, counts it, and writes the rest: a queued register still drains', async () => {
+        arrangeRoster([STUDENT_A, STUDENT_B]);
+        tx.lessonPupilMove.findMany.mockResolvedValue([{ fromLessonId: LESSON_ID, studentId: STUDENT_B }]);
+
+        const result = await service.reportAttendance(
+          dto([
+            { studentId: STUDENT_A, status: 'PRESENT' as never },
+            { studentId: STUDENT_B, status: 'ABSENT' as never },
+          ]),
+          teacher(),
+        );
+
+        expect(result).toEqual({ created: 1, updated: 0, movedAway: 1 });
+        expect(writes().map((write) => write.studentId)).toEqual([STUDENT_A]);
+        // The move was asked of this lesson's pupils among the entries, nothing wider.
+        expect(tx.lessonPupilMove.findMany).toHaveBeenCalledWith({
+          where: { fromLessonId: { in: [LESSON_ID] }, studentId: { in: [STUDENT_A, STUDENT_B] } },
+          select: { fromLessonId: true, studentId: true },
+        });
+      });
+
+      it('writes nothing, and alerts nobody, for a register whose only entries are moved off', async () => {
+        arrangeRoster([STUDENT_B]);
+        tx.lessonPupilMove.findMany.mockResolvedValue([{ fromLessonId: LESSON_ID, studentId: STUDENT_B }]);
+
+        const result = await service.reportAttendance(dto([{ studentId: STUDENT_B, status: 'ABSENT' as never }]), teacher());
+
+        expect(result).toEqual({ created: 0, updated: 0, movedAway: 1 });
+        expectNothingWritten();
+        expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      });
+
+      it('answers as it always did when nobody is moved: no movedAway', async () => {
+        arrangeRoster([STUDENT_A]);
+        const result = await service.reportAttendance(dto([{ studentId: STUDENT_A, status: 'PRESENT' as never }]), teacher());
+        expect(result).toEqual({ created: 1, updated: 0 });
+      });
     });
 
     it('answers 409 ATTENDANCE_REGISTER_BUSY when a lock is waited for 5 s, and nothing else as that', async () => {

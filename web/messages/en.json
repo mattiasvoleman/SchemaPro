@@ -2343,6 +2343,8 @@
       "ACK_REQUESTED": "The school asks you to confirm: {title}",
       "ACK_REMINDER": "Reminder: the school is waiting for your confirmation of {title}"
     },
+    "lessonPupilMoved": "A pupil changes lesson {when}: {to} instead of {from}.",
+    "lessonPupilMovedUndone": "The change of lesson {when} is undone: {from} stands.",
     "lessonReportReminder": "{count, plural, one {# new lesson was held} other {# new lessons were held}} at least {limitDays, plural, one {# day} other {# days}} ago with no saved register. Older open lessons may remain. See My reporting.",
     "reportingRateDigest": "Reporting rate {from} – {to}: {reported, number} of {held, plural, one {# lesson held} other {# lessons held}} had a saved register. See Reporting rate.",
     "cover": {
@@ -6105,6 +6107,7 @@
       "COVER_REQUEST_ACCEPTED": "Colleagues who said yes to my request",
       "ABSENCE_WATCH_DIGEST": "Absence summary",
       "ACK_REQUESTED": "Messages from the school for you to confirm",
+      "LESSON_PUPIL_MOVED": "Pupils who change lesson for a day",
       "ACK_REMINDER": "Reminder about a message waiting for your confirmation",
       "LESSON_REPORT_REMINDER": "Reminders about open lessons",
       "REPORTING_RATE_DIGEST": "Weekly reporting-rate note",
@@ -7216,6 +7219,7 @@
       "mentorDuties": "{count, plural, one {# mentor duty loses} other {# mentor duties lose}} the class",
       "sharedLessons": "{count, plural, one {# lesson} other {# lessons}} in the master timetable and the calendar shared with other groups lose the group",
       "lessonLogs": "{count, plural, one {# lesson log} other {# lesson logs}} on those lessons",
+      "lessonMoves": "{count, plural, one {# move of a pupil to a parallel lesson} other {# moves of pupils to parallel lessons}} for a day on those lessons",
       "lunchSittings": "{count, plural, one {# lunch} other {# lunches}} in the master timetable",
       "calendarBreaks": "{count, plural, one {# break or lunch} other {# breaks and lunches}} in the calendar",
       "availabilityConstraints": "{count, plural, one {# availability rule} other {# availability rules}}",
@@ -8372,6 +8376,67 @@
       "saved": "The choice is saved",
       "loadFailed": "The choice could not be loaded",
       "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment."
+    }
+  },
+  "lessonMoves": {
+    "action": "Move pupil",
+    "title": "Move a pupil to a parallel lesson",
+    "description": "The pupil is moved for this lesson's day. The rest of the timetable is as it was, and the move can be undone.",
+    "pupil": "Pupil",
+    "pupilPlaceholder": "Choose a pupil",
+    "noPupils": "No pupil on the lesson is one you may move.",
+    "pupilsFailed": "The pupils could not be loaded.",
+    "pupilsFailedHint": "Try again in a moment.",
+    "arrived": "moved here",
+    "candidates": "Lessons that overlap {subject} {start}–{end}",
+    "noCandidates": "No other lesson overlaps this one in time.",
+    "candidatesFailed": "The lessons could not be loaded.",
+    "candidatesFailedHint": "Try again in a moment.",
+    "headcount": "{count, plural, one {# pupil} other {# pupils}}",
+    "capacity": "the room holds {count}",
+    "confirm": "Move",
+    "moved": "The pupil has been moved.",
+    "undone": "The move is undone.",
+    "undo": "Undo",
+    "sectionTitle": "Moved pupils",
+    "sectionDescription": "Pupils moved to or from this lesson for the day. They count on the lesson they attend, not as absent from this one.",
+    "departure": "Moved to {subject} ({className}, {start}–{end})",
+    "arrival": "Comes from {subject} ({className}, {start}–{end})",
+    "movedBy": "moved by {name}",
+    "warning": {
+      "TARGET_ROOM_OVER_CAPACITY": "The room holds {capacity} but gets {headcount}"
+    },
+    "refusal": {
+      "LESSON_MOVE_NOT_PARALLEL": "Does not overlap in time",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {The lesson the pupil leaves is not held} other {Is cancelled}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "Is replaced by a schedule-breaking activity",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "The pupil is already on this lesson",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "The pupil has another lesson at the same time"
+    },
+    "errors": {
+      "LESSON_MOVE_NOT_ALLOWED": "You may not move this pupil. An administrator with Drift, a teacher of either lesson and the pupil's mentor may.",
+      "LESSON_MOVE_NOT_FOUND": "The move no longer exists.",
+      "LESSON_MOVE_LESSON_NOT_FOUND": "The lesson does not exist.",
+      "LESSON_MOVE_NOT_PARALLEL": "The lessons do not overlap in time, so the pupil cannot be moved there.",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {The lesson the pupil leaves is not held.} other {The lesson the pupil is to be moved to is cancelled.}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "{side, select, FROM {The lesson the pupil leaves is replaced by a schedule-breaking activity.} other {The lesson the pupil is to be moved to is replaced by a schedule-breaking activity.}}",
+      "LESSON_MOVE_IN_THE_PAST": "A move is made for today or later.",
+      "LESSON_MOVE_PUPIL_NOT_ON_LESSON": "The pupil is not on the lesson.",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "The pupil is already on that lesson.",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "The pupil would have two lessons at once.",
+      "LESSON_MOVE_HAS_ATTENDANCE": "The pupil already has an attendance mark on the lesson they were moved to. Take the mark away first.",
+      "LESSON_MOVE_EXISTS": "The pupil is already moved from the lesson.",
+      "LESSON_MOVE_CHANGED": "The move changed just now. Try again.",
+      "LESSON_MOVE_NOT_A_PUPIL": "The pupil does not exist."
+    },
+    "settings": {
+      "title": "Notice when a pupil changes lesson",
+      "description": "The teachers of the two lessons are always told. Here the school chooses whether the guardian is told too when the child is moved to a parallel lesson for a day.",
+      "guardianNotice": "Tell the guardian when a child changes lesson for a day",
+      "hint": "The notice says that a child's lesson has changed and when, never who moved the child. Off by default.",
+      "saved": "The choice is saved.",
+      "loadFailed": "The choice could not be loaded.",
+      "loadFailedHint": "Try again in a moment."
     }
   }
 }

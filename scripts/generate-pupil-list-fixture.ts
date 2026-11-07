@@ -53,7 +53,7 @@ const pupils = [
   { id: EVA, name: 'Eva', homeGroupId: C7A, groupIds: [SVA7, SV7F] },
 ];
 /** Lessons: subject, groups (own first), named pupils. */
-const lessons = [
+const lessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[]; movedOff?: string[] }[] = [
   { id: id('1001'), name: '7A:s svenska', subjectId: SV, groupIds: [C7A], named: [] as string[] },
   { id: id('1002'), name: '7A:s svenska, Alva namngiven', subjectId: SV, groupIds: [C7A], named: [ALVA] },
   { id: id('1003'), name: '7A:s svenska med SvA7 tillagd', subjectId: SV, groupIds: [C7A, SVA7], named: [] },
@@ -62,6 +62,10 @@ const lessons = [
   { id: id('1006'), name: 'Stöd7:s svenska', subjectId: SV, groupIds: [STOD7], named: [] },
   { id: id('1007'), name: '7A:s matematik', subjectId: MA, groupIds: [C7A], named: [] },
   { id: id('1008'), name: 'Sv7f:s svenska', subjectId: SV, groupIds: [SV7F], named: [] },
+  // Elevens lektion för dagen: pupils moved off a lesson for the day. They are `off`, a named one included.
+  { id: id('1009'), name: '7A:s matematik, Cim flyttad', subjectId: MA, groupIds: [C7A], named: [] as string[], movedOff: [CIM] },
+  { id: id('1010'), name: '7A:s svenska, Alva namngiven och flyttad', subjectId: SV, groupIds: [C7A], named: [ALVA], movedOff: [ALVA] },
+  { id: id('1011'), name: '7A:s svenska, Bo och Eva flyttade (Eva är redan borta)', subjectId: SV, groupIds: [C7A], named: [] as string[], movedOff: [BO, EVA] },
 ];
 
 function school(name: string, replaces: boolean, cases: Record<string, string>) {

@@ -3666,6 +3666,153 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Elevens lektion för dagen (D7, 20270122091000), sections 395-399: a school of
+-- its own, with its people and its lessons planted once, as the owner. The
+-- moves themselves are the sections'. The lessons are tomorrow's (a move is
+-- made for today or later), at the school's clock. Every id is made, not drawn
+-- (people d7000000-0000-4000-8000-b000000000NN, the logins
+-- 00000000-0000-4000-8000-d7000000NN00 with the same NN), so the sections name
+-- people and lessons without a lookup: the unprivileged role reads no school
+-- before a principal is set.
+--
+--   school …0000c1, the other school …0000c2   people (…b0000000NN, the login …d7000000NN00):
+--   NN 01  FULL                                 NN 06  T1, teacher of X (D77A)
+--   NN 03  EXPEDITION                           NN 07  T2, teacher of Y, C and E (D77B)
+--   NN 05  LASARE                               NN 08  M, teacher, mentor of D77A, teaches nothing
+--   NN 09  T4, teaches Z and nothing else, mentors nobody
+--   NN 11  P1 (D77A)   NN 12  P2 (D77A)   NN 13  P3 (D77B)
+--   NN 21  G1 (P1)     NN 22  G2 (P3)
+--   NN 31  the other school's FULL, 32 its pupil, 34 its teacher
+--
+--   lessons …000000000aNN, tomorrow:
+--     a01 X  D77A Matematik 09:00-10:00, T1       a02 Y  D77B Engelska 09:00-10:00, T2
+--     a03 Z  D77B Svenska   09:30-10:30, T4       a04 W  D77A Svenska   11:00-12:00, T1 (not parallel to X)
+--     a05 C  D77B Engelska  09:00-10:00, T2, CANCELLED (MANUAL)
+--     a06 E  D77B Engelska  09:00-10:00, T2, CANCELLED (EVENT: replaced by an activity)
+--     a07 the other school's lesson, 09:00-10:00 (a pupil of the first school is never moved to it)
+DO $$
+DECLARE
+  s1 uuid := 'd7000000-0000-4000-8000-0000000000c1';
+  s2 uuid := 'd7000000-0000-4000-8000-0000000000c2';
+  y uuid;
+  y2 uuid;
+  ka uuid;
+  kb uuid;
+  k2 uuid;
+  mat uuid;
+  eng uuid;
+  sve uuid;
+  sub2 uuid;
+  tomorrow date;
+  clock text := 'Europe/Stockholm';
+  -- A person's id and login by number.
+  pid text := 'd7000000-0000-4000-8000-b000000000';
+  lid text := '00000000-0000-4000-8000-d7000000';
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-d7-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (id, name, slug, timezone, "updatedAt")
+  VALUES (s1, 'RLS Elevens lektion', 'rls-d7-school', clock, now());
+  tomorrow := (now() AT TIME ZONE clock)::date + 1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'D7', tomorrow - 700, tomorrow + 700, true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'D77A', 7, now()) RETURNING id INTO ka;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'D77B', 7, now()) RETURNING id INTO kb;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (s1, 'D7 Matematik', now()) RETURNING id INTO mat;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (s1, 'D7 Engelska', now()) RETURNING id INTO eng;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (s1, 'D7 Svenska', now()) RETURNING id INTO sve;
+
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    ((pid || '01')::uuid, s1, 'd7-full@example.invalid', 'D7', 'Full', 'SCHOOL_ADMIN', 'FULL', (lid || '0100')::uuid, true, now()),
+    ((pid || '03')::uuid, s1, 'd7-expedition@example.invalid', 'D7', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', (lid || '0300')::uuid, true, now()),
+    ((pid || '05')::uuid, s1, 'd7-lasare@example.invalid', 'D7', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', (lid || '0500')::uuid, true, now());
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    ((pid || '06')::uuid, s1, 'd7-t1@example.invalid', 'D7', 'Lärare Ett', 'TEACHER', (lid || '0600')::uuid, true, now()),
+    ((pid || '07')::uuid, s1, 'd7-t2@example.invalid', 'D7', 'Lärare Två', 'TEACHER', (lid || '0700')::uuid, true, now()),
+    ((pid || '08')::uuid, s1, 'd7-m@example.invalid', 'D7', 'Mentor', 'TEACHER', (lid || '0800')::uuid, true, now()),
+    ((pid || '09')::uuid, s1, 'd7-t4@example.invalid', 'D7', 'Lärare Fyra', 'TEACHER', (lid || '0900')::uuid, true, now());
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  VALUES (s1, (pid || '08')::uuid, y, 'MENTORSKAP', 'Mentor D77A', 60, ka, now());
+
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    ((pid || '11')::uuid, s1, 'd7-p1@example.invalid', 'D7', 'Elev Ett', 'STUDENT', (lid || '1100')::uuid, true, ka, now()),
+    ((pid || '12')::uuid, s1, 'd7-p2@example.invalid', 'D7', 'Elev Två', 'STUDENT', (lid || '1200')::uuid, true, ka, now()),
+    ((pid || '13')::uuid, s1, 'd7-p3@example.invalid', 'D7', 'Elev Tre', 'STUDENT', (lid || '1300')::uuid, true, kb, now());
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    ((pid || '21')::uuid, s1, 'd7-g1@example.invalid', 'D7', 'Vårdnadshavare Ett', 'GUARDIAN', (lid || '2100')::uuid, true, now()),
+    ((pid || '22')::uuid, s1, 'd7-g2@example.invalid', 'D7', 'Vårdnadshavare Två', 'GUARDIAN', (lid || '2200')::uuid, true, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES
+    (s1, (pid || '21')::uuid, (pid || '11')::uuid),
+    (s1, (pid || '22')::uuid, (pid || '13')::uuid);
+
+  INSERT INTO "CalendarLessons" (id, "schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "cancelCause", "updatedAt") VALUES
+    ('d7000000-0000-4000-8000-000000000a01', s1, mat, ka, tomorrow, (tomorrow + time '09:00') AT TIME ZONE clock, (tomorrow + time '10:00') AT TIME ZONE clock, 'SCHEDULED', NULL, now()),
+    ('d7000000-0000-4000-8000-000000000a02', s1, eng, kb, tomorrow, (tomorrow + time '09:00') AT TIME ZONE clock, (tomorrow + time '10:00') AT TIME ZONE clock, 'SCHEDULED', NULL, now()),
+    ('d7000000-0000-4000-8000-000000000a03', s1, sve, kb, tomorrow, (tomorrow + time '09:30') AT TIME ZONE clock, (tomorrow + time '10:30') AT TIME ZONE clock, 'SCHEDULED', NULL, now()),
+    ('d7000000-0000-4000-8000-000000000a04', s1, sve, ka, tomorrow, (tomorrow + time '11:00') AT TIME ZONE clock, (tomorrow + time '12:00') AT TIME ZONE clock, 'SCHEDULED', NULL, now()),
+    ('d7000000-0000-4000-8000-000000000a05', s1, eng, kb, tomorrow, (tomorrow + time '09:00') AT TIME ZONE clock, (tomorrow + time '10:00') AT TIME ZONE clock, 'CANCELLED', 'MANUAL', now()),
+    ('d7000000-0000-4000-8000-000000000a06', s1, eng, kb, tomorrow, (tomorrow + time '09:00') AT TIME ZONE clock, (tomorrow + time '10:00') AT TIME ZONE clock, 'CANCELLED', 'EVENT', now());
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId") VALUES
+    (s1, 'd7000000-0000-4000-8000-000000000a01', (pid || '06')::uuid),
+    (s1, 'd7000000-0000-4000-8000-000000000a02', (pid || '07')::uuid),
+    (s1, 'd7000000-0000-4000-8000-000000000a03', (pid || '09')::uuid),
+    (s1, 'd7000000-0000-4000-8000-000000000a04', (pid || '06')::uuid),
+    (s1, 'd7000000-0000-4000-8000-000000000a05', (pid || '07')::uuid),
+    (s1, 'd7000000-0000-4000-8000-000000000a06', (pid || '07')::uuid);
+
+  -- The other school: its own admin, class, pupil, teacher and a lesson at the same hour.
+  INSERT INTO "Schools" (id, name, slug, timezone, "updatedAt")
+  VALUES (s2, 'RLS Elevens lektion annan', 'rls-d7-annan', clock, now());
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'D7 annan', tomorrow - 700, tomorrow + 700, true, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s2, y2, 'D79A', 9, now()) RETURNING id INTO k2;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (s2, 'D7 annan Matematik', now()) RETURNING id INTO sub2;
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES ((pid || '31')::uuid, s2, 'd7-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', (lid || '3100')::uuid, true, now());
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES ((pid || '32')::uuid, s2, 'd7-annan-p@example.invalid', 'Annan', 'Elev', 'STUDENT', (lid || '3200')::uuid, true, k2, now());
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES ((pid || '34')::uuid, s2, 'd7-annan-t@example.invalid', 'Annan', 'Lärare', 'TEACHER', (lid || '3400')::uuid, true, now());
+  INSERT INTO "CalendarLessons" (id, "schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES ('d7000000-0000-4000-8000-000000000a07', s2, sub2, k2, tomorrow, (tomorrow + time '09:00') AT TIME ZONE clock, (tomorrow + time '10:00') AT TIME ZONE clock, 'SCHEDULED', now());
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId")
+  VALUES (s2, 'd7000000-0000-4000-8000-000000000a07', (pid || '34')::uuid);
+END $$;
+
+-- The matrix school's row for Elevens lektion för dagen (20270122091000), so the
+-- role matrix (section 116) has a row to probe: a pupil moved, in 2030, between
+-- two parallel lessons of the pupil's class. Written by the owner, once; the
+-- arrival is the target's named pupil, as the door writes it.
+DO $$
+DECLARE
+  m uuid;
+  pupil uuid;
+  grp uuid;
+  subj uuid;
+  a uuid := gen_random_uuid();
+  b uuid := gen_random_uuid();
+  mv uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "LessonPupilMoves" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id, "studentGroupId" INTO pupil, grp FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000112';
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = m ORDER BY "createdAt", id LIMIT 1;
+  IF pupil IS NULL OR grp IS NULL OR subj IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school lacks the pupil, class or subject for a pupil''s move';
+  END IF;
+  INSERT INTO "CalendarLessons" (id, "schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt") VALUES
+    (a, m, subj, grp, '2030-10-01', '2030-10-01 09:00+02', '2030-10-01 10:00+02', now()),
+    (b, m, subj, grp, '2030-10-01', '2030-10-01 09:00+02', '2030-10-01 10:00+02', now());
+  INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (m, pupil, a, b) RETURNING id INTO mv;
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId", "moveId") VALUES (m, b, pupil, mv);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

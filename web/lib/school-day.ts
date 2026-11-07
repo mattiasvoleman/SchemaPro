@@ -19,6 +19,8 @@ export const TEACHER_VIEWS: readonly TeacherView[] = ["NONE", "ROOMS", "ALL"];
 
 export interface SchoolDaySettings {
   teacherView: TeacherView;
+  /** Whether a guardian is told of a pupil's move to a parallel lesson (Elevens lektion för dagen); off until the school says so. */
+  guardianNoticeOnMove?: boolean;
 }
 
 export interface SchoolDayAccess {
