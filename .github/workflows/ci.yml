@@ -197,6 +197,15 @@ jobs:
         run: npx playwright test --project=smoke
         working-directory: web
 
+      # The menus are server data and not in the bundle the budget above
+      # counts; they are in every full page load's document instead. This
+      # holds the gzipped HTML of /sv/admin and /sv/teacher (against the e2e
+      # stub) under a ceiling, and prints the figures: with the list reporter,
+      # because the github one prints nothing of a passing test.
+      - name: Document size budget
+        run: npx playwright test --project=document-size --reporter=list
+        working-directory: web
+
       # §2: ≤0.1% pixel variance. Baselines are committed and must match the
       # Linux renderer — regenerate them in a Linux container, not on macOS.
       - name: Visual regression
