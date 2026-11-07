@@ -88,18 +88,33 @@ describe("the menus stay out of the bundle", () => {
     // Every module under web/ that starts with "use client", not the two that
     // happen to hold the shell: a third (the user menu, a later widget) that
     // imported a menu would otherwise pass unseen until the build said so.
-    // A type import is erased and takes nothing with it.
+    //
+    // This is a quick warning before the build, not the guard: `server-only`
+    // is the guard, and the build refuses a client module that reaches a menu
+    // by any road. What the scan reads is a static `import ... from` or
+    // `export ... from` whose specifier ends in a menu file's name, and these
+    // slip past it (the build catches each):
+    //   - a dynamic `import("./admin-nav")`;
+    //   - an import without names or `from`, `import "./guardian-nav"`;
+    //   - an indirect one: a client module that imports a helper which
+    //     re-exports a menu;
+    //   - a specifier written with no space before `from` or after it.
+    // And it errs the other way in one case, by name: it matches the last
+    // segment of the specifier, not the file it resolves to, so a client
+    // module in another folder that imports its own `./teacher-nav` is named
+    // as an offender too. A type import is erased and takes nothing with it
+    // (`import type`, and `import { type A }` when every name is a type), and
+    // is not named.
     const menus = new Set(navFiles.map((file) => file.replace(/\.tsx?$/, "")));
     const clientModule = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*["']use client["']/;
-    const importOf = /(?:^|\n)\s*(?:import|export)\s+(?!type\b)[^;]*?\sfrom\s+["']([^"']+)["']/g;
     const clientModules: string[] = [];
     const offenders: string[] = [];
     for (const file of sourceFiles(join(here, "..", ".."))) {
       const source = readFileSync(file, "utf8");
       if (!clientModule.test(source)) continue;
       clientModules.push(file);
-      for (const [, specifier] of source.matchAll(importOf)) {
-        if (menus.has(specifier!.split("/").pop()!)) offenders.push(`${file} imports ${specifier}`);
+      for (const specifier of runtimeImportsOf(source)) {
+        if (menus.has(specifier.split("/").pop()!)) offenders.push(`${file} imports ${specifier}`);
       }
     }
     // The scan has to see the shell, or it proves nothing.
@@ -107,7 +122,37 @@ describe("the menus stay out of the bundle", () => {
     expect(clientModules).toContain(join(here, "..", "profile-context.tsx"));
     expect(offenders).toEqual([]);
   });
+
+  it("reads the imports it claims to, and not the ones the compiler erases", () => {
+    // The scan is only as good as these: a form it stopped seeing would let a
+    // client module import a menu with the test green.
+    const seen = (source: string) => runtimeImportsOf(source);
+    expect(seen('import { ADMIN_NAV } from "./admin-nav";')).toEqual(["./admin-nav"]);
+    expect(seen('import ADMIN from "./admin-nav";')).toEqual(["./admin-nav"]);
+    expect(seen('import * as menus from "@/components/layout/admin-nav";')).toEqual(["@/components/layout/admin-nav"]);
+    expect(seen('export { TEACHER_NAV } from "./teacher-nav";')).toEqual(["./teacher-nav"]);
+    expect(seen('export * from "./teacher-nav";')).toEqual(["./teacher-nav"]);
+    expect(seen('import {\n  type NavGroup,\n  navForRole,\n} from "./role-nav";')).toEqual(["./role-nav"]);
+    expect(seen('import { type NavGroup, STUDENT_NAV } from "./student-nav";')).toEqual(["./student-nav"]);
+    // Erased by the compiler: nothing of the menu comes with them.
+    expect(seen('import type { NavGroup } from "./role-nav";')).toEqual([]);
+    expect(seen('import { type NavGroup } from "./role-nav";')).toEqual([]);
+    expect(seen('import { type NavGroup, type NavEntry as Entry } from "./role-nav";')).toEqual([]);
+    expect(seen('export type { NavGroup } from "./role-nav";')).toEqual([]);
+  });
 });
+
+/**
+ * The specifiers of a module's static imports and re-exports that the compiler
+ * keeps: all but `import type ...` and a clause whose every name is written
+ * `type X` (the whole line is erased then). See "is imported by no client
+ * module" for what it does not see.
+ */
+function runtimeImportsOf(source: string): string[] {
+  const statement = /(?:^|\n)\s*(?:import|export)\s+(?!type\b)([^;]*?)\s+from\s+["']([^"']+)["']/g;
+  const onlyTypes = /^\{(?:\s*type\s+[\w$]+(?:\s+as\s+[\w$]+)?\s*,?)+\s*\}$/;
+  return [...source.matchAll(statement)].filter(([, clause]) => !onlyTypes.test(clause!.trim())).map(([, , specifier]) => specifier!);
+}
 
 /** The .ts and .tsx files under a folder of web/, without installs, builds and tests. */
 function sourceFiles(dir: string): string[] {
