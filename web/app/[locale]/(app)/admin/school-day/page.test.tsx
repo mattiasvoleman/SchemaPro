@@ -5,6 +5,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
+import { SCHOOL_DAY_KEYS } from "@/lib/school-day-queries";
 import { ADMIN, HOLIDAY, PRAO, STAFF_DAY, TUESDAY, WEEK_DAYS, day, free, lesson, view } from "@/lib/__fixtures__/school-day";
 import type { AdminProfile } from "@/lib/admin-areas";
 import type { FreeView, SchoolDaySettings, SchoolDayView } from "@/lib/school-day";
@@ -54,7 +55,7 @@ const state = vi.hoisted(() => ({
   free: undefined as unknown,
   settings: undefined as unknown,
   gridError: null as null | Error,
-  freeError: false,
+  freeError: false as boolean | "limited",
 }));
 
 const rangeOf = (path: string) => /from=([\d-]+)&to=([\d-]+)/.exec(path)!.slice(1, 3) as [string, string];
@@ -62,7 +63,7 @@ const reads = (prefix: string) => api.get.mock.calls.map(([path]) => path as str
 
 function renderPage(locale: "sv" | "en" = "sv") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
+  return Object.assign(render(
     <QueryClientProvider client={client}>
       <NextIntlClientProvider
         locale={locale}
@@ -75,7 +76,7 @@ function renderPage(locale: "sv" | "en" = "sv") {
         <SchoolDayPage />
       </NextIntlClientProvider>
     </QueryClientProvider>,
-  );
+  ), { client });
 }
 
 beforeEach(() => {
@@ -92,6 +93,7 @@ beforeEach(() => {
   api.get.mockImplementation(async (path: string) => {
     if (path === `${ROOT}/settings`) return state.settings;
     if (path.startsWith(`${ROOT}/free?`)) {
+      if (state.freeError === "limited") throw new ApiError(429, "Too Many Requests", "SCHOOL_DAY_RATE_LIMITED");
       if (state.freeError) throw new ApiError(500, "boom");
       return state.free;
     }
@@ -232,6 +234,46 @@ describe("the day", () => {
     state.gridError = null;
     await user.click(screen.getByRole("button", { name: "Försök igen" }));
     expect(await screen.findAllByRole("rowheader")).not.toHaveLength(0);
+  });
+
+  it("says too many requests calmly when the gateway limits the first read, and not that something broke", async () => {
+    state.gridError = new ApiError(429, "Too Many Requests", "SCHOOL_DAY_RATE_LIMITED");
+    renderPage();
+    expect(await screen.findByText("För många frågor just nu")).toBeInTheDocument();
+    expect(screen.getByText(/Vänta en minut och försök igen/)).toBeInTheDocument();
+    expect(screen.queryByText("Skolans dag kunde inte hämtas")).not.toBeInTheDocument();
+  });
+
+  it("keeps the figures on screen when a poll is refused, says so above them, and takes the notice away when asked again", async () => {
+    const { client } = renderPage();
+    await screen.findAllByRole("rowheader");
+    const rows = screen.getAllByRole("rowheader").length;
+    state.gridError = new ApiError(429, "Too Many Requests", "SCHOOL_DAY_RATE_LIMITED");
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: SCHOOL_DAY_KEYS.all });
+    });
+    expect(await screen.findByText("För många frågor just nu")).toBeInTheDocument();
+    expect(screen.getByText("Sidan visar det den hade och försöker igen om en stund.")).toBeInTheDocument();
+    // The day as it was, not the error page that replaced it.
+    expect(screen.getAllByRole("rowheader")).toHaveLength(rows);
+    expect(screen.queryByText("Skolans dag kunde inte hämtas")).not.toBeInTheDocument();
+    state.gridError = null;
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: SCHOOL_DAY_KEYS.all });
+    });
+    await waitFor(() => expect(screen.queryByText("För många frågor just nu")).not.toBeInTheDocument());
+    expect(screen.getAllByRole("rowheader")).toHaveLength(rows);
+  });
+
+  it("keeps the figures on screen, with another notice, when a poll fails for any other reason", async () => {
+    const { client } = renderPage();
+    await screen.findAllByRole("rowheader");
+    state.gridError = new ApiError(500, "boom");
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: SCHOOL_DAY_KEYS.all });
+    });
+    expect(await screen.findByText("Skolans dag kunde inte uppdateras")).toBeInTheDocument();
+    expect(screen.getAllByRole("rowheader")).not.toHaveLength(0);
   });
 
   it("is a state, not an error, when the school closed the page for teachers since it was drawn", async () => {
@@ -406,6 +448,15 @@ describe("the finder", () => {
     state.free = free({ poolLeftOut: 2 });
     await ask();
     expect(screen.getByText("2 vikarier ur poolen har inga anmälda tider och räknas inte som lediga.")).toBeInTheDocument();
+  });
+
+  it("says the search was limited calmly, with a wait", async () => {
+    const user = userEvent.setup();
+    state.freeError = "limited";
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "Visa lediga" }));
+    expect(await screen.findByText("För många frågor just nu")).toBeInTheDocument();
+    expect(screen.queryByText("Det gick inte att söka")).not.toBeInTheDocument();
   });
 
   it("says the search failed, and nothing is made up", async () => {

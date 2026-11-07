@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Printer, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useLocale } from "next-intl";
-import { isNotOpen, useSchoolDay } from "@/lib/school-day-queries";
+import { isNotOpen, isRateLimited, useSchoolDay } from "@/lib/school-day-queries";
 import {
   axisOf,
   buildRows,
@@ -55,9 +55,12 @@ function stepDay(date: string, direction: 1 | -1): string {
  * and the Skriv ut button, which only an administrator has. The page does not
  * ask who the reader is; `access` says.
  *
- * It is a screen that stays open, so it asks again every minute (the lessons
- * change under the morning) and keeps the last figures dimmed while a new
- * range loads, instead of a blank between two days.
+ * It is a screen that stays open, so it asks again (every minute for an
+ * administrator, every five for a teacher: the lessons change under the
+ * morning) and keeps the last figures dimmed while a new range loads, instead
+ * of a blank between two days. A poll that fails, or that the gateway refuses
+ * for too many requests, leaves the figures as they were with a notice above
+ * them; only a first load or a new range with nothing to show is an error page.
  *
  * PRINT. A printout names the staff and leaves the screen, so a teacher the
  * school has marked as having a protected identity is not named on it: at the
@@ -185,10 +188,10 @@ export function SchoolDayBody() {
       ) : isNotOpen(query.error) ? (
         // The school closed the page for teachers since this one was drawn.
         <NotOpen />
-      ) : query.isError || !view ? (
+      ) : !view ? (
         <LoadError
-          title={t("loadFailed")}
-          hint={t("loadFailedHint")}
+          title={isRateLimited(query.error) ? t("rateLimited") : t("loadFailed")}
+          hint={isRateLimited(query.error) ? t("rateLimitedHint") : t("loadFailedHint")}
           headingLevel={2}
           action={
             <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
@@ -198,6 +201,8 @@ export function SchoolDayBody() {
         />
       ) : (
         <div className={moving ? "opacity-60 transition-opacity" : undefined} aria-busy={moving}>
+          {/* A poll that was refused or failed leaves the figures on screen, as they were, and says so. */}
+          {query.isError ? <Notice tone="warning" title={isRateLimited(query.error) ? t("staleRateLimited") : t("stale")}>{t("staleHint")}</Notice> : null}
           {mode === "day" ? <DayView rows={shown} view={view} kind={kind} axis={axis} /> : (
             <WeekGrid rows={shown} days={weekColumns(view)} axis={axis} kind={kind} onOpenDay={(opened) => { setDate(opened); setMode("day"); }} />
           )}

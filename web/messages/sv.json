@@ -7958,6 +7958,11 @@
     },
     "loadFailed": "Skolans dag kunde inte hämtas",
     "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "rateLimited": "För många frågor just nu",
+    "rateLimitedHint": "Skolans dag får inte fler frågor från dig just nu. Vänta en minut och försök igen.",
+    "stale": "Skolans dag kunde inte uppdateras",
+    "staleRateLimited": "För många frågor just nu",
+    "staleHint": "Sidan visar det den hade och försöker igen om en stund.",
     "retry": "Försök igen",
     "legend": {
       "label": "Teckenförklaring",

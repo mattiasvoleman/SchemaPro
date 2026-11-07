@@ -14072,7 +14072,7 @@
           "TEACHER"
         ],
         "x-rate-limit": {
-          "limit": 30,
+          "limit": 1200,
           "ttlSeconds": 60
         }
       }
@@ -14141,7 +14141,7 @@
           "TEACHER"
         ],
         "x-rate-limit": {
-          "limit": 30,
+          "limit": 1200,
           "ttlSeconds": 60
         }
       }

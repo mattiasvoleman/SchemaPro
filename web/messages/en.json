@@ -7958,6 +7958,11 @@
     },
     "loadFailed": "The school day could not be loaded",
     "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment.",
+    "rateLimited": "Too many requests right now",
+    "rateLimitedHint": "School day will not take more requests from you right now. Wait a minute and try again.",
+    "stale": "School day could not be updated",
+    "staleRateLimited": "Too many requests right now",
+    "staleHint": "The page shows what it had, and tries again in a moment.",
     "retry": "Try again",
     "legend": {
       "label": "Key",

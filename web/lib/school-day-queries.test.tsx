@@ -9,6 +9,7 @@ import {
   SCHOOL_DAY_KEYS,
   TEACHER_REFRESH_MS,
   isNotOpen,
+  isRateLimited,
   useSchoolDay,
   useSchoolDayActions,
   useSchoolDayFree,
@@ -146,5 +147,15 @@ describe("a school that has not opened the page for teachers", () => {
     expect(isNotOpen(new ApiError(500, "x", NOT_OPEN))).toBe(false);
     expect(isNotOpen(new Error("x"))).toBe(false);
     expect(isNotOpen(null)).toBe(false);
+  });
+});
+
+describe("a gateway that limits the reads", () => {
+  it("is told by the status, with the code or without it (the ceiling per address has none), and by nothing else", () => {
+    expect(isRateLimited(new ApiError(429, "x", "SCHOOL_DAY_RATE_LIMITED"))).toBe(true);
+    expect(isRateLimited(new ApiError(429, "x"))).toBe(true);
+    expect(isRateLimited(new ApiError(503, "x"))).toBe(false);
+    expect(isRateLimited(new Error("x"))).toBe(false);
+    expect(isRateLimited(undefined)).toBe(false);
   });
 });

@@ -47,6 +47,15 @@ export function isNotOpen(error: unknown): boolean {
   return error instanceof ApiError && error.status === 403 && error.code === NOT_OPEN;
 }
 
+/**
+ * The gateway limits each login's reads of the grids and of the search (SCHOOL_DAY_RATE_LIMITED, 429): a state of
+ * the page, said calmly with a wait, and no breakage. The status says it whatever sent it (the global guard's
+ * ceiling per address has no code).
+ */
+export function isRateLimited(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 429;
+}
+
 /** The grids of [from, to]. Moving to another range keeps the last one on screen, dimmed by the page, instead of a blank. */
 export function useSchoolDay(from: string, to: string) {
   return useQuery({

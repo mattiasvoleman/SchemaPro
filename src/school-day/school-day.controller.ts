@@ -9,6 +9,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { FreeQueryDto, GridQueryDto, SchoolDaySettingsDto } from './dto/school-day.dto';
 import { SchoolDayService } from './school-day.service';
+import { PER_ADDRESS, SchoolDayThrottlerGuard } from './school-day-throttler.guard';
 import type { FreeView, SchoolDaySettingsView, SchoolDayView } from './school-day.types';
 
 /**
@@ -31,19 +32,22 @@ export class SchoolDayController {
   constructor(private readonly schoolDay: SchoolDayService) {}
 
   /**
-   * The day or the week: lessons, bookings, closures and the rows, from `from` to `to`. Throttled like the print
-   * of the same grids: a week of a large school is built in the API process and weighs up to 2 MB, and every
-   * teacher the school lets in reads it, so the global 120 a minute per address is too loose a ceiling.
+   * The day or the week: lessons, bookings, closures and the rows, from `from` to `to`. A week of a large school
+   * is built in the API process and weighs up to 2 MB, and every teacher the school lets in reads it, so it is
+   * limited to 30 a minute per login (SchoolDayThrottlerGuard). Not per address: the web asks from each person's
+   * browser, and a school's staff share one. The global guard keeps a high ceiling per address instead.
    */
   @Get()
-  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(SchoolDayThrottlerGuard)
+  @Throttle({ default: PER_ADDRESS })
   grid(@Query() query: GridQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<SchoolDayView> {
     return this.schoolDay.grid(query, user);
   }
 
-  /** Who and what is free over an interval of a date, by the rules the Vikarietavla uses. Throttled as the grid is. */
+  /** Who and what is free over an interval of a date, by the rules the Vikarietavla uses. Limited as the grid is. */
   @Get('free')
-  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(SchoolDayThrottlerGuard)
+  @Throttle({ default: PER_ADDRESS })
   free(@Query() query: FreeQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<FreeView> {
     return this.schoolDay.free(query, user);
   }

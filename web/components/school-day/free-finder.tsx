@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { MapPin, UserCheck } from "lucide-react";
-import { useSchoolDayFree } from "@/lib/school-day-queries";
+import { isRateLimited, useSchoolDayFree } from "@/lib/school-day-queries";
 import {
   PRESETS,
   closedFor,
@@ -104,7 +104,11 @@ export function FreeFinder() {
           <Skeleton className="h-24 w-full" />
         </div>
       ) : free.isError || !free.data ? (
-        <LoadError variant="inline" title={t("free.loadFailed")} hint={t("free.loadFailedHint")} />
+        <LoadError
+          variant="inline"
+          title={isRateLimited(free.error) ? t("rateLimited") : t("free.loadFailed")}
+          hint={isRateLimited(free.error) ? t("rateLimitedHint") : t("free.loadFailedHint")}
+        />
       ) : (
         <FreeResult free={free.data} />
       )}

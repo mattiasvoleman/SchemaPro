@@ -1606,12 +1606,20 @@ Walk the full product loop once, in order:
   rooms reads a week in about 0.2 s in the API (`scripts/bench/school-day.ts`);
   the answer is about 0.8 MB (about 1.9 MB for 150 classes, 300 teachers and
   200 rooms), built in the API process and not compressed by the gateway.
-  **The two reads are throttled to 30 a minute** (`grid`, `free`), as the
-  print is, and a teacher's page asks again every five minutes (an
-  administrator's every minute), so a school behind one address does not
-  spend the whole ceiling on a wall of open pages; watch 429s from shared NAT
-  addresses when the first school sets `ALL`. Compression at the proxy is a
-  decision of its own.
+  **The two reads are limited to 30 a minute per login and per route**
+  (`grid`, `free`; `SchoolDayThrottlerGuard`, which keys on the verified
+  login), with a ceiling of 1 200 a minute per address in the global guard's
+  bucket for each route (`x-rate-limit` in the OpenAPI document is that
+  ceiling). Not 30 per address: the web asks the API from each person's
+  browser, so a school's staff arrive from one NAT address, and sixty teachers
+  opening the page together would have had thirty errors, and a block of a
+  minute for everyone on the address. The refusal is 429 with `Retry-After`
+  and the code `SCHOOL_DAY_RATE_LIMITED`; the page says it calmly and keeps
+  the figures it had when a poll is refused. A teacher's page asks again every
+  five minutes (an administrator's every minute). When the first school sets
+  `ALL`, count 429 per route; a 429 without the code is the address ceiling
+  and means one address is flooding. Compression at the proxy is a decision
+  of its own.
   **Rolling back the API** leaves a table and a function nobody reads; the
   page then answers 404. Nothing needs undoing. To remove them (only if the
   feature is abandoned): `DROP FUNCTION app.school_day_protected_staff();

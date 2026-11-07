@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { SchoolDayController } from './school-day.controller';
 import { SchoolDayService } from './school-day.service';
+import { SchoolDayThrottlerGuard } from './school-day-throttler.guard';
 
 /**
  * Skolans dag i ett svep: the school's day and week as grids over its classes,
@@ -10,6 +11,6 @@ import { SchoolDayService } from './school-day.service';
  */
 @Module({
   controllers: [SchoolDayController],
-  providers: [SchoolDayService],
+  providers: [SchoolDayService, SchoolDayThrottlerGuard],
 })
 export class SchoolDayModule {}
