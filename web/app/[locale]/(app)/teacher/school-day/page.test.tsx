@@ -73,7 +73,7 @@ function school(choice: TeacherView) {
       groups: view().groups,
       teachers: [],
       // Lessons with a room only, and no teachers: the gateway's ROOMS form.
-      lessons: view().lessons.filter((one) => one.roomId !== null).map((one) => ({ ...one, teachers: [], hiddenTeachers: 0 })),
+      lessons: view().lessons.filter((one) => one.roomId !== null).map((one) => ({ ...one, teachers: [] })),
       blocks: view().blocks.filter((one) => one.resource === "ROOM"),
     });
     state.free = free({ access: TEACHER_ROOMS, teachers: null, busyTeachers: null, busyRooms: null, rules: { teachers: [], rooms: ROOM_RULES } });

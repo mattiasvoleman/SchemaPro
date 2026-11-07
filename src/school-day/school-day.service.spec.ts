@@ -193,7 +193,6 @@ describe('SchoolDayService', () => {
         extraGroupIds: ['g2'],
         activity: false,
         teachers: [{ id: 't2', role: 'SUBSTITUTE' }, { id: 't1', role: 'ASSISTANT' }],
-        hiddenTeachers: 0,
       });
       expect(activity).toMatchObject({ activity: true, roomId: null });
     });
@@ -358,8 +357,9 @@ describe('SchoolDayService', () => {
       const byId = new Map(view.lessons.map((lesson) => [lesson.id, lesson]));
       expect(byId.get('hers')!.teachers).toEqual([]);
       expect(byId.get('shared')!.teachers).toEqual([{ id: 't1', role: null }]);
-      expect([...byId.values()].map((lesson) => lesson.hiddenTeachers)).toEqual([0, 0, 0]);
-      expect(view.heldOut).toEqual({ teachers: 0 });
+      // No field says that a teacher is missing: nothing to count, on a lesson or on the answer.
+      expect([...byId.values()].every((lesson) => !('hiddenTeachers' in lesson))).toBe(true);
+      expect(view).not.toHaveProperty('heldOut');
       expect(JSON.stringify(view)).not.toContain('t2');
     });
 

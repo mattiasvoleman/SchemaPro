@@ -69,9 +69,9 @@ const byName = (a: string, b: string): number => a.localeCompare(b, 'sv', { nume
  * WHO IS NOT NAMED. A person the school has marked as having a protected
  * identity is named for administrators only: for a teacher with ALL the person
  * is left out of the teachers, and out of the lessons' teacher rows, with no id
- * and without a count (hiddenTeachers and heldOut are 0 for everyone: "one
- * teacher is not shown" on the lessons that are hers would point at her, which
- * the omission is there to not do). The screen is the whole staff's at once,
+ * and without a count (the answer has no field that says someone is left out:
+ * "one teacher is not shown" on the lessons that are hers would point at her,
+ * which the omission is there to not do). The screen is the whole staff's at once,
  * which a lesson row a teacher can read one at a time is not. The omission is
  * presentation: PostgREST still lets a teacher read the rows (people-files.ts).
  * src/common/people-files.ts and web/lib/people-files.ts say the same of the
@@ -168,7 +168,6 @@ export class SchoolDayService {
           extraGroupIds: row.extraGroups.map((extra) => extra.studentGroupId),
           roomId: row.roomId ?? null,
           teachers: named.map((teacher) => ({ id: teacher.teacherId, role: access.admin ? teacher.role : null })),
-          hiddenTeachers: 0,
           activity: row.activityLinks.length > 0,
         };
       });
@@ -236,7 +235,6 @@ export class SchoolDayService {
         subjects,
         lessons,
         blocks,
-        heldOut: { teachers: 0 },
       } satisfies SchoolDayView;
     });
   }
@@ -258,7 +256,7 @@ export class SchoolDayService {
       const breaks = day?.breaks ?? [];
       const rules = { teachers: access.freeTeachers ? [...TEACHER_RULES] : [], rooms: [...ROOM_RULES] };
       const roomRows = await tx.room.findMany({ select: { id: true, name: true, code: true } });
-      const base = { date, from: query.from, to: query.to, access, breaks, rules, heldOut: { teachers: 0 } };
+      const base = { date, from: query.from, to: query.to, access, breaks, rules };
 
       // A lov that closes the whole school leaves nobody free: nobody is in the house.
       if (breaks.some((entry) => entry.kind === 'HOLIDAY' && entry.groupIds === null)) {

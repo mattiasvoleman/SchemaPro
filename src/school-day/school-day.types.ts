@@ -78,11 +78,10 @@ export interface GridLesson {
   roomId: string | null;
   /**
    * Empty for a caller who may not see teachers (ROOMS). The role is the administrators': a teacher is not told
-   * that a teacher holds the lesson in someone's place, and a teacher marked as having a protected identity is left out.
+   * that a teacher holds the lesson in someone's place, and a teacher marked as having a protected identity is left out
+   * without a count: no field says that someone is missing.
    */
   teachers: Array<{ id: string; role: TeacherAssignmentRole | null }>;
-  /** Always 0: a teacher is not told that a marked teacher was left out (the count would point at her), and an administrator is told every name. */
-  hiddenTeachers: number;
   /** The lesson is the replacement lesson of a schemabrytande aktivitet (D3). */
   activity: boolean;
 }
@@ -126,8 +125,6 @@ export interface SchoolDayView {
   subjects: GridSubject[];
   lessons: GridLesson[];
   blocks: GridBlock[];
-  /** Always 0, like hiddenTeachers: marked persons (skyddad identitet) are left out for a teacher without a trace, and named for an administrator. */
-  heldOut: { teachers: number };
 }
 
 /** Why a teacher is not free (the rules of the Vikarietavla that say occupied; cover-rules.ts occupancyFindings). */
@@ -184,7 +181,6 @@ export interface FreeView {
   busyRooms: BusyRoom[] | null;
   /** Substitute-pool members without a declared window over the interval, left out of the free teachers (POOL_NOT_DECLARED). */
   poolLeftOut: number;
-  heldOut: { teachers: number };
   /** The rules that decided the answer, by name: shown on the page so that nobody has to guess. */
   rules: { teachers: TeacherBusyCode[]; rooms: RoomBusyCode[] };
 }

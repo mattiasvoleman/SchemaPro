@@ -34,8 +34,8 @@
  * calendar_lessons_staff_select), and no pupil: a class is a row, never a
  * person. A person the school has marked is named there for administrators
  * only: the answer a teacher gets leaves a marked teacher out, without an id
- * and without a count (hiddenTeachers and heldOut are 0 for everyone: a count
- * on the lessons that are hers would point at her), because the page puts every
+ * and without a count (the answer has no field that says someone was left
+ * out: a count on the lessons that are hers would point at her), because the page puts every
  * teacher's day on one screen. The omission is PRESENTATION, not a boundary: a
  * teacher reads Users, CalendarLessons and CalendarLessonTeachers through
  * PostgREST (staff_select), so the rows stay readable there, and what the page

@@ -465,12 +465,10 @@ export async function skolansDagChecks(owner: Client, api: PrismaService, marker
     const lesson9c = masked.lessons.find((one) => one.id === svenska9c)!;
     assert.deepEqual(lesson9c.teachers.map((one) => one.id), [cia.userId]);
     // No field says that a teacher is missing: not on her lesson, not anywhere else.
-    assert.deepEqual(masked.lessons.map((one) => one.hiddenTeachers).filter((count) => count !== 0), []);
-    assert.deepEqual(masked.heldOut, { teachers: 0 });
+    assert.ok(masked.lessons.every((one) => !('hiddenTeachers' in one)) && !('heldOut' in masked));
     assert.equal(JSON.stringify(masked).includes(eva.userId!), false);
     const named = await day.grid({ from: mondayAfter }, reader);
     assert.deepEqual(named.lessons.find((one) => one.id === svenska9c)!.teachers.map((one) => one.id).sort(), [cia.userId, eva.userId].sort());
-    assert.deepEqual(named.heldOut, { teachers: 0 });
     await owner.query(`DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1 AND "teacherId" = $2`, [svenska9c, eva.userId]);
 
     // Why a lesson is cancelled and in whose place a teacher stands are the administrators': the lesson is cancelled, and who holds it is there.

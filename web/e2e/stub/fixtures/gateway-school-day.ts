@@ -66,7 +66,6 @@ function lessonsOn(from: string, to: string, access: SchoolDayAccess): GridLesso
           role: row.role as "LEAD" | "ASSISTANT" | "SUBSTITUTE",
         }))
       : [],
-    hiddenTeachers: 0,
     activity: false,
   }));
 }
@@ -114,7 +113,6 @@ function grid(context: GatewayContext): SchoolDayView | Reply {
     subjects: SUBJECT_LIST.filter((subject) => lessons.some((lesson) => lesson.subjectId === subject.id)).map((subject) => ({ id: subject.id, name: subject.name })),
     lessons,
     blocks,
-    heldOut: { teachers: 0 },
   };
 }
 
@@ -147,7 +145,6 @@ function free(context: GatewayContext): FreeView | Reply {
     busyTeachers: access.admin ? teachers.filter((teacher) => busyTeachers.has(teacher.id)).map((teacher) => ({ ...teacher, reasons: ["BUSY_LESSON" as const] })) : null,
     busyRooms: access.admin ? rooms.filter((room) => busyRooms.has(room.id)).map((room) => ({ ...room, reasons: ["ROOM_IN_USE" as const] })) : null,
     poolLeftOut: 0,
-    heldOut: { teachers: 0 },
     rules: {
       teachers: access.freeTeachers
         ? ["ABSENT", "BUSY_LESSON", "BUSY_SUPERVISION", "BUSY_DUTY", "UNAVAILABLE", "BOOKED_ROOM", "POOL_NOT_DECLARED"]

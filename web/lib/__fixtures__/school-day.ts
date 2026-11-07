@@ -59,7 +59,6 @@ export const lesson = (over: Partial<GridLesson> & Pick<GridLesson, "id" | "star
   extraGroupIds: [],
   roomId: null,
   teachers: [],
-  hiddenTeachers: 0,
   activity: false,
   ...over,
 });
@@ -109,7 +108,6 @@ export function view(over: Partial<SchoolDayView> = {}): SchoolDayView {
     subjects: SUBJECTS,
     lessons: LESSONS,
     blocks: BLOCKS,
-    heldOut: { teachers: 0 },
     ...over,
   };
 }
@@ -132,7 +130,6 @@ export function free(over: Partial<FreeView> = {}): FreeView {
     busyTeachers: [{ id: "t-3", name: "Cecilia Ås", reasons: ["ABSENT", "BUSY_LESSON"] }],
     busyRooms: [{ id: "r-12", name: "Sal 12", code: null, reasons: ["ROOM_IN_USE", "ROOM_BOOKED"] }],
     poolLeftOut: 0,
-    heldOut: { teachers: 0 },
     rules: {
       teachers: ["ABSENT", "BUSY_LESSON", "BUSY_SUPERVISION", "BUSY_DUTY", "UNAVAILABLE", "BOOKED_ROOM", "POOL_NOT_DECLARED"],
       rooms: ["ROOM_IN_USE", "ROOM_BOOKED", "ROOM_CLOSED", "ROOM_LENT", "ROOM_BORROWED_OUTSIDE_LOAN"],

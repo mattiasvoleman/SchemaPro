@@ -86,8 +86,6 @@ export interface GridLesson {
   roomId: string | null;
   /** The role is the administrators': null for a teacher, who is not told whose place a teacher holds. */
   teachers: Array<{ id: string; role: "LEAD" | "ASSISTANT" | "SUBSTITUTE" | null }>;
-  /** Always 0 from the gateway: a teacher is not told that a marked teacher was left out. */
-  hiddenTeachers: number;
   activity: boolean;
 }
 
@@ -119,7 +117,6 @@ export interface SchoolDayView {
   subjects: GridSubject[];
   lessons: GridLesson[];
   blocks: GridBlock[];
-  heldOut: { teachers: number };
 }
 
 export type TeacherBusyCode =
@@ -155,7 +152,6 @@ export interface FreeView {
   busyTeachers: Array<FreeTeacher & { reasons: TeacherBusyCode[] }> | null;
   busyRooms: Array<FreeRoom & { reasons: RoomBusyCode[] }> | null;
   poolLeftOut: number;
-  heldOut: { teachers: number };
   rules: { teachers: TeacherBusyCode[]; rooms: RoomBusyCode[] };
 }
 
