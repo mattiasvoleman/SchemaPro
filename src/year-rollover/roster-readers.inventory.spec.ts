@@ -454,7 +454,19 @@ describe('the roster-reader inventory', () => {
       // rostersOfYear as POST jobs does, and its check and apply rebuild
       // Generera's fetch (prepareSchedule), so a year two steps ahead answers
       // R6's 409 there too.
+      //
+      // Analys och planering (20270130090000) reads the year's rosters the way
+      // the load report does: the key figures and the cost basis count pupils
+      // per teacher and per grade, the payroll basis and its file read the
+      // load input beside the delivered lessons. All four are the school's
+      // economy, and a year two steps ahead, or a rolled one in a school with
+      // no active year, has no pupils to divide a teacher's time by, so they
+      // answer the 409 StaffingLoadController.load answers for the same year.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
+        'AnalysisController.costBasis',
+        'AnalysisController.keyFigures',
+        'AnalysisController.payrollBasis',
+        'AnalysisController.payrollFile',
         'CalendarController.publish',
         'CalendarLessonsController.assignSubstitute',
         'CalendarLessonsController.suggestSubstitutes',
