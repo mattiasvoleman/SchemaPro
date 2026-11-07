@@ -7,6 +7,7 @@ import {
   NOT_OPEN,
   REFRESH_MS,
   SCHOOL_DAY_KEYS,
+  TEACHER_REFRESH_MS,
   isNotOpen,
   useSchoolDay,
   useSchoolDayActions,
@@ -51,6 +52,20 @@ describe("the grids", () => {
   it("keeps a range of its own in the cache, and asks again once a minute for a screen left open", () => {
     expect(SCHOOL_DAY_KEYS.grid("2026-11-02", "2026-11-08")).not.toEqual(SCHOOL_DAY_KEYS.grid("2026-11-03", "2026-11-03"));
     expect(REFRESH_MS).toBe(60_000);
+  });
+
+  it("asks a teacher's page less often than an administrator's, once the answer says who is asking", async () => {
+    expect(TEACHER_REFRESH_MS).toBe(300_000);
+    const { client, wrapper } = setup();
+    api.get.mockResolvedValueOnce({ access: { admin: false, grids: true, freeTeachers: false } });
+    const { result } = renderHook(() => useSchoolDay("2026-11-03", "2026-11-03"), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const interval = client.getQueryCache().find({ queryKey: SCHOOL_DAY_KEYS.grid("2026-11-03", "2026-11-03") })!.observers[0]!.options.refetchInterval as (query: unknown) => number | false | undefined;
+    const asked = (data: unknown) => interval({ state: { data } });
+    expect(asked({ access: { admin: false } })).toBe(TEACHER_REFRESH_MS);
+    expect(asked({ access: { admin: true } })).toBe(REFRESH_MS);
+    // Before the first answer, and after a refusal, nobody is known to be a teacher: the first pace.
+    expect(asked(undefined)).toBe(REFRESH_MS);
   });
 
   it("keeps the last range on screen while the next one loads", async () => {

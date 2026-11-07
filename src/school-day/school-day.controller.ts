@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Put, Query, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AnyAdministrator, Decides } from '../auth/decorators/area.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -29,14 +30,20 @@ import type { FreeView, SchoolDaySettingsView, SchoolDayView } from './school-da
 export class SchoolDayController {
   constructor(private readonly schoolDay: SchoolDayService) {}
 
-  /** The day or the week: lessons, bookings, closures and the rows, from `from` to `to`. */
+  /**
+   * The day or the week: lessons, bookings, closures and the rows, from `from` to `to`. Throttled like the print
+   * of the same grids: a week of a large school is built in the API process and weighs up to 2 MB, and every
+   * teacher the school lets in reads it, so the global 120 a minute per address is too loose a ceiling.
+   */
   @Get()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   grid(@Query() query: GridQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<SchoolDayView> {
     return this.schoolDay.grid(query, user);
   }
 
-  /** Who and what is free over an interval of a date, by the rules the Vikarietavla uses. */
+  /** Who and what is free over an interval of a date, by the rules the Vikarietavla uses. Throttled as the grid is. */
   @Get('free')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   free(@Query() query: FreeQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<FreeView> {
     return this.schoolDay.free(query, user);
   }

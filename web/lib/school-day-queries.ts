@@ -32,6 +32,12 @@ const BASE = "/api/v1/school-day";
 export const REFRESH_MS = 60_000;
 
 /**
+ * A teacher's page asks less often: the answer is built per request in the API (up to 2 MB for a week in a large
+ * school) and every teacher the school lets in has the page open, behind one address and one rate limit.
+ */
+export const TEACHER_REFRESH_MS = 300_000;
+
+/**
  * The code the gateway answers a teacher with while the school has chosen
  * nothing for teachers (NONE): a state of the page, said calmly, and no error.
  */
@@ -47,7 +53,8 @@ export function useSchoolDay(from: string, to: string) {
     queryKey: SCHOOL_DAY_KEYS.grid(from, to),
     retry: false,
     placeholderData: keepPreviousData,
-    refetchInterval: REFRESH_MS,
+    // Once an answer says the reader is not an administrator the page asks at the slower pace; until then, at the first.
+    refetchInterval: (query) => (query.state.data?.access?.admin === false ? TEACHER_REFRESH_MS : REFRESH_MS),
     queryFn: () => api.get<SchoolDayView>(`${BASE}?from=${from}&to=${to}`),
   });
 }
