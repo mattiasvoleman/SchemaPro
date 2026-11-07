@@ -71,6 +71,9 @@ interface SubjectForm {
   maxLessonsPerDay: string;
   /** Null for no rule; 2 is "inte dagar i följd". */
   minDaysBetween: number | null;
+  /** Placeringsregler, Inte först eller sist på dagen: two markings, off by default. */
+  notFirstInDay: boolean;
+  notLastInDay: boolean;
 }
 
 const ANY_ROOM = "__any__";
@@ -96,6 +99,8 @@ const EMPTY_FORM: SubjectForm = {
   // No ämnesfördelning: school rules are off until a school sets them.
   maxLessonsPerDay: "",
   minDaysBetween: null,
+  notFirstInDay: false,
+  notLastInDay: false,
 };
 
 /** "Matematik (MA)" — the statute's name with the code the CSV column takes. */
@@ -107,6 +112,7 @@ export default function SubjectsPage() {
   const tCommon = useTranslations("common");
   const tCsvImport = useTranslations("csvImport");
   const tDistribution = useTranslations("distribution");
+  const tPlacement = useTranslations("placementRules");
   const { data: subjects, isLoading, isError } = useSubjects();
   const mutations = useCrudMutations<{
     name: string;
@@ -118,6 +124,8 @@ export default function SubjectsPage() {
     loadFactor?: number;
     maxLessonsPerDay?: number | null;
     minDaysBetween?: number | null;
+    notFirstInDay?: boolean;
+    notLastInDay?: boolean;
     // A factor moves every teacher's load under FACTOR, so the report is
     // refetched with the list.
   }>("/api/v1/subjects", [["subjects"], [...STAFFING_KEYS.load]]);
@@ -168,6 +176,8 @@ export default function SubjectsPage() {
       loadFactor: formatLoadFactor(subject.loadFactor, locale),
       maxLessonsPerDay: subject.maxLessonsPerDay ? String(subject.maxLessonsPerDay) : "",
       minDaysBetween: subject.minDaysBetween ?? null,
+      notFirstInDay: subject.notFirstInDay ?? false,
+      notLastInDay: subject.notLastInDay ?? false,
     });
     setDialogOpen(true);
   };
@@ -196,6 +206,15 @@ export default function SubjectsPage() {
       // reason: an absent key keeps the old rule, and "no rule" is a decision.
       maxLessonsPerDay: rule.maxLessonsPerDay,
       minDaysBetween: rule.minDaysBetween,
+      // Placeringsregler: sent only when it differs from what is stored (a new
+      // subject stores false), so a save that touches neither box reaches an
+      // API from before the rule without a key it refuses.
+      ...(form.notFirstInDay !== (editing?.notFirstInDay ?? false)
+        ? { notFirstInDay: form.notFirstInDay }
+        : {}),
+      ...(form.notLastInDay !== (editing?.notLastInDay ?? false)
+        ? { notLastInDay: form.notLastInDay }
+        : {}),
     };
     try {
       if (editing) {
@@ -534,6 +553,27 @@ export default function SubjectsPage() {
               {editing && (rule.maxLessonsPerDay !== null || rule.minDaysBetween !== null) ? (
                 <SubjectDistributionBreaches subjectId={editing.id} subjectName={form.name.trim() || editing.name} rule={rule} />
               ) : null}
+            </fieldset>
+            {/* Placeringsregler, Inte först eller sist på dagen: the markings
+                live on the subject; the rule itself is switched on under
+                Skolregler. */}
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">{tPlacement("subject.legend")}</legend>
+              <p id="subject-placement-hint" className="text-xs text-muted-foreground">
+                {tPlacement("subject.hint")}
+              </p>
+              {(["notFirstInDay", "notLastInDay"] as const).map((key) => (
+                <label key={key} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4"
+                    checked={form[key]}
+                    aria-describedby="subject-placement-hint"
+                    onChange={(e) => setForm({ ...form, [key]: e.target.checked })}
+                  />
+                  {tPlacement(key === "notFirstInDay" ? "subject.notFirst" : "subject.notLast")}
+                </label>
+              ))}
             </fieldset>
           </div>
           <DialogFooter>

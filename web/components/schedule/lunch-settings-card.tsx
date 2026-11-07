@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
-import { useLunchSettings, useSaveLunchSettings } from "@/lib/queries";
+import { useLunchSettings, useSaveLunchSettings, useSubjects } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
@@ -14,11 +14,23 @@ import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import {
+  LIMIT_FIELDS,
+  PlacementRulesFields,
+  type PlacementErrors,
+  type PlacementValues,
+} from "./placement-rules-fields";
 
 /** The solver's grid: 08:00-18:00 in quarter hours, and it rejects anything else. */
 const QUARTER_HOUR_STEP = 15 * 60;
 
-interface LunchForm {
+/** The weight a Mjuk placement rule starts at, and the range the API takes. */
+const DEFAULT_PLACEMENT_WEIGHT = 250;
+const WEIGHT_RANGE = [1, 1000] as const;
+/** The most different rooms or buildings a day a school can allow (1 = a single one). */
+const LIMIT_RANGE = [1, 20] as const;
+
+interface LunchForm extends PlacementValues {
   lunchEnabled: boolean;
   lunchStartTime: string;
   lunchEndTime: string;
@@ -43,7 +55,49 @@ const EMPTY_FORM: LunchForm = {
   generatorKeepsPupilGapsDown: false,
   // Off until the school turns it on: Sammanhängande undervisning.
   generatorKeepsConsecutiveTeaching: false,
+  // Off until the school turns them on: Placeringsregler.
+  placementEdgeMode: "OFF",
+  placementEdgeWeight: String(DEFAULT_PLACEMENT_WEIGHT),
+  placementPlacesMode: "OFF",
+  placementPlacesWeight: String(DEFAULT_PLACEMENT_WEIGHT),
+  placementSharedMode: "OFF",
+  placementSharedWeight: String(DEFAULT_PLACEMENT_WEIGHT),
+  maxClassRoomsPerDay: "",
+  maxTeacherRoomsPerDay: "",
+  maxClassBuildingsPerDay: "",
+  maxTeacherBuildingsPerDay: "",
 };
+
+/** A whole number within the range, as typed; anything else is not one. */
+function wholeNumberIn(value: string, [min, max]: readonly [number, number]): boolean {
+  const trimmed = value.trim();
+  return /^\d+$/.test(trimmed) && Number(trimmed) >= min && Number(trimmed) <= max;
+}
+
+/**
+ * What is wrong with the placement rules as typed. A weight counts only while
+ * its rule is Mjuk; a limit is wrong whenever something not a whole number in
+ * 1..20 is typed in it (0 is no longer one: a day cannot visit no room); and
+ * Salar och byggnader per dag cannot be on without a limit, since
+ * a rule with no limit holds nothing and the solver would refuse the request.
+ */
+function placementErrors(form: LunchForm): PlacementErrors {
+  const limits = Object.fromEntries(
+    LIMIT_FIELDS.map(([key]) => [key, form[key].trim() !== "" && !wholeNumberIn(form[key], LIMIT_RANGE)]),
+  ) as PlacementErrors["limits"];
+  return {
+    edgeWeight: form.placementEdgeMode === "SOFT" && !wholeNumberIn(form.placementEdgeWeight, WEIGHT_RANGE),
+    placesWeight: form.placementPlacesMode === "SOFT" && !wholeNumberIn(form.placementPlacesWeight, WEIGHT_RANGE),
+    sharedWeight: form.placementSharedMode === "SOFT" && !wholeNumberIn(form.placementSharedWeight, WEIGHT_RANGE),
+    limits,
+    noLimit: form.placementPlacesMode !== "OFF" && LIMIT_FIELDS.every(([key]) => form[key].trim() === ""),
+  };
+}
+
+/** What a weight is saved as: the number typed, or the default for a rule that is not Mjuk. */
+function weightToSend(typed: string): number {
+  return wholeNumberIn(typed, WEIGHT_RANGE) ? Number(typed) : DEFAULT_PLACEMENT_WEIGHT;
+}
 
 /**
  * "11:00" for an `<input type="time">`, whatever shape the API is sending.
@@ -69,6 +123,10 @@ export function toInputTime(value: string): string {
   if (!/^\d{2}:\d{2}/.test(value)) return "";
   return value.slice(0, 5);
 }
+
+/** A stored limit as the box holds it: empty for no limit. */
+const limitText = (value: number | null | undefined): string =>
+  value === null || value === undefined ? "" : String(value);
 
 /**
  * Legacy rules from before this card existed.
@@ -134,6 +192,9 @@ export function LunchSettingsCard() {
   const tCommon = useTranslations("common");
   const { data: settings, isSuccess, isError } = useLunchSettings();
   const save = useSaveLunchSettings();
+  // Only to say how many subjects carry a box for Inte först eller sist på
+  // dagen; the card does not wait for it.
+  const subjects = useSubjects();
 
   const [form, setForm] = useState<LunchForm>(EMPTY_FORM);
   const [loaded, setLoaded] = useState(false);
@@ -153,6 +214,8 @@ export function LunchSettingsCard() {
   const [apiKnowsPupilGaps, setApiKnowsPupilGaps] = useState(false);
   // And for the teachers' limit on teaching in a row, on the same terms.
   const [apiKnowsConsecutive, setApiKnowsConsecutive] = useState(false);
+  // And for Placeringsregler, whose ten keys go together.
+  const [apiKnowsPlacement, setApiKnowsPlacement] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -176,12 +239,25 @@ export function LunchSettingsCard() {
         generatorKeepsTravelTime: settings.generatorKeepsTravelTime ?? false,
         generatorKeepsPupilGapsDown: settings.generatorKeepsPupilGapsDown ?? false,
         generatorKeepsConsecutiveTeaching: settings.generatorKeepsConsecutiveTeaching ?? false,
+        // Off, 250 and no limit for an API from before the rules, as for the
+        // switches above; a stored null limit is an empty box, not a 0.
+        placementEdgeMode: settings.placementEdgeMode ?? "OFF",
+        placementEdgeWeight: String(settings.placementEdgeWeight ?? DEFAULT_PLACEMENT_WEIGHT),
+        placementPlacesMode: settings.placementPlacesMode ?? "OFF",
+        placementPlacesWeight: String(settings.placementPlacesWeight ?? DEFAULT_PLACEMENT_WEIGHT),
+        placementSharedMode: settings.placementSharedMode ?? "OFF",
+        placementSharedWeight: String(settings.placementSharedWeight ?? DEFAULT_PLACEMENT_WEIGHT),
+        maxClassRoomsPerDay: limitText(settings.maxClassRoomsPerDay),
+        maxTeacherRoomsPerDay: limitText(settings.maxTeacherRoomsPerDay),
+        maxClassBuildingsPerDay: limitText(settings.maxClassBuildingsPerDay),
+        maxTeacherBuildingsPerDay: limitText(settings.maxTeacherBuildingsPerDay),
       };
       setForm(filled);
       setBaseline(filled);
       setApiKnowsTravel(settings.generatorKeepsTravelTime !== undefined);
       setApiKnowsPupilGaps(settings.generatorKeepsPupilGapsDown !== undefined);
       setApiKnowsConsecutive(settings.generatorKeepsConsecutiveTeaching !== undefined);
+      setApiKnowsPlacement(settings.placementEdgeMode !== undefined);
       return;
     }
     setForm({ ...EMPTY_FORM, ...legacyForm() });
@@ -197,6 +273,19 @@ export function LunchSettingsCard() {
 
   const changed =
     baseline === null || FORM_KEYS.some((key) => form[key] !== baseline[key]);
+  const errors = placementErrors(form);
+  const placementWrong =
+    errors.edgeWeight ||
+    errors.placesWeight ||
+    errors.sharedWeight ||
+    errors.noLimit ||
+    Object.values(errors.limits).some(Boolean);
+  const placementOn = [form.placementEdgeMode, form.placementPlacesMode, form.placementSharedMode].some(
+    (mode) => mode !== "OFF",
+  );
+  const markedSubjects = subjects.isSuccess
+    ? subjects.data.filter((subject) => subject.notFirstInDay || subject.notLastInDay).length
+    : null;
 
   const submit = async () => {
     const sent = form;
@@ -219,6 +308,23 @@ export function LunchSettingsCard() {
           : {}),
         ...(apiKnowsConsecutive || sent.generatorKeepsConsecutiveTeaching
           ? { generatorKeepsConsecutiveTeaching: sent.generatorKeepsConsecutiveTeaching }
+          : {}),
+        // All ten together: an API from before the rules refuses the first key
+        // it does not know, so they are sent once it has named them or the
+        // admin has turned a rule on. The weight is kept while a rule is off.
+        ...(apiKnowsPlacement || placementOn
+          ? {
+              placementEdgeMode: sent.placementEdgeMode,
+              placementEdgeWeight: weightToSend(sent.placementEdgeWeight),
+              placementPlacesMode: sent.placementPlacesMode,
+              placementPlacesWeight: weightToSend(sent.placementPlacesWeight),
+              placementSharedMode: sent.placementSharedMode,
+              placementSharedWeight: weightToSend(sent.placementSharedWeight),
+              maxClassRoomsPerDay: optionalNumber(sent.maxClassRoomsPerDay),
+              maxTeacherRoomsPerDay: optionalNumber(sent.maxTeacherRoomsPerDay),
+              maxClassBuildingsPerDay: optionalNumber(sent.maxClassBuildingsPerDay),
+              maxTeacherBuildingsPerDay: optionalNumber(sent.maxTeacherBuildingsPerDay),
+            }
           : {}),
       });
       setBaseline(sent);
@@ -245,7 +351,7 @@ export function LunchSettingsCard() {
         // Drawn, disabled, while the rules load, so the card does not grow a
         // button under the admin's pointer; gone when they cannot be read.
         loaded || !isError ? (
-          <Button data-writes="PLANERING" onClick={() => void submit()} disabled={!loaded || save.isPending || !changed}>
+          <Button data-writes="PLANERING" onClick={() => void submit()} disabled={!loaded || save.isPending || !changed || placementWrong}>
             {save.isPending ? (
               <>
                 <Loader2 className="animate-spin" aria-hidden="true" />
@@ -388,6 +494,13 @@ export function LunchSettingsCard() {
               {t("consecutiveWithPupilGaps")}
             </Notice>
           ) : null}
+
+          <PlacementRulesFields
+            values={form}
+            errors={errors}
+            markedSubjects={markedSubjects}
+            onChange={patch}
+          />
 
           {saveError !== null ? (
             <Notice tone="destructive" title={t("saveFailed")}>

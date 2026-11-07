@@ -15,6 +15,7 @@ import type {
   SingleCancelCause,
   LessonRecurrence,
   LunchSettings,
+  PlacementRuleMode,
   RoomType,
   AcademicYear,
   AttendanceRecordRow,
@@ -116,7 +117,9 @@ export function useSubjects() {
             // (or on factor 1) and the next save would clear the mapping.
             // maxLessonsPerDay and minDaysBetween too, for the same reason: the
             // dialog would open on "no rule" and the next save would clear it.
-            "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween",
+            // notFirstInDay and notLastInDay too (Placeringsregler): the
+            // dialog's two boxes would open unticked and the next save clear them.
+            "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween, notFirstInDay, notLastInDay",
             "name",
           )
         ).map((subject) => ({
@@ -182,7 +185,9 @@ export function useRooms() {
       sortByName(
         await selectAll<Room>(
           "Rooms",
-          "id, name, code, capacity, roomTypeId, minGradeLevel, maxGradeLevel, requiresApproval, building, floor, siteId",
+          // canBeShared too (Placeringsregler, Delade salar), for the same
+          // reason: the room dialog writes it back.
+          "id, name, code, capacity, roomTypeId, minGradeLevel, maxGradeLevel, requiresApproval, building, floor, siteId, canBeShared",
           "name",
         ),
         (room) => room.name,
@@ -578,6 +583,21 @@ export interface LunchSettingsInput {
   generatorKeepsPupilGapsDown?: boolean;
   /** The same for the teachers' limit on teaching in a row. */
   generatorKeepsConsecutiveTeaching?: boolean;
+  /**
+   * Placeringsregler: the ten keys go together, or none do (an API from before
+   * them refuses the first it does not know). Weights are 1..1000, limits
+   * 1..20 or null.
+   */
+  placementEdgeMode?: PlacementRuleMode;
+  placementEdgeWeight?: number;
+  placementPlacesMode?: PlacementRuleMode;
+  placementPlacesWeight?: number;
+  placementSharedMode?: PlacementRuleMode;
+  placementSharedWeight?: number;
+  maxClassRoomsPerDay?: number | null;
+  maxTeacherRoomsPerDay?: number | null;
+  maxClassBuildingsPerDay?: number | null;
+  maxTeacherBuildingsPerDay?: number | null;
 }
 
 export function useSaveLunchSettings() {
