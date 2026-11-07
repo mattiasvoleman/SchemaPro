@@ -73,8 +73,8 @@ describe('the clash rule over the snapshot is the clash rule over the database',
               endMinutes: start + 60,
               teacherId: lesson.teacherId,
               roomId: lesson.roomId,
-              extraGroupIds: [],
-              studentIds: [],
+              extraGroupIds: [] as string[],
+              studentIds: [] as string[],
             },
           ] as const;
           const fromDatabase = await masterLessons.findConflicts(...args, {});

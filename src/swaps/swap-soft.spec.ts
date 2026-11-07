@@ -1,5 +1,5 @@
 import { buildSoftMeasure, SCORE, type SoftInput } from './swap-soft';
-import type { SwapLesson, SwapMove } from './swap-types';
+import type { SoftCost, SwapLesson, SwapMove } from './swap-types';
 
 const lesson = (id: string, day: number, start: number, over: Partial<SwapLesson> = {}): SwapLesson => ({
   id,
@@ -45,7 +45,7 @@ function input(lessons: SwapLesson[], over: Partial<SoftInput> = {}, pupils = 2)
   };
 }
 
-const cost = (costs: { code: string }[], code: string) => costs.find((c) => c.code === code) as { before: number; after: number; delta: number };
+const cost = (costs: SoftCost[], code: string): SoftCost => costs.find((c) => c.code === code)!;
 
 describe('the soft costs of a set of moves', () => {
   it('counts the pupils’ håltimmar before and after, weighted by the pupils, and is negative for a closed gap', () => {
