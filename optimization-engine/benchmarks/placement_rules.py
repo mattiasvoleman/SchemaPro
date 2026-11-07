@@ -42,7 +42,8 @@ must be empty.
     first      the satisfaction model solved to its first timetable (stop after
                first solution), as phase 1a does
     full       solve() end to end on the budget, then validate
-    det-first  `first` on ONE worker with a DETERMINISTIC budget: the search
+    det-first  `first` on ONE worker (INTERLEAVE=8 for the eight-worker
+               portfolio in lockstep) with a DETERMINISTIC budget: the search
                effort to a first timetable in CP-SAT's own deterministic time,
                which the load of the machine does not move. It is the cost of
                a HARD rule as the search sees it; wall-clock pairs say the same
@@ -302,7 +303,12 @@ def measure(args: tuple[str, str, str, float]) -> dict[str, object]:
             request, use_assumptions=False, include_objective=not sat,
         )
         cp = cp_model.CpSolver()
-        cp.parameters.num_workers = 1
+        # One worker, or with INTERLEAVE=8 the eight-worker portfolio run in
+        # lockstep (CP-SAT's interleave_search), which is deterministic too:
+        # the portfolio's search effort in a unit the load cannot move.
+        workers = int(os.environ.get("INTERLEAVE", "1"))
+        cp.parameters.num_workers = workers
+        cp.parameters.interleave_search = workers > 1
         cp.parameters.random_seed = 0
         cp.parameters.max_deterministic_time = budget
         cp.parameters.max_time_in_seconds = 3600

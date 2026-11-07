@@ -1568,6 +1568,95 @@ write question asked as a read) killed by the new rows of RLS section 288. The t
 that must never be priced (locks exactly Y apart, an odd and an even week's lessons) have
 a test of their own, since the other cases require that something is priced.
 
+### Placeringsregler: what three optional rules cost, and what they hold
+
+Three rules a school sets about where its lessons stand, each off until asked
+for and soft or hard as the school chooses (`app/solver/placement.py`,
+`benchmarks/placement_rules.py`): subjects not first or last in the class's
+day, at most N different room groups and M different buildings a day, and the
+pupils together fitting a shared room. Measured on the högstadium school (450
+pupils, 26 teachers, 423 lessons; `hogstadium.py`) against main's model
+(`d497a93a`), with the rule's own measure counted by code that shares nothing
+with the model.
+
+**The machine could not give a wall-clock answer.** The measurements ran
+while eleven other sessions shared the host (load average 60–190 on 8 cores).
+Main's own satisfaction model, which finds its first timetable in 8 s on a
+quiet machine, took 139–149 s in the same pair as the rule's arm, and the
+rule's arm often found nothing in 150 s. A pair measures the load then, not
+the rule. So the cost is stated in CP-SAT's **deterministic time** to the first
+timetable, which the load does not move: the one-worker search, and the
+eight-worker portfolio run in lockstep (`interleave_search`, `INTERLEAVE=8`,
+the second the nearer to what a school's Generera does). Wall-clock pairs
+with eight workers are to be repeated on a quiet machine before a school
+turns a hard rule on; the numbers below are the ratio to main's model on the
+same school and seed, one instance per arm.
+
+| arm | rule | satisfaction model (vars / rows) | first timetable, 1 worker | first timetable, 8 workers lockstep |
+|---|---|---|---|---|
+| off | main's model | 6,735 / 17,094 | 0.70 | 1.67 |
+| e1h | idrott not first or last, hard | 9,336 / 22,287 (+39 % / +30 %) | 16.0 (23×) | 7.49 (4.5×) |
+| e2h | idrott, slöjd, bild, hemkunskap, hard | 11,280 / 26,175 | 15.2 (22×) | 7.73 (4.6×) |
+| r1h | 4 room groups a day for a class, 5 for a teacher, hard | 10,068 / 35,325 (+50 % / +107 %) | 6.59 (9×) | 4.69 (2.8×) |
+| b1h | 2 buildings a day, class and teacher, hard | 7,677 / 19,908 (+14 % / +16 %) | 0.75 (1.1×) | 4.88 (2.9×) |
+| b2h | the same with each year's classrooms in one house | 7,425 / 22,428 | 0.48 | 6.03 (3.6×) |
+| s1h | the two halls shared, 60 seats, hard | 7,069 / 18,632 (+5 % / +9 %) | 0.48 | 3.16 (1.9×) |
+
+The soft arms build nothing in the satisfaction phase (e1s: 6,735 / 17,094,
+main's exactly), as the free-day wish and sammanhängande undervisning do; their
+cost is in the full model (e1s: 12,351 vars, 31,582 rows against 9,759 and
+26,470), which only the objective phase pays. The building arms are the one
+exception: a limit on buildings splits the rooms into classes by building in
+both phases (`building_key`), so a soft building limit also adds 942
+variables to the satisfaction model.
+
+**What the soft rules reach** (`--mode det-full`, the full model on the
+eight-worker portfolio in lockstep for 12 deterministic seconds from no
+timetable, so a wish is tried with no hint from a first phase; one instance per
+arm, so read the counts and not the objectives, which differ by search luck):
+
+| arm | model (vars / rows) | the rule's own count on the best timetable |
+|---|---|---|
+| off | 9,759 / 26,470 | (main's model: 8 opening and 7 closing lessons of idrott in the first timetable) |
+| e1s idrott not first or last, weight 250 | 12,351 / 31,582 | 3 open and 2 close the class's day |
+| r1s 4 room groups a class, 5 a teacher | 13,229 / 44,663 | 0 class-days and 0 teacher-days over the limit of places |
+| b1s 2 buildings a day | 10,701 / 29,284 | 0 and 0 over the limit of places |
+| s1s halls shared, 60 seats | 10,091 / 28,004 | most pupils at once in a hall: 60 of 60 seats, 0 over |
+
+"Tries" is the promise for the soft edge rule, as it is for sammanhängande
+undervisning: it halved the lessons at an end of the day in the time it had
+and did not take them to zero.
+
+**What each hard rule is defended with.**
+
+* *Not first or last (hard)* costs 4.5× the first timetable with eight
+  workers. It is a real constraint: idrott must stand between two other
+  lessons of 18 classes, in two halls. A min/max encoding of the day's first
+  start and last end (patch kept in the session notes) was measured as the
+  alternative and was worse (38.5 deterministic seconds on one worker against
+  the pair encoding's 16.0), so the pairs stay. The settings say that a hard
+  rule can make Generera refuse and recommend a soft one.
+* *Different rooms and buildings (hard)* costs 2.8–3.6×. The model holds the
+  limit it states (0 party-days over, in every arm) and no more: counted as
+  changes between neighbouring lessons instead, 25 of the school's class-days
+  for room groups and 26–34 for buildings would be over, because A–B–A–B is
+  two places and three changes. That is why the rule says "different" and not
+  "changes". The exact count was priced (a literal per lesson, start step and
+  party) at several times the model and fell.
+* *Shared rooms (hard)* is a relaxation of the exclusive room, 1.9× in the
+  portfolio and cheaper on one worker; its cumulative has a variable
+  capacity in both modes so that an infeasible week can name the room.
+
+**Main's model is unchanged for a school that sets none.**
+`benchmarks/model_identity.py` compared main (`d497a93a`) and this branch on
+1,738 payloads (the benchmark schools in every variant and every request
+main's test suite builds a model for): 15,642 builds, and every
+`validate`, `estimate`, `full`, `feasible`, `explain`, `diagnosis` and
+`placeable` build is byte for byte equal. Two payloads' `solve` build differ,
+and differ between runs of main against itself (14, 10 and 34 solves of one
+INFEASIBLE explanation on main, depending on the load of the host), so
+they say nothing about this branch.
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the
