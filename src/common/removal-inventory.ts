@@ -344,6 +344,11 @@ export const STUDENT_BELOW: readonly BelowKey<never>[] = [
   below('TeacherAbsences', 'CoverRequestLessons', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherAbsences', 'CoverConfirmations', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('CrisisPupils', 'CrisisReports', ['callId', 'studentId'], 'CASCADE', { with: 'otherRows' }),
+  // Provplanering (20270127090000): a booking made by a person who goes is cancelled with them, and the exam's sitting that
+  // booking held stays, without the booking.
+  below('RoomBookings', 'ExamSittings', ['bookingId', 'schoolId'], 'SET NULL', {
+    unlinked: 'a sitting of an exam keeps its room and its writers and loses the booking that held the room; the exam can be laid again',
+  }),
   below('TeacherEmployments', 'TeacherEmploymentPeriods', ['employmentId', 'schoolId', 'userId', 'academicYearId'], 'CASCADE', {
     with: 'otherRows',
   }),

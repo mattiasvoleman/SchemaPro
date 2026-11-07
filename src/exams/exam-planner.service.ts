@@ -11,7 +11,7 @@ import { ScheduleActivitiesService } from '../publication/schedule-activities.se
 import { ownersOf } from '../publication/activity-plan';
 import { asDay, day as dayOf } from '../publication/cancellation-core';
 import { loadGroupFacts, memberHomes, ownersWithPupils } from '../publication/activity-replacements';
-import { enterGrundschemaWrite } from '../publication/publish-mode';
+import { enterGrundschemaWrite, isLockTimeout } from '../publication/publish-mode';
 import { isRoomAlreadyHeld } from '../room-bookings/room-bookings.service';
 import { checkScope, createCreditInTransaction } from '../timplan/timplan-credits.service';
 import { markedIds } from '../users/person-protections';
@@ -19,6 +19,7 @@ import { roomFreeFor, teacherFreeFor, type SlotSpan } from './exam-availability'
 import {
   badExam,
   conflictingExam,
+  EXAM_BUSY,
   EXAM_IS_PLANNED,
   EXAM_NO_REPLACEMENT_SUBJECT,
   EXAM_NO_ROOMS,
@@ -400,6 +401,11 @@ export class ExamPlannerService {
 
   /** One exam of an accepted proposal, asked everything again and made, in the caller's transaction. */
   private async applyOne(tx: PrismaClient, user: AuthenticatedUser, schoolId: string, dto: ApplyExamPlanDto, item: ApplyItemDto) {
+    // One exam of a year is laid at a time: two applies that read the same free room or the same free teacher
+    // would each lay an exam on them (the booking's exclusion stops the room, nothing stops the teacher).
+    // The publication lock first, this second, as the other applies take them.
+    await enterGrundschemaWrite(tx, schoolId);
+    await lockExamApply(tx, dto.academicYearId);
     const settings = await readSettings(tx, schoolId);
     this.assertReady(settings);
     const row = await readOne(tx, item.examId);
@@ -595,6 +601,17 @@ export class ExamPlannerService {
 }
 
 // ---------------------------------------------------------------------------
+
+/** The year's exam-apply lock, exclusive, waited for at most 5 s. */
+async function lockExamApply(tx: PrismaClient, academicYearId: string): Promise<void> {
+  try {
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('exam-apply'), hashtext(${academicYearId}::uuid::text))`;
+  } catch (error) {
+    if (isLockTimeout(error)) throw conflictingExam(EXAM_BUSY, 'Ett annat prov läggs just nu: försök igen om en stund.');
+    throw error;
+  }
+}
 
 function isoWeekKey(date: string): string {
   const d = new Date(`${date}T00:00:00.000Z`);

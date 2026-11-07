@@ -19,6 +19,7 @@ export const EXAM_ROOM = 'EXAM_ROOM';
 export const EXAM_PLACEMENT = 'EXAM_PLACEMENT';
 export const EXAM_ROOM_TAKEN = 'EXAM_ROOM_TAKEN';
 export const EXAM_NOT_PLANNED = 'EXAM_NOT_PLANNED';
+export const EXAM_BUSY = 'EXAM_BUSY';
 
 export const badExam = (code: string, message: string, params?: Record<string, string | number>) =>
   new BadRequestException({ message, code, ...(params ? { params } : {}) });

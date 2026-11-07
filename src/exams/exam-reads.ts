@@ -25,7 +25,8 @@ export function homeClassesOf(named: readonly string[], groups: ReadonlyMap<stri
   for (const id of named) {
     const group = groups.get(id);
     if (!group) continue;
-    if (group.kind === 'CLASS') {
+    // A class is itself, and a half of a class is that class, whatever its roll says.
+    if (group.kind === 'CLASS' || group.halfOfId !== null) {
       out.add(group.halfOfId ?? group.id);
       continue;
     }

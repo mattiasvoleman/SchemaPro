@@ -10,6 +10,7 @@ import { tryEnterPublication } from './publish-mode';
 import type { CreateScheduleActivityDto, ScheduleActivitySelectionDto } from './dto/schedule-activity.dto';
 import {
   ACTIVITY_CREDIT_SUBJECT,
+  ACTIVITY_OWNED_BY_EXAM,
   ACTIVITY_REMOVED,
   ACTIVITY_SCOPE_TOO_WIDE,
   ACTIVITY_SUBJECT,
@@ -1229,6 +1230,19 @@ describe('ScheduleActivitiesService', () => {
       world.activity = activityRow({ removedAt: NOW });
       expect(await code(service.remove(ACTIVITY, user))).toBe(ACTIVITY_REMOVED);
       expect(await code(service.removePreview(ACTIVITY, user))).toBe(ACTIVITY_REMOVED);
+    });
+  });
+
+  describe('an activity an exam carries', () => {
+    it('is refused a change or a removal from here: the exam changes and removes it', async () => {
+      tx.exam.findFirst.mockResolvedValue({ id: 'exam-1' });
+      expect(await code(service.refuseWhenAnExam(ACTIVITY, user))).toBe(ACTIVITY_OWNED_BY_EXAM);
+      expect(tx.exam.findFirst).toHaveBeenCalledWith({ where: { activityId: ACTIVITY }, select: { id: true } });
+    });
+
+    it('is left to the activities page when no exam holds it', async () => {
+      tx.exam.findFirst.mockResolvedValue(null);
+      await expect(service.refuseWhenAnExam(ACTIVITY, user)).resolves.toBeUndefined();
     });
   });
 });

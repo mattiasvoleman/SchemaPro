@@ -71,6 +71,7 @@ export const ACTIVITY_CREDIT_SUBJECT = 'ACTIVITY_CREDIT_SUBJECT';
 export const ACTIVITY_TEACHER = 'ACTIVITY_TEACHER';
 export const ACTIVITY_SCOPE_TOO_WIDE = 'ACTIVITY_SCOPE_TOO_WIDE';
 export const ACTIVITY_REMOVED = 'ACTIVITY_REMOVED';
+export const ACTIVITY_OWNED_BY_EXAM = 'ACTIVITY_OWNED_BY_EXAM';
 
 /** How long the pass after a DIRECT activity waits for the publications open beside it, and how often it asks. */
 const SETTLE_WAIT_MS = 10_000;
@@ -372,6 +373,23 @@ export class ScheduleActivitiesService {
     await this.broadcast(user, [...done.take.map((lesson) => lesson.id), ...done.synced.created]);
     this.boardChanged(done.schoolId, done.range.from, done.range.to);
     if (done.mode === 'DIRECT') await this.settleDirect(user, done.schoolId, done.batchId);
+  }
+
+  /**
+   * An activity an exam carries (Provplanering) is changed and removed through
+   * the exam: a change here would drop the exam's credit (a window cannot carry
+   * one) and a removal would leave its room booked. The controller asks before
+   * `update` and `remove`; the exam's own unplan calls `remove` directly.
+   */
+  async refuseWhenAnExam(id: string, user: AuthenticatedUser): Promise<void> {
+    requireSchoolId(user);
+    const exam = await this.prisma.withRls(user, (tx) => tx.exam.findFirst({ where: { activityId: id }, select: { id: true } }));
+    if (exam) {
+      throw new ConflictException({
+        message: 'Aktiviteten hör till ett prov: ändra eller ta bort den under Prov.',
+        code: ACTIVITY_OWNED_BY_EXAM,
+      });
+    }
   }
 
   async list(academicYearId: string, user: AuthenticatedUser): Promise<ScheduleActivityView[]> {

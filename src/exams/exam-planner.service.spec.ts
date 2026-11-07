@@ -413,6 +413,16 @@ describe('ExamPlannerService', () => {
       ]);
     });
 
+    it('lays one exam of a year at a time: it takes the year’s lock first, and answers busy when it cannot get it', async () => {
+      await service.apply(dto(), user);
+      const statements = tx.$executeRaw.mock.calls.map((call) => (call[0] as TemplateStringsArray).join('?'));
+      expect(statements[0]).toContain("lock_timeout = '5s'");
+      expect(statements[1]).toContain("pg_advisory_xact_lock(hashtext('exam-apply')");
+      tx.$executeRaw.mockRejectedValue(new Error('canceling statement due to lock timeout (55P03)'));
+      const busy = await service.apply(dto(), user);
+      expect(busy.outcomes).toEqual([{ examId: 'e1', ok: false, code: 'EXAM_BUSY', message: 'Ett annat prov läggs just nu: försök igen om en stund.' }]);
+    });
+
     it('does not tell the families when asked not to', async () => {
       await service.apply(dto([item()], { notify: false }), user);
       expect(activities.createWithin.mock.calls[0][2].notify).toBe(false);
