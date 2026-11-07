@@ -4276,6 +4276,71 @@
     </p>
   </div>
   <p>
+    <strong>Placeringsregler.</strong> Tre regler om var lektionerna hamnar på
+    dagen och i vilka salar sätts under <span class="ui">Placeringsregler</span>
+    bland skolreglerna. Varje regel är <span class="ui">Av</span> tills skolan
+    slår på den, och en skola som låter alla tre vara av får precis samma
+    schema som förut. Varje regel kan vara <span class="ui">Mjuk</span> eller
+    <span class="ui">Hård</span>. En mjuk regel är ett önskemål med en vikt
+    (1–1000, förval 250) som genereringen väger mot allt annat: den försöker
+    hålla regeln men vägrar aldrig för att den inte gick, och sätter du vikten
+    lågt vinner de andra önskemålen. En hård regel är ett krav: går den inte att
+    hålla tillsammans med resten av reglerna går veckan inte att lägga, och
+    genereringen vägrar och skriver ut vilken regel det är. Räknar genereringen
+    ut i förväg att regeln inte kan hållas, till exempel att en klass har högst
+    två lektioner per dag men ett ämne ska ligga mitt emellan två andra,
+    vägrar den direkt och säger det.
+  </p>
+  <p>
+    <em>Inte först eller sist på dagen.</em> Markera under
+    <span class="ui">Ämnen</span> vilka ämnen som inte ska vara klassens första
+    lektion på dagen, inte den sista, eller varken eller: idrott är det vanliga
+    exemplet. Klassens dag är alla lektioner som klassens elever sitter, alltså
+    klassens egna, undervisningsgruppernas och halvornas, och de lektioner ni
+    har låst. En lektion ligger först när ingen sådan lektion börjar tidigare
+    samma dag och sist när ingen slutar senare; en lektion som börjar samtidigt
+    med en annan är först bredvid den. Går ett ämne udda eller jämna veckor
+    gäller regeln i varje vecka lektionen går. En grupp som bara några av
+    klassens elever sitter räknas som en lektion före eller efter, så för de
+    övriga eleverna kan ämnet ändå komma först; när en språkvalsgrupp täcker
+    hela årskursen blir det rätt.
+  </p>
+  <p>
+    <em>Byten per dag.</em> Högst så många byten av sal och av byggnad per dag,
+    för en klass och för en lärare var för sig. Lämnar du en gräns tom gäller ingen
+    gräns, och 0 betyder aldrig. Byggnad är salens uppgift
+    <span class="ui">Byggnad</span> under <span class="ui">Salar</span>; salar
+    utan byggnad räknas som en byggnad för sig. Skolområdet och dess restid är en
+    egen regel. Ett salbyte räknas på salsgrupper: lika salar av samma typ,
+    storlek och årskurser räknas som en sal, och genereringen låter en klass
+    eller lärare behålla sin sal i gruppen när den är ledig. Vill du jämna ut
+    resten kör du <span class="ui">Salsoptimering</span> efteråt (5.4). Klassen
+    räknas på den grupps egna lektioner, inte på undervisningsgrupperna eleverna
+    också går i.
+  </p>
+  <p>
+    Genereringen räknar <em>platserna</em> en klass eller lärare står på under
+    dagen och inte bytena mellan två grannar: högst 1 byggnadsbyte per dag är högst
+    två olika byggnader samma dag. En dag som går A–B–A räknas därför som ett
+    byte och inte som två. Det är priset för att regeln inte behöver veta
+    lektionernas ordning, och det håller modellen liten; hur ofta det
+    förekommer i ett schema syns på sidan Luckor och håltimmar efter körningen
+    och i mätningen i verifieringsunderlaget.
+  </p>
+  <p>
+    <em>Delade salar.</em> En sal som ni markerar <span class="ui">Kan delas av
+    flera grupper samtidigt</span> under <span class="ui">Salar</span> får ha
+    flera lektioner samtidigt, så länge elevernas antal tillsammans ryms i salens
+    kapacitet. Salen måste ha en kapacitet. Hård: antalet i salen överstiger
+    aldrig kapaciteten. Mjuk: kapaciteten får överskridas, och vikten betalas per
+    elev över kapaciteten vid salens värsta ögonblick under veckan. Låsta
+    lektioner i en delad sal tar sina elevers platser, inte hela salen, och
+    en låst lektion som är större än salen vägras vid hård regel. Bara genereringen
+    känner till delningen: skärmen med krockar visar två lektioner i samma sal
+    samtidigt som en krock, också när de ryms. Alla andra salar har en lektion
+    åt gången, som förut.
+  </p>
+  <p>
     <strong>Optimeringsprofilen</strong> är mjuka önskemål. De kan väga mot
     varandra: ju högre värde, desto viktigare. Motorn hittar den bästa
     kompromissen när önskemålen står i konflikt.

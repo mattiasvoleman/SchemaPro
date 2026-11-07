@@ -5984,6 +5984,8 @@ class SchedulerSolver:
             + len(_blocks_of(request.requirements))
             + 2 * len(request.previous_lessons)
             + self._week_vars(request, lessons_by_teacher, lessons_by_group)
+            # Placeringsregler: zero without placementRules (placement.py).
+            + self._placement_vars(request)
             # Elevernas håltimmar: zero without pupilGaps (pupil_gaps.py).
             + (
                 pupil_gap_variables(
@@ -6000,6 +6002,52 @@ class SchedulerSolver:
                 else 0
             )
         )
+
+    def _placement_vars(self, request: OptimizeScheduleRequest) -> int:
+        """An upper bound on the variables Placeringsregler build; zero without them.
+
+        Rule 1 builds a literal per flagged lesson and edge for each lesson of
+        the class's day it could stand beside (the lessons per class, with the
+        groups that share its pupils charged as doubling them) and the day
+        variables; rule 2 a place literal per party, day and room group or
+        building, at most eight places charged, and the lessons' day one-hots;
+        rule 3 one capacity variable per room. An UPPER bound, checked against
+        the variables the högstadium school's builds make with each rule on
+        (benchmarks/placement_rules.py --mode size): rule 1 is within 10 %
+        above, rule 2 half again above, because it charges eight places a
+        party where the school has two to seven.
+        """
+        rules = request.placement_rules
+        if rules is None:
+            return 0
+        days = len(self._grid.schedule_days)
+        lessons = sum(requirement.lessons_per_week for requirement in request.requirements)
+        classes = max(1, len({pupil_key_of(requirement) for requirement in request.requirements}))
+        teachers = len({
+            teacher for requirement in request.requirements for teacher in _teachers_of(requirement)
+        })
+        total = 0
+        if rules.subject_edges is not None:
+            edges = {row.subject_id: row.not_first + row.not_last for row in rules.subject_edges.subjects}
+            flagged = sum(
+                requirement.lessons_per_week * edges.get(requirement.subject_id, 0)
+                for requirement in request.requirements
+            )
+            total += flagged * 4 * (lessons // classes + 1) + lessons
+        if rules.changes is not None:
+            limits = sum(
+                limit is not None
+                for limit in (
+                    rules.changes.max_class_room_changes,
+                    rules.changes.max_teacher_room_changes,
+                    rules.changes.max_class_building_changes,
+                    rules.changes.max_teacher_building_changes,
+                )
+            )
+            total += limits * (classes + teachers) * days * 8 + lessons * (days + 1)
+        if rules.shared_rooms is not None:
+            total += len(request.rooms)
+        return total
 
     def _week_vars(
         self,
@@ -9836,6 +9884,34 @@ class SchedulerSolver:
                         )
                         for requirement in request.requirements
                     ],
+                }),
+            ))
+        # PLACERINGSREGLER, a probe each and only for a rule the school made
+        # HARD: a SOFT rule is a price and never what a search ran out on, and
+        # a rule that is off is not in the payload. Beside the distribution
+        # rules because they are the same kind of thing, a school's own rule
+        # about where a lesson may lie, and a school told which of the three
+        # the budget ran out on knows the one card to go to.
+        hard = {
+            name: rule
+            for name in ("subject_edges", "changes", "shared_rooms")
+            if request.placement_rules is not None
+            and (rule := getattr(request.placement_rules, name)) is not None
+            and rule.mode == "HARD"
+        }
+        for name, code in (
+            ("subject_edges", "PROBE_SOLVED_WITHOUT_SUBJECT_EDGES"),
+            ("changes", "PROBE_SOLVED_WITHOUT_CHANGE_LIMITS"),
+            ("shared_rooms", "PROBE_SOLVED_WITHOUT_SHARED_ROOMS"),
+        ):
+            if name not in hard:
+                continue
+            rules = request.placement_rules.model_copy(update={name: None})  # type: ignore[union-attr]
+            others = (rules.subject_edges, rules.changes, rules.shared_rooms)
+            out.append((
+                code,
+                request.model_copy(update={
+                    "placement_rules": rules if any(other is not None for other in others) else None,
                 }),
             ))
         if _blocks_of(request.requirements):
@@ -13752,6 +13828,13 @@ class SchedulerSolver:
         }
         limits = {key: value for key, value in limits.items() if value is not None}
         with_buildings = bool(room_plan.class_buildings)
+        if any(kind == "room" for _party, kind in limits):
+            # The post-pass keeps these parties in the room they had.
+            for decision in decisions:
+                room_plan.parties[decision.lesson.key()] = (
+                    ("class", pupil_key_of(decision.lesson.requirement)),
+                    *(("teacher", teacher) for teacher in _lesson_teachers(decision.lesson)),
+                )
 
         def places_of(key: str) -> dict[str, dict[Hashable, tuple[cp_model.IntVar | None, ...]]]:
             chosen: dict[int, cp_model.IntVar | None]

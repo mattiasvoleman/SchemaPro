@@ -1038,6 +1038,19 @@ MESSAGES: dict[str, str] = {
         "With the subjects' distribution rules dropped — at most a number of lessons a day, "
         "no consecutive days — a timetable was found in {seconds} s."
     ),
+    # Placeringsregler: a rule the school made HARD, dropped for the probe.
+    "PROBE_SOLVED_WITHOUT_SUBJECT_EDGES": (
+        "Without the rule that keeps subjects from opening or closing a class's day, a "
+        "timetable was found in {seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_CHANGE_LIMITS": (
+        "Without the limits on room and building changes a day, a timetable was found in "
+        "{seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_SHARED_ROOMS": (
+        "Without the rule that the pupils in a shared room fit its seats, a timetable was found "
+        "in {seconds} s."
+    ),
     "PROBE_SOLVED_WITHOUT_BLOCKS": (
         "With the blocks dropped, so that the lessons of a block could take different times, a "
         "timetable was found in {seconds} s."

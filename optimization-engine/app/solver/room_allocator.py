@@ -162,6 +162,13 @@ class RoomPlan:
     #: class index, and the capacity variable of each one's cumulative
     #: (a constant where the rule is off for it): SOFT's price is the variable
     #: above the room's capacity, HARD's is an assumption pinning it there.
+    #: Placeringsregler, regel 2: the parties whose room changes a school
+    #: limits, by lesson key — a class's pupil key and its teachers. The
+    #: post-pass hands such a lesson the room one of its parties stood in last
+    #: when that room is free, so two lessons the model saw in one room group
+    #: are, as far as the sweep can make them, in one room. Empty without the
+    #: rule, and then the sweep is the one it was.
+    parties: dict[str, tuple[Hashable, ...]] = field(default_factory=dict)
     shared: dict[int, "SharedRoom"] = field(default_factory=dict)
     shared_capacity: dict[int, cp_model.IntVar] = field(default_factory=dict)
     # lesson key -> {class index: literal}; absent when the class is forced.
@@ -256,12 +263,24 @@ class RoomPlan:
         """Give each lesson a free room of the class in start order (module docstring)."""
         # Absolute slot from which each room is free again.
         free_from = dict.fromkeys(room_indices, 0)
+        # The room each party of a limited room change stood in last.
+        stood: dict[Hashable, int] = {}
         for start, duration, key, preferred in sorted(entries, key=lambda e: e[0]):
-            # Prefer whatever the solver left in room_index when it is free,
-            # so singleton (pinned) classes reproduce its own choice and
-            # repeated solves of one schedule return stable rooms.
+            parties = self.parties.get(key, ())
+            # A party's own last room first, so a class or a teacher who has
+            # one room of this group keeps it while it is free (Placerings-
+            # regler, regel 2); then whatever the solver left in room_index
+            # when it is free, so singleton (pinned) classes reproduce its own
+            # choice and repeated solves of one schedule return stable rooms.
             chosen = None
-            if preferred in free_from and free_from[preferred] <= start:
+            for party in parties:
+                room = stood.get(party)
+                if room is not None and free_from[room] <= start:
+                    chosen = room
+                    break
+            if chosen is not None:
+                pass
+            elif preferred in free_from and free_from[preferred] <= start:
                 chosen = preferred
             else:
                 for candidate in room_indices:
@@ -276,6 +295,8 @@ class RoomPlan:
                 raise RoomAllocationError(msg)
             free_from[chosen] = start + duration
             assignment[key] = chosen
+            for party in parties:
+                stood[party] = chosen
 
 
 def collect_distinguished_room_ids(

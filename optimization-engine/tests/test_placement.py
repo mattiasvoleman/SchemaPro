@@ -779,3 +779,91 @@ class TestThePreFlight:
         # Back to back they never meet.
         locks[1]["startTime"], locks[1]["endTime"] = "09:00:00", "10:00:00"
         assert _refusal(payload, day_end=720) is None
+
+
+class TestTheTimeoutProbe:
+    """A timed-out week is probed without each HARD rule, one at a time, and never without a SOFT one."""
+
+    def _relaxations(self, placement: dict[str, object]) -> dict[str, OptimizeScheduleRequest]:
+        payload = _payload([_requirement(IDROTT, CLASS_7A), _requirement(MATTE, CLASS_7A)], placementRules=placement)
+        solver = SchedulerSolver(_settings())
+        return dict(solver._timeout_relaxations(OptimizeScheduleRequest.model_validate(payload)))
+
+    def test_each_hard_rule_is_dropped_alone_and_the_others_stay(self) -> None:
+        placement = {
+            **_edges("HARD", (IDROTT, True, False)),
+            **_changes("HARD", maxClassRoomChanges=2),
+            **_shared("HARD"),
+        }
+
+        found = self._relaxations(placement)
+
+        edges = found["PROBE_SOLVED_WITHOUT_SUBJECT_EDGES"].placement_rules
+        assert edges is not None and edges.subject_edges is None
+        assert edges.changes is not None and edges.shared_rooms is not None
+        changes = found["PROBE_SOLVED_WITHOUT_CHANGE_LIMITS"].placement_rules
+        assert changes is not None and changes.changes is None and changes.subject_edges is not None
+        shared = found["PROBE_SOLVED_WITHOUT_SHARED_ROOMS"].placement_rules
+        assert shared is not None and shared.shared_rooms is None
+
+    def test_the_last_rule_dropped_leaves_no_block_at_all(self) -> None:
+        found = self._relaxations(_edges("HARD", (IDROTT, True, False)))
+
+        assert found["PROBE_SOLVED_WITHOUT_SUBJECT_EDGES"].placement_rules is None
+
+    def test_a_soft_rule_is_not_probed(self) -> None:
+        found = self._relaxations({
+            **_edges("SOFT", (IDROTT, True, False)), **_changes("SOFT", maxClassRoomChanges=2),
+        })
+
+        assert not [code for code in found if "SUBJECT_EDGES" in code or "CHANGE_LIMITS" in code]
+
+
+class TestThePostPassKeepsAPartyInItsRoom:
+    """Two equal classrooms are one room group to the model; the sweep keeps a party in the one it had."""
+
+    def _plan(self, parties: dict[str, tuple[object, ...]]):
+        from app.solver.room_allocator import RoomClass, RoomPlan
+
+        return RoomPlan(classes=[RoomClass(index=0, room_indices=(0, 1))], parties=parties)
+
+    def _sweep(self, plan, entries):
+        assignment: dict[str, int] = {}
+        plan._sweep(0, (0, 1), entries, assignment)
+        return assignment
+
+    def test_a_class_whose_first_room_was_taken_keeps_the_room_it_got(self) -> None:
+        plan = self._plan({
+            "b": (("class", "7B"),), "a1": (("class", "7A"),), "a2": (("class", "7A"),),
+        })
+        # 7B takes room 0 at slot 0; 7A is sent to room 1, and at slot 2 both are
+        # free and the solver's own choice was room 0.
+        entries = [(0, 2, "b", 0), (0, 2, "a1", 0), (2, 2, "a2", 0)]
+
+        assert self._sweep(plan, entries) == {"b": 0, "a1": 1, "a2": 1}
+
+    def test_without_the_rule_it_is_the_sweep_it_was(self) -> None:
+        plan = self._plan({})
+        entries = [(0, 2, "b", 0), (0, 2, "a1", 0), (2, 2, "a2", 0)]
+
+        assert self._sweep(plan, entries) == {"b": 0, "a1": 1, "a2": 0}
+
+    def test_a_teacher_is_kept_in_their_room_too(self) -> None:
+        plan = self._plan({
+            "b": (("class", "7B"), ("teacher", "T2")),
+            "a1": (("class", "7A"), ("teacher", "T1")),
+            "a2": (("class", "7C"), ("teacher", "T1")),
+        })
+        entries = [(0, 2, "b", 0), (0, 2, "a1", 0), (2, 2, "a2", 0)]
+
+        assert self._sweep(plan, entries)["a2"] == 1
+
+    def test_a_room_that_is_taken_is_not_kept(self) -> None:
+        plan = self._plan({"a1": (("class", "7A"),), "a2": (("class", "7A"),), "c": (("class", "7C"),)})
+        # 7A stood in room 1; at slot 2 room 1 is taken by 7C, which started
+        # earlier in the sweep, so 7A takes the other room.
+        entries = [(0, 2, "a1", 1), (2, 4, "c", 1), (3, 1, "a2", 1)]
+
+        assignment = self._sweep(plan, entries)
+
+        assert assignment["a1"] == 1 and assignment["c"] == 1 and assignment["a2"] == 0
