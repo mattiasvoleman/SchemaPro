@@ -222,7 +222,7 @@ async function main() {
     // KEEP=1 leaves the school for a closer look (the next run replaces it).
     if (!process.env['KEEP']) await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]);
     await owner.end();
-    await api.onModuleDestroy?.();
+    await api.$disconnect();
   }
 }
 

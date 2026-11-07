@@ -87,7 +87,7 @@ async function main() {
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]);
     await owner.end();
-    await api.onModuleDestroy?.();
+    await api.$disconnect();
   }
 }
 
@@ -261,6 +261,16 @@ async function run(owner: Client, api: PrismaService, seeded: SeededSchool) {
     const before = await fingerprint();
     await assert.rejects(swaps.apply(bodyOf(blockLesson.id, parted), asAdmin), (error: unknown) => {
       assert.ok(error instanceof ConflictException);
+      assert.equal((error.getResponse() as { code?: string }).code, 'SWAP_SPLITS_PARALLEL');
+      return true;
+    });
+    assert.equal(await fingerprint(), before);
+    // Whichever member is left behind, the first by id included: the same 409, never a 500.
+    const members = [...answer.unit.lessonIds].sort();
+    const last = members[members.length - 1]!;
+    const lastOnly = { ...proposal, moves: proposal.moves.filter((m) => m.lessonId === last || !members.includes(m.lessonId)) };
+    await assert.rejects(swaps.apply(bodyOf(last, lastOnly), asAdmin), (error: unknown) => {
+      assert.ok(error instanceof ConflictException, String(error));
       assert.equal((error.getResponse() as { code?: string }).code, 'SWAP_SPLITS_PARALLEL');
       return true;
     });
