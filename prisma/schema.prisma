@@ -281,6 +281,7 @@ model School {
   absenceWatchLimits      AbsenceWatchLimit[]
   absenceWatchFindings    AbsenceWatchFinding[]
   absenceWatchDigests     AbsenceWatchDigest[]
+  absenceStatsMonths      AbsenceStatsMonth[]
   reportingSettings       ReportingSetting?
   teacherReportingDays    TeacherReportingDay[]
   reportingReminders      ReportingReminder[]
@@ -1985,6 +1986,8 @@ model StudentGroup {
   timplanCredits          TimplanCredit[]
   /// The pupils' segments in this class (StudentEnrollment.studentGroupId).
   enrollments             StudentEnrollment[]
+  /// The class's absence by month (AbsenceStatsMonth); a deleted class takes its history.
+  absenceStatsMonths      AbsenceStatsMonth[]
 
   @@unique([schoolId, academicYearId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -5498,6 +5501,46 @@ model AbsenceWatchFinding {
   /// Gallring's predicate and the school's view.
   @@index([schoolId, lastSeenOn])
   @@map("AbsenceWatchFindings")
+}
+
+/// Frånvarostatistik över tid (20270121090000): the absence of the whole school
+/// (studentGroupId null) or of one class, one row per month, written by
+/// app.absence_stats_month every night and by nothing else, and read only by
+/// the app.absence_stats_* functions (the table has RLS and no policy, and no
+/// grant). NO PUPIL: there is no column that names a person, and a test fails
+/// a table that gets one. Minst fem elever: a class with fewer than five
+/// pupils has no row, and a month in which fewer than five pupils had a
+/// registered mark has no minutes (null), both held by CHECK constraints. The
+/// minutes are Frånvarobevakningens (PRESENT, EXCUSED, ABSENT, LATE 15 minutes
+/// at most a lesson, UNKNOWN nowhere), the lessons Rapporteringsgradens
+/// (app.reporting_lessons). Not gallrad with the attendance, on purpose: that is
+/// what reaches three läsår when attendance is kept shorter; it goes with its
+/// school or class, and the job removes months before the third läsår.
+/// Not visible here, and load-bearing: the two partial unique indexes
+/// AbsenceStatsMonths_class_month_key and AbsenceStatsMonths_school_month_key.
+model AbsenceStatsMonth {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String   @db.Uuid
+  studentGroupId   String?  @db.Uuid
+  month            DateTime @db.Date
+  throughDay       DateTime @db.Date
+  pupils           Int
+  pupilsRegistered Int
+  recordedMinutes  Int?
+  validMinutes     Int?
+  absentMinutes    Int?
+  lateMinutes      Int?
+  lateCount        Int?
+  lessonsHeld      Int
+  lessonsReported  Int
+  computedAt       DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  studentGroup StudentGroup? @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  /// The key's index: a class that is removed looks for its months.
+  @@index([studentGroupId, schoolId])
+  @@map("AbsenceStatsMonths")
 }
 
 /// The ledger of written digests: one row per school, group and period end, so
