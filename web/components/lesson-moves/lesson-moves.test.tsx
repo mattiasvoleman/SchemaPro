@@ -148,6 +148,31 @@ describe("the dialog that moves a pupil", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Lektionen eleven går från är ersatt av en schemabrytande aktivitet."));
   });
 
+  it("says that the lesson is over, and sends the correction to the lesson's register", async () => {
+    const user = userEvent.setup();
+    api.post.mockRejectedValue(new ApiError(409, "x", "LESSON_MOVE_LESSON_OVER"));
+    renderIn(<MovePupilDialog lessonId={LESSON} studentId={PUPIL} open onOpenChange={() => {}} />);
+    await user.click(await screen.findByRole("radio", { name: "Engelska · 7B" }));
+    await user.click(screen.getByRole("button", { name: "Flytta" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Lektionen eleven flyttas från är slut. Närvaron för den rättas i lektionens register."),
+    );
+  });
+
+  it("lists the lessons with the reason that the source is over, when it is, in both languages", async () => {
+    const over = candidates();
+    api.get.mockImplementation(async (path: string) => {
+      if (path.includes("/candidates")) {
+        return { ...over, candidates: over.candidates.map((candidate) => ({ ...candidate, refusal: { code: "LESSON_MOVE_LESSON_OVER", side: "FROM" } })) };
+      }
+      return { students: [] };
+    });
+    renderIn(<MovePupilDialog lessonId={LESSON} studentId={PUPIL} open onOpenChange={() => {}} />);
+    expect((await screen.findAllByText("Lektionen eleven går från är slut")).length).toBe(4);
+    expect(screen.getByRole("radio", { name: "Engelska · 7B" })).toBeDisabled();
+    expect(en.lessonMoves.refusal.LESSON_MOVE_LESSON_OVER).toBe("The lesson the pupil leaves is over");
+  });
+
   it("says in English as well, and has a sentence for every code the gateway can answer", async () => {
     renderIn(<MovePupilDialog lessonId={LESSON} studentId={PUPIL} open onOpenChange={() => {}} />, "en");
     expect(await screen.findByText("Is replaced by a schedule-breaking activity")).toBeInTheDocument();

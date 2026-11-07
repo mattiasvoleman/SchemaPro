@@ -8430,6 +8430,7 @@
     },
     "refusal": {
       "LESSON_MOVE_NOT_PARALLEL": "Does not overlap in time",
+      "LESSON_MOVE_LESSON_OVER": "The lesson the pupil leaves is over",
       "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {The lesson the pupil leaves is not held} other {Is cancelled}}",
       "LESSON_MOVE_REPLACED_BY_ACTIVITY": "Is replaced by a schedule-breaking activity",
       "LESSON_MOVE_ALREADY_ON_TARGET": "The pupil is already on this lesson",
@@ -8443,6 +8444,7 @@
       "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {The lesson the pupil leaves is not held.} other {The lesson the pupil is to be moved to is cancelled.}}",
       "LESSON_MOVE_REPLACED_BY_ACTIVITY": "{side, select, FROM {The lesson the pupil leaves is replaced by a schedule-breaking activity.} other {The lesson the pupil is to be moved to is replaced by a schedule-breaking activity.}}",
       "LESSON_MOVE_IN_THE_PAST": "A move is made for today or later.",
+      "LESSON_MOVE_LESSON_OVER": "The lesson the pupil is moved from is over. Its attendance is corrected in the lesson's register.",
       "LESSON_MOVE_PUPIL_NOT_ON_LESSON": "The pupil is not on the lesson.",
       "LESSON_MOVE_ALREADY_ON_TARGET": "The pupil is already on that lesson.",
       "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "The pupil would have two lessons at once.",

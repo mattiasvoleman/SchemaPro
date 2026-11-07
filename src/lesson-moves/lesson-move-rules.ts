@@ -16,6 +16,7 @@ export const LESSON_MOVE_NOT_PARALLEL = 'LESSON_MOVE_NOT_PARALLEL';
 export const LESSON_MOVE_LESSON_NOT_HELD = 'LESSON_MOVE_LESSON_NOT_HELD';
 export const LESSON_MOVE_REPLACED_BY_ACTIVITY = 'LESSON_MOVE_REPLACED_BY_ACTIVITY';
 export const LESSON_MOVE_IN_THE_PAST = 'LESSON_MOVE_IN_THE_PAST';
+export const LESSON_MOVE_LESSON_OVER = 'LESSON_MOVE_LESSON_OVER';
 export const LESSON_MOVE_PUPIL_NOT_ON_LESSON = 'LESSON_MOVE_PUPIL_NOT_ON_LESSON';
 export const LESSON_MOVE_ALREADY_ON_TARGET = 'LESSON_MOVE_ALREADY_ON_TARGET';
 export const LESSON_MOVE_PUPIL_DOUBLE_BOOKED = 'LESSON_MOVE_PUPIL_DOUBLE_BOOKED';
@@ -26,6 +27,7 @@ export const LESSON_MOVE_NOT_A_PUPIL = 'LESSON_MOVE_NOT_A_PUPIL';
 
 export type MoveRefusalCode =
   | typeof LESSON_MOVE_NOT_PARALLEL
+  | typeof LESSON_MOVE_LESSON_OVER
   | typeof LESSON_MOVE_LESSON_NOT_HELD
   | typeof LESSON_MOVE_REPLACED_BY_ACTIVITY
   | typeof LESSON_MOVE_ALREADY_ON_TARGET
@@ -59,6 +61,15 @@ export function overlaps(a: Pick<MoveLesson, 'startsAt' | 'endsAt'>, b: Pick<Mov
   return a.startsAt.getTime() < b.endsAt.getTime() && b.startsAt.getTime() < a.endsAt.getTime();
 }
 
+/**
+ * A lesson whose end has passed. The day is not the hour: a lesson that ended this morning is still today's, and
+ * its register is its teachers', which a move would write to (the pupil's mark on it becomes UNKNOWN). A lesson
+ * that ends exactly now is over, as the database's door reads it (`endsAt <= now()`).
+ */
+export function isOver(lesson: Pick<MoveLesson, 'endsAt'>, now: Date): boolean {
+  return lesson.endsAt.getTime() <= now.getTime();
+}
+
 /** A lesson an activity has replaced (Schemabrytande aktivitet): cancelled with the cause EVENT. */
 export function isReplacedByActivity(lesson: Pick<MoveLesson, 'status' | 'cancelCause'>): boolean {
   return lesson.status === 'CANCELLED' && lesson.cancelCause === 'EVENT';
@@ -66,12 +77,15 @@ export function isReplacedByActivity(lesson: Pick<MoveLesson, 'status' | 'cancel
 
 /**
  * Why `target` cannot be where the pupil goes in place of `origin`, in the
- * database's order: a lesson an activity has replaced, a lesson not held,
- * a lesson that does not overlap the pupil's own. The pupil may be on `current`
- * (a lesson a move put them on), which is not the target either.
+ * database's order: a source that is over, a lesson an activity has replaced,
+ * a lesson not held, a lesson that does not overlap the pupil's own. The pupil
+ * may be on `current` (a lesson a move put them on), which is not the target
+ * either. `now` is the caller's clock, so that no test depends on the date it
+ * is run.
  */
-export function refusalOf(origin: MoveLesson, target: MoveLesson): MoveRefusal | null {
+export function refusalOf(origin: MoveLesson, target: MoveLesson, now: Date): MoveRefusal | null {
   if (target.id === origin.id) return { code: LESSON_MOVE_NOT_PARALLEL };
+  if (isOver(origin, now)) return { code: LESSON_MOVE_LESSON_OVER, side: 'FROM' };
   if (isReplacedByActivity(origin)) return { code: LESSON_MOVE_REPLACED_BY_ACTIVITY, side: 'FROM' };
   if (isReplacedByActivity(target)) return { code: LESSON_MOVE_REPLACED_BY_ACTIVITY, side: 'TO' };
   if (!isHeld(origin)) return { code: LESSON_MOVE_LESSON_NOT_HELD, side: 'FROM' };
@@ -112,9 +126,10 @@ export const SQLSTATE_TO_CODE: Readonly<Record<string, string>> = {
   LM413: LESSON_MOVE_REPLACED_BY_ACTIVITY,
   LM414: LESSON_MOVE_IN_THE_PAST,
   LM415: LESSON_MOVE_HAS_ATTENDANCE,
+  LM416: LESSON_MOVE_LESSON_OVER,
 };
 
-/** The code a LM409 refusal carries in its message, or null. */
+/** The code a LM404 or LM409 refusal carries in its message, or null (the door writes `CODE: reason`). */
 export function conflictCodeOf(text: string): string | null {
   return /(LESSON_MOVE_[A-Z_]+)/.exec(text)?.[1] ?? null;
 }

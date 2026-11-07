@@ -176,6 +176,7 @@ export class LessonMovesService {
         orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
         take: 2000,
       });
+      const now = new Date();
       const overlapping = day.filter((row) => row.id !== origin.id && row.id !== current.id && overlaps(asLesson(row), asLesson(origin)));
 
       const pupilRosters = await calendarLessonRosters(tx, day, { pupils: 'ACTIVE', among: [studentId] });
@@ -186,7 +187,7 @@ export class LessonMovesService {
       const candidates = overlapping.map((row): MoveCandidate => {
         const target = asLesson(row);
         const headcount = headcounts.get(row.id)?.size ?? 0;
-        let refusal: MoveRefusal | null = refusalOf(asLesson(origin), target);
+        let refusal: MoveRefusal | null = refusalOf(asLesson(origin), target, now);
         if (!refusal && pupilRosters.get(row.id)?.has(studentId)) refusal = { code: LESSON_MOVE_ALREADY_ON_TARGET };
         if (!refusal && doubleBooks(target, pupilLessons, except)) refusal = { code: LESSON_MOVE_PUPIL_DOUBLE_BOOKED };
         const warning = refusal ? null : crowdedWarning(headcount, row.room?.capacity ?? null);
@@ -215,7 +216,7 @@ export class LessonMovesService {
 
       const warnings: MoveWarning[] = [];
       if (!backToStart) {
-        const refusal = refusalOf(asLesson(origin), asLesson(target));
+        const refusal = refusalOf(asLesson(origin), asLesson(target), new Date());
         if (refusal) throw refusalError(refusal);
         const day = await tx.calendarLesson.findMany({
           where: { schoolId, date: origin.date, id: { not: target.id } },
@@ -462,6 +463,7 @@ const MESSAGES: Readonly<Record<string, string>> = {
   LESSON_MOVE_LESSON_NOT_HELD: 'Lektionen är inställd och hålls inte.',
   LESSON_MOVE_REPLACED_BY_ACTIVITY: 'Lektionen är ersatt av en schemabrytande aktivitet.',
   LESSON_MOVE_IN_THE_PAST: 'En flytt görs för i dag eller senare.',
+  LESSON_MOVE_LESSON_OVER: 'Lektionen eleven flyttas från är slut. Närvaron för den rättas i lektionens register.',
   LESSON_MOVE_PUPIL_NOT_ON_LESSON: 'Eleven går inte på lektionen.',
   LESSON_MOVE_ALREADY_ON_TARGET: 'Eleven går redan på den lektionen.',
   LESSON_MOVE_PUPIL_DOUBLE_BOOKED: 'Eleven skulle få två lektioner samtidigt.',
@@ -482,19 +484,27 @@ export function refusalError(refusal: MoveRefusal): HttpException {
   return coded(409, refusal.code, side ? { side } : undefined);
 }
 
+/** The text the database's refusal carries: the adapter's cause has it, and so does the rendered error. */
+function doorText(error: unknown): string {
+  const cause = (error as { meta?: { driverAdapterError?: { cause?: { originalMessage?: unknown } } } }).meta?.driverAdapterError?.cause;
+  return `${typeof cause?.originalMessage === 'string' ? cause.originalMessage : ''} ${error instanceof Error ? error.message : ''}`;
+}
+
 /** The database door's refusal as the coded answer the gateway would have given; anything else passes through. */
 export function doorError(error: unknown): unknown {
   const state = sqlStateOf(error);
   if (!state) return error;
   if (state === 'LM409') {
-    // The code is in the database's message: the adapter's cause carries it, and so does the rendered error.
-    const cause = (error as { meta?: { driverAdapterError?: { cause?: { originalMessage?: unknown } } } }).meta?.driverAdapterError?.cause;
-    const text = `${typeof cause?.originalMessage === 'string' ? cause.originalMessage : ''} ${error instanceof Error ? error.message : ''}`;
-    return coded(409, conflictCodeOf(text) ?? LESSON_MOVE_ALREADY_ON_TARGET);
+    // The code is in the database's message.
+    return coded(409, conflictCodeOf(doorText(error)) ?? LESSON_MOVE_ALREADY_ON_TARGET);
+  }
+  if (state === 'LM404') {
+    // Not found is three things in the door (a move, a lesson, a pupil); each says which in its message, and the
+    // teacher is told the one that went missing.
+    return coded(404, conflictCodeOf(doorText(error)) ?? LESSON_MOVE_NOT_FOUND);
   }
   const code = SQLSTATE_TO_CODE[state];
   if (!code) return error;
-  const status: 403 | 404 | 409 = state === 'LM403' ? 403 : state === 'LM404' ? 404 : 409;
+  const status: 403 | 409 = state === 'LM403' ? 403 : 409;
   return coded(status, code);
 }
-

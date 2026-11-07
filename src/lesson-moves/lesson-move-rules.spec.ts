@@ -2,6 +2,7 @@ import {
   LESSON_MOVE_ALREADY_ON_TARGET,
   LESSON_MOVE_HAS_ATTENDANCE,
   LESSON_MOVE_LESSON_NOT_HELD,
+  LESSON_MOVE_LESSON_OVER,
   LESSON_MOVE_NOT_ALLOWED,
   LESSON_MOVE_NOT_FOUND,
   LESSON_MOVE_NOT_PARALLEL,
@@ -11,6 +12,7 @@ import {
   crowdedWarning,
   doubleBooks,
   isHeld,
+  isOver,
   isReplacedByActivity,
   overlaps,
   refusalOf,
@@ -18,6 +20,8 @@ import {
 } from './lesson-move-rules';
 
 const at = (hhmm: string) => new Date(`2026-11-10T${hhmm}:00.000Z`);
+// Before every lesson of the file, so that none is over unless a test says so.
+const NOW = at('08:00');
 const lesson = (id: string, from: string, to: string, extra: Partial<MoveLesson> = {}): MoveLesson => ({
   id,
   status: 'SCHEDULED',
@@ -40,6 +44,18 @@ describe('overlaps', () => {
   });
 });
 
+describe('isOver', () => {
+  it('is true for a lesson whose end has passed, and for one that ends exactly now', () => {
+    expect(isOver(lesson('a', '08:00', '09:00'), at('09:01'))).toBe(true);
+    expect(isOver(lesson('a', '08:00', '09:00'), at('09:00'))).toBe(true);
+  });
+
+  it('is false for a lesson that is running or has not started: the day is not the hour, but neither is the start', () => {
+    expect(isOver(lesson('a', '08:00', '09:00'), at('08:59'))).toBe(false);
+    expect(isOver(lesson('a', '09:00', '10:00'), at('08:00'))).toBe(false);
+  });
+});
+
 describe('isHeld and isReplacedByActivity', () => {
   it('holds the statuses the delivered time counts, and no other', () => {
     expect(isHeld({ status: 'SCHEDULED' })).toBe(true);
@@ -59,40 +75,52 @@ describe('refusalOf: why the pupil cannot go there', () => {
   const origin = lesson('x', '09:00', '10:00');
 
   it('lets a held lesson that overlaps the pupil’s own', () => {
-    expect(refusalOf(origin, lesson('y', '09:00', '10:00'))).toBeNull();
-    expect(refusalOf(origin, lesson('z', '09:30', '10:30'))).toBeNull();
+    expect(refusalOf(origin, lesson('y', '09:00', '10:00'), NOW)).toBeNull();
+    expect(refusalOf(origin, lesson('z', '09:30', '10:30'), NOW)).toBeNull();
   });
 
   it('names a lesson that does not overlap', () => {
-    expect(refusalOf(origin, lesson('w', '11:00', '12:00'))).toEqual({ code: LESSON_MOVE_NOT_PARALLEL });
-    expect(refusalOf(origin, lesson('w', '10:00', '11:00'))).toEqual({ code: LESSON_MOVE_NOT_PARALLEL });
+    expect(refusalOf(origin, lesson('w', '11:00', '12:00'), NOW)).toEqual({ code: LESSON_MOVE_NOT_PARALLEL });
+    expect(refusalOf(origin, lesson('w', '10:00', '11:00'), NOW)).toEqual({ code: LESSON_MOVE_NOT_PARALLEL });
   });
 
   it('names a lesson that is the pupil’s own', () => {
-    expect(refusalOf(origin, origin)).toEqual({ code: LESSON_MOVE_NOT_PARALLEL });
+    expect(refusalOf(origin, origin, NOW)).toEqual({ code: LESSON_MOVE_NOT_PARALLEL });
   });
 
   it('names a cancelled or rescheduled target, and says it is the target', () => {
-    expect(refusalOf(origin, lesson('c', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'MANUAL' }))).toEqual({
+    expect(refusalOf(origin, lesson('c', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'MANUAL' }), NOW)).toEqual({
       code: LESSON_MOVE_LESSON_NOT_HELD,
       side: 'TO',
     });
-    expect(refusalOf(origin, lesson('r', '09:00', '10:00', { status: 'RESCHEDULED' }))).toEqual({ code: LESSON_MOVE_LESSON_NOT_HELD, side: 'TO' });
+    expect(refusalOf(origin, lesson('r', '09:00', '10:00', { status: 'RESCHEDULED' }), NOW)).toEqual({ code: LESSON_MOVE_LESSON_NOT_HELD, side: 'TO' });
   });
 
   it('names a lesson an activity has replaced, before it names a cancelled lesson', () => {
-    expect(refusalOf(origin, lesson('e', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'EVENT' }))).toEqual({
+    expect(refusalOf(origin, lesson('e', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'EVENT' }), NOW)).toEqual({
       code: LESSON_MOVE_REPLACED_BY_ACTIVITY,
       side: 'TO',
     });
   });
 
+  it('names a source that is over, as the source, before anything else about the lessons', () => {
+    expect(refusalOf(origin, lesson('y', '09:00', '10:00'), at('10:00'))).toEqual({ code: LESSON_MOVE_LESSON_OVER, side: 'FROM' });
+    expect(refusalOf(origin, lesson('y', '09:00', '10:00'), at('09:59'))).toBeNull();
+    // The database's door asks before its trigger, so an over source that is also cancelled is over.
+    expect(refusalOf(lesson('x', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'MANUAL' }), lesson('y', '09:00', '10:00'), at('10:30'))).toEqual({
+      code: LESSON_MOVE_LESSON_OVER,
+      side: 'FROM',
+    });
+    // The target being over is not the source's reason: the pupil's mark is on the source.
+    expect(refusalOf(lesson('x', '09:00', '11:00'), lesson('y', '09:00', '10:00'), at('10:30'))).toBeNull();
+  });
+
   it('names a source that is cancelled or replaced, as the source', () => {
-    expect(refusalOf(lesson('x', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'MANUAL' }), lesson('y', '09:00', '10:00'))).toEqual({
+    expect(refusalOf(lesson('x', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'MANUAL' }), lesson('y', '09:00', '10:00'), NOW)).toEqual({
       code: LESSON_MOVE_LESSON_NOT_HELD,
       side: 'FROM',
     });
-    expect(refusalOf(lesson('x', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'EVENT' }), lesson('y', '09:00', '10:00'))).toEqual({
+    expect(refusalOf(lesson('x', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'EVENT' }), lesson('y', '09:00', '10:00'), NOW)).toEqual({
       code: LESSON_MOVE_REPLACED_BY_ACTIVITY,
       side: 'FROM',
     });
@@ -134,7 +162,8 @@ describe('the database’s refusals', () => {
     expect(SQLSTATE_TO_CODE['LM404']).toBe(LESSON_MOVE_NOT_FOUND);
     expect(SQLSTATE_TO_CODE['LM412']).toBe(LESSON_MOVE_NOT_PARALLEL);
     expect(SQLSTATE_TO_CODE['LM415']).toBe(LESSON_MOVE_HAS_ATTENDANCE);
-    expect(Object.keys(SQLSTATE_TO_CODE).sort()).toEqual(['LM403', 'LM404', 'LM410', 'LM412', 'LM413', 'LM414', 'LM415']);
+    expect(SQLSTATE_TO_CODE['LM416']).toBe(LESSON_MOVE_LESSON_OVER);
+    expect(Object.keys(SQLSTATE_TO_CODE).sort()).toEqual(['LM403', 'LM404', 'LM410', 'LM412', 'LM413', 'LM414', 'LM415', 'LM416']);
   });
 
   it('reads the code a conflict carries in its message', () => {

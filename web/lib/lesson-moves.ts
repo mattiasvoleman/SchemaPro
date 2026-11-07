@@ -7,6 +7,7 @@
 /** Why a pupil cannot be moved to a lesson; the candidates carry it, a refused move answers with it as an error code. */
 export type MoveRefusalCode =
   | "LESSON_MOVE_NOT_PARALLEL"
+  | "LESSON_MOVE_LESSON_OVER"
   | "LESSON_MOVE_LESSON_NOT_HELD"
   | "LESSON_MOVE_REPLACED_BY_ACTIVITY"
   | "LESSON_MOVE_ALREADY_ON_TARGET"

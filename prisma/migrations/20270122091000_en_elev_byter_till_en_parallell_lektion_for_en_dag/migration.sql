@@ -50,7 +50,14 @@
 --     eleven just nu är på, eller är elevens mentor den dagen, med
 --     app.leave_mentors, ledighetsbeslutets och frånvarobevakningens enda
 --     definition av en mentor);
---   * dagen är inte förbi: en flytt görs för i dag eller senare;
+--   * dagen är inte förbi och lektionen eleven flyttas från är inte slut: en
+--     flytt görs för i dag eller senare, och aldrig ur en lektion vars
+--     sluttid har passerat (LM416). Flytten skriver över elevens markering på
+--     källan, och en lektions register är dess lärares: den som bara
+--     undervisar målet får inte genom flytten ändra eller radera en markering
+--     på en lektion hen inte kan spara register för. En administratör som
+--     behöver rätta en avslutad lektion gör det i registret, där markeringen
+--     får en författare;
 --   * eleven står inte redan på mållektionen som namngiven.
 --
 -- Vem som är på källektionen (hemklass, grupp, ersättande grupp) och att
@@ -125,7 +132,10 @@
 -- avbokning skriver CalendarLessons och Users i en och samma transaktion, så
 -- låsen tas tillsammans, NOWAIT, i en slinga: ett nej rullar tillbaka
 -- delbegäran med det den fått och försöker igen 50 ms senare. Efter 30 s
--- stoppar den utan att ha ändrat något och kan köras om. Den tidigare
+-- stoppar den utan att ha ändrat något. Prisma har då skrivit ett misslyckat
+-- försök i _prisma_migrations och svarar P3009 på nästa deploy tills
+-- `prisma migrate resolve --rolled-back 20270122091000_en_elev_byter_till_en_parallell_lektion_for_en_dag`
+-- har körts; sedan kan filen köras om. Den tidigare
 -- API-versionen känner varken kolumnerna eller tabellen och skriver aldrig
 -- till dem; den läser inte heller flytten, men det finns ingen flytt förrän
 -- den nya versionen kör.
@@ -145,7 +155,7 @@ BEGIN
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Schools, Users, CalendarLessons, CalendarLessonStudents and SchoolDaySettings were not free at once in 30 s: nothing is changed, run the migration again';
+        RAISE EXCEPTION 'Schools, Users, CalendarLessons, CalendarLessonStudents and SchoolDaySettings were not free at once in 30 s: nothing is changed; run prisma migrate resolve --rolled-back 20270122091000_en_elev_byter_till_en_parallell_lektion_for_en_dag and deploy again';
       END IF;
       PERFORM pg_sleep(0.05);
     END;
@@ -509,6 +519,7 @@ DECLARE
   prev "LessonPupilMoves";
   origin uuid;
   origin_date date;
+  origin_ends timestamptz;
   mark record;
   displaced jsonb;
   new_id uuid;
@@ -543,12 +554,21 @@ BEGIN
     RAISE EXCEPTION 'LESSON_MOVE_CHANGED: flytten ändrades just nu, försök igen' USING ERRCODE = 'LM409';
   END IF;
 
-  SELECT l."date" INTO origin_date FROM "CalendarLessons" l WHERE l."id" = origin;
+  SELECT l."date", l."endsAt" INTO origin_date, origin_ends FROM "CalendarLessons" l WHERE l."id" = origin;
   IF NOT app.lesson_move_may(p_student, ARRAY[origin, p_from, p_to], origin_date) THEN
     RAISE EXCEPTION 'LESSON_MOVE_NOT_ALLOWED: du får inte flytta den här eleven' USING ERRCODE = 'LM403';
   END IF;
   IF origin_date < app.school_today() THEN
     RAISE EXCEPTION 'LESSON_MOVE_IN_THE_PAST: en flytt görs för i dag eller senare' USING ERRCODE = 'LM414';
+  END IF;
+  -- The day is not the hour: a lesson that ended this morning is still
+  -- today's. Its register is its teachers' to change, and a move writes the
+  -- pupil's mark on it (UNKNOWN, recordedById the mover), so the teacher of the
+  -- target alone could erase a colleague's mark by moving the pupil. now() is
+  -- the transaction's start: a lesson that ends exactly now is over.
+  IF origin_ends <= now() THEN
+    RAISE EXCEPTION 'LESSON_MOVE_LESSON_OVER: lektionen eleven flyttas från är slut, så dess register ändras inte genom en flytt'
+      USING ERRCODE = 'LM416';
   END IF;
 
   -- Leaving a lesson the pupil was moved onto: not while it holds a mark of
@@ -620,6 +640,7 @@ DECLARE
   school uuid := app.current_school_id();
   m "LessonPupilMoves";
   on_day date;
+  ends_at timestamptz;
 BEGIN
   IF app.current_user_id() IS NULL OR school IS NULL THEN
     RAISE EXCEPTION 'LESSON_MOVE_NOT_ALLOWED: bara personal ångrar en flytt' USING ERRCODE = 'LM403';
@@ -638,12 +659,18 @@ BEGIN
     RAISE EXCEPTION 'LESSON_MOVE_NOT_FOUND: flytten finns inte' USING ERRCODE = 'LM404';
   END IF;
 
-  SELECT l."date" INTO on_day FROM "CalendarLessons" l WHERE l."id" = m."fromLessonId";
+  SELECT l."date", l."endsAt" INTO on_day, ends_at FROM "CalendarLessons" l WHERE l."id" = m."fromLessonId";
   IF NOT app.lesson_move_may(m."studentId", ARRAY[m."fromLessonId", m."toLessonId"], on_day) THEN
     RAISE EXCEPTION 'LESSON_MOVE_NOT_ALLOWED: du får inte ångra den här flytten' USING ERRCODE = 'LM403';
   END IF;
   IF on_day < app.school_today() THEN
     RAISE EXCEPTION 'LESSON_MOVE_IN_THE_PAST: en flytt ångras för i dag eller senare' USING ERRCODE = 'LM414';
+  END IF;
+  -- Ångra puts the pupil's mark back on the lesson they were moved from: the
+  -- same register the move may not touch once the lesson is over.
+  IF ends_at <= now() THEN
+    RAISE EXCEPTION 'LESSON_MOVE_LESSON_OVER: lektionen eleven flyttades från är slut, så dess register ändras inte genom att flytten ångras'
+      USING ERRCODE = 'LM416';
   END IF;
   IF EXISTS (SELECT 1 FROM "AttendanceRecords" a
               WHERE a."calendarLessonId" = m."toLessonId" AND a."studentId" = m."studentId"
@@ -1460,9 +1487,9 @@ $$;
 COMMENT ON TABLE "LessonPupilMoves" IS
   'Elevens lektion för dagen: en elev flyttad från en lektion till en parallell för ett datum. Skrivs bara av app.lesson_pupil_move / app.lesson_pupil_move_undo; faller när lektionerna inte längre bär den. Ankomsten är en rad i CalendarLessonStudents med moveId.';
 COMMENT ON FUNCTION app.lesson_pupil_move(uuid, uuid, uuid) IS
-  'Flyttar en elev (p_student) från lektionen hen är på (p_from) till en parallell lektion (p_to) för dagen. Svarar flyttens id, eller NULL när eleven skickas tillbaka till sin ursprungliga lektion. Frågar app.lesson_move_may, tar lektionernas rader i id-ordning och sätter elevens markering på källan till UNKNOWN. Felen har SQLSTATE LM4xx.';
+  'Flyttar en elev (p_student) från lektionen hen är på (p_from) till en parallell lektion (p_to) för dagen. Svarar flyttens id, eller NULL när eleven skickas tillbaka till sin ursprungliga lektion. Frågar app.lesson_move_may, tar lektionernas rader i id-ordning och sätter elevens markering på källan till UNKNOWN, men aldrig på en lektion som är slut (LM416). Felen har SQLSTATE LM4xx.';
 COMMENT ON FUNCTION app.lesson_pupil_move_undo(uuid) IS
-  'Ångrar en flytt: tar bort den (ankomsten går med) och lägger tillbaka elevens markering på källan om ingen skrivit en ny. Vägras (LM415) när eleven har en markering på mållektionen.';
+  'Ångrar en flytt: tar bort den (ankomsten går med) och lägger tillbaka elevens markering på källan om ingen skrivit en ny. Vägras (LM415) när eleven har en markering på mållektionen, och (LM414, LM416) när källektionens dag är förbi eller lektionen är slut.';
 COMMENT ON FUNCTION app.lesson_pupil_move_remove(uuid, boolean) IS
   'Tar bort en flytt och, med p_restore, lägger tillbaka den undanflyttade markeringen. Den som anropar har lektionernas lås och har frågat app.lesson_move_may.';
 COMMENT ON FUNCTION app.lesson_pupil_register_lock(uuid) IS
