@@ -44354,6 +44354,7 @@ DECLARE
   p3 uuid := current_setting('app.test_rls355_p3')::uuid;
   p4 uuid := current_setting('app.test_rls355_p4')::uuid;
   stamp timestamptz;
+  find_at timestamptz;
 BEGIN
   -- Not the administration's "not in the building" of 355g, and not a pupil nobody found.
   PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'RETRACTED', now())$q$, school, al, c2, c1, p3),
@@ -44367,19 +44368,25 @@ BEGIN
   IF stamp IS NULL THEN RAISE EXCEPTION 'krisläge: the teacher does not read the withdrawal she made'; END IF;
   PERFORM set_config('app.test_rls355_stamp', stamp::text, true);
   -- A withdrawal older than the find it withdraws is not one (a pupil of her own list this time).
+  -- The withdrawal is counted from the find's own stored time (the row says it, after the stamp has had its say), one
+  -- second before it, and not from the clock: a margin of clock_timestamp() - 5 ms is only as good as the time the
+  -- statements in between take, and on a loaded host they take longer, which made the withdrawal newer than the find.
   INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
-  VALUES (gen_random_uuid(), school, al, c1, current_setting('app.test_rls355_p1')::uuid, 'FOUND', clock_timestamp());
-  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'RETRACTED', clock_timestamp() - interval '5 milliseconds')$q$,
-                                 school, al, c1, current_setting('app.test_rls355_p1')),
+  VALUES (gen_random_uuid(), school, al, c1, current_setting('app.test_rls355_p1')::uuid, 'FOUND', clock_timestamp())
+  RETURNING "at" INTO find_at;
+  IF find_at IS NULL THEN RAISE EXCEPTION 'krisläge: the teacher does not read the find she made'; END IF;
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'RETRACTED', %L)$q$,
+                                 school, al, c1, current_setting('app.test_rls355_p1'), find_at - interval '1 second'),
                           'KL413', 'a withdrawal older than the find');
   INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
   VALUES (gen_random_uuid(), school, al, c1, current_setting('app.test_rls355_p1')::uuid, 'RETRACTED', clock_timestamp());
   -- Twice is nothing to withdraw.
   PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'RETRACTED', now())$q$, school, al, cn, c1, p4),
                           'KL413', 'a second withdrawal');
-  -- An older mark that arrives late does not bring the find back.
+  -- An older mark that arrives late does not bring the find back (counted from the withdrawal's stored time, a second
+  -- before it, like the withdrawal above).
   INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at)
-  VALUES (gen_random_uuid(), school, al, cn, c1, p4, 'FOUND', stamp - interval '5 milliseconds');
+  VALUES (gen_random_uuid(), school, al, cn, c1, p4, 'FOUND', stamp - interval '1 second');
 END $$;
 SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
 DO $$

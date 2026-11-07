@@ -12,7 +12,8 @@
  * a change (SCHOOL_UNIT_FROM_SOURCE). The span is the school's either way.
  *
  * On Klasser rather than a page of its own: the units are the classes'
- * frame, set up once, and a menu row would cost every route bytes.
+ * frame, set up once, and a menu row for them would be one more row in every
+ * administrator's menu for something touched once.
  */
 
 import { useMemo, useState, type FormEvent } from "react";
