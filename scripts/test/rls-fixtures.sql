@@ -501,40 +501,13 @@ INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId
 SELECT "schoolId", calendar_lesson_id, pupil_id FROM rls_fixture_lesson
 ON CONFLICT ("calendarLessonId", "studentId") DO NOTHING;
 
--- One link row of each kind filed under the SECOND school but attached to the
--- FIRST school's lessons: the second school's extra class, pupil and teacher.
--- Every link table references its lesson by id alone, so such a row can be
--- written. The service-principal policies answer by the row's own school, so
--- the first school's principal must not see these, and section 3 counts them
--- in its "none of another school's" half. A policy that asked the lesson's
--- school instead would show them there.
-CREATE OR REPLACE TEMP VIEW rls_fixture_crossed AS
-SELECT b."schoolId", a.master_lesson_id, a.calendar_lesson_id,
-       b.extra_group_id, b.teacher_id, b.pupil_id
-FROM rls_fixture_lesson a
-JOIN rls_fixture_lesson b ON b."schoolId" <> a."schoolId"
-JOIN "Schools" s ON s.id = b."schoolId"
-WHERE s.slug = 'rls-fixture-school';
-
-INSERT INTO "MasterLessonGroups" ("schoolId", "masterLessonId", "studentGroupId")
-SELECT "schoolId", master_lesson_id, extra_group_id FROM rls_fixture_crossed
-ON CONFLICT ("masterLessonId", "studentGroupId") DO NOTHING;
-
-INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId")
-SELECT "schoolId", master_lesson_id, pupil_id FROM rls_fixture_crossed
-ON CONFLICT ("masterLessonId", "studentId") DO NOTHING;
-
-INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId")
-SELECT "schoolId", calendar_lesson_id, teacher_id FROM rls_fixture_crossed
-ON CONFLICT ("calendarLessonId", "teacherId") DO NOTHING;
-
-INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId")
-SELECT "schoolId", calendar_lesson_id, extra_group_id FROM rls_fixture_crossed
-ON CONFLICT ("calendarLessonId", "studentGroupId") DO NOTHING;
-
-INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId")
-SELECT "schoolId", calendar_lesson_id, pupil_id FROM rls_fixture_crossed
-ON CONFLICT ("calendarLessonId", "studentId") DO NOTHING;
+-- There is no link row filed under one school and attached to the other's lessons
+-- any more: until 20270115090000 every link table named its lesson by id alone,
+-- so such a row could be written, and this fixture planted one of each kind to
+-- prove that the service-principal policies answer by the row's own school. The
+-- keys are now ("lessonId", "schoolId"), the database refuses the row, and
+-- section 330 proves that it does; a policy can no longer be told from one that
+-- asks the lesson's school.
 
 -- An active key for the FIRST school, so the key-lookup assertions have
 -- something to find, and a revoked one so revocation can be asserted.
@@ -2165,10 +2138,12 @@ BEGIN
   VALUES (s2, subj2, k9, current_date + 1, (current_date + 1) + time '08:00', (current_date + 1) + time '09:00', 'TG-9', now()) RETURNING id INTO l9;
   INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (s2, l9, sva9);
   INSERT INTO "LessonLogs" ("schoolId", "calendarLessonId", topic) VALUES (s2, l9, 'TG annan');
-  -- The two rows that point across: the other school's, by their schoolId.
-  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s2, sva, q);
-  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (s2, l2, sva9);
-  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, spa, q);
+  -- Until 20270115090000 this block also planted three rows that point across
+  -- the schools (the other school's pupil in this school's group, the other
+  -- school's group on this school's lesson, and this school's row naming the
+  -- other school's pupil), to prove that no arm counts a row by what it names.
+  -- The keys are now composite, the database refuses such a row, and section 330
+  -- proves that it does.
 
   -- Last läsår.
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
@@ -2413,15 +2388,14 @@ BEGIN
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
   VALUES (s2, sv2, k2, current_date + 1, (current_date + 1) + time '08:00', (current_date + 1) + time '09:00', 'EG-9', now());
 
-  -- A row the other school's administrator wrote: its insert arm checks the
-  -- row's school alone, and the keys to the group and the pupil are not
-  -- composite, so it may point at a group and a pupil of this school. The
-  -- group replaces svenska and has no lessons, so the arms reach nothing
-  -- through the row. Were the helper or the calendar feed to read it (both
-  -- DEFINER, past the member arms), P2 would leave 7A's svenska.
+  -- A group that replaces svenska, has no lessons and, since 20270115090000, no
+  -- member of the other school either: the other school's administrator could
+  -- once write a row naming this group and P2 (its insert arm checked the row's
+  -- school alone and the keys were not composite), and the fixture planted one
+  -- to prove that the helper and the calendar feed (both DEFINER, past the
+  -- member arms) did not read it. The database refuses that row now (section 330).
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "replacesSubjectId", "updatedAt")
   VALUES (s1, y, 'EG SvA7 tom', 7, 'TEACHING_GROUP', sv, now()) RETURNING id INTO rtom;
-  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s2, rtom, p2);
 
   -- M: a pupil here in 7A, and there in 7A and that school's SvA7.
   FOR rec IN SELECT * FROM (VALUES
@@ -3447,6 +3421,97 @@ BEGIN
   END IF;
   INSERT INTO "ReportingDigests" ("schoolId", "periodStart", "periodEnd", recipients, teachers, held, reported)
   VALUES (m, '2030-09-02', '2030-09-08', 1, 1, 4, 3);
+END $$;
+
+-- Nycklar mellan skolbundna tabeller (20270115090000), sections 330-334. Two
+-- schools of their own, rls-tenantkey-a and rls-tenantkey-b, each with the same
+-- rows: an administrator, a teacher (and a second), a pupil (and a second), a
+-- guardian, a class and a teaching group (and a second), a year (and a second),
+-- a room type, a room, a subject, a master lesson, a lesson, a room rule and a
+-- leave request (and a second of each, for the keys' same-school control), and
+-- one row in each table whose key the sections re-point: the other school's
+-- row is what the first school's is pointed at. Ids are made, not drawn
+-- (7e<school><entity>-0000-4000-8000-000000000000, the logins
+-- 00000000-0000-4000-8000-7e<school><entity>), so the sections name them
+-- without a lookup; the entity numbers are in the sections' helper.
+CREATE OR REPLACE FUNCTION pg_temp.tk_id(s int, n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('7e' || lpad(s::text, 2, '0') || lpad(to_hex(n), 4, '0') || '-0000-4000-8000-000000000000')::uuid
+$$;
+CREATE OR REPLACE FUNCTION pg_temp.tk_auth(s int, n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('00000000-0000-4000-8000-7e' || lpad((s * 100 + n)::text, 10, '0'))::uuid
+$$;
+
+DO $$
+DECLARE
+  s int;
+  sid uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-tenantkey-a') THEN RETURN; END IF;
+  FOR s IN 1..2 LOOP
+    sid := pg_temp.tk_id(s, 1);
+    INSERT INTO "Schools" (id, name, slug, timezone, "updatedAt")
+    VALUES (sid, 'RLS Nycklar ' || s, CASE s WHEN 1 THEN 'rls-tenantkey-a' ELSE 'rls-tenantkey-b' END, 'Europe/Stockholm', now());
+    INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+      (pg_temp.tk_id(s, 2),  sid, 'tk-admin-' || s || '@example.invalid',    'Admin',    'TK' || s, 'SCHOOL_ADMIN', 'FULL', pg_temp.tk_auth(s, 2),  true, now()),
+      (pg_temp.tk_id(s, 3),  sid, 'tk-teacher-' || s || '@example.invalid',  'Teacher',  'TK' || s, 'TEACHER',      NULL,   pg_temp.tk_auth(s, 3),  true, now()),
+      (pg_temp.tk_id(s, 5),  sid, 'tk-guardian-' || s || '@example.invalid', 'Guardian', 'TK' || s, 'GUARDIAN',     NULL,   pg_temp.tk_auth(s, 5),  true, now()),
+      (pg_temp.tk_id(s, 16), sid, 'tk-teacher2-' || s || '@example.invalid', 'Teacher2', 'TK' || s, 'TEACHER',      NULL,   pg_temp.tk_auth(s, 16), true, now());
+    INSERT INTO "AcademicYears" (id, "schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt") VALUES
+      (pg_temp.tk_id(s, 8),  sid, '2026/27', '2026-08-17', '2027-06-11', true,  'NIOARIG', now()),
+      (pg_temp.tk_id(s, 18), sid, '2025/26', '2025-08-18', '2026-06-12', false, 'NIOARIG', now());
+    INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES
+      (pg_temp.tk_id(s, 6),  sid, pg_temp.tk_id(s, 8), 'TK7' || s,  'CLASS',          7, now()),
+      (pg_temp.tk_id(s, 7),  sid, pg_temp.tk_id(s, 8), 'TKG' || s,  'TEACHING_GROUP', 7, now()),
+      (pg_temp.tk_id(s, 26), sid, pg_temp.tk_id(s, 8), 'TKH' || s,  'TEACHING_GROUP', 7, now());
+    INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+      (pg_temp.tk_id(s, 4),  sid, 'tk-student-' || s || '@example.invalid',  'Student',  'TK' || s, 'STUDENT', pg_temp.tk_auth(s, 4),  true, pg_temp.tk_id(s, 6), now()),
+      (pg_temp.tk_id(s, 17), sid, 'tk-student2-' || s || '@example.invalid', 'Student2', 'TK' || s, 'STUDENT', pg_temp.tk_auth(s, 17), true, pg_temp.tk_id(s, 6), now());
+    INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (sid, pg_temp.tk_id(s, 5), pg_temp.tk_id(s, 4));
+    INSERT INTO "RoomTypes" (id, "schoolId", name, "updatedAt") VALUES
+      (pg_temp.tk_id(s, 9),  sid, 'Sal ' || s,  now()),
+      (pg_temp.tk_id(s, 19), sid, 'Sal2 ' || s, now());
+    INSERT INTO "Rooms" (id, "schoolId", name, "roomTypeId", "updatedAt") VALUES
+      (pg_temp.tk_id(s, 10), sid, 'TKR' || s,  pg_temp.tk_id(s, 9), now()),
+      (pg_temp.tk_id(s, 20), sid, 'TKR2' || s, pg_temp.tk_id(s, 9), now());
+    INSERT INTO "Subjects" (id, "schoolId", name, code, "requiredRoomTypeId", "updatedAt") VALUES
+      (pg_temp.tk_id(s, 11), sid, 'TK ämne ' || s,  'TK' || s,  pg_temp.tk_id(s, 9), now()),
+      (pg_temp.tk_id(s, 21), sid, 'TK ämne2 ' || s, 'TKB' || s, pg_temp.tk_id(s, 9), now());
+    INSERT INTO "MasterLessons" (id, "schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES
+      (pg_temp.tk_id(s, 12), sid, pg_temp.tk_id(s, 8), pg_temp.tk_id(s, 11), pg_temp.tk_id(s, 6), pg_temp.tk_id(s, 3), pg_temp.tk_id(s, 10), 2, '09:00', '09:50', now()),
+      (pg_temp.tk_id(s, 22), sid, pg_temp.tk_id(s, 8), pg_temp.tk_id(s, 11), pg_temp.tk_id(s, 6), pg_temp.tk_id(s, 16), pg_temp.tk_id(s, 20), 3, '09:00', '09:50', now());
+    INSERT INTO "CalendarLessons" (id, "schoolId", "masterLessonId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", "updatedAt") VALUES
+      (pg_temp.tk_id(s, 13), sid, pg_temp.tk_id(s, 12), pg_temp.tk_id(s, 11), pg_temp.tk_id(s, 6), pg_temp.tk_id(s, 10), '2026-09-15', '2026-09-15 09:00+02', '2026-09-15 09:50+02', now()),
+      (pg_temp.tk_id(s, 23), sid, pg_temp.tk_id(s, 22), pg_temp.tk_id(s, 11), pg_temp.tk_id(s, 6), pg_temp.tk_id(s, 20), '2026-09-16', '2026-09-16 09:00+02', '2026-09-16 09:50+02', now());
+    INSERT INTO "RoomPreferences" (id, "schoolId", "subjectId", "roomTypeId", "updatedAt") VALUES
+      (pg_temp.tk_id(s, 14), sid, pg_temp.tk_id(s, 11), pg_temp.tk_id(s, 9),  now()),
+      (pg_temp.tk_id(s, 24), sid, pg_temp.tk_id(s, 21), pg_temp.tk_id(s, 19), now());
+    INSERT INTO "LeaveRequests" (id, "schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "referredAt") VALUES
+      (pg_temp.tk_id(s, 15), sid, pg_temp.tk_id(s, 4), pg_temp.tk_id(s, 5), '2026-09-16', '2026-09-17', 'tk', now()),
+      (pg_temp.tk_id(s, 25), sid, pg_temp.tk_id(s, 4), pg_temp.tk_id(s, 5), '2026-09-18', '2026-09-19', 'tk2', now());
+    INSERT INTO "LeaveRequestNotices" ("leaveRequestId", "userId", "schoolId") VALUES (pg_temp.tk_id(s, 15), pg_temp.tk_id(s, 3), sid);
+    -- The rows the sections re-point (one for each key they name).
+    INSERT INTO "StudentGroupMembers" (id, "schoolId", "studentGroupId", "studentId") VALUES (pg_temp.tk_id(s, 32), sid, pg_temp.tk_id(s, 7), pg_temp.tk_id(s, 4));
+    INSERT INTO "MasterLessonGroups" (id, "schoolId", "masterLessonId", "studentGroupId") VALUES (pg_temp.tk_id(s, 33), sid, pg_temp.tk_id(s, 12), pg_temp.tk_id(s, 7));
+    INSERT INTO "MasterLessonStudents" (id, "schoolId", "masterLessonId", "studentId") VALUES (pg_temp.tk_id(s, 34), sid, pg_temp.tk_id(s, 12), pg_temp.tk_id(s, 4));
+    INSERT INTO "CalendarLessonGroups" (id, "schoolId", "calendarLessonId", "studentGroupId") VALUES (pg_temp.tk_id(s, 35), sid, pg_temp.tk_id(s, 13), pg_temp.tk_id(s, 7));
+    INSERT INTO "CalendarLessonStudents" (id, "schoolId", "calendarLessonId", "studentId") VALUES (pg_temp.tk_id(s, 36), sid, pg_temp.tk_id(s, 13), pg_temp.tk_id(s, 4));
+    INSERT INTO "CalendarLessonTeachers" (id, "schoolId", "calendarLessonId", "teacherId") VALUES (pg_temp.tk_id(s, 37), sid, pg_temp.tk_id(s, 13), pg_temp.tk_id(s, 3));
+    INSERT INTO "AttendanceRecords" (id, "schoolId", "calendarLessonId", "studentId", "recordedById", "updatedAt")
+    VALUES (pg_temp.tk_id(s, 38), sid, pg_temp.tk_id(s, 13), pg_temp.tk_id(s, 4), pg_temp.tk_id(s, 3), now());
+    INSERT INTO "AvailabilityConstraints" (id, "schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+    VALUES (pg_temp.tk_id(s, 57), sid, 'TEACHER', pg_temp.tk_id(s, 3), 3, '08:00', '09:00', now());
+    INSERT INTO "AvailabilityConstraints" (id, "schoolId", "resourceType", "roomId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+    VALUES (pg_temp.tk_id(s, 58), sid, 'ROOM', pg_temp.tk_id(s, 10), 3, '08:00', '09:00', now());
+    INSERT INTO "AvailabilityConstraints" (id, "schoolId", "resourceType", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+    VALUES (pg_temp.tk_id(s, 59), sid, 'STUDENT_GROUP', pg_temp.tk_id(s, 6), 3, '08:00', '09:00', now());
+    INSERT INTO "AbsenceReports" (id, "schoolId", "studentId", "reportedById", date) VALUES (pg_temp.tk_id(s, 60), sid, pg_temp.tk_id(s, 4), pg_temp.tk_id(s, 5), '2026-09-15');
+    INSERT INTO "Notifications" (id, "schoolId", "userId", type) VALUES (pg_temp.tk_id(s, 61), sid, pg_temp.tk_id(s, 3), 'SCHEDULE_CHANGED');
+    -- The two schools' bookings are on different days: a room is held once, and the control
+    -- moves a booking to a room of its own school.
+    INSERT INTO "RoomBookings" (id, "schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt")
+    VALUES (pg_temp.tk_id(s, 62), sid, pg_temp.tk_id(s, 10), pg_temp.tk_id(s, 3), 'tk', ('2026-09-2' || s || ' 10:00+02')::timestamptz, ('2026-09-2' || s || ' 11:00+02')::timestamptz, now());
+    INSERT INTO "RoomPreferenceRooms" (id, "schoolId", "preferenceId", "roomId") VALUES (pg_temp.tk_id(s, 63), sid, pg_temp.tk_id(s, 14), pg_temp.tk_id(s, 10));
+  END LOOP;
 END $$;
 
 -- The matrix school's decision for Skolans dag (20270116090000), so the role
