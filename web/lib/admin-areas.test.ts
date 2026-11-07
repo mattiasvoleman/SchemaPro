@@ -46,6 +46,15 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/reporting-rate")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("opens Analys och planering to every administrator: it reads only, the gateway gives each profile what it may have, and the settings ask the profile themselves", () => {
+    expect(PAGE_GATES["/admin/analysis"]).toBeNull();
+    expect(gateOfPath("/sv/admin/analysis")).toBeNull();
+    for (const profile of ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION", "LASARE"] as const) {
+      expect(closedPages(profile).map((page) => page.path)).not.toContain("/admin/analysis");
+      expect(readOnlyPages(profile).map((page) => page.path)).not.toContain("/admin/analysis");
+    }
+  });
+
   it("opens Skolans dag to every administrator: it reads only, so the läsare has it whole, and no area gates it", () => {
     expect(PAGE_GATES["/admin/school-day"]).toBeNull();
     expect(gateOfPath("/sv/admin/school-day")).toBeNull();

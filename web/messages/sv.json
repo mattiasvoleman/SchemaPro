@@ -230,7 +230,8 @@
     "crisis": "Krisläge",
     "myCrisis": "Larm",
     "schemavisaren": "Schemavisaren",
-    "schoolDay": "Skolans dag"
+    "schoolDay": "Skolans dag",
+    "analysis": "Analys och planering"
   },
   "dashboard": {
     "title": "Översikt",
@@ -8372,6 +8373,189 @@
       "saved": "Valet är sparat",
       "loadFailed": "Valet kunde inte hämtas",
       "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
+    }
+  },
+  "analysis": {
+    "title": "Analys och planering",
+    "subtitle": "Nyckeltal, kostnad per elev och löneunderlag.",
+    "intro": "Allt räknas fram när du öppnar en flik, ur tjänstefördelningen, rostern, timplanen och de lektioner som hållits. Inga individuella löner lagras: kostnaden är timmar gånger den timkostnad per personalkategori som skolan anger.",
+    "tabs": {
+      "label": "Vy",
+      "keyFigures": "Nyckeltal",
+      "cost": "Kostnad per elev",
+      "payroll": "Löneunderlag",
+      "settings": "Skoldelar och satser"
+    },
+    "years": {
+      "loadFailed": "Läsåren kunde inte hämtas",
+      "noneTitle": "Skolan har inget läsår än",
+      "noneBody": "Analysen räknas per läsår. Lägg till ett under Kom igång."
+    },
+    "loadFailedHint": "Försök igen om en stund. Det du ser här har inte ändrats.",
+    "retry": "Försök igen",
+    "rateLimited": "Det går för snabbt",
+    "rateLimitedHint": "Sidan räknar fram skolans siffror varje gång, så den läses högst några gånger i minuten. Vänta en minut.",
+    "unknownPerson": "Okänd person",
+    "percent": "{percent} %",
+    "category": {
+      "TEACHER": "Behörig lärare",
+      "UNQUALIFIED_TEACHER": "Lärare utan behörighet",
+      "SUBSTITUTE": "Vikarie"
+    },
+    "notice": {
+      "ANALYSIS_PUPILS_FROM_ENROLLMENT": "Eleverna är hämtade ur klasshistoriken, som klasserna var det läsåret.",
+      "ANALYSIS_GRADES_WITHOUT_PART": "Årskurs {grades} hör till ingen skoldel. Lägg till eller bredda en skoldel under Skoldelar och satser.",
+      "ANALYSIS_NO_SCHOOL_PARTS": "Skolan har inga skoldelar än, så underlaget visas per årskurs. Skoldelar läggs under Skoldelar och satser.",
+      "ANALYSIS_RATE_MISSING": "Skolan har ingen timkostnad för {category}. Kostnaden för de timmarna är okänd, inte noll. Ange den under Skoldelar och satser.",
+      "ANALYSIS_NO_FULL_TIME": "Skolan har inget riktmärke för undervisning, så lärartätheten i heltidstjänster kan inte anges. Riktmärket anges under Tjänstefördelning.",
+      "ANALYSIS_QUALIFICATIONS_NOT_RECORDED": "Inga behörigheter är registrerade, så ingen bedöms. Alla timmar räknas då som behörig lärare, och behöriga lärares andel visas först när behörigheter är registrerade.",
+      "ANALYSIS_ROWS_WITHOUT_PUPILS": "{rows} timplansposter har inga elever på listan, till exempel en grupp innan eleverna är placerade. Deras tid räknas på gruppens egen årskurs.",
+      "ANALYSIS_PERIOD_CLAMPED": "Perioden är beskuren till läsåret: {from} – {to}.",
+      "ANALYSIS_NOTHING_PUBLISHED": "Inget schema är publicerat, så ingen undervisning har hållits och inga timmar kan anges.",
+      "ANALYSIS_COVER_TO_CHECK": "{lessons} hållna vikariepass är utelämnade, eftersom vikarien själv var frånvarande över lektionen. De granskas under Rapporter, Vikarietimmar.",
+      "ANALYSIS_DUTIES_UNALLOCATED": "{people} personer har uppdrag men ingen undervisning eller inget vikariepass i perioden. Deras uppdrag ligger på en rad utan skoldel och konto, för skolan att boka för hand.",
+      "ANALYSIS_PROTECTED_IN_FILE": "{people} personer med skyddad identitet finns med i underlaget, eftersom lönen ska betalas till alla.",
+      "ANALYSIS_CHARACTERS_REPLACED": "{characters} tecken som windows-1252 inte rymmer är ersatta i CSV-filen. Excel-filen behåller dem."
+    },
+    "keyFigures": {
+      "loadFailed": "Nyckeltalen kunde inte hämtas",
+      "aggregateOnly": "Du läser skolans nyckeltal. Enskilda lärares siffror visas inte för huvudmannens läsare.",
+      "kpi": {
+        "pupils": "Elever",
+        "pupilsPerTeacher": "{count} elever per lärare",
+        "density": "Lärartäthet",
+        "densityFallback": "Riktmärke saknas",
+        "densityDetail": "Heltidstjänster per 100 elever. Efter antal: {head} lärare per 100 elever ({teachers} lärare).",
+        "qualified": "Behöriga lärares andel",
+        "qualifiedFallback": "Inga behörigheter registrerade",
+        "qualifiedDetail": "{covered} av {all} undervisningstimmar i veckan",
+        "teaching": "Undervisning",
+        "hours": "{hours} tim/år",
+        "perWeek": "{hours} tim i veckan",
+        "unstaffed": "{hours} tim i veckan saknar lärare"
+      },
+      "employmentDensity": "Efter tjänstgöringsgrad: {fte} heltidstjänster, {per100} per 100 elever.",
+      "noTarget": "Inget mål",
+      "teachers": {
+        "title": "Lärare",
+        "description": "Undervisningen enligt tjänstefördelningen, i timmar i veckan, och elevernas antal.",
+        "emptyTitle": "Inga lärare med undervisning",
+        "emptyBody": "När timplansposter har en lärare visas deras nyckeltal här.",
+        "sortedBy": "Sorterat efter {column}, {direction, select, asc {stigande} other {fallande}}.",
+        "caption": "Nyckeltal per lärare"
+      },
+      "column": {
+        "teacher": "Lärare",
+        "teaching": "Undervisning (tim/vecka)",
+        "scheduled": "Enligt schemat (tim/vecka)",
+        "load": "Av målet",
+        "pupils": "Elever",
+        "qualified": "Behörig andel",
+        "employment": "Tjänstgöringsgrad"
+      }
+    },
+    "cost": {
+      "notYoursTitle": "Kostnaden är skolans ekonomi",
+      "notYoursBody": "Kostnadsunderlaget hämtas av rektor, en fullständig administratör, den som har HR-läs och huvudmannens läsare.",
+      "loadFailed": "Kostnadsunderlaget kunde inte hämtas",
+      "aggregateOnly": "Du läser kostnadsunderlaget som summor per skoldel och årskurs. Inga lärare och inga elever namnges.",
+      "basis": "Lärartid enligt tjänstefördelningen gånger skolans timkostnad: {rates}.",
+      "noRates": "ingen timkostnad är angiven än",
+      "substitutesOver": "Vikariernas hållna pass är räknade från {from} till {to}.",
+      "noSubstitutes": "Inga hållna vikariepass är räknade.",
+      "title": "Kostnad per elev",
+      "description": "Varje posts timmar delas lika på postens elever, var och en i sin årskurs. Uppdrag ingår inte, de finns i löneunderlaget.",
+      "download": "Ladda ner CSV",
+      "caption": "Kostnadsunderlag per skoldel och årskurs",
+      "column": {
+        "where": "Skoldel och årskurs",
+        "pupils": "Elever",
+        "hours": "{category} (tim)",
+        "perPupil": "Lärartid per elev (tim)",
+        "cost": "Kostnad",
+        "costPerPupil": "Kostnad per elev"
+      },
+      "partDetail": "konto {account}, årskurs {span}",
+      "grade": "Årskurs {grade}",
+      "noPart": "Ingen skoldel",
+      "noGrade": "utan årskurs",
+      "whole": "Hela skolan",
+      "unknown": "Okänd",
+      "unknownCost": "Skolan har ingen timkostnad för en av kategorierna som har timmar här.",
+      "noPupils": "Inga elever i årskursen."
+    },
+    "payroll": {
+      "periodTitle": "Period",
+      "periodDescription": "Lönemånaden, eller högst 93 dagar. Underlaget räknas för perioden när du visar det.",
+      "from": "Från",
+      "to": "Till",
+      "show": "Visa underlag",
+      "noPeriodTitle": "Välj en period",
+      "noPeriodBody": "Löneunderlaget räknas för en period i taget och visas först när du ber om det.",
+      "notYoursTitle": "Löneunderlaget är HR-uppgifter",
+      "notYoursBody": "Löneunderlaget innehåller varje persons tid och tjänstgöringsgrad. Det hämtas av rektor, en fullständig administratör eller den som har HR-läs.",
+      "loadFailed": "Löneunderlaget kunde inte hämtas",
+      "title": "Löneunderlag {from} – {to}",
+      "description": "{people} personer med tid i perioden, per skoldel. Undervisningen är hållna lektioner, vikariepassen timexportens, uppdragen delas mellan personens skoldelar.",
+      "csv": "CSV för Excel",
+      "xlsx": "Excel",
+      "downloaded": "{file} är hämtad.",
+      "emptyTitle": "Ingen tid i perioden",
+      "emptyBody": "Ingen undervisning, inga uppdrag och inga vikariepass hittades i perioden.",
+      "caption": "Löneunderlag per person och skoldel",
+      "column": {
+        "person": "Person",
+        "part": "Skoldel",
+        "account": "Konto",
+        "teaching": "Undervisning (tim)",
+        "duty": "Uppdrag (tim)",
+        "substitute": "Vikariepass (tim)",
+        "total": "Totalt (tim)"
+      },
+      "pool": "vikariepool",
+      "noPart": "Ej fördelat"
+    },
+    "settings": {
+      "deciders": "Skoldelar och timkostnader ändras av rektor och fullständig administratör. Du kan läsa dem.",
+      "parts": {
+        "title": "Skoldelar",
+        "description": "En skoldel är ett kostnadsställe med ett konto och de årskurser den rymmer, till exempel F–3, 4–6 och 7–9. Två skoldelar delar aldrig årskurs, så en klass hör till högst en.",
+        "loadFailed": "Skoldelarna kunde inte hämtas",
+        "empty": "Skolan har inga skoldelar än.",
+        "caption": "Skolans skoldelar",
+        "name": "Namn",
+        "account": "Konto",
+        "accountHint": "Kontot eller kostnadsstället som lönen bokas på.",
+        "grades": "Årskurser",
+        "actions": "Åtgärder",
+        "remove": "Ta bort skoldelen {name}",
+        "add": "Lägg till en skoldel",
+        "edit": "Ändra skoldelen",
+        "from": "Första årskurs",
+        "to": "Sista årskurs",
+        "preschool": "F (förskoleklass)",
+        "addButton": "Lägg till",
+        "saved": "Skoldelen är sparad.",
+        "removed": "Skoldelen är borttagen.",
+        "confirmTitle": "Ta bort skoldelen {name}?",
+        "confirmBody": "Kostnadsunderlaget och löneunderlaget visar då årskurserna utan skoldel. Ingen lön eller person ändras."
+      },
+      "rates": {
+        "title": "Timkostnad per personalkategori",
+        "description": "Kostnaden för en timme i varje kategori, i kronor. Det är skolans egen siffra för kategorin och ingen persons lön: inga individuella löner lagras.",
+        "loadFailed": "Timkostnaderna kunde inte hämtas",
+        "invalid": "Ange kronor per timme, 0 till 100 000, högst två decimaler.",
+        "saved": "Timkostnaden för {category} är sparad.",
+        "removed": "Timkostnaden för {category} är borttagen.",
+        "unset": "Inte angiven",
+        "unit": "kr/tim",
+        "remove": "Ta bort",
+        "hint": {
+          "TEACHER": "Undervisning av en lärare som en behörighet täcker, och alla lärare om skolan inte registrerat behörigheter.",
+          "UNQUALIFIED_TEACHER": "Undervisning av en lärare som ingen registrerad behörighet täcker.",
+          "SUBSTITUTE": "Hållna vikariepass, i klocktimmar."
+        }
+      }
     }
   }
 }

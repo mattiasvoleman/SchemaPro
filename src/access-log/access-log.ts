@@ -56,6 +56,16 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  * route or screen: a notice's readAt stays the recipient's, and a staff
  * member's own notices have no receipt at all.
  *
+ * ANALYS OCH PLANERING (20270130090000). The nyckeltal per lärare (GET
+ * /api/v1/analysis/key-figures) read each teacher's undervisning and load
+ * against their tjänst: EMPLOYMENT for every teacher in the answer, and PEOPLE
+ * beside it when the answer states a person's tjänstgöringsgrad, which only a
+ * reader of HR data is given. The löneunderlag and its file name people and
+ * state each one's time and tjänst: EMPLOYMENT and PEOPLE for everyone in it,
+ * written in the read's transaction before the answer leaves. The huvudman's
+ * reader is handed the school's figures and the cost basis as aggregates, which
+ * name nobody, and is recorded nowhere because nobody's data is read.
+ *
  * A GUARDIAN'S CALENDAR FEED. A feed of a child is the family's week again,
  * delivered to the guardian's calendar app instead of their screen, so it is
  * recorded as viewing it is: SCHEDULE, the guardian the reader, about the

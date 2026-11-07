@@ -128,6 +128,9 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   // Skolans dag: reads only. The one write, what a teacher has of it, is a decision the card asks of the
   // profile itself (profileDecides), so no area gates the page and the läsare opens it like any other.
   "/admin/school-day": null,
+  // Analys och planering: reads only. The skoldelar and the rates are decisions the card asks of the profile
+  // itself (profileDecides), and what each tab shows is what the gateway gives that profile, so no area gates the page.
+  "/admin/analysis": null,
   "/admin/lessons": "DRIFT",
   "/admin/teacher-absence": "DRIFT",
   "/admin/cover": "DRIFT",

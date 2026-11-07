@@ -60,6 +60,7 @@ import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module
 import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.module';
 import { AckModule } from '../../src/ack/ack.module';
 import { SchoolDayModule } from '../../src/school-day/school-day.module';
+import { AnalysisModule } from '../../src/analysis/analysis.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { SchoolExportModule } from '../../src/school-export/school-export.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
@@ -192,6 +193,7 @@ export const FEATURE_MODULES = [
   ReportingRateModule,
   AckModule,
   SchoolDayModule,
+  AnalysisModule,
   SignInModule,
   HuvudmanModule,
   AccessLogModule,
