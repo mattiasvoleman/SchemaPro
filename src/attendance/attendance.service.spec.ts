@@ -1360,6 +1360,8 @@ describe('AttendanceService', () => {
       expect(query.where).toEqual({
         student: { studentGroupId: PRIMARY_GROUP },
         calendarLesson: { date: { gte: new Date('2026-09-01T00:00:00.000Z'), lte: new Date('2026-09-30T00:00:00.000Z') } },
+        // UNKNOWN is a mark moved off a lesson (Elevens lektion för dagen), no mark at all.
+        status: { not: 'UNKNOWN' },
       });
       expect(query.take).toBe(20_000);
       expect(recordedReads(tx)).toEqual([{ kind: 'ATTENDANCE', channel: 'WEB', ids: [STUDENT_A] }]);
@@ -1378,15 +1380,21 @@ describe('AttendanceService', () => {
         { status: 'PRESENT', _count: { _all: 40 } },
         { status: 'LATE', _count: { _all: 5 } },
         { status: 'ABSENT', _count: { _all: 4 } },
-        { status: 'UNKNOWN', _count: { _all: 1 } },
       ]);
-      await expect(service.summary('2026-08-26', testUser())).resolves.toEqual({ recorded: 50, present: 45 });
+      await expect(service.summary('2026-08-26', testUser())).resolves.toEqual({ recorded: 49, present: 45 });
       expect(tx.attendanceRecord.groupBy).toHaveBeenCalledWith({
         by: ['status'],
-        where: { recordedAt: { gte: new Date('2026-08-26T00:00:00.000Z') } },
+        where: { recordedAt: { gte: new Date('2026-08-26T00:00:00.000Z') }, status: { not: 'UNKNOWN' } },
         _count: { _all: true },
       });
       expect(recordedReads(tx)).toEqual([]);
+    });
+
+    it('does not count a mark of UNKNOWN as recorded: a pupil moved off a lesson is not a second mark (MEDEL-4 of the review of #281)', async () => {
+      tx.attendanceRecord.groupBy = jest.fn().mockResolvedValue([{ status: 'PRESENT', _count: { _all: 3 } }]);
+      await service.summary('2026-08-26', testUser());
+      const [query] = tx.attendanceRecord.groupBy.mock.calls[0] as [{ where: { status?: unknown } }];
+      expect(query.where.status).toEqual({ not: 'UNKNOWN' });
     });
   });
 });

@@ -560,7 +560,10 @@ export class AttendanceService {
    * class is the group, on a lesson dated from..to (the administrator's
    * attendance report; read from PostgREST until Läslogg). At most
    * GROUP_ATTENDANCE_LIMIT marks, as the direct read was. ATTENDANCE in the
-   * läslogg, naming the pupils whose marks were returned.
+   * läslogg, naming the pupils whose marks were returned. UNKNOWN is no
+   * mark: it is what a pupil's mark on a lesson they were moved off becomes
+   * (Elevens lektion för dagen), and the reports leave it out as the absence
+   * watch, the minutes and SS12000 do.
    */
   async groupRecords(
     groupId: string,
@@ -581,6 +584,7 @@ export class AttendanceService {
         where: {
           student: { studentGroupId: groupId },
           calendarLesson: { date: { gte: from, lte: to } },
+          status: { not: 'UNKNOWN' },
         },
         select: {
           studentId: true,
@@ -606,13 +610,17 @@ export class AttendanceService {
     });
   }
 
-  /** The dashboard's attendance figure since a day. Counts only, so not in the läslogg. */
+  /**
+   * The dashboard's attendance figure since a day. Counts only, so not in the läslogg. A mark of UNKNOWN is not
+   * counted as recorded: a move writes one on the lesson the pupil was moved off (recordedAt = the move), and the
+   * figure the principal reads first would otherwise count the pupil twice.
+   */
   async summary(sinceDay: string, user: AuthenticatedUser): Promise<AttendanceSummaryResult> {
     const since = parseDateString(sinceDay);
     const groups = await this.prisma.queryWithRls(user, (db) =>
       db.attendanceRecord.groupBy({
         by: ['status'],
-        where: { recordedAt: { gte: since } },
+        where: { recordedAt: { gte: since }, status: { not: 'UNKNOWN' } },
         _count: { _all: true },
       }),
     );
