@@ -42,6 +42,7 @@ import {
   ROOM_LOANS,
   LENDABLE_ROOMS,
 } from "./misc-school";
+import { EXAM_COUNTER, EXAM_ROOMS, EXAM_SETTINGS, EXAMS } from "./misc-exams";
 import { byId, GROUP_LIST, GROUPS, HALF_LIST, NEXT_YEAR, ROOM_TYPES, STUDENTS, YEAR } from "./world";
 import { addDays, THIS_MONDAY } from "./calendar";
 import { weekOf } from "./gateway-public";
@@ -230,6 +231,12 @@ export const miscRoutes: GatewayRoute[] = [
 
   // --- Aktiviteter ---------------------------------------------------------------------------
   route("GET", "/api/v1/schedule-activities", ({ query }) => (query.get("academicYearId") === YEAR.id ? SCHEDULE_ACTIVITIES : [])),
+
+  // --- Prov och skrivsalar ---------------------------------------------------------------------
+  route("GET", "/api/v1/exams/settings", () => EXAM_SETTINGS),
+  route("GET", "/api/v1/exams/rooms", () => EXAM_ROOMS),
+  route("GET", "/api/v1/exams/counter", ({ query }) => (query.get("academicYearId") === YEAR.id ? EXAM_COUNTER : [])),
+  route("GET", "/api/v1/exams", ({ query }) => (query.get("academicYearId") === YEAR.id ? EXAMS : [])),
 
   // --- Dataskydd -------------------------------------------------------------------------------
   route("GET", "/api/v1/retention", () => RETENTION_OVERVIEW),
