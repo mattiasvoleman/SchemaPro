@@ -439,6 +439,7 @@ describe('Planning surface (e2e)', () => {
             lessonLogs: 6,
             enrolments: 25,
             mentorDuties: 1,
+            classTeacher: 0,
             fromSource: 1,
           },
         });
