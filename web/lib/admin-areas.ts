@@ -125,6 +125,9 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/schemavisaren": "PUBLICERING",
   // Kalenderprenumeration's switches are PublicationSettings, Publicering's.
   "/admin/calendar-feeds": "PUBLICERING",
+  // Skolans dag: reads only. The one write, what a teacher has of it, is a decision the card asks of the
+  // profile itself (profileDecides), so no area gates the page and the läsare opens it like any other.
+  "/admin/school-day": null,
   "/admin/lessons": "DRIFT",
   "/admin/teacher-absence": "DRIFT",
   "/admin/cover": "DRIFT",
@@ -142,6 +145,8 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/absence-watch": "DRIFT",
   // Rapporteringsgrad: the two switches and the limit are Drift's, as the attendance whose registers it counts.
   "/admin/reporting-rate": "DRIFT",
+  // Kvittens: the switch and the reminder are Drift's, as the notices they send to guardians; a request is written by Drift too.
+  "/admin/acknowledgements": "DRIFT",
   // Lektionslogg: the klassbok reads for everyone; removing a log is drift's.
   "/admin/klassbok": "DRIFT",
   "/admin/dataskydd": "DECIDES",

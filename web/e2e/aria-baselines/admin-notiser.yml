@@ -88,6 +88,9 @@
         - link "Krisläge":
           - /url: /sv/admin/crisis
       - listitem:
+        - link "Skolans dag":
+          - /url: /sv/admin/school-day
+      - listitem:
         - link "Dagsplanering":
           - /url: /sv/admin/lessons
       - listitem:
@@ -117,6 +120,9 @@
       - listitem:
         - link "Rapporteringsgrad":
           - /url: /sv/admin/reporting-rate
+      - listitem:
+        - link "Kvittens":
+          - /url: /sv/admin/acknowledgements
       - listitem:
         - link "Klassbok":
           - /url: /sv/admin/klassbok

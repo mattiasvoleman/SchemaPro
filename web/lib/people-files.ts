@@ -74,6 +74,11 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     rule: "HOLDS_OUT",
     why: "A row per pupil: a marked pupil's row and every mark that names them are left out, and the page and the file say how many pupils were counted without a name (lib/crisis-protocol.ts).",
   },
+  "components/school-day/print-actions.ts": {
+    files: "Skolans dag printed (Skriv ut, which is also how a PDF is made): the day or the week, as classes, teachers or rooms",
+    rule: "HOLDS_OUT",
+    why: "Names teachers beside their lessons and no pupil: a teacher the school has marked as having a protected identity is shown as 'Skyddad identitet' in the row and in every lesson, and the sheet says how many were left out. The marks are read at the click, and a read that fails prints nothing.",
+  },
   "app/[locale]/(app)/admin/reports/staffing-report.tsx": {
     files: "tjanstefordelning-….csv (samverkan), scb-pedagogisk-personal-….txt and .csv",
     rule: "KEEPS_AND_SAYS",

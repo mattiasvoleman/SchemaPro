@@ -5,7 +5,6 @@ import {
   CalendarDays,
   CalendarOff,
   CalendarRange,
-  CalendarSearch,
   ClipboardCheck,
   Coffee,
   GraduationCap,
@@ -109,7 +108,9 @@ export const ADMIN_NAV: NavSection[] = [
       { labelKey: "timetable", href: "/admin/timetable", icon: CalendarDays },
       // Next to the grid it is used against: finslipning starts once a base
       // schedule exists, and every answer there is read off this one.
-      { labelKey: "gaps", href: "/admin/gaps", icon: CalendarSearch },
+      // The day planner's icon: CalendarSearch was the only row of the menu to use it, and its code
+      // (240 B gzipped) sat in the shell of every admin page. /admin/gaps carries it itself now.
+      { labelKey: "gaps", href: "/admin/gaps", icon: CalendarClock },
       // Last in the phase, as in the manual: a schedule is published once it
       // is refined. The mode (direct or utkast), which published timetable is
       // valid when, and the checks. The ramtider's icon — a validity range is a
@@ -133,6 +134,11 @@ export const ADMIN_NAV: NavSection[] = [
       // icon (Ledighetsansökningar), already in the shell: the same act of
       // ticking pupils off, in a different hour.
       { labelKey: "crisis", href: "/admin/crisis", icon: ClipboardCheck },
+      // Skolans dag: the whole school's day and week as classes, teachers or
+      // rooms, and who is free. Before the day planner it reads from: the
+      // overview first, the single lesson after. The timetable's icon,
+      // already in the shell.
+      { labelKey: "schoolDay", href: "/admin/school-day", icon: CalendarDays },
       { labelKey: "dayPlanner", href: "/admin/lessons", icon: CalendarClock },
       { labelKey: "teacherAbsence", href: "/admin/teacher-absence", icon: UserX },
       // Beside the absence register whose lessons it covers. The day
@@ -158,6 +164,10 @@ export const ADMIN_NAV: NavSection[] = [
       // registers from the pupils' side. The reports' icon again, already in
       // the shell.
       { labelKey: "reportingRate", href: "/admin/reporting-rate", icon: BarChart3 },
+      // Kvittens: staff ask guardians to confirm a message, and see who has.
+      // The attendance icon (Ledighetsansökningar), already in the shell: a
+      // confirmation is a tick against a name, like the register's.
+      { labelKey: "acknowledgements", href: "/admin/acknowledgements", icon: ClipboardCheck },
       // Lektionslogg's klassbok: a class's lessons over a period, printed. The subjects' book.
       { labelKey: "classBook", href: "/admin/klassbok", icon: BookOpen },
     ],

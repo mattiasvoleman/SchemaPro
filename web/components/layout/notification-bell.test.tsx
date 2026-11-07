@@ -636,6 +636,34 @@ describe("NotificationBell inbox", () => {
     expect(router.push).toHaveBeenLastCalledWith("/admin/reporting-rate");
   });
 
+  it("tells the guardian that the school asks for a confirmation, and later reminds, by the message's title and never the child, and takes them to the list (Kvittens)", async () => {
+    const user = userEvent.setup();
+    who.role = "GUARDIAN";
+    supabaseState.selectResults.push(
+      ok([
+        notif({ type: "ACK_REQUESTED", meta: { requestId: "r-1", title: "Utflykten på torsdag", studentName: "Alva Elev" } }),
+        notif({ type: "ACK_REMINDER", meta: { requestId: "r-1", title: "Utflykten på torsdag" } }),
+        // No meta is a sentence with an empty title, not a crash and not "undefined".
+        notif({ type: "ACK_REQUESTED", meta: null }),
+      ]),
+    );
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    const request = screen.getByText("ack.ACK_REQUESTED(title=Utflykten på torsdag)");
+    expect(screen.getByText("ack.ACK_REMINDER(title=Utflykten på torsdag)")).toBeInTheDocument();
+    expect(screen.getByText("ack.ACK_REQUESTED(title=)")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/Alva|Elev|undefined/);
+
+    await user.click(request);
+    expect(router.push).toHaveBeenLastCalledWith("/guardian/acknowledgements");
+    await user.click(bellButton());
+    await user.click(screen.getByText("ack.ACK_REMINDER(title=Utflykten på torsdag)"));
+    expect(router.push).toHaveBeenLastCalledWith("/guardian/acknowledgements");
+  });
+
   it("says a notice of a type this build does not know as a notice, never an empty line", async () => {
     const user = userEvent.setup();
     supabaseState.selectResults.push(ok([notif({ type: "FROM_A_NEWER_GATEWAY" as BellRow["type"], meta: {} })]));

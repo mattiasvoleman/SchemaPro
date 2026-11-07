@@ -137,6 +137,10 @@ export const TEACHER_NAV: NavSection[] = [
       // homework. The admin menu's subjects icon, already in the shell.
       { labelKey: "classBook", href: "/teacher/klassbok", icon: BookOpen },
       { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
+      // Skolans dag: the school's day and week, in the form the school has
+      // decided teachers get (the page says so when it has decided none). The
+      // week's icon, already in the shell.
+      { labelKey: "schoolDay", href: "/teacher/school-day", icon: CalendarDays },
       // The teacher's own tjänst, read-only. The admin's Tjänstefördelning
       // icon, already in the shell: the same thing seen from the other side,
       // and a second glyph would be bytes on every route for nothing.
@@ -155,6 +159,9 @@ export const TEACHER_NAV: NavSection[] = [
       // Rapporteringsgrad: the lessons whose register is not saved, and the
       // teacher's own share. The attendance icon, already in the shell.
       { labelKey: "myReporting", href: "/teacher/reporting-rate", icon: ClipboardCheck },
+      // Kvittens: ask the guardians of the teacher's mentees to confirm a message. Always in
+      // the menu: the page says so when the school has not turned it on. The attendance icon.
+      { labelKey: "acknowledgements", href: "/teacher/acknowledgements", icon: ClipboardCheck },
       { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
     ],
 
@@ -169,6 +176,9 @@ export const GUARDIAN_NAV: NavSection[] = [
       // Frånvarobevakning: the children over a limit the school set for
       // guardians. Always in the menu; the list is empty when nothing applies.
       { labelKey: "absenceWatch", href: "/guardian/absence-watch", icon: BarChart3 },
+      // Kvittens: the messages the school asks the guardian to confirm. Always in the menu;
+      // the list is empty when nothing has been asked. The attendance icon, already in the shell.
+      { labelKey: "acknowledgements", href: "/guardian/acknowledgements", icon: ClipboardCheck },
       { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
     ],
   },

@@ -99,7 +99,7 @@ function fieldsUnderTheKeyboard(source: string, os: OS): number[] {
 
 describe('screens lay out for the window', () => {
   it('finds every screen', () => {
-    expect(SCREENS.length).toBe(11);
+    expect(SCREENS.length).toBe(12);
   });
 
   it.each(SCREENS)('%s takes its width from layout/responsive', (file) => {

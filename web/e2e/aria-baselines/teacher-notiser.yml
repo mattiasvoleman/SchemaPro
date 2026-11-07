@@ -20,6 +20,9 @@
         - link "Boka lokal":
           - /url: /sv/teacher/rooms
       - listitem:
+        - link "Skolans dag":
+          - /url: /sv/teacher/school-day
+      - listitem:
         - link "Min tjänst":
           - /url: /sv/teacher/tjanst
       - listitem:
@@ -34,6 +37,9 @@
       - listitem:
         - link "Min rapportering":
           - /url: /sv/teacher/reporting-rate
+      - listitem:
+        - link "Kvittens":
+          - /url: /sv/teacher/acknowledgements
       - listitem:
         - link "Min kalenderprenumeration":
           - /url: /sv/calendar-feed

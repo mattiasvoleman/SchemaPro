@@ -1047,21 +1047,12 @@ BEGIN
   PERFORM pg_temp.rgo_expect('346o the other school', (SELECT count(*)::text FROM app.reporting_lessons(other, '2026-09-15', '2026-09-15', now())), '0');
   PERFORM pg_temp.rgo_expect('346o what a row says', (SELECT reported::text FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), 'false');
 
-  -- A teacher of another school stands on a lesson of this one (the key to the teacher is a single column):
-  -- the lesson is not theirs to report here, and the night does not stop for it.
-  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, l, t_other, 'ASSISTANT');
-  PERFORM pg_temp.rgo_expect('346o a stranger', (SELECT string_agg(teacher_id::text, ',' ORDER BY teacher_id) FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), t1::text);
+  -- (A teacher of another school on a lesson of this one, and a row filed under another school's id for a teacher
+  -- of this school, were once planted here to prove that the lesson's own school decides; the keys to the lesson
+  -- and to the teacher are composite since 20270115090000, the database refuses both rows, and section 330 proves it.)
+  PERFORM pg_temp.rgo_expect('346o the lesson', (SELECT string_agg(teacher_id::text, ',' ORDER BY teacher_id) FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), t1::text);
   PERFORM app.reporting_compute(school, '2026-09-30');
-  IF EXISTS (SELECT 1 FROM "TeacherReportingDays" WHERE "teacherId" = t_other AND "schoolId" = school) THEN
-    RAISE EXCEPTION 'rapporteringsgrad 346o: a teacher of another school has a day here';
-  END IF;
-  PERFORM pg_temp.rgo_expect('346o the days beside a stranger', (SELECT string_agg(day || ' ' || reported || '/' || held, ', ') FROM "TeacherReportingDays" WHERE "schoolId" = school), '2026-09-15 0/1');
-
-  -- A row that puts a teacher of this school on the lesson under another school's id (the key to the lesson is a
-  -- single column, so the database takes it): the lesson's own school decides, and the row is no one's here.
-  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (other, l, t2, 'ASSISTANT');
-  PERFORM pg_temp.rgo_expect('346o a row of another school', (SELECT string_agg(teacher_id::text, ',' ORDER BY teacher_id) FROM app.reporting_lessons(school, '2026-09-15', '2026-09-15', now())), t1::text);
-  DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = l AND "schoolId" = other;
+  PERFORM pg_temp.rgo_expect('346o the days', (SELECT string_agg(day || ' ' || reported || '/' || held, ', ') FROM "TeacherReportingDays" WHERE "schoolId" = school), '2026-09-15 0/1');
 
   -- The window is 90 days up to and including the day asked for: a day inside it with no lesson is removed,
   -- one before it is final and stays as it was.
@@ -1455,6 +1446,1051 @@ BEGIN
   INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (school, t1, today - 800, 1, 1);
   run := app.gallring_begin(school, now());
   IF app.gallring_purge(run, 'ATTENDANCE', 100) <> 0 THEN RAISE EXCEPTION 'rapporteringsgrad 349o: a school that keeps its attendance lost a day'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 330 and 334 on the owner's side: Nycklar mellan skolbundna tabeller
+-- (20270115090000).
+--
+-- Every foreign key between two tables that both carry "schoolId" is
+-- ("x", "schoolId") -> table ("id", "schoolId"), so a row cannot name a row of
+-- another school. Sections 331-333 of rls-policies.sql re-point school B's rows
+-- at school A's as B's principals; what only the owner can ask is here:
+--
+--   330   the catalogue, the way section 291 asks it of the person keys. Every
+--         foreign key from a table with "schoolId" to another table with it
+--         holds the child's "schoolId" against the parent's, except five that
+--         something else holds (named, with what holds each): a key added
+--         later that does not fails here, named. The guard's own predicate is
+--         run over a stand-in pair with a key of each kind and must report the
+--         plain one alone. The thirty-eight keys of the migration are what the
+--         migration made them (columns, parent, actions, validated), the plain
+--         keys they replaced are gone, each key has an index that serves the
+--         lookup of a removed parent and the planner never answers it with a
+--         Seq Scan, and the database itself, with row security out of the way,
+--         refuses a row that names another school's. The guard sees a table's
+--         school under any column named <something>SchoolId when it has no
+--         "schoolId" of its own (RoomLoans).
+--         What these keys also hold: the policies' SELECT arms ask the school
+--         of the ROW, and the fixtures that once planted a row naming another
+--         school's (to tell an arm asking the row's school from one asking the
+--         parent's) are gone, since such a row cannot be written. Loosen a key
+--         here and that distinction is untested again, not only this section.
+--   334   what a removed parent does is what it did: CASCADE removes the row,
+--         SET NULL nulls the column and nothing else ("schoolId" stays), RESTRICT
+--         refuses. What a parent moved to another school does is nothing: the
+--         keys are ON UPDATE NO ACTION, so the move is refused by the key of
+--         the row that would have been carried along (it was CASCADE, and a room
+--         followed its room type to another school without a word).
+--
+-- The rows are rls-tenantkey-a's and -b's (fixtures: 7e<school><entity>-…).
+-- Run as the owner: the policies of the API's role add predicates of their own
+-- (sections 331-333 are theirs), and the referential lookups see none.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.tk_id(s int, n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('7e' || lpad(s::text, 2, '0') || lpad(to_hex(n), 4, '0') || '-0000-4000-8000-000000000000')::uuid
+$$;
+
+-- The keys of the migration: the table, the column, the parent, ON DELETE (c, n, r), the row of school B
+-- the column is moved on, the row of school A it is pointed at, and the entity of school B the
+-- column is moved to for 334 (null: the column's own parent is deleted).
+CREATE FUNCTION pg_temp.tk_keys() RETURNS TABLE (child text, col text, parent text, del char, row_n int, victim_n int)
+LANGUAGE sql AS $$
+  SELECT * FROM (VALUES
+    ('AbsenceReports',          'reportedById',       'Users',           'c', 60,  5),
+    ('AbsenceReports',          'studentId',          'Users',           'c', 60,  4),
+    ('AttendanceRecords',       'calendarLessonId',   'CalendarLessons', 'c', 38, 13),
+    ('AttendanceRecords',       'recordedById',       'Users',           'n', 38,  3),
+    ('AttendanceRecords',       'studentId',          'Users',           'c', 38,  4),
+    ('AvailabilityConstraints', 'roomId',             'Rooms',           'c', 58, 10),
+    ('AvailabilityConstraints', 'studentGroupId',     'StudentGroups',   'c', 59,  6),
+    ('AvailabilityConstraints', 'userId',             'Users',           'c', 57,  3),
+    ('CalendarLessonGroups',    'calendarLessonId',   'CalendarLessons', 'c', 35, 13),
+    ('CalendarLessonGroups',    'studentGroupId',     'StudentGroups',   'c', 35,  7),
+    ('CalendarLessonStudents',  'calendarLessonId',   'CalendarLessons', 'c', 36, 13),
+    ('CalendarLessonStudents',  'studentId',          'Users',           'c', 36,  4),
+    ('CalendarLessonTeachers',  'calendarLessonId',   'CalendarLessons', 'c', 37, 13),
+    ('CalendarLessonTeachers',  'teacherId',          'Users',           'c', 37,  3),
+    ('CalendarLessons',         'masterLessonId',     'MasterLessons',   'n', 13, 12),
+    ('CalendarLessons',         'roomId',             'Rooms',           'n', 13, 10),
+    ('CalendarLessons',         'studentGroupId',     'StudentGroups',   'c', 13,  6),
+    ('CalendarLessons',         'subjectId',          'Subjects',        'c', 13, 11),
+    ('LeaveRequests',           'decidedById',        'Users',           'n', 15,  2),
+    ('LeaveRequests',           'referredById',       'Users',           'n', 15,  3),
+    ('LeaveRequests',           'requestedById',      'Users',           'c', 15,  5),
+    ('LeaveRequests',           'studentId',          'Users',           'c', 15,  4),
+    ('MasterLessonGroups',      'masterLessonId',     'MasterLessons',   'c', 33, 12),
+    ('MasterLessonStudents',    'masterLessonId',     'MasterLessons',   'c', 34, 12),
+    ('Notifications',           'userId',             'Users',           'c', 61,  3),
+    ('RoomBookings',            'bookedById',         'Users',           'c', 62,  3),
+    ('RoomBookings',            'decidedById',        'Users',           'n', 62,  2),
+    ('RoomBookings',            'roomId',             'Rooms',           'c', 62, 10),
+    ('RoomPreferenceRooms',     'preferenceId',       'RoomPreferences', 'c', 63, 14),
+    ('RoomPreferenceRooms',     'roomId',             'Rooms',           'c', 63, 10),
+    ('RoomPreferences',         'roomTypeId',         'RoomTypes',       'c', 14,  9),
+    ('RoomPreferences',         'subjectId',          'Subjects',        'c', 14, 11),
+    ('Rooms',                   'roomTypeId',         'RoomTypes',       'r', 10,  9),
+    ('StudentGroupMembers',     'studentGroupId',     'StudentGroups',   'c', 32,  7),
+    ('StudentGroupMembers',     'studentId',          'Users',           'c', 32,  4),
+    ('StudentGroups',           'academicYearId',     'AcademicYears',   'c',  7,  8),
+    ('Subjects',                'requiredRoomTypeId', 'RoomTypes',       'r', 11,  9),
+    -- No id of its own (its key is the pair): moved by the pair, in 330 only.
+    ('LeaveRequestNotices',     'leaveRequestId',     'LeaveRequests',   'c', 15, 15)
+  ) v(child, col, parent, del, row_n, victim_n)
+$$;
+
+-- The columns of a table that say which school a row belongs to: "schoolId", or, in a table that has none of
+-- that name (RoomLoans: the owner's school and the borrower's), every column named like <something>SchoolId.
+CREATE FUNCTION pg_temp.tk_school_cols(p_rel oid) RETURNS int2[] LANGUAGE sql AS $$
+  SELECT coalesce(
+    (SELECT array_agg(a.attnum) FROM pg_attribute a WHERE a.attrelid = p_rel AND a.attname = 'schoolId' AND NOT a.attisdropped),
+    (SELECT array_agg(a.attnum) FROM pg_attribute a WHERE a.attrelid = p_rel AND a.attnum > 0 AND NOT a.attisdropped AND a.attname ~ '[a-z]SchoolId$'))
+$$;
+
+-- The guard's predicate, over the foreign keys of one schema's tables: those whose child and parent both
+-- carry a school column (above) and that do not hold one of the child's against one of the parent's at some
+-- position of the key. Run over "public" for the guard, and over this session's temporary tables for its
+-- self-test.
+CREATE FUNCTION pg_temp.tk_gaps(p_schema oid) RETURNS TABLE (tbl text, conname text, cols text)
+LANGUAGE sql AS $$
+  SELECT cl.relname::text, c.conname::text,
+         (SELECT string_agg(a.attname, ',' ORDER BY u.ord)
+            FROM unnest(c.conkey) WITH ORDINALITY u(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum)
+    FROM pg_constraint c
+    JOIN pg_class cl ON cl.oid = c.conrelid AND cl.relnamespace = p_schema
+    CROSS JOIN LATERAL (SELECT pg_temp.tk_school_cols(c.conrelid) AS cs, pg_temp.tk_school_cols(c.confrelid) AS ps) s
+   WHERE c.contype = 'f'
+     AND s.cs IS NOT NULL AND s.ps IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM generate_subscripts(c.conkey, 1) i
+                      WHERE c.conkey[i] = ANY (s.cs) AND c.confkey[i] = ANY (s.ps))
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Section 330, the guard.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  exempt constant text[] := ARRAY[
+    'CrisisPupils.CrisisPupils_callId_alarmId_fkey',
+    'CrisisReports.CrisisReports_callId_alarmId_fkey',
+    'CrisisReports.CrisisReports_callId_studentId_fkey',
+    'CrisisReports.CrisisReports_foundInCallId_alarmId_fkey',
+    'Users.Users_studentGroupId_fkey'];
+  found text[];
+  extra text[];
+  gone text[];
+  asked int;
+  unvalid text[];
+  chain record;
+BEGIN
+  SELECT array_agg(g.tbl || '.' || g.conname ORDER BY g.tbl, g.conname) INTO found FROM pg_temp.tk_gaps('public'::regnamespace) g;
+  SELECT array_agg(f ORDER BY f) INTO extra FROM unnest(found) f WHERE f <> ALL (exempt);
+  SELECT array_agg(e ORDER BY e) INTO gone FROM unnest(exempt) e WHERE e <> ALL (coalesce(found, '{}'));
+  IF extra IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 330: a key between two tables that carry "schoolId" does not hold them together: % (make it (x, "schoolId") -> parent (id, "schoolId"), the parent having that unique key, as 20270115090000 did for 38 others; or, if something else holds it, name what in this list)', extra;
+  END IF;
+  IF gone IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 330: a key this list says something else holds is gone or has become composite: % (take it off the list)', gone;
+  END IF;
+
+  SELECT count(*) INTO asked
+    FROM pg_constraint c
+    JOIN pg_class cl ON cl.oid = c.conrelid AND cl.relnamespace = 'public'::regnamespace
+   WHERE c.contype = 'f'
+     AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attname = 'schoolId' AND NOT a.attisdropped)
+     AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.confrelid AND a.attname = 'schoolId' AND NOT a.attisdropped);
+  IF asked < 200 THEN
+    RAISE EXCEPTION 'tenant keys 330: only % keys between tables with "schoolId" were asked, the catalogue holds more than 200', asked;
+  END IF;
+
+  -- A key left NOT VALID judges new rows and nothing before them.
+  SELECT array_agg(cl.relname || '.' || c.conname ORDER BY cl.relname, c.conname) INTO unvalid
+    FROM pg_constraint c
+    JOIN pg_class cl ON cl.oid = c.conrelid AND cl.relnamespace = 'public'::regnamespace
+   WHERE c.contype = 'f' AND NOT c.convalidated
+     AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attname = 'schoolId' AND NOT a.attisdropped);
+  IF unvalid IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 330: keys that were never validated: % (VALIDATE CONSTRAINT)', unvalid;
+  END IF;
+
+  -- What holds each of the five: the Crisis keys, the keys beside them on the same call.
+  FOR chain IN SELECT * FROM (VALUES
+      ('CrisisPupils',  'CrisisPupils_callId_schoolId_fkey'),
+      ('CrisisReports', 'CrisisReports_callId_schoolId_fkey'),
+      ('CrisisCalls',   'CrisisCalls_alarmId_schoolId_fkey')) v(tbl, conname)
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+                    WHERE c.conname = chain.conname AND c.conrelid = to_regclass(format('public.%I', chain.tbl)) AND c.contype = 'f' AND c.convalidated
+                      AND (SELECT string_agg(a.attname::text, ',' ORDER BY u.ord) FROM unnest(c.conkey) WITH ORDINALITY u(attnum, ord)
+                             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum) LIKE '%,schoolId') THEN
+      RAISE EXCEPTION 'tenant keys 330: %.% is gone, and it is what holds the Crisis keys to one school', chain.tbl, chain.conname;
+    END IF;
+  END LOOP;
+  -- And a pupil's class: the trigger that refuses another school's, in the key's own words.
+  IF (SELECT count(*) FROM pg_trigger t
+       WHERE t.tgrelid = '"Users"'::regclass AND t.tgname IN ('Users_enrollment_on_insert', 'Users_enrollment_on_update')
+         AND t.tgenabled = 'O' AND t.tgfoid = 'app.student_enrollments_follow_the_class'::regproc) <> 2 THEN
+    RAISE EXCEPTION 'tenant keys 330: the triggers that hold a pupil''s class to the pupil''s school are not both there and on';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- The guard's own predicate, over stand-ins: the plain keys and the two that hold a school against
+-- something else are reported, the composite one is not. A guard that let one through, or reported the
+-- composite one, fails here.
+BEGIN;
+DO $$
+DECLARE
+  got text[];
+BEGIN
+  CREATE TEMP TABLE tk_parent (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, UNIQUE (id, "schoolId"));
+  CREATE TEMP TABLE tk_plain (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid REFERENCES tk_parent (id));
+  CREATE TEMP TABLE tk_composite (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                  FOREIGN KEY (x, "schoolId") REFERENCES tk_parent (id, "schoolId"));
+  -- Both in one table: the composite key does not make the plain one beside it right.
+  CREATE TEMP TABLE tk_both (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid REFERENCES tk_parent (id),
+                             FOREIGN KEY (x, "schoolId") REFERENCES tk_parent (id, "schoolId"));
+  -- The child's school held against a column of the parent's that is not its school.
+  CREATE TEMP TABLE tk_parent2 (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, other uuid NOT NULL, UNIQUE (id, other));
+  CREATE TEMP TABLE tk_crossed (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                FOREIGN KEY (x, "schoolId") REFERENCES tk_parent2 (id, other));
+  -- The parent's school held against a column of the child's that is not its school.
+  CREATE TEMP TABLE tk_wrongcol (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid, y uuid,
+                                 FOREIGN KEY (x, y) REFERENCES tk_parent (id, "schoolId"));
+  -- A table without the column on either side is none of the guard's business.
+  CREATE TEMP TABLE tk_bare (id uuid PRIMARY KEY);
+  CREATE TEMP TABLE tk_bare_child (id uuid PRIMARY KEY, x uuid REFERENCES tk_bare (id));
+  -- A table whose school is not called "schoolId" (RoomLoans: ownerSchoolId, borrowerSchoolId): a plain key
+  -- from it is a gap, a key that holds one of its school columns against the parent's is not.
+  CREATE TEMP TABLE tk_loan_plain (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid REFERENCES tk_parent (id));
+  CREATE TEMP TABLE tk_loan_owner (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                   FOREIGN KEY (x, "ownerSchoolId") REFERENCES tk_parent (id, "schoolId"));
+  CREATE TEMP TABLE tk_loan_borrower (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                      FOREIGN KEY (x, "borrowerSchoolId") REFERENCES tk_parent (id, "schoolId"));
+  -- The same table the other way round: a school-bound table naming a row of a table whose school is called
+  -- <x>SchoolId, plain.
+  CREATE TEMP TABLE tk_loaned (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, UNIQUE (id, "ownerSchoolId"));
+  CREATE TEMP TABLE tk_names_loaned (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid REFERENCES tk_loaned (id));
+  SELECT array_agg(g.tbl ORDER BY g.tbl) INTO got FROM pg_temp.tk_gaps(pg_my_temp_schema()) g;
+  IF got IS DISTINCT FROM ARRAY['tk_both', 'tk_crossed', 'tk_loan_plain', 'tk_names_loaned', 'tk_plain', 'tk_wrongcol'] THEN
+    RAISE EXCEPTION 'tenant keys 330: the guard reported % over the stand-ins, not the keys that do not hold the school alone (tk_both, tk_crossed, tk_loan_plain, tk_names_loaned, tk_plain, tk_wrongcol)', got;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 330, the thirty-eight keys.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  k record;
+  def text;
+  want text;
+  valid boolean;
+  idx text;
+  line text;
+  plan text;
+  types text;
+  nulls text;
+  where_sql text;
+  kname text;
+  checked int := 0;
+  unled text[] := '{}';
+  bare text[] := '{}';
+BEGIN
+  PERFORM set_config('plan_cache_mode', 'force_generic_plan', true);
+  PERFORM set_config('enable_seqscan', 'off', true);
+  FOR k IN SELECT * FROM pg_temp.tk_keys() LOOP
+    kname := k.child || '_' || k.col || '_schoolId_fkey';
+    SELECT pg_get_constraintdef(c.oid), c.convalidated INTO def, valid
+      FROM pg_constraint c WHERE c.conname = kname AND c.conrelid = to_regclass(format('public.%I', k.child)) AND c.contype = 'f';
+    IF def IS NULL THEN
+      RAISE EXCEPTION 'tenant keys 330: % is gone', kname;
+    END IF;
+    -- ON UPDATE NO ACTION is the default and pg_get_constraintdef does not print it; the catalogue's own
+    -- letter is asked as well, so a key that follows its parent to another school (CASCADE, SET NULL) fails here.
+    want := format('FOREIGN KEY (%I, "schoolId") REFERENCES %I(id, "schoolId") ON DELETE %s', k.col, k.parent,
+                   CASE k.del WHEN 'c' THEN 'CASCADE' WHEN 'r' THEN 'RESTRICT' ELSE format('SET NULL (%I)', k.col) END);
+    IF def IS DISTINCT FROM want THEN
+      RAISE EXCEPTION E'tenant keys 330: % is\n  %\nnot\n  %', kname, def, want;
+    END IF;
+    IF (SELECT c.confupdtype FROM pg_constraint c WHERE c.conname = kname AND c.conrelid = to_regclass(format('public.%I', k.child))) <> 'a' THEN
+      RAISE EXCEPTION 'tenant keys 330: % follows its parent when the parent is updated (ON UPDATE is not NO ACTION)', kname;
+    END IF;
+    IF NOT valid THEN
+      RAISE EXCEPTION 'tenant keys 330: % was never validated', kname;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conname = k.child || '_' || k.col || '_fkey' AND c.conrelid = to_regclass(format('public.%I', k.child))) THEN
+      RAISE EXCEPTION 'tenant keys 330: the plain key %_%_fkey is back beside the composite one', k.child, k.col;
+    END IF;
+
+    -- The lookup of a removed parent: an equality on the key's columns. An index that starts with the
+    -- column (the school is a filter on the rows it finds), or whose first two columns are the key's
+    -- own in either order, serves it; and the planner, asked for the lookup with sequential scans off,
+    -- never answers with a Seq Scan.
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_index i
+       WHERE i.indrelid = to_regclass(format('public.%I', k.child)) AND i.indisvalid AND i.indisready AND i.indexprs IS NULL
+         AND (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = i.indrelid AND a.attnum = (i.indkey::int2[])[0]) = k.col
+    ) THEN
+      unled := unled || (k.child || '(' || k.col || ')');
+    END IF;
+    SELECT string_agg(format('$%s = x.%I', u.ord, a.attname), ' AND ' ORDER BY u.ord),
+           string_agg(format_type(a.atttypid, a.atttypmod), ',' ORDER BY u.ord),
+           string_agg('NULL', ',' ORDER BY u.ord)
+      INTO where_sql, types, nulls
+      FROM unnest(ARRAY[k.col, 'schoolId']) WITH ORDINALITY u(name, ord)
+      JOIN pg_attribute a ON a.attrelid = to_regclass(format('public.%I', k.child)) AND a.attname = u.name;
+    EXECUTE format('PREPARE tk_lookup(%s) AS SELECT 1 FROM ONLY %I x WHERE %s FOR KEY SHARE OF x', types, k.child, where_sql);
+    plan := '';
+    FOR line IN EXECUTE format('EXPLAIN EXECUTE tk_lookup(%s)', nulls) LOOP plan := plan || line || E'\n'; END LOOP;
+    DEALLOCATE tk_lookup;
+    IF plan ~ 'Seq Scan' THEN bare := bare || (k.child || '(' || k.col || ')'); END IF;
+    checked := checked + 1;
+  END LOOP;
+  IF checked <> 38 THEN RAISE EXCEPTION 'tenant keys 330: % keys checked, 38 expected', checked; END IF;
+  IF cardinality(unled) > 0 THEN
+    RAISE EXCEPTION 'tenant keys 330: removing a parent has no index to find the rows of % with (give each key one that starts with its column)', unled;
+  END IF;
+  IF cardinality(bare) > 0 THEN
+    RAISE EXCEPTION 'tenant keys 330: removing a parent reads the whole of % (no index of any kind answers the lookup)', bare;
+  END IF;
+
+  -- The four parents' key and the four indexes the migration added for the lookups.
+  FOR idx IN SELECT unnest(ARRAY['MasterLessons_id_schoolId_key', 'RoomPreferences_id_schoolId_key', 'RoomTypes_id_schoolId_key', 'LeaveRequests_id_schoolId_key']) LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass(format('public.%I', idx)) AND i.indisunique AND i.indisvalid AND i.indisready
+                      AND (SELECT array_agg(a.attname::text ORDER BY u.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY u(attnum, ord)
+                             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = u.attnum) = ARRAY['id', 'schoolId']) THEN
+      RAISE EXCEPTION 'tenant keys 330: % is not a valid unique key on (id, schoolId)', idx;
+    END IF;
+  END LOOP;
+  FOR idx IN SELECT unnest(ARRAY['CalendarLessons_subjectId_schoolId_idx', 'RoomPreferences_subjectId_schoolId_idx',
+                                  'RoomPreferences_roomTypeId_schoolId_idx', 'RoomPreferenceRooms_roomId_schoolId_idx']) LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass(format('public.%I', idx)) AND NOT i.indisunique AND i.indisvalid AND i.indisready) THEN
+      RAISE EXCEPTION 'tenant keys 330: % is not a valid index', idx;
+    END IF;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 330, the database itself. School B's rows, re-pointed at school A's with row security out of
+-- the way (the owner): every key refuses, by its own name, by UPDATE and by INSERT. A pupil's class is
+-- the one the trigger refuses (in the key's words), and the control, a row of B's own, goes through.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  k record;
+  snap jsonb;
+  got text;
+  cname text;
+  bad text[] := '{}';
+  n int := 0;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM "Schools" WHERE id = pg_temp.tk_id(2, 1) AND slug = 'rls-tenantkey-b') THEN
+    RAISE EXCEPTION 'tenant keys 330: the fixture schools are not there; fixtures did not run';
+  END IF;
+  FOR k IN SELECT * FROM pg_temp.tk_keys() WHERE child <> 'LeaveRequestNotices' LOOP
+    -- UPDATE
+    BEGIN
+      EXECUTE format('UPDATE %I SET %I = $1 WHERE id = $2', k.child, k.col) USING pg_temp.tk_id(1, k.victim_n), pg_temp.tk_id(2, k.row_n);
+      got := 'OK';
+      RAISE EXCEPTION 'rollback' USING ERRCODE = 'TF999';
+    EXCEPTION
+      WHEN SQLSTATE 'TF999' THEN NULL;
+      WHEN foreign_key_violation THEN GET STACKED DIAGNOSTICS cname = CONSTRAINT_NAME; got := 'fk:' || cname;
+      WHEN OTHERS THEN got := 'other:' || SQLSTATE;
+    END;
+    IF got = 'fk:' || k.child || '_' || k.col || '_schoolId_fkey' OR (got = 'other:LV409' AND k.child = 'LeaveRequests') THEN
+      n := n + 1;
+    ELSE
+      bad := bad || format('%s.%s UPDATE: %s', k.child, k.col, got);
+    END IF;
+    -- INSERT: the row as it is, removed, and written again with the other school's row in the column.
+    BEGIN
+      EXECUTE format('SELECT to_jsonb(c) FROM %I c WHERE id = $1', k.child) INTO snap USING pg_temp.tk_id(2, k.row_n);
+      EXECUTE format('DELETE FROM %I WHERE id = $1', k.child) USING pg_temp.tk_id(2, k.row_n);
+      EXECUTE format('INSERT INTO %1$I SELECT (jsonb_populate_record(NULL::%1$I, $1 || jsonb_build_object(%2$L, $2))).*', k.child, k.col) USING snap, pg_temp.tk_id(1, k.victim_n);
+      got := 'OK';
+      RAISE EXCEPTION 'rollback' USING ERRCODE = 'TF999';
+    EXCEPTION
+      WHEN SQLSTATE 'TF999' THEN NULL;
+      WHEN foreign_key_violation THEN GET STACKED DIAGNOSTICS cname = CONSTRAINT_NAME; got := 'fk:' || cname;
+      WHEN OTHERS THEN got := 'other:' || SQLSTATE;
+    END;
+    IF got = 'fk:' || k.child || '_' || k.col || '_schoolId_fkey' THEN
+      n := n + 1;
+    ELSE
+      bad := bad || format('%s.%s INSERT: %s', k.child, k.col, got);
+    END IF;
+  END LOOP;
+  -- The notice has no id: its key is the pair, and the pair is moved.
+  BEGIN
+    UPDATE "LeaveRequestNotices" SET "leaveRequestId" = pg_temp.tk_id(1, 15) WHERE "leaveRequestId" = pg_temp.tk_id(2, 15);
+    got := 'OK';
+    RAISE EXCEPTION 'rollback' USING ERRCODE = 'TF999';
+  EXCEPTION
+    WHEN SQLSTATE 'TF999' THEN NULL;
+    WHEN foreign_key_violation THEN GET STACKED DIAGNOSTICS cname = CONSTRAINT_NAME; got := 'fk:' || cname;
+    WHEN OTHERS THEN got := 'other:' || SQLSTATE;
+  END;
+  IF got = 'fk:LeaveRequestNotices_leaveRequestId_schoolId_fkey' THEN n := n + 1; ELSE bad := bad || format('LeaveRequestNotices.leaveRequestId UPDATE: %s', got); END IF;
+  IF cardinality(bad) > 0 THEN
+    RAISE EXCEPTION E'tenant keys 330: the database took, or refused otherwise than by the key, a row naming another school''s:\n%', array_to_string(bad, E'\n');
+  END IF;
+  IF n <> 75 THEN
+    RAISE EXCEPTION 'tenant keys 330: % refusals by a key or its trigger, 75 expected (37 keys by two paths, less the two leave-request UPDATEs a trigger refuses first, plus the notice)', n;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- A pupil's class is not a key of the migration's kind: the trigger refuses another school's class in the
+-- key's own words, and a class of the pupil's school goes through.
+BEGIN;
+DO $$
+DECLARE
+  own_class uuid := gen_random_uuid();
+  msg text;
+BEGIN
+  INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (own_class, pg_temp.tk_id(2, 1), pg_temp.tk_id(2, 8), 'TK330 egen klass', 'CLASS', 7, now());
+  UPDATE "Users" SET "studentGroupId" = own_class WHERE id = pg_temp.tk_id(2, 17);
+  BEGIN
+    UPDATE "Users" SET "studentGroupId" = pg_temp.tk_id(1, 6) WHERE id = pg_temp.tk_id(2, 17);
+    RAISE EXCEPTION 'tenant keys 330: a pupil was given another school''s class';
+  EXCEPTION WHEN foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS msg = CONSTRAINT_NAME;
+    IF msg IS DISTINCT FROM 'Users_studentGroupId_fkey' THEN RAISE EXCEPTION 'tenant keys 330: the refusal of another school''s class named %', msg; END IF;
+  END;
+  BEGIN
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+    VALUES (pg_temp.tk_id(2, 1), 'tk330-pupil@example.invalid', 'Tk', 'Pupil', 'STUDENT', gen_random_uuid(), true, pg_temp.tk_id(1, 6), now());
+    RAISE EXCEPTION 'tenant keys 330: a pupil was written into another school''s class';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 334: what a removed parent does is what it did.
+--
+-- Each key's own parent (the row its column names) is removed, as the owner, in a
+-- subtransaction that is rolled back: CASCADE removes the row; SET NULL nulls the
+-- column and leaves "schoolId" and the rest of the row as they were (the key is
+-- on the pair, and only the column is nulled); RESTRICT refuses and the row stays.
+-- The two RESTRICT keys are tried one at a time, the other's rows moved off the type.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  k record;
+  parent_id uuid;
+  school uuid;
+  after_col uuid;
+  after_school uuid;
+  still boolean;
+  cname text;
+  refused boolean;
+  ok int := 0;
+BEGIN
+  FOR k IN SELECT * FROM pg_temp.tk_keys() WHERE child <> 'LeaveRequestNotices' LOOP
+    BEGIN
+      EXECUTE format('SELECT %I, "schoolId" FROM %I WHERE id = $1', k.col, k.child) INTO parent_id, school USING pg_temp.tk_id(2, k.row_n);
+      IF school IS DISTINCT FROM pg_temp.tk_id(2, 1) THEN
+        RAISE EXCEPTION 'tenant keys 334: % of the fixture is not school B''s', k.child;
+      END IF;
+      IF parent_id IS NULL THEN
+        -- A column the fixture leaves empty (who decided, who referred) names school B's counterpart of the row
+        -- 331 points at school A.
+        parent_id := pg_temp.tk_id(2, k.victim_n);
+        EXECUTE format('UPDATE %I SET %I = $1 WHERE id = $2', k.child, k.col) USING parent_id, pg_temp.tk_id(2, k.row_n);
+      END IF;
+      refused := false;
+      -- A room type is held by two RESTRICT keys (a room's and a subject's): each is tried alone, the rows of
+      -- the other moved off the type, and the removal of a type for the keys that follow it out first.
+      IF k.parent = 'RoomTypes' THEN
+        IF k.child <> 'Rooms' THEN UPDATE "Rooms" SET "roomTypeId" = NULL WHERE "schoolId" = school; END IF;
+        IF k.child <> 'Subjects' THEN UPDATE "Subjects" SET "requiredRoomTypeId" = NULL WHERE "schoolId" = school; END IF;
+      END IF;
+      IF k.del = 'r' THEN
+        BEGIN
+          EXECUTE format('DELETE FROM %I WHERE id = $1', k.parent) USING parent_id;
+        EXCEPTION WHEN restrict_violation OR foreign_key_violation THEN
+          GET STACKED DIAGNOSTICS cname = CONSTRAINT_NAME;
+          refused := true;
+          IF cname IS DISTINCT FROM k.child || '_' || k.col || '_schoolId_fkey' THEN
+            RAISE EXCEPTION 'tenant keys 334: removing the type was refused by % and not by %', cname, k.child || '_' || k.col || '_schoolId_fkey';
+          END IF;
+        END;
+        IF NOT refused THEN RAISE EXCEPTION 'tenant keys 334: % % did not refuse the removal of its parent', k.child, k.col; END IF;
+      ELSE
+        EXECUTE format('DELETE FROM %I WHERE id = $1', k.parent) USING parent_id;
+        EXECUTE format('SELECT true, %I, "schoolId" FROM %I WHERE id = $1', k.col, k.child) INTO still, after_col, after_school USING pg_temp.tk_id(2, k.row_n);
+        IF k.del = 'c' AND still IS NOT NULL THEN
+          RAISE EXCEPTION 'tenant keys 334: % % did not follow its parent out', k.child, k.col;
+        END IF;
+        IF k.del = 'n' AND (still IS NOT TRUE OR after_col IS NOT NULL OR after_school IS DISTINCT FROM school) THEN
+          RAISE EXCEPTION 'tenant keys 334: % % was %/% after its parent went, not null with the school kept', k.child, k.col, after_col, after_school;
+        END IF;
+      END IF;
+      ok := ok + 1;
+      RAISE EXCEPTION 'rollback' USING ERRCODE = 'TF999';
+    EXCEPTION WHEN SQLSTATE 'TF999' THEN NULL;
+    END;
+  END LOOP;
+  IF ok <> 37 THEN RAISE EXCEPTION 'tenant keys 334: % keys of 37 removed their parent', ok; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 334, the other half: a parent moved to another school is not followed.
+--
+-- A room type of school B with one room of B's, moved to school A by an UPDATE of its "schoolId" (the owner;
+-- no role the API runs as can). ON UPDATE CASCADE would have carried the room along, and the move would have
+-- passed in silence, a room in a school that never made it; NO ACTION refuses, and the refusal is the room's
+-- key. The room type is a fresh one so that nothing but the room holds it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  rtype uuid := gen_random_uuid();
+  room uuid := gen_random_uuid();
+  cname text;
+  moved boolean := false;
+BEGIN
+  INSERT INTO "RoomTypes" (id, "schoolId", name, "updatedAt") VALUES (rtype, pg_temp.tk_id(2, 1), 'TK334 flyttad typ', now());
+  INSERT INTO "Rooms" (id, "schoolId", name, "roomTypeId", "updatedAt") VALUES (room, pg_temp.tk_id(2, 1), 'TK334 flyttat rum', rtype, now());
+  BEGIN
+    UPDATE "RoomTypes" SET "schoolId" = pg_temp.tk_id(1, 1) WHERE id = rtype;
+    moved := true;
+  EXCEPTION WHEN foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS cname = CONSTRAINT_NAME;
+  END;
+  IF moved THEN
+    RAISE EXCEPTION 'tenant keys 334: a room type was moved to another school and its room was %', (SELECT "schoolId" FROM "Rooms" WHERE id = room);
+  END IF;
+  IF cname IS DISTINCT FROM 'Rooms_roomTypeId_schoolId_fkey' THEN
+    RAISE EXCEPTION 'tenant keys 334: moving the room type was refused by % and not by Rooms_roomTypeId_schoolId_fkey', cname;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Kvittens (F4, 20270117091000), owner checks. What needs the owner: removing a
+-- person, a request whose time has been moved, the lock a confirmation takes,
+-- and a gallring run.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.kvo_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'kvittens %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- A statement the table must refuse, by a fragment of the constraint's name (or the SQLSTATE).
+CREATE FUNCTION pg_temp.kvo_refuses(p_sql text, p_fragment text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE p_sql;
+  RAISE EXCEPTION 'kvittens: accepted: %', p_sql;
+EXCEPTION WHEN check_violation OR unique_violation OR foreign_key_violation OR not_null_violation THEN
+  IF position(p_fragment IN SQLERRM) = 0 AND p_fragment <> SQLSTATE THEN
+    RAISE EXCEPTION 'kvittens: % was refused, but not by %: %', p_sql, p_fragment, SQLERRM;
+  END IF;
+END $$;
+-- The school's people by e-mail, and a request written as the owner (no login: the author is given).
+CREATE FUNCTION pg_temp.kvo_user(p_email text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT id FROM "Users" WHERE email = p_email || '@example.invalid'
+$$;
+CREATE FUNCTION pg_temp.kvo_request(p_school uuid, p_author uuid, p_title text, p_rule "AckRule", p_pairs text) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  req uuid := gen_random_uuid();
+  pair text;
+BEGIN
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, rule) VALUES (req, p_school, p_author, p_title, 'Text för ' || p_title, p_rule);
+  FOREACH pair IN ARRAY string_to_array(p_pairs, ',') LOOP
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+    VALUES (req, p_school, pg_temp.kvo_user('kv-' || split_part(pair, ':', 1)), pg_temp.kvo_user('kv-' || split_part(pair, ':', 2)));
+  END LOOP;
+  RETURN req;
+END $$;
+
+-- 370o: the constraints, what removing a person takes, and the keys' indexes.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  author uuid;
+  req uuid;
+  fk record;
+BEGIN
+  -- An author the owner names is kept, and the name is the person's.
+  req := pg_temp.kvo_request(school, full_, 'Ägd', 'ANY', 'p1:g1');
+  PERFORM pg_temp.kvo_expect('370o owner''s request keeps its author', (SELECT "authorName" FROM "AckRequests" WHERE id = req), 'Kvittens Full');
+  -- Without an author there is no name, and the CHECK says so.
+  PERFORM pg_temp.kvo_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'T', 'B')$q$, school), 'an_author_has_a_name');
+  -- An author of another school is no author of this one's.
+  PERFORM pg_temp.kvo_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", "authorId", title, body) VALUES (%L, %L, 'T', 'B')$q$, school, pg_temp.kvo_user('kv-annan-admin')), 'an_author_has_a_name');
+  -- A receipt filed under another school than its request's is refused by the composite key.
+  PERFORM pg_temp.kvo_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$,
+                                     req, (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan'), pg_temp.kvo_user('kv-annan-p'), pg_temp.kvo_user('kv-annan-g')), 'AckReceipts_requestId_schoolId_fkey');
+  -- A guardian of one school asked about a pupil of another is refused by the keys to Users.
+  PERFORM pg_temp.kvo_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$,
+                                     req, school, pg_temp.kvo_user('kv-annan-p'), pg_temp.kvo_user('kv-g1')), '_studentId_schoolId_fkey');
+
+  -- Removing the author keeps the request, with the name, and the school.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'kv-leaving@example.invalid', 'Kvittens', 'Lämnar', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO author;
+  req := pg_temp.kvo_request(school, author, 'Lämnarens', 'ANY', 'p1:g1');
+  DELETE FROM "Users" WHERE id = author;
+  PERFORM pg_temp.kvo_expect('370o a removed author', (SELECT concat_ws('|', "authorId" IS NULL, "schoolId" = school, "authorName") FROM "AckRequests" WHERE id = req), 't|t|Kvittens Lämnar');
+  -- Removing a guardian takes their receipts; removing a pupil takes all that ask about the pupil; the request, all under it.
+  req := pg_temp.kvo_request(school, full_, 'Tre rader', 'ALL', 'p1:g1,p1:g2,p2:g1');
+  DELETE FROM "Users" WHERE id = pg_temp.kvo_user('kv-g2');
+  PERFORM pg_temp.kvo_expect('370o a removed guardian', (SELECT count(*)::text FROM "AckReceipts" WHERE "requestId" = req), '2');
+  DELETE FROM "Users" WHERE id = pg_temp.kvo_user('kv-p2');
+  PERFORM pg_temp.kvo_expect('370o a removed pupil', (SELECT count(*)::text FROM "AckReceipts" WHERE "requestId" = req), '1');
+  DELETE FROM "AckRequests" WHERE id = req;
+  PERFORM pg_temp.kvo_expect('370o a removed request', (SELECT count(*)::text FROM "AckReceipts" WHERE "requestId" = req), '0');
+
+  -- Every foreign key of the three tables has an index that starts with its columns (the FK index audit).
+  FOR fk IN
+    SELECT c.conname, c.conrelid::regclass::text AS tbl
+      FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid::regclass::text IN ('"AckSettings"', '"AckRequests"', '"AckReceipts"')
+       AND NOT EXISTS (
+             SELECT 1 FROM pg_index i
+              WHERE i.indrelid = c.conrelid AND i.indisvalid
+                AND (i.indkey::int2[])[0:cardinality(c.conkey) - 1] = c.conkey)
+  LOOP
+    RAISE EXCEPTION 'kvittens 370o: % on % has no index that starts with its columns', fk.conname, fk.tbl;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid WHERE c.relname IN ('AckSettings', 'AckRequests', 'AckReceipts') AND NOT i.indisvalid) THEN
+    RAISE EXCEPTION 'kvittens 370o: an index is invalid';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'AckRequests_stamp' AND tgrelid = '"AckRequests"'::regclass AND tgenabled = 'O')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'AckSettings_stamp' AND tgrelid = '"AckSettings"'::regclass AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'kvittens 370o: a stamp is missing or off';
+  END IF;
+
+  -- The outcome of a reminder: only a sent one has a time, and only a request with a reminder has an outcome.
+  req := pg_temp.kvo_request(school, full_, 'Utfall', 'ANY', 'p1:g1');
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderSentAt" = now() WHERE id = %L$q$, req), 'only_a_sent_reminder_has_a_time');
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderOutcome" = 'SENT' WHERE id = %L$q$, req), 'only_a_sent_reminder_has_a_time');
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderOutcome" = 'STOPPED', "reminderSentAt" = now() WHERE id = %L$q$, req), 'only_a_sent_reminder_has_a_time');
+  UPDATE "AckRequests" SET "reminderOutcome" = 'SENT', "reminderSentAt" = now() WHERE id = req;
+  UPDATE "AckRequests" SET "reminderOutcome" = 'NOT_NEEDED', "reminderSentAt" = NULL WHERE id = req;
+  UPDATE "AckRequests" SET "remindAt" = NULL, "reminderOutcome" = NULL, "reminderSentAt" = NULL WHERE id = req;
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderOutcome" = 'STOPPED' WHERE id = %L$q$, req), 'a_reminder_was_due');
+END $$;
+ROLLBACK;
+
+-- 370o: the limits. A person writes ten requests an hour and a school 20 000 receipts a day (KV429, KV428),
+-- as a logged-in writer; the owner (this script, a migration) is not counted against and writes as it likes. The
+-- claims are set under the owner so the statement runs the triggers as a login would; the policies are the
+-- policy suite's (370).
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  req uuid;
+  i integer;
+BEGIN
+  -- Ten requests made the owner's way, an hour and a half ago, count for nothing when the person is logged in.
+  FOR i IN 1..10 LOOP
+    req := pg_temp.kvo_request(school, full_, 'Gammal ' || i, 'ANY', 'p1:g1');
+    UPDATE "AckRequests" SET "createdAt" = now() - interval '90 minutes' WHERE id = req;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  FOR i IN 1..10 LOOP
+    INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (school, 'Ny ' || i, 'B');
+  END LOOP;
+  BEGIN
+    INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (school, 'Elfte', 'B');
+    RAISE EXCEPTION 'kvittens 370o: an eleventh request in an hour was written';
+  EXCEPTION WHEN SQLSTATE 'KV429' THEN NULL;
+  END;
+  -- The window moves: when the oldest of the ten is more than an hour old the person writes again.
+  UPDATE "AckRequests" SET "createdAt" = now() - interval '61 minutes' WHERE title = 'Ny 1';
+  INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (school, 'Efter en timme', 'B');
+  -- The limit is per person: a colleague writes on, and so does the person in no other school's count.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000008')::text, true);
+  INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (school, 'Kollegan', 'B');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000031')::text, true);
+  FOR i IN 1..10 LOOP
+    INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (other, 'Annans ' || i, 'B');
+  END LOOP;
+  -- And the owner is not a person: no claims, no count, any number.
+  PERFORM set_config('request.jwt.claims', '', true);
+  FOR i IN 1..12 LOOP
+    PERFORM pg_temp.kvo_request(school, full_, 'Ägarens ' || i, 'ANY', 'p1:g1');
+  END LOOP;
+END $$;
+ROLLBACK;
+
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan');
+  t3 uuid := pg_temp.kvo_user('kv-t3');
+  req uuid;
+BEGIN
+  -- A school's day: 19 999 receipts the owner's way (1 000 requests, twenty receipts each less one), then a person
+  -- asks for one more (the 20 000th, which is allowed) and one more still (refused, with nothing written).
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body)
+  SELECT gen_random_uuid(), school, t3, 'Dygn ' || g, 'B' FROM generate_series(1, 1000) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Dygn %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 19999;
+  PERFORM pg_temp.kvo_expect('370o the owner''s day', (SELECT count(*)::text FROM "AckReceipts" WHERE "schoolId" = school AND "createdAt" > now() - interval '24 hours'), '19999');
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Dagens', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+  BEGIN
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+    VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2')), (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3'));
+    RAISE EXCEPTION 'kvittens 370o: a school''s 20 002nd receipt in a day was written';
+  EXCEPTION WHEN SQLSTATE 'KV428' THEN NULL;
+  END;
+  -- The statement was refused whole: neither of its rows is there.
+  PERFORM pg_temp.kvo_expect('370o a refused statement writes nothing', (SELECT count(*)::text FROM "AckReceipts" WHERE "requestId" = req), '1');
+  -- Another school is another count; and the same school writes again when the day has moved on.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000031')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), other, 'Annans dag', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, other, pg_temp.kvo_user('kv-annan-p'), pg_temp.kvo_user('kv-annan-g'));
+  PERFORM set_config('request.jwt.claims', '', true);
+  UPDATE "AckReceipts" SET "createdAt" = now() - interval '25 hours' WHERE "schoolId" = school AND "requestId" IN (SELECT id FROM "AckRequests" WHERE title LIKE 'Dygn %');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES ((SELECT id FROM "AckRequests" WHERE title = 'Dagens'), school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2'));
+END $$;
+ROLLBACK;
+
+-- 372o: what a confirmation locks on the guardian's links. A link that is removed waits for the
+-- confirmation (FOR KEY SHARE) or is gone before it, and the confirmation then refuses (KV410): the
+-- row locks of the transaction show as its xmax. The request's own lock (FOR SHARE, against the
+-- reminder pass's FOR UPDATE SKIP LOCKED) cannot be read this way, since writing its receipts has
+-- key-shared it already: the adapter probe (probe-kvittens.ts) holds a confirmation open on one
+-- connection and runs the pass on another.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  req uuid;
+  me text := pg_current_xact_id()::xid::text;
+  g1 uuid := pg_temp.kvo_user('kv-g1');
+BEGIN
+  req := pg_temp.kvo_request(school, pg_temp.kvo_user('kv-full'), 'Lås', 'ALL', 'p1:g1,p2:g1');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000021')::text, true);
+  IF EXISTS (SELECT 1 FROM "GuardianStudents" WHERE xmax::text = me) THEN
+    RAISE EXCEPTION 'kvittens 372o: a link was locked before the confirmation';
+  END IF;
+  PERFORM app.ack_confirm(req);
+  PERFORM pg_temp.kvo_expect('372o the guardian''s links are key-shared',
+    (SELECT string_agg((xmax::text = me)::text, ',' ORDER BY "studentId") FROM "GuardianStudents" WHERE "guardianId" = g1), 'true,true');
+  IF (SELECT count(*) FROM "GuardianStudents" WHERE xmax::text = me) <> 2 THEN
+    RAISE EXCEPTION 'kvittens 372o: a confirmation locked a link that is not the guardian''s, or too few';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 372o: a confirmation marks the guardian's own notices about the request as read (the request and the
+-- reminder: nothing is left to do), and no others: not another request's, not another type's that happens to
+-- carry the id, not the other guardian's.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  g1 uuid := pg_temp.kvo_user('kv-g1');
+  g2 uuid := pg_temp.kvo_user('kv-g2');
+  req uuid;
+  other_req uuid;
+  first_read timestamptz;
+  seen text;
+BEGIN
+  req := pg_temp.kvo_request(school, full_, 'Läst', 'ANY', 'p1:g1,p1:g2');
+  other_req := pg_temp.kvo_request(school, full_, 'Annan', 'ANY', 'p1:g1');
+  INSERT INTO "Notifications" ("schoolId", "userId", type, meta) VALUES
+    (school, g1, 'ACK_REQUESTED', jsonb_build_object('requestId', req, 'title', 'Läst')),
+    (school, g1, 'ACK_REMINDER', jsonb_build_object('requestId', req, 'title', 'Läst')),
+    (school, g1, 'ACK_REQUESTED', jsonb_build_object('requestId', other_req, 'title', 'Annan')),
+    (school, g1, 'LESSON_CANCELLED', jsonb_build_object('requestId', req)),
+    (school, g2, 'ACK_REQUESTED', jsonb_build_object('requestId', req, 'title', 'Läst'));
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000021')::text, true);
+  PERFORM app.ack_confirm(req);
+  PERFORM set_config('request.jwt.claims', '', true);
+  SELECT string_agg((CASE n."userId" WHEN g1 THEN 'g1' ELSE 'g2' END) || ' ' || n.type::text || ' ' || coalesce(n.meta ->> 'title', '-') || ' ' || (n."readAt" IS NOT NULL)::text,
+                    E'\n' ORDER BY n."userId" = g1 DESC, n.type::text, n.meta ->> 'title')
+    INTO seen FROM "Notifications" n WHERE n."schoolId" = school AND n.type IN ('ACK_REQUESTED', 'ACK_REMINDER', 'LESSON_CANCELLED');
+  PERFORM pg_temp.kvo_expect('372o which notices a confirmation reads', seen,
+    E'g1 ACK_REMINDER Läst true\ng1 ACK_REQUESTED Annan false\ng1 ACK_REQUESTED Läst true\ng1 LESSON_CANCELLED - false\ng2 ACK_REQUESTED Läst false');
+  -- A second tap changes nothing, the time of the reading included.
+  SELECT min("readAt") INTO first_read FROM "Notifications" WHERE "userId" = g1 AND type = 'ACK_REMINDER';
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000021')::text, true);
+  PERFORM app.ack_confirm(req);
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF (SELECT min("readAt") FROM "Notifications" WHERE "userId" = g1 AND type = 'ACK_REMINDER') IS DISTINCT FROM first_read THEN
+    RAISE EXCEPTION 'kvittens 372o: a second tap moved the time a notice was read';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 373o: the reminder. Which guardians, how many, how each request ends, and never twice. A request is made due
+-- by moving its time, which no role may do. The pass is the job's: no claims here, as the delivery's door has none.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  q1 uuid; q2 uuid; q3 uuid; q4 uuid; q5 uuid; q6 uuid; q7 uuid; q9 uuid; q10 uuid; q11 uuid;
+  told text;
+  n integer;
+  ids uuid[];
+  mine uuid[];
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (school, true, 2), (other, true, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET enabled = true, "remindAfterDays" = 2;
+  -- Q1  ALL, P1 asks G1 and G2, P2 asks G1: due, nobody has confirmed.
+  q1 := pg_temp.kvo_request(school, full_, 'Q1', 'ALL', 'p1:g1,p1:g2,p2:g1');
+  -- Q2  ANY, P1 asks G1 and G2: due, G1 has confirmed so the pupil is met, and G2 is reminded all the same:
+  --     whether the other guardian has answered is not something a missing reminder may tell.
+  q2 := pg_temp.kvo_request(school, full_, 'Q2', 'ANY', 'p1:g1,p1:g2');
+  UPDATE "AckReceipts" SET "ackedAt" = now() WHERE "requestId" = q2 AND "guardianId" = pg_temp.kvo_user('kv-g1');
+  -- Q3  ALL, P1 asks G1 and G2: due, G2 has confirmed, so G1 alone is asked.
+  q3 := pg_temp.kvo_request(school, full_, 'Q3', 'ALL', 'p1:g1,p1:g2');
+  UPDATE "AckReceipts" SET "ackedAt" = now() WHERE "requestId" = q3 AND "guardianId" = pg_temp.kvo_user('kv-g2');
+  -- Q4  not yet due (two days off).
+  q4 := pg_temp.kvo_request(school, full_, 'Q4', 'ALL', 'p3:g3');
+  -- Q5  due 40 days ago: closed without a word.
+  q5 := pg_temp.kvo_request(school, full_, 'Q5', 'ALL', 'p3:g3');
+  -- Q6  ALL, P4's only guardian has no link any more: nobody to ask.
+  q6 := pg_temp.kvo_request(school, full_, 'Q6', 'ALL', 'p4:g4');
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.kvo_user('kv-g4') AND "studentId" = pg_temp.kvo_user('kv-p4');
+  -- Q7  the other school's, due: told in its own school, to its own guardian.
+  q7 := pg_temp.kvo_request(other, pg_temp.kvo_user('kv-annan-admin'), 'Q7', 'ALL', 'annan-p:annan-g');
+  -- Q9  due, stopped by its author before the pass: nobody is told.
+  q9 := pg_temp.kvo_request(school, full_, 'Q9', 'ANY', 'p3:g3');
+  -- Q10 due, everybody has confirmed: nothing to remind.
+  q10 := pg_temp.kvo_request(school, full_, 'Q10', 'ANY', 'p3:g3');
+  UPDATE "AckReceipts" SET "ackedAt" = now() WHERE "requestId" = q10;
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id IN (q1, q2, q3, q6, q7, q9, q10);
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '40 days' WHERE id = q5;
+  mine := ARRAY[q1, q2, q3, q4, q5, q6, q7, q9, q10];
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  PERFORM pg_temp.kvo_expect('373o stopped before the pass', app.ack_stop_reminder(q9)::text, 'STOPPED');
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  -- The queue: what is due and not dealt with, the oldest first, bounded; nothing of Q4 (not yet), Q9 (stopped).
+  SELECT array_agg(r.request_id ORDER BY r.ord) INTO ids FROM (SELECT d.request_id, row_number() OVER () AS ord FROM app.ack_remind_queue(100) d) r;
+  IF NOT (ids @> ARRAY[q1, q2, q3, q5, q6, q7, q10]) OR q4 = ANY (ids) OR q9 = ANY (ids) THEN
+    RAISE EXCEPTION 'kvittens 373o: the queue is not what is due and not dealt with';
+  END IF;
+  -- Oldest first: Q5 (forty days) before the ones that fell due an hour ago.
+  IF array_position(ids, q5) > least(array_position(ids, q1), array_position(ids, q2), array_position(ids, q3), array_position(ids, q6), array_position(ids, q7), array_position(ids, q10)) THEN
+    RAISE EXCEPTION 'kvittens 373o: the queue does not begin with the oldest (Q5, forty days)';
+  END IF;
+  IF (SELECT count(*) FROM app.ack_remind_queue(2)) <> 2 OR (SELECT count(*) FROM app.ack_remind_queue(0)) <> 0 THEN
+    RAISE EXCEPTION 'kvittens 373o: the queue does not keep to its bound';
+  END IF;
+
+  -- A logged-in caller is handed nothing from either step, and writes nothing, with these due.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000021')::text, true);
+  IF EXISTS (SELECT 1 FROM app.ack_remind_queue(100)) OR EXISTS (SELECT 1 FROM app.ack_remind_request(q1)) THEN
+    RAISE EXCEPTION 'kvittens 373o: a guardian was handed the queue or a reminder';
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  IF EXISTS (SELECT 1 FROM app.ack_remind_queue(100)) OR EXISTS (SELECT 1 FROM app.ack_remind_request(q1)) THEN
+    RAISE EXCEPTION 'kvittens 373o: an administrator was handed the queue or a reminder';
+  END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF (SELECT "reminderOutcome" FROM "AckRequests" WHERE id = q1) IS NOT NULL OR EXISTS (SELECT 1 FROM "Notifications" WHERE type = 'ACK_REMINDER') THEN
+    RAISE EXCEPTION 'kvittens 373o: a logged-in caller moved the pass';
+  END IF;
+
+  -- The pass, a request at a time: Q1 tells G1 once (two children) and G2; Q2 tells G2; Q3 tells G1; Q7 the other school's guardian.
+  SELECT string_agg(r.title || ' ' || substr(u.email, 4, 3) || ' ' || (r.school_id = a."schoolId")::text || ' ' || (r.email = u.email)::text,
+                    ', ' ORDER BY r.title, u.email)
+    INTO told
+    FROM (SELECT d.notification_id, d.user_id, d.school_id, d.email, d.meta ->> 'title' AS title
+            FROM unnest(ARRAY[q1, q2, q3, q4, q5, q6, q7, q9, q10]) AS due(request_id), LATERAL app.ack_remind_request(due.request_id) d) r
+    JOIN "Users" u ON u.id = r.user_id
+    JOIN "AckRequests" a ON a.title = r.title AND a."schoolId" = r.school_id;
+  PERFORM pg_temp.kvo_expect('373o who is reminded', told, 'Q1 g1@ true true, Q1 g2@ true true, Q2 g2@ true true, Q3 g1@ true true, Q7 ann true true');
+  PERFORM pg_temp.kvo_expect('373o the notices written',
+    (SELECT string_agg(n.type::text || ' ' || (n.meta ->> 'title'), ', ' ORDER BY n.meta ->> 'title', n."userId"::text) FROM "Notifications" n WHERE n.type = 'ACK_REMINDER'),
+    'ACK_REMINDER Q1, ACK_REMINDER Q1, ACK_REMINDER Q2, ACK_REMINDER Q3, ACK_REMINDER Q7');
+
+  -- Receipts marked: all of Q1's, G2's of Q2, only G1's of Q3, none of Q4, Q5, Q6, Q9, Q10.
+  PERFORM pg_temp.kvo_expect('373o receipts reminded',
+    (SELECT string_agg(q.title || ':' || (SELECT count(*) FROM "AckReceipts" r WHERE r."requestId" = q.id AND r."remindedAt" IS NOT NULL), ' ' ORDER BY q.title)
+       FROM "AckRequests" q WHERE q.id IN (q1, q2, q3, q4, q5, q6, q7, q9, q10)),
+    'Q1:3 Q10:0 Q2:1 Q3:1 Q4:0 Q5:0 Q6:0 Q7:1 Q9:0');
+  -- How each ended, and a time only where something was sent.
+  PERFORM pg_temp.kvo_expect('373o how the reminders ended',
+    (SELECT string_agg(q.title || ':' || coalesce(q."reminderOutcome"::text, '-') || ':' || (q."reminderSentAt" IS NOT NULL)::text, ' ' ORDER BY q.title)
+       FROM "AckRequests" q WHERE q.id IN (q1, q2, q3, q4, q5, q6, q7, q9, q10)),
+    'Q1:SENT:true Q10:NOT_NEEDED:false Q2:SENT:true Q3:SENT:true Q4:-:false Q5:LAPSED:false Q6:NOT_NEEDED:false Q7:SENT:true Q9:STOPPED:false');
+  -- Never twice: none of these is in the queue again, and the request is not asked again by name.
+  SELECT array_agg(d.request_id) INTO ids FROM app.ack_remind_queue(1000) d WHERE d.request_id = ANY (mine);
+  IF ids IS NOT NULL THEN RAISE EXCEPTION 'kvittens 373o: a second queue has % of these requests, wanted none', ids; END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_request(q1);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 373o: a second pass over Q1 reminded % guardians', n; END IF;
+  -- Even a request opened again (which no role may do) asks nobody twice: the receipt remembers, and it ends as needing no one.
+  UPDATE "AckRequests" SET "reminderOutcome" = NULL, "reminderSentAt" = NULL WHERE id IN (q1, q3);
+  SELECT count(*) INTO n FROM (SELECT * FROM app.ack_remind_request(q1) UNION ALL SELECT * FROM app.ack_remind_request(q3)) x;
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 373o: a request opened again reminded % guardians who had been reminded', n; END IF;
+  IF (SELECT string_agg("reminderOutcome"::text, ',') FROM "AckRequests" WHERE id IN (q1, q3)) <> 'NOT_NEEDED,NOT_NEEDED' THEN
+    RAISE EXCEPTION 'kvittens 373o: a request opened again did not end as needing no reminder';
+  END IF;
+  -- Q4 comes due: it is told then, and only then.
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 minute' WHERE id = q4;
+  SELECT count(*) INTO n FROM app.ack_remind_request(q4);
+  IF n <> 1 THEN RAISE EXCEPTION 'kvittens 373o: Q4 reminded % guardians when it came due', n; END IF;
+  -- A request that is not due, one that does not exist and a null are nothing.
+  q11 := pg_temp.kvo_request(school, full_, 'Q11', 'ANY', 'p3:g3');
+  IF EXISTS (SELECT 1 FROM app.ack_remind_request(q11)) OR EXISTS (SELECT 1 FROM app.ack_remind_request(gen_random_uuid())) OR EXISTS (SELECT 1 FROM app.ack_remind_request(NULL)) THEN
+    RAISE EXCEPTION 'kvittens 373o: a request that is not due, or no request, was reminded';
+  END IF;
+  -- A school with no reminder (NULL days) gets a request with no time and is never told.
+  UPDATE "AckSettings" SET "remindAfterDays" = NULL WHERE "schoolId" = school;
+  q4 := pg_temp.kvo_request(school, full_, 'Q8', 'ANY', 'p3:g3');
+  IF (SELECT "remindAt" FROM "AckRequests" WHERE id = q4) IS NOT NULL THEN RAISE EXCEPTION 'kvittens 373o: a school with no reminder gave a request a time'; END IF;
+  IF EXISTS (SELECT 1 FROM app.ack_remind_queue(100) d WHERE d.request_id = q4) OR EXISTS (SELECT 1 FROM app.ack_remind_request(q4)) THEN
+    RAISE EXCEPTION 'kvittens 373o: a request with no reminder time was reminded';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 373o: turning kvittens off stops the reminders of the school's requests whose time comes while it is off, for good:
+-- turned on again, the pass does not send what fell due in between (OFF), and a request not yet due is reminded as before.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  due_ uuid; later uuid; n integer;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (school, true, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET enabled = true, "remindAfterDays" = 2;
+  due_ := pg_temp.kvo_request(school, full_, 'Av 1', 'ANY', 'p1:g1');
+  later := pg_temp.kvo_request(school, full_, 'Av 2', 'ANY', 'p3:g3');
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = due_;
+  UPDATE "AckSettings" SET enabled = false WHERE "schoolId" = school;
+  SELECT count(*) INTO n FROM app.ack_remind_request(due_);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 373o: % guardians were reminded in a school that has turned kvittens off', n; END IF;
+  PERFORM pg_temp.kvo_expect('373o a reminder that fell due while off', (SELECT "reminderOutcome"::text FROM "AckRequests" WHERE id = due_), 'OFF');
+  UPDATE "AckSettings" SET enabled = true WHERE "schoolId" = school;
+  SELECT count(*) INTO n FROM app.ack_remind_request(due_);
+  IF n <> 0 OR EXISTS (SELECT 1 FROM app.ack_remind_queue(100) d WHERE d.request_id = due_) THEN
+    RAISE EXCEPTION 'kvittens 373o: turned on again, the reminder that fell due while off was sent';
+  END IF;
+  -- The one that came due after it was turned on again is reminded.
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 minute' WHERE id = later;
+  SELECT count(*) INTO n FROM app.ack_remind_request(later);
+  IF n <> 1 THEN RAISE EXCEPTION 'kvittens 373o: a request that came due with kvittens on reminded % guardians', n; END IF;
+END $$;
+ROLLBACK;
+
+-- 374o: gallring. A request goes with the school's choice for NOTIFICATIONS, by the day it was
+-- made, with the receipts under it, in the same batch as the notices.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan');
+  admin uuid := pg_temp.kvo_user('kv-full');
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  old1 uuid; old2 uuid; recent uuid; foreign_ uuid;
+  run uuid;
+  n integer;
+  counts jsonb;
+  tbls text[];
+BEGIN
+  old1 := pg_temp.kvo_request(school, admin, 'Gammal 1', 'ALL', 'p1:g1,p1:g2,p2:g1');
+  old2 := pg_temp.kvo_request(school, admin, 'Gammal 2', 'ANY', 'p3:g3');
+  recent := pg_temp.kvo_request(school, admin, 'Ny', 'ANY', 'p3:g3');
+  foreign_ := pg_temp.kvo_request(other, pg_temp.kvo_user('kv-annan-admin'), 'Annans gamla', 'ANY', 'annan-p:annan-g');
+  UPDATE "AckRequests" SET "createdAt" = now() - interval '900 days' WHERE id IN (old1, foreign_);
+  UPDATE "AckRequests" SET "createdAt" = now() - interval '400 days' WHERE id = old2;
+  UPDATE "AckRequests" SET "createdAt" = now() - interval '30 days' WHERE id = recent;
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (school, 'NOTIFICATIONS', 'PURGE_AFTER', 12, 'KV 374', admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+
+  -- What is due, as the one predicate answers it: the two old requests of this school, under NOTIFICATIONS and nothing else.
+  SELECT array_agg(DISTINCT d.tbl) INTO tbls FROM app.gallring_due(school, 'NOTIFICATIONS', today - 365, today) d WHERE d.tbl = 'AckRequests';
+  IF tbls IS DISTINCT FROM ARRAY['AckRequests'] THEN RAISE EXCEPTION 'kvittens 374o: the kinds due are %', tbls; END IF;
+  IF (SELECT count(*) FROM app.gallring_due(school, 'NOTIFICATIONS', today - 365, today) d WHERE d.tbl = 'AckRequests') <> 2
+     OR NOT EXISTS (SELECT 1 FROM app.gallring_due(school, 'NOTIFICATIONS', today - 365, today) d WHERE d.id = old1)
+     OR NOT EXISTS (SELECT 1 FROM app.gallring_due(school, 'NOTIFICATIONS', today - 365, today) d WHERE d.id = old2) THEN
+    RAISE EXCEPTION 'kvittens 374o: not the two requests made before the cutoff are due';
+  END IF;
+  IF EXISTS (SELECT 1 FROM unnest(ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'CHANGE_LOGS', 'ABSENCE_REASONS', 'ACCESS_LOG', 'COVER_REQUESTS']::"RetentionDataType"[]) t
+              WHERE EXISTS (SELECT 1 FROM app.gallring_due(school, t, today - 365, today) d WHERE d.tbl = 'AckRequests')) THEN
+    RAISE EXCEPTION 'kvittens 374o: the requests are due under another kind than NOTIFICATIONS';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.gallring_due(other, 'NOTIFICATIONS', today - 365, today) d WHERE d.id IN (old1, old2)) THEN
+    RAISE EXCEPTION 'kvittens 374o: a school''s requests are due under another school''s run';
+  END IF;
+
+  -- The night: the two old requests go with their five receipts; the recent one and the other school's stay.
+  run := app.gallring_begin(school, now());
+  LOOP
+    n := app.gallring_purge(run, 'NOTIFICATIONS', 1);
+    EXIT WHEN n = 0;
+  END LOOP;
+  PERFORM app.gallring_finish(run, '{}', now());
+  PERFORM pg_temp.kvo_expect('374o what is left',
+    (SELECT string_agg(q.title || ':' || (SELECT count(*) FROM "AckReceipts" r WHERE r."requestId" = q.id), ' ' ORDER BY q.title) FROM "AckRequests" q WHERE q.id IN (old1, old2, recent, foreign_)),
+    'Annans gamla:1 Ny:1');
+  SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
+  IF (counts ->> 'NOTIFICATIONS')::integer <> 2 THEN RAISE EXCEPTION 'kvittens 374o: the run counts % under NOTIFICATIONS, not the two requests', counts ->> 'NOTIFICATIONS'; END IF;
+
+  -- The batch is shared with the notices: with a budget of one the run is not complete until nothing is left.
+  old1 := pg_temp.kvo_request(school, admin, 'Gammal 3', 'ANY', 'p3:g3');
+  old2 := pg_temp.kvo_request(school, admin, 'Gammal 4', 'ANY', 'p3:g3');
+  UPDATE "AckRequests" SET "createdAt" = now() - interval '800 days' WHERE id IN (old1, old2);
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'NOTIFICATIONS', 1) <> 1 THEN RAISE EXCEPTION 'kvittens 374o: a batch of one took more or less than one request'; END IF;
+  IF (SELECT (complete ->> 'NOTIFICATIONS')::boolean FROM "GallringRuns" WHERE id = run) THEN
+    RAISE EXCEPTION 'kvittens 374o: a full batch said nothing was left';
+  END IF;
+  IF app.gallring_purge(run, 'NOTIFICATIONS', 1) <> 1 OR app.gallring_purge(run, 'NOTIFICATIONS', 1) <> 0 THEN
+    RAISE EXCEPTION 'kvittens 374o: the second request was not taken in the next batch';
+  END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+
+  -- KEEP stops it at once.
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, reference, "decidedById", "decidedAt")
+  VALUES (school, 'NOTIFICATIONS', 'KEEP', 'KV 374 keep', admin, now() - interval '1 hour');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  old1 := pg_temp.kvo_request(school, admin, 'Gammal 5', 'ANY', 'p3:g3');
+  UPDATE "AckRequests" SET "createdAt" = now() - interval '800 days' WHERE id = old1;
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'NOTIFICATIONS', 100) <> 0 THEN RAISE EXCEPTION 'kvittens 374o: a school that keeps its notices lost a request'; END IF;
   PERFORM app.gallring_finish(run, '{}', now());
 END $$;
 ROLLBACK;

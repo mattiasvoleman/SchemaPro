@@ -79,6 +79,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'who attends a lesson, for every caller: the attendance check and the register’s list (real people at dated lessons, it writes rows), every lesson notice and avbokning digest, and the teacher app’s broadcast (nobody is told about next year’s class before the activation)',
   },
   'src/integration/ss12000.service.ts': { basis: 'CURRENT', why: 'an external export, of the active year by design' },
+  'src/ack/ack.service.ts': {
+    basis: 'CURRENT',
+    why: 'Kvittens: the pupils a request can be about, every active pupil of the school or a mentor’s mentees today, with their home class as it is; no lesson’s roster',
+  },
   'src/family/leave.service.ts': {
     basis: 'CURRENT',
     why: 'the class name shown beside a pupil in the leave inboxes, as the pupil is placed now; who decides is the class history’s (app.leave_mentors), not this',

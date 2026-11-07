@@ -280,8 +280,8 @@ describe('replacement lessons of an activity', () => {
           note: 'Friluftsdag: Vandring',
           teachers: {
             create: [
-              { schoolId: SCHOOL, teacherId: 't1', role: 'LEAD' },
-              { schoolId: SCHOOL, teacherId: 't2', role: 'ASSISTANT' },
+              { teacherId: 't1', role: 'LEAD' },
+              { teacherId: 't2', role: 'ASSISTANT' },
             ],
           },
         },

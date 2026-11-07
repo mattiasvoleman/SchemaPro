@@ -46,6 +46,25 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/reporting-rate")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("opens Skolans dag to every administrator: it reads only, so the läsare has it whole, and no area gates it", () => {
+    expect(PAGE_GATES["/admin/school-day"]).toBeNull();
+    expect(gateOfPath("/sv/admin/school-day")).toBeNull();
+    for (const profile of ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION", "LASARE"] as const) {
+      expect(closedPages(profile).map((page) => page.path)).not.toContain("/admin/school-day");
+      // A page with no gate is not read-only for anybody: its one write asks the profile itself.
+      expect(readOnlyPages(profile).map((page) => page.path)).not.toContain("/admin/school-day");
+    }
+  });
+
+  it("gates Kvittens by Drift, as the notices it sends: the läsare reads the requests and the switch and makes no request, every other profile writes", () => {
+    expect(PAGE_GATES["/admin/acknowledgements"]).toBe("DRIFT");
+    expect(gateOfPath("/sv/admin/acknowledgements")).toBe("DRIFT");
+    expect(profileOpens("EXPEDITION", "DRIFT")).toBe(true);
+    expect(profileOpens("LASARE", "DRIFT")).toBe(false);
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/acknowledgements");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/acknowledgements")?.areas).toEqual(["DRIFT"]);
+  });
+
   it("gates Schemavisaren by Publicering, as the publication it shows: a planner writes it, the läsare reads it, the expedition has no page", () => {
     expect(PAGE_GATES["/admin/schemavisaren"]).toBe(PAGE_GATES["/admin/publishing"]);
     expect(gateOfPath("/en/admin/schemavisaren")).toBe("PUBLICERING");

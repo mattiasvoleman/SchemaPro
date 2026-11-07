@@ -59,8 +59,10 @@ function AuthGate(): React.JSX.Element {
 // the language. A tap on a notification opens the role's Notiser tab — every
 // role has one — except a cover question (COVER_REQUESTED, and its end,
 // COVER_REQUEST_CLOSED), which opens a teacher's Vikarie tab where it is
-// answered, and an alarm (CRISIS_ALARM, CRISIS_ENDED), which opens the Larm
-// tab of a teacher or an administrator (tapTarget); the tap is then
+// answered, an alarm (CRISIS_ALARM, CRISIS_ENDED), which opens the Larm tab of
+// a teacher or an administrator, and a request to confirm a message
+// (ACK_REQUESTED, and its reminder ACK_REMINDER), which opens a guardian's
+// Meddelanden tab where it is confirmed (tapTarget); the tap is then
 // forgotten, so no later sign-in replays it.
 //
 // An alarm push is also remembered for WHEN it was sent, whether it is tapped

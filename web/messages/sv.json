@@ -224,11 +224,13 @@
     "classBook": "Klassbok",
     "scheduleExchange": "Schema som fil",
     "absenceWatch": "Frånvarobevakning",
+    "acknowledgements": "Kvittens",
     "reportingRate": "Rapporteringsgrad",
     "myReporting": "Min rapportering",
     "crisis": "Krisläge",
     "myCrisis": "Larm",
-    "schemavisaren": "Schemavisaren"
+    "schemavisaren": "Schemavisaren",
+    "schoolDay": "Skolans dag"
   },
   "dashboard": {
     "title": "Översikt",
@@ -2337,6 +2339,10 @@
     "unreadMarker": "Oläst.",
     "absenceWatchDigest": "Frånvarosammanställning {from} – {to}: {open, plural, =0 {ingen elev är över en gräns} one {# elev är över en gräns} other {# elever är över en gräns}}, {crossed, plural, =0 {ingen passerade en gräns} one {# passerade en gräns} other {# passerade en gräns}} under perioden. Se Frånvarobevakning.",
     "absenceWatchDigestGuardian": "Frånvarosammanställning {from} – {to}: {open, plural, =0 {{crossed, plural, one {ett av dina barn har} other {# av dina barn har}} kommit under en gräns för frånvaro igen} one {ett av dina barn har frånvaro över en gräns som skolan har satt} other {# av dina barn har frånvaro över en gräns som skolan har satt}}. Se Frånvarobevakning.",
+    "ack": {
+      "ACK_REQUESTED": "Skolan ber dig bekräfta: {title}",
+      "ACK_REMINDER": "Påminnelse: skolan väntar på din bekräftelse av {title}"
+    },
     "lessonReportReminder": "{count, plural, one {# ny lektion hölls} other {# nya lektioner hölls}} för minst {limitDays, plural, one {# dag} other {# dagar}} sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Se Min rapportering.",
     "reportingRateDigest": "Rapporteringsgrad {from} – {to}: {reported, number} av {held, plural, one {# hållen lektion} other {# hållna lektioner}} hade ett sparat register. Se Rapporteringsgrad.",
     "cover": {
@@ -6098,6 +6104,8 @@
       "COVER_REQUEST_CLOSED": "Förfrågningar som tillsatts, dragits tillbaka eller gått ut utan svar",
       "COVER_REQUEST_ACCEPTED": "Kollegor som tackat ja till min förfrågan",
       "ABSENCE_WATCH_DIGEST": "Frånvarosammanställning",
+      "ACK_REQUESTED": "Meddelanden från skolan som du ska bekräfta",
+      "ACK_REMINDER": "Påminnelse om ett meddelande som väntar på din bekräftelse",
       "LESSON_REPORT_REMINDER": "Påminnelser om öppna lektioner",
       "REPORTING_RATE_DIGEST": "Veckobesked om rapporteringsgrad",
       "CRISIS_GUARDIAN_AFTER": "Besked efter ett larm på skolan"
@@ -7509,6 +7517,217 @@
       "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund."
     }
   },
+  "acknowledgements": {
+    "title": "Kvittens",
+    "subtitle": "Be vårdnadshavare bekräfta att de har tagit del av ett meddelande",
+    "teacherSubtitle": "Be vårdnadshavarna till dina mentorselever bekräfta ett meddelande",
+    "guardianSubtitle": "Meddelanden där skolan ber dig bekräfta att du har tagit del av dem",
+    "rule": {
+      "ANY": {
+        "label": "Räcker att en vårdnadshavare bekräftar",
+        "hint": "Eleven är klar så fort en av vårdnadshavarna har bekräftat.",
+        "short": "En räcker"
+      },
+      "ALL": {
+        "label": "Alla vårdnadshavare ska bekräfta",
+        "hint": "Eleven är klar när alla vårdnadshavare som kan bekräfta har gjort det.",
+        "short": "Alla"
+      }
+    },
+    "settings": {
+      "title": "Kvittens på skolan",
+      "description": "När kvittens är på kan personal be vårdnadshavare bekräfta ett meddelande. Vårdnadshavarna får en notis, och den som bad ser vem som har bekräftat och när.",
+      "switchLabel": "Kvittens",
+      "onHint": "På. Personal kan be vårdnadshavare bekräfta meddelanden.",
+      "offHint": "Av. Ingen kan be om kvittens, men tidigare förfrågningar finns kvar. Påminnelser som ska gå medan kvittens är av skickas inte, inte heller när du slår på den igen.",
+      "turnedOn": "Kvittens är på.",
+      "turnedOff": "Kvittens är av.",
+      "remindLabel": "Påminnelse",
+      "remindHint": "Varje vårdnadshavare som inte själv har bekräftat påminns en gång, också när en annan vårdnadshavare till eleven har bekräftat. Ändringen gäller förfrågningar som skickas efter att du har sparat.",
+      "remindNone": "Ingen påminnelse",
+      "remindOption": "Efter {days} dygn",
+      "remindSaved": "Påminnelsen är sparad.",
+      "loadFailed": "Inställningarna för kvittens kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund."
+    },
+    "list": {
+      "title": "Förfrågningar",
+      "description": {
+        "admin": "Alla förfrågningar på skolan, de nyaste först.",
+        "teacher": "Förfrågningar som gäller dina mentorselever, de nyaste först."
+      },
+      "new": "Be om kvittens",
+      "caption": "Förfrågningar om kvittens",
+      "colMessage": "Meddelande",
+      "colRule": "Regel",
+      "colDone": "Klara elever",
+      "colWaiting": "Väntar",
+      "colReminder": "Påminnelse",
+      "sentBy": "Skickad {date} av {author}",
+      "doneOf": "{met} av {pupils, plural, one {# elev} other {# elever}}",
+      "allDone": "Alla klara",
+      "waiting": "{count, plural, =0 {Ingen} one {# vårdnadshavare} other {# vårdnadshavare}}",
+      "reminder": {
+        "NONE": "Ingen",
+        "SCHEDULED": "Går {date}",
+        "SENT": "Skickad",
+        "NOT_NEEDED": "Behövs inte",
+        "LAPSED": "Skickades inte, för sent",
+        "STOPPED": "Stoppad",
+        "OFF": "Skickades inte, kvittens var av"
+      },
+      "more": "Visa fler",
+      "loadingMore": "Hämtar fler…",
+      "moreFailed": "Fler förfrågningar kunde inte hämtas",
+      "moreFailedHint": "De som redan visas finns kvar. Försök igen om en stund.",
+      "emptyTitle": "Inga förfrågningar ännu",
+      "empty": {
+        "admin": "När personal ber vårdnadshavare bekräfta ett meddelande syns det här, med vem som har bekräftat.",
+        "teacher": "När du ber vårdnadshavare bekräfta ett meddelande syns det här, med vem som har bekräftat."
+      },
+      "loadFailed": "Förfrågningarna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund.",
+      "disabledTitle": {
+        "admin": "Kvittens är av",
+        "teacher": "Skolan har inte slagit på kvittens"
+      },
+      "disabled": {
+        "admin": "Slå på kvittens ovan för att personal ska kunna be om kvittens. Tidigare förfrågningar finns kvar nedan.",
+        "teacher": "En administratör kan slå på den. Tidigare förfrågningar finns kvar nedan."
+      },
+      "sentTitle": "Förfrågan är skickad",
+      "sentBody": "Förfrågan gick till {guardians, plural, one {# vårdnadshavare} other {# vårdnadshavare}} för {pupils, plural, one {# elev} other {# elever}}.",
+      "sentWithout": "{count, plural, one {# elev lämnades utanför} other {# elever lämnades utanför}} eftersom ingen vårdnadshavare kunde frågas: {names}."
+    },
+    "form": {
+      "title": "Ny förfrågan",
+      "description": "Vårdnadshavarna till de elever du väljer får en notis och bekräftar med ett tryck.",
+      "titleLabel": "Rubrik",
+      "titleHint": "Kort och tydligt, till exempel Utflykten på torsdag.",
+      "bodyLabel": "Meddelande",
+      "bodyHint": "Samma text går till alla vårdnadshavare du väljer. Nämn inga enskilda elever.",
+      "counter": "{count, number} av {max, number} tecken",
+      "problem": {
+        "title": "Skriv en rubrik.",
+        "titleLong": "Rubriken får vara högst {max, number} tecken.",
+        "body": "Skriv ett meddelande.",
+        "bodyLong": "Meddelandet får vara högst {max, number} tecken.",
+        "pupils": "Välj minst en elev.",
+        "pupilsMany": "Du kan välja högst {max, number} elever i en förfrågan.",
+        "nobody": "Ingen av de valda eleverna har en vårdnadshavare att fråga."
+      },
+      "ruleLegend": "Hur många vårdnadshavare ska bekräfta?",
+      "pupilsLegend": "Elever",
+      "pupilsHint": "Vårdnadshavarna till de elever du väljer får frågan.",
+      "search": "Sök elev eller klass",
+      "classFilter": "Klass",
+      "allClasses": "Alla klasser",
+      "selectShown": "Markera alla som visas",
+      "selectClass": "Markera alla i {class}",
+      "unselectShown": "Avmarkera alla som visas",
+      "unselectClass": "Avmarkera alla i {class}",
+      "clear": "Rensa val",
+      "shown": "{shown, number} av {total, plural, one {# elev} other {# elever}} visas",
+      "noMatch": "Ingen elev matchar sökningen.",
+      "noPupilsTitle": {
+        "admin": "Det finns inga elever att fråga om",
+        "teacher": "Du är inte mentor för några elever just nu"
+      },
+      "noPupils": {
+        "admin": "Kvittens går till vårdnadshavarna till eleverna på skolan.",
+        "teacher": "Kvittens går till vårdnadshavarna till elever du är mentor för."
+      },
+      "guardians": "{count, plural, =0 {Ingen vårdnadshavare} one {# vårdnadshavare} other {# vårdnadshavare}}",
+      "chosen": "{pupils, plural, =0 {Ingen elev vald} one {# elev vald} other {# elever valda}}",
+      "willAsk": "{guardians, plural, =0 {Ingen vårdnadshavare att fråga} one {# vårdnadshavare får frågan} other {# vårdnadshavare får frågan}}",
+      "withoutTitle": "{count, plural, one {# vald elev har ingen vårdnadshavare att fråga} other {# valda elever har ingen vårdnadshavare att fråga}}",
+      "withoutBody": "De lämnas utanför förfrågan: {names}.",
+      "moreNames": "{count} till",
+      "submit": "Skicka förfrågan",
+      "sending": "Skickar…",
+      "failed": "Förfrågan skickades inte",
+      "loadFailed": "Eleverna kunde inte hämtas",
+      "loadFailedHint": "Inget har skickats. Försök igen om en stund."
+    },
+    "refusal": {
+      "ACK_DISABLED": "Skolan har inte slagit på kvittens. Be en administratör att slå på den.",
+      "ACK_UNKNOWN_PUPIL": "En av eleverna finns inte längre på skolan. Elevlistan är uppdaterad: kontrollera dina val och försök igen.",
+      "ACK_NOT_YOUR_PUPIL": "Du kan bara be om kvittens för elever du är mentor för.",
+      "ACK_NO_GUARDIANS": "Ingen av eleverna har en vårdnadshavare att fråga.",
+      "ACK_TOO_MANY_REQUESTS": "Du har skickat så många förfrågningar den senaste timmen att fler inte får skickas just nu. Inget har skickats. Försök igen om en stund.",
+      "ACK_TOO_MANY_RECIPIENTS": "Skolan har skickat så många kvittenser i dag att den här förfrågan skulle gå över dagens gräns. Inget har skickats. Välj färre elever eller försök igen i morgon.",
+      "THROTTLED": "Du skickade för många förfrågningar på kort tid. Inget har skickats. Vänta en minut och försök igen."
+    },
+    "detail": {
+      "back": "Till förfrågningarna",
+      "rule": "Regel",
+      "sent": "Skickad",
+      "sentValue": "{moment} av {author}",
+      "reminder": "Påminnelse",
+      "reminderState": {
+        "NONE": "Ingen påminnelse",
+        "SCHEDULED": "Skickas {moment} till dem som då inte har bekräftat, också när en annan vårdnadshavare till samma elev har gjort det",
+        "SENT": "Skickad {moment}",
+        "NOT_NEEDED": "Skickades inte: när tiden kom hade alla redan bekräftat, eller så kunde ingen längre bekräfta",
+        "LAPSED": "Skickades inte: den skulle ha gått för mer än 30 dagar sedan, och en så gammal påminnelse skickas inte",
+        "STOPPED": "Stoppad: den som skrev förfrågan, eller en administratör, stoppade påminnelsen innan den gick",
+        "OFF": "Skickades inte: kvittens var av på skolan när tiden kom"
+      },
+      "stop": {
+        "button": "Stoppa påminnelsen",
+        "ask": "Stoppa påminnelsen? Den går inte att ångra.",
+        "askHint": "Förfrågan finns kvar och vårdnadshavarna kan fortfarande bekräfta. Det är bara påminnelsen som uteblir.",
+        "confirm": "Stoppa",
+        "stopping": "Stoppar…",
+        "done": "Påminnelsen är stoppad.",
+        "already": "Påminnelsen gick inte att stoppa: den hade redan gått eller avslutats. Sidan är uppdaterad.",
+        "failedTitle": "Påminnelsen stoppades inte",
+        "failed": "Inget har ändrats. Försök igen om en stund.",
+        "staleTitle": "Påminnelsen går inte längre att stoppa",
+        "stale": "Den kan redan ha gått, eller så får du inte längre stoppa den. Sidan är uppdaterad."
+      },
+      "pupilsTitle": "Elever",
+      "summary": "{met} av {pupils, plural, one {# elev} other {# elever}} klara",
+      "onlyWaiting": "Visa bara elever som inte är klara",
+      "allMet": "Alla elever är klara.",
+      "pupilMet": "Klar",
+      "pupilWaiting": "Väntar",
+      "pupilNobody": "Ingen kan bekräfta",
+      "guardianConfirmed": "Bekräftade {moment}",
+      "guardianWaiting": "Väntar",
+      "guardianEnded": "Vårdnaden har upphört",
+      "guardianReminded": "Påmind {moment}",
+      "loadFailed": "Förfrågan kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "notFoundTitle": "Förfrågan finns inte",
+      "notFound": "Den kan ha tagits bort, eller så gäller den inga av dina elever."
+    },
+    "guardian": {
+      "listTitle": "Dina meddelanden",
+      "summary": "{count, plural, =0 {Inget meddelande väntar på din bekräftelse} one {# meddelande väntar på din bekräftelse} other {# meddelanden väntar på din bekräftelse}}",
+      "summaryMore": "Räkningen gäller de meddelanden som visas. Fler finns: visa äldre.",
+      "more": "Visa äldre",
+      "loadingMore": "Hämtar äldre…",
+      "moreFailed": "Äldre meddelanden kunde inte hämtas",
+      "moreFailedHint": "De som redan visas finns kvar. Försök igen om en stund.",
+      "from": "Från {author}, {moment}",
+      "about": "Gäller {names}",
+      "allRule": "Skolan ber alla vårdnadshavare bekräfta.",
+      "waitingBadge": "Väntar på dig",
+      "confirm": "Jag har tagit del av detta",
+      "confirming": "Bekräftar…",
+      "confirmedAt": "Bekräftat {moment}",
+      "confirmedAnnounce": "Du har bekräftat: {title}",
+      "goneTitle": "Meddelandet gäller inte längre dig",
+      "gone": "Du är inte längre vårdnadshavare för barnet i meddelandet, eller så finns meddelandet inte kvar. Listan är uppdaterad.",
+      "failedTitle": "Det gick inte att bekräfta",
+      "failed": "Din bekräftelse sparades inte. Försök igen om en stund.",
+      "emptyTitle": "Inga meddelanden att bekräfta",
+      "empty": "När skolan ber dig bekräfta ett meddelande om ditt barn visas det här, och du får en notis.",
+      "loadFailed": "Meddelandena kunde inte hämtas",
+      "loadFailedHint": "Ladda om sidan om en stund."
+    }
+  },
   "protectedIdentity": {
     "title": "Skyddad identitet",
     "state": {
@@ -7968,6 +8187,191 @@
       "loadFailedHint": "Du verkar sakna kontakt med servern, och ingen lista finns sparad på den här enheten. Listan visas så snart du får kontakt.",
       "noAlarm": "Inget larm pågår",
       "noAlarmBody": "När skolan startar ett larm visas dina grupper här, och du får en notis."
+    }
+  },
+  "schoolDay": {
+    "title": "Skolans dag",
+    "subtitle": "Alla klasser, lärare och salar i ett svep",
+    "intro": {
+      "admin": "Dagens eller veckans lektioner som de står i kalendern: med vikarier, inställda lektioner, ersättningslektioner för aktiviteter, lokalbokningar och lov. Här ser du också vilka lärare och salar som är lediga en viss tid.",
+      "teacher": "Dagens eller veckans lektioner och vilka salar som är lediga, i den form som skolan har bestämt för lärare."
+    },
+    "protectedName": "Skyddad identitet",
+    "noSubject": "Lektion",
+    "cancelled": "inställd",
+    "cancelledBy": "inställd ({cause})",
+    "rescheduled": "ombokad",
+    "activity": "aktivitet",
+    "cause": {
+      "TEACHER_UNAVAILABLE": "läraren är borta",
+      "ROOM_UNAVAILABLE": "salen är spärrad",
+      "MANUAL": "av skolan",
+      "EVENT": "aktivitet"
+    },
+    "block": {
+      "BOOKING": "Bokning",
+      "CLOSED": "Spärrad",
+      "LOAN": "Utlånad till annan skola",
+      "PASS": "Rastvakt",
+      "DUTY": "Uppdrag",
+      "UNAVAILABLE": "Ej tillgänglig",
+      "ABSENT": "Frånvarande"
+    },
+    "break": {
+      "holiday": "Lov: {name}",
+      "holidayFor": "Lov för {grades}: {name}",
+      "staffDay": "Studiedag: {name}",
+      "staffDayFor": "Studiedag för {grades}: {name}"
+    },
+    "grades": {
+      "one": "åk {grade}",
+      "range": "åk {min}–{max}",
+      "from": "från åk {grade}",
+      "to": "till och med åk {grade}"
+    },
+    "mode": {
+      "label": "Visa",
+      "day": "Dag",
+      "week": "Vecka"
+    },
+    "rows": {
+      "label": "Rader",
+      "GROUP": "Klasser",
+      "TEACHER": "Lärare",
+      "ROOM": "Salar",
+      "GROUPOne": "Klass",
+      "TEACHEROne": "Lärare",
+      "ROOMOne": "Sal"
+    },
+    "nav": {
+      "previousDay": "Föregående dag",
+      "nextDay": "Nästa dag",
+      "previousWeek": "Föregående vecka",
+      "nextWeek": "Nästa vecka",
+      "today": "Idag",
+      "date": "Datum"
+    },
+    "week": {
+      "label": "Vecka {week} · {from} – {to}"
+    },
+    "filter": {
+      "label": "Filtrera rader",
+      "placeholder": {
+        "GROUP": "Klass",
+        "TEACHER": "Lärare",
+        "ROOM": "Sal"
+      }
+    },
+    "print": {
+      "button": "Skriv ut",
+      "failed": "Skyddsmarkeringarna gick inte att läsa, så ingenting skrevs ut. Försök igen.",
+      "held": "{count, plural, one {En person visas inte vid namn (skyddad identitet).} other {# personer visas inte vid namn (skyddad identitet).}}"
+    },
+    "grid": {
+      "regionDay": "Skolans dag {date}",
+      "captionDay": "{kind}, {date}: lektioner och bokningar över dagen",
+      "time": "Tid",
+      "regionWeek": "Skolans vecka",
+      "captionWeek": "{kind}: lektioner och bokningar över veckan",
+      "openDay": "Visa dagen {date}",
+      "nothing": "Inget inlagt"
+    },
+    "closedTitle": "Lov: skolan är stängd",
+    "noRows": {
+      "title": "Inga rader att visa",
+      "body": "Inget matchar filtret. Rensa det för att se alla."
+    },
+    "loadFailed": "Skolans dag kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "rateLimited": "För många frågor just nu",
+    "rateLimitedHint": "Skolans dag får inte fler frågor från dig just nu. Vänta en minut och försök igen.",
+    "stale": "Skolans dag kunde inte uppdateras",
+    "staleRateLimited": "För många frågor just nu",
+    "staleHint": "Sidan visar det den hade och försöker igen om en stund.",
+    "retry": "Försök igen",
+    "legend": {
+      "label": "Teckenförklaring",
+      "lesson": "Lektion",
+      "cancelled": "Inställd eller ombokad",
+      "activity": "Aktivitet",
+      "booking": "Bokning",
+      "closed": "Spärr, utlåning, frånvaro, rastvakt eller uppdrag"
+    },
+    "notOpen": {
+      "title": "Skolan har inte öppnat Skolans dag för lärare",
+      "body": "Rektor bestämmer vad lärare ser här. Under tiden visar Boka lokal vilka salar som är lediga.",
+      "rooms": "Till Boka lokal"
+    },
+    "free": {
+      "title": "Vem och vad är ledigt?",
+      "description": "Välj dag och tid för att se vilka lärare och salar som inte är upptagna hela tiden.",
+      "date": "Dag",
+      "from": "Från",
+      "to": "Till",
+      "show": "Visa lediga",
+      "presets": "Vanliga tider",
+      "preset": {
+        "morning": "Förmiddag {from}–{to}",
+        "lunch": "Lunch {from}–{to}",
+        "afternoon": "Eftermiddag {from}–{to}"
+      },
+      "problem": {
+        "TIMES": "Skriv båda tiderna som TT:MM.",
+        "ORDER": "Sluttiden måste vara efter starttiden."
+      },
+      "loadFailed": "Det gick inte att söka",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "asOf": "{date}, {from}–{to}",
+      "closed": "Lov: skolan är stängd",
+      "staffDay": "Studiedag ({name}): personalen arbetar och inga lektioner hålls. Listorna visar vem som inte är bunden av annat.",
+      "teachers": "Lediga lärare ({count})",
+      "noTeachers": "Ingen lärare är ledig hela tiden.",
+      "teachersWithheld": "Vilka lärare som är lediga visas inte för lärare: frånvaro, uppdrag och rastvakt är inte deras att läsa, och en lista av det de ser skulle kalla en frånvarande kollega ledig.",
+      "rooms": "Lediga salar ({count})",
+      "noRooms": "Ingen sal är ledig hela tiden.",
+      "poolLeftOut": "{count, plural, one {# vikarie ur poolen har inga anmälda tider och räknas inte som ledig.} other {# vikarier ur poolen har inga anmälda tider och räknas inte som lediga.}}",
+      "notFree": "Inte lediga ({count})",
+      "notFreeTeachers": "Lärare som inte är lediga",
+      "notFreeRooms": "Salar som inte är lediga",
+      "rulesTeachers": "Lärare är lediga när Vikarietavlans regler för upptagen inte träffar: {rules}.",
+      "rulesRooms": "Salar är lediga när ingenting av detta träffar: {rules}.",
+      "notIncluded": "Lunch, vila, dagtak och sammanhängande undervisning, som Vikarietavlan också prövar när någon ska vikariera, ingår inte i ”ledig”.",
+      "reason": {
+        "teacher": {
+          "ABSENT": "frånvarande",
+          "BUSY_LESSON": "upptagen i lektion",
+          "BUSY_SUPERVISION": "rastvakt",
+          "BUSY_DUTY": "uppdrag",
+          "UNAVAILABLE": "spärrad",
+          "BOOKED_ROOM": "har bokat en sal",
+          "POOL_NOT_DECLARED": "vikarie utan anmälda tider"
+        },
+        "room": {
+          "ROOM_IN_USE": "används i en lektion",
+          "ROOM_BOOKED": "bokad",
+          "ROOM_CLOSED": "spärrad",
+          "ROOM_LENT": "utlånad till en annan skola då",
+          "ROOM_BORROWED_OUTSIDE_LOAN": "lånad sal, och lånet gäller inte hela tiden"
+        }
+      }
+    },
+    "settings": {
+      "title": "Vad lärare ser av Skolans dag",
+      "description": "Skolan bestämmer själv. Tills ni har bestämt något ser lärarna ingenting; administratörer har alltid hela sidan. Schemavisarens inställningar påverkar inte Skolans dag.",
+      "option": {
+        "NONE": "Ingenting",
+        "ROOMS": "Salar",
+        "ALL": "Hela schemat"
+      },
+      "hint": {
+        "NONE": "Lärare har ingen sida och får ett besked om att skolan inte har öppnat den.",
+        "ROOMS": "Lärare ser vilka salar som är lediga, och salarnas dag och vecka. Lektionerna visas utan lärare.",
+        "ALL": "Lärare ser också klassernas och lärarnas lektioner som de står: inställda lektioner och vem som håller dem syns. De ser aldrig orsaken, frånvaron, uppdragen eller rastvakten, och ingen lista över lediga kolleger. Personer med skyddad identitet visas inte vid namn."
+      },
+      "deciders": "Rektor och fulla administratörer bestämmer detta. Du ser vad skolan har valt.",
+      "saved": "Valet är sparat",
+      "loadFailed": "Valet kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
     }
   }
 }

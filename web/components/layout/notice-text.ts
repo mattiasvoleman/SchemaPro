@@ -30,6 +30,8 @@ export interface NotificationRow {
     | "COVER_REQUEST_CLOSED"
     | "COVER_REQUEST_ACCEPTED"
     | "ABSENCE_WATCH_DIGEST"
+    | "ACK_REQUESTED"
+    | "ACK_REMINDER"
     | "CRISIS_ALARM"
     | "CRISIS_ENDED"
     | "CRISIS_GUARDIAN_AFTER"
@@ -54,6 +56,9 @@ const HREF: Partial<Record<NotificationRow["type"], string>> = {
   // Rapporteringsgrad (D2): the teacher to the lessons that stand open, rektor to the week's figures.
   LESSON_REPORT_REMINDER: "/teacher/reporting-rate",
   REPORTING_RATE_DIGEST: "/admin/reporting-rate",
+  // Kvittens: the guardian to the message they are asked to confirm.
+  ACK_REQUESTED: "/guardian/acknowledgements",
+  ACK_REMINDER: "/guardian/acknowledgements",
 };
 
 /**
@@ -106,6 +111,11 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
         from: str("periodStart").slice(0, 10),
         to: str("periodEnd").slice(0, 10),
       });
+    case "ACK_REQUESTED":
+    case "ACK_REMINDER":
+      // Kvittens: the message's title, which is behind the login (the push and the e-mail say
+      // only that a message waits), and never the child. One key per type under "ack", for the bundle.
+      return t(`ack.${entry.type}`, { title: str("title") });
     case "LESSON_REPORT_REMINDER":
       // Rapporteringsgrad: how many lessons and the school's limit, never which
       // lesson, its subject, its class or its time (the e-mail says no more).

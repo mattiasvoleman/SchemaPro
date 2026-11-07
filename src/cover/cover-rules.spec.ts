@@ -6,7 +6,9 @@ import {
   isFeasible,
   maskFindings,
   maskWarnings,
+  occupancyFindings,
   passTargetId,
+  poolNotDeclared,
   prefersFree,
   softWarnings,
   toldFromPost,
@@ -669,5 +671,62 @@ describe('cover rules', () => {
       { code: 'COVER_BREAKS_LUNCH', params: { minutes: 30 } },
       { code: 'COVER_TEACHER_UNAVAILABLE', params: { label: 'APT' } },
     ]);
+  });
+});
+
+describe('occupancyFindings (the rules that say occupied, as Skolans dag asks them)', () => {
+  const span = (from: string, to: string) => ({ start: at(from), end: at(to) });
+  const occupied = (person: PersonDay, from = '10:00', to = '11:00') => occupancyFindings(person, span(from, to)).map((finding) => finding.code);
+
+  it('finds nothing in a free day, and ends at the touch: a lesson to 10:00 does not occupy 10:00', () => {
+    expect(occupied(day())).toEqual([]);
+    expect(occupied(day({ lessons: [lesson('l', '09:00', '10:00')] }))).toEqual([]);
+    expect(occupied(day({ lessons: [lesson('l', '11:00', '12:00')] }))).toEqual([]);
+  });
+
+  it('names every occupying rule, in the order hardFindings tells them', () => {
+    const person = day({
+      lessons: [lesson('l', '10:30', '11:30')],
+      supervision: [{ id: 'pass:1:d', date: D, start: at('10:00'), end: at('10:20') }],
+      closures: [
+        { span: span('10:00', '11:00'), kind: 'DUTY', label: 'Mentor' },
+        { span: span('10:00', '11:00'), kind: 'UNAVAILABLE', label: null },
+      ],
+      bookings: [span('10:00', '11:00')],
+      absences: [span('08:00', '12:00')],
+    });
+    expect(occupied(person)).toEqual(['ABSENT', 'BUSY_LESSON', 'BUSY_SUPERVISION', 'BUSY_DUTY', 'UNAVAILABLE', 'BOOKED_ROOM']);
+  });
+
+  it('is the first half of hardFindings and not another copy of it', () => {
+    const person = day({
+      lessons: [lesson('l', '10:30', '11:30'), lesson('m', '09:00', '10:30', { status: 'CANCELLED' })],
+      closures: [{ span: span('10:00', '11:00'), kind: 'UNAVAILABLE', label: null }],
+      bookings: [span('10:00', '11:00')],
+      absences: [span('08:00', '12:00')],
+    });
+    const asked = hardFindings(person, target()).map((finding) => finding.code);
+    expect(asked.filter((code) => ['ABSENT', 'BUSY_LESSON', 'BUSY_SUPERVISION', 'BUSY_DUTY', 'UNAVAILABLE', 'BOOKED_ROOM'].includes(code))).toEqual(
+      occupied(person),
+    );
+  });
+
+  it('lets a cancelled lesson free its time, and a lesson be no clash with itself', () => {
+    expect(occupied(day({ lessons: [lesson('l', '10:00', '11:00', { status: 'CANCELLED' })] }))).toEqual([]);
+    expect(occupied(day({ lessons: [lesson('l', '10:00', '11:00', { status: 'RESCHEDULED' })] }))).toEqual([]);
+    expect(occupied(day({ lessons: [lesson('l', '10:00', '11:00', { status: 'COMPLETED' })] }))).toEqual(['BUSY_LESSON']);
+    expect(occupancyFindings(day({ lessons: [lesson('cover', '10:00', '11:00')] }), span('10:00', '11:00'), undefined, 'cover')).toEqual([]);
+  });
+});
+
+describe('poolNotDeclared', () => {
+  const whole = { start: at('10:00'), end: at('11:00') };
+
+  it('is true only for a member without a post whose windows do not hold the whole span', () => {
+    expect(poolNotDeclared(day(), whole)).toBe(false);
+    expect(poolNotDeclared(day({ pool: { member: true, hasEmployment: true, windows: [] } }), whole)).toBe(false);
+    expect(poolNotDeclared(day({ pool: { member: true, hasEmployment: false, windows: [] } }), whole)).toBe(true);
+    expect(poolNotDeclared(day({ pool: { member: true, hasEmployment: false, windows: [{ start: at('09:00'), end: at('10:30') }] } }), whole)).toBe(true);
+    expect(poolNotDeclared(day({ pool: { member: true, hasEmployment: false, windows: [{ start: at('09:00'), end: at('12:00') }] } }), whole)).toBe(false);
   });
 });

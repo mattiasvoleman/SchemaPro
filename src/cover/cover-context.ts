@@ -76,6 +76,17 @@ export interface DayReadOptions {
    * whether a post exists, and leave them unread.
    */
   withPeriods?: boolean;
+  /**
+   * Read only what says a person is OCCUPIED (Skolans dag, src/school-day):
+   * not the work rule's lunch, rest and cap, and of the post only whether one
+   * exists, which the pool rule asks. No HR column is read, so a reader of the
+   * answer has nothing of the post to be told. The days come back with
+   * those fields at their empty values, and hardFindings must not be asked of
+   * them; occupancyFindings is the question this read answers.
+   */
+  occupancyOnly?: boolean;
+  /** The caller has the dated lessons already (the grid reads the whole range once). */
+  skipLessons?: boolean;
 }
 
 export interface DayRead {
@@ -134,8 +145,9 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
   if (ids.length === 0) return { days, employments: new Map(), poolMembers: new Set() };
   const people = byUser ?? { in: ids };
 
-  const rows =
-    (await tx.calendarLessonTeacher.findMany({
+  const rows = options.skipLessons
+    ? []
+    : (await tx.calendarLessonTeacher.findMany({
       where: { teacherId: people, calendarLesson: { date: { gte: dayDate(shiftDay(date, -1)), lte: dayDate(shiftDay(date, 1)) } } },
       select: {
         teacherId: true,
@@ -310,8 +322,9 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
   // work rule, read in the same statement: a school that sets neither asks
   // nothing more than it did. (The limit for teaching in a row, Sammanhängande
   // undervisning, is HR data like the days and is read from the post below.)
-  const rules =
-    (await tx.teacherWorkRule.findMany({
+  const rules = options.occupancyOnly
+    ? []
+    : (await tx.teacherWorkRule.findMany({
       where: { userId: people },
       select: {
         userId: true,
@@ -365,7 +378,16 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
   }
 
   const employments = new Map<string, LoadEmployment>();
-  if (options.academicYearId !== null) {
+  // Occupancy only: whether a post exists is all the pool rule asks of it.
+  const postHolders = new Set<string>();
+  if (options.academicYearId !== null && options.occupancyOnly) {
+    const posts =
+      (await tx.teacherEmployment.findMany({
+        where: { academicYearId: options.academicYearId, userId: people },
+        select: { userId: true },
+      })) ?? [];
+    for (const post of posts) if (post?.userId) postHolders.add(post.userId);
+  } else if (options.academicYearId !== null) {
     const rows =
       (await tx.teacherEmployment.findMany({
         where: { academicYearId: options.academicYearId, userId: people },
@@ -449,7 +471,7 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
   }
   for (const [userId, day] of days) {
     day.pool.member = poolMembers.has(userId);
-    day.pool.hasEmployment = employments.has(userId);
+    day.pool.hasEmployment = employments.has(userId) || postHolders.has(userId);
   }
   return { days, employments, poolMembers };
 }
