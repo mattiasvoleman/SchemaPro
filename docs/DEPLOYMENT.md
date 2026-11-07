@@ -1873,6 +1873,35 @@ Walk the full product loop once, in order:
   above. Count the notices first (`SELECT count(*) FROM "Notifications" WHERE
   "type"::text LIKE 'ACK\_%'`). What a rollback changes: nobody can ask or
   confirm, and the requests already made are gone.
+  *(5) What the lock of 20270119090000 taught, for the next migration of a table
+  with rows.* That file's `ADD COLUMN` and `ADD CONSTRAINT` came first, and a file
+  is one implicit transaction: `ACCESS EXCLUSIVE` on `AckRequests` was taken at its
+  start and held to its end, past the functions and the DO block. Its comment said
+  "a few milliseconds"; the independent review measured 1.85 s on a loaded test host.
+  With one session holding a read on the table (a pooled connection left idle in a
+  transaction) the 5 s `lock_timeout` ended the run at 5.5 s and rolled it back
+  whole, and an ordinary `SELECT` that arrived a second after the waiting `ALTER`
+  queued 4.4 s behind it. Nothing is wrong while the table is empty (no school has
+  turned kvittens on), and the file has run in production, so it is not changed.
+  **The rule for the next one:** put the `ALTER` statements LAST in the file, so the
+  lock is held only over them; or take the lock `NOWAIT` in a retry loop with a 30 s
+  ceiling and a message that names the `prisma migrate resolve --rolled-back` the
+  next try needs, as 20270117091000 does for `Schools` and `Users`. A single
+  `lock_timeout` is not enough: it bounds the wait and not the hold, and the queue
+  behind a waiting lock request is the harm.
+  *(6) The two doors of the delivery answer no login at all (20270202090000, after
+  the review).* `app.ack_remind_request` and `app.ack_reminder_mirrored` stood
+  back for a session that resolves to a person, and a login with no person row (the
+  huvudman's reader, the municipality's administrator) slipped past that. They now
+  answer nothing to a session with any claims, and are run only by the delivery's
+  door, which sets none. The migration replaces the two bodies (the guard is the only
+  difference) and touches no table, so it takes no table lock. **Before it:**
+  `md5(prosrc)` of `app.ack_remind_request` is `894541402de92108263324294f19c4db` and of
+  `app.ack_reminder_mirrored` `edaea80452b04494beeb73668086bcc0`; **after it** they are
+  `6836f7ae29327c074a4dc7b62776837b` and `308fe14167295988d49d575cdf0f1856`, the count of
+  `app.ack_%` functions is still 22, and `app.ack_usage` (`2534cef97c828b5999ce076aff18f9d3`)
+  and the three gallring functions are untouched. A session with any claims, a person or not, is
+  handed nothing by either door.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

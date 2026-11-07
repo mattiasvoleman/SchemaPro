@@ -2727,3 +2727,213 @@ BEGIN
 END $$;
 ROLLBACK;
 
+
+-- ---------------------------------------------------------------------------
+-- Kvittens, after the independent review of #277 (20270202090000), owner checks.
+--
+--   450o  the delivery's two doors answer nothing to any login, a person or not
+--   451o  the sender rows of the usage are read under Drift
+--   452o  the day's window in the usage: the school's rows, one's own and the senders'
+--   453o  a removed sender's share, and the mark leaves the time the reminder went alone
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.kq_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'kvittens %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- The usage as one text for a caller, in the order the function answers (claims set for this transaction).
+CREATE FUNCTION pg_temp.kq_usage(p_auth text, p_senders integer DEFAULT 5) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  seen text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p_auth)::text, true);
+  SELECT coalesce(string_agg(u.scope || coalesce(':' || u.author_name, '') || ' ' || u.used || '/' || u.cap, ', ' ORDER BY u.n), '')
+    INTO seen
+    FROM app.ack_usage(p_senders) WITH ORDINALITY u(scope, author_id, author_name, used, cap, n);
+  PERFORM set_config('request.jwt.claims', '', true);
+  RETURN seen;
+END $$;
+
+-- 450o: app.ack_remind_request and app.ack_reminder_mirrored are the delivery's doors, and the delivery sets no claims.
+-- A session with any claims gets nothing from them, and that includes a login that is no person: the huvudman's reader
+-- (a läsare of the school it chose, with no Users row there, so app.current_user_id() is NULL) is the one a guard on the
+-- person row let through. A subject setting alone (the older claim style, which Supabase's auth.uid() also reads) is a
+-- login too. The same functions then do their work for the door, so none of this passes because they do nothing at all.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  roller uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  waits uuid;        -- a SENT reminder that waits for the delivery's mark
+  by_reader uuid;    -- a due request each of the three logins asks the pass to take
+  by_sub uuid;
+  by_person uuid;
+  asked uuid[];
+  n bigint;
+  notices bigint;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (school, true, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET enabled = true, "remindAfterDays" = 2;
+  waits := pg_temp.kvo_request(school, full_, 'Väntar på märket', 'ANY', 'p1:g1');
+  by_reader := pg_temp.kvo_request(school, full_, 'Läsarens', 'ANY', 'p1:g1');
+  by_sub := pg_temp.kvo_request(school, full_, 'Subjektets', 'ANY', 'p2:g1');
+  by_person := pg_temp.kvo_request(school, full_, 'Personens', 'ANY', 'p3:g3');
+  asked := ARRAY[by_reader, by_sub, by_person];
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = ANY (asked || waits);
+
+  -- The delivery's door (no claims; the empty string is what a pooled connection reads after a login's transaction)
+  -- takes the first one: SENT, and not yet marked.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  SELECT count(*) INTO n FROM app.ack_remind_request(waits);
+  IF n <> 1 THEN RAISE EXCEPTION 'kvittens 450o: the door wrote % notices for the first request, not 1', n; END IF;
+  PERFORM pg_temp.kq_expect('450o the first reminder is SENT and not marked',
+                            (SELECT "reminderOutcome"::text || ':' || ("reminderMirroredAt" IS NOT NULL) FROM "AckRequests" WHERE id = waits), 'SENT:false');
+  notices := (SELECT count(*) FROM "Notifications" WHERE "schoolId" = school AND "type"::text = 'ACK_REMINDER');
+
+  -- The huvudman's reader at the roller school: a login with no person there.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000260')::text, true);
+  PERFORM set_config('app.chosen_school_id', roller::text, true);
+  IF app.current_user_id() IS NOT NULL OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_school_id() IS DISTINCT FROM roller THEN
+    RAISE EXCEPTION 'kvittens 450o: P is not the reader at the roller school (school %, person %, role %)', app.current_school_id(), app.current_user_id(), app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_request(by_reader);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a login with no person was handed % notices to deliver', n; END IF;
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM set_config('app.chosen_school_id', '', true);
+
+  -- A subject setting alone: no claims JSON, the older style. On this database auth.uid() does not read it, so no person
+  -- resolves, which is what makes it tell a guard on the person row from a guard on any login.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-f40000000001', true);
+  SELECT count(*) INTO n FROM app.ack_remind_request(by_sub);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a session with only a subject setting was handed % notices to deliver', n; END IF;
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+
+  -- A person.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  IF app.current_user_id() IS DISTINCT FROM full_ THEN RAISE EXCEPTION 'kvittens 450o: the person is not Full'; END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_request(by_person);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a person was handed % notices to deliver', n; END IF;
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  -- Nothing was written by any of the three: no outcome, no notice, no guardian marked as reminded, no mark.
+  PERFORM pg_temp.kq_expect('450o nothing reminded by a login',
+                            (SELECT string_agg(coalesce("reminderOutcome"::text, '-'), ',' ORDER BY title COLLATE "C") FROM "AckRequests" WHERE id = ANY (asked)), '-,-,-');
+  PERFORM pg_temp.kq_expect('450o no notice written by a login',
+                            ((SELECT count(*) FROM "Notifications" WHERE "schoolId" = school AND "type"::text = 'ACK_REMINDER') - notices)::text, '0');
+  PERFORM pg_temp.kq_expect('450o no guardian marked reminded by a login',
+                            (SELECT count(*)::text FROM "AckReceipts" WHERE "requestId" = ANY (asked) AND "remindedAt" IS NOT NULL), '0');
+  PERFORM pg_temp.kq_expect('450o nothing marked mailed by a login',
+                            (SELECT ("reminderMirroredAt" IS NOT NULL)::text FROM "AckRequests" WHERE id = waits), 'false');
+
+  -- The door does all of it: the three requests are taken (they were due and waiting, so they are not skipped for some
+  -- other reason) and the SENT reminder is marked.
+  SELECT count(*) INTO n FROM app.ack_remind_request(by_reader);
+  SELECT n + count(*) INTO n FROM app.ack_remind_request(by_sub);
+  SELECT n + count(*) INTO n FROM app.ack_remind_request(by_person);
+  IF n <> 3 THEN RAISE EXCEPTION 'kvittens 450o: the door wrote % notices for the three requests, not 3', n; END IF;
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM pg_temp.kq_expect('450o the door takes the requests',
+                            (SELECT string_agg(coalesce("reminderOutcome"::text, '-'), ',' ORDER BY title COLLATE "C") FROM "AckRequests" WHERE id = ANY (asked)), 'SENT,SENT,SENT');
+  PERFORM pg_temp.kq_expect('450o the door marks', (SELECT ("reminderMirroredAt" IS NOT NULL)::text FROM "AckRequests" WHERE id = waits), 'true');
+END $$;
+ROLLBACK;
+
+-- 451o: the sender rows of the usage name people, so they are read under Drift (a gate on the function and not only on
+-- the route). Every profile of today reads Drift, so the real function shows them to every administrator and the gate
+-- decides nothing yet; the first profile without it would, and there is no such profile to ask. A stand-in for
+-- app.current_user_may that says no to a read of Drift, made inside this transaction and rolled back with it, is that
+-- profile: the school and one's own share are shown, no sender is.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  the_md5 text := md5((SELECT prosrc FROM pg_proc WHERE oid = 'app.current_user_may("AdminArea", boolean)'::regprocedure));
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  PERFORM pg_temp.kvo_request(school, full_, 'Drift-grinden', 'ANY', 'p1:g1');
+  PERFORM pg_temp.kq_expect('451o an administrator who reads Drift is told the senders',
+                            pg_temp.kq_usage('00000000-0000-4000-8000-f40000000001'), 'SCHOOL 1/20000, ME 1/8000, SENDER:Kvittens Full 1/8000');
+
+  CREATE OR REPLACE FUNCTION app.current_user_may(p_area "AdminArea", p_write boolean) RETURNS boolean LANGUAGE sql STABLE AS $f$
+    SELECT NOT (p_area = 'DRIFT' AND NOT coalesce(p_write, true))
+  $f$;
+  IF md5((SELECT prosrc FROM pg_proc WHERE oid = 'app.current_user_may("AdminArea", boolean)'::regprocedure)) = the_md5 THEN
+    RAISE EXCEPTION 'kvittens 451o: the stand-in for the Drift gate was not made';
+  END IF;
+  PERFORM pg_temp.kq_expect('451o an administrator who may not read Drift is told no sender, and still the school and their own share',
+                            pg_temp.kq_usage('00000000-0000-4000-8000-f40000000001'), 'SCHOOL 1/20000, ME 1/8000');
+END $$;
+ROLLBACK;
+
+-- 452o: the day is the last 24 hours, in all three of the usage's counts. A request with its receipts made 24 hours and
+-- ten minutes ago is no part of it, one made 23 hours and fifty minutes ago is. (The limits count the same window:
+-- 381o moves a request across it and watches the limit open.)
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  old_req uuid := gen_random_uuid();
+  new_req uuid := gen_random_uuid();
+  long_ago constant timestamptz := now() - interval '24 hours 10 minutes';
+  lately constant timestamptz := now() - interval '23 hours 50 minutes';
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  VALUES (old_req, school, full_, 'Över ett dygn', 'B', long_ago), (new_req, school, full_, 'Strax under ett dygn', 'B', lately);
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "createdAt")
+  VALUES (old_req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'), long_ago),
+         (old_req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2'), long_ago),
+         (new_req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'), lately),
+         (new_req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2'), lately),
+         (new_req, school, pg_temp.kvo_user('kv-p2'), pg_temp.kvo_user('kv-g1'), lately);
+  PERFORM pg_temp.kvo_expect('452o the rows are there', (SELECT count(*)::text FROM "AckReceipts" WHERE "schoolId" = school), '5');
+  PERFORM pg_temp.kq_expect('452o only the last 24 hours are counted: the school, one''s own share and the sender',
+                            pg_temp.kq_usage('00000000-0000-4000-8000-f40000000001'), 'SCHOOL 3/20000, ME 3/8000, SENDER:Kvittens Full 3/8000');
+END $$;
+ROLLBACK;
+
+-- 453o: a sender whose Users row is gone (a teacher removed after she asked) has no role to look up, and is read with the
+-- stricter share, a teacher's 2 000, never an administrator's 8 000: the name stays, the person does not. And the mark
+-- that the delivery makes moves nothing else: the time the reminder went is the pass's and stays what it was, with the
+-- mark after it.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  gone uuid;
+  waits uuid;
+  went timestamptz;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (school, true, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET enabled = true, "remindAfterDays" = 2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'kv-borta@example.invalid', 'Kvittens', 'Borta', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO gone;
+  PERFORM pg_temp.kvo_request(school, gone, 'Borttagens', 'ANY', 'p1:g1');
+  DELETE FROM "Users" WHERE id = gone;
+  PERFORM pg_temp.kq_expect('453o a removed sender is read with the teacher''s share',
+                            pg_temp.kq_usage('00000000-0000-4000-8000-f40000000001'), 'SCHOOL 1/20000, ME 0/8000, SENDER:Kvittens Borta 1/2000');
+
+  waits := pg_temp.kvo_request(school, full_, 'Går och märks', 'ANY', 'p1:g1');
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = waits;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM count(*) FROM app.ack_remind_request(waits);
+  went := (SELECT "reminderSentAt" FROM "AckRequests" WHERE id = waits);
+  IF went IS NULL THEN RAISE EXCEPTION 'kvittens 453o: the request was not sent'; END IF;
+  PERFORM pg_sleep(0.02);
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM pg_temp.kq_expect('453o the mark leaves the time the reminder went alone',
+                            (SELECT "reminderSentAt" = went FROM "AckRequests" WHERE id = waits)::text, 'true');
+  PERFORM pg_temp.kq_expect('453o the mark is after the time the reminder went',
+                            (SELECT ("reminderMirroredAt" > "reminderSentAt")::text FROM "AckRequests" WHERE id = waits), 'true');
+END $$;
+ROLLBACK;

@@ -47009,3 +47009,105 @@ BEGIN
 END $$;
 ROLLBACK;
 
+
+-- ---------------------------------------------------------------------------
+-- Kvittens, after the independent review of #277 (20270202090000), sections 450 and 454. Their logic needs rows the
+-- API's role cannot make (a SENT reminder, an old receipt, a removed sender, a profile without Drift): that is
+-- 450o-453o in rls-owner-checks.sql.
+--
+--   450  a login with no person row (the huvudman's reader) runs the delivery's doors without error and gets nothing;
+--        the usage's own-share row carries the person's id, and the reader's none
+--   454  the column privileges: nobody holds one, on any of the three tables
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.kq_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'kvittens %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 450: the doors, for a login with no person row
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  roller uuid;
+  n bigint;
+  seen text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
+  roller := app.current_school_id();
+  -- The huvudman's reader at the roller school: claims, a school chosen, and no Users row there.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000260')::text, true);
+  PERFORM set_config('app.chosen_school_id', roller::text, true);
+  IF app.current_school_id() IS DISTINCT FROM roller OR app.current_user_id() IS NOT NULL OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'kvittens 450: P is not the reader at the roller school (school %, person %, role %)', app.current_school_id(), app.current_user_id(), app.current_user_role();
+  END IF;
+
+  -- The doors are the API's to run (the delivery runs them as that role), and a login runs them to no effect and no error.
+  SELECT count(*) INTO n FROM app.ack_remind_request(gen_random_uuid());
+  PERFORM pg_temp.kq_expect('450 the reader is handed no notice', n::text, '0');
+  PERFORM app.ack_reminder_mirrored(gen_random_uuid());
+
+  -- The usage's own-share row names the person it is for. The reader has none: the gateway answers "no share" for a row
+  -- with no person (mine: null), and so shows the reader no "Din andel 0 av 8 000". A person's row names them, or the
+  -- gateway would show nobody a share.
+  SELECT string_agg(u.scope || ':' || (u.author_id IS NULL)::text, ',' ORDER BY u.n) INTO seen
+    FROM app.ack_usage() WITH ORDINALITY u(scope, author_id, author_name, used, cap, n) WHERE u.scope IN ('SCHOOL', 'ME');
+  PERFORM pg_temp.kq_expect('450 the reader''s own-share row has no person', seen, 'SCHOOL:true,ME:true');
+  PERFORM set_config('app.chosen_school_id', '', true);
+
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  PERFORM pg_temp.kq_expect('450 an administrator''s own-share row names them, the school''s row no one',
+                            (SELECT string_agg(u.scope || ':' || coalesce((u.author_id = app.current_user_id())::text, 'none'), ',' ORDER BY u.n)
+                               FROM app.ack_usage() WITH ORDINALITY u(scope, author_id, author_name, used, cap, n) WHERE u.scope IN ('SCHOOL', 'ME')),
+                            'SCHOOL:none,ME:true');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(6));
+  PERFORM pg_temp.kq_expect('450 a teacher''s own-share row names them',
+                            (SELECT string_agg(u.scope || ':' || (u.author_id = app.current_user_id())::text, ',' ORDER BY u.n)
+                               FROM app.ack_usage() WITH ORDINALITY u(scope, author_id, author_name, used, cap, n)),
+                            'ME:true');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 454: column privileges. Section 374 asks has_table_privilege, which is false for a role that holds a privilege
+-- on one column only (a GRANT UPDATE ("reminderMirroredAt") reads as "no UPDATE" there); has_any_column_privilege is
+-- true for a privilege on the table or on any column. Nobody writes the mark by the table, and no column of the three
+-- tables is granted to anyone the table is not.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl text;
+  r text;
+  priv text;
+  holds boolean;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY['AckSettings', 'AckRequests', 'AckReceipts'] LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      -- The four privileges that can be granted on a column. The same expectations as section 374's, for the table.
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+        holds := (r = 'app_authenticated' AND priv IN ('SELECT', 'INSERT')) OR (r = 'app_authenticated' AND priv = 'UPDATE' AND tbl = 'AckSettings')
+                 OR (r = 'service_role' AND priv = 'SELECT');
+        IF has_any_column_privilege(r, format('%I', tbl), priv) IS DISTINCT FROM holds THEN
+          RAISE EXCEPTION 'kvittens 454: % % % on a column of % (it should%)', r, CASE WHEN holds THEN 'lacks' ELSE 'holds' END, priv, tbl, CASE WHEN holds THEN '' ELSE ' not' END;
+        END IF;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  -- The mark itself, by name: no role updates it (the API's role may insert a request, and the check of 381 refuses the
+  -- column on one written that way).
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    IF has_column_privilege(r, '"AckRequests"', 'reminderMirroredAt', 'UPDATE') THEN
+      RAISE EXCEPTION 'kvittens 454: % may update reminderMirroredAt', r;
+    END IF;
+  END LOOP;
+END $$;
+ROLLBACK;
