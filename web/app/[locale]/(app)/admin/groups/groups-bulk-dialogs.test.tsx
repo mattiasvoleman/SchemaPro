@@ -89,6 +89,7 @@ describe("describeGroupRemoval", () => {
     publicLinks: 0,
     enrolments: 0,
     mentorDuties: 0,
+    consentLists: 0,
     fromSource: 0,
   };
 
@@ -213,7 +214,7 @@ describe("GroupsBulkDialogs", () => {
         consequences: {
           halves: 1, homePupils: 20, successors: 0, memberships: 0, requirements: 9, masterLessons: 0, sharedLessons: 0,
           calendarLessons: 0, attendanceMarks: 0, lessonLogs: 0, availabilityConstraints: 0, lunchSittings: 0,
-          calendarBreaks: 0, timplanCredits: 0, publicLinks: 0, enrolments: 20, mentorDuties: 0, fromSource: 0,
+          calendarBreaks: 0, timplanCredits: 0, publicLinks: 0, enrolments: 20, mentorDuties: 0, consentLists: 0, fromSource: 0,
         },
       })
       .mockResolvedValueOnce({ applied: true, dryRun: false, done: ["g-7a", "g-7a1"], refused: [] });

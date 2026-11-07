@@ -998,6 +998,8 @@ describe('StudentGroupsService', () => {
         PublicTimetableHidden: 1,
         StudentEnrollments: 25,
         TeacherDuties: 1,
+        // A class's consent list (Checklistor) loses the class and keeps its answers.
+        ConsentLists: 2,
       };
       /** The SQL of a $queryRaw call: a tagged template's strings, or a Prisma.sql's text. */
       const textOf = (first: unknown): string =>
@@ -1096,6 +1098,7 @@ describe('StudentGroupsService', () => {
             lessonLogs: 9,
             enrolments: 25,
             mentorDuties: 1,
+            consentLists: 2,
             fromSource: 1,
           },
         });
@@ -1172,7 +1175,7 @@ describe('StudentGroupsService', () => {
         const dryRunCounts = {
           halves: 0, homePupils: 12, memberships: 30, requirements: 4, masterLessons: 7, sharedLessons: 3,
           calendarLessons: 200, availabilityConstraints: 3, lunchSittings: 5, calendarBreaks: 10, timplanCredits: 1,
-          publicLinks: 3, successors: 1, attendanceMarks: 1000, lessonLogs: 9, enrolments: 25, mentorDuties: 1, fromSource: 0,
+          publicLinks: 3, successors: 1, attendanceMarks: 1000, lessonLogs: 9, enrolments: 25, mentorDuties: 1, consentLists: 2, fromSource: 0,
         };
 
         it('deletes when nothing grew since the dry run, and answers no counts', async () => {

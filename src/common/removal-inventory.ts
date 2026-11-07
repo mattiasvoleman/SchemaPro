@@ -87,6 +87,7 @@ export type GroupKeyKind =
   | 'homePupils'
   | 'successors'
   | 'mentorDuties'
+  | 'consentLists'
   | 'enrolments';
 
 /** Every key to StudentGroups. Each is counted: an administrator reads them all. */
@@ -109,6 +110,9 @@ export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
   key('Users', ['studentGroupId'], 'SET NULL', { counted: 'homePupils' }),
   key('StudentGroups', ['predecessorId', 'schoolId'], 'SET NULL', { counted: 'successors' }),
   key('TeacherDuties', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'mentorDuties' }),
+  // A consent list belongs to a class (Checklistor, 20270129091000). The list and its answers are kept when the class
+  // goes, as the record of who consented to what: the list only loses the class it was made for.
+  key('ConsentLists', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'consentLists' }),
   key('StudentEnrollments', ['studentGroupId', 'academicYearId', 'schoolId'], 'SET NULL', { counted: 'enrolments' }),
 ];
 

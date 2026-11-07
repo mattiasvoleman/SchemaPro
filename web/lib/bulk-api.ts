@@ -53,6 +53,7 @@ export interface GroupRemovalConsequences {
   publicLinks: number;
   enrolments: number;
   mentorDuties: number;
+  consentLists: number;
   fromSource: number;
 }
 

@@ -7220,6 +7220,7 @@
       "homePupils": "{count, plural, one {# elev blir} other {# elever blir}} utan klass",
       "enrolments": "{count, plural, one {# avsnitt} other {# avsnitt}} i elevernas klasshistorik tappar klassen",
       "mentorDuties": "{count, plural, one {# mentorsuppdrag} other {# mentorsuppdrag}} tappar klassen",
+      "consentLists": "{count, plural, one {# samtyckeslista} other {# samtyckeslistor}} tappar klassen, och svaren sparas",
       "sharedLessons": "{count, plural, one {# lektion} other {# lektioner}} i grundschemat och kalendern som delas med andra grupper tappar gruppen",
       "lessonLogs": "{count, plural, one {# lektionslogg} other {# lektionsloggar}} på de lektionerna",
       "lunchSittings": "{count, plural, one {# lunch} other {# luncher}} i grundschemat",

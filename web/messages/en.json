@@ -7220,6 +7220,7 @@
       "homePupils": "{count, plural, one {# student is} other {# students are}} left without a class",
       "enrolments": "{count, plural, one {# entry} other {# entries}} in the students' class history lose the class",
       "mentorDuties": "{count, plural, one {# mentor duty loses} other {# mentor duties lose}} the class",
+      "consentLists": "{count, plural, one {# consent list loses} other {# consent lists lose}} the class, and the answers are kept",
       "sharedLessons": "{count, plural, one {# lesson} other {# lessons}} in the master timetable and the calendar shared with other groups lose the group",
       "lessonLogs": "{count, plural, one {# lesson log} other {# lesson logs}} on those lessons",
       "lunchSittings": "{count, plural, one {# lunch} other {# lunches}} in the master timetable",
