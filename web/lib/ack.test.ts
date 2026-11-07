@@ -12,11 +12,13 @@ import {
   ACK_NO_GUARDIANS,
   ACK_REMINDER_STATES,
   ACK_RULES,
+  ACK_SENDER_DAY_LIMIT,
   ACK_TOO_MANY_RECIPIENTS,
   ACK_TOO_MANY_REQUESTS,
   ACK_UNKNOWN_PUPIL,
   BODY_MAX,
   CREATE_REFUSALS,
+  NEAR_LIMIT,
   PUPILS_MAX,
   REMIND_DAYS_MAX,
   REMIND_DAYS_MIN,
@@ -29,6 +31,7 @@ import {
   guardiansOf,
   isDone,
   itemsOf,
+  limitState,
   matchesPupil,
   metIn,
   namesOf,
@@ -37,13 +40,14 @@ import {
   reminderOf,
   setChosen,
   shownPupils,
+  usedShare,
   waitingFor,
   withConfirmed,
   withConfirmedPages,
   withoutGuardianOf,
   type AckPupilChoice,
 } from "./ack";
-import { detail, listItem, mineItem, page } from "./__fixtures__/ack";
+import { detail, listItem, mineItem, page, usage } from "./__fixtures__/ack";
 
 /**
  * The web's copy of the gateway's vocabulary, bounds and codes. The gateway's
@@ -87,12 +91,14 @@ describe("the vocabulary, the bounds and the codes are the gateway's", () => {
     expect(ACK_NOT_YOUR_PUPIL).toBe(codeOf("ACK_NOT_YOUR_PUPIL"));
     expect(ACK_NO_GUARDIANS).toBe(codeOf("ACK_NO_GUARDIANS"));
     expect(ACK_TOO_MANY_REQUESTS).toBe(codeOf("ACK_TOO_MANY_REQUESTS"));
+    expect(ACK_SENDER_DAY_LIMIT).toBe(codeOf("ACK_SENDER_DAY_LIMIT"));
     expect(ACK_TOO_MANY_RECIPIENTS).toBe(codeOf("ACK_TOO_MANY_RECIPIENTS"));
     expect(ACK_NOT_STAFF).toBe(codeOf("ACK_NOT_STAFF"));
   });
 
   it("says every refusal of a request that the form has a sentence for, in both languages", () => {
     expect(CREATE_REFUSALS).toContain(ACK_TOO_MANY_REQUESTS);
+    expect(CREATE_REFUSALS).toContain(ACK_SENDER_DAY_LIMIT);
     expect(CREATE_REFUSALS).toContain(ACK_TOO_MANY_RECIPIENTS);
     for (const messages of [sv, en]) {
       const refusal = messages.acknowledgements.refusal as Record<string, string>;
@@ -100,10 +106,12 @@ describe("the vocabulary, the bounds and the codes are the gateway's", () => {
     }
   });
 
-  it("knows the states of a reminder as the gateway has them: none, scheduled, and the database's outcomes", () => {
+  it("knows the states of a reminder as the gateway has them: none, scheduled, written, and the database's outcomes", () => {
     const outcomes = [...(/enum AckReminderOutcome \{([^}]*)\}/.exec(SCHEMA)?.[1] ?? "").matchAll(/^\s*([A-Z_]+)\s*$/gm)].map((match) => match[1]!);
     expect(outcomes.length).toBeGreaterThan(0);
-    expect([...ACK_REMINDER_STATES]).toEqual(["NONE", "SCHEDULED", ...outcomes]);
+    expect([...ACK_REMINDER_STATES]).toEqual(["NONE", "SCHEDULED", "WRITTEN", ...outcomes]);
+    // The gateway's union says the same three beside the outcomes.
+    expect(/export type AckReminderState = ([^;]*);/.exec(VIEWS)?.[1]).toBe("'NONE' | 'SCHEDULED' | 'WRITTEN' | AckReminderOutcome");
   });
 
   it("has a word for every state of a reminder, in the list and in the request, in both languages", () => {
@@ -124,6 +132,16 @@ describe("the vocabulary, the bounds and the codes are the gateway's", () => {
     expect(fieldsOf("AckDetail")).toEqual(Object.keys(detail()).sort());
     expect(fieldsOf("AckMine")).toEqual(Object.keys(mineItem()).sort());
     expect(fieldsOf("AckReminderStopped")).toEqual(["reminder"]);
+  });
+
+  it("answers the day's use as the gateway has it: the school's, the reader's share and the senders", () => {
+    const fieldsOf = (name: string): string[] => {
+      const body = new RegExp(`export interface ${name} \\{\\n([\\s\\S]*?)\\n\\}`).exec(VIEWS)?.[1] ?? "";
+      return [...body.matchAll(/^ {2}(\w+):/gm)].map((match) => match[1]!).sort();
+    };
+    expect(fieldsOf("AckUsage")).toEqual(Object.keys(usage()).sort());
+    expect(fieldsOf("AckUsageLine")).toEqual(["limit", "used"]);
+    expect(Object.keys(usage().senders![0]!).sort()).toEqual(["limit", "name", "used"]);
   });
 
   it("reads the guardian's shape as the gateway has it: no field about another guardian", () => {
@@ -251,6 +269,28 @@ describe("reading a request", () => {
   it("keeps the pupils still to hear from", () => {
     const rows = [row(true, "CONFIRMED"), row(false, "WAITING")];
     expect(pupilsNotMet(rows)).toEqual([rows[1]]);
+  });
+
+  it("says how full a limit is: ok, near from three quarters of it, reached at all of it", () => {
+    expect(NEAR_LIMIT).toBe(0.75);
+    expect(limitState({ used: 0, limit: 8000 })).toBe("ok");
+    expect(limitState({ used: 5999, limit: 8000 })).toBe("ok");
+    expect(limitState({ used: 6000, limit: 8000 })).toBe("near");
+    expect(limitState({ used: 7999, limit: 8000 })).toBe("near");
+    expect(limitState({ used: 8000, limit: 8000 })).toBe("reached");
+    expect(limitState({ used: 8001, limit: 8000 })).toBe("reached");
+    // A limit of nothing is not "plenty left".
+    expect(limitState({ used: 0, limit: 0 })).toBe("reached");
+  });
+
+  it("rounds the share down to a whole percent, so that a limit not yet reached never reads 100 %", () => {
+    expect(usedShare({ used: 0, limit: 20000 })).toBe(0);
+    expect(usedShare({ used: 6340, limit: 20000 })).toBe(0.31);
+    expect(usedShare({ used: 19900, limit: 20000 })).toBe(0.99);
+    expect(usedShare({ used: 19999, limit: 20000 })).toBe(0.99);
+    expect(usedShare({ used: 20000, limit: 20000 })).toBe(1);
+    expect(usedShare({ used: 21000, limit: 20000 })).toBe(1);
+    expect(usedShare({ used: 5, limit: 0 })).toBe(1);
   });
 
   it("says what became of the reminder as the gateway does, for every state", () => {

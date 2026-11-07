@@ -1,6 +1,10 @@
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { Logger } from '@nestjs/common';
 import {
   ExpoPushClient,
   MIN_REQUEST_INTERVAL_MS,
+  REQUEST_TIMEOUT_MS,
   resetExpoPacing,
   type ExpoMessage,
 } from './expo-push.client';
@@ -36,10 +40,11 @@ describe('ExpoPushClient', () => {
     });
   });
 
-  const client = (accessToken?: string) =>
+  const client = (accessToken?: string, timeoutMs?: number) =>
     new ExpoPushClient({
       apiUrl: API,
       accessToken,
+      timeoutMs,
       fetch: fetchMock as unknown as typeof fetch,
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -133,5 +138,119 @@ describe('ExpoPushClient', () => {
     await expect(client().receipts(['a1234567'])).resolves.toEqual({});
     fetchMock.mockResolvedValue(respond(200, { data: ['not', 'a', 'map'] }));
     await expect(client().receipts(['a1234567'])).resolves.toEqual({});
+  });
+  describe('a request Expo does not answer', () => {
+    /** A fetch that answers nothing, and rejects the way fetch does when its signal aborts. */
+    const silent = (_url: string, init: { signal: AbortSignal }) =>
+      new Promise<never>((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    });
+    afterEach(() => warn.mockRestore());
+
+    it('gives every request a signal that aborts after the limit, ten seconds unless told otherwise', async () => {
+      const timeout = jest.spyOn(AbortSignal, 'timeout');
+      await client().send([message(1)]);
+      await client(undefined, 250).send([message(1)]);
+      expect(timeout.mock.calls).toEqual([[REQUEST_TIMEOUT_MS], [250]]);
+      expect(REQUEST_TIMEOUT_MS).toBe(10_000);
+      expect((fetchMock.mock.calls[0][1] as { signal: AbortSignal }).signal).toBeInstanceOf(AbortSignal);
+      timeout.mockRestore();
+    });
+
+    it('gives up on it, retries it like a network error, and answers RequestFailed per message when none gets through', async () => {
+      fetchMock.mockImplementation(silent);
+      const tickets = await client(undefined, 15).send([message(1), message(2)]);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(sleeps.filter((ms) => ms >= 1000)).toEqual([1125, 2125, 4125]);
+      expect(tickets).toEqual([
+        { status: 'error', details: { error: 'RequestFailed' } },
+        { status: 'error', details: { error: 'RequestFailed' } },
+      ]);
+      expect(warn).toHaveBeenCalledWith('Expo did not answer in time [path=send, limit=15 ms]');
+      // Nothing of the content is logged: no token, no title, no body.
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/ExponentPushToken|Inställd|lektion/);
+    });
+
+    it('goes on with the next chunk after a chunk that timed out for good', async () => {
+      let calls = 0;
+      fetchMock.mockImplementation(async (url: string, init: { body: string; signal: AbortSignal }) => {
+        calls += 1;
+        if (calls <= 4) return silent(url, init);
+        return respond(200, { data: (JSON.parse(init.body) as unknown[]).map((_m, i) => ({ status: 'ok', id: `t${i}` })) });
+      });
+      const tickets = await client(undefined, 10).send(Array.from({ length: 101 }, (_v, i) => message(i)));
+      expect(tickets.slice(0, 100).every((t) => t.status === 'error')).toBe(true);
+      expect(tickets[100]).toEqual({ status: 'ok', id: 't0' });
+    });
+
+    it('retries an answer whose body timed out, and does not retry one that is not JSON', async () => {
+      const cutOff = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => Promise.reject(cutOff) });
+      await expect(client().send([message(1)])).resolves.toEqual([{ status: 'ok', id: 'ticket-0' }]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      fetchMock.mockClear();
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => Promise.reject(new SyntaxError('Unexpected token')) });
+      const tickets = await client().send([message(1)]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(tickets).toEqual([{ status: 'error', details: { error: 'RequestFailed' } }]);
+    });
+
+    describe('over a real socket', () => {
+      let server: Server;
+      let behave: (res: import('node:http').ServerResponse) => void;
+      let requests: number;
+      beforeEach(async () => {
+        requests = 0;
+        server = createServer((_req, res) => {
+          requests += 1;
+          behave(res);
+        });
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      });
+      afterEach(async () => {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      });
+      const real = () =>
+        new ExpoPushClient({
+          apiUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+          timeoutMs: 80,
+          sleep: async () => undefined,
+          random: () => 0,
+        });
+
+      it('stops waiting for a server that takes the request and never answers', async () => {
+        behave = () => undefined;
+        const started = Date.now();
+        const tickets = await real().send([message(1)]);
+        expect(tickets).toEqual([{ status: 'error', details: { error: 'RequestFailed' } }]);
+        expect(requests).toBe(4);
+        expect(Date.now() - started).toBeLessThan(2_000);
+      });
+
+      it('stops waiting for a server that answers the headers and stalls in the body', async () => {
+        behave = (res) => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.write('{"data":[');
+        };
+        const started = Date.now();
+        const tickets = await real().send([message(1)]);
+        expect(tickets).toEqual([{ status: 'error', details: { error: 'RequestFailed' } }]);
+        expect(requests).toBe(4);
+        expect(Date.now() - started).toBeLessThan(2_000);
+      });
+
+      it('still reads an answer that comes in time', async () => {
+        behave = (res) => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ data: [{ status: 'ok', id: 'on-time' }] }));
+        };
+        await expect(real().send([message(1)])).resolves.toEqual([{ status: 'ok', id: 'on-time' }]);
+        expect(requests).toBe(1);
+      });
+    });
   });
 });
