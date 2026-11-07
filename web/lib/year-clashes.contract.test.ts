@@ -6,6 +6,8 @@ import {
   detectConflicts,
   type ConflictHit,
 } from "./conflicts";
+import { buildRosterIndex } from "./lesson-audience";
+import { withSharedRooms } from "./shared-rooms-board";
 import type { AvailabilityConstraint, MasterLesson } from "./types";
 
 /**
@@ -30,6 +32,8 @@ interface FixtureCase {
     halves?: Array<{ id: string; halfOfId: string }>;
     /** Ersättande grupper: the groups replacing a subject, which the page passes with its groups. */
     replacing?: Array<{ id: string; replacesSubjectId: string }>;
+    /** Delade salar: the rooms that may hold several lessons at once, with their seats. */
+    sharedRooms?: Array<{ roomId: string; seats: number }>;
   };
   clashes: Record<string, ConflictHit[]>;
 }
@@ -51,6 +55,20 @@ function groupsOfCase(c: FixtureCase) {
   return [...ids].map((id) => ({ id, academicYearId: "y", ...special.get(id) }));
 }
 
+/**
+ * The relation as the page builds it: the groups that share pupils, and, for a
+ * case with shared rooms, the rooms laid on it (lib/shared-rooms-board.ts) from
+ * the roster index the page holds. The gate's seats become rooms of that many
+ * places under HARD, which reads a room exactly as the gate's seats do.
+ */
+function relationOf(c: FixtureCase, studentGroupOf: Map<string, string | null>) {
+  const groups = groupsOfCase(c);
+  const relation = buildGroupConflictMap(studentGroupOf, c.input.memberships, groups);
+  if (!c.input.sharedRooms?.length) return relation;
+  const rooms = c.input.sharedRooms.map((room) => ({ id: room.roomId, canBeShared: true, capacity: room.seats }));
+  return withSharedRooms(relation, rooms, "HARD", buildRosterIndex(studentGroupOf, c.input.memberships, groups));
+}
+
 describe("the board paints what the publish gate counts", () => {
   it.each(cases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
     const studentGroupOf = new Map(c.input.studentGroupOf);
@@ -67,7 +85,7 @@ describe("the board paints what the publish gate counts", () => {
       // The page passes the school's groups, each with its läsår ("y", the
       // lessons'): the halves and the replacing groups among them are what
       // the relation reads, and a lesson's läsår is its own group's.
-      buildGroupConflictMap(studentGroupOf, c.input.memberships, groupsOfCase(c)),
+      relationOf(c, studentGroupOf),
       undefined,
       undefined,
       undefined,

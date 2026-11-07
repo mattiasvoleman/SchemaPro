@@ -327,6 +327,15 @@ export type GroupConflictMap = Map<string, Set<string>> & {
    * Absent at a school with none, and every answer is the relation's alone.
    */
   replacing?: ReplacingContext;
+  /**
+   * Delade salar (lib/shared-rooms-board.ts): of the candidate and the
+   * placements beside it, the ones the candidate's room can hold together with
+   * it, or undefined when the room is exclusive. Carried by the relation, which
+   * every caller already hands the check, so the check takes no argument more
+   * and a school with no shared room pays nothing: absent, every room holds one
+   * lesson at a time, as it always did.
+   */
+  shared?: (candidate: Placement, others: readonly Placement[]) => ReadonlySet<Placement> | undefined;
 };
 
 /** What the clash check needs to apply lib/replacing-groups.ts. */
@@ -526,6 +535,9 @@ export function validatePlacement(
   roomLock?: RoomLockCheck,
 ): ConflictHit[] {
   const hits: ConflictHit[] = [];
+  // What the candidate's room holds beside it, asked once and only of a shared
+  // room (Delade salar, GroupConflictMap.shared).
+  let held: ReadonlySet<Placement> | undefined;
 
   for (const other of others) {
     if (candidate.id !== null && other.id === candidate.id) continue;
@@ -565,7 +577,12 @@ export function validatePlacement(
     if (shareTheClock && candidateTeachers.some((id) => otherTeachers.includes(id))) {
       hits.push({ kind: "TEACHER", otherLessonId: other.id ?? undefined });
     }
-    if (shareTheClock && candidate.roomId && other.roomId === candidate.roomId) {
+    if (
+      shareTheClock &&
+      candidate.roomId &&
+      other.roomId === candidate.roomId &&
+      !(held ??= groupConflicts?.shared?.(candidate, others))?.has(other)
+    ) {
       hits.push({ kind: "ROOM", otherLessonId: other.id ?? undefined });
     }
     const candidateGroups = groupsOf(candidate);

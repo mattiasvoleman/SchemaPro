@@ -954,6 +954,194 @@ describe('MasterLessonsService', () => {
       });
     });
 
+    describe('Delade salar: a room the school lets several groups use at once', () => {
+      // 7A (the candidate's class), 7B and 7C hold two pupils each; the room
+      // is ROOM_ID, where every other lesson below already stands at 10:30.
+      const CLASS_B = '00000000-aaaa-4aaa-8aaa-0000000000b1';
+      const CLASS_C = '00000000-aaaa-4aaa-8aaa-0000000000c1';
+      const roster = () =>
+        arrangePupils([
+          { id: 'a1', studentGroupId: GROUP_ID },
+          { id: 'a2', studentGroupId: GROUP_ID },
+          { id: 'b1', studentGroupId: CLASS_B },
+          { id: 'b2', studentGroupId: CLASS_B },
+          { id: 'c1', studentGroupId: CLASS_C },
+          { id: 'c2', studentGroupId: CLASS_C },
+        ]);
+      /** The school's rule and its marked rooms, as readSharedMode and readSharedSeats read them. */
+      const arrangeShared = (
+        mode: 'OFF' | 'SOFT' | 'HARD' | null,
+        room: { canBeShared: boolean; capacity: number | null } | null = { canBeShared: true, capacity: 4 },
+      ) => {
+        tx.lunchSetting.findFirst.mockResolvedValue(mode === null ? null : { placementSharedMode: mode });
+        tx.room.findMany.mockImplementation((query: Query = {}) =>
+          Promise.resolve(room !== null && query.where?.canBeShared ? [{ id: ROOM_ID, ...room }] : []),
+        );
+      };
+      const inRoom = (id: string, studentGroupId: string, overrides: Record<string, unknown> = {}) =>
+        otherLesson({ id, studentGroupId, roomId: ROOM_ID, ...overrides });
+      const ROOM_REFUSED = new ConflictException('Room is already booked for Math in this slot.');
+
+      it('lets two classes share the room when their pupils fit its capacity', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD');
+        sameDay([inRoom('b', CLASS_B)]);
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        // The rule was read for the school of the läsår, and the room by its id.
+        expect(tx.lunchSetting.findFirst).toHaveBeenCalledWith({
+          where: { school: { academicYears: { some: { id: YEAR_ID } } } },
+          select: { placementSharedMode: true },
+        });
+        expect(tx.room.findMany).toHaveBeenCalledWith({
+          where: { id: { in: [ROOM_ID] }, canBeShared: true, capacity: { not: null } },
+          select: { id: true, canBeShared: true, capacity: true },
+        });
+      });
+
+      it('holds a soft rule to the same capacity', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('SOFT');
+        sameDay([inRoom('b', CLASS_B)]);
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+      });
+
+      it('refuses them when the pupils together do not fit', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD', { canBeShared: true, capacity: 3 });
+        sameDay([inRoom('b', CLASS_B)]);
+
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+        expect(tx.masterLesson.create).not.toHaveBeenCalled();
+      });
+
+      it('counts a pupil named on the lesson beside the class', async () => {
+        arrangeCreate();
+        roster();
+        sameDay([inRoom('b', CLASS_B)]);
+        // 7A's two, 7B's two and c1, named on the candidate: five pupils.
+        arrangeShared('HARD', { canBeShared: true, capacity: 5 });
+        await expect(service.create(createDto({ studentIds: ['c1'] }), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        arrangeShared('HARD', { canBeShared: true, capacity: 4 });
+        await expect(service.create(createDto({ studentIds: ['c1'] }), testUser())).rejects.toThrow(ROOM_REFUSED);
+      });
+
+      it('refuses a room that is not marked shared, as before', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD', null);
+        sameDay([inRoom('b', CLASS_B)]);
+
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+      });
+
+      it('refuses a marked room without a capacity: there is no limit to share under', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD', { canBeShared: true, capacity: null });
+        sameDay([inRoom('b', CLASS_B)]);
+
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+      });
+
+      it('refuses with the rule off or never written, and then reads no room at all', async () => {
+        for (const mode of ['OFF', null] as const) {
+          tx.room.findMany.mockClear();
+          arrangeCreate();
+          roster();
+          arrangeShared(mode);
+          sameDay([inRoom('b', CLASS_B)]);
+
+          await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+          expect(tx.room.findMany).not.toHaveBeenCalledWith(
+            expect.objectContaining({ where: expect.objectContaining({ canBeShared: true }) }),
+          );
+        }
+      });
+
+      it('asks the database nothing about the rule when no lesson stands in the room at that hour', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD');
+        // Another room at the same hour, and this room at another hour.
+        sameDay([
+          otherLesson({ id: 'elsewhere', studentGroupId: CLASS_B }),
+          inRoom('later', CLASS_C, { startTime: t('11:00'), endTime: t('12:00') }),
+        ]);
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        expect(tx.lunchSetting.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('holds three lessons together, not in pairs: two fit the room and a third does not', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD', { canBeShared: true, capacity: 4 });
+        // Each pair of the three is four pupils, which fits; the three are six.
+        sameDay([inRoom('b', CLASS_B)]);
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        sameDay([inRoom('c', CLASS_C)]);
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        sameDay([inRoom('b', CLASS_B), inRoom('c', CLASS_C)]);
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+      });
+
+      it('does not count lessons that follow each other as being in the room together', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD', { canBeShared: true, capacity: 4 });
+        // The candidate runs 10:00-11:00; 7B 10:00-10:30 and 7C 10:30-11:00 are never three at once.
+        sameDay([
+          inRoom('b', CLASS_B, { startTime: t('10:00'), endTime: t('10:30') }),
+          inRoom('c', CLASS_C, { startTime: t('10:30'), endTime: t('11:00') }),
+        ]);
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+      });
+
+      it('leaves odd and even weeks sharing a room as they always did, and counts them apart', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD', { canBeShared: true, capacity: 2 });
+        // An even-week lesson never meets the candidate's odd weeks, rule or no rule.
+        sameDay([inRoom('b', CLASS_B, { recurrence: 'EVEN_WEEKS' })]);
+        await expect(service.create(createDto({ recurrence: 'ODD_WEEKS' }), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        arrangeShared('OFF');
+        await expect(service.create(createDto({ recurrence: 'ODD_WEEKS' }), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        // Four seats: an every-week lesson, an odd-week one and an even-week one are never three at once.
+        arrangeShared('HARD', { canBeShared: true, capacity: 4 });
+        sameDay([inRoom('b', CLASS_B, { recurrence: 'ODD_WEEKS' }), inRoom('c', CLASS_C, { recurrence: 'EVEN_WEEKS' })]);
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+      });
+
+      it('keeps the teacher, the class and shared pupils clashing in a shared room', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD', { canBeShared: true, capacity: 1000 });
+        sameDay([inRoom('t', CLASS_B, { teacherId: TEACHER_ID })]);
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(
+          new ConflictException('Teacher already teaches Math in this slot.'),
+        );
+        sameDay([inRoom('g', GROUP_ID)]);
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(
+          new ConflictException('The group already has Math in this slot.'),
+        );
+      });
+
+      it('keeps a lesson whose class has no known pupils exclusive in the room', async () => {
+        arrangeCreate();
+        roster();
+        arrangeShared('HARD', { canBeShared: true, capacity: 1000 });
+        sameDay([inRoom('x', '00000000-aaaa-4aaa-8aaa-0000000000d1')]);
+
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+      });
+    });
+
     it('does not hold a participant busy for a class that is elsewhere at that hour', async () => {
       // The pupil's home class has no lesson in this slot, so the pupil is
       // free, whatever the other lesson is.
