@@ -2343,8 +2343,7 @@
       "ACK_REQUESTED": "The school asks you to confirm: {title}",
       "ACK_REMINDER": "Reminder: the school is waiting for your confirmation of {title}"
     },
-    "lessonPupilMoved": "A pupil changes lesson {when}: {to} instead of {from}.",
-    "lessonPupilMovedUndone": "The change of lesson {when} is undone: {from} stands.",
+    "lessonPupilMoved": "A pupil’s lesson ({when}) is now {subject}.",
     "lessonReportReminder": "{count, plural, one {# new lesson was held} other {# new lessons were held}} at least {limitDays, plural, one {# day} other {# days}} ago with no saved register. Older open lessons may remain. See My reporting.",
     "reportingRateDigest": "Reporting rate {from} – {to}: {reported, number} of {held, plural, one {# lesson held} other {# lessons held}} had a saved register. See Reporting rate.",
     "cover": {

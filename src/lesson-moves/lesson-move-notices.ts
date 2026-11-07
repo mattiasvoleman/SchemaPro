@@ -25,6 +25,8 @@ export interface MoveNoticeMeta {
   studentId: string;
   fromSubjectName: string;
   toSubjectName: string;
+  /** The lesson the pupil is on now: where they went, or where they are back after Ångra. The web words its notice from this alone. */
+  subjectName: string;
   startsAt: string;
   /** True when the move was taken back (Ångra) or the pupil was sent back to where they started. */
   undone?: boolean;
@@ -40,6 +42,7 @@ export function moveMeta(
     ...ids,
     fromSubjectName: from.subjectName,
     toSubjectName: to.subjectName,
+    subjectName: undone ? from.subjectName : to.subjectName,
     startsAt: from.startsAt.toISOString(),
     ...(undone ? { undone: true } : {}),
   };

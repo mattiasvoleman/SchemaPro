@@ -43,16 +43,18 @@ describe("the guardian's notice after an alarm", () => {
 });
 
 describe("the notice of a pupil moved to a parallel lesson for a day (Elevens lektion för dagen)", () => {
-  const meta = { fromSubjectName: "Svenska", toSubjectName: "Engelska", startsAt: startedAt, studentName: "Alva Andersson", movedByName: "Rektor Rask" };
+  // The server writes the lesson the pupil is on now as subjectName: Engelska after a move, Svenska after Ångra.
+  const meta = { subjectName: "Engelska", fromSubjectName: "Svenska", toSubjectName: "Engelska", startsAt: startedAt, studentName: "Alva Andersson", movedByName: "Rektor Rask" };
 
-  it("says the two subjects and that a pupil changes lesson, in both languages", () => {
-    expect(say("sv", row("LESSON_PUPIL_MOVED", meta))).toMatch(/^En elev byter lektion .*: Engelska i stället för Svenska\.$/);
-    expect(say("en", row("LESSON_PUPIL_MOVED", meta))).toMatch(/^A pupil changes lesson .*: Engelska instead of Svenska\.$/);
+  it("says which lesson the pupil is on now, in both languages", () => {
+    expect(say("sv", row("LESSON_PUPIL_MOVED", meta))).toMatch(/^En elevs lektion .* är nu Engelska\.$/);
+    expect(say("en", row("LESSON_PUPIL_MOVED", meta))).toMatch(/^A pupil.s lesson \(.*\) is now Engelska\.$/);
   });
 
-  it("says that the change is undone, and which lesson stands", () => {
-    expect(say("sv", row("LESSON_PUPIL_MOVED", { ...meta, undone: true }))).toMatch(/är ångrat: det är Svenska som gäller\.$/);
-    expect(say("en", row("LESSON_PUPIL_MOVED", { ...meta, undone: true }))).toMatch(/is undone: Svenska stands\.$/);
+  it("says the lesson they are back on when the move is undone, in the same sentence", () => {
+    const undone = { ...meta, subjectName: "Svenska", undone: true };
+    expect(say("sv", row("LESSON_PUPIL_MOVED", undone))).toMatch(/är nu Svenska\.$/);
+    expect(say("en", row("LESSON_PUPIL_MOVED", undone))).toMatch(/is now Svenska\.$/);
   });
 
   it("never says the pupil or who moved them, even if a newer gateway puts them in the meta", () => {

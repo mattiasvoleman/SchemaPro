@@ -2343,8 +2343,7 @@
       "ACK_REQUESTED": "Skolan ber dig bekräfta: {title}",
       "ACK_REMINDER": "Påminnelse: skolan väntar på din bekräftelse av {title}"
     },
-    "lessonPupilMoved": "En elev byter lektion {when}: {to} i stället för {from}.",
-    "lessonPupilMovedUndone": "Bytet av lektion {when} är ångrat: det är {from} som gäller.",
+    "lessonPupilMoved": "En elevs lektion {when} är nu {subject}.",
     "lessonReportReminder": "{count, plural, one {# ny lektion hölls} other {# nya lektioner hölls}} för minst {limitDays, plural, one {# dag} other {# dagar}} sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Se Min rapportering.",
     "reportingRateDigest": "Rapporteringsgrad {from} – {to}: {reported, number} av {held, plural, one {# hållen lektion} other {# hållna lektioner}} hade ett sparat register. Se Rapporteringsgrad.",
     "cover": {
