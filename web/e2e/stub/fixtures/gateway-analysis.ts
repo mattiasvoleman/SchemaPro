@@ -45,6 +45,7 @@ const teacher = (id: string, over: Partial<TeacherKeyFigures>): TeacherKeyFigure
 const KEY_FIGURES: KeyFigures = {
   academicYearId: "",
   year: { startDate: YEAR_START, endDate: YEAR_END },
+  employmentOn: YEAR_START,
   loadModel: "MINUTES",
   school: {
     pupils: 120,

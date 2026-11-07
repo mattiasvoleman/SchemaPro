@@ -37,7 +37,7 @@ import { TableCard } from "@/components/ui/table-card";
  * teacher's row, and the page says so.
  */
 export function KeyFiguresPanel({ yearId }: { yearId: string }) {
-  const { t, number } = useAnalysisText();
+  const { t, number, day } = useAnalysisText();
   // The comparison with the grundschema is a second report over every master lesson: made when asked for.
   const [compare, setCompare] = useState(false);
   const query = useKeyFigures(yearId, compare);
@@ -146,6 +146,7 @@ export function KeyFiguresPanel({ yearId }: { yearId: string }) {
           })}
         </p>
       ) : null}
+      {view.employmentOn ? <p className="text-sm text-muted-foreground">{t("keyFigures.employmentOn", { date: day(view.employmentOn) })}</p> : null}
 
       {view.teachers === null ? null : (
         <SectionCard id="analysis-teachers" title={t("keyFigures.teachers.title")} description={t("keyFigures.teachers.description")}>

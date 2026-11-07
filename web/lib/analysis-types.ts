@@ -83,6 +83,8 @@ export interface KeyFigures {
   loadModel: "MINUTES" | "FACTOR";
   rostersFrom?: "ENROLLMENT";
   hrHidden?: true;
+  /** The day tjänstgöringsgrad is read on: the school's today held inside the läsår (the post in force that day). HR-läs only. */
+  employmentOn?: string;
   aggregateOnly?: true;
   school: SchoolKeyFigures;
   teachers: TeacherKeyFigures[] | null;

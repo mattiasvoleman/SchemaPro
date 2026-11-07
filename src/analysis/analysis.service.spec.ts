@@ -107,6 +107,7 @@ describe('AnalysisService', () => {
       expect(result.teachers?.find((row) => row.userId === ANNA)).toMatchObject({ employmentPercent: 100, pupils: 6 });
       expect(result.school).toMatchObject({ pupils: 6, teachers: 3, fullTimeTeachingMinutesPerWeek: 1080 });
       expect(result.school.employmentFte).toBe(2.3);
+      expect(result.employmentOn).toBe('2026-11-18');
       expect(result).not.toHaveProperty('hrHidden');
       expect(result).not.toHaveProperty('aggregateOnly');
       expect(result.loadModel).toBe('MINUTES');
@@ -117,9 +118,45 @@ describe('AnalysisService', () => {
       expect(reads[0]!.ids.sort()).toEqual([ANNA, BO, CY].sort());
     });
 
+    it("reads a post that changes during the year on the school's today held inside the läsår, and says which day", async () => {
+      const input = schoolInput();
+      const changing = {
+        ...input,
+        employments: [
+          { ...input.employments[0]!, periods: [{ validFrom: '2027-01-01', validTo: null, employmentPercent: 60, reductionPercent: 0, teachingTargetMinutesPerWeek: null }] },
+          ...input.employments.slice(1),
+        ],
+      };
+      staffing.readReports.mockResolvedValue({
+        read: { year: { startDate: '2026-08-17', endDate: '2027-06-11' }, input: changing },
+        planned: buildTeacherLoadReport(changing),
+        scheduled: null,
+      });
+      const anna = (result: Awaited<ReturnType<AnalysisService['keyFigures']>>) => result.teachers?.find((row) => row.userId === ANNA)?.employmentPercent;
+
+      // In November, before the period starts: the base row's 100 %.
+      expect(anna(await service.keyFigures(YEAR_ID, rektor()))).toBe(100);
+
+      // In February: the period's 60 %, and the school's heltidstjänster by tjänstgöringsgrad follow it.
+      jest.spyOn(service, 'now').mockReturnValue(new Date('2027-02-10T10:00:00.000Z'));
+      const february = await service.keyFigures(YEAR_ID, rektor());
+      expect(february.employmentOn).toBe('2027-02-10');
+      expect(anna(february)).toBe(60);
+      expect(february.school.employmentFte).toBe(1.9);
+
+      // A past year is read on its last day, a coming one on its first.
+      jest.spyOn(service, 'now').mockReturnValue(new Date('2028-01-10T10:00:00.000Z'));
+      expect((await service.keyFigures(YEAR_ID, rektor())).employmentOn).toBe('2027-06-11');
+      jest.spyOn(service, 'now').mockReturnValue(new Date('2026-06-01T10:00:00.000Z'));
+      const coming = await service.keyFigures(YEAR_ID, rektor());
+      expect(coming.employmentOn).toBe('2026-08-17');
+      expect(anna(coming)).toBe(100);
+    });
+
     it('leaves tjänstgöringsgrad out for a reader without HR-läs, says so, and records the teachers as their tjänst alone', async () => {
       const result = await service.keyFigures(YEAR_ID, withoutHr());
       expect(result.hrHidden).toBe(true);
+      expect(result).not.toHaveProperty('employmentOn');
       expect(result.teachers?.every((row) => row.employmentPercent === null)).toBe(true);
       expect(result.school).not.toHaveProperty('employmentFte');
       expect(recordedReads(tx).map((read) => read.kind)).toEqual(['EMPLOYMENT']);
@@ -130,6 +167,7 @@ describe('AnalysisService', () => {
       expect(result.aggregateOnly).toBe(true);
       expect(result.teachers).toBeNull();
       expect(result).not.toHaveProperty('hrHidden');
+      expect(result).not.toHaveProperty('employmentOn');
       expect(result.school.teachers).toBe(3);
       expect(result.school).not.toHaveProperty('employmentFte');
       expect(recordedReads(tx)).toEqual([]);

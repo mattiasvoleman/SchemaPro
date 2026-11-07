@@ -116,6 +116,7 @@ export class AnalysisService {
   async keyFigures(academicYearId: string, user: AuthenticatedUser, options: { schedule?: boolean } = {}): Promise<KeyFiguresResponse> {
     requireSchoolId(user);
     const aggregateOnly = isReader(user);
+    const now = this.now();
     return this.prisma.withRls(user, async (tx) => {
       const { read, planned, scheduled } = await this.staffing.readReports(tx, user, academicYearId, { scheduled: options.schedule === true });
       const pupils = await readPlannedInput(tx, user, academicYearId, true);
@@ -123,12 +124,24 @@ export class AnalysisService {
       const audiences = audiencesOf(pupils.groups, pupils.pupils);
       const hr = readsHr(user) && !aggregateOnly;
       const fullTime = read.input.policy?.fullTimeTeachingMinutesPerWeek ?? null;
+      // A post that changes during the year is read on one day (postOn), not on its base row: the school's today,
+      // held inside the läsår, so a past year is read on its last day and a coming one on its first.
+      let employmentOn = read.year.startDate;
+      if (hr) {
+        const zone = await tx.academicYear.findUnique({
+          where: { id: academicYearId },
+          select: { school: { select: { timezone: true } } },
+        });
+        const today = asDay(todayInZone(zone?.school?.timezone ?? 'Europe/Stockholm', now));
+        employmentOn = today < read.year.startDate ? read.year.startDate : today > read.year.endDate ? read.year.endDate : today;
+      }
       const { school, teachers } = buildKeyFigures({
         planned,
         scheduled,
         audiences,
         fullTimeMinutesPerWeek: fullTime && fullTime > 0 ? fullTime : null,
         readsHr: hr,
+        employmentOn,
       });
       if (!aggregateOnly) {
         // Each teacher's undervisning, load and, with HR-läs, tjänst: their post (EMPLOYMENT), and the person it is (PEOPLE).
@@ -146,6 +159,7 @@ export class AnalysisService {
         loadModel: planned.loadModel,
         ...(pupils.rostersFrom ? { rostersFrom: pupils.rostersFrom } : {}),
         ...(!hr && !aggregateOnly ? { hrHidden: true as const } : {}),
+        ...(hr ? { employmentOn } : {}),
         ...(aggregateOnly ? { aggregateOnly: true as const } : {}),
         school,
         teachers: aggregateOnly ? null : teachers,

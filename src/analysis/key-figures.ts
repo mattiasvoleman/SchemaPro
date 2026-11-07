@@ -1,3 +1,4 @@
+import { postOn } from '../staffing/employment-periods';
 import type { TeacherAssignment, TeacherLoad, TeacherLoadReport } from '../staffing/teacher-load';
 import type { Audiences } from './audience';
 import type { SchoolKeyFigures, TeacherKeyFigures } from './analysis.types';
@@ -44,6 +45,13 @@ export interface KeyFigureInput {
   fullTimeMinutesPerWeek: number | null;
   /** May tjänstgöringsgrad be stated? (readsHr) */
   readsHr: boolean;
+  /**
+   * The day a post's tjänstgöringsgrad is read on (postOn): a post that changes
+   * during the läsår has no one figure, and the base row's would be the wrong
+   * one for part of the year. The service gives the school's today, held inside
+   * the läsår; the response says which day it was.
+   */
+  employmentOn: string;
 }
 
 export interface KeyFigureResult {
@@ -82,6 +90,7 @@ function teacherFigures(
   recorded: boolean,
   audiences: Audiences,
   readsHr: boolean,
+  employmentOn: string,
 ): TeacherKeyFigures {
   let clock = 0;
   let covered = 0;
@@ -101,7 +110,7 @@ function teacherFigures(
     status: teacher.status,
     scheduledMinutesPerWeek: hasScheduled ? (scheduled?.assignedMinutesPerWeek ?? 0) : null,
     teachingHoursPerYear: teacher.annual.assignedHoursPerYear,
-    employmentPercent: readsHr && teacher.employment ? teacher.employment.employmentPercent : null,
+    employmentPercent: readsHr && teacher.employment ? postOn(teacher.employment, employmentOn).employmentPercent : null,
     groups: new Set(teacher.assignments.map((assignment) => assignment.studentGroupId)).size,
     pupils: pupilsOfAssignments(teacher.assignments, audiences).size,
     qualifiedShare: recorded && clock > 0 ? round(covered / clock, 4) : null,
@@ -109,7 +118,7 @@ function teacherFigures(
 }
 
 export function buildKeyFigures(input: KeyFigureInput): KeyFigureResult {
-  const { planned, scheduled, audiences, fullTimeMinutesPerWeek, readsHr } = input;
+  const { planned, scheduled, audiences, fullTimeMinutesPerWeek, readsHr, employmentOn } = input;
   const unqualified = unqualifiedKeys(planned);
   const recorded = planned.qualificationsRecorded;
   const scheduledById = new Map((scheduled?.teachers ?? []).map((teacher) => [teacher.userId, teacher]));
@@ -117,7 +126,7 @@ export function buildKeyFigures(input: KeyFigureInput): KeyFigureResult {
   const hasScheduled = scheduled !== null && scheduled.totals.lessonMinutesPerWeek > 0;
 
   const teachers = planned.teachers.map((teacher) =>
-    teacherFigures(teacher, scheduledById.get(teacher.userId), hasScheduled, unqualified, recorded, audiences, readsHr),
+    teacherFigures(teacher, scheduledById.get(teacher.userId), hasScheduled, unqualified, recorded, audiences, readsHr, employmentOn),
   );
 
   const teaching = planned.teachers.filter((teacher) => teacher.assignments.length > 0);
@@ -156,7 +165,10 @@ export function buildKeyFigures(input: KeyFigureInput): KeyFigureResult {
     unstaffedMinutesPerWeek: planned.unstaffedRequirements.reduce((sum, row) => sum + row.minutesPerWeek, 0),
   };
   if (readsHr) {
-    const employed = teaching.reduce((sum, teacher) => sum + (teacher.employment ? teacher.employment.employmentPercent / 100 : 0), 0);
+    const employed = teaching.reduce(
+      (sum, teacher) => sum + (teacher.employment ? postOn(teacher.employment, employmentOn).employmentPercent / 100 : 0),
+      0,
+    );
     school.employmentFte = round(employed, 2);
     school.employmentFtePer100Pupils = per100(employed);
   }

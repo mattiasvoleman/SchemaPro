@@ -101,6 +101,7 @@ const keyFigures = (over: Partial<KeyFigures> = {}): KeyFigures => ({
   academicYearId: "y1",
   year: { startDate: "2026-08-17", endDate: "2027-06-11" },
   loadModel: "MINUTES",
+  employmentOn: "2026-11-18",
   school: {
     pupils: 120,
     teachers: 3,
@@ -257,6 +258,8 @@ describe("Analys och planering, the administrator's page", () => {
     expect(screen.getByText("1 320 tim/år")).toBeInTheDocument();
     // The HR-based density, for a reader of HR data.
     expect(screen.getByText(/Efter tjänstgöringsgrad: 2,30 heltidstjänster, 1,92 per 100 elever\./)).toBeInTheDocument();
+    // ...and the day the grad is read on, since a post that changes during the year has no one figure.
+    expect(screen.getByText(/Tjänstgraden är den som gäller 18 nov\.? 2026\./)).toBeInTheDocument();
   });
 
   it("lists the teachers by name, hours a week and tjänstgöringsgrad, and sorts on a heading both ways", async () => {
@@ -294,6 +297,7 @@ describe("Analys och planering, the administrator's page", () => {
   it("has no column of tjänstgöringsgrad, and no HR-based density, for a reader without HR-läs", async () => {
     state.key = keyFigures({
       hrHidden: true,
+      employmentOn: undefined,
       teachers: keyFigures().teachers!.map((one) => ({ ...one, employmentPercent: null })),
       school: { ...keyFigures().school, employmentFte: undefined, employmentFtePer100Pupils: undefined },
     });
@@ -301,6 +305,7 @@ describe("Analys och planering, the administrator's page", () => {
     const table = await screen.findByRole("table", { name: "Nyckeltal per lärare" });
     expect(within(table).queryByRole("columnheader", { name: /Tjänstgöringsgrad/ })).toBeNull();
     expect(screen.queryByText(/Efter tjänstgöringsgrad/)).toBeNull();
+    expect(screen.queryByText(/Tjänstgraden är den som gäller/)).toBeNull();
   });
 
   it("shows the huvudman's reader the school's figures and no teacher, and says so", async () => {

@@ -8,6 +8,7 @@ const figures = (overrides: Parameters<typeof report>[0] = {}, extra: Partial<Pa
     audiences,
     fullTimeMinutesPerWeek: 1080,
     readsHr: true,
+    employmentOn: '2026-10-15',
     ...extra,
   });
 
@@ -38,6 +39,22 @@ describe('buildKeyFigures: per teacher', () => {
     expect(teacher(result, BO)).toMatchObject({ pupils: 4, groups: 2 });
     // CY: beside ANNA in MaN alone.
     expect(teacher(result, CY)).toMatchObject({ pupils: 2, groups: 1 });
+  });
+
+  it("reads a post that changes during the year on the day it is asked for, not on its base row", () => {
+    // ANNA starts the year at 100 % and goes down to 60 % from 1 January: the base row alone would say 100 all year.
+    const employments = [
+      { ...schoolInput().employments[0]!, periods: [{ validFrom: '2027-01-01', validTo: null, employmentPercent: 60, reductionPercent: 0, teachingTargetMinutesPerWeek: null }] },
+      ...schoolInput().employments.slice(1),
+    ];
+    const before = figures({ employments }, { employmentOn: '2026-12-31' });
+    const after = figures({ employments }, { employmentOn: '2027-01-01' });
+    expect(teacher(before, ANNA).employmentPercent).toBe(100);
+    expect(teacher(after, ANNA).employmentPercent).toBe(60);
+    expect(teacher(after, BO).employmentPercent).toBe(50);
+    // The school's heltidstjänster by tjänstgöringsgrad follow the same day: 1.0 + 0.5 + 0.8 before, 0.6 + 0.5 + 0.8 after.
+    expect(before.school.employmentFte).toBe(2.3);
+    expect(after.school.employmentFte).toBe(1.9);
   });
 
   it("states tjänstgöringsgrad only to a reader of HR data, and says nothing of it otherwise", () => {
@@ -118,6 +135,7 @@ describe('buildKeyFigures: per school', () => {
       audiences: { ...audiences, schoolPupils: [] },
       fullTimeMinutesPerWeek: 1080,
       readsHr: true,
+      employmentOn: '2026-10-15',
     }).school;
     expect(noPupils).toMatchObject({ pupils: 0, teachersPer100Pupils: null, teachingFtePer100Pupils: null, employmentFtePer100Pupils: null });
   });

@@ -8435,6 +8435,7 @@
         "unstaffed": "{hours} h a week have no teacher"
       },
       "employmentDensity": "By employment degree: {fte} full-time posts, {per100} per 100 pupils.",
+      "employmentOn": "The employment degree is the one in force on {date}. A post that changes during the school year has another degree before and after.",
       "noTarget": "No target",
       "teachers": {
         "title": "Teachers",

@@ -140,6 +140,12 @@ export interface KeyFiguresResponse {
   rostersFrom?: 'ENROLLMENT';
   /** True when tjänstgöringsgrad was left out for a reader without HR-läs. */
   hrHidden?: true;
+  /**
+   * The day every teacher's tjänstgöringsgrad (and employmentFte) is read on: the school's today held inside the
+   * läsår. A post that changes during the year has no one figure; this is the one in force that day (postOn).
+   * Present only where tjänstgöringsgrad is stated, i.e. for a reader with HR-läs.
+   */
+  employmentOn?: string;
   /** True for the huvudman's reader: the school's figures, and no teacher's. */
   aggregateOnly?: true;
   school: SchoolKeyFigures;

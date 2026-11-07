@@ -8435,6 +8435,7 @@
         "unstaffed": "{hours} tim i veckan saknar lärare"
       },
       "employmentDensity": "Efter tjänstgöringsgrad: {fte} heltidstjänster, {per100} per 100 elever.",
+      "employmentOn": "Tjänstgraden är den som gäller {date}. En tjänst som ändras under läsåret har en annan grad före och efter.",
       "noTarget": "Inget mål",
       "teachers": {
         "title": "Lärare",

@@ -118,6 +118,16 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string; via?: string }> = 
     basis: "WRITES",
     why: "the person form's post fields write the base row",
   },
+  "lib/analysis.ts": {
+    basis: "VIA",
+    via: "@/lib/analysis-types",
+    why: "Analys och planering: sorts and prints the gateway's key figures, whose Tjänst % is the post on the day the answer names (employmentOn, postOn there); it reads no post of its own",
+  },
+  "components/analysis/key-figures-panel.tsx": {
+    basis: "VIA",
+    via: "@/lib/analysis-queries",
+    why: "Analys och planering: prints the gateway's Tjänst % and heltidstjänster as of employmentOn, and says which day; for a reader with HR-läs only",
+  },
   "lib/staffing-queries.ts": {
     basis: "TRANSPORT",
     why: "the post and period endpoints, through the gateway; no figure read",
