@@ -35,7 +35,8 @@
 -- app.lesson_pupil_move_undo (SECURITY DEFINER, bara API-rollen), som ställer
 -- samma fråga som arm efter arm skulle ha gjort och tar de två lektionernas
 -- rader i id-ordning (FOR NO KEY UPDATE) innan något annat. Den som tar emot
--- ett register tar sin lektions rad FOR SHARE (AttendanceService), så en flytt
+-- ett register tar sin lektions rad FOR SHARE (AttendanceService, genom
+-- app.lesson_pupil_register_lock), så en flytt
 -- och ett sparat register möts i en ordning och aldrig mitt i: en markering
 -- som sparats före flytten ligger kvar att flytta undan, och ett register som
 -- sparas efter ser flytten och lämnar eleven utanför.
@@ -82,7 +83,9 @@
 --
 -- Läsarmar (alla TO app_authenticated): administratörer läser alla skolans
 -- flyttar; en lärare dem på lektioner hen undervisar och dem hen är mentor
--- för; en elev sina egna; en vårdnadshavare sina barns. Ingen skrivarm.
+-- för; en elev sina egna; en vårdnadshavare sina barns; SS12000-leverantören
+-- (skolans tjänsteprincipal) skolans alla, som den läser ankomsten bredvid.
+-- Ingen skrivarm.
 -- Varje rad som skrivs eller tas bort bumpar båda lektionernas CalendarEvent
 -- i ett anrop (app.ss12000_bump_lessons tar versionsraderna i id-ordning),
 -- så en flytt och en flytt åt andra hållet inte låser varandra korsvis.
@@ -654,6 +657,24 @@ END
 $$;
 
 REVOKE ALL ON FUNCTION app.lesson_pupil_move_undo(uuid) FROM PUBLIC;
+
+-- The register's side of the same order: a lesson's row FOR SHARE, which a move
+-- (FOR NO KEY UPDATE) waits for and which waits for a move. A function of its
+-- own because the lock cannot be taken from the gateway: a row lock on a table
+-- with row security runs the UPDATE policy over the row too, a teacher has none
+-- on CalendarLessons, and the statement then locks nothing and says nothing.
+-- Found by the adapter probe, with a save and a move started together.
+CREATE FUNCTION app.lesson_pupil_register_lock(p_lesson uuid) RETURNS boolean
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+BEGIN
+  PERFORM 1 FROM "CalendarLessons"
+   WHERE "id" = p_lesson AND "schoolId" = app.current_school_id()
+     FOR SHARE;
+  RETURN FOUND;
+END
+$$;
+
+REVOKE ALL ON FUNCTION app.lesson_pupil_register_lock(uuid) FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
 -- The pupil's own arms: the lessons they were moved off.
@@ -1385,12 +1406,19 @@ BEGIN
                AND "studentId" = ANY ((select CASE WHEN app.current_user_role() = 'GUARDIAN'
                                                    THEN app.current_guardian_child_ids() END)::uuid[]));
 
+    -- The SS12000 provider (a school's service principal) reads a move to say who does not take
+    -- part in an event, as it reads the arrival beside it (calendar_lesson_students_service_select).
+    CREATE POLICY "lesson_pupil_moves_service_select" ON "LessonPupilMoves"
+        FOR SELECT TO "app_authenticated"
+        USING ("schoolId" = (select app.current_service_school_id()));
+
     REVOKE ALL ON "LessonPupilMoves" FROM app_authenticated;
     GRANT SELECT ON "LessonPupilMoves" TO app_authenticated;
 
     GRANT EXECUTE ON FUNCTION app.lesson_pupil_move(uuid, uuid, uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.lesson_pupil_move_undo(uuid) TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.lesson_move_is_mentor(uuid, date) TO "app_authenticated";
+    GRANT EXECUTE ON FUNCTION app.lesson_pupil_register_lock(uuid) TO "app_authenticated";
   END IF;
 
   FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
@@ -1416,7 +1444,8 @@ BEGIN
     'app.lesson_pupil_move_remove(uuid, boolean)', 'app.lesson_move_may(uuid, uuid[], date)',
     'app.lesson_move_is_mentor(uuid, date)', 'app.lesson_pupil_move_is_parallel()',
     'app.lesson_pupil_move_tells_the_integrations()', 'app.lesson_pupil_moves_lapse()',
-    'app.lesson_pupil_arrival_is_the_moves()', 'app.lesson_pupil_arrival_goes_with_the_move()'
+    'app.lesson_pupil_arrival_is_the_moves()', 'app.lesson_pupil_arrival_goes_with_the_move()',
+    'app.lesson_pupil_register_lock(uuid)'
   ] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', t);
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
@@ -1436,6 +1465,8 @@ COMMENT ON FUNCTION app.lesson_pupil_move_undo(uuid) IS
   'Ångrar en flytt: tar bort den (ankomsten går med) och lägger tillbaka elevens markering på källan om ingen skrivit en ny. Vägras (LM415) när eleven har en markering på mållektionen.';
 COMMENT ON FUNCTION app.lesson_pupil_move_remove(uuid, boolean) IS
   'Tar bort en flytt och, med p_restore, lägger tillbaka den undanflyttade markeringen. Den som anropar har lektionernas lås och har frågat app.lesson_move_may.';
+COMMENT ON FUNCTION app.lesson_pupil_register_lock(uuid) IS
+  'Registret tar lektionens rad FOR SHARE, så en flytt och ett sparat register möts i en ordning. En funktion för att en lärare saknar UPDATE-policy på CalendarLessons och ett radlås under RLS då inte tar något lås.';
 COMMENT ON FUNCTION app.lesson_move_may(uuid, uuid[], date) IS
   'Får den inloggade flytta eleven: en administratör med Drift, eller en lärare som undervisar någon av lektionerna eller är elevens mentor den dagen (app.leave_mentors).';
 COMMENT ON FUNCTION app.lesson_move_is_mentor(uuid, date) IS

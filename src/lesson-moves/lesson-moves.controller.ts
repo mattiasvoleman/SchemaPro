@@ -20,7 +20,13 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { MoveCandidatesQueryDto, MoveLessonPupilDto } from './dto/lesson-moves.dto';
-import { LessonMovesService, type LessonMovesView, type MoveCandidates, type MoveResult } from './lesson-moves.service';
+import {
+  LessonMovesService,
+  type LessonMovesView,
+  type MovablePupil,
+  type MoveCandidates,
+  type MoveResult,
+} from './lesson-moves.service';
 
 const uuid = () => new ParseUUIDPipe({ version: '4' });
 
@@ -47,6 +53,12 @@ export class LessonMovesController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<MoveCandidates> {
     return this.moves.candidates(lessonId, query.studentId, user);
+  }
+
+  /** `GET /api/v1/lesson-moves/lessons/:lessonId/pupils`: the pupils of the lesson the caller may move. */
+  @Get('lessons/:lessonId/pupils')
+  pupils(@Param('lessonId', uuid()) lessonId: string, @CurrentUser() user: AuthenticatedUser): Promise<{ students: MovablePupil[] }> {
+    return this.moves.pupils(lessonId, user);
   }
 
   /** `GET /api/v1/lesson-moves/lessons/:lessonId`: the pupils this lesson lost and gained for the day. */

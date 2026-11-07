@@ -25178,6 +25178,7 @@
                 "LEAVE_REQUESTED",
                 "LESSON_CANCELLED",
                 "LESSON_COVER_WITHDRAWN",
+                "LESSON_PUPIL_MOVED",
                 "LESSON_REINSTATED",
                 "LESSON_REPORT_REMINDER",
                 "LESSON_ROOM_CHANGED",
@@ -26127,6 +26128,9 @@
               "NONE",
               "ROOMS"
             ]
+          },
+          "guardianNoticeOnMove": {
+            "type": "boolean"
           }
         },
         "required": [

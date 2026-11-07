@@ -128,6 +128,15 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
       ? Prisma.sql`ARRAY(SELECT p."studentId" FROM "CalendarLessonStudents" p
                   WHERE p."calendarLessonId" = cl."id" ORDER BY 1) AS "studentIds"`
       : Prisma.sql`'{}'::uuid[] AS "studentIds"`;
+  // Elevens lektion för dagen: the pupils moved off the lesson for the day, who are not on it. Read with the
+  // named pupils (rule 4's audience) and in the audience's grouping, so that lessons with different pupils
+  // moved off are different rows, and a school with no move has an empty array on every row and the rows it
+  // always had.
+  const movedOff =
+    audience === 'full'
+      ? Prisma.sql`ARRAY(SELECT m."studentId" FROM "LessonPupilMoves" m
+                  WHERE m."fromLessonId" = cl."id" AND m."schoolId" = cl."schoolId" ORDER BY 1) AS "movedOffIds"`
+      : Prisma.sql`'{}'::uuid[] AS "movedOffIds"`;
   // Rule 5, or every subject. The default spells the line P3 wrote.
   const counted = options.subjects === 'all' ? Prisma.sql`AND TRUE` : Prisma.sql`AND s."countsTowardTimplan"`;
   // Asked only of a CANCELLED row, past or ahead: one test, written once.
@@ -160,7 +169,8 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
              ELSE 'OTHER'
            END AS "bucket",
            ${extraGroups},
-           ${students}
+           ${students},
+           ${movedOff}
       FROM "CalendarLessons" cl
       JOIN "StudentGroups" g ON g."id" = cl."studentGroupId"
       JOIN "Subjects" s ON s."id" = cl."subjectId"
@@ -181,10 +191,10 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
 export function audienceStatement(window: DeliveredWindow): Prisma.Sql {
   return Prisma.sql`
     WITH l AS (${deliveredLessons(window)})
-    SELECT "studentGroupId", "subjectId", "bucket", "extraGroupIds", "studentIds",
+    SELECT "studentGroupId", "subjectId", "bucket", "extraGroupIds", "studentIds", "movedOffIds",
            SUM("minutes")::int AS "minutes", COUNT(*)::int AS "lessons"
       FROM l
-     GROUP BY 1, 2, 3, 4, 5
+     GROUP BY 1, 2, 3, 4, 5, 6
   `;
 }
 
@@ -204,11 +214,11 @@ export function segmentedAudienceStatement(window: DeliveredWindow, boundaries: 
       : Prisma.sql`width_bucket("date", ${boundaries}::date[])`;
   return Prisma.sql`
     WITH l AS (${deliveredLessons(window)})
-    SELECT "studentGroupId", "subjectId", "bucket", "extraGroupIds", "studentIds",
+    SELECT "studentGroupId", "subjectId", "bucket", "extraGroupIds", "studentIds", "movedOffIds",
            ${segment}::int AS "segment",
            SUM("minutes")::int AS "minutes", COUNT(*)::int AS "lessons"
       FROM l
-     GROUP BY 1, 2, 3, 4, 5, 6
+     GROUP BY 1, 2, 3, 4, 5, 6, 7
   `;
 }
 
@@ -232,7 +242,7 @@ export async function readSegmentedDeliveredRows(
     return { audiences: [], horizon: [], published: null, publishedDays: [], dates: [] };
   }
   const audiences = await tx.$queryRaw<
-    { studentGroupId: string; subjectId: string; bucket: string; extraGroupIds: string[]; studentIds: string[]; segment: number; minutes: number; lessons: number }[]
+    { studentGroupId: string; subjectId: string; bucket: string; extraGroupIds: string[]; studentIds: string[]; movedOffIds: string[]; segment: number; minutes: number; lessons: number }[]
   >(segmentedAudienceStatement(window, boundaries));
   const byDate =
     dates.length === 0 ? [] : await tx.$queryRaw<DeliveredDateRow[]>(datesStatement(window, dates));
@@ -528,7 +538,7 @@ export async function readDeliveredRows(
     return { audiences: [], horizon: [], published: null, publishedDays: [], dates: [] };
   }
   const audiences = await tx.$queryRaw<
-    { studentGroupId: string; subjectId: string; bucket: string; extraGroupIds: string[]; studentIds: string[]; minutes: number; lessons: number }[]
+    { studentGroupId: string; subjectId: string; bucket: string; extraGroupIds: string[]; studentIds: string[]; movedOffIds: string[]; minutes: number; lessons: number }[]
   >(audienceStatement(window));
   const byDate =
     dates.length === 0 ? [] : await tx.$queryRaw<DeliveredDateRow[]>(datesStatement(window, dates));

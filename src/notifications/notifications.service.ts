@@ -32,7 +32,8 @@ export type NotificationKind =
   | 'LESSON_REPORT_REMINDER'
   | 'REPORTING_RATE_DIGEST'
   | 'ACK_REQUESTED'
-  | 'ACK_REMINDER';
+  | 'ACK_REMINDER'
+  | 'LESSON_PUPIL_MOVED';
 
 
 /** Where a transaction's outbox is kept (PrismaService.commitLocal). */

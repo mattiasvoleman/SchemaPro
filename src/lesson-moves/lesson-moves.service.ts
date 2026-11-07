@@ -79,6 +79,15 @@ export interface LessonMovesView {
   arrivals: LessonMoveView[];
 }
 
+/** A pupil of a lesson the caller may move, by name: for the dialog's list. */
+export interface MovablePupil {
+  id: string;
+  firstName: string;
+  lastName: string;
+  /** True when the pupil is on the lesson because a move put them there: they can be sent on or back. */
+  arrived: boolean;
+}
+
 const LESSON_SELECT = {
   id: true,
   schoolId: true,
@@ -251,6 +260,45 @@ export class LessonMovesService {
       await this.realtime.notifyLessonsChanged(tx, [origin.id, target.id]);
       await this.tell(tx, { origin, current: target, target, studentId: row.studentId, undone: true, user });
       this.logger.log(`Pupil move undone [from=${origin.id}, to=${target.id}]`);
+    });
+  }
+
+  /**
+   * The pupils of a lesson the caller may move: its whole list for an administrator and for a teacher of the
+   * lesson (the register's own list, as the one roster reader answers it), the pupils they mentor that day for a
+   * teacher who only mentors. A teacher of neither gets nothing, and no hint of why.
+   */
+  async pupils(lessonId: string, user: AuthenticatedUser): Promise<{ students: MovablePupil[] }> {
+    requireSchoolId(user);
+    return this.prisma.withRls(user, async (tx) => {
+      const lesson = await this.lessonOf(tx, lessonId);
+      const roster = [...((await calendarLessonRosters(tx, [lesson], { pupils: 'ACTIVE' })).get(lesson.id) ?? [])];
+      if (roster.length === 0) return { students: [] };
+      let allowed = roster;
+      if (user.role === Role.TEACHER) {
+        const teaches =
+          !!user.userId &&
+          !!(await tx.calendarLessonTeacher.findFirst({ where: { teacherId: user.userId, calendarLessonId: lessonId }, select: { id: true } }));
+        if (!teaches) {
+          // Only the mentees: one statement over the roster, the day's mentor question asked once per pupil by the database.
+          const rows = await tx.$queryRaw<Array<{ id: string }>>(
+            Prisma.sql`SELECT p.id FROM unnest(${roster}::uuid[]) AS p(id) WHERE app.lesson_move_is_mentor(p.id, ${lesson.date}::date)`,
+          );
+          allowed = rows.map((row) => row.id);
+        }
+      }
+      if (allowed.length === 0) return { students: [] };
+      const [students, arrivals] = await Promise.all([
+        tx.user.findMany({
+          where: { id: { in: allowed } },
+          select: { id: true, firstName: true, lastName: true },
+          orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+        }),
+        tx.lessonPupilMove.findMany({ where: { toLessonId: lessonId, studentId: { in: allowed } }, select: { studentId: true } }),
+      ]);
+      const arrived = new Set(arrivals.map((row) => row.studentId));
+      await recordRead(tx, 'ROSTER', students.map((student) => student.id), user.channel);
+      return { students: students.map((student) => ({ ...student, arrived: arrived.has(student.id) })) };
     });
   }
 
@@ -439,7 +487,9 @@ export function doorError(error: unknown): unknown {
   const state = sqlStateOf(error);
   if (!state) return error;
   if (state === 'LM409') {
-    const text = error instanceof Error ? error.message : '';
+    // The code is in the database's message: the adapter's cause carries it, and so does the rendered error.
+    const cause = (error as { meta?: { driverAdapterError?: { cause?: { originalMessage?: unknown } } } }).meta?.driverAdapterError?.cause;
+    const text = `${typeof cause?.originalMessage === 'string' ? cause.originalMessage : ''} ${error instanceof Error ? error.message : ''}`;
     return coded(409, conflictCodeOf(text) ?? LESSON_MOVE_ALREADY_ON_TARGET);
   }
   const code = SQLSTATE_TO_CODE[state];

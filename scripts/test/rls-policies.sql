@@ -44792,7 +44792,8 @@ DECLARE
 BEGIN
   SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum) INTO cols
     FROM pg_attribute a WHERE a.attrelid = 'public."SchoolDaySettings"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
-  IF cols IS DISTINCT FROM 'schoolId:uuid,teacherView:"SchoolDayTeacherView",createdAt:timestamp(6) with time zone,updatedAt:timestamp(6) with time zone' THEN
+  -- guardianNoticeOnMove: Elevens lektion för dagen (20270122091000), the school's choice of telling a guardian.
+  IF cols IS DISTINCT FROM 'schoolId:uuid,teacherView:"SchoolDayTeacherView",createdAt:timestamp(6) with time zone,updatedAt:timestamp(6) with time zone,guardianNoticeOnMove:boolean' THEN
     RAISE EXCEPTION 'skolans dag 365: SchoolDaySettings has the columns %', cols;
   END IF;
   SELECT string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder) INTO def
@@ -47294,7 +47295,7 @@ DECLARE
   got text;
   fn text;
 BEGIN
-  -- The table: security on, four arms, all for the API's role, all reads, all naming the school.
+  -- The table: security on, five arms, all for the API's role, all reads, all naming the school.
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"LessonPupilMoves"'::regclass) THEN
     RAISE EXCEPTION 'LessonPupilMoves has no row-level security';
   END IF;
@@ -47302,8 +47303,9 @@ BEGIN
     FROM pg_policies WHERE tablename = 'LessonPupilMoves';
   PERFORM pg_temp.d7_expect('the arms', got,
     'lesson_pupil_moves_admin_select:SELECT:{app_authenticated}, lesson_pupil_moves_guardian_select:SELECT:{app_authenticated}, '
-    'lesson_pupil_moves_student_select:SELECT:{app_authenticated}, lesson_pupil_moves_teacher_select:SELECT:{app_authenticated}');
-  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'LessonPupilMoves' AND qual NOT LIKE '%current_school_id%') THEN
+    'lesson_pupil_moves_service_select:SELECT:{app_authenticated}, lesson_pupil_moves_student_select:SELECT:{app_authenticated}, '
+    'lesson_pupil_moves_teacher_select:SELECT:{app_authenticated}');
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'LessonPupilMoves' AND qual NOT LIKE '%current_school_id%' AND qual NOT LIKE '%current_service_school_id%') THEN
     RAISE EXCEPTION 'an arm of LessonPupilMoves does not name the school';
   END IF;
   -- Privileges: the API's role reads; nobody writes.
@@ -47333,10 +47335,10 @@ BEGIN
      NOT LIKE '%ON DELETE SET NULL ("movedById")%' THEN
     RAISE EXCEPTION 'the mover''s key nulls more than the mover';
   END IF;
-  -- The functions: definer with a pinned path; the three doors the API role's, nothing else anybody's.
+  -- The functions: definer with a pinned path; the four doors the API role's, nothing else anybody's.
   FOREACH fn IN ARRAY ARRAY['lesson_pupil_move', 'lesson_pupil_move_undo', 'lesson_pupil_move_remove', 'lesson_move_may', 'lesson_move_is_mentor',
                             'lesson_pupil_move_is_parallel', 'lesson_pupil_move_tells_the_integrations', 'lesson_pupil_moves_lapse',
-                            'lesson_pupil_arrival_is_the_moves', 'lesson_pupil_arrival_goes_with_the_move'] LOOP
+                            'lesson_pupil_arrival_is_the_moves', 'lesson_pupil_arrival_goes_with_the_move', 'lesson_pupil_register_lock'] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                     WHERE n.nspname = 'app' AND p.proname = fn AND p.prosecdef
                       AND p.proconfig @> ARRAY['search_path=public, pg_temp']) THEN
@@ -47349,7 +47351,7 @@ BEGIN
   PERFORM pg_temp.d7_expect('who may execute', got,
     'lesson_move_is_mentor:true, lesson_move_may:false, lesson_pupil_arrival_goes_with_the_move:false, lesson_pupil_arrival_is_the_moves:false, '
     'lesson_pupil_move:true, lesson_pupil_move_is_parallel:false, lesson_pupil_move_remove:false, lesson_pupil_move_tells_the_integrations:false, '
-    'lesson_pupil_move_undo:true, lesson_pupil_moves_lapse:false');
+    'lesson_pupil_move_undo:true, lesson_pupil_moves_lapse:false, lesson_pupil_register_lock:true');
   IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace, pg_roles r
               WHERE n.nspname = 'app' AND (p.proname LIKE 'lesson\_pupil\_%' OR p.proname LIKE 'lesson\_move\_%')
                 AND r.rolname IN ('anon', 'authenticated', 'service_role')

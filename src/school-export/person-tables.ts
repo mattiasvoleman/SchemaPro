@@ -100,6 +100,9 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   AbsenceWatchFindings: dump(['studentId'], 'ATTENDANCE'),
   MasterLessonStudents: dump(['studentId'], 'ROSTER'),
   CalendarLessonStudents: dump(['studentId'], 'ROSTER'),
+  // Elevens lektion för dagen (20270122091000): the days a pupil was moved to a parallel lesson, and the moves a
+  // member of staff made. A pupil's lessons are theirs, whoever moved them.
+  LessonPupilMoves: dump(['studentId', 'movedById'], 'ROSTER'),
   StudentGroupMembers: dump(['studentId'], 'ROSTER'),
   StudentEnrollments: dump(['studentId'], 'ROSTER'),
   TimplanStatements: dump(['studentId'], 'TEACHING_TIME'),

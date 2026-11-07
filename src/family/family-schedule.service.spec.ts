@@ -243,6 +243,52 @@ describe('FamilyScheduleService', () => {
     expect(staffCalls[0][0]).toMatchObject({ values: [['l-home', 'l-tg', 'l-extra', 'l-named']] });
   });
 
+  describe('Elevens lektion för dagen: the child was moved to a parallel lesson for a day', () => {
+    // 7A's matematik is the child's own at 08:00; a parallel lesson of 8B at the same time is where they were moved
+    // (a named row, the move's arrival). The guardian's arm on the lessons knows nothing of the move: it returns both.
+    const own = () => lesson('l-own', '2026-10-13');
+    const there = () => lesson('l-there', '2026-10-13', { studentGroupId: OTHER, participants: [{ studentId: CHILD }] });
+
+    it('leaves out the lesson the child was moved off and shows the one they were moved to, marked', async () => {
+      tx.calendarLesson.findMany.mockResolvedValue([own(), there(), lesson('l-after', '2026-10-13', { startsAt: at('2026-10-13', '08:00'), endsAt: at('2026-10-13', '08:45') })]);
+      tx.lessonPupilMove.findMany.mockResolvedValue([{ fromLessonId: 'l-own', toLessonId: 'l-there' }]);
+
+      const result = await run('2026-10-13');
+
+      expect(result.lessons.map((l) => [l.id, l.movedHere])).toEqual([
+        ['l-there', true],
+        ['l-after', false],
+      ]);
+      // Asked once, of this child, for the week's lessons only, through the guardian's own arm.
+      expect(tx.lessonPupilMove.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.lessonPupilMove.findMany.mock.calls[0]![0]).toEqual({
+        where: { studentId: CHILD, OR: [{ fromLessonId: { in: ['l-own', 'l-there', 'l-after'] } }, { toLessonId: { in: ['l-own', 'l-there', 'l-after'] } }] },
+        select: { fromLessonId: true, toLessonId: true },
+      });
+      // The teachers are asked about the lessons the child is on, not the one they left.
+      expect(staffCalls[0]![0]).toMatchObject({ values: [['l-there', 'l-after']] });
+    });
+
+    it('answers as before for a week without a move, and reads no move for a week with no lesson', async () => {
+      tx.calendarLesson.findMany.mockResolvedValue([own()]);
+      const plain = await run('2026-10-13');
+      expect(plain.lessons.map((l) => [l.id, l.movedHere])).toEqual([['l-own', false]]);
+
+      tx.lessonPupilMove.findMany.mockClear();
+      tx.calendarLesson.findMany.mockResolvedValue([]);
+      await run('2026-10-13');
+      expect(tx.lessonPupilMove.findMany).not.toHaveBeenCalled();
+    });
+
+    it('shows a lesson the child was moved to even where nothing else would reach them to it', async () => {
+      // The moved-to lesson of a class the child is in no group of, and no participant row came with it (a stale read).
+      tx.calendarLesson.findMany.mockResolvedValue([lesson('l-there', '2026-10-13', { studentGroupId: OTHER })]);
+      tx.lessonPupilMove.findMany.mockResolvedValue([{ fromLessonId: 'l-own', toLessonId: 'l-there' }]);
+      const result = await run('2026-10-13');
+      expect(result.lessons.map((l) => l.id)).toEqual(['l-there']);
+    });
+  });
+
   describe('Ersättande grupper: a replacing group takes the child off the class’s lessons in its subject', () => {
     // TG replaces Svenska: the child goes to TG's lessons instead of the home
     // class's svenska.
@@ -393,7 +439,7 @@ describe('FamilyScheduleService', () => {
         'timezone',
         'lessons', 'lessons.id', 'lessons.date', 'lessons.start', 'lessons.end', 'lessons.startsAt', 'lessons.endsAt',
         'lessons.subjectId', 'lessons.subject', 'lessons.subjectColor', 'lessons.room', 'lessons.teachers', 'lessons.status',
-        'lessons.substitute', 'lessons.topic', 'lessons.homework',
+        'lessons.substitute', 'lessons.topic', 'lessons.homework', 'lessons.movedHere',
         'lunches', 'lunches.id', 'lunches.date', 'lunches.start', 'lunches.end',
         'rasts', 'rasts.id', 'rasts.date', 'rasts.start', 'rasts.end', 'rasts.name',
       ]),
