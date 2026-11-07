@@ -713,6 +713,33 @@ describe('NotificationDeliveryService (push)', () => {
       expect(await told([lesson()])).toEqual([false]);
     });
 
+    // Expo refuses our credentials for every device alike: the request was not taken by the channel, and a reminder
+    // must not read "taken" for a push no phone will get. The client's own answer for a chunk it could not get
+    // through is the same kind of word.
+    it.each(['InvalidCredentials', 'MismatchSenderId', 'RequestFailed'])('says false when the channel itself refuses (%s), although another ticket was ok', async (code) => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      expo.send.mockResolvedValue([{ status: 'ok', id: 'ticket-ok-1' }, { status: 'error', details: { error: code } }]);
+      expect(await told([lesson()])).toEqual([false]);
+      // What was taken is still stored: the answer does not undo the ok ticket.
+      expect(settled).toHaveLength(1);
+      expect(settled[0]!.values[2]).toBe(JSON.stringify([{ id: 'ticket-ok-1', tokenId: 't-u1' }]));
+    });
+
+    // One device or one message: the channel took the request, and sending it again would change nothing.
+    it.each(['DeviceNotRegistered', 'MessageTooBig', 'MessageRateExceeded'])('says true when Expo refuses one device or message (%s), as it took the request', async (code) => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      expo.send.mockResolvedValue([{ status: 'ok', id: 'ticket-ok-1' }, { status: 'error', details: { error: code } }]);
+      expect(await told([lesson()])).toEqual([true]);
+    });
+
+    it('says false for a channel refusal among device refusals, and true when only the device ones are there', async () => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      expo.send.mockResolvedValue([{ status: 'error', details: { error: 'MessageRateExceeded' } }, { status: 'error', details: { error: 'InvalidCredentials' } }]);
+      expect(await told([lesson()])).toEqual([false]);
+      expo.send.mockResolvedValue([{ status: 'error', details: { error: 'MessageTooBig' } }, { status: 'error', details: { error: 'DeviceNotRegistered' } }]);
+      expect(await told([lesson()])).toEqual([true]);
+    });
+
     it('says false when the settling of the tickets failed, and goes on to the next batch', async () => {
       jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
       tx.$executeRaw.mockRejectedValueOnce(new Error('connection lost'));
@@ -730,5 +757,87 @@ describe('NotificationDeliveryService (push)', () => {
       delivery.enqueue([], (delivered) => answers.push(delivered));
       expect(answers).toEqual([true]);
     });
+  });
+});
+
+// A batch that goes out by both channels. The two are told apart in the answer (true only when both took it) but not
+// in the work: for the crisis alarm the push is what counts (its life is ten minutes, and a phone in a pocket hears
+// nothing of a mail), so a mail that Resend refuses must never keep the same batch's push from going. These tests need
+// no socket and no clock, which the two that read an answer over a real one do.
+describe('NotificationDeliveryService (mail and push in one batch)', () => {
+  let tx: TxMock;
+  let prisma: ReturnType<typeof createPrismaMock>;
+  let expo: { send: jest.Mock; receipts: jest.Mock };
+  let delivery: NotificationDeliveryService;
+  const fetchMock = jest.fn();
+  const realFetch = globalThis.fetch;
+  const config = { get: (key: string) => (key === 'push' ? { enabled: true, apiUrl: 'https://x.invalid' } : undefined) };
+
+  const alarm = (): OutboxEntry =>
+    entry({
+      type: 'CRISIS_ALARM',
+      meta: {},
+      recipients: [{ userId: 'u1', notificationId: 'n1' }],
+      email: { subject: 'Larm', body: 'B', recipients: [{ userId: 'u1', email: 'u1@example.invalid' }] },
+    });
+  const told = async (batch: OutboxEntry[]): Promise<boolean[]> => {
+    const answers: boolean[] = [];
+    delivery.enqueue(batch, (delivered) => answers.push(delivered));
+    await delivery.idle();
+    return answers;
+  };
+
+  beforeEach(() => {
+    tx = createTxMock();
+    prisma = createPrismaMock(tx);
+    expo = {
+      send: jest.fn(async (messages: unknown[]) => messages.map((_m, i) => ({ status: 'ok', id: `ticket-${i}-abc` }))),
+      receipts: jest.fn(),
+    };
+    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, expo as never);
+    delivery.emailIntervalMs = 0;
+    jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+    tx.$queryRaw.mockImplementation(async (sql: { strings: string[] }) =>
+      sql.strings.join('?').includes('app.push_targets(')
+        ? [{ token_id: 't-u1', user_id: 'u1', token: 'ExponentPushToken[aaaaaaaa]', locale: 'sv', timezone: 'Europe/Stockholm' }]
+        : [],
+    );
+    tx.$executeRaw.mockResolvedValue(1);
+    fetchMock.mockReset();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    process.env.RESEND_API_KEY = 'resend-key';
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.RESEND_API_KEY;
+    jest.restoreAllMocks();
+  });
+
+  it('sends the push although the mail of the same batch was refused, and tells the batch false, once', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 429 });
+    expect(await told([alarm()])).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(expo.send).toHaveBeenCalledTimes(1);
+    expect(expo.send.mock.calls[0]![0]).toHaveLength(1);
+  });
+
+  it('sends the push although the mail could not be sent at all (the connection failed)', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNRESET'));
+    expect(await told([alarm()])).toEqual([false]);
+    expect(expo.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the mail although the push was refused, and tells the batch false', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    expo.send.mockResolvedValue([{ status: 'error', details: { error: 'InvalidCredentials' } }]);
+    expect(await told([alarm()])).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the batch true only when both channels took it', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    expect(await told([alarm()])).toEqual([true]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(expo.send).toHaveBeenCalledTimes(1);
   });
 });
