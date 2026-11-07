@@ -137,6 +137,16 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
   "components/import/csv-import-dialog.tsx": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only." },
   "components/timplan/timplan-import-dialog.tsx": { files: "the timplan template", rule: "NAMES_NOBODY", why: "Headers only." },
   "lib/csv.ts": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only (downloadTemplate)." },
+  "app/[locale]/(app)/admin/meals/page.tsx": {
+    files: "Måltidskollen printed (Skriv ut, which is also how a PDF is made): the day or the week ahead",
+    rule: "NAMES_NOBODY",
+    why: "Counts and the names of classes (7A, 8B), never a pupil: the portions of each lunch sitting, the absence taken off as a number and the staff as a number. A protected pupil is a pupil in a count and is named nowhere.",
+  },
+  "lib/meal-counts-queries.ts": {
+    files: "portioner-<yyyy-mm-dd>[-<yyyy-mm-dd>].csv",
+    rule: "NAMES_NOBODY",
+    why: "The gateway's file of the same counts (windows-1252, ;): a row per day and sitting with the classes' names and numbers, no pupil. This only hands the bytes over (downloadMealCsv).",
+  },
   "lib/school-export.ts": {
     files: "rastra-skolexport-<skola>-<datum>.zip",
     rule: "HANDS_OVER",
