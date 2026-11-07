@@ -59,6 +59,12 @@ const row = (over: Partial<ChangeRow> = {}): ChangeRow => ({
 
 type Statement = { strings: string[]; values: unknown[] };
 const sql = (statement: unknown): string => (statement as Statement).strings.join('?');
+/** The last value bound into a raw statement: for the frame, the flag that says a draft is new. */
+const lastValue = (call: unknown[]): unknown => (call[0] as Statement).values.at(-1);
+
+beforeEach(() => {
+  (datedConflicts as jest.Mock).mockReset().mockResolvedValue([]);
+});
 
 interface World {
   /** What app.class_teacher_frame answers; null is "inside the frame". */
@@ -162,7 +168,7 @@ describe('askFrame and lessonState', () => {
     expect(await askFrame(tx as never, input, true)).toBe('BLOCK');
     const text = sql(tx['$queryRaw']!.mock.calls[0]![0]);
     expect(text).toContain('app.class_teacher_frame');
-    expect(tx['$queryRaw']!.mock.calls[0]!.slice(-1)[0]).toBe(true);
+    expect(lastValue(tx['$queryRaw']!.mock.calls[0]!)).toBe(true);
     const free = setup({ frame: null });
     expect(await askFrame(free.tx as never, input, false)).toBeNull();
   });
@@ -195,9 +201,9 @@ describe('ClassTeacherEngine.evaluate', () => {
   it('is REFUSED with the frame’s reason, asked as a written draft unless it is a new one', async () => {
     const { engine, tx } = setup({ frame: 'TIME_CLOSED' });
     expect(await engine.evaluate(tx as never, row())).toEqual({ state: 'REFUSED', reason: 'TIME_CLOSED' });
-    expect(tx['$queryRaw']!.mock.calls[0]!.slice(-1)[0]).toBe(false);
+    expect(lastValue(tx['$queryRaw']!.mock.calls[0]!)).toBe(false);
     await engine.evaluate(tx as never, row(), { creating: true });
-    expect(tx['$queryRaw']!.mock.calls[1]!.slice(-1)[0]).toBe(true);
+    expect(lastValue(tx['$queryRaw']!.mock.calls[1]!)).toBe(true);
   });
 
   it('is GONE when the frame says the lesson is gone', async () => {
@@ -513,7 +519,8 @@ describe('ClassTeacherEngine.publishOne', () => {
         tx['calendarLesson']!['findUnique']!.mockImplementation(async (args: { select: Record<string, unknown> }) =>
           args.select['status'] ? { ...lessonRow, ...lessonOver } : { ...lessonRow, roomId: null, endsAt: new Date('2027-03-22T09:30:00.000Z') },
         );
-        (datedConflicts as jest.Mock).mockResolvedValueOnce([]).mockResolvedValueOnce(clashes);
+        tx['classTeacherChange']!['updateMany']!.mockResolvedValue({ count: 1 });
+        (datedConflicts as jest.Mock).mockReset().mockResolvedValueOnce([]).mockResolvedValue(clashes);
         const outcome = await engine.publishOne(actor, moved);
         expect(['CONFLICT', 'STALE', 'REFUSED']).toContain(outcome.outcome);
         expect(tx['calendarLesson']!['update']).not.toHaveBeenCalled();

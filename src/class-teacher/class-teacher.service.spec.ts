@@ -12,6 +12,8 @@ const day = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
 
 type Statement = { strings: string[]; values: unknown[] };
 const sql = (statement: unknown): string => (statement as Statement).strings.join('?');
+/** The last value bound into a raw statement: for the frame, the flag that says a draft is new. */
+const lastValue = (call: unknown[]): unknown => (call[0] as Statement).values.at(-1);
 
 const sqlError = (state: string, code = 'P2010'): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError('refused', { code, clientVersion: 'test', meta: { driverAdapterError: { cause: { originalCode: state } } } });
@@ -281,7 +283,7 @@ describe('ClassTeacherService.create', () => {
     tx['classTeacherChange']!['create']!.mockResolvedValue(changeRow({ note: 'Studiebesök' }));
     const view = await service.create('class-1', dto, teacher);
     expect(view).toMatchObject({ id: 'change-1', kind: 'OCCASION_CANCEL', note: 'Studiebesök', rev: 1 });
-    expect(tx['$queryRaw']!.mock.calls[0]!.slice(-1)[0]).toBe(true);
+    expect(lastValue(tx['$queryRaw']!.mock.calls[0]!)).toBe(true);
     expect(tx['classTeacherChange']!['create']).toHaveBeenCalledWith({
       data: expect.objectContaining({
         schoolId: 'school-1',
@@ -317,7 +319,7 @@ describe('ClassTeacherService.create', () => {
     const outside = setup({ frame: 'REPLACING_GROUP' });
     await expect(outside.service.create('class-1', dto, teacher)).rejects.toMatchObject({
       status: 403,
-      response: { code: CODES.OUTSIDE_FRAME, reason: 'REPLACING_GROUP' },
+      response: { code: CODES.OUTSIDE_FRAME, params: { reason: 'REPLACING_GROUP' } },
     });
     expect(outside.tx['classTeacherChange']!['create']).not.toHaveBeenCalled();
     const gone = setup({ frame: 'LESSON_GONE' });
@@ -338,7 +340,7 @@ describe('ClassTeacherService.create', () => {
     const { service, tx } = setup({ state: { version: 'b'.repeat(32), snapshot: { status: 'CANCELLED' } } });
     await expect(service.create('class-1', dto, teacher)).rejects.toMatchObject({
       status: 409,
-      response: { code: CODES.STALE, current: { version: 'b'.repeat(32), snapshot: { status: 'CANCELLED' } } },
+      response: { code: CODES.STALE, params: { version: 'b'.repeat(32) } },
     });
     expect(tx['classTeacherChange']!['create']).not.toHaveBeenCalled();
   });
@@ -396,7 +398,7 @@ describe('ClassTeacherService.update', () => {
       where: { id: 'change-1', rev: 2, status: 'DRAFT' },
       data: { targetStart: time('10:15'), targetRoomId: null, note: 'Kortare' },
     });
-    expect(tx['$queryRaw']!.mock.calls[0]!.slice(-1)[0]).toBe(false);
+    expect(lastValue(tx['$queryRaw']!.mock.calls[0]!)).toBe(false);
   });
 
   it('writes every column a patch may carry', async () => {
@@ -421,7 +423,7 @@ describe('ClassTeacherService.update', () => {
     tx['classTeacherChange']!['findFirst']!.mockResolvedValue(changeRow({ rev: 4, note: 'Någon annans' }));
     await expect(service.update('class-1', 'change-1', { rev: 3, note: 'Mitt' }, teacher)).rejects.toMatchObject({
       status: 409,
-      response: { code: CODES.REV, current: expect.objectContaining({ rev: 4, note: 'Någon annans' }) },
+      response: { code: CODES.REV, params: { rev: 4 } },
     });
     tx['classTeacherChange']!['findFirst']!.mockResolvedValue(changeRow({ rev: 3, status: 'PUBLISHED' }));
     await expect(service.update('class-1', 'change-1', { rev: 3, note: 'Mitt' }, teacher)).rejects.toMatchObject({ response: { code: CODES.REV } });
@@ -433,9 +435,9 @@ describe('ClassTeacherService.update', () => {
     tx['classTeacherChange']!['findFirst']!.mockResolvedValue(changeRow({ rev: 3 }));
     tx['classTeacherChange']!['updateMany']!.mockResolvedValue({ count: 0 });
     tx['classTeacherChange']!['findUnique']!.mockResolvedValue(changeRow({ rev: 4 }));
-    await expect(service.update('class-1', 'change-1', { rev: 3, note: 'x' }, teacher)).rejects.toMatchObject({ response: { code: CODES.REV, current: expect.objectContaining({ rev: 4 }) } });
+    await expect(service.update('class-1', 'change-1', { rev: 3, note: 'x' }, teacher)).rejects.toMatchObject({ response: { code: CODES.REV, params: { rev: 4 } } });
     tx['classTeacherChange']!['findUnique']!.mockResolvedValue(null);
-    await expect(service.update('class-1', 'change-1', { rev: 3, note: 'x' }, teacher)).rejects.toMatchObject({ response: { code: CODES.REV, current: expect.objectContaining({ rev: 3 }) } });
+    await expect(service.update('class-1', 'change-1', { rev: 3, note: 'x' }, teacher)).rejects.toMatchObject({ response: { code: CODES.REV, params: { rev: 3 } } });
   });
 
   it('is 404 for a draft that is not there or not the class’s, 403 for a class that is not theirs, and 403 with the reason outside the frame', async () => {
@@ -449,7 +451,7 @@ describe('ClassTeacherService.update', () => {
     outside.tx['classTeacherChange']!['findFirst']!.mockResolvedValue(changeRow());
     await expect(outside.service.update('class-1', 'change-1', { rev: 1, targetStart: '07:00' }, teacher)).rejects.toMatchObject({
       status: 403,
-      response: { reason: 'TARGET_CLOSED' },
+      response: { params: { reason: 'TARGET_CLOSED' } },
     });
   });
 });
@@ -466,7 +468,7 @@ describe('ClassTeacherService.discard', () => {
     const { service, tx } = setup();
     tx['classTeacherChange']!['deleteMany']!.mockResolvedValue({ count: 0 });
     tx['classTeacherChange']!['findFirst']!.mockResolvedValue(changeRow({ rev: 5 }));
-    await expect(service.discard('class-1', 'change-1', 2, teacher)).rejects.toMatchObject({ status: 409, response: { code: CODES.REV, current: expect.objectContaining({ rev: 5 }) } });
+    await expect(service.discard('class-1', 'change-1', 2, teacher)).rejects.toMatchObject({ status: 409, response: { code: CODES.REV, params: { rev: 5 } } });
     tx['classTeacherChange']!['findFirst']!.mockResolvedValue(null);
     await expect(service.discard('class-1', 'change-1', 2, teacher)).rejects.toMatchObject({ status: 404 });
     await expect(setup({ appointed: false }).service.discard('class-1', 'change-1', 2, teacher)).rejects.toMatchObject({ status: 403 });

@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { CalendarLessonsService } from '../src/calendar/calendar-lessons.service';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 const CLASS = 'a1111111-1111-4111-8111-111111111111';
@@ -117,9 +118,7 @@ describe('klasslärarens schema (e2e)', () => {
       for (const profile of ['EXPEDITION', 'LASARE']) {
         const appoint = await http().post('/api/v1/class-teachers/appointments').set('x-test-user', admin(profile)).send({ studentGroupId: CLASS, userId: TEACHER }).expect(403);
         expect(appoint.body.code).toBe('AREA_NOT_YOURS');
-        expect(appoint.body.area).toBe('SCHEMALAGGNING');
         const settings = await http().put('/api/v1/class-teachers/settings').set('x-test-user', admin(profile)).send({ selfPublish: true }).expect(403);
-        expect(settings.body.area).toBe('PUBLICERING');
         await http().post(`/api/v1/class-teachers/classes/${CLASS}/publish`).set('x-test-user', admin(profile)).send({}).expect(403);
         await http().delete(`/api/v1/class-teachers/drafts/${CHANGE}`).set('x-test-user', admin(profile)).expect(403);
       }
@@ -200,8 +199,15 @@ describe('klasslärarens schema (e2e)', () => {
         },
       ]);
 
-      const published = await http().post(`/api/v1/class-teachers/classes/${CLASS}/publish`).set('x-test-user', admin()).send({ changeIds: [CHANGE] }).expect(200);
-      expect(published.body).toEqual({ outcomes: [{ id: CHANGE, outcome: 'PUBLISHED' }] });
+      // The editor's own cancel is the editor's to test (and the adapter probe's, against a real database): here it is asked, as the administrator.
+      const cancel = jest.spyOn(harness.app.get(CalendarLessonsService, { strict: false }), 'cancel').mockResolvedValue({ id: LESSON, status: 'CANCELLED', note: null } as never);
+      try {
+        const published = await http().post(`/api/v1/class-teachers/classes/${CLASS}/publish`).set('x-test-user', admin()).send({ changeIds: [CHANGE] }).expect(200);
+        expect(published.body).toEqual({ outcomes: [{ id: CHANGE, outcome: 'PUBLISHED' }] });
+        expect(cancel).toHaveBeenCalledWith(LESSON, expect.objectContaining({ cause: 'MANUAL' }), expect.objectContaining({ userId: ADMIN }));
+      } finally {
+        cancel.mockRestore();
+      }
 
       tx['classTeacherChange']!['deleteMany']!.mockResolvedValue({ count: 1 });
       await http().delete(`/api/v1/class-teachers/drafts/${CHANGE}`).set('x-test-user', admin('SCHEMALAGGARE')).expect(204);
@@ -270,7 +276,7 @@ describe('klasslärarens schema (e2e)', () => {
       const updated = await http().patch(`/api/v1/class-teacher/classes/${CLASS}/changes/${CHANGE}`).set('x-test-user', teacher).send({ rev: 2, note: 'Ny' }).expect(200);
       expect(updated.body.rev).toBe(3);
       const lost = await http().patch(`/api/v1/class-teacher/classes/${CLASS}/changes/${CHANGE}`).set('x-test-user', teacher).send({ rev: 1, note: 'Sen' }).expect(409);
-      expect(lost.body).toMatchObject({ code: 'CLASS_TEACHER_REV', current: { rev: 2 } });
+      expect(lost.body).toMatchObject({ code: 'CLASS_TEACHER_REV', params: { rev: 2 } });
 
       tx['classTeacherChange']!['deleteMany']!.mockResolvedValue({ count: 1 });
       await http().delete(`/api/v1/class-teacher/classes/${CLASS}/changes/${CHANGE}?rev=2`).set('x-test-user', teacher).expect(204);
@@ -288,7 +294,7 @@ describe('klasslärarens schema (e2e)', () => {
         .set('x-test-user', teacher)
         .send({ kind: 'OCCASION_CANCEL', calendarLessonId: LESSON, baseVersion: VERSION })
         .expect(403);
-      expect(outside.body).toMatchObject({ code: 'CLASS_TEACHER_OUTSIDE_FRAME', reason: 'BLOCK' });
+      expect(outside.body).toMatchObject({ code: 'CLASS_TEACHER_OUTSIDE_FRAME', params: { reason: 'BLOCK' } });
       expect(tx['classTeacherChange']!['create']).not.toHaveBeenCalled();
 
       tx.$queryRaw.mockImplementation(async (statement: { strings: string[] }) => {
@@ -301,7 +307,7 @@ describe('klasslärarens schema (e2e)', () => {
         .set('x-test-user', teacher)
         .send({ kind: 'OCCASION_CANCEL', calendarLessonId: LESSON, baseVersion: VERSION })
         .expect(409);
-      expect(stale.body).toMatchObject({ code: 'CLASS_TEACHER_STALE', current: { version: 'e'.repeat(32) } });
+      expect(stale.body).toMatchObject({ code: 'CLASS_TEACHER_STALE', params: { version: 'e'.repeat(32) } });
     });
 
     it('refuses a draft that is not one', async () => {
@@ -329,8 +335,14 @@ describe('klasslärarens schema (e2e)', () => {
         .expect(200);
       expect(tried.body).toEqual({ verdict: { state: 'OK' } });
       expect(tx['classTeacherChange']!['create']).not.toHaveBeenCalled();
-      const published = await http().post(`/api/v1/class-teacher/classes/${CLASS}/publish`).set('x-test-user', teacher).send({}).expect(200);
-      expect(published.body).toEqual({ outcomes: [{ id: CHANGE, outcome: 'PUBLISHED' }] });
+      const cancel = jest.spyOn(harness.app.get(CalendarLessonsService, { strict: false }), 'cancel').mockResolvedValue({ id: LESSON, status: 'CANCELLED', note: null } as never);
+      try {
+        const published = await http().post(`/api/v1/class-teacher/classes/${CLASS}/publish`).set('x-test-user', teacher).send({}).expect(200);
+        expect(published.body).toEqual({ outcomes: [{ id: CHANGE, outcome: 'PUBLISHED' }] });
+        expect(cancel).toHaveBeenCalledWith(LESSON, expect.objectContaining({ cause: 'MANUAL' }), expect.objectContaining({ userId: ADMIN }));
+      } finally {
+        cancel.mockRestore();
+      }
       expect((harness.prisma.withRls as jest.Mock).mock.calls.some((call) => (call[0] as { userId: string }).userId === ADMIN)).toBe(true);
     });
 

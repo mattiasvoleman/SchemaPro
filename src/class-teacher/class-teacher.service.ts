@@ -18,7 +18,7 @@ import {
   type ChangeRow,
   type FrameInput,
 } from './class-teacher-engine';
-import { appointerGone, frameRefusal, rethrowClassTeacherError, staleLesson } from './class-teacher-errors';
+import { appointerGone, frameRefusal, rethrowClassTeacherError, staleDraft, staleLesson } from './class-teacher-errors';
 import {
   CODES,
   isOccasionKind,
@@ -191,35 +191,34 @@ export class ClassTeacherService {
       const weekStart = mondayOf(query.from ?? today);
       const days = [...iterateDates(weekStart, addDays(weekStart, 4))];
 
-      const [settings, openRows, drafts, rooms, masters, states] = await Promise.all([
-        tx.classTeacherSettings.findUnique({ where: { schoolId } }),
-        tx.classTeacherOpenTime.findMany({
-          where: { academicYearId: group.academicYearId, OR: [{ studentGroupId: null }, { studentGroupId: classId }] },
-          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
-        }),
-        tx.classTeacherChange.findMany({ where: { studentGroupId: classId, status: 'DRAFT' }, orderBy: { createdAt: 'asc' } }),
-        tx.$queryRaw<{ id: string; name: string; refusal: FrameReason | null }[]>(
-          Prisma.sql`SELECT r."id", r."name", app.class_teacher_room_refusal(r."id") AS "refusal" FROM "Rooms" r ORDER BY r."name"`,
-        ),
-        tx.$queryRaw<
-          Array<{
-            id: string;
-            studentGroupId: string;
-            subjectId: string;
-            dayOfWeek: number;
-            startTime: Date;
-            endTime: Date;
-            roomId: string | null;
-            teacherId: string | null;
-            recurrence: string;
-            version: string;
-            refusal: FrameReason | null;
-          }>
-        >(Prisma.sql`SELECT * FROM app.class_teacher_master_lessons(${classId}::uuid)`),
-        tx.$queryRaw<{ calendarLessonId: string; version: string; refusal: FrameReason | null }[]>(
-          Prisma.sql`SELECT * FROM app.class_teacher_calendar_states(${classId}::uuid, ${days[0]}::date, ${days[4]}::date)`,
-        ),
-      ]);
+      // One after the other: a transaction is one connection, and pg queues what is asked of a busy client (and will stop doing so).
+      const settings = await tx.classTeacherSettings.findUnique({ where: { schoolId } });
+      const openRows = await tx.classTeacherOpenTime.findMany({
+        where: { academicYearId: group.academicYearId, OR: [{ studentGroupId: null }, { studentGroupId: classId }] },
+        orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+      });
+      const drafts = await tx.classTeacherChange.findMany({ where: { studentGroupId: classId, status: 'DRAFT' }, orderBy: { createdAt: 'asc' } });
+      const rooms = await tx.$queryRaw<{ id: string; name: string; refusal: FrameReason | null }[]>(
+        Prisma.sql`SELECT r."id", r."name", app.class_teacher_room_refusal(r."id") AS "refusal" FROM "Rooms" r ORDER BY r."name"`,
+      );
+      const masters = await tx.$queryRaw<
+        Array<{
+          id: string;
+          studentGroupId: string;
+          subjectId: string;
+          dayOfWeek: number;
+          startTime: Date;
+          endTime: Date;
+          roomId: string | null;
+          teacherId: string | null;
+          recurrence: string;
+          version: string;
+          refusal: FrameReason | null;
+        }>
+      >(Prisma.sql`SELECT * FROM app.class_teacher_master_lessons(${classId}::uuid)`);
+      const states = await tx.$queryRaw<{ calendarLessonId: string; version: string; refusal: FrameReason | null }[]>(
+        Prisma.sql`SELECT * FROM app.class_teacher_calendar_states(${classId}::uuid, ${days[0]}::date, ${days[4]}::date)`,
+      );
 
       const lessons = await tx.calendarLesson.findMany({
         where: { id: { in: states.map((row) => row.calendarLessonId) } },
@@ -398,11 +397,7 @@ export class ClassTeacherService {
         return { done: toChangeView(after) } as const;
       });
       if ('conflict' in outcome) {
-        throw new ConflictException({
-          message: 'Utkastet har ändrats av någon annan. Läs om det och försök igen.',
-          code: CODES.REV,
-          current: outcome.conflict,
-        });
+        throw staleDraft(outcome.conflict);
       }
       return outcome.done;
     } catch (error) {
@@ -421,11 +416,7 @@ export class ClassTeacherService {
         return toChangeView(current);
       });
       if (conflict) {
-        throw new ConflictException({
-          message: 'Utkastet har ändrats av någon annan. Läs om det och försök igen.',
-          code: CODES.REV,
-          current: conflict,
-        });
+        throw staleDraft(conflict);
       }
     } catch (error) {
       return rethrowClassTeacherError(error);

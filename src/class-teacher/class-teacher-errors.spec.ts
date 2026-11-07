@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { appointerGone, frameRefusal, rethrowClassTeacherError, staleLesson } from './class-teacher-errors';
+import { appointerGone, frameRefusal, rethrowClassTeacherError, staleDraft, staleLesson } from './class-teacher-errors';
 import { CODES, FRAME_MESSAGES, FRAME_REASONS } from './class-teacher.types';
 
 const sqlError = (state: string): Prisma.PrismaClientKnownRequestError =>
@@ -14,7 +14,7 @@ describe('frame refusals', () => {
     expect(frameRefusal('LESSON_GONE')).toBeInstanceOf(NotFoundException);
     const outside = frameRefusal('SHARED_ROOM');
     expect(outside).toBeInstanceOf(ForbiddenException);
-    expect(outside.getResponse()).toEqual({ message: FRAME_MESSAGES.SHARED_ROOM, code: CODES.OUTSIDE_FRAME, reason: 'SHARED_ROOM' });
+    expect(outside.getResponse()).toEqual({ message: FRAME_MESSAGES.SHARED_ROOM, code: CODES.OUTSIDE_FRAME, params: { reason: 'SHARED_ROOM' } });
   });
 
   it('keeps the list and the sentences one to one', () => {
@@ -27,7 +27,12 @@ describe('stale and gone', () => {
   it('carries what changed or what is now', () => {
     const stale = staleLesson({ changed: [{ field: 'roomId', was: 'a', now: 'b' }] });
     expect(stale).toBeInstanceOf(ConflictException);
-    expect(stale.getResponse()).toMatchObject({ code: CODES.STALE, changed: [{ field: 'roomId', was: 'a', now: 'b' }] });
+    // Flat, because the global filter forwards a problem's code and flat params and nothing else of its body.
+    expect(stale.getResponse()).toMatchObject({ code: CODES.STALE, params: { changed: 'roomId' } });
+    const now = staleLesson({ current: { version: 'c'.repeat(32) } });
+    expect(now.getResponse()).toMatchObject({ code: CODES.STALE, params: { version: 'c'.repeat(32) } });
+    expect(staleLesson({}).getResponse()).toEqual({ message: expect.any(String), code: CODES.STALE });
+    expect(staleDraft({ rev: 4 }).getResponse()).toMatchObject({ code: CODES.REV, params: { rev: 4 } });
     expect(appointerGone().getResponse()).toMatchObject({ code: CODES.APPOINTER_GONE });
   });
 });
