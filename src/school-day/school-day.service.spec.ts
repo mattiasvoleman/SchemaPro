@@ -327,14 +327,12 @@ describe('SchoolDayService', () => {
       marked: ['t2'],
     };
 
-    it('ALL: names a colleague who is not marked, leaves out one who is (no id), counts them, and shows no absence or uppdrag', async () => {
+    it('ALL: names a colleague who is not marked, leaves out one who is (no id, no count), and shows no absence or uppdrag', async () => {
       const { service, calls } = setup({ ...world, view: 'ALL' });
       const view = await service.grid({ from: WINTER }, teacher);
       expect(view.access).toEqual({ admin: false, grids: true, freeTeachers: false });
-      expect(view.lessons[0]!.teachers).toEqual([{ id: 't1', role: 'LEAD' }]);
-      expect(view.lessons[0]!.hiddenTeachers).toBe(1);
+      expect(view.lessons[0]!.teachers).toEqual([{ id: 't1', role: null }]);
       expect(view.teachers.map((row) => row.id)).toEqual(['t1']);
-      expect(view.heldOut).toEqual({ teachers: 1 });
       expect(JSON.stringify(view)).not.toContain('t2');
       // A booking is the room's and its booker's, but the marked one's block is the room's alone; absence and uppdrag are not read at all.
       expect(view.blocks.map((block) => [block.resource, block.resourceId, block.kind])).toEqual([
@@ -343,6 +341,58 @@ describe('SchoolDayService', () => {
         ['ROOM', 'r1', 'BOOKING'],
       ]);
       expect(calls).not.toContain('teacherAbsence.findMany');
+    });
+
+    it('does not tell a teacher that someone was left out: the lessons of a marked teacher are drawn without her, with no count anywhere', async () => {
+      // Hers alone, hers with a colleague, and one nobody holds: the first reads as the third, and no field says a teacher is missing.
+      const { service } = setup({
+        ...world,
+        view: 'ALL',
+        lessons: [
+          lessonRow({ id: 'hers', teachers: [{ teacherId: 't2', role: 'LEAD' }] }),
+          lessonRow({ id: 'shared', teachers: [{ teacherId: 't2', role: 'LEAD' }, { teacherId: 't1', role: 'ASSISTANT' }] }),
+          lessonRow({ id: 'nobody', teachers: [] }),
+        ],
+      });
+      const view = await service.grid({ from: WINTER }, teacher);
+      const byId = new Map(view.lessons.map((lesson) => [lesson.id, lesson]));
+      expect(byId.get('hers')!.teachers).toEqual([]);
+      expect(byId.get('shared')!.teachers).toEqual([{ id: 't1', role: null }]);
+      expect([...byId.values()].map((lesson) => lesson.hiddenTeachers)).toEqual([0, 0, 0]);
+      expect(view.heldOut).toEqual({ teachers: 0 });
+      expect(JSON.stringify(view)).not.toContain('t2');
+    });
+
+    it('tells a teacher that a lesson is cancelled and who holds it, not why or in whose place (cause and role are the administrators’)', async () => {
+      const lessons = [
+        lessonRow({ id: 'away', status: 'CANCELLED', cancelCause: 'TEACHER_UNAVAILABLE', teachers: [{ teacherId: 't1', role: 'LEAD' }] }),
+        lessonRow({ id: 'cover', teachers: [{ teacherId: 't1', role: 'SUBSTITUTE' }] }),
+        lessonRow({ id: 'event', status: 'CANCELLED', cancelCause: 'EVENT', teachers: [] }),
+      ];
+      for (const form of ['ALL', 'ROOMS'] as const) {
+        const view = await setup({ ...world, view: form, lessons }).service.grid({ from: WINTER }, teacher);
+        const byId = new Map(view.lessons.map((lesson) => [lesson.id, lesson]));
+        expect(byId.get('away')).toMatchObject({ status: 'CANCELLED', cancelCause: null });
+        expect(byId.get('event')).toMatchObject({ status: 'CANCELLED', cancelCause: null });
+        // The status stays whatever the form: a cancelled lesson is drawn as one.
+        expect(byId.get('cover')!.status).toBe('SCHEDULED');
+        const text = JSON.stringify(view);
+        expect(text).not.toContain('TEACHER_UNAVAILABLE');
+        expect(text).not.toContain('SUBSTITUTE');
+        expect(text).not.toContain('EVENT');
+        if (form === 'ALL') {
+          expect(byId.get('away')!.teachers).toEqual([{ id: 't1', role: null }]);
+          expect(byId.get('cover')!.teachers).toEqual([{ id: 't1', role: null }]);
+        } else {
+          expect(byId.get('away')!.teachers).toEqual([]);
+        }
+      }
+      // An administrator reads both: why, and in whose place.
+      const admin_ = await setup({ ...world, lessons }).service.grid({ from: WINTER }, admin);
+      const away = admin_.lessons.find((lesson) => lesson.id === 'away')!;
+      const cover = admin_.lessons.find((lesson) => lesson.id === 'cover')!;
+      expect(away.cancelCause).toBe('TEACHER_UNAVAILABLE');
+      expect(cover.teachers).toEqual([{ id: 't1', role: 'SUBSTITUTE' }]);
     });
 
     it('ROOMS: only the lessons that use a room, without their teachers, and nobody else’s name', async () => {

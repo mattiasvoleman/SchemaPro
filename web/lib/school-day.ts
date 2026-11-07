@@ -78,12 +78,15 @@ export interface GridLesson {
   start: number;
   end: number;
   status: LessonState;
+  /** Administrators only: a teacher reads that the lesson is cancelled, not why. */
   cancelCause: CancelCause | null;
   subjectId: string;
   groupId: string;
   extraGroupIds: string[];
   roomId: string | null;
-  teachers: Array<{ id: string; role: "LEAD" | "ASSISTANT" | "SUBSTITUTE" }>;
+  /** The role is the administrators': null for a teacher, who is not told whose place a teacher holds. */
+  teachers: Array<{ id: string; role: "LEAD" | "ASSISTANT" | "SUBSTITUTE" | null }>;
+  /** Always 0 from the gateway: a teacher is not told that a marked teacher was left out. */
   hiddenTeachers: number;
   activity: boolean;
 }
@@ -205,8 +208,6 @@ export interface Drawn {
   groups: string[];
   room: string | null;
   teachers: DrawnTeacher[];
-  /** Teachers the gateway left out of the answer; a count, never a name. */
-  hiddenTeachers: number;
   /** A booking's title or an uppdrag's name. */
   label: string | null;
 }
@@ -270,7 +271,6 @@ export function buildRows(view: SchoolDayView, kind: RowKind, held: ReadonlySet<
     teachers: lesson.teachers
       .filter((one) => teacher.has(one.id))
       .map((one) => ({ id: one.id, name: held.has(one.id) ? null : teacher.get(one.id)! })),
-    hiddenTeachers: lesson.hiddenTeachers,
     label: null,
   });
 
@@ -290,7 +290,6 @@ export function buildRows(view: SchoolDayView, kind: RowKind, held: ReadonlySet<
     groups: [],
     room: null,
     teachers: [],
-    hiddenTeachers: 0,
     label: block.label,
   });
 

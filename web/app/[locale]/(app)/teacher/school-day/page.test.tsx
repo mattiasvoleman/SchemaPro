@@ -184,20 +184,20 @@ describe("a school that gives teachers the whole schedule", () => {
   });
 
   it("never tells who is free, nor who is away, nor a protected teacher by name or id", async () => {
-    // As the gateway answers a teacher: the marked teacher is out of the rows and the lessons, counted.
+    // As the gateway answers a teacher: the marked teacher is out of the rows and the lessons, without a count.
     state.grid = view({
       access: TEACHER_ALL,
       teachers: view().teachers.filter((one) => one.id !== "t-1"),
-      lessons: view().lessons.map((one) => ({ ...one, teachers: one.teachers.filter((t) => t.id !== "t-1"), hiddenTeachers: one.teachers.some((t) => t.id === "t-1") ? 1 : one.hiddenTeachers })),
+      lessons: view().lessons.map((one) => ({ ...one, teachers: one.teachers.filter((t) => t.id !== "t-1") })),
       blocks: view().blocks.filter((one) => !(one.resource === "TEACHER" && one.resourceId === "t-1")),
-      heldOut: { teachers: 1 },
     });
     const user = userEvent.setup();
     renderPage();
     await screen.findAllByRole("rowheader");
-    expect(screen.getByText("En lärare visas inte vid namn.")).toBeInTheDocument();
     expect(screen.queryByText(/Anna Svensson/)).not.toBeInTheDocument();
-    expect(screen.getByText("08:15–09:00 Matematik, Sal 12, +1 lärare visas inte")).toBeInTheDocument();
+    // The lesson is drawn as a lesson nobody holds; the page cannot say that someone was left out, whatever a gateway sends.
+    expect(screen.getByText("08:15–09:00 Matematik, Sal 12")).toBeInTheDocument();
+    expect(screen.queryByText(/visas inte/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Visa lediga" }));
     await screen.findByRole("heading", { name: "Lediga salar (1)" });
     expect(screen.queryByRole("heading", { name: /Lediga lärare/ })).not.toBeInTheDocument();

@@ -70,14 +70,18 @@ export interface GridLesson {
   end: number;
   /** SCHEDULED and COMPLETED hold their time; CANCELLED and RESCHEDULED are drawn but free everyone (holdsTime). */
   status: 'SCHEDULED' | 'CANCELLED' | 'COMPLETED' | 'RESCHEDULED';
+  /** Administrators only: a teacher is told the lesson is cancelled, not why (TEACHER_UNAVAILABLE would say a colleague is away). */
   cancelCause: LessonCancelCause | null;
   subjectId: string;
   groupId: string;
   extraGroupIds: string[];
   roomId: string | null;
-  /** Empty for a caller who may not see teachers (ROOMS). */
-  teachers: Array<{ id: string; role: TeacherAssignmentRole }>;
-  /** Teachers on the lesson left out because the school marks them as having a protected identity. */
+  /**
+   * Empty for a caller who may not see teachers (ROOMS). The role is the administrators': a teacher is not told
+   * that a teacher holds the lesson in someone's place, and a teacher marked as having a protected identity is left out.
+   */
+  teachers: Array<{ id: string; role: TeacherAssignmentRole | null }>;
+  /** Always 0: a teacher is not told that a marked teacher was left out (the count would point at her), and an administrator is told every name. */
   hiddenTeachers: number;
   /** The lesson is the replacement lesson of a schemabrytande aktivitet (D3). */
   activity: boolean;
@@ -122,7 +126,7 @@ export interface SchoolDayView {
   subjects: GridSubject[];
   lessons: GridLesson[];
   blocks: GridBlock[];
-  /** What the answer leaves out: marked persons (skyddad identitet), counted and never named. */
+  /** Always 0, like hiddenTeachers: marked persons (skyddad identitet) are left out for a teacher without a trace, and named for an administrator. */
   heldOut: { teachers: number };
 }
 

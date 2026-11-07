@@ -141,12 +141,12 @@ describe("the day", () => {
     ]);
   });
 
-  it("says in words what is cancelled, what is an aktivitet's replacement and which teacher is not shown", async () => {
+  it("says in words what is cancelled and what is an aktivitet's replacement, and draws a lesson whose teacher was left out with none", async () => {
     await loaded();
     expect(sentences("9B")).toEqual([
       "08:00–15:00 Friluftsdag, Cecilia Ås, aktivitet",
       "08:15–09:00 Idrott, Gymnastiksalen, Cecilia Ås, inställd (aktivitet)",
-      "10:00–10:45 Matematik, Sal 12, +1 lärare visas inte",
+      "10:00–10:45 Matematik, Sal 12",
     ]);
   });
 
@@ -423,7 +423,7 @@ describe("what teachers have of the page", () => {
   it("shows the school's choice, defaulting to nothing, with a sentence for each option", async () => {
     await loaded();
     expect(choices().map((one) => (one as HTMLInputElement).checked)).toEqual([true, false, false]);
-    expect(screen.getByRole("radio", { name: "Hela schemat" })).toHaveAccessibleDescription(/aldrig veta vilka kolleger som är lediga/);
+    expect(screen.getByRole("radio", { name: "Hela schemat" })).toHaveAccessibleDescription(/aldrig orsaken, frånvaron, uppdragen eller rastvakten, och ingen lista över lediga kolleger/);
     expect(screen.getByRole("radio", { name: "Hela schemat" })).toHaveAccessibleDescription(/skyddad identitet visas inte vid namn/);
   });
 

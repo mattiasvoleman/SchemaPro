@@ -7873,8 +7873,6 @@
     },
     "protectedName": "Skyddad identitet",
     "noSubject": "Lektion",
-    "hiddenTeachers": "{count, plural, one {+# lärare visas inte} other {+# lärare visas inte}}",
-    "heldOut": "{count, plural, one {En lärare visas inte vid namn.} other {# lärare visas inte vid namn.}}",
     "cancelled": "inställd",
     "cancelledBy": "inställd ({cause})",
     "rescheduled": "ombokad",
@@ -8029,7 +8027,7 @@
     },
     "settings": {
       "title": "Vad lärare ser av Skolans dag",
-      "description": "Skolan bestämmer själv. Tills ni har bestämt något ser lärarna ingenting; administratörer har alltid hela sidan.",
+      "description": "Skolan bestämmer själv. Tills ni har bestämt något ser lärarna ingenting; administratörer har alltid hela sidan. Schemavisarens inställningar påverkar inte Skolans dag.",
       "option": {
         "NONE": "Ingenting",
         "ROOMS": "Salar",
@@ -8038,7 +8036,7 @@
       "hint": {
         "NONE": "Lärare har ingen sida och får ett besked om att skolan inte har öppnat den.",
         "ROOMS": "Lärare ser vilka salar som är lediga, och salarnas dag och vecka. Lektionerna visas utan lärare.",
-        "ALL": "Lärare ser också klassernas och lärarnas lektioner. De får aldrig veta vilka kolleger som är lediga, eftersom frånvaro, uppdrag och rastvakt inte är deras att läsa. Personer med skyddad identitet visas inte vid namn."
+        "ALL": "Lärare ser också klassernas och lärarnas lektioner som de står: inställda lektioner och vem som håller dem syns. De ser aldrig orsaken, frånvaron, uppdragen eller rastvakten, och ingen lista över lediga kolleger. Personer med skyddad identitet visas inte vid namn."
       },
       "deciders": "Rektor och fulla administratörer bestämmer detta. Du ser vad skolan har valt.",
       "saved": "Valet är sparat",

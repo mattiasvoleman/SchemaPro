@@ -71,8 +71,8 @@ export const LESSONS: GridLesson[] = [
   // Cancelled by an aktivitet, with the replacement lesson across it.
   lesson({ id: "l-3", start: 495, end: 540, subjectId: "s-id", groupId: "g-9b", roomId: "r-gym", status: "CANCELLED", cancelCause: "EVENT", teachers: [{ id: "t-3", role: "LEAD" }] }),
   lesson({ id: "l-4", start: 480, end: 900, subjectId: "s-fr", groupId: "g-9b", activity: true, teachers: [{ id: "t-3", role: "LEAD" }] }),
-  // A teacher the gateway left out for a protected identity: a count, never a name.
-  lesson({ id: "l-5", start: 600, end: 645, subjectId: "s-ma", groupId: "g-9b", roomId: "r-12", teachers: [], hiddenTeachers: 1 }),
+  // A teacher the gateway left out for a protected identity: the lesson is drawn without one, and nothing says one is missing.
+  lesson({ id: "l-5", start: 600, end: 645, subjectId: "s-ma", groupId: "g-9b", roomId: "r-12", teachers: [] }),
   lesson({ id: "l-6", start: 660, end: 705, subjectId: "s-en", groupId: "g-7a", status: "RESCHEDULED", teachers: [{ id: "t-1", role: "LEAD" }] }),
 ];
 

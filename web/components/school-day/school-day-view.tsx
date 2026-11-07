@@ -198,9 +198,6 @@ export function SchoolDayBody() {
         />
       ) : (
         <div className={moving ? "opacity-60 transition-opacity" : undefined} aria-busy={moving}>
-          {view.heldOut.teachers > 0 ? (
-            <p className="mb-2 text-sm text-muted-foreground">{t("heldOut", { count: view.heldOut.teachers })}</p>
-          ) : null}
           {mode === "day" ? <DayView rows={shown} view={view} kind={kind} axis={axis} /> : (
             <WeekGrid rows={shown} days={weekColumns(view)} axis={axis} kind={kind} onOpenDay={(opened) => { setDate(opened); setMode("day"); }} />
           )}

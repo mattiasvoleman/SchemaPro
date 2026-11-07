@@ -86,10 +86,10 @@ describe("class rows", () => {
     expect([alone!.lane, alone!.laneCount]).toEqual([0, 1]);
   });
 
-  it("shows a teacher the gateway left out as a count and never as a name", () => {
+  it("draws a lesson whose teacher the gateway left out without one, and keeps no count that says someone is missing", () => {
     const left = on(row(rows, "g-9b")).find((one) => one.key === "l:l-5")!;
     expect(left.teachers).toEqual([]);
-    expect(left.hiddenTeachers).toBe(1);
+    expect(left).not.toHaveProperty("hiddenTeachers");
   });
 
   it("names a lesson's teachers, room and subject", () => {

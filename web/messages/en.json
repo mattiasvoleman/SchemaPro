@@ -7873,8 +7873,6 @@
     },
     "protectedName": "Protected identity",
     "noSubject": "Lesson",
-    "hiddenTeachers": "{count, plural, one {+# teacher not shown} other {+# teachers not shown}}",
-    "heldOut": "{count, plural, one {One teacher is not shown by name.} other {# teachers are not shown by name.}}",
     "cancelled": "cancelled",
     "cancelledBy": "cancelled ({cause})",
     "rescheduled": "rescheduled",
@@ -8029,7 +8027,7 @@
     },
     "settings": {
       "title": "What teachers see of School day",
-      "description": "The school decides. Until you have decided anything, teachers see nothing; administrators always have the whole page.",
+      "description": "The school decides. Until you have decided anything, teachers see nothing; administrators always have the whole page. The Timetable viewer settings do not affect School day.",
       "option": {
         "NONE": "Nothing",
         "ROOMS": "Rooms",
@@ -8038,7 +8036,7 @@
       "hint": {
         "NONE": "Teachers have no page and are told that the school has not opened it.",
         "ROOMS": "Teachers see which rooms are free, and the rooms' day and week. Lessons are shown without teachers.",
-        "ALL": "Teachers also see the classes' and teachers' lessons. They are never told which colleagues are free, because absence, assignments and break duty are not theirs to read. People with a protected identity are not shown by name."
+        "ALL": "Teachers also see the classes' and teachers' lessons as they stand: cancelled lessons and who holds them are shown. They never see the reason, absences, assignments or break duty, and get no list of free colleagues. People with a protected identity are not shown by name."
       },
       "deciders": "The principal and full administrators decide this. You can see what the school has chosen.",
       "saved": "The choice is saved",

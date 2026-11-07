@@ -41,8 +41,10 @@
  *   sd-h  the pool member is left out until a window of theirs holds the interval;
  *   sd-i  what a teacher has: NONE refuses, ROOMS has the rooms and no teacher,
  *         ALL has the grids without absence, uppdrag or free colleagues, and the
- *         marked teacher is in none of it (and a teacher cannot read the marks
- *         but the gateway can ask for them);
+ *         marked teacher is in none of it, with no count that says one is missing
+ *         (and a teacher cannot read the marks but the gateway can ask for them);
+ *         a cancelled lesson is told as cancelled without its cause, and a
+ *         vikarie stands on the lesson without the role that says whose it was;
  *   sd-j  the decision: those who decide write it, nobody else;
  *   sd-k  a room lent to another school of the huvudman is not free in the loan's
  *         window (the booking page's own rule), and is drawn as lent.
@@ -457,18 +459,41 @@ export async function skolansDagChecks(owner: Client, api: PrismaService, marker
     // The administrator sees the name.
     assert.ok((await day.grid({ from: mondayAfter }, reader)).teachers.some((one) => one.name.startsWith('eva')));
 
-    // A marked teacher on a lesson is left out of the lesson, and counted.
+    // A marked teacher on a lesson is left out of the lesson without a trace: no id, and no count that says someone is missing.
     await owner.query(`INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, 'ASSISTANT')`, [s, svenska9c, eva.userId]);
     const masked = await day.grid({ from: mondayAfter }, anna);
     const lesson9c = masked.lessons.find((one) => one.id === svenska9c)!;
     assert.deepEqual(lesson9c.teachers.map((one) => one.id), [cia.userId]);
-    assert.equal(lesson9c.hiddenTeachers, 1);
-    assert.deepEqual(masked.heldOut, { teachers: 1 });
+    // No field says that a teacher is missing: not on her lesson, not anywhere else.
+    assert.deepEqual(masked.lessons.map((one) => one.hiddenTeachers).filter((count) => count !== 0), []);
+    assert.deepEqual(masked.heldOut, { teachers: 0 });
     assert.equal(JSON.stringify(masked).includes(eva.userId!), false);
     const named = await day.grid({ from: mondayAfter }, reader);
     assert.deepEqual(named.lessons.find((one) => one.id === svenska9c)!.teachers.map((one) => one.id).sort(), [cia.userId, eva.userId].sort());
     assert.deepEqual(named.heldOut, { teachers: 0 });
     await owner.query(`DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1 AND "teacherId" = $2`, [svenska9c, eva.userId]);
+
+    // Why a lesson is cancelled and in whose place a teacher stands are the administrators': the lesson is cancelled, and who holds it is there.
+    await owner.query(`UPDATE "CalendarLessons" SET "cancelCause" = 'TEACHER_UNAVAILABLE' WHERE id = $1`, [cancelled8b]);
+    try {
+      for (const form of ['ALL', 'ROOMS'] as const) {
+        await day.updateSettings({ teacherView: form }, admin);
+        const told = await day.grid({ from: mondayAfter, to: tuesdayAfter }, anna);
+        assert.equal(told.lessons.find((one) => one.id === cancelled8b)!.status, 'CANCELLED', `${form}: the cancelled lesson is cancelled`);
+        assert.ok(told.lessons.every((one) => one.cancelCause === null), `${form}: a cause is told to a teacher`);
+        assert.ok(told.lessons.every((one) => one.teachers.every((who) => who.role === null)), `${form}: a role is told to a teacher`);
+        const text = JSON.stringify(told);
+        for (const word of ['TEACHER_UNAVAILABLE', 'SUBSTITUTE', '"EVENT"']) assert.equal(text.includes(word), false, `${form}: ${word} is in what a teacher reads`);
+      }
+      await day.updateSettings({ teacherView: 'ALL' }, admin);
+      const told = await day.grid({ from: mondayAfter }, anna);
+      assert.equal(told.lessons.find((one) => one.id === svenska7a)!.teachers.length, 1, 'the vikarie holds the lesson, and is named');
+      const read = await day.grid({ from: mondayAfter }, reader);
+      assert.equal(read.lessons.find((one) => one.id === cancelled8b)!.cancelCause, 'TEACHER_UNAVAILABLE');
+      assert.deepEqual(read.lessons.find((one) => one.id === svenska7a)!.teachers, [{ id: vera.userId, role: 'SUBSTITUTE' }]);
+    } finally {
+      await owner.query(`UPDATE "CalendarLessons" SET "cancelCause" = 'MANUAL' WHERE id = $1`, [cancelled8b]);
+    }
   });
 
   await check('(sd-j) those who decide write the teachers’ share; the planner, the expedition, the läsare and a teacher do not', async () => {

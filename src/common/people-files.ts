@@ -33,9 +33,16 @@
  * timetable layer does (staff read every lesson and its teachers directly:
  * calendar_lessons_staff_select), and no pupil: a class is a row, never a
  * person. A person the school has marked is named there for administrators
- * only: the answer a teacher gets leaves a marked teacher out, without an id,
- * and counts them (heldOut), because the page puts every teacher's day on one
- * screen. The print of the grid is the web's (web/lib/people-files.ts), an
+ * only: the answer a teacher gets leaves a marked teacher out, without an id
+ * and without a count (hiddenTeachers and heldOut are 0 for everyone: a count
+ * on the lessons that are hers would point at her), because the page puts every
+ * teacher's day on one screen. The omission is PRESENTATION, not a boundary: a
+ * teacher reads Users, CalendarLessons and CalendarLessonTeachers through
+ * PostgREST (staff_select), so the rows stay readable there, and what the page
+ * adds is that it does not gather them or say who is missing. Cancelled
+ * lessons and their holders are told as they stand; the cause (cancelCause)
+ * and a teacher's role are administrators' only, since TEACHER_UNAVAILABLE and
+ * SUBSTITUTE would say a colleague is away. The print of the grid is the web's (web/lib/people-files.ts), an
  * administrator's alone, and there the rule is HOLDS_OUT: a marked teacher is
  * not named and is counted. A route of Skolans dag that ever answers a file
  * belongs in the list below, by name, before it ships.

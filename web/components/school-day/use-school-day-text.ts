@@ -56,7 +56,6 @@ export function useSchoolDayText() {
     if (item.room) facts.push(item.room);
     const names = item.teachers.map((one) => one.name ?? protectedName());
     if (names.length > 0) facts.push(names.join(", "));
-    if (item.hiddenTeachers > 0) facts.push(t("hiddenTeachers", { count: item.hiddenTeachers }));
     const state: string[] = [];
     if (item.status === "CANCELLED") state.push(item.cancelCause ? t("cancelledBy", { cause: t(`cause.${item.cancelCause}`) }) : t("cancelled"));
     if (item.status === "RESCHEDULED") state.push(t("rescheduled"));

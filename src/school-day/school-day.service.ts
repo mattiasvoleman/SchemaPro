@@ -68,10 +68,19 @@ const byName = (a: string, b: string): number => a.localeCompare(b, 'sv', { nume
  *
  * WHO IS NOT NAMED. A person the school has marked as having a protected
  * identity is named for administrators only: for a teacher with ALL the person
- * is left out of the teachers, and out of the lessons' teacher rows, with no id,
- * and counted (heldOut). The screen is the whole staff's at once, which a
- * lesson row a teacher can read one at a time is not. src/common/people-files.ts
- * and web/lib/people-files.ts say the same of the print.
+ * is left out of the teachers, and out of the lessons' teacher rows, with no id
+ * and without a count (hiddenTeachers and heldOut are 0 for everyone: "one
+ * teacher is not shown" on the lessons that are hers would point at her, which
+ * the omission is there to not do). The screen is the whole staff's at once,
+ * which a lesson row a teacher can read one at a time is not. The omission is
+ * presentation: PostgREST still lets a teacher read the rows (people-files.ts).
+ * src/common/people-files.ts and web/lib/people-files.ts say the same of the
+ * print, which is an administrator's and counts the marked there.
+ *
+ * WHAT A LESSON SAYS TO A TEACHER. The lesson as it stands, cancelled ones and
+ * who holds it too, but not why or in whose place: cancelCause and a teacher's
+ * role are the administrators' (TEACHER_UNAVAILABLE says a colleague is away,
+ * SUBSTITUTE whose lesson it was), and absence is not a teacher's to read.
  *
  * READ LOG. The timetable layer is not recorded (access-log.ts): staff read
  * it directly. What the answer adds is who is away: a teacher named as absent
@@ -140,25 +149,26 @@ export class SchoolDayService {
         orderBy: [{ date: 'asc' }, { startsAt: 'asc' }],
       });
 
-      const heldSeen = new Set<string>();
       const lessons: GridLesson[] = lessonRows.map((row) => {
         // The select leaves the rows out for a form without teachers; the answer does too, whatever the row holds.
         const assigned = access.grids ? (row.teachers ?? []) : [];
+        // A marked teacher is left out of the lesson without a trace: no id, no count, no "someone is missing".
         const named = assigned.filter((teacher) => !held.has(teacher.teacherId));
-        for (const teacher of assigned) if (held.has(teacher.teacherId)) heldSeen.add(teacher.teacherId);
         return {
           id: row.id,
           date: asDay(row.date),
           start: clock(row.startsAt.getTime()),
           end: endMinutes(row.startsAt.getTime(), row.endsAt.getTime(), clock),
           status: row.status,
-          cancelCause: row.cancelCause ?? null,
+          // Why a lesson is cancelled and who stands in are administrators': TEACHER_UNAVAILABLE says a colleague is away, a SUBSTITUTE
+          // row says whose lesson it was. A teacher reads that the lesson is cancelled and who holds it, not the cause or the role.
+          cancelCause: access.admin ? (row.cancelCause ?? null) : null,
           subjectId: row.subjectId,
           groupId: row.studentGroupId,
           extraGroupIds: row.extraGroups.map((extra) => extra.studentGroupId),
           roomId: row.roomId ?? null,
-          teachers: named.map((teacher) => ({ id: teacher.teacherId, role: teacher.role })),
-          hiddenTeachers: assigned.length - named.length,
+          teachers: named.map((teacher) => ({ id: teacher.teacherId, role: access.admin ? teacher.role : null })),
+          hiddenTeachers: 0,
           activity: row.activityLinks.length > 0,
         };
       });
@@ -226,7 +236,7 @@ export class SchoolDayService {
         subjects,
         lessons,
         blocks,
-        heldOut: { teachers: heldSeen.size },
+        heldOut: { teachers: 0 },
       } satisfies SchoolDayView;
     });
   }
