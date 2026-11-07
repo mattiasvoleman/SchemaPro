@@ -6167,6 +6167,10 @@
       "CRISIS_ALARMS": {
         "name": "Skarpa larm",
         "body": "Skarpa larm med utrymning eller inrymning, med protokollet över vem som rapporterade vad och när. De behålls enligt skolans beslut, och utan beslut gallras inget. Ett larm som pågår gallras aldrig."
+      },
+      "CHECKLISTS": {
+        "name": "Instruktionsbevis och samtycken",
+        "body": "Instruktionsbevis och samtycken sparas så länge eleven går på skolan, och därefter så länge ni väljer. Ett instruktionsbevis kan behövas för arbetsmiljöansvaret efter att eleven slutat. Välj minst lika lång tid för ’Slutade personer’, annars har beviset kvar sin tid men inte längre ett namn."
       }
     },
     "peopleEffectsTitle": "När en person pseudonymiseras:",
@@ -6379,7 +6383,8 @@
     "ACCESS_LOG": "Läsningar före {date} är gallrade enligt skolans beslut.",
     "COVER_REQUESTS": "Vikarieförfrågningar som avslutades före {date} är gallrade enligt skolans beslut.",
     "CRISIS_DRILLS": "Övningar i krisläge som avslutades före {date} är gallrade enligt skolans beslut.",
-    "CRISIS_ALARMS": "Skarpa larm som avslutades före {date} är gallrade enligt skolans beslut."
+    "CRISIS_ALARMS": "Skarpa larm som avslutades före {date} är gallrade enligt skolans beslut.",
+    "CHECKLISTS": "Instruktionsbevis och samtycken för elever som slutade före {date} är gallrade enligt skolans beslut."
   },
   "leaveInbox": {
     "alreadyDecided": "Ansökan är redan beslutad. Listan är uppdaterad.",
@@ -8395,6 +8400,379 @@
       "saved": "Valet är sparat",
       "loadFailed": "Valet kunde inte hämtas",
       "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
+    }
+  },
+  "checklists": {
+    "title": "Checklistor",
+    "subtitle": "Instruktionsbevis och samtycken på ett ställe",
+    "teacherSubtitle": "Bocka av vilka elever som har fått instruktion, och håll samtyckeslistor för dina mentorsklasser",
+    "counter": "{count, number} av {max, number} tecken",
+    "dialogLoadFailed": "Dialogrutan kunde inte öppnas. Inget är ändrat – försök igen.",
+    "panelLoadFailed": "Den här delen av sidan kunde inte hämtas",
+    "panelLoadFailedHint": "Inget har ändrats. Kontrollera anslutningen och försök igen.",
+    "tabs": {
+      "label": "Checklistor",
+      "instructions": "Instruktionsbevis",
+      "consents": "Samtycken"
+    },
+    "state": {
+      "GRANTED": "Samtycke",
+      "DECLINED": "Har tackat nej",
+      "WITHDRAWN": "Återkallat",
+      "ASKED": "Frågad i appen",
+      "MISSING": "Saknas"
+    },
+    "templates": {
+      "title": "Mallar",
+      "description": "En mall är ett moment som eleverna ska ha fått instruktion i, till exempel maskinerna i slöjden. En mall tas aldrig bort, eftersom bockarna ska finnas kvar. Den som inte behövs mer avvecklas: då går det inte längre att bocka av i den, men alla bockar finns kvar och mallen kan tas fram igen.",
+      "new": "Ny mall",
+      "newTitle": "Ny mall",
+      "editTitle": "Ändra mallen",
+      "titleLabel": "Moment",
+      "titleHint": "Till exempel Maskinerna eller Laborationssäkerhet.",
+      "subjectLabel": "Ämne",
+      "subjectHint": "Välj ämne om momentet hör till ett. Ett moment finns bara en gång i varje ämne.",
+      "noSubject": "Inget ämne",
+      "descriptionLabel": "Beskrivning",
+      "descriptionHint": "Vad instruktionen innehåller, så att alla bockar av samma sak.",
+      "create": "Skapa mallen",
+      "save": "Spara",
+      "saving": "Sparar…",
+      "created": "Mallen är skapad.",
+      "saved": "Mallen är sparad.",
+      "retired": "{title} är avvecklad. Bockarna finns kvar.",
+      "restored": "{title} är framtagen igen.",
+      "retire": "Avveckla",
+      "restore": "Ta fram igen",
+      "retiredBadge": "Avvecklad",
+      "emptyTitle": "Inga mallar än",
+      "empty": "Gör en mall för varje moment som eleverna ska ha fått instruktion i. Sedan kan alla som undervisar bocka av i den.",
+      "loadFailed": "Mallarna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "failed": "Mallen kunde inte sparas",
+      "subjectsFailed": "Ämnena kunde inte hämtas. Du kan spara mallen utan ämne och välja ett senare.",
+      "problem": {
+        "title": "Skriv namnet på momentet.",
+        "titleLong": "Namnet får vara högst {max, number} tecken.",
+        "descriptionLong": "Beskrivningen får vara högst {max, number} tecken."
+      }
+    },
+    "tick": {
+      "title": "Bocka av",
+      "description": {
+        "admin": "Välj en mall och en grupp, och bocka av de elever som har fått instruktionen.",
+        "teacher": "Välj en mall och en av dina grupper, och bocka av de elever som har fått instruktionen. Klasser du är mentor för kan du läsa men inte bocka av i."
+      },
+      "templateLabel": "Mall",
+      "chooseTemplate": "Välj mall…",
+      "groupLabel": "Grupp",
+      "chooseGroup": "Välj grupp…",
+      "groupHint": "Under Bara läsning står klasser du är mentor för men inte undervisar.",
+      "yourGroups": "Dina grupper",
+      "lookOnly": "Bara läsning",
+      "choose": "Välj mall och grupp för att se eleverna.",
+      "loadFailed": "Mallarna och grupperna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "noTemplatesTitle": "Det finns inga mallar att bocka av i",
+      "noTemplates": {
+        "admin": "Gör en mall under Mallar ovan.",
+        "teacher": "En administratör gör mallarna. När det finns en kan du bocka av i den här."
+      },
+      "noGroupsTitle": "Det finns inga grupper att visa",
+      "noGroups": {
+        "admin": "Skolan har inga grupper i det aktiva läsåret ännu.",
+        "teacher": "Du undervisar ingen grupp i det aktiva läsåret och är inte mentor för någon klass."
+      },
+      "formTitle": "Bocka av valda",
+      "dateLabel": "Datum för instruktionen",
+      "dateHint": "Dagen då eleverna fick instruktionen. Det kan inte vara en dag som inte har kommit.",
+      "instructorLabel": "Den som gav instruktionen",
+      "instructorMe": "Jag",
+      "instructorHint": "Lämna som det är om du gav instruktionen själv.",
+      "instructorsFailed": "Personallistan kunde inte hämtas. Bocken skrivs på dig.",
+      "noteLabel": "Anteckning",
+      "chosen": "{count, plural, =0 {Ingen elev vald} one {# elev vald} other {# elever valda}}",
+      "submit": "Bocka av valda",
+      "ticking": "Bockar av…",
+      "resultTitle": "Klart",
+      "result": "{written, plural, =0 {Ingen elev bockades av} one {# elev bockades av} other {# elever bockades av}}{already, plural, =0 {} one {. # elev hade redan en bock för dagen} other {. # elever hade redan en bock för dagen}}.",
+      "failed": "Det gick inte att bocka av",
+      "problem": {
+        "pupils": "Välj minst en elev.",
+        "pupilsMany": "Du kan bocka av högst {max, number} elever åt gången.",
+        "date": "Skriv en dag.",
+        "dateFuture": "Dagen har inte kommit.",
+        "noteLong": "Anteckningen får vara högst {max, number} tecken."
+      }
+    },
+    "roster": {
+      "caption": "Eleverna i {group} och vad de har fått i {template}",
+      "done": "{done, number} av {pupils, number} har fått instruktion",
+      "chooseMissing": "Välj alla som saknas",
+      "clear": "Rensa val",
+      "colChoose": "Välj",
+      "colPupil": "Elev",
+      "colClass": "Klass",
+      "colStatus": "Instruktion",
+      "choose": "Välj {name}",
+      "openCard": "Öppna elevkort för {name}",
+      "lookOnlyRow": "Bara läsning",
+      "had": "Instruktion {date} av {by}",
+      "hadNoName": "Instruktion {date}",
+      "earlier": "{count, plural, one {+# tidigare} other {+# tidigare}}",
+      "missing": "Saknas",
+      "void": "Upphäv",
+      "voidNamed": "Upphäv bocken för {name}, {date}",
+      "emptyTitle": "Inga elever att visa",
+      "empty": "Gruppen har inga elever som du får se.",
+      "loadFailed": "Eleverna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "notFound": "Mallen eller gruppen finns inte",
+      "notFoundHint": "Någon kan ha avvecklat mallen eller tagit bort gruppen. Välj igen."
+    },
+    "void": {
+      "title": "Upphäv bocken",
+      "description": "Använd det när en bock har blivit fel. Bocken tas inte bort.",
+      "stays": "Bocken finns kvar på elevens kort, markerad som upphävd, med vem som upphävde den, när och varför. Den räknas inte längre som instruktion.",
+      "reasonLabel": "Varför upphävs bocken?",
+      "reasonHint": "Till exempel Fel elev eller Fel dag. Orsaken syns på elevens kort.",
+      "submit": "Upphäv bocken",
+      "voiding": "Upphäver…",
+      "done": "Bocken är upphävd. Den syns kvar på elevens kort.",
+      "failed": "Bocken kunde inte upphävas",
+      "notYours": "Bocken finns inte, eller så är den någon annans. Du kan bara upphäva bockar du själv har gjort. En administratör kan upphäva alla.",
+      "problem": {
+        "reason": "Skriv varför bocken upphävs.",
+        "reasonLong": "Orsaken får vara högst {max, number} tecken."
+      }
+    },
+    "card": {
+      "description": "Allt som är bockat för eleven, också det som är upphävt, och var eleven står på samtyckeslistorna.",
+      "proofsTitle": "Instruktionsbevis",
+      "noProofs": "Eleven har inga bockar än.",
+      "voidedBadge": "Upphävd",
+      "voided": "Upphävd {moment} av {name}: {reason}",
+      "someone": "okänd",
+      "note": "Anteckning: {note}",
+      "consentsTitle": "Samtycken",
+      "noConsents": "Eleven finns inte på någon samtyckeslista.",
+      "loadFailed": "Elevkortet kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen.",
+      "notFound": "Eleven finns inte, eller är inte din att se",
+      "notFoundHint": "Elever som du varken undervisar eller är mentor för kan du inte öppna."
+    },
+    "lists": {
+      "title": "Samtyckeslistor",
+      "description": {
+        "admin": "En lista per klass över vilka vårdnadshavare som har samtyckt till något, till exempel fotografering eller en utflykt.",
+        "teacher": "Listor för klasser du är mentor för: vilka vårdnadshavare som har samtyckt till något, till exempel fotografering eller en utflykt."
+      },
+      "new": "Ny samtyckeslista",
+      "classFilter": "Klass",
+      "allClasses": "Alla klasser",
+      "includeClosed": "Visa avslutade",
+      "open": "Öppna {title}, {class}",
+      "closedOn": "Avslutad {date}",
+      "closedBadge": "Avslutad",
+      "emptyTitle": "Inga samtyckeslistor än",
+      "empty": {
+        "admin": "När personal gör en samtyckeslista för en klass syns den här.",
+        "teacher": "Gör en lista för en klass du är mentor för, så syns den här."
+      },
+      "noMatch": "Ingen lista matchar.",
+      "loadFailed": "Listorna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund."
+    },
+    "newList": {
+      "title": "Ny samtyckeslista",
+      "description": "Texten är det vårdnadshavarna ombeds samtycka till. När listan är gjord kan du fråga dem i appen, eller skriva in svar från papper och samtal.",
+      "classLabel": "Klass",
+      "chooseClass": "Välj klass…",
+      "classHint": {
+        "admin": "Listan gäller eleverna i klassen som den ser ut nu.",
+        "teacher": "Du kan bara göra en lista för en klass där du är mentor."
+      },
+      "titleLabel": "Rubrik",
+      "titleHint": "Till exempel Fotografering HT 2026.",
+      "bodyLabel": "Det vårdnadshavarna ombeds samtycka till",
+      "bodyHint": "Skriv det i de ord vårdnadshavarna ska läsa. Nämn inga enskilda elever.",
+      "footer": "När du frågar vårdnadshavarna i appen läggs den här meningen till under texten: ”Genom att bekräfta ger du ditt samtycke. Du kan ta tillbaka det när som helst genom att kontakta skolan.”",
+      "submit": "Gör listan",
+      "creating": "Gör listan…",
+      "created": "Listan {title} är gjord.",
+      "failed": "Listan kunde inte göras",
+      "loadFailed": "Klasserna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "noClassesTitle": "Det finns inga klasser att göra en lista för",
+      "noClasses": {
+        "admin": "Skolan har inga klasser i det aktiva läsåret ännu.",
+        "teacher": "Du kan bara göra en samtyckeslista för en klass där du är mentor, och du är inte mentor för någon klass just nu."
+      },
+      "problem": {
+        "class": "Välj en klass.",
+        "title": "Skriv en rubrik.",
+        "titleLong": "Rubriken får vara högst {max, number} tecken.",
+        "body": "Skriv det vårdnadshavarna ska samtycka till.",
+        "bodyLong": "Texten får vara högst {max, number} tecken."
+      }
+    },
+    "detail": {
+      "back": "Till listorna",
+      "class": "Klass",
+      "made": "Gjord",
+      "madeBy": "{date} av {name}",
+      "madeOn": "{date}",
+      "closed": "Avslutad",
+      "closedTitle": "Listan är avslutad",
+      "closedBody": "En avslutad lista tar inga fler svar. Det som är skrivet står kvar och går att läsa.",
+      "closedDone": "Listan är avslutad.",
+      "close": "Avsluta listan",
+      "ask": "Fråga vårdnadshavarna i appen",
+      "askAll": "Fråga alla som saknar svar",
+      "askHelp": "Vårdnadshavaren får en notis och bekräftar under Meddelanden, i appen eller på webben. När alla vårdnadshavare till en elev har bekräftat skrivs samtycket in här av sig självt.",
+      "asked": "Frågade {guardians, plural, one {# vårdnadshavare} other {# vårdnadshavare}} om {pupils, plural, one {# elev} other {# elever}}.",
+      "askedWithout": "{count, plural, one {# elev har} other {# elever har}} ingen vårdnadshavare att fråga: {names}.",
+      "moreNames": "{count, number} till",
+      "kvittensOffTitle": "Skolan har inte slagit på Kvittens",
+      "kvittensOff": {
+        "admin": "Då går det inte att fråga vårdnadshavarna i appen. Slå på Kvittens på sidan Kvittens, så kan du fråga härifrån. Du kan fortfarande skriva in svar från papper och samtal.",
+        "teacher": "Då går det inte att fråga vårdnadshavarna i appen. En administratör kan slå på Kvittens. Du kan fortfarande skriva in svar från papper och samtal."
+      },
+      "chooseHint": "Välj elever i listan för att skriva in ett svar eller fråga dem.",
+      "chosen": "{count, plural, one {# elev vald} other {# elever valda}}",
+      "written": {
+        "GRANTED": "{count, plural, one {Samtycke registrerat för # elev.} other {Samtycke registrerat för # elever.}}",
+        "DECLINED": "{count, plural, one {Nej registrerat för # elev.} other {Nej registrerat för # elever.}}",
+        "WITHDRAWN": "{count, plural, one {Samtycket är återkallat för # elev.} other {Samtycket är återkallat för # elever.}}"
+      },
+      "doneTitle": "Klart",
+      "chooseAll": "Välj alla",
+      "clearAll": "Rensa val",
+      "chooseUnanswered": "Välj alla som saknar svar",
+      "pupils": "{count, plural, one {# elev} other {# elever}}",
+      "caption": "Eleverna och deras svar på {title}",
+      "colChoose": "Välj",
+      "colPupil": "Elev",
+      "colState": "Svar",
+      "colHistory": "Historik",
+      "choose": "Välj {name}",
+      "leftClass": "Har lämnat klassen",
+      "history": "Historik ({count})",
+      "historyNamed": "Visa historiken för {name}, {count, plural, one {# svar} other {# svar}}",
+      "waitingOn": "Väntar på {waiting, number} av {asked, plural, one {# vårdnadshavare} other {# vårdnadshavare}}",
+      "previously": "Tidigare: {answer}",
+      "note": "Anteckning: {note}",
+      "emptyTitle": "Inga elever i listan",
+      "empty": "Klassen har inga elever just nu, och ingen har ett svar på listan.",
+      "loadFailed": "Listan kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "notFoundTitle": "Listan finns inte",
+      "notFound": "Den kan ha tagits bort, eller så är den inte din att se."
+    },
+    "entry": {
+      "title": {
+        "GRANTED": "Registrera samtycke",
+        "DECLINED": "Registrera nej",
+        "WITHDRAWN": "Återkalla samtycke"
+      },
+      "description": {
+        "GRANTED": "Skriv in att vårdnadshavaren har samtyckt, till exempel på en blankett eller i ett samtal.",
+        "DECLINED": "Skriv in att vårdnadshavaren har tackat nej.",
+        "WITHDRAWN": "Skriv in att vårdnadshavaren har tagit tillbaka sitt samtycke. Det syns direkt i listan."
+      },
+      "pupils": "Gäller {count, plural, one {# elev} other {# elever}}.",
+      "dateLabel": {
+        "GRANTED": "Datum på blanketten eller i samtalet",
+        "DECLINED": "Datum på blanketten eller i samtalet",
+        "WITHDRAWN": "Datum då samtycket togs tillbaka"
+      },
+      "dateHint": {
+        "GRANTED": "Dagen vårdnadshavaren gav sitt samtycke. Det kan inte vara en dag som inte har kommit.",
+        "DECLINED": "Dagen vårdnadshavaren tackade nej. Det kan inte vara en dag som inte har kommit.",
+        "WITHDRAWN": "Dagen vårdnadshavaren tog tillbaka sitt samtycke. Det kan inte vara en dag som inte har kommit."
+      },
+      "givenByLabel": "Lämnat av",
+      "givenByHint": "Vem som svarade, med dina egna ord. Till exempel Annas mamma.",
+      "noteLabel": "Anteckning",
+      "withdrawnStays": "Återkallelsen skrivs som ett nytt svar. Det tidigare samtycket finns kvar i historiken.",
+      "submit": {
+        "GRANTED": "Registrera samtycke",
+        "DECLINED": "Registrera nej",
+        "WITHDRAWN": "Återkalla samtycke"
+      },
+      "writing": "Skriver in…",
+      "failed": "Svaret kunde inte skrivas in",
+      "problem": {
+        "pupils": "Välj minst en elev.",
+        "pupilsMany": "Du kan skriva in svar för högst {max, number} elever åt gången.",
+        "date": "Skriv en dag.",
+        "dateFuture": "Dagen har inte kommit.",
+        "givenByLong": "Högst {max, number} tecken.",
+        "noteLong": "Anteckningen får vara högst {max, number} tecken."
+      }
+    },
+    "ask": {
+      "title": "Fråga vårdnadshavarna i appen?",
+      "chosen": "{count, plural, one {# vald elev.} other {# valda elever.}}",
+      "unanswered": "Alla elever som saknar svar: {count, number}.",
+      "how": "Vårdnadshavarna får en notis och bekräftar med ett tryck under Meddelanden, i appen eller på webben. När alla vårdnadshavare till en elev har bekräftat skrivs samtycket in i listan av sig självt.",
+      "final": "Frågan går inte att ta tillbaka. En elev som inte har någon vårdnadshavare får ingen fråga.",
+      "submit": "Fråga vårdnadshavarna",
+      "sending": "Skickar…",
+      "failed": "Frågan kunde inte skickas"
+    },
+    "close": {
+      "title": "Avsluta {title}?",
+      "description": "En avslutad lista tar inga fler svar. Det som redan är skrivet står kvar och går att läsa, men det går inte att öppna listan igen.",
+      "guardians": "En vårdnadshavare som bekräftar en fråga efter att listan har avslutats ger inget svar i listan.",
+      "submit": "Avsluta listan",
+      "closing": "Avslutar…",
+      "failed": "Listan kunde inte avslutas"
+    },
+    "how": {
+      "registeredBy": "Skrivet in av {name} den {date}",
+      "registered": "Skrivet in den {date}",
+      "givenBy": "lämnat {given} av {by}",
+      "given": "lämnat {given}",
+      "kvittens": "Bekräftat i appen {date}"
+    },
+    "print": {
+      "button": "Skriv ut",
+      "preparing": "Förbereder…",
+      "failed": "Utskriften gjordes inte. Vi kunde inte kontrollera vilka elever som har skyddad identitet, och utan det skriver vi inte ut några namn.",
+      "held": "{count, plural, one {# elev med skyddad identitet är inte med i utskriften. Se skärmen.} other {# elever med skyddad identitet är inte med i utskriften. Se skärmen.}}",
+      "group": "Grupp: {group}",
+      "class": "Klass: {class}",
+      "printed": "Utskrivet {moment}",
+      "closed": "avslutad {date}",
+      "colHow": "Hur"
+    },
+    "refusal": {
+      "CHECKLIST_NOT_FOUND": "Det finns inte längre, eller är inte ditt att se. Ladda om sidan.",
+      "CHECKLIST_NOT_STAFF": "Bara personal kan göra det.",
+      "CHECKLIST_NOT_YOUR_PUPIL": "Du kan bara bocka av elever i dina egna grupper och lektioner, och skriva in samtycken för dina mentorselever.",
+      "CHECKLIST_UNKNOWN_PUPIL": "En av eleverna finns inte i skolan eller har slutat. Ladda om listan och försök igen.",
+      "CHECKLIST_TEMPLATE_RETIRED": "Mallen är avvecklad, så det går inte att bocka av i den. En administratör kan ta fram den igen.",
+      "CHECKLIST_TEMPLATE_EXISTS": "Det momentet finns redan i det ämnet.",
+      "CHECKLIST_UNKNOWN_SUBJECT": "Ämnet finns inte i skolan. Välj ett annat.",
+      "CHECKLIST_DATE_IN_THE_FUTURE": "Dagen har inte kommit.",
+      "CHECKLIST_DATE_INVALID": "Dagen finns inte.",
+      "CONSENT_ASK_NEEDS_ALL": "Frågan till vårdnadshavarna måste kräva att alla bekräftar. Försök igen.",
+      "CONSENT_ASK_ALREADY_ANSWERED": "Frågan har redan bekräftats av en vårdnadshavare och gäller något annat. Försök igen.",
+      "CHECKLIST_INSTRUCTOR_IS_NOT_STAFF": "Den som gav instruktionen måste vara personal vid skolan.",
+      "CHECKLIST_REASON_NEEDED": "Skriv en kort orsak till varför bocken upphävs.",
+      "CONSENT_LIST_CLOSED": "Listan är avslutad. Det går inte att skriva mer i den.",
+      "CONSENT_LIST_EXISTS": "Klassen har redan en öppen lista med det namnet.",
+      "CONSENT_NOT_A_CLASS": "Klassen finns inte i skolan.",
+      "CONSENT_NOT_YOUR_CLASS": "Du kan bara göra samtyckeslistor för klasser du är mentor för.",
+      "CONSENT_NOBODY_TO_ASK": "Det finns ingen att fråga: ingen av eleverna har en vårdnadshavare, eller så har alla redan svarat.",
+      "ACK_DISABLED": "Skolan har inte slagit på Kvittens, så det går inte att fråga vårdnadshavarna i appen.",
+      "ACK_UNKNOWN_PUPIL": "En av eleverna finns inte i skolan eller har slutat. Ladda om listan och försök igen.",
+      "ACK_NOT_YOUR_PUPIL": "Du kan bara fråga vårdnadshavarna till elever du är mentor för.",
+      "ACK_NO_GUARDIANS": "Ingen av eleverna har en vårdnadshavare att fråga.",
+      "ACK_TOO_MANY_REQUESTS": "Du har redan skickat tio frågor den senaste timmen. Vänta en stund och försök igen.",
+      "ACK_TOO_MANY_RECIPIENTS": "Skolan har bett om kvittens från för många vårdnadshavare det senaste dygnet. Försök igen i morgon.",
+      "THROTTLED": "Du gör det för ofta. Vänta en minut och försök igen."
     }
   }
 }

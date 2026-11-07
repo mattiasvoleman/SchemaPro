@@ -6167,6 +6167,10 @@
       "CRISIS_ALARMS": {
         "name": "Live alarms",
         "body": "Live evacuations and lockdowns, with the protocol of who reported what and when. They are kept as the school decides, and nothing is purged without a decision. An alarm that is going is never purged."
+      },
+      "CHECKLISTS": {
+        "name": "Instruction proofs and consents",
+        "body": "Instruction proofs and consents are kept as long as the pupil attends the school, and after that for as long as you choose. An instruction proof may be needed for the work-environment responsibility after the pupil has left. Choose at least as long a time for ‘People who left’, otherwise the proof keeps its time but no longer has a name."
       }
     },
     "peopleEffectsTitle": "When a person is pseudonymised:",
@@ -6379,7 +6383,8 @@
     "ACCESS_LOG": "Reads before {date} have been purged under the school’s decision.",
     "COVER_REQUESTS": "Substitute requests that ended before {date} have been purged under the school's decision.",
     "CRISIS_DRILLS": "Crisis mode drills that ended before {date} have been purged under the school's decision.",
-    "CRISIS_ALARMS": "Live alarms that ended before {date} have been purged under the school's decision."
+    "CRISIS_ALARMS": "Live alarms that ended before {date} have been purged under the school's decision.",
+    "CHECKLISTS": "Instruction proofs and consents for pupils who left before {date} have been purged under the school's decision."
   },
   "leaveInbox": {
     "alreadyDecided": "The request has already been decided. The list is up to date.",
@@ -8395,6 +8400,379 @@
       "saved": "The choice is saved",
       "loadFailed": "The choice could not be loaded",
       "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment."
+    }
+  },
+  "checklists": {
+    "title": "Checklists",
+    "subtitle": "Instruction proofs and consents in one place",
+    "teacherSubtitle": "Tick which pupils have had an instruction, and keep consent lists for the classes you mentor",
+    "counter": "{count, number} of {max, number} characters",
+    "dialogLoadFailed": "The dialog could not be opened. Nothing has changed – try again.",
+    "panelLoadFailed": "This part of the page could not be fetched",
+    "panelLoadFailedHint": "Nothing has changed. Check the connection and try again.",
+    "tabs": {
+      "label": "Checklists",
+      "instructions": "Instruction proofs",
+      "consents": "Consents"
+    },
+    "state": {
+      "GRANTED": "Consent",
+      "DECLINED": "Has declined",
+      "WITHDRAWN": "Withdrawn",
+      "ASKED": "Asked in the app",
+      "MISSING": "Missing"
+    },
+    "templates": {
+      "title": "Templates",
+      "description": "A template is a moment that pupils are to have had instruction in, for example the machines in woodwork. A template is never deleted, because its ticks must stay. One that is no longer needed is retired: it can no longer be ticked in, but every tick stays and the template can be brought back.",
+      "new": "New template",
+      "newTitle": "New template",
+      "editTitle": "Change the template",
+      "titleLabel": "Moment",
+      "titleHint": "For example Machines or Laboratory safety.",
+      "subjectLabel": "Subject",
+      "subjectHint": "Choose a subject if the moment belongs to one. A moment exists once in each subject.",
+      "noSubject": "No subject",
+      "descriptionLabel": "Description",
+      "descriptionHint": "What the instruction covers, so that everyone ticks the same thing.",
+      "create": "Create the template",
+      "save": "Save",
+      "saving": "Saving…",
+      "created": "The template has been created.",
+      "saved": "The template has been saved.",
+      "retired": "{title} is retired. Its ticks stay.",
+      "restored": "{title} has been brought back.",
+      "retire": "Retire",
+      "restore": "Bring back",
+      "retiredBadge": "Retired",
+      "emptyTitle": "No templates yet",
+      "empty": "Make a template for each moment that pupils are to have had instruction in. Then everyone who teaches can tick in it.",
+      "loadFailed": "The templates could not be fetched",
+      "loadFailedHint": "Nothing has changed. Try again in a moment.",
+      "failed": "The template could not be saved",
+      "subjectsFailed": "The subjects could not be fetched. You can save the template without a subject and choose one later.",
+      "problem": {
+        "title": "Write the name of the moment.",
+        "titleLong": "The name can be at most {max, number} characters.",
+        "descriptionLong": "The description can be at most {max, number} characters."
+      }
+    },
+    "tick": {
+      "title": "Tick off",
+      "description": {
+        "admin": "Choose a template and a group, and tick the pupils who have had the instruction.",
+        "teacher": "Choose a template and one of your groups, and tick the pupils who have had the instruction. You can read the classes you mentor but not tick in them."
+      },
+      "templateLabel": "Template",
+      "chooseTemplate": "Choose a template…",
+      "groupLabel": "Group",
+      "chooseGroup": "Choose a group…",
+      "groupHint": "Under Read only are classes you mentor but do not teach.",
+      "yourGroups": "Your groups",
+      "lookOnly": "Read only",
+      "choose": "Choose a template and a group to see the pupils.",
+      "loadFailed": "The templates and groups could not be fetched",
+      "loadFailedHint": "Nothing has changed. Try again in a moment.",
+      "noTemplatesTitle": "There are no templates to tick in",
+      "noTemplates": {
+        "admin": "Make a template under Templates above.",
+        "teacher": "An administrator makes the templates. When there is one you can tick in it here."
+      },
+      "noGroupsTitle": "There are no groups to show",
+      "noGroups": {
+        "admin": "The school has no groups in the active school year yet.",
+        "teacher": "You teach no group in the active school year and do not mentor any class."
+      },
+      "formTitle": "Tick the chosen pupils",
+      "dateLabel": "Date of the instruction",
+      "dateHint": "The day the pupils had the instruction. It cannot be a day that has not come.",
+      "instructorLabel": "Who gave the instruction",
+      "instructorMe": "Me",
+      "instructorHint": "Leave it as it is if you gave the instruction yourself.",
+      "instructorsFailed": "The staff list could not be fetched. The tick will be written in your name.",
+      "noteLabel": "Note",
+      "chosen": "{count, plural, =0 {No pupil chosen} one {# pupil chosen} other {# pupils chosen}}",
+      "submit": "Tick the chosen",
+      "ticking": "Ticking…",
+      "resultTitle": "Done",
+      "result": "{written, plural, =0 {No pupil was ticked} one {# pupil was ticked} other {# pupils were ticked}}{already, plural, =0 {} one {. # pupil already had a tick for the day} other {. # pupils already had a tick for the day}}.",
+      "failed": "Could not tick",
+      "problem": {
+        "pupils": "Choose at least one pupil.",
+        "pupilsMany": "You can tick at most {max, number} pupils at a time.",
+        "date": "Enter a day.",
+        "dateFuture": "That day has not come.",
+        "noteLong": "The note can be at most {max, number} characters."
+      }
+    },
+    "roster": {
+      "caption": "The pupils in {group} and what they have had in {template}",
+      "done": "{done, number} of {pupils, number} have had the instruction",
+      "chooseMissing": "Choose all who are missing",
+      "clear": "Clear choice",
+      "colChoose": "Choose",
+      "colPupil": "Pupil",
+      "colClass": "Class",
+      "colStatus": "Instruction",
+      "choose": "Choose {name}",
+      "openCard": "Open the card of {name}",
+      "lookOnlyRow": "Read only",
+      "had": "Instruction {date} by {by}",
+      "hadNoName": "Instruction {date}",
+      "earlier": "{count, plural, one {+# earlier} other {+# earlier}}",
+      "missing": "Missing",
+      "void": "Void",
+      "voidNamed": "Void the tick for {name}, {date}",
+      "emptyTitle": "No pupils to show",
+      "empty": "The group has no pupils that you may see.",
+      "loadFailed": "The pupils could not be fetched",
+      "loadFailedHint": "Nothing has changed. Try again in a moment.",
+      "notFound": "The template or the group does not exist",
+      "notFoundHint": "Someone may have retired the template or removed the group. Choose again."
+    },
+    "void": {
+      "title": "Void the tick",
+      "description": "Use this when a tick was made in error. The tick is not deleted.",
+      "stays": "The tick stays on the pupil's card, marked as voided, with who voided it, when and why. It no longer counts as instruction.",
+      "reasonLabel": "Why is the tick voided?",
+      "reasonHint": "For example Wrong pupil or Wrong day. The reason shows on the pupil's card.",
+      "submit": "Void the tick",
+      "voiding": "Voiding…",
+      "done": "The tick is voided. It stays visible on the pupil's card.",
+      "failed": "The tick could not be voided",
+      "notYours": "The tick does not exist, or it is someone else's. You can only void ticks you made yourself. An administrator can void any.",
+      "problem": {
+        "reason": "Write why the tick is voided.",
+        "reasonLong": "The reason can be at most {max, number} characters."
+      }
+    },
+    "card": {
+      "description": "Everything ticked for the pupil, the voided ticks too, and where the pupil stands on the consent lists.",
+      "proofsTitle": "Instruction proofs",
+      "noProofs": "The pupil has no ticks yet.",
+      "voidedBadge": "Voided",
+      "voided": "Voided {moment} by {name}: {reason}",
+      "someone": "unknown",
+      "note": "Note: {note}",
+      "consentsTitle": "Consents",
+      "noConsents": "The pupil is not on any consent list.",
+      "loadFailed": "The pupil's card could not be fetched",
+      "loadFailedHint": "Nothing has changed. Try again.",
+      "notFound": "The pupil does not exist, or is not yours to see",
+      "notFoundHint": "You cannot open pupils you neither teach nor mentor."
+    },
+    "lists": {
+      "title": "Consent lists",
+      "description": {
+        "admin": "A list per class of which guardians have consented to something, for example photography or an excursion.",
+        "teacher": "Lists for the classes you mentor: which guardians have consented to something, for example photography or an excursion."
+      },
+      "new": "New consent list",
+      "classFilter": "Class",
+      "allClasses": "All classes",
+      "includeClosed": "Show ended lists",
+      "open": "Open {title}, {class}",
+      "closedOn": "Ended {date}",
+      "closedBadge": "Ended",
+      "emptyTitle": "No consent lists yet",
+      "empty": {
+        "admin": "When staff make a consent list for a class it shows here.",
+        "teacher": "Make a list for a class you mentor and it shows here."
+      },
+      "noMatch": "No list matches.",
+      "loadFailed": "The lists could not be fetched",
+      "loadFailedHint": "Nothing has changed. Try again in a moment."
+    },
+    "newList": {
+      "title": "New consent list",
+      "description": "The text is what the guardians are asked to consent to. Once the list is made you can ask them in the app, or write in answers from paper and calls.",
+      "classLabel": "Class",
+      "chooseClass": "Choose a class…",
+      "classHint": {
+        "admin": "The list covers the pupils in the class as it is now.",
+        "teacher": "You can only make a list for a class you mentor."
+      },
+      "titleLabel": "Title",
+      "titleHint": "For example Photography autumn 2026.",
+      "bodyLabel": "What the guardians are asked to consent to",
+      "bodyHint": "Write it in the words the guardians will read. Do not name individual pupils.",
+      "footer": "When you ask the guardians in the app, this sentence (in Swedish) is added under the text: “Genom att bekräfta ger du ditt samtycke. Du kan ta tillbaka det när som helst genom att kontakta skolan.” It says that a confirmation is the consent and that it can be taken back by contacting the school.",
+      "submit": "Make the list",
+      "creating": "Making the list…",
+      "created": "The list {title} is made.",
+      "failed": "The list could not be made",
+      "loadFailed": "The classes could not be fetched",
+      "loadFailedHint": "Nothing has changed. Try again in a moment.",
+      "noClassesTitle": "There are no classes to make a list for",
+      "noClasses": {
+        "admin": "The school has no classes in the active school year yet.",
+        "teacher": "You can only make a consent list for a class you mentor, and you do not mentor any class right now."
+      },
+      "problem": {
+        "class": "Choose a class.",
+        "title": "Write a title.",
+        "titleLong": "The title can be at most {max, number} characters.",
+        "body": "Write what the guardians are to consent to.",
+        "bodyLong": "The text can be at most {max, number} characters."
+      }
+    },
+    "detail": {
+      "back": "Back to the lists",
+      "class": "Class",
+      "made": "Made",
+      "madeBy": "{date} by {name}",
+      "madeOn": "{date}",
+      "closed": "Ended",
+      "closedTitle": "The list has ended",
+      "closedBody": "An ended list takes no more answers. What is written stays and can be read.",
+      "closedDone": "The list has ended.",
+      "close": "End the list",
+      "ask": "Ask the guardians in the app",
+      "askAll": "Ask everyone who has not answered",
+      "askHelp": "The guardian gets a notice and confirms under Messages, in the app or on the web. When every guardian of a pupil has confirmed, the consent is written here by itself.",
+      "asked": "Asked {guardians, plural, one {# guardian} other {# guardians}} about {pupils, plural, one {# pupil} other {# pupils}}.",
+      "askedWithout": "{count, plural, one {# pupil has} other {# pupils have}} no guardian to ask: {names}.",
+      "moreNames": "{count, number} more",
+      "kvittensOffTitle": "The school has not turned Acknowledgements on",
+      "kvittensOff": {
+        "admin": "That means the guardians cannot be asked in the app. Turn Acknowledgements on on the Acknowledgements page and you can ask from here. You can still write in answers from paper and calls.",
+        "teacher": "That means the guardians cannot be asked in the app. An administrator can turn Acknowledgements on. You can still write in answers from paper and calls."
+      },
+      "chooseHint": "Choose pupils in the list to write in an answer or to ask them.",
+      "chosen": "{count, plural, one {# pupil chosen} other {# pupils chosen}}",
+      "written": {
+        "GRANTED": "{count, plural, one {Consent recorded for # pupil.} other {Consent recorded for # pupils.}}",
+        "DECLINED": "{count, plural, one {A no recorded for # pupil.} other {A no recorded for # pupils.}}",
+        "WITHDRAWN": "{count, plural, one {Consent withdrawn for # pupil.} other {Consent withdrawn for # pupils.}}"
+      },
+      "doneTitle": "Done",
+      "chooseAll": "Choose all",
+      "clearAll": "Clear choice",
+      "chooseUnanswered": "Choose all who have not answered",
+      "pupils": "{count, plural, one {# pupil} other {# pupils}}",
+      "caption": "The pupils and their answers to {title}",
+      "colChoose": "Choose",
+      "colPupil": "Pupil",
+      "colState": "Answer",
+      "colHistory": "History",
+      "choose": "Choose {name}",
+      "leftClass": "Has left the class",
+      "history": "History ({count})",
+      "historyNamed": "Show the history of {name}, {count, plural, one {# answer} other {# answers}}",
+      "waitingOn": "Waiting for {waiting, number} of {asked, plural, one {# guardian} other {# guardians}}",
+      "previously": "Before: {answer}",
+      "note": "Note: {note}",
+      "emptyTitle": "No pupils in the list",
+      "empty": "The class has no pupils right now, and nobody has an answer on the list.",
+      "loadFailed": "The list could not be fetched",
+      "loadFailedHint": "Nothing has changed. Try again in a moment.",
+      "notFoundTitle": "The list does not exist",
+      "notFound": "It may have been removed, or it is not yours to see."
+    },
+    "entry": {
+      "title": {
+        "GRANTED": "Record consent",
+        "DECLINED": "Record a no",
+        "WITHDRAWN": "Withdraw consent"
+      },
+      "description": {
+        "GRANTED": "Write in that the guardian has consented, for example on a form or in a call.",
+        "DECLINED": "Write in that the guardian has said no.",
+        "WITHDRAWN": "Write in that the guardian has taken back their consent. It shows in the list at once."
+      },
+      "pupils": "Applies to {count, plural, one {# pupil} other {# pupils}}.",
+      "dateLabel": {
+        "GRANTED": "Date on the form or of the call",
+        "DECLINED": "Date on the form or of the call",
+        "WITHDRAWN": "Date the consent was taken back"
+      },
+      "dateHint": {
+        "GRANTED": "The day the guardian gave their consent. It cannot be a day that has not come.",
+        "DECLINED": "The day the guardian said no. It cannot be a day that has not come.",
+        "WITHDRAWN": "The day the guardian took back their consent. It cannot be a day that has not come."
+      },
+      "givenByLabel": "Given by",
+      "givenByHint": "Who answered, in your own words. For example Anna's mother.",
+      "noteLabel": "Note",
+      "withdrawnStays": "The withdrawal is written as a new answer. The earlier consent stays in the history.",
+      "submit": {
+        "GRANTED": "Record consent",
+        "DECLINED": "Record a no",
+        "WITHDRAWN": "Withdraw consent"
+      },
+      "writing": "Writing in…",
+      "failed": "The answer could not be written in",
+      "problem": {
+        "pupils": "Choose at least one pupil.",
+        "pupilsMany": "You can write in answers for at most {max, number} pupils at a time.",
+        "date": "Enter a day.",
+        "dateFuture": "That day has not come.",
+        "givenByLong": "At most {max, number} characters.",
+        "noteLong": "The note can be at most {max, number} characters."
+      }
+    },
+    "ask": {
+      "title": "Ask the guardians in the app?",
+      "chosen": "{count, plural, one {# chosen pupil.} other {# chosen pupils.}}",
+      "unanswered": "Every pupil who has not answered: {count, number}.",
+      "how": "The guardians get a notice and confirm with one tap under Messages, in the app or on the web. When every guardian of a pupil has confirmed, the consent is written into the list by itself.",
+      "final": "The question cannot be taken back. A pupil with no guardian is not asked.",
+      "submit": "Ask the guardians",
+      "sending": "Sending…",
+      "failed": "The question could not be sent"
+    },
+    "close": {
+      "title": "End {title}?",
+      "description": "An ended list takes no more answers. What is already written stays and can be read, but the list cannot be opened again.",
+      "guardians": "A guardian who confirms a question after the list has ended gives no answer in the list.",
+      "submit": "End the list",
+      "closing": "Ending…",
+      "failed": "The list could not be ended"
+    },
+    "how": {
+      "registeredBy": "Written in by {name} on {date}",
+      "registered": "Written in on {date}",
+      "givenBy": "given {given} by {by}",
+      "given": "given {given}",
+      "kvittens": "Confirmed in the app {date}"
+    },
+    "print": {
+      "button": "Print",
+      "preparing": "Preparing…",
+      "failed": "Nothing was printed. We could not check which pupils have a protected identity, and without that we print no names.",
+      "held": "{count, plural, one {# pupil with a protected identity is not on the printout. See the screen.} other {# pupils with a protected identity are not on the printout. See the screen.}}",
+      "group": "Group: {group}",
+      "class": "Class: {class}",
+      "printed": "Printed {moment}",
+      "closed": "ended {date}",
+      "colHow": "How"
+    },
+    "refusal": {
+      "CHECKLIST_NOT_FOUND": "It no longer exists, or it is not yours to see. Reload the page.",
+      "CHECKLIST_NOT_STAFF": "Only staff can do that.",
+      "CHECKLIST_NOT_YOUR_PUPIL": "You can only tick pupils in your own groups and lessons, and write in consents for your mentees.",
+      "CHECKLIST_UNKNOWN_PUPIL": "One of the pupils is not at the school or has left. Reload the list and try again.",
+      "CHECKLIST_TEMPLATE_RETIRED": "The template is retired, so it cannot be ticked in. An administrator can bring it back.",
+      "CHECKLIST_TEMPLATE_EXISTS": "That moment already exists in that subject.",
+      "CHECKLIST_UNKNOWN_SUBJECT": "The subject does not exist at the school. Choose another.",
+      "CHECKLIST_DATE_IN_THE_FUTURE": "That day has not come.",
+      "CHECKLIST_DATE_INVALID": "That day does not exist.",
+      "CONSENT_ASK_NEEDS_ALL": "The question to the guardians must require every guardian to confirm. Try again.",
+      "CONSENT_ASK_ALREADY_ANSWERED": "The question has already been confirmed by a guardian and is about something else. Try again.",
+      "CHECKLIST_INSTRUCTOR_IS_NOT_STAFF": "Whoever gave the instruction must be staff at the school.",
+      "CHECKLIST_REASON_NEEDED": "Write a short reason why the tick is voided.",
+      "CONSENT_LIST_CLOSED": "The list has ended. Nothing more can be written in it.",
+      "CONSENT_LIST_EXISTS": "The class already has an open list with that name.",
+      "CONSENT_NOT_A_CLASS": "The class does not exist at the school.",
+      "CONSENT_NOT_YOUR_CLASS": "You can only make consent lists for classes you mentor.",
+      "CONSENT_NOBODY_TO_ASK": "There is nobody to ask: none of the pupils has a guardian, or everyone has already answered.",
+      "ACK_DISABLED": "The school has not turned Acknowledgements on, so the guardians cannot be asked in the app.",
+      "ACK_UNKNOWN_PUPIL": "One of the pupils is not at the school or has left. Reload the list and try again.",
+      "ACK_NOT_YOUR_PUPIL": "You can only ask the guardians of pupils you mentor.",
+      "ACK_NO_GUARDIANS": "None of the pupils has a guardian to ask.",
+      "ACK_TOO_MANY_REQUESTS": "You have already sent ten questions in the last hour. Wait a while and try again.",
+      "ACK_TOO_MANY_RECIPIENTS": "The school has asked too many guardians for an acknowledgement in the last 24 hours. Try again tomorrow.",
+      "THROTTLED": "You are doing that too often. Wait a minute and try again."
     }
   }
 }
