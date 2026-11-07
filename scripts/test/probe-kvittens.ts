@@ -32,8 +32,8 @@
  *       turns kvittens off stops the reminders that fall due while it is off
  *   kl  the limits: a person's eleventh request in an hour, and a school's receipts in a
  *       day, are 429s with their own codes through the adapter, and write nothing
- *   km  the lists are paged, and a read costs what the caller reads, not the school's
- *       requests (the policies' ids are built once per statement)
+ *   km  the lists are paged, and a read builds the policies' ids once per statement and
+ *       calls no function per row of the school's requests
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -582,7 +582,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     await service.create({ title: 'Nästa dygn', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asColleague);
   });
 
-  await check('km: the lists are paged, and a read costs what the caller reads, not the school’s requests', async () => {
+  await check('km: the lists are paged, and a read builds the policies’ ids once and calls no function per row of the school’s requests', async () => {
     // Paging: every request once, newest first, the last page says so.
     const page = async <T extends { id: string }>(read: (query: { after?: string; limit: number }) => Promise<{ items: T[]; next: string | null }>, limit: number): Promise<string[]> => {
       const seen: string[] = [];
@@ -614,7 +614,9 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     assert.deepEqual([nothing.items, nothing.next], [[], null], 'a cursor that is no request of theirs gave something');
 
     // The cost: the school gets many requests the guardian is not asked about, and the guardian's read calls the policies' ids once
-    // and nothing per row of the school. Counted in the database's own function statistics, in a transaction of its own.
+    // and no function per row of the school (the plan still filters the school's requests by the array, linearly, but a row
+    // costs a fraction of a microsecond and not a function call). Counted in the database's own function statistics, in a
+    // transaction of its own.
     const others = Number(process.env['KVITTENS_REQUESTS'] ?? 300);
     await owner.query(
       `INSERT INTO "AckRequests" ("schoolId", "authorId", title, body) SELECT $1, $2, 'Andras ' || i, 'B' FROM generate_series(1, $3::int) i`,

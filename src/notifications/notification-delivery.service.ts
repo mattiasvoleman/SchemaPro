@@ -80,9 +80,13 @@ export const EMAIL_INTERVAL_MS = 500;
  * of a batch are split by type when it is queued, so an alarm that shares a
  * transaction with other notices is still the urgent lane's. The two lanes
  * share the providers' pacing (one mail at most every EMAIL_INTERVAL_MS,
- * Expo's five requests a second), each mail and each request taking the next
- * free slot, so an alarm's mail waits one slot, not the other lane's whole
- * backlog, and the total rate is the one the providers allow.
+ * Expo's five requests a second). Mails go one at a time in the order they
+ * ask for their turn, each at least EMAIL_INTERVAL_MS after the last one
+ * ACTUALLY went, not after the moment it was planned for: a timer that fires
+ * late must not bring the next mail closer than the interval, and Resend
+ * refuses what comes faster than two a second. So an alarm's mail waits one
+ * turn, not the other lane's whole backlog, and the total rate is the one the
+ * providers allow.
  *
  * E-mail is BCC mail per notifyUsers chunk, with the caller's subject and
  * body, unchanged, minus the recipients who opted out of the type
@@ -118,8 +122,10 @@ export class NotificationDeliveryService {
     ordinary: { queue: [], running: null },
     urgent: { queue: [], running: null },
   };
-  /** The first moment the next mail may go (epoch ms), for the provider's rate; a mail takes the slot, whichever lane sends it. */
-  private nextMailAt = 0;
+  /** When the last mail really went (epoch ms), for the provider's rate. */
+  private lastMailAt = 0;
+  /** The mails waiting for their turn, both lanes in the order they asked: each turn starts when the one before it has gone. */
+  private mailTurns: Promise<void> = Promise.resolve();
   /** The pause between two mails; a spec sets it to 0. */
   emailIntervalMs = EMAIL_INTERVAL_MS;
 
@@ -326,17 +332,28 @@ export class NotificationDeliveryService {
     return new Set((rows ?? []).map((row) => row.user_id));
   }
 
+  /**
+   * Resolves when this mail may go: it is next in line, and EMAIL_INTERVAL_MS has passed since the last mail went, from
+   * whichever lane. The moment is taken when the wait ends, so the interval is kept even when a timer fires late.
+   */
+  private async mailTurn(): Promise<void> {
+    const turn = this.mailTurns.then(async () => {
+      for (let wait = this.lastMailAt + this.emailIntervalMs - Date.now(); wait > 0; wait = this.lastMailAt + this.emailIntervalMs - Date.now()) {
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+      this.lastMailAt = Date.now();
+    });
+    this.mailTurns = turn;
+    await turn;
+  }
+
   private async sendEmails(addresses: string[], subject: string, body: string): Promise<void> {
     const apiKey = process.env.RESEND_API_KEY;
     const from = process.env.EMAIL_FROM ?? 'Rastra Schema <noreply@schemapro.app>';
     if (!apiKey || addresses.length === 0) return;
 
     for (let at = 0; at < addresses.length; at += EMAIL_BCC_CHUNK) {
-      // The next free slot, taken before waiting for it: the other lane's mail takes the one after.
-      const now = Date.now();
-      const slot = Math.max(now, this.nextMailAt);
-      this.nextMailAt = slot + this.emailIntervalMs;
-      if (slot > now) await new Promise((resolve) => setTimeout(resolve, slot - now));
+      await this.mailTurn();
       try {
         const response = await fetch('https://api.resend.com/emails', {
           method: 'POST',

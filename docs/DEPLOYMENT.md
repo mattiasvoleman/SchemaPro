@@ -1702,8 +1702,8 @@ Walk the full product loop once, in order:
   number is a migration. The delivery has a second, **urgent lane** for the
   crisis alarm and its end (`CRISIS_ALARM`, `CRISIS_ENDED`): a wave of mails
   never stands in front of an alarm's push (ten minutes of life); the lanes
-  share the providers' pace (a mail takes the next free 500 ms slot,
-  whichever lane sends it).
+  share the providers' pace (mails go one at a time in the order they ask,
+  each at least 500 ms after the last one actually went, whichever lane sends it).
   **The reminder pass** lists the due requests (`app.ack_remind_queue`, ids
   only) and takes them one at a time (`app.ack_remind_request`), each in a
   transaction under the delivery door's five seconds, up to a minute a pass: a
@@ -1764,11 +1764,19 @@ Walk the full product loop once, in order:
   GROUP BY 1, 2 HAVING count(*) > 5`); and how far a school is from its day's
   limit (`SELECT "schoolId", count(*) FROM "AckReceipts" WHERE "createdAt" >
   now() - interval '24 hours' GROUP BY 1 ORDER BY 2 DESC LIMIT 5`).
-  **Not tried:** that the API *before* the release reads a `Notifications`
-  row of the two new types without failing (a client library generated from an
-  older schema may not know the enum values). Try it before the first school
-  turns kvittens on, and delete the notices in the same transaction as the
-  rollback below if it throws.
+  **Tried (the second review):** a Prisma client generated from the schema
+  *before* the release (without Kvittens) reads a `Notifications` row of the two
+  new types with `count` and `updateMany`, but a model read that returns the row
+  (`findMany`, `groupBy`) throws `Value 'ACK_REQUESTED' not found in enum
+  'NotificationType'`. The gateway reads `Notifications` with the model
+  nowhere (it writes with `createMany` and reads twice by raw SQL, which gives
+  the enum as text, in `school-export/data-files.ts`; the apps read the inbox
+  through PostgREST), so a revert of the code is harmless today, and an older
+  app shows a row of the new types as "Notification". What would break it is a
+  model read of `Notifications` that lands in `main` before a revert: check
+  `git grep -nE 'notification\.(findMany|findFirst|findUnique|groupBy|aggregate)'
+  src` first, and delete the notices in the same transaction as the rollback
+  below if one has landed.
   **Rollback of the code** is a revert; the tables stay and are unread. Rollback
   of the data, only if nothing in it is wanted: `BEGIN; DELETE FROM
   "Notifications" WHERE "type"::text IN ('ACK_REQUESTED', 'ACK_REMINDER');

@@ -99,12 +99,16 @@
 -- Allt går genom gatewayen, som loggar läsningen; ingen arm är öppen för
 -- PostgREST (bara app_authenticated).
 --
--- Kostnaden följer det man läser, inte skolans alla förfrågningar: policyerna
--- på AckRequests och AckReceipts frågar efter id:na en gång per uttalande, som
--- ett initplan (en funktion som ger en uuid[] ur AckReceipts på dess index),
--- och `id = ANY (…)` går mot primärnyckeln. En funktion som anropas per rad
--- läste skolans hela tabell: 20 000 förfrågningar tog 1–2,5 s för en
--- vårdnadshavare med tretton egna.
+-- Policyerna på AckRequests och AckReceipts frågar efter id:na en gång per
+-- uttalande, som ett initplan (en funktion som ger en uuid[] ur AckReceipts på
+-- dess index), och `id = ANY (…)` är ett filter på planens läsning av skolans
+-- förfrågningar (indexet på (schoolId, createdAt), nyast först). Planen läser
+-- alltså fortfarande skolans alla förfrågningar och filtrerar dem, så kostnaden
+-- följer skolans antal förfrågningar, linjärt. Det som försvann är ett
+-- funktionsanrop per rad, 55–90 µs, mot ungefär 0,35 µs för filtret: 20 000
+-- förfrågningar tog 0,8–2,5 s för en vårdnadshavare med tretton egna, nu
+-- 7–12 ms. Ska kostnaden följa det man läser behövs en plan som utgår från
+-- kvittona (en join mot AckReceipts på (guardianId, schoolId)).
 --
 -- ## Gränser
 --
@@ -430,8 +434,10 @@ $$;
 
 -- The ids the policies compare with, each built once per statement as an
 -- initplan (`"id" = ANY ((select app.f())::uuid[])`), not asked per row: a
--- function the planner has to call for every row of the school's table made the
--- read cost follow all of the school's requests instead of the caller's own.
+-- function the planner has to call for every row of the school's table cost
+-- 55-90 microseconds a row. As a filter the array costs a fraction of one
+-- (the plan still reads the school's requests by (schoolId, createdAt) and
+-- filters them, so the cost grows with the school's requests, linearly).
 
 -- The requests the calling guardian has a row in for a child they are still linked to
 -- (the index (guardianId, schoolId)). After the custody has ended the request does not

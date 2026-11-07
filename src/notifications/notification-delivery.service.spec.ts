@@ -175,6 +175,30 @@ describe('NotificationDeliveryService (e-mail)', () => {
       for (const gap of gaps) expect(gap).toBeGreaterThanOrEqual(35);
     });
 
+    it('counts the interval from when a mail really went, not from when it was planned: a late timer does not bring two mails closer', async () => {
+      delivery.emailIntervalMs = 40;
+      const sentAt: number[] = [];
+      fetchMock.mockImplementation(async () => {
+        sentAt.push(Date.now());
+        return { ok: true, status: 200 };
+      });
+      // A wave of two mails; its second waits 40 ms for its turn. While it waits the event loop is stuck for 60 ms (a busy host),
+      // so that timer fires late, at about 65 ms, and an alarm queued meanwhile must not go at 80 as the wave's planned slots say.
+      delivery.enqueue([waveOf('WAVE')]);
+      await until(() => sentAt.length === 1);
+      setTimeout(() => {
+        const stuckUntil = Date.now() + 60;
+        while (Date.now() < stuckUntil) {
+          /* a busy host */
+        }
+      }, 5);
+      delivery.enqueue([alarm()]);
+      await delivery.idle();
+      expect(sentAt).toHaveLength(3);
+      const gaps = sentAt.slice(1).map((at, i) => at - sentAt[i]!);
+      for (const gap of gaps) expect(gap).toBeGreaterThanOrEqual(37);
+    });
+
     it('bounds each lane on its own: a full ordinary lane does not refuse an alarm', async () => {
       const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
       fetchMock.mockImplementation(() => new Promise(() => undefined));
