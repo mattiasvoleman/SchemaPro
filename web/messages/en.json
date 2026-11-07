@@ -227,7 +227,8 @@
     "reportingRate": "Reporting rate",
     "myReporting": "My reporting",
     "crisis": "Crisis mode",
-    "myCrisis": "Alarm"
+    "myCrisis": "Alarm",
+    "schoolDay": "School day"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -7861,6 +7862,191 @@
       "loadFailedHint": "You seem to have no contact with the server, and no list is kept on this device. The list is shown as soon as you get contact.",
       "noAlarm": "No alarm is going",
       "noAlarmBody": "When the school starts an alarm your groups are shown here, and you get a notice."
+    }
+  },
+  "schoolDay": {
+    "title": "School day",
+    "subtitle": "Every class, teacher and room at a glance",
+    "intro": {
+      "admin": "The day's or the week's lessons as the calendar has them: with substitutes, cancelled lessons, replacement lessons for activities, room bookings and breaks. Here you can also see which teachers and rooms are free at a given time.",
+      "teacher": "The day's or the week's lessons and which rooms are free, in the form the school has decided teachers get."
+    },
+    "protectedName": "Protected identity",
+    "noSubject": "Lesson",
+    "cancelled": "cancelled",
+    "cancelledBy": "cancelled ({cause})",
+    "rescheduled": "rescheduled",
+    "activity": "activity",
+    "cause": {
+      "TEACHER_UNAVAILABLE": "the teacher is away",
+      "ROOM_UNAVAILABLE": "the room is closed",
+      "MANUAL": "by the school",
+      "EVENT": "activity"
+    },
+    "block": {
+      "BOOKING": "Booking",
+      "CLOSED": "Closed",
+      "LOAN": "Lent to another school",
+      "PASS": "Break duty",
+      "DUTY": "Assignment",
+      "UNAVAILABLE": "Unavailable",
+      "ABSENT": "Absent"
+    },
+    "break": {
+      "holiday": "Holiday: {name}",
+      "holidayFor": "Holiday for {grades}: {name}",
+      "staffDay": "Staff day: {name}",
+      "staffDayFor": "Staff day for {grades}: {name}"
+    },
+    "grades": {
+      "one": "year {grade}",
+      "range": "years {min}–{max}",
+      "from": "from year {grade}",
+      "to": "up to and including year {grade}"
+    },
+    "mode": {
+      "label": "Show",
+      "day": "Day",
+      "week": "Week"
+    },
+    "rows": {
+      "label": "Rows",
+      "GROUP": "Classes",
+      "TEACHER": "Teachers",
+      "ROOM": "Rooms",
+      "GROUPOne": "Class",
+      "TEACHEROne": "Teacher",
+      "ROOMOne": "Room"
+    },
+    "nav": {
+      "previousDay": "Previous day",
+      "nextDay": "Next day",
+      "previousWeek": "Previous week",
+      "nextWeek": "Next week",
+      "today": "Today",
+      "date": "Date"
+    },
+    "week": {
+      "label": "Week {week} · {from} – {to}"
+    },
+    "filter": {
+      "label": "Filter rows",
+      "placeholder": {
+        "GROUP": "Class",
+        "TEACHER": "Teacher",
+        "ROOM": "Room"
+      }
+    },
+    "print": {
+      "button": "Print",
+      "failed": "The protection marks could not be read, so nothing was printed. Try again.",
+      "held": "{count, plural, one {One person is not shown by name (protected identity).} other {# people are not shown by name (protected identity).}}"
+    },
+    "grid": {
+      "regionDay": "School day {date}",
+      "captionDay": "{kind}, {date}: lessons and bookings over the day",
+      "time": "Time",
+      "regionWeek": "School week",
+      "captionWeek": "{kind}: lessons and bookings over the week",
+      "openDay": "Show the day {date}",
+      "nothing": "Nothing scheduled"
+    },
+    "closedTitle": "Holiday: the school is closed",
+    "noRows": {
+      "title": "No rows to show",
+      "body": "Nothing matches the filter. Clear it to see them all."
+    },
+    "loadFailed": "The school day could not be loaded",
+    "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment.",
+    "rateLimited": "Too many requests right now",
+    "rateLimitedHint": "School day will not take more requests from you right now. Wait a minute and try again.",
+    "stale": "School day could not be updated",
+    "staleRateLimited": "Too many requests right now",
+    "staleHint": "The page shows what it had, and tries again in a moment.",
+    "retry": "Try again",
+    "legend": {
+      "label": "Key",
+      "lesson": "Lesson",
+      "cancelled": "Cancelled or rescheduled",
+      "activity": "Activity",
+      "booking": "Booking",
+      "closed": "Closure, loan, absence, break duty or assignment"
+    },
+    "notOpen": {
+      "title": "The school has not opened School day for teachers",
+      "body": "The principal decides what teachers see here. Meanwhile, Book a room shows which rooms are free.",
+      "rooms": "Go to Book a room"
+    },
+    "free": {
+      "title": "Who and what is free?",
+      "description": "Pick a day and a time to see which teachers and rooms are not occupied for the whole of it.",
+      "date": "Day",
+      "from": "From",
+      "to": "To",
+      "show": "Show free",
+      "presets": "Usual times",
+      "preset": {
+        "morning": "Morning {from}–{to}",
+        "lunch": "Lunch {from}–{to}",
+        "afternoon": "Afternoon {from}–{to}"
+      },
+      "problem": {
+        "TIMES": "Write both times as HH:MM.",
+        "ORDER": "The end time must be after the start time."
+      },
+      "loadFailed": "The search failed",
+      "loadFailedHint": "Nothing has changed. Try again in a moment.",
+      "asOf": "{date}, {from}–{to}",
+      "closed": "Holiday: the school is closed",
+      "staffDay": "Staff day ({name}): the staff are at work and no lessons are held. The lists show who is not tied up by anything else.",
+      "teachers": "Free teachers ({count})",
+      "noTeachers": "No teacher is free the whole time.",
+      "teachersWithheld": "Which teachers are free is not shown to teachers: absence, assignments and break duty are not theirs to read, and a list made of what they can see would call an absent colleague free.",
+      "rooms": "Free rooms ({count})",
+      "noRooms": "No room is free the whole time.",
+      "poolLeftOut": "{count, plural, one {# substitute from the pool has no declared times and is not counted as free.} other {# substitutes from the pool have no declared times and are not counted as free.}}",
+      "notFree": "Not free ({count})",
+      "notFreeTeachers": "Teachers who are not free",
+      "notFreeRooms": "Rooms that are not free",
+      "rulesTeachers": "Teachers are free when none of the cover board's rules for occupied applies: {rules}.",
+      "rulesRooms": "Rooms are free when none of this applies: {rules}.",
+      "notIncluded": "Lunch, rest, the daily cap and teaching in a row, which the cover board also checks when someone is asked to cover, are not part of “free”.",
+      "reason": {
+        "teacher": {
+          "ABSENT": "absent",
+          "BUSY_LESSON": "in a lesson",
+          "BUSY_SUPERVISION": "break duty",
+          "BUSY_DUTY": "assignment",
+          "UNAVAILABLE": "unavailable",
+          "BOOKED_ROOM": "has booked a room",
+          "POOL_NOT_DECLARED": "substitute without declared times"
+        },
+        "room": {
+          "ROOM_IN_USE": "used by a lesson",
+          "ROOM_BOOKED": "booked",
+          "ROOM_CLOSED": "closed",
+          "ROOM_LENT": "lent to another school then",
+          "ROOM_BORROWED_OUTSIDE_LOAN": "borrowed room, and the loan does not cover the whole time"
+        }
+      }
+    },
+    "settings": {
+      "title": "What teachers see of School day",
+      "description": "The school decides. Until you have decided anything, teachers see nothing; administrators always have the whole page. The Timetable viewer settings do not affect School day.",
+      "option": {
+        "NONE": "Nothing",
+        "ROOMS": "Rooms",
+        "ALL": "The whole schedule"
+      },
+      "hint": {
+        "NONE": "Teachers have no page and are told that the school has not opened it.",
+        "ROOMS": "Teachers see which rooms are free, and the rooms' day and week. Lessons are shown without teachers.",
+        "ALL": "Teachers also see the classes' and teachers' lessons as they stand: cancelled lessons and who holds them are shown. They never see the reason, absences, assignments or break duty, and get no list of free colleagues. People with a protected identity are not shown by name."
+      },
+      "deciders": "The principal and full administrators decide this. You can see what the school has chosen.",
+      "saved": "The choice is saved",
+      "loadFailed": "The choice could not be loaded",
+      "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment."
     }
   }
 }

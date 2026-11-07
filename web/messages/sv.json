@@ -227,7 +227,8 @@
     "reportingRate": "Rapporteringsgrad",
     "myReporting": "Min rapportering",
     "crisis": "Krisläge",
-    "myCrisis": "Larm"
+    "myCrisis": "Larm",
+    "schoolDay": "Skolans dag"
   },
   "dashboard": {
     "title": "Översikt",
@@ -7861,6 +7862,191 @@
       "loadFailedHint": "Du verkar sakna kontakt med servern, och ingen lista finns sparad på den här enheten. Listan visas så snart du får kontakt.",
       "noAlarm": "Inget larm pågår",
       "noAlarmBody": "När skolan startar ett larm visas dina grupper här, och du får en notis."
+    }
+  },
+  "schoolDay": {
+    "title": "Skolans dag",
+    "subtitle": "Alla klasser, lärare och salar i ett svep",
+    "intro": {
+      "admin": "Dagens eller veckans lektioner som de står i kalendern: med vikarier, inställda lektioner, ersättningslektioner för aktiviteter, lokalbokningar och lov. Här ser du också vilka lärare och salar som är lediga en viss tid.",
+      "teacher": "Dagens eller veckans lektioner och vilka salar som är lediga, i den form som skolan har bestämt för lärare."
+    },
+    "protectedName": "Skyddad identitet",
+    "noSubject": "Lektion",
+    "cancelled": "inställd",
+    "cancelledBy": "inställd ({cause})",
+    "rescheduled": "ombokad",
+    "activity": "aktivitet",
+    "cause": {
+      "TEACHER_UNAVAILABLE": "läraren är borta",
+      "ROOM_UNAVAILABLE": "salen är spärrad",
+      "MANUAL": "av skolan",
+      "EVENT": "aktivitet"
+    },
+    "block": {
+      "BOOKING": "Bokning",
+      "CLOSED": "Spärrad",
+      "LOAN": "Utlånad till annan skola",
+      "PASS": "Rastvakt",
+      "DUTY": "Uppdrag",
+      "UNAVAILABLE": "Ej tillgänglig",
+      "ABSENT": "Frånvarande"
+    },
+    "break": {
+      "holiday": "Lov: {name}",
+      "holidayFor": "Lov för {grades}: {name}",
+      "staffDay": "Studiedag: {name}",
+      "staffDayFor": "Studiedag för {grades}: {name}"
+    },
+    "grades": {
+      "one": "åk {grade}",
+      "range": "åk {min}–{max}",
+      "from": "från åk {grade}",
+      "to": "till och med åk {grade}"
+    },
+    "mode": {
+      "label": "Visa",
+      "day": "Dag",
+      "week": "Vecka"
+    },
+    "rows": {
+      "label": "Rader",
+      "GROUP": "Klasser",
+      "TEACHER": "Lärare",
+      "ROOM": "Salar",
+      "GROUPOne": "Klass",
+      "TEACHEROne": "Lärare",
+      "ROOMOne": "Sal"
+    },
+    "nav": {
+      "previousDay": "Föregående dag",
+      "nextDay": "Nästa dag",
+      "previousWeek": "Föregående vecka",
+      "nextWeek": "Nästa vecka",
+      "today": "Idag",
+      "date": "Datum"
+    },
+    "week": {
+      "label": "Vecka {week} · {from} – {to}"
+    },
+    "filter": {
+      "label": "Filtrera rader",
+      "placeholder": {
+        "GROUP": "Klass",
+        "TEACHER": "Lärare",
+        "ROOM": "Sal"
+      }
+    },
+    "print": {
+      "button": "Skriv ut",
+      "failed": "Skyddsmarkeringarna gick inte att läsa, så ingenting skrevs ut. Försök igen.",
+      "held": "{count, plural, one {En person visas inte vid namn (skyddad identitet).} other {# personer visas inte vid namn (skyddad identitet).}}"
+    },
+    "grid": {
+      "regionDay": "Skolans dag {date}",
+      "captionDay": "{kind}, {date}: lektioner och bokningar över dagen",
+      "time": "Tid",
+      "regionWeek": "Skolans vecka",
+      "captionWeek": "{kind}: lektioner och bokningar över veckan",
+      "openDay": "Visa dagen {date}",
+      "nothing": "Inget inlagt"
+    },
+    "closedTitle": "Lov: skolan är stängd",
+    "noRows": {
+      "title": "Inga rader att visa",
+      "body": "Inget matchar filtret. Rensa det för att se alla."
+    },
+    "loadFailed": "Skolans dag kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "rateLimited": "För många frågor just nu",
+    "rateLimitedHint": "Skolans dag får inte fler frågor från dig just nu. Vänta en minut och försök igen.",
+    "stale": "Skolans dag kunde inte uppdateras",
+    "staleRateLimited": "För många frågor just nu",
+    "staleHint": "Sidan visar det den hade och försöker igen om en stund.",
+    "retry": "Försök igen",
+    "legend": {
+      "label": "Teckenförklaring",
+      "lesson": "Lektion",
+      "cancelled": "Inställd eller ombokad",
+      "activity": "Aktivitet",
+      "booking": "Bokning",
+      "closed": "Spärr, utlåning, frånvaro, rastvakt eller uppdrag"
+    },
+    "notOpen": {
+      "title": "Skolan har inte öppnat Skolans dag för lärare",
+      "body": "Rektor bestämmer vad lärare ser här. Under tiden visar Boka lokal vilka salar som är lediga.",
+      "rooms": "Till Boka lokal"
+    },
+    "free": {
+      "title": "Vem och vad är ledigt?",
+      "description": "Välj dag och tid för att se vilka lärare och salar som inte är upptagna hela tiden.",
+      "date": "Dag",
+      "from": "Från",
+      "to": "Till",
+      "show": "Visa lediga",
+      "presets": "Vanliga tider",
+      "preset": {
+        "morning": "Förmiddag {from}–{to}",
+        "lunch": "Lunch {from}–{to}",
+        "afternoon": "Eftermiddag {from}–{to}"
+      },
+      "problem": {
+        "TIMES": "Skriv båda tiderna som TT:MM.",
+        "ORDER": "Sluttiden måste vara efter starttiden."
+      },
+      "loadFailed": "Det gick inte att söka",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "asOf": "{date}, {from}–{to}",
+      "closed": "Lov: skolan är stängd",
+      "staffDay": "Studiedag ({name}): personalen arbetar och inga lektioner hålls. Listorna visar vem som inte är bunden av annat.",
+      "teachers": "Lediga lärare ({count})",
+      "noTeachers": "Ingen lärare är ledig hela tiden.",
+      "teachersWithheld": "Vilka lärare som är lediga visas inte för lärare: frånvaro, uppdrag och rastvakt är inte deras att läsa, och en lista av det de ser skulle kalla en frånvarande kollega ledig.",
+      "rooms": "Lediga salar ({count})",
+      "noRooms": "Ingen sal är ledig hela tiden.",
+      "poolLeftOut": "{count, plural, one {# vikarie ur poolen har inga anmälda tider och räknas inte som ledig.} other {# vikarier ur poolen har inga anmälda tider och räknas inte som lediga.}}",
+      "notFree": "Inte lediga ({count})",
+      "notFreeTeachers": "Lärare som inte är lediga",
+      "notFreeRooms": "Salar som inte är lediga",
+      "rulesTeachers": "Lärare är lediga när Vikarietavlans regler för upptagen inte träffar: {rules}.",
+      "rulesRooms": "Salar är lediga när ingenting av detta träffar: {rules}.",
+      "notIncluded": "Lunch, vila, dagtak och sammanhängande undervisning, som Vikarietavlan också prövar när någon ska vikariera, ingår inte i ”ledig”.",
+      "reason": {
+        "teacher": {
+          "ABSENT": "frånvarande",
+          "BUSY_LESSON": "upptagen i lektion",
+          "BUSY_SUPERVISION": "rastvakt",
+          "BUSY_DUTY": "uppdrag",
+          "UNAVAILABLE": "spärrad",
+          "BOOKED_ROOM": "har bokat en sal",
+          "POOL_NOT_DECLARED": "vikarie utan anmälda tider"
+        },
+        "room": {
+          "ROOM_IN_USE": "används i en lektion",
+          "ROOM_BOOKED": "bokad",
+          "ROOM_CLOSED": "spärrad",
+          "ROOM_LENT": "utlånad till en annan skola då",
+          "ROOM_BORROWED_OUTSIDE_LOAN": "lånad sal, och lånet gäller inte hela tiden"
+        }
+      }
+    },
+    "settings": {
+      "title": "Vad lärare ser av Skolans dag",
+      "description": "Skolan bestämmer själv. Tills ni har bestämt något ser lärarna ingenting; administratörer har alltid hela sidan. Schemavisarens inställningar påverkar inte Skolans dag.",
+      "option": {
+        "NONE": "Ingenting",
+        "ROOMS": "Salar",
+        "ALL": "Hela schemat"
+      },
+      "hint": {
+        "NONE": "Lärare har ingen sida och får ett besked om att skolan inte har öppnat den.",
+        "ROOMS": "Lärare ser vilka salar som är lediga, och salarnas dag och vecka. Lektionerna visas utan lärare.",
+        "ALL": "Lärare ser också klassernas och lärarnas lektioner som de står: inställda lektioner och vem som håller dem syns. De ser aldrig orsaken, frånvaron, uppdragen eller rastvakten, och ingen lista över lediga kolleger. Personer med skyddad identitet visas inte vid namn."
+      },
+      "deciders": "Rektor och fulla administratörer bestämmer detta. Du ser vad skolan har valt.",
+      "saved": "Valet är sparat",
+      "loadFailed": "Valet kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
     }
   }
 }

@@ -46,6 +46,16 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/reporting-rate")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("opens Skolans dag to every administrator: it reads only, so the läsare has it whole, and no area gates it", () => {
+    expect(PAGE_GATES["/admin/school-day"]).toBeNull();
+    expect(gateOfPath("/sv/admin/school-day")).toBeNull();
+    for (const profile of ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION", "LASARE"] as const) {
+      expect(closedPages(profile).map((page) => page.path)).not.toContain("/admin/school-day");
+      // A page with no gate is not read-only for anybody: its one write asks the profile itself.
+      expect(readOnlyPages(profile).map((page) => page.path)).not.toContain("/admin/school-day");
+    }
+  });
+
   it("reads a page's gate through the locale prefix and from its sub-pages", () => {
     expect(gateOfPath("/sv/admin/rooms")).toBe("PLANERING");
     // Personer has two areas' buttons, and gates each control instead.

@@ -88,6 +88,7 @@
       <li><span>6.12 Frånvarobevakning</span><span class="dots"></span><span class="pg" data-pg="s612"></span></li>
       <li><span>6.13 Rapporteringsgrad</span><span class="dots"></span><span class="pg" data-pg="s613"></span></li>
       <li><span>6.14 Krisläge: larm vid utrymning och inrymning</span><span class="dots"></span><span class="pg" data-pg="s614"></span></li>
+      <li><span>6.15 Skolans dag i ett svep</span><span class="dots"></span><span class="pg" data-pg="s615"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -5138,7 +5139,7 @@
     går på lektionen, deras vårdnadshavare och lektionens lärare får en notis,
     också när en inställd lektion återinsätts (6.10).
   </p>
-  <p>Använd dagsplaneringen för enstaka händelser under dagen.</p>
+  <p>Använd dagsplaneringen för enstaka händelser under dagen. Vill du i stället se hela skolans dag eller vecka på en skärm, eller veta vilka lärare och salar som är lediga, finns Skolans dag (6.15).</p>
 
   <h3 id="s62"><span class="num">6.2</span>Lärarfrånvaro</h3>
   <p>
@@ -6564,6 +6565,156 @@
       alltid även personal och besökare på skolans vanliga sätt.
     </p>
   </div>
+
+
+  <h3 id="s615"><span class="num">6.15</span>Skolans dag i ett svep</h3>
+  <p>
+    <span class="path">Drift › Skolans dag</span> visar skolans dag eller vecka
+    på en skärm, med en rad för varje klass, lärare eller sal och tiden på
+    tvären. Sidan svarar på frågor som <em>vem är ledig klockan 10–11 i dag?</em>
+    och <em>vilken sal är tom på fredag eftermiddag?</em> utan att du öppnar
+    varje schema. Alla administratörsprofiler öppnar sidan, också läsaren, för
+    sidan ändrar ingenting i schemat. Det enda som kan sparas där är skolans
+    beslut om vad lärare ser (nedan).
+  </p>
+
+  <h4>Dagen och veckan</h4>
+  <p>
+    Välj <span class="ui">Dag</span> eller <span class="ui">Vecka</span> och
+    vad raderna ska vara: <span class="ui">Klasser</span>,
+    <span class="ui">Lärare</span> eller <span class="ui">Salar</span>.
+    Pilarna bläddrar en skoldag eller en vecka i taget (lördag och söndag
+    hoppas över, men du kan välja dem i datumfältet), och
+    <span class="ui">Idag</span> tar dig tillbaka. Fältet
+    <span class="ui">Filtrera rader</span> letar efter ett namn. Sidan frågar om
+    igen varje minut, så den går att låta stå på en skärm (lärarnas sida vart femte minut). I veckovyn är varje
+    dag en kolumn, och dagens namn öppnar dagen.
+  </p>
+  <p>
+    Rutnätet bygger på kalenderns daterade lektioner, samma som Dagsplanering
+    (6.1) och Vikarietavlan (6.3) läser, och det visar dem som kalendern har dem:
+  </p>
+  <ul>
+    <li><strong>Vikarier</strong> står som lärare på lektionen de tagit; den frånvarande läraren står inte kvar på den.</li>
+    <li><strong>Inställda och ombokade lektioner</strong> ritas genomstrukna med streckad kant och står som <em>inställd</em> i sitt namn, med orsaken om den är känd. De upptar varken lärare eller sal.</li>
+    <li><strong>Ersättningslektioner</strong> för en schemabrytande aktivitet (6.5) ritas som lektioner och är märkta <em>aktivitet</em>. Klassens inställda lektioner ligger under dem, genomstrukna.</li>
+    <li><strong>Lokalbokningar</strong> (6.8) ritas på salen och på den som bokat, så länge bokningen väntar eller är godkänd.</li>
+    <li><strong>Spärrar</strong> för en sal, och för en lärare rastvakt, uppdrag, spärrad tid och frånvaro, ritas på sin rad. Frånvaron visar bara att läraren är borta, aldrig varför.</li>
+    <li><strong>Utlånade salar</strong> (godkända lån till en annan skola i huvudmannen, 2.5) ritas på salen som <em>Utlånad till annan skola</em>. En lånad sal utanför det lånet täcker ritas som spärrad.</li>
+    <li><strong>Lov</strong> (<span class="path">Planering › Lov och studiedagar</span>) täcker raden: ett lov för hela skolan täcker alla rader, ett lov för vissa årskurser (prao i åk 9) bara de klasserna. En studiedag stänger klasserna men inte lärarna, som arbetar den dagen.</li>
+    <li>Två lektioner som överlappar i samma rad hamnar under varandra, och raden blir högre. Det är en dubbelbokning som syns, inte en som döljs.</li>
+  </ul>
+  <p>
+    Tiderna är skolans lokala tid hela året. En lektion klockan 08:15 står på
+    samma ställe före och efter sommartid. En grupp som ligger över flera
+    klasser (ett språkval) står på varje berörd klass rad och namnger de andra.
+  </p>
+
+  <h4>Vem och vad är ledigt?</h4>
+  <p>
+    Välj dag och tid och tryck <span class="ui">Visa lediga</span>, eller
+    använd <span class="ui">Förmiddag</span>, <span class="ui">Lunch</span>
+    eller <span class="ui">Eftermiddag</span>. Du får de lärare och salar som
+    ingenting upptar <em>under hela tiden</em>. Under svaret står vilka regler
+    som avgjorde det, och <span class="ui">Inte lediga</span> visar för dig som
+    administratör vilka som inte är det och vilken regel som sa det.
+  </p>
+  <p>
+    Reglerna är Vikarietavlans regler för <em>upptagen</em>, samma som avgör
+    vem som kan föreslås som vikarie (6.3), så att de två svaren aldrig
+    skiljer sig:
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">En lärare är inte ledig om</th><th>Så avgörs det</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Frånvarande</td><td>Läraren har en aktiv frånvaroanmälan som överlappar tiden.</td></tr>
+      <tr><td class="k">Upptagen i lektion</td><td>Läraren står på en lektion som överlappar tiden. En inställd lektion upptar ingen. Slutar en lektion 10:00 är läraren ledig 10:00.</td></tr>
+      <tr><td class="k">Rastvakt</td><td>Läraren har ett rastvaktspass i tiden, eget eller övertaget som vikarie, om inte frånvaron redan har tagit det ifrån hen.</td></tr>
+      <tr><td class="k">Uppdrag</td><td>Läraren har ett uppdrag med fast tid som täcker tiden, i det läsår och de datum uppdraget gäller.</td></tr>
+      <tr><td class="k">Spärrad</td><td>Läraren har en spärrad tid (Tillgänglighet, 4.4) som täcker tiden.</td></tr>
+      <tr><td class="k">Har bokat en sal</td><td>Läraren har en väntande eller godkänd lokalbokning i tiden.</td></tr>
+      <tr><td class="k">Vikarie utan anmälda tider</td><td>En vikarie ur poolen (6.4) utan tjänst räknas som ledig bara i en tid hen själv anmält. Annars är hen inte i huset, och sidan säger hur många som lämnats utanför.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    En sal är inte ledig om en lektion som håller sin tid använder den, om en
+    väntande eller godkänd bokning har den, eller om en spärr för salen täcker
+    tiden. Två regler kommer från delade lokaler (2.5), och är samma som
+    lokalbokningen (6.8) prövar: en sal som är <strong>utlånad till en annan
+    skola</strong> i huvudmannen i ett godkänt lån är inte ledig då, och en
+    <strong>lånad sal</strong> är inte ledig för tider som lånet inte täcker
+    (två lån efter varandra täcker tillsammans).
+  </p>
+  <div class="note">
+    <span class="label">Ledig är inte detsamma som lämplig vikarie</span>
+    <p>
+      Vikarietavlan prövar mer när någon ska <em>be</em> en kollega vikariera:
+      lunchen, dygnsvilan, dagstaket, hur länge hen undervisar i sträck och
+      tjänstens dagar. De ingår <strong>inte</strong> i ”ledig” här. En lärare
+      som står som ledig kan alltså ändå nekas som vikarie, och sidan säger det
+      under varje svar. Lektioner på huvudmannens andra skolor läses inte heller,
+      som i Vikarietavlan (2.5).
+    </p>
+  </div>
+  <p>
+    Är det lov för hela skolan säger sidan <em>Lov: skolan är stängd</em> i
+    stället för två tomma listor. En studiedag är en upplysning, och listorna
+    visas ändå.
+  </p>
+
+  <h4>Vad lärare ser</h4>
+  <p>
+    Längst ner finns skolans beslut <span class="ui">Vad lärare ser av Skolans
+    dag</span>. Skolan bestämmer själv, och <strong>förvalet är Ingenting</strong>:
+    en lärare får då en sida som säger att skolan inte har öppnat den, och en
+    länk till Boka lokal. Rektor och fullständig administratör sparar valet. De
+    andra profilerna ser vad skolan har valt och kan inte ändra det. Valet är
+    skilt från Schemavisarens inställningar (7.1): Schemavisaren gäller länkar och
+    koder utåt, Skolans dag är personalens egen skärm, och ingen av dem styr den andra.
+  </p>
+  <table>
+    <thead><tr><th style="width:24%">Val</th><th>Läraren ser</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Ingenting</td><td>Ingen sida. Administratörerna har den som förut.</td></tr>
+      <tr><td class="k">Salar</td><td>Vilka salar som är lediga, och salarnas dag och vecka. Lektionerna visas utan lärare.</td></tr>
+      <tr><td class="k">Hela schemat</td><td>Dessutom klassernas och lärarnas lektioner. Lektionerna som de står, också inställda lektioner och vem som håller dem, men <strong>aldrig orsaken, frånvaron, uppdragen eller rastvakten</strong>, och aldrig en lista över lediga kolleger: de uppgifterna är inte en lärares att läsa, och en lista gjord av det läraren kan se skulle kalla en frånvarande kollega ledig. En inställd lektion säger bara att den är inställd, och en vikarie står på lektionen utan att sidan säger att hen är vikarie.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Elever och vårdnadshavare har ingen sida och ser ingenting nytt.
+  </p>
+
+  <h4>Skyddad identitet</h4>
+  <p>
+    En lärare som skolan markerat med skyddad identitet (3.5) syns för
+    administratörer som alla andra. <strong>För andra lärare nämns hen inte vid
+    namn</strong>: hen saknas som rad, i lektionernas lärare och bland de lediga,
+    och sidan säger inte att någon saknas, inte heller hur många, eftersom en räknare
+    på hens lektioner skulle peka ut hen. Skälet till att hen utelämnas är att
+    skärmen samlar hela personalens platser på ett ställe, i lärarrummet eller
+    på en vägg, vilket en lektion åt gången inte gör. Att det i övrigt går att
+    läsa varje lektion direkt i kalendern ändrar inte det: skärmen ska inte
+    peka ut någon.
+  </p>
+  <p>
+    <span class="ui">Skriv ut</span> (bara för administratörer) skriver ut den
+    vy du ser. En utskrift lämnar skärmen och kan hänga var som helst, så en
+    markerad lärare står där som <em>Skyddad identitet</em>, i raden och på varje
+    lektion, och utskriften säger hur många personer som inte nämns. Markeringarna
+    läses när du trycker, och går det inte skrivs ingenting ut. Skärmen är som
+    den var när utskriften är klar. Webbläsarens egen utskrift (Ctrl+P) går inte
+    genom knappen och skriver ut namnen som skärmen visar dem, så använd
+    knappen för papper som ska lämna rummet. Klassernas lektioner nämner ingen elev; en
+    elev står aldrig på sidan.
+  </p>
+
+  <h4>Läslogg</h4>
+  <p>
+    Schemat är en uppgift alla lärare redan läser direkt, och en öppning av
+    sidan skrivs inte i läsloggen (7.4). Det som skrivs är vem som sagts vara
+    borta: de lärare vars frånvaro rutnätet eller en ledig-sökning nämner
+    skrivs som en läsning av frånvaro, som på Vikarietavlan.
+  </p>
 
 </section>
 
@@ -8103,6 +8254,11 @@
         <td class="k">Ingen föreslås som vikarie</td>
         <td>Alla som kunde är upptagna, frånvarande, skulle förlora lunch eller dygnsvila, eller står i poolen utan tider.</td>
         <td>Se <span class="ui">Kan inte</span> i förslagen, ange poolvikariernas tider, eller välj under <span class="ui">Annan lärare</span> med varning (6.3).</td>
+      </tr>
+      <tr>
+        <td class="k">En lärare får besked om att skolan inte har öppnat Skolans dag, eller ser inga lärare bland de lediga</td>
+        <td>Skolans val för lärare är <em>Ingenting</em> (förvalet), <em>Salar</em> eller <em>Hela schemat</em>. Någon lista över lediga kolleger får en lärare aldrig, vad skolan än väljer.</td>
+        <td>Rektor eller en fullständig administratör väljer under <span class="ui">Vad lärare ser av Skolans dag</span> (6.15). Lediga lärare läser du själv som administratör.</td>
       </tr>
       <tr>
         <td class="k">Knappen Generera schema går inte att klicka</td>

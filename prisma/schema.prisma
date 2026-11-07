@@ -5618,3 +5618,32 @@ model ReportingDigest {
   @@id([schoolId, periodEnd])
   @@map("ReportingDigests")
 }
+
+// -----------------------------------------------------------------------------
+// Skolans dag i ett svep (20270116090000)
+// -----------------------------------------------------------------------------
+
+/// What a TEACHER has of Skolans dag, the day and week grids and the search for
+/// free rooms and teachers. The school decides (a rule of its own, never a
+/// default of the product's), and NONE is what a school that has not decided
+/// gets: the administrators have the page, the teachers none.
+enum SchoolDayTeacherView {
+  /// No page for a teacher, and the gateway answers 403.
+  NONE
+  /// The rooms: which are free, and the rooms' own day and week.
+  ROOMS
+  /// ROOMS, and the classes' and the teachers' day and week from the published lessons. Never who is free:
+  /// absence, uppdrag and rastvakt are not a teacher's to read (row-level security), so a list of free
+  /// colleagues made from what a teacher can read would call an absent one free.
+  ALL
+}
+
+/// One row per school; no row means NONE. Decided by those who decide (rektor, full).
+model SchoolDaySettings {
+  schoolId    String               @id @db.Uuid
+  teacherView SchoolDayTeacherView @default(NONE)
+  createdAt   DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("SchoolDaySettings")
+}

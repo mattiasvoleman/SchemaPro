@@ -254,7 +254,7 @@ export function overlaps(a: Span, b: Span): boolean {
 }
 
 /** A lesson that takes the person's time: SCHEDULED or COMPLETED. */
-export function holdsTime(lesson: PersonLesson): boolean {
+export function holdsTime(lesson: Pick<PersonLesson, 'status'>): boolean {
   return lesson.status === 'SCHEDULED' || lesson.status === 'COMPLETED';
 }
 
@@ -373,6 +373,50 @@ function daysBroken(day: PersonDay, target: CoverTarget, added: readonly PersonL
 }
 
 /**
+ * THE RULES THAT SAY A PERSON IS OCCUPIED over a span: absent, in a lesson
+ * that holds its time, on a rastvaktspass, inside an uppdrag's slot or a
+ * closure, holding a room booking. The first half of hardFindings, lifted
+ * out unchanged so that the one other question about the same facts — is
+ * this teacher FREE over an interval (Skolans dag, src/school-day) — asks
+ * the very rules the Vikarietavla asks, in the same order and with the same
+ * params, and cannot drift from them. `except` is the id of the lesson or
+ * pass being covered: it is never its own clash. `lessons` default to the
+ * person's own; hardFindings passes them with the day proposal's earlier
+ * picks added.
+ */
+export function occupancyFindings(
+  day: PersonDay,
+  span: Span,
+  lessons: readonly PersonLesson[] = day.lessons,
+  except?: string,
+): RuleFinding[] {
+  const findings: RuleFinding[] = [];
+  if (day.absences.some((absence) => overlaps(absence, span))) findings.push({ code: 'ABSENT', params: {} });
+  const busy = lessons.find((lesson) => lesson.id !== except && holdsTime(lesson) && overlaps(lesson, span));
+  if (busy) findings.push({ code: 'BUSY_LESSON', params: { lessonId: busy.id } });
+  if ((day.supervision ?? []).some((pass) => pass.id !== except && overlaps(pass, span))) {
+    findings.push({ code: 'BUSY_SUPERVISION', params: {} });
+  }
+  for (const closure of day.closures) {
+    if (!overlaps(closure.span, span)) continue;
+    if (closure.kind === 'DUTY') findings.push({ code: 'BUSY_DUTY', params: { label: closure.label ?? '' } });
+    else findings.push({ code: 'UNAVAILABLE', params: {} });
+  }
+  if (day.bookings.some((booking) => overlaps(booking, span))) findings.push({ code: 'BOOKED_ROOM', params: {} });
+  return findings;
+}
+
+/**
+ * The pool member who is not at the school over the span: a member of the
+ * substitute pool without a post, none of whose declared windows holds the
+ * whole span. hardFindings names it POOL_NOT_DECLARED; Skolans dag leaves such
+ * a person out of the free teachers by the same test.
+ */
+export function poolNotDeclared(day: PersonDay, span: Span): boolean {
+  return day.pool.member && !day.pool.hasEmployment && !day.pool.windows.some((window) => window.start <= span.start && window.end >= span.end);
+}
+
+/**
  * Every hard rule the person would break by covering `target`, in the order
  * of the header. `added` are lessons given to them earlier in the same day
  * proposal, counted as SCHEDULED.
@@ -388,18 +432,7 @@ export function hardFindings(
 
   if (!day.isActiveTeacher) findings.push({ code: 'INACTIVE', params: {} });
   if (target.teacherIds.includes(day.userId)) findings.push({ code: 'ON_LESSON', params: {} });
-  if (day.absences.some((span) => overlaps(span, cover))) findings.push({ code: 'ABSENT', params: {} });
-  const busy = lessons.find((lesson) => lesson.id !== target.id && holdsTime(lesson) && overlaps(lesson, cover));
-  if (busy) findings.push({ code: 'BUSY_LESSON', params: { lessonId: busy.id } });
-  if ((day.supervision ?? []).some((pass) => pass.id !== target.id && overlaps(pass, cover))) {
-    findings.push({ code: 'BUSY_SUPERVISION', params: {} });
-  }
-  for (const closure of day.closures) {
-    if (!overlaps(closure.span, cover)) continue;
-    if (closure.kind === 'DUTY') findings.push({ code: 'BUSY_DUTY', params: { label: closure.label ?? '' } });
-    else findings.push({ code: 'UNAVAILABLE', params: {} });
-  }
-  if (day.bookings.some((span) => overlaps(span, cover))) findings.push({ code: 'BOOKED_ROOM', params: {} });
+  findings.push(...occupancyFindings(day, cover, lessons, target.id));
   if (lunchBroken(day, target, lessons)) findings.push({ code: 'LUNCH', params: { minutes: day.lunch!.minutes } });
   const rest = restBroken(day, target, lessons);
   if (rest) findings.push({ code: 'DAILY_REST', params: { side: rest, minutes: day.minDailyRestMinutes! } });
@@ -411,13 +444,7 @@ export function hardFindings(
     });
   }
   if (daysBroken(day, target, added)) findings.push({ code: 'WORK_DAYS', params: { days: day.maxTeachingDaysPerWeek! } });
-  if (
-    day.pool.member &&
-    !day.pool.hasEmployment &&
-    !day.pool.windows.some((window) => window.start <= target.start && window.end >= target.end)
-  ) {
-    findings.push({ code: 'POOL_NOT_DECLARED', params: {} });
-  }
+  if (poolNotDeclared(day, cover)) findings.push({ code: 'POOL_NOT_DECLARED', params: {} });
   return dedupe(findings);
 }
 

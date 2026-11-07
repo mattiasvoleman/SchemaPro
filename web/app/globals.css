@@ -206,6 +206,21 @@
  * under <body> that the screen never shows; the class on <html> lasts from
  * "Skriv ut veckan" until the browser says the print is done.
  */
+/*
+ * Skolans dag (components/school-day): a day or a week of rows and time wants
+ * width, so its sheet is A4 landscape. A named page, not a second @page for
+ * the whole app: only the page whose root carries the class changes
+ * orientation, and a browser that does not know named pages prints it as it
+ * prints the rest (a hint, not a rule).
+ */
+.school-day-sheet {
+  page: school-day;
+}
+@page school-day {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
 .print-sheet-root {
   display: none;
 }

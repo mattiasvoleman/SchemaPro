@@ -1532,6 +1532,100 @@ Walk the full product loop once, in order:
   "type"::text LIKE 'CRISIS\_%'`); do not roll back while an alarm is going.
   What a rollback changes: nobody can start or answer an alarm, the phones
   show no list, and the alarms already made stay in the tables unread.
+- **Skolans dag i ett svep**: 20270116090000 adds the enum
+  `SchoolDayTeacherView` (`NONE`, `ROOMS`, `ALL`), the table
+  `SchoolDaySettings` (one row per school; no row is `NONE`) with three policies
+  (`school_day_settings_staff_select` for every administrator and every teacher
+  of the school, `_admin_insert` and `_admin_update` for those who decide), and
+  `app.school_day_protected_staff()`, a SECURITY DEFINER function that answers a
+  teacher or an administrator of the school the ids of its staff that carry a
+  mark of protected identity (never a pupil or a guardian), executable by
+  `app_authenticated` alone. No existing row is touched, no existing table gains
+  a column, `gallring_due`, `gallring_purge` and `gallring_pseudonymise` are not
+  restated (their `md5(prosrc)` are the same before and after), and nothing
+  reaches the engine. The one new key takes `Schools` in SHARE ROW EXCLUSIVE,
+  NOWAIT, in a loop with a 30 s ceiling: reads and foreign-key checks go on,
+  writes to `Schools` wait for the file (milliseconds), and if the lock is not
+  free in 30 s it stops with nothing changed (`prisma migrate resolve
+  --rolled-back 20270116090000_skolans_dag_har_ett_beslut_om_vad_lararna_ser`,
+  then deploy again). The API before the release knows none of the objects, so
+  it keeps working between the migration and the deploy. **The migration goes
+  in first, then the merge.**
+  **Before the migration**, as the owner: `SHOW server_version` is 17.x;
+  `prisma migrate status` lists exactly this migration as pending; the file's
+  checksum (sha256, what Prisma records) is
+  `5b979fc826b3a5dc54bb72e0e7e93cd5e78f9c43e58e8792e1303f583f5a11dc`;
+  `SELECT to_regclass('"SchoolDaySettings"')` is NULL; and no session sits idle
+  in a transaction that holds `Schools` (the query of the Vikariefrågan entry
+  above). **Gallring:** `SELECT proname, md5(prosrc) FROM pg_proc WHERE
+  pronamespace = 'app'::regnamespace AND proname IN ('gallring_due',
+  'gallring_purge', 'gallring_pseudonymise') ORDER BY 1` is
+  `1d002a81c954ccda01acc9bf0cabdbb3`, `6f18f62fc354bde849aa2e8b01eeceda`,
+  `21b7b43da05c4ff63f045ee769b1ba5c` (due, pseudonymise, purge) before and
+  after: this release adds a table with no personal data and no retention type.
+  **After it, before the merge:** `SELECT count(*) FROM pg_policies WHERE
+  tablename = 'SchoolDaySettings'` is 3; `app_authenticated` holds SELECT,
+  INSERT and UPDATE on it and nothing else (no DELETE, no MAINTAIN), `anon` and
+  `authenticated` nothing; `has_function_privilege('anon',
+  'app.school_day_protected_staff()', 'EXECUTE')`, the same for `authenticated`
+  and for `service_role`, are false; `SELECT count(*) FROM "SchoolDaySettings"`
+  is 0.
+  **After the merge:** as an administrator, `/admin/school-day` shows the
+  school's day and `GET /api/v1/school-day/settings` answers `NONE`; as a
+  teacher, `/teacher/school-day` says that the school has not opened the page
+  and `GET /api/v1/school-day?from=<today>` answers 403 `SCHOOL_DAY_NOT_OPEN`;
+  as a pupil or a guardian the routes answer 403. **What a teacher has is the
+  school's decision** (`/admin/school-day`, for those who decide): nothing
+  until it is made. `ROOMS` gives the free rooms and the rooms' own day and
+  week; `ALL` adds the classes' and the teachers' lessons. **Never who is
+  free for a teacher:** absence, uppdrag and rastvakt are not a teacher's to
+  read (row security), so a list of free colleagues made from what they can
+  read would call an absent one free. The free teachers are the
+  administrators'. **A teacher is told the lessons as they stand**, cancelled
+  ones and who holds them included, **but not why or in whose place:**
+  `cancelCause` and a teacher's role are administrators' only (a
+  `TEACHER_UNAVAILABLE` cause or a `SUBSTITUTE` row would say a colleague is
+  away). **A person the school marks as having a protected identity**
+  is named for administrators only: a teacher's answer leaves a marked teacher
+  out, without an id and without a count (a count on the lessons that are
+  hers would point at her; the omission is presentation, since PostgREST still
+  lets a teacher read the rows); the print is an administrator's and does
+  not name a marked teacher either (it counts them). **Free is the
+  Vikarietavla's occupied rules** (absent, in a lesson that holds its time, on
+  a rastvaktspass, inside an uppdrag or a closure, holding a room booking, and
+  for a pool member without a post, inside a window they declared); a room is
+  free when no lesson that holds its time uses it, no booking in PENDING or
+  APPROVED holds it, no closure covers it, and the loans between this school
+  and another leave it to this school then (the booking page's own rule: lent
+  out in an approved window, or the school's room for a borrowed one outside
+  what the loans give). Lunch, rest, the daily cap, the
+  stretch of teaching and the days (the Vikarietavla's other rules, which
+  answer "may we ask them to cover") are not part of "free". **Known limit,
+  as in the Vikarietavla:** a shared teacher's lessons at the huvudman's other
+  school are not read. **Measure:** a school of 60 classes, 120 teachers and 80
+  rooms reads a week in about 0.2 s in the API (`scripts/bench/school-day.ts`);
+  the answer is about 0.8 MB (about 1.9 MB for 150 classes, 300 teachers and
+  200 rooms), built in the API process and not compressed by the gateway.
+  **The two reads are limited to 30 a minute per login and per route**
+  (`grid`, `free`; `SchoolDayThrottlerGuard`, which keys on the verified
+  login), with a ceiling of 1 200 a minute per address in the global guard's
+  bucket for each route (`x-rate-limit` in the OpenAPI document is that
+  ceiling). Not 30 per address: the web asks the API from each person's
+  browser, so a school's staff arrive from one NAT address, and sixty teachers
+  opening the page together would have had thirty errors, and a block of a
+  minute for everyone on the address. The refusal is 429 with `Retry-After`
+  and the code `SCHOOL_DAY_RATE_LIMITED`; the page says it calmly and keeps
+  the figures it had when a poll is refused. A teacher's page asks again every
+  five minutes (an administrator's every minute). When the first school sets
+  `ALL`, count 429 per route; a 429 without the code is the address ceiling
+  and means one address is flooding. Compression at the proxy is a decision
+  of its own.
+  **Rolling back the API** leaves a table and a function nobody reads; the
+  page then answers 404. Nothing needs undoing. To remove them (only if the
+  feature is abandoned): `DROP FUNCTION app.school_day_protected_staff();
+  DROP TABLE "SchoolDaySettings"; DROP TYPE "SchoolDayTeacherView";` and
+  `prisma migrate resolve --rolled-back
+  20270116090000_skolans_dag_har_ett_beslut_om_vad_lararna_ser`.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
