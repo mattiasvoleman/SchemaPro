@@ -1,9 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect } from "react";
-import { BarChart3, BookOpen, CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, Users, UserX } from "lucide-react";
 import { usePathname } from "@/i18n/navigation";
-import type { NavSection } from "@/components/layout/app-shell";
 import type { MySchool, Profile, School } from "@/lib/types";
 import { SCHOOL_COOKIE, cookieSchool } from "@/lib/school-choice";
 import { noticeHref, noticeText } from "@/components/layout/notice-text";
@@ -116,88 +114,9 @@ export function ClosedPageGate({ children }: { children: React.ReactNode }) {
   return path ? closed[path] : children;
 }
 
-/*
- * The menus of the roles that are not the admin, which AppShell renders. They
- * are here and not in app-shell.tsx for the bundle: that module's part of the
- * signed-in routes' shared chunk sat just under Turbopack's minChunkSize, and
- * this module's part, which pages share, can grow (app-shell.tsx says more). The
- * icons are the admin menu's (components/layout/admin-nav.ts), already in that chunk.
- */
-export const TEACHER_NAV: NavSection[] = [
-  {
-    labelKey: null,
-    items: [
-      { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
-      // Larm (Krisläge): the pupils of the teacher's groups to tick off when
-      // the school starts an alarm. Second, so that it is in reach on a phone
-      // without scrolling the menu. The attendance icon, already in the shell.
-      { labelKey: "myCrisis", href: "/teacher/crisis", icon: ClipboardCheck },
-      { labelKey: "attendance", href: "/teacher/attendance", icon: ClipboardCheck },
-      // Lektionslogg: a class's lessons over a period with their topic and
-      // homework. The admin menu's subjects icon, already in the shell.
-      { labelKey: "classBook", href: "/teacher/klassbok", icon: BookOpen },
-      { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
-      // Skolans dag: the school's day and week, in the form the school has
-      // decided teachers get (the page says so when it has decided none). The
-      // week's icon, already in the shell.
-      { labelKey: "schoolDay", href: "/teacher/school-day", icon: CalendarDays },
-      // The teacher's own tjänst, read-only. The admin's Tjänstefördelning
-      // icon, already in the shell: the same thing seen from the other side,
-      // and a second glyph would be bytes on every route for nothing.
-      { labelKey: "myStaffing", href: "/teacher/tjanst", icon: Scale },
-      // Mina vikariepass and Min frånvaro: the admin's Lärarfrånvaro icon,
-      // the same subject from the teacher's side.
-      { labelKey: "myCover", href: "/teacher/franvaro", icon: UserX },
-      // Ledighet: the requests the teacher decides as a pupil's mentor
-      // (20261023091000). The admin's Ledighetsansökningar icon, already in
-      // the shell: the same inbox from the mentor's side.
-      { labelKey: "myLeave", href: "/teacher/ledighet", icon: ClipboardCheck },
-      // Frånvarobevakning: the mentor's pupils over a limit. Always in the
-      // menu: a teacher who mentors nobody gets an empty list, said kindly.
-      // The admin's Rapporter icon, already in the shell.
-      { labelKey: "absenceWatch", href: "/teacher/absence-watch", icon: BarChart3 },
-      // Rapporteringsgrad: the lessons whose register is not saved, and the
-      // teacher's own share. The attendance icon, already in the shell.
-      { labelKey: "myReporting", href: "/teacher/reporting-rate", icon: ClipboardCheck },
-      // Kvittens: ask the guardians of the teacher's mentees to confirm a message. Always in
-      // the menu: the page says so when the school has not turned it on. The attendance icon.
-      { labelKey: "acknowledgements", href: "/teacher/acknowledgements", icon: ClipboardCheck },
-      { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
-    ],
-
-  },
-];
-
-export const GUARDIAN_NAV: NavSection[] = [
-  {
-    labelKey: null,
-    items: [
-      { labelKey: "myChildren", href: "/guardian", icon: Users },
-      // Frånvarobevakning: the children over a limit the school set for
-      // guardians. Always in the menu; the list is empty when nothing applies.
-      { labelKey: "absenceWatch", href: "/guardian/absence-watch", icon: BarChart3 },
-      // Kvittens: the messages the school asks the guardian to confirm. Always in the menu;
-      // the list is empty when nothing has been asked. The attendance icon, already in the shell.
-      { labelKey: "acknowledgements", href: "/guardian/acknowledgements", icon: ClipboardCheck },
-      { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
-    ],
-  },
-];
-
-export const STUDENT_NAV: NavSection[] = [
-  {
-    labelKey: null,
-    items: [
-      { labelKey: "mySchedule", href: "/student", icon: CalendarDays },
-      { labelKey: "myAttendance", href: "/student/attendance", icon: ClipboardCheck },
-      { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
-    ],
-  },
-];
-
 /**
  * What the bell says of a notice and where it leads, handed on from here for
- * the same reason as the menus above: the bell is in AppShell's part of the
+ * the same reason the menus once were: the bell is in AppShell's part of the
  * chunk every signed-in route loads, which sits just under Turbopack's
  * minChunkSize, and the words of twenty notice types are code. Imported from
  * the bell as a module of its own they stayed in AppShell's part (measured
