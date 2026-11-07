@@ -88,4 +88,16 @@ export class UpsertLunchSettingsDto {
   @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   generatorKeepsConsecutiveTeaching?: boolean;
+
+  /**
+   * Bästa möjliga schema (20270125090000): the school lets an administrator
+   * who plans ask for a timetable in which five of its own shaping rules may
+   * give way, listed for the school to accept before it is applied. Off until
+   * the school turns it on. Optional on exactly the travel switch's terms
+   * above: absent leaves the stored value as it is, null is refused with the
+   * 400 that names the field.
+   */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  generatorBestEffort?: boolean;
 }

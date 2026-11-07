@@ -40,6 +40,17 @@
  *         its task can no longer write; the partial index answers a second
  *         start that passed every check (23505 → CANDIDATES_RUNNING); the cap
  *         on live runs, whatever their school or year (CANDIDATES_BUSY);
+ *   sc-o  Bästa möjliga schema (20270125090000): a run of the mode is refused
+ *         while the school's switch is off (no run, no engine call), and with
+ *         it on — turned on through the real Skolregler service — plants ONE
+ *         candidate that asks the engine for `relaxation` and stores the rules
+ *         that gave way (a cap with its teacher's Users id kept for the server,
+ *         a part-timer's days hidden whole); the overview and the check name
+ *         the teacher and give out no id and the same digest; an apply without
+ *         the digest, with another, or after the school switched the mode off,
+ *         writes nothing; with it, the REGENERATE entry keeps the accepted
+ *         list, its digest and the moment and no teacher id; and the publish
+ *         check lists them until a publication follows;
  *   sc-k  no stored row, change-log entry, response or engine request names a
  *         pupil;
  *   sc-l  a run interrupted by a restart while its call is out frees its year
@@ -92,6 +103,8 @@ import { BASIS_PARTS } from '../../src/optimization/candidate-basis';
 import { OptimizationJobsService } from '../../src/optimization/optimization-jobs.service';
 import { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
 import { ScheduleCandidatesService, yearHasActiveCandidateRun } from '../../src/optimization/schedule-candidates.service';
+import { deviationsFinding } from '../../src/publication/deviation-finding';
+import { LunchSettingsService } from '../../src/resources/lunch-settings.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
@@ -168,6 +181,8 @@ interface EngineBody {
   previousLessons: Array<{ requirementId: string; dayOfWeek: number; startTime: string }>;
   weights?: Record<string, number>;
   search?: { seed?: number; maxSeconds?: number; probes?: boolean; workers?: number };
+  relaxation?: { mode: string };
+  teacherWorkRules?: Array<{ id: string; teacherId: string; maxTeachingMinutesPerDay?: number }>;
 }
 
 interface EngineAnswer {
@@ -176,6 +191,8 @@ interface EngineAnswer {
   lessons: Array<{ requirementId: string; roomId: string | null; dayOfWeek: number; startTime: string; endTime: string }>;
   lunches?: Array<{ studentGroupId: string; dayOfWeek: number; startTime: string; endTime: string }>;
   conflicts?: unknown;
+  /** Bästa möjliga schema: present, even empty, only on the answer to a request that carried `relaxation`. */
+  deviations?: unknown[];
 }
 
 /**
@@ -913,7 +930,7 @@ export async function scheduleCandidateChecks(
 
       const checked = await candidates.check(batchId, admin);
       responses.push(checked);
-      assert.deepEqual(checked, { stale: false, changed: [], refusalCode: null, mode: 'DIRECT', futureCalendarLessons: 2, coverAssignments: 1 });
+      assert.deepEqual(checked, { stale: false, changed: [], refusalCode: null, mode: 'DIRECT', futureCalendarLessons: 2, coverAssignments: 1, deviations: null, deviationsDigest: null });
 
       const rows = await candidateRows(batchId);
       const chosen = rows.find((row) => row.variant === 'TEACHER_GAPS')!;
@@ -1631,6 +1648,154 @@ export async function scheduleCandidateChecks(
         `     sc-n: wishes on days ${rules.map((rule) => rule.day).join(', ')}; the draft breaks ${said(draftNotes).length}, ` +
           `KEEP ${said(stored[0]!.notes).length}, TEACHER_GAPS ${said(chosen.notes).length}, as the week the apply wrote and Generera say`,
       );
+    });
+
+    await check('(sc-o) Bästa möjliga schema: refused while the switch is off; one candidate that stores what gave way; an apply that needs the digest, writes nothing without it, and keeps the acceptance in the REGENERATE entry; the publish check lists it until a publication follows', async () => {
+      const lunchBefore = await all<{ id: string }>(`SELECT id FROM "LunchSettings" WHERE "schoolId" = $1`, [s]);
+      const ruleBefore = await all<{ id: string }>(`SELECT id FROM "TeacherWorkRules" WHERE "userId" = $1`, [t1.id]);
+      const countRuns = async () => (await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ScheduleCandidateRuns" WHERE "schoolId" = $1`, [s])).n;
+      const isBestEffort = (body: EngineBody) => body.relaxation !== undefined;
+      const lunch = new LunchSettingsService(api);
+      const switchTo = (on: boolean) =>
+        lunch.upsert(
+          { lunchEnabled: false, lunchStartTime: '11:00', lunchEndTime: '13:00', lunchMinutes: 30, generatorBestEffort: on } as never,
+          admin,
+        );
+
+      // The switch is off for a school that never said so: refused, nothing created, the engine not asked.
+      const runsBefore = await countRuns();
+      const callsBefore = engine.calls.length;
+      await refusedWith(candidates.start({ academicYearId: year, mode: 'BEST_EFFORT' }, admin), 409, 'BEST_EFFORT_NOT_ENABLED');
+      assert.equal(await countRuns(), runsBefore, 'a refused start created a run');
+      assert.equal(engine.calls.length, callsBefore, 'a refused start asked the engine');
+
+      // The school turns it on through the real Skolregler service, and reads it back on.
+      assert.equal((await switchTo(true)).generatorBestEffort, true);
+      assert.equal((await lunch.get(admin))?.generatorBestEffort, true);
+      // …and the expedition (which does not hold Planering) may not turn it off.
+      assert.ok(await refusal(lunch.upsert({ lunchEnabled: false, lunchStartTime: '11:00', lunchEndTime: '13:00', lunchMinutes: 30, generatorBestEffort: false } as never, expedition)));
+      assert.equal((await lunch.get(admin))?.generatorBestEffort, true);
+
+      // A cap on t1's day: the work rule, whose teacher the gateway keeps by the rule's id.
+      await owner.query(`DELETE FROM "TeacherWorkRules" WHERE "userId" = $1`, [t1.id]);
+      const rule = await one<{ id: string }>(
+        `INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "updatedAt") VALUES ($1, $2, 120, now()) RETURNING id`,
+        [s, t1.id],
+      );
+      engine.once(isBestEffort, async (body) => {
+        const anonRule = body.teacherWorkRules?.find((entry) => entry.maxTeachingMinutesPerDay === 120)?.id;
+        assert.ok(anonRule, 'the engine was not sent the cap');
+        const maths = body.requirements.find((entry) => entry.minutesPerLesson === 60)!;
+        const line = (code: string, params: Record<string, string | number>, rest: Record<string, unknown> = {}) => ({
+          category: 'DEVIATION', code, params, message: `English for ${code}`, requirementIds: [], roomIds: [], constraintIds: [], resourceIds: [], ...rest,
+        });
+        return {
+          ...placed(body),
+          deviations: [
+            line('DEVIATION_TEACHER_DAILY_CAP', { rule: anonRule, day: 1, minutes: 120, taught: 180, over: 60, needed: 180 }, { resourceIds: [anonRule] }),
+            line('DEVIATION_SUBJECT_PER_DAY', { requirement: maths.id, day: 2, maxPerDay: 1, count: 2, over: 1, needed: 2 }, { requirementIds: [maths.id] }),
+            line('DEVIATION_TEACHER_WORK_DAYS', { limit: randomUUID(), days: 3, taught: 4, over: 1, needed: 4 }),
+          ],
+        };
+      });
+
+      const asked = engine.calls.length;
+      const { runId } = await candidates.start({ academicYearId: year, mode: 'BEST_EFFORT', count: 4 }, admin);
+      const done = await settle(runId);
+      assert.equal(done.status, 'SUCCEEDED', `the run ended ${done.status} ${done.errorCode}`);
+      assert.equal(done.requested, 1);
+      assert.equal(engine.calls.length, asked + 1, 'the mode asks the engine once');
+      const sent = engine.calls[asked]!.body;
+      assert.deepEqual(sent.relaxation, { mode: 'BEST_EFFORT' });
+      assert.equal(sent.search?.probes, true, 'the lead call explains a refusal');
+      const rows = await candidateRows(runId);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]!.variant, 'BEST_EFFORT');
+      assert.equal(rows[0]!.ordinal, 1);
+      const { deviations } = await one<{ deviations: Array<Record<string, any>> | null }>(`SELECT deviations FROM "ScheduleCandidates" WHERE id = $1`, [rows[0]!.id]);
+      seenRows.push({ deviations });
+      assert.ok(Array.isArray(deviations) && deviations.length === 3, `stored ${JSON.stringify(deviations)}`);
+      const [cap, perDay, days] = deviations!;
+      assert.equal(cap!['code'], 'DEVIATION_TEACHER_DAILY_CAP');
+      assert.deepEqual(cap!['subjectIds'], [t1.id], 'the cap’s teacher is kept for the server, as an id');
+      assert.equal(cap!['params'].rule, rule.id, 'the cap’s rule is the real row, not the engine’s token');
+      assert.equal(perDay!['params'].requirement, 'SF Matematik för SF 7A', 'the requirement is the Timplan page’s name for it');
+      assert.deepEqual(days, {
+        category: 'DEVIATION', code: 'TEACHER_WORK_DAYS_HIDDEN', params: {}, message: days!['message'], resourceNames: [],
+      });
+      assert.ok(!/could not be made/.test(days!['message']), 'the hidden days say the refusal’s sentence');
+      assert.ok(!JSON.stringify(deviations).match(/t1 Förslag|Förslag/), 'a name was stored');
+
+      // The overview names the cap's teacher, and gives out no id; the check says the same list and digest.
+      const page = await candidates.overview(year, admin);
+      responses.push(page);
+      const view = page.batch!.candidates[0]!;
+      assert.equal(view.variant, 'BEST_EFFORT');
+      assert.equal(view.deviations?.length, 3);
+      assert.equal(view.deviations![0]!.params?.['rule'], 't1 Förslag');
+      assert.match(view.deviationsDigest ?? '', /^[0-9a-f]{64}$/);
+      const text = JSON.stringify(page);
+      for (const leak of ['subjectIds', t1.id, rule.id]) assert.ok(!text.includes(leak), `the overview gives out ${leak}`);
+      const checked = await candidates.check(runId, admin);
+      assert.equal(checked.deviationsDigest, view.deviationsDigest);
+      assert.deepEqual(checked.deviations, view.deviations);
+
+      // An apply without the digest, with another, and after the school switched the mode off: refused, nothing written.
+      const mastersBefore = sortedContent(await masters());
+      const logsBefore = (await regenerations()).length;
+      const versionsBefore = (await versionRows()).length;
+      const nothingMoved = async (what: string) => {
+        assert.deepEqual(sortedContent(await masters()), mastersBefore, `${what} moved the timetable`);
+        assert.equal((await regenerations()).length, logsBefore, `${what} wrote a REGENERATE entry`);
+        assert.equal((await versionRows()).length, versionsBefore, `${what} saved a safety version`);
+        assert.equal((await runRow(runId)).appliedCandidateId, null, `${what} marked the run applied`);
+      };
+      const mode = checked.mode;
+      const none = await refusedWith(candidates.apply(rows[0]!.id, mode, admin), 409, 'SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED');
+      assert.equal(none.params?.['count'], 3);
+      await nothingMoved('an apply with no digest');
+      await refusedWith(candidates.apply(rows[0]!.id, mode, admin, 'f'.repeat(64)), 409, 'SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED');
+      await nothingMoved('an apply with another digest');
+      await switchTo(false);
+      await refusedWith(candidates.apply(rows[0]!.id, mode, admin, view.deviationsDigest!), 409, 'BEST_EFFORT_NOT_ENABLED');
+      await nothingMoved('an apply after the switch was turned off');
+      await switchTo(true);
+
+      // With the digest: applied, and the REGENERATE entry keeps what was accepted.
+      await candidates.apply(rows[0]!.id, mode, admin, view.deviationsDigest!);
+      const applied = await runRow(runId);
+      assert.equal(applied.appliedCandidateId, rows[0]!.id);
+      const entries = await regenerations();
+      assert.equal(entries.length, logsBefore + 1);
+      const entry = entries[entries.length - 1]!;
+      assert.equal(entry.after['source'], 'CANDIDATE');
+      assert.equal(entry.after['variant'], 'BEST_EFFORT');
+      assert.equal(entry.after['deviationsDigest'], view.deviationsDigest);
+      assert.match(String(entry.after['acceptedAt']), /^\d{4}-\d{2}-\d{2}T/);
+      assert.equal((entry.after['deviations'] as unknown[]).length, 3);
+      assert.equal(entry.actorId, admin.userId, 'who accepted is the entry’s actor');
+      const entryText = JSON.stringify(entry.after);
+      for (const leak of ['subjectIds', t1.id, 't1 Förslag']) assert.ok(!entryText.includes(leak), `the REGENERATE entry keeps ${leak}`);
+
+      // The publish check lists the accepted rules until a publication follows.
+      const finding = await api.withRls(admin, (tx) => deviationsFinding(tx, year));
+      assert.equal(finding.count, 3);
+      assert.equal(finding.entries?.length, 3);
+      assert.ok(finding.entries!.every((item) => !/t1|Förslag/.test(item.label)), `a label names a person: ${JSON.stringify(finding.entries)}`);
+      const publication = await one<{ id: string }>(
+        `INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "publishedAt")
+         VALUES ($1, $2, 'PUBLISH', 'PUBLISHED', 'DIRECT', '2095-08-15', '2096-06-10', now() + interval '1 minute') RETURNING id`,
+        [s, year],
+      );
+      assert.equal((await api.withRls(admin, (tx) => deviationsFinding(tx, year))).count, 0, 'a publication after the apply left the finding standing');
+      await owner.query(`DELETE FROM "TimetablePublications" WHERE id = $1`, [publication.id]);
+
+      // Put the world back for the checks after.
+      await owner.query(`DELETE FROM "TeacherWorkRules" WHERE "userId" = $1`, [t1.id]);
+      if (lunchBefore.length === 0) await owner.query(`DELETE FROM "LunchSettings" WHERE "schoolId" = $1`, [s]);
+      else await owner.query(`UPDATE "LunchSettings" SET "generatorBestEffort" = false WHERE "schoolId" = $1`, [s]);
+      assert.equal(ruleBefore.length, 0, 'the world held a work rule of t1 before sc-o: it was replaced');
+      console.log(`     sc-o: one candidate, ${deviations!.length} rules gave way, accepted by digest ${String(view.deviationsDigest).slice(0, 12)}…`);
     });
 
     await check('(sc-k) no stored candidate, run, REGENERATE entry, response or engine request names a pupil', async () => {

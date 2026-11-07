@@ -827,6 +827,85 @@ Walk the full product loop once, in order:
   "maxConsecutiveTeachingMinutes" IS NOT NULL;`, as the owner; the figures are
   HR data, so do not keep the output with names) and tell the schools that, until
   the release is back, a rollover carries no limit.
+- **Bästa möjliga schema**: 20270125090000 adds three columns and nothing else:
+  `LunchSettings."generatorBestEffort"` (boolean, NOT NULL, default false: the
+  Skolregler switch), `ScheduleCandidates."deviations"` (jsonb, nullable, a
+  list or NULL by the CHECK `ScheduleCandidates_deviations_is_a_list`) and
+  `PublicationSettings."gateDeviations"` (`PublishGateMode`, NOT NULL, default
+  WARN: the policy of the new publish check `PUB_DEVIATIONS`). **It is off for
+  every school until that school turns it on**; the migration turns nothing on
+  and changes no row, so every Skolregler row reads off, every candidate reads
+  null (it did not come from the mode) and every settings row reads WARN. With
+  the switch on, an administrator who plans can ask a schemaförslag run for
+  *one* candidate (`mode: 'BEST_EFFORT'`) that the engine places even when the
+  school's own shaping rules cannot all hold: a teacher's cap of minutes a day,
+  a part-timer's days, a subject's cap per day and its days apart, and a
+  subject's locked rooms may give way, and the candidate lists which did and by
+  how much. Everything else stays hard (a double booking, a lesson outside the
+  frame times, the walk between sites, a teacher's lunch and rest, a teacher
+  marked unavailable, a requirement's own room type, lunch, lesson lengths, a
+  block's shared start, the group's daily cap): the list is the engine's
+  (`optimization-engine/app/solver/relaxation.py`), not a setting. **The apply
+  of a candidate with deviations needs the administrator to accept exactly that
+  list** (`acceptedDeviations`, the candidate's digest): without it the apply is
+  409 `SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED` and writes nothing, and with
+  the school's switch turned off again it is 409 `BEST_EFFORT_NOT_ENABLED`
+  whatever the digest. **The acceptance is kept in the REGENERATE entry of
+  `ScheduleChangeLogs`** (`after`: the accepted list, its digest and the moment;
+  who accepted is the entry's own `actorId`), not in a table of its own, so the
+  registerutdrag, the removal inventory, the school export and `people-files`
+  have nothing new to classify; the accepted list in `after` carries no Users id
+  and no name, because no person-removal reaches that JSON by column. The
+  candidate's own copy keeps a cap's teacher as a Users id in `subjectIds`,
+  server-only and named when the page reads it, as a free-day note does (and
+  not at all for a person with a protected identity); **a sentence about a
+  part-timer's days is stored in the hidden form for every reader** (the code
+  `TEACHER_WORK_DAYS_HIDDEN`, no figure, no post, no teacher, its own English
+  and not the refusal's "one of the reasons the timetable could not be made"),
+  as every sentence about a post's days is: the figure is HR data and the
+  candidate page has no HR path. "Uppdatera förslagen" on a batch of the mode
+  keeps the mode (the request names `refreshOf` alone) and is refused 409
+  `BEST_EFFORT_NOT_ENABLED` if the school has switched it off since; a refusal
+  of a hard rule by the mode's one candidate ends the run
+  `CANDIDATES_FIRST_FAILED`, as for any first candidate. The new publish check
+  `PUB_DEVIATIONS` reminds the publisher of the accepted list until a
+  publication follows the apply (WARN, or REFUSE if the school sets
+  `gateDeviations`). It takes ACCESS EXCLUSIVE on `LunchSettings`,
+  `PublicationSettings` and `ScheduleCandidates`, NOWAIT and together in a loop
+  (the generator reads the first at the start of every run, a publish reads the
+  second, the Schemaförslag page polls the third every two seconds while a run
+  goes); a refusal gives back whatever it got and tries again 50 ms later, and
+  if the three are not free at once in 30 s it stops with nothing changed —
+  `prisma migrate resolve --rolled-back
+  20270125090000_ett_schemaforslag_kan_saga_vilka_av_skolans_regler_som_gav_vika`,
+  then deploy again. Before: the three columns absent from
+  `information_schema.columns`. After: the three present, and `SELECT count(*)
+  FROM "LunchSettings" WHERE "generatorBestEffort"`, `SELECT count(*) FROM
+  "ScheduleCandidates" WHERE "deviations" IS NOT NULL` and `SELECT count(*) FROM
+  "PublicationSettings" WHERE "gateDeviations" <> 'WARN'` all 0. No grant and no
+  policy moves (RLS sections 410–414 hold it). The API before the release names
+  only the old columns, so it keeps working between the migration and the
+  deploy: its Skolregler upsert does not name the switch (a save leaves it as it
+  was), a candidate it stores has null deviations, and its settings read leaves
+  the policy at its default. **Deploy order and the engine:** the engine ships
+  with the API from the same merge, additive (`relaxation` is optional in the
+  request and `deviations` appears in the answer only when it was asked for), and
+  the API sends `relaxation` only for a run the school asked the mode for, so
+  nothing changes for a school that has not turned the switch on. In the few
+  minutes an API can meet an engine from before the release, a run of the mode
+  fails as 503 `ENGINE_LACKS_BEST_EFFORT` ("try again in a few minutes") and
+  never as a refusal of the week. **Rolling it back:** the engine before this
+  release refuses the field (its request models are `extra="forbid"`: 422), so
+  an engine rolled back alone fails the mode's runs of any school that turned
+  the switch on; roll the API back first, or with the engine (the API before
+  the release never sends it). If the API must stay, turn the switch off for
+  every school before the engine goes back (`UPDATE "LunchSettings" SET
+  "generatorBestEffort" = false WHERE "generatorBestEffort";`, as the owner), and
+  tell the schools it was. **Do not roll the API back while a candidate with
+  deviations is on the page**: an API from before the release does not know the
+  column and would apply it without the school accepting what gave way. The
+  candidates are swept after a week; a school that has not used the mode has
+  none. The columns can stay through a rollback.
 - **Rastvakt i vardagen**: 20261210090000 adds `SupervisionCovers` (the
   vikarietavla's decision on an absent rastvakt's pass on one date: a
   vikarie, or none), the enum `SupervisionCoverDecision`, an `(id,

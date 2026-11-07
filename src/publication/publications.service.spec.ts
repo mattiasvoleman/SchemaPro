@@ -211,6 +211,71 @@ describe('PublicationsService (DIRECT)', () => {
     expect(created()[0]).not.toHaveProperty('created');
   });
 
+  describe('Bästa möjliga schema: PUB_DEVIATIONS', () => {
+    const applied = new Date('2026-10-11T09:00:00.000Z');
+    /** The apply's REGENERATE entry, whose `after` keeps the list the administrator accepted. */
+    const accepted = () =>
+      tx.scheduleChangeLog.findFirst.mockResolvedValue({
+        action: 'REGENERATE',
+        createdAt: applied,
+        after: {
+          source: 'CANDIDATE',
+          deviations: [
+            { category: 'DEVIATION', code: 'DEVIATION_ROOM_LOCK', params: { requirement: 'Matematik för 7B', lessons: 1, of: 2 }, message: 'm', resourceNames: [] },
+          ],
+          deviationsDigest: 'd'.repeat(64),
+        },
+      });
+
+    it('reminds the publisher of what was accepted when the timetable was applied, as a warning that asks for "Publicera ändå"', async () => {
+      accepted();
+      const preview = await service.preview({ academicYearId: YEAR_ID }, testUser());
+      expect(preview.gates.find((gate) => gate.code === 'PUB_DEVIATIONS')).toMatchObject({
+        severity: 'WARN',
+        count: 1,
+        items: [{ label: 'Matematik för 7B: 1 av 2 lektioner i ett rum utanför ämnets rum' }],
+      });
+      expect(preview.needsAcknowledgement).toBe(true);
+
+      const error = await service.publish({ academicYearId: YEAR_ID }, testUser()).catch((e: unknown) => e);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: PUBLISH_WARNINGS_UNACKNOWLEDGED,
+        params: { warnings: 'PUB_DEVIATIONS' },
+      });
+      const outcome = await service.publish({ academicYearId: YEAR_ID, acknowledgeWarnings: true }, testUser());
+      expect(outcome.gates.map((gate) => [gate.code, gate.severity])).toContainEqual(['PUB_DEVIATIONS', 'WARN']);
+    });
+
+    it('refuses the publish when the school set gateDeviations to REFUSE, and says which check', async () => {
+      accepted();
+      tx.publicationSettings.findUnique.mockResolvedValue({ publishMode: 'DIRECT', gateDeviations: 'REFUSE' });
+      const error = await service.publish({ academicYearId: YEAR_ID, acknowledgeWarnings: true }, testUser()).catch((e: unknown) => e);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: PUBLISH_GATES_REFUSED,
+        params: { refused: 'PUB_DEVIATIONS', publicationId: 'pub-1' },
+      });
+    });
+
+    it('says nothing when the timetable was not applied from a candidate with deviations', async () => {
+      const preview = await service.preview({ academicYearId: YEAR_ID }, testUser());
+      expect(preview.gates.map((gate) => gate.code)).not.toContain('PUB_DEVIATIONS');
+    });
+
+    it('reads the policy column on the way in and on the way out', async () => {
+      tx.publicationSettings.findUnique.mockResolvedValue({ publishMode: 'DIRECT', gateDeviations: 'REFUSE' });
+      await expect(service.settings(testUser())).resolves.toMatchObject({ gateDeviations: 'REFUSE', stored: true });
+      tx.publicationSettings.findUnique.mockResolvedValue(null);
+      await expect(service.settings(testUser())).resolves.toMatchObject({ gateDeviations: 'WARN', stored: false });
+
+      tx.publicationSettings.findUnique.mockResolvedValue(null);
+      tx.publicationSettings.upsert.mockResolvedValue({ publishMode: 'DIRECT', gateDeviations: 'REFUSE' });
+      await service.upsertSettings({ gateDeviations: 'REFUSE' }, testUser());
+      expect(tx.publicationSettings.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ gateDeviations: 'REFUSE' }), update: expect.objectContaining({ gateDeviations: 'REFUSE' }) }),
+      );
+    });
+  });
+
   it('refuses a publish whose grundschema changed since the preview', async () => {
     const preview = await service.preview({ academicYearId: YEAR_ID }, testUser());
     tx.masterLesson.findMany.mockResolvedValue([lesson({ dayOfWeek: 2 })]);

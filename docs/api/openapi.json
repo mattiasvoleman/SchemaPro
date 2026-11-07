@@ -21510,6 +21510,10 @@
               "DIRECT",
               "DRAFT"
             ]
+          },
+          "acceptedDeviations": {
+            "type": "string",
+            "maxLength": 128
           }
         },
         "required": [
@@ -26521,6 +26525,12 @@
           "refreshOf": {
             "type": "string",
             "format": "uuid"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "BEST_EFFORT"
+            ]
           }
         },
         "required": [
@@ -27865,6 +27875,9 @@
           },
           "generatorKeepsConsecutiveTeaching": {
             "type": "boolean"
+          },
+          "generatorBestEffort": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -27983,6 +27996,13 @@
             ]
           },
           "gateOtherSchool": {
+            "type": "string",
+            "enum": [
+              "REFUSE",
+              "WARN"
+            ]
+          },
+          "gateDeviations": {
             "type": "string",
             "enum": [
               "REFUSE",
