@@ -99,13 +99,13 @@ def fuzz(request: OptimizeScheduleRequest, seed: int) -> OptimizeScheduleRequest
             rules[teacher] = rule.model_copy(update={"max_teaching_minutes_per_day": cap})
         else:
             rules[teacher] = type(request.teacher_work_rules[0]).model_validate({
-                "id": str(uuid.uuid5(_NS, f"rule-{teacher}")),
+                "id": hogstadium._uid(f"g2-rule-{teacher}"),
                 "teacherId": str(teacher),
                 "maxTeachingMinutesPerDay": cap,
             })
     if len(chosen) > 3 and chosen[3] not in limits:
         limits[chosen[3]] = type(request.teacher_day_limits[0]).model_validate({
-            "id": str(uuid.uuid5(_NS, f"post-{chosen[3]}")),
+            "id": hogstadium._uid(f"g2-post-{chosen[3]}"),
             "teacherId": str(chosen[3]),
             "maxTeachingDaysPerWeek": 2,
             "lockedWeekdays": [[]],
@@ -145,13 +145,23 @@ def _load() -> float:
     return round(os.getloadavg()[0], 1)
 
 
-def _eight(workers: int) -> None:
-    """Every generation solve of this process runs `workers` workers."""
+def _eight(workers: int, deterministic: float | None = None) -> None:
+    """Every generation solve of this process runs `workers` workers.
+
+    With ONE worker the solve is limited in the solver's own deterministic time
+    (`deterministic` seconds a phase) and given a fixed seed, so the host's
+    load does not move what it finds: the way to compare two builds on a Mac
+    that a dozen sessions share.
+    """
     original = SchedulerSolver._generation_solver
 
     def with_workers(request, seconds):  # type: ignore[no-untyped-def]
         solver = original(request, seconds)
         solver.parameters.num_workers = workers
+        if workers == 1 and deterministic is not None:
+            solver.parameters.random_seed = 0
+            solver.parameters.max_time_in_seconds = 6 * 3600
+            solver.parameters.max_deterministic_time = deterministic
         return solver
 
     SchedulerSolver._generation_solver = staticmethod(with_workers)  # type: ignore[method-assign]
@@ -177,9 +187,10 @@ def teacher_idle(request: OptimizeScheduleRequest, lessons) -> int:  # type: ign
 
 def measure(kind: str, scenario: str, seed: int, budget: float, workers: int) -> dict[str, object]:
     request = week(scenario, seed)
-    settings = Settings(SOLVER_MAX_TIME_SECONDS=budget)  # type: ignore[call-arg]
+    deterministic = budget if workers == 1 else None
+    settings = Settings(SOLVER_MAX_TIME_SECONDS=100000.0 if workers == 1 else budget)  # type: ignore[call-arg]
     solver = SchedulerSolver(settings)
-    _eight(workers)
+    _eight(workers, deterministic)
     relaxed = kind.endswith("relaxed")
     out: dict[str, object] = {
         "kind": kind, "scenario": scenario, "seed": seed, "workers": workers,
@@ -223,9 +234,18 @@ def _first(
     cp.parameters.max_time_in_seconds = budget
     cp.parameters.num_workers = workers
     cp.parameters.stop_after_first_solution = True
+    if workers == 1:
+        # ONE WORKER AND A FIXED SEED, LIMITED IN DETERMINISTIC TIME: the
+        # host's load then does not enter the number that matters, the
+        # solver's own deterministic time, nor the point the search stops at.
+        # `budget` is then deterministic seconds and the wall clock is let run.
+        cp.parameters.random_seed = 0
+        cp.parameters.max_time_in_seconds = 6 * 3600
+        cp.parameters.max_deterministic_time = budget
     status = cp.StatusName(cp.Solve(model))
     return {
         "status": status,
+        "deterministicTime": round(cp.ResponseProto().deterministic_time, 2),
         "buildSeconds": round(built, 2),
         "firstSolutionSeconds": round(cp.WallTime(), 2),
         "variables": len(model.Proto().variables),

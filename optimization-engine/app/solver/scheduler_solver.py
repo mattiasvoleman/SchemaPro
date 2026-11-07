@@ -5404,7 +5404,9 @@ class SchedulerSolver:
         if not prices_anything(request):
             # Nothing on the list is in the week: the strict solve is the
             # best-effort solve, and says so with an empty list.
-            strict = self.solve(request.model_copy(update={"relaxation": None}))
+            strict = SchedulerSolver(self._settings).solve(
+                request.model_copy(update={"relaxation": None}),
+            )
             if strict.lessons:
                 strict = strict.model_copy(update={"deviations": []})
             return strict
