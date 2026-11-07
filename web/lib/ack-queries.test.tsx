@@ -10,6 +10,7 @@ import {
   useAckMine,
   useAckPupils,
   useAckSettings,
+  useAckUsage,
 } from "./ack-queries";
 import type { AckMine, AckPage } from "./ack";
 import { listItem, mineItem, page } from "./__fixtures__/ack";
@@ -53,6 +54,20 @@ describe("reading", () => {
     expect(api.get.mock.calls.map(([path]) => path).sort()).toEqual(
       [`${BASE}/settings`, `${BASE}/pupils`, BASE, `${BASE}/mine`, `${BASE}/r-1`].sort(),
     );
+  });
+
+  it("reads the day's use from its own route, and keeps it for a minute", async () => {
+    const usage = { school: { used: 6, limit: 20000 }, mine: { used: 3, limit: 8000 }, senders: [{ name: "Anna Lind", used: 3, limit: 2000 }] };
+    api.get.mockResolvedValue(usage);
+    const { client, wrapper } = setup();
+    const { result } = renderHook(() => useAckUsage(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(api.get).toHaveBeenCalledWith(`${BASE}/usage`);
+    expect(result.current.data).toEqual(usage);
+    expect(client.getQueryCache().find({ queryKey: ACK_KEYS.usage })?.observers[0]?.options.staleTime).toBe(60_000);
+    // Shown again within the minute, it is not read again.
+    renderHook(() => useAckUsage(), { wrapper });
+    expect(api.get).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry a refusal: a failed read is shown at once", async () => {
@@ -183,6 +198,22 @@ describe("a request", () => {
     const before = api.get.mock.calls.length;
     await act(() => result.current.create.mutateAsync(body));
     await waitFor(() => expect(api.get.mock.calls.slice(before).map(([path]) => path)).toContain(BASE));
+  });
+
+  it("reads the day's use again when it was made, and when it was refused (a 429 says a colleague has sent)", async () => {
+    api.get.mockResolvedValue({ school: null, mine: { used: 0, limit: 2000 }, senders: null });
+    const { wrapper } = setup();
+    const usage = renderHook(() => useAckUsage(), { wrapper });
+    await waitFor(() => expect(usage.result.current.isSuccess).toBe(true));
+    const { result } = renderHook(() => useAckActions(), { wrapper });
+    let before = api.get.mock.calls.length;
+    await act(() => result.current.create.mutateAsync(body));
+    await waitFor(() => expect(api.get.mock.calls.slice(before).map(([path]) => path)).toContain(`${BASE}/usage`));
+
+    api.post.mockRejectedValue(new Error("429"));
+    before = api.get.mock.calls.length;
+    await act(() => result.current.create.mutateAsync(body).catch(() => undefined));
+    await waitFor(() => expect(api.get.mock.calls.slice(before).map(([path]) => path)).toContain(`${BASE}/usage`));
   });
 
   it("reads the setting again when it was refused, because a 409 says the switch moved", async () => {
