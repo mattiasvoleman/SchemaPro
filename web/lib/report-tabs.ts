@@ -7,9 +7,9 @@
  * reportTabOf() from the server" — a 500 on every load of Rapporter.
  */
 
-export type ReportTab = "attendance" | "staffing" | "cover";
+export type ReportTab = "attendance" | "staffing" | "cover" | "absence-stats";
 
 /** A `?tab=` value as a tab; anything unknown is Närvaro. */
 export function reportTabOf(value: string | null | undefined): ReportTab {
-  return value === "staffing" || value === "cover" ? value : "attendance";
+  return value === "staffing" || value === "cover" || value === "absence-stats" ? value : "attendance";
 }
