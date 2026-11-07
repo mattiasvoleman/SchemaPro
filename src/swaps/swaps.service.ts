@@ -520,7 +520,8 @@ export class SwapsService {
       const unit = context.unitOf.get(move.lessonId);
       if (!unit) throw swapStale();
       units.add(unit.id);
-      const landing = moved.get(unit.members[0]!.id)!.to;
+      // Where the members that ARE named go; the one asked about is among them, so there is one.
+      const landing = moved.get(unit.members.find((member) => moved.has(member.id))!.id)!.to;
       const missing = unit.members.filter((member) => !moved.has(member.id));
       const apart = unit.members.filter((member) => {
         const to = moved.get(member.id)?.to;

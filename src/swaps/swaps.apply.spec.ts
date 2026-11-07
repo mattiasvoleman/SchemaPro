@@ -250,6 +250,16 @@ describe('SwapsService.apply', () => {
       expect(second).toBeDefined();
     });
 
+    it('is the same 409 whichever member of the card is left out, the first by id included', async () => {
+      const { tx, written } = applyTx(blocked);
+      const { swaps } = build(blocked, tx);
+      // Name only the SECOND member of the card: the first one is left behind.
+      const error = await swaps.apply(body(blocked, [[second, elsewhere], [elsewhere, second]], { lessonId: second.id }), user).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: SWAP_SPLITS_PARALLEL, lessonIds: [first!.id] });
+      expect(written).toHaveLength(0);
+    });
+
     it('is a 409 SWAP_SPLITS_PARALLEL when the moves would part the block, naming the lessons left behind', async () => {
       const { tx, written } = applyTx(blocked);
       const { swaps } = build(blocked, tx);
