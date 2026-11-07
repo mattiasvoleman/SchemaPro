@@ -20217,6 +20217,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('LeaveDelegationDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('LeaveRequests', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('LessonLogs', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('LessonPupilMoves', '{}', '{}', '{}', '{}'),
   ('LocalTimplanEntries', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('LocalTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('LunchServings', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
