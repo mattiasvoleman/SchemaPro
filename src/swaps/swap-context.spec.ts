@@ -107,6 +107,38 @@ describe('mayStand: the prune is a plain overlap, and a subset of the clash rule
   });
 });
 
+describe('mayStand: groups that share a pupil clash, unless a replacing group is in play', () => {
+  const sharedPupil = (groupsByStudent: Array<[string, string[]]>) => ({
+    rosters: { ...base.data.rosters, groupsByStudent: new Map(groupsByStudent.map(([pupil, groups]) => [pupil, new Set(groups)])) },
+  });
+  const groups = (extra: Partial<SwapData['groups'][number]> = {}) => [
+    ...base.data.groups,
+    { id: 'tg', name: 'Spanska', kind: 'TEACHING_GROUP' as const, halfOfId: null, replacesSubjectId: null, gradeLevel: 7, ...extra },
+  ];
+  const mover = lesson('mover', 'c1', 1, 480);
+  const block = lesson('block', 'tg', 2, 540);
+
+  it('refuses a slot where a teaching group with a pupil of the class stands', () => {
+    const ctx = context([mover, block], { ...sharedPupil([['p1', ['c1', 'tg']]]), groups: groups() });
+    expect(ctx.mayStand(unitOf(ctx, 'mover'), slot(2, 540), new Set(['mover']))).toBe(false);
+    // The teaching group moving to the class's slot is refused the same way.
+    expect(ctx.mayStand(unitOf(ctx, 'block'), slot(1, 480), new Set(['block']))).toBe(false);
+  });
+
+  it('lets them share a slot when no pupil is in both', () => {
+    const ctx = context([mover, block], { ...sharedPupil([['p1', ['c1']], ['p2', ['tg']]]), groups: groups() });
+    expect(ctx.mayStand(unitOf(ctx, 'mover'), slot(2, 540), new Set(['mover']))).toBe(true);
+  });
+
+  it('keeps to the groups themselves at a school with a replacing group: the rule lets a replaced pupil be elsewhere', () => {
+    const ctx = context([mover, block], {
+      ...sharedPupil([['p1', ['c1', 'tg']]]),
+      groups: groups({ replacesSubjectId: 'sv' }),
+    });
+    expect(ctx.mayStand(unitOf(ctx, 'mover'), slot(2, 540), new Set(['mover']))).toBe(true);
+  });
+});
+
 describe('boardRefusal: the grid’s other hard kinds', () => {
   const mover = lesson('mover', 'c1', 1, 480, { teacherId: 'T', roomId: 'R' });
   const landing = (ctx: SwapContext, to: SwapSlot) => ctx.boardRefusal({ lesson: mover, to });

@@ -112,6 +112,13 @@ async function main() {
   await owner.connect();
   const api = new PrismaService();
   await api.onModuleInit();
+  // withRls gives a transaction 15 s. On a host that other work has taken to a load average
+  // of a hundred a single request outlives that, which measures the host; WAIT_MS lifts it.
+  const patience = Number(process.env['WAIT_MS'] ?? 0);
+  if (patience > 0) {
+    const withRls = api.withRls.bind(api) as (user: unknown, run: unknown, options?: object) => Promise<unknown>;
+    (api as unknown as { withRls: typeof withRls }).withRls = (user, run, options) => withRls(user, run, { ...options, timeoutMs: patience });
+  }
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]);
   try {

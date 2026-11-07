@@ -57,6 +57,16 @@ export class SwapContext {
   private readonly sittings = new Map<string, SwapData['sittings'][number][]>();
   private readonly holdsByResource = new Map<string, OtherSchoolHold[]>();
   private readonly gapConstraints: GapConstraint[];
+  /**
+   * group -> the groups that hold a pupil of it, or null at a school with a
+   * replacing group. A class and a teaching group cut across it (språkval,
+   * elevens val) clash when they share a pupil, and the clash rule says so; the
+   * prune says it too, so that the judge is not asked about every slot a block
+   * stands in. With a replacing group the rule lets a replaced pupil be
+   * elsewhere (common/replacing-groups.ts), so the plain relation could refuse
+   * what the rule allows: there the prune keeps to the groups themselves.
+   */
+  private readonly sharing: ReadonlyMap<string, readonly string[]> | null;
 
   constructor(readonly data: SwapData) {
     this.lessonById = new Map(data.lessons.map((lesson) => [lesson.id, lesson]));
@@ -127,6 +137,8 @@ export class SwapContext {
           ]
         : [],
     );
+
+    this.sharing = data.groups.some((group) => group.replacesSubjectId !== null) ? null : sharingOf(data);
 
     // Units: what the school laid beside what.
     const blockOfPost = new Map(data.posts.map((post) => [`${post.studentGroupId}:${post.subjectId}`, post.blockId]));
@@ -254,19 +266,22 @@ export class SwapContext {
     const own = this.buffer.get(lesson.id);
     const pupilStart = to.startMinutes - (own?.before ?? 0);
     const pupilEnd = to.endMinutes + (own?.after ?? 0);
+    const sharing = this.sharing;
     for (const groupId of [lesson.studentGroupId, ...lesson.extraGroupIds]) {
-      for (const other of this.byGroupDay.get(`${groupId}|${day}`) ?? []) {
-        if (!meets(other)) continue;
-        const theirs = this.buffer.get(other.id);
-        if (
-          overlaps(
-            pupilStart,
-            pupilEnd,
-            other.startMinutes - (theirs?.before ?? 0),
-            other.endMinutes + (theirs?.after ?? 0),
-          )
-        ) {
-          return false;
+      for (const sharedWith of sharing ? [groupId, ...(sharing.get(groupId) ?? [])] : [groupId]) {
+        for (const other of this.byGroupDay.get(`${sharedWith}|${day}`) ?? []) {
+          if (!meets(other)) continue;
+          const theirs = this.buffer.get(other.id);
+          if (
+            overlaps(
+              pupilStart,
+              pupilEnd,
+              other.startMinutes - (theirs?.before ?? 0),
+              other.endMinutes + (theirs?.after ?? 0),
+            )
+          ) {
+            return false;
+          }
         }
       }
     }
@@ -380,4 +395,18 @@ export class SwapContext {
     }
     return null;
   }
+}
+
+/** group -> the other groups holding at least one of its pupils, from the rosters the clash rule reads. */
+function sharingOf(data: SwapData): Map<string, string[]> {
+  const related = new Map<string, Set<string>>();
+  for (const groups of data.rosters.groupsByStudent.values()) {
+    if (groups.size < 2) continue;
+    for (const a of groups) {
+      let set = related.get(a);
+      if (!set) related.set(a, (set = new Set()));
+      for (const b of groups) if (a !== b) set.add(b);
+    }
+  }
+  return new Map([...related].map(([group, others]) => [group, [...others]]));
 }
