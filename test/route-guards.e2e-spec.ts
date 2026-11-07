@@ -176,6 +176,7 @@ describe('Route guard coverage (e2e)', () => {
     // Kvittens: the switch is Drift's; a request is written by a teacher or an administrator under Drift.
     expect(of('AckController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('AckController', 'create')).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    expect(of('AckController', 'stopReminder')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     // Rapporteringsgrad: the switches and the limit are Drift's; a teacher reads their own page.
     expect(of('ReportingRateController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('PublicationsController', 'publish')).toEqual({ kind: 'area', areas: ['PUBLICERING', 'DRIFT'] });

@@ -1473,22 +1473,31 @@
         "operationId": "AckController_list",
         "parameters": [
           {
+            "name": "after",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
             "$ref": "#/components/parameters/SchoolId"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": "OK"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -1560,6 +1569,10 @@
           "areas": [
             "DRIFT"
           ]
+        },
+        "x-rate-limit": {
+          "limit": 5,
+          "ttlSeconds": 60
         }
       }
     },
@@ -1571,22 +1584,31 @@
         "operationId": "AckController_mine",
         "parameters": [
           {
+            "name": "after",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
             "$ref": "#/components/parameters/SchoolId"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": "OK"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -1841,6 +1863,61 @@
         "x-roles": [
           "GUARDIAN"
         ]
+      }
+    },
+    "/api/v1/acknowledgements/{id}/stop-reminder": {
+      "post": {
+        "tags": [
+          "Ack"
+        ],
+        "operationId": "AckController_stopReminder",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
       }
     },
     "/api/v1/attendance/groups/{groupId}/records": {

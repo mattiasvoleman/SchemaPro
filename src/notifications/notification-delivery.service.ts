@@ -72,6 +72,18 @@ export const EMAIL_INTERVAL_MS = 500;
  * ten. Batches go through one process-wide serial queue: the next starts
  * when the last has finished. The queue is bounded (MAX_PENDING_BATCHES).
  *
+ * AN ALARM DOES NOT WAIT IN IT. A request for a guardian's confirmation to a
+ * whole school is 4 000 notices and some 82 mails, a minute or so of that
+ * queue, and an alarm's push lives ten minutes (URGENT_PUSH_TTL_SECONDS). The
+ * urgent types (URGENT_PUSH_TYPES) therefore go through a second serial
+ * queue of their own, which starts at once beside the first one: the entries
+ * of a batch are split by type when it is queued, so an alarm that shares a
+ * transaction with other notices is still the urgent lane's. The two lanes
+ * share the providers' pacing (one mail at most every EMAIL_INTERVAL_MS,
+ * Expo's five requests a second), each mail and each request taking the next
+ * free slot, so an alarm's mail waits one slot, not the other lane's whole
+ * backlog, and the total rate is the one the providers allow.
+ *
  * E-mail is BCC mail per notifyUsers chunk, with the caller's subject and
  * body, unchanged, minus the recipients who opted out of the type
  * (NotificationOptOuts, read by userId through app.delivery_opt_outs in
@@ -101,10 +113,13 @@ export const EMAIL_INTERVAL_MS = 500;
 @Injectable()
 export class NotificationDeliveryService {
   private readonly logger = new Logger(NotificationDeliveryService.name);
-  private readonly queue: OutboxBatch[] = [];
-  private running: Promise<void> | null = null;
-  /** When the last mail went (epoch ms), for the provider's rate. */
-  private lastMailAt = 0;
+  /** The ordinary lane and the urgent one; each is serial, and they run beside each other. */
+  private readonly lanes: Record<'ordinary' | 'urgent', { queue: OutboxBatch[]; running: Promise<void> | null }> = {
+    ordinary: { queue: [], running: null },
+    urgent: { queue: [], running: null },
+  };
+  /** The first moment the next mail may go (epoch ms), for the provider's rate; a mail takes the slot, whichever lane sends it. */
+  private nextMailAt = 0;
   /** The pause between two mails; a spec sets it to 0. */
   emailIntervalMs = EMAIL_INTERVAL_MS;
 
@@ -129,25 +144,35 @@ export class NotificationDeliveryService {
     return Boolean(process.env.RESEND_API_KEY);
   }
 
-  /** Queues one committed transaction's notices. Never throws. */
+  /** Queues one committed transaction's notices: the alarms in the urgent lane, the rest in the ordinary one. Never throws. */
   enqueue(batch: OutboxBatch): void {
     if (batch.length === 0) return;
-    if (this.queue.length >= MAX_PENDING_BATCHES) {
-      this.logger.warn(`Delivery queue full; ${batch.length} notice(s) not mirrored [pending=${this.queue.length}]`);
+    const urgent = batch.filter((entry) => URGENT_PUSH_TYPES.has(entry.type));
+    if (urgent.length > 0) this.offer('urgent', urgent);
+    if (urgent.length < batch.length) this.offer('ordinary', urgent.length === 0 ? batch : batch.filter((entry) => !URGENT_PUSH_TYPES.has(entry.type)));
+  }
+
+  private offer(name: 'ordinary' | 'urgent', batch: OutboxBatch): void {
+    const lane = this.lanes[name];
+    if (lane.queue.length >= MAX_PENDING_BATCHES) {
+      this.logger.warn(`Delivery queue full; ${batch.length} notice(s) not mirrored [pending=${lane.queue.length}${name === 'urgent' ? ', lane=urgent' : ''}]`);
       return;
     }
-    this.queue.push(batch);
-    if (!this.running) this.running = this.drain();
+    lane.queue.push(batch);
+    if (!lane.running) lane.running = this.drain(name);
   }
 
-  /** Resolves once the queue is empty and nothing is being delivered. */
+  /** Resolves once both queues are empty and nothing is being delivered. */
   async idle(): Promise<void> {
-    while (this.running) await this.running;
+    while (this.lanes.ordinary.running || this.lanes.urgent.running) {
+      await Promise.all([this.lanes.ordinary.running, this.lanes.urgent.running]);
+    }
   }
 
-  private async drain(): Promise<void> {
+  private async drain(name: 'ordinary' | 'urgent'): Promise<void> {
+    const lane = this.lanes[name];
     try {
-      for (let batch = this.queue.shift(); batch; batch = this.queue.shift()) {
+      for (let batch = lane.queue.shift(); batch; batch = lane.queue.shift()) {
         try {
           await this.deliver(batch);
         } catch (error) {
@@ -155,7 +180,7 @@ export class NotificationDeliveryService {
         }
       }
     } finally {
-      this.running = null;
+      lane.running = null;
     }
   }
 
@@ -307,9 +332,11 @@ export class NotificationDeliveryService {
     if (!apiKey || addresses.length === 0) return;
 
     for (let at = 0; at < addresses.length; at += EMAIL_BCC_CHUNK) {
-      const wait = this.lastMailAt + this.emailIntervalMs - Date.now();
-      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-      this.lastMailAt = Date.now();
+      // The next free slot, taken before waiting for it: the other lane's mail takes the one after.
+      const now = Date.now();
+      const slot = Math.max(now, this.nextMailAt);
+      this.nextMailAt = slot + this.emailIntervalMs;
+      if (slot > now) await new Promise((resolve) => setTimeout(resolve, slot - now));
       try {
         const response = await fetch('https://api.resend.com/emails', {
           method: 'POST',

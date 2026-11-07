@@ -8,9 +8,13 @@ import { AckService } from './ack.service';
 /**
  * Kvittens' reminder pass (20270117091000), a job of the JobRunner: once, to
  * each guardian who has not confirmed a request whose time the school chose
- * has come (app.ack_remind_due). Off when ACK_BACKGROUND=off (the test setup).
- * With no request due it is one query a quarter of an hour. Never throws; each
- * pass is counted in JobRuns.
+ * has come. The pass takes the due requests one at a time, each in a
+ * transaction of its own (AckService.remind), so one that cannot be finished
+ * neither stops the others nor is lost. Off when ACK_BACKGROUND=off (the test
+ * setup). With no request due it is one query a quarter of an hour. Never
+ * throws; each pass is counted in JobRuns: how many guardians were reminded,
+ * how many requests were worked through, how many failed (the pass is then
+ * recorded as failed) and how many were left for the next pass.
  */
 @Injectable()
 export class AckJob implements OnModuleInit, OnModuleDestroy {
@@ -39,8 +43,9 @@ export class AckJob implements OnModuleInit, OnModuleDestroy {
     this.running = this.ack
       .remind()
       .then((counts) => {
-        if (counts.reminded > 0) this.logger.log(`Reminders written [guardians=${counts.reminded}]`);
-        this.jobs?.settled(ACK_JOB, started, { ok: true, counts: { ...counts } });
+        if (counts.reminded > 0) this.logger.log(`Reminders written [guardians=${counts.reminded}, requests=${counts.requests}]`);
+        if (counts.left > 0) this.logger.warn(`The reminder pass ran out of time [left=${counts.left}]`);
+        this.jobs?.settled(ACK_JOB, started, counts.failed === 0 ? { ok: true, counts: { ...counts } } : { ok: false, error: 'RequestFailed', counts: { ...counts } });
       })
       .catch((error: unknown) => {
         this.logger.warn(`Reminder pass failed [${errorName(error)}]`);

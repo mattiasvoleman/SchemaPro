@@ -109,6 +109,84 @@ describe('NotificationDeliveryService (e-mail)', () => {
     expect(most).toBe(1);
   });
 
+  describe('an alarm and a wave', () => {
+    const waveOf = (subject: string) =>
+      entry({
+        email: { subject, body: 'B', recipients: Array.from({ length: 98 }, (_, i) => ({ userId: `u${i}`, email: `u${i}@example.invalid` })) },
+      });
+    const alarm = (subject = 'ALARM') =>
+      entry({ type: 'CRISIS_ALARM', meta: {}, email: { subject, body: 'B', recipients: [{ userId: 'u1', email: 'u1@example.invalid' }] } });
+    const subjectOf = (call: unknown[]) => (JSON.parse((call[1] as { body: string }).body) as { subject: string }).subject;
+    const until = async (condition: () => boolean) => {
+      for (let i = 0; i < 500 && !condition(); i++) await new Promise((resolve) => setTimeout(resolve, 2));
+      expect(condition()).toBe(true);
+    };
+
+    it('lets an alarm go beside a wave that is in the middle of its mails, not after it', async () => {
+      // A request to a whole school is some 4 000 notices and 82 mails; the alarm's push lives ten minutes.
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
+        if ((JSON.parse(init.body) as { subject: string }).subject === 'WAVE') await held;
+        return { ok: true, status: 200 };
+      });
+      delivery.enqueue([waveOf('WAVE')]);
+      delivery.enqueue([waveOf('NEXT WAVE')]);
+      await until(() => fetchMock.mock.calls.length === 1);
+      delivery.enqueue([alarm()]);
+      await until(() => fetchMock.mock.calls.some((call) => subjectOf(call) === 'ALARM'));
+      // The first wave is still held in its first mail, and the second has not started.
+      expect(fetchMock.mock.calls.map(subjectOf)).toEqual(['WAVE', 'ALARM']);
+      release();
+      await delivery.idle();
+      expect(fetchMock.mock.calls.map(subjectOf).filter((subject) => subject === 'NEXT WAVE')).toHaveLength(2);
+    });
+
+    it('splits a transaction’s notices by type: the alarm in it goes the urgent way, the rest wait their turn', async () => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
+        if ((JSON.parse(init.body) as { subject: string }).subject === 'WAVE') await held;
+        return { ok: true, status: 200 };
+      });
+      delivery.enqueue([waveOf('WAVE')]);
+      await until(() => fetchMock.mock.calls.length === 1);
+      delivery.enqueue([entry({ email: { subject: 'LESSON', body: 'B', recipients: [{ userId: 'u9', email: 'u9@example.invalid' }] } }), alarm()]);
+      await until(() => fetchMock.mock.calls.some((call) => subjectOf(call) === 'ALARM'));
+      expect(fetchMock.mock.calls.map(subjectOf)).toEqual(['WAVE', 'ALARM']);
+      release();
+      await delivery.idle();
+      expect(fetchMock.mock.calls.map(subjectOf)).toEqual(['WAVE', 'ALARM', 'WAVE', 'LESSON']);
+    });
+
+    it('keeps the provider’s pace across both lanes: one mail at most every interval, whichever lane sends it', async () => {
+      delivery.emailIntervalMs = 40;
+      const sentAt: number[] = [];
+      fetchMock.mockImplementation(async () => {
+        sentAt.push(Date.now());
+        return { ok: true, status: 200 };
+      });
+      delivery.enqueue([waveOf('WAVE')]);
+      delivery.enqueue([alarm('A1')]);
+      delivery.enqueue([alarm('A2')]);
+      await delivery.idle();
+      expect(sentAt).toHaveLength(4);
+      const gaps = sentAt.slice(1).map((at, i) => at - sentAt[i]!);
+      for (const gap of gaps) expect(gap).toBeGreaterThanOrEqual(35);
+    });
+
+    it('bounds each lane on its own: a full ordinary lane does not refuse an alarm', async () => {
+      const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      fetchMock.mockImplementation(() => new Promise(() => undefined));
+      for (let i = 0; i <= MAX_PENDING_BATCHES + 1; i++) delivery.enqueue([entry()]);
+      warn.mockClear();
+      delivery.enqueue([alarm()]);
+      expect(warn).not.toHaveBeenCalled();
+      for (let i = 0; i <= MAX_PENDING_BATCHES + 1; i++) delivery.enqueue([alarm()]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('lane=urgent'));
+    });
+  });
+
   it('keeps going after a batch fails, and logs only its error’s name', async () => {
     const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
     prisma.withDeliveryService.mockRejectedValueOnce(new TypeError('boom with a secret'));

@@ -4,8 +4,8 @@ import type { AckService } from './ack.service';
 
 /**
  * The reminder pass: one look every quarter of an hour at the requests whose time
- * has come (AckService.remind, app.ack_remind_due), counted in JobRuns, never
- * throwing; registered only when ACK_BACKGROUND is on.
+ * has come (AckService.remind: the due requests one at a time), counted in JobRuns,
+ * never throwing; registered only when ACK_BACKGROUND is on.
  */
 describe('AckJob', () => {
   const setup = (remind: jest.Mock, background = true) => {
@@ -35,10 +35,22 @@ describe('AckJob', () => {
     expect(jobs.unregister).toHaveBeenCalledWith(ACK_JOB);
   });
 
-  it('counts a pass in JobRuns with how many guardians were reminded', async () => {
-    const { job, jobs } = setup(jest.fn().mockResolvedValue({ reminded: 3 }));
+  it('counts a pass in JobRuns with how many guardians were reminded, in how many requests, and how many were left', async () => {
+    const counts = { reminded: 3, requests: 2, failed: 0, left: 0 };
+    const { job, jobs } = setup(jest.fn().mockResolvedValue(counts));
     await job.tick();
-    expect(jobs.settled).toHaveBeenCalledWith(ACK_JOB, expect.any(Date), { ok: true, counts: { reminded: 3 } });
+    expect(jobs.settled).toHaveBeenCalledWith(ACK_JOB, expect.any(Date), { ok: true, counts });
+  });
+
+  it('records a pass in which a request failed as failed, with the others counted, and a pass that ran out of time as ok', async () => {
+    const failing = { reminded: 1, requests: 1, failed: 1, left: 0 };
+    const { job, jobs } = setup(jest.fn().mockResolvedValue(failing));
+    await job.tick();
+    expect(jobs.settled).toHaveBeenCalledWith(ACK_JOB, expect.any(Date), { ok: false, error: 'RequestFailed', counts: failing });
+    const slow = { reminded: 5, requests: 5, failed: 0, left: 40 };
+    const second = setup(jest.fn().mockResolvedValue(slow));
+    await second.job.tick();
+    expect(second.jobs.settled).toHaveBeenCalledWith(ACK_JOB, expect.any(Date), { ok: true, counts: slow });
   });
 
   it('records a failed pass as failed and never throws', async () => {
@@ -48,12 +60,12 @@ describe('AckJob', () => {
   });
 
   it('lets a pass that is still running finish instead of starting another', async () => {
-    let finish!: (counts: { reminded: number }) => void;
+    let finish!: (counts: { reminded: number; requests: number; failed: number; left: number }) => void;
     const remind = jest.fn().mockReturnValue(new Promise((resolve) => (finish = resolve)));
     const { job } = setup(remind);
     const first = job.tick();
     const second = job.tick();
-    finish({ reminded: 0 });
+    finish({ reminded: 0, requests: 0, failed: 0, left: 0 });
     await Promise.all([first, second]);
     expect(remind).toHaveBeenCalledTimes(1);
   });

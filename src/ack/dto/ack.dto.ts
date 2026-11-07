@@ -1,7 +1,7 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Max, Min, ValidateIf } from 'class-validator';
 import type { AckRule } from '@prisma/client';
-import { ACK_RULES, BODY_MAX, PUPILS_MAX, REMIND_DAYS_MAX, REMIND_DAYS_MIN, TITLE_MAX } from '../ack';
+import { ACK_RULES, BODY_MAX, PAGE_MAX, PUPILS_MAX, REMIND_DAYS_MAX, REMIND_DAYS_MIN, TITLE_MAX } from '../ack';
 
 const trimmed = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
@@ -39,4 +39,18 @@ export class CreateAckRequestDto {
   @ArrayMaxSize(PUPILS_MAX)
   @IsUUID('all', { each: true })
   studentIds!: string[];
+}
+
+/** A page of the staff's list or the guardian's own: after the request with this id, at most `limit`. */
+export class AckPageQueryDto {
+  @IsOptional()
+  @IsUUID('4')
+  after?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(PAGE_MAX)
+  limit?: number;
 }

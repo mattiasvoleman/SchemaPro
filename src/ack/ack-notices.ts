@@ -7,7 +7,7 @@ import type { OutboxEntry } from '../notifications/notification-outbox';
  * that a message waits and nothing else: no title, no pupil, no text, so the
  * message is read only after signing in, which is also where it is confirmed.
  * The push says less still (push-messages.ts). The database writes the
- * reminders (app.ack_remind_due) and hands them back with the addresses; the
+ * reminders (app.ack_remind_request) and hands them back with the addresses; the
  * request's own notices are written by the service in the staff member's
  * transaction.
  */
@@ -26,7 +26,7 @@ export function requestedEntries(requestId: string, title: string): { meta: Reco
   return { meta: { requestId, title }, email: { subject: EMAIL_SUBJECT, body: requestedBody } };
 }
 
-/** A row of app.ack_remind_due. */
+/** A row of app.ack_remind_request. */
 export interface ReminderRow {
   notification_id: string;
   user_id: string;

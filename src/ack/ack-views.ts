@@ -1,6 +1,18 @@
-import type { AckRule } from '@prisma/client';
+import type { AckReminderOutcome, AckRule } from '@prisma/client';
 
 /** What the answers look like; the web and the app have their own copies of these shapes. */
+
+/** A page of a list: the items, and the id to ask for the next page after (null: that was the last). */
+export interface AckPage<T> {
+  items: T[];
+  next: string | null;
+}
+
+/**
+ * Where a request's one reminder stands: NONE (the school chose no reminder), SCHEDULED (its time has not
+ * come, or the pass has not reached it yet), and how it ended otherwise (AckReminderOutcome).
+ */
+export type AckReminderState = 'NONE' | 'SCHEDULED' | AckReminderOutcome;
 
 export interface AckSettingsView {
   enabled: boolean;
@@ -39,7 +51,7 @@ export interface AckListItem {
   /** Guardians who have not confirmed and still can. */
   waiting: number;
   remindAt: string | null;
-  reminderSent: boolean;
+  reminder: AckReminderState;
 }
 
 export type AckGuardianState = 'CONFIRMED' | 'WAITING' | 'ENDED';
@@ -70,7 +82,11 @@ export interface AckDetail {
   authorName: string;
   createdAt: string;
   remindAt: string | null;
+  /** When at least one reminder went; null unless the reminder is SENT. */
   reminderSentAt: string | null;
+  reminder: AckReminderState;
+  /** The reader may stop the reminder: it is scheduled, and they wrote the request or administer the school. */
+  mayStopReminder: boolean;
   pupils: AckPupilRow[];
 }
 
@@ -88,4 +104,8 @@ export interface AckMine {
 
 export interface AckConfirmed {
   ackedAt: string;
+}
+
+export interface AckReminderStopped {
+  reminder: AckReminderState;
 }

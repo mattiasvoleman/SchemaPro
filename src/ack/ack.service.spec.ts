@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, HttpStatus, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
@@ -193,6 +193,27 @@ describe('AckService', () => {
       expect(notifications.notifyUsers.mock.calls[0]![1].userIds).toHaveLength(1500);
     });
 
+    it.each([
+      ['KV429', 'ACK_TOO_MANY_REQUESTS'],
+      ['KV428', 'ACK_TOO_MANY_RECIPIENTS'],
+    ])('answers the database’s %s with a 429 and its own code, and nothing else', async (state, code) => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_enabled()': [{ enabled: true }] });
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      tx['guardianStudent']!['findMany']!.mockResolvedValue([{ studentId: 'p-1', guardianId: 'g-1' }]);
+      tx['ackRequest']!['createMany']!.mockRejectedValue(sqlState(state));
+      const error = await service.create(dto, admin).catch((e: unknown) => e);
+      expect((error as { getStatus(): number }).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect((error as { response: { code: string } }).response.code).toBe(code);
+      // The receipts' own statement can be the one over the day's limit.
+      tx['ackRequest']!['createMany']!.mockResolvedValue({ count: 1 });
+      tx['ackReceipt']!['createMany']!.mockRejectedValue(sqlState(state));
+      await expect(service.create(dto, admin)).rejects.toMatchObject({ response: { code } });
+      const other = new Error('connection reset');
+      tx['ackReceipt']!['createMany']!.mockRejectedValue(other);
+      await expect(service.create(dto, admin)).rejects.toBe(other);
+    });
+
     it('lets a teacher ask about her mentees', async () => {
       const { tx, service } = setup();
       raw(tx, { 'app.ack_enabled()': [{ enabled: true }], 'app.ack_mentee_ids()': [{ ids: ['p-1', 'p-2'] }] });
@@ -203,11 +224,12 @@ describe('AckService', () => {
   });
 
   describe('list', () => {
-    it('counts pupils, those who are met and the guardians who wait, and names nobody', async () => {
+    it('counts pupils, those who are met and the guardians who wait, says where each reminder stands, and names nobody', async () => {
       const { tx, service } = setup();
       tx['ackRequest']!['findMany']!.mockResolvedValue([
-        { id: 'r-1', title: 'A', rule: 'ALL', authorName: 'Mentor A', createdAt: new Date('2026-11-02T08:00:00Z'), remindAt: new Date('2026-11-04T08:00:00Z'), reminderSentAt: null },
-        { id: 'r-2', title: 'B', rule: 'ANY', authorName: 'Mentor A', createdAt: new Date('2026-11-01T08:00:00Z'), remindAt: null, reminderSentAt: new Date('2026-11-03T08:00:00Z') },
+        { id: 'r-1', title: 'A', rule: 'ALL', authorName: 'Mentor A', createdAt: new Date('2026-11-02T08:00:00Z'), remindAt: new Date('2026-11-04T08:00:00Z'), reminderOutcome: null },
+        { id: 'r-2', title: 'B', rule: 'ANY', authorName: 'Mentor A', createdAt: new Date('2026-11-01T08:00:00Z'), remindAt: null, reminderOutcome: null },
+        { id: 'r-3', title: 'C', rule: 'ANY', authorName: 'Mentor A', createdAt: new Date('2026-10-30T08:00:00Z'), remindAt: new Date('2026-11-01T08:00:00Z'), reminderOutcome: 'NOT_NEEDED' },
       ]);
       raw(tx, {
         'app.ack_status': [
@@ -215,17 +237,44 @@ describe('AckService', () => {
           { request_id: 'r-1', student_id: 'p-2', asked: 1, acked: 1, waiting: 0, met: true },
         ],
       });
-      const list = await service.list(admin);
-      expect(list).toEqual([
-        { id: 'r-1', title: 'A', rule: 'ALL', authorName: 'Mentor A', createdAt: '2026-11-02T08:00:00.000Z', pupils: 2, met: 1, waiting: 1, remindAt: '2026-11-04T08:00:00.000Z', reminderSent: false },
-        { id: 'r-2', title: 'B', rule: 'ANY', authorName: 'Mentor A', createdAt: '2026-11-01T08:00:00.000Z', pupils: 0, met: 0, waiting: 0, remindAt: null, reminderSent: true },
+      const page = await service.list(admin);
+      expect(page.next).toBeNull();
+      expect(page.items).toEqual([
+        { id: 'r-1', title: 'A', rule: 'ALL', authorName: 'Mentor A', createdAt: '2026-11-02T08:00:00.000Z', pupils: 2, met: 1, waiting: 1, remindAt: '2026-11-04T08:00:00.000Z', reminder: 'SCHEDULED' },
+        { id: 'r-2', title: 'B', rule: 'ANY', authorName: 'Mentor A', createdAt: '2026-11-01T08:00:00.000Z', pupils: 0, met: 0, waiting: 0, remindAt: null, reminder: 'NONE' },
+        { id: 'r-3', title: 'C', rule: 'ANY', authorName: 'Mentor A', createdAt: '2026-10-30T08:00:00.000Z', pupils: 0, met: 0, waiting: 0, remindAt: '2026-11-01T08:00:00.000Z', reminder: 'NOT_NEEDED' },
       ]);
       expect(tx.$executeRaw).not.toHaveBeenCalled();
     });
 
-    it('asks nothing of the database when there is nothing to count', async () => {
+    it.each(['SENT', 'NOT_NEEDED', 'LAPSED', 'STOPPED', 'OFF'] as const)('says %s when that is how the reminder ended', async (outcome) => {
       const { tx, service } = setup();
-      expect(await service.list(admin)).toEqual([]);
+      tx['ackRequest']!['findMany']!.mockResolvedValue([
+        { id: 'r-1', title: 'A', rule: 'ANY', authorName: 'M', createdAt: new Date('2026-11-02T08:00:00Z'), remindAt: new Date('2026-11-04T08:00:00Z'), reminderOutcome: outcome },
+      ]);
+      expect((await service.list(admin)).items[0]!.reminder).toBe(outcome);
+    });
+
+    it('asks for one more than a page, shows a page, and says where the next one starts', async () => {
+      const { tx, service } = setup();
+      const row = (id: string) => ({ id, title: id, rule: 'ANY', authorName: 'M', createdAt: new Date('2026-11-02T08:00:00Z'), remindAt: null, reminderOutcome: null });
+      tx['ackRequest']!['findMany']!.mockResolvedValue([row('r-1'), row('r-2'), row('r-3')]);
+      const page = await service.list(admin, { limit: 2 });
+      expect(page.items.map((item) => item.id)).toEqual(['r-1', 'r-2']);
+      expect(page.next).toBe('r-2');
+      expect(tx['ackRequest']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ take: 3, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }));
+      expect(tx['ackRequest']!['findMany']!.mock.calls[0]![0]).not.toHaveProperty('cursor');
+      await service.list(admin, { after: 'r-2', limit: 2 });
+      expect(tx['ackRequest']!['findMany']).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: { id: 'r-2' }, skip: 1, take: 3 }));
+      // A page that fills exactly is the last one.
+      tx['ackRequest']!['findMany']!.mockResolvedValue([row('r-4'), row('r-5')]);
+      expect((await service.list(admin, { limit: 2 })).next).toBeNull();
+    });
+
+    it('takes fifty by default, and asks nothing of the database when there is nothing to count', async () => {
+      const { tx, service } = setup();
+      expect(await service.list(admin)).toEqual({ items: [], next: null });
+      expect(tx['ackRequest']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ take: 51 }));
       expect(tx.$queryRaw).not.toHaveBeenCalled();
     });
   });
@@ -233,6 +282,7 @@ describe('AckService', () => {
   describe('detail', () => {
     const request = {
       id: REQ,
+      authorId: 'teacher-1',
       title: 'Utflykt',
       body: 'Vi åker kl. 8.',
       rule: 'ALL',
@@ -240,6 +290,7 @@ describe('AckService', () => {
       createdAt: new Date('2026-11-02T08:00:00Z'),
       remindAt: new Date('2026-11-04T08:00:00Z'),
       reminderSentAt: new Date('2026-11-04T08:15:00Z'),
+      reminderOutcome: 'SENT',
     };
     const receipt = (studentId: string, guardianId: string, ackedAt: Date | null, last = 'Ett') => ({
       studentId,
@@ -274,7 +325,17 @@ describe('AckService', () => {
         'app.ack_open_pairs': [{ student_id: 'p-1', guardian_id: 'g-2' }],
       });
       const detail = await service.detail(REQ, admin);
-      expect(detail).toMatchObject({ id: REQ, title: 'Utflykt', body: 'Vi åker kl. 8.', rule: 'ALL', authorName: 'Mentor A', reminderSentAt: '2026-11-04T08:15:00.000Z' });
+      expect(detail).toMatchObject({
+        id: REQ,
+        title: 'Utflykt',
+        body: 'Vi åker kl. 8.',
+        rule: 'ALL',
+        authorName: 'Mentor A',
+        reminderSentAt: '2026-11-04T08:15:00.000Z',
+        reminder: 'SENT',
+        mayStopReminder: false,
+      });
+      expect(JSON.stringify(detail)).not.toContain('authorId');
       expect(detail.pupils.map((p) => [p.name, p.met])).toEqual([['Elev Ett', false], ['Elev Två', true]]);
       expect(detail.pupils[0]!.guardians.map((g) => [g.id, g.state, g.ackedAt, g.remindedAt])).toEqual([
         ['g-1', 'CONFIRMED', '2026-11-02T10:00:00.000Z', null],
@@ -283,6 +344,75 @@ describe('AckService', () => {
       ]);
       // PEOPLE for the pupils and the guardians, GUARDIANS for whose guardian is whose.
       expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('detail: who may stop the reminder', () => {
+    const scheduled = {
+      id: REQ,
+      authorId: 'teacher-1',
+      title: 'Utflykt',
+      body: 'Text',
+      rule: 'ANY',
+      authorName: 'Mentor A',
+      createdAt: new Date('2026-11-02T08:00:00Z'),
+      remindAt: new Date('2026-11-09T08:00:00Z'),
+      reminderSentAt: null,
+      reminderOutcome: null,
+    };
+
+    it('lets the author, and an administrator who writes Drift, stop a scheduled reminder, and nobody else', async () => {
+      const { tx, service } = setup();
+      tx['ackRequest']!['findUnique']!.mockResolvedValue(scheduled);
+      expect((await service.detail(REQ, teacher)).mayStopReminder).toBe(true);
+      expect((await service.detail(REQ, testUser({ schoolId: 'school-1', userId: 'teacher-2', role: 'TEACHER' as never }))).mayStopReminder).toBe(false);
+      raw(tx, { 'app.current_user_may': [{ may: true }] });
+      expect((await service.detail(REQ, admin)).mayStopReminder).toBe(true);
+      raw(tx, { 'app.current_user_may': [{ may: false }] });
+      expect((await service.detail(REQ, admin)).mayStopReminder).toBe(false);
+    });
+
+    it('lets nobody stop a reminder that has ended or was never chosen, and does not ask the database whether an administrator may', async () => {
+      const { tx, service } = setup();
+      for (const [remindAt, reminderOutcome] of [
+        [new Date('2026-11-04T08:00:00Z'), 'STOPPED'],
+        [new Date('2026-11-04T08:00:00Z'), 'LAPSED'],
+        [null, null],
+      ] as const) {
+        tx['ackRequest']!['findUnique']!.mockResolvedValue({ ...scheduled, remindAt, reminderOutcome });
+        expect((await service.detail(REQ, teacher)).mayStopReminder).toBe(false);
+      }
+      expect(tx.$queryRaw.mock.calls.some(([query]) => sqlOf(query).includes('current_user_may'))).toBe(false);
+    });
+  });
+
+  describe('stopReminder', () => {
+    it('answers where the reminder stands afterwards', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_stop_reminder': [{ outcome: 'STOPPED' }] });
+      expect(await service.stopReminder(REQ, teacher)).toEqual({ reminder: 'STOPPED' });
+      raw(tx, { 'app.ack_stop_reminder': [{ outcome: 'SENT' }] });
+      expect(await service.stopReminder(REQ, teacher)).toEqual({ reminder: 'SENT' });
+      raw(tx, { 'app.ack_stop_reminder': [{ outcome: null }] });
+      expect(await service.stopReminder(REQ, admin)).toEqual({ reminder: 'NONE' });
+    });
+
+    it.each([
+      ['KV403', ForbiddenException, 'ACK_NOT_STAFF'],
+      ['KV404', NotFoundException, 'ACK_NOT_FOUND'],
+    ])('answers %s with its own code', async (state, type, code) => {
+      const { tx, service } = setup();
+      tx.$queryRaw.mockRejectedValue(sqlState(state));
+      const error = await service.stopReminder(REQ, teacher).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(type);
+      expect((error as { response: { code: string } }).response.code).toBe(code);
+    });
+
+    it('lets any other failure through as it was', async () => {
+      const { tx, service } = setup();
+      const boom = new Error('connection reset');
+      tx.$queryRaw.mockRejectedValue(boom);
+      await expect(service.stopReminder(REQ, teacher)).rejects.toBe(boom);
     });
   });
 
@@ -307,7 +437,9 @@ describe('AckService', () => {
         row('r-2', [{ studentId: 'p-1', ackedAt: null, name: 'Anna' }]),
         row('r-3', []),
       ]);
-      const mine = await service.mine(guardian);
+      const page = await service.mine(guardian);
+      const mine = page.items;
+      expect(page.next).toBeNull();
       expect(mine.map((m) => m.id)).toEqual(['r-1', 'r-2']);
       expect(mine[0]).toMatchObject({ children: [{ id: 'p-1', name: 'Anna Barn' }, { id: 'p-2', name: 'Erik Barn' }], ackedAt: '2026-11-03T09:00:00.000Z' });
       expect(mine[1]).toMatchObject({ ackedAt: null, authorName: 'Mentor A' });
@@ -323,7 +455,19 @@ describe('AckService', () => {
           { studentId: 'p-2', ackedAt: null, name: 'Erik' },
         ]),
       ]);
-      expect((await service.mine(guardian))[0]!.ackedAt).toBeNull();
+      expect((await service.mine(guardian)).items[0]!.ackedAt).toBeNull();
+    });
+
+    it('pages the same way, newest first from after the request it is given, so an old unconfirmed one can be reached', async () => {
+      const { tx, service } = setup();
+      const many = ['r-1', 'r-2', 'r-3'].map((id) => row(id, [{ studentId: 'p-1', ackedAt: null, name: 'Anna' }]));
+      tx['ackRequest']!['findMany']!.mockResolvedValue(many);
+      const first = await service.mine(guardian, { limit: 2 });
+      expect(first.items.map((m) => m.id)).toEqual(['r-1', 'r-2']);
+      expect(first.next).toBe('r-2');
+      expect(tx['ackRequest']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ take: 3, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }));
+      await service.mine(guardian, { after: 'r-2', limit: 2 });
+      expect(tx['ackRequest']!['findMany']).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: { id: 'r-2' }, skip: 1 }));
     });
   });
 
@@ -363,22 +507,74 @@ describe('AckService', () => {
   });
 
   describe('remind', () => {
-    it('hands what the database wrote to the delivery, once per school', async () => {
-      const { tx, notifications, service } = setup();
-      tx.$queryRaw.mockResolvedValue([
-        { notification_id: 'n-1', user_id: 'g-1', school_id: 'school-1', email: 'g1@example.invalid', meta: { requestId: REQ, title: 'T' } },
-        { notification_id: 'n-2', user_id: 'g-2', school_id: 'school-2', email: null, meta: { requestId: REQ, title: 'T' } },
-      ]);
-      expect(await service.remind()).toEqual({ reminded: 2 });
-      expect(notifications.deliverCommitted).toHaveBeenCalledTimes(1);
+    const notice = (id: string, user: string, school = 'school-1') => ({
+      notification_id: id,
+      user_id: user,
+      school_id: school,
+      email: `${user}@example.invalid`,
+      meta: { requestId: REQ, title: 'T' },
+    });
+
+    /** The queue the database lists, and what each request's pass answers (an Error: that request fails). */
+    function due(tx: TxMock, ids: string[], answers: Record<string, unknown[] | Error>): void {
+      tx.$queryRaw.mockImplementation((query: unknown) => {
+        const q = query as { sql?: string; values?: unknown[] };
+        if ((q.sql ?? '').includes('app.ack_remind_queue')) return Promise.resolve(ids.map((request_id) => ({ request_id })));
+        const answer = answers[String(q.values?.[0])] ?? [];
+        return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+      });
+    }
+
+    it('takes the requests one at a time, each in a transaction of its own, and hands the delivery what each wrote', async () => {
+      const { tx, prisma, notifications, service } = setup();
+      due(tx, ['r-1', 'r-2', 'r-3'], { 'r-1': [notice('n-1', 'g-1'), notice('n-2', 'g-2', 'school-2')], 'r-2': [], 'r-3': [notice('n-3', 'g-3')] });
+      expect(await service.remind()).toEqual({ reminded: 3, requests: 3, failed: 0, left: 0 });
+      // One door for the queue and one for each request: a request that fails or times out rolls back alone.
+      expect(prisma.withDeliveryService).toHaveBeenCalledTimes(4);
+      expect(notifications.deliverCommitted).toHaveBeenCalledTimes(2);
       expect(notifications.deliverCommitted.mock.calls[0]![0]).toHaveLength(2);
+      expect(notifications.deliverCommitted.mock.calls[1]![0]).toHaveLength(1);
+    });
+
+    it('goes on with the next request when one fails, says so, and leaves the failed one in the queue', async () => {
+      const { tx, notifications, service } = setup();
+      const warn = jest.spyOn((service as unknown as { logger: { warn(m: string): void } }).logger, 'warn').mockImplementation(() => undefined);
+      due(tx, ['r-1', 'r-2'], { 'r-1': sqlState('57014'), 'r-2': [notice('n-2', 'g-2')] });
+      expect(await service.remind()).toEqual({ reminded: 1, requests: 1, failed: 1, left: 0 });
+      expect(notifications.deliverCommitted).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('sqlstate=57014'));
+      expect(warn.mock.calls[0]![0]).not.toContain('r-1');
+    });
+
+    it('stops at its budget and counts what it left for the next pass', async () => {
+      const { tx, notifications, service } = setup();
+      due(tx, ['r-1', 'r-2', 'r-3'], { 'r-1': [notice('n-1', 'g-1')] });
+      // Out of time before the first.
+      expect(await service.remind(0)).toEqual({ reminded: 0, requests: 0, failed: 0, left: 3 });
+      expect(notifications.deliverCommitted).not.toHaveBeenCalled();
+    });
+
+    it('asks for the queue with a bound', async () => {
+      const { tx, service } = setup();
+      due(tx, [], {});
+      await service.remind();
+      const asked = tx.$queryRaw.mock.calls[0]![0] as { sql: string; values: unknown[] };
+      expect(asked.sql).toContain('app.ack_remind_queue(');
+      expect(asked.values).toEqual([200]);
     });
 
     it('delivers nothing when nobody is due', async () => {
       const { tx, notifications, service } = setup();
-      tx.$queryRaw.mockResolvedValue([]);
-      expect(await service.remind()).toEqual({ reminded: 0 });
+      due(tx, [], {});
+      expect(await service.remind()).toEqual({ reminded: 0, requests: 0, failed: 0, left: 0 });
       expect(notifications.deliverCommitted).not.toHaveBeenCalled();
+    });
+
+    it('lets a failure of the queue itself through: nothing was tried, so the pass failed', async () => {
+      const { tx, service } = setup();
+      const boom = new Error('connection reset');
+      tx.$queryRaw.mockRejectedValue(boom);
+      await expect(service.remind()).rejects.toBe(boom);
     });
   });
 });

@@ -82,6 +82,49 @@ describe('/api/v1/acknowledgements (e2e)', () => {
       await http().get('/api/v1/acknowledgements/not-an-id').set('x-test-user', asUser({})).expect(400);
       await http().get('/api/v1/acknowledgements/mine').set('x-test-user', asUser({})).expect(403);
     });
+
+    it('answers a page: the items and where the next one starts', async () => {
+      const res = await http().get(`/api/v1/acknowledgements?limit=2&after=${REQ}`).set('x-test-user', asUser({})).expect(200);
+      expect(res.body).toEqual({ items: [], next: null });
+      expect(harness.tx['ackRequest']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ take: 3, cursor: { id: REQ }, skip: 1 }));
+    });
+
+    it.each(['limit=0', 'limit=101', 'limit=ten', 'limit=1.5', 'after=not-an-id'])('refuses a page asked for with %s', async (query) => {
+      await http().get(`/api/v1/acknowledgements?${query}`).set('x-test-user', asUser({})).expect(400);
+      await http().get(`/api/v1/acknowledgements/mine?${query}`).set('x-test-user', asUser({ role: 'GUARDIAN' as never })).expect(400);
+    });
+  });
+
+  describe('stopping a reminder', () => {
+    const stop = (as: string) => http().post(`/api/v1/acknowledgements/${REQ}/stop-reminder`).set('x-test-user', as);
+
+    it('is for signed-in staff: not for a guardian, a pupil or a visitor, nor an administrator who only reads', async () => {
+      await http().post(`/api/v1/acknowledgements/${REQ}/stop-reminder`).expect(401);
+      for (const role of ['STUDENT', 'GUARDIAN']) await stop(asUser({ role: role as never })).expect(403);
+      const refused = await stop(asUser({ adminProfile: 'LASARE' as never })).expect(403);
+      expect(refused.body.code).toBe('AREA_NOT_YOURS');
+      await http().post('/api/v1/acknowledgements/not-an-id/stop-reminder').set('x-test-user', asUser({})).expect(400);
+      expect(harness.tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('answers where the reminder stands, for a teacher and an administrator', async () => {
+      harness.tx.$queryRaw.mockResolvedValue([{ outcome: 'STOPPED' }]);
+      for (const as of [asUser({ role: 'TEACHER' as never }), asUser({})]) {
+        const res = await stop(as).expect(200);
+        expect(res.body).toEqual({ reminder: 'STOPPED' });
+      }
+    });
+
+    it.each([
+      ['KV403', 403, 'ACK_NOT_STAFF'],
+      ['KV404', 404, 'ACK_NOT_FOUND'],
+    ])('answers the database’s %s as %i with its code', async (state, status, code) => {
+      harness.tx.$queryRaw.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Raw query failed', { code: 'P2010', clientVersion: 'test', meta: { driverAdapterError: { cause: { originalCode: state } } } }),
+      );
+      const res = await stop(asUser({ role: 'TEACHER' as never })).expect(status);
+      expect(res.body.code).toBe(code);
+    });
   });
 
   describe('validation', () => {
@@ -118,6 +161,20 @@ describe('/api/v1/acknowledgements (e2e)', () => {
       expect(res.body).toMatchObject({ pupils: 1, guardians: 1, withoutGuardian: [] });
       expect(harness.tx['ackRequest']!['createMany']!.mock.calls[0]![0].data[0]).toMatchObject({ title: 'Utflykt', body: 'Vi åker kl. 8.', rule: 'ANY' });
     });
+
+    it.each([
+      ['KV429', 'ACK_TOO_MANY_REQUESTS'],
+      ['KV428', 'ACK_TOO_MANY_RECIPIENTS'],
+    ])('answers the database’s limit %s as a 429 with its code', async (state, code) => {
+      harness.tx['user']!['findMany']!.mockResolvedValue([{ id: PUPIL }]);
+      harness.tx['guardianStudent']!['findMany']!.mockResolvedValue([{ studentId: PUPIL, guardianId: '66666666-6666-4666-8666-666666666666' }]);
+      harness.tx['ackRequest']!['createMany']!.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Raw query failed', { code: 'P2010', clientVersion: 'test', meta: { driverAdapterError: { cause: { originalCode: state } } } }),
+      );
+      const res = await http().post('/api/v1/acknowledgements').set('x-test-user', admin).send(BODY).expect(429);
+      expect(res.body.code).toBe(code);
+      harness.tx['ackRequest']!['createMany']!.mockReset();
+    });
   });
 
   describe('the guardian', () => {
@@ -125,7 +182,8 @@ describe('/api/v1/acknowledgements (e2e)', () => {
 
     it('reads only the guardian’s own list and confirms; every other role is refused both', async () => {
       harness.tx['ackRequest']!['findMany']!.mockResolvedValue([]);
-      await http().get('/api/v1/acknowledgements/mine').set('x-test-user', guardian).expect(200);
+      const res = await http().get('/api/v1/acknowledgements/mine').set('x-test-user', guardian).expect(200);
+      expect(res.body).toEqual({ items: [], next: null });
       for (const role of ['TEACHER', 'STUDENT', 'SCHOOL_ADMIN']) {
         await http().post(`/api/v1/acknowledgements/${REQ}/confirm`).set('x-test-user', asUser({ role: role as never })).expect(403);
       }
