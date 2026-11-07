@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { ClipboardCheck } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useAckList } from "@/lib/ack-queries";
-import { isDone, reminderOf, type AckListItem } from "@/lib/ack";
+import { isDone, itemsOf, reminderOf, type AckListItem } from "@/lib/ack";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -20,6 +22,12 @@ export const openerId = (id: string) => `ack-open-${id}`;
  * many of the pupils are done, how many guardians still wait and what became of
  * the reminder. Who the pupils and the guardians are is behind the title, in the
  * request itself, where the gateway records the reading.
+ *
+ * The gateway answers a page at a time. "Visa fler" asks for the next and the
+ * rows come after the ones shown, and focus goes to the first of them, since
+ * the button may be gone when the last page is in. A page that cannot be read
+ * is said under the table, with a way to try again: the rows already loaded
+ * stay.
  */
 export function AckList({
   audience,
@@ -29,7 +37,21 @@ export function AckList({
   onOpen: (item: Pick<AckListItem, "id" | "title">) => void;
 }) {
   const { t, day } = useAckText();
+  const tCommon = useTranslations("common");
   const list = useAckList();
+  const rows = itemsOf(list.data);
+  // The row that takes focus once the page asked for is in; a new object each time, so that asking twice moves it twice.
+  const [focus, setFocus] = useState<{ id: string } | null>(null);
+
+  useEffect(() => {
+    if (focus) document.getElementById(openerId(focus.id))?.focus();
+  }, [focus]);
+
+  const more = async () => {
+    const shown = rows.length;
+    const next = itemsOf((await list.fetchNextPage()).data)[shown];
+    if (next) setFocus({ id: next.id });
+  };
 
   if (list.isLoading) {
     return (
@@ -38,10 +60,11 @@ export function AckList({
       </div>
     );
   }
-  if (list.isError || !list.data) {
+  // A page that failed has the loaded rows to show; any other failed read has nothing.
+  if ((list.isError && !list.isFetchNextPageError) || !list.data) {
     return <LoadError variant="inline" title={t("list.loadFailed")} hint={t("list.loadFailedHint")} />;
   }
-  if (list.data.length === 0) {
+  if (rows.length === 0) {
     return (
       <EmptyState
         icon={ClipboardCheck}
@@ -54,10 +77,10 @@ export function AckList({
 
   const reminder = (item: AckListItem): string => {
     const kind = reminderOf(item);
-    return kind === "DUE" ? t("list.reminder.DUE", { date: day(item.remindAt!) }) : t(`list.reminder.${kind}`);
+    return kind === "SCHEDULED" ? t("list.reminder.SCHEDULED", { date: day(item.remindAt!) }) : t(`list.reminder.${kind}`);
   };
 
-  return (
+  const table = (
     <TableCard caption={t("list.caption")} tableClassName="min-w-[46rem]">
       <TableHeader>
         <TableRow>
@@ -69,7 +92,7 @@ export function AckList({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {list.data.map((item) => (
+        {rows.map((item) => (
           <TableRow key={item.id}>
             <TableCell className="max-w-xs">
               <Button
@@ -98,5 +121,30 @@ export function AckList({
         ))}
       </TableBody>
     </TableCard>
+  );
+
+  if (!list.hasNextPage) return table;
+  return (
+    <>
+      {table}
+      {list.isFetchNextPageError ? (
+        <LoadError
+          variant="inline"
+          title={t("list.moreFailed")}
+          hint={t("list.moreFailedHint")}
+          action={
+            <Button type="button" variant="outline" size="sm" disabled={list.isFetchingNextPage} onClick={() => void more()}>
+              {list.isFetchingNextPage ? t("list.loadingMore") : tCommon("retry")}
+            </Button>
+          }
+        />
+      ) : (
+        <div>
+          <Button type="button" variant="outline" disabled={list.isFetchingNextPage} onClick={() => void more()}>
+            {list.isFetchingNextPage ? t("list.loadingMore") : t("list.more")}
+          </Button>
+        </div>
+      )}
+    </>
   );
 }

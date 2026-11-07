@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { AckSettings } from "@/lib/ack";
-import { PUPILS, SETTINGS_OFF, SETTINGS_ON, detail, listItem } from "@/lib/__fixtures__/ack";
+import { PUPILS, SETTINGS_OFF, SETTINGS_ON, detail, listItem, page } from "@/lib/__fixtures__/ack";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import AcknowledgementsPage from "./page";
@@ -38,6 +38,7 @@ const state = vi.hoisted(() => ({
   settings: undefined as unknown,
   list: [] as unknown[],
   pupils: [] as unknown[],
+  detail: undefined as unknown,
   settingsError: false,
   listError: false,
   hold: null as null | Promise<void>,
@@ -67,6 +68,7 @@ beforeEach(() => {
   state.settings = SETTINGS_ON;
   state.list = [listItem()];
   state.pupils = PUPILS;
+  state.detail = detail();
   state.settingsError = false;
   state.listError = false;
   state.hold = null;
@@ -78,10 +80,10 @@ beforeEach(() => {
     }
     if (path === BASE) {
       if (state.listError) throw new ApiError(500, "boom");
-      return state.list;
+      return page(state.list);
     }
     if (path === `${BASE}/pupils`) return state.pupils;
-    if (path === `${BASE}/r-1`) return detail();
+    if (path === `${BASE}/r-1`) return state.detail;
     throw new Error(`unexpected read ${path}`);
   });
   api.put.mockImplementation(async (_path: string, body: Partial<AckSettings>) => ({ ...(state.settings as AckSettings), ...body }));
@@ -122,7 +124,11 @@ describe("Kvittens, the administrator's page", () => {
 
     const toggle = await kvittensSwitch();
     expect(toggle).not.toBeChecked();
-    expect(screen.getByText("Av. Ingen kan be om kvittens, men tidigare förfrågningar finns kvar.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Av. Ingen kan be om kvittens, men tidigare förfrågningar finns kvar. Påminnelser som ska gå medan kvittens är av skickas inte, inte heller när du slår på den igen.",
+      ),
+    ).toBeInTheDocument();
     expect(await screen.findByText("Kvittens är av")).toBeInTheDocument();
     expect(screen.getByText(/Slå på kvittens ovan för att personal ska kunna be om kvittens/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Utflykten på torsdag" })).toBeInTheDocument();
@@ -194,6 +200,17 @@ describe("Kvittens, the administrator's page", () => {
     expect(screen.getByRole("option", { name: "Ingen påminnelse" })).toBeInTheDocument();
   });
 
+  it("says that every guardian who has not confirmed is reminded once, also when another guardian of the pupil has, from the requests sent after the save", async () => {
+    renderPage();
+    await kvittensSwitch();
+
+    expect(
+      screen.getByText(
+        "Varje vårdnadshavare som inte själv har bekräftat påminns en gång, också när en annan vårdnadshavare till eleven har bekräftat. Ändringen gäller förfrågningar som skickas efter att du har sparat.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows a school with no reminder as that", async () => {
     state.settings = { enabled: true, remindAfterDays: null };
     renderPage();
@@ -254,6 +271,31 @@ describe("Kvittens, the administrator's page", () => {
       expect(await screen.findByText("Ada Berg")).toBeInTheDocument();
       expect(screen.getByText("Sara Berg").closest("li")).toHaveTextContent("Bekräftade");
     });
+
+    it("is not offered the stop of a reminder, whatever the gateway says of the right", async () => {
+      const user = userEvent.setup();
+      state.detail = detail({ mayStopReminder: true });
+      renderPage();
+      await user.click(await screen.findByRole("button", { name: "Utflykten på torsdag" }));
+
+      expect(await screen.findByText("Ada Berg")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Stoppa påminnelsen" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("offers an administrator the stop of a reminder the gateway says may be stopped, and stops it", async () => {
+    const user = userEvent.setup();
+    state.detail = detail({ mayStopReminder: true });
+    api.post.mockResolvedValue({ reminder: "STOPPED" });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Utflykten på torsdag" }));
+
+    await user.click(await screen.findByRole("button", { name: "Stoppa påminnelsen" }));
+    expect(api.post).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Stoppa" }));
+
+    expect(await screen.findByText("Påminnelsen är stoppad.")).toBeInTheDocument();
+    expect(api.post).toHaveBeenCalledWith(`${BASE}/r-1/stop-reminder`);
   });
 
   it("speaks English too", async () => {

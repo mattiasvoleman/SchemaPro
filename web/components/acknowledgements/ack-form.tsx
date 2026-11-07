@@ -135,6 +135,8 @@ export function AckRequestForm({
     if (error instanceof ApiError && error.code && (CREATE_REFUSALS as readonly string[]).includes(error.code)) {
       return t(`refusal.${error.code as (typeof CREATE_REFUSALS)[number]}`);
     }
+    // The route is throttled besides (five a minute): that 429 has no code of ours, only the throttler's English words.
+    if (error instanceof ApiError && error.status === 429) return t("refusal.THROTTLED");
     return error instanceof Error ? error.message : tCommon("error");
   };
 

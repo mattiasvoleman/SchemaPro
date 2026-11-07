@@ -11,12 +11,14 @@ import {
   useAckPupils,
   useAckSettings,
 } from "./ack-queries";
-import type { AckMine } from "./ack";
+import type { AckMine, AckPage } from "./ack";
+import { listItem, mineItem, page } from "./__fixtures__/ack";
 
 /**
  * What goes over the wire to /api/v1/acknowledgements: the routes, the verbs
  * and the bodies, and what is read again after a write. The gateway's routes
- * are the contract (src/ack/ack.controller.ts).
+ * are the contract (src/ack/ack.controller.ts). The two lists are pages: the
+ * first has no `after`, and each answer names the id to ask the next after.
  */
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() }));
@@ -41,7 +43,7 @@ beforeEach(() => {
 describe("reading", () => {
   it("reads each list from its own route", async () => {
     const { wrapper } = setup();
-    api.get.mockResolvedValue([]);
+    api.get.mockResolvedValue(page([]));
     for (const hook of [useAckSettings, useAckPupils, useAckList, useAckMine]) {
       const { result } = renderHook(() => hook(), { wrapper });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -62,7 +64,7 @@ describe("reading", () => {
   });
 
   it("does not keep the pupils or an opened request once nothing shows them (the gateway records each reading)", async () => {
-    api.get.mockResolvedValue([]);
+    api.get.mockResolvedValue(page([]));
     const { client, wrapper } = setup();
     const pupils = renderHook(() => useAckPupils(), { wrapper });
     const detail = renderHook(() => useAckDetail("r-1"), { wrapper });
@@ -77,6 +79,63 @@ describe("reading", () => {
     const again = renderHook(() => useAckPupils(), { wrapper });
     await waitFor(() => expect(again.result.current.isSuccess).toBe(true));
     expect(api.get.mock.calls.length).toBe(before + 1);
+  });
+});
+
+describe("the pages of a list", () => {
+  const first = page([listItem({ id: "r-3" }), listItem({ id: "r-2" })], "r-2");
+  const second = page([listItem({ id: "r-1" })]);
+
+  it.each([
+    ["the staff's list", useAckList, BASE],
+    ["the guardian's own", useAckMine, `${BASE}/mine`],
+  ])("asks %s for the next page after the id the last answer named, and appends it", async (_who, hook, path) => {
+    api.get.mockImplementation(async (url: string) => (url === path ? first : second));
+    const { wrapper } = setup();
+    // Both lists are one shape of query, whatever their items.
+    const { result } = renderHook(() => hook() as ReturnType<typeof useAckList>, { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // The first page has no cursor and no limit: the page size is the gateway's.
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(api.get).toHaveBeenLastCalledWith(path);
+    expect(result.current.hasNextPage).toBe(true);
+
+    await act(() => result.current.fetchNextPage());
+
+    expect(api.get).toHaveBeenLastCalledWith(`${path}?after=r-2`);
+    await waitFor(() => expect(result.current.data!.pages).toHaveLength(2));
+    expect(result.current.data!.pages.flatMap((one) => one.items.map((item) => item.id))).toEqual(["r-3", "r-2", "r-1"]);
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it("has no next page when the answer names none", async () => {
+    api.get.mockResolvedValue(page([listItem()], null));
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useAckList(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it("keeps the pages it has when the next one cannot be read, and reads it again when asked", async () => {
+    api.get.mockImplementation(async (url: string) => {
+      if (url === BASE) return first;
+      throw new Error("500");
+    });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useAckList(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    await act(() => result.current.fetchNextPage());
+
+    await waitFor(() => expect(result.current.isFetchNextPageError).toBe(true));
+    expect(result.current.data!.pages).toEqual([first]);
+    expect(result.current.hasNextPage).toBe(true);
+
+    api.get.mockImplementation(async (url: string) => (url === BASE ? first : second));
+    await act(() => result.current.fetchNextPage());
+    await waitFor(() => expect(result.current.data!.pages).toHaveLength(2));
+    expect(result.current.isFetchNextPageError).toBe(false);
   });
 });
 
@@ -116,7 +175,7 @@ describe("a request", () => {
   });
 
   it("reads the list again when it was made", async () => {
-    api.get.mockResolvedValue([]);
+    api.get.mockResolvedValue(page([]));
     const { wrapper } = setup();
     const list = renderHook(() => useAckList(), { wrapper });
     await waitFor(() => expect(list.result.current.isSuccess).toBe(true));
@@ -143,9 +202,11 @@ describe("a confirmation", () => {
     { id: "r-1", title: "Utflykten", body: "På torsdag", rule: "ANY", authorName: "Anna Lind", createdAt: "2026-11-05T08:00:00.000Z", children: [], ackedAt },
     { id: "r-2", title: "Larmet", body: "Det hände", rule: "ALL", authorName: "Anna Lind", createdAt: "2026-11-04T08:00:00.000Z", children: [], ackedAt: null },
   ];
+  const ackedAts = (client: QueryClient) =>
+    client.getQueryData<{ pages: Array<AckPage<AckMine>> }>(ACK_KEYS.mine)!.pages.map((one) => one.items.map((item) => item.ackedAt));
 
   it("POSTs to the request's own route with no body, and writes the gateway's time into the list at once", async () => {
-    api.get.mockResolvedValue(mine(null));
+    api.get.mockResolvedValue(page(mine(null)));
     api.post.mockResolvedValue({ ackedAt: "2026-11-06T09:00:00.000Z" });
     const { client, wrapper } = setup();
     const list = renderHook(() => useAckMine(), { wrapper });
@@ -155,11 +216,35 @@ describe("a confirmation", () => {
     await act(() => result.current.confirm.mutateAsync("r-1"));
 
     expect(api.post).toHaveBeenCalledWith(`${BASE}/r-1/confirm`);
-    expect(client.getQueryData<AckMine[]>(ACK_KEYS.mine)!.map((one) => one.ackedAt)).toEqual(["2026-11-06T09:00:00.000Z", null]);
+    expect(ackedAts(client)).toEqual([["2026-11-06T09:00:00.000Z", null]]);
+  });
+
+  it("writes it into the page the request is on, also when that is a later one, and into no other", async () => {
+    const first = page([mineItem({ id: "r-3" }), mineItem({ id: "r-2" })], "r-2");
+    api.get.mockImplementation(async (url: string) => (url === `${BASE}/mine` ? first : page([mineItem({ id: "r-1" })])));
+    api.post.mockResolvedValue({ ackedAt: "2026-11-06T09:00:00.000Z" });
+    const { client, wrapper } = setup();
+    const list = renderHook(() => useAckMine(), { wrapper });
+    // `data` is read first: a hook re-renders only for what the test has looked at.
+    await waitFor(() => expect(list.result.current.data?.pages).toHaveLength(1));
+    await act(() => list.result.current.fetchNextPage());
+    await waitFor(() => expect(list.result.current.data!.pages).toHaveLength(2));
+    const { result } = renderHook(() => useAckActions(), { wrapper });
+    const before = api.get.mock.calls.length;
+
+    await act(() => result.current.confirm.mutateAsync("r-1"));
+
+    expect(ackedAts(client)).toEqual([
+      [null, null],
+      ["2026-11-06T09:00:00.000Z"],
+    ]);
+    // Written, not read again; the cursor of the page before it is as it was.
+    expect(api.get.mock.calls).toHaveLength(before);
+    expect(client.getQueryData<{ pages: Array<AckPage<AckMine>> }>(ACK_KEYS.mine)!.pages[0]!.next).toBe("r-2");
   });
 
   it("reads the list again when the gateway refuses (custody ended, or the message is gone)", async () => {
-    api.get.mockResolvedValue(mine(null));
+    api.get.mockResolvedValue(page(mine(null)));
     api.post.mockRejectedValue(new Error("409"));
     const { wrapper } = setup();
     const list = renderHook(() => useAckMine(), { wrapper });
@@ -170,5 +255,64 @@ describe("a confirmation", () => {
     await act(() => result.current.confirm.mutateAsync("r-1").catch(() => undefined));
 
     await waitFor(() => expect(api.get.mock.calls.length).toBeGreaterThan(before));
+  });
+});
+
+describe("stopping a reminder", () => {
+  const detailBody = { id: "r-1" };
+
+  it("POSTs to the request's own route with no body and hands back where the reminder ended", async () => {
+    api.post.mockResolvedValue({ reminder: "STOPPED" });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useAckActions(), { wrapper });
+
+    await expect(act(() => result.current.stopReminder.mutateAsync("r-1"))).resolves.toEqual({ reminder: "STOPPED" });
+
+    expect(api.post).toHaveBeenCalledWith(`${BASE}/r-1/stop-reminder`);
+  });
+
+  it("reads the list and the request again afterwards, not guessing what the reminder became", async () => {
+    api.get.mockImplementation(async (url: string) => (url === BASE ? page([listItem()]) : detailBody));
+    api.post.mockResolvedValue({ reminder: "SENT" });
+    const { wrapper } = setup();
+    const list = renderHook(() => useAckList(), { wrapper });
+    const one = renderHook(() => useAckDetail("r-1"), { wrapper });
+    await waitFor(() => expect(list.result.current.isSuccess && one.result.current.isSuccess).toBe(true));
+    const { result } = renderHook(() => useAckActions(), { wrapper });
+    const before = api.get.mock.calls.length;
+
+    await act(() => result.current.stopReminder.mutateAsync("r-1"));
+
+    await waitFor(() => expect(api.get.mock.calls.slice(before).map(([path]) => path).sort()).toEqual([BASE, `${BASE}/r-1`].sort()));
+  });
+
+  it("reads them again when the gateway refuses too (403 or 404 say the page is out of date)", async () => {
+    api.get.mockImplementation(async (url: string) => (url === BASE ? page([listItem()]) : detailBody));
+    api.post.mockRejectedValue(new Error("404"));
+    const { wrapper } = setup();
+    const list = renderHook(() => useAckList(), { wrapper });
+    const one = renderHook(() => useAckDetail("r-1"), { wrapper });
+    await waitFor(() => expect(list.result.current.isSuccess && one.result.current.isSuccess).toBe(true));
+    const { result } = renderHook(() => useAckActions(), { wrapper });
+    const before = api.get.mock.calls.length;
+
+    await act(() => result.current.stopReminder.mutateAsync("r-1").catch(() => undefined));
+
+    await waitFor(() => expect(api.get.mock.calls.slice(before).map(([path]) => path)).toContain(`${BASE}/r-1`));
+    expect(api.get.mock.calls.slice(before).map(([path]) => path)).toContain(BASE);
+  });
+
+  it("leaves other requests' pages alone", async () => {
+    api.get.mockImplementation(async (url: string) => (url === `${BASE}/mine` ? page([mineItem()]) : detailBody));
+    api.post.mockResolvedValue({ reminder: "STOPPED" });
+    const { wrapper } = setup();
+    const mine = renderHook(() => useAckMine(), { wrapper });
+    await waitFor(() => expect(mine.result.current.isSuccess).toBe(true));
+    const { result } = renderHook(() => useAckActions(), { wrapper });
+    const before = api.get.mock.calls.length;
+
+    await act(() => result.current.stopReminder.mutateAsync("r-1"));
+
+    expect(api.get.mock.calls).toHaveLength(before);
   });
 });

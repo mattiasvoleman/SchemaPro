@@ -30,9 +30,21 @@ export const ACK_CUSTODY_ENDED = "ACK_CUSTODY_ENDED";
 export const ACK_UNKNOWN_PUPIL = "ACK_UNKNOWN_PUPIL";
 export const ACK_NOT_YOUR_PUPIL = "ACK_NOT_YOUR_PUPIL";
 export const ACK_NO_GUARDIANS = "ACK_NO_GUARDIANS";
+/** Both 429: an eleventh request in an hour from one sender, more than 20 000 receipts in a day for one school. */
+export const ACK_TOO_MANY_REQUESTS = "ACK_TOO_MANY_REQUESTS";
+export const ACK_TOO_MANY_RECIPIENTS = "ACK_TOO_MANY_RECIPIENTS";
+/** 403 on stopping a reminder: the reader neither wrote the request nor administers the school. */
+export const ACK_NOT_STAFF = "ACK_NOT_STAFF";
 
 /** The refusals of a request that have a sentence of their own in the form. */
-export const CREATE_REFUSALS = [ACK_DISABLED, ACK_UNKNOWN_PUPIL, ACK_NOT_YOUR_PUPIL, ACK_NO_GUARDIANS] as const;
+export const CREATE_REFUSALS = [
+  ACK_DISABLED,
+  ACK_UNKNOWN_PUPIL,
+  ACK_NOT_YOUR_PUPIL,
+  ACK_NO_GUARDIANS,
+  ACK_TOO_MANY_REQUESTS,
+  ACK_TOO_MANY_RECIPIENTS,
+] as const;
 export type CreateRefusal = (typeof CREATE_REFUSALS)[number];
 
 /** The days the school may wait before the one reminder, in the order a select lists them. */
@@ -44,6 +56,22 @@ export const REMIND_DAY_OPTIONS: readonly number[] = Array.from(
 // ---------------------------------------------------------------------------
 // What the gateway answers (src/ack/ack-views.ts)
 // ---------------------------------------------------------------------------
+
+/** A page of a list: the items, and the id to ask for the next page after (null: that was the last). */
+export interface AckPage<T> {
+  items: T[];
+  next: string | null;
+}
+
+/**
+ * Where a request's one reminder stands: none (the school chose no reminder),
+ * scheduled (its time has not come, or the pass has not reached it), or how it
+ * ended: sent; not needed (nobody was left to remind when the time came);
+ * lapsed (the time had passed more than 30 days before the pass came); stopped
+ * (by the author or an administrator); off (Kvittens was off when it fell due).
+ */
+export const ACK_REMINDER_STATES = ["NONE", "SCHEDULED", "SENT", "NOT_NEEDED", "LAPSED", "STOPPED", "OFF"] as const;
+export type AckReminderState = (typeof ACK_REMINDER_STATES)[number];
 
 export interface AckSettings {
   enabled: boolean;
@@ -92,7 +120,7 @@ export interface AckListItem {
   /** Guardians who have not confirmed and still can. */
   waiting: number;
   remindAt: string | null;
-  reminderSent: boolean;
+  reminder: AckReminderState;
 }
 
 export type AckGuardianState = "CONFIRMED" | "WAITING" | "ENDED";
@@ -121,7 +149,11 @@ export interface AckDetail {
   authorName: string;
   createdAt: string;
   remindAt: string | null;
+  /** When at least one reminder went; null unless the reminder is SENT. */
   reminderSentAt: string | null;
+  reminder: AckReminderState;
+  /** The reader may stop the reminder: it is scheduled, and they wrote the request or administer the school. */
+  mayStopReminder: boolean;
   pupils: AckPupilRow[];
 }
 
@@ -139,6 +171,10 @@ export interface AckMine {
 
 export interface AckConfirmed {
   ackedAt: string;
+}
+
+export interface AckReminderStopped {
+  reminder: AckReminderState;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +269,15 @@ export function setChosen(current: readonly string[], ids: readonly string[], on
 }
 
 // ---------------------------------------------------------------------------
+// The pages of a list
+// ---------------------------------------------------------------------------
+
+/** The items of the pages loaded so far, in the order the gateway gave them (newest first). */
+export function itemsOf<T>(data: { pages: ReadonlyArray<AckPage<T>> } | undefined): T[] {
+  return data ? data.pages.flatMap((page) => page.items) : [];
+}
+
+// ---------------------------------------------------------------------------
 // Reading a request
 // ---------------------------------------------------------------------------
 
@@ -257,13 +302,13 @@ export function pupilsNotMet<T extends Pick<AckPupilRow, "met">>(pupils: readonl
 }
 
 /**
- * What a list row says of the reminder: sent; due later; not needed because
- * nobody waits any more; or none (the school sets no reminder).
+ * What a row or a request says of the reminder: the state the gateway answers,
+ * except that a scheduled reminder with no time to show (the gateway answers
+ * none) is said as none, so that nothing reads "Går" with no date. Whether
+ * anyone is left to remind is the gateway's say, not worked out here.
  */
-export function reminderOf(item: Pick<AckListItem, "reminderSent" | "remindAt" | "waiting">): "SENT" | "DUE" | "NOT_NEEDED" | "NONE" {
-  if (item.reminderSent) return "SENT";
-  if (item.remindAt === null) return "NONE";
-  return item.waiting === 0 ? "NOT_NEEDED" : "DUE";
+export function reminderOf(item: Pick<AckListItem, "reminder" | "remindAt">): AckReminderState {
+  return item.reminder === "SCHEDULED" && item.remindAt === null ? "NONE" : item.reminder;
 }
 
 /** The request's own pupils all met? A request with no pupil the reader sees is not "done". */
@@ -283,4 +328,15 @@ export function waitingFor(mine: readonly Pick<AckMine, "ackedAt">[]): number {
 /** The list with a confirmation written into one request, as the gateway answered it. */
 export function withConfirmed<T extends Pick<AckMine, "id" | "ackedAt">>(mine: readonly T[], id: string, ackedAt: string): T[] {
   return mine.map((one) => (one.id === id ? { ...one, ackedAt: one.ackedAt ?? ackedAt } : one));
+}
+
+/**
+ * The same written into every page loaded, since the request may be on any of
+ * them. A page the confirmation does not touch is kept as it is.
+ */
+export function withConfirmedPages<D extends { pages: ReadonlyArray<AckPage<AckMine>> }>(data: D, id: string, ackedAt: string): D {
+  const pages = data.pages.map((page) =>
+    page.items.some((one) => one.id === id) ? { ...page, items: withConfirmed(page.items, id, ackedAt) } : page,
+  );
+  return { ...data, pages };
 }

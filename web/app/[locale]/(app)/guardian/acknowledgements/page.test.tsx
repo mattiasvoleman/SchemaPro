@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
-import { mineItem } from "@/lib/__fixtures__/ack";
+import { mineItem, page } from "@/lib/__fixtures__/ack";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import GuardianAcknowledgementsPage from "./page";
@@ -18,7 +18,10 @@ import GuardianAcknowledgementsPage from "./page";
  * guardian; a tap sends once, the button is closed while it is on its way, and
  * what takes its place is the moment the gateway answered and has focus; a
  * custody that has ended (409) or a message that is gone (404) is said as that
- * and the list is read again; any other failure leaves the button to try again.
+ * and the list is read again; any other failure leaves the button to try again;
+ * the list comes a page at a time, "Visa äldre" asks for the next, the count of
+ * waiting messages says it counts the ones shown while more exist, and a page
+ * that cannot be read leaves the cards already loaded.
  */
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
@@ -26,7 +29,15 @@ vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeo
 
 const MINE = "/api/v1/acknowledgements/mine";
 
-const state = vi.hoisted(() => ({ list: [] as unknown[], listError: false, hold: null as null | Promise<void> }));
+const state = vi.hoisted(() => ({
+  list: [] as Array<{ id: string }>,
+  /** The gateway answers this many at a time. */
+  pageSize: 50,
+  listError: false,
+  /** Every page after the first cannot be read. */
+  moreError: false,
+  hold: null as null | Promise<void>,
+}));
 
 // The time of a confirmation, written the way the page writes one (the browser's zone is UTC here).
 const momentText = (iso: string) =>
@@ -50,15 +61,26 @@ function renderPage(locale: "sv" | "en" = "sv") {
   );
 }
 
+/** The page the gateway answers for a read of the list: `pageSize` messages after the id in `?after=`. */
+function listPage(path: string) {
+  const after = new URL(path, "http://gateway").searchParams.get("after");
+  if (after && state.moreError) throw new ApiError(500, "boom");
+  const from = after ? state.list.findIndex((one) => one.id === after) + 1 : 0;
+  const items = state.list.slice(from, from + state.pageSize);
+  return page(items, from + state.pageSize < state.list.length ? items[items.length - 1]!.id : null);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   state.list = [];
+  state.pageSize = 50;
   state.listError = false;
+  state.moreError = false;
   state.hold = null;
   api.get.mockImplementation(async (path: string) => {
-    if (path !== MINE) throw new Error(`unexpected read ${path}`);
+    if (path !== MINE && !path.startsWith(`${MINE}?`)) throw new Error(`unexpected read ${path}`);
     if (state.listError) throw new ApiError(500, "boom");
-    return state.list;
+    return listPage(path);
   });
   api.post.mockResolvedValue({ ackedAt: "2026-11-06T09:41:00.000Z" });
 });
@@ -223,6 +245,120 @@ describe("the guardian's messages", () => {
     });
   });
 
+  describe("a page at a time", () => {
+    const messages = (count: number) =>
+      Array.from({ length: count }, (_, index) => mineItem({ id: `r-${index + 1}`, title: `Meddelande ${index + 1}` }));
+    const titles = () => screen.getAllByRole("article").map((one) => one.querySelector("h2")!.textContent);
+
+    it("offers no older messages, and does not say there are more, when the gateway names no next page", async () => {
+      state.list = messages(2);
+      renderPage();
+
+      expect(await screen.findByText("2 meddelanden väntar på din bekräftelse")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Visa äldre" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Fler finns/)).not.toBeInTheDocument();
+    });
+
+    it("says the count is of the messages shown while more exist, and drops the sentence when the last page is in", async () => {
+      const user = userEvent.setup();
+      state.pageSize = 2;
+      state.list = messages(3);
+      renderPage();
+
+      const summary = await screen.findByText(/^2 meddelanden väntar på din bekräftelse/);
+      expect(summary).toHaveTextContent("2 meddelanden väntar på din bekräftelse Räkningen gäller de meddelanden som visas. Fler finns: visa äldre.");
+      // The live region stays one and the same: it is the sentence that changes, not a new region that appears.
+      expect(summary).toHaveAttribute("aria-live", "polite");
+
+      await user.click(screen.getByRole("button", { name: "Visa äldre" }));
+
+      await waitFor(() => expect(screen.getByText("3 meddelanden väntar på din bekräftelse")).toBe(summary));
+      expect(summary).toHaveAttribute("aria-live", "polite");
+      expect(screen.queryByText(/Fler finns/)).not.toBeInTheDocument();
+    });
+
+    it("asks for the next page after the last id shown, puts its messages below the others and hands focus to the first of them", async () => {
+      const user = userEvent.setup();
+      state.pageSize = 2;
+      state.list = messages(3);
+      renderPage();
+      await screen.findByRole("article", { name: "Meddelande 1" });
+      expect(titles()).toEqual(["Meddelande 1", "Meddelande 2"]);
+      expect(api.get.mock.calls.map(([path]) => path)).toEqual([MINE]);
+
+      await user.click(screen.getByRole("button", { name: "Visa äldre" }));
+
+      expect(api.get).toHaveBeenLastCalledWith(`${MINE}?after=r-2`);
+      await waitFor(() => expect(titles()).toEqual(["Meddelande 1", "Meddelande 2", "Meddelande 3"]));
+      await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Meddelande 3" })).toHaveFocus());
+      expect(screen.queryByRole("button", { name: "Visa äldre" })).not.toBeInTheDocument();
+    });
+
+    it("closes the button and says it is fetching while the page is on its way", async () => {
+      const user = userEvent.setup();
+      state.pageSize = 1;
+      state.list = messages(2);
+      renderPage();
+      await screen.findByRole("article", { name: "Meddelande 1" });
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const answer = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (path: string) => {
+        if (path.includes("after=")) await held;
+        return answer(path);
+      });
+
+      await user.click(screen.getByRole("button", { name: "Visa äldre" }));
+
+      expect(await screen.findByRole("button", { name: "Hämtar äldre…" })).toBeDisabled();
+      release();
+      expect(await screen.findByRole("article", { name: "Meddelande 2" })).toBeInTheDocument();
+    });
+
+    it("keeps the messages already loaded when a page cannot be read, says so under them and reads it again when asked", async () => {
+      const user = userEvent.setup();
+      state.pageSize = 2;
+      state.list = messages(3);
+      state.moreError = true;
+      renderPage();
+      await screen.findByRole("article", { name: "Meddelande 1" });
+
+      await user.click(screen.getByRole("button", { name: "Visa äldre" }));
+
+      expect(await screen.findByText("Äldre meddelanden kunde inte hämtas")).toBeInTheDocument();
+      expect(screen.getByText("De som redan visas finns kvar. Försök igen om en stund.")).toBeInTheDocument();
+      expect(titles()).toEqual(["Meddelande 1", "Meddelande 2"]);
+      expect(screen.queryByText("Meddelandena kunde inte hämtas")).not.toBeInTheDocument();
+      // Still said to count only the ones shown, and the cards still confirm.
+      expect(screen.getByText(/Räkningen gäller de meddelanden som visas/)).toBeInTheDocument();
+
+      state.moreError = false;
+      await user.click(screen.getByRole("button", { name: "Försök igen" }));
+
+      await waitFor(() => expect(titles()).toEqual(["Meddelande 1", "Meddelande 2", "Meddelande 3"]));
+      expect(screen.queryByText("Äldre meddelanden kunde inte hämtas")).not.toBeInTheDocument();
+    });
+
+    it("confirms a message on a later page, shows its moment there and counts it", async () => {
+      const user = userEvent.setup();
+      state.pageSize = 2;
+      state.list = messages(3);
+      renderPage();
+      await screen.findByRole("article", { name: "Meddelande 1" });
+      await user.click(screen.getByRole("button", { name: "Visa äldre" }));
+      const third = within(await screen.findByRole("article", { name: "Meddelande 3" }));
+
+      await user.click(third.getByRole("button", { name: "Jag har tagit del av detta" }));
+
+      expect(api.post).toHaveBeenCalledWith("/api/v1/acknowledgements/r-3/confirm");
+      expect(await third.findByText(`Bekräftat ${momentText("2026-11-06T09:41:00.000Z")}`)).toBeInTheDocument();
+      expect(third.queryByRole("button")).not.toBeInTheDocument();
+      expect(screen.getByText("2 meddelanden väntar på din bekräftelse")).toBeInTheDocument();
+      // The ones on the first page have their buttons still.
+      expect(within(screen.getByRole("article", { name: "Meddelande 1" })).getByRole("button")).toBeEnabled();
+    });
+  });
+
   it("speaks English too", async () => {
     state.list = [mineItem({ rule: "ALL" })];
     renderPage("en");
@@ -231,5 +367,14 @@ describe("the guardian's messages", () => {
     expect(await confirmButton("I have read this")).toBeInTheDocument();
     expect(screen.getByText("The school asks all guardians to confirm.")).toBeInTheDocument();
     expect(screen.getByText("1 message is waiting for your confirmation")).toBeInTheDocument();
+  });
+
+  it("says in English that the count is of the messages shown, and offers the older ones", async () => {
+    state.pageSize = 1;
+    state.list = [mineItem({ id: "r-1" }), mineItem({ id: "r-2", title: "Larmet" })];
+    renderPage("en");
+
+    expect(await screen.findByText(/The count is of the messages shown\. There are more: show older\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show older" })).toBeInTheDocument();
   });
 });

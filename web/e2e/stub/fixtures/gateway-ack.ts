@@ -3,6 +3,7 @@ import type {
   AckGuardianRow,
   AckListItem,
   AckMine,
+  AckPage,
   AckPupilChoice,
   AckPupilRow,
   AckSettings,
@@ -21,14 +22,20 @@ import { ADMIN, byId, GROUP_LIST, GUARDIAN_LINKS, GUARDIANS, STUDENTS, STUDENT_L
  * Kvittens is on, with a reminder after two days. Three requests:
  *  - Anna's "Utflykten på torsdag" (one guardian is enough) about 7A: Ella's
  *    guardian has confirmed, Ines's has not. Jamal has no guardian to ask and is
- *    not in it.
+ *    not in it. The reminder is scheduled, and Anna (who wrote it) and the
+ *    administrator may stop it.
  *  - Rektor's "Beslutet om ledighet" (every guardian must confirm): Sara has not
  *    confirmed for either of her children, and Tom's custody of Ines has ended,
- *    so nobody can confirm for Ines.
+ *    so nobody can confirm for Ines. The reminder is scheduled, and only the
+ *    administrator (who wrote it) may stop it: Anna may not.
  *  - Anna's "Vad som hände vid larmet" (every guardian), long since done, the
  *    reminder gone out.
  * A teacher sees the requests with a pupil of the class they mentor and only
  * those pupils; the guardian sees their own children's and their own time.
+ *
+ * The lists answer a page (`limit` and `after` are honoured, newest first). A
+ * confirmation and a stopped reminder are answered but not kept, as the
+ * confirmation always was: the requests are the same on the next read.
  */
 
 const SETTINGS: AckSettings = { enabled: true, remindAfterDays: 2 };
@@ -52,6 +59,15 @@ function pupilRow(pupil: (typeof STUDENT_LIST)[number], guardians: AckGuardianRo
   return { id: pupil.id, name: nameOf(pupil), className: classOf(pupil), met: guardians.some((one) => one.state === "CONFIRMED"), guardians };
 }
 
+/** The page the query asks for: `limit` items after the id `after`, and the id to ask after for the next. */
+function pageOf<T extends { id: string }>(items: T[], query: URLSearchParams): AckPage<T> {
+  const limit = Math.min(Number(query.get("limit")) || 50, 100);
+  const after = query.get("after");
+  const from = after ? items.findIndex((one) => one.id === after) + 1 : 0;
+  const shown = items.slice(from, from + limit);
+  return { items: shown, next: from + limit < items.length ? shown[shown.length - 1]!.id : null };
+}
+
 const DETAILS: AckDetail[] = [
   {
     id: uid(KIND.misc, 8301),
@@ -62,6 +78,8 @@ const DETAILS: AckDetail[] = [
     createdAt: at(0, "07:30"),
     remindAt: at(2, "07:30"),
     reminderSentAt: null,
+    reminder: "SCHEDULED",
+    mayStopReminder: false,
     pupils: [
       pupilRow(STUDENTS.ella, [guardianRow(GUARDIANS.sara, "CONFIRMED", at(0, "08:12"))]),
       pupilRow(STUDENTS.ines, [guardianRow(GUARDIANS.tom, "WAITING")]),
@@ -76,6 +94,8 @@ const DETAILS: AckDetail[] = [
     createdAt: at(-1, "09:00"),
     remindAt: at(1, "09:00"),
     reminderSentAt: null,
+    reminder: "SCHEDULED",
+    mayStopReminder: false,
     pupils: [
       pupilRow(STUDENTS.ella, [guardianRow(GUARDIANS.sara, "WAITING")]),
       pupilRow(STUDENTS.hugo, [guardianRow(GUARDIANS.sara, "WAITING")]),
@@ -91,12 +111,28 @@ const DETAILS: AckDetail[] = [
     createdAt: at(-8, "13:00"),
     remindAt: at(-6, "13:00"),
     reminderSentAt: at(-6, "13:01"),
+    reminder: "SENT",
+    mayStopReminder: false,
     pupils: [
       pupilRow(STUDENTS.ella, [guardianRow(GUARDIANS.sara, "CONFIRMED", at(-6, "17:40"), at(-6, "13:01"))]),
       pupilRow(STUDENTS.hugo, [guardianRow(GUARDIANS.sara, "CONFIRMED", at(-6, "17:40"), at(-6, "13:01"))]),
     ],
   },
 ];
+
+/** Who wrote each request (Users.id), which is who besides an administrator may stop its reminder. */
+const AUTHOR_OF: Record<string, string> = {
+  [DETAILS[0]!.id]: TEACHERS.anna.id,
+  [DETAILS[1]!.id]: ADMIN.id,
+  [DETAILS[2]!.id]: TEACHERS.anna.id,
+};
+
+/** The request as the reader gets it: they may stop a scheduled reminder if they wrote it or administer the school. */
+function withStopRight(one: AckDetail, context: GatewayContext): AckDetail {
+  const person = context.person!;
+  const mayStopReminder = one.reminder === "SCHEDULED" && (person.persona === "admin" || AUTHOR_OF[one.id] === person.userId);
+  return { ...one, mayStopReminder };
+}
 
 /** The classes a teacher holds MENTORSKAP for. */
 function mentored(userId: string): Set<string> {
@@ -137,7 +173,7 @@ function listItem(one: AckDetail): AckListItem {
     met: one.pupils.filter((pupil) => pupil.met).length,
     waiting: one.pupils.reduce((sum, pupil) => sum + pupil.guardians.filter((guardian) => guardian.state === "WAITING").length, 0),
     remindAt: one.remindAt,
-    reminderSent: one.reminderSentAt !== null,
+    reminder: one.reminder,
   };
 }
 
@@ -178,16 +214,14 @@ export const ackRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/acknowledgements/pupils", (context) => staffOnly(context) ?? askable(context)),
   route("GET", "/api/v1/acknowledgements/mine", (context) => {
     if (!context.person) return new Reply(401, { message: "Not authenticated." });
-    return context.person.persona === "guardian" ? mineOf(context) : new Reply(403, { message: "Forbidden." });
+    return context.person.persona === "guardian" ? pageOf(mineOf(context), context.query) : new Reply(403, { message: "Forbidden." });
   }),
-  route("GET", "/api/v1/acknowledgements", (context) => staffOnly(context) ?? seenBy(context).map(listItem)),
+  route("GET", "/api/v1/acknowledgements", (context) => staffOnly(context) ?? pageOf(seenBy(context).map(listItem), context.query)),
   route("GET", "/api/v1/acknowledgements/:id", (context) => {
     const refused = staffOnly(context);
     if (refused) return refused;
-    return (
-      seenBy(context).find((one) => one.id === context.params.id) ??
-      new Reply(404, { message: "Meddelandet finns inte, eller gäller inte dig.", code: "ACK_NOT_FOUND" })
-    );
+    const found = seenBy(context).find((one) => one.id === context.params.id);
+    return found ? withStopRight(found, context) : new Reply(404, { message: "Meddelandet finns inte, eller gäller inte dig.", code: "ACK_NOT_FOUND" });
   }),
   route("POST", "/api/v1/acknowledgements", (context) => {
     const refused = staffOnly(context);
@@ -200,6 +234,16 @@ export const ackRoutes: GatewayRoute[] = [
       guardians: asked.reduce((sum, id) => sum + guardiansOf(id), 0),
       withoutGuardian: ids.filter((id) => guardiansOf(id) === 0),
     };
+  }),
+  route("POST", "/api/v1/acknowledgements/:id/stop-reminder", (context) => {
+    const refused = staffOnly(context);
+    if (refused) return refused;
+    const found = seenBy(context).find((one) => one.id === context.params.id);
+    if (!found) return new Reply(404, { message: "Meddelandet finns inte, eller gäller inte dig.", code: "ACK_NOT_FOUND" });
+    if (found.reminder !== "SCHEDULED") return { reminder: found.reminder };
+    return withStopRight(found, context).mayStopReminder
+      ? { reminder: "STOPPED" }
+      : new Reply(403, { message: "Bara den som skrev meddelandet, eller en administratör, kan stoppa påminnelsen.", code: "ACK_NOT_STAFF" });
   }),
   route("POST", "/api/v1/acknowledgements/:id/confirm", (context) => {
     if (!context.person) return new Reply(401, { message: "Not authenticated." });

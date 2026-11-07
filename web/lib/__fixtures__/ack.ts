@@ -3,6 +3,7 @@ import type {
   AckGuardianRow,
   AckListItem,
   AckMine,
+  AckPage,
   AckPupilChoice,
   AckPupilRow,
   AckSettings,
@@ -24,6 +25,9 @@ export const PUPILS: AckPupilChoice[] = [
   { id: "p-dan", name: "Dan Dal", className: "7B", guardians: 2 },
 ];
 
+/** A page of a list as the gateway answers one: `next` is the id to ask after, or null for the last. */
+export const page = <T>(items: T[], next: string | null = null): AckPage<T> => ({ items, next });
+
 export const listItem = (over: Partial<AckListItem> = {}): AckListItem => ({
   id: "r-1",
   title: "Utflykten på torsdag",
@@ -34,7 +38,7 @@ export const listItem = (over: Partial<AckListItem> = {}): AckListItem => ({
   met: 1,
   waiting: 4,
   remindAt: "2026-11-07T08:30:00.000Z",
-  reminderSent: false,
+  reminder: "SCHEDULED",
   ...over,
 });
 
@@ -65,6 +69,8 @@ export const detail = (over: Partial<AckDetail> = {}): AckDetail => ({
   createdAt: "2026-11-05T08:30:00.000Z",
   remindAt: "2026-11-07T08:30:00.000Z",
   reminderSentAt: null,
+  reminder: "SCHEDULED",
+  mayStopReminder: false,
   pupils: [
     pupilRow("p-ada", "Ada Berg", [guardian("g-sara", "Sara Berg", "CONFIRMED"), guardian("g-tom", "Tom Berg", "WAITING")]),
     pupilRow("p-bo", "Bo Ek", [guardian("g-eva", "Eva Ek", "WAITING")]),

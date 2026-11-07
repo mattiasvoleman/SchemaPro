@@ -4,7 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
-import { PUPILS, SETTINGS_OFF, SETTINGS_ON, detail, guardian, listItem, pupilRow } from "@/lib/__fixtures__/ack";
+import type { AckReminderState } from "@/lib/ack";
+import { PUPILS, SETTINGS_OFF, SETTINGS_ON, detail, guardian, listItem, page, pupilRow } from "@/lib/__fixtures__/ack";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import TeacherAcknowledgementsPage from "./page";
@@ -21,7 +22,10 @@ import TeacherAcknowledgementsPage from "./page";
  * asked and which pupils nobody can be asked about; a refusal is said in the
  * form with everything typed still there; and the request shows each pupil as
  * done, waiting or without anyone who can confirm, and each guardian as
- * confirmed (and when), waiting, or no longer a guardian.
+ * confirmed (and when), waiting, or no longer a guardian; the list comes a page
+ * at a time and a page that cannot be read leaves the rows already loaded; the
+ * reminder is said as the gateway's state, and the one who may stop it is asked
+ * once first.
  */
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
@@ -32,10 +36,14 @@ const BASE = "/api/v1/acknowledgements";
 
 const state = vi.hoisted(() => ({
   settings: undefined as unknown,
-  list: [] as unknown[],
+  list: [] as Array<{ id: string }>,
+  /** Requests to a page: the gateway answers this many at a time. */
+  pageSize: 50,
   pupils: [] as unknown[],
   detail: undefined as unknown,
   listError: false,
+  /** Every page after the first cannot be read. */
+  moreError: false,
   pupilsError: false,
   detailError: null as null | Error,
 }));
@@ -63,20 +71,31 @@ function renderPage(locale: "sv" | "en" = "sv") {
 
 const reads = () => api.get.mock.calls.map(([path]) => path as string);
 
+/** The page the gateway answers for a read of the list: `pageSize` requests after the id in `?after=`. */
+function listPage(path: string) {
+  const after = new URL(path, "http://gateway").searchParams.get("after");
+  if (after && state.moreError) throw new ApiError(500, "boom");
+  const from = after ? state.list.findIndex((one) => one.id === after) + 1 : 0;
+  const items = state.list.slice(from, from + state.pageSize);
+  return page(items, from + state.pageSize < state.list.length ? items[items.length - 1]!.id : null);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   state.settings = SETTINGS_ON;
   state.list = [listItem()];
+  state.pageSize = 50;
   state.pupils = PUPILS;
   state.detail = detail();
   state.listError = false;
+  state.moreError = false;
   state.pupilsError = false;
   state.detailError = null;
   api.get.mockImplementation(async (path: string) => {
     if (path === `${BASE}/settings`) return state.settings;
-    if (path === BASE) {
+    if (path === BASE || path.startsWith(`${BASE}?`)) {
       if (state.listError) throw new ApiError(500, "boom");
-      return state.list;
+      return listPage(path);
     }
     if (path === `${BASE}/pupils`) {
       if (state.pupilsError) throw new ApiError(500, "boom");
@@ -112,9 +131,9 @@ describe("the teacher's list", () => {
   it("lists each request with its rule, how many pupils are done, who still waits and what became of the reminder", async () => {
     state.list = [
       listItem({ id: "r-1", title: "Utflykten på torsdag", rule: "ANY", pupils: 3, met: 1, waiting: 4 }),
-      listItem({ id: "r-2", title: "Beslutet om ledighet", rule: "ALL", pupils: 2, met: 2, waiting: 0, remindAt: "2026-11-04T08:30:00.000Z", reminderSent: true }),
-      listItem({ id: "r-3", title: "Larmet", pupils: 1, met: 1, waiting: 0, remindAt: "2026-11-07T08:30:00.000Z" }),
-      listItem({ id: "r-4", title: "Skolfotot", pupils: 1, met: 0, waiting: 2, remindAt: null }),
+      listItem({ id: "r-2", title: "Beslutet om ledighet", rule: "ALL", pupils: 2, met: 2, waiting: 0, remindAt: "2026-11-04T08:30:00.000Z", reminder: "SENT" }),
+      listItem({ id: "r-3", title: "Larmet", pupils: 1, met: 1, waiting: 0, remindAt: "2026-11-07T08:30:00.000Z", reminder: "NOT_NEEDED" }),
+      listItem({ id: "r-4", title: "Skolfotot", pupils: 1, met: 0, waiting: 2, remindAt: null, reminder: "NONE" }),
     ];
     renderPage();
 
@@ -131,11 +150,123 @@ describe("the teacher's list", () => {
     ]);
     // Every pupil done: said so, and nobody waits. The reminder went out.
     expect(cells(rows[1]!).slice(1).map((cell) => cell.textContent)).toEqual(["Alla", "2 av 2 eleverAlla klara", "Ingen", "Skickad"]);
-    // Nobody waits, so the reminder that is due will not go.
+    // The gateway says nobody was left to remind when the time came.
     expect(cells(rows[2]!)[4]).toHaveTextContent("Behövs inte");
     // The school sets no reminder.
     expect(cells(rows[3]!)[4]).toHaveTextContent("Ingen");
     expect(cells(rows[3]!)[3]).toHaveTextContent("2 vårdnadshavare");
+  });
+
+  it("says each state of the reminder in words of its own, as the gateway has it and not as the counts suggest", async () => {
+    // Everyone has confirmed and the time has passed in each, so that a cell worked out from the counts would say the same of all.
+    const row = (reminder: AckReminderState, over = {}) =>
+      listItem({ id: `r-${reminder}`, title: `Om ${reminder}`, pupils: 1, met: 1, waiting: 0, remindAt: "2026-11-07T08:30:00.000Z", reminder, ...over });
+    state.list = [
+      row("NONE", { remindAt: null }),
+      row("SCHEDULED"),
+      row("SENT"),
+      row("NOT_NEEDED"),
+      row("LAPSED"),
+      row("STOPPED"),
+      row("OFF"),
+    ];
+    renderPage();
+
+    const table = await screen.findByRole("table", { name: "Förfrågningar om kvittens" });
+    const reminders = within(table)
+      .getAllByRole("row")
+      .slice(1)
+      .map((one) => within(one).getAllByRole("cell")[4]!.textContent);
+    expect(reminders).toEqual([
+      "Ingen",
+      `Går ${day("2026-11-07T08:30:00.000Z")}`,
+      "Skickad",
+      "Behövs inte",
+      "Skickades inte, för sent",
+      "Stoppad",
+      "Skickades inte, kvittens var av",
+    ]);
+  });
+
+  describe("a page at a time", () => {
+    const requests = (count: number) =>
+      Array.from({ length: count }, (_, index) => listItem({ id: `r-${index + 1}`, title: `Förfrågan ${index + 1}` }));
+    const titles = () => screen.getAllByRole("button", { name: /^Förfrågan \d+$/ }).map((one) => one.textContent);
+
+    it("offers no more when the gateway names no next page", async () => {
+      state.list = requests(2);
+      renderPage();
+
+      await screen.findByRole("button", { name: "Förfrågan 1" });
+      expect(screen.queryByRole("button", { name: "Visa fler" })).not.toBeInTheDocument();
+    });
+
+    it("asks for the next page after the last id shown and puts its requests below the ones shown, with focus on the first of them", async () => {
+      const user = userEvent.setup();
+      state.pageSize = 2;
+      state.list = requests(5);
+      renderPage();
+      await screen.findByRole("button", { name: "Förfrågan 1" });
+      expect(titles()).toEqual(["Förfrågan 1", "Förfrågan 2"]);
+      // The first page has no cursor, and the size is the gateway's: no limit is sent.
+      expect(reads()).toContain(BASE);
+      expect(reads().filter((path) => path.includes("limit"))).toEqual([]);
+
+      await user.click(screen.getByRole("button", { name: "Visa fler" }));
+
+      expect(reads()).toContain(`${BASE}?after=r-2`);
+      await waitFor(() => expect(titles()).toEqual(["Förfrågan 1", "Förfrågan 2", "Förfrågan 3", "Förfrågan 4"]));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Förfrågan 3" })).toHaveFocus());
+      // The last page is in: nothing more to show.
+      await user.click(screen.getByRole("button", { name: "Visa fler" }));
+      expect(reads()).toContain(`${BASE}?after=r-4`);
+      await waitFor(() => expect(titles()).toHaveLength(5));
+      expect(screen.queryByRole("button", { name: "Visa fler" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Förfrågan 5" })).toHaveFocus();
+    });
+
+    it("closes the button and says it is fetching while the page is on its way", async () => {
+      const user = userEvent.setup();
+      state.pageSize = 1;
+      state.list = requests(2);
+      renderPage();
+      await screen.findByRole("button", { name: "Förfrågan 1" });
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const answer = api.get.getMockImplementation()!;
+      api.get.mockImplementation(async (path: string) => {
+        if (path.includes("after=")) await held;
+        return answer(path);
+      });
+
+      await user.click(screen.getByRole("button", { name: "Visa fler" }));
+
+      expect(await screen.findByRole("button", { name: "Hämtar fler…" })).toBeDisabled();
+      release();
+      expect(await screen.findByRole("button", { name: "Förfrågan 2" })).toBeInTheDocument();
+    });
+
+    it("keeps the rows already loaded when a page cannot be read, says so under them and reads it again when asked", async () => {
+      const user = userEvent.setup();
+      state.pageSize = 2;
+      state.list = requests(4);
+      state.moreError = true;
+      renderPage();
+      await screen.findByRole("button", { name: "Förfrågan 1" });
+
+      await user.click(screen.getByRole("button", { name: "Visa fler" }));
+
+      expect(await screen.findByText("Fler förfrågningar kunde inte hämtas")).toBeInTheDocument();
+      expect(screen.getByText("De som redan visas finns kvar. Försök igen om en stund.")).toBeInTheDocument();
+      expect(titles()).toEqual(["Förfrågan 1", "Förfrågan 2"]);
+      expect(screen.queryByText("Förfrågningarna kunde inte hämtas")).not.toBeInTheDocument();
+
+      state.moreError = false;
+      await user.click(screen.getByRole("button", { name: "Försök igen" }));
+
+      await waitFor(() => expect(titles()).toEqual(["Förfrågan 1", "Förfrågan 2", "Förfrågan 3", "Förfrågan 4"]));
+      expect(screen.queryByText("Fler förfrågningar kunde inte hämtas")).not.toBeInTheDocument();
+    });
   });
 
   it("welcomes an empty list, and says a failed one as such", async () => {
@@ -393,6 +524,8 @@ describe("a new request", () => {
     ["ACK_NOT_YOUR_PUPIL", 403, "Du kan bara be om kvittens för elever du är mentor för."],
     ["ACK_NO_GUARDIANS", 422, "Ingen av eleverna har en vårdnadshavare att fråga."],
     ["ACK_UNKNOWN_PUPIL", 422, "En av eleverna finns inte längre på skolan. Elevlistan är uppdaterad: kontrollera dina val och försök igen."],
+    ["ACK_TOO_MANY_REQUESTS", 429, "Du har skickat så många förfrågningar den senaste timmen att fler inte får skickas just nu. Inget har skickats. Försök igen om en stund."],
+    ["ACK_TOO_MANY_RECIPIENTS", 429, "Skolan har skickat så många kvittenser i dag att den här förfrågan skulle gå över dagens gräns. Inget har skickats. Välj färre elever eller försök igen i morgon."],
   ])("says a refusal (%s) in the form, in Swedish, with everything typed and chosen still there", async (code, status, sentence) => {
     const user = userEvent.setup();
     api.post.mockRejectedValue(new ApiError(status, "English prose for a log.", code));
@@ -417,6 +550,26 @@ describe("a new request", () => {
     expect(screen.getByRole("button", { name: "Skicka förfrågan" })).toBeEnabled();
     // A pupil who has left: the list is read again, and the choice is made from what is there now.
     if (code === "ACK_UNKNOWN_PUPIL") await waitFor(() => expect(reads().filter((path) => path === `${BASE}/pupils`).length).toBe(pupilReads + 1));
+  });
+
+  it("says the throttler's 429, which has no code of ours, in words too and not as its English message", async () => {
+    const user = userEvent.setup();
+    api.post.mockRejectedValue(new ApiError(429, "ThrottlerException: Too Many Requests"));
+    renderPage();
+    await openForm(user);
+    await user.click(await screen.findByRole("checkbox", { name: /Ada Berg/ }));
+    await user.click(screen.getByLabelText("Rubrik"));
+    await user.paste("Utflykten");
+    await user.click(screen.getByLabelText("Meddelande"));
+    await user.paste("På torsdag");
+
+    await user.click(screen.getByRole("button", { name: "Skicka förfrågan" }));
+
+    const refusal = await screen.findByRole("alert");
+    expect(refusal).toHaveTextContent("Du skickade för många förfrågningar på kort tid. Inget har skickats. Vänta en minut och försök igen.");
+    expect(refusal).not.toHaveTextContent(/Throttler/);
+    expect(screen.getByLabelText("Rubrik")).toHaveValue("Utflykten");
+    expect(screen.getByRole("button", { name: "Skicka förfrågan" })).toBeEnabled();
   });
 
   it("says a refusal it has no sentence for with the gateway's own words", async () => {
@@ -522,6 +675,7 @@ describe("one request", () => {
     state.detail = detail({
       remindAt: "2026-11-07T08:30:00.000Z",
       reminderSentAt: "2026-11-07T08:31:00.000Z",
+      reminder: "SENT",
       pupils: [pupilRow("p-bo", "Bo Ek", [guardian("g-eva", "Eva Ek", "WAITING", { remindedAt: "2026-11-07T08:31:00.000Z" })])],
     });
     renderPage();
@@ -533,11 +687,31 @@ describe("one request", () => {
 
   it("says there is no reminder when the school sets none", async () => {
     const user = userEvent.setup();
-    state.detail = detail({ remindAt: null, reminderSentAt: null });
+    state.detail = detail({ remindAt: null, reminderSentAt: null, reminder: "NONE" });
     renderPage();
     await openRequest(user);
 
     expect(await screen.findByText("Ingen påminnelse")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["NONE", { remindAt: null }, "Ingen påminnelse"],
+    ["SCHEDULED", {}, `Skickas ${moment("2026-11-07T08:30:00.000Z")} till dem som då inte har bekräftat, också när en annan vårdnadshavare till samma elev har gjort det`],
+    ["SENT", { reminderSentAt: "2026-11-07T08:31:00.000Z" }, `Skickad ${moment("2026-11-07T08:31:00.000Z")}`],
+    ["NOT_NEEDED", {}, "Skickades inte: när tiden kom hade alla redan bekräftat, eller så kunde ingen längre bekräfta"],
+    ["LAPSED", {}, "Skickades inte: den skulle ha gått för mer än 30 dagar sedan, och en så gammal påminnelse skickas inte"],
+    ["STOPPED", {}, "Stoppad: den som skrev förfrågan, eller en administratör, stoppade påminnelsen innan den gick"],
+    ["OFF", {}, "Skickades inte: kvittens var av på skolan när tiden kom"],
+  ] as const)("says the reminder of a request as the gateway has it (%s), and not from whether a moment is set", async (reminder, over, sentence) => {
+    const user = userEvent.setup();
+    // remindAt is set in all but the first, and a moment of sending in none but SENT: the words come from the state.
+    state.detail = detail({ reminder, ...over });
+    renderPage();
+    await openRequest(user);
+
+    const line = (await screen.findByText("Påminnelse", { selector: "dt" })).nextElementSibling!;
+    expect(line).toHaveTextContent(sentence);
+    expect(line.textContent).toBe(sentence);
   });
 
   it("can show only the pupils who are not done, and says so when there are none", async () => {
@@ -603,6 +777,192 @@ describe("one request", () => {
     expect(await screen.findByText("Förfrågan kunde inte hämtas")).toBeInTheDocument();
     expect(screen.queryByText("Förfrågan finns inte")).not.toBeInTheDocument();
   });
+
+  describe("stopping the reminder", () => {
+    const STOP = `${BASE}/r-1/stop-reminder`;
+    const stoppable = (over: Parameters<typeof detail>[0] = {}) => detail({ mayStopReminder: true, ...over });
+    const stopButton = () => screen.findByRole("button", { name: "Stoppa påminnelsen" });
+    const reminderLine = () => screen.getByText("Påminnelse", { selector: "dt" }).nextElementSibling!;
+
+    it("offers the button only to a reader the gateway says may stop it", async () => {
+      const user = userEvent.setup();
+      renderPage();
+      await openRequest(user);
+      await screen.findByText("Ada Berg");
+      expect(screen.queryByRole("button", { name: "Stoppa påminnelsen" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Till förfrågningarna" }));
+
+      state.detail = stoppable();
+      await openRequest(user);
+
+      expect(await stopButton()).toHaveAttribute("data-writes", "DRIFT");
+    });
+
+    it("asks once first, with the question and what stays, takes focus to the safe answer and sends nothing yet", async () => {
+      const user = userEvent.setup();
+      state.detail = stoppable();
+      renderPage();
+      await openRequest(user);
+
+      await user.click(await stopButton());
+
+      const question = screen.getByRole("group", { name: "Stoppa påminnelsen? Den går inte att ångra." });
+      expect(question).toHaveTextContent("Förfrågan finns kvar och vårdnadshavarna kan fortfarande bekräfta. Det är bara påminnelsen som uteblir.");
+      expect(within(question).getByRole("button", { name: "Stoppa" })).toBeEnabled();
+      await waitFor(() => expect(within(question).getByRole("button", { name: "Avbryt" })).toHaveFocus());
+      expect(screen.queryByRole("button", { name: "Stoppa påminnelsen" })).not.toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
+    });
+
+    it("takes the question back on Avbryt, hands focus back to the button and sends nothing", async () => {
+      const user = userEvent.setup();
+      state.detail = stoppable();
+      renderPage();
+      await openRequest(user);
+      await user.click(await stopButton());
+
+      await user.click(screen.getByRole("button", { name: "Avbryt" }));
+
+      const button = await stopButton();
+      await waitFor(() => expect(button).toHaveFocus());
+      expect(screen.queryByRole("group")).not.toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
+    });
+
+    it("stops it: posts to the request's route, says so in a live region that takes focus, and reads the request and then the list again", async () => {
+      const user = userEvent.setup();
+      state.detail = stoppable();
+      api.post.mockImplementation(async () => {
+        state.detail = detail({ reminder: "STOPPED", mayStopReminder: false });
+        return { reminder: "STOPPED" };
+      });
+      renderPage();
+      await openRequest(user);
+      await user.click(await stopButton());
+
+      await user.click(screen.getByRole("button", { name: "Stoppa" }));
+
+      await waitFor(() => expect(api.post).toHaveBeenCalledWith(STOP));
+      expect(api.post).toHaveBeenCalledTimes(1);
+      const result = await screen.findByRole("status");
+      expect(result).toHaveTextContent("Påminnelsen är stoppad.");
+      await waitFor(() => expect(result).toHaveFocus());
+      expect(screen.queryByRole("button", { name: "Stoppa påminnelsen" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("group")).not.toBeInTheDocument();
+      // The request is read again, and the line above says what the gateway now says.
+      await waitFor(() => expect(reads().filter((path) => path === `${BASE}/r-1`)).toHaveLength(2));
+      await waitFor(() => expect(reminderLine()).toHaveTextContent("Stoppad: den som skrev förfrågan"));
+      // The list, which was not on the page, is read again when it is: its cell no longer says "Går".
+      state.list = [listItem({ reminder: "STOPPED" })];
+      await user.click(screen.getByRole("button", { name: "Till förfrågningarna" }));
+      const table = await screen.findByRole("table", { name: "Förfrågningar om kvittens" });
+      await waitFor(() => expect(within(table).getAllByRole("cell")[4]).toHaveTextContent("Stoppad"));
+    });
+
+    it("closes both buttons while it is on its way and sends once however often it is pressed", async () => {
+      const user = userEvent.setup();
+      state.detail = stoppable();
+      let release!: () => void;
+      api.post.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve({ reminder: "STOPPED" });
+          }),
+      );
+      renderPage();
+      await openRequest(user);
+      await user.click(await stopButton());
+
+      await user.click(screen.getByRole("button", { name: "Stoppa" }));
+
+      const stopping = await screen.findByRole("button", { name: "Stoppar…" });
+      expect(stopping).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Avbryt" })).toBeDisabled();
+      await user.click(stopping);
+      expect(api.post).toHaveBeenCalledTimes(1);
+
+      release();
+      expect(await screen.findByText("Påminnelsen är stoppad.")).toBeInTheDocument();
+    });
+
+    it("says when it had already come to something else, and does not say it was stopped", async () => {
+      const user = userEvent.setup();
+      state.detail = stoppable();
+      api.post.mockResolvedValue({ reminder: "SENT" });
+      renderPage();
+      await openRequest(user);
+      await user.click(await stopButton());
+
+      await user.click(screen.getByRole("button", { name: "Stoppa" }));
+
+      expect(await screen.findByRole("status")).toHaveTextContent("Påminnelsen gick inte att stoppa: den hade redan gått eller avslutats. Sidan är uppdaterad.");
+      expect(screen.queryByText("Påminnelsen är stoppad.")).not.toBeInTheDocument();
+    });
+
+    it("says any other failure as one and leaves the button to try again", async () => {
+      const user = userEvent.setup();
+      state.detail = stoppable();
+      api.post.mockRejectedValueOnce(new ApiError(500, "boom"));
+      renderPage();
+      await openRequest(user);
+      await user.click(await stopButton());
+
+      await user.click(screen.getByRole("button", { name: "Stoppa" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Påminnelsen stoppades inte");
+      expect(alert).toHaveTextContent("Inget har ändrats. Försök igen om en stund.");
+      expect(screen.queryByRole("group")).not.toBeInTheDocument();
+      const again = await stopButton();
+      await waitFor(() => expect(again).toHaveFocus());
+
+      api.post.mockResolvedValueOnce({ reminder: "STOPPED" });
+      await user.click(again);
+      await user.click(screen.getByRole("button", { name: "Stoppa" }));
+      expect(await screen.findByText("Påminnelsen är stoppad.")).toBeInTheDocument();
+      expect(screen.queryByText("Påminnelsen stoppades inte")).not.toBeInTheDocument();
+    });
+
+    it("reads the request again on a 403, and says the page was out of date when the right is gone", async () => {
+      const user = userEvent.setup();
+      state.detail = stoppable();
+      api.post.mockImplementation(async () => {
+        // An administrator took the right away, or the author was changed: the request as it is read now.
+        state.detail = detail({ mayStopReminder: false });
+        throw new ApiError(403, "Bara den som skrev meddelandet kan stoppa.", "ACK_NOT_STAFF");
+      });
+      renderPage();
+      await openRequest(user);
+      await user.click(await stopButton());
+
+      await user.click(screen.getByRole("button", { name: "Stoppa" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Påminnelsen går inte längre att stoppa");
+      expect(alert).toHaveTextContent("Den kan redan ha gått, eller så får du inte längre stoppa den. Sidan är uppdaterad.");
+      await waitFor(() => expect(reads().filter((path) => path === `${BASE}/r-1`)).toHaveLength(2));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Stoppa påminnelsen" })).not.toBeInTheDocument());
+      expect(screen.queryByText("Påminnelsen stoppades inte")).not.toBeInTheDocument();
+    });
+
+    it("reads the request again on a 404, and says it is gone", async () => {
+      const user = userEvent.setup();
+      state.detail = stoppable();
+      api.post.mockImplementation(async () => {
+        state.detailError = new ApiError(404, "Meddelandet finns inte.", "ACK_NOT_FOUND");
+        throw new ApiError(404, "Meddelandet finns inte.", "ACK_NOT_FOUND");
+      });
+      renderPage();
+      await openRequest(user);
+      await user.click(await stopButton());
+
+      await user.click(screen.getByRole("button", { name: "Stoppa" }));
+
+      expect(await screen.findByText("Förfrågan finns inte")).toBeInTheDocument();
+      expect(reads().filter((path) => path === `${BASE}/r-1`).length).toBeGreaterThan(1);
+      expect(screen.queryByRole("button", { name: "Stoppa påminnelsen" })).not.toBeInTheDocument();
+    });
+  });
 });
 
 describe("English", () => {
@@ -613,7 +973,10 @@ describe("English", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Acknowledgements" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Utflykten på torsdag" })).toBeInTheDocument();
     expect(screen.getByText("1 of 3 pupils")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Ask for acknowledgement" }));
+    await user.click(screen.getByRole("button", { name: "Utflykten på torsdag" }));
+    expect(await screen.findByText(/Goes out .* to whoever has not confirmed by then, also when another guardian of the same pupil has/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back to the requests" }));
+    await user.click(await screen.findByRole("button", { name: "Ask for acknowledgement" }));
     expect(await screen.findByRole("radio", { name: "All guardians must confirm" })).toBeInTheDocument();
     expect(await screen.findByText("No pupil chosen. No guardian to ask.")).toBeInTheDocument();
   });
