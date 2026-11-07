@@ -2085,7 +2085,11 @@ Walk the full product loop once, in order:
   `CalendarLessonStudents` and `SchoolDaySettings` in ACCESS EXCLUSIVE, all
   together, NOWAIT, in a retry loop of 30 s (a register save or a cancellation
   writes `Users` and `CalendarLessons` in one transaction, so no order of locks
-  is safe; the migration stops having changed nothing and can be run again).
+  is safe). If the loop gives up after 30 s it has changed nothing, but Prisma
+  has written an unfinished attempt to `_prisma_migrations`, and the next
+  `migrate deploy` answers **P3009** until `prisma migrate resolve --rolled-back
+  20270122091000_en_elev_byter_till_en_parallell_lektion_for_en_dag` has been
+  run (the lock loop's own error message says so); only then run it again.
   Deploy order: **migrate first**, then merge (the old API knows none of the
   new columns and writes none of them; it does not read a move either, but there
   is none before the new API runs).
@@ -2111,8 +2115,9 @@ Walk the full product loop once, in order:
   replaced by an activity or moved so that they no longer overlap
   (`CalendarLessons_pupil_moves_lapse`, only when time or status changes), and
   with either pupil or lesson when one is deleted. The state codes of the
-  refusals are `LM403`–`LM415`, answered as coded 403/404/409
-  (`LESSON_MOVE_*`). Nothing touches `MasterLessons`.
+  refusals are `LM403`–`LM416`, answered as coded 403/404/409
+  (`LESSON_MOVE_*`; `LM416` is `LESSON_MOVE_LESSON_OVER`, below). Nothing
+  touches `MasterLessons`.
   The delivered time's audience statement (`audienceStatement`, the timplan)
   gains one column, `movedOffIds`, behind an option only it asks for; every
   other statement of P3 is byte for byte what it was (pinned in
@@ -2142,11 +2147,20 @@ Walk the full product loop once, in order:
   'gallring_due', 'gallring_purge') ORDER BY p.proname COLLATE "C"` (prod
   sorts en_US, so compare the md5 per name, not the order). The migrations'
   sha256: 20270122090000 `7beae1596b32c59ab6201ec7748823afb66f5240f8cab580b323bcfd1d1e8e01`,
-  20270122091000 `4ddc89769176bba0a66c63aefb304332c851f5ef021910471c2f4606e243830c`
+  20270122091000 `5d82a347c26825ad40de70f5974fb10a70f0e5e80d553fc041d63c29914c5588`
   (the second changes if the file is edited after this was written: check
-  `shasum -a 256` of the merged file).
+  `shasum -a 256` of the merged file). The two doors' md5 (`prosrc`), the only
+  new functions the review of #281 changed before the migration was run:
+  `lesson_pupil_move` `9304007c95318be11c5b7db3571ed1b0` and
+  `lesson_pupil_move_undo` `e08b03d2835967b75717ca1f3f5a2c9c`.
   **What is decided, for a conversation with the school (BESLUT):** a move is for
-  today or later (a past day's register is not edited this way); no free-text
+  today or later (a past day's register is not edited this way), and never out
+  of a lesson that has ended (409 `LESSON_MOVE_LESSON_OVER`, `LM416`, the same
+  for Ångra and a move on or back): the day is not the hour, the register of a
+  finished lesson is its teachers', and a move writes the pupil's mark on the
+  lesson it leaves, so the teacher of the target alone could have erased a
+  colleague's mark; an administrator corrects a finished lesson in its
+  register, where the mark gets an author; no free-text
   reason is stored (a note about a child would be a record nobody asked for);
   the teachers of both lessons are always told (the one who moved the pupil
   excepted), **the guardian only if the school says so** (Drift › Skolans dag,
@@ -2160,7 +2174,16 @@ Walk the full product loop once, in order:
   a pupil's own direct read of a moved-in lesson does not show the teacher's
   name until the teacher's rows reach the pupil (the gateway's week does); the
   app has no screen for moving (a notice and the type, and the realtime
-  broadcast keeps the register current).
+  broadcast keeps the register current); a lesson that is deleted (a
+  republication that removes a base lesson) takes the moves on it with it, as a
+  cancellation does, and a mark that was set aside on the source stays
+  `UNKNOWN` (the set-aside copy goes with the move, and nobody is told: a
+  deletion is not a cancellation); the register is where it is corrected; a
+  move that gallring removes
+  (the source's date older than the school's attendance limit) takes the
+  arrival with it, so the delivered time (`movedOffIds`) and the rosters of a
+  lesson older than that limit read it as if the pupil had never been moved:
+  the delivered time of a year older than the attendance limit is not stable.
   **Measure** (`scripts/bench/lesson-moves.ts`: two schools of 60 classes of 25
   pupils and six lessons a day, one with 120 pupils moved to a parallel lesson;
   medians of 21 adjacent pairs on a shared Mac, so load moves both alike): the
@@ -2183,7 +2206,8 @@ Walk the full product loop once, in order:
   `app.lesson_pupil_%` function exist, `prisma migrate status` lists exactly
   the two new migrations as pending, no session sits idle in a transaction that
   holds `Users`, `Schools` or `CalendarLessons`, and the seven readers carry
-  the md5 above. **After them, before the merge:** `LessonPupilMoves` has row
+  the md5 above, and `_prisma_migrations` has no unfinished row (an earlier
+  attempt that gave up leaves one: P3009). **After them, before the merge:** `LessonPupilMoves` has row
   security on with five policies, all `TO app_authenticated`, and
   `app_authenticated` holds SELECT and nothing else (`SELECT
   has_table_privilege('app_authenticated', 'public."LessonPupilMoves"', 'INSERT,
@@ -2204,7 +2228,9 @@ Walk the full product loop once, in order:
   revert, put the marks back and take the moves away in one transaction:
   `BEGIN; UPDATE "AttendanceRecords" a SET "status" =
   (m."displacedMark" ->> 'status')::"AttendanceStatus", "note" =
-  m."displacedMark" ->> 'note', "updatedAt" = now() FROM "LessonPupilMoves" m
+  m."displacedMark" ->> 'note', "recordedAt" = (m."displacedMark" ->>
+  'recordedAt')::timestamptz, "recordedById" = (m."displacedMark" ->>
+  'recordedById')::uuid, "updatedAt" = now() FROM "LessonPupilMoves" m
   WHERE m."displacedMark" IS NOT NULL AND a."calendarLessonId" =
   m."fromLessonId" AND a."studentId" = m."studentId" AND a."status" =
   'UNKNOWN'; DELETE FROM "LessonPupilMoves"; COMMIT;` (the arrivals go with the
