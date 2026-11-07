@@ -108,6 +108,15 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     is away is the board's, which records it. The substitutes it would
  *     book come with their cover counter and their week against their
  *     tjänst, and are recorded (EMPLOYMENT), as the candidates are;
+ *   - Skolans dag (GET /api/v1/school-day and .../free, 20270116090000): the
+ *     school's lessons by class, teacher and room are the timetable layer
+ *     above, which staff read directly. What the answer adds is who is away,
+ *     and that IS recorded (STAFF_ABSENCES), about the teachers it names as
+ *     absent, whether as a block on the grid or as the reason a teacher is not
+ *     free: the cover board's rule. It is told to administrators alone (a
+ *     teacher cannot read another's absence, row security), it reads no post
+ *     (only whether one exists, for the substitute pool), and an uppdrag's
+ *     slot comes with its name and never its note;
  *   - counts and summaries that name nobody (/users/counts, the attendance
  *     summary, the rollover preview's pupils, the stage overview without a
  *     class);

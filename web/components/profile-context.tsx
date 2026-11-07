@@ -137,6 +137,10 @@ export const TEACHER_NAV: NavSection[] = [
       // homework. The admin menu's subjects icon, already in the shell.
       { labelKey: "classBook", href: "/teacher/klassbok", icon: BookOpen },
       { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
+      // Skolans dag: the school's day and week, in the form the school has
+      // decided teachers get (the page says so when it has decided none). The
+      // week's icon, already in the shell.
+      { labelKey: "schoolDay", href: "/teacher/school-day", icon: CalendarDays },
       // The teacher's own tjänst, read-only. The admin's Tjänstefördelning
       // icon, already in the shell: the same thing seen from the other side,
       // and a second glyph would be bytes on every route for nothing.

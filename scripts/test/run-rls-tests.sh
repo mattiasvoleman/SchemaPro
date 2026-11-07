@@ -126,27 +126,10 @@ for table in AcademicYears StudentGroups GuardianStudents MasterLessons Calendar
   fi
 done
 
-# And in each link table, a row attached to one of the primary school's lessons
-# but filed under another school. Without one, a policy that asked the lesson's
-# school instead of the row's own passes section 3.
-for link in MasterLessonGroups:MasterLessons:masterLessonId \
-    MasterLessonStudents:MasterLessons:masterLessonId \
-    CalendarLessonTeachers:CalendarLessons:calendarLessonId \
-    CalendarLessonGroups:CalendarLessons:calendarLessonId \
-    CalendarLessonStudents:CalendarLessons:calendarLessonId; do
-  IFS=: read -r table lessons lesson_key <<< "$link"
-  crossed_rows="$(
-    compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
-      -v ON_ERROR_STOP=1 -tAc \
-      "SELECT count(*) FROM \"${table}\" x JOIN \"${lessons}\" l ON l.id = x.\"${lesson_key}\" \
-        WHERE l.\"schoolId\" = '${school_a}' AND x.\"schoolId\" <> l.\"schoolId\"" \
-    | tr -d '[:space:]'
-  )"
-  if [ "${crossed_rows:-0}" = "0" ]; then
-    echo "FAIL: no ${table} row filed under another school than its lesson's; fixtures did not run." >&2
-    exit 1
-  fi
-done
+# (Until 20270115090000 the runner also refused to start unless each link table
+# held a row filed under another school than its lesson's, which only a plain key
+# let the fixtures write. The keys are composite now and section 330 proves that
+# the database refuses such a row.)
 
 # The second school's tjänstefördelning rows. Section 7h asserts that an admin
 # and a teacher of the primary school see none of another school's policy,
@@ -263,8 +246,8 @@ fi
 # One of the second school's classes, in that same year. Section 19 has school
 # A's admin link a group to it (a cross-school predecessor, which only the
 # composite (predecessorId, schoolId) keys can refuse), and file a linked group
-# of its own under school B's year (which the plain academicYearId key lets
-# through and the link trigger must refuse without naming school B's rows).
+# of its own under school B's year (which the composite academicYearId key
+# refuses, 20270115090000, without naming school B's rows).
 # The year is the one read just above: the fixtures' 'RLS Fixture Year' is the
 # only year school B has, and section 18's attachments hang on it.
 group_b="$(

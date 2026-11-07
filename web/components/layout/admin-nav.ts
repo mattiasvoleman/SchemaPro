@@ -131,6 +131,11 @@ export const ADMIN_NAV: NavSection[] = [
       // icon (Ledighetsansökningar), already in the shell: the same act of
       // ticking pupils off, in a different hour.
       { labelKey: "crisis", href: "/admin/crisis", icon: ClipboardCheck },
+      // Skolans dag: the whole school's day and week as classes, teachers or
+      // rooms, and who is free. Before the day planner it reads from: the
+      // overview first, the single lesson after. The timetable's icon,
+      // already in the shell.
+      { labelKey: "schoolDay", href: "/admin/school-day", icon: CalendarDays },
       { labelKey: "dayPlanner", href: "/admin/lessons", icon: CalendarClock },
       { labelKey: "teacherAbsence", href: "/admin/teacher-absence", icon: UserX },
       // Beside the absence register whose lessons it covers. The day

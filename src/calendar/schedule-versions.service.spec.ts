@@ -600,10 +600,10 @@ describe('ScheduleVersionsService', () => {
           startDate: utcDate('2026-08-31'),
           endDate: utcDate('2026-12-18'),
           extraGroups: {
-            create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
+            create: [{ studentGroupId: EXTRA_GROUP_ID }],
           },
           participants: {
-            create: [{ schoolId: SCHOOL_ID, studentId: STUDENT_ID }],
+            create: [{ studentId: STUDENT_ID }],
           },
         },
       });

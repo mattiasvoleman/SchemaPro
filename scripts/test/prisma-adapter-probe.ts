@@ -148,8 +148,10 @@ import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
 import { coverRequestsChecks, sweepCoverRequestsSchool } from './probe-cover-requests';
 import { krislageChecks, sweepKrislageSchool } from './probe-krislage';
 import { kvittensChecks, sweepKvittensSchool } from './probe-kvittens';
+import { skolansDagChecks, sweepSkolansDagSchool } from './probe-skolans-dag';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
+import { sweepTenantKeySchools, tenantKeyChecks } from './probe-tenant-keys';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -5935,9 +5937,11 @@ async function runChecks(
   await scheduleActivityChecks(owner, api, MARKER, check);
   await scheduleActivityPublicationChecks(owner, api, MARKER, check);
   await rastvaktChecks(owner, api, MARKER, check);
+  await tenantKeyChecks(owner, api, MARKER, check);
   await coverRequestsChecks(owner, api, MARKER, check);
   await krislageChecks(owner, api, MARKER, check);
   await kvittensChecks(owner, api, MARKER, check);
+  await skolansDagChecks(owner, api, MARKER, check);
   await elevlistanChecks(owner, api, MARKER, check);
   await massvalChecks(owner, api, MARKER, check);
 }
@@ -6430,11 +6434,15 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepScheduleActivitySchool(owner, MARKER);
   await sweepScheduleActivityPublicationSchools(owner, MARKER);
   await sweepRastvaktSchool(owner, MARKER);
+  // The tenant keys' two schools, likewise.
+  await sweepTenantKeySchools(owner, MARKER);
   await sweepCoverRequestsSchool(owner, MARKER);
   // Krisläge's school, likewise.
   await sweepKrislageSchool(owner, MARKER);
   // Kvittens' school, likewise.
   await sweepKvittensSchool(owner, MARKER);
+  // Skolans dag's school, likewise.
+  await sweepSkolansDagSchool(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
   await sweepElevlistanSchool(owner, MARKER);
   // Massåtgärder's school, likewise.

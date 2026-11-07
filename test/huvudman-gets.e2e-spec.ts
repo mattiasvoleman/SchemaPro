@@ -145,6 +145,8 @@ maybe("Huvudman: every GET a läsare reaches, as the huvudman's reader (a real d
       '/api/v1/print/timetables': `?kind=GROUP&date=${from}`,
       '/api/v1/timetable-validity': `?week=${from}`,
       '/api/v1/cover/board': `?from=${from}&to=${to}`,
+      // The interval is a date and two times of the day, not two dates: without it the route is 400 for both and "alike" is empty.
+      '/api/v1/school-day/free': `?date=${from}&from=08:00&to=09:00`,
       '/api/v1/lesson-logs/class-book': `?groupId=${ids.StudentGroups}&from=${from}&to=${to}`,
       '/api/v1/retention/preview': '?dataType=ATTENDANCE&months=24',
     };

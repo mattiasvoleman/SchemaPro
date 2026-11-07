@@ -61,7 +61,7 @@ export class RoomPreferencesService {
             maxGradeLevel: dto.maxGradeLevel ?? null,
             roomTypeId: dto.roomTypeId ?? null,
             ...(dto.weight !== undefined ? { weight: dto.weight } : {}),
-            rooms: { create: roomIds.map((roomId) => ({ schoolId, roomId })) },
+            rooms: { create: roomIds.map((roomId) => ({ roomId })) },
           },
           include: { rooms: { select: { roomId: true } } },
         });
@@ -106,7 +106,9 @@ export class RoomPreferencesService {
    * school still reads as missing.
    */
   async update(id: string, dto: UpdateRoomPreferenceDto, user: AuthenticatedUser) {
-    const schoolId = requireSchoolId(user);
+    // The rooms' school comes from the rule they are created under (the composite key), so the
+    // id is no longer written here; a principal with no school is still refused.
+    requireSchoolId(user);
     // Only check the pair when the caller touches either side of it: a request
     // that just changes the weight must not be forced to restate the target.
     const touchesTarget = dto.roomTypeId !== undefined || dto.roomIds !== undefined;
@@ -168,7 +170,7 @@ export class RoomPreferencesService {
                   roomTypeId: dto.roomTypeId ?? null,
                   rooms: {
                     deleteMany: {},
-                    create: roomIds.map((roomId) => ({ schoolId, roomId })),
+                    create: roomIds.map((roomId) => ({ roomId })),
                   },
                 }
               : {}),

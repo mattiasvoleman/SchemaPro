@@ -192,8 +192,8 @@ describe('RoomPreferencesService', () => {
           weight: 200,
           rooms: {
             create: [
-              { schoolId: testUser().schoolId, roomId: ROOM_A },
-              { schoolId: testUser().schoolId, roomId: ROOM_B },
+              { roomId: ROOM_A },
+              { roomId: ROOM_B },
             ],
           },
         },
@@ -304,7 +304,7 @@ describe('RoomPreferencesService', () => {
       expect(data.roomTypeId).toBeNull();
       expect(data.rooms.deleteMany).toEqual({});
       expect(data.rooms.create).toEqual([
-        { schoolId: testUser().schoolId, roomId: ROOM_B },
+        { roomId: ROOM_B },
       ]);
     });
 

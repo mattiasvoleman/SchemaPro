@@ -285,7 +285,7 @@ export async function syncReplacementsInTransaction(
           status: 'SCHEDULED',
           note,
           teachers: {
-            create: wanted(entry.groupId).map((teacher) => ({ schoolId, teacherId: teacher.teacherId, role: teacher.role })),
+            create: wanted(entry.groupId).map((teacher) => ({ teacherId: teacher.teacherId, role: teacher.role })),
           },
         },
         select: { id: true },

@@ -495,13 +495,11 @@ export class MasterLessonsService {
           endDate: parseDateOrNull(dto.endDate),
           extraGroups: {
             create: candidate.extraGroupIds.map((studentGroupId) => ({
-              schoolId: year.schoolId,
               studentGroupId,
             })),
           },
           participants: {
             create: [...new Set(candidate.studentIds)].map((studentId) => ({
-              schoolId: year.schoolId,
               studentId,
             })),
           },
@@ -835,7 +833,6 @@ export class MasterLessonsService {
                 extraGroups: {
                   deleteMany: {},
                   create: candidate.extraGroupIds.map((studentGroupId) => ({
-                    schoolId: lesson.school.id,
                     studentGroupId,
                   })),
                 },
@@ -846,7 +843,6 @@ export class MasterLessonsService {
                 participants: {
                   deleteMany: {},
                   create: [...new Set(candidate.studentIds)].map((studentId) => ({
-                    schoolId: lesson.school.id,
                     studentId,
                   })),
                 },

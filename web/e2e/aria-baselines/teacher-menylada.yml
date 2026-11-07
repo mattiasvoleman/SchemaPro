@@ -20,6 +20,9 @@
           - link "Boka lokal":
             - /url: /sv/teacher/rooms
         - listitem:
+          - link "Skolans dag":
+            - /url: /sv/teacher/school-day
+        - listitem:
           - link "Min tjänst":
             - /url: /sv/teacher/tjanst
         - listitem:

@@ -163,6 +163,9 @@
       "name": "SchoolBreaks"
     },
     {
+      "name": "SchoolDay"
+    },
+    {
       "name": "SchoolExport"
     },
     {
@@ -14471,6 +14474,228 @@
         }
       }
     },
+    "/api/v1/school-day": {
+      "get": {
+        "tags": [
+          "SchoolDay"
+        ],
+        "operationId": "SchoolDayController_grid",
+        "parameters": [
+          {
+            "name": "from",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ],
+        "x-rate-limit": {
+          "limit": 1200,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/school-day/free": {
+      "get": {
+        "tags": [
+          "SchoolDay"
+        ],
+        "operationId": "SchoolDayController_free",
+        "parameters": [
+          {
+            "name": "date",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ],
+        "x-rate-limit": {
+          "limit": 1200,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/school-day/settings": {
+      "get": {
+        "tags": [
+          "SchoolDay"
+        ],
+        "operationId": "SchoolDayController_settings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      },
+      "put": {
+        "tags": [
+          "SchoolDay"
+        ],
+        "operationId": "SchoolDayController_updateSettings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchoolDaySettingsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
+        }
+      }
+    },
     "/api/v1/school-exports": {
       "get": {
         "tags": [
@@ -25716,6 +25941,22 @@
             "maximum": 20
           }
         }
+      },
+      "SchoolDaySettingsDto": {
+        "type": "object",
+        "properties": {
+          "teacherView": {
+            "type": "string",
+            "enum": [
+              "ALL",
+              "NONE",
+              "ROOMS"
+            ]
+          }
+        },
+        "required": [
+          "teacherView"
+        ]
       },
       "SetGroupMembersDto": {
         "type": "object",

@@ -220,6 +220,8 @@ describe("AppShell navigation", () => {
     expect(link("nav.absenceWatch")).toHaveAttribute("href", "/teacher/absence-watch");
     // Rapporteringsgrad: the lessons whose register is not saved, and the teacher's own share.
     expect(link("nav.myReporting")).toHaveAttribute("href", "/teacher/reporting-rate");
+    // Skolans dag: in the menu always; the page says what the school has decided teachers get.
+    expect(link("nav.schoolDay")).toHaveAttribute("href", "/teacher/school-day");
     // Kvittens: ask the guardians of the mentees to confirm a message, in the menu always.
     expect(link("nav.acknowledgements")).toHaveAttribute("href", "/teacher/acknowledgements");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
@@ -229,7 +231,7 @@ describe("AppShell navigation", () => {
     expect(screen.queryByRole("link", { name: "nav.leaveRequests" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
     // Counted inside the nav: the skip link is a link too, and not an entry.
-    expect(navLinks()).toHaveLength(12);
+    expect(navLinks()).toHaveLength(13);
 
   });
 
@@ -294,6 +296,7 @@ describe("AppShell navigation", () => {
     ]);
     expect(group("nav.operations")).toEqual([
       "nav.crisis",
+      "nav.schoolDay",
       "nav.dayPlanner",
       "nav.teacherAbsence",
       "nav.coverBoard",
@@ -318,7 +321,7 @@ describe("AppShell navigation", () => {
     expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
     expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(38);
+    expect(all).toHaveLength(39);
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {
