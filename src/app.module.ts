@@ -41,6 +41,7 @@ import { YearRolloverModule } from './year-rollover/year-rollover.module';
 import { CoverModule } from './cover/cover.module';
 import { CrisisModule } from './crisis/crisis.module';
 import { AbsenceWatchModule } from './absence-watch/absence-watch.module';
+import { MealCountsModule } from './meal-counts/meal-counts.module';
 import { ReportingRateModule } from './reporting-rate/reporting-rate.module';
 import { AckModule } from './ack/ack.module';
 import { SchoolDayModule } from './school-day/school-day.module';
@@ -151,6 +152,7 @@ import type { ThrottleConfig } from './config/configuration';
     GallringModule,
     SchoolExportModule,
     AbsenceWatchModule,
+    MealCountsModule,
     ReportingRateModule,
     AckModule,
     SchoolDayModule,
