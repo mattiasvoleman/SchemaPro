@@ -44511,8 +44511,7 @@ BEGIN
     END IF;
   END LOOP;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')
-     AND (has_table_privilege('service_role', 'public."SchoolDaySettings"', 'INSERT') OR has_table_privilege('service_role', 'public."SchoolDaySettings"', 'UPDATE')
-          OR has_table_privilege('service_role', 'public."SchoolDaySettings"', 'DELETE')) THEN
+     AND has_table_privilege('service_role', 'public."SchoolDaySettings"', 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
     RAISE EXCEPTION 'skolans dag 365: service_role writes SchoolDaySettings';
   END IF;
   IF current_setting('server_version_num')::int >= 170000 THEN

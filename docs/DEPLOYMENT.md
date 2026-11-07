@@ -1581,9 +1581,15 @@ Walk the full product loop once, in order:
   free for a teacher:** absence, uppdrag and rastvakt are not a teacher's to
   read (row security), so a list of free colleagues made from what they can
   read would call an absent one free. The free teachers are the
-  administrators'. **A person the school marks as having a protected identity**
+  administrators'. **A teacher is told the lessons as they stand**, cancelled
+  ones and who holds them included, **but not why or in whose place:**
+  `cancelCause` and a teacher's role are administrators' only (a
+  `TEACHER_UNAVAILABLE` cause or a `SUBSTITUTE` row would say a colleague is
+  away). **A person the school marks as having a protected identity**
   is named for administrators only: a teacher's answer leaves a marked teacher
-  out, without an id, and counts them; the print is an administrator's and does
+  out, without an id and without a count (a count on the lessons that are
+  hers would point at her; the omission is presentation, since PostgREST still
+  lets a teacher read the rows); the print is an administrator's and does
   not name a marked teacher either (it counts them). **Free is the
   Vikarietavla's occupied rules** (absent, in a lesson that holds its time, on
   a rastvaktspass, inside an uppdrag or a closure, holding a room booking, and
@@ -1598,7 +1604,14 @@ Walk the full product loop once, in order:
   as in the Vikarietavla:** a shared teacher's lessons at the huvudman's other
   school are not read. **Measure:** a school of 60 classes, 120 teachers and 80
   rooms reads a week in about 0.2 s in the API (`scripts/bench/school-day.ts`);
-  the answer is about 0.8 MB, which the gateway does not compress.
+  the answer is about 0.8 MB (about 1.9 MB for 150 classes, 300 teachers and
+  200 rooms), built in the API process and not compressed by the gateway.
+  **The two reads are throttled to 30 a minute** (`grid`, `free`), as the
+  print is, and a teacher's page asks again every five minutes (an
+  administrator's every minute), so a school behind one address does not
+  spend the whole ceiling on a wall of open pages; watch 429s from shared NAT
+  addresses when the first school sets `ALL`. Compression at the proxy is a
+  decision of its own.
   **Rolling back the API** leaves a table and a function nobody reads; the
   page then answers 404. Nothing needs undoing. To remove them (only if the
   feature is abandoned): `DROP FUNCTION app.school_day_protected_staff();
