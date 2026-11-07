@@ -15,7 +15,14 @@
  *        read off the rows, in the school's own tables;
  *   tk3  a row of one school written with the id of another's is Prisma's P2003
  *        (a foreign key), not a row and not a 500: the model API's own refusal
- *        the services' error mapping already turns into a 409.
+ *        the services' error mapping already turns into a 409;
+ *   tk4  removing a year files the same SS12000 tombstones for its lessons
+ *        whatever order its cascade runs in (the review of #272, M1): a
+ *        CalendarEvent for each lesson, and an AdhocActivity only for the one
+ *        that never had a master lesson. The keys' triggers fire in name order
+ *        (RI_ConstraintTrigger_a_<oid>), so the order moves with every key that
+ *        is dropped and added again; the service takes the lessons first and
+ *        the set no longer depends on it.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -31,6 +38,7 @@ import { MasterLessonsService } from '../../src/calendar/master-lessons.service'
 import type { PrismaService } from '../../src/database/prisma.service';
 import type { NotificationsService } from '../../src/notifications/notifications.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
+import { AcademicYearsService } from '../../src/resources/academic-years.service';
 import { RoomPreferencesService } from '../../src/resources/room-preferences.service';
 import { StudentGroupsService } from '../../src/resources/student-groups.service';
 
@@ -235,6 +243,57 @@ export async function tenantKeyChecks(owner: Client, api: PrismaService, marker:
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "StudentGroups" WHERE name = 'TK3 g'`)).n, 0);
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "Rooms" WHERE name = 'TK3 sal'`)).n, 0);
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "schoolId" = $1 AND "subjectId" = $2`, [b.school, a.subject])).n, 0);
+    });
+
+    await check('(tk4) removing a year files a CalendarEvent tombstone for each of its lessons and an AdhocActivity tombstone only for the lesson that had no master lesson', async () => {
+      const past = (
+        await one<{ id: string }>(
+          `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+           VALUES ($1, 'probe nyckel förra', '2097-08-18', '2098-06-12', false, 'NIOARIG', now()) RETURNING id`,
+          [b.school],
+        )
+      ).id;
+      const group = (
+        await one<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+           VALUES ($1, $2, 'TK4 grupp', 'TEACHING_GROUP'::"StudentGroupKind", 7, now()) RETURNING id`,
+          [b.school, past],
+        )
+      ).id;
+      const master = (
+        await one<{ id: string }>(
+          `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+           VALUES ($1, $2, $3, $4, 1, '08:00', '08:50', now()) RETURNING id`,
+          [b.school, past, b.subject, group],
+        )
+      ).id;
+      const lesson = async (date: string, masterId: string | null) =>
+        (
+          await one<{ id: string }>(
+            `INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+             VALUES ($1, $2, $3, $4, $5::date, ($5::date + time '08:00') AT TIME ZONE 'Europe/Stockholm', ($5::date + time '08:50') AT TIME ZONE 'Europe/Stockholm', now())
+             RETURNING id`,
+            [b.school, masterId, b.subject, group, date],
+          )
+        ).id;
+      const keyed = [await lesson('2097-08-25', master), await lesson('2097-09-01', master)];
+      const adhoc = await lesson('2097-09-02', null);
+
+      await new AcademicYearsService(api).remove(past, b.asAdmin);
+
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "studentGroupId" = $1`, [group])).n, 0, 'the lessons went with the year');
+      // Of the three lessons' ids only: nothing else in the school's tombstones is this check's business.
+      const buried = async (resource: string) =>
+        (
+          await many<{ emittedId: string }>(
+            `SELECT "emittedId" FROM "Ss12000Tombstones" WHERE "schoolId" = $1 AND resource = $2 AND "emittedId" = ANY($3::uuid[])`,
+            [b.school, resource, [...keyed, adhoc]],
+          )
+        )
+          .map((row) => row.emittedId)
+          .sort();
+      assert.deepEqual(await buried('CalendarEvent'), [...keyed, adhoc].sort(), 'a CalendarEvent tombstone for each lesson');
+      assert.deepEqual(await buried('AdhocActivity'), [adhoc], 'an AdhocActivity tombstone for the lesson that never had a master lesson, and for none that had');
     });
   } finally {
     await sweepTenantKeySchools(owner, marker);

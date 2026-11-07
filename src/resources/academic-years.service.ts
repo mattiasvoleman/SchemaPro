@@ -205,6 +205,14 @@ export class AcademicYearsService {
             params: { pupils, inactive },
           });
         }
+        // The year's lessons go first, by their own statement. Left to the year's cascade they leave by two
+        // routes in one statement (the groups' and the master lessons'), and which route runs first is the order
+        // of the keys' triggers by name (RI_ConstraintTrigger_a_<oid>): a key dropped and added again, as
+        // 20270115090000 did, moves to the end. When the master lessons go first the lessons are set to no master
+        // before they go, and app.ss12000_v_lessons() reads the lesson that is deleted as an ad-hoc activity and
+        // files an AdhocActivity tombstone for an id no consumer was given. Here the lessons are deleted with
+        // their master lessons still named, whatever the keys' order is.
+        await tx.calendarLesson.deleteMany({ where: { studentGroup: { academicYearId: id } } });
         await tx.academicYear.delete({ where: { id } });
         if (this.notifications && user.schoolId) await tellNewMentors(this.notifications, tx, user.schoolId);
       });
