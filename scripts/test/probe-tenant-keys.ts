@@ -17,12 +17,16 @@
  *        (a foreign key), not a row and not a 500: the model API's own refusal
  *        the services' error mapping already turns into a 409;
  *   tk4  removing a year files the same SS12000 tombstones for its lessons
- *        whatever order its cascade runs in (the review of #272, M1): a
- *        CalendarEvent for each lesson, and an AdhocActivity only for the one
- *        that never had a master lesson. The keys' triggers fire in name order
- *        (RI_ConstraintTrigger_a_<oid>), so the order moves with every key that
- *        is dropped and added again; the service takes the lessons first and
- *        the set no longer depends on it.
+ *        whichever door removes it and whatever order its cascade runs in (the
+ *        review of #272, M1, R1, R2): a CalendarEvent for each lesson of a year
+ *        that was sent, and an AdhocActivity only for the one that never had a
+ *        master lesson; none at all for a year that was never sent. The keys'
+ *        triggers fire in name order (RI_ConstraintTrigger_a_<oid>), so the
+ *        order moves with every key that is dropped and added again; the BEFORE
+ *        DELETE trigger on AcademicYears (20270120090000) takes the lessons
+ *        first and the set no longer depends on it. The doors are the service,
+ *        a DELETE of the year on the API's role, and a DELETE as the owner: the
+ *        same set from each, or the check names the door.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -245,55 +249,99 @@ export async function tenantKeyChecks(owner: Client, api: PrismaService, marker:
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "schoolId" = $1 AND "subjectId" = $2`, [b.school, a.subject])).n, 0);
     });
 
-    await check('(tk4) removing a year files a CalendarEvent tombstone for each of its lessons and an AdhocActivity tombstone only for the lesson that had no master lesson', async () => {
-      const past = (
-        await one<{ id: string }>(
-          `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
-           VALUES ($1, 'probe nyckel förra', '2097-08-18', '2098-06-12', false, 'NIOARIG', now()) RETURNING id`,
-          [b.school],
-        )
-      ).id;
-      const group = (
-        await one<{ id: string }>(
-          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
-           VALUES ($1, $2, 'TK4 grupp', 'TEACHING_GROUP'::"StudentGroupKind", 7, now()) RETURNING id`,
-          [b.school, past],
-        )
-      ).id;
-      const master = (
-        await one<{ id: string }>(
-          `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
-           VALUES ($1, $2, $3, $4, 1, '08:00', '08:50', now()) RETURNING id`,
-          [b.school, past, b.subject, group],
-        )
-      ).id;
-      const lesson = async (date: string, masterId: string | null) =>
-        (
+    await check('(tk4) removing a year files the same SS12000 tombstones through the service, a DELETE on the API’s role and a DELETE as the owner: a CalendarEvent for each lesson and an AdhocActivity only for the one that had no master lesson, and none for a year that was never sent', async () => {
+      // A year of b's that is not the active one, with a class, a master lesson and three lessons: two that
+      // keep their master lesson and one that never had it. `sent` is a year before the active one, `unsent`
+      // a year after it (app.ss12000_year_is_emitted).
+      const yearWithLessons = async (kind: 'sent' | 'unsent', door: string) => {
+        const [from, to, days] =
+          kind === 'sent'
+            ? (['2097-08-18', '2098-06-12', ['2097-08-25', '2097-09-01', '2097-09-02']] as const)
+            : (['2099-08-16', '2100-06-11', ['2099-08-23', '2099-08-30', '2099-09-01']] as const);
+        const year = (
           await one<{ id: string }>(
-            `INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
-             VALUES ($1, $2, $3, $4, $5::date, ($5::date + time '08:00') AT TIME ZONE 'Europe/Stockholm', ($5::date + time '08:50') AT TIME ZONE 'Europe/Stockholm', now())
-             RETURNING id`,
-            [b.school, masterId, b.subject, group, date],
+            `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+             VALUES ($1, $2, $3::date, $4::date, false, 'NIOARIG', now()) RETURNING id`,
+            [b.school, `probe nyckel ${kind} ${door}`, from, to],
           )
         ).id;
-      const keyed = [await lesson('2097-08-25', master), await lesson('2097-09-01', master)];
-      const adhoc = await lesson('2097-09-02', null);
-
-      await new AcademicYearsService(api).remove(past, b.asAdmin);
-
-      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "studentGroupId" = $1`, [group])).n, 0, 'the lessons went with the year');
-      // Of the three lessons' ids only: nothing else in the school's tombstones is this check's business.
-      const buried = async (resource: string) =>
-        (
-          await many<{ emittedId: string }>(
-            `SELECT "emittedId" FROM "Ss12000Tombstones" WHERE "schoolId" = $1 AND resource = $2 AND "emittedId" = ANY($3::uuid[])`,
-            [b.school, resource, [...keyed, adhoc]],
+        const group = (
+          await one<{ id: string }>(
+            `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+             VALUES ($1, $2, 'TK4 grupp', 'TEACHING_GROUP'::"StudentGroupKind", 7, now()) RETURNING id`,
+            [b.school, year],
           )
-        )
-          .map((row) => row.emittedId)
-          .sort();
-      assert.deepEqual(await buried('CalendarEvent'), [...keyed, adhoc].sort(), 'a CalendarEvent tombstone for each lesson');
-      assert.deepEqual(await buried('AdhocActivity'), [adhoc], 'an AdhocActivity tombstone for the lesson that never had a master lesson, and for none that had');
+        ).id;
+        const master = (
+          await one<{ id: string }>(
+            `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+             VALUES ($1, $2, $3, $4, 1, '08:00', '08:50', now()) RETURNING id`,
+            [b.school, year, b.subject, group],
+          )
+        ).id;
+        const lesson = async (date: string, masterId: string | null) =>
+          (
+            await one<{ id: string }>(
+              `INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+               VALUES ($1, $2, $3, $4, $5::date, ($5::date + time '08:00') AT TIME ZONE 'Europe/Stockholm', ($5::date + time '08:50') AT TIME ZONE 'Europe/Stockholm', now())
+               RETURNING id`,
+              [b.school, masterId, b.subject, group, date],
+            )
+          ).id;
+        const keyed = [await lesson(days[0], master), await lesson(days[1], master)];
+        const adhoc = await lesson(days[2], null);
+        return { year, group, keyed, adhoc };
+      };
+      const doors: Array<[string, (year: string) => Promise<void>]> = [
+        ['the service', (year) => new AcademicYearsService(api).remove(year, b.asAdmin)],
+        [
+          'a DELETE on the API’s role',
+          (year) =>
+            api.withRls(b.asAdmin, async (tx) => {
+              const removed = await tx.$executeRawUnsafe(`DELETE FROM "AcademicYears" WHERE id = $1::uuid`, year);
+              assert.equal(removed, 1, 'the DELETE reached the year');
+            }),
+        ],
+        [
+          'a DELETE as the owner',
+          async (year) => {
+            await owner.query(`DELETE FROM "AcademicYears" WHERE id = $1`, [year]);
+          },
+        ],
+      ];
+      const seen: Record<string, string> = {};
+      for (const kind of ['sent', 'unsent'] as const) {
+        for (const [door, remove] of doors) {
+          const { year, group, keyed, adhoc } = await yearWithLessons(kind, door);
+          await remove(year);
+
+          assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "studentGroupId" = $1`, [group])).n, 0, `${door}: the lessons went with the year`);
+          assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "AcademicYears" WHERE id = $1`, [year])).n, 0, `${door}: the year went`);
+          // Of the three lessons' ids only: nothing else in the school's tombstones is this check's business.
+          const buried = async (resource: string) =>
+            (
+              await many<{ emittedId: string }>(
+                `SELECT "emittedId" FROM "Ss12000Tombstones" WHERE "schoolId" = $1 AND resource = $2 AND "emittedId" = ANY($3::uuid[])`,
+                [b.school, resource, [...keyed, adhoc]],
+              )
+            )
+              .map((row) => row.emittedId)
+              .sort();
+          const events = await buried('CalendarEvent');
+          const adhocs = await buried('AdhocActivity');
+          if (kind === 'sent') {
+            assert.deepEqual(events, [...keyed, adhoc].sort(), `${door}: a CalendarEvent tombstone for each lesson of a year that was sent`);
+            assert.deepEqual(adhocs, [adhoc], `${door}: an AdhocActivity tombstone for the lesson that never had a master lesson, and for none that had`);
+          } else {
+            assert.deepEqual(events, [], `${door}: no CalendarEvent tombstone for the lessons of a year that was never sent`);
+            assert.deepEqual(adhocs, [], `${door}: no AdhocActivity tombstone for the lessons of a year that was never sent`);
+          }
+          // The same shape from every door (the ids differ, what they were does not).
+          const shape = `${events.length} CalendarEvent, ${adhocs.length} AdhocActivity`;
+          seen[kind] ??= shape;
+          assert.equal(shape, seen[kind], `${door} filed ${shape}, the first door filed ${seen[kind]}`);
+        }
+      }
     });
   } finally {
     await sweepTenantKeySchools(owner, marker);

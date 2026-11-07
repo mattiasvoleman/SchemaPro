@@ -2494,3 +2494,371 @@ BEGIN
   PERFORM app.gallring_finish(run, '{}', now());
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 385-387 on the owner's side: Ett läsårs lektioner tas bort först
+-- (20270120090000) (the review of #272).
+--
+-- A year's removal cascades into its lessons by two routes, and which route runs
+-- first is the order of the keys' triggers by name, which a key dropped and added
+-- again moves. Run the wrong way round, the lessons lose their master lesson
+-- before they go and app.ss12000_v_lessons() files an AdhocActivity tombstone for
+-- each of them. A BEFORE DELETE trigger on AcademicYears takes the lessons first,
+-- whoever removes the year. It runs as the owner (SECURITY DEFINER); the reasons
+-- are in the migration, and what they rest on is tested here.
+--
+--   385  the trigger and its function in the catalogue: BEFORE DELETE, per row,
+--        on, the owner's, a fixed search_path, no EXECUTE for anyone, and the
+--        premise of the owner's rights (row security is not forced on the
+--        tables it deletes from)
+--   386  every door files the same tombstones: a DELETE of the year as the
+--        owner, as the API's role and as PostgREST's, for a year that was sent
+--        (a CalendarEvent for each lesson, an AdhocActivity only for the one that
+--        never had a master lesson) and for one that was never sent (none), and
+--        nothing else of the school goes
+--   387  who reaches it and who does not: a profile that writes PLANERING and
+--        not DRIFT (the year goes, and its lessons go first all the same: the
+--        service's own DELETE of them deleted nothing for it), a profile that
+--        writes DRIFT and not PLANERING, another school's administrator and a
+--        teacher (the year stays, the lessons stay), and a year whose removal is
+--        refused (the lessons come back)
+--
+-- These run as the owner and set the role of the API and of PostgREST with the
+-- claims of a signed-in person, because they read the tombstones, which only the
+-- owner reads. The rows are this section's own (ids 7f...), in two schools of its
+-- own, and are rolled back.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.ylg_id(n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('7f' || lpad(to_hex(n), 6, '0') || '-0000-4000-8000-000000000000')::uuid
+$$;
+
+-- The number a row of this section was given, from its id.
+CREATE FUNCTION pg_temp.ylg_n(p_id uuid) RETURNS int LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('x' || substr(p_id::text, 3, 6))::bit(24)::int
+$$;
+
+CREATE FUNCTION pg_temp.ylg_auth(n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('00000000-0000-4000-8000-7f' || lpad(n::text, 10, '0'))::uuid
+$$;
+
+-- Two schools. School 1 has an active year (10), a year that was sent (11) and one that was never sent
+-- (12); a class in each of the last two (30, 31) with a master lesson (50, 51) and three lessons, of which
+-- two keep their master lesson and one never had it (60-62, 63-65); a lesson (66) of the unsent year's class
+-- that names the sent year's class as an extra group; and its people: a full administrator (80), a teacher
+-- (81), an administrator of the expedition (82), one of the schedulers (84). School 2 has a year (20), a class
+-- (32) with two lessons (70 keyed, 71 not) and a full administrator (83).
+CREATE FUNCTION pg_temp.ylg_world() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  s1 uuid := pg_temp.ylg_id(1);
+  s2 uuid := pg_temp.ylg_id(2);
+  lesson record;
+BEGIN
+  INSERT INTO "Schools" (id, name, slug, timezone, "updatedAt") VALUES
+    (s1, 'YLG skola 1', 'ylg-1', 'Europe/Stockholm', now()),
+    (s2, 'YLG skola 2', 'ylg-2', 'Europe/Stockholm', now());
+  INSERT INTO "AcademicYears" (id, "schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt") VALUES
+    (pg_temp.ylg_id(10), s1, 'aktivt',  '2098-08-17', '2099-06-12', true,  'NIOARIG', now()),
+    (pg_temp.ylg_id(11), s1, 'förra',   '2097-08-18', '2098-06-12', false, 'NIOARIG', now()),
+    (pg_temp.ylg_id(12), s1, 'nästa',   '2099-08-16', '2100-06-12', false, 'NIOARIG', now()),
+    (pg_temp.ylg_id(20), s2, 'aktivt',  '2098-08-17', '2099-06-12', true,  'NIOARIG', now());
+  INSERT INTO "Subjects" (id, "schoolId", name, code, "updatedAt") VALUES
+    (pg_temp.ylg_id(40), s1, 'YLG ämne 1', 'YL1', now()),
+    (pg_temp.ylg_id(41), s2, 'YLG ämne 2', 'YL2', now());
+  INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES
+    (pg_temp.ylg_id(30), s1, pg_temp.ylg_id(11), 'YLG förra',  'TEACHING_GROUP', 7, now()),
+    (pg_temp.ylg_id(31), s1, pg_temp.ylg_id(12), 'YLG nästa',  'TEACHING_GROUP', 7, now()),
+    (pg_temp.ylg_id(32), s2, pg_temp.ylg_id(20), 'YLG andra',  'TEACHING_GROUP', 7, now());
+  INSERT INTO "MasterLessons" (id, "schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES
+    (pg_temp.ylg_id(50), s1, pg_temp.ylg_id(11), pg_temp.ylg_id(40), pg_temp.ylg_id(30), 1, '08:00', '08:50', now()),
+    (pg_temp.ylg_id(51), s1, pg_temp.ylg_id(12), pg_temp.ylg_id(40), pg_temp.ylg_id(31), 1, '08:00', '08:50', now()),
+    (pg_temp.ylg_id(52), s2, pg_temp.ylg_id(20), pg_temp.ylg_id(41), pg_temp.ylg_id(32), 1, '08:00', '08:50', now());
+  FOR lesson IN SELECT * FROM (VALUES
+      (60, s1, 50, 40, 30, date '2097-08-25'), (61, s1, 50, 40, 30, date '2097-09-01'), (62, s1, NULL, 40, 30, date '2097-09-02'),
+      (63, s1, 51, 40, 31, date '2099-08-23'), (64, s1, 51, 40, 31, date '2099-08-30'), (65, s1, NULL, 40, 31, date '2099-09-01'),
+      (66, s1, 51, 40, 31, date '2099-09-06'),
+      (70, s2, 52, 41, 32, date '2098-08-24'), (71, s2, NULL, 41, 32, date '2098-08-25')) v(n, school, master, subject, grp, day)
+  LOOP
+    INSERT INTO "CalendarLessons" (id, "schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+    VALUES (pg_temp.ylg_id(lesson.n), lesson.school, CASE WHEN lesson.master IS NULL THEN NULL ELSE pg_temp.ylg_id(lesson.master) END,
+            pg_temp.ylg_id(lesson.subject), pg_temp.ylg_id(lesson.grp), lesson.day,
+            (lesson.day + time '08:00') AT TIME ZONE 'Europe/Stockholm', (lesson.day + time '08:50') AT TIME ZONE 'Europe/Stockholm', now());
+  END LOOP;
+  INSERT INTO "CalendarLessonGroups" (id, "schoolId", "calendarLessonId", "studentGroupId")
+  VALUES (pg_temp.ylg_id(90), s1, pg_temp.ylg_id(66), pg_temp.ylg_id(30));
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (pg_temp.ylg_id(80), s1, 'ylg-full@example.invalid',   'Full',  'Admin',   'SCHOOL_ADMIN', 'FULL',          pg_temp.ylg_auth(80), true, now()),
+    (pg_temp.ylg_id(81), s1, 'ylg-lararen@example.invalid', 'Lärare', 'Ett',     'TEACHER',      NULL,            pg_temp.ylg_auth(81), true, now()),
+    (pg_temp.ylg_id(82), s1, 'ylg-exp@example.invalid',    'Exp',   'Admin',   'SCHOOL_ADMIN', 'EXPEDITION',    pg_temp.ylg_auth(82), true, now()),
+    (pg_temp.ylg_id(84), s1, 'ylg-sched@example.invalid',  'Sched', 'Admin',   'SCHOOL_ADMIN', 'SCHEMALAGGARE', pg_temp.ylg_auth(84), true, now()),
+    (pg_temp.ylg_id(83), s2, 'ylg-full2@example.invalid',  'Full',  'Andra',   'SCHOOL_ADMIN', 'FULL',          pg_temp.ylg_auth(83), true, now());
+  DELETE FROM "Ss12000Tombstones" WHERE "schoolId" IN (s1, s2);
+END $$;
+
+-- The tombstones a school has for the lessons of this section, as '<resource> <numbers>; <resource> <numbers>',
+-- the numbers being the lessons' (60-71): '' when there are none.
+CREATE FUNCTION pg_temp.ylg_tombs(p_school uuid) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(r.resource || ' ' || r.ids, '; ' ORDER BY r.resource COLLATE "C"), '')
+    FROM (SELECT t.resource, string_agg(pg_temp.ylg_n(t."emittedId")::text, ',' ORDER BY pg_temp.ylg_n(t."emittedId")) AS ids
+            FROM "Ss12000Tombstones" t
+           WHERE t."schoolId" = p_school AND t."emittedId" IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 71) n)
+           GROUP BY t.resource) r
+$$;
+
+-- The numbers of the lessons of this section that are left, among 60-71.
+CREATE FUNCTION pg_temp.ylg_lessons() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(pg_temp.ylg_n(l.id)::text, ',' ORDER BY pg_temp.ylg_n(l.id)), '')
+    FROM "CalendarLessons" l WHERE l.id IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 71) n)
+$$;
+
+-- Removes one year by a DELETE of its own, as <p_role> (the owner when null) with the claims of person <p_who>.
+-- Answers what the statement did: the number of rows, 'denied' for a missing privilege, or 'error: ...'.
+-- Back as the owner.
+CREATE FUNCTION pg_temp.ylg_delete_year(p_year int, p_role text, p_who int) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+  -- Everything of pg_temp's is read before the role is set: a role without the privilege to create temporary
+  -- objects does not see the schema.
+  year_id uuid := pg_temp.ylg_id(p_year);
+  claims text := json_build_object('sub', pg_temp.ylg_auth(p_who))::text;
+BEGIN
+  IF p_role IS NOT NULL THEN
+    EXECUTE format('SET LOCAL ROLE %I', p_role);
+    PERFORM set_config('request.jwt.claims', claims, true);
+  END IF;
+  BEGIN
+    DELETE FROM "AcademicYears" WHERE id = year_id;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      RESET ROLE;
+      RETURN 'denied';
+    WHEN OTHERS THEN
+      RESET ROLE;
+      RETURN 'error: ' || SQLERRM;
+  END;
+  RESET ROLE;
+  RETURN n::text;
+END $$;
+
+-- One scenario, in a subtransaction that is always rolled back: the world, then <p_prep> (SQL, as the owner),
+-- then (when p_probe) what person <p_who> does with a DELETE of lesson 60 on its own, then the DELETE of year
+-- <p_year> by person <p_who> as <p_role>. Answers what is left: the statement's answer, whether the year is,
+-- the lessons of the section, the tombstones of school 1 and of school 2, and the probe's answer.
+CREATE FUNCTION pg_temp.ylg_scenario(p_year int, p_role text, p_who int, p_prep text DEFAULT NULL, p_probe boolean DEFAULT false)
+RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  answer text;
+  probe text := NULL;
+  n bigint;
+  result jsonb;
+  lesson_60 uuid := pg_temp.ylg_id(60);
+  claims text := json_build_object('sub', pg_temp.ylg_auth(p_who))::text;
+BEGIN
+  BEGIN
+    PERFORM pg_temp.ylg_world();
+    IF p_prep IS NOT NULL THEN EXECUTE p_prep; END IF;
+    IF p_probe THEN
+      BEGIN
+        EXECUTE format('SET LOCAL ROLE %I', p_role);
+        PERFORM set_config('request.jwt.claims', claims, true);
+        DELETE FROM "CalendarLessons" WHERE id = lesson_60;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        probe := n::text;
+        RESET ROLE;
+        RAISE EXCEPTION 'rollback the probe' USING ERRCODE = 'TF998';
+      EXCEPTION WHEN SQLSTATE 'TF998' THEN NULL;
+      END;
+      RESET ROLE;
+    END IF;
+    answer := pg_temp.ylg_delete_year(p_year, p_role, p_who);
+    result := jsonb_build_object(
+      'answer', answer,
+      'year', EXISTS (SELECT 1 FROM "AcademicYears" WHERE id = pg_temp.ylg_id(p_year)),
+      'lessons', pg_temp.ylg_lessons(),
+      'tombs1', pg_temp.ylg_tombs(pg_temp.ylg_id(1)),
+      'tombs2', pg_temp.ylg_tombs(pg_temp.ylg_id(2)),
+      'probe', probe);
+    RAISE EXCEPTION 'rollback' USING ERRCODE = 'TF999';
+  EXCEPTION WHEN SQLSTATE 'TF999' THEN NULL;
+  END;
+  RETURN result;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 385: the trigger, in the catalogue.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  t record;
+  fn record;
+  grantee oid;
+  role_ text;
+BEGIN
+  SELECT * INTO t FROM pg_trigger WHERE tgrelid = '"AcademicYears"'::regclass AND tgname = 'AcademicYears_a_lessons_go_first' AND NOT tgisinternal;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'lektioner först 385: AcademicYears has no trigger AcademicYears_a_lessons_go_first';
+  END IF;
+  -- tgtype: 1 ROW, 2 BEFORE, 8 DELETE, 16 UPDATE, 4 INSERT, 32 TRUNCATE, 64 INSTEAD: BEFORE DELETE for each row, and that alone.
+  IF t.tgtype <> 1 + 2 + 8 THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger is not BEFORE DELETE FOR EACH ROW and nothing else (tgtype %)', t.tgtype;
+  END IF;
+  IF t.tgenabled <> 'O' THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger is not enabled (tgenabled %)', t.tgenabled;
+  END IF;
+  IF t.tgfoid <> 'app.academic_year_lessons_go_first()'::regprocedure THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger runs % and not app.academic_year_lessons_go_first()', t.tgfoid::regproc;
+  END IF;
+  IF t.tgattr::text <> '' OR t.tgqual IS NOT NULL THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger has a column list or a WHEN: it would not run for every year';
+  END IF;
+
+  SELECT p.prosecdef, p.proconfig, p.proowner, p.proacl, p.prorettype::regtype::text AS ret, p.prolang
+    INTO fn FROM pg_proc p WHERE p.oid = 'app.academic_year_lessons_go_first()'::regprocedure;
+  IF NOT fn.prosecdef THEN
+    RAISE EXCEPTION 'lektioner först 385: the function runs as its caller: a profile that may delete a year and not lessons would delete none (386, 387)';
+  END IF;
+  -- However the setting is spelled (public, pg_temp / "public", "pg_temp"), it is that one and no other.
+  IF fn.proconfig IS NULL OR cardinality(fn.proconfig) <> 1 OR replace(replace(fn.proconfig[1], '"', ''), ' ', '') <> 'search_path=public,pg_temp' THEN
+    RAISE EXCEPTION 'lektioner först 385: the function''s settings are %, not a fixed search_path of public, pg_temp', fn.proconfig;
+  END IF;
+  IF fn.ret <> 'trigger' THEN
+    RAISE EXCEPTION 'lektioner först 385: the function returns %', fn.ret;
+  END IF;
+
+  -- It runs as the tables' owner, whose rights are the year's own cascade's: the referential actions run as
+  -- the owner of the table whose rows they delete, and row security is not forced on an owner.
+  IF fn.proowner <> (SELECT relowner FROM pg_class WHERE oid = '"AcademicYears"'::regclass)
+     OR fn.proowner <> (SELECT relowner FROM pg_class WHERE oid = '"CalendarLessons"'::regclass)
+     OR fn.proowner <> (SELECT relowner FROM pg_class WHERE oid = '"StudentGroups"'::regclass) THEN
+    RAISE EXCEPTION 'lektioner först 385: the function is not owned by the owner of AcademicYears, CalendarLessons and StudentGroups';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid IN ('"AcademicYears"'::regclass, '"CalendarLessons"'::regclass, '"StudentGroups"'::regclass) AND relforcerowsecurity) THEN
+    RAISE EXCEPTION 'lektioner först 385: row security is forced on a table the trigger deletes from or reads: the owner is no longer outside it, and neither is the year''s cascade';
+  END IF;
+  -- Nobody holds EXECUTE on it: not PUBLIC, not the roles that are named, nobody but the owner. A trigger
+  -- needs none to fire.
+  FOR grantee IN SELECT a.grantee FROM aclexplode(coalesce(fn.proacl, acldefault('f', fn.proowner))) a WHERE a.grantee <> fn.proowner LOOP
+    RAISE EXCEPTION 'lektioner först 385: EXECUTE on the function is held by %', CASE WHEN grantee = 0 THEN 'PUBLIC' ELSE grantee::regrole::text END;
+  END LOOP;
+  FOREACH role_ IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_)
+       AND has_function_privilege(role_, 'app.academic_year_lessons_go_first()', 'EXECUTE') THEN
+      RAISE EXCEPTION 'lektioner först 385: % can execute the function', role_;
+    END IF;
+  END LOOP;
+
+  -- No other trigger on the year deletes the lessons, or the year would be deleted by two.
+  IF EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = '"AcademicYears"'::regclass AND NOT g.tgisinternal AND g.tgname <> t.tgname
+               AND g.tgtype & 8 = 8 AND g.tgtype & 2 = 2) THEN
+    RAISE EXCEPTION 'lektioner först 385: another BEFORE DELETE trigger on AcademicYears has been added: it may run before the lessons go (it is named AcademicYears_a_..., which sorts first only while it stays alone)';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 386: every door files the same tombstones.
+--
+-- A sent year (11): a CalendarEvent for each of its three lessons (60-62) and an AdhocActivity for the one
+-- that never had a master lesson (62). A year that was never sent (12): none. The lesson of the unsent year
+-- that names the sent year's class as an extra group (66) stays, and school 2 is not touched. The lessons
+-- are the rows of the section: 60-66 of school 1, 70-71 of school 2.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  door record;
+  r jsonb;
+BEGIN
+  FOR door IN SELECT * FROM (VALUES
+      ('the owner', NULL::text, 0), ('the API''s role', 'app_authenticated', 80), ('PostgREST''s role', 'authenticated', 80)) v(who, via, person)
+  LOOP
+    r := pg_temp.ylg_scenario(11, door.via, door.person);
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 386: % did not remove the sent year: %', door.who, r;
+    END IF;
+    IF r ->> 'tombs1' <> 'AdhocActivity 62; CalendarEvent 60,61,62' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the sent year, not [AdhocActivity 62; CalendarEvent 60,61,62] (an AdhocActivity for a lesson that had a master lesson: the cascade ran the master lessons'' key before the classes'')', door.who, r ->> 'tombs1';
+    END IF;
+    IF r ->> 'lessons' <> '63,64,65,66,70,71' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the sent year went, not [63,64,65,66,70,71] (its own three go; the other year''s, the one with the extra group included, and school 2''s stay)', door.who, r ->> 'lessons';
+    END IF;
+    IF r ->> 'tombs2' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for school 2 when a year of school 1 went', door.who, r ->> 'tombs2';
+    END IF;
+
+    r := pg_temp.ylg_scenario(12, door.via, door.person);
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 386: % did not remove the unsent year: %', door.who, r;
+    END IF;
+    IF r ->> 'tombs1' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the lessons of a year that was never sent, and the flow sends none', door.who, r ->> 'tombs1';
+    END IF;
+    IF r ->> 'lessons' <> '60,61,62,70,71' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the unsent year went, not [60,61,62,70,71]', door.who, r ->> 'lessons';
+    END IF;
+  END LOOP;
+
+  -- What the set is the set of: the lessons removed on their own first, with the trigger out of the way, which
+  -- is what the service did since #272. The trigger makes every door file that.
+  r := pg_temp.ylg_scenario(11, NULL, 0, 'ALTER TABLE "AcademicYears" DISABLE TRIGGER "AcademicYears_a_lessons_go_first"; DELETE FROM "CalendarLessons" WHERE id IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 62) n)');
+  IF r ->> 'tombs1' <> 'AdhocActivity 62; CalendarEvent 60,61,62' THEN
+    RAISE EXCEPTION 'lektioner först 386: the lessons removed first, with the trigger out of the way, filed [%], not the set the doors above are held to', r ->> 'tombs1';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 387: who reaches the trigger, who does not, and what a refusal does.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  r jsonb;
+  via text;
+  all_lessons constant text := '60,61,62,63,64,65,66,70,71';
+BEGIN
+  -- A profile that writes PLANERING and not DRIFT (none does today: this is the next one). The simulation
+  -- must bite: its own DELETE of a lesson deletes nothing, and its DELETE of the year deletes the year, and
+  -- the lessons go first all the same.
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    r := pg_temp.ylg_scenario(11, via, 84,
+      $q$CREATE OR REPLACE FUNCTION app.admin_profile_writes(p_profile "AdminProfile") RETURNS "AdminArea"[] LANGUAGE sql IMMUTABLE AS
+         $f$ SELECT CASE p_profile WHEN 'SCHEMALAGGARE' THEN ARRAY['PLANERING']::"AdminArea"[] ELSE '{}'::"AdminArea"[] END $f$ $q$, true);
+    IF r ->> 'probe' IS DISTINCT FROM '0' THEN
+      RAISE EXCEPTION 'lektioner först 387: the profile that writes PLANERING only deleted % lesson(s) of its own by a DELETE as %: the simulation does not bite', r ->> 'probe', via;
+    END IF;
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 387: a profile that writes PLANERING only did not remove the year as %: %', via, r;
+    END IF;
+    IF r ->> 'tombs1' <> 'AdhocActivity 62; CalendarEvent 60,61,62' OR r ->> 'lessons' <> '63,64,65,66,70,71' THEN
+      RAISE EXCEPTION 'lektioner först 387: a profile that writes PLANERING only, as %, filed [%] and left lessons [%]: the lessons did not go first (the cascade ran, as the owner, in the keys'' order)', via, r ->> 'tombs1', r ->> 'lessons';
+    END IF;
+  END LOOP;
+
+  -- A profile that writes DRIFT and not PLANERING (the expedition) cannot remove the year; a teacher cannot; the
+  -- administrator of another school cannot. Nothing is removed and nothing is filed, as either role.
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    r := pg_temp.ylg_scenario(11, via, 82);
+    IF r ->> 'answer' <> '0' OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 387: the expedition, as %, removed or filed something: %', via, r;
+    END IF;
+    r := pg_temp.ylg_scenario(11, via, 83);
+    IF r ->> 'answer' <> '0' OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' OR r ->> 'tombs2' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 387: the administrator of another school, as %, reached the year or its lessons: %', via, r;
+    END IF;
+    r := pg_temp.ylg_scenario(11, via, 81);
+    IF r ->> 'answer' NOT IN ('0', 'denied') OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 387: a teacher, as %, reached the year or its lessons: %', via, r;
+    END IF;
+  END LOOP;
+
+  -- A year whose removal is refused takes nothing with it: the lessons are back (one statement, one transaction).
+  r := pg_temp.ylg_scenario(11, NULL, 0,
+    $q$CREATE FUNCTION app.ylg_refuses() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RAISE EXCEPTION 'ylg refuses'; END $f$;
+       CREATE TRIGGER "AcademicYears_z_ylg_refuses" BEFORE DELETE ON "AcademicYears" FOR EACH ROW EXECUTE FUNCTION app.ylg_refuses()$q$);
+  IF r ->> 'answer' NOT LIKE 'error: ylg refuses%' OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' THEN
+    RAISE EXCEPTION 'lektioner först 387: a removal that was refused took lessons or tombstones with it: %', r;
+  END IF;
+END $$;
