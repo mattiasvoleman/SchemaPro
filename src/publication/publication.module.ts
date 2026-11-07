@@ -52,6 +52,6 @@ import { PrintTimetablesService } from './print-timetables.service';
     StaffViewerThrottlerGuard,
     PrintTimetablesService,
   ],
-  exports: [PublicationsService],
+  exports: [PublicationsService, ScheduleActivitiesService],
 })
 export class PublicationModule {}
