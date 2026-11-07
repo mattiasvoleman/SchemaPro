@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
 import type { SwapProposal, SwapSuggestion } from "@/lib/swaps";
+import english from "@/messages/en.json";
+import swedish from "@/messages/sv.json";
 import { SwapDialog } from "./swap-dialog";
 
 /**
@@ -66,6 +68,7 @@ const SWAP: SwapProposal = {
     { code: "MOVED_LESSONS", unit: "LESSONS", before: 0, after: 3, delta: 3 },
   ],
   lessons: [lesson("l-a", "Matematik", "7A", true), lesson("l-b", "Tyska", "7B"), lesson("l-c", "Franska", "7C")],
+  removedCalendarLessons: 2,
 };
 
 const CHAIN: SwapProposal = {
@@ -80,6 +83,7 @@ const CHAIN: SwapProposal = {
     { lessonId: "l-d", from: slot(3, 660), to: slot(1, 480) },
   ],
   lessons: [lesson("l-a", "Matematik", "7A", true), lesson("l-b", "Tyska", "7B"), lesson("l-d", "Svenska", "7D")],
+  removedCalendarLessons: 0,
 };
 
 const suggestion = (over: Partial<SwapSuggestion> = {}): SwapSuggestion => ({
@@ -156,6 +160,23 @@ describe("SwapDialog: what it shows of a proposal", () => {
   it("names what another school holds at the new times", async () => {
     await opened();
     expect(screen.getByText(/external\.SHARED_TEACHER\(Anna Ek\|\?\|Norra skolan\|2 09:00–10:00\)/)).toBeInTheDocument();
+  });
+
+  it("says before Tillämpa how many published lessons a proposal removes from the calendar, and nothing for one that removes none", async () => {
+    await opened();
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
+    const [chain] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^chain/ }));
+    const warning = within(swap!).getByText("removesCalendar(2)");
+    expect(warning.closest("[id]")).toHaveAttribute("id", "swap-p-swap-removes");
+    // The button is described by the proposal and by what it would remove, so a screen reader hears both on Tillämpa.
+    expect(within(swap!).getByRole("button", { name: "apply" })).toHaveAccessibleDescription(/swap: Matematik 7A.*removesCalendar\(2\)/);
+    expect(within(chain!).queryByText(/removesCalendar/)).not.toBeInTheDocument();
+    expect(within(chain!).getByRole("button", { name: "apply" })).toHaveAttribute("aria-describedby", "swap-p-chain");
+  });
+
+  it("says what the checks leave out, once under the list", async () => {
+    await opened();
+    expect(screen.getAllByText("notChecked")).toHaveLength(1);
   });
 
   it("lists the hard rules held and the soft costs, before and after, in the pupils' order", async () => {
@@ -239,6 +260,29 @@ describe("SwapDialog: apply", () => {
     );
   });
 
+  it("says after Tillämpa how many calendar lessons were removed, next to how many followed", async () => {
+    swaps.apply.mutateAsync.mockResolvedValue({
+      propagatedLessons: 4,
+      removedCalendarLessons: 2,
+      versionId: "v-1",
+      undo: [{ lessonId: "l-a", from: slot(2, 600), to: slot(1, 480) }],
+    });
+    await opened();
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
+    await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(toast.success).toHaveBeenCalledWith("applied(3)", expect.objectContaining({ description: "calendarUpdated(4) calendarRemoved(2)" }));
+  });
+
+  it("says it even when nothing followed: only removals", async () => {
+    swaps.apply.mutateAsync.mockResolvedValue({ propagatedLessons: 0, removedCalendarLessons: 1, versionId: "v-1", undo: [] });
+    await opened();
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
+    await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(toast.success).toHaveBeenCalledWith("applied(3)", expect.objectContaining({ description: "calendarRemoved(1)" }));
+  });
+
   it("takes it back from the toast by sending the answer's undo, and says if the timetable moved since", async () => {
     await opened();
     const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
@@ -247,15 +291,55 @@ describe("SwapDialog: apply", () => {
     const action = (toast.success as ReturnType<typeof vi.fn>).mock.calls[0]![1].action;
 
     await act(async () => action.onClick());
+    // A second safety version of its own, not another "Före byte".
     expect(swaps.apply.mutateAsync).toHaveBeenLastCalledWith({
       lessonId: "l-a",
       moves: [{ lessonId: "l-a", from: { dayOfWeek: 2, startTime: "10:00", endTime: "11:00" }, to: { dayOfWeek: 1, startTime: "08:00", endTime: "09:00" } }],
+      versionName: "Före ångra",
     });
-    expect(toast.success).toHaveBeenLastCalledWith("undone");
+    // Nothing was removed: it says the lessons are back and that the calendar followed, and nothing about what is lost.
+    expect(toast.success).toHaveBeenLastCalledWith("undone", expect.objectContaining({ description: "undoneCalendar(4)" }));
 
     swaps.apply.mutateAsync.mockRejectedValueOnce(new ApiError(409, "clash", "X"));
     await act(async () => action.onClick());
     expect(toast.error).toHaveBeenLastCalledWith("undoStale");
+  });
+
+  /*
+   * What Ångra says is what it does. The timetable's lessons go back and the
+   * published ones that followed are moved back; the calendar lessons the swap
+   * removed, with their vikarie and homework, are not recreated, and a lesson
+   * the undo removes in its turn is not either.
+   */
+  it("after a swap that removed calendar lessons, Ångra says they do not come back, adding any the undo removed itself", async () => {
+    swaps.apply.mutateAsync.mockResolvedValueOnce({
+      propagatedLessons: 4,
+      removedCalendarLessons: 2,
+      versionId: "v-1",
+      undo: [{ lessonId: "l-a", from: slot(2, 600), to: slot(1, 480) }],
+    });
+    await opened();
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
+    await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    const action = (toast.success as ReturnType<typeof vi.fn>).mock.calls[0]![1].action;
+
+    // The undo moved 3 published lessons back and removed 1 more of its own: 2 + 1 are gone for good.
+    swaps.apply.mutateAsync.mockResolvedValueOnce({ propagatedLessons: 3, removedCalendarLessons: 1, versionId: "v-2", undo: [] });
+    await act(async () => action.onClick());
+    expect(toast.success).toHaveBeenLastCalledWith("undone", expect.objectContaining({ description: "undoneCalendar(3) undoneNotRestored(3)" }));
+  });
+
+  it("says only that the timetable is back when no published lesson followed or went", async () => {
+    swaps.apply.mutateAsync.mockResolvedValueOnce({ propagatedLessons: 0, removedCalendarLessons: 0, versionId: "v-1", undo: [] });
+    await opened();
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
+    await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    const action = (toast.success as ReturnType<typeof vi.fn>).mock.calls[0]![1].action;
+    swaps.apply.mutateAsync.mockResolvedValueOnce({ propagatedLessons: 0, removedCalendarLessons: 0, versionId: "v-2", undo: [] });
+    await act(async () => action.onClick());
+    expect(toast.success).toHaveBeenLastCalledWith("undone");
   });
 
   it.each([
@@ -288,5 +372,23 @@ describe("SwapDialog: apply", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("boom"));
     expect(swaps.suggest.mutateAsync).toHaveBeenCalledTimes(1);
     expect(screen.getByText("found(2)")).toBeInTheDocument();
+  });
+});
+
+/*
+ * The mock above prints keys; these are the real sentences. Ångra's own text
+ * promises the timetable's lessons and nothing about the calendar — the
+ * calendar is said by the two sentences next to it, which say what moved back
+ * and what did not.
+ */
+describe("the sentences Ångra uses", () => {
+  const catalogues = { sv: swedish.swaps, en: english.swaps } as const;
+
+  it.each(["sv", "en"] as const)("%s: undone does not mention the calendar, and the removed lessons are said not to come back", (locale) => {
+    const text = catalogues[locale];
+    expect(text.undone).not.toMatch(/kalender|calendar|published|publicerad/i);
+    expect(text.undoneNotRestored).toMatch(locale === "sv" ? /kommer inte tillbaka/ : /do(es)? not come back/);
+    expect(text.undoneNotRestored).toMatch(locale === "sv" ? /vikarie/ : /substitute/);
+    expect(text.removesCalendar).toMatch(locale === "sv" ? /Ångra lägger inte tillbaka/ : /Undo does not put them back/);
   });
 });

@@ -4667,6 +4667,42 @@
     ångra-historik töms vid ett byte, som vid en återställd version.
   </p>
   <div class="note">
+    <span class="label">Kalenderlektioner som bytet tar bort — och vad Ångra ger tillbaka</span>
+    <p>
+      Ett byte flyttar alltid minst en lektion till en tidigare veckodag. En
+      publicerad lektion i kalendern som flytten skulle lägga på en tid som
+      redan varit (eller utanför lektionens veckor) flyttas inte utan
+      <em>tas bort</em>, med vikarie, lektionslogg och läxa. Vilka förslag som
+      gör det står före <span class="ui">Tillämpa</span>: ett förslag som
+      tar bort kalenderlektioner har en gul ruta, <em>Tar bort N publicerade
+      lektioner ur kalendern</em>. Meddelandet efter Tillämpa säger hur många
+      som följde med och hur många som togs bort.
+    </p>
+    <p>
+      <span class="ui">Ångra</span> sätter tillbaka <em>lektionerna i
+      grundschemat</em> på sina gamla tider och flyttar tillbaka de publicerade
+      lektioner som följde med. Det lägger inte tillbaka kalenderlektioner som
+      redan tagits bort, och inte heller vikarien, lektionsloggen eller läxan på
+      dem; meddelandet efter Ångra räknar dem. <span class="ui">Publicera</span>
+      igen skapar nya kalenderlektioner på de gamla tiderna, men utan det som
+      hängde på de borttagna. Ångra sparar också en säkerhetsversion, <em>Före
+      ångra</em>, bredvid <em>Före byte</em>. I utkastläge (5.7) rörs kalendern
+      inte förrän du publicerar, så där tas ingenting bort av ett byte.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Vad förslagen inte prövar</span>
+    <p>
+      Korridortiden i ramtiderna och restiden mellan skolområden prövas inte
+      (en flytt för hand varnar för restid, ett byte gör det inte). På ett
+      rutnät som inte är hela timmar kan enstaka kedjor där en tredje lektion
+      frigör en delvis överlappande tid saknas bland förslagen; de som visas är
+      alltid prövade. Lektionerna som byter tid är kvar som genererade, så
+      nästa <span class="ui">Generera</span> kan flytta dem igen: lås dem om de
+      ska ligga kvar.
+    </p>
+  </div>
+  <div class="note">
     <span class="label">När schemat hunnit ändras</span>
     <p>
       Har någon flyttat en av lektionerna sedan förslagen räknades fram, eller

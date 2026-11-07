@@ -118,12 +118,26 @@ export function SwapDialog({
 
   const message = (error: unknown) => (error instanceof Error ? error.message : t("failed"));
 
-  /** The same moves sent back: the apply's answer names them. */
-  const undo = async (picked: string, moves: SwapMove[]) => {
+  /**
+   * The same moves sent back: the apply's answer names them. What it says is
+   * what it did: the timetable's lessons stand on their old times and the
+   * published ones that followed are moved back. The calendar lessons the swap
+   * removed (`removedBySwap`), and any the undo had to remove in its turn, do
+   * not come back with it, nor does what hung on them.
+   */
+  const undo = async (picked: string, moves: SwapMove[], removedBySwap: number) => {
     try {
-      await apply.mutateAsync(applyBody(picked, moves));
+      const result = await apply.mutateAsync(applyBody(picked, moves, "Före ångra"));
       onApplied();
-      toast.success(t("undone"));
+      const gone = removedBySwap + result.removedCalendarLessons;
+      const description = [
+        result.propagatedLessons > 0 ? t("undoneCalendar", { count: result.propagatedLessons }) : null,
+        gone > 0 ? t("undoneNotRestored", { count: gone }) : null,
+      ]
+        .filter((part) => part !== null)
+        .join(" ");
+      if (description) toast.success(t("undone"), { description, duration: UNDO_TOAST_MS });
+      else toast.success(t("undone"));
     } catch (error) {
       toast.error(error instanceof ApiError && error.status === 409 ? t("undoStale") : message(error));
     }
@@ -135,12 +149,19 @@ export function SwapDialog({
       const result = await apply.mutateAsync(applyBody(lessonId, proposal.moves));
       onApplied();
       onOpenChange(false);
+      const description = [
+        result.propagatedLessons > 0 ? t("calendarUpdated", { count: result.propagatedLessons }) : null,
+        result.removedCalendarLessons > 0 ? t("calendarRemoved", { count: result.removedCalendarLessons }) : null,
+      ]
+        .filter((part) => part !== null)
+        .join(" ");
       toast.success(t("applied", { count: proposal.moves.length }), {
-        ...(result.propagatedLessons > 0
-          ? { description: t("calendarUpdated", { count: result.propagatedLessons }) }
-          : {}),
+        ...(description ? { description } : {}),
         duration: UNDO_TOAST_MS,
-        action: { label: t("undo"), onClick: () => void undo(lessonId, result.undo) },
+        action: {
+          label: t("undo"),
+          onClick: () => void undo(lessonId, result.undo, result.removedCalendarLessons),
+        },
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
@@ -254,7 +275,11 @@ export function SwapDialog({
                         <Button
                           size="sm"
                           onClick={() => void doApply(proposal)}
-                          aria-describedby={`swap-${proposal.id}`}
+                          aria-describedby={
+                            proposal.removedCalendarLessons > 0
+                              ? `swap-${proposal.id} swap-${proposal.id}-removes`
+                              : `swap-${proposal.id}`
+                          }
                           disabled={apply.isPending}
                           data-writes="SCHEMALAGGNING DRIFT"
                         >
@@ -285,6 +310,12 @@ export function SwapDialog({
                           );
                         })}
                       </ul>
+
+                      {proposal.removedCalendarLessons > 0 ? (
+                        <Notice tone="warning" role={null} id={`swap-${proposal.id}-removes`}>
+                          <p>{t("removesCalendar", { count: proposal.removedCalendarLessons })}</p>
+                        </Notice>
+                      ) : null}
 
                       {proposal.parallels.length > 0 ? (
                         <p className="text-sm">
@@ -336,6 +367,7 @@ export function SwapDialog({
               </>
             )}
 
+            {suggestion.proposals.length > 0 ? <p className="text-xs text-muted-foreground">{t("notChecked")}</p> : null}
             {suggestion.stats.truncated ? <p className="text-xs text-muted-foreground">{t("truncated")}</p> : null}
           </>
         ) : null}

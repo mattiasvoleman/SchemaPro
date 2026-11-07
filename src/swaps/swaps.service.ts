@@ -16,10 +16,11 @@ import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { lockYearsOfLessonsForGrundschemaEdit } from '../optimization/regeneration-lock';
-import { enterGrundschemaWrite } from '../publication/publish-mode';
+import { enterGrundschemaWrite, publishModeOf } from '../publication/publish-mode';
 import { RealtimeService } from '../realtime/realtime.service';
 import type { ApplySwapDto, SuggestSwapsDto } from './dto/swaps.dto';
 import { SwapContext } from './swap-context';
+import { removedCalendarLessons } from './swap-calendar';
 import { dayLessonOf, SwapReads } from './swap-reads';
 import { proposalId, searchSwaps } from './swap-search';
 import { readSwapData, type SwapData } from './swap-snapshot';
@@ -62,6 +63,14 @@ export interface SwapLessonView {
 export interface SwapProposalView extends Omit<SwapProposal, 'score'> {
   /** Every lesson the proposal names, once. */
   lessons: SwapLessonView[];
+  /**
+   * The published calendar lessons applying it would REMOVE instead of move —
+   * a lesson the move would carry to a time that has begun — with the vikarie,
+   * lesson log and homework on them. Undo puts the master lessons back and not
+   * these. Zero in a draft layer, where the calendar is not touched until the
+   * draft is published.
+   */
+  removedCalendarLessons: number;
 }
 
 export interface SwapSuggestion {
@@ -143,7 +152,7 @@ export class SwapsService {
     return this.prisma.withRls(user, async (tx) => {
       const picked = await tx.masterLesson.findUnique({
         where: { id: dto.lessonId },
-        select: { id: true, academicYearId: true, isParked: true },
+        select: { id: true, academicYearId: true, isParked: true, school: { select: { timezone: true } } },
       });
       if (!picked) throw new NotFoundException('Master lesson not found.');
       const empty = (immovable: SwapSuggestion['immovable']): SwapSuggestion => ({
@@ -190,7 +199,19 @@ export class SwapsService {
         budgetMs: BUDGET_MS,
       });
 
-      const proposals = result.proposals.map((proposal) => this.viewOf(data, context, proposal));
+      const viewed = result.proposals.map((proposal) => this.viewOf(data, context, proposal));
+      // What each would take out of the published calendar, said before it is applied. A draft layer
+      // leaves the calendar alone until it is published, so there is nothing to say then.
+      const removals =
+        viewed.length > 0 && (await publishModeOf(tx, data.schoolId)) !== 'DRAFT'
+          ? await removedCalendarLessons(
+              tx,
+              viewed.map((proposal) => proposal.moves),
+              context.lessonById,
+              picked.school.timezone,
+            )
+          : viewed.map(() => 0);
+      const proposals = viewed.map((proposal, index) => ({ ...proposal, removedCalendarLessons: removals[index] ?? 0 }));
       // A teacher's day or week counted against a limit of their post is a read of that post.
       if (proposals.length > 0) {
         const teachers = new Set(
@@ -226,7 +247,7 @@ export class SwapsService {
     data: SwapData,
     context: SwapContext,
     proposal: { kind: SwapProposal['kind']; moves: SwapMove[]; parallels: SwapProposal['parallels']; soft: SoftCost[] },
-  ): SwapProposalView {
+  ): Omit<SwapProposalView, 'removedCalendarLessons'> {
     const lessons = proposal.moves.map((move) => {
       const lesson = context.lessonById.get(move.lessonId)!;
       return {

@@ -175,7 +175,7 @@ export function fakeTx(world: World, lessons: () => SwapLesson[] = () => world.d
     masterLesson: {
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
         const found = lessons().find((lesson) => lesson.id === where.id);
-        return found ? { id: found.id, academicYearId: YEAR, isParked: false } : null;
+        return found ? { id: found.id, academicYearId: YEAR, isParked: false, school: { timezone: 'Europe/Stockholm' } } : null;
       }),
       findMany: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
         const idClause = where['id'] as { notIn?: string[]; not?: string } | undefined;
@@ -214,6 +214,9 @@ export function fakeTx(world: World, lessons: () => SwapLesson[] = () => world.d
       count: jest.fn(async () => 0),
     },
     studentGroupMember: { findMany: jest.fn(async () => []) },
+    // The published calendar has no future lesson of the world's, and the school publishes directly.
+    calendarLesson: { findMany: jest.fn(async (_args: unknown) => [] as Array<{ masterLessonId: string | null; date: Date }>) },
+    $queryRaw: jest.fn(async () => [{ mode: 'DIRECT' }]),
     $executeRaw: jest.fn(async () => 0),
   };
 }

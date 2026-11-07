@@ -34,7 +34,11 @@
  *          (the version check's day condition: start and end moved together
  *          cover for one another, the day alone did not);
  *   (sw-h) a clock past the end of the day ("34:00" wraps to 10:00 where the
- *          teacher's other lesson stands) is a 400 that writes nothing.
+ *          teacher's other lesson stands) is a 400 that writes nothing;
+ *   (sw-i) published calendar lessons: a proposal says how many it would
+ *          REMOVE (a lesson carried to a time that has begun), apply removes
+ *          exactly those and moves the rest, and Ångra, with a safety version
+ *          of its own, does not bring the removed ones back.
  *
  * Independent of what earlier CI steps left in the database: it works in a
  * school of its own and counts on nothing in the seed.
@@ -46,6 +50,7 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
 import { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
+import { zonedTimeToUtc } from '../../src/common/utils/time';
 import { PrismaService } from '../../src/database/prisma.service';
 import { SwapsService, type SwapProposalView } from '../../src/swaps/swaps.service';
 import { seedHogstadium, type SeededSchool } from '../fixtures/hogstadium-week';
@@ -369,6 +374,79 @@ async function run(owner: Client, api: PrismaService, seeded: SeededSchool) {
           columns.map((column) => frame[column]),
         );
       }
+    }
+  });
+
+  await check('(sw-i) a proposal says how many published lessons it removes, apply removes exactly those, and Ångra does not bring them back', async () => {
+    const zone = 'Europe/Stockholm';
+    const now = new Date();
+    // A swap with a move back by two weekdays or more: its published lessons land before today whatever the day is.
+    let lessonId = '';
+    let proposalId = '';
+    for (const lesson of start.filter((r) => seeded.classes.some((c) => c.id === r.groupId))) {
+      const found = (await swaps.suggest({ lessonId: lesson.id, limit: 30 }, asAdmin)).proposals.find(
+        (p) => p.kind === 'SWAP' && p.moves.some((m) => m.from.dayOfWeek - m.to.dayOfWeek >= 2),
+      );
+      if (found) {
+        lessonId = lesson.id;
+        proposalId = found.id;
+        break;
+      }
+    }
+    assert.ok(lessonId, 'no swap with a move back by two weekdays');
+    const proposalOf = async () => (await swaps.suggest({ lessonId, limit: 30 }, asAdmin)).proposals.find((p) => p.id === proposalId)!;
+    const proposal = await proposalOf();
+    assert.equal(proposal.removedCalendarLessons, 0, 'nothing is published, so nothing would be removed');
+
+    // Two published lessons per moving lesson, tomorrow and a week on. (The weekday of a planted date is not the template's:
+    // the rule carries a row by the template's move, and a backward move of two weekdays lands before today from tomorrow.)
+    const isoDay = (offset: number) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offset));
+    const masters = (
+      await owner.query(
+        `SELECT id, "subjectId", "studentGroupId", "roomId" FROM "MasterLessons" WHERE id = ANY($1::uuid[])`,
+        [proposal.moves.map((m) => m.lessonId)],
+      )
+    ).rows as Array<{ id: string; subjectId: string; studentGroupId: string; roomId: string | null }>;
+    let expected = 0;
+    let planted = 0;
+    for (const move of proposal.moves) {
+      const master = masters.find((m) => m.id === move.lessonId)!;
+      for (const offset of [1, 8]) {
+        const date = isoDay(offset).toISOString().slice(0, 10);
+        await owner.query(
+          `INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+          [school, master.id, master.subjectId, master.studentGroupId, master.roomId, date, zonedTimeToUtc(date, clock(move.from.startMinutes), zone), zonedTimeToUtc(date, clock(move.from.endMinutes), zone)],
+        );
+        planted += 1;
+        const target = isoDay(offset + move.to.dayOfWeek - move.from.dayOfWeek).toISOString().slice(0, 10);
+        if (zonedTimeToUtc(target, clock(move.to.startMinutes), zone) <= now) expected += 1;
+      }
+    }
+    assert.ok(expected > 0 && expected < planted, `${expected} of ${planted} planted lessons would be removed: the check needs both kinds`);
+    const countRows = async () =>
+      Number((await owner.query(`SELECT count(*) AS n FROM "CalendarLessons" WHERE "masterLessonId" = ANY($1::uuid[])`, [proposal.moves.map((m) => m.lessonId)])).rows[0].n);
+
+    try {
+      assert.equal((await proposalOf()).removedCalendarLessons, expected, 'the proposal does not say what apply removes');
+      const before = await fingerprint();
+      const applied = await swaps.apply(bodyOf(lessonId, proposal), asAdmin);
+      assert.equal(applied.removedCalendarLessons, expected, 'apply removed another number than the proposal said');
+      assert.equal(applied.propagatedLessons, planted - expected);
+      assert.equal(await countRows(), planted - expected);
+
+      // Ångra: the timetable's lessons go back, the removed calendar lessons do not, and the safety version has a name of its own.
+      const undone = await swaps.apply({ ...bodyOf(lessonId, proposal), moves: applied.undo.map((m) => ({
+        lessonId: m.lessonId,
+        from: { dayOfWeek: m.from.dayOfWeek, startTime: clock(m.from.startMinutes), endTime: clock(m.from.endMinutes) },
+        to: { dayOfWeek: m.to.dayOfWeek, startTime: clock(m.to.startMinutes), endTime: clock(m.to.endMinutes) },
+      })), versionName: 'Före ångra' }, asAdmin);
+      assert.equal(await fingerprint(), before, 'the undo did not put the timetable back');
+      assert.equal(await countRows(), planted - expected - undone.removedCalendarLessons, 'a removed calendar lesson came back');
+      const name = (await owner.query(`SELECT name FROM "ScheduleVersions" WHERE id = $1`, [undone.versionId])).rows[0].name;
+      assert.equal(name, 'Före ångra');
+    } finally {
+      await owner.query(`DELETE FROM "CalendarLessons" WHERE "schoolId" = $1`, [school]);
     }
   });
 

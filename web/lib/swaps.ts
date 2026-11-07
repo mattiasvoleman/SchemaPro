@@ -82,6 +82,12 @@ export interface SwapProposal {
   hard: HardCode[];
   soft: SoftCost[];
   lessons: SwapLessonView[];
+  /**
+   * Published calendar lessons that applying it would REMOVE instead of move
+   * (a lesson carried to a time that has begun), with their vikarie, lesson log
+   * and homework. Undo puts the timetable's lessons back, not these.
+   */
+  removedCalendarLessons: number;
 }
 
 export interface SwapSuggestion {

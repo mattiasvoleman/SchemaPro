@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { MasterLessonsService } from '../calendar/master-lessons.service';
+import { zonedTimeToUtc } from '../common/utils/time';
 import { fakeTx, makeWorld, YEAR, type World } from './__fixtures__/swap-world';
 import { SwapReads } from './swap-reads';
 import { proposalId } from './swap-search';
@@ -191,6 +192,95 @@ describe('SwapsService.suggest: what it offers is what a brute force finds', () 
     (readSwapData as jest.Mock).mockResolvedValue(world.data);
     const offered = await parked.suggest({ lessonId: 'x' }, user);
     expect(offered).toMatchObject({ proposals: [], immovable: 'PARKED' });
+  });
+});
+
+describe('SwapsService.suggest says what applying a proposal would take out of the published calendar', () => {
+  const TZ = 'Europe/Stockholm';
+  /** Wednesday 14 October 2026, 10:00 in Stockholm: this week has begun. */
+  const NOW = new Date('2026-10-14T08:00:00.000Z');
+  const world = makeWorld({ seed: 7 });
+  const clockOf = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+  const weekday = (date: Date) => (date.getUTCDay() === 0 ? 7 : date.getUTCDay());
+
+  /** The dates (UTC midnight) of a lesson’s published rows from today on: its weekday, every week, those that have not begun. */
+  function rowsOf(lesson: SwapLesson): Array<{ masterLessonId: string; date: Date }> {
+    const rows: Array<{ masterLessonId: string; date: Date }> = [];
+    for (let offset = 0; offset < 8 * 7; offset++) {
+      const date = new Date(Date.UTC(2026, 9, 14 + offset));
+      if (weekday(date) !== lesson.dayOfWeek) continue;
+      const startsAt = zonedTimeToUtc(date.toISOString().slice(0, 10), clockOf(lesson.startMinutes), TZ);
+      if (startsAt > NOW) rows.push({ masterLessonId: lesson.id, date });
+    }
+    return rows;
+  }
+
+  /** The oracle: a row is lost when the weekday and clock it would be carried to have begun, and nothing else does it here. */
+  function lost(moves: readonly SwapMove[]): number {
+    let total = 0;
+    for (const move of moves) {
+      const lesson = world.data.lessons.find((l) => l.id === move.lessonId)!;
+      for (const row of rowsOf(lesson)) {
+        const target = new Date(row.date);
+        target.setUTCDate(target.getUTCDate() + move.to.dayOfWeek - move.from.dayOfWeek);
+        if (zonedTimeToUtc(target.toISOString().slice(0, 10), clockOf(move.to.startMinutes), TZ) <= NOW) total += 1;
+      }
+    }
+    return total;
+  }
+
+  beforeEach(() => {
+    // Only the clock: timers and microtasks stay real.
+    jest.useFakeTimers({
+      now: NOW,
+      doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'queueMicrotask', 'performance', 'hrtime'],
+    });
+    (readSwapData as jest.Mock).mockResolvedValue(world.data);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  it('counts, per proposal, the published lessons its moves would carry to a time that has begun', async () => {
+    const tx = fakeTx(world);
+    tx.calendarLesson.findMany.mockImplementation(async (args: unknown) => {
+      const wanted = ((args as { where: { masterLessonId: { in: string[] } } }).where.masterLessonId.in);
+      return world.data.lessons.filter((l) => wanted.includes(l.id)).flatMap(rowsOf);
+    });
+    const { swaps } = service(world, tx);
+    // A spread of picked lessons, so that proposals land on every hour of today as well as on days that have gone.
+    let proposals = 0;
+    let removing = 0;
+    let keeping = 0;
+    let today = 0;
+    for (const lesson of world.data.lessons.filter((_, index) => index % 6 === 3)) {
+      tx.calendarLesson.findMany.mockClear();
+      const offered = await swaps.suggest({ lessonId: lesson.id, limit: 30 }, user);
+      expect(offered.proposals.map((proposal) => proposal.removedCalendarLessons)).toEqual(offered.proposals.map((proposal) => lost(proposal.moves)));
+      // One read for all the proposals of an answer.
+      expect(tx.calendarLesson.findMany).toHaveBeenCalledTimes(1);
+      for (const proposal of offered.proposals) {
+        proposals += 1;
+        if (proposal.removedCalendarLessons > 0) removing += 1;
+        else keeping += 1;
+        // The hours of Wednesday itself are where the school's time zone decides.
+        if (proposal.moves.some((move) => move.to.dayOfWeek === 3 && move.to.startMinutes >= 9 * 60 && move.to.startMinutes <= 11 * 60)) today += 1;
+      }
+    }
+    // Not a vacuous pass: some proposals take lessons out of the week that has begun, some take none,
+    // and some land inside this morning's hours, where only the school's own zone gives the right count.
+    expect(proposals).toBeGreaterThan(50);
+    expect(removing).toBeGreaterThan(0);
+    expect(keeping).toBeGreaterThan(0);
+    expect(today).toBeGreaterThan(0);
+  });
+
+  it('says nothing in a draft layer, where the calendar is not touched until the draft is published', async () => {
+    const tx = fakeTx(world);
+    tx.$queryRaw.mockResolvedValue([{ mode: 'DRAFT' }]);
+    const { swaps } = service(world, tx);
+    const offered = await swaps.suggest({ lessonId: world.data.lessons[3]!.id, limit: 30 }, user);
+    expect(offered.proposals.length).toBeGreaterThan(0);
+    expect(offered.proposals.every((proposal) => proposal.removedCalendarLessons === 0)).toBe(true);
+    expect(tx.calendarLesson.findMany).not.toHaveBeenCalled();
   });
 });
 

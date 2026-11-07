@@ -1843,7 +1843,7 @@
   },
   "swaps": {
     "title": "Swaps and moves",
-    "body": "Lessons that can trade times with this one without anything being double-booked, and chains of three where each lesson takes the next one's time. Every proposal has been judged by the same rules as a hand move, and you see what it costs before anything changes.",
+    "body": "Lessons that can trade times with this one without anything being double-booked, and chains of three where each lesson takes the next one's time. Every proposal has been judged by the same rules as a hand move, and you see what it costs before anything changes. The lessons that trade times stay generated, so the next Generate can move them again: lock them if they are to stay.",
     "computing": "Looking for swaps…",
     "failed": "The proposals could not be fetched.",
     "retry": "Try again",
@@ -1876,6 +1876,7 @@
       "ROOM_BORROWED": "{room} is borrowed from {schools} and is only available within the loan, not {when}."
     },
     "hardTitle": "Hard rules held",
+    "notChecked": "The proposals do not check the changeover time in the frames or the travel time between sites.",
     "hard": {
       "CLASH": "no double booking of teacher, room or pupils, and no closed times",
       "FRAME": "the school day's frames",
@@ -1895,11 +1896,14 @@
     "breaches": "{count, plural, =0 {no breaches} =1 {1 breach} other {# breaches}}",
     "lessons": "{count, plural, =1 {1 lesson} other {# lessons}}",
     "apply": "Apply",
-    "applying": "Applying…",
     "applied": "{count, plural, =1 {1 lesson changed time.} other {# lessons changed time.}} The timetable as it was before was saved as a version.",
     "calendarUpdated": "{count, plural, =1 {1 published lesson in the calendar followed.} other {# published lessons in the calendar followed.}}",
+    "calendarRemoved": "{count, plural, =1 {1 published lesson in the calendar was removed, with its substitute, lesson log and homework.} other {# published lessons in the calendar were removed, with their substitutes, lesson logs and homework.}}",
+    "removesCalendar": "{count, plural, =1 {Removes 1 published lesson from the calendar} other {Removes # published lessons from the calendar}}: they would land before now or outside the lesson's weeks. Their substitute, lesson log and homework go with them, and Undo does not put them back.",
     "undo": "Undo",
-    "undone": "The lessons are back at their times",
+    "undone": "The swap is undone. The lessons stand at their old times in the master timetable.",
+    "undoneCalendar": "{count, plural, =1 {1 published lesson in the calendar was moved back.} other {# published lessons in the calendar were moved back.}}",
+    "undoneNotRestored": "{count, plural, =1 {1 calendar lesson that was removed does not come back by itself. Publish again to create a new one, without its substitute, lesson log and homework.} other {# calendar lessons that were removed do not come back by themselves. Publish again to create new ones, without their substitutes, lesson logs and homework.}}",
     "stale": "The timetable has changed since the proposals were computed. The proposals are fetched again.",
     "splitsParallel": "The swap would part lessons that stand in parallel, so nothing changed. The proposals are fetched again.",
     "lockedPartner": "The swap would move a locked lesson, so nothing changed. The proposals are fetched again.",

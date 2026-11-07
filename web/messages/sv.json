@@ -1843,7 +1843,7 @@
   },
   "swaps": {
     "title": "Byten och flyttar",
-    "body": "Lektioner som kan byta tid med den här utan att något dubbelbokas, och kedjor om tre där varje lektion tar nästa lektions tid. Varje förslag har prövats mot samma regler som en handflytt, och du ser vad det kostar innan något ändras.",
+    "body": "Lektioner som kan byta tid med den här utan att något dubbelbokas, och kedjor om tre där varje lektion tar nästa lektions tid. Varje förslag har prövats mot samma regler som en handflytt, och du ser vad det kostar innan något ändras. Lektionerna som byter tid står kvar som genererade, så nästa Generera kan flytta dem igen: lås dem om de ska ligga kvar.",
     "computing": "Söker byten…",
     "failed": "Förslagen kunde inte hämtas.",
     "retry": "Försök igen",
@@ -1876,6 +1876,7 @@
       "ROOM_BORROWED": "{room} lånas från {schools} och är bara tillgänglig inom lånetiderna, inte {when}."
     },
     "hardTitle": "Hårda regler som hålls",
+    "notChecked": "Förslagen prövar inte korridortiden i ramtiderna och inte restiden mellan skolområden.",
     "hard": {
       "CLASH": "ingen dubbelbokning av lärare, sal eller elever, och inga stängda tider",
       "FRAME": "ramtiderna",
@@ -1895,11 +1896,14 @@
     "breaches": "{count, plural, =0 {inga brott} =1 {1 brott} other {# brott}}",
     "lessons": "{count, plural, =1 {1 lektion} other {# lektioner}}",
     "apply": "Tillämpa",
-    "applying": "Tillämpar…",
     "applied": "{count, plural, =1 {1 lektion bytte tid.} other {# lektioner bytte tid.}} Schemat som det var före sparades som en version.",
     "calendarUpdated": "{count, plural, =1 {1 publicerad lektion i kalendern följde med.} other {# publicerade lektioner i kalendern följde med.}}",
+    "calendarRemoved": "{count, plural, =1 {1 publicerad lektion i kalendern togs bort, med sin vikarie, lektionslogg och läxa.} other {# publicerade lektioner i kalendern togs bort, med sina vikarier, lektionsloggar och läxor.}}",
+    "removesCalendar": "{count, plural, =1 {Tar bort 1 publicerad lektion ur kalendern} other {Tar bort # publicerade lektioner ur kalendern}}: de skulle hamna före nu eller utanför lektionens veckor. Vikarie, lektionslogg och läxa på dem försvinner med dem, och Ångra lägger inte tillbaka dem.",
     "undo": "Ångra",
-    "undone": "Lektionerna är tillbaka på sina tider",
+    "undone": "Bytet är ångrat. Lektionerna står på sina gamla tider i grundschemat.",
+    "undoneCalendar": "{count, plural, =1 {1 publicerad lektion i kalendern flyttades tillbaka.} other {# publicerade lektioner i kalendern flyttades tillbaka.}}",
+    "undoneNotRestored": "{count, plural, =1 {1 kalenderlektion som togs bort kommer inte tillbaka av sig själv. Publicera igen så skapas en ny, men utan vikarie, lektionslogg och läxa.} other {# kalenderlektioner som togs bort kommer inte tillbaka av sig själva. Publicera igen så skapas nya, men utan vikarier, lektionsloggar och läxor.}}",
     "stale": "Schemat har ändrats sedan förslagen räknades fram. Förslagen hämtas på nytt.",
     "splitsParallel": "Bytet skulle dela upp lektioner som ligger parallellt, så inget ändrades. Förslagen hämtas på nytt.",
     "lockedPartner": "Bytet skulle flytta en låst lektion, så inget ändrades. Förslagen hämtas på nytt.",

@@ -82,6 +82,24 @@ proposal. Code in `src/swaps/`, dialog in `web/components/schedule/swap-dialog.t
   `updateMany` per lesson, `propagateTemplateChange` to the published calendar, a
   `ScheduleChangeLogs` row per lesson, the `SCHEDULE_CHANGED` notice, realtime. The
   answer's `undo` is the same moves reversed; send them to the same route.
+- **What it takes out of the calendar, said beforehand.** `propagateTemplateChange`
+  removes (does not move) a published calendar lesson that a move would carry
+  to a time that has begun, or off the template's weeks ("never into the past"),
+  and its vikarie, lesson log and homework go with it (`ON DELETE CASCADE`).
+  A swap always moves a lesson to an earlier weekday, so it can. Each proposal of
+  `suggest` carries `removedCalendarLessons`: the count of those rows, computed
+  from the rows `reconcilableLessons` selects by `wouldRemoveOnUpdate` — the
+  same `standsAt` decision the write path makes, held to the same number by
+  `swap-calendar.spec.ts` — and zero in a DRAFT layer, which leaves the calendar
+  alone. `apply` answers `removedCalendarLessons` too. **Undo restores the
+  master lessons and moves the followed calendar lessons back; it does not
+  recreate removed ones** (nor their vikarie or log). Publishing again creates new
+  rows at the old times. The dialog says so before Tillämpa and after Ångra.
+- **A clock is 00:00 to 23:59.** The apply's clocks are `^([01]\d|2[0-3]):[0-5]\d$`
+  and the minutes the clash rule judges are read from the *parsed* time
+  (`clockMinutes`), the value that is written: `parseTimeString` wraps an hour
+  past 23 into the next day, so `34:00` used to be judged at minute 2040 and
+  stored as 10:00.
 
 ## Lesson participants (multi-class & individual students)
 
