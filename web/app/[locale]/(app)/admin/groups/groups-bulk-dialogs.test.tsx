@@ -89,8 +89,18 @@ describe("describeGroupRemoval", () => {
     publicLinks: 0,
     enrolments: 0,
     mentorDuties: 0,
+    classTeacher: 0,
     fromSource: 0,
   };
+
+  it("tells that the klasslärare's appointment, open hours and drafts go with the class", () => {
+    expect(describeGroupRemoval(t, { ...none, classTeacher: 4 })).toEqual({
+      goes: ["groupConsequences.classTeacher(4)"],
+      loses: [],
+      notes: [],
+      exhaustive: true,
+    });
+  });
 
   it("says what goes with the groups and what is left without them, and nothing for a count of 0", () => {
     expect(
@@ -213,7 +223,7 @@ describe("GroupsBulkDialogs", () => {
         consequences: {
           halves: 1, homePupils: 20, successors: 0, memberships: 0, requirements: 9, masterLessons: 0, sharedLessons: 0,
           calendarLessons: 0, attendanceMarks: 0, lessonLogs: 0, availabilityConstraints: 0, lunchSittings: 0,
-          calendarBreaks: 0, timplanCredits: 0, publicLinks: 0, enrolments: 20, mentorDuties: 0, fromSource: 0,
+          calendarBreaks: 0, timplanCredits: 0, publicLinks: 0, enrolments: 20, mentorDuties: 0, classTeacher: 0, fromSource: 0,
         },
       })
       .mockResolvedValueOnce({ applied: true, dryRun: false, done: ["g-7a", "g-7a1"], refused: [] });
