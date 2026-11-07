@@ -998,6 +998,10 @@ describe('StudentGroupsService', () => {
         PublicTimetableHidden: 1,
         StudentEnrollments: 25,
         TeacherDuties: 1,
+        // Klasslärarens schema (20270128090000): the three tables are one line, 1 + 2 + 3.
+        ClassTeacherAppointments: 1,
+        ClassTeacherOpenTimes: 2,
+        ClassTeacherChanges: 3,
       };
       /** The SQL of a $queryRaw call: a tagged template's strings, or a Prisma.sql's text. */
       const textOf = (first: unknown): string =>
@@ -1096,6 +1100,7 @@ describe('StudentGroupsService', () => {
             lessonLogs: 9,
             enrolments: 25,
             mentorDuties: 1,
+            classTeacher: 6,
             fromSource: 1,
           },
         });

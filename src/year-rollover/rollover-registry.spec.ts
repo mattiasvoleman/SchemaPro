@@ -270,6 +270,10 @@ describe('the rollover registry', () => {
       'LessonLog',
       'LessonSubstituteNote',
       'SupervisionShift',
+      // Klasslärarens schema (20270128090000): an appointment, its open hours and its drafts stay with the year they were made for.
+      'ClassTeacherAppointment',
+      'ClassTeacherOpenTime',
+      'ClassTeacherChange',
     ];
     expect(
       createHash('sha256')
@@ -292,6 +296,11 @@ describe('the rollover registry', () => {
       expect.objectContaining({ model: 'PublicationPendingRemoval', counted: false }),
       expect.objectContaining({ model: 'Ss12000DutyLink', counted: false }),
       expect.objectContaining({ model: 'SupervisionShift', counted: false }),
+    ]);
+    expect(skipped.filter((entry) => entry.model.startsWith('ClassTeacher'))).toEqual([
+      expect.objectContaining({ model: 'ClassTeacherAppointment', counted: false }),
+      expect.objectContaining({ model: 'ClassTeacherOpenTime', counted: false }),
+      expect.objectContaining({ model: 'ClassTeacherChange', counted: false }),
     ]);
     expect(skippedModels({ carryStaffing: false })).toEqual(skippedModels());
     // fa4a3d6's tables, and the parallel blocks (20261024090000), whose rows
