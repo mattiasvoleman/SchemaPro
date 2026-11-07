@@ -3,7 +3,7 @@
  * (src/exams/exams.controller.ts, exams.service.ts, exam-planner.service.ts and
  * dto/exam.dto.ts), written by hand as the other mirrors are.
  *
- * Kept apart from lib/types.ts so that only /admin/exams carries it. Nothing
+ * Kept apart from lib/types.ts so that only /admin/activities/exams carries it. Nothing
  * here is code.
  */
 

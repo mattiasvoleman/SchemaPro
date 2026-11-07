@@ -52,7 +52,7 @@ export default function ActivitiesPage() {
           <>
             <YearSelect value={yearId} onValueChange={setYearId} label={t("yearLabel")} />
             <Button variant="outline" asChild>
-              <Link href="/admin/exams">{t("examsLink")}</Link>
+              <Link href="/admin/activities/exams">{t("examsLink")}</Link>
             </Button>
           </>
         }

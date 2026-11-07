@@ -25,7 +25,7 @@ globalThis.ResizeObserver ??= class ResizeObserverStub {
 };
 
 /**
- * /admin/exams over the real hooks and the real Swedish messages, the gateway
+ * /admin/activities/exams over the real hooks and the real Swedish messages, the gateway
  * answering by path. What only this page decides: the planner is off until the
  * school turns it on and then there is no button, only the reason; an exam is
  * entered with the window or the fixed time it wants and sent as the gateway
@@ -212,7 +212,7 @@ vi.setConfig({ testTimeout: 30_000 });
 const setValue = (label: string | RegExp, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const region = (name: string) => screen.getByRole("region", { name });
 
-describe("/admin/exams", () => {
+describe("/admin/activities/exams", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     subjects = SUBJECTS;

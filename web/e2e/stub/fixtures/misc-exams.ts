@@ -4,7 +4,7 @@ import { addDays, THIS_MONDAY } from "./calendar";
 import { GROUPS, ROOM_LIST, ROOMS, SUBJECTS, TEACHERS, YEAR } from "./world";
 
 /**
- * Prov och skrivsalar (/admin/exams): the planner is off, as a school has it
+ * Prov och skrivsalar (/admin/activities/exams): the planner is off, as a school has it
  * until it turns it on; two rooms are skrivsalar; one exam is laid and one is
  * not, with the reason the last run gave. Reads only, as the suites scan pages.
  * A teacher with a protected identity is on no list, as the gateway leaves them.

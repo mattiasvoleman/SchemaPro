@@ -140,7 +140,7 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/activities": "DRIFT",
   // Provplanering: an exam becomes an activity, so Drift's as that is. The settings, the skrivsalar,
   // the exams and the planner are one page; the planner is off until the school turns it on.
-  "/admin/exams": "DRIFT",
+  "/admin/activities/exams": "DRIFT",
   "/admin/leave": "DRIFT",
   "/admin/room-bookings": "DRIFT",
   "/admin/reports": "DRIFT",
