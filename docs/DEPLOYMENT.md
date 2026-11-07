@@ -1691,16 +1691,20 @@ Walk the full product loop once, in order:
   **What one person can send, and what the queue carries.** A request to a
   whole school is some 4 000 notices and 82 mails (49 on BCC, one every 500 ms:
   about 41 s of the delivery queue) and a push to each. A person therefore
-  writes at most **10 requests an hour** and a school gets at most **20 000
-  new receipts in 24 hours** (five requests to every guardian of a school of
-  2 000 pupils, far more than a school needs; under four minutes of mail a day
-  at most: 20 000 addresses, 49 to a mail, one mail every half second): the 11th request or the receipts past the day's are refused
-  whole with 429 (`ACK_TOO_MANY_REQUESTS`, `ACK_TOO_MANY_RECIPIENTS`) by the
-  database (triggers; the owner and the migrations are not counted, and the
-  two limits take an advisory lock each, the sender's first and the school's
+  writes at most **10 requests an hour**, a sender has a **share of the day**
+  (since 20270119090000: **8 000 new receipts in 24 hours for an administrator,
+  2 000 for a teacher**, counted over the receipts of the requests the person
+  wrote), and a school gets at most **20 000 new receipts in 24 hours** (five
+  requests to every guardian of a school of 2 000 pupils, far more than a school
+  needs; under four minutes of mail a day at most: 20 000 addresses, 49 to a
+  mail, one mail every half second): the 11th request, the receipts past the
+  sender's share and the receipts past the day's are refused whole with 429
+  (`ACK_TOO_MANY_REQUESTS`, `ACK_SENDER_DAY_LIMIT`, `ACK_TOO_MANY_RECIPIENTS`)
+  by the database (triggers; the owner and the migrations are not counted, and
+  the limits take an advisory lock each, the sender's first and the school's
   then, so two requests at the limit do not both pass), and `POST
   /api/v1/acknowledgements` is throttled to five a minute besides. To change a
-  number is a migration. The delivery has a second, **urgent lane** for the
+  number is a migration (`app.ack_day_limit` holds all three). The delivery has a second, **urgent lane** for the
   crisis alarm and its end (`CRISIS_ALARM`, `CRISIS_ENDED`): a wave of mails
   never stands in front of an alarm's push (ten minutes of life); the lanes
   share the providers' pace (mails go one at a time in the order they ask,
@@ -1778,6 +1782,88 @@ Walk the full product loop once, in order:
   `git grep -nE 'notification\.(findMany|findFirst|findUnique|groupBy|aggregate)'
   src` first, and delete the notices in the same transaction as the rollback
   below if one has landed.
+  **Hardening after the three reviews (20270119090000, one migration, the
+  gateway and the web in one release; Kvittens is off everywhere until a school
+  turns it on, so none of it is seen before then).** Four things the reviews
+  found, in the order they were found:
+  *(1) The delivery's mail chain survives an error.* Every mail asks for a turn
+  in one chain shared by both lanes; a turn that threw closed the e-mail of the
+  whole process until it was restarted. A turn that throws now costs only its own
+  mail (logged `Email dispatch skipped [turn, <error name>]`).
+  *(2) A request to Resend or Expo that is not answered is given up.* The
+  calls had no time limit, so a mail that never got an answer held its lane for
+  as long as the runtime waits (five minutes), and the ordinary lane carries every
+  school's notices. A mail now waits **10 s** (`EMAIL_TIMEOUT_MS`; Resend answers in
+  well under one) and is then logged (`Email dispatch failed [timeout 10000 ms]`)
+  and not sent again, like any refused mail; an Expo request waits **10 s**
+  (`REQUEST_TIMEOUT_MS`, the answer's body under the same limit), counts as a
+  network error and is retried after 1, 2 and 4 s as before, so a chunk Expo never
+  answers is given up after 47 s and its messages are answered `RequestFailed`. A
+  retry after a timeout can send a push twice if the first reached Expo; a lost push
+  is the worse of the two. A Resend that does not answer at all still costs every
+  mail of a wave its ten seconds: check it first when mail stops (`Email dispatch
+  failed [timeout` in the log).
+  *(3) A reminder reads "Skickad" only when the mail went.* The pass writes the
+  notices and marks the request SENT in one transaction, as before; the e-mail and
+  the push go after the commit through the delivery's queue. The delivery now says,
+  when it has finished the batch, whether every mail and push was taken by its
+  channel (Resend answered 2xx; Expo took the request, a device it calls gone is not
+  a refusal), or that there was nothing outside the inbox to send, and the gateway
+  records it in `AckRequests."reminderMirroredAt"` (`app.ack_reminder_mirrored`,
+  which answers nothing to a login that is a person). Until then, and for good if
+  it never comes, the gateway calls the reminder `WRITTEN` and the staff's list says
+  *Lagd i inkorgen* (the notices are in the inboxes, and nothing more is known)
+  where it said *Skickad*; the detail page says what is and is not known. **Known
+  limit:** the e-mail and the push of a reminder go to the delivery's in-memory
+  queue after the commit, as every other notice does, so a process that stops
+  between the commit and the send loses them: the inbox notices are written, the
+  request reads *Lagd i inkorgen* for good, and nothing sends the reminder again.
+  A whole-school wave is some 41 s of mail and 8 s of push, so **do not release
+  while one is going** (`SELECT count(*), min("remindAt") FROM "AckRequests" WHERE
+  "remindAt" <= now() AND "reminderOutcome" IS NULL` is empty, and the last
+  `JobRuns` row of `ack-reminders` is a few minutes old at most, when the pass has
+  just finished), and read the requests that stayed `WRITTEN` afterwards (`SELECT
+  count(*) FROM "AckRequests" WHERE "reminderOutcome" = 'SENT' AND
+  "reminderMirroredAt" IS NULL AND "reminderSentAt" < now() - interval '15
+  minutes'`). A refused batch (Resend or Expo answering with an error) leaves the
+  request `WRITTEN` the same way.
+  *(4) A sender cannot use up the school's day.* The school's 20 000 rows were
+  shared by all senders: two mentor accounts, each writing the ten requests an hour
+  for a class of 30 (66 rows each), reach 15 840 rows a day each. Each sender now has
+  a share of the day (8 000 for an administrator, 2 000 for a teacher; refused whole
+  with `KV427`, `ACK_SENDER_DAY_LIMIT`, 429, before the school's own limit is
+  looked at). The numbers: a whole-school request is pupils x guardians (4 000 for
+  2 000 pupils with two guardians each, 5 700 for the largest school counted on, 2 600
+  pupils), and an administrator's 8 000 holds one of those and a half more; a mentor
+  asks about 30 to 60 pupils, 66 to 132 rows a request, and 2 000 is fifteen to thirty
+  requests a day. Against the school's 20 000: no one sender, and no two
+  administrators, can use the day up (3 x 8 000 can; ten teachers can). An
+  administrator reads the use on the Kvittens page (`GET
+  /api/v1/acknowledgements/usage`: the school's rows of the last 24 hours, their own
+  share, and the five who used most), the same numbers the limits refuse by. The
+  share is counted per author of the request, over the requests written in the last
+  24 hours. The migration adds one nullable column and its check to the requests table (empty while no school has turned kvittens on)
+  under a 5 s `lock_timeout`, three functions (`app.ack_reminder_mirrored`,
+  `app.ack_day_limit`, `app.ack_usage`) and replaces `app.ack_receipts_limit`, so
+  there are 22 `app.ack_%` functions after it, all definer with a pinned
+  `search_path`, 16 the API role may run and six the owner's alone. It touches no
+  other table, takes no lock on `Users` or `Schools`, and the gallring functions are
+  not touched. **Before it:** `SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON
+  n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE 'ack\_%'` is 19,
+  `SELECT count(*) FROM "AckRequests"` is the number you expect (zero while no school
+  has turned kvittens on), and no session holds a lock on `AckRequests`. **After it
+  and before the merge:** the count is 22; `SELECT count(*) FROM pg_attribute WHERE
+  attrelid = '"AckRequests"'::regclass AND attname = 'reminderMirroredAt'` is 1;
+  `app.ack_day_limit('SCHOOL')`, `('SCHOOL_ADMIN')` and `('TEACHER')` are 20000, 8000
+  and 2000; `anon`, `authenticated` and `service_role` can run none of the
+  `app.ack_%` functions. **The API before the release** does not know the column or the
+  functions and writes the notices as before, so it keeps working between the migration
+  and the deploy; the web before the release does not draw `WRITTEN` and shows the
+  state's name, which is a cosmetic fault until the web is deployed (the web and the
+  gateway are one release). **Rolling it back:** a revert of the code is harmless; the
+  column and the functions stay unread, and `app.ack_receipts_limit` keeps the sender
+  shares, which only makes the database stricter than the old gateway knew
+  (it would answer `KV427` as an error and not as a 429 until the code is back).
   **Rollback of the code** is a revert; the tables stay and are unread. Rollback
   of the data, only if nothing in it is wanted: `BEGIN; DELETE FROM
   "Notifications" WHERE "type"::text IN ('ACK_REQUESTED', 'ACK_REMINDER');
