@@ -28,19 +28,25 @@
  *   lm-f  a move and a register save of the same pupil's lesson, started
  *         together eight times, always meet in one order: the move stands and
  *         the pupil's mark on the source is never anything but UNKNOWN or
- *         absent, whichever was first.
+ *         absent, whichever was first;
+ *   lm-h  a lesson that ended this morning is still today's: the teacher of
+ *         the target alone cannot move a pupil off it (409, and the door says
+ *         LM416 itself when asked past the gateway), the colleague's mark
+ *         stands with its author, and Ångra of a move whose source has ended
+ *         since is refused too (the review of #281, MEDEL-1).
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { ConflictException, ForbiddenException, HttpException } from '@nestjs/common';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import type { Client } from 'pg';
 import { AttendanceService } from '../../src/attendance/attendance.service';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import type { PrismaService } from '../../src/database/prisma.service';
+import { sqlStateOf } from '../../src/cover/cover-errors';
 import { FamilyScheduleService } from '../../src/family/family-schedule.service';
 import { LessonMovesService } from '../../src/lesson-moves/lesson-moves.service';
 import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
@@ -74,6 +80,9 @@ export async function lessonMoveChecks(owner: Client, api: PrismaService, marker
   await sweepLessonMovesSchool(owner, marker);
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   const today = (await one<{ d: string }>(`SELECT ((now() AT TIME ZONE 'Europe/Stockholm')::date)::text AS d`)).d;
+  // The dashboard's window starts at midnight UTC of a day; a mark made just after midnight in Stockholm was made the
+  // evening before in UTC, so the window starts the day before.
+  const sinceDay = (await one<{ d: string }>(`SELECT ((now() AT TIME ZONE 'Europe/Stockholm')::date - 1)::text AS d`)).d;
 
   const s = (
     await one<{ id: string }>(
@@ -229,6 +238,11 @@ export async function lessonMoveChecks(owner: Client, api: PrismaService, marker
       const arrival = await one<{ moveId: string }>(`SELECT "moveId" FROM "CalendarLessonStudents" WHERE "calendarLessonId" = $1 AND "studentId" = $2`, [E, p1.userId]);
       assert.equal(arrival.moveId, rows[0]!.id);
 
+      // The set-aside mark is a mark for nobody in the figures a principal reads (the review of #281, MEDEL-4): the
+      // dashboard's attendance and the class report count the pupil's mark once, and here not at all, since it is UNKNOWN.
+      assert.deepEqual(await attendance.summary(sinceDay, admin), { recorded: 0, present: 0 }, 'the dashboard counts the set-aside mark');
+      assert.deepEqual((await attendance.groupRecords(k7a, monday, monday, admin)).records, [], 'the class report lists the set-aside mark');
+
       assert.deepEqual(await rosterOf(S, anna), [p2.userId].sort());
       assert.deepEqual(await rosterOf(E, bertil), [p1.userId, p3.userId].sort());
 
@@ -253,6 +267,12 @@ export async function lessonMoveChecks(owner: Client, api: PrismaService, marker
       assert.deepEqual(await moveRows(), []);
       assert.equal(await markOf(S, p1), 'PRESENT', 'the set-aside mark is back');
       assert.deepEqual(await rosterOf(S, anna), [p1.userId, p2.userId].sort());
+      // Alva's mark is back, and Bo's was saved above: two marks, both present.
+      assert.deepEqual(await attendance.summary(sinceDay, admin), { recorded: 2, present: 2 }, 'the dashboard misses the mark that is back');
+      assert.deepEqual(
+        (await attendance.groupRecords(k7a, monday, monday, admin)).records.map((row) => [row.studentId, row.status]).sort(),
+        [[p1.userId, 'PRESENT'], [p2.userId, 'PRESENT']].sort(),
+      );
     });
 
     await check('(lm-c) a mark on the lesson they were moved to stops Ångra; taken away, Ångra puts the set-aside mark back', async () => {
@@ -344,6 +364,71 @@ export async function lessonMoveChecks(owner: Client, api: PrismaService, marker
       assert.ok(during.filter((row) => row.studentGroupId === k7b).every((row) => row.movedOffIds.length === 0), 'the lesson she went to names her as moved off');
       await moves.undo(moved.moveId!, anna);
       assert.ok((await read()).every((row) => row.movedOffIds.length === 0));
+    });
+
+    await check('(lm-h) a lesson that ended this morning is still today’s, and the teacher of the target alone cannot move a pupil off it; Ångra of such a move is refused too', async () => {
+      // Two lessons today that overlap and are over: the pupil's (Anna) ended two hours ago, the parallel one (Bertil) an hour ago.
+      const now = async (groupId: string, subjectId: string, from: string, to: string) =>
+        (
+          await one<{ id: string }>(
+            `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+             VALUES ($1, $2, $3, (now() AT TIME ZONE 'Europe/Stockholm')::date, now() + $4::interval, now() + $5::interval, 'SCHEDULED', now()) RETURNING id`,
+            [s, subjectId, groupId, from, to],
+          )
+        ).id;
+      const S2 = await now(k7a, sv, '-3 hours', '-2 hours');
+      const E2 = await now(k7b, en, '-150 minutes', '-1 hour');
+      await teach(S2, anna);
+      await teach(E2, bertil);
+      const note = 'skolkade enligt Anna';
+      await owner.query(
+        `INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, note, "recordedAt", "recordedById", "updatedAt")
+         VALUES ($1, $2, $3, 'ABSENT', $4, now() - interval '2 hours', $5, now())`,
+        [s, S2, p1.userId, note, anna.userId],
+      );
+      const mark = async () =>
+        one<{ status: string; note: string | null; recordedById: string | null }>(
+          `SELECT status::text, note, "recordedById" FROM "AttendanceRecords" WHERE "calendarLessonId" = $1 AND "studentId" = $2`,
+          [S2, p1.userId],
+        );
+      const standing = { status: 'ABSENT', note, recordedById: anna.userId };
+
+      // Bertil teaches the target only: Anna's register is not his to change, and a move would have written over it.
+      await assert.rejects(moves.move(p1.userId!, S2, E2, bertil), refusedWith(409, 'LESSON_MOVE_LESSON_OVER'));
+      assert.deepEqual(await moveRows(), []);
+      assert.deepEqual(await mark(), standing, 'the colleague’s mark was written over');
+      const candidates = await moves.candidates(S2, p1.userId!, anna);
+      assert.ok(candidates.candidates.length > 0 && candidates.candidates.every((row) => row.refusal?.code === 'LESSON_MOVE_LESSON_OVER'), 'the list offers a lesson to a pupil whose lesson is over');
+
+      // Past the gateway, to the door itself: the same refusal, with its own SQLSTATE.
+      const door = api.withRls(bertil, (tx) =>
+        (tx as unknown as PrismaClient).$queryRaw(Prisma.sql`SELECT app.lesson_pupil_move(${p1.userId}::uuid, ${S2}::uuid, ${E2}::uuid) AS id`),
+      );
+      await assert.rejects(door, (error: unknown) => sqlStateOf(error) === 'LM416', 'the door let a pupil go off a lesson that is over');
+      assert.deepEqual(await moveRows(), []);
+      assert.deepEqual(await mark(), standing, 'the colleague’s mark was written over by the door');
+
+      // A move made while the source ran and Ångra after it ended: the register is the source teacher's by then.
+      const S3 = await lesson(k7a, sv, '12:00', '12:45');
+      const E3 = await lesson(k7b, en, '12:00', '12:45');
+      await teach(S3, anna);
+      await teach(E3, bertil);
+      const made = await moves.move(p1.userId!, S3, E3, bertil);
+      assert.equal(made.moved, true);
+      await owner.query(
+        `UPDATE "CalendarLessons" SET date = (now() AT TIME ZONE 'Europe/Stockholm')::date,
+                "startsAt" = CASE id WHEN $1 THEN now() - interval '3 hours' ELSE now() - interval '150 minutes' END,
+                "endsAt" = CASE id WHEN $1 THEN now() - interval '2 hours' ELSE now() + interval '30 minutes' END,
+                "updatedAt" = now()
+          WHERE id IN ($1, $2)`,
+        [S3, E3],
+      );
+      assert.equal((await moveRows()).length, 1, 'the move fell with the move of the lessons');
+      await assert.rejects(moves.undo(made.moveId!, bertil), refusedWith(409, 'LESSON_MOVE_LESSON_OVER'));
+      await assert.rejects(moves.move(p1.userId!, E3, S3, bertil), refusedWith(409, 'LESSON_MOVE_LESSON_OVER'));
+      assert.equal((await moveRows()).length, 1, 'the move stands');
+      await owner.query(`DELETE FROM "CalendarLessons" WHERE id = ANY($1::uuid[])`, [[S2, E2, S3, E3]]);
+      assert.deepEqual(await moveRows(), []);
     });
 
     await check('(lm-f) a move and a register save started together always meet in one order', async () => {

@@ -47229,6 +47229,123 @@ BEGIN
 END $$;
 ROLLBACK;
 
+-- The day is not the hour (the review of #281, MEDEL-1). A lesson that ended this morning is still today's, and its
+-- register is its teachers': the door writes the pupil's mark on the source (UNKNOWN, by the mover), so a teacher of
+-- the target alone could erase a colleague's mark by moving the pupil off a lesson that was over. LM416, for the
+-- target's teacher and for the administrator alike, and the mark stands, with its author.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'ABSENT', 'skolkade enligt t1');
+-- Both lessons today, both over and still overlapping: the first ended half an hour ago, the second ten minutes ago.
+UPDATE "CalendarLessons" SET date = (now() AT TIME ZONE 'Europe/Stockholm')::date,
+       "startsAt" = now() - interval '2 hours', "endsAt" = now() - interval '30 minutes' WHERE id = pg_temp.d7_l(1);
+UPDATE "CalendarLessons" SET date = (now() AT TIME ZONE 'Europe/Stockholm')::date,
+       "startsAt" = now() - interval '90 minutes', "endsAt" = now() - interval '10 minutes' WHERE id = pg_temp.d7_l(2);
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(7));
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM416', 'the teacher of the target alone moving a pupil off a lesson that ended half an hour ago');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(6));
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM416', 'the teacher of the source, too: it is the lesson that is over');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM416', 'the administrator with Drift: the register is where a finished lesson is corrected');
+  PERFORM pg_temp.d7_expect('no move', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('the colleague''s mark stands, with its note', pg_temp.d7_mark_of('p1', 1), 'ABSENT/skolkade enligt t1');
+  PERFORM pg_temp.d7_expect('... and with its author and time',
+    (SELECT (a."recordedById" = pg_temp.d7f('t1') AND a."recordedAt" < now() - interval '30 minutes')::text FROM "AttendanceRecords" a
+      WHERE a."calendarLessonId" = pg_temp.d7_l(1) AND a."studentId" = pg_temp.d7f('p1')), 'true');
+  PERFORM pg_temp.d7_expect('no arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '0');
+END $$;
+ROLLBACK;
+
+-- The clock is the source's end and nothing else: a lesson that is running (it began an hour ago) lets a pupil go, the
+-- second it ends it does not (now() is the transaction's, so a lesson ending exactly now is over), and the target being
+-- over is the target's affair and not the source's.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+DECLARE
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+BEGIN
+  UPDATE "CalendarLessons" SET date = today, "startsAt" = now() - interval '1 hour', "endsAt" = now() + interval '1 second' WHERE id = pg_temp.d7_l(1);
+  UPDATE "CalendarLessons" SET date = today, "startsAt" = now() - interval '1 hour', "endsAt" = now() + interval '1 hour' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(7));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_expect('a lesson that began an hour ago and ends in a second lets a pupil go', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM app.lesson_pupil_move_undo((SELECT m.id FROM "LessonPupilMoves" m));
+  PERFORM pg_temp.d7_expect('and Ångra while it runs', pg_temp.d7_moves(), '');
+  UPDATE "CalendarLessons" SET "endsAt" = now() WHERE id = pg_temp.d7_l(1);
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM416', 'a lesson that ends exactly now');
+  -- Ångra reads the same clock: the move was made while the source ran, and the source ends exactly now.
+  UPDATE "CalendarLessons" SET "endsAt" = now() + interval '1 hour' WHERE id = pg_temp.d7_l(1);
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  UPDATE "CalendarLessons" SET "endsAt" = now() WHERE id = pg_temp.d7_l(1);
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || (SELECT m.id FROM "LessonPupilMoves" m) || ''')', 'LM416', 'Ångra of a move whose source ends exactly now');
+  UPDATE "CalendarLessons" SET "endsAt" = now() + interval '1 hour' WHERE id = pg_temp.d7_l(1);
+  PERFORM app.lesson_pupil_move_undo((SELECT m.id FROM "LessonPupilMoves" m));
+  PERFORM pg_temp.d7_expect('Ångra once the source runs again', pg_temp.d7_moves(), '');
+  -- The target over and the source running: the pupil's mark is on the source, and the source is not over.
+  UPDATE "CalendarLessons" SET "endsAt" = now() + interval '1 hour' WHERE id = pg_temp.d7_l(1);
+  UPDATE "CalendarLessons" SET "startsAt" = now() - interval '2 hours', "endsAt" = now() - interval '1 minute' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('a target that is over is not the source''s reason', (SELECT (app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2)) IS NOT NULL)::text), 'true');
+END $$;
+ROLLBACK;
+
+-- Ångra, a move back and a move on touch the same register, so they ask the same clock: the lesson the pupil started on
+-- has ended since the move, and by then the mark on it is the source teacher's to correct, in the register.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'EXCUSED', 'ledig');
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+-- One statement for both, so that the lapse (it looks when the statement is done) finds them overlapping still: the first
+-- ended half an hour ago, the second runs for another half hour.
+UPDATE "CalendarLessons" SET date = (now() AT TIME ZONE 'Europe/Stockholm')::date,
+       "startsAt" = CASE id WHEN pg_temp.d7_l(1) THEN now() - interval '2 hours' ELSE now() - interval '90 minutes' END,
+       "endsAt" = CASE id WHEN pg_temp.d7_l(1) THEN now() - interval '30 minutes' ELSE now() + interval '30 minutes' END
+ WHERE id IN (pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+DECLARE
+  mv uuid := (SELECT id FROM "LessonPupilMoves");
+BEGIN
+  PERFORM pg_temp.d7_expect('the lapse keeps a move whose lessons still overlap', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(7));
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', 'LM416', 'Ångra of a move whose source has ended');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 2, 1), 'LM416', 'a move back to a source that has ended');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 2, 3), 'LM416', 'a move on, from a first source that has ended');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM pg_temp.d7_expect('the move stands', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_expect('and so does the mark that was set aside', pg_temp.d7_mark_of('p1', 1), 'UNKNOWN');
+  PERFORM pg_temp.d7_expect('... with the colleague''s kept', (SELECT m."displacedMark" ->> 'note' FROM "LessonPupilMoves" m WHERE m.id = mv), 'ledig');
+END $$;
+ROLLBACK;
+
+-- Ångra for a day that has passed (LM414), a source an activity has replaced (LM413, as the source) and an arrival that is
+-- not its move's (LM409): the guards no section had a case for.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+DECLARE
+  mv uuid := (SELECT id FROM "LessonPupilMoves");
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 6, 1), 'LM413', 'a source an activity has replaced');
+  PERFORM pg_temp.d7_refuses(
+    format('INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId", "moveId") VALUES (%L, %L, %L, %L)',
+           pg_temp.d7f('school'), pg_temp.d7_l(2), pg_temp.d7f('p2'), mv), 'LM409', 'an arrival for another pupil than the move''s');
+  PERFORM pg_temp.d7_refuses(
+    format('INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId", "moveId") VALUES (%L, %L, %L, %L)',
+           pg_temp.d7f('school'), pg_temp.d7_l(3), pg_temp.d7f('p1'), mv), 'LM409', 'an arrival on another lesson than the move''s');
+END $$;
+UPDATE "CalendarLessons" SET date = date - 3, "startsAt" = "startsAt" - interval '3 days', "endsAt" = "endsAt" - interval '3 days'
+ WHERE id IN (pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || (SELECT id FROM "LessonPupilMoves") || ''')', 'LM414', 'Ångra for a day that has passed');
+  PERFORM pg_temp.d7_expect('the move stands', pg_temp.d7_moves(), '11:01>02');
+END $$;
+ROLLBACK;
+
 -- A move falls when its lessons no longer carry it: a lesson cancelled, replaced by an activity or
 -- moved so that the two no longer overlap. A time that still overlaps changes nothing.
 BEGIN;
@@ -47338,6 +47455,37 @@ BEGIN
   PERFORM pg_temp.d7_expect('the move was sent on', pg_temp.d7_moves(), '11:01>03');
   PERFORM app.lesson_pupil_move_undo((SELECT m.id FROM "LessonPupilMoves" m));
   PERFORM pg_temp.d7_expect('and Ångra', pg_temp.d7_moves(), '');
+END $$;
+ROLLBACK;
+
+-- Ångra has no role check of its own: lesson_move_may is the whole of it, and for a pupil, a guardian and a läsare its ELSE is
+-- what refuses (the review of #281, MEDEL-3). Another school's administrator and teacher do not find the move at all; the
+-- school filter of the lookup is what says so, because the definer would otherwise read and delete it across the border.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+DECLARE
+  who record;
+  mv uuid := (SELECT id FROM "LessonPupilMoves");
+BEGIN
+  FOR who IN SELECT * FROM (VALUES
+      (5,  'the läsare',                       'LM403'),
+      (9,  'a teacher of neither lesson',      'LM403'),
+      (11, 'the moved pupil themselves',       'LM403'),
+      (12, 'a classmate',                      'LM403'),
+      (13, 'a pupil of the other class',       'LM403'),
+      (21, 'the pupil''s guardian',            'LM403'),
+      (22, 'another pupil''s guardian',        'LM403'),
+      (31, 'another school''s administrator',  'LM404'),
+      (34, 'another school''s teacher',        'LM404')) AS t(login, what, wanted)
+  LOOP
+    PERFORM pg_temp.d7_as(pg_temp.d7_auth(who.login));
+    PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', who.wanted, 'Ångra by ' || who.what);
+  END LOOP;
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM pg_temp.d7_expect('the move stands after all of them', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_expect('... with its arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" n WHERE n."moveId" = mv), '1');
 END $$;
 ROLLBACK;
 
