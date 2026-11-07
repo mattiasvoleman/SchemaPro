@@ -401,13 +401,14 @@ BEGIN
      GROUP BY a."studentId", l.day
   ),
   -- Klassen eleven hade den dagen: segmentet som täcker datumet, aldrig dagens klasslista.
-  with_class AS (
-    SELECT d.*,
-           (SELECT e."studentGroupId" FROM "StudentEnrollments" e
+  with_class AS MATERIALIZED (
+    SELECT d.*, c.grp
+      FROM daily d
+      LEFT JOIN LATERAL (
+            SELECT e."studentGroupId" AS grp FROM "StudentEnrollments" e
              WHERE e."studentId" = d.student AND e."schoolId" = p_school
                AND e."validFrom" <= d.day AND (e."validTo" IS NULL OR d.day < e."validTo")
-             ORDER BY e."validFrom" DESC LIMIT 1) AS grp
-      FROM daily d
+             ORDER BY e."validFrom" DESC LIMIT 1) c ON true
   ),
   enrolled AS (
     SELECT e."studentGroupId" AS grp, count(DISTINCT e."studentId")::integer AS n
@@ -430,17 +431,18 @@ BEGIN
       FROM app.reporting_lessons(p_school, m_first, m_last, clock_timestamp()) r
      ORDER BY r.lesson_id
   ),
+  -- Lektionens klasser: dess egen grupp och de extra grupperna, slagna upp med sin nyckel (inte en genomläsning av
+  -- skolans alla grupper för varje lektion), en halvklass som sin klass, en gång per lektion och klass.
   lesson_classes AS (
-    SELECT rl.lesson_id, rl.reported, c.cid
+    SELECT DISTINCT rl.lesson_id, rl.reported, coalesce(g."halfOfId", g."id") AS cid
       FROM rl
       JOIN "CalendarLessons" cl ON cl."id" = rl.lesson_id
      CROSS JOIN LATERAL (
-           SELECT DISTINCT coalesce(g."halfOfId", g."id") AS cid
-             FROM "StudentGroups" g
-            WHERE g."schoolId" = p_school
-              AND (g."kind" = 'CLASS' OR g."halfOfId" IS NOT NULL)
-              AND (g."id" = cl."studentGroupId"
-                   OR g."id" IN (SELECT x."studentGroupId" FROM "CalendarLessonGroups" x WHERE x."calendarLessonId" = cl."id"))) c
+           SELECT cl."studentGroupId" AS gid
+           UNION
+           SELECT x."studentGroupId" FROM "CalendarLessonGroups" x WHERE x."calendarLessonId" = cl."id") ids
+      JOIN "StudentGroups" g ON g."id" = ids.gid AND g."schoolId" = p_school
+                            AND (g."kind" = 'CLASS' OR g."halfOfId" IS NOT NULL)
   ),
   class_lessons AS (
     SELECT lc.cid, count(*)::integer AS held, (count(*) FILTER (WHERE lc.reported))::integer AS reported
@@ -913,58 +915,69 @@ BEGIN
       FROM lineage l JOIN "StudentGroups" g ON g."id" = l."predecessorId" AND g."schoolId" = sid
      WHERE l.depth < 4
   ),
-  -- Markeringarna mönstret räknas ur: en elevs egna, eller klassens elevers
-  -- vid lektionens dag. En markerad elev räknas med i en klass: en summa
-  -- namnger ingen.
-  base AS MATERIALIZED (
-    SELECT a."studentId" AS student, extract(isodow FROM cl."date")::integer AS isodow,
-           to_char(cl."startsAt" AT TIME ZONE tz, 'HH24:MI') AS slot, cl."subjectId" AS subject_id, su."name" AS subject_name,
-           round(extract(epoch FROM (cl."endsAt" - cl."startsAt")) / 60)::integer AS mins, a."status"::text AS status
-      FROM "AttendanceRecords" a
-      JOIN "CalendarLessons" cl ON cl."id" = a."calendarLessonId" AND cl."schoolId" = sid
-      JOIN "Subjects" su ON su."id" = cl."subjectId" AND su."schoolId" = sid
-     WHERE p_student IS NOT NULL AND a."studentId" = p_student AND a."schoolId" = sid AND a."status" <> 'UNKNOWN'
-       AND cl."date" BETWEEN p_from AND p_to AND cl."status" IN ('SCHEDULED', 'COMPLETED')
-    UNION ALL
-    SELECT a."studentId", extract(isodow FROM cl."date")::integer,
-           to_char(cl."startsAt" AT TIME ZONE tz, 'HH24:MI'), cl."subjectId", su."name",
-           round(extract(epoch FROM (cl."endsAt" - cl."startsAt")) / 60)::integer, a."status"::text
+  -- Klassens elever i perioden, med segmenten de satt i klassen eller i en föregångare.
+  roster AS MATERIALIZED (
+    SELECT e."studentId" AS student, e."validFrom", e."validTo"
       FROM "StudentEnrollments" e
-      JOIN "AttendanceRecords" a ON a."studentId" = e."studentId" AND a."schoolId" = sid AND a."status" <> 'UNKNOWN'
-      JOIN "CalendarLessons" cl ON cl."id" = a."calendarLessonId" AND cl."schoolId" = sid
-      JOIN "Subjects" su ON su."id" = cl."subjectId" AND su."schoolId" = sid
      WHERE p_class IS NOT NULL AND e."schoolId" = sid AND e."studentGroupId" IN (SELECT l.id FROM lineage l)
        AND e."validFrom" <= p_to AND (e."validTo" IS NULL OR e."validTo" > p_from)
-       AND cl."date" >= e."validFrom" AND (e."validTo" IS NULL OR cl."date" < e."validTo")
-       AND cl."date" BETWEEN p_from AND p_to AND cl."status" IN ('SCHEDULED', 'COMPLETED')
+  ),
+  -- Markeringarna mönstret räknas ur: en elevs egna, eller klassens elevers. Varje
+  -- elev läses en gång genom sitt eget index, hur många segment hen än har. (Att gå
+  -- från segmenten till markeringarna läste varje markering en gång per segment och
+  -- byggde en hash över skolans alla lektioner i perioden: tre läsår för en kull
+  -- tog fem gånger så lång tid som klassens elevlista.)
+  marks AS (
+    SELECT a."studentId" AS student, a."calendarLessonId" AS lesson, a."status"
+      FROM "AttendanceRecords" a
+     WHERE p_student IS NOT NULL AND a."studentId" = p_student AND a."schoolId" = sid AND a."status" <> 'UNKNOWN'
+    UNION ALL
+    SELECT a."studentId", a."calendarLessonId", a."status"
+      FROM (SELECT DISTINCT r.student FROM roster r) p
+      JOIN "AttendanceRecords" a ON a."studentId" = p.student AND a."schoolId" = sid AND a."status" <> 'UNKNOWN'
+  ),
+  -- Lektionen slås upp med sin nyckel (LATERAL ... LIMIT 1 hindrar en hash över
+  -- skolans lektioner). I en klass räknas markeringen bara om eleven satt i klassen
+  -- eller en föregångare lektionens dag. En markerad elev räknas med i en klass: en
+  -- summa namnger ingen.
+  base AS (
+    SELECT m.student, extract(isodow FROM cl."date")::integer AS isodow,
+           date_trunc('minute', cl."startsAt" AT TIME ZONE tz)::time AS slot, cl."subjectId" AS subject_id,
+           round(extract(epoch FROM (cl."endsAt" - cl."startsAt")) / 60)::integer AS mins, m."status"
+      FROM marks m
+     CROSS JOIN LATERAL (
+           SELECT c."date", c."startsAt", c."endsAt", c."subjectId" FROM "CalendarLessons" c
+            WHERE c."id" = m.lesson AND c."schoolId" = sid AND c."date" BETWEEN p_from AND p_to
+              AND c."status" IN ('SCHEDULED', 'COMPLETED')
+            LIMIT 1) cl
+     WHERE p_class IS NULL
+        OR EXISTS (SELECT 1 FROM roster r
+                    WHERE r.student = m.student AND cl."date" >= r."validFrom" AND (r."validTo" IS NULL OR cl."date" < r."validTo"))
+  ),
+  -- Ett enda varv över markeringarna för alla fyra grupperingarna: veckodag, pass,
+  -- ämne och eleverna (hur många som har en markering). grouping() är 7, 11, 13
+  -- respektive 14 för dem, med en etta för varje kolumn som inte grupperas.
+  agg AS (
+    SELECT grouping(b.isodow, b.slot, b.subject_id, b.student) AS g, b.isodow, b.slot, b.subject_id,
+           sum(b.mins)::integer AS recorded,
+           sum(CASE WHEN b."status" = 'EXCUSED' THEN b.mins ELSE 0 END)::integer AS valid_mins,
+           sum(CASE WHEN b."status" = 'ABSENT' THEN b.mins ELSE 0 END)::integer AS absent_mins,
+           sum(CASE WHEN b."status" = 'LATE' THEN least(15, b.mins) ELSE 0 END)::integer AS late_mins,
+           (count(*) FILTER (WHERE b."status" = 'LATE'))::integer AS late_n
+      FROM base b
+     GROUP BY GROUPING SETS ((b.isodow), (b.slot), (b.subject_id), (b.student))
   ),
   size AS (
-    SELECT count(DISTINCT b.student)::integer AS n FROM base b
+    SELECT count(*)::integer AS n FROM agg WHERE agg.g = 14
   ),
   cells AS (
-    SELECT 'WEEKDAY'::text AS dimension, b.isodow::text AS key, ''::text AS label,
-           sum(b.mins)::integer AS recorded,
-           sum(CASE WHEN b.status = 'EXCUSED' THEN b.mins ELSE 0 END)::integer AS valid_mins,
-           sum(CASE WHEN b.status = 'ABSENT' THEN b.mins ELSE 0 END)::integer AS absent_mins,
-           sum(CASE WHEN b.status = 'LATE' THEN least(15, b.mins) ELSE 0 END)::integer AS late_mins,
-           (count(*) FILTER (WHERE b.status = 'LATE'))::integer AS late_n
-      FROM base b GROUP BY b.isodow
-    UNION ALL
-    SELECT 'SLOT', b.slot, '',
-           sum(b.mins)::integer,
-           sum(CASE WHEN b.status = 'EXCUSED' THEN b.mins ELSE 0 END)::integer,
-           sum(CASE WHEN b.status = 'ABSENT' THEN b.mins ELSE 0 END)::integer,
-           sum(CASE WHEN b.status = 'LATE' THEN least(15, b.mins) ELSE 0 END)::integer,
-           (count(*) FILTER (WHERE b.status = 'LATE'))::integer
-      FROM base b GROUP BY b.slot
-    UNION ALL
-    SELECT 'SUBJECT', b.subject_id::text, b.subject_name,
-           sum(b.mins)::integer,
-           sum(CASE WHEN b.status = 'EXCUSED' THEN b.mins ELSE 0 END)::integer,
-           sum(CASE WHEN b.status = 'ABSENT' THEN b.mins ELSE 0 END)::integer,
-           sum(CASE WHEN b.status = 'LATE' THEN least(15, b.mins) ELSE 0 END)::integer,
-           (count(*) FILTER (WHERE b.status = 'LATE'))::integer
-      FROM base b GROUP BY b.subject_id, b.subject_name
+    SELECT (CASE a.g WHEN 7 THEN 'WEEKDAY' WHEN 11 THEN 'SLOT' ELSE 'SUBJECT' END)::text AS dimension,
+           (CASE a.g WHEN 7 THEN a.isodow::text WHEN 11 THEN to_char(a.slot, 'HH24:MI') ELSE a.subject_id::text END)::text AS key,
+           (CASE a.g WHEN 13 THEN su."name"::text ELSE ''::text END)::text AS label,
+           a.recorded, a.valid_mins, a.absent_mins, a.late_mins, a.late_n
+      FROM agg a
+      LEFT JOIN "Subjects" su ON a.g = 13 AND su."id" = a.subject_id AND su."schoolId" = sid
+     WHERE a.g <> 14
   )
   -- A class of fewer than five pupils with a mark: one row that says so.
   SELECT 'ALL'::text, ''::text, ''::text, z.n, true,

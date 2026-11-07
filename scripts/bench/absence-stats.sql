@@ -18,7 +18,7 @@
 --     for every class: about 210 000 lessons;
 --   * the marks (every pupil of the class marked on 95 % of the lessons, 94 %
 --     present, 3 % absent, 2 % excused and 1 % late) for the last three months
---     of every class (about 800 000 marks) and for all three läsår of the
+--     of every class (about 550 000 marks) and for all three läsår of the
 --     first class of each year, the cohort the pupil and class doors are timed
 --     on (about 70 000): not the five million of every pupil's three years, which
 --     a shared disk does not hold. What each door costs rests on the rows it reads,
@@ -38,7 +38,13 @@
 -- backfills them) and an ordinary night (the plan, the months of the last 62
 -- days, the trim). The gateway gives a statement 2 s; the job's door gives a month 9 s.
 -- The figures are printed as notices, the best of three in milliseconds.
--- Mind the host: under a load average of tens, every figure carries it.
+-- Mind the host: under a load average of tens, every figure carries it, and the
+-- wall clock above is no measure at all (a 20-million-row count took 60 s of it on
+-- the host this was written on, one second on an idle one). Measure the CPU instead:
+-- run the door alone with `SET log_statement_stats = on; SET client_min_messages = log;`
+-- and read the "user" seconds beside those of `SELECT count(*) FROM generate_series(1,
+-- 5000000)` in the same session (a quarter of a second on an idle host); the ratio
+-- is what a door costs. EXPLAIN (ANALYZE, BUFFERS) says what it reads, which no load changes.
 
 \set ON_ERROR_STOP on
 \timing off
@@ -280,7 +286,10 @@ DECLARE
   adm constant text := '00000000-0000-4000-8000-b0000000a001';
   mentor constant text := '00000000-0000-4000-8000-b0000000a002';
   cls uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = s AND name = 'B3-01');
-  pupil uuid := (SELECT id FROM "Users" WHERE "schoolId" = s AND email = 'bench-p1@example.invalid');
+  -- A pupil of the mentor's class, so that the mentor's reads below are the mentor's own pupil's.
+  pupil uuid := (SELECT e."studentId" FROM "StudentEnrollments" e
+                  WHERE e."schoolId" = s AND e."studentGroupId" = (SELECT id FROM "StudentGroups" WHERE "schoolId" = s AND name = 'B3-01')
+                    AND e."validTo" IS NULL ORDER BY e."studentId" LIMIT 1);
   yr_start date := (SELECT "startDate" FROM "AcademicYears" WHERE "schoolId" = s AND "isActive");
   first_day date := (SELECT min("startDate") FROM "AcademicYears" WHERE "schoolId" = s);
   yesterday date := (now() AT TIME ZONE 'Europe/Stockholm')::date - 1;

@@ -53,9 +53,9 @@ const MINUTE_DOORS = [
   { name: 'app.absence_stats_pupil', late: LATE, excused: compact(`a."status" = 'EXCUSED'`), absent: compact(`a."status" = 'ABSENT'`) },
   {
     name: 'app.absence_stats_patterns',
-    late: compact(`WHEN b.status = 'LATE' THEN least(15, b.mins)`),
-    excused: compact(`b.status = 'EXCUSED'`),
-    absent: compact(`b.status = 'ABSENT'`),
+    late: compact(`WHEN b."status" = 'LATE' THEN least(15, b.mins)`),
+    excused: compact(`b."status" = 'EXCUSED'`),
+    absent: compact(`b."status" = 'ABSENT'`),
   },
 ] as const;
 
@@ -125,7 +125,8 @@ describe('the class a pupil sat in is read from the history, never from the pupi
   it('app.absence_stats_patterns asks StudentEnrollments for the day of the lesson', () => {
     const text = compact(functionBody(STATS, 'app.absence_stats_patterns'));
     expect(text).toContain('"studentenrollments"');
-    expect(text).toContain(compact(`cl."date" >= e."validFrom" AND (e."validTo" IS NULL OR cl."date" < e."validTo")`));
+    // The roster holds the pupil's segments in the class and its predecessors; a mark counts when its lesson's day is inside one.
+    expect(text).toContain(compact(`cl."date" >= r."validFrom" AND (r."validTo" IS NULL OR cl."date" < r."validTo")`));
   });
 
   it('nothing here reads the pupil’s current class (Users.studentGroupId) to place a mark in a class', () => {
