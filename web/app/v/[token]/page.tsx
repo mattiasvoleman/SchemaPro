@@ -7,22 +7,26 @@ import { weekNumberOf } from "@/lib/print-sheet";
 import {
   isIndex,
   shiftWeek,
-  TOKEN_PATTERN,
+  viewerAddressOf,
   viewerHref,
   viewerQueryOf,
   canGoBack,
   type PublicIndex,
   type PublicWeek,
+  type ViewerOutcome,
   type ViewerQuery,
 } from "@/lib/public-timetable";
 import { readViewer } from "./read-viewer";
+import { readViewerAsStaff } from "./read-as-staff";
 
 /*
- * Schemavisaren: a class's, a teacher's or a room's PUBLISHED week, or an
- * index of a school's classes or rooms, without a login, behind a share link
- * an admin made on /admin/publishing. What a school's printed schedule shows
- * on the classroom door: times, subject, group, room, and the teacher as the
- * school chose (signature, name, or nothing).
+ * Schemavisaren: a class's, a teaching group's, a teacher's, a room's or one
+ * pupil's PUBLISHED week, or a list of the school's classes, teachers or
+ * rooms, behind a link or a code the school made on /admin/schemavisaren.
+ * What a school's printed schedule shows on the classroom door: times,
+ * subject, group, room, and the teacher as the school chose (signature, name,
+ * or nothing). A pupil's page names no group and, unless the school gave the
+ * link a label, no title but "Elevens schema".
  *
  * A SERVER COMPONENT with no client code of its own: the week is laid out
  * here (lib/day-lanes.ts, lanes per overlap cluster) and sent as HTML, so
@@ -35,7 +39,19 @@ import { readViewer } from "./read-viewer";
  * (cache: "no-store"), so a revoked link is gone when the gateway's minute
  * of public caching is — the HTML itself is dynamic, which Next serves
  * private and uncached. Every "not found" is one page, as the gateway's 404
- * is one answer.
+ * is one answer: an unknown address, a kind that is off, a schedule that is
+ * hidden or protected, a viewer that is for staff.
+ *
+ * THAT LAST ONE has a second door, asked first. A visitor who already carries
+ * a session is asked as that person (./read-as-staff.ts) before the public
+ * route, so that no read by staff is ever a miss against the school's
+ * address; only when the signed-in twin has nothing to show is the public
+ * route asked, and only when that is the 404 too is the page "not found".
+ * Nobody without a session is asked twice, and nobody is told which of the
+ * reasons it was.
+ *
+ * THE ADDRESS may be written any way a person writes a code: the page reads
+ * it (lib/viewer-token.ts) and links to the one spelling.
  */
 
 export const dynamic = "force-dynamic";
@@ -55,10 +71,20 @@ export default async function PublicTimetablePage({
   const messages = locale === "en" ? en : sv;
   const t = createTranslator({ locale, messages, namespace: "publicViewer" }) as unknown as Translate;
   const tDays = createTranslator({ locale, messages, namespace: "days" }) as unknown as Translate;
-  if (!TOKEN_PATTERN.test(token)) notFound();
+  // The address in the spelling the page links to; an address that is no link is not asked about.
+  const address = viewerAddressOf(token);
+  if (address === null) notFound();
 
   const query = viewerQueryOf({ target: search.target, date: search.date });
-  const outcome = await readViewer(token, query);
+  // A visitor who holds a session is asked as that person FIRST. The signed-in route answers an open
+  // viewer too, and a viewer for staff only it can answer; a visitor asked first would cost the school's
+  // address a miss for every read by a teacher (the public route counts a not-found against the address),
+  // and thirty reads in a minute would shut the viewer for everyone behind it. Only when the signed-in
+  // route has nothing to show, or the visitor has no session, is the public route asked.
+  const asStaff = await readViewerAsStaff(address, query);
+  let outcome: ViewerOutcome = asStaff?.kind === "document" ? asStaff : await readViewer(address, query);
+  // Said in words rather than as "nothing there": the signed-in route could not be reached.
+  if (outcome.kind === "notFound" && asStaff?.kind === "unavailable") outcome = asStaff;
   if (outcome.kind === "notFound") notFound();
 
   return (
@@ -71,9 +97,9 @@ export default async function PublicTimetablePage({
           body={t(outcome.kind === "busy" ? "busyBody" : "unavailableBody")}
         />
       ) : isIndex(outcome.document) ? (
-        <IndexView document={outcome.document} token={token} locale={locale} t={t} />
+        <IndexView document={outcome.document} token={address} locale={locale} t={t} />
       ) : (
-        <WeekView document={outcome.document} token={token} query={query} locale={locale} t={t} tDays={tDays} />
+        <WeekView document={outcome.document} token={address} query={query} locale={locale} t={t} tDays={tDays} />
       )}
       {/* The tillgänglighetsredogörelse, which a visitor without an account
           can reach from nowhere else. The screen's, not the paper's. */}
@@ -153,14 +179,17 @@ function WeekView({
   t: Translate;
   tDays: Translate;
 }) {
-  const week = weekNumberOf(document);
+  // A pupil's link has the title the school gave it, or none: then the page
+  // says what it is, and still not whose it is.
+  const shown: PublicWeek = document.title === "" ? { ...document, title: t("studentTitle") } : document;
+  const week = weekNumberOf(shown);
   const nav = (date: string | null) => viewerHref(token, { target: query.target, date, lang: locale });
 
   return (
     <div className="space-y-3 print:space-y-1">
-      <title>{`${document.title} – ${t("week", { week })}`}</title>
+      <title>{`${shown.title} – ${t("week", { week })}`}</title>
       <WeekSheet
-        document={document}
+        document={shown}
         locale={locale}
         t={t}
         tDays={tDays}

@@ -213,6 +213,8 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
 
   // Publicering: what is published, to whom, and Schemavisaren.
   PublicTimetableLinks: only('PUBLICERING'),
+  // Schemavisarens lägen (20270118090000): a schedule hidden, or shown again; never edited.
+  PublicTimetableHidden: just('PUBLICERING', 'insert', 'delete'),
   PublicationPendingRemovals: just('PUBLICERING', 'delete'),
   PublicationSettings: only('PUBLICERING'),
   PublishedLessons: just('PUBLICERING', 'insert', 'update'),

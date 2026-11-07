@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseEnumPipe, ParseUUIDPipe, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Area } from '../auth/decorators/area.decorator';
@@ -8,7 +8,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreatePublicLinkDto, PublicationListQueryDto, TeacherPublicLabelDto } from './dto/publication.dto';
-import { PublicLinksService, type PublicLinkView } from './public-links.service';
+import { PublicLinksService, type HiddenKind, type HiddenTargets, type PublicLinkView } from './public-links.service';
 
 /** The viewer's share links and hidden teachers. ADMIN ONLY. */
 @Controller('api/v1')
@@ -45,6 +45,22 @@ export class PublicLinksController {
   @Get('teacher-public-labels')
   hidden(@CurrentUser() user: AuthenticatedUser): Promise<string[]> {
     return this.links.hiddenTeachers(user);
+  }
+
+  /** Classes, groups, rooms and pupils hidden from Schemavisaren one by one (20270118090000). */
+  @Get('viewer-hidden')
+  hiddenTargets(@CurrentUser() user: AuthenticatedUser): Promise<HiddenTargets> {
+    return this.links.hiddenTargets(user);
+  }
+
+  @Put('viewer-hidden/:kind/:id')
+  setHiddenTarget(
+    @Param('kind', new ParseEnumPipe(['group', 'room', 'student'])) kind: HiddenKind,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: TeacherPublicLabelDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ kind: HiddenKind; id: string; hidden: boolean }> {
+    return this.links.setHiddenTarget(kind, id, dto.hidden, user);
   }
 
   @Put('teacher-public-labels/:userId')

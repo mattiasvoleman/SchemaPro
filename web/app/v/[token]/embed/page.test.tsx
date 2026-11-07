@@ -12,7 +12,13 @@ import EmbeddedTimetablePage from "./page";
 
 const nav = vi.hoisted(() => ({ notFound: vi.fn(() => { throw new Error("NEXT_NOT_FOUND"); }) }));
 vi.mock("next/navigation", () => ({ notFound: nav.notFound }));
-vi.mock("next/headers", () => ({ headers: async () => new Headers({ "x-forwarded-for": "6.6.6.6, 203.0.113.9" }) }));
+// The frame must never touch the session: a spy on both ways in, asserted below.
+const session = vi.hoisted(() => ({ cookies: vi.fn(), createClient: vi.fn() }));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ "x-forwarded-for": "6.6.6.6, 203.0.113.9" }),
+  cookies: session.cookies,
+}));
+vi.mock("@/utils/supabase/server", () => ({ createClient: session.createClient }));
 
 const TOKEN = "Tok_en-".padEnd(43, "x");
 const fetchMock = vi.fn();
@@ -48,6 +54,8 @@ describe("/v/[token]/embed", () => {
     fetchMock.mockReset();
     vi.stubEnv("PUBLIC_VIEWER_PROXY_KEY", "k".repeat(40));
     vi.stubEnv("PUBLIC_VIEWER_API_BASE_URL", "http://gateway.internal");
+    session.cookies.mockClear();
+    session.createClient.mockClear();
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -97,6 +105,30 @@ describe("/v/[token]/embed", () => {
     );
     // The targets first, then the way out.
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["Sal 12", "Öppna i Schemavisaren"]);
+  });
+
+  it("never reads the session: a 404 is the frame's last word, whoever is signed in", async () => {
+    respond(404, { status: 404 });
+    await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
+    respond(200, WEEK);
+    await renderPage();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/public/v1/timetables/"))).toBe(true);
+    expect(session.cookies).not.toHaveBeenCalled();
+    expect(session.createClient).not.toHaveBeenCalled();
+  });
+
+  it("frames a code in the spelling the school hands out, however it was typed, and a pupil's page by what it is", async () => {
+    respond(200, { kind: "GROUP", school: "Skolan", targets: [{ id: "0b9d6a5e-3c1f-4a7b-9d2e-5f6a7b8c9d0e", label: "7A" }] });
+    await renderPage({}, "k7qm2 x9drt 4v8wn b5c3h");
+    expect(fetchMock).toHaveBeenCalledWith("http://gateway.internal/public/v1/timetables/K7QM2-X9DRT-4V8WN-B5C3H", expect.anything());
+    expect(screen.getByRole("link", { name: "7A" })).toHaveAttribute(
+      "href",
+      "/v/K7QM2-X9DRT-4V8WN-B5C3H/embed?target=0b9d6a5e-3c1f-4a7b-9d2e-5f6a7b8c9d0e",
+    );
+    respond(200, { ...WEEK, kind: "STUDENT", title: "", days: WEEK.days.map((day) => ({ ...day, lessons: [] })) });
+    await renderPage();
+    expect(screen.getByRole("heading", { level: 1, name: "Elevens schema" })).toBeInTheDocument();
   });
 
   it("answers the viewer's one not-found, and says a limit and an unreachable gateway in words", async () => {

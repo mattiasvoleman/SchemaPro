@@ -1,13 +1,11 @@
 "use client";
 
 // Publicering: how the school's grundschema reaches the calendar, which
-// published timetable is valid when, the checks a publish must pass, and
-// Schemavisaren — the timetable shown without a login.
-//
-// Two tabs, because they are two audiences. "Publicering" is the planner's:
-// direct or utkastläge, the validity ranges and the log, the policy for the
-// named checks. "Schemavisaren" is about the families and the staff room: what
-// the school shows outside SchemaPro, to whom, and through which links.
+// published timetable is valid when, and the checks a publish must pass.
+// What the school shows outside Rastra without a login, to whom and through
+// which codes, is Schemavisaren's page (/admin/schemavisaren): it was a tab
+// here, for another audience — the families and the staff room, where this is
+// the planner's.
 //
 // THE DEFAULT CHANGES NOTHING. A school that never opens this page publishes
 // directly, as before: every grundschema edit reaches the calendar as it is
@@ -34,15 +32,9 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GatePolicyCard } from "./gate-policy-card";
-import { EmbedCard } from "./embed-card";
-import { HiddenTeachersCard } from "./hidden-teachers-card";
-import { LinksCard } from "./links-card";
 import { ModeCard } from "./mode-card";
-import { useHiddenTeachers } from "./use-public-links";
 import { ValidityCard } from "./validity-card";
-import { ViewerCard } from "./viewer-card";
 
 export default function PublishingPage() {
   const t = useTranslations("publishing");
@@ -53,12 +45,9 @@ export default function PublishingPage() {
 
   const settings = usePublicationSettings();
   const { data: groups } = useGroups();
-  const peopleQuery = usePeople();
-  const people = peopleQuery.data;
+  const { data: people } = usePeople();
   const { data: rooms } = useRooms();
   const { data: subjects } = useSubjects();
-  const hiddenQuery = useHiddenTeachers();
-  const hidden = useMemo(() => new Set(hiddenQuery.data ?? []), [hiddenQuery.data]);
   const teachers = useMemo(
     () => (people ?? []).filter((person) => person.role === "TEACHER" || person.role === "SCHOOL_ADMIN"),
     [people],
@@ -66,10 +55,9 @@ export default function PublishingPage() {
   const [reviewOpen, setReviewOpen] = useState(false);
 
   /*
-   * The two year-bound cards (validity, links) and what stands in their place
-   * while there is no year to show: the years still loading, failed, or none
-   * at all yet. The rest of the page is the school's, not a year's, and works
-   * without one.
+   * The year-bound card (validity) and what stands in its place while there is
+   * no year to show: the years still loading, failed, or none at all yet. The
+   * rest of the page is the school's, not a year's, and works without one.
    */
   const yearBound = (card: (shown: NonNullable<typeof year>) => React.ReactNode) =>
     year ? (
@@ -103,6 +91,9 @@ export default function PublishingPage() {
         actions={
           <div className="flex flex-wrap items-end gap-2">
             <Button variant="outline" asChild>
+              <Link href="/admin/schemavisaren">{t("viewerAction")}</Link>
+            </Button>
+            <Button variant="outline" asChild>
               <Link href="/admin/publishing/print">{t("printAction")}</Link>
             </Button>
             <YearSelect value={yearId} onValueChange={setYearId} label={t("yearLabel")} />
@@ -125,39 +116,13 @@ export default function PublishingPage() {
       ) : settings.isError && !settings.data ? (
         <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : settings.data ? (
-        <Tabs defaultValue="publishing" className="space-y-4">
-          <TabsList aria-label={t("tabsLabel")}>
-            <TabsTrigger value="publishing">{t("tabPublishing")}</TabsTrigger>
-            <TabsTrigger value="viewer">{t("tabViewer")}</TabsTrigger>
-          </TabsList>
-          <TabsContent value="publishing" className="space-y-4">
-            <ModeCard mode={settings.data.publishMode} />
-            {yearBound((shown) => (
-              <ValidityCard year={shown} mode={settings.data!.publishMode} onReview={() => setReviewOpen(true)} />
-            ))}
-            <GatePolicyCard settings={settings.data} />
-          </TabsContent>
-          <TabsContent value="viewer" className="space-y-4">
-            <ViewerCard settings={settings.data} />
-            <EmbedCard settings={settings.data} />
-            {yearBound((shown) => (
-              <LinksCard
-                year={shown}
-                settings={settings.data!}
-                groups={groups ?? []}
-                teachers={teachers}
-                rooms={rooms ?? []}
-                hidden={hidden}
-              />
-            ))}
-            <HiddenTeachersCard
-              teachers={teachers.filter((teacher) => teacher.isActive)}
-              hidden={hidden}
-              loading={Boolean(hiddenQuery.isLoading || peopleQuery.isLoading)}
-              failed={Boolean(hiddenQuery.isError || peopleQuery.isError)}
-            />
-          </TabsContent>
-        </Tabs>
+        <div className="space-y-4">
+          <ModeCard mode={settings.data.publishMode} />
+          {yearBound((shown) => (
+            <ValidityCard year={shown} mode={settings.data!.publishMode} onReview={() => setReviewOpen(true)} />
+          ))}
+          <GatePolicyCard settings={settings.data} />
+        </div>
       ) : null}
 
       <PublishReviewDialog

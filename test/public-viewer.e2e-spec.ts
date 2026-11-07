@@ -1,6 +1,8 @@
 import request from 'supertest';
 import { createTestApp, type TestHarness } from './utils/test-app';
 import { tokenHashOf } from '../src/publication/public-token';
+import { OPEN_ROUTES } from '../src/publication/open-routes';
+import { MISSES, PER_PERSON, PER_STAFF_LINK } from '../src/publication/viewer-miss-limiter';
 
 /**
  * Schemavisaren over HTTP, without a principal: one identical 404 for every
@@ -23,6 +25,10 @@ const DOC = {
 };
 
 const ORIGINS = ['https://skolan.example', 'https://www.skolan.example:8443'];
+/** A code, as the school hands it out and as a person may type it. */
+const CODE = 'K7QM2X9DRT4V8WNB5C3H';
+const STAFF = JSON.stringify({ authId: '11111111-1111-4111-8111-111111111111', userId: '22222222-2222-4222-8222-222222222222', schoolId: '33333333-3333-4333-8333-333333333333', role: 'TEACHER' });
+const sqlOf = (call: { strings: string[] }) => call.strings.join('?');
 
 describe('the public viewer (e2e)', () => {
   let harness: TestHarness;
@@ -32,7 +38,7 @@ describe('the public viewer (e2e)', () => {
     // A fresh app per test: the viewer's counters live in its guard.
     harness = await createTestApp();
     harness.tx.$queryRaw.mockImplementation(async (statement: { strings: string[]; values: unknown[] }) => {
-      const known = statement.values[0] === tokenHashOf(TOKEN);
+      const known = statement.values[0] === tokenHashOf(TOKEN) || statement.values[0] === tokenHashOf(CODE);
       if (statement.strings.join('?').includes('app.public_timetable_embed(')) {
         return [{ origins: known ? ORIGINS : null }];
       }
@@ -158,4 +164,126 @@ describe('the public viewer (e2e)', () => {
     // Another link is its own.
     await request(http()).get(`/public/v1/timetables/${OTHER}`).set('X-Viewer-Client-Ip', '10.9.9.9').set('X-Viewer-Proxy-Key', KEY).expect(404);
   });
+
+  it('takes a code however it is typed, and asks the database for the one canonical spelling\'s hash', async () => {
+    for (const typed of [CODE, 'K7QM2-X9DRT-4V8WN-B5C3H', 'k7qm2-x9drt-4v8wn-b5c3h', 'K7QM2%20X9DRT%204V8WN%20B5C3H']) {
+      await request(http()).get(`/public/v1/timetables/${typed}`).expect(200);
+    }
+    const asked = harness.tx.$queryRaw.mock.calls.map((call) => call[0].values[0]);
+    expect(new Set(asked)).toEqual(new Set([tokenHashOf(CODE)]));
+    expect(asked).toHaveLength(4);
+  });
+
+  it('refuses an address that has tried too many links or codes that do not exist, before it asks the database, and costs a hit nothing', async () => {
+    const as = (ip: string) => ({ 'X-Viewer-Client-Ip': ip, 'X-Viewer-Proxy-Key': KEY });
+    // Hits are free, whatever their number (below the address's own limit).
+    for (let i = 0; i < 60; i++) await request(http()).get(`/public/v1/timetables/${TOKEN}`).set(as('10.2.0.1')).expect(200);
+    // The storage blocks on the hit past the limit, so the limit and one more are answered.
+    for (let i = 0; i <= MISSES.limit; i++) {
+      await request(http()).get(`/public/v1/timetables/${OTHER}`).set(as('10.2.0.2')).expect(404);
+    }
+    const calls = harness.tx.$queryRaw.mock.calls.length;
+    // The next is refused, and so is a link that would have resolved: the address is spent.
+    const refused = await request(http()).get(`/public/v1/timetables/${OTHER}`).set(as('10.2.0.2')).expect(429);
+    expect(refused.headers['cache-control']).toBe('no-store');
+    await request(http()).get(`/public/v1/timetables/${TOKEN}`).set(as('10.2.0.2')).expect(429);
+    await request(http()).get(`/public/v1/timetables/${TOKEN}/embed`).set(as('10.2.0.2')).expect(429);
+    expect(harness.tx.$queryRaw.mock.calls.length).toBe(calls);
+    // Another address is its own, and the same program through a spoofed header is not another.
+    await request(http()).get(`/public/v1/timetables/${TOKEN}`).set(as('10.2.0.3')).expect(200);
+    await request(http()).get(`/public/v1/timetables/${TOKEN}`).set({ 'X-Viewer-Client-Ip': '10.2.0.2', 'X-Viewer-Proxy-Key': 'wrong' }).expect(200);
+  });
+
+  it('counts a malformed or embedded miss against the address too', async () => {
+    const as = { 'X-Viewer-Client-Ip': '10.3.0.1', 'X-Viewer-Proxy-Key': KEY };
+    for (let i = 0; i <= MISSES.limit; i++) {
+      const path = i % 3 === 0 ? '/public/v1/timetables/short' : i % 3 === 1 ? `/public/v1/timetables/${OTHER}/embed` : `/public/v1/timetables/${TOKEN}?target=nope`;
+      await request(http()).get(path).set(as).expect(404);
+    }
+    await request(http()).get(`/public/v1/timetables/${TOKEN}`).set(as).expect(429);
+  });
+
+  describe('the staff door (a viewer for staff)', () => {
+    it('is no open route: nobody gets through it without signing in, and a pupil or a guardian does not either', async () => {
+      await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).expect(401);
+      for (const role of ['STUDENT', 'GUARDIAN']) {
+        const user = JSON.stringify({ authId: '11111111-1111-4111-8111-111111111111', schoolId: '33333333-3333-4333-8333-333333333333', role });
+        await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', user).expect(403);
+      }
+      expect(harness.tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('asks the staff door as the signed-in person, and keeps what it answers from every cache', async () => {
+      const response = await request(http()).get(`/api/v1/schemavisaren/K7QM2-X9DRT-4V8WN-B5C3H?date=2026-10-14`).set('x-test-user', STAFF).expect(200);
+      expect(response.body).toEqual(DOC);
+      expect(response.headers['cache-control']).toBe('private, no-store');
+      expect(response.headers['x-robots-tag']).toBe('noindex, nofollow');
+      expect(response.headers['set-cookie']).toBeUndefined();
+      const [call] = harness.tx.$queryRaw.mock.calls;
+      expect(sqlOf(call![0])).toContain('app.public_timetable_staff(');
+      expect(call![0].values).toEqual([tokenHashOf(CODE), null, '2026-10-14']);
+    });
+
+    it('answers the not-found for what the database will not show, and refuses a person who asks for too many that do not exist', async () => {
+      for (let i = 0; i <= MISSES.limit; i++) await request(http()).get(`/api/v1/schemavisaren/${OTHER}`).set('x-test-user', STAFF).expect(404);
+      const refused = await request(http()).get(`/api/v1/schemavisaren/${OTHER}`).set('x-test-user', STAFF).expect(429);
+      // A refusal is for that caller alone and says when to come back.
+      expect(refused.headers['cache-control']).toBe('private, no-store');
+      expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+      await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', STAFF).expect(429);
+      // Another person is their own.
+      const other = JSON.stringify({ ...JSON.parse(STAFF), userId: '55555555-5555-4555-8555-555555555555' });
+      await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', other).expect(200);
+    });
+
+    it('keeps a signed-in person to what one person reads in a minute, and counts a read as no miss', async () => {
+      // The staff of a school read many weeks: reads are hits, and a read costs the person no miss.
+      for (let i = 0; i < PER_PERSON.limit; i++) await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', STAFF).expect(200);
+      const refused = await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', STAFF).expect(429);
+      expect(refused.headers['cache-control']).toBe('private, no-store');
+      expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+      // Nobody else is slowed by it, and the web server's address is nobody's bucket.
+      const other = JSON.stringify({ ...JSON.parse(STAFF), userId: '66666666-6666-4666-8666-666666666666' });
+      await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', other).expect(200);
+      expect(harness.tx.$queryRaw.mock.calls.length).toBe(PER_PERSON.limit + 1);
+    });
+
+    it('keeps one link to what it may be read for through the staff route in a minute, whoever reads it', async () => {
+      for (let i = 0; i < PER_STAFF_LINK.limit; i++) {
+        const person = JSON.stringify({ ...JSON.parse(STAFF), userId: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}` });
+        await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', person).expect(200);
+      }
+      const person = JSON.stringify({ ...JSON.parse(STAFF), userId: '77777777-7777-4777-8777-777777777777' });
+      await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', person).expect(429);
+      // Another link is its own.
+      await request(http()).get(`/api/v1/schemavisaren/${CODE}`).set('x-test-user', person).expect(200);
+    });
+
+    it('gives the database two seconds at most for it, as it does a visitor, and no JIT', async () => {
+      await request(http()).get(`/api/v1/schemavisaren/${TOKEN}`).set('x-test-user', STAFF).expect(200);
+      const statements = harness.tx.$executeRaw.mock.calls.map((call) => (call[0] as unknown as string[]).join('?'));
+      expect(statements).toEqual(expect.arrayContaining([expect.stringContaining("statement_timeout = '2s'"), expect.stringContaining('jit = off')]));
+    });
+  });
+
+  // An open route is a decision the school made, or a leak. Every route
+  // classed VIEWER (src/publication/open-routes.ts) reaches the database only
+  // through the door it names, and answers the viewer's one not-found when
+  // that door says nothing: a route that showed anything without asking, or
+  // asked something else, fails here. The unclassed ones fail in
+  // route-guards.e2e-spec.ts.
+  it.each(Object.entries(OPEN_ROUTES).filter(([, entry]) => entry.relation === 'VIEWER'))(
+    '%s reaches the database only through its door, and gives a visitor nothing when the door says nothing',
+    async (key, entry) => {
+      const path = key.split(' ')[1]!.replace(':token', OTHER);
+      const door = (entry as { door: string }).door;
+      harness.tx.$queryRaw.mockImplementation(async () => [{ doc: null, origins: null }]);
+      const response = await request(http()).get(path).expect(404);
+      expect(response.body).toEqual({ type: 'about:blank', title: 'Not Found', status: 404, detail: 'Schemat finns inte.' });
+      expect(response.headers['cache-control']).toBe('no-store');
+      const sql = harness.tx.$queryRaw.mock.calls.map((call) => sqlOf(call[0]));
+      expect(sql.length).toBeGreaterThan(0);
+      for (const statement of sql) expect(statement).toContain(door);
+    },
+  );
 });

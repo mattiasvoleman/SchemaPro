@@ -3,11 +3,16 @@ import { ThrottlerException } from '@nestjs/throttler';
 import type { ConfigService } from '@nestjs/config';
 import { PER_CLIENT, PER_LINK, PublicViewerThrottlerGuard, SWEEP_ABOVE } from './public-viewer-throttler.guard';
 import { newToken } from './public-token';
+import { ViewerMissLimiter } from './viewer-miss-limiter';
 
 const KEY = 'k'.repeat(32);
 
-function guard(): PublicViewerThrottlerGuard {
-  return new PublicViewerThrottlerGuard({ get: () => ({ proxyKey: KEY }) } as unknown as ConfigService);
+function limiter(): ViewerMissLimiter {
+  return new ViewerMissLimiter({ get: () => ({ proxyKey: KEY }) } as unknown as ConfigService);
+}
+
+function guard(misses: ViewerMissLimiter = limiter()): PublicViewerThrottlerGuard {
+  return new PublicViewerThrottlerGuard(misses);
 }
 
 function call(target: PublicViewerThrottlerGuard, token: string, ip: string, forwarded?: string) {

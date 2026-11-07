@@ -82,6 +82,16 @@ export class WindowedThrottlerStorage implements ThrottlerStorage {
     return this.entries.size;
   }
 
+  /**
+   * Whether a key is blocked right now, without counting a hit: for a limit
+   * that is charged after the fact (the public viewer's misses) and asked
+   * before the next request is served.
+   */
+  isBlocked(key: string, throttlerName: string): boolean {
+    const entry = this.entries.get(`${throttlerName}\u0000${key}`);
+    return entry !== undefined && entry.isBlocked && entry.blockExpiresAt > this.now();
+  }
+
   async increment(
     key: string,
     ttl: number,

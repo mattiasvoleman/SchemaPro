@@ -8,7 +8,7 @@ import {
   canGoBack,
   isIndex,
   shiftWeek,
-  TOKEN_PATTERN,
+  viewerAddressOf,
   viewerHref,
   viewerQueryOf,
   type PublicIndex,
@@ -20,6 +20,11 @@ import { readViewer } from "../read-viewer";
 /*
  * Schemavisaren in a frame on the school's own website (Utskrift och
  * inbäddning, 20261102090000): the share link's week, or its index, compact.
+ *
+ * THIS PAGE NEVER READS THE SESSION. A viewer for staff has a second door for
+ * a signed-in teacher (../read-as-staff.ts); a frame on somebody's website is
+ * not it, and the gateway frames nothing but a viewer open to everyone — and
+ * never a pupil's page.
  *
  * WHAT IT SHOWS is the viewer's document, asked of the gateway exactly as the
  * viewer page asks it (../read-viewer.ts): embedding adds a frame, not a
@@ -52,10 +57,11 @@ export default async function EmbeddedTimetablePage({
   const messages = locale === "en" ? en : sv;
   const t = createTranslator({ locale, messages, namespace: "publicViewer" }) as unknown as Translate;
   const tDays = createTranslator({ locale, messages, namespace: "days" }) as unknown as Translate;
-  if (!TOKEN_PATTERN.test(token)) notFound();
+  const address = viewerAddressOf(token);
+  if (address === null) notFound();
 
   const query = viewerQueryOf({ target: search.target, date: search.date });
-  const outcome = await readViewer(token, query);
+  const outcome = await readViewer(address, query);
   if (outcome.kind === "notFound") notFound();
 
   return (
@@ -68,9 +74,9 @@ export default async function EmbeddedTimetablePage({
           <p>{t(outcome.kind === "busy" ? "busyBody" : "unavailableBody")}</p>
         </div>
       ) : isIndex(outcome.document) ? (
-        <EmbeddedIndex document={outcome.document} token={token} locale={locale} t={t} />
+        <EmbeddedIndex document={outcome.document} token={address} locale={locale} t={t} />
       ) : (
-        <EmbeddedWeek document={outcome.document} token={token} query={query} locale={locale} t={t} tDays={tDays} />
+        <EmbeddedWeek document={outcome.document} token={address} query={query} locale={locale} t={t} tDays={tDays} />
       )}
     </main>
   );
@@ -137,13 +143,15 @@ function EmbeddedWeek({
   t: Translate;
   tDays: Translate;
 }) {
-  const week = weekNumberOf(document);
+  // A pupil's link may have no label (opened on its own, as it is never framed): the page says what it is.
+  const shown: PublicWeek = document.title === "" ? { ...document, title: t("studentTitle") } : document;
+  const week = weekNumberOf(shown);
   const nav = (date: string | null) => viewerHref(token, { target: query.target, date, lang: locale }, { embed: true });
   return (
     <div className="space-y-2">
-      <title>{`${document.title} – ${t("week", { week })}`}</title>
+      <title>{`${shown.title} – ${t("week", { week })}`}</title>
       <WeekSheet
-        document={document}
+        document={shown}
         locale={locale}
         t={t}
         tDays={tDays}

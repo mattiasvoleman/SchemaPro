@@ -15,6 +15,7 @@ import {
   CANCELLATION_BATCHES,
   cancellationPreview,
   draftState,
+  HIDDEN_TARGETS,
   HIDDEN_TEACHERS,
   PUBLIC_LINKS,
   publicationPreview,
@@ -143,6 +144,8 @@ export const miscRoutes: GatewayRoute[] = [
     PUBLIC_LINKS.filter((link) => link.academicYearId === query.get("academicYearId")),
   ),
   route("GET", "/api/v1/teacher-public-labels", () => HIDDEN_TEACHERS),
+  // Schemavisarens lägen: the classes, groups, rooms and pupils hidden one by one.
+  route("GET", "/api/v1/viewer-hidden", () => HIDDEN_TARGETS),
   // Schema som fil: what an export of the year would hold. The preview and
   // the apply are POSTs the browser smoke tests do not press.
   route("GET", "/api/v1/schedule-exchange/summary", ({ query }) => ({

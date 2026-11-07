@@ -291,6 +291,7 @@ describe("AppShell navigation", () => {
       "nav.timetable",
       "nav.gaps",
       "nav.publishing",
+      "nav.schemavisaren",
       "nav.calendarFeeds",
       "nav.scheduleExchange",
     ]);
@@ -321,7 +322,7 @@ describe("AppShell navigation", () => {
     expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
     expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(39);
+    expect(all).toHaveLength(40);
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {
@@ -589,7 +590,7 @@ describe("AppShell navigation by administrator profile", () => {
     expect(hrefs()).toEqual(
       expect.arrayContaining(["/admin", "/admin/people", "/admin/teacher-absence", "/admin/leave", "/admin/cover"]),
     );
-    for (const href of ["/admin/timetable", "/admin/generate", "/admin/publishing", "/admin/calendar-feeds", "/admin/subjects", "/admin/dataskydd", "/admin/integrations"]) {
+    for (const href of ["/admin/timetable", "/admin/generate", "/admin/publishing", "/admin/schemavisaren", "/admin/calendar-feeds", "/admin/subjects", "/admin/dataskydd", "/admin/integrations"]) {
       expect(hrefs()).not.toContain(href);
     }
     // Their own calendar feed is every profile's: the school's switches are not.
@@ -605,7 +606,7 @@ describe("AppShell navigation by administrator profile", () => {
     shellFor("SCHEMALAGGARE");
     // Personer too: its arbetstid, behörigheter and uppdrag are planering's.
     expect(hrefs()).toEqual(
-      expect.arrayContaining(["/admin/subjects", "/admin/staffing", "/admin/timetable", "/admin/publishing", "/admin/cover", "/admin/people"]),
+      expect.arrayContaining(["/admin/subjects", "/admin/staffing", "/admin/timetable", "/admin/publishing", "/admin/schemavisaren", "/admin/cover", "/admin/people"]),
     );
     for (const href of ["/admin/dataskydd", "/admin/integrations"]) {
       expect(hrefs()).not.toContain(href);

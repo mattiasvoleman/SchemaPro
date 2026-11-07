@@ -10,21 +10,32 @@
  * (null for a group smaller than the school's minimum: drawn "Grupp"), room,
  * the teachers as the school chose to show them, cancelled (never in a
  * teacher's week, never with a cause), and "busy" for a lesson of named
- * pupils in a room's week. Never a pupil, a note or an id.
+ * pupils in a room's week. Never a note or an id, and never a pupil's name:
+ * a pupil's own page (kind STUDENT, behind a code) names no group either.
+ *
+ * WHO MAY ASK, and which kinds are shown, is decided there too (the school's
+ * lägen, 20270118090000): the same ONE 404 answers an unknown address, a kind
+ * that is off, a viewer for staff, a hidden or protected schedule. The page
+ * adds nothing to that, and asks again as a signed-in teacher or
+ * administrator (staffViewerFetchOf) only when the anonymous answer was it.
  */
 
-/** 32 random bytes in base64url — the gateway's TOKEN_PATTERN. */
-export const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+import { schoolHeaders } from "@/lib/school-choice";
+
+// What an address may carry, and how it is read, is lib/viewer-token.ts's: here
+// for the callers that have always imported it from this module.
+export { codeForDisplay, TOKEN_PATTERN, viewerAddressOf, viewerTokenOf } from "@/lib/viewer-token";
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-export type PublicKind = "GROUP" | "TEACHER" | "ROOM";
+export type PublicKind = "GROUP" | "TEACHER" | "ROOM" | "STUDENT";
 
 export interface PublicLesson {
   start: string;
   end: string;
   subject?: string | null;
-  /** The lesson's own group first; null = a group too small to name. */
+  /** The lesson's own group first; null = a group too small to name. Empty on a pupil's page. */
   groups?: (string | null)[];
   room?: string | null;
   teachers?: string[];
@@ -43,6 +54,7 @@ export interface PublicDay {
 
 export interface PublicWeek {
   kind: PublicKind;
+  /** The page's title; empty on a pupil's page whose link has no label ("Elevens schema" is the page's to say). */
   title: string;
   school: string;
   week: { from: string; to: string; isoWeek: string };
@@ -50,7 +62,8 @@ export interface PublicWeek {
 }
 
 export interface PublicIndex {
-  kind: "GROUP" | "ROOM";
+  /** A list of classes and groups, of teachers or of rooms; never of pupils. */
+  kind: "GROUP" | "TEACHER" | "ROOM";
   school: string;
   targets: { id: string; label: string }[];
 }
@@ -95,15 +108,28 @@ export function isCalendarDay(value: string): boolean {
  * per-viewer rate limit: the RIGHTMOST X-Forwarded-For entry, the one the
  * platform's edge appended. Anything to its left is what the browser sent and
  * can be anything. Null when there is none.
+ *
+ * Behind more than one proxy that append their own address (a CDN in front
+ * of the platform's edge) the rightmost entry is a proxy's, the same for
+ * every visitor. `skipRight` is how many entries to the right of the
+ * visitor's own those proxies have added (PUBLIC_VIEWER_TRUSTED_HOPS, 0 where
+ * the platform's edge is the last; docs/DEPLOYMENT.md): the entry that many
+ * from the right is taken. Null when there are not that many.
  */
-export function clientIpOf(forwardedFor: string | null): string | null {
+export function clientIpOf(forwardedFor: string | null, skipRight = 0): string | null {
   if (!forwardedFor) return null;
   const hops = forwardedFor
     .split(",")
     .map((hop) => hop.trim())
     .filter(Boolean);
-  const last = hops[hops.length - 1];
-  return last && last.length <= 64 ? last : null;
+  const own = hops[hops.length - 1 - Math.max(0, Math.floor(skipRight))];
+  return own && own.length <= 64 ? own : null;
+}
+
+/** PUBLIC_VIEWER_TRUSTED_HOPS as a count of proxies to skip: a whole number from 0 to 5, else 0. */
+export function trustedHopsOf(value: string | undefined): number {
+  const hops = Number(value);
+  return Number.isInteger(hops) && hops >= 0 && hops <= 5 ? hops : 0;
 }
 
 export interface ViewerFetch {
@@ -124,13 +150,14 @@ export function viewerFetchOf(
   query: ViewerQuery,
   forwardedFor: string | null,
   proxyKey: string | undefined,
+  skipHops = 0,
 ): ViewerFetch {
   const search = new URLSearchParams();
   if (query.target) search.set("target", query.target);
   if (query.date) search.set("date", query.date);
   const qs = search.toString();
   const headers: Record<string, string> = { Accept: "application/json" };
-  const client = clientIpOf(forwardedFor);
+  const client = clientIpOf(forwardedFor, skipHops);
   if (proxyKey && client) {
     headers["X-Viewer-Proxy-Key"] = proxyKey;
     headers["X-Viewer-Client-Ip"] = client;
@@ -138,6 +165,31 @@ export function viewerFetchOf(
   return {
     url: `${base.replace(/\/+$/, "")}/public/v1/timetables/${encodeURIComponent(token)}${qs ? `?${qs}` : ""}`,
     headers,
+  };
+}
+
+/**
+ * What the web server asks the gateway's signed-in twin of the viewer
+ * (GET /api/v1/schemavisaren/:token, for a school whose viewer is for staff):
+ * the same question, as the teacher or administrator who holds the session.
+ * The access token is only forwarded — the gateway verifies it — and the
+ * school the browser chose is named as everywhere else (lib/school-choice.ts).
+ * No proxy key and no client address: the twin is rate-limited by the person.
+ */
+export function staffViewerFetchOf(
+  base: string,
+  token: string,
+  query: ViewerQuery,
+  accessToken: string,
+  school: string | null | undefined,
+): ViewerFetch {
+  const search = new URLSearchParams();
+  if (query.target) search.set("target", query.target);
+  if (query.date) search.set("date", query.date);
+  const qs = search.toString();
+  return {
+    url: `${base.replace(/\/+$/, "")}/api/v1/schemavisaren/${encodeURIComponent(token)}${qs ? `?${qs}` : ""}`,
+    headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}`, ...schoolHeaders(school) },
   };
 }
 
@@ -157,6 +209,17 @@ export async function readViewerResponse(response: Response): Promise<ViewerOutc
   } catch {
     return { kind: "unavailable" };
   }
+}
+
+/**
+ * The twin's answer, as the page needs it. A 401 and a 403 (an expired
+ * session, a role that is not staff's) and the 404 are all the one "not
+ * found": the visitor is no better placed than before, and learns nothing
+ * about which of the reasons it was.
+ */
+export async function readStaffViewerResponse(response: Response): Promise<ViewerOutcome> {
+  if (response.status === 401 || response.status === 403) return { kind: "notFound" };
+  return readViewerResponse(response);
 }
 
 const toMinutes = (clock: string): number => {

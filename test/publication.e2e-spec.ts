@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
@@ -599,6 +600,7 @@ describe('Publicering (e2e)', () => {
       targetGroupId: data.targetGroupId ?? null,
       targetTeacherId: data.targetTeacherId ?? null,
       targetRoomId: data.targetRoomId ?? null,
+      targetStudentId: data.targetStudentId ?? null,
       label: data.label ?? null,
       createdAt: new Date('2026-10-12T08:00:00Z'),
       revokedAt: null,
@@ -612,22 +614,35 @@ describe('Publicering (e2e)', () => {
         .set('x-test-user', admin())
         .send({ academicYearId: YEAR_ID, kind: 'TEACHER', targetId: TEACHER_ID })
         .expect(201);
-      expect(response.body.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      // A code: 100 random bits in four groups of five, kept as the hash of its canonical spelling.
+      expect(response.body.token).toMatch(/^[0-9A-HJKMNP-TV-Z]{5}(-[0-9A-HJKMNP-TV-Z]{5}){3}$/);
       const stored = harness.tx.publicTimetableLink.create.mock.calls[0]![0].data;
-      expect(stored.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(stored.tokenHash).toBe(createHash('sha256').update(response.body.token.replaceAll('-', '')).digest('hex'));
       expect(JSON.stringify(stored)).not.toContain(response.body.token);
+      expect(JSON.stringify(stored)).not.toContain(response.body.token.replaceAll('-', ''));
       expect(response.body.link).toEqual(expect.objectContaining({ kind: 'TEACHER', targetId: TEACHER_ID }));
       expect(response.body.link).not.toHaveProperty('tokenHash');
     });
 
-    it('refuses a teacher link without its teacher or with a name of its own', async () => {
+    it('refuses a teacher link with a name of its own, and a pupil\'s link without its pupil', async () => {
       for (const body of [
-        { academicYearId: YEAR_ID, kind: 'TEACHER' },
         { academicYearId: YEAR_ID, kind: 'TEACHER', targetId: TEACHER_ID, label: 'Anna' },
+        { academicYearId: YEAR_ID, kind: 'TEACHER', label: 'Alla lärare' },
+        { academicYearId: YEAR_ID, kind: 'STUDENT' },
       ]) {
         const response = await request(http()).post('/api/v1/public-links').set('x-test-user', admin()).send(body).expect(400);
         expect(response.body.code).toBe('PUBLIC_LINK_SHAPE');
       }
+    });
+
+    it('makes the list of teachers (a teacher link with no teacher) and a pupil\'s link, which is never an index', async () => {
+      harness.tx.publicTimetableLink.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
+      const list = await request(http()).post('/api/v1/public-links').set('x-test-user', admin()).send({ academicYearId: YEAR_ID, kind: 'TEACHER' }).expect(201);
+      expect(list.body.link).toEqual(expect.objectContaining({ kind: 'TEACHER', targetId: null }));
+      const pupil = await request(http()).post('/api/v1/public-links').set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, kind: 'STUDENT', targetId: TEACHER_ID, label: 'Barn 1' }).expect(201);
+      expect(harness.tx.publicTimetableLink.create.mock.calls.at(-1)![0].data).toMatchObject({ kind: 'STUDENT', targetStudentId: TEACHER_ID, label: 'Barn 1' });
+      expect(pupil.body.link.kind).toBe('STUDENT');
     });
 
     it('lists without tokens and revokes', async () => {
@@ -655,16 +670,23 @@ describe('Publicering (e2e)', () => {
       const unnamed = await request(http())
         .put('/api/v1/publication-settings')
         .set('x-test-user', admin())
-        .send({ publicViewerEnabled: true, publicTeachers: true })
+        .send({ viewerTeacherMode: 'CODE' })
         .expect(400);
       expect(unnamed.body.code).toBe('PUBLIC_TEACHERS_UNNAMED');
+      // A list of pupils would be a register of where they are: a pupil's schedule is a code or off.
+      const pupils = await request(http()).put('/api/v1/publication-settings').set('x-test-user', admin()).send({ viewerStudentMode: 'LIST' }).expect(400);
+      expect(pupils.body.code).toBe('PUBLIC_STUDENTS_NOT_LISTED');
       await request(http()).put('/api/v1/publication-settings').set('x-test-user', admin()).send({ publicMinGroupSize: 2 }).expect(400);
       const ok = await request(http())
         .put('/api/v1/publication-settings')
         .set('x-test-user', admin())
-        .send({ publicTeachers: true, publicTeacherDisplay: 'SIGNATURE' })
+        .send({ viewerTeacherMode: 'CODE', publicTeacherDisplay: 'SIGNATURE' })
         .expect(200);
-      expect(ok.body).toMatchObject({ publicTeachers: true, publicTeacherDisplay: 'SIGNATURE', publicViewerEnabled: false });
+      // Nothing else is on, and the viewer is for staff until the school says otherwise.
+      expect(ok.body).toMatchObject({
+        viewerTeacherMode: 'CODE', publicTeacherDisplay: 'SIGNATURE', viewerAudience: 'STAFF', viewerClassMode: 'OFF', viewerStudentMode: 'OFF',
+      });
+      expect(ok.body).not.toHaveProperty('publicViewerEnabled');
     });
   });
 

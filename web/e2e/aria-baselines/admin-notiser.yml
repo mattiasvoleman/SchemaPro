@@ -74,6 +74,9 @@
         - link "Publicering":
           - /url: /sv/admin/publishing
       - listitem:
+        - link "Schemavisaren":
+          - /url: /sv/admin/schemavisaren
+      - listitem:
         - link "Kalenderprenumeration":
           - /url: /sv/admin/calendar-feeds
       - listitem:

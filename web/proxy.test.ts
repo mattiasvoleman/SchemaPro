@@ -39,6 +39,78 @@ describe("proxy", () => {
     expect(english.headers.get("x-middleware-request-x-viewer-lang")).toBe("en");
   });
 
+  it("lets the page where a code is typed (/v) through as it does a link: no locale, no session, no cookie", async () => {
+    for (const path of ["/v", "/v/", "/v?code=K7QM2-X9DRT-4V8WN-B5C3H"]) {
+      const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+      expect(response.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }
+    expect(intl).not.toHaveBeenCalled();
+    expect(updateSession).not.toHaveBeenCalled();
+    // Only /v itself and what is under it: /vad is an app path like any other.
+    await proxy(new NextRequest("https://schema.example.se/vad"));
+    expect(intl).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a staff member who holds a session (the viewer for staff)", () => {
+    const cookie = "sb-abcdefgh-auth-token=stale.jwt";
+
+    it("has the session refreshed, the new one forwarded to the page and written back to the browser", async () => {
+      updateSession.mockImplementation(async (request: NextRequest, response: Awaited<ReturnType<typeof proxy>>) => {
+        request.cookies.set("sb-abcdefgh-auth-token", "fresh.jwt");
+        response.cookies.set("sb-abcdefgh-auth-token", "fresh.jwt", { path: "/", httpOnly: true, sameSite: "lax" });
+        return { sub: "u" };
+      });
+      const response = await proxy(
+        new NextRequest(`https://schema.example.se/v/${"A".repeat(43)}`, { headers: { cookie: `other=1; ${cookie}` } }),
+      );
+      expect(updateSession).toHaveBeenCalledTimes(1);
+      expect(intl).not.toHaveBeenCalled();
+      // What the page reads: the refreshed token, not the one already spent.
+      expect(response.headers.get("x-middleware-request-cookie")).toContain("sb-abcdefgh-auth-token=fresh.jwt");
+      expect(response.headers.get("x-middleware-request-cookie")).not.toContain("stale.jwt");
+      expect(response.headers.get("set-cookie")).toContain("sb-abcdefgh-auth-token=fresh.jwt");
+      // And still no redirect to the login, still unframed and unindexed.
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("x-frame-options")).toBe("DENY");
+      expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+    });
+
+    it("is served all the same when the refresh fails, and a split cookie (sb-….0) counts as a session", async () => {
+      updateSession.mockRejectedValueOnce(new Error("auth is down"));
+      const response = await proxy(
+        new NextRequest(`https://schema.example.se/v/${"A".repeat(43)}`, { headers: { cookie: "sb-abcdefgh-auth-token.0=part" } }),
+      );
+      expect(updateSession).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-middleware-request-x-viewer-lang")).toBe("sv");
+      expect(response.headers.get("set-cookie")).toBeNull();
+    });
+
+    it("is not touched on the frame of a link: the embed page never reads the session", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 404 }), { status: 404 }));
+      vi.stubGlobal("fetch", fetchMock);
+      try {
+        const response = await proxy(
+          new NextRequest(`https://schema.example.se/v/K7QM2-X9DRT-4V8WN-B5C3H/embed`, { headers: { cookie } }),
+        );
+        expect(updateSession).not.toHaveBeenCalled();
+        expect(response.headers.get("set-cookie")).toBeNull();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("is not asked of a visitor with no Supabase cookie: no session is opened, none written", async () => {
+      const response = await proxy(
+        new NextRequest(`https://schema.example.se/v/${"A".repeat(43)}`, { headers: { cookie: "theme=dark; rastra_school=x" } }),
+      );
+      expect(updateSession).not.toHaveBeenCalled();
+      expect(response.headers.get("set-cookie")).toBeNull();
+    });
+  });
+
   it("lets a visitor without a session read the tillgänglighetsredogörelse, in either language", async () => {
     for (const path of ["/sv/tillganglighet", "/en/tillganglighet"]) {
       const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
@@ -86,6 +158,23 @@ describe("proxy", () => {
       );
       expect(intl).not.toHaveBeenCalled();
       expect(updateSession).not.toHaveBeenCalled();
+    });
+
+    it("frames a link's code however it is written, asking the gateway for the one address", async () => {
+      fetchMock.mockResolvedValue(new Response(JSON.stringify({ frameAncestors: ["https://www.skolan.se"] }), { status: 200 }));
+      const response = await proxy(new NextRequest("https://schema.example.se/v/k7qm2%20x9drt%204v8wn%20b5c3h/embed"));
+      expect(response.headers.get("content-security-policy")).toBe("frame-ancestors https://www.skolan.se");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://gateway.internal/public/v1/timetables/K7QM2-X9DRT-4V8WN-B5C3H/embed",
+        expect.anything(),
+      );
+    });
+
+    it("shuts the frame of an address that is no link without asking anyone", async () => {
+      const response = await proxy(new NextRequest("https://schema.example.se/v/short/embed"));
+      expect(response.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+      expect(response.headers.get("x-frame-options")).toBe("DENY");
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("shuts the frame when the link may not be embedded, or the gateway does not answer", async () => {

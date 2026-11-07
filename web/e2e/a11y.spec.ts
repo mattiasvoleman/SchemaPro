@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { DESKTOP, PHONE, scanBothSchemes, setScheme } from "./axe";
 import { signInAs } from "./signed-in";
-import { SHARE_TOKEN } from "./stub/fixtures/gateway-public";
+import { PUPIL_CODE, SHARE_TOKEN } from "./stub/fixtures/gateway-public";
 import { GROUPS } from "./stub/fixtures/world";
 import { ORPHAN } from "./stub/sessions";
 
@@ -32,6 +32,13 @@ const ROUTES = [
   { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}`, name: "Schemavisaren, a class's week", themed: false },
   { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}&lang=en`, name: "Schemavisaren, a class's week (en)", themed: false },
   { path: `/v/${"x".repeat(43)}`, name: "Schemavisaren, a link that does not resolve", themed: false },
+  // Schemavisarens lägen: where a code is typed, in both languages and once refused as no code;
+  // and a pupil's page, behind a code typed any way (the page reads it).
+  { path: "/v", name: "Schemavisaren, where a code is typed", themed: false },
+  { path: "/v?lang=en", name: "Schemavisaren, where a code is typed (en)", themed: false },
+  { path: "/v?code=K7QM2-X9DRT", name: "Schemavisaren, a code that cannot be one", themed: false },
+  { path: `/v/${PUPIL_CODE}`, name: "Schemavisaren, a pupil's week behind a code", themed: false },
+  { path: `/v/${PUPIL_CODE.toLowerCase().replace(/-/g, " ")}`, name: "Schemavisaren, a code typed in small letters with spaces", themed: false },
   // The frame a school puts on its website (Utskrift och inbäddning), opened on its own here.
   { path: `/v/${SHARE_TOKEN}/embed`, name: "Schemavisaren's frame, the list of classes", themed: false },
   { path: `/v/${SHARE_TOKEN}/embed?target=${GROUPS.g7A.id}`, name: "Schemavisaren's frame, a class's week", themed: false },

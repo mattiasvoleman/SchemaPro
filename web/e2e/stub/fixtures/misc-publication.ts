@@ -30,6 +30,7 @@ import {
   MASTER_LESSONS,
   ROOMS,
   STUDENT_LIST,
+  STUDENTS,
   SUBJECT_LIST,
   SUBJECTS,
   TEACHERS,
@@ -47,11 +48,14 @@ import {
 export const PUBLICATION_SETTINGS: PublicationSettings = {
   publishMode: "DRAFT",
   stored: true,
-  // Schemavisaren is on for classes and teachers, as gateway-public.ts's share link needs.
-  publicViewerEnabled: true,
-  publicGroups: true,
-  publicTeachers: true,
-  publicRooms: false,
+  // Schemavisaren (Schemavisarens lägen): open to anyone with a link or a code, classes and teaching
+  // groups and teachers from a list, a pupil only by code, rooms off — as gateway-public.ts's links need.
+  viewerAudience: "EVERYONE",
+  viewerClassMode: "LIST",
+  viewerGroupMode: "LIST",
+  viewerTeacherMode: "LIST",
+  viewerStudentMode: "CODE",
+  viewerRoomMode: "OFF",
   publicTeacherDisplay: "NAME",
   publicShowMeals: true,
   publicMinGroupSize: 5,
@@ -296,10 +300,22 @@ export const PUBLIC_LINKS: PublicLink[] = [
   // David asked not to be named outside SchemaPro, so his link answers nothing.
   link(9113, { kind: "TEACHER", targetId: TEACHERS.david.id, label: "Idrottsschemat", createdAt: ago(25, "13:30"), notShownBecause: "TEACHER_HIDDEN" }),
   link(9114, { kind: "ROOM", label: "Skärmen i entrén", createdAt: ago(60, "11:00"), revokedAt: ago(20, "15:45"), lastUsedAt: ago(21, "12:02") }),
+  // Schemavisarens lägen: the list of teachers, and a pupil's code (a code is gateway-public.ts's PUPIL_CODE).
+  link(9115, { kind: "TEACHER", label: null, createdAt: ago(10, "10:20") }),
+  link(9116, { kind: "STUDENT", targetId: STUDENTS.ines.id, label: "Barn 1", createdAt: ago(5, "16:45"), lastUsedAt: ago(1, "07:30") }),
+  // Rooms are off in PUBLICATION_SETTINGS, so a room's list answers nothing.
+  link(9117, { kind: "ROOM", label: null, createdAt: ago(3, "09:00"), notShownBecause: "SCOPE_OFF" }),
 ];
 
 /** Teachers the viewer never names (TeacherPublicLabels.hidden). */
 export const HIDDEN_TEACHERS: string[] = [TEACHERS.david.id];
+
+/** Classes, groups, rooms and pupils hidden from the viewer one by one (GET /viewer-hidden). */
+export const HIDDEN_TARGETS: { groups: string[]; rooms: string[]; students: string[] } = {
+  groups: [GROUPS.g9A.id],
+  rooms: [],
+  students: [STUDENTS.jamal.id],
+};
 
 // --- Versioner ------------------------------------------------------------------------------
 

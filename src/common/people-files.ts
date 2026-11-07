@@ -69,6 +69,11 @@
 export type PeopleRouteRule =
   /** The marked persons, and every row naming one, are not in the answer; it counts them. */
   | 'HOLDS_OUT'
+  /**
+   * The marked persons are never in the answer, and the answer does not count them: it goes to a reader who must not learn that
+   * someone is held back (Schemavisaren, 20270118090000; the print set of the same pages).
+   */
+  | 'NEVER_SHOWN'
   /** The recipient is to have everyone: the marked are in it, and the answer counts them. */
   | 'KEEPS_AND_SAYS'
   /** Names staff and no pupil or guardian (pupils, if at all, as a count); the one exception, a user who holds a lesson without being staff by role, is said in that route's `why`. Not filtered: see `why`. */
@@ -124,8 +129,11 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
       'left out, the lesson stands without a teacher, and the file\'s notes say how many. A marked teacher stays, as in every schedule file.',
   },
   'GET /api/v1/print/timetables': {
-    rule: 'NAMES_STAFF',
-    why: 'The print set: teachers by signature or name, already without a teacher hidden from public timetables (TeacherPublicLabels).',
+    rule: 'NEVER_SHOWN',
+    why:
+      'The print set: teachers by signature or name, without a teacher hidden from public timetables (TeacherPublicLabels) and without a teacher with a protected identity, ' +
+      'and without a class or room the school hides from the viewer (PublicTimetableHidden), named neither as a sheet nor on another sheet ' +
+      '(the week builder is Schemavisaren\'s, app.timetable_week_days); never a pupil. Uncounted: the sheet of the school\'s teachers is the school\'s own.',
   },
   'GET /api/v1/lesson-logs/class-book': {
     rule: 'NAMES_STAFF',
@@ -133,15 +141,21 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
   },
   'GET /public/v1/calendar-feeds/:file': {
     rule: 'ONE_PERSON',
-    why: 'A person\'s own week, or a guardian\'s child\'s: colleagues as teachers, no other pupil.',
+    why:
+      'A person\'s own week, or a guardian\'s child\'s, behind an address the person made (its own authority, not Schemavisaren\'s modes): colleagues as teachers, no other pupil. ' +
+      'The people it names besides the owner follow the viewer\'s rule: a teacher hidden by the school or with a protected identity is not named.',
   },
   'GET /public/v1/timetables/:token': {
-    rule: 'NAMES_STAFF',
-    why: 'Schemavisaren: groups and teachers, without a teacher hidden from public timetables; no pupil.',
+    rule: 'NEVER_SHOWN',
+    why:
+      'Schemavisaren (20270118090000; GET /api/v1/schemavisaren/:token is the same door for signed-in staff): groups, rooms and teachers, and a pupil\'s own week by a code. ' +
+      'Never a person with a protected identity, whatever the mode or the audience: no such teacher is named, listed or given a page; no such pupil, nor a pupil with a ' +
+      'protected guardian, is given a page; no guardian is in any document. A teacher hidden by the school (TeacherPublicLabels) and a class, group, room or pupil ' +
+      'hidden one by one (PublicTimetableHidden) read as a link that does not exist, as does everything else the viewer will not show. The answer says nothing of who is held back.',
   },
   'GET /public/v1/timetables/:token/embed': {
-    rule: 'NAMES_STAFF',
-    why: 'Schemavisaren embedded: as above.',
+    rule: 'NEVER_SHOWN',
+    why: 'Schemavisaren embedded: the same document, only for a viewer open to everyone, and never for a pupil.',
   },
   'GET /api/v1/access-log': {
     rule: 'ONE_PERSON',

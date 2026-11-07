@@ -104,6 +104,8 @@ export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
   key('CalendarRasts', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'calendarBreaks' }),
   key('TimplanCredits', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'timplanCredits' }),
   key('PublicTimetableLinks', ['targetGroupId', 'schoolId'], 'CASCADE', { counted: 'publicLinks' }),
+  // Counted with the group's links: both are the viewer's rows about the group (a mark that hides it from Schemavisaren, 20270118090000).
+  key('PublicTimetableHidden', ['targetGroupId', 'schoolId'], 'CASCADE', { counted: 'publicLinks' }),
   key('Users', ['studentGroupId'], 'SET NULL', { counted: 'homePupils' }),
   key('StudentGroups', ['predecessorId', 'schoolId'], 'SET NULL', { counted: 'successors' }),
   key('TeacherDuties', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'mentorDuties' }),
@@ -161,6 +163,9 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('TeacherEmploymentLogs', ['userId', 'schoolId'], 'CASCADE', others),
   key('TeacherPublicLabels', ['userId', 'schoolId'], 'CASCADE', others),
   key('PublicTimetableLinks', ['targetTeacherId', 'schoolId'], 'CASCADE', others),
+  // Schemavisaren for a pupil (20270118090000): the code that opens their week, and a mark that hides it.
+  key('PublicTimetableLinks', ['targetStudentId', 'schoolId'], 'CASCADE', others),
+  key('PublicTimetableHidden', ['targetStudentId', 'schoolId'], 'CASCADE', others),
   key('TeacherAbsences', ['userId', 'schoolId'], 'CASCADE', others),
   key('SubstitutePoolMembers', ['userId', 'schoolId'], 'CASCADE', others),
   key('Ss12000DutyLinks', ['userId', 'schoolId'], 'CASCADE', others),

@@ -15,6 +15,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { GATE_POLICY_KEYS } from '../publication-gates';
+import { VIEWER_AUDIENCES, VIEWER_MODES, type ViewerAudience, type ViewerMode } from '../viewer-modes';
 import { EMBED_ORIGIN_PATTERN, MAX_EMBED_ORIGINS, normalizeEmbedOrigins } from '../embed-origins';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -89,11 +90,14 @@ export class UpsertPublicationSettingsDto {
   @IsOptional() @IsIn(GATE_MODES) gateEmptyHalf?: 'WARN' | 'REFUSE';
   @IsOptional() @IsIn(GATE_MODES) gateOtherSchool?: 'WARN' | 'REFUSE';
 
-  // The public viewer (20261011120000). Off by default, every one.
-  @IsOptional() @IsBoolean() publicViewerEnabled?: boolean;
-  @IsOptional() @IsBoolean() publicGroups?: boolean;
-  @IsOptional() @IsBoolean() publicTeachers?: boolean;
-  @IsOptional() @IsBoolean() publicRooms?: boolean;
+  // The public viewer (20261011120000) and its lägen (20270118090000): who may
+  // look, and how each kind of schedule is shown. Off, and for staff, by default.
+  @IsOptional() @IsIn(VIEWER_AUDIENCES) viewerAudience?: ViewerAudience;
+  @IsOptional() @IsIn(VIEWER_MODES) viewerClassMode?: ViewerMode;
+  @IsOptional() @IsIn(VIEWER_MODES) viewerGroupMode?: ViewerMode;
+  @IsOptional() @IsIn(VIEWER_MODES) viewerTeacherMode?: ViewerMode;
+  @IsOptional() @IsIn(VIEWER_MODES) viewerStudentMode?: ViewerMode;
+  @IsOptional() @IsIn(VIEWER_MODES) viewerRoomMode?: ViewerMode;
   @IsOptional() @IsIn(['NONE', 'SIGNATURE', 'NAME']) publicTeacherDisplay?: 'NONE' | 'SIGNATURE' | 'NAME';
   @IsOptional() @IsBoolean() publicShowMeals?: boolean;
   @IsOptional() @IsInt() @Min(3) @Max(30) publicMinGroupSize?: number;
@@ -168,10 +172,10 @@ export class CreatePublicLinkDto {
   @IsUUID('4', { message: 'academicYearId: läsåret anges med sitt id.' })
   academicYearId!: string;
 
-  @IsIn(['GROUP', 'TEACHER', 'ROOM'], { message: "kind: 'GROUP', 'TEACHER' eller 'ROOM'." })
-  kind!: 'GROUP' | 'TEACHER' | 'ROOM';
+  @IsIn(['GROUP', 'TEACHER', 'ROOM', 'STUDENT'], { message: "kind: 'GROUP', 'TEACHER', 'ROOM' eller 'STUDENT'." })
+  kind!: 'GROUP' | 'TEACHER' | 'ROOM' | 'STUDENT';
 
-  /** The class or group, the teacher or the room; absent = an index (GROUP and ROOM only). */
+  /** The class or group, the teacher, the room or the pupil; absent = an index (GROUP, ROOM and TEACHER only). */
   @IsOptional()
   @Transform(lower)
   @IsUUID('4', { message: 'targetId: anges med sitt id.' })

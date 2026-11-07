@@ -11,6 +11,7 @@ import { Prisma } from '@prisma/client';
 import type { Request, Response } from 'express';
 import type { ProblemDetails } from '../interfaces/problem-details.interface';
 import { areaRefusal } from '../utils/prisma-errors';
+import { viewerTokenOf } from '../../publication/public-token';
 
 interface NormalizedError {
   status: number;
@@ -66,10 +67,12 @@ function safeParams(value: unknown): Record<string, string | number> | undefined
 export function redactShareToken(url: string): string {
   return withoutSs12000Query(
     url.replace(
-      /(\/public\/v1\/(?:timetables|calendar-feeds)\/)([^/?#]+)/i,
+      /(\/(?:public\/v1\/(?:timetables|calendar-feeds)|api\/v1\/schemavisaren)\/)([^/?#]+)/i,
       (_match, prefix: string, segment: string) => {
         const ics = segment.endsWith('.ics');
-        const token = ics ? segment.slice(0, -'.ics'.length) : segment;
+        const spelled = ics ? segment.slice(0, -'.ics'.length) : segment;
+        // A code is hashed as the database keeps it (upper case, no hyphens), however it was typed.
+        const token = viewerTokenOf(spelled) ?? spelled;
         return `${prefix}sha256:${createHash('sha256').update(token).digest('hex').slice(0, 6)}…${ics ? '.ics' : ''}`;
       },
     ),

@@ -209,5 +209,11 @@ describe("the embed code (20261102090000)", () => {
     expect(tokenOfViewerUrl("https://schema.example.se/v/short")).toBeNull();
     expect(tokenOfViewerUrl(`https://schema.example.se/v/${token}/other`)).toBeNull();
     expect(tokenOfViewerUrl("skolan.se")).toBeNull();
+    // A code, as the school hands it out and as it may have been typed; the frame of one too.
+    expect(tokenOfViewerUrl("https://schema.example.se/v/K7QM2-X9DRT-4V8WN-B5C3H")).toBe("K7QM2-X9DRT-4V8WN-B5C3H");
+    expect(tokenOfViewerUrl("https://schema.example.se/v/k7qm2-x9drt-4v8wn-b5c3h/embed?lang=en")).toBe("K7QM2-X9DRT-4V8WN-B5C3H");
+    expect(tokenOfViewerUrl("https://schema.example.se/v/k7qm2%20x9drt%204v8wn%20b5c3h")).toBe("K7QM2-X9DRT-4V8WN-B5C3H");
+    expect(tokenOfViewerUrl("https://schema.example.se/v/K7QM2-X9DRT-4V8WN")).toBeNull();
+    expect(tokenOfViewerUrl("https://schema.example.se/v")).toBeNull();
   });
 });

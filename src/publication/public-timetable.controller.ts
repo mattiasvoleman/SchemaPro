@@ -6,9 +6,10 @@ import { Prisma } from '@prisma/client';
 import { Public } from '../auth/decorators/public.decorator';
 import { PrismaService } from '../database/prisma.service';
 import { PublicViewerThrottlerGuard } from './public-viewer-throttler.guard';
-import { TOKEN_PATTERN, tokenHashOf } from './public-token';
+import { tokenHashOf, viewerTokenOf } from './public-token';
+import { ViewerMissLimiter } from './viewer-miss-limiter';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -26,15 +27,20 @@ export function isViewerDate(value: string): boolean {
 }
 
 /**
- * Schemavisaren: the PUBLISHED timetable of a class, a teacher or a room,
- * without logging in, behind a share link (migration 20261011120000).
+ * Schemavisaren: the PUBLISHED timetable of a class, a group, a teacher, a
+ * room or a pupil, without logging in, behind a share link or a code
+ * (migration 20261011120000, and 20270118090000 for the school's modes).
  *
  * Everything it shows is decided in the database, by app.public_timetable()
- * — a whitelist the API cannot widen. The API only:
+ * — the school's mode per kind, who may look, who is hidden or has a
+ * protected identity, and a whitelist the API cannot widen. The API only:
  *
  *   - answers ONE 404, byte for byte, for every link that does not resolve
- *     (malformed, unknown, revoked, switched off, target gone or hidden), so
- *     a guess learns nothing;
+ *     (malformed, unknown, revoked, a kind that is off, a viewer for staff,
+ *     target gone, hidden or protected), so a guess learns nothing;
+ *   - counts every such 404 against the asking address (ViewerMissLimiter):
+ *     one that has tried too many links or codes that do not exist is
+ *     refused for a while;
  *   - caches for a minute and no longer (public, max-age=60, s-maxage=60,
  *     no stale-while-revalidate): a revoked link is gone within a minute
  *     everywhere, and a 404 or a 429 is never stored;
@@ -56,7 +62,10 @@ export function isViewerDate(value: string): boolean {
 @SkipThrottle()
 @UseGuards(PublicViewerThrottlerGuard)
 export class PublicTimetableController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly limiter: ViewerMissLimiter,
+  ) {}
 
   @Get(':token')
   async show(
@@ -71,6 +80,7 @@ export class PublicTimetableController {
     response.setHeader('Referrer-Policy', 'no-referrer');
     const document = await this.read(token, target, date);
     if (document === null) {
+      await this.limiter.miss(this.limiter.clientOf(request));
       response.setHeader('Cache-Control', 'no-store');
       response.status(404).json(NOT_FOUND);
       return;
@@ -92,6 +102,7 @@ export class PublicTimetableController {
     response.setHeader('Referrer-Policy', 'no-referrer');
     const origins = await this.readEmbed(token);
     if (origins === null) {
+      await this.limiter.miss(this.limiter.clientOf(request));
       response.setHeader('Cache-Control', 'no-store');
       response.status(404).json(NOT_FOUND);
       return;
@@ -110,8 +121,9 @@ export class PublicTimetableController {
     response.status(200).type('application/json').send(body);
   }
 
-  private async readEmbed(token: string): Promise<string[] | null> {
-    if (!TOKEN_PATTERN.test(token)) return null;
+  private async readEmbed(raw: string): Promise<string[] | null> {
+    const token = viewerTokenOf(raw);
+    if (token === null) return null;
     const hash = tokenHashOf(token);
     const rows = await this.prisma.withPublicViewer((tx) =>
       tx.$queryRaw<{ origins: string[] | null }[]>(
@@ -122,8 +134,9 @@ export class PublicTimetableController {
     return origins && origins.length > 0 ? origins : null;
   }
 
-  private async read(token: string, target: string | undefined, date: string | undefined): Promise<unknown | null> {
-    if (!TOKEN_PATTERN.test(token)) return null;
+  private async read(raw: string, target: string | undefined, date: string | undefined): Promise<unknown | null> {
+    const token = viewerTokenOf(raw);
+    if (token === null) return null;
     if (target !== undefined && !UUID.test(target)) return null;
     if (date !== undefined && (typeof date !== 'string' || !isViewerDate(date))) return null;
     const hash = tokenHashOf(token);

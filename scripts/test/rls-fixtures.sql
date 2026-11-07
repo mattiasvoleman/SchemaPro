@@ -1289,6 +1289,8 @@ BEGIN
   INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetGroupId", "tokenHash")
   VALUES (m, yr, 'GROUP', grp, encode(sha256('roller-token'), 'hex'));
   INSERT INTO "TeacherPublicLabels" ("userId", "schoolId", hidden) VALUES (teacher, m, true);
+  -- Schemavisarens lägen (20270118090000): a class hidden from the viewer.
+  INSERT INTO "PublicTimetableHidden" ("schoolId", "targetGroupId") VALUES (m, grp);
   INSERT INTO "TimplanStatementPublications" ("schoolId", "academicYearId", "asOfDate", pupils)
   VALUES (m, yr, '2030-12-01', 1) RETURNING id INTO tpub;
   INSERT INTO "TimplanStatements" ("schoolId", "publicationId", "academicYearId", "asOfDate", "studentId", stage, "subjectCode",

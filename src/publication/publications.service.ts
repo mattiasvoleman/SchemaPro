@@ -55,6 +55,7 @@ import {
   type PublicationRange,
   type ValiditySegment,
 } from './publication-validity';
+import { DEFAULT_VIEWER_MODES, legacySwitches, MODE_KEYS, modesRefusal, PUBLIC_TEACHERS_UNNAMED, type ViewerModes } from './viewer-modes';
 import type {
   PublicationRangeDto,
   PublishTimetableDto,
@@ -63,11 +64,7 @@ import type {
 
 export type PublishModeName = 'DIRECT' | 'DRAFT';
 
-export interface PublicViewerSettings {
-  publicViewerEnabled: boolean;
-  publicGroups: boolean;
-  publicTeachers: boolean;
-  publicRooms: boolean;
+export interface PublicViewerSettings extends ViewerModes {
   publicTeacherDisplay: 'NONE' | 'SIGNATURE' | 'NAME';
   publicShowMeals: boolean;
   publicMinGroupSize: number;
@@ -83,10 +80,7 @@ export interface PublicViewerSettings {
 }
 
 export const DEFAULT_VIEWER_SETTINGS: PublicViewerSettings = {
-  publicViewerEnabled: false,
-  publicGroups: false,
-  publicTeachers: false,
-  publicRooms: false,
+  ...DEFAULT_VIEWER_MODES,
   publicTeacherDisplay: 'NONE',
   publicShowMeals: true,
   publicMinGroupSize: 5,
@@ -171,7 +165,7 @@ export const PUBLISH_RANGE_EMPTY = 'PUBLISH_RANGE_EMPTY';
 export const PUBLISH_DRAFT_PENDING = 'PUBLISH_DRAFT_PENDING';
 export const PUBLISH_NOT_DRAFT = 'PUBLISH_NOT_DRAFT';
 export const PUBLISH_NOTHING_PUBLISHED = 'PUBLISH_NOTHING_PUBLISHED';
-export const PUBLIC_TEACHERS_UNNAMED = 'PUBLIC_TEACHERS_UNNAMED';
+export { PUBLIC_TEACHERS_UNNAMED };
 
 /** What a DRAFT publish did beside materialising. */
 export interface DraftCounts {
@@ -288,18 +282,25 @@ export class PublicationsService {
     const row = await this.prisma.withRls(user, async (tx) => {
       const current = toSettings(await tx.publicationSettings.findUnique({ where: { schoolId } }));
       const merged = { ...current, ...viewer };
-      // The table's CHECK, said with the fields named: a teacher's page that
-      // names nobody would be a grid of anonymous lessons.
-      if (merged.publicTeachers && merged.publicTeacherDisplay === 'NONE') {
-        throw new BadRequestException({
-          message: 'publicTeacherDisplay: lärarscheman visar läraren som signatur eller namn; välj ett av dem.',
-          code: PUBLIC_TEACHERS_UNNAMED,
-        });
-      }
+      // The table's CHECKs, said with the fields named: a teacher's page that
+      // names nobody would be a grid of anonymous lessons, and a list of
+      // pupils would be a register of where they are.
+      const refusal = modesRefusal(merged, merged.publicTeacherDisplay);
+      if (refusal) throw new BadRequestException(refusal);
+      // The four switches the viewer had before its modes stay in step, for
+      // the API that runs beside a deploy and for a rollback; the viewer
+      // reads only the modes (20270118090000).
+      const mirror = legacySwitches(merged);
+      // The create half is the whole viewer, not just what was sent: the upsert
+      // is INSERT … ON CONFLICT, and a CHECK is judged on the row proposed
+      // before the conflict is found, so a mode sent without its teacher
+      // display would fail on a row that exists and is fine.
+      const whole = Object.fromEntries(VIEWER_KEYS.map((key) => [key, merged[key]])) as Partial<PublicViewerSettings>;
       return tx.publicationSettings.upsert({
         where: { schoolId },
-        create: { schoolId, ...gates, ...viewer },
-        update: { ...gates, ...viewer },
+        create: { schoolId, ...gates, ...whole, ...mirror },
+        // A write that says no mode leaves the viewer's old switches where they are.
+        update: { ...gates, ...viewer, ...(MODE_KEYS.some((key) => viewer[key] !== undefined) ? mirror : {}) },
       });
     });
     return toSettings(row);

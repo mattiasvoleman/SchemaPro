@@ -6,6 +6,7 @@ import type {
   PublicationTimeline,
   PublishMode,
 } from "@/lib/publication-types";
+import { viewerAddressOf } from "@/lib/viewer-token";
 
 /*
  * Publicering's arithmetic for the screen: the window a publish is offered
@@ -186,10 +187,14 @@ export function publicViewerEmbedUrl(origin: string, token: string): string {
   return `${publicViewerUrl(origin, token)}/embed`;
 }
 
-/** A share link's token, from an address an admin pasted: /v/<token>, with or without /embed, a query or a host. */
+/**
+ * A share link's token or code, from an address an admin pasted: /v/<link>,
+ * with or without /embed, a query or a host. A code comes back as the school
+ * hands it out (four groups of five), whatever way it was typed.
+ */
 export function tokenOfViewerUrl(pasted: string): string | null {
-  const match = pasted.trim().match(/\/v\/([A-Za-z0-9_-]{43})(?:\/embed)?\/?(?:[?#].*)?$/);
-  return match ? match[1]! : null;
+  const match = pasted.trim().match(/\/v\/([^/?#]+)(?:\/embed)?\/?(?:[?#].*)?$/);
+  return match ? viewerAddressOf(match[1]) : null;
 }
 
 const escapeAttribute = (value: string) =>

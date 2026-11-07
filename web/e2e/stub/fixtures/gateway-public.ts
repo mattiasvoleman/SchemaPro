@@ -10,10 +10,18 @@ import { byId, CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, GROUPS, ROOMS, SCHOOL
  * which the page turns into its not-found. The link may be framed on the
  * school's own website (/v/<token>/embed); any other token may be framed
  * nowhere.
+ *
+ * And a pupil's code (Schemavisarens lägen): a code as the school hands it out,
+ * four groups of five, which opens one pupil's week — Ines's, in 7A — with the
+ * page title the school gave the link, and no group named on any lesson. It is
+ * never framed. The web asks for a code in that spelling whatever way it was typed.
  */
 
 /** 43 characters of base64url, the shape TOKEN_PATTERN accepts. */
 export const SHARE_TOKEN = "ExempelskolanKlasserDelasMedVardnadshavarna";
+
+/** A pupil's code, in the spelling the school hands it out (lib/viewer-token.ts viewerAddressOf). */
+export const PUPIL_CODE = "K7QM2-X9DRT-4V8WN-B5C3H";
 
 /** The website the school lets frame its classes (PublicationSettings.publicEmbedOrigins). */
 export const SCHOOL_WEBSITE = PUBLICATION_SETTINGS.publicEmbedOrigins[0]!;
@@ -58,6 +66,17 @@ export function weekOf(groupId: string): PublicWeek {
   };
 }
 
+/** Ines's week: her class's lessons, with no group named and the title the school gave her code. */
+export function pupilWeek(): PublicWeek {
+  const week = weekOf(GROUPS.g7A.id);
+  return {
+    ...week,
+    kind: "STUDENT",
+    title: "Barn 1",
+    days: week.days.map((day) => ({ ...day, lessons: day.lessons.map((lesson) => ({ ...lesson, groups: [] })) })),
+  };
+}
+
 const INDEX: PublicIndex = {
   kind: "GROUP",
   school: SCHOOL.name,
@@ -69,6 +88,7 @@ export const publicRoutes: GatewayRoute[] = [
     params.token === SHARE_TOKEN ? { frameAncestors: [SCHOOL_WEBSITE] } : new Reply(404, { message: "Not found" }),
   ),
   route("GET", "/public/v1/timetables/:token", ({ params, query }) => {
+    if (params.token === PUPIL_CODE) return query.get("target") ? new Reply(404, { message: "Not found" }) : pupilWeek();
     if (params.token !== SHARE_TOKEN) return new Reply(404, { message: "Not found" });
     const target = query.get("target");
     if (!target) return INDEX;

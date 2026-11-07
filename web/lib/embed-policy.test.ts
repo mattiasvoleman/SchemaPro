@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { EMBED_PATH, embedOriginsOf, forgetEmbedPolicies, frameAncestorsOf } from "./embed-policy";
+import { EMBED_PATH, embedOriginsOf, embedTokenOf, forgetEmbedPolicies, frameAncestorsOf } from "./embed-policy";
 
 /**
  * Who may frame /v/<token>/embed: the school's websites as the gateway lists
@@ -41,7 +41,34 @@ describe("EMBED_PATH", () => {
     expect(`/v/${TOKEN}/embed/`).toMatch(EMBED_PATH);
     expect(`/v/${TOKEN}`).not.toMatch(EMBED_PATH);
     expect(`/v/${TOKEN}/embed/x`).not.toMatch(EMBED_PATH);
-    expect("/v/short/embed").not.toMatch(EMBED_PATH);
+    expect("/v/embed").not.toMatch(EMBED_PATH);
+  });
+});
+
+describe("embedTokenOf", () => {
+  const CODE = "K7QM2-X9DRT-4V8WN-B5C3H";
+
+  it("names the link a frame's path holds, a token as it is", () => {
+    expect(embedTokenOf(`/v/${TOKEN}/embed`)).toBe(TOKEN);
+    expect(embedTokenOf(`/v/${TOKEN}/embed/`)).toBe(TOKEN);
+  });
+
+  it("reads a code in any spelling as the one link, so every spelling frames and is remembered alike", () => {
+    for (const path of [
+      `/v/${CODE}/embed`,
+      "/v/k7qm2-x9drt-4v8wn-b5c3h/embed",
+      "/v/K7QM2X9DRT4V8WNB5C3H/embed",
+      // A typed space reaches the proxy as %20.
+      "/v/k7qm2%20x9drt%204v8wn%20b5c3h/embed",
+    ]) {
+      expect(embedTokenOf(path)).toBe(CODE);
+    }
+  });
+
+  it("is null for a path that is no share link's frame: such a page is framed by nobody", () => {
+    for (const path of ["/v/short/embed", "/v/%E0%A4%A/embed", `/v/${TOKEN}`, `/v/${TOKEN}/embed/x`, "/v/K7QM2-X9DRT-4V8WN-B5C3/embed", "/sv/login"]) {
+      expect(embedTokenOf(path)).toBeNull();
+    }
   });
 });
 

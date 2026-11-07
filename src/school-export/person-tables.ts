@@ -150,7 +150,8 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   ScheduleActivityTeachers: dump(['teacherId']),
 
   // What the person decided, published or wrote.
-  PublicTimetableLinks: dump(['targetTeacherId', 'createdByUserId']),
+  PublicTimetableLinks: dump(['targetTeacherId', 'targetStudentId', 'createdByUserId']),
+  PublicTimetableHidden: dump(['targetStudentId']),
   TimplanStatementPublications: dump(['publishedByUserId']),
   TimetablePublications: dump(['publishedByUserId']),
   CancellationBatches: dump(['createdByUserId', 'reversedByUserId']),

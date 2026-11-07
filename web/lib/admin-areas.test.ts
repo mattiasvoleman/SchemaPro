@@ -65,6 +65,14 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/acknowledgements")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("gates Schemavisaren by Publicering, as the publication it shows: a planner writes it, the läsare reads it, the expedition has no page", () => {
+    expect(PAGE_GATES["/admin/schemavisaren"]).toBe(PAGE_GATES["/admin/publishing"]);
+    expect(gateOfPath("/en/admin/schemavisaren")).toBe("PUBLICERING");
+    expect(profileOpens("SCHEMALAGGARE", "PUBLICERING")).toBe(true);
+    expect(closedPages("EXPEDITION").map((page) => page.path)).toContain("/admin/schemavisaren");
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/schemavisaren");
+  });
+
   it("reads a page's gate through the locale prefix and from its sub-pages", () => {
     expect(gateOfPath("/sv/admin/rooms")).toBe("PLANERING");
     // Personer has two areas' buttons, and gates each control instead.
@@ -118,6 +126,7 @@ describe("the läsare (Läsbehörighet)", () => {
     expect(pages.find((page) => page.path === "/admin/people")?.areas).toEqual(["PERSONAL", "PLANERING"]);
     expect(pages.find((page) => page.path === "/admin/timetable")?.areas).toEqual(["SCHEMALAGGNING"]);
     expect(pages.find((page) => page.path === "/admin/calendar-feeds")?.areas).toEqual(["PUBLICERING"]);
+    expect(pages.find((page) => page.path === "/admin/schemavisaren")?.areas).toEqual(["PUBLICERING"]);
     expect(pages.some((page) => page.path === "/admin")).toBe(false);
     expect(profileReadsPage("LASARE", "DRIFT")).toBe(true);
     expect(profileReadsPage("LASARE", "DECIDES")).toBe(false);

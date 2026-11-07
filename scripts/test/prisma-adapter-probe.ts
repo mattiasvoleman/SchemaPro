@@ -9303,7 +9303,7 @@ async function pastRowChecks(owner: Client, api: PrismaService): Promise<void> {
     });
 
     await check('(pub-e) a share link shows this week and last week, never further back', async () => {
-      await publications.upsertSettings({ publicViewerEnabled: true, publicGroups: true }, school.admin);
+      await publications.upsertSettings({ viewerAudience: 'EVERYONE', viewerClassMode: 'LIST', viewerGroupMode: 'LIST' }, school.admin);
       const link = await new PublicLinksService(api).create(
         { academicYearId: school.yearId, kind: 'GROUP', targetId: school.class7a },
         school.admin,
@@ -9477,6 +9477,15 @@ async function batchChecks(owner: Client, api: PrismaService): Promise<void> {
  * is asserted on its exact keys and searched for every pupil's name and
  * e-mail, and for the cancelled lesson's note, which must never appear.
  */
+/**
+ * Schemavisaren's lägen (20270118090000) as the viewer's checks below want
+ * them: the school's pages open to everyone, classes, groups and rooms with a
+ * list, teachers by code (their links name them; a list of them is another
+ * check's) — what the four old switches meant — and everything off.
+ */
+const VIEWER_ON = { viewerAudience: 'EVERYONE', viewerClassMode: 'LIST', viewerGroupMode: 'LIST', viewerRoomMode: 'LIST', viewerTeacherMode: 'CODE' } as const;
+const VIEWER_OFF = { viewerClassMode: 'OFF', viewerGroupMode: 'OFF', viewerRoomMode: 'OFF', viewerTeacherMode: 'OFF', viewerStudentMode: 'OFF' } as const;
+
 async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
   const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0];
   const school = await givenPublicationSchool(owner, 'visare');
@@ -9555,13 +9564,7 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
   };
   try {
     await publications.upsertSettings(
-      {
-        publicViewerEnabled: true,
-        publicGroups: true,
-        publicTeachers: true,
-        publicRooms: true,
-        publicTeacherDisplay: 'SIGNATURE',
-      },
+      { ...VIEWER_ON, publicTeacherDisplay: 'SIGNATURE' },
       school.admin,
     );
     await links.setHidden(hidden.id, true, school.admin);
@@ -9618,6 +9621,11 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
     await check('(pub-e) an index lists classes and big enough groups only; a small group and a hidden teacher cannot be linked', async () => {
       const doc = (await view(index.token)) as { targets: Array<{ id: string; label: string }> };
       assert.deepEqual(doc.targets.map((target) => target.label), [`${MARKER} 7A`]);
+      // A list names its entries by its own handle, and the handle opens the class. An old bookmark with the database's id of it still opens what
+      // the list itself shows, the very document the handle gives, and nothing the list does not show (20270118090000).
+      assert.ok(await view(index.token, doc.targets[0]!.id));
+      assert.notEqual(doc.targets[0]!.id, school.class7a);
+      assert.deepEqual(await view(index.token, school.class7a), await view(index.token, doc.targets[0]!.id));
       assert.ok(await view(index.token, school.class7a));
       assert.equal(await view(index.token, small.id), null);
       await assert.rejects(
@@ -9704,12 +9712,12 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
       await links.setHidden(school.teacherId, true, school.admin);
       assert.equal((await agree()).teacher, 'TEACHER_HIDDEN');
       await links.setHidden(school.teacherId, false, school.admin);
-      await publications.upsertSettings({ publicRooms: false }, school.admin);
+      await publications.upsertSettings({ viewerRoomMode: 'OFF' }, school.admin);
       assert.equal((await agree()).room, 'SCOPE_OFF');
-      await publications.upsertSettings({ publicRooms: true }, school.admin);
-      await publications.upsertSettings({ publicViewerEnabled: false }, school.admin);
+      await publications.upsertSettings({ viewerRoomMode: 'LIST' }, school.admin);
+      await publications.upsertSettings(VIEWER_OFF, school.admin);
       assert.deepEqual(await agree(), { klass: 'VIEWER_OFF', room: 'VIEWER_OFF', teacher: 'VIEWER_OFF', index: 'VIEWER_OFF' });
-      await publications.upsertSettings({ publicViewerEnabled: true }, school.admin);
+      await publications.upsertSettings(VIEWER_ON, school.admin);
     });
 
     // Utskrift och inbäddning (20261102090000), against this school's week as the checks above left it.
@@ -9732,9 +9740,9 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
       assert.equal(timeout[0]!.statement_timeout, '2s');
       await links.revoke(room.link.id, school.admin);
       assert.equal(await view(room.token), null);
-      await publications.upsertSettings({ publicTeachers: false }, school.admin);
+      await publications.upsertSettings({ viewerTeacherMode: 'OFF' }, school.admin);
       assert.equal(await view(teacher.token), null);
-      await publications.upsertSettings({ publicViewerEnabled: false }, school.admin);
+      await publications.upsertSettings(VIEWER_OFF, school.admin);
       assert.equal(await view(klass.token), null);
       assert.equal(await view('A'.repeat(43)), null);
       // Without a principal the API role reads no link and no setting itself.

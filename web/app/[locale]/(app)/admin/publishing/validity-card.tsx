@@ -42,7 +42,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DateField } from "@/components/ui/date-field";
-import { Label } from "@/components/ui/label";
+import { FormField } from "@/components/ui/form-field";
 import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
@@ -220,9 +220,15 @@ export function ValidityCard({
             </h3>
             <p className="max-w-prose text-sm text-muted-foreground">{t("refillBody")}</p>
           </div>
+          {/*
+            FormField and not a Label beside the field, on purpose. The viewer
+            cards that used it moved to /admin/schemavisaren, and with them this
+            page's last import of it; without one, the shared form chunks are
+            cut differently across the app and /admin/requirements went 60 bytes
+            over its budget (bundle gate, 2026-11-06). Same markup either way.
+          */}
           <div className="grid max-w-md gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-            <div className="space-y-1.5">
-              <Label htmlFor="refill-from">{t("validFrom")}</Label>
+            <FormField id="refill-from" label={t("validFrom")}>
               <DateField
                 id="refill-from"
                 label={t("validFrom")}
@@ -234,9 +240,8 @@ export function ValidityCard({
                   setRefillRange((previous) => ({ ...previous, from: value }));
                 }}
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="refill-to">{t("validTo")}</Label>
+            </FormField>
+            <FormField id="refill-to" label={t("validTo")}>
               <DateField
                 id="refill-to"
                 label={t("validTo")}
@@ -248,7 +253,7 @@ export function ValidityCard({
                   setRefillRange((previous) => ({ ...previous, to: value }));
                 }}
               />
-            </div>
+            </FormField>
           </div>
           {refillNeedsAck ? (
             <Notice tone="warning" title={t("refillWarnings")}>

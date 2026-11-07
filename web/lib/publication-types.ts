@@ -79,15 +79,44 @@ export const GATE_OF_POLICY: Record<GatePolicyKey, GateCode> = {
 
 export type TeacherDisplay = "NONE" | "SIGNATURE" | "NAME";
 
+/**
+ * Schemavisarens lägen (src/publication/viewer-modes.ts, 20270118090000).
+ *
+ * WHO may look: anyone who holds a link or a code (EVERYONE), or only a
+ * signed-in teacher or administrator of the school (STAFF).
+ * HOW each kind of schedule is shown: OFF (not at all), LIST (a list the
+ * visitor picks from) or CODE (Fritext-ID: only to the holder of the exact
+ * code, no list). A pupil is never LIST.
+ */
+export type ViewerAudience = "STAFF" | "EVERYONE";
+export type ViewerMode = "OFF" | "LIST" | "CODE";
+
+/** The five kinds of schedule, in the order the page lists them: a class and a teaching group are both StudentGroups. */
+export const VIEWER_KINDS = ["CLASS", "GROUP", "TEACHER", "STUDENT", "ROOM"] as const;
+export type ViewerKind = (typeof VIEWER_KINDS)[number];
+
+/** The settings column of each kind (VIEWER_MODE_KEYS). */
+export const VIEWER_MODE_KEYS = {
+  CLASS: "viewerClassMode",
+  GROUP: "viewerGroupMode",
+  TEACHER: "viewerTeacherMode",
+  STUDENT: "viewerStudentMode",
+  ROOM: "viewerRoomMode",
+} as const satisfies Record<ViewerKind, string>;
+export type ViewerModeKey = (typeof VIEWER_MODE_KEYS)[ViewerKind];
+
 /** GET/PUT /publication-settings (PublicationSettingsResponse). */
 export interface PublicationSettings extends GatePolicy {
   publishMode: PublishMode;
   /** False when the school has no row: every value is the default. */
   stored: boolean;
-  publicViewerEnabled: boolean;
-  publicGroups: boolean;
-  publicTeachers: boolean;
-  publicRooms: boolean;
+  /** Schemavisarens lägen: who may look, and how each kind is shown. A school with no row: STAFF, and every kind OFF. */
+  viewerAudience: ViewerAudience;
+  viewerClassMode: ViewerMode;
+  viewerGroupMode: ViewerMode;
+  viewerTeacherMode: ViewerMode;
+  viewerStudentMode: ViewerMode;
+  viewerRoomMode: ViewerMode;
   publicTeacherDisplay: TeacherDisplay;
   publicShowMeals: boolean;
   publicMinGroupSize: number;
@@ -341,12 +370,22 @@ export interface ReversePreview {
 // Schemavisaren (src/publication/public-links.service.ts)
 // ---------------------------------------------------------------------------
 
-export type PublicScopeKind = "GROUP" | "TEACHER" | "ROOM";
+/** A link's kind: GROUP is a class or a teaching group (told apart by the target's own kind). */
+export type PublicScopeKind = "GROUP" | "TEACHER" | "ROOM" | "STUDENT";
 
+/**
+ * Why an unrevoked link still answers the viewer's one 404 to a visitor
+ * (the gateway's notShownReasons). The audience is not one of them: a viewer
+ * for staff is every link's, and the page says so once.
+ */
 export type PublicLinkNotShown =
   | "VIEWER_OFF"
   | "SCOPE_OFF"
+  | "INDEX_NOT_LISTED"
   | "TEACHER_HIDDEN"
+  | "TARGET_HIDDEN"
+  | "PROTECTED"
+  | "TARGET_GONE"
   | "NO_SIGNATURE"
   | "GROUP_TOO_SMALL"
   | "YEAR_ENDED";
@@ -355,7 +394,7 @@ export interface PublicLink {
   id: string;
   academicYearId: string;
   kind: PublicScopeKind;
-  /** The class or group, teacher or room; null = an index of them. */
+  /** The class or group, teacher, room or pupil; null = a list of that kind. */
   targetId: string | null;
   label: string | null;
   createdAt: string;
@@ -363,13 +402,25 @@ export interface PublicLink {
   lastUsedAt: string | null;
   /** Why an unrevoked link answers the viewer's 404 (the gateway's own rule), or null. */
   notShownBecause: PublicLinkNotShown | null;
-  /** Whether the school's websites may frame this link (app.public_timetable_embed's rule). */
+  /** Whether the school's websites may frame this link (app.public_timetable_embed's rule); never a pupil's. */
   embeddable: boolean;
 }
 
 export interface PublicLinkInput {
   academicYearId: string;
   kind: PublicScopeKind;
+  /** Absent: a list of the kind (a pupil's link always names the pupil). */
   targetId?: string;
+  /** The page's title (a pupil's: "Barn 1"); a teacher's link takes none. */
   label?: string;
+}
+
+/** The kinds of schedule hidden one by one besides a teacher's (PUT /viewer-hidden/:kind/:id). */
+export type HiddenKind = "group" | "room" | "student";
+
+/** GET /viewer-hidden: the ids hidden from Schemavisaren, per kind. */
+export interface HiddenTargets {
+  groups: string[];
+  rooms: string[];
+  students: string[];
 }

@@ -37,7 +37,7 @@ Design work optimises for this person first (decided 2026-10-11).
   - notices;
   - the *Undervisningstid* card.
 - **Elever** are children in F–9 and see their own schedule and attendance. Adult students may report their own absence.
-- **Anyone with a link** can open *Schemavisaren*, the login-free published week for a class, teacher or room. The school creates the link, and it typically reaches families on a phone.
+- **Anyone with a link or a code** can open *Schemavisaren*, the login-free published week for a class, teaching group, teacher, pupil or room, when the school has chosen so: the viewer is for signed-in staff only until it says otherwise, and each kind of schedule is off, a list, or Fritext-ID (shown only to the holder of the exact code, drawn and handed out by the school). A pupil's schedule is only ever behind a code, and a person with a protected identity is never shown. The school creates the code, and it typically reaches families on a phone.
 
 **Not modelled yet:**
 - A huvudman's central planners.

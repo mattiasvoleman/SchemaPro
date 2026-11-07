@@ -16,6 +16,7 @@ export const PUBLICATION_KEYS = {
   preview: ["publicationPreview"],
   links: ["publicLinks"],
   hiddenTeachers: ["teacherPublicLabels"],
+  hiddenTargets: ["viewerHidden"],
   batches: ["cancellationBatches"],
 } as const;
 
