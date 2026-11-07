@@ -203,9 +203,8 @@ UPDATE "PublicationSettings" s
 --   publicGroups / publicRooms / publicTeachers -> false   that kind OFF
 --   a switch -> true (or the viewer -> true)   a kind that is OFF becomes
 --       what the switch meant before the lägen: classes, groups and rooms
---       LIST, teachers CODE (when teachers have a name to show; the CHECK
---       refuses a shown teacher without one); and a viewer that was off
---       becomes open to everyone, as it was
+--       LIST, teachers CODE; and a viewer that was off becomes open to
+--       everyone, as it was
 --
 -- A write that names a mode or the audience owns them and is left as it is:
 -- the new API writes the modes and the switches together. "Stäng av
@@ -267,8 +266,8 @@ BEGIN
     NEW."viewerRoomMode" := 'OFF';
   END IF;
   IF NEW."publicTeachers" THEN
-    -- A teacher shown has a name (the CHECK); with no name chosen the old switch stays what it was before: nobody is shown.
-    IF NEW."viewerTeacherMode" = 'OFF' AND NEW."publicTeacherDisplay" <> 'NONE' THEN NEW."viewerTeacherMode" := 'CODE'; END IF;
+    -- publicTeachers has always required a name (PublicationSettings_teachers_are_named), so CODE satisfies the new CHECK too.
+    IF NEW."viewerTeacherMode" = 'OFF' THEN NEW."viewerTeacherMode" := 'CODE'; END IF;
   ELSE
     NEW."viewerTeacherMode" := 'OFF';
   END IF;

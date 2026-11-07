@@ -44528,11 +44528,11 @@ BEGIN
   UPDATE "PublicationSettings" SET "viewerClassMode" = 'CODE', "publicViewerEnabled" = false WHERE "schoolId" = school;
   SELECT count(*) INTO n FROM "PublicationSettings" WHERE "schoolId" = school AND "viewerClassMode" = 'CODE' AND "viewerGroupMode" = 'LIST';
   IF n <> 1 THEN RAISE EXCEPTION 'lägen: a write that named a mode had its modes rewritten from the switches'; END IF;
-  -- Teachers with no name to show stay unshown: the old switch must not trip the CHECK.
-  UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'NONE', "viewerTeacherMode" = 'OFF', "publicTeachers" = false, "publicViewerEnabled" = true WHERE "schoolId" = school;
-  UPDATE "PublicationSettings" SET "publicTeachers" = true WHERE "schoolId" = school;
-  SELECT count(*) INTO n FROM "PublicationSettings" WHERE "schoolId" = school AND "viewerTeacherMode" = 'OFF';
-  IF n <> 1 THEN RAISE EXCEPTION 'lägen: the old teachers switch showed teachers who have no name to show'; END IF;
+  -- The old teachers switch off turns teachers off alone.
+  UPDATE "PublicationSettings" SET "publicViewerEnabled" = true WHERE "schoolId" = school;
+  UPDATE "PublicationSettings" SET "publicTeachers" = false WHERE "schoolId" = school;
+  SELECT count(*) INTO n FROM "PublicationSettings" WHERE "schoolId" = school AND "viewerTeacherMode" = 'OFF' AND "viewerGroupMode" = 'LIST';
+  IF n <> 1 THEN RAISE EXCEPTION 'lägen: the old teachers switch off did not turn teachers off alone'; END IF;
   -- An insert by the old API: the viewer on, no mode named.
   DELETE FROM "PublicationSettings" WHERE "schoolId" = school;
   INSERT INTO "PublicationSettings" ("schoolId", "publicViewerEnabled", "publicGroups") VALUES (school, true, true);
