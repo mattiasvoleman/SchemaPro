@@ -62,9 +62,9 @@ ConflictCategory = Literal[
     # Placeringsregler (G3): a school's own hard placement rule, named when the
     # week cannot keep it. One category per rule, because the fix is a
     # different setting on the same card: the subject's edge rule, the limit
-    # on changes, or the shared room.
+    # on places a day, or the shared room.
     "PLACEMENT_EDGE",
-    "PLACEMENT_CHANGES",
+    "PLACEMENT_PLACES",
     "SHARED_ROOM",
 ]
 
@@ -1194,44 +1194,51 @@ class SubjectEdges(CamelModel):
         return self
 
 
-class ChangeLimits(CamelModel):
-    """Placeringsregler, regel 2: at most N room changes and M building changes a day.
+class PlaceLimits(CamelModel):
+    """Placeringsregler, regel 2: at most N different room groups and M different buildings a day.
 
     Four limits, each optional, because a school limits a class without
-    limiting its teachers' day: a teacher walks between rooms by trade. A
-    limit is counted on one day of one real week, between a party's lessons
-    taken in time order. A ROOM change is a change of room GROUP (the
-    engine's interchangeability classes; two equal classrooms are one room
-    here and the post-pass keeps a party in the room it had), a BUILDING
-    change is a change of AnonymousRoom.building. Zero is allowed: never.
+    limiting its teachers' day: a teacher walks between rooms by trade. A limit
+    is counted on one day of one real week, over the places a party's lessons
+    stand in: at most this many DIFFERENT room groups (the engine's
+    interchangeability classes: two equal classrooms are one) or different
+    buildings (AnonymousRoom.building, none being a building of its own).
+    1 is "one and the same all day"; 20 is the most the database lets a school
+    write down.
+
+    DIFFERENT PLACES AND NOT CHANGES BETWEEN NEIGHBOURS, and the difference is
+    measured (benchmarks/placement_rules.py): a day that goes A, B, A is two
+    places and two changes, but A, B, A, B is two places and three, and a
+    count of changes needs the order of the lessons, which costs five times
+    the model. A school that writes "at most 2 buildings" gets exactly that.
     """
 
     mode: PlacementMode
     weight: int | None = Field(default=None, ge=1, le=1000)
-    max_class_room_changes: int | None = Field(
-        default=None, alias="maxClassRoomChanges", ge=0, le=20,
+    max_class_rooms: int | None = Field(
+        default=None, alias="maxClassRooms", ge=1, le=20,
     )
-    max_teacher_room_changes: int | None = Field(
-        default=None, alias="maxTeacherRoomChanges", ge=0, le=20,
+    max_teacher_rooms: int | None = Field(
+        default=None, alias="maxTeacherRooms", ge=1, le=20,
     )
-    max_class_building_changes: int | None = Field(
-        default=None, alias="maxClassBuildingChanges", ge=0, le=20,
+    max_class_buildings: int | None = Field(
+        default=None, alias="maxClassBuildings", ge=1, le=20,
     )
-    max_teacher_building_changes: int | None = Field(
-        default=None, alias="maxTeacherBuildingChanges", ge=0, le=20,
+    max_teacher_buildings: int | None = Field(
+        default=None, alias="maxTeacherBuildings", ge=1, le=20,
     )
 
     @model_validator(mode="after")
-    def validate_something_limited(self) -> ChangeLimits:
+    def validate_something_limited(self) -> PlaceLimits:
         """A block that limits nothing is a gateway that lost its numbers."""
         limits = (
-            self.max_class_room_changes,
-            self.max_teacher_room_changes,
-            self.max_class_building_changes,
-            self.max_teacher_building_changes,
+            self.max_class_rooms,
+            self.max_teacher_rooms,
+            self.max_class_buildings,
+            self.max_teacher_buildings,
         )
         if all(limit is None for limit in limits):
-            msg = "changes needs at least one limit."
+            msg = "places needs at least one limit."
             raise ValueError(msg)
         return self
 
@@ -1259,12 +1266,12 @@ class PlacementRules(CamelModel):
     """
 
     subject_edges: SubjectEdges | None = Field(default=None, alias="subjectEdges")
-    changes: ChangeLimits | None = None
+    places: PlaceLimits | None = None
     shared_rooms: SharedRooms | None = Field(default=None, alias="sharedRooms")
 
     @model_validator(mode="after")
     def validate_some_rule(self) -> PlacementRules:
-        if self.subject_edges is None and self.changes is None and self.shared_rooms is None:
+        if self.subject_edges is None and self.places is None and self.shared_rooms is None:
             msg = "placementRules needs at least one rule."
             raise ValueError(msg)
         return self

@@ -4306,12 +4306,12 @@
     hela årskursen blir det rätt.
   </p>
   <p>
-    <em>Byten per dag.</em> Högst så många byten av sal och av byggnad per dag,
-    för en klass och för en lärare var för sig. Lämnar du en gräns tom gäller ingen
-    gräns, och 0 betyder aldrig. Byggnad är salens uppgift
-    <span class="ui">Byggnad</span> under <span class="ui">Salar</span>; salar
-    utan byggnad räknas som en byggnad för sig. Skolområdet och dess restid är en
-    egen regel. Ett salbyte räknas på salsgrupper: lika salar av samma typ,
+    <em>Salar och byggnader per dag.</em> Högst så många <em>olika</em>
+    salsgrupper och byggnader per dag, för en klass och för en lärare var för
+    sig. Lämnar du en gräns tom gäller ingen gräns, och 1 betyder en enda hela
+    dagen. Byggnad är salens uppgift <span class="ui">Byggnad</span> under
+    <span class="ui">Salar</span>; salar utan byggnad räknas som en byggnad för
+    sig. Skolområdet och dess restid är en egen regel. Lika salar av samma typ,
     storlek och årskurser räknas som en sal, och genereringen låter en klass
     eller lärare behålla sin sal i gruppen när den är ledig. Vill du jämna ut
     resten kör du <span class="ui">Salsoptimering</span> efteråt (5.4). Klassen
@@ -4319,13 +4319,12 @@
     också går i.
   </p>
   <p>
-    Genereringen räknar <em>platserna</em> en klass eller lärare står på under
-    dagen och inte bytena mellan två grannar: högst 1 byggnadsbyte per dag är högst
-    två olika byggnader samma dag. En dag som går A–B–A räknas därför som ett
-    byte och inte som två. Det är priset för att regeln inte behöver veta
-    lektionernas ordning, och det håller modellen liten; hur ofta det
-    förekommer i ett schema syns på sidan Luckor och håltimmar efter körningen
-    och i mätningen i verifieringsunderlaget.
+    Regeln räknar hur många olika platser en klass eller lärare är på under
+    dagen, inte byten mellan två grannlektioner. En dag som går A–B–A är två
+    byggnader, och A–B–A–B är det också, fast det är tre byten. Det är en
+    medveten avgränsning: att räkna byten kräver lektionernas ordning och gör
+    modellen flera gånger större. Mätningen på högstadiets testskola visar
+    skillnaden, och 1 är den gräns som inte kan bytas ut mot något annat.
   </p>
   <p>
     <em>Delade salar.</em> En sal som ni markerar <span class="ui">Kan delas av

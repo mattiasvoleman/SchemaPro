@@ -904,13 +904,12 @@ MESSAGES: dict[str, str] = {
         "{end}} the day with, allow the subject at the {edge, select, FIRST {start} other "
         "{end}} of the day, or turn the rule to Soft under School rules."
     ),
-    "CHANGES_CANNOT_BE_KEPT": (
+    "PLACES_CANNOT_BE_KEPT": (
         "The school rules allow {party, select, class {a class} other {a teacher}} at most "
-        "{limit, plural, one {# {kind, select, room {room change} other {building change}}} "
-        "other {# {kind, select, room {room changes} other {building changes}}}} a day, and the "
-        "week cannot keep that for everyone. Raise the limit, turn the rule to Soft under School "
-        "rules, or let the lessons use {kind, select, room {fewer kinds of room} other "
-        "{fewer buildings}}."
+        "{limit, plural, one {# {kind, select, room {kind of room} other {building}}} other "
+        "{# {kind, select, room {kinds of room} other {buildings}}}} a day, and the week cannot "
+        "keep that for everyone. Raise the limit, turn the rule to Soft under School rules, or "
+        "let the lessons use {kind, select, room {fewer kinds of room} other {fewer buildings}}."
     ),
     "SHARED_ROOM_CANNOT_BE_KEPT": (
         "{room} is shared by several groups at once, and the week cannot place its lessons so "
@@ -930,13 +929,13 @@ MESSAGES: dict[str, str] = {
         "rule applies to, so one of them would have to {edge, select, FIRST {open} other "
         "{close}} it. Give the class a lesson of another subject, or relax the rule."
     ),
-    "PLACEMENT_CHANGES_FORCED_PLACES": (
+    "PLACEMENT_PLACES_FORCED": (
         "{party, select, class {A class} other {A teacher}} has lessons that can only be in "
         "{places, plural, one {# {kind, select, room {kind of room} other {building}}} other "
         "{# {kind, select, room {kinds of room} other {buildings}}}}, but the school rules allow "
-        "at most {limit, plural, one {# {kind, select, room {room change} other {building "
-        "change}}} other {# {kind, select, room {room changes} other {building changes}}}} a "
-        "day, which takes {days, plural, one {# day} other {# days}} and the week has "
+        "at most {limit, plural, one {# {kind, select, room {kind of room} other {building}}} "
+        "other {# {kind, select, room {kinds of room} other {buildings}}}} in a day, which takes "
+        "{days, plural, one {# day} other {# days}} and the week has "
         "{open, plural, one {# day} other {# days}}. Raise the limit or let the lessons use "
         "other rooms."
     ),
@@ -1043,8 +1042,8 @@ MESSAGES: dict[str, str] = {
         "Without the rule that keeps subjects from opening or closing a class's day, a "
         "timetable was found in {seconds} s."
     ),
-    "PROBE_SOLVED_WITHOUT_CHANGE_LIMITS": (
-        "Without the limits on room and building changes a day, a timetable was found in "
+    "PROBE_SOLVED_WITHOUT_PLACE_LIMITS": (
+        "Without the limits on different rooms and buildings a day, a timetable was found in "
         "{seconds} s."
     ),
     "PROBE_SOLVED_WITHOUT_SHARED_ROOMS": (

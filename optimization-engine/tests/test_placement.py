@@ -291,11 +291,11 @@ def _room(kind: str | None, *, building: str | None = None, capacity: int = 30, 
     return room
 
 
-def _changes(mode: str, weight: int | None = None, **limits: int) -> dict[str, object]:
+def _places(mode: str, weight: int | None = None, **limits: int) -> dict[str, object]:
     block: dict[str, object] = {"mode": mode, **limits}
     if weight is not None:
         block["weight"] = weight
-    return {"changes": block}
+    return {"places": block}
 
 
 def _lock(
@@ -329,8 +329,8 @@ def _lessons_in_three_types(group: str, teacher: str | None = None) -> list[dict
     ]
 
 
-class TestBuildingChanges:
-    """Rule 2, buildings: M changes a day is M + 1 buildings a day."""
+class TestBuildingsPerDay:
+    """Rule 2, buildings: at most M different buildings a day."""
 
     def test_two_buildings_on_every_day_break_a_limit_of_zero(self) -> None:
         """The pre-flight counts forced places against days; here they fit, and the days do not.
@@ -343,20 +343,20 @@ class TestBuildingChanges:
         payload = _payload(
             [_requirement(str(uuid4()), CLASS_7A, requiredRoomType="WORKSHOP")],
             rooms=rooms, fixedLessons=locks,
-            placementRules=_changes("HARD", maxClassBuildingChanges=0),
+            placementRules=_places("HARD", maxClassBuildings=1),
         )
 
         response = _solve(payload, days="1,2")
 
         assert response.status == "INFEASIBLE"
         assert response.conflicts is not None
-        assert "CHANGES_CANNOT_BE_KEPT" in {detail.code for detail in response.conflicts.conflicts}
+        assert "PLACES_CANNOT_BE_KEPT" in {detail.code for detail in response.conflicts.conflicts}
 
-    def test_one_change_is_two_buildings(self) -> None:
+    def test_two_buildings_hold_a_limit_of_two(self) -> None:
         payload = _payload(
             _lessons_in_three_types(CLASS_7A),
             rooms=_three_rooms(),
-            placementRules=_changes("HARD", maxClassBuildingChanges=1),
+            placementRules=_places("HARD", maxClassBuildings=2),
         )
 
         assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
@@ -365,7 +365,7 @@ class TestBuildingChanges:
         payload = _payload(
             _lessons_in_three_types(CLASS_7A),
             rooms=_three_rooms(),
-            placementRules=_changes("HARD", maxClassBuildingChanges=0),
+            placementRules=_places("HARD", maxClassBuildings=1),
         )
 
         response = _solve(payload, days="1,2")
@@ -389,11 +389,11 @@ class TestBuildingChanges:
         ]
         free = _payload(
             requirements, rooms=_three_rooms(),
-            placementRules=_changes("HARD", maxClassBuildingChanges=0),
+            placementRules=_places("HARD", maxClassBuildings=1),
         )
         bound = _payload(
             requirements, rooms=_three_rooms(),
-            placementRules=_changes("HARD", maxTeacherBuildingChanges=0),
+            placementRules=_places("HARD", maxTeacherBuildings=1),
         )
 
         assert _solve(free).status in {"OPTIMAL", "FEASIBLE"}
@@ -415,19 +415,19 @@ class TestBuildingChanges:
         }
         payload = _payload(
             requirements, rooms=rooms, fixedLessons=[locked],
-            placementRules=_changes("HARD", maxClassBuildingChanges=0),
+            placementRules=_places("HARD", maxClassBuildings=1),
         )
 
         refused = _refusal(payload)
         assert refused is not None
-        assert refused.code == "PLACEMENT_CHANGES_FORCED_PLACES"
+        assert refused.code == "PLACEMENT_PLACES_FORCED"
         assert _solve(payload, days="1,2").status in {"OPTIMAL", "FEASIBLE"}
 
     def test_a_school_with_one_building_builds_nothing(self) -> None:
         rooms = [_room("LAB", building="Hus A"), _room("HALL", building="Hus A"), _room("WORKSHOP", building="Hus A")]
         requirements = _lessons_in_three_types(CLASS_7A)
         request = OptimizeScheduleRequest.model_validate(
-            _payload(requirements, rooms=rooms, placementRules=_changes("HARD", maxClassBuildingChanges=0)),
+            _payload(requirements, rooms=rooms, placementRules=_places("HARD", maxClassBuildings=1)),
         )
         plain = OptimizeScheduleRequest.model_validate(_payload(requirements, rooms=rooms))
         solver = SchedulerSolver(_settings())
@@ -441,7 +441,7 @@ class TestBuildingChanges:
         payload = _payload(
             _lessons_in_three_types(CLASS_7A),
             rooms=_three_rooms(),
-            placementRules=_changes("SOFT", maxClassBuildingChanges=0),
+            placementRules=_places("SOFT", maxClassBuildings=1),
         )
 
         response = _solve(payload)
@@ -453,7 +453,7 @@ class TestBuildingChanges:
         payload = _payload(
             _lessons_in_three_types(CLASS_7A),
             rooms=_three_rooms(),
-            placementRules=_changes("SOFT", maxClassBuildingChanges=0),
+            placementRules=_places("SOFT", maxClassBuildings=1),
         )
 
         response = _solve(payload, days="1,2", **QUIET)
@@ -465,8 +465,8 @@ class TestBuildingChanges:
         assert all(len(found) == 1 for found in by_day.values())
 
 
-class TestRoomChanges:
-    """Rule 2, rooms: N changes a day is N + 1 room groups a day."""
+class TestRoomsPerDay:
+    """Rule 2, rooms: at most N different room groups a day."""
 
     def test_three_kinds_of_room_on_every_day_break_a_limit_of_one(self) -> None:
         rooms = _three_rooms()
@@ -475,40 +475,40 @@ class TestRoomChanges:
         payload = _payload(
             [_requirement(str(uuid4()), CLASS_7A, requiredRoomType="WORKSHOP")],
             rooms=rooms, fixedLessons=locks,
-            placementRules=_changes("HARD", maxClassRoomChanges=1),
+            placementRules=_places("HARD", maxClassRooms=2),
         )
 
         response = _solve(payload, days="1,2", day_end=720)
 
         assert response.status == "INFEASIBLE"
         assert response.conflicts is not None
-        assert "CHANGES_CANNOT_BE_KEPT" in {detail.code for detail in response.conflicts.conflicts}
+        assert "PLACES_CANNOT_BE_KEPT" in {detail.code for detail in response.conflicts.conflicts}
 
     def test_three_kinds_of_room_in_a_one_day_week_are_refused_by_name(self) -> None:
         payload = _payload(
             _lessons_in_three_types(CLASS_7A),
             rooms=_three_rooms(),
-            placementRules=_changes("HARD", maxClassRoomChanges=1),
+            placementRules=_places("HARD", maxClassRooms=2),
         )
 
         refused = _refusal(payload)
 
         assert refused is not None
-        assert refused.code == "PLACEMENT_CHANGES_FORCED_PLACES"
+        assert refused.code == "PLACEMENT_PLACES_FORCED"
 
-    def test_two_changes_hold_three_kinds(self) -> None:
+    def test_three_kinds_hold_a_limit_of_three(self) -> None:
         payload = _payload(
             _lessons_in_three_types(CLASS_7A),
             rooms=_three_rooms(),
-            placementRules=_changes("HARD", maxClassRoomChanges=2),
+            placementRules=_places("HARD", maxClassRooms=3),
         )
 
         assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
 
-    def test_two_equal_classrooms_are_one_room(self) -> None:
+    def test_two_equal_classrooms_are_one_room_group(self) -> None:
         rooms = [_room(None), _room(None)]
         requirements = [_requirement(str(uuid4()), CLASS_7A) for _ in range(3)]
-        payload = _payload(requirements, rooms=rooms, placementRules=_changes("HARD", maxClassRoomChanges=0))
+        payload = _payload(requirements, rooms=rooms, placementRules=_places("HARD", maxClassRooms=1))
 
         assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
 
@@ -726,15 +726,15 @@ class TestThePreFlight:
         payload = _payload(
             _lessons_in_three_types(CLASS_7A),
             rooms=rooms,
-            placementRules=_changes("HARD", maxClassBuildingChanges=0),
+            placementRules=_places("HARD", maxClassBuildings=1),
         )
 
         refused = _refusal(payload)
 
         assert refused is not None
-        assert refused.code == "PLACEMENT_CHANGES_FORCED_PLACES"
+        assert refused.code == "PLACEMENT_PLACES_FORCED"
         assert refused.params == {
-            "party": "class", "kind": "building", "places": 2, "limit": 0, "days": 2, "open": 1,
+            "party": "class", "kind": "building", "places": 2, "limit": 1, "days": 2, "open": 1,
         }
         assert _refusal(payload, days="1,2") is None
 
@@ -792,7 +792,7 @@ class TestTheTimeoutProbe:
     def test_each_hard_rule_is_dropped_alone_and_the_others_stay(self) -> None:
         placement = {
             **_edges("HARD", (IDROTT, True, False)),
-            **_changes("HARD", maxClassRoomChanges=2),
+            **_places("HARD", maxClassRooms=3),
             **_shared("HARD"),
         }
 
@@ -800,9 +800,9 @@ class TestTheTimeoutProbe:
 
         edges = found["PROBE_SOLVED_WITHOUT_SUBJECT_EDGES"].placement_rules
         assert edges is not None and edges.subject_edges is None
-        assert edges.changes is not None and edges.shared_rooms is not None
-        changes = found["PROBE_SOLVED_WITHOUT_CHANGE_LIMITS"].placement_rules
-        assert changes is not None and changes.changes is None and changes.subject_edges is not None
+        assert edges.places is not None and edges.shared_rooms is not None
+        changes = found["PROBE_SOLVED_WITHOUT_PLACE_LIMITS"].placement_rules
+        assert changes is not None and changes.places is None and changes.subject_edges is not None
         shared = found["PROBE_SOLVED_WITHOUT_SHARED_ROOMS"].placement_rules
         assert shared is not None and shared.shared_rooms is None
 
@@ -813,7 +813,7 @@ class TestTheTimeoutProbe:
 
     def test_a_soft_rule_is_not_probed(self) -> None:
         found = self._relaxations({
-            **_edges("SOFT", (IDROTT, True, False)), **_changes("SOFT", maxClassRoomChanges=2),
+            **_edges("SOFT", (IDROTT, True, False)), **_places("SOFT", maxClassRooms=3),
         })
 
         assert not [code for code in found if "SUBJECT_EDGES" in code or "CHANGE_LIMITS" in code]

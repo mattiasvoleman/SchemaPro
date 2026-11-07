@@ -215,7 +215,7 @@ class Settings(BaseSettings):
     # carries no weight of its own (the gateway always sends one, 250 unless the
     # school changed it). Per lesson at an end of the class's day it should not
     # be at (subject edges), per place beyond the limit a party stands in on a
-    # day (change limits), per pupil above a shared room's capacity at its
+    # day (place limits), per pupil above a shared room's capacity at its
     # worst moment of the week (shared rooms). The same scale and the same
     # reasoning as sammanhängande undervisning's: a rule the school wrote down
     # outweighs a taste (spread 3, a room wish 5, a free day 40), and the
@@ -226,10 +226,10 @@ class Settings(BaseSettings):
         alias="WEIGHT_SUBJECT_EDGE",
         description="Penalty per lesson of a flagged subject at an end of the class's day.",
     )
-    weight_change_limit: int = Field(
+    weight_place_limit: int = Field(
         default=250,
-        alias="WEIGHT_CHANGE_LIMIT",
-        description="Penalty per room group or building a class or teacher stands in beyond their daily limit.",
+        alias="WEIGHT_PLACE_LIMIT",
+        description="Penalty per room group or building a class or teacher stands in beyond their daily limit of different ones.",
     )
     weight_shared_room: int = Field(
         default=250,

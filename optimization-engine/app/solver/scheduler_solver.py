@@ -33,19 +33,19 @@ from app.solver.pupil_gaps import (
     pupil_idle_minutes,
 )
 from app.solver.placement import (
-    ChangeLesson,
-    ChangeLock,
+    PlaceLesson,
+    PlaceLock,
     EdgeLesson,
     EdgeLock,
     SharedLock,
     SharedRoom,
-    add_change_limits,
+    add_place_limits,
     add_subject_edges,
 )
 from app.solver.rasts import blocks_for, blocks_with_demand, forbidden_starts
 from app.solver.servings import allowed_starts
 from app.schemas.schedule import (
-    ChangeLimits,
+    PlaceLimits,
     SubjectEdges,
     AnonymousRoomPreference,
     AnonymousConstraint,
@@ -6034,14 +6034,14 @@ class SchedulerSolver:
                 for requirement in request.requirements
             )
             total += flagged * 4 * (lessons // classes + 1) + lessons
-        if rules.changes is not None:
+        if rules.places is not None:
             limits = sum(
                 limit is not None
                 for limit in (
-                    rules.changes.max_class_room_changes,
-                    rules.changes.max_teacher_room_changes,
-                    rules.changes.max_class_building_changes,
-                    rules.changes.max_teacher_building_changes,
+                    rules.places.max_class_rooms,
+                    rules.places.max_teacher_rooms,
+                    rules.places.max_class_buildings,
+                    rules.places.max_teacher_buildings,
                 )
             )
             total += limits * (classes + teachers) * days * 8 + lessons * (days + 1)
@@ -9894,20 +9894,20 @@ class SchedulerSolver:
         # the budget ran out on knows the one card to go to.
         hard = {
             name: rule
-            for name in ("subject_edges", "changes", "shared_rooms")
+            for name in ("subject_edges", "places", "shared_rooms")
             if request.placement_rules is not None
             and (rule := getattr(request.placement_rules, name)) is not None
             and rule.mode == "HARD"
         }
         for name, code in (
             ("subject_edges", "PROBE_SOLVED_WITHOUT_SUBJECT_EDGES"),
-            ("changes", "PROBE_SOLVED_WITHOUT_CHANGE_LIMITS"),
+            ("places", "PROBE_SOLVED_WITHOUT_PLACE_LIMITS"),
             ("shared_rooms", "PROBE_SOLVED_WITHOUT_SHARED_ROOMS"),
         ):
             if name not in hard:
                 continue
             rules = request.placement_rules.model_copy(update={name: None})  # type: ignore[union-attr]
-            others = (rules.subject_edges, rules.changes, rules.shared_rooms)
+            others = (rules.subject_edges, rules.places, rules.shared_rooms)
             out.append((
                 code,
                 request.model_copy(update={
@@ -13402,7 +13402,7 @@ class SchedulerSolver:
     # Three rules a school sets about where its lessons stand, each in its own
     # function in app/solver/placement.py and each posted from here. A mode
     # that lets a hard rule give way names the function it relaxes:
-    # `add_subject_edges`, `add_change_limits`, and the shared room's
+    # `add_subject_edges`, `add_place_limits`, and the shared room's
     # cumulative in `add_shared_capacity`.
 
     @staticmethod
@@ -13413,10 +13413,10 @@ class SchedulerSolver:
         own, so every room without a building is in the same unnamed house.
         None with the rule off, and then the partition is the one it was.
         """
-        changes = request.placement_rules.changes if request.placement_rules else None
-        if changes is None or (
-            changes.max_class_building_changes is None
-            and changes.max_teacher_building_changes is None
+        limits = request.placement_rules.places if request.placement_rules else None
+        if limits is None or (
+            limits.max_class_buildings is None
+            and limits.max_teacher_buildings is None
         ):
             return None
         return lambda room: room.building
@@ -13490,8 +13490,8 @@ class SchedulerSolver:
             return
         if rules.subject_edges is not None and rules.subject_edges.mode == "HARD":
             self._verify_subject_edges(request, rules.subject_edges)
-        if rules.changes is not None and rules.changes.mode == "HARD":
-            self._verify_change_limits(request, rules.changes)
+        if rules.places is not None and rules.places.mode == "HARD":
+            self._verify_place_limits(request, rules.places)
         if rules.shared_rooms is not None and rules.shared_rooms.mode == "HARD":
             self._verify_shared_locks(request)
 
@@ -13552,7 +13552,7 @@ class SchedulerSolver:
                         "edge": edge,
                     })
 
-    def _verify_change_limits(self, request: OptimizeScheduleRequest, changes: ChangeLimits) -> None:
+    def _verify_place_limits(self, request: OptimizeScheduleRequest, rule: PlaceLimits) -> None:
         """Rule 2: the places a party's lessons are forced into must fit the days it has.
 
         A lesson is FORCED into a place when every room it may use is in that
@@ -13564,10 +13564,10 @@ class SchedulerSolver:
         into that room's place.
         """
         limits = {
-            ("class", "room"): changes.max_class_room_changes,
-            ("teacher", "room"): changes.max_teacher_room_changes,
-            ("class", "building"): changes.max_class_building_changes,
-            ("teacher", "building"): changes.max_teacher_building_changes,
+            ("class", "room"): rule.max_class_rooms,
+            ("teacher", "room"): rule.max_teacher_rooms,
+            ("class", "building"): rule.max_class_buildings,
+            ("teacher", "building"): rule.max_teacher_buildings,
         }
         rooms = request.rooms
         allowed, key = self._lock_aware(
@@ -13625,9 +13625,9 @@ class SchedulerSolver:
                 for owner in owners:
                     forced[owner].add(place(kind, room_index[fixed.room_id]))
             for owner, places in forced.items():
-                days = -(-len(places) // (limit + 1))
+                days = -(-len(places) // limit)
                 if days > open_days:
-                    raise InvalidScheduleInputError.of("PLACEMENT_CHANGES_FORCED_PLACES", {
+                    raise InvalidScheduleInputError.of("PLACEMENT_PLACES_FORCED", {
                         "party": party,
                         "kind": kind,
                         "places": len(places),
@@ -13734,8 +13734,8 @@ class SchedulerSolver:
         on, days_of = self._placement_day_hooks(model, day_vars, day_literals)
         if rules.subject_edges is not None and (rules.subject_edges.mode == "SOFT") == soft:
             terms.extend(self._subject_edges(model, registry, request, decisions, days_of, day_vars))
-        if rules.changes is not None and (rules.changes.mode == "SOFT") == soft:
-            terms.extend(self._change_limits(model, registry, request, decisions, room_plan, on, days_of))
+        if rules.places is not None and (rules.places.mode == "SOFT") == soft:
+            terms.extend(self._place_limits(model, registry, request, decisions, room_plan, on, days_of))
         if soft and rules.shared_rooms is not None and rules.shared_rooms.mode == "SOFT":
             weight = rules.shared_rooms.weight or self._settings.weight_shared_room
             for class_index, capacity in room_plan.shared_capacity.items():
@@ -13805,7 +13805,7 @@ class SchedulerSolver:
             weight=weight,
         )
 
-    def _change_limits(
+    def _place_limits(
         self,
         model: cp_model.CpModel,
         registry: AssumptionRegistry,
@@ -13815,16 +13815,16 @@ class SchedulerSolver:
         on: Callable[[LessonDecision, int], cp_model.IntVar],
         days_of: Callable[[LessonDecision], frozenset[int]],
     ) -> list[cp_model.LinearExpr]:
-        """Regel 2 (placement.add_change_limits), with the places read off the room plan."""
-        changes = request.placement_rules.changes  # type: ignore[union-attr]
-        weight = changes.weight or self._settings.weight_change_limit
-        if changes.mode == "SOFT" and weight <= 0:
+        """Regel 2 (placement.add_place_limits), with the places read off the room plan."""
+        places = request.placement_rules.places  # type: ignore[union-attr]
+        weight = places.weight or self._settings.weight_place_limit
+        if places.mode == "SOFT" and weight <= 0:
             return []
         limits = {
-            ("class", "room"): changes.max_class_room_changes,
-            ("teacher", "room"): changes.max_teacher_room_changes,
-            ("class", "building"): changes.max_class_building_changes,
-            ("teacher", "building"): changes.max_teacher_building_changes,
+            ("class", "room"): places.max_class_rooms,
+            ("teacher", "room"): places.max_teacher_rooms,
+            ("class", "building"): places.max_class_buildings,
+            ("teacher", "building"): places.max_teacher_buildings,
         }
         limits = {key: value for key, value in limits.items() if value is not None}
         with_buildings = bool(room_plan.class_buildings)
@@ -13852,7 +13852,7 @@ class SchedulerSolver:
             return places
 
         lessons = [
-            ChangeLesson(
+            PlaceLesson(
                 key=decision.lesson.key(),
                 decision=decision,
                 parity=_parity(decision),
@@ -13878,7 +13878,7 @@ class SchedulerSolver:
             if with_buildings:
                 where["building"] = request.rooms[room_index].building
             locks.append(
-                ChangeLock(
+                PlaceLock(
                     day=window[0] // self._grid.slots_per_day,
                     parity=fixed.recurrence,
                     pupil_keys=tuple(pupil_keys_of(fixed)),
@@ -13892,9 +13892,9 @@ class SchedulerSolver:
             if (party, kind) not in made:
                 made[(party, kind)] = registry.register(
                     model,
-                    name=f"change_limit_{party}_{kind}",
-                    category="PLACEMENT_CHANGES",
-                    code="CHANGES_CANNOT_BE_KEPT",
+                    name=f"place_limit_{party}_{kind}",
+                    category="PLACEMENT_PLACES",
+                    code="PLACES_CANNOT_BE_KEPT",
                     params={
                         "party": party,
                         "kind": kind,
@@ -13903,14 +13903,14 @@ class SchedulerSolver:
                 )
             return made[(party, kind)]
 
-        return add_change_limits(
+        return add_place_limits(
             model,
             lessons=lessons,
             locks=locks,
             limits=limits,  # type: ignore[arg-type]
             on=on,
             days_of=days_of,
-            assume=assume if changes.mode == "HARD" else None,
+            assume=assume if places.mode == "HARD" else None,
             weight=weight,
         )
 

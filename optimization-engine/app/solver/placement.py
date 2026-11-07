@@ -5,7 +5,7 @@ Each rule is the school's, off until it asks, and soft or hard as it chooses:
     1. NOT FIRST OR LAST IN THE DAY, per subject, on the class's day
        (`add_subject_edges`): idrott never opens or closes 7A's day.
     2. AT MOST N ROOM CHANGES AND M BUILDING CHANGES A DAY, for a class and for
-       a teacher (`add_change_limits`).
+       a teacher (`add_place_limits`).
     3. THE PUPILS TOGETHER FIT A SHARED ROOM (`shared_capacity`, used by
        room_allocator.add_room_allocation): a room the school has marked
        shareable holds several lessons at once while their pupils sum to its
@@ -229,8 +229,8 @@ def add_subject_edges(
 
 
 @dataclass(frozen=True)
-class ChangeLesson:
-    """A generated lesson as the change limits see it."""
+class PlaceLesson:
+    """A generated lesson as the place limits see it."""
 
     key: str
     decision: Any
@@ -244,8 +244,8 @@ class ChangeLesson:
 
 
 @dataclass(frozen=True)
-class ChangeLock:
-    """A locked lesson in a room, as the change limits see it."""
+class PlaceLock:
+    """A locked lesson in a room, as the place limits see it."""
 
     day: int
     parity: WeekParity | None
@@ -256,39 +256,42 @@ class ChangeLock:
     places: dict[str, Hashable]
 
 
-def add_change_limits(
+def add_place_limits(
     model: cp_model.CpModel,
     *,
-    lessons: list[ChangeLesson],
-    locks: list[ChangeLock],
+    lessons: list[PlaceLesson],
+    locks: list[PlaceLock],
     limits: dict[tuple[str, str], int],
     on: Callable[[Any, int], cp_model.IntVar],
     days_of: Callable[[Any], frozenset[int]],
     assume: Callable[[str, str], cp_model.IntVar] | None,
     weight: int,
 ) -> list[cp_model.LinearExpr]:
-    """Placeringsregel 2: at most N room changes and M building changes a day.
+    """Placeringsregel 2: at most N different room groups and M different buildings a day.
 
     `limits` maps (party, kind) to the number, party "class" or "teacher" and
     kind "room" or "building"; a pair left out has no limit.
 
     WHAT IS COUNTED, and the whole of the definition. On one day of one real
-    week a party stands in the places of its lessons, generated and locked.
-    The rule limits the number of CHANGES, and the model counts DISTINCT
-    PLACES: at most N + 1 different room groups, at most M + 1 different
-    buildings. A day that goes A, B, A has two changes and two places, so the
-    model lets it through under a limit of one; that is the price of a count
-    that needs no order of the lessons (no successor variable, no pair
-    literal, no occupancy per slot), and benchmarks/placement_rules.py counts
-    how often a generated timetable pays it. It is monotone in the lessons, so
-    a limit the model holds is one the exact count holds whenever no party
-    returns to a place it left.
+    week a party stands in the places of its lessons, generated and locked, and
+    the rule says there are at most `limit` DIFFERENT ones. It does not count
+    changes between neighbouring lessons: a day that goes A, B, A is two places
+    and so is A, B, A, B, which is three changes. That is the price of a count
+    that needs no order of the lessons (no successor variable, no pair literal,
+    no occupancy per slot), and it is measured rather than assumed:
+    benchmarks/placement_rules.py counts on the timetables it makes how many
+    party-days a school counting changes would find over its limit while the
+    model holds none over its count of places. The exact count was priced too,
+    and fell: it takes a literal per lesson, start step and party, five times
+    the model. So the rule says what it holds, "at most N different", and the
+    settings say so.
 
     A ROOM IS A ROOM GROUP, the engine's interchangeability class: two equal
     classrooms are one room here, which is what the model can see. The
-    post-pass keeps a party in the room it had when that room is free, and
-    Salsoptimering evens out the rest. A BUILDING is Room.building as the
-    salsoptimering reads it, none being a value of its own.
+    post-pass keeps a party in the room it had when that room is free
+    (RoomPlan.parties), and Salsoptimering evens out the rest. A BUILDING is
+    Room.building as the salsoptimering reads it, none being a value of its
+    own.
 
     A CLASS IS A GROUP: the lessons filed under one pupil key, its own and
     nobody else's. A pupil in 7A and in a språkval group changes rooms
@@ -298,8 +301,8 @@ def add_change_limits(
     they are on, lead or co-teacher.
 
     A party that cannot exceed its limit builds nothing: one with at most
-    N + 1 lessons, or whose lessons can stand in at most N + 1 places in all.
-    A school with one building therefore builds no building row.
+    `limit` lessons, or whose lessons can stand in at most `limit` places in
+    all. A school with one building therefore builds no building row.
 
     HARD (`assume` given) bounds the day's places by the limit under the
     assumption of the party and kind; SOFT pays `weight` for each place beyond
@@ -311,8 +314,8 @@ def add_change_limits(
             limit = limits.get((party, kind))
             if limit is None:
                 continue
-            members: dict[UUID, list[ChangeLesson]] = defaultdict(list)
-            held: dict[UUID, list[ChangeLock]] = defaultdict(list)
+            members: dict[UUID, list[PlaceLesson]] = defaultdict(list)
+            held: dict[UUID, list[PlaceLock]] = defaultdict(list)
             for lesson in lessons:
                 owners = (lesson.pupil_key,) if party == "class" else lesson.teachers
                 for owner in dict.fromkeys(owners):
@@ -342,15 +345,15 @@ def _bound_places(
     party: str,
     kind: str,
     limit: int,
-    lessons: list[ChangeLesson],
-    locks: list[ChangeLock],
+    lessons: list[PlaceLesson],
+    locks: list[PlaceLock],
     on: Callable[[Any, int], cp_model.IntVar],
     days_of: Callable[[Any], frozenset[int]],
     assumption: Callable[[], cp_model.IntVar] | None,
     weight: int,
 ) -> list[cp_model.LinearExpr]:
     """One party's rows for one kind: its places a day, bounded, week by week."""
-    allowed = limit + 1
+    allowed = limit
     if len(lessons) + len(locks) <= allowed:
         return []
     every_place: set[Hashable] = {

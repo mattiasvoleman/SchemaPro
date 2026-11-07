@@ -4785,7 +4785,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         ScheduleRules,
         SearchOptions,
         SiteTravelTime,
-        ChangeLimits,
+        PlaceLimits,
         PlacementRules,
         SharedRooms,
         SubjectEdge,
@@ -4803,12 +4803,12 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     }
     assert _field_names(SiteTravelTime) == {"siteAId", "siteBId", "minutes"}
     # Placeringsregler: the gateway's PLACEMENT_RULE_FIELDS and its sub-blocks.
-    assert _field_names(PlacementRules) == {"subjectEdges", "changes", "sharedRooms"}
+    assert _field_names(PlacementRules) == {"subjectEdges", "places", "sharedRooms"}
     assert _field_names(SubjectEdges) == {"mode", "weight", "subjects"}
     assert _field_names(SubjectEdge) == {"subjectId", "notFirst", "notLast"}
-    assert _field_names(ChangeLimits) == {
-        "mode", "weight", "maxClassRoomChanges", "maxTeacherRoomChanges",
-        "maxClassBuildingChanges", "maxTeacherBuildingChanges",
+    assert _field_names(PlaceLimits) == {
+        "mode", "weight", "maxClassRooms", "maxTeacherRooms",
+        "maxClassBuildings", "maxTeacherBuildings",
     }
     assert _field_names(SharedRooms) == {"mode", "weight"}
     # Elevernas håltimmar: counts and anonymous keys, never a pupil. The

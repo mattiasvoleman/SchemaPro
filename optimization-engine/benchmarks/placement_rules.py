@@ -8,8 +8,8 @@ the other is the same school with one rule on:
 
     e1s  e1h   idrott not first and not last in the class's day, soft / hard
     e2s  e2h   the same, and slöjd not first, bild and hemkunskap not last
-    r1s  r1h   at most 3 room changes a day for a class, 4 for a teacher
-    b1s  b1h   at most 1 building change a day, class and teacher, the school
+    r1s  r1h   at most 4 different room groups a day for a class, 5 for a teacher
+    b1s  b1h   at most 2 different buildings a day, class and teacher, the school
                in two buildings (classrooms free)
     b2s  b2h   the same with each year's classrooms in one house, as a
                two-house school keeps them
@@ -26,22 +26,30 @@ WHAT IS COUNTED is the rule's own measure, taken by code that shares nothing
 with app/solver/placement.py, on the timetable each arm makes:
 
     edge      flagged lessons that open or close their class's day
-    places    party-days (a class, a teacher) over the limit, counted as the
-              model counts them (distinct places - 1) and as a school would
-              (changes between neighbouring lessons, in time order), for
-              rooms as the engine's room groups and as concrete rooms, and for
-              buildings
+    places    party-days (a class, a teacher) over the limit of different
+              places, as the rule counts them; and, for information, the
+              party-days a school counting CHANGES between neighbouring
+              lessons (limit - 1 of them), in time order, would find over,
+              for room groups, for concrete rooms and for buildings
     seats     the most pupils in a shared hall at once, against its seats
 
 A soft arm is a wish and not a refusal, so a count is a result and never a
 failure; `problems` is validate_schedule.validate on the full timetable and
 must be empty.
 
-    size    the satisfaction and the full model built, no solve: variables and
-            constraints, and the pre-flight's verdict
-    first   the satisfaction model solved to its first timetable (stop after
-            first solution), as phase 1a does
-    full    solve() end to end on the budget, then validate
+    size       the satisfaction and the full model built, no solve: variables and
+               constraints, and the pre-flight's verdict
+    first      the satisfaction model solved to its first timetable (stop after
+               first solution), as phase 1a does
+    full       solve() end to end on the budget, then validate
+    det-first  `first` on ONE worker with a DETERMINISTIC budget: the search
+               effort to a first timetable in CP-SAT's own deterministic time,
+               which the load of the machine does not move. It is the cost of
+               a HARD rule as the search sees it; wall-clock pairs say the same
+               only when the machine is quiet enough for the base arm to find
+               its timetable in the time it has
+    det-full   the full model on one worker for a deterministic budget, then the
+               rule's own counts on the best timetable found
 """
 
 from __future__ import annotations
@@ -87,8 +95,8 @@ def _edges(mode: str, *rows: tuple[str, bool, bool]) -> dict[str, object]:
     }}
 
 
-def _changes(mode: str, **limits: int) -> dict[str, object]:
-    return {"changes": {"mode": mode, "weight": 250, **limits}}
+def _places(mode: str, **limits: int) -> dict[str, object]:
+    return {"places": {"mode": mode, "weight": 250, **limits}}
 
 
 def _mode(arm: str) -> str:
@@ -107,11 +115,11 @@ def arm_of(name: str) -> tuple[dict[str, object] | None, bool, bool, bool]:
             mode, ("IDH", True, True), ("SL", True, False), ("BL", False, True), ("HKK", False, True),
         ), False, False, False
     if name.startswith("r1"):
-        return _changes(mode, maxClassRoomChanges=3, maxTeacherRoomChanges=4), False, False, False
+        return _places(mode, maxClassRooms=4, maxTeacherRooms=5), False, False, False
     if name.startswith("b1"):
-        return _changes(mode, maxClassBuildingChanges=1, maxTeacherBuildingChanges=1), True, False, False
+        return _places(mode, maxClassBuildings=2, maxTeacherBuildings=2), True, False, False
     if name.startswith("b2"):
-        return _changes(mode, maxClassBuildingChanges=1, maxTeacherBuildingChanges=1), True, True, False
+        return _places(mode, maxClassBuildings=2, maxTeacherBuildings=2), True, True, False
     if name.startswith("s1"):
         return {"sharedRooms": {"mode": mode, "weight": 250}}, False, False, True
     msg = f"unknown arm {name}"
@@ -195,13 +203,13 @@ def counts(request: OptimizeScheduleRequest, lessons) -> dict[str, object]:
             closing += breached_last
         result["edgeOpening"], result["edgeClosing"] = opening, closing
 
-    if rules and rules.changes:
-        limits = rules.changes
+    if rules and rules.places:
+        limits = rules.places
         asked = {
-            ("class", "room"): limits.max_class_room_changes,
-            ("teacher", "room"): limits.max_teacher_room_changes,
-            ("class", "building"): limits.max_class_building_changes,
-            ("teacher", "building"): limits.max_teacher_building_changes,
+            ("class", "room"): limits.max_class_rooms,
+            ("teacher", "room"): limits.max_teacher_rooms,
+            ("class", "building"): limits.max_class_buildings,
+            ("teacher", "building"): limits.max_teacher_buildings,
         }
 
         def group_of(room_id) -> object:
@@ -223,17 +231,20 @@ def counts(request: OptimizeScheduleRequest, lessons) -> dict[str, object]:
                     group_of(l["room"]) if kind == "room" else rooms[l["room"]].building
                     for l in ordered if l["room"] is not None
                 ]
+                # What the rule holds: different places a day. What a school
+                # counting changes between neighbours would find: the same
+                # number of changes as the limit allows (limit - 1), exceeded.
+                distinct += len(set(where)) > limit
                 changes = sum(a != b for a, b in zip(where, where[1:]))
-                exact += changes > limit
-                distinct += len(set(where)) - 1 > limit
+                exact += changes > limit - 1
                 if kind == "room":
                     ids = [l["room"] for l in ordered if l["room"] is not None]
-                    concrete += sum(a != b for a, b in zip(ids, ids[1:])) > limit
+                    concrete += sum(a != b for a, b in zip(ids, ids[1:])) > limit - 1
             tag = f"{party}{kind.capitalize()}"
-            result[f"{tag}DaysOverByDistinct"] = distinct
-            result[f"{tag}DaysOverByChanges"] = exact
+            result[f"{tag}DaysOverTheLimit"] = distinct
+            result[f"{tag}DaysOverIfCountedAsChanges"] = exact
             if kind == "room":
-                result[f"{tag}DaysOverByConcreteRooms"] = concrete
+                result[f"{tag}DaysOverIfCountedAsConcreteRoomChanges"] = concrete
 
     if rules and rules.shared_rooms:
         peak: dict[object, int] = defaultdict(int)
@@ -285,6 +296,30 @@ def measure(args: tuple[str, str, str, float]) -> dict[str, object]:
             cp.parameters.stop_after_first_solution = True
             result["status"] = cp.StatusName(cp.Solve(model))
             result["firstSolutionSeconds"] = round(cp.WallTime(), 2)
+    elif mode in {"det-first", "det-full"}:
+        sat = mode == "det-first"
+        model, _registry, decisions, room_plan, _lunch = solver._build_model(
+            request, use_assumptions=False, include_objective=not sat,
+        )
+        cp = cp_model.CpSolver()
+        cp.parameters.num_workers = 1
+        cp.parameters.random_seed = 0
+        cp.parameters.max_deterministic_time = budget
+        cp.parameters.max_time_in_seconds = 3600
+        cp.parameters.stop_after_first_solution = sat
+        status = cp.StatusName(cp.Solve(model))
+        result.update({
+            "status": status,
+            "deterministicTime": round(cp.deterministic_time, 2),
+            "wallSeconds": round(cp.WallTime(), 2),
+            "variables": len(model.Proto().variables),
+            "constraints": len(model.Proto().constraints),
+        })
+        if status in {"FEASIBLE", "OPTIMAL"}:
+            if not sat:
+                result["objective"] = round(cp.ObjectiveValue(), 1)
+                result["bound"] = round(cp.BestObjectiveBound(), 1)
+            result.update(counts(request, solver._extract_lessons(cp, decisions, request.rooms, room_plan)))
     else:
         from validate_schedule import validate
 
@@ -315,7 +350,7 @@ def measure(args: tuple[str, str, str, float]) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--mode", choices=["size", "first", "full"], default="first")
+    parser.add_argument("--mode", choices=["size", "first", "full", "det-first", "det-full"], default="first")
     parser.add_argument("--arms", default="off,e1h")
     parser.add_argument("--budget", type=float, default=60.0)
     parser.add_argument("--rounds", type=int, default=1)
@@ -324,6 +359,11 @@ def main() -> int:
     arms = args.arms.split(",")
     for _ in range(args.rounds):
         jobs = [("hogstadium", args.mode, arm, args.budget) for arm in arms]
+        if args.mode.startswith("det-"):
+            with multiprocessing.get_context("spawn").Pool(min(len(jobs), 6)) as pool:
+                for result in pool.map(measure, jobs):
+                    print(json.dumps(result), flush=True)
+            continue
         if args.mode == "size" or args.serial:
             for job in jobs:
                 print(json.dumps(measure(job)), flush=True)
