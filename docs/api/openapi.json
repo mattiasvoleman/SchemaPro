@@ -14070,7 +14070,11 @@
         "x-roles": [
           "SCHOOL_ADMIN",
           "TEACHER"
-        ]
+        ],
+        "x-rate-limit": {
+          "limit": 30,
+          "ttlSeconds": 60
+        }
       }
     },
     "/api/v1/school-day/free": {
@@ -14135,7 +14139,11 @@
         "x-roles": [
           "SCHOOL_ADMIN",
           "TEACHER"
-        ]
+        ],
+        "x-rate-limit": {
+          "limit": 30,
+          "ttlSeconds": 60
+        }
       }
     },
     "/api/v1/school-day/settings": {
