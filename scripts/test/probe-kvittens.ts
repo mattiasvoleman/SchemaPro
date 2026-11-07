@@ -126,9 +126,22 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
   const asLoner = as(loner, Role.TEACHER);
   const asG = (g: { id: string; authId: string }) => as(g, Role.GUARDIAN);
 
-  // The delivery is the gateway's own; here it only records what was handed to it.
+  // The delivery is the gateway's own; here it records what was handed to it, and tells the listener how the batch went:
+  // 'taken' at once, 'refused' at once, or 'held' (the batch sits in the queue until the check lets it go, or for good: a
+  // process that stopped with it in its memory).
   const delivered: OutboxEntry[] = [];
-  const delivery = { wants: () => true, emailConfigured: () => true, enqueue: (batch: OutboxEntry[]) => void delivered.push(...batch) };
+  let channel: 'taken' | 'refused' | 'held' = 'taken';
+  const held: Array<(delivered: boolean) => void> = [];
+  const delivery = {
+    wants: () => true,
+    emailConfigured: () => true,
+    enqueue: (batch: OutboxEntry[], settled?: (delivered: boolean) => void) => {
+      delivered.push(...batch);
+      if (!settled) return;
+      if (channel === 'held') held.push(settled);
+      else settled(channel === 'taken');
+    },
+  };
   const notifications = new NotificationsService(api, delivery as never);
   const service = new AckService(api, notifications);
 
@@ -143,6 +156,14 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
        SELECT $1, $2, gs."studentId", gs."guardianId" FROM "GuardianStudents" gs WHERE gs."schoolId" = $2 AND gs."studentId" = ANY ($3::uuid[])`,
       [row.id, s, studentIds]);
     return row.id;
+  };
+  /** The delivery's word that a reminder's mail was taken is recorded after the pass has returned: wait for it. */
+  const untilMirrored = async (id: string): Promise<void> => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await one<{ m: Date | null }>(`SELECT "reminderMirroredAt" AS m FROM "AckRequests" WHERE id = $1`, [id])).m) return;
+      await sleep(50);
+    }
+    assert.fail(`the delivery's word on ${id} was not recorded`);
   };
   const statusOf = async (id: string) => {
     const detail = await service.detail(id, asAdmin);
@@ -410,9 +431,11 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     delivered.length = 0;
     assert.equal((await service.remind()).reminded, 0, 'the reminder went twice');
     assert.equal(delivered.length, 0);
+    await untilMirrored(r.id);
     const detail = await service.detail(r.id, asAdmin);
     assert.equal(detail.reminder, 'SENT');
     assert.equal(detail.reminderSentAt !== null, true);
+    assert.equal(detail.reminderMirroredAt !== null, true);
     assert.equal(detail.mayStopReminder, false, 'a reminder that has gone can be stopped');
     assert.ok(detail.pupils[0]!.guardians.find((g) => g.name.startsWith('g2'))!.remindedAt, 'staff are not told when the reminder went');
 
@@ -424,6 +447,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     delivered.length = 0;
     assert.equal((await service.remind()).reminded, 1, 'the guardian who had not confirmed was not reminded because the other had');
     assert.deepEqual(delivered[0]!.recipients.map((x) => x.userId), [g2.id]);
+    await untilMirrored(any.id);
     assert.equal((await service.list(asAdmin)).items.find((x) => x.id === any.id)!.reminder, 'SENT');
   });
 
@@ -654,6 +678,106 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     const got = await service.mine(asG(g3));
     console.log(`    km: a guardian with ${mineAll.length} of ${others + everything.length} requests reads the page in ${Date.now() - t0} ms (${JSON.stringify(guardianCalls)})`);
     assert.ok(got.items.length > 0);
+  });
+
+  await check('kn: a reminder is WRITTEN until the delivery says its mail was taken, and SENT after; a refusal or a lost batch leaves it WRITTEN, and nothing sends it again', async () => {
+    await service.updateSettings({ enabled: true }, asAdmin);
+    const due = async (title: string): Promise<string> => {
+      const id = await seed(title, 'ANY', [p3.id], mentor2);
+      await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = $1`, [id]);
+      return id;
+    };
+    const stateOf = async (id: string) => (await service.list(asAdmin, { limit: 100 })).items.find((x) => x.id === id)?.reminder;
+    const row = (id: string) => one<{ o: string; m: Date | null; t: Date | null }>(`SELECT "reminderOutcome" AS o, "reminderMirroredAt" AS m, "reminderSentAt" AS t FROM "AckRequests" WHERE id = $1`, [id]);
+
+    // Held: the notices are written and the database says SENT, but the mail has not gone, and the page says so.
+    channel = 'held';
+    held.length = 0;
+    const slow = await due('Brevet är på väg');
+    await service.remind();
+    const waiting = await row(slow);
+    assert.equal(waiting.o, 'SENT');
+    assert.ok(waiting.t, 'the notices were written');
+    assert.equal(waiting.m, null, 'the mail was recorded as taken before the delivery said so');
+    assert.equal(await stateOf(slow), 'WRITTEN');
+    assert.ok(held.length >= 1);
+    // The delivery says it went: SENT, once, and the time is recorded after the notices.
+    for (const settled of held.splice(0)) settled(true);
+    await untilMirrored(slow);
+    assert.equal(await stateOf(slow), 'SENT');
+    const done = await row(slow);
+    assert.ok(done.m! >= done.t!, 'the mail went before the notices were written');
+
+    // Refused: a channel that did not take the batch leaves the request WRITTEN, and nothing records otherwise.
+    channel = 'refused';
+    const refused = await due('Brevet togs inte emot');
+    await service.remind();
+    await sleep(300);
+    assert.equal((await row(refused)).m, null);
+    assert.equal(await stateOf(refused), 'WRITTEN');
+
+    // Lost: the batch was in the queue of a process that stopped; its word never comes.
+    channel = 'held';
+    held.length = 0;
+    const lost = await due('Processen stoppades');
+    await service.remind();
+    await sleep(300);
+    assert.equal(await stateOf(lost), 'WRITTEN');
+    held.length = 0;
+
+    // Neither is sent again: the pass does not take a request that is SENT, WRITTEN or not.
+    channel = 'taken';
+    delivered.length = 0;
+    assert.equal((await service.remind()).reminded, 0);
+    assert.equal(delivered.length, 0);
+    // A logged-in administrator cannot record the delivery's word either: the function answers nothing to a login that is a person.
+    await api.withRls(asAdmin, (tx) => tx.$executeRaw`SELECT app.ack_reminder_mirrored(${refused}::uuid)`);
+    assert.equal((await row(refused)).m, null, 'a logged-in administrator recorded the delivery’s word');
+  });
+
+  await check('ko: a sender’s share of the day is a 429 of its own through the adapter, and the usage page reads the numbers', async () => {
+    await service.updateSettings({ enabled: true }, asAdmin);
+    const share = 2000;
+    const before = (await service.usage(asMentor1)).mine;
+    assert.equal(before.limit, share, 'a teacher’s share is 2 000');
+    // The owner (no login: not counted against) brings her to three short of her share, five hours ago, so the hour's limit is not in play.
+    const bulk = await one<{ id: string }>(
+      `INSERT INTO "AckRequests" ("schoolId", "authorId", title, body, "createdAt") VALUES ($1, $2, 'Andelens underlag', 'B', now() - interval '5 hours') RETURNING id`,
+      [s, mentor1.id]);
+    await owner.query(
+      `INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+       SELECT $1, $2, p.id, g.id FROM (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'STUDENT') p CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'GUARDIAN') g LIMIT $3`,
+      [bulk.id, s, share - 3 - before.used]);
+    assert.equal((await service.usage(asMentor1)).mine.used, share - 3);
+
+    // P1 and P2 have three guardians between them (G1 and G2 for P1, G1 for P2): the 2 000th receipt is allowed, the next is not.
+    const body = { body: 'B', rule: 'ANY' as const, studentIds: [p1.id, p2.id] };
+    await service.create({ ...body, title: 'Den 2 000:e' }, asMentor1);
+    const requests = await count(`SELECT count(*) AS n FROM "AckRequests" WHERE "schoolId" = $1`, [s]);
+    const notices = () => count(`SELECT count(*) AS n FROM "Notifications" WHERE "schoolId" = $1 AND type = 'ACK_REQUESTED'`, [s]);
+    const noticesBefore = await notices();
+    await assert.rejects(() => service.create({ ...body, title: 'Över andelen' }, asMentor1), (error: unknown) => {
+      assert.ok(error instanceof HttpException, `not a 429: ${String(error)}`);
+      assert.equal(error.getStatus(), 429);
+      assert.equal((error.getResponse() as { code: string }).code, 'ACK_SENDER_DAY_LIMIT');
+      return true;
+    });
+    assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE "schoolId" = $1`, [s]), requests, 'the refused request was written');
+    assert.equal(await notices(), noticesBefore, 'the refused request wrote notices');
+    // The share is hers: the other mentor and an administrator write on, and the school has room (its own limit is 20 000).
+    await service.create({ title: 'Kollegan', body: 'B', rule: 'ANY', studentIds: [p3.id] }, asMentor2);
+
+    // What the page reads: an administrator the school, their share and the senders; the teacher only her own.
+    const mine = await service.usage(asMentor1);
+    assert.deepEqual([mine.school, mine.mine, mine.senders], [null, { used: share, limit: share }, null]);
+    const admins = await service.usage(asAdmin);
+    assert.equal(admins.school!.limit, 20000);
+    assert.ok(admins.school!.used >= share, 'the school’s day is less than one teacher’s');
+    assert.equal(admins.mine.limit, 8000);
+    assert.deepEqual(admins.senders!.find((x) => x.name.startsWith('mentor1')), { name: 'mentor1 Probe', used: share, limit: share });
+    assert.ok(admins.senders!.length <= 5);
+    assert.deepEqual((await service.usage(asLasare)).mine.limit, 8000, 'an administrator who only reads Drift reads the usage');
+    await assert.rejects(() => service.usage(asG(g1)), ForbiddenException);
   });
 
   await sweepKvittensSchool(owner, marker);

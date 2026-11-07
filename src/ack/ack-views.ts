@@ -11,8 +11,13 @@ export interface AckPage<T> {
 /**
  * Where a request's one reminder stands: NONE (the school chose no reminder), SCHEDULED (its time has not
  * come, or the pass has not reached it yet), and how it ended otherwise (AckReminderOutcome).
+ *
+ * WRITTEN is a SENT reminder whose e-mail and push the delivery has not said it handed over (reminderMirroredAt):
+ * the notices are in the guardians' inboxes, which is all the database knows. It is not a failure and it is not
+ * sent again; it is what a reminder is called while the mail is on its way, and for good when the process stopped
+ * with the mail still in its queue or Resend did not take it.
  */
-export type AckReminderState = 'NONE' | 'SCHEDULED' | AckReminderOutcome;
+export type AckReminderState = 'NONE' | 'SCHEDULED' | 'WRITTEN' | AckReminderOutcome;
 
 export interface AckSettingsView {
   enabled: boolean;
@@ -82,8 +87,10 @@ export interface AckDetail {
   authorName: string;
   createdAt: string;
   remindAt: string | null;
-  /** When at least one reminder went; null unless the reminder is SENT. */
+  /** When at least one reminder was written to the inboxes; null unless the reminder is SENT or WRITTEN. */
   reminderSentAt: string | null;
+  /** When the delivery said the e-mail and the push were taken; null unless the reminder is SENT. */
+  reminderMirroredAt: string | null;
   reminder: AckReminderState;
   /** The reader may stop the reminder: it is scheduled, and they wrote the request or administer the school. */
   mayStopReminder: boolean;
@@ -108,4 +115,20 @@ export interface AckConfirmed {
 
 export interface AckReminderStopped {
   reminder: AckReminderState;
+}
+
+/** One use of the day's limits: rows asked for in the last 24 hours, and the most there may be. */
+export interface AckUsageLine {
+  used: number;
+  limit: number;
+}
+
+/**
+ * Kvittens' use of the day (GET /usage): the school's (an administrator only), the caller's own share, and the
+ * senders who have used most (an administrator who reads Drift). Receipts are the unit: one per guardian and pupil.
+ */
+export interface AckUsage {
+  school: AckUsageLine | null;
+  mine: AckUsageLine;
+  senders: Array<AckUsageLine & { name: string }> | null;
 }
