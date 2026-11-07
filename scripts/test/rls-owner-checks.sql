@@ -2515,9 +2515,12 @@ ROLLBACK;
 --        tables it deletes from)
 --   386  every door files the same tombstones: a DELETE of the year as the
 --        owner, as the API's role and as PostgREST's, for a year that was sent
---        (a CalendarEvent for each lesson, an AdhocActivity only for the one that
---        never had a master lesson) and for one that was never sent (none), and
---        nothing else of the school goes
+--        and for the active one (a CalendarEvent for each lesson, an AdhocActivity
+--        only for the one that never had a master lesson; among the lessons a
+--        cancelled one, one with a teacher, one with an attendance record and one
+--        dated before today, which a trigger that chose its lessons would leave
+--        to the cascade) and for one that was never sent (none), and nothing else
+--        of the school goes
 --   387  who reaches it and who does not: a profile that writes PLANERING and
 --        not DRIFT (the year goes, and its lessons go first all the same: the
 --        service's own DELETE of them deleted nothing for it), a profile that
@@ -2549,11 +2552,22 @@ CREATE FUNCTION pg_temp.ylg_auth(n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $
 $$;
 
 -- Two schools. School 1 has an active year (10), a year that was sent (11) and one that was never sent
--- (12); a class in each of the last two (30, 31) with a master lesson (50, 51) and three lessons, of which
--- two keep their master lesson and one never had it (60-62, 63-65); a lesson (66) of the unsent year's class
--- that names the sent year's class as an extra group; and its people: a full administrator (80), a teacher
--- (81), an administrator of the expedition (82), one of the schedulers (84). School 2 has a year (20), a class
--- (32) with two lessons (70 keyed, 71 not) and a full administrator (83).
+-- (12); a class in each (33, 30, 31) with a master lesson (53, 50, 51). The active year has two lessons, one
+-- that keeps its master lesson (67) and one that never had it (68). The sent year has three plain lessons, of
+-- which two keep their master lesson and one never had it (60-62), and four more that keep it and that a
+-- trigger written to be selective would be tempted to leave to the cascade: one that is CANCELLED (72), one
+-- with a teacher (73), one with an attendance record (74) and one dated before today and before the year
+-- began (75; 2020, the others are 2097-2099). The unsent year has three (63-65) and a lesson (66) that names
+-- the sent year's class as an extra group. Its people: a full administrator (80), a teacher (81), an
+-- administrator of the expedition (82), one of the schedulers (84), a pupil (85). School 2 has a year (20),
+-- a class (32) with two lessons (70 keyed, 71 not) and a full administrator (83).
+--
+-- A lesson that keeps its master lesson is what shows a lesson left to the cascade: the master lessons' key
+-- runs first and sets "masterLessonId" to NULL on it, and it is filed as an AdhocActivity too. A lesson that
+-- never had one is filed as one whichever way it goes, and shows nothing. So every lesson that must not be
+-- skipped is keyed (67, 72-75): a trigger that skips the active year, the lessons that have a teacher or an
+-- attendance record, the cancelled ones or the past ones leaves them to the cascade, and 386 sees it (the
+-- review of #276, M2).
 CREATE FUNCTION pg_temp.ylg_world() RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
   s1 uuid := pg_temp.ylg_id(1);
@@ -2574,21 +2588,27 @@ BEGIN
   INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES
     (pg_temp.ylg_id(30), s1, pg_temp.ylg_id(11), 'YLG förra',  'TEACHING_GROUP', 7, now()),
     (pg_temp.ylg_id(31), s1, pg_temp.ylg_id(12), 'YLG nästa',  'TEACHING_GROUP', 7, now()),
-    (pg_temp.ylg_id(32), s2, pg_temp.ylg_id(20), 'YLG andra',  'TEACHING_GROUP', 7, now());
+    (pg_temp.ylg_id(32), s2, pg_temp.ylg_id(20), 'YLG andra',  'TEACHING_GROUP', 7, now()),
+    (pg_temp.ylg_id(33), s1, pg_temp.ylg_id(10), 'YLG aktivt', 'TEACHING_GROUP', 7, now());
   INSERT INTO "MasterLessons" (id, "schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES
     (pg_temp.ylg_id(50), s1, pg_temp.ylg_id(11), pg_temp.ylg_id(40), pg_temp.ylg_id(30), 1, '08:00', '08:50', now()),
     (pg_temp.ylg_id(51), s1, pg_temp.ylg_id(12), pg_temp.ylg_id(40), pg_temp.ylg_id(31), 1, '08:00', '08:50', now()),
-    (pg_temp.ylg_id(52), s2, pg_temp.ylg_id(20), pg_temp.ylg_id(41), pg_temp.ylg_id(32), 1, '08:00', '08:50', now());
+    (pg_temp.ylg_id(52), s2, pg_temp.ylg_id(20), pg_temp.ylg_id(41), pg_temp.ylg_id(32), 1, '08:00', '08:50', now()),
+    (pg_temp.ylg_id(53), s1, pg_temp.ylg_id(10), pg_temp.ylg_id(40), pg_temp.ylg_id(33), 1, '08:00', '08:50', now());
   FOR lesson IN SELECT * FROM (VALUES
-      (60, s1, 50, 40, 30, date '2097-08-25'), (61, s1, 50, 40, 30, date '2097-09-01'), (62, s1, NULL, 40, 30, date '2097-09-02'),
-      (63, s1, 51, 40, 31, date '2099-08-23'), (64, s1, 51, 40, 31, date '2099-08-30'), (65, s1, NULL, 40, 31, date '2099-09-01'),
-      (66, s1, 51, 40, 31, date '2099-09-06'),
-      (70, s2, 52, 41, 32, date '2098-08-24'), (71, s2, NULL, 41, 32, date '2098-08-25')) v(n, school, master, subject, grp, day)
+      (60, s1, 50, 40, 30, date '2097-08-25', 'SCHEDULED'), (61, s1, 50, 40, 30, date '2097-09-01', 'SCHEDULED'), (62, s1, NULL, 40, 30, date '2097-09-02', 'SCHEDULED'),
+      (63, s1, 51, 40, 31, date '2099-08-23', 'SCHEDULED'), (64, s1, 51, 40, 31, date '2099-08-30', 'SCHEDULED'), (65, s1, NULL, 40, 31, date '2099-09-01', 'SCHEDULED'),
+      (66, s1, 51, 40, 31, date '2099-09-06', 'SCHEDULED'),
+      (67, s1, 53, 40, 33, date '2098-08-24', 'SCHEDULED'), (68, s1, NULL, 40, 33, date '2098-08-25', 'SCHEDULED'),
+      (70, s2, 52, 41, 32, date '2098-08-24', 'SCHEDULED'), (71, s2, NULL, 41, 32, date '2098-08-25', 'SCHEDULED'),
+      (72, s1, 50, 40, 30, date '2097-09-08', 'CANCELLED'), (73, s1, 50, 40, 30, date '2097-09-15', 'SCHEDULED'),
+      (74, s1, 50, 40, 30, date '2097-09-22', 'SCHEDULED'), (75, s1, 50, 40, 30, date '2020-02-03', 'SCHEDULED')) v(n, school, master, subject, grp, day, state)
   LOOP
-    INSERT INTO "CalendarLessons" (id, "schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+    INSERT INTO "CalendarLessons" (id, "schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
     VALUES (pg_temp.ylg_id(lesson.n), lesson.school, CASE WHEN lesson.master IS NULL THEN NULL ELSE pg_temp.ylg_id(lesson.master) END,
             pg_temp.ylg_id(lesson.subject), pg_temp.ylg_id(lesson.grp), lesson.day,
-            (lesson.day + time '08:00') AT TIME ZONE 'Europe/Stockholm', (lesson.day + time '08:50') AT TIME ZONE 'Europe/Stockholm', now());
+            (lesson.day + time '08:00') AT TIME ZONE 'Europe/Stockholm', (lesson.day + time '08:50') AT TIME ZONE 'Europe/Stockholm',
+            lesson.state::"LessonStatus", now());
   END LOOP;
   INSERT INTO "CalendarLessonGroups" (id, "schoolId", "calendarLessonId", "studentGroupId")
   VALUES (pg_temp.ylg_id(90), s1, pg_temp.ylg_id(66), pg_temp.ylg_id(30));
@@ -2597,24 +2617,30 @@ BEGIN
     (pg_temp.ylg_id(81), s1, 'ylg-lararen@example.invalid', 'Lärare', 'Ett',     'TEACHER',      NULL,            pg_temp.ylg_auth(81), true, now()),
     (pg_temp.ylg_id(82), s1, 'ylg-exp@example.invalid',    'Exp',   'Admin',   'SCHOOL_ADMIN', 'EXPEDITION',    pg_temp.ylg_auth(82), true, now()),
     (pg_temp.ylg_id(84), s1, 'ylg-sched@example.invalid',  'Sched', 'Admin',   'SCHOOL_ADMIN', 'SCHEMALAGGARE', pg_temp.ylg_auth(84), true, now()),
+    (pg_temp.ylg_id(85), s1, 'ylg-eleven@example.invalid', 'Elev',  'Ett',     'STUDENT',      NULL,            pg_temp.ylg_auth(85), true, now()),
     (pg_temp.ylg_id(83), s2, 'ylg-full2@example.invalid',  'Full',  'Andra',   'SCHOOL_ADMIN', 'FULL',          pg_temp.ylg_auth(83), true, now());
+  -- What hangs on a lesson: a teacher (73) and a pupil's attendance (74), which go with it.
+  INSERT INTO "CalendarLessonTeachers" (id, "schoolId", "calendarLessonId", "teacherId")
+  VALUES (pg_temp.ylg_id(91), s1, pg_temp.ylg_id(73), pg_temp.ylg_id(81));
+  INSERT INTO "AttendanceRecords" (id, "schoolId", "calendarLessonId", "studentId", "updatedAt")
+  VALUES (pg_temp.ylg_id(92), s1, pg_temp.ylg_id(74), pg_temp.ylg_id(85), now());
   DELETE FROM "Ss12000Tombstones" WHERE "schoolId" IN (s1, s2);
 END $$;
 
 -- The tombstones a school has for the lessons of this section, as '<resource> <numbers>; <resource> <numbers>',
--- the numbers being the lessons' (60-71): '' when there are none.
+-- the numbers being the lessons' (60-79): '' when there are none.
 CREATE FUNCTION pg_temp.ylg_tombs(p_school uuid) RETURNS text LANGUAGE sql AS $$
   SELECT coalesce(string_agg(r.resource || ' ' || r.ids, '; ' ORDER BY r.resource COLLATE "C"), '')
     FROM (SELECT t.resource, string_agg(pg_temp.ylg_n(t."emittedId")::text, ',' ORDER BY pg_temp.ylg_n(t."emittedId")) AS ids
             FROM "Ss12000Tombstones" t
-           WHERE t."schoolId" = p_school AND t."emittedId" IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 71) n)
+           WHERE t."schoolId" = p_school AND t."emittedId" IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 79) n)
            GROUP BY t.resource) r
 $$;
 
--- The numbers of the lessons of this section that are left, among 60-71.
+-- The numbers of the lessons of this section that are left, among 60-79.
 CREATE FUNCTION pg_temp.ylg_lessons() RETURNS text LANGUAGE sql AS $$
   SELECT coalesce(string_agg(pg_temp.ylg_n(l.id)::text, ',' ORDER BY pg_temp.ylg_n(l.id)), '')
-    FROM "CalendarLessons" l WHERE l.id IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 71) n)
+    FROM "CalendarLessons" l WHERE l.id IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 79) n)
 $$;
 
 -- Removes one year by a DELETE of its own, as <p_role> (the owner when null) with the claims of person <p_who>.
@@ -2767,16 +2793,22 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Section 386: every door files the same tombstones.
 --
--- A sent year (11): a CalendarEvent for each of its three lessons (60-62) and an AdhocActivity for the one
--- that never had a master lesson (62). A year that was never sent (12): none. The lesson of the unsent year
--- that names the sent year's class as an extra group (66) stays, and school 2 is not touched. The lessons
--- are the rows of the section: 60-66 of school 1, 70-71 of school 2.
+-- A sent year (11): a CalendarEvent for each of its seven lessons (60-62, 72-75) and an AdhocActivity for the
+-- one that never had a master lesson (62). Of the seven, four are the kind a trigger that chose its lessons
+-- would leave to the cascade, which files an AdhocActivity for each of those too: 72 is CANCELLED, 73 has a
+-- teacher, 74 has an attendance record and 75 is dated before today (and before the year began). The active
+-- year (10): a CalendarEvent for each of its two lessons (67 keyed, 68 not) and an AdhocActivity for 68; a
+-- trigger that left the active year to the cascade files one for 67 as well. A year that was never sent (12):
+-- none. The lesson of the unsent year that names the sent year's class as an extra group (66) stays, and
+-- school 2 is not touched. The lessons are the rows of the section: 60-68 and 72-75 of school 1, 70-71 of
+-- school 2.
 -- ---------------------------------------------------------------------------
 
 DO $$
 DECLARE
   door record;
   r jsonb;
+  sent_tombs constant text := 'AdhocActivity 62; CalendarEvent 60,61,62,72,73,74,75';
 BEGIN
   FOR door IN SELECT * FROM (VALUES
       ('the owner', NULL::text, 0), ('the API''s role', 'app_authenticated', 80), ('PostgREST''s role', 'authenticated', 80)) v(who, via, person)
@@ -2785,14 +2817,29 @@ BEGIN
     IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
       RAISE EXCEPTION 'lektioner först 386: % did not remove the sent year: %', door.who, r;
     END IF;
-    IF r ->> 'tombs1' <> 'AdhocActivity 62; CalendarEvent 60,61,62' THEN
-      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the sent year, not [AdhocActivity 62; CalendarEvent 60,61,62] (an AdhocActivity for a lesson that had a master lesson: the cascade ran the master lessons'' key before the classes'')', door.who, r ->> 'tombs1';
+    IF r ->> 'tombs1' <> sent_tombs THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the sent year, not [%] (an AdhocActivity for a lesson that had a master lesson: the cascade ran the master lessons'' key before the classes'', so the lesson was left to it: a cancelled one, one with a teacher or an attendance record, a past one, or all of the year''s)', door.who, r ->> 'tombs1', sent_tombs;
     END IF;
-    IF r ->> 'lessons' <> '63,64,65,66,70,71' THEN
-      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the sent year went, not [63,64,65,66,70,71] (its own three go; the other year''s, the one with the extra group included, and school 2''s stay)', door.who, r ->> 'lessons';
+    IF r ->> 'lessons' <> '63,64,65,66,67,68,70,71' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the sent year went, not [63,64,65,66,67,68,70,71] (its own seven go; the other years'', the one with the extra group included, and school 2''s stay)', door.who, r ->> 'lessons';
     END IF;
     IF r ->> 'tombs2' <> '' THEN
       RAISE EXCEPTION 'lektioner först 386: % filed [%] for school 2 when a year of school 1 went', door.who, r ->> 'tombs2';
+    END IF;
+
+    -- The active year is a sent year too (app.ss12000_year_is_emitted): its lessons are filed the same way.
+    r := pg_temp.ylg_scenario(10, door.via, door.person);
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 386: % did not remove the active year: %', door.who, r;
+    END IF;
+    IF r ->> 'tombs1' <> 'AdhocActivity 68; CalendarEvent 67,68' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the active year, not [AdhocActivity 68; CalendarEvent 67,68] (an AdhocActivity for the lesson that had a master lesson: the active year was left to the cascade)', door.who, r ->> 'tombs1';
+    END IF;
+    IF r ->> 'lessons' <> '60,61,62,63,64,65,66,70,71,72,73,74,75' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the active year went, not [60,61,62,63,64,65,66,70,71,72,73,74,75]', door.who, r ->> 'lessons';
+    END IF;
+    IF r ->> 'tombs2' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for school 2 when the active year of school 1 went', door.who, r ->> 'tombs2';
     END IF;
 
     r := pg_temp.ylg_scenario(12, door.via, door.person);
@@ -2802,16 +2849,20 @@ BEGIN
     IF r ->> 'tombs1' <> '' THEN
       RAISE EXCEPTION 'lektioner först 386: % filed [%] for the lessons of a year that was never sent, and the flow sends none', door.who, r ->> 'tombs1';
     END IF;
-    IF r ->> 'lessons' <> '60,61,62,70,71' THEN
-      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the unsent year went, not [60,61,62,70,71]', door.who, r ->> 'lessons';
+    IF r ->> 'lessons' <> '60,61,62,67,68,70,71,72,73,74,75' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the unsent year went, not [60,61,62,67,68,70,71,72,73,74,75]', door.who, r ->> 'lessons';
     END IF;
   END LOOP;
 
   -- What the set is the set of: the lessons removed on their own first, with the trigger out of the way, which
   -- is what the service did since #272. The trigger makes every door file that.
-  r := pg_temp.ylg_scenario(11, NULL, 0, 'ALTER TABLE "AcademicYears" DISABLE TRIGGER "AcademicYears_a_lessons_go_first"; DELETE FROM "CalendarLessons" WHERE id IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 62) n)');
-  IF r ->> 'tombs1' <> 'AdhocActivity 62; CalendarEvent 60,61,62' THEN
-    RAISE EXCEPTION 'lektioner först 386: the lessons removed first, with the trigger out of the way, filed [%], not the set the doors above are held to', r ->> 'tombs1';
+  r := pg_temp.ylg_scenario(11, NULL, 0, 'ALTER TABLE "AcademicYears" DISABLE TRIGGER "AcademicYears_a_lessons_go_first"; DELETE FROM "CalendarLessons" WHERE id IN (SELECT pg_temp.ylg_id(n) FROM unnest(ARRAY[60, 61, 62, 72, 73, 74, 75]) n)');
+  IF r ->> 'tombs1' <> sent_tombs THEN
+    RAISE EXCEPTION 'lektioner först 386: the lessons removed first, with the trigger out of the way, filed [%], not the set the doors above are held to [%]', r ->> 'tombs1', sent_tombs;
+  END IF;
+  r := pg_temp.ylg_scenario(10, NULL, 0, 'ALTER TABLE "AcademicYears" DISABLE TRIGGER "AcademicYears_a_lessons_go_first"; DELETE FROM "CalendarLessons" WHERE id IN (SELECT pg_temp.ylg_id(n) FROM unnest(ARRAY[67, 68]) n)');
+  IF r ->> 'tombs1' <> 'AdhocActivity 68; CalendarEvent 67,68' THEN
+    RAISE EXCEPTION 'lektioner först 386: the active year''s lessons removed first, with the trigger out of the way, filed [%], not the set the doors above are held to [AdhocActivity 68; CalendarEvent 67,68]', r ->> 'tombs1';
   END IF;
 END $$;
 
@@ -2823,7 +2874,8 @@ DO $$
 DECLARE
   r jsonb;
   via text;
-  all_lessons constant text := '60,61,62,63,64,65,66,70,71';
+  all_lessons constant text := '60,61,62,63,64,65,66,67,68,70,71,72,73,74,75';
+  sent_tombs constant text := 'AdhocActivity 62; CalendarEvent 60,61,62,72,73,74,75';
 BEGIN
   -- A profile that writes PLANERING and not DRIFT (none does today: this is the next one). The simulation
   -- must bite: its own DELETE of a lesson deletes nothing, and its DELETE of the year deletes the year, and
@@ -2838,7 +2890,7 @@ BEGIN
     IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
       RAISE EXCEPTION 'lektioner först 387: a profile that writes PLANERING only did not remove the year as %: %', via, r;
     END IF;
-    IF r ->> 'tombs1' <> 'AdhocActivity 62; CalendarEvent 60,61,62' OR r ->> 'lessons' <> '63,64,65,66,70,71' THEN
+    IF r ->> 'tombs1' <> sent_tombs OR r ->> 'lessons' <> '63,64,65,66,67,68,70,71' THEN
       RAISE EXCEPTION 'lektioner först 387: a profile that writes PLANERING only, as %, filed [%] and left lessons [%]: the lessons did not go first (the cascade ran, as the owner, in the keys'' order)', via, r ->> 'tombs1', r ->> 'lessons';
     END IF;
   END LOOP;
@@ -2882,7 +2934,8 @@ END $$;
 -- because they are, not because they are right; no code path updates an id or a school of any parent, and
 -- nothing is carried along that the owner has not asked for. The list only gets shorter: a key that is made
 -- NO ACTION (or removed) is taken off it here, and the section fails until it is. A new key that follows its
--- parent fails by name.
+-- parent fails by name, and adding its name to the list instead fails the list's ceiling (98): raising it is a
+-- decision that shows in the diff.
 --
 -- A key is "one that holds a school" when it has more than one column and one of them is a school column of
 -- its table: "schoolId", or in a table without one, a column named like <something>SchoolId (RoomLoans),
@@ -3008,6 +3061,12 @@ DECLARE
     'TimplanStatements.TimplanStatements_publicationId_academicYearId_asOfDate_schoolI',
     'TimplanStatements.TimplanStatements_studentId_schoolId_fkey',
     'UserRoleChanges.UserRoleChanges_userId_schoolId_fkey'];
+  -- The list can only get shorter. It is checked to be exactly the keys that follow their parent (below), so
+  -- a new key that follows could be passed by adding its name; the ceiling (max_names) makes that a decision
+  -- that shows in the diff, a number raised on purpose with a reason in the change. 98 is what the schema of
+  -- 20270118090000 has. When the list gets shorter, lower the ceiling with it, or the next name added fits
+  -- under it.
+  max_names constant int := 98;
   found text[];
   extra text[];
   gone text[];
@@ -3025,6 +3084,9 @@ BEGIN
   END IF;
   IF dup IS NOT NULL THEN
     RAISE EXCEPTION 'tenant keys 388: named twice in the list: %', dup;
+  END IF;
+  IF cardinality(exempt) > max_names THEN
+    RAISE EXCEPTION 'tenant keys 388: the list names % keys, more than its ceiling of %: a key that follows its parent was added to the list instead of being made ON UPDATE NO ACTION (if it has to follow, raise max_names in this change and say why)', cardinality(exempt), max_names;
   END IF;
 END $$;
 ROLLBACK;
