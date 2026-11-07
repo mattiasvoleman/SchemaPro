@@ -45117,6 +45117,8 @@ ROLLBACK;
 --   372  the confirmation: who is done, custody that has ended, a protected pupil
 --   373  the reminder's privileges (its logic is 373o, which may move a request's time)
 --   374  the catalogue: privileges, arms, keys and gallring
+--   380, 381 (20270119090000, at the end of the file): the day's use of the limits, and the
+--        column that says a reminder's mail went. Their logic is 380o and 381o.
 -- ---------------------------------------------------------------------------
 
 -- The helpers the sections share. Temporary, so they die with the session.
@@ -45835,12 +45837,12 @@ DECLARE
   priv text;
   owner_only constant text[] := ARRAY[
     'app.ack_settings_stamp()', 'app.ack_requests_stamp()', 'app.ack_receipts_limit()', 'app.ack_receipt_open(uuid, uuid, uuid)',
-    'app.ack_status_raw(uuid[])'];
+    'app.ack_status_raw(uuid[])', 'app.ack_day_limit(text)'];
   api_may constant text[] := ARRAY[
     'app.ack_enabled()', 'app.ack_remind_after_days()', 'app.ack_mentee_ids()', 'app.ack_asks_open(uuid, uuid)', 'app.ack_is_author(uuid)',
     'app.ack_my_request_ids()', 'app.ack_mentee_request_ids()', 'app.ack_authored_request_ids()', 'app.ack_status(uuid[])',
     'app.ack_open_pairs(uuid)', 'app.ack_confirm(uuid)', 'app.ack_remind_queue(integer)', 'app.ack_remind_request(uuid)',
-    'app.ack_stop_reminder(uuid)'];
+    'app.ack_stop_reminder(uuid)', 'app.ack_reminder_mirrored(uuid)', 'app.ack_usage(integer)'];
   def record;
   holds boolean;
 BEGIN
@@ -45883,7 +45885,8 @@ BEGIN
     END LOOP;
   END LOOP;
 
-  -- Functions: the owner's five are nobody's; the API's role runs the rest; no other role runs any. Nineteen in all.
+  -- Functions: the owner's six are nobody's; the API's role runs the rest; no other role runs any. Twenty-two in all
+  -- (20270119090000 added the delivery's mark, the usage, and the one place the limits' numbers are written).
   IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE 'ack\_%') <> cardinality(owner_only || api_may) THEN
     RAISE EXCEPTION 'kvittens 374: the app schema has % ack_ functions, not the %', (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE 'ack\_%'), cardinality(owner_only || api_may);
   END IF;
@@ -46865,6 +46868,156 @@ BEGIN
   DELETE FROM "PersonProtections";
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 380: the day's use of the limits, for staff (20270119090000). What the
+-- administrator reads on the Kvittens page: the school's rows of the last day, the
+-- caller's own share, and the senders who have used most. Who is told what, and
+-- that the numbers are the rows that were written. The limits themselves (the
+-- share that refuses, KV427) are 381o's: they need more rows than the API's role
+-- may write in an hour.
+-- ---------------------------------------------------------------------------
+
+-- The usage as one text per caller, in the order the function answers.
+CREATE FUNCTION pg_temp.ku_text(p_auth text, p_senders integer DEFAULT 5) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  seen text;
+BEGIN
+  PERFORM pg_temp.kv_as(p_auth);
+  SELECT coalesce(string_agg(u.scope || coalesce(':' || u.author_name, '') || ' ' || u.used || '/' || u.cap, ', ' ORDER BY u.n), '')
+    INTO seen
+    FROM app.ack_usage(p_senders) WITH ORDINALITY u(scope, author_id, author_name, used, cap, n);
+  RETURN seen;
+END $$;
+
+BEGIN;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  PERFORM pg_temp.kv_load();
+  UPDATE "AckSettings" SET enabled = true WHERE "schoolId" = school;
+  IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true); END IF;
+
+  -- Nothing has been asked in the last day (the fixtures' own rows were made days ago): the school's limit, and the
+  -- caller's share by role, an administrator's 8 000 and a teacher's 2 000.
+  PERFORM pg_temp.kv_expect('380 FULL, nothing yet', pg_temp.ku_text(pg_temp.kv_auth(1)), 'SCHOOL 0/20000, ME 0/8000');
+  PERFORM pg_temp.kv_expect('380 M1, nothing yet', pg_temp.ku_text(pg_temp.kv_auth(6)), 'ME 0/2000');
+
+  -- The administrator asks three rows; the mentor asks two (her own pupils).
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  PERFORM pg_temp.kv_request('Ett', 'ALL', 'p1:g1,p1:g2,p2:g1');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(6));
+  PERFORM pg_temp.kv_request('Två', 'ANY', 'p1:g1,p2:g1');
+
+  -- The administrator reads the school, their own share, and who has used what: the larger sender first.
+  PERFORM pg_temp.kv_expect('380 FULL', pg_temp.ku_text(pg_temp.kv_auth(1)),
+                            'SCHOOL 5/20000, ME 3/8000, SENDER:Kvittens Full 3/8000, SENDER:Kvittens Mentor A 2/2000');
+  -- The mentor reads her own and nothing of the school or of the others: no name, no number.
+  PERFORM pg_temp.kv_expect('380 M1', pg_temp.ku_text(pg_temp.kv_auth(6)), 'ME 2/2000');
+  PERFORM pg_temp.kv_expect('380 M2, who has asked nothing', pg_temp.ku_text(pg_temp.kv_auth(7)), 'ME 0/2000');
+
+  -- Equal use: the order is the name's, in the C collation (the same on every database), then the id.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(6));
+  PERFORM pg_temp.kv_request('Tre', 'ANY', 'p4:g4');
+  PERFORM pg_temp.kv_expect('380 a tie', pg_temp.ku_text(pg_temp.kv_auth(1)),
+                            'SCHOOL 6/20000, ME 3/8000, SENDER:Kvittens Full 3/8000, SENDER:Kvittens Mentor A 3/2000');
+  -- The number of senders named is the caller's to bound, and a bound of zero names none.
+  PERFORM pg_temp.kv_expect('380 one sender', pg_temp.ku_text(pg_temp.kv_auth(1), 1), 'SCHOOL 6/20000, ME 3/8000, SENDER:Kvittens Full 3/8000');
+  PERFORM pg_temp.kv_expect('380 no senders', pg_temp.ku_text(pg_temp.kv_auth(1), 0), 'SCHOOL 6/20000, ME 3/8000');
+  -- Every administrator who reads Drift reads the same school.
+  PERFORM pg_temp.kv_expect('380 EXPEDITION', pg_temp.ku_text(pg_temp.kv_auth(3)),
+                            'SCHOOL 6/20000, ME 0/8000, SENDER:Kvittens Full 3/8000, SENDER:Kvittens Mentor A 3/2000');
+  PERFORM pg_temp.kv_expect('380 LASARE', pg_temp.ku_text(pg_temp.kv_auth(5)),
+                            'SCHOOL 6/20000, ME 0/8000, SENDER:Kvittens Full 3/8000, SENDER:Kvittens Mentor A 3/2000');
+
+  -- A guardian, a pupil and a login with no person are staff of nothing.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(21));
+  PERFORM pg_temp.kv_refuses('SELECT * FROM app.ack_usage()', 'KV403', 'a guardian reading the usage');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(11));
+  PERFORM pg_temp.kv_refuses('SELECT * FROM app.ack_usage()', 'KV403', 'a pupil reading the usage');
+  PERFORM pg_temp.kv_as('00000000-0000-4000-8000-000000000000');
+  PERFORM pg_temp.kv_refuses('SELECT * FROM app.ack_usage()', 'KV403', 'a login nobody has reading the usage');
+
+  -- The other school's administrator reads their own school's day, which is empty, and none of this one's senders.
+  PERFORM pg_temp.kv_expect('380 the other school', pg_temp.ku_text(pg_temp.kv_auth(31)), 'SCHOOL 0/20000, ME 0/8000');
+END $$;
+
+-- The huvudman's reader (20261212090000) has no Users row at the school it reads, so no person id: it reads the usage as
+-- the school's läsare does (huvudman-gets.e2e-spec.ts holds every GET a läsare reaches to that), with no share of its own
+-- used. With no school named it is staff of nothing.
+DO $$
+DECLARE
+  roller uuid;
+  lasare text;
+  reader text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
+  roller := app.current_school_id();
+  lasare := pg_temp.ku_text('00000000-0000-4000-8000-000000000115');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000260')::text, true);
+  PERFORM set_config('app.chosen_school_id', roller::text, true);
+  IF app.current_school_id() IS DISTINCT FROM roller OR app.current_user_id() IS NOT NULL OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'kvittens 380: P is not the reader at the roller school (school %, person %, role %)', app.current_school_id(), app.current_user_id(), app.current_user_role();
+  END IF;
+  reader := pg_temp.ku_text('fe000000-0000-4000-8000-000000000260');
+  PERFORM set_config('app.chosen_school_id', roller::text, true);
+  PERFORM pg_temp.kv_expect('380 the reader reads as the läsare', reader, lasare);
+  IF reader NOT LIKE 'SCHOOL %, ME 0/8000%' THEN RAISE EXCEPTION 'kvittens 380: the reader''s usage is %', reader; END IF;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM pg_temp.kv_refuses('SELECT * FROM app.ack_usage()', 'KV403', 'the reader naming no school');
+END $$;
+
+-- PostgREST's role runs none of the three new functions, and the API's role runs the usage and the mark
+-- but not the numbers (section 374 holds the full list).
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.kv_refuses('SELECT * FROM app.ack_usage()', '42501', 'PostgREST reading the usage');
+  PERFORM pg_temp.kv_refuses('SELECT app.ack_reminder_mirrored(gen_random_uuid())', '42501', 'PostgREST marking a reminder');
+  PERFORM pg_temp.kv_refuses('SELECT app.ack_day_limit(''SCHOOL'')', '42501', 'PostgREST reading the limits');
+END $$;
+SET LOCAL ROLE app_authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.kv_refuses('SELECT app.ack_day_limit(''SCHOOL'')', '42501', 'the API''s role reading the limits');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 381: the column that says a reminder's mail went. Nobody writes it but
+-- app.ack_reminder_mirrored (380o), and it is only ever on a SENT reminder.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = '"AckRequests"'::regclass AND attname = 'reminderMirroredAt'
+                    AND atttypid = 'timestamptz'::regtype AND NOT attnotnull AND NOT atthasdef) THEN
+    RAISE EXCEPTION 'kvittens 381: reminderMirroredAt is not a nullable timestamptz with no default';
+  END IF;
+  IF (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+       WHERE conrelid = '"AckRequests"'::regclass AND conname = 'AckRequests_only_a_sent_reminder_is_mirrored') IS NULL THEN
+    RAISE EXCEPTION 'kvittens 381: the column has no check that it is only on a SENT reminder';
+  END IF;
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+BEGIN
+  PERFORM pg_temp.kv_load();
+  UPDATE "AckSettings" SET enabled = true WHERE "schoolId" = app.current_school_id();
+  IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (app.current_school_id(), true); END IF;
+  PERFORM pg_temp.kv_request('Märkt av ingen', 'ANY', 'p3:g3');
+  -- No role writes the column by the table, the administrator under Drift included; the mark is the function's.
+  PERFORM pg_temp.kv_denied('UPDATE "AckRequests" SET "reminderMirroredAt" = now()', 'marking a reminder as mailed by the table');
+  -- A writer cannot set it when the request is written either: the stamp leaves the outcome empty, and the check
+  -- refuses the column on anything but a SENT reminder.
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body, "reminderMirroredAt") VALUES (%L, 'Redan märkt', 'B', now())$q$, app.current_school_id()),
+                             '23514', 'a request written with its reminder already mailed');
+END $$;
+ROLLBACK;
+
 
 -- ---------------------------------------------------------------------------
 -- Provplanering (G4, 20270127090000), sections 420-424: ett prov läggs med

@@ -195,6 +195,7 @@ describe('AckService', () => {
 
     it.each([
       ['KV429', 'ACK_TOO_MANY_REQUESTS'],
+      ['KV427', 'ACK_SENDER_DAY_LIMIT'],
       ['KV428', 'ACK_TOO_MANY_RECIPIENTS'],
     ])('answers the database’s %s with a 429 and its own code, and nothing else', async (state, code) => {
       const { tx, service } = setup();
@@ -216,6 +217,7 @@ describe('AckService', () => {
 
     it.each([
       ['ACK_TOO_MANY_REQUESTS', 'ACK_TOO_MANY_REQUESTS'],
+      ['ACK_SENDER_DAY_LIMIT', 'ACK_SENDER_DAY_LIMIT'],
       ['ACK_TOO_MANY_RECIPIENTS', 'ACK_TOO_MANY_RECIPIENTS'],
     ])('answers a model query that the trigger refused in another class of error, by the text it raised (%s)', async (text, code) => {
       const { tx, service } = setup();
@@ -259,7 +261,7 @@ describe('AckService', () => {
       expect(tx.$executeRaw).not.toHaveBeenCalled();
     });
 
-    it.each(['SENT', 'NOT_NEEDED', 'LAPSED', 'STOPPED', 'OFF'] as const)('says %s when that is how the reminder ended', async (outcome) => {
+    it.each(['NOT_NEEDED', 'LAPSED', 'STOPPED', 'OFF'] as const)('says %s when that is how the reminder ended', async (outcome) => {
       const { tx, service } = setup();
       tx['ackRequest']!['findMany']!.mockResolvedValue([
         { id: 'r-1', title: 'A', rule: 'ANY', authorName: 'M', createdAt: new Date('2026-11-02T08:00:00Z'), remindAt: new Date('2026-11-04T08:00:00Z'), reminderOutcome: outcome },
@@ -291,6 +293,30 @@ describe('AckService', () => {
     });
   });
 
+  describe('list: a reminder that went', () => {
+    const row = (reminderMirroredAt: Date | null) => ({
+      id: 'r-1', title: 'A', rule: 'ANY', authorName: 'M', createdAt: new Date('2026-11-02T08:00:00Z'), remindAt: new Date('2026-11-04T08:00:00Z'),
+      reminderOutcome: 'SENT', reminderMirroredAt,
+    });
+
+    it('says SENT only when the delivery has said the e-mail and the push were taken, and WRITTEN while it has not', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_status': [] });
+      tx['ackRequest']!['findMany']!.mockResolvedValue([row(new Date('2026-11-04T08:16:00Z'))]);
+      expect((await service.list(admin)).items[0]!.reminder).toBe('SENT');
+      tx['ackRequest']!['findMany']!.mockResolvedValue([row(null)]);
+      expect((await service.list(admin)).items[0]!.reminder).toBe('WRITTEN');
+    });
+
+    it('reads the column it needs', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_status': [] });
+      tx['ackRequest']!['findMany']!.mockResolvedValue([]);
+      await service.list(admin);
+      expect(tx['ackRequest']!['findMany']!.mock.calls[0]![0].select).toMatchObject({ reminderMirroredAt: true });
+    });
+  });
+
   describe('detail', () => {
     const request = {
       id: REQ,
@@ -303,6 +329,7 @@ describe('AckService', () => {
       remindAt: new Date('2026-11-04T08:00:00Z'),
       reminderSentAt: new Date('2026-11-04T08:15:00Z'),
       reminderOutcome: 'SENT',
+      reminderMirroredAt: new Date('2026-11-04T08:16:00Z'),
     };
     const receipt = (studentId: string, guardianId: string, ackedAt: Date | null, last = 'Ett') => ({
       studentId,
@@ -318,6 +345,14 @@ describe('AckService', () => {
       tx['ackRequest']!['findUnique']!.mockResolvedValue(null);
       await expect(service.detail(REQ, teacher)).rejects.toBeInstanceOf(NotFoundException);
       expect(tx['ackReceipt']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('says WRITTEN, with no time for the mail, while the delivery has not said the e-mail and the push were taken', async () => {
+      const { tx, service } = setup();
+      tx['ackRequest']!['findUnique']!.mockResolvedValue({ ...request, reminderMirroredAt: null });
+      tx['ackReceipt']!['findMany']!.mockResolvedValue([]);
+      raw(tx, { 'app.ack_status': [], 'app.ack_open_pairs': [] });
+      expect(await service.detail(REQ, admin)).toMatchObject({ reminder: 'WRITTEN', reminderSentAt: '2026-11-04T08:15:00.000Z', reminderMirroredAt: null, mayStopReminder: false });
     });
 
     it('says per guardian whether they confirmed, wait, or can no longer, per pupil whether it is met, and records the read', async () => {
@@ -344,6 +379,7 @@ describe('AckService', () => {
         rule: 'ALL',
         authorName: 'Mentor A',
         reminderSentAt: '2026-11-04T08:15:00.000Z',
+        reminderMirroredAt: '2026-11-04T08:16:00.000Z',
         reminder: 'SENT',
         mayStopReminder: false,
       });
@@ -558,6 +594,61 @@ describe('AckService', () => {
       expect(warn.mock.calls[0]![0]).not.toContain('r-1');
     });
 
+    describe('what the delivery says about the batch', () => {
+      /** The pass with one request due, and the listener the delivery was given for it. */
+      async function passWithListener(): Promise<{ tx: TxMock; service: AckService; settle: (delivered: boolean) => Promise<void>; warn: jest.SpyInstance }> {
+        const { tx, notifications, service } = setup();
+        const warn = jest.spyOn((service as unknown as { logger: { warn(m: string): void } }).logger, 'warn').mockImplementation(() => undefined);
+        due(tx, ['r-1'], { 'r-1': [notice('n-1', 'g-1')] });
+        await service.remind();
+        const listener = notifications.deliverCommitted.mock.calls[0]![1] as ((delivered: boolean) => void) | undefined;
+        expect(listener).toEqual(expect.any(Function));
+        tx.$executeRaw.mockClear();
+        return { tx, service, warn, settle: async (delivered) => { listener!(delivered); await new Promise((resolve) => setImmediate(resolve)); } };
+      }
+
+      it('marks the request as taken by its channels when the delivery says so, in its own transaction, and not before', async () => {
+        const { tx, settle } = await passWithListener();
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+        await settle(true);
+        expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+        const asked = tx.$executeRaw.mock.calls[0]![0] as { sql: string; values: unknown[] };
+        expect(asked.sql).toContain('app.ack_reminder_mirrored(');
+        expect(asked.values).toEqual(['r-1']);
+      });
+
+      it('marks the request it was told of, not the last one the pass worked on', async () => {
+        const { tx, notifications, service } = setup();
+        due(tx, ['r-1', 'r-2'], { 'r-1': [notice('n-1', 'g-1')], 'r-2': [notice('n-2', 'g-2')] });
+        await service.remind();
+        tx.$executeRaw.mockClear();
+        (notifications.deliverCommitted.mock.calls[0]![1] as (delivered: boolean) => void)(true);
+        await new Promise((resolve) => setImmediate(resolve));
+        expect((tx.$executeRaw.mock.calls[0]![0] as { values: unknown[] }).values).toEqual(['r-1']);
+      });
+
+      it('marks nothing, and says so without naming anyone, when a channel did not take the batch: the request stays WRITTEN', async () => {
+        const { tx, settle, warn } = await passWithListener();
+        await settle(false);
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith('A reminder was written to the inboxes but its e-mail or push was not taken by its channel');
+      });
+
+      it('does not let a mark that fails reach anyone: it is logged, and the request stays WRITTEN', async () => {
+        const { tx, settle, warn } = await passWithListener();
+        tx.$executeRaw.mockRejectedValue(sqlState('57014'));
+        await expect(settle(true)).resolves.toBeUndefined();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('stays WRITTEN [PrismaClientKnownRequestError, sqlstate=57014]'));
+      });
+
+      it('hands the delivery nothing to hear about for a request that wrote no notice', async () => {
+        const { tx, notifications, service } = setup();
+        due(tx, ['r-1'], { 'r-1': [] });
+        await service.remind();
+        expect(notifications.deliverCommitted).not.toHaveBeenCalled();
+      });
+    });
+
     it('stops at its budget and counts what it left for the next pass', async () => {
       const { tx, notifications, service } = setup();
       due(tx, ['r-1', 'r-2', 'r-3'], { 'r-1': [notice('n-1', 'g-1')] });
@@ -587,6 +678,43 @@ describe('AckService', () => {
       const boom = new Error('connection reset');
       tx.$queryRaw.mockRejectedValue(boom);
       await expect(service.remind()).rejects.toBe(boom);
+    });
+  });
+  describe('usage', () => {
+    const answer = (...rows: Array<[string, string | null, number, number]>) => rows.map(([scope, author_name, used, cap]) => ({ scope, author_name, used, cap }));
+
+    it('gives an administrator the school, their own share and the largest senders, as the database counted them', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_usage': answer(['SCHOOL', null, 15000, 20000], ['ME', null, 100, 8000], ['SENDER', 'Anna Rektor', 9000, 8000], ['SENDER', 'Bo Mentor', 1500, 2000]) });
+      expect(await service.usage(admin)).toEqual({
+        school: { used: 15000, limit: 20000 },
+        mine: { used: 100, limit: 8000 },
+        senders: [{ name: 'Anna Rektor', used: 9000, limit: 8000 }, { name: 'Bo Mentor', used: 1500, limit: 2000 }],
+      });
+      const asked = tx.$queryRaw.mock.calls[0]![0] as { sql: string; values: unknown[] };
+      expect(asked.sql).toContain('app.ack_usage(');
+      expect(asked.values).toEqual([5]);
+    });
+
+    it('says an administrator with no sender yet has none (an empty list, not a missing one)', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_usage': answer(['SCHOOL', null, 0, 20000], ['ME', null, 0, 8000]) });
+      expect(await service.usage(admin)).toMatchObject({ school: { used: 0, limit: 20000 }, senders: [] });
+    });
+
+    it('gives a teacher their own share and nothing of the school or of the others', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_usage': answer(['ME', null, 66, 2000]) });
+      expect(await service.usage(teacher)).toEqual({ school: null, mine: { used: 66, limit: 2000 }, senders: null });
+    });
+
+    it('turns the database’s refusal of a person who is no staff into a 403, and lets another failure through', async () => {
+      const { tx, service } = setup();
+      tx.$queryRaw.mockRejectedValue(sqlState('KV403'));
+      await expect(service.usage(guardian)).rejects.toBeInstanceOf(ForbiddenException);
+      const boom = new Error('connection reset');
+      tx.$queryRaw.mockRejectedValue(boom);
+      await expect(service.usage(admin)).rejects.toBe(boom);
     });
   });
 });

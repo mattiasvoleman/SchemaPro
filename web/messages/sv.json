@@ -7561,6 +7561,26 @@
       "loadFailed": "Inställningarna för kvittens kunde inte hämtas",
       "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund."
     },
+    "usage": {
+      "title": "Dygnets förbrukning",
+      "description": "Hur många kvittenser, en per vårdnadshavare och elev, som har begärts det senaste dygnet. Skolan har en gräns, och var och en som skickar har en egen andel av den.",
+      "school": "Skolan",
+      "mine": "Din andel",
+      "value": "{used, number} av {limit, number} ({percent, number, percent})",
+      "near": "Nära gränsen",
+      "reached": {
+        "school": "Gränsen är nådd: fler kan inte skickas förrän äldre rader passerat ett dygn",
+        "mine": "Din andel är nådd: du kan inte skicka fler förrän äldre rader passerat ett dygn"
+      },
+      "sendersTitle": "De som skickat mest",
+      "sendersCaption": "De som har begärt flest kvittenser det senaste dygnet",
+      "colSender": "Avsändare",
+      "colUsed": "Använt av andelen",
+      "none": "Ingen har bett om kvittens det senaste dygnet.",
+      "senderReached": "Gränsen är nådd",
+      "loadFailed": "Förbrukningen kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Ladda om sidan om en stund."
+    },
     "list": {
       "title": "Förfrågningar",
       "description": {
@@ -7581,6 +7601,7 @@
       "reminder": {
         "NONE": "Ingen",
         "SCHEDULED": "Går {date}",
+        "WRITTEN": "Lagd i inkorgen",
         "SENT": "Skickad",
         "NOT_NEEDED": "Behövs inte",
         "LAPSED": "Skickades inte, för sent",
@@ -7666,6 +7687,7 @@
       "ACK_NOT_YOUR_PUPIL": "Du kan bara be om kvittens för elever du är mentor för.",
       "ACK_NO_GUARDIANS": "Ingen av eleverna har en vårdnadshavare att fråga.",
       "ACK_TOO_MANY_REQUESTS": "Du har skickat så många förfrågningar den senaste timmen att fler inte får skickas just nu. Inget har skickats. Försök igen om en stund.",
+      "ACK_SENDER_DAY_LIMIT": "Du har bett om så många kvittenser det senaste dygnet att den här förfrågan skulle gå över din andel av dagen. Inget har skickats. Välj färre elever eller försök igen senare: din andel räknas över de senaste 24 timmarna.",
       "ACK_TOO_MANY_RECIPIENTS": "Skolan har skickat så många kvittenser i dag att den här förfrågan skulle gå över dagens gräns. Inget har skickats. Välj färre elever eller försök igen i morgon.",
       "THROTTLED": "Du skickade för många förfrågningar på kort tid. Inget har skickats. Vänta en minut och försök igen."
     },
@@ -7678,6 +7700,7 @@
       "reminderState": {
         "NONE": "Ingen påminnelse",
         "SCHEDULED": "Skickas {moment} till dem som då inte har bekräftat, också när en annan vårdnadshavare till samma elev har gjort det",
+        "WRITTEN": "Lagd i vårdnadshavarnas inkorgar {moment}. Att e-post och push gick iväg är inte bekräftat: det kan dröja några minuter, och det uteblir om tjänsten startades om eller e-postleverantören inte svarade. Påminnelsen skickas inte igen.",
         "SENT": "Skickad {moment}",
         "NOT_NEEDED": "Skickades inte: när tiden kom hade alla redan bekräftat, eller så kunde ingen längre bekräfta",
         "LAPSED": "Skickades inte: den skulle ha gått för mer än 30 dagar sedan, och en så gammal påminnelse skickas inte",
