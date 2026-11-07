@@ -3752,7 +3752,8 @@ BEGIN
   VALUES (s1, 'TEACHER', t1, extract(isodow FROM d)::integer, '10:45', '11:15', 'UNAVAILABLE', now()) RETURNING id INTO con;
   INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (s1, duty, con);
 
-  -- The other school: its own administrator, class, pupils and a sitting on the same day.
+  -- The other school: its own administrator, class, pupils and a sitting on the same day, an address and the
+  -- letter off (it is not written to).
   INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
   VALUES ('RLS Måltidskollen annan', 'rls-maltidskollen-annan', tz, now()) RETURNING id INTO s2;
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
@@ -3766,7 +3767,7 @@ BEGIN
   INSERT INTO "CalendarLunches" ("schoolId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
   VALUES (s2, ga, d, (d + time '11:30') AT TIME ZONE tz, (d + time '12:00') AT TIME ZONE tz, now());
   INSERT INTO "KitchenSettings" ("schoolId", "cutoffTime", "letterEnabled", "kitchenEmail")
-  VALUES (s2, '09:00', false, NULL);
+  VALUES (s2, '09:00', false, 'annan@example.invalid');
 END $$;
 
 -- The matrix school's row for Måltidskollen (20270123090000), so the role matrix (section 116) has a row of the

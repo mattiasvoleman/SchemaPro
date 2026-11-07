@@ -47100,6 +47100,8 @@ BEGIN
   PERFORM pg_temp.d8_expect('402 a report that ends a minute before the sitting does', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/1/1/false');
   UPDATE "AbsenceReports" SET "endTime" = '11:00' WHERE "studentId" = (SELECT id FROM "Users" WHERE email = 'md-p5@example.invalid') AND date = d0;
   PERFORM pg_temp.d8_expect('402 a report that covers the whole sitting', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/2/1/false');
+  UPDATE "AbsenceReports" SET "startTime" = '10:30' WHERE "studentId" = (SELECT id FROM "Users" WHERE email = 'md-p5@example.invalid') AND date = d0;
+  PERFORM pg_temp.d8_expect('402 a report that starts as the sitting does', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/2/1/false');
   UPDATE "AbsenceReports" SET "startTime" = '10:31' WHERE "studentId" = (SELECT id FROM "Users" WHERE email = 'md-p5@example.invalid') AND date = d0;
   PERFORM pg_temp.d8_expect('402 a report that starts a minute into the sitting does not', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/1/1/false');
 
@@ -47161,12 +47163,24 @@ BEGIN
   -- A duty that ends before D is no lunch on D; one that begins on D is.
   UPDATE "TeacherDuties" SET "validTo" = d0 - 1 WHERE id = duty;
   PERFORM pg_temp.d8_expect('402 a duty that ended', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1');
+  UPDATE "TeacherDuties" SET "validTo" = d0 WHERE id = duty;
+  PERFORM pg_temp.d8_expect('402 a duty that ends on D', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=2');
   UPDATE "TeacherDuties" SET "validTo" = NULL, "validFrom" = d0 WHERE id = duty;
   PERFORM pg_temp.d8_expect('402 a duty that begins on D', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=2');
   UPDATE "TeacherDuties" SET "validFrom" = d0 + 1 WHERE id = duty;
   PERFORM pg_temp.d8_expect('402 a duty that begins after D', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1');
-  -- A teacher who has left does not eat; with no one left the model has no staff.
   UPDATE "TeacherDuties" SET "validFrom" = NULL WHERE id = duty;
+  -- A teacher whose time lies across two sittings goes to the one with most of it, and to the earlier on a tie: with
+  -- MD7B at 11:00-11:30 the first teacher (10:45-11:15) has 15 minutes in each, the second (10:50-11:20) 10 and 20.
+  UPDATE "CalendarLunches" SET "startsAt" = (d0 + time '11:00') AT TIME ZONE 'Europe/Stockholm', "endsAt" = (d0 + time '11:30') AT TIME ZONE 'Europe/Stockholm'
+   WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'MD7B') AND date = d0;
+  PERFORM pg_temp.d8_expect('402 a tie and the most overlap', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1,11:00-11:30=1');
+  UPDATE "AvailabilityConstraints" SET "startTime" = '10:40', "endTime" = '11:10' WHERE id = con;
+  PERFORM pg_temp.d8_expect('402 the most overlap, the earlier', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=2');
+  UPDATE "AvailabilityConstraints" SET "startTime" = '10:50', "endTime" = '11:20' WHERE id = con;
+  UPDATE "CalendarLunches" SET "startsAt" = (d0 + time '10:30') AT TIME ZONE 'Europe/Stockholm', "endsAt" = (d0 + time '11:00') AT TIME ZONE 'Europe/Stockholm'
+   WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'MD7B') AND date = d0;
+  -- A teacher who has left does not eat; with no one left the model has no staff.
   UPDATE "Users" SET "isActive" = false WHERE id = t1;
   PERFORM pg_temp.d8_expect('402 a teacher who left', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1');
   UPDATE "Users" SET "isActive" = false WHERE email = 'md-t2@example.invalid';
