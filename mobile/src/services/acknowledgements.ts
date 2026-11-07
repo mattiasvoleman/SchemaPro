@@ -16,6 +16,11 @@ import type { Tone } from '../theme/tokens';
  * needs both, and neither is ever said here. The screen words the rule and
  * stops there.
  *
+ * THE LIST COMES IN PAGES, newest first (fetchMyAcks): a guardian with many
+ * messages reaches the oldest one that still waits by asking for the page
+ * after the last they have. Nothing here counts what the gateway has not sent:
+ * the messages that wait are counted among the ones in hand (waitingCount).
+ *
  * NOTHING HERE IS QUEUED. A confirmation is a statement that the person has
  * read the message now; one delivered later by a queue would say they had
  * when they had not. A phone with no network, or a request that never
@@ -50,6 +55,18 @@ export interface AckMine {
   readonly ackedAt: string | null;
 }
 
+/** A page of a list (ack-views.ts AckPage): the items, newest first, and the id to ask after for the next, older page (null: that was the last). */
+export interface AckPage<T> {
+  readonly items: readonly T[];
+  readonly next: string | null;
+}
+
+/** Which page to ask for: after the message with this id, at most this many (the gateway answers 50 and allows 100). */
+export interface AckPageQuery {
+  readonly after?: string;
+  readonly limit?: number;
+}
+
 const BASE = '/api/v1/acknowledgements';
 
 /** Newest first, as the gateway sends them: sorted here too, so the list never depends on that. */
@@ -57,23 +74,37 @@ export function newestFirst(rows: readonly AckMine[]): AckMine[] {
   return [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
 }
 
-/** How many of the messages still wait for this guardian. */
+/** How many of the messages in hand still wait for this guardian (more may wait on a page not yet asked for). */
 export function waitingCount(rows: readonly AckMine[]): number {
   return rows.filter((row) => row.ackedAt === null).length;
 }
 
+/** The query string for what is set, and nothing for what is not. */
+function queryOf(query: AckPageQuery): string {
+  const parts: string[] = [];
+  if (query.after !== undefined) parts.push(`after=${encodeURIComponent(query.after)}`);
+  if (query.limit !== undefined) parts.push(`limit=${encodeURIComponent(String(query.limit))}`);
+  return parts.length === 0 ? '' : `?${parts.join('&')}`;
+}
+
 /**
- * GET /api/v1/acknowledgements/mine. A 404 WITHOUT a code is a gateway that
- * has no such route (one from before Kvittens, or rolled back past it) and
- * has nothing to ask: an empty list, not an error on every visit. The
- * route's own refusals carry a code.
+ * GET /api/v1/acknowledgements/mine, one page: without `after` the newest
+ * messages, with it the page of older ones that follows that message. A page
+ * can hold fewer than asked (the gateway leaves out a request that concerns
+ * none of the guardian's children), and still have an older one behind it:
+ * only `next` says whether there is more. A bare array is the answer from
+ * before the route paged (capped at 100); it is read as the one page it is.
+ * A 404 WITHOUT a code is a gateway that has no such route (one from before
+ * Kvittens, or rolled back past it) and has nothing to ask: an empty page, not
+ * an error on every visit. The route's own refusals carry a code.
  */
-export async function fetchMyAcks(): Promise<AckMine[]> {
+export async function fetchMyAcks(query: AckPageQuery = {}): Promise<AckPage<AckMine>> {
   try {
-    const rows = await apiRequest<AckMine[] | undefined>(`${BASE}/mine`);
-    return newestFirst(rows ?? []);
+    const page = await apiRequest<AckMine[] | { items?: AckMine[]; next?: unknown } | undefined>(`${BASE}/mine${queryOf(query)}`);
+    if (Array.isArray(page)) return { items: newestFirst(page), next: null };
+    return { items: newestFirst(page?.items ?? []), next: typeof page?.next === 'string' ? page.next : null };
   } catch (error) {
-    if (error instanceof ApiError && error.status === 404 && !error.code) return [];
+    if (error instanceof ApiError && error.status === 404 && !error.code) return { items: [], next: null };
     throw error;
   }
 }

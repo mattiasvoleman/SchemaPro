@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
@@ -30,6 +30,11 @@ import type { NotificationRow } from '../../types';
  * reminder ACK_REMINDER, Kvittens) is a button: it opens the Meddelanden tab,
  * where the message is read and confirmed, as the push about it does. No other
  * row goes anywhere.
+ *
+ * READ AGAIN WHEN THE TAB IS SEEN. A tab stays mounted once opened, and the
+ * inbox changes without it: confirming a message in Meddelanden reads that
+ * message's notices in the database, so the rows it shows are read again
+ * whenever the tab gains focus, as well as by a pull.
  */
 export function NotificationsScreen(): React.JSX.Element {
   const { colors } = useAppTheme();
@@ -47,11 +52,13 @@ export function NotificationsScreen(): React.JSX.Element {
     setRows(userId ? await fetchNotifications(userId) : []);
   }, [userId]);
 
-  useEffect(() => {
-    void load()
-      .catch(() => undefined)
-      .finally(() => setIsLoading(false));
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      void load()
+        .catch(() => undefined)
+        .finally(() => setIsLoading(false));
+    }, [load]),
+  );
 
   const onRefresh = useCallback(async () => {
     setIsRefreshing(true);

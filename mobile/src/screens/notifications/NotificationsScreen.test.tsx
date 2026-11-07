@@ -5,7 +5,9 @@
  * the reader's language, and a guardian's row that asks them to confirm a
  * message (Kvittens: ACK_REQUESTED and its reminder ACK_REMINDER) is a button
  * that opens the Meddelanden tab, where the other rows are plain text that
- * goes nowhere. Under TZ=UTC, so the instants read as written.
+ * goes nowhere; and that the inbox is read again when the tab gains focus (a
+ * confirmation in Meddelanden reads that message's notices in the database).
+ * Under TZ=UTC, so the instants read as written.
  */
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
@@ -13,11 +15,18 @@ import { translatorFor } from '../../i18n';
 import type { NotificationRow, NotificationType } from '../../types';
 
 let mockRole: string | null = 'GUARDIAN';
+let mockFocusEffect: (() => void | (() => void)) | null = null;
 const mockPush = jest.fn();
 
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush, replace: jest.fn(), back: jest.fn() }),
+  // As a focused tab: the effect runs on mount; the test can run it again, as the tab gaining focus does.
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    mockFocusEffect = effect;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('react').useEffect(effect, [effect]);
+  },
 }));
 jest.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ authState: { isAuthenticated: true, teacherId: 'u1', role: mockRole }, isLoading: false }),
@@ -95,6 +104,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   mockRole = 'GUARDIAN';
+  mockFocusEffect = null;
   read([]);
   jest.mocked(markAllRead).mockResolvedValue(undefined);
 });
@@ -120,6 +130,20 @@ describe('NotificationsScreen', () => {
         'tis 13 okt 07:00',
       ]),
     );
+  });
+
+  it('reads the inbox again when the tab gains focus, so a notice read since is no longer marked unread', async () => {
+    read([ASKED]);
+    tree = await render();
+    expect(fetchNotifications).toHaveBeenCalledTimes(1);
+    expect(texts(tree)).toContain(t('notifications.unread', { count: 1 }));
+    read([row('n1', 'ACK_REQUESTED', ASKED.meta, '2026-10-13T08:00:00.000Z')]);
+    await act(async () => {
+      mockFocusEffect?.();
+    });
+    await settle();
+    expect(fetchNotifications).toHaveBeenCalledTimes(2);
+    expect(texts(tree)).not.toContain(t('notifications.unread', { count: 1 }));
   });
 
   it('counts the unread rows and marks them all read', async () => {

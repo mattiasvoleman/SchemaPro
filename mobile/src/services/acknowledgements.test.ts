@@ -19,7 +19,8 @@ jest.mock('./network/deviceOffline', () => ({ noNetwork: jest.fn(), deviceOfflin
 /**
  * Kvittens from the guardian's side, through the real gateway client against
  * a stubbed fetch: the request the gateway receives (URL, method, and that
- * nothing is sent but the bearer), the order of the list, and what each
+ * nothing is sent but the bearer), the page the list comes in (the query
+ * for what is asked, the cursor that is answered) and its order, and what each
  * refusal code becomes for the screen. A confirmation is never queued: with
  * the phone joined to no network no request is made at all. Supabase fails
  * the test if asked: the messages are the gateway's to answer.
@@ -59,37 +60,81 @@ beforeEach(() => {
   jest.mocked(noNetwork).mockResolvedValue(false);
 });
 
+const HEADERS = { 'X-SchemaPro-Client': 'app', Authorization: 'Bearer jwt-guardian' };
+const NEXT = '9b2f4c10-5a6d-4e83-8c17-0d3e6a9f1b52';
+
 describe('fetchMyAcks', () => {
-  it('asks the gateway for the guardian’s own messages, with nothing but the bearer', async () => {
-    fetchMock.mockResolvedValue(answer(200, [ack('a-1', '2026-11-02T08:00:00.000Z')]));
-    const rows = await fetchMyAcks();
-    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/mine`, {
-      method: 'GET',
-      headers: { 'X-SchemaPro-Client': 'app', Authorization: 'Bearer jwt-guardian' },
-    });
-    expect(rows).toEqual([ack('a-1', '2026-11-02T08:00:00.000Z')]);
+  it('asks the gateway for the guardian’s own messages, with nothing but the bearer, and no query when nothing is set', async () => {
+    fetchMock.mockResolvedValue(answer(200, { items: [ack('a-1', '2026-11-02T08:00:00.000Z')], next: null }));
+    const page = await fetchMyAcks();
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/mine`, { method: 'GET', headers: HEADERS });
+    expect(page).toEqual({ items: [ack('a-1', '2026-11-02T08:00:00.000Z')], next: null });
     expect(getSupabase).not.toHaveBeenCalled();
   });
 
-  it('puts the newest first, whatever order the gateway answers in', async () => {
-    fetchMock.mockResolvedValue(
-      answer(200, [
-        ack('old', '2026-10-01T08:00:00.000Z'),
-        ack('newest', '2026-11-04T08:00:00.000Z'),
-        ack('middle', '2026-10-20T08:00:00.000Z'),
-      ]),
-    );
-    expect((await fetchMyAcks()).map((row) => row.id)).toEqual(['newest', 'middle', 'old']);
+  it.each([
+    ['only the message to continue after', { after: NEXT }, `?after=${NEXT}`],
+    ['only how many', { limit: 25 }, '?limit=25'],
+    ['both', { after: NEXT, limit: 100 }, `?after=${NEXT}&limit=100`],
+    ['nothing, for an empty query', {}, ''],
+  ])('puts %s in the query string', async (_name, query, suffix) => {
+    fetchMock.mockResolvedValue(answer(200, { items: [], next: null }));
+    await fetchMyAcks(query);
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/mine${suffix}`);
+    expect(fetchMock.mock.calls[0][1]).toEqual({ method: 'GET', headers: HEADERS });
   });
 
-  it('reads an empty answer as no messages', async () => {
+  it('escapes a cursor that is not a plain uuid, so it cannot add a parameter of its own', async () => {
+    fetchMock.mockResolvedValue(answer(200, { items: [], next: null }));
+    await fetchMyAcks({ after: 'x&limit=100' });
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/mine?after=x%26limit%3D100`);
+  });
+
+  it('hands back the cursor the gateway answers, for the older page', async () => {
+    fetchMock.mockResolvedValue(answer(200, { items: [ack('a-1', '2026-11-02T08:00:00.000Z')], next: NEXT }));
+    await expect(fetchMyAcks()).resolves.toMatchObject({ next: NEXT });
+  });
+
+  it('keeps a page with no messages that still has an older one behind it: only the cursor says there is no more', async () => {
+    fetchMock.mockResolvedValue(answer(200, { items: [], next: NEXT }));
+    await expect(fetchMyAcks()).resolves.toEqual({ items: [], next: NEXT });
+  });
+
+  it('puts the newest first within the page, whatever order the gateway answers in', async () => {
+    fetchMock.mockResolvedValue(
+      answer(200, {
+        items: [
+          ack('old', '2026-10-01T08:00:00.000Z'),
+          ack('newest', '2026-11-04T08:00:00.000Z'),
+          ack('middle', '2026-10-20T08:00:00.000Z'),
+        ],
+        next: null,
+      }),
+    );
+    expect((await fetchMyAcks()).items.map((row) => row.id)).toEqual(['newest', 'middle', 'old']);
+  });
+
+  it('reads an answer from before the route paged, a bare array, as the one page it is', async () => {
+    fetchMock.mockResolvedValue(answer(200, [ack('old', '2026-10-01T08:00:00.000Z'), ack('new', '2026-11-04T08:00:00.000Z')]));
+    await expect(fetchMyAcks()).resolves.toEqual({
+      items: [ack('new', '2026-11-04T08:00:00.000Z'), ack('old', '2026-10-01T08:00:00.000Z')],
+      next: null,
+    });
+  });
+
+  it('reads an empty answer, or one with no cursor or a cursor that is not an id, as no messages and no more', async () => {
     fetchMock.mockResolvedValue(answer(204));
-    await expect(fetchMyAcks()).resolves.toEqual([]);
+    await expect(fetchMyAcks()).resolves.toEqual({ items: [], next: null });
+    fetchMock.mockResolvedValue(answer(200, {}));
+    await expect(fetchMyAcks()).resolves.toEqual({ items: [], next: null });
+    fetchMock.mockResolvedValue(answer(200, { items: [], next: 7 }));
+    await expect(fetchMyAcks()).resolves.toEqual({ items: [], next: null });
   });
 
   it('reads a gateway with no such route (a 404 without a code) as nothing to confirm, not as an error', async () => {
     fetchMock.mockResolvedValue(answer(404, { message: 'Cannot GET /api/v1/acknowledgements/mine' }));
-    await expect(fetchMyAcks()).resolves.toEqual([]);
+    await expect(fetchMyAcks()).resolves.toEqual({ items: [], next: null });
+    await expect(fetchMyAcks({ after: NEXT })).resolves.toEqual({ items: [], next: null });
   });
 
   it('throws a refusal that carries a code, and any other failure, as it came', async () => {

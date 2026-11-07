@@ -34,6 +34,11 @@ import { noteOf, waitingCount, type AckMine, type ConfirmOutcome } from '../../s
 //
 // A confirmation is sent live and never queued (services/acknowledgements.ts):
 // a phone with no network is told so, and the button stays.
+//
+// The list comes in pages. While the gateway has an older page the summary
+// counts only the messages in hand and says so ("Minst 2 ...", "Fler
+// meddelanden finns"), and "Visa äldre" under the last card asks for the next.
+// A page that fails says so there and keeps every card above it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function AcknowledgementsScreen(): React.JSX.Element {
@@ -68,6 +73,13 @@ export function AcknowledgementsScreen(): React.JSX.Element {
   }
 
   const waiting = waitingCount(state.items);
+  const subtitle = state.hasNextPage
+    ? waiting > 0
+      ? t('acks.subtitleWaitingMore', { count: waiting })
+      : t('acks.subtitleNoneMore')
+    : waiting > 0
+      ? t('acks.subtitleWaiting', { count: waiting })
+      : t('acks.subtitleNone');
   const failedFirst = state.problem !== null && !state.hasLoaded;
   const stale = state.stale ? noteOf(state.stale, t) : null;
 
@@ -77,9 +89,8 @@ export function AcknowledgementsScreen(): React.JSX.Element {
         <Text style={styles.headerTitle} accessibilityRole="header">
           {t('acks.title')}
         </Text>
-        <Text style={styles.headerSubtitle}>
-          {waiting > 0 ? t('acks.subtitleWaiting', { count: waiting }) : t('acks.subtitleNone')}
-        </Text>
+        <Text style={styles.headerSubtitle}>{subtitle}</Text>
+        {state.hasNextPage ? <Text style={styles.headerSubtitle}>{t('acks.moreExist')}</Text> : null}
       </View>
 
       {state.problem !== null && state.hasLoaded ? (
@@ -120,15 +131,23 @@ export function AcknowledgementsScreen(): React.JSX.Element {
             onConfirm={() => void onConfirm(item)}
           />
         )}
+        ListFooterComponent={
+          state.hasNextPage ? (
+            <ShowOlder busy={state.isFetchingNextPage} problem={state.nextPageProblem} onPress={() => void state.fetchNextPage()} />
+          ) : null
+        }
+        // A first page with nothing the guardian is asked about can still have older messages behind it: no "none" then.
         ListEmptyComponent={
-          <View style={styles.center}>
-            <Text style={styles.emptyTitle}>
-              {failedFirst ? (state.problem === 'OFFLINE' ? t('acks.offlineTitle') : t('acks.failedTitle')) : t('acks.emptyTitle')}
-            </Text>
-            <Text style={styles.emptySubtitle}>
-              {failedFirst ? (state.problem === 'OFFLINE' ? t('acks.problemOffline') : t('acks.problemFailed')) : t('acks.emptyBody')}
-            </Text>
-          </View>
+          state.hasNextPage ? null : (
+            <View style={styles.center}>
+              <Text style={styles.emptyTitle}>
+                {failedFirst ? (state.problem === 'OFFLINE' ? t('acks.offlineTitle') : t('acks.failedTitle')) : t('acks.emptyTitle')}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {failedFirst ? (state.problem === 'OFFLINE' ? t('acks.problemOffline') : t('acks.problemFailed')) : t('acks.emptyBody')}
+              </Text>
+            </View>
+          )
         }
         contentContainerStyle={[state.items.length === 0 ? styles.listEmpty : styles.list, { paddingHorizontal: gutter }]}
       />
@@ -142,6 +161,42 @@ function Note({ tone, text }: { readonly tone: Tone; readonly text: string }): R
   return (
     <View style={[styles.note, { backgroundColor: colors.toneTint[tone], borderColor: colors[tone] }]} accessibilityLiveRegion="polite">
       <Text style={[styles.noteText, { color: colors[tone] }]}>{text}</Text>
+    </View>
+  );
+}
+
+/** Under the last card while the gateway has an older page: asks for it, and after a failure says so and asks again. */
+function ShowOlder({
+  busy,
+  problem,
+  onPress,
+}: {
+  readonly busy: boolean;
+  readonly problem: 'OFFLINE' | 'FAILED' | null;
+  readonly onPress: () => void;
+}): React.JSX.Element {
+  const { colors } = useAppTheme();
+  const styles = useStyles();
+  const { t } = useI18n();
+  const failed = problem !== null;
+
+  return (
+    <View style={styles.older}>
+      {problem !== null ? (
+        <Note tone={problem === 'OFFLINE' ? 'warning' : 'danger'} text={t(problem === 'OFFLINE' ? 'acks.olderOffline' : 'acks.olderFailed')} />
+      ) : null}
+      <TouchableOpacity
+        style={[styles.olderButton, busy && styles.disabled]}
+        onPress={onPress}
+        disabled={busy}
+        accessibilityRole="button"
+        accessibilityLabel={busy ? undefined : t(failed ? 'acks.retryOlderA11y' : 'acks.showOlderA11y')}
+        accessibilityState={{ disabled: busy, busy }}
+      >
+        <Text style={[styles.olderText, { color: colors.primary }]}>
+          {busy ? t('acks.showOlderBusy') : t(failed ? 'acks.retryOlder' : 'acks.showOlder')}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -250,6 +305,20 @@ const useStyles = makeStyles((c) => ({
   confirmed: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 },
   confirmedGlyph: { fontSize: 18, fontWeight: '700' },
   confirmedText: { flexShrink: 1, fontSize: 15, fontWeight: '700' },
+  older: { marginBottom: 10 },
+  olderButton: {
+    minHeight: 44,
+    marginTop: 2,
+    backgroundColor: c.surface,
+    borderWidth: 1,
+    borderColor: c.primary,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  olderText: { fontWeight: '700', textAlign: 'center' },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: c.text, marginBottom: 8, textAlign: 'center' },
   emptySubtitle: { fontSize: 14, color: c.textMuted, textAlign: 'center', lineHeight: 22 },
 }));

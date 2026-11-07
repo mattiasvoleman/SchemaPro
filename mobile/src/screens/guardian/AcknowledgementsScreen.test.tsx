@@ -8,14 +8,16 @@
  * request is in the air; the card that turns into "Bekräftat <tid>"; an
  * offline phone told so and the button left to press again, with nothing
  * queued; a guardianship that has ended (409) or a message that is gone (404)
- * said kindly with the list read again; and what a screen reader is told.
- * Under TZ=UTC, so the instants read as written.
+ * said kindly with the list read again; the list in pages (the summary that
+ * claims no total while an older page exists, "Visa äldre" under the last card,
+ * the page that fails without taking the cards above it with it); and what a
+ * screen reader is told. Under TZ=UTC, so the instants read as written.
  */
 import React from 'react';
 import { AccessibilityInfo, AppState, Platform, RefreshControl } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 import { translatorFor } from '../../i18n';
-import type { AckMine, ConfirmOutcome } from '../../services/acknowledgements';
+import type { AckMine, AckPage, ConfirmOutcome } from '../../services/acknowledgements';
 
 let mockLocale: 'sv' | 'en' = 'sv';
 let mockFocusEffect: (() => void | (() => void)) | null = null;
@@ -143,7 +145,8 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
-const read = (rows: AckMine[]) => jest.mocked(fetchMyAcks).mockResolvedValue(rows);
+const page = (items: AckMine[], next: string | null = null): AckPage<AckMine> => ({ items, next });
+const read = (rows: AckMine[], next: string | null = null) => jest.mocked(fetchMyAcks).mockResolvedValue(page(rows, next));
 const confirmed = (at = '2026-10-13T08:00:00.000Z'): ConfirmOutcome => ({ kind: 'CONFIRMED', ackedAt: at });
 
 let tree: Tree | null = null;
@@ -305,11 +308,244 @@ describe('AcknowledgementsScreen', () => {
     });
   });
 
+  describe('the list in pages', () => {
+    const OLDER = { title: 'Beslutet om ledighet', createdAt: '2026-09-01T07:00:00.000Z' };
+    const MORE = 'Fler meddelanden finns: visa äldre';
+    const SHOW_OLDER = 'Visa äldre';
+
+    it('reads the newest page first, asks for no more, and shows no button when there is no older page', async () => {
+      read([ack('a1')]);
+      tree = await render();
+      expect(fetchMyAcks).toHaveBeenCalledTimes(1);
+      expect(fetchMyAcks).toHaveBeenCalledWith();
+      expect(hasText(tree, '1 meddelande väntar på din bekräftelse')).toBe(true);
+      expect(hasText(tree, MORE)).toBe(false);
+      expect(hasText(tree, SHOW_OLDER)).toBe(false);
+    });
+
+    it('does not claim to know the total while an older page exists: the summary counts what is in hand and says more exist', async () => {
+      read([ack('a1'), ack('a2')], 'a2');
+      tree = await render();
+      expect(hasText(tree, 'Minst 2 meddelanden väntar på din bekräftelse')).toBe(true);
+      expect(hasText(tree, MORE)).toBe(true);
+      expect(hasText(tree, '2 meddelanden väntar på din bekräftelse')).toBe(false);
+      await act(async () => tree?.unmount());
+      read([ack('a1', { ackedAt: '2026-10-13T08:00:00.000Z' })], 'a1');
+      tree = await render();
+      expect(hasText(tree, sv('acks.subtitleNoneMore'))).toBe(true);
+      expect(hasText(tree, sv('acks.subtitleNone'))).toBe(false);
+      expect(hasText(tree, MORE)).toBe(true);
+    });
+
+    it('shows "Visa äldre" under the last card, and asks for the page after the last message in hand', async () => {
+      read([ack('a1'), ack('a2', { title: 'Andra' })], 'a2');
+      tree = await render();
+      jest.mocked(fetchMyAcks).mockResolvedValueOnce(page([ack('a3', OLDER)]));
+      await press(touchable(tree, SHOW_OLDER));
+      expect(fetchMyAcks).toHaveBeenCalledTimes(2);
+      expect(fetchMyAcks).toHaveBeenLastCalledWith({ after: 'a2' });
+      const titles = texts(tree).filter((text) => ['Utflykten är på torsdag', 'Andra', 'Beslutet om ledighet'].includes(text));
+      expect(titles).toEqual(['Utflykten är på torsdag', 'Andra', 'Beslutet om ledighet']);
+      // The last page is in hand: the button and the sentence go, and the summary counts all three.
+      expect(hasText(tree, SHOW_OLDER)).toBe(false);
+      expect(hasText(tree, MORE)).toBe(false);
+      expect(hasText(tree, '3 meddelanden väntar på din bekräftelse')).toBe(true);
+    });
+
+    it('goes on asking while pages keep a cursor, and each ask is after the last page’s own', async () => {
+      read([ack('a1')], 'c1');
+      tree = await render();
+      jest.mocked(fetchMyAcks).mockResolvedValueOnce(page([ack('a2', { ...OLDER, title: 'Andra' })], 'c2'));
+      await press(touchable(tree, SHOW_OLDER));
+      jest.mocked(fetchMyAcks).mockResolvedValueOnce(page([ack('a3', { ...OLDER, title: 'Tredje' })]));
+      await press(touchable(tree, SHOW_OLDER));
+      expect(jest.mocked(fetchMyAcks).mock.calls.map(([query]) => query)).toEqual([undefined, { after: 'c1' }, { after: 'c2' }]);
+      expect(hasText(tree, 'Tredje')).toBe(true);
+      expect(hasText(tree, SHOW_OLDER)).toBe(false);
+    });
+
+    it('shows a message the gateway sends on two pages once', async () => {
+      read([ack('a1'), ack('a2', { title: 'Andra' })], 'a2');
+      tree = await render();
+      jest.mocked(fetchMyAcks).mockResolvedValueOnce(page([ack('a2', { title: 'Andra' }), ack('a3', OLDER)]));
+      await press(touchable(tree, SHOW_OLDER));
+      expect(texts(tree).filter((text) => text === 'Andra')).toHaveLength(1);
+      expect(hasText(tree, 'Beslutet om ledighet')).toBe(true);
+    });
+
+    it('closes the button and words it as busy while the page is in the air, drops a second press, and opens it again after', async () => {
+      read([ack('a1')], 'a1');
+      tree = await render();
+      const pending = deferred<AckPage<AckMine>>();
+      jest.mocked(fetchMyAcks).mockReturnValueOnce(pending.promise);
+      const button = touchable(tree, SHOW_OLDER);
+      await press(button);
+      expect(fetchMyAcks).toHaveBeenCalledTimes(2);
+      const busy = touchable(tree, sv('acks.showOlderBusy'));
+      expect(busy.props.disabled).toBe(true);
+      expect(busy.props.accessibilityState).toEqual({ disabled: true, busy: true });
+      await press(busy);
+      await act(async () => button.props.onPress());
+      expect(fetchMyAcks).toHaveBeenCalledTimes(2);
+
+      await act(async () => pending.resolve(page([ack('a2', OLDER)], 'a2')));
+      await settle();
+      const again = touchable(tree, SHOW_OLDER);
+      expect(again.props.disabled).toBe(false);
+      expect(again.props.accessibilityState).toEqual({ disabled: false, busy: false });
+    });
+
+    it('gives the button the role of a button and a name that says what it shows', async () => {
+      read([ack('a1')], 'a1');
+      tree = await render();
+      const button = touchable(tree, SHOW_OLDER);
+      expect(button.props.accessibilityRole).toBe('button');
+      expect(button.props.accessibilityLabel).toBe('Visa äldre meddelanden');
+    });
+
+    it('keeps every card and says so, in place, when the older page cannot be had (no network), and asks again from the same button', async () => {
+      read([ack('a1')], 'a1');
+      tree = await render();
+      jest.mocked(fetchMyAcks).mockRejectedValueOnce(new TypeError('Network request failed'));
+      jest.mocked(loadProblem).mockResolvedValue('OFFLINE');
+      await press(touchable(tree, SHOW_OLDER));
+      expect(hasText(tree, sv('acks.olderOffline'))).toBe(true);
+      expect(hasText(tree, 'Utflykten är på torsdag')).toBe(true);
+      expect(touchables(tree, BUTTON)).toHaveLength(1);
+      expect(hasText(tree, MORE)).toBe(true);
+      // The read of the whole list did not fail, so its own sentence is not said.
+      expect(hasText(tree, sv('acks.problemOffline'))).toBe(false);
+      expect(hasText(tree, SHOW_OLDER)).toBe(false);
+      const retry = touchable(tree, sv('acks.retryOlder'));
+      expect(retry.props.accessibilityLabel).toBe('Försök igen att hämta äldre meddelanden');
+      const note = tree.root.find((n) => isHostOf(n, 'Text') && textOf(n) === sv('acks.olderOffline'));
+      expect(liveRegionAround(note)).not.toBeNull();
+
+      jest.mocked(fetchMyAcks).mockResolvedValueOnce(page([ack('a2', OLDER)]));
+      await press(retry);
+      expect(fetchMyAcks).toHaveBeenLastCalledWith({ after: 'a1' });
+      expect(hasText(tree, sv('acks.olderOffline'))).toBe(false);
+      expect(hasText(tree, 'Beslutet om ledighet')).toBe(true);
+      expect(hasText(tree, 'Utflykten är på torsdag')).toBe(true);
+    });
+
+    it('says a page that failed otherwise as a failure, not as a missing network', async () => {
+      read([ack('a1')], 'a1');
+      tree = await render();
+      jest.mocked(fetchMyAcks).mockRejectedValueOnce(new Error('HTTP 500'));
+      await press(touchable(tree, SHOW_OLDER));
+      expect(hasText(tree, sv('acks.olderFailed'))).toBe(true);
+      expect(hasText(tree, sv('acks.olderOffline'))).toBe(false);
+      expect(hasText(tree, 'Utflykten är på torsdag')).toBe(true);
+    });
+
+    it('clears the sentence about a failed page when the whole list is read again', async () => {
+      read([ack('a1')], 'a1');
+      tree = await render();
+      jest.mocked(fetchMyAcks).mockRejectedValueOnce(new Error('HTTP 500'));
+      await press(touchable(tree, SHOW_OLDER));
+      expect(hasText(tree, sv('acks.olderFailed'))).toBe(true);
+      await act(async () => {
+        tree!.root.findByType(RefreshControl).props.onRefresh();
+      });
+      await settle();
+      expect(hasText(tree, sv('acks.olderFailed'))).toBe(false);
+      expect(hasText(tree, SHOW_OLDER)).toBe(true);
+    });
+
+    it('confirms a message that sits on an older page, lays the time over it there, and reads nothing again', async () => {
+      read([ack('a1', { ackedAt: '2026-10-13T08:00:00.000Z' })], 'a1');
+      tree = await render();
+      jest.mocked(fetchMyAcks).mockResolvedValueOnce(page([ack('a2', OLDER)]));
+      await press(touchable(tree, SHOW_OLDER));
+      await press(touchable(tree, BUTTON));
+      expect(confirmAck).toHaveBeenCalledWith('a2');
+      expect(hasText(tree, 'Bekräftat tis 13 okt 08:00')).toBe(true);
+      expect(hasText(tree, BUTTON)).toBe(false);
+      expect(hasText(tree, sv('acks.subtitleNone'))).toBe(true);
+      expect(fetchMyAcks).toHaveBeenCalledTimes(2);
+    });
+
+    it('starts over at the newest page on a pull, and on the tab gaining focus', async () => {
+      read([ack('a1')], 'a1');
+      tree = await render();
+      jest.mocked(fetchMyAcks).mockResolvedValueOnce(page([ack('a2', OLDER)]));
+      await press(touchable(tree, SHOW_OLDER));
+      expect(hasText(tree, 'Beslutet om ledighet')).toBe(true);
+      expect(hasText(tree, SHOW_OLDER)).toBe(false);
+      read([ack('a1')], 'a1');
+      await act(async () => {
+        tree!.root.findByType(RefreshControl).props.onRefresh();
+      });
+      await settle();
+      expect(fetchMyAcks).toHaveBeenLastCalledWith();
+      expect(hasText(tree, 'Beslutet om ledighet')).toBe(false);
+      expect(hasText(tree, SHOW_OLDER)).toBe(true);
+    });
+
+    it('drops an older page that was in the air when the whole list was read again', async () => {
+      read([ack('a1')], 'a1');
+      tree = await render();
+      const pending = deferred<AckPage<AckMine>>();
+      jest.mocked(fetchMyAcks).mockReturnValueOnce(pending.promise);
+      await press(touchable(tree, SHOW_OLDER));
+      read([ack('a1', { title: 'Nyläst' })], 'a1');
+      await act(async () => {
+        mockFocusEffect?.();
+      });
+      await settle();
+      await act(async () => pending.resolve(page([ack('a2', OLDER)])));
+      await settle();
+      expect(hasText(tree, 'Nyläst')).toBe(true);
+      expect(hasText(tree, 'Beslutet om ledighet')).toBe(false);
+      // The list it followed is gone, so the person can ask again from the new one.
+      expect(touchable(tree, SHOW_OLDER).props.disabled).toBe(false);
+    });
+
+    it('reads the list again from the newest page when a message on an older page has moved on (409), and keeps the sentence', async () => {
+      read([ack('a1', { ackedAt: '2026-10-13T08:00:00.000Z' })], 'a1');
+      tree = await render();
+      jest.mocked(fetchMyAcks).mockResolvedValueOnce(page([ack('a2', OLDER)]));
+      await press(touchable(tree, SHOW_OLDER));
+      jest.mocked(confirmAck).mockResolvedValueOnce({ kind: 'ENDED' });
+      read([ack('a1', { ackedAt: '2026-10-13T08:00:00.000Z' })]);
+      await press(touchable(tree, BUTTON));
+      expect(hasText(tree, sv('acks.custodyEnded'))).toBe(true);
+      expect(hasText(tree, 'Beslutet om ledighet')).toBe(false);
+      expect(fetchMyAcks).toHaveBeenLastCalledWith();
+    });
+
+    it('does not say there are no messages for a first page with none in it that has older ones behind it', async () => {
+      read([], 'p1');
+      tree = await render();
+      expect(hasText(tree, sv('acks.emptyTitle'))).toBe(false);
+      expect(hasText(tree, sv('acks.emptyBody'))).toBe(false);
+      expect(hasText(tree, MORE)).toBe(true);
+      jest.mocked(fetchMyAcks).mockResolvedValueOnce(page([ack('a1', OLDER)]));
+      await press(touchable(tree, SHOW_OLDER));
+      expect(fetchMyAcks).toHaveBeenLastCalledWith({ after: 'p1' });
+      expect(hasText(tree, 'Beslutet om ledighet')).toBe(true);
+    });
+
+    it('speaks English to an English reader', async () => {
+      mockLocale = 'en';
+      read([ack('a1')], 'a1');
+      tree = await render();
+      for (const text of ['At least 1 message is waiting for your confirmation', 'There are more messages: show older', 'Show older']) {
+        expect(texts(tree)).toContain(text);
+      }
+      jest.mocked(fetchMyAcks).mockRejectedValueOnce(new Error('HTTP 500'));
+      await press(touchable(tree, 'Show older'));
+      expect(texts(tree)).toContain('Older messages could not be fetched. Try again.');
+      expect(texts(tree)).toContain('Try again');
+    });
+  });
+
   describe('reads that overlap', () => {
     it('never lets an older answer arriving late replace a newer one', async () => {
       read([ack('a1', { title: 'Första' })]);
       tree = await render();
-      const slow = deferred<AckMine[]>();
+      const slow = deferred<AckPage<AckMine>>();
       jest.mocked(fetchMyAcks).mockReturnValueOnce(slow.promise);
       await act(async () => {
         tree!.root.findByType(RefreshControl).props.onRefresh();
@@ -320,7 +556,7 @@ describe('AcknowledgementsScreen', () => {
       });
       await settle();
       expect(hasText(tree, 'Andra')).toBe(true);
-      await act(async () => slow.resolve([ack('a1', { title: 'Första' })]));
+      await act(async () => slow.resolve(page([ack('a1', { title: 'Första' })])));
       await settle();
       expect(hasText(tree, 'Andra')).toBe(true);
       expect(hasText(tree, 'Första')).toBe(false);
@@ -438,14 +674,14 @@ describe('AcknowledgementsScreen', () => {
       read([ack('a1')]);
       tree = await render();
       // A pull whose answer is slow, and still says "not confirmed".
-      const slow = deferred<AckMine[]>();
+      const slow = deferred<AckPage<AckMine>>();
       jest.mocked(fetchMyAcks).mockReturnValueOnce(slow.promise);
       await act(async () => {
         tree!.root.findByType(RefreshControl).props.onRefresh();
       });
       await press(touchable(tree, BUTTON));
       expect(hasText(tree, 'Bekräftat tis 13 okt 08:00')).toBe(true);
-      await act(async () => slow.resolve([ack('a1')]));
+      await act(async () => slow.resolve(page([ack('a1')])));
       await settle();
       expect(hasText(tree, 'Bekräftat tis 13 okt 08:00')).toBe(true);
       expect(hasText(tree, BUTTON)).toBe(false);
