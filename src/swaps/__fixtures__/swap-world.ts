@@ -1,3 +1,4 @@
+import { CURRENT } from '../../year-rollover/projected-rosters';
 import type { SwapData } from '../swap-snapshot';
 import type { SwapLesson } from '../swap-types';
 
@@ -109,7 +110,7 @@ export function makeWorld(options: WorldOptions = {}): World {
     schoolId: SCHOOL,
     academicYearId: YEAR,
     gradeNumbering: 'NIOARIG',
-    basis: { kind: 'CURRENT' } as SwapData['basis'],
+    basis: CURRENT,
     lessons,
     posts: [],
     blocks: [],
