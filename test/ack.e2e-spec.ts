@@ -164,6 +164,7 @@ describe('/api/v1/acknowledgements (e2e)', () => {
 
     it.each([
       ['KV429', 'ACK_TOO_MANY_REQUESTS'],
+      ['KV427', 'ACK_SENDER_DAY_LIMIT'],
       ['KV428', 'ACK_TOO_MANY_RECIPIENTS'],
     ])('answers the database’s limit %s as a 429 with its code', async (state, code) => {
       harness.tx['user']!['findMany']!.mockResolvedValue([{ id: PUPIL }]);
@@ -174,6 +175,26 @@ describe('/api/v1/acknowledgements (e2e)', () => {
       const res = await http().post('/api/v1/acknowledgements').set('x-test-user', admin).send(BODY).expect(429);
       expect(res.body.code).toBe(code);
       harness.tx['ackRequest']!['createMany']!.mockReset();
+    });
+  });
+
+  describe('usage', () => {
+    it('answers an administrator the school, their own share and the largest senders; a teacher only their own share; nobody else anything', async () => {
+      harness.tx.$queryRaw.mockResolvedValue([
+        { scope: 'SCHOOL', author_name: null, used: 6, cap: 20000 },
+        { scope: 'ME', author_name: null, used: 0, cap: 8000 },
+        { scope: 'SENDER', author_name: 'Anna Rektor', used: 6, cap: 8000 },
+      ]);
+      const res = await http().get('/api/v1/acknowledgements/usage').set('x-test-user', asUser({})).expect(200);
+      expect(res.body).toEqual({ school: { used: 6, limit: 20000 }, mine: { used: 0, limit: 8000 }, senders: [{ name: 'Anna Rektor', used: 6, limit: 8000 }] });
+
+      harness.tx.$queryRaw.mockResolvedValue([{ scope: 'ME', author_name: null, used: 66, cap: 2000 }]);
+      const teacher = await http().get('/api/v1/acknowledgements/usage').set('x-test-user', asUser({ role: 'TEACHER' as never })).expect(200);
+      expect(teacher.body).toEqual({ school: null, mine: { used: 66, limit: 2000 }, senders: null });
+
+      for (const role of ['GUARDIAN', 'STUDENT']) {
+        await http().get('/api/v1/acknowledgements/usage').set('x-test-user', asUser({ role: role as never })).expect(403);
+      }
     });
   });
 

@@ -7,6 +7,7 @@ import type {
   AckPupilChoice,
   AckPupilRow,
   AckSettings,
+  AckUsage,
 } from "@/lib/ack";
 
 /*
@@ -69,6 +70,7 @@ export const detail = (over: Partial<AckDetail> = {}): AckDetail => ({
   createdAt: "2026-11-05T08:30:00.000Z",
   remindAt: "2026-11-07T08:30:00.000Z",
   reminderSentAt: null,
+  reminderMirroredAt: null,
   reminder: "SCHEDULED",
   mayStopReminder: false,
   pupils: [
@@ -88,5 +90,17 @@ export const mineItem = (over: Partial<AckMine> = {}): AckMine => ({
   createdAt: "2026-11-05T08:30:00.000Z",
   children: [{ id: "p-ada", name: "Ada Berg" }],
   ackedAt: null,
+  ...over,
+});
+
+/** The day's use as an administrator reads it: the school, their own share and the senders, the largest first. */
+export const usage = (over: Partial<AckUsage> = {}): AckUsage => ({
+  school: { used: 6340, limit: 20000 },
+  mine: { used: 3000, limit: 8000 },
+  senders: [
+    { name: "Rektor Rut", used: 3000, limit: 8000 },
+    { name: "Anna Lind", used: 1500, limit: 2000 },
+    { name: "Bo Berg", used: 1840, limit: 2000 },
+  ].sort((a, b) => b.used - a.used),
   ...over,
 });
