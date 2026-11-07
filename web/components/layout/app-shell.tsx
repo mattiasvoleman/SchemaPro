@@ -2,10 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { CalendarRange, Menu, X, type LucideIcon } from "lucide-react";
+import { CalendarRange, Menu, X } from "lucide-react";
 import { Link, usePathname } from "@/i18n/navigation";
-import { GUARDIAN_NAV, STUDENT_NAV, TEACHER_NAV } from "@/components/profile-context";
-import { ADMIN_NAV } from "@/components/layout/admin-nav";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@/lib/types";
 import { LocaleSwitcher } from "./locale-switcher";
@@ -14,10 +12,13 @@ import { NotificationBell } from "@/components/layout/notification-bell";
 import { UserMenu } from "./user-menu";
 import { Button } from "@/components/ui/button";
 
+// role-nav.tsx derives the rows its files write (NavEntry, NavGroup) from these
+// two, so a field added here is a field of every row there.
 export interface NavItem {
   labelKey: string;
   href: string;
-  icon: LucideIcon;
+  /** The glyph as an element: the server draws it (role-nav.tsx), so no icon's code is here. */
+  icon: React.ReactNode;
 }
 
 export interface NavSection {
@@ -26,32 +27,24 @@ export interface NavSection {
 }
 
 /*
- * The teacher's, the guardian's and the pupil's menus are in
- * profile-context.tsx, beside the profile they are for, and the admin's in
- * admin-nav.ts. Not here: every signed-in route loads one chunk with this
- * module, AppProviders and ProfileProvider, and on main this module's part of
- * it sat just under Turbopack's minChunkSize: a few bytes of code more split
- * the chunk in two, +0.7 to 0.9 KB on every route. Moving the three menus out
- * left it some 800 B under (Kalenderprenumeration, 2026-10-16); the admin's
- * followed with Frånvarobevakning (2026-11-05), whose menu item then cost
- * this module nothing. A menu item for any role goes in those files.
+ * The menu is not in this module or in any client module: the (app) layout
+ * picks the role's (role-nav.tsx) on the server and passes it in. Every
+ * signed-in route loads one chunk with this module, AppProviders and
+ * ProfileProvider, and on main this module's part of it sat just under
+ * Turbopack's minChunkSize: a few bytes of code more split the chunk in two,
+ * +0.7 to 0.9 KB on every route. The menus were code in that chunk, for all
+ * four roles on every route, and a menu row for any one of them cost
+ * /admin/requirements about 19 B of the 45 it had left. A menu item for any
+ * role goes in components/layout/*-nav.ts and adds nothing to the JavaScript
+ * bundle. It is payload in every full page load instead (the menu is in the
+ * layout's HTML and RSC), which the bundle gate does not see; the document
+ * gate does (e2e/document-size.spec.ts).
  */
-
-function navForRole(role: UserRole): NavSection[] {
-  switch (role) {
-    case "SCHOOL_ADMIN":
-      return ADMIN_NAV;
-    case "TEACHER":
-      return TEACHER_NAV;
-    case "STUDENT":
-      return STUDENT_NAV;
-    case "GUARDIAN":
-      return GUARDIAN_NAV;
-  }
-}
 
 interface AppShellProps {
   role: UserRole;
+  /** The role's menu (role-nav.tsx navForRole), built by the (app) layout. */
+  sections: NavSection[];
   userName: string;
   email: string;
   /**
@@ -66,13 +59,12 @@ interface AppShellProps {
 /** The drawer's focusable elements, for the Tab wrap. */
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function AppShell({ role, userName, email, schoolName, children }: AppShellProps) {
+export function AppShell({ role, sections, userName, email, schoolName, children }: AppShellProps) {
   const t = useTranslations("nav");
   const tCommon = useTranslations("common");
   const tStatement = useTranslations("accessibilityStatement");
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const sections = navForRole(role);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -162,7 +154,7 @@ export function AppShell({ role, userName, email, schoolName, children }: AppShe
                             : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
                         )}
                       >
-                        <item.icon className="size-4 shrink-0" aria-hidden="true" />
+                        {item.icon}
                         {t(item.labelKey)}
                       </Link>
                     </li>
