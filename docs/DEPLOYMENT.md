@@ -143,9 +143,13 @@ behind. A file that builds an index with `CREATE INDEX CONCURRENTLY` cannot run
 in a transaction, so Prisma runs it one statement at a time, and a build that
 is cancelled (a statement timeout, `pg_cancel_backend`, a dropped connection)
 or that fails (a unique index over rows that are not unique) leaves its index in
-the catalogue **invalid**: not used by the planner, still kept up to date by
-every write, and holding its name. The rerun then stops at the same statement
-with
+the catalogue **invalid**: not used by the planner, and holding its name. Whether
+writes still maintain it depends on where the build stopped. One that failed in
+its second phase (`indisready = true`) is kept up to date by every write; one
+that failed in the first, as a unique index over duplicates does, is not
+(`indisready = false`), so it is no index to rely on in either case, and the
+query in step 1 below shows both flags. The rerun then stops at the same
+statement with
 
 ```
 ERROR: relation "<index>" already exists   (SQLSTATE 42P07)
@@ -1928,13 +1932,52 @@ Walk the full product loop once, in order:
   by the migrations). The behaviour is not tried against production (it would
   delete): it is the adapter probe's `tk4` and RLS sections 385-387, on every
   run of the Database job.
-  **Rolling back** is `DROP TRIGGER "AcademicYears_a_lessons_go_first" ON
-  "AcademicYears"; DROP FUNCTION app.academic_year_lessons_go_first();` and
-  `prisma migrate resolve --rolled-back
-  20270120090000_ett_lasars_lektioner_tas_bort_forst_pa_varje_vag`; do it
-  together with rolling back the API, or the API before it is the one that
-  deletes the lessons itself. What it changes: removing a year goes back to the
-  keys' order and files the extra tombstones; nothing is lost.
+  **Rolling back** is two steps, as the owner on the direct connection, and the
+  API goes back with them: the API before this release deletes a year's lessons
+  itself (it has since #272), so with the trigger gone it still files the right
+  tombstones; the API of this release leaves the lessons to the trigger, and
+  with the trigger gone and that API left in place a removal files the extra
+  tombstones again.
+  (1) Drop the two objects behind a lock guard. `DROP TRIGGER` takes ACCESS
+  EXCLUSIVE on `AcademicYears`, and a drop that waits for one open reader makes
+  every later read of the table, and every foreign-key check against it, queue
+  behind it (measured: a plain `SELECT count(*)` waited 5.2 s behind a bare
+  `DROP TRIGGER` that waited for one open reader). With the guard it gives up
+  after a second with `55P03`, drops nothing, and the reader that came meanwhile
+  waited 0.9 s; rerun it until it goes through (measured: 251 ms once the reader
+  was gone):
+
+  ```sql
+  BEGIN;
+  SET LOCAL lock_timeout = '1s';
+  DROP TRIGGER "AcademicYears_a_lessons_go_first" ON "AcademicYears";
+  DROP FUNCTION app.academic_year_lessons_go_first();
+  COMMIT;
+  ```
+
+  (2) Decide what Prisma is told, because the migration is still recorded as
+  applied after the drop, and `prisma migrate resolve --rolled-back` is not the
+  command for it: it refuses an applied migration (`P3012`, "not in a failed
+  state"; it is for one that stopped, as in the ceiling above and §2.1).
+  - To be able to bring the trigger back with `prisma migrate deploy`, delete
+    the record, deliberately, as the owner and after the drop, never before it
+    (the file creates the function and the trigger without `IF NOT EXISTS` and
+    stops at objects that are still there):
+    `DELETE FROM _prisma_migrations WHERE migration_name =
+    '20270120090000_ett_lasars_lektioner_tas_bort_forst_pa_varje_vag';` removes
+    one row; `prisma migrate status` then lists the migration as pending and
+    `migrate deploy` applies the file again from its first statement (tried:
+    the function with `md5(prosrc)` `3dbf3391e7a8ec8649239b9a02054ebb`, the
+    trigger `11`, `O`, and the checksum above come back). That is the way to
+    put the API of this release back.
+  - Or leave the record. Then the database stays rolled back: a later
+    `migrate deploy` says there is nothing to apply and does not recreate the
+    trigger (tried), so the API of this release must not be put back until the
+    file has been applied by hand (`psql -f`, as the owner).
+
+  What it changes: with the API before this release nothing; with the API of
+  this release left in place, removing a year goes back to the keys' order and
+  files the extra tombstones; nothing is lost either way.
   **The composite keys' ON UPDATE:** the same release adds RLS section 388,
   which fails the next composite key that holds a school and follows its parent
   when the parent is updated (`ON UPDATE CASCADE`; make it `NO ACTION`, as
