@@ -52,6 +52,9 @@
         - text: Ändringar i schemat
         - switch "Ändringar i schemat" [checked]
       - listitem:
+        - text: Elever som byter lektion för en dag
+        - switch "Elever som byter lektion för en dag" [checked]
+      - listitem:
         - text: Beslut om ledighet
         - switch "Beslut om ledighet" [checked]
       - listitem:
