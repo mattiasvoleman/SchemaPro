@@ -59,6 +59,7 @@ import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module';
 import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.module';
 import { AckModule } from '../../src/ack/ack.module';
+import { LessonMovesModule } from '../../src/lesson-moves/lesson-moves.module';
 import { SchoolDayModule } from '../../src/school-day/school-day.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { SchoolExportModule } from '../../src/school-export/school-export.module';
@@ -191,6 +192,8 @@ export const FEATURE_MODULES = [
   // Rapporteringsgrad's job is @Optional on the runner too, and the setup turns it off.
   ReportingRateModule,
   AckModule,
+  // Elevens lektion för dagen: moves a pupil to a parallel lesson for a day; no timer.
+  LessonMovesModule,
   SchoolDayModule,
   SignInModule,
   HuvudmanModule,
