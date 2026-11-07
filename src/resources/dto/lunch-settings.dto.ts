@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   Matches,
@@ -7,8 +8,25 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
+import type { PlacementRuleMode } from '@prisma/client';
+import {
+  PLACE_LIMIT_MAX,
+  PLACE_LIMIT_MIN,
+  PLACEMENT_RULE_MODES,
+  PLACEMENT_WEIGHT_MAX,
+  PLACEMENT_WEIGHT_MIN,
+} from '../placement-rules';
 
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
+
+/**
+ * Placeringsregler (20270126090000): the messages name the field, as the
+ * other bounds of the Skolregler do, and the bounds are the database's own
+ * (LunchSettings_placement…Weight_check and …PerDay_check).
+ */
+export const PLACEMENT_MODE_MESSAGE = 'Läget anges som OFF (av), SOFT (mjuk) eller HARD (hård).';
+export const PLACEMENT_WEIGHT_MESSAGE = `Vikten är ett heltal ${PLACEMENT_WEIGHT_MIN}–${PLACEMENT_WEIGHT_MAX}.`;
+export const PLACE_LIMIT_MESSAGE = `Gränsen är ett heltal ${PLACE_LIMIT_MIN}–${PLACE_LIMIT_MAX} (1 är en enda sal eller byggnad per dag, aldrig byte), eller null för ingen gräns.`;
 
 /**
  * The school's lunch rules and the size of its dining hall.
@@ -88,4 +106,81 @@ export class UpsertLunchSettingsDto {
   @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   generatorKeepsConsecutiveTeaching?: boolean;
+
+  /**
+   * Placeringsregler (20270126090000), regel 1: a subject marked not first /
+   * not last in a class's day (Subject.notFirstInDay, notLastInDay) is kept
+   * off the first / the last lesson of the day. OFF until the school turns it
+   * on; SOFT pays `placementEdgeWeight` per lesson at an end it should not be
+   * at, HARD forbids it. Every field of the three rules is optional on
+   * exactly the switches' terms above: absent leaves the stored value as it
+   * is, and null is refused with the 400 that names the field (the columns are
+   * NOT NULL), except a limit, where null clears it.
+   */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(PLACEMENT_RULE_MODES, { message: PLACEMENT_MODE_MESSAGE })
+  placementEdgeMode?: PlacementRuleMode;
+
+  /** SOFT only. Kept while the mode is OFF or HARD, so a switch back does not lose the figure. */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt({ message: PLACEMENT_WEIGHT_MESSAGE })
+  @Min(PLACEMENT_WEIGHT_MIN, { message: PLACEMENT_WEIGHT_MESSAGE })
+  @Max(PLACEMENT_WEIGHT_MAX, { message: PLACEMENT_WEIGHT_MESSAGE })
+  placementEdgeWeight?: number;
+
+  /**
+   * Regel 2: at most this many different room groups and buildings in a day,
+   * for a class and for a teacher apart. SOFT or HARD needs at least one of
+   * the four limits (the service judges the row as it would be, and answers
+   * PLACEMENT_PLACES_NEEDS_A_LIMIT).
+   */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(PLACEMENT_RULE_MODES, { message: PLACEMENT_MODE_MESSAGE })
+  placementPlacesMode?: PlacementRuleMode;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt({ message: PLACEMENT_WEIGHT_MESSAGE })
+  @Min(PLACEMENT_WEIGHT_MIN, { message: PLACEMENT_WEIGHT_MESSAGE })
+  @Max(PLACEMENT_WEIGHT_MAX, { message: PLACEMENT_WEIGHT_MESSAGE })
+  placementPlacesWeight?: number;
+
+  /** Most different room groups a class is in during a day (1 is a single one). Null: no limit; absent: as stored. */
+  @IsOptional()
+  @IsInt({ message: PLACE_LIMIT_MESSAGE })
+  @Min(PLACE_LIMIT_MIN, { message: PLACE_LIMIT_MESSAGE })
+  @Max(PLACE_LIMIT_MAX, { message: PLACE_LIMIT_MESSAGE })
+  maxClassRoomsPerDay?: number | null;
+
+  @IsOptional()
+  @IsInt({ message: PLACE_LIMIT_MESSAGE })
+  @Min(PLACE_LIMIT_MIN, { message: PLACE_LIMIT_MESSAGE })
+  @Max(PLACE_LIMIT_MAX, { message: PLACE_LIMIT_MESSAGE })
+  maxTeacherRoomsPerDay?: number | null;
+
+  @IsOptional()
+  @IsInt({ message: PLACE_LIMIT_MESSAGE })
+  @Min(PLACE_LIMIT_MIN, { message: PLACE_LIMIT_MESSAGE })
+  @Max(PLACE_LIMIT_MAX, { message: PLACE_LIMIT_MESSAGE })
+  maxClassBuildingsPerDay?: number | null;
+
+  @IsOptional()
+  @IsInt({ message: PLACE_LIMIT_MESSAGE })
+  @Min(PLACE_LIMIT_MIN, { message: PLACE_LIMIT_MESSAGE })
+  @Max(PLACE_LIMIT_MAX, { message: PLACE_LIMIT_MESSAGE })
+  maxTeacherBuildingsPerDay?: number | null;
+
+  /**
+   * Regel 3: the pupils of the lessons in a room marked canBeShared, at one
+   * time, fit its capacity together. SOFT pays `placementSharedWeight` per
+   * pupil over it at the room's worst moment, HARD forbids it.
+   */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(PLACEMENT_RULE_MODES, { message: PLACEMENT_MODE_MESSAGE })
+  placementSharedMode?: PlacementRuleMode;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt({ message: PLACEMENT_WEIGHT_MESSAGE })
+  @Min(PLACEMENT_WEIGHT_MIN, { message: PLACEMENT_WEIGHT_MESSAGE })
+  @Max(PLACEMENT_WEIGHT_MAX, { message: PLACEMENT_WEIGHT_MESSAGE })
+  placementSharedWeight?: number;
 }

@@ -68,6 +68,7 @@ export const BASIS_PAYLOAD_FIELDS = [
   'groups',
   'lunchPlacements',
   'lunchServings',
+  'placementRules',
   'previousLessons',
   'pupilGaps',
   'rasts',
@@ -144,6 +145,7 @@ export type BasisPayload = Pick<
   | 'groupConflicts'
   | 'siteTravelTimes'
   | 'pupilGaps'
+  | 'placementRules'
 >;
 
 /**
@@ -331,6 +333,10 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
         id: realOf(room.id),
         type: realOrNull(room.type),
         ...(room.siteId !== undefined ? { siteId: realOf(room.siteId) } : {}),
+        // Placeringsregler: the building is a token minted per request and
+        // mapped back (buildingAnonMap), so two reads of an unchanged school
+        // agree. Only on a room sent with one; `shareable` rides the spread.
+        ...(room.building !== undefined ? { building: realOf(room.building) } : {}),
       })),
       // Restid i generatorn: the walks, with the rooms' sites above, in the
       // rooms' part. The key is sent only when the school turned the walk on
@@ -393,6 +399,29 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
       // Elevernas håltimmar: the switch, as the walk's is, present only when
       // the cohorts were sent. Their content is the rosters' part's.
       ...(payload.pupilGaps !== undefined ? { keepsPupilGapsDown: true } : {}),
+      // Placeringsregler: the rules the school turned on, the subjects of rule
+      // 1 in real ids. A rule turned on, off or changed after a run makes that
+      // run stale, which is the truth: it was solved under other rules. Present
+      // only when the key was sent, so every other school's part hashes as
+      // before and its batches stay fresh across the release that added it.
+      ...(payload.placementRules !== undefined
+        ? {
+            placementRules: {
+              ...payload.placementRules,
+              ...(payload.placementRules.subjectEdges !== undefined
+                ? {
+                    subjectEdges: {
+                      ...payload.placementRules.subjectEdges,
+                      subjects: payload.placementRules.subjectEdges.subjects.map((row) => ({
+                        ...row,
+                        subjectId: realOf(row.subjectId),
+                      })),
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
       storedRules: source.storedRules,
     },
     rosters: {
@@ -408,6 +437,16 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
             lockedPupils: payload.fixedLessons
               .filter((lesson) => lesson.pupilGroupIds !== undefined)
               .map((lesson) => ({ ...fixedLessonContent(lesson, realOf), pupilGroupIds: lesson.pupilGroupIds!.map(realOf) })),
+          }
+        : {}),
+      // Placeringsregler: how many pupils sit a lock in a shared room, which
+      // the room's capacity is held against. Beside the lock it is of; only
+      // when a lock carries one, so every other school's part hashes as before.
+      ...(payload.fixedLessons.some((lesson) => lesson.studentCount !== undefined)
+        ? {
+            lockedStudentCounts: payload.fixedLessons
+              .filter((lesson) => lesson.studentCount !== undefined)
+              .map((lesson) => ({ ...fixedLessonContent(lesson, realOf), studentCount: lesson.studentCount })),
           }
         : {}),
       // Elevernas håltimmar: the pupils' cohorts, in real ids (a lock by its

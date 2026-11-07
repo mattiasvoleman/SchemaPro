@@ -103,6 +103,14 @@ import { unkeptConsecutiveWishes, type ConsecutiveWish } from './consecutive-wis
 import { TRAVEL_TEACHERS_CODE } from './stored-conflicts';
 import { holdMessage, readOtherSchoolHolds, HOLD_CODES, type OtherSchoolHold } from './other-school-holds';
 import { pupilGapsOf } from './pupil-cohorts';
+import {
+  MAX_EDGE_SUBJECTS,
+  PLACEMENT_SETTINGS_SELECT,
+  limitsBuildings,
+  placementModesOf,
+  placementRulesOf,
+  roomPlacementOf,
+} from './placement-rules';
 import type {
   AiEngineConflictAnalysis,
   AiEngineLesson,
@@ -125,6 +133,7 @@ import type {
   AnonymousSiteTravelTime,
   AnonymousTeacherWorkRule,
   AnonymousPupilGaps,
+  AnonymousPlacementRules,
   ConstraintKind,
   DayOfWeek,
   ObjectiveWeights,
@@ -1411,6 +1420,9 @@ export class OptimizationProxyService {
       ...(data.siteTravelTimes.length > 0 ? { siteTravelTimes: data.siteTravelTimes } : {}),
       // Elevernas håltimmar: only when the school turned it on and has pupils.
       ...(data.pupilGaps ? { pupilGaps: data.pupilGaps } : {}),
+      // Placeringsregler: only when the school turned a rule on and it has
+      // something to apply to; the rooms and locks then carry their part.
+      ...(data.placementRules ? { placementRules: data.placementRules } : {}),
     };
 
     // Over the payload turned back to real ids — the teacher's and the
@@ -1431,6 +1443,7 @@ export class OptimizationProxyService {
           data.blockAnonMap,
           data.dayLimitAnonMap,
           data.siteAnonMap,
+          data.buildingAnonMap,
           data.fixedIdByLesson,
         ],
         storedRules: data.storedRules,
@@ -2042,6 +2055,10 @@ export class OptimizationProxyService {
     siteTravelTimes: AnonymousSiteTravelTime[];
     /** Elevernas håltimmar: the pupils' cohorts, null unless the school turned it on. */
     pupilGaps: AnonymousPupilGaps | null;
+    /** Placeringsregler: the rules the school turned on, undefined while none is on or has anything to apply to. */
+    placementRules: AnonymousPlacementRules | undefined;
+    /** The buildings the rooms name, real name -> token; empty unless a building limit was sent. Nothing in an answer names one. */
+    buildingAnonMap: Map<string, string>;
     /** A lock's payload id by its own: the cohorts name locks by it. */
     fixedIdByLesson: Map<string, string>;
     /** The sites the walks and the rooms name. Nothing in an answer names one. */
@@ -2968,6 +2985,11 @@ export class OptimizationProxyService {
         maxGradeLevel: true,
         // Restid i generatorn: sent only when the walk is on, below.
         siteId: true,
+        // Placeringsregler: the building (a token, only when a school limits
+        // buildings a day holds) and the shared mark (only while rule 3 is on),
+        // both below.
+        building: true,
+        canBeShared: true,
         // Same reason as the subject's name above: for the way back, never
         // for the engine.
         name: true,
@@ -3002,6 +3024,7 @@ export class OptimizationProxyService {
         generatorKeepsTravelTime: true,
         generatorKeepsPupilGapsDown: true,
         generatorKeepsConsecutiveTeaching: true,
+        ...PLACEMENT_SETTINGS_SELECT,
       },
     });
     const storedRules: ScheduleRules | null = !lunchSettings
@@ -3068,6 +3091,18 @@ export class OptimizationProxyService {
     }));
 
 
+    /*
+     * Placeringsregler: which rules are on, and what each room says of them.
+     * The building of a room is an opaque token (one per distinct name, per
+     * request; the school's own words never leave) and is sent only by a
+     * school that limits the buildings a day holds, and only on a room that has one:
+     * no building is itself a value, the main house, told by the key's
+     * absence. A room is `shareable` only while rule 3 is on, when the room is
+     * marked and has a capacity. All off, nothing is added to any room.
+     */
+    const placementModes = placementModesOf(lunchSettings);
+    const buildingAnonMap = new Map<string, string>();
+    const roomsOn = { buildings: limitsBuildings(lunchSettings), shared: placementModes.shared !== null };
     const rooms: AnonymousRoom[] = rawRooms.map((r) => ({
       id: anonId(roomAnonMap, r.id),
       capacity: r.capacity,
@@ -3077,7 +3112,13 @@ export class OptimizationProxyService {
       ...(siteTravelTimes.length > 0 && r.siteId !== null
         ? { siteId: anonId(siteAnonMap, r.siteId) }
         : {}),
+      ...roomPlacementOf(r, roomsOn, (building) => anonId(buildingAnonMap, building)),
     }));
+    const shareableRoomIds = new Set(
+      rawRooms
+        .filter((r) => roomPlacementOf(r, { buildings: false, shared: roomsOn.shared }, () => '').shareable === true)
+        .map((r) => r.id),
+    );
 
     const roomPreferences: AnonymousRoomPreference[] = rawPreferences.map((p) => {
       // Only rooms the payload actually carries: one no longer scheduled points
@@ -3606,6 +3647,57 @@ export class OptimizationProxyService {
         })
       : null;
 
+    /*
+     * Placeringsregler. Rule 1 names the subjects the school marked, by the
+     * payload's own subject ids: a subject no sent requirement carries is no
+     * rule (the engine would meet an id it has no lesson for), so only marks
+     * on subjects of the week are read, and only while rule 1 is on. Rule 3
+     * reads the locks too: a lock in a shareable room takes SEATS and not the
+     * room, so it says how many pupils sit it, each counted once whatever
+     * groups and named pupils it holds (roomNeedsOf, the count the room
+     * eligibility uses for a requirement). Rule 2 reads nothing more.
+     */
+    const subjectsSent = new Set(requirements.map((requirement) => requirement.subjectId));
+    const markedSubjects =
+      placementModes.edge !== null
+        ? await tx.subject.findMany({
+            where: { schoolId, OR: [{ notFirstInDay: true }, { notLastInDay: true }] },
+            select: { id: true, notFirstInDay: true, notLastInDay: true },
+            orderBy: { id: 'asc' },
+          })
+        : [];
+    const placementRules = placementRulesOf({
+      settings: lunchSettings,
+      markedSubjects,
+      subjectId: (realId) => {
+        const id = subjectAnonMap.get(realId);
+        return id !== undefined && subjectsSent.has(id) ? id : undefined;
+      },
+      anyShareableRoom: shareableRoomIds.size > 0,
+    });
+    if (markedSubjects.length > MAX_EDGE_SUBJECTS) {
+      this.logger.warn(
+        `${markedSubjects.length} subjects are marked for the first/last-lesson rule; the engine takes ${MAX_EDGE_SUBJECTS}, the rest are left out [academicYearId=${academicYearId}].`,
+      );
+    }
+    const fixedLessonsSent: AnonymousFixedLesson[] =
+      placementRules?.sharedRooms !== undefined
+        ? fixedLessons.map((fixed, index) => {
+            const lesson = preservedLessons[index]!;
+            if (lesson.roomId === null || !shareableRoomIds.has(lesson.roomId)) return fixed;
+            const { studentGroupSize } = roomNeedsOf(
+              rosters,
+              {
+                groupIds: [lesson.studentGroupId, ...lesson.extraGroups.map((entry) => entry.studentGroupId)],
+                studentIds: (lesson.participants ?? []).map((entry) => entry.studentId),
+              },
+              { requiredRoomTypeId: null },
+              numbering,
+            );
+            return { ...fixed, studentCount: Math.min(1000, studentGroupSize) };
+          })
+        : fixedLessons;
+
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
     // reached the payload (no requirement and no fixed lesson references them)
@@ -3651,12 +3743,14 @@ export class OptimizationProxyService {
       roomPreferences,
       teacherWorkRules,
       teacherDayLimits,
-      fixedLessons,
+      fixedLessons: fixedLessonsSent,
       groups,
       previousLessons,
       groupConflicts,
       siteTravelTimes,
       pupilGaps,
+      placementRules,
+      buildingAnonMap,
       fixedIdByLesson,
       siteAnonMap,
       roomAnonMap,

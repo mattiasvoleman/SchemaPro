@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { of } from 'rxjs';
 import { BASIS_EXCLUDED_FIELDS, BASIS_PAYLOAD_FIELDS } from './candidate-basis';
 import { searchFor, type CallShape } from './candidate-variants';
@@ -115,11 +116,33 @@ const PUPIL_GAP_FIELDS = ['cohorts'];
 const COHORT_FIELDS = ['fixedLessonIds', 'groupIds', 'homeGroupId', 'pupils'];
 const MARGIN_FIELDS = ['fixedLessonId', 'minutesAfter', 'minutesBefore'];
 const PAYLOAD_FIELDS_WITH_PUPIL_GAPS = [...PAYLOAD_FIELDS, 'pupilGaps'].sort();
+/**
+ * Placeringsregler: the three rules a school turned on, each left out while it
+ * is off, and the key left out while none is on. The engine's
+ * `_field_names(PlacementRules)`, `(SubjectEdges)`, `(SubjectEdge)`,
+ * `(PlaceLimits)` and `(SharedRooms)`.
+ */
+const PLACEMENT_RULE_FIELDS = ['places', 'sharedRooms', 'subjectEdges'];
+const SUBJECT_EDGES_FIELDS = ['mode', 'subjects', 'weight'];
+const SUBJECT_EDGE_FIELDS = ['notFirst', 'notLast', 'subjectId'];
+const PLACE_LIMITS_FIELDS = [
+  'maxClassBuildings',
+  'maxClassRooms',
+  'maxTeacherBuildings',
+  'maxTeacherRooms',
+  'mode',
+  'weight',
+];
+const SHARED_ROOMS_FIELDS = ['mode', 'weight'];
+const PAYLOAD_FIELDS_WITH_PLACEMENT = [...PAYLOAD_FIELDS, 'placementRules'].sort();
 /** Every key a payload can carry, the conditional ones included. */
-const PAYLOAD_FIELDS_ALL = [...PAYLOAD_FIELDS, 'teacherDayLimits', 'siteTravelTimes', 'pupilGaps'].sort();
+const PAYLOAD_FIELDS_ALL = [...PAYLOAD_FIELDS, 'teacherDayLimits', 'siteTravelTimes', 'pupilGaps', 'placementRules'].sort();
 /** The generator's room: the engine's `_field_names(AnonymousRoom)` with the walk on. */
 const ROOM_FIELDS = ['capacity', 'id', 'maxGradeLevel', 'minGradeLevel', 'type'];
 const ROOM_FIELDS_WITH_SITE = [...ROOM_FIELDS, 'siteId'].sort();
+/** Placeringsregler: a room's building (a token) and its shared mark, each sent only by a school that turned its rule on. */
+const ROOM_FIELDS_WITH_BUILDING = [...ROOM_FIELDS, 'building'].sort();
+const ROOM_FIELDS_SHAREABLE = [...ROOM_FIELDS, 'shareable'].sort();
 
 /** A sitting names a span of years, so there is nothing here to anonymise. */
 const SERVING_FIELDS = [
@@ -206,6 +229,8 @@ const FIXED_LESSON_FIELDS = ['coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupI
 const FIXED_LESSON_FIELDS_REPLACED = [...FIXED_LESSON_FIELDS, 'pupilGroupIds'].sort();
 /** A/B-veckor: `recurrence` only on a lock of odd or even weeks only. */
 const FIXED_LESSON_FIELDS_ALTERNATING = [...FIXED_LESSON_FIELDS_REPLACED, 'recurrence'].sort();
+/** Placeringsregler: `studentCount` only on a lock in a room sent shareable. */
+const FIXED_LESSON_FIELDS_COUNTED = [...FIXED_LESSON_FIELDS, 'studentCount'].sort();
 
 /** No resourceId: a year range names no resource, and sending one is refused. */
 const GRADE_CONSTRAINT_FIELDS = [
@@ -799,6 +824,354 @@ describe('AI engine wire contract', () => {
       expect(gaps.fixedMargins).toEqual([{ fixedLessonId: fixedId, minutesBefore: 5, minutesAfter: 20 }]);
       expect(Object.keys(gaps.fixedMargins[0]!).sort()).toEqual(MARGIN_FIELDS);
       expect(JSON.stringify(payload)).not.toMatch(/ml-idh/);
+    });
+  });
+
+  describe('Placeringsregler', () => {
+    /** The Skolregler row as the database answers: the rules named by the test, the rest at their defaults. */
+    const schoolRules = (rules: Record<string, unknown>) => ({
+      lunchEnabled: true,
+      lunchStartTime: new Date(0),
+      lunchEndTime: new Date(0),
+      lunchMinutes: 30,
+      diningSeats: 180,
+      maxLessonsPerDayPerGroup: 7,
+      generatorKeepsTravelTime: false,
+      generatorKeepsPupilGapsDown: false,
+      generatorKeepsConsecutiveTeaching: false,
+      placementEdgeMode: 'OFF',
+      placementEdgeWeight: 250,
+      placementPlacesMode: 'OFF',
+      placementPlacesWeight: 250,
+      maxClassRoomsPerDay: null,
+      maxTeacherRoomsPerDay: null,
+      maxClassBuildingsPerDay: null,
+      maxTeacherBuildingsPerDay: null,
+      placementSharedMode: 'OFF',
+      placementSharedWeight: 250,
+      ...rules,
+    });
+    const room = (id: string, overrides: Record<string, unknown> = {}) => ({
+      id,
+      capacity: 30,
+      roomTypeId: null,
+      minGradeLevel: null,
+      maxGradeLevel: null,
+      siteId: null,
+      name: id,
+      roomType: null,
+      building: null,
+      canBeShared: false,
+      ...overrides,
+    });
+    const configure =
+      (rules: Record<string, unknown>, options: { rooms?: Array<Record<string, unknown>>; marked?: Array<Record<string, unknown>>; pupils?: boolean } = {}) =>
+      (tx: ReturnType<typeof createTxMock>) => {
+        tx['lunchSetting']!['findUnique']!.mockResolvedValue(schoolRules(rules));
+        tx['room']!['findMany']!.mockResolvedValue(options.rooms ?? [room('rm1')]);
+        tx['subject']!['findMany']!.mockResolvedValue(options.marked ?? []);
+        if (options.pupils) {
+          tx['user']!['findMany']!.mockResolvedValue([
+            { id: 'pupil-1', studentGroupId: 'g1' },
+            { id: 'pupil-2', studentGroupId: 'g1' },
+          ]);
+        }
+      };
+    /** Every id turned into its order of appearance: two requests of one school differ in nothing else. */
+    const shape = (payload: unknown): string => {
+      const seen = new Map<string, string>();
+      return JSON.stringify(payload).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
+        if (!seen.has(id)) seen.set(id, `#${seen.size}`);
+        return seen.get(id)!;
+      });
+    };
+    const sentRooms = (payload: Record<string, unknown>) => payload['rooms'] as Array<Record<string, unknown>>;
+    const rulesOf = (payload: Record<string, unknown>) => payload['placementRules'] as Record<string, Record<string, unknown>>;
+    const marks = [{ id: 's1', notFirstInDay: true, notLastInDay: false }];
+    const everythingMarked = (tx: ReturnType<typeof createTxMock>) =>
+      configure(
+        {},
+        {
+          rooms: [room('rm1', { building: 'Hus B', canBeShared: true }), room('rm2', { building: 'Hus C' })],
+          marked: marks,
+        },
+      )(tx);
+
+    it('sends a school with the defaults, however it has marked its subjects and rooms, the payload it always sent', async () => {
+      const without = await buildPayload({}, [], [], (tx) => {
+        tx['room']!['findMany']!.mockResolvedValue([room('rm1'), room('rm2')]);
+      });
+      const defaults = await buildPayload({}, [], [], everythingMarked);
+
+      // Not a key, not a field of a room: the bytes, ids aside.
+      expect(Object.keys(defaults).sort()).toEqual(PAYLOAD_FIELDS);
+      for (const sent of sentRooms(defaults)) expect(Object.keys(sent).sort()).toEqual(ROOM_FIELDS);
+      expect(shape(defaults)).toBe(shape(without));
+      expect(JSON.stringify(defaults)).not.toMatch(/placementRules|building|shareable|studentCount|Hus B/);
+      // And nothing more is asked of the database: the marks are not even read.
+      expect(lastTx['subject']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('sends a school whose row predates the columns the same payload', async () => {
+      const payload = await buildPayload({}, [], [], (tx) => {
+        tx['room']!['findMany']!.mockResolvedValue([room('rm1', { building: 'Hus B', canBeShared: true })]);
+        tx['lunchSetting']!['findUnique']!.mockResolvedValue({
+          lunchEnabled: true,
+          lunchStartTime: new Date(0),
+          lunchEndTime: new Date(0),
+          lunchMinutes: 30,
+          diningSeats: 180,
+          maxLessonsPerDayPerGroup: 7,
+        });
+      });
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+      expect(Object.keys(sentRooms(payload)[0]!).sort()).toEqual(ROOM_FIELDS);
+    });
+
+    describe('regel 1: första och sista lektionen', () => {
+      it('sends the subjects the school marked, by the payload’s own subject id, under the names the engine declares', async () => {
+        const payload = await buildPayload({}, [], [], configure({ placementEdgeMode: 'SOFT', placementEdgeWeight: 400 }, {
+          marked: [{ id: 's1', notFirstInDay: true, notLastInDay: false }],
+        }));
+        const subjectId = (payload['requirements'] as Array<Record<string, unknown>>)[0]!['subjectId'];
+
+        expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS_WITH_PLACEMENT);
+        expect(Object.keys(rulesOf(payload)).sort()).toEqual(['subjectEdges']);
+        const edges = rulesOf(payload)['subjectEdges']!;
+        expect(Object.keys(edges).sort()).toEqual(SUBJECT_EDGES_FIELDS);
+        expect(edges['mode']).toBe('SOFT');
+        expect(edges['weight']).toBe(400);
+        const rows = edges['subjects'] as Array<Record<string, unknown>>;
+        expect(Object.keys(rows[0]!).sort()).toEqual(SUBJECT_EDGE_FIELDS);
+        expect(rows).toEqual([{ subjectId, notFirst: true, notLast: false }]);
+        // The marks are read for this school's subjects that carry one, in a stable order.
+        expect(lastTx['subject']!['findMany']).toHaveBeenCalledWith({
+          where: { schoolId: expect.any(String), OR: [{ notFirstInDay: true }, { notLastInDay: true }] },
+          select: { id: true, notFirstInDay: true, notLastInDay: true },
+          orderBy: { id: 'asc' },
+        });
+        // No name and no real id crosses.
+        expect(JSON.stringify(payload)).not.toMatch(/"s1"/);
+      });
+
+      it('sends a HARD rule without a weight, whatever the school’s figure is', async () => {
+        const payload = await buildPayload({}, [], [], configure({ placementEdgeMode: 'HARD', placementEdgeWeight: 900 }, {
+          marked: [{ id: 's1', notFirstInDay: true, notLastInDay: true }],
+        }));
+        const edges = rulesOf(payload)['subjectEdges']!;
+        expect(edges['mode']).toBe('HARD');
+        expect(edges).not.toHaveProperty('weight');
+        expect((edges['subjects'] as Array<Record<string, unknown>>)[0]).toMatchObject({ notFirst: true, notLast: true });
+      });
+
+      it('leaves out a marked subject the week does not teach, and the whole rule when no marked subject is taught', async () => {
+        const some = await buildPayload({}, [], [], configure({ placementEdgeMode: 'SOFT' }, {
+          marked: [
+            { id: 's9', notFirstInDay: true, notLastInDay: false },
+            { id: 's1', notFirstInDay: false, notLastInDay: true },
+          ],
+        }));
+        expect((rulesOf(some)['subjectEdges']!['subjects'] as unknown[]).length).toBe(1);
+
+        const none = await buildPayload({}, [], [], configure({ placementEdgeMode: 'SOFT' }, {
+          marked: [{ id: 's9', notFirstInDay: true, notLastInDay: false }],
+        }));
+        // On, and nothing to apply to: the payload is the one it always was.
+        expect(Object.keys(none).sort()).toEqual(PAYLOAD_FIELDS);
+      });
+
+      it('sends no key for a rule that is on while no subject is marked, and does not leave a subject unmarked on both ends in', async () => {
+        const unmarked = await buildPayload({}, [], [], configure({ placementEdgeMode: 'HARD' }, { marked: [] }));
+        expect(Object.keys(unmarked).sort()).toEqual(PAYLOAD_FIELDS);
+        const neither = await buildPayload({}, [], [], configure({ placementEdgeMode: 'HARD' }, {
+          marked: [{ id: 's1', notFirstInDay: false, notLastInDay: false }],
+        }));
+        expect(Object.keys(neither).sort()).toEqual(PAYLOAD_FIELDS);
+      });
+
+      it('sends the engine no more subjects than it takes, and says in the log that the rest were left out', async () => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        try {
+          const many = [{ id: 's1', notFirstInDay: true, notLastInDay: false }].concat(
+            Array.from({ length: 600 }, (_, index) => ({ id: `extra-${index}`, notFirstInDay: true, notLastInDay: false })),
+          );
+          const payload = await buildPayload({}, [], [], configure({ placementEdgeMode: 'SOFT' }, { marked: many }));
+
+          // Only the subject the week teaches reaches the engine, and the log says how many were marked.
+          expect((rulesOf(payload)['subjectEdges']!['subjects'] as unknown[]).length).toBe(1);
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('601 subjects are marked'));
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      it('sends a schemaförslag candidate the same rules as Generera', async () => {
+        const payload = await buildPayload({}, [], [], configure({ placementEdgeMode: 'SOFT' }, { marked: marks }), {
+          weights: null,
+          call: { variant: 'TEACHER_GAPS', seed: 1, lead: false },
+        });
+        expect(Object.keys(payload).sort()).toEqual([...PAYLOAD_FIELDS_WITH_PLACEMENT, 'search'].sort());
+        expect(Object.keys(rulesOf(payload))).toEqual(['subjectEdges']);
+      });
+    });
+
+    describe('regel 2: högst så många olika salar och byggnader om dagen', () => {
+      it('sends only the limits the school set, under the names the engine declares, and a SOFT rule its weight', async () => {
+        const payload = await buildPayload({}, [], [], configure({
+          placementPlacesMode: 'SOFT',
+          placementPlacesWeight: 120,
+          maxClassRoomsPerDay: 2,
+          maxTeacherBuildingsPerDay: 1,
+        }));
+
+        expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS_WITH_PLACEMENT);
+        expect(Object.keys(rulesOf(payload))).toEqual(['places']);
+        const places = rulesOf(payload)['places']!;
+        // 1 is a single place a day, not an absent limit; a limit left null is not sent.
+        expect(places).toEqual({ mode: 'SOFT', weight: 120, maxClassRooms: 2, maxTeacherBuildings: 1 });
+        for (const key of Object.keys(places)) expect(PLACE_LIMITS_FIELDS).toContain(key);
+      });
+
+      it('sends all four limits to a HARD rule, and no weight', async () => {
+        const payload = await buildPayload({}, [], [], configure({
+          placementPlacesMode: 'HARD',
+          maxClassRoomsPerDay: 1,
+          maxTeacherRoomsPerDay: 4,
+          maxClassBuildingsPerDay: 1,
+          maxTeacherBuildingsPerDay: 2,
+        }));
+        const places = rulesOf(payload)['places']!;
+        expect(Object.keys(places).sort()).toEqual(PLACE_LIMITS_FIELDS.filter((key) => key !== 'weight'));
+        expect(places).toMatchObject({
+          mode: 'HARD',
+          maxClassRooms: 1,
+          maxTeacherRooms: 4,
+          maxClassBuildings: 1,
+          maxTeacherBuildings: 2,
+        });
+      });
+
+      it('sends a room’s building as a token, one per name, only when a building limit is set, and never the name', async () => {
+        const rooms = [room('rm1', { building: 'Hus B' }), room('rm2', { building: 'Hus B' }), room('rm3', { building: 'Hus C' }), room('rm4')];
+        const payload = await buildPayload({}, [], [], configure({ placementPlacesMode: 'HARD', maxClassBuildingsPerDay: 1 }, { rooms }));
+        const sent = sentRooms(payload);
+
+        expect(Object.keys(sent[0]!).sort()).toEqual(ROOM_FIELDS_WITH_BUILDING);
+        // The same building is the same token; another is another; none is no key at all (the main house).
+        expect(sent[0]!['building']).toBe(sent[1]!['building']);
+        expect(sent[2]!['building']).not.toBe(sent[0]!['building']);
+        expect(Object.keys(sent[3]!).sort()).toEqual(ROOM_FIELDS);
+        expect(JSON.stringify(payload)).not.toMatch(/Hus B|Hus C/);
+        expect(typeof sent[0]!['building']).toBe('string');
+      });
+
+      it('sends a teacher’s building limit the buildings too, and a limit on rooms alone none', async () => {
+        const rooms = [room('rm1', { building: 'Hus B' })];
+        const teacher = await buildPayload({}, [], [], configure({ placementPlacesMode: 'SOFT', maxTeacherBuildingsPerDay: 3 }, { rooms }));
+        expect(sentRooms(teacher)[0]).toHaveProperty('building');
+
+        const roomsOnly = await buildPayload({}, [], [], configure({ placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 3, maxTeacherRoomsPerDay: 3 }, { rooms }));
+        expect(Object.keys(sentRooms(roomsOnly)[0]!).sort()).toEqual(ROOM_FIELDS);
+        expect(Object.keys(roomsOnly).sort()).toEqual(PAYLOAD_FIELDS_WITH_PLACEMENT);
+      });
+
+      it('sends no building while the rule is off, although the school has limits and buildings', async () => {
+        const rooms = [room('rm1', { building: 'Hus B' })];
+        const payload = await buildPayload({}, [], [], configure({ placementPlacesMode: 'OFF', maxClassBuildingsPerDay: 1 }, { rooms }));
+        expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+        expect(Object.keys(sentRooms(payload)[0]!).sort()).toEqual(ROOM_FIELDS);
+      });
+
+      it('sends no rule that is on without a limit to hold (a row the database would not write)', async () => {
+        const payload = await buildPayload({}, [], [], configure({ placementPlacesMode: 'HARD' }));
+        expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+      });
+    });
+
+    describe('regel 3: delade salar', () => {
+      const shared = (overrides: Record<string, unknown> = {}) => ({ placementSharedMode: 'SOFT', placementSharedWeight: 60, ...overrides });
+      const lock = (overrides: Record<string, unknown> = {}) => ({
+        id: 'ml-gym',
+        subjectId: 's1',
+        studentGroupId: 'g1',
+        teacherId: null,
+        coTeacherId: null,
+        roomId: 'rm-gym',
+        dayOfWeek: 2,
+        startTime: new Date('1970-01-01T08:00:00.000Z'),
+        endTime: new Date('1970-01-01T09:00:00.000Z'),
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        extraGroups: [],
+        participants: [],
+        ...overrides,
+      });
+      const gym = room('rm-gym', { capacity: 60, canBeShared: true });
+
+      it('sends a room that is marked and has a capacity as shareable, and the rule under the names the engine declares', async () => {
+        const rooms = [gym, room('rm-plain'), room('rm-nocap', { capacity: null, canBeShared: true }), room('rm-unmarked', { capacity: 40 })];
+        const payload = await buildPayload({}, [], [], configure(shared(), { rooms }));
+        const sent = sentRooms(payload);
+
+        expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS_WITH_PLACEMENT);
+        const rule = rulesOf(payload)['sharedRooms']!;
+        expect(Object.keys(rule).sort()).toEqual(SHARED_ROOMS_FIELDS);
+        expect(rule).toEqual({ mode: 'SOFT', weight: 60 });
+        expect(Object.keys(sent[0]!).sort()).toEqual(ROOM_FIELDS_SHAREABLE);
+        expect(sent[0]!['shareable']).toBe(true);
+        // A room without a capacity has no limit to share under: it stays exclusive, as does an unmarked one.
+        for (const other of sent.slice(1)) expect(Object.keys(other).sort()).toEqual(ROOM_FIELDS);
+      });
+
+      it('sends a HARD rule without a weight', async () => {
+        const payload = await buildPayload({}, [], [], configure(shared({ placementSharedMode: 'HARD' }), { rooms: [gym] }));
+        expect(rulesOf(payload)['sharedRooms']).toEqual({ mode: 'HARD' });
+      });
+
+      it('sends nothing of the rooms while the rule is off, and no rule while no room is marked with a capacity', async () => {
+        const off = await buildPayload({}, [], [], configure({ placementSharedMode: 'OFF' }, { rooms: [gym] }));
+        expect(Object.keys(off).sort()).toEqual(PAYLOAD_FIELDS);
+        expect(Object.keys(sentRooms(off)[0]!).sort()).toEqual(ROOM_FIELDS);
+
+        const unmarked = await buildPayload({}, [], [], configure(shared(), { rooms: [room('rm1'), room('rm2', { capacity: null, canBeShared: true })] }));
+        expect(Object.keys(unmarked).sort()).toEqual(PAYLOAD_FIELDS);
+        for (const sent of sentRooms(unmarked)) expect(Object.keys(sent).sort()).toEqual(ROOM_FIELDS);
+      });
+
+      it('sends a lock in a shareable room the pupils who sit it, each counted once, groups and named pupils alike', async () => {
+        const payload = await buildPayload({}, [lock({ participants: [{ studentId: 'pupil-3' }, { studentId: 'pupil-1' }] })], [], configure(shared(), { rooms: [gym], pupils: true }));
+        const fixed = payload['fixedLessons'] as Array<Record<string, unknown>>;
+
+        expect(Object.keys(fixed[0]!).sort()).toEqual(FIXED_LESSON_FIELDS_COUNTED);
+        // g1 holds pupil-1 and pupil-2; the lesson names pupil-3 and pupil-1 again.
+        expect(fixed[0]!['studentCount']).toBe(3);
+        expect(JSON.stringify(payload)).not.toMatch(/pupil-|ml-gym/);
+      });
+
+      it('sends a lock elsewhere, or anywhere with the rule off, the fields it always had', async () => {
+        const elsewhere = await buildPayload({}, [lock({ roomId: 'rm-plain' })], [], configure(shared(), { rooms: [gym, room('rm-plain')], pupils: true }));
+        expect(Object.keys((elsewhere['fixedLessons'] as Array<Record<string, unknown>>)[0]!).sort()).toEqual(FIXED_LESSON_FIELDS);
+
+        const off = await buildPayload({}, [lock()], [], configure({}, { rooms: [gym], pupils: true }));
+        expect(Object.keys((off['fixedLessons'] as Array<Record<string, unknown>>)[0]!).sort()).toEqual(FIXED_LESSON_FIELDS);
+
+        const roomless = await buildPayload({}, [lock({ roomId: null })], [], configure(shared(), { rooms: [gym], pupils: true }));
+        expect(Object.keys((roomless['fixedLessons'] as Array<Record<string, unknown>>)[0]!).sort()).toEqual(FIXED_LESSON_FIELDS);
+      });
+
+      it('counts at least one pupil for a lock whose group has none, as the room eligibility does', async () => {
+        const payload = await buildPayload({}, [lock()], [], configure(shared(), { rooms: [gym] }));
+        expect((payload['fixedLessons'] as Array<Record<string, unknown>>)[0]!['studentCount']).toBe(1);
+      });
+    });
+
+    it('sends all three rules together under the key the engine declares', async () => {
+      const payload = await buildPayload({}, [], [], configure(
+        { placementEdgeMode: 'HARD', placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 1, placementSharedMode: 'SOFT' },
+        { rooms: [room('rm1', { canBeShared: true })], marked: marks },
+      ));
+      expect(Object.keys(rulesOf(payload)).sort()).toEqual(PLACEMENT_RULE_FIELDS);
     });
   });
 

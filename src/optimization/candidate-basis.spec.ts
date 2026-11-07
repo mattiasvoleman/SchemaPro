@@ -213,6 +213,8 @@ const anonymised = (real: School, turn = 0): BasisSource => {
     block: new Map<string, string>(),
     dayLimit: new Map<string, string>(),
     site: new Map<string, string>(),
+    // Placeringsregler: a building is a token minted per request.
+    building: new Map<string, string>(),
     // A lock's own id, mapped only where the pupils' cohorts name it.
     fixed: new Map<string, string>(),
   };
@@ -252,6 +254,7 @@ const anonymised = (real: School, turn = 0): BasisSource => {
         id: anon(maps.room, room.id),
         type: orNull(maps.roomType, room.type),
         ...(room.siteId !== undefined ? { siteId: anon(maps.site, room.siteId) } : {}),
+        ...(room.building !== undefined ? { building: anon(maps.building, room.building) } : {}),
       })),
       turn,
     ),
@@ -343,6 +346,25 @@ const anonymised = (real: School, turn = 0): BasisSource => {
       ),
       turn,
     ),
+    // Placeringsregler: sent only when the school turned a rule on.
+    ...(p.placementRules !== undefined
+      ? {
+          placementRules: {
+            ...p.placementRules,
+            ...(p.placementRules.subjectEdges !== undefined
+              ? {
+                  subjectEdges: {
+                    ...p.placementRules.subjectEdges,
+                    subjects: shuffled(
+                      p.placementRules.subjectEdges.subjects.map((row) => ({ ...row, subjectId: anon(maps.subject, row.subjectId) })),
+                      turn,
+                    ),
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
     // Elevernas håltimmar: sent only when the school turned it on.
     ...(p.pupilGaps !== undefined
       ? {
@@ -569,6 +591,68 @@ describe('the candidate basis', () => {
     expect(changedParts(partsOf(school()), partsOf(counted(12), 1))).toEqual(['rules', 'rosters']);
     // A pupil who moves between cohorts is the rosters' part alone.
     expect(changedParts(partsOf(counted(12)), partsOf(counted(11), 1))).toEqual(['rosters']);
+  });
+
+  it('reads the placement rules in real ids, as a change of rules, and a school without them as before', () => {
+    const ruled = (mode: 'SOFT' | 'HARD', notLast = false) => {
+      const real = school();
+      real.payload.placementRules = {
+        subjectEdges: { mode, ...(mode === 'SOFT' ? { weight: 250 } : {}), subjects: [{ subjectId: 'sub-id', notFirst: true, notLast }, { subjectId: 'sub-ma', notFirst: false, notLast: true }] },
+        places: { mode, maxClassRooms: 2 },
+      };
+      return real;
+    };
+    // Whatever the subjects' anonymous ids and the order they come back in.
+    expect(partsOf(ruled('HARD'), 1)).toEqual(partsOf(ruled('HARD')));
+    // Turned on after a run: the run was solved under other rules, and says so.
+    expect(changedParts(partsOf(school()), partsOf(ruled('HARD'), 1))).toEqual(['rules']);
+    // A rule that is held another way, or a mark on another end, is the rules' part alone.
+    expect(changedParts(partsOf(ruled('HARD')), partsOf(ruled('SOFT'), 1))).toEqual(['rules']);
+    expect(changedParts(partsOf(ruled('HARD')), partsOf(ruled('HARD', true), 1))).toEqual(['rules']);
+    // A school that has none hashes as it always did.
+    expect(partsOf(school(), 1)).toEqual(partsOf(school()));
+  });
+
+  it('reads a room’s building by its name and its shared mark, whatever the token it was sent under', () => {
+    const housed = (building: string, shareable = false) => {
+      const real = school();
+      real.payload.rooms = real.payload.rooms.map((room, index) => ({
+        ...room,
+        ...(index === 0 ? { building } : {}),
+        ...(index === 1 && shareable ? { shareable: true as const } : {}),
+      }));
+      return real;
+    };
+    // Two reads of an unchanged school mint other tokens and agree.
+    expect(partsOf(housed('Hus B'), 1)).toEqual(partsOf(housed('Hus B')));
+    // A room moved to another building, or marked shared, is the rooms' part alone.
+    expect(changedParts(partsOf(housed('Hus B')), partsOf(housed('Hus C'), 1))).toEqual(['rooms']);
+    expect(changedParts(partsOf(housed('Hus B')), partsOf(housed('Hus B', true), 1))).toEqual(['rooms']);
+    // And the name is hashed, never held in the payload's token.
+    expect(JSON.stringify(basisInputsOf(anonymised(housed('Hus B'))))).toContain('Hus B');
+  });
+
+  it('reads how many pupils sit a lock in a shared room, as a change of rosters', () => {
+    const counted = (studentCount: number) => {
+      const real = school();
+      real.payload.fixedLessons = [
+        {
+          id: 'never-mapped',
+          teacherId: 't-anna',
+          coTeacherId: null,
+          studentGroupId: 'grp-7a',
+          roomId: 'room-hall',
+          dayOfWeek: 2,
+          startTime: '08:00:00',
+          endTime: '09:00:00',
+          studentCount,
+        },
+      ];
+      return real;
+    };
+    expect(partsOf(counted(40), 1)).toEqual(partsOf(counted(40)));
+    // The lock itself is the preserved part's, and carries no count there.
+    expect(changedParts(partsOf(counted(40)), partsOf(counted(41), 1))).toEqual(['rosters']);
   });
 
   it('reads a conflict pair either way round as one pair', () => {

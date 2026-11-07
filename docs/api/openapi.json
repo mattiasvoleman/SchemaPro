@@ -22858,6 +22858,9 @@
           },
           "requiresApproval": {
             "type": "boolean"
+          },
+          "canBeShared": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -23262,6 +23265,12 @@
             "nullable": true,
             "minimum": 2,
             "maximum": 6
+          },
+          "notFirstInDay": {
+            "type": "boolean"
+          },
+          "notLastInDay": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -27132,6 +27141,9 @@
           },
           "requiresApproval": {
             "type": "boolean"
+          },
+          "canBeShared": {
+            "type": "boolean"
           }
         }
       },
@@ -27441,6 +27453,12 @@
             "nullable": true,
             "minimum": 2,
             "maximum": 6
+          },
+          "notFirstInDay": {
+            "type": "boolean"
+          },
+          "notLastInDay": {
+            "type": "boolean"
           }
         }
       },
@@ -27865,6 +27883,69 @@
           },
           "generatorKeepsConsecutiveTeaching": {
             "type": "boolean"
+          },
+          "placementEdgeMode": {
+            "type": "string",
+            "enum": [
+              "HARD",
+              "OFF",
+              "SOFT"
+            ]
+          },
+          "placementEdgeWeight": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "placementPlacesMode": {
+            "type": "string",
+            "enum": [
+              "HARD",
+              "OFF",
+              "SOFT"
+            ]
+          },
+          "placementPlacesWeight": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "maxClassRoomsPerDay": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "maxTeacherRoomsPerDay": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "maxClassBuildingsPerDay": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "maxTeacherBuildingsPerDay": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "placementSharedMode": {
+            "type": "string",
+            "enum": [
+              "HARD",
+              "OFF",
+              "SOFT"
+            ]
+          },
+          "placementSharedWeight": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000
           }
         },
         "required": [

@@ -81,4 +81,55 @@ describe('UpsertLunchSettingsDto limits', () => {
       'generatorKeepsTravelTime',
     ]);
   });
+
+  describe('Placeringsregler', () => {
+    const MODES = ['placementEdgeMode', 'placementPlacesMode', 'placementSharedMode'] as const;
+    const WEIGHTS = ['placementEdgeWeight', 'placementPlacesWeight', 'placementSharedWeight'] as const;
+    const LIMITS = [
+      'maxClassRoomsPerDay',
+      'maxTeacherRoomsPerDay',
+      'maxClassBuildingsPerDay',
+      'maxTeacherBuildingsPerDay',
+    ] as const;
+
+    it('leaves all ten fields out as nothing to change: a Skolregler tab from before them PUTs the row without', async () => {
+      await expect(failing(base)).resolves.toEqual([]);
+    });
+
+    it.each(MODES)('takes %s as OFF, SOFT or HARD and nothing else', async (field) => {
+      for (const mode of ['OFF', 'SOFT', 'HARD']) await expect(failing({ ...base, [field]: mode })).resolves.toEqual([]);
+      // Spelled as the enum is, and never null: the column is NOT NULL, so null is the 400 that names the field.
+      for (const bad of ['MEDIUM', 'off', 'Soft', '', null, true, 1]) {
+        await expect(failing({ ...base, [field]: bad })).resolves.toEqual([field]);
+      }
+    });
+
+    it('says in Swedish which three words a mode is', async () => {
+      const errors = await validate(plainToInstance(UpsertLunchSettingsDto, { ...base, placementEdgeMode: 'MEDIUM' }));
+      expect(Object.values(errors[0]!.constraints ?? {})[0]).toMatch(/OFF.*SOFT.*HARD/);
+    });
+
+    it.each(WEIGHTS)('takes %s as a whole number 1 to 1000, the CHECK’s own range', async (field) => {
+      for (const weight of [1, 250, 1000]) await expect(failing({ ...base, [field]: weight })).resolves.toEqual([]);
+      for (const bad of [0, -1, 1001, 99999, 2.5, '250', null]) {
+        await expect(failing({ ...base, [field]: bad })).resolves.toEqual([field]);
+      }
+    });
+
+    it.each(LIMITS)('takes %s as 1 to 20 (1 is a single place a day), with null clearing it, and refuses what the CHECK would answer with a 500', async (field) => {
+      for (const limit of [1, 2, 20, null]) await expect(failing({ ...base, [field]: limit })).resolves.toEqual([]);
+      // 0 is no day in any room; the old rule's "never change" is 1 now.
+      for (const bad of [0, -1, 21, 1.5, '2', true]) {
+        await expect(failing({ ...base, [field]: bad })).resolves.toEqual([field]);
+      }
+    });
+
+    it('names a field and no other for each of several wrong ones', async () => {
+      await expect(failing({ ...base, placementEdgeWeight: 0, maxClassRoomsPerDay: 21, placementSharedMode: 'x' })).resolves.toEqual([
+        'placementEdgeWeight',
+        'maxClassRoomsPerDay',
+        'placementSharedMode',
+      ]);
+    });
+  });
 });

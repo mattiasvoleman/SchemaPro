@@ -38,6 +38,13 @@ function toResponse(row: LunchSetting): LunchSettingsResponse {
 }
 import { parseTimeString } from '../common/utils/time';
 import type { UpsertLunchSettingsDto } from './dto/lunch-settings.dto';
+import {
+  assertPlacesHaveALimit,
+  placesNeedALimit,
+  isPlacesNeedALimitCheck,
+  placementDataOf,
+  touchesPlacesRule,
+} from './placement-rules';
 
 /**
  * The solver's time grid, restated.
@@ -97,19 +104,40 @@ export class LunchSettingsService {
       ...(dto.generatorKeepsConsecutiveTeaching !== undefined
         ? { generatorKeepsConsecutiveTeaching: dto.generatorKeepsConsecutiveTeaching }
         : {}),
+      // Placeringsregler: the columns the request names, and only those.
+      ...placementDataOf(dto),
     };
 
     try {
       return toResponse(
-        await this.prisma.withRls(user, (tx) =>
-          tx.lunchSetting.upsert({
+        await this.prisma.withRls(user, async (tx) => {
+          // Rule 2 that is on needs a limit, judged on the row as it would
+          // be, so the stored row is read, in this same transaction, only when
+          // the request says something about that rule.
+          if (touchesPlacesRule(dto)) {
+            const stored = await tx.lunchSetting.findUnique({
+              where: { schoolId },
+              select: {
+                placementPlacesMode: true,
+                maxClassRoomsPerDay: true,
+                maxTeacherRoomsPerDay: true,
+                maxClassBuildingsPerDay: true,
+                maxTeacherBuildingsPerDay: true,
+              },
+            });
+            assertPlacesHaveALimit(dto, stored);
+          }
+          return tx.lunchSetting.upsert({
             where: { schoolId },
             create: { schoolId, ...data },
             update: data,
-          }),
-        ),
+          });
+        }),
       );
     } catch (error) {
+      // The database's CHECK says the same as the read above, for the request
+      // that raced another between the read and the write.
+      if (isPlacesNeedALimitCheck(error)) throw placesNeedALimit();
       rethrowPrismaError(error);
     }
   }

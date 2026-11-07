@@ -585,11 +585,19 @@ model Room {
   /// "Special" rooms (labs, gyms, auditoria) whose self-service bookings need
   /// admin approval before they're confirmed. Ordinary rooms auto-approve.
   requiresApproval Boolean  @default(false)
+  /// Placeringsregler (20270126090000), rule 3: the room may hold several
+  /// lessons at the same time as long as their pupils fit its capacity
+  /// together. False is exclusive, which every room has always been and is
+  /// until a school says otherwise: nothing else says a room can take two
+  /// groups at once. Read only while the school's Skolregler hold the rule on
+  /// (LunchSetting.placementSharedMode), and a room without a capacity has no
+  /// limit to share under, so it stays exclusive whatever this says.
+  canBeShared      Boolean  @default(false)
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime @updatedAt @db.Timestamptz(6)
 
   school                  School                   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  roomType                RoomType?                @relation(fields: [roomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
+  roomType                RoomType?            @relation(fields: [roomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
   site                    Site?                    @relation(fields: [siteId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
@@ -886,11 +894,18 @@ model Subject {
   /// See migration 20261019090000.
   maxLessonsPerDay   Int?
   minDaysBetween     Int?
+  /// Placeringsregler (20270126090000), rule 1: the subject is not placed as
+  /// the first / the last lesson of a class's day. Both false is no rule, which
+  /// is every subject until a school marks one. Read only while the school's
+  /// Skolregler hold the rule on (LunchSetting.placementEdgeMode), so a mark
+  /// made before the rule is switched on changes nothing.
+  notFirstInDay      Boolean  @default(false)
+  notLastInDay       Boolean  @default(false)
   createdAt          DateTime @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
   school               School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  requiredRoomType     RoomType?             @relation(fields: [requiredRoomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
+  requiredRoomType     RoomType?           @relation(fields: [requiredRoomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
   nationalSubject      NationalSubject?      @relation(fields: [nationalCode], references: [code], onDelete: Restrict)
   teachingRequirements TeachingRequirement[]
   masterLessons        MasterLesson[]
@@ -4112,6 +4127,34 @@ model LunchSetting {
   /// switch is the school's: it moves lessons of every teacher who has the
   /// rule. In this row for the reason the others are: the same form.
   generatorKeepsConsecutiveTeaching Boolean @default(false)
+  /// Placeringsregler (20270126090000), three rules about where a lesson is
+  /// placed, each OFF until the school turns it on (OFF sends the engine
+  /// nothing, and the week is generated exactly as before), SOFT (a weight,
+  /// on the scale of the other wishes) or HARD (a week that cannot keep it is
+  /// refused by name). In this row for the reason the switches above are: they
+  /// sit in the same form, Skolregler.
+  ///
+  /// Rule 1: a subject marked "not first" or "not last" (Subject.notFirstInDay,
+  /// notLastInDay) is kept off the first or last lesson of a class's day.
+  placementEdgeMode        PlacementRuleMode @default(OFF)
+  /// SOFT only: 1..1000 (LunchSettings_placementEdgeWeight_check). Kept when
+  /// the mode is OFF or HARD, so switching back does not lose the figure.
+  placementEdgeWeight      Int      @default(250)
+  /// Rule 2: a class and a teacher (apart) are in at most this many DIFFERENT
+  /// room groups and different buildings in a day. 1 is a single one, never a
+  /// change; the same room twice is one. The mode is SOFT or HARD only while at
+  /// least one of the four limits is set (LunchSettings_placementPlaces_needs_a_limit_check).
+  placementPlacesMode       PlacementRuleMode @default(OFF)
+  placementPlacesWeight     Int      @default(250)
+  /// 1..20, null = no limit (LunchSettings_max…PerDay_check).
+  maxClassRoomsPerDay       Int?
+  maxTeacherRoomsPerDay     Int?
+  maxClassBuildingsPerDay   Int?
+  maxTeacherBuildingsPerDay Int?
+  /// Rule 3: the pupils of the lessons in a shared room (Room.canBeShared) at
+  /// one time fit its capacity together.
+  placementSharedMode      PlacementRuleMode @default(OFF)
+  placementSharedWeight    Int      @default(250)
   createdAt                DateTime @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime @updatedAt @db.Timestamptz(6)
 
@@ -4121,6 +4164,16 @@ model LunchSetting {
   // already is one, and a second would only be a duplicate to maintain.
   @@unique([schoolId])
   @@map("LunchSettings")
+}
+
+/// Placeringsregler: how a placement rule is held. OFF is the school without
+/// the rule (nothing is sent to the engine); SOFT pays a weight for every
+/// breach and refuses nothing; HARD forbids the breach, and a week that cannot
+/// keep it is refused by name.
+enum PlacementRuleMode {
+  OFF
+  SOFT
+  HARD
 }
 
 enum RoomRuleKind {
