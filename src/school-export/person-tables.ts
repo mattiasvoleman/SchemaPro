@@ -150,6 +150,10 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   ScheduleActivityTeachers: dump(['teacherId']),
   // Provplanering (20270127090000): the watch a teacher keeps at an exam (room and exam in the row's keys).
   ExamInvigilators: dump(['teacherId']),
+  ExamSittings: {
+    excluded:
+      'En sal ett prov skrivs i, med antalet skrivande och bokningen som håller salen. Ingen person står på raden; vakterna i salen är ExamInvigilators, som registerutdraget lämnar ut efter lärarens nyckel.',
+  },
 
   // What the person decided, published or wrote.
   PublicTimetableLinks: dump(['targetTeacherId', 'targetStudentId', 'createdByUserId']),
