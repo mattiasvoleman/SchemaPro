@@ -54,7 +54,7 @@ describe('the audience statement carries the pupils moved off a lesson (Elevens 
   });
 
   it('is the only one: P3’s classification, the dates, the horizon, the credits and the hours are without it', () => {
-    for (const statement of [deliveredLessons(WINDOW), datesStatement(WINDOW, ['2026-09-25']), horizonStatement(WINDOW), staffingCreditStatement(WINDOW), substituteHoursStatement(WINDOW)]) {
+    for (const statement of [deliveredLessons(WINDOW), datesStatement(WINDOW, ['2026-09-25']), horizonStatement(WINDOW), staffingCreditStatement(WINDOW, { from: '2026-09-01', to: '2026-09-30' }, null), substituteHoursStatement(WINDOW, { from: '2026-09-01', to: '2026-09-30' })]) {
       expect(statement.sql).not.toMatch(/movedOffIds|LessonPupilMoves/);
     }
   });
