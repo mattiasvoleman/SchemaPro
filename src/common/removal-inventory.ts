@@ -172,6 +172,9 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   // Krisläge (20270113091000): a pupil is on no list once removed; the marks and answers they made are kept without them.
   key('CrisisPupils', ['studentId', 'schoolId'], 'CASCADE', others),
   key('CoverConfirmations', ['userId', 'schoolId'], 'CASCADE', others),
+  // Kvittens (20270117091000): the requests a guardian was asked, and the ones asked about a pupil, go with the person.
+  key('AckReceipts', ['guardianId', 'schoolId'], 'CASCADE', others),
+  key('AckReceipts', ['studentId', 'schoolId'], 'CASCADE', others),
   key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),
   // Skyddad identitet (20270107090000): the mark goes with the person, counted like any other row.
   key('PersonProtections', ['userId', 'schoolId'], 'CASCADE', others),
@@ -215,6 +218,7 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('LessonLogs', ['writtenById', 'schoolId'], 'SET NULL', kept),
   key('TeachingRequirementShares', ['teacherId', 'schoolId'], 'SET NULL', kept),
   key('SupervisionCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('AckRequests', ['authorId', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['requestedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['acceptedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CrisisAlarms', ['startedByUserId', 'schoolId'], 'SET NULL', kept),

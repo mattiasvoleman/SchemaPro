@@ -4,7 +4,12 @@ import { useI18n } from '../../src/context/LocaleContext';
 import { useTabScreenOptions } from '../../src/screens/tabScreenOptions';
 import { TabGlyph } from '../../src/screens/TabGlyph';
 
-/** Guardian shell — children and absence, each child's schedule, leave requests, notifications, settings. */
+/**
+ * Guardian shell — children and absence, each child's schedule, leave requests,
+ * the messages the school asks them to confirm (Kvittens), notifications,
+ * settings. A push or an inbox row about such a message opens Meddelanden
+ * (services/auth/appGate.ts ackTarget).
+ */
 export default function GuardianLayout(): React.JSX.Element {
   const { t } = useI18n();
   const screenOptions = useTabScreenOptions();
@@ -31,6 +36,13 @@ export default function GuardianLayout(): React.JSX.Element {
         options={{
           title: t('tabs.leave'),
           tabBarIcon: ({ color, focused }) => <TabGlyph glyph="✈" color={color} focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="acknowledgements"
+        options={{
+          title: t('acks.tab'),
+          tabBarIcon: ({ color, focused }) => <TabGlyph glyph="✉" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen

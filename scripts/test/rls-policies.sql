@@ -20174,6 +20174,9 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('AbsenceWatchSettings', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('AcademicYearTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('AcademicYears', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('AckReceipts', '{DRIFT}', '{}', '{}', '{}'),
+  ('AckRequests', '{DRIFT}', '{}', '{}', '{}'),
+  ('AckSettings', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('AttendanceRecords', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('AttendanceSharingDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('AvailabilityConstraints', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -31214,8 +31217,8 @@ ROLLBACK;
 -- writes no more than the same call writes with no principal at all. The
 -- jobs (gallring, the job runner, push receipts, the candidates' sweep,
 -- SS12000 housekeeping and delivery, the absence watch's count and
--- digest, Frånvarobevakning, and Rapporteringsgrad's count, reminders and
--- weekly notice) ask for no principal and no route
+-- digest, Frånvarobevakning, Rapporteringsgrad's count, reminders and
+-- weekly notice, and Kvittens' reminder of one request) ask for no principal and no route
 -- calls them: the reader gets nothing through them that an empty session
 -- would not. They are named rather than inferred from the writes, since
 -- which of them write depends on the arguments a call happens to get; a
@@ -31246,6 +31249,7 @@ DECLARE
   wrong text[] := '{}';
   writes_by_design constant text[] := ARRAY['app.personal_data_read'];
   job_functions constant text[] := ARRAY[
+    'app.ack_remind_request',
     'app.absence_watch_digest', 'app.absence_watch_evaluate',
     'app.gallring_begin', 'app.gallring_claim_person', 'app.gallring_departed_due', 'app.gallring_finish',
     'app.gallring_pseudonymise', 'app.gallring_purge',
@@ -45085,4 +45089,844 @@ BEGIN
   PERFORM pg_temp.sd_refuses('SELECT app.school_day_protected_staff()', '42501', 'PostgREST''s list of the marked staff');
 END $$;
 SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Kvittens (F4, 20270117091000), sections 370-374: a guardian confirms a message
+-- about their child. Fixtures: rls-kvittens-school (and rls-kvittens-annan),
+-- planted once by the fixtures script.
+--
+--   370  the tables and what their triggers do
+--   371  who reads and who writes
+--   372  the confirmation: who is done, custody that has ended, a protected pupil
+--   373  the reminder's privileges (its logic is 373o, which may move a request's time)
+--   374  the catalogue: privileges, arms, keys and gallring
+-- ---------------------------------------------------------------------------
+
+-- The helpers the sections share. Temporary, so they die with the session.
+CREATE FUNCTION pg_temp.kv_as(p_auth text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_auth)::text, true)
+$$;
+CREATE FUNCTION pg_temp.kv_auth(n integer) RETURNS text LANGUAGE sql AS $$
+  SELECT '00000000-0000-4000-8000-f400000000' || lpad(n::text, 2, '0')
+$$;
+-- The people by name, set once per transaction by the administrator (a guardian
+-- reads no pupil but their own): pupils p1..p5, guardians g1..g4, teachers m1 m2 t3.
+CREATE FUNCTION pg_temp.kv_load() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      ('p1','kv-p1'),('p2','kv-p2'),('p3','kv-p3'),('p4','kv-p4'),('p5','kv-p5'),
+      ('g1','kv-g1'),('g2','kv-g2'),('g3','kv-g3'),('g4','kv-g4'),
+      ('m1','kv-m1'),('m2','kv-m2'),('t3','kv-t3'),('full','kv-full')) v(k, e)
+  LOOP
+    PERFORM set_config('app.test_kv_' || r.k, (SELECT id::text FROM "Users" WHERE email = r.e || '@example.invalid'), true);
+  END LOOP;
+  PERFORM set_config('app.test_kv_school', app.current_school_id()::text, true);
+END $$;
+CREATE FUNCTION pg_temp.kvf(p_name text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT current_setting('app.test_kv_' || p_name)::uuid
+$$;
+CREATE FUNCTION pg_temp.kv_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'kvittens %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- A statement that must fail with exactly this SQLSTATE.
+CREATE FUNCTION pg_temp.kv_refuses(p_sql text, p_state text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM p_state THEN
+    RAISE EXCEPTION 'kvittens: % should be refused with %, was %', p_what, p_state, got;
+  END IF;
+END $$;
+-- A statement the caller cannot do: refused for lack of a privilege or by a policy,
+-- or an UPDATE or DELETE that no policy lets reach a row.
+CREATE FUNCTION pg_temp.kv_denied(p_sql text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+BEGIN
+  EXECUTE p_sql;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF p_sql ~* '^(UPDATE|DELETE)' AND n = 0 THEN RETURN; END IF;
+  RAISE EXCEPTION 'kvittens: % was not denied (% rows)', p_what, n;
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+-- A request, as the caller writes it: with its receipts, one per (pupil, guardian) pair
+-- given as 'p1:g1,p1:g2'. The caller must be allowed to; the id is returned.
+CREATE FUNCTION pg_temp.kv_request(p_title text, p_rule "AckRule", p_pairs text) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  req uuid := gen_random_uuid();
+  pair text;
+BEGIN
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req, app.current_school_id(), p_title, 'Text för ' || p_title, p_rule);
+  FOREACH pair IN ARRAY string_to_array(p_pairs, ',') LOOP
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+    VALUES (req, app.current_school_id(), pg_temp.kvf(split_part(pair, ':', 1)), pg_temp.kvf(split_part(pair, ':', 2)));
+  END LOOP;
+  RETURN req;
+END $$;
+-- Who is done, as one text: pupil, asked/acked/waiting, and met (t/f), through the one definition.
+CREATE FUNCTION pg_temp.kv_status(p_request uuid) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(substr(u.email, 4, 2) || ' ' || s.asked || '/' || s.acked || '/' || s.waiting || ' ' || CASE WHEN s.met THEN 't' ELSE 'f' END,
+                             ', ' ORDER BY u.email), '')
+    FROM app.ack_status(ARRAY[p_request]) s JOIN "Users" u ON u.id = s.student_id
+$$;
+
+-- How many rows the status gives, without a join to Users (which is under row security too and
+-- would hide a pupil the reader cannot read: a leak shown as an empty text).
+CREATE FUNCTION pg_temp.kv_status_rows(p_request uuid) RETURNS bigint LANGUAGE sql AS $$
+  SELECT (SELECT count(*) FROM app.ack_status(ARRAY[p_request]))
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Section 370: the tables and what their triggers do.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  s record;
+  q record;
+  req uuid;
+  other uuid;
+BEGIN
+  PERFORM pg_temp.kv_load();
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'kvittens 370: expected the full administrator'; END IF;
+
+  -- No row: off, with the default reminder of two days; and a request is refused while it is off.
+  IF app.ack_enabled() THEN RAISE EXCEPTION 'kvittens 370: the school starts with kvittens on'; END IF;
+  IF app.ack_remind_after_days() IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'kvittens 370: the school with no row does not have the default two days'; END IF;
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'T', 'B')$q$, school),
+                             '42501', 'a request while kvittens is off');
+  INSERT INTO "AckSettings" ("schoolId") VALUES (school);
+  SELECT * INTO s FROM "AckSettings";
+  IF s.enabled OR s."remindAfterDays" IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'kvittens 370: the defaults are off and two days: %', s; END IF;
+  IF app.ack_enabled() THEN RAISE EXCEPTION 'kvittens 370: a row that is off says on'; END IF;
+  UPDATE "AckSettings" SET enabled = true;
+  IF NOT app.ack_enabled() THEN RAISE EXCEPTION 'kvittens 370: the switch is on and ack_enabled says off'; END IF;
+  -- The reminder time: one to thirty days, or none.
+  PERFORM pg_temp.kv_refuses('UPDATE "AckSettings" SET "remindAfterDays" = 0', '23514', 'a reminder after no days');
+  PERFORM pg_temp.kv_refuses('UPDATE "AckSettings" SET "remindAfterDays" = 31', '23514', 'a reminder after 31 days');
+  UPDATE "AckSettings" SET "remindAfterDays" = 30;
+  UPDATE "AckSettings" SET "remindAfterDays" = 1;
+  UPDATE "AckSettings" SET "remindAfterDays" = NULL;
+  IF app.ack_remind_after_days() IS NOT NULL THEN RAISE EXCEPTION 'kvittens 370: no reminder reads as %', app.ack_remind_after_days(); END IF;
+  -- One row per school, and the school's own.
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckSettings" ("schoolId") VALUES (%L)$q$, school), '23505', 'a second switch for the school');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckSettings" ("schoolId") VALUES (%L)$q$, gen_random_uuid()), '42501', 'a switch for another school');
+
+  -- A request is written in the caller's name whatever the row says, with the
+  -- reminder time the school chose when it was written (none, now).
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", "authorName", title, body, "remindAt", "reminderSentAt", "reminderOutcome")
+  VALUES (req, school, pg_temp.kvf('m1'), 'Någon Annan', 'Utflykt', 'Vi åker kl. 8.', now() - interval '5 days', now(), 'SENT');
+  SELECT * INTO q FROM "AckRequests" WHERE id = req;
+  IF q."authorId" <> pg_temp.kvf('full') OR q."authorName" <> 'Kvittens Full' THEN
+    RAISE EXCEPTION 'kvittens 370: a request was written in another name: % %', q."authorId", q."authorName";
+  END IF;
+  IF q."remindAt" IS NOT NULL OR q."reminderSentAt" IS NOT NULL OR q."reminderOutcome" IS NOT NULL OR q.rule <> 'ANY' THEN
+    RAISE EXCEPTION 'kvittens 370: with no reminder the request has remindAt %, reminderSentAt % and reminderOutcome % (rule %)', q."remindAt", q."reminderSentAt", q."reminderOutcome", q.rule;
+  END IF;
+  UPDATE "AckSettings" SET "remindAfterDays" = 3;
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, "remindAt", "reminderOutcome") VALUES (req, school, 'Tre dagar', 'B', now() - interval '1 day', 'STOPPED');
+  SELECT * INTO q FROM "AckRequests" WHERE id = req;
+  IF q."remindAt" IS DISTINCT FROM q."createdAt" + interval '3 days' OR q."reminderOutcome" IS NOT NULL THEN
+    RAISE EXCEPTION 'kvittens 370: the reminder is due % (outcome %) for a request made % with three days', q."remindAt", q."reminderOutcome", q."createdAt";
+  END IF;
+  -- A later change of the setting moves no request already out.
+  UPDATE "AckSettings" SET "remindAfterDays" = 9;
+  IF (SELECT "remindAt" FROM "AckRequests" WHERE id = req) IS DISTINCT FROM q."remindAt" THEN RAISE EXCEPTION 'kvittens 370: a setting moved a request that was out'; END IF;
+
+  -- Title and text: one to 120, one to 2000 characters, blanks counting for nothing.
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, '', 'B')$q$, school), '23514', 'an empty title');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, '   ', 'B')$q$, school), '23514', 'a blank title');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, %L, 'B')$q$, school, repeat('t', 121)), '23514', 'a title of 121 characters');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'T', ' ')$q$, school), '23514', 'a blank text');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'T', %L)$q$, school, repeat('b', 2001)), '23514', 'a text of 2001 characters');
+  INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (school, repeat('t', 120), repeat('b', 2000));
+
+  -- Receipts: one per pupil and guardian in a request; the guardian of the pupil; unconfirmed.
+  req := pg_temp.kv_request('Kvitton', 'ALL', 'p1:g1,p1:g2,p2:g1');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$, req, school, pg_temp.kvf('p1'), pg_temp.kvf('g1')),
+                             '23505', 'the same guardian asked twice about the same pupil');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$, req, school, pg_temp.kvf('p3'), pg_temp.kvf('g1')),
+                             '42501', 'a guardian asked about a pupil they are not linked to');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$, req, school, pg_temp.kvf('g1'), pg_temp.kvf('p1')),
+                             '42501', 'a pupil asked about a guardian (the roles the wrong way round)');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "ackedAt") VALUES (%L, %L, %L, %L, now())$q$, req, school, pg_temp.kvf('p3'), pg_temp.kvf('g3')),
+                             '42501', 'a receipt that starts confirmed');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "remindedAt") VALUES (%L, %L, %L, %L, now())$q$, req, school, pg_temp.kvf('p3'), pg_temp.kvf('g3')),
+                             '42501', 'a receipt that starts reminded');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$, gen_random_uuid(), school, pg_temp.kvf('p3'), pg_temp.kvf('g3')),
+                             '23503', 'a receipt in a request that does not exist');
+  -- A guardian or a pupil who has left cannot be asked.
+  UPDATE "Users" SET "isActive" = false WHERE id = pg_temp.kvf('g3');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$, req, school, pg_temp.kvf('p3'), pg_temp.kvf('g3')),
+                             '42501', 'a guardian who has left asked');
+  UPDATE "Users" SET "isActive" = true WHERE id = pg_temp.kvf('g3');
+  UPDATE "Users" SET "isActive" = false WHERE id = pg_temp.kvf('p3');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$, req, school, pg_temp.kvf('p3'), pg_temp.kvf('g3')),
+                             '42501', 'a guardian asked about a pupil who has left');
+  UPDATE "Users" SET "isActive" = true WHERE id = pg_temp.kvf('p3');
+  -- The other school's pupil and guardian: the policy says no before the key does.
+  other := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$, req, other, gen_random_uuid(), gen_random_uuid()),
+                             '42501', 'a receipt filed under another school');
+
+  -- Nobody, not even the author, changes or removes a request or a receipt.
+  PERFORM pg_temp.kv_denied('UPDATE "AckRequests" SET title = ''Ändrad''', 'changing a request');
+  PERFORM pg_temp.kv_denied('UPDATE "AckRequests" SET "reminderSentAt" = now()', 'marking a reminder sent');
+  PERFORM pg_temp.kv_denied('UPDATE "AckRequests" SET "reminderOutcome" = ''STOPPED''', 'stopping a reminder by the table');
+  PERFORM pg_temp.kv_denied('DELETE FROM "AckRequests"', 'removing a request');
+  PERFORM pg_temp.kv_denied('UPDATE "AckReceipts" SET "ackedAt" = now()', 'confirming for someone');
+  PERFORM pg_temp.kv_denied('UPDATE "AckReceipts" SET "remindedAt" = now()', 'marking a receipt reminded');
+  PERFORM pg_temp.kv_denied('DELETE FROM "AckReceipts"', 'removing a receipt');
+  PERFORM pg_temp.kv_denied('TRUNCATE "AckReceipts"', 'truncating the receipts');
+  PERFORM pg_temp.kv_denied('DELETE FROM "AckSettings"', 'removing the switch');
+END $$;
+ROLLBACK;
+
+-- The sender's limit: ten requests an hour for a person (KV429). The window and the owner's
+-- exemption are 370o's, which can write a request in the past; the school's day is 370o's too.
+BEGIN;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  i integer;
+BEGIN
+  PERFORM pg_temp.kv_load();
+  UPDATE "AckSettings" SET enabled = true;
+  IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true); END IF;
+  -- The fixtures' own rows were made days ago and count for nothing: ten go through.
+  FOR i IN 1..10 LOOP
+    INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (school, 'Gräns ' || i, 'B');
+  END LOOP;
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'Gräns 11', 'B')$q$, school),
+                             'KV429', 'an eleventh request in an hour from one person');
+  -- The refusal wrote nothing, and it is the person's: a colleague writes on.
+  IF (SELECT count(*) FROM "AckRequests" WHERE title LIKE 'Gräns %') <> 10 THEN RAISE EXCEPTION 'kvittens 370: the refused request was written, or one of the ten was not'; END IF;
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(3));
+  INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (school, 'Expedition tar över', 'B');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(6));
+  INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (school, 'Mentorn skriver', 'B');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 371: who reads and who writes.
+--
+-- Two requests:
+--   R1 by the mentor of KV7A (M1), rule ALL:  P1 asks G1 and G2, P2 asks G1
+--   R2 by the full administrator, rule ANY:   P3 asks G3, P4 (KV7A, marked) asks G4
+-- M1 mentors P1, P2 and P4; M2 mentors P3 and P5; T3 mentors nobody.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+BEGIN
+  PERFORM pg_temp.kv_load();
+  UPDATE "AckSettings" SET enabled = true WHERE "schoolId" = app.current_school_id();
+  IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (app.current_school_id(), true); END IF;
+  PERFORM set_config('app.test_kv_r2', pg_temp.kv_request('R2', 'ANY', 'p3:g3,p4:g4')::text, true);
+END $$;
+
+-- R1 is the mentor's own: she is its author.
+SELECT pg_temp.kv_as(pg_temp.kv_auth(6));
+DO $$
+DECLARE
+  r1 uuid;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'kvittens 371: expected the mentor'; END IF;
+  r1 := pg_temp.kv_request('R1', 'ALL', 'p1:g1,p1:g2,p2:g1');
+  PERFORM set_config('app.test_kv_r1', r1::text, true);
+  IF (SELECT authorName FROM (SELECT "authorName" AS authorName FROM "AckRequests" WHERE id = r1) x) <> 'Kvittens Mentor A' THEN
+    RAISE EXCEPTION 'kvittens 371: the mentor''s request names another author';
+  END IF;
+  -- A teacher asks only about her own mentees, in a request that is hers.
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$,
+                                    r1, app.current_school_id(), (SELECT id FROM "Users" WHERE email = 'kv-p3@example.invalid'), (SELECT id FROM "Users" WHERE email = 'kv-g3@example.invalid')),
+                             '42501', 'a mentor asking about a pupil in another class');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$,
+                                    current_setting('app.test_kv_r2')::uuid, app.current_school_id(), (SELECT id FROM "Users" WHERE email = 'kv-p4@example.invalid'), (SELECT id FROM "Users" WHERE email = 'kv-g4@example.invalid')),
+                             '42501', 'a mentor adding to a request she did not write');
+END $$;
+
+CREATE FUNCTION pg_temp.kv_sees(p_auth text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  seen text;
+BEGIN
+  PERFORM pg_temp.kv_as(p_auth);
+  SELECT coalesce((SELECT string_agg(q.title, ' ' ORDER BY q.title) FROM "AckRequests" q), '') || ' | ' ||
+         coalesce((SELECT string_agg(q.title || ':' || (SELECT string_agg(substr(u.email, 4, 2) || '-' || substr(g.email, 4, 2), ',' ORDER BY u.email, g.email)
+                                                           FROM "AckReceipts" r JOIN "Users" u ON u.id = r."studentId" JOIN "Users" g ON g.id = r."guardianId"
+                                                          WHERE r."requestId" = q.id), ' ' ORDER BY q.title) FROM "AckRequests" q), '')
+    INTO seen;
+  RETURN seen;
+END $$;
+-- (Joins to Users are under row security too: a person the reader cannot read would drop out
+-- of the text above, so the texts are read beside the counts.)
+CREATE FUNCTION pg_temp.kv_counts(p_auth text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n text;
+BEGIN
+  PERFORM pg_temp.kv_as(p_auth);
+  SELECT (SELECT count(*) FROM "AckRequests") || '/' || (SELECT count(*) FROM "AckReceipts") INTO n;
+  RETURN n;
+END $$;
+
+DO $$
+BEGIN
+  -- Administrators of every profile read what the school holds: 2 requests, 5 receipts.
+  PERFORM pg_temp.kv_expect('371 FULL', pg_temp.kv_counts(pg_temp.kv_auth(1)), '2/5');
+  PERFORM pg_temp.kv_expect('371 EXPEDITION', pg_temp.kv_counts(pg_temp.kv_auth(3)), '2/5');
+  PERFORM pg_temp.kv_expect('371 LASARE', pg_temp.kv_counts(pg_temp.kv_auth(5)), '2/5');
+  PERFORM pg_temp.kv_expect('371 FULL text', pg_temp.kv_sees(pg_temp.kv_auth(1)),
+                            'R1 R2 | R1:p1-g1,p1-g2,p2-g1 R2:p3-g3,p4-g4');
+  -- The mentor of KV7A: all of R1 (hers), and of R2 only the row about P4, her pupil.
+  PERFORM pg_temp.kv_expect('371 M1', pg_temp.kv_counts(pg_temp.kv_auth(6)), '2/4');
+  PERFORM pg_temp.kv_expect('371 M1 text', pg_temp.kv_sees(pg_temp.kv_auth(6)),
+                            'R1 R2 | R1:p1-g1,p1-g2,p2-g1 R2:p4-g4');
+  -- The mentor of KV7B: R2's row about P3 and nothing of R1 (none of her pupils is in it).
+  PERFORM pg_temp.kv_expect('371 M2', pg_temp.kv_counts(pg_temp.kv_auth(7)), '1/1');
+  PERFORM pg_temp.kv_expect('371 M2 text', pg_temp.kv_sees(pg_temp.kv_auth(7)), 'R2 | R2:p3-g3');
+  -- A teacher who mentors nobody and wrote nothing sees nothing.
+  PERFORM pg_temp.kv_expect('371 T3', pg_temp.kv_counts(pg_temp.kv_auth(8)), '0/0');
+  -- A guardian sees the requests that ask them, and their own rows only: not the other guardian's.
+  PERFORM pg_temp.kv_expect('371 G1', pg_temp.kv_counts(pg_temp.kv_auth(21)), '1/2');
+  PERFORM pg_temp.kv_expect('371 G1 text', pg_temp.kv_sees(pg_temp.kv_auth(21)), 'R1 | R1:p1-g1,p2-g1');
+  PERFORM pg_temp.kv_expect('371 G2', pg_temp.kv_counts(pg_temp.kv_auth(22)), '1/1');
+  PERFORM pg_temp.kv_expect('371 G2 text', pg_temp.kv_sees(pg_temp.kv_auth(22)), 'R1 | R1:p1-g2');
+  PERFORM pg_temp.kv_expect('371 G3', pg_temp.kv_counts(pg_temp.kv_auth(23)), '1/1');
+  PERFORM pg_temp.kv_expect('371 G4 (the marked pupil''s guardian)', pg_temp.kv_counts(pg_temp.kv_auth(24)), '1/1');
+  -- A pupil, a login of the other school, and nobody at all.
+  PERFORM pg_temp.kv_expect('371 P1', pg_temp.kv_counts(pg_temp.kv_auth(11)), '0/0');
+  PERFORM pg_temp.kv_expect('371 other school''s FULL', pg_temp.kv_counts(pg_temp.kv_auth(31)), '0/0');
+  PERFORM pg_temp.kv_expect('371 other school''s guardian', pg_temp.kv_counts(pg_temp.kv_auth(33)), '0/0');
+  PERFORM pg_temp.kv_expect('371 other school''s mentor', pg_temp.kv_counts(pg_temp.kv_auth(34)), '0/0');
+  PERFORM pg_temp.kv_expect('371 no login', pg_temp.kv_counts('00000000-0000-4000-8000-000000000000'), '0/0');
+  -- Her mentorship ends: she still reads what she wrote (all of R1), and no longer the row about P4 in R2.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  DELETE FROM "TeacherDuties" WHERE "userId" = (SELECT id FROM "Users" WHERE email = 'kv-m1@example.invalid');
+  PERFORM pg_temp.kv_expect('371 M1 after her mentorship ended', pg_temp.kv_sees(pg_temp.kv_auth(6)), 'R1 | R1:p1-g1,p1-g2,p2-g1');
+END $$;
+
+-- Who writes: a request by a teacher, or an administrator who writes Drift; nobody else.
+DO $$
+DECLARE
+  school uuid;
+BEGIN
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  school := app.current_school_id();
+  -- The expedition writes Drift; the läsare writes nothing.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(3));
+  INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (school, 'Expedition', 'B');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(5));
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'Läsare', 'B')$q$, school), '42501', 'a läsare writing a request');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$,
+                                    current_setting('app.test_kv_r1')::uuid, school, (SELECT id FROM "Users" WHERE email = 'kv-p1@example.invalid'), (SELECT id FROM "Users" WHERE email = 'kv-g2@example.invalid')),
+                             '42501', 'a läsare adding a receipt');
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckSettings" ("schoolId") VALUES (%L)$q$, school), '42501', 'a läsare writing the switch');
+  PERFORM pg_temp.kv_denied('UPDATE "AckSettings" SET enabled = false', 'a läsare turning kvittens off');
+END $$;
+DO $$
+DECLARE
+  school uuid;
+  req uuid;
+BEGIN
+  -- A teacher who mentors nobody may start a request and add nothing to it.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(8));
+  school := app.current_school_id();
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (req, school, 'T3', 'B');
+  IF (SELECT count(*) FROM "AckRequests") <> 1 THEN RAISE EXCEPTION 'kvittens 371: an author does not read her own request'; END IF;
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (%L, %L, %L, %L)$q$,
+                                    req, school, (SELECT id FROM "Users" WHERE email = 'kv-p3@example.invalid'), (SELECT id FROM "Users" WHERE email = 'kv-g3@example.invalid')),
+                             '42501', 'a teacher who mentors nobody adding a receipt');
+  -- A guardian, a pupil and the other school write nothing.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(21));
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'G', 'B')$q$, school), '42501', 'a guardian writing a request');
+  PERFORM pg_temp.kv_denied('UPDATE "AckReceipts" SET "ackedAt" = now()', 'a guardian confirming by the table');
+  PERFORM pg_temp.kv_denied('DELETE FROM "AckReceipts"', 'a guardian removing a receipt');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(11));
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'P', 'B')$q$, school), '42501', 'a pupil writing a request');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(31));
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'X', 'B')$q$, school), '42501', 'another school''s administrator writing a request here');
+  -- The switch off stops the teacher too.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  UPDATE "AckSettings" SET enabled = false;
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(6));
+  PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body) VALUES (%L, 'Av', 'B')$q$, school), '42501', 'a mentor writing a request while kvittens is off');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(21));
+  -- Turned off, the guardian still reads and can still confirm what was asked.
+  IF pg_temp.kv_counts(pg_temp.kv_auth(21)) <> '1/2' THEN RAISE EXCEPTION 'kvittens 371: turning kvittens off hid a request from its guardian'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 372: the confirmation. Who is done (one definition), what a second tap
+-- does, a guardian whose custody has ended, and a marked pupil's guardian.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+BEGIN
+  PERFORM pg_temp.kv_load();
+  IF NOT EXISTS (SELECT 1 FROM "AckSettings" WHERE enabled) THEN
+    UPDATE "AckSettings" SET enabled = true;
+    IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (app.current_school_id(), true); END IF;
+  END IF;
+  -- RA: any one of the two guardians of P1 will do. RB: both must. RC: the marked pupil's only guardian.
+  PERFORM set_config('app.test_kv_ra', pg_temp.kv_request('RA', 'ANY', 'p1:g1,p1:g2')::text, true);
+  PERFORM set_config('app.test_kv_rb', pg_temp.kv_request('RB', 'ALL', 'p1:g1,p1:g2')::text, true);
+  PERFORM set_config('app.test_kv_rc', pg_temp.kv_request('RC', 'ANY', 'p4:g4')::text, true);
+  IF NOT EXISTS (SELECT 1 FROM "PersonProtections" WHERE "userId" = pg_temp.kvf('p4')) THEN
+    RAISE EXCEPTION 'kvittens 372: the fixture''s pupil P4 is not marked as having a protected identity';
+  END IF;
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(6));
+DO $$
+BEGIN
+  -- R1: ALL; P1 asks G1 and G2, P2 asks G1. The mentor wrote it.
+  PERFORM set_config('app.test_kv_r1', pg_temp.kv_request('R1', 'ALL', 'p1:g1,p1:g2,p2:g1')::text, true);
+END $$;
+
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+DECLARE
+  r1 uuid := current_setting('app.test_kv_r1')::uuid;
+BEGIN
+  PERFORM pg_temp.kv_expect('372 nobody has confirmed', pg_temp.kv_status(r1), 'p1 2/0/2 f, p2 1/0/1 f');
+END $$;
+
+-- G1 has two children in R1 and confirms once for both.
+SELECT pg_temp.kv_as(pg_temp.kv_auth(21));
+DO $$
+DECLARE
+  r1 uuid := current_setting('app.test_kv_r1')::uuid;
+  t1 timestamptz;
+  t2 timestamptz;
+BEGIN
+  t1 := app.ack_confirm(r1);
+  IF t1 IS NULL OR abs(extract(epoch FROM clock_timestamp() - t1)) > 30 THEN RAISE EXCEPTION 'kvittens 372: the confirmation is stamped %, not now', t1; END IF;
+  IF (SELECT count(DISTINCT "ackedAt") FROM "AckReceipts" WHERE "requestId" = r1) <> 1 OR (SELECT count(*) FROM "AckReceipts" WHERE "requestId" = r1 AND "ackedAt" IS NOT NULL) <> 2 THEN
+    RAISE EXCEPTION 'kvittens 372: one tap did not confirm both of the guardian''s children at one time';
+  END IF;
+  -- A second tap changes nothing and answers the first time.
+  t2 := app.ack_confirm(r1);
+  IF t2 IS DISTINCT FROM t1 THEN RAISE EXCEPTION 'kvittens 372: a second tap answered % after the first % ', t2, t1; END IF;
+  IF (SELECT count(DISTINCT "ackedAt") FROM "AckReceipts" WHERE "requestId" = r1) <> 1 THEN RAISE EXCEPTION 'kvittens 372: a second tap moved the time'; END IF;
+  PERFORM set_config('app.test_kv_t1', t1::text, true);
+END $$;
+
+-- G2 sees her own row, unconfirmed, and nothing of G1's confirmation.
+SELECT pg_temp.kv_as(pg_temp.kv_auth(22));
+DO $$
+DECLARE
+  r1 uuid := current_setting('app.test_kv_r1')::uuid;
+BEGIN
+  IF (SELECT count(*) FROM "AckReceipts" WHERE "requestId" = r1) <> 1 OR EXISTS (SELECT 1 FROM "AckReceipts" WHERE "ackedAt" IS NOT NULL) THEN
+    RAISE EXCEPTION 'kvittens 372: a guardian reads the other guardian''s confirmation';
+  END IF;
+END $$;
+
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+DECLARE
+  r1 uuid := current_setting('app.test_kv_r1')::uuid;
+BEGIN
+  -- ALL: P2 has only G1 and is met; P1 waits for G2.
+  PERFORM pg_temp.kv_expect('372 G1 confirmed R1', pg_temp.kv_status(r1), 'p1 2/1/1 f, p2 1/1/0 t');
+END $$;
+
+-- G2 confirms: P1 is met under ALL.
+SELECT pg_temp.kv_as(pg_temp.kv_auth(22));
+DO $$
+BEGIN
+  PERFORM app.ack_confirm(current_setting('app.test_kv_r1')::uuid);
+  -- And under ANY, G2 alone is enough for P1 while G1 has not answered.
+  PERFORM app.ack_confirm(current_setting('app.test_kv_ra')::uuid);
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+BEGIN
+  PERFORM pg_temp.kv_expect('372 both confirmed R1 (ALL)', pg_temp.kv_status(current_setting('app.test_kv_r1')::uuid), 'p1 2/2/0 t, p2 1/1/0 t');
+  PERFORM pg_temp.kv_expect('372 one confirmed RA (ANY)', pg_temp.kv_status(current_setting('app.test_kv_ra')::uuid), 'p1 2/1/1 t');
+  PERFORM pg_temp.kv_expect('372 nobody confirmed RB (ALL)', pg_temp.kv_status(current_setting('app.test_kv_rb')::uuid), 'p1 2/0/2 f');
+END $$;
+
+-- Custody ends: G2 is no longer P1's guardian.
+DO $$
+BEGIN
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.kvf('g2') AND "studentId" = pg_temp.kvf('p1');
+  IF NOT FOUND THEN RAISE EXCEPTION 'kvittens 372: the administrator could not end the custody'; END IF;
+  -- What G2 confirmed before stays, and counts.
+  PERFORM pg_temp.kv_expect('372 G2''s custody ended (R1 stands)', pg_temp.kv_status(current_setting('app.test_kv_r1')::uuid), 'p1 2/2/0 t, p2 1/1/0 t');
+  PERFORM pg_temp.kv_expect('372 G2''s custody ended (RA stands)', pg_temp.kv_status(current_setting('app.test_kv_ra')::uuid), 'p1 2/1/1 t');
+  -- RB, ALL: G2 can no longer answer, so she does not hold P1 up.
+  PERFORM pg_temp.kv_expect('372 G2''s custody ended (RB, nothing confirmed)', pg_temp.kv_status(current_setting('app.test_kv_rb')::uuid), 'p1 2/0/1 f');
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(22));
+DO $$
+BEGIN
+  -- G2 can not confirm, and the requests about P1 are not hers to read any more.
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_confirm(%L)', current_setting('app.test_kv_rb')), 'KV410', 'a guardian whose custody has ended confirming');
+  IF EXISTS (SELECT 1 FROM "AckRequests") OR EXISTS (SELECT 1 FROM "AckReceipts") THEN
+    RAISE EXCEPTION 'kvittens 372: a guardian whose custody has ended still reads a request about the child';
+  END IF;
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(21));
+DO $$
+BEGIN
+  -- G1 alone meets RB now.
+  PERFORM app.ack_confirm(current_setting('app.test_kv_rb')::uuid);
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+BEGIN
+  PERFORM pg_temp.kv_expect('372 G1 alone meets RB', pg_temp.kv_status(current_setting('app.test_kv_rb')::uuid), 'p1 2/1/0 t');
+END $$;
+
+-- The marked pupil's guardian is asked and confirms like any other; the staff see the row.
+SELECT pg_temp.kv_as(pg_temp.kv_auth(24));
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "AckRequests") <> 1 THEN RAISE EXCEPTION 'kvittens 372: the guardian of the marked pupil does not read the request'; END IF;
+  PERFORM app.ack_confirm(current_setting('app.test_kv_rc')::uuid);
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(6));
+DO $$
+BEGIN
+  PERFORM pg_temp.kv_expect('372 the mentor of the marked pupil', pg_temp.kv_status(current_setting('app.test_kv_rc')::uuid), 'p4 1/1/0 t');
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+DECLARE
+  rd uuid;
+BEGIN
+  -- Custody ending leaves nobody to ask: not met, nobody waiting, and the guardian is refused.
+  rd := pg_temp.kv_request('RD', 'ANY', 'p4:g4');
+  PERFORM set_config('app.test_kv_rd', rd::text, true);
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.kvf('g4') AND "studentId" = pg_temp.kvf('p4');
+  PERFORM pg_temp.kv_expect('372 all guardians gone', pg_temp.kv_status(rd), 'p4 1/0/0 f');
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(24));
+DO $$
+BEGIN
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_confirm(%L)', current_setting('app.test_kv_rd')), 'KV410', 'the last guardian whose custody has ended confirming');
+END $$;
+
+-- One guardian with two children in a request, custody of one of them ended: the tap confirms the other child and not the one she has no
+-- longer the custody of.
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+DECLARE
+  rt uuid := pg_temp.kv_request('RT', 'ALL', 'p1:g1,p2:g1');
+  re_ uuid;
+BEGIN
+  PERFORM set_config('app.test_kv_rt', rt::text, true);
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.kvf('g1') AND "studentId" = pg_temp.kvf('p2');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(21));
+  PERFORM app.ack_confirm(rt);
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  PERFORM pg_temp.kv_expect('372 a tap after one child''s custody ended', pg_temp.kv_status(rt), 'p1 1/1/0 t, p2 1/0/0 f');
+  IF EXISTS (SELECT 1 FROM "AckReceipts" WHERE "requestId" = rt AND "studentId" = pg_temp.kvf('p2') AND "ackedAt" IS NOT NULL) THEN
+    RAISE EXCEPTION 'kvittens 372: a tap confirmed a child the guardian no longer has the custody of';
+  END IF;
+  -- ALL, and nobody left who can: not met either.
+  re_ := pg_temp.kv_request('RE', 'ALL', 'p3:g3');
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.kvf('g3') AND "studentId" = pg_temp.kvf('p3');
+  PERFORM pg_temp.kv_expect('372 ALL with nobody left to ask', pg_temp.kv_status(re_), 'p3 1/0/0 f');
+END $$;
+
+-- Who may confirm at all: a guardian, and one who is asked.
+DO $$
+DECLARE
+  r1 uuid := current_setting('app.test_kv_r1')::uuid;
+BEGIN
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(23));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_confirm(%L)', r1), 'KV404', 'a guardian who was not asked');
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_confirm(%L)', gen_random_uuid()), 'KV404', 'a request that does not exist');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(33));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_confirm(%L)', r1), 'KV404', 'a guardian of another school');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(6));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_confirm(%L)', r1), 'KV403', 'the teacher who wrote it confirming');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_confirm(%L)', r1), 'KV403', 'an administrator confirming');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(11));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_confirm(%L)', r1), 'KV403', 'a pupil confirming');
+  PERFORM pg_temp.kv_as('00000000-0000-4000-8000-000000000000');
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_confirm(%L)', r1), 'KV403', 'a login nobody has confirming');
+END $$;
+
+-- Who may ask who is done: the author and the administrators, and a mentor only of her pupils.
+DO $$
+DECLARE
+  r1 uuid := current_setting('app.test_kv_r1')::uuid;
+  rc uuid := current_setting('app.test_kv_rc')::uuid;
+BEGIN
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(6));
+  PERFORM pg_temp.kv_expect('372 the author reads her request', pg_temp.kv_status(r1), 'p1 2/2/0 t, p2 1/1/0 t');
+  PERFORM pg_temp.kv_expect('372 the mentor reads her pupil in another''s request', pg_temp.kv_status(rc), 'p4 1/1/0 t');
+  IF (SELECT count(*) FROM app.ack_open_pairs(current_setting('app.test_kv_rb')::uuid)) <> 1 THEN
+    RAISE EXCEPTION 'kvittens 372: the open pairs of RB are not the one guardian who still can';
+  END IF;
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(7));
+  PERFORM pg_temp.kv_expect('372 another class''s mentor reads nothing of R1', pg_temp.kv_status_rows(r1)::text, '0');
+  PERFORM pg_temp.kv_expect('372 another class''s mentor reads nothing of RC', pg_temp.kv_status_rows(rc)::text, '0');
+  IF EXISTS (SELECT 1 FROM app.ack_open_pairs(r1)) OR EXISTS (SELECT 1 FROM app.ack_open_pairs(rc)) THEN RAISE EXCEPTION 'kvittens 372: another class''s mentor reads the open pairs'; END IF;
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(8));
+  PERFORM pg_temp.kv_expect('372 a teacher who mentors nobody', pg_temp.kv_status_rows(r1)::text, '0');
+  IF EXISTS (SELECT 1 FROM app.ack_open_pairs(r1)) THEN RAISE EXCEPTION 'kvittens 372: a teacher who mentors nobody reads the open pairs'; END IF;
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(21));
+  PERFORM pg_temp.kv_expect('372 a guardian asks who is done', pg_temp.kv_status_rows(r1)::text, '0');
+  IF EXISTS (SELECT 1 FROM app.ack_open_pairs(r1)) THEN RAISE EXCEPTION 'kvittens 372: a guardian reads the open pairs'; END IF;
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(31));
+  PERFORM pg_temp.kv_expect('372 another school''s administrator', pg_temp.kv_status_rows(r1)::text, '0');
+  IF EXISTS (SELECT 1 FROM app.ack_open_pairs(r1)) THEN RAISE EXCEPTION 'kvittens 372: another school''s administrator reads the open pairs'; END IF;
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(5));
+  PERFORM pg_temp.kv_expect('372 the läsare reads', pg_temp.kv_status(r1), 'p1 2/2/0 t, p2 1/1/0 t');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 373: the reminder, as far as the API's role may touch it. Its logic (which
+-- guardians, how many, how it ends, and never twice) needs a request whose time has
+-- come, and no role may move that: it is 373o's. Here: nobody who is somebody runs the
+-- job's two steps, and who stops a reminder.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+DECLARE
+  r uuid;
+BEGIN
+  PERFORM pg_temp.kv_load();
+  UPDATE "AckSettings" SET enabled = true, "remindAfterDays" = 2;
+  IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (app.current_school_id(), true, 2); END IF;
+  r := pg_temp.kv_request('Påminns', 'ALL', 'p1:g1,p1:g2');
+  PERFORM set_config('app.test_kv_rp', r::text, true);
+  IF (SELECT "remindAt" FROM "AckRequests" WHERE id = r) <= now() + interval '47 hours' THEN
+    RAISE EXCEPTION 'kvittens 373: the reminder is due %, not after the two days the school chose', (SELECT "remindAt" FROM "AckRequests" WHERE id = r);
+  END IF;
+  IF (SELECT "reminderOutcome" FROM "AckRequests" WHERE id = r) IS NOT NULL OR EXISTS (SELECT 1 FROM "AckReceipts" WHERE "requestId" = r AND "remindedAt" IS NOT NULL) THEN
+    RAISE EXCEPTION 'kvittens 373: a request that was not due was dealt with';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "Notifications" WHERE type = 'ACK_REMINDER') THEN RAISE EXCEPTION 'kvittens 373: a reminder was written before its time'; END IF;
+END $$;
+
+-- The two steps are the job's: a login that is somebody (an administrator of either school, a
+-- teacher, a guardian, a pupil) gets nothing from them and writes nothing, whatever is due.
+DO $$
+DECLARE
+  r uuid := current_setting('app.test_kv_rp')::uuid;
+  who integer;
+BEGIN
+  FOREACH who IN ARRAY ARRAY[1, 3, 5, 6, 7, 21, 11, 31, 33] LOOP
+    PERFORM pg_temp.kv_as(pg_temp.kv_auth(who));
+    IF EXISTS (SELECT 1 FROM app.ack_remind_queue(1000)) THEN RAISE EXCEPTION 'kvittens 373: login % was handed the queue', who; END IF;
+    IF EXISTS (SELECT 1 FROM app.ack_remind_request(r)) THEN RAISE EXCEPTION 'kvittens 373: login % was handed a reminder', who; END IF;
+  END LOOP;
+END $$;
+
+-- Stopping a reminder: the author of it, or an administrator who writes Drift.
+SELECT pg_temp.kv_as(pg_temp.kv_auth(6));
+DO $$
+BEGIN
+  PERFORM set_config('app.test_kv_rm', pg_temp.kv_request('Mentorns', 'ANY', 'p1:g1')::text, true);
+  PERFORM set_config('app.test_kv_rm2', pg_temp.kv_request('Mentorns andra', 'ANY', 'p1:g2')::text, true);
+END $$;
+SELECT pg_temp.kv_as(pg_temp.kv_auth(1));
+DO $$
+BEGIN
+  PERFORM set_config('app.test_kv_ra3', pg_temp.kv_request('Administratörens', 'ANY', 'p3:g3')::text, true);
+END $$;
+
+DO $$
+DECLARE
+  rm uuid := current_setting('app.test_kv_rm')::uuid;
+  rm2 uuid := current_setting('app.test_kv_rm2')::uuid;
+  ra uuid := current_setting('app.test_kv_ra3')::uuid;
+BEGIN
+  -- The author stops hers, twice, and nothing else moves.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(6));
+  PERFORM pg_temp.kv_expect('373 the author stops her reminder', app.ack_stop_reminder(rm)::text, 'STOPPED');
+  PERFORM pg_temp.kv_expect('373 stopping twice', app.ack_stop_reminder(rm)::text, 'STOPPED');
+  PERFORM pg_temp.kv_expect('373 the stop is on the request', (SELECT "reminderOutcome"::text FROM "AckRequests" WHERE id = rm), 'STOPPED');
+  PERFORM pg_temp.kv_expect('373 the others are as they were', (SELECT count(*)::text FROM "AckRequests" WHERE "reminderOutcome" IS NOT NULL), '1');
+  IF EXISTS (SELECT 1 FROM "AckReceipts" WHERE "remindedAt" IS NOT NULL OR "ackedAt" IS NOT NULL) THEN RAISE EXCEPTION 'kvittens 373: stopping touched a receipt'; END IF;
+  -- She does not stop an administrator's request, which she cannot read, nor does a colleague stop hers.
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_stop_reminder(%L)', ra), 'KV404', 'a teacher stopping the administrator''s reminder');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(7));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_stop_reminder(%L)', rm2), 'KV404', 'a colleague stopping the mentor''s reminder');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(8));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_stop_reminder(%L)', rm2), 'KV404', 'a teacher who mentors nobody stopping it');
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_stop_reminder(%L)', gen_random_uuid()), 'KV404', 'a request that does not exist');
+  -- An administrator who writes Drift stops anybody's; the expedition does too.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  PERFORM pg_temp.kv_expect('373 the administrator stops the mentor''s', app.ack_stop_reminder(rm2)::text, 'STOPPED');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(3));
+  PERFORM pg_temp.kv_expect('373 the expedition stops the administrator''s', app.ack_stop_reminder(ra)::text, 'STOPPED');
+  -- The läsare reads and stops nothing; a guardian, a pupil and nobody are not staff; another school's
+  -- administrator finds no such request.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(5));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_stop_reminder(%L)', current_setting('app.test_kv_rp')), 'KV403', 'a läsare stopping a reminder');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(21));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_stop_reminder(%L)', rm), 'KV403', 'a guardian stopping a reminder');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(11));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_stop_reminder(%L)', rm), 'KV403', 'a pupil stopping a reminder');
+  PERFORM pg_temp.kv_as('00000000-0000-4000-8000-000000000000');
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_stop_reminder(%L)', rm), 'KV403', 'a login nobody has stopping a reminder');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(31));
+  PERFORM pg_temp.kv_refuses(format('SELECT app.ack_stop_reminder(%L)', rm), 'KV404', 'another school''s administrator stopping a reminder');
+  -- A school that chose no reminder has nothing to stop: the answer is no outcome at all.
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  UPDATE "AckSettings" SET "remindAfterDays" = NULL;
+  ra := pg_temp.kv_request('Utan påminnelse', 'ANY', 'p3:g3');
+  IF app.ack_stop_reminder(ra) IS NOT NULL THEN RAISE EXCEPTION 'kvittens 373: a request with no reminder was stopped'; END IF;
+  IF (SELECT "reminderOutcome" FROM "AckRequests" WHERE id = ra) IS NOT NULL THEN RAISE EXCEPTION 'kvittens 373: a request with no reminder has an outcome'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 374: the catalogue. The arms, who holds a privilege, which function the
+-- API's role may run, the keys, and the gallring branch. The rows are 370-373's.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl text;
+  r text;
+  fn text;
+  want text;
+  got text;
+  priv text;
+  owner_only constant text[] := ARRAY[
+    'app.ack_settings_stamp()', 'app.ack_requests_stamp()', 'app.ack_receipts_limit()', 'app.ack_receipt_open(uuid, uuid, uuid)',
+    'app.ack_status_raw(uuid[])'];
+  api_may constant text[] := ARRAY[
+    'app.ack_enabled()', 'app.ack_remind_after_days()', 'app.ack_mentee_ids()', 'app.ack_asks_open(uuid, uuid)', 'app.ack_is_author(uuid)',
+    'app.ack_my_request_ids()', 'app.ack_mentee_request_ids()', 'app.ack_authored_request_ids()', 'app.ack_status(uuid[])',
+    'app.ack_open_pairs(uuid)', 'app.ack_confirm(uuid)', 'app.ack_remind_queue(integer)', 'app.ack_remind_request(uuid)',
+    'app.ack_stop_reminder(uuid)'];
+  def record;
+  holds boolean;
+BEGIN
+  -- Row security on; every arm for the API's role alone.
+  FOREACH tbl IN ARRAY ARRAY['AckSettings', 'AckRequests', 'AckReceipts'] LOOP
+    IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('%I', tbl)::regclass) THEN
+      RAISE EXCEPTION 'kvittens 374: % has no row security', tbl;
+    END IF;
+  END LOOP;
+  FOR tbl, want IN SELECT * FROM (VALUES
+      ('AckSettings', 'ack_settings_admin_insert:a, ack_settings_admin_select:r, ack_settings_admin_update:w'),
+      ('AckRequests', 'ack_requests_admin_select:r, ack_requests_guardian_select:r, ack_requests_staff_insert:a, ack_requests_teacher_select:r'),
+      ('AckReceipts', 'ack_receipts_admin_insert:a, ack_receipts_admin_select:r, ack_receipts_guardian_select:r, ack_receipts_teacher_insert:a, ack_receipts_teacher_select:r')
+    ) v(t, w)
+  LOOP
+    SELECT string_agg(polname::text || ':' || polcmd::text, ', ' ORDER BY polname::text) INTO got FROM pg_policy WHERE polrelid = format('%I', tbl)::regclass;
+    IF got IS DISTINCT FROM want THEN RAISE EXCEPTION E'kvittens 374: the arms of %: got\n%\nwanted\n%', tbl, got, want; END IF;
+    IF EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = format('%I', tbl)::regclass
+                  AND (SELECT array_agg(rolname::text) FROM pg_roles WHERE oid = ANY (p.polroles)) IS DISTINCT FROM ARRAY['app_authenticated']) THEN
+      RAISE EXCEPTION 'kvittens 374: an arm of % is for a role other than the API''s alone', tbl;
+    END IF;
+  END LOOP;
+
+  -- Privileges on the tables: the API's role selects and inserts, the switch is also updated, and nothing is removed;
+  -- PostgREST's roles (authenticated, anon) hold nothing.
+  FOREACH tbl IN ARRAY ARRAY['AckSettings', 'AckRequests', 'AckReceipts'] LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        -- service_role keeps the SELECT every table gives it and loses every write (it bypasses row security, and no part of this reaches it).
+        holds := (r = 'app_authenticated' AND priv IN ('SELECT', 'INSERT')) OR (r = 'app_authenticated' AND priv = 'UPDATE' AND tbl = 'AckSettings')
+                 OR (r = 'service_role' AND priv = 'SELECT');
+        IF has_table_privilege(r, format('%I', tbl), priv) IS DISTINCT FROM holds THEN
+          RAISE EXCEPTION 'kvittens 374: % % % on % (it should%)', r, CASE WHEN holds THEN 'lacks' ELSE 'holds' END, priv, tbl, CASE WHEN holds THEN '' ELSE ' not' END;
+        END IF;
+      END LOOP;
+      IF current_setting('server_version_num')::int >= 170000 AND has_table_privilege(r, format('%I', tbl), 'MAINTAIN') THEN
+        RAISE EXCEPTION 'kvittens 374: % holds MAINTAIN on %', r, tbl;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  -- Functions: the owner's five are nobody's; the API's role runs the rest; no other role runs any. Nineteen in all.
+  IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE 'ack\_%') <> cardinality(owner_only || api_may) THEN
+    RAISE EXCEPTION 'kvittens 374: the app schema has % ack_ functions, not the %', (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE 'ack\_%'), cardinality(owner_only || api_may);
+  END IF;
+  FOREACH fn IN ARRAY owner_only || api_may LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = fn::regprocedure AND prosecdef
+                      AND EXISTS (SELECT 1 FROM unnest(proconfig) c WHERE c LIKE 'search_path=%')) THEN
+      RAISE EXCEPTION 'kvittens 374: % is not a definer function with a search path of its own', fn;
+    END IF;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_function_privilege(r, fn::regprocedure, 'EXECUTE') THEN RAISE EXCEPTION 'kvittens 374: % may run %', r, fn; END IF;
+    END LOOP;
+    IF has_function_privilege('app_authenticated', fn::regprocedure, 'EXECUTE') <> (fn = ANY (api_may)) THEN
+      RAISE EXCEPTION 'kvittens 374: the API''s role % run %', CASE WHEN fn = ANY (api_may) THEN 'may not' ELSE 'may' END, fn;
+    END IF;
+  END LOOP;
+
+  -- What the policies compare with is built once per statement, as an initplan over the caller's own
+  -- ids, and not asked of every row of the school's table by a function (which cost 55-90 microseconds
+  -- a row: 0.8 s for a guardian with thirteen requests among 20 000).
+  FOR tbl, want IN SELECT * FROM (VALUES
+      ('ack_requests_guardian_select', 'ack_my_request_ids'),
+      ('ack_requests_teacher_select', 'ack_mentee_request_ids'),
+      ('ack_receipts_teacher_select', 'ack_authored_request_ids')) v(pol, fnname)
+  LOOP
+    SELECT pg_get_expr(polqual, polrelid) INTO got FROM pg_policy WHERE polname = tbl;
+    IF got IS NULL OR position(want IN got) = 0 OR got !~ '\(\s*SELECT\s+app\.' OR got ~ 'ack_is_author|ack_request_concerns|ack_guardian_may_see' THEN
+      RAISE EXCEPTION E'kvittens 374: % is not an initplan over %: %', tbl, want, got;
+    END IF;
+  END LOOP;
+
+  -- The limits: the sender's in the stamp, the school's day in a statement trigger that reads the rows it inserted.
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'AckReceipts_limit' AND tgrelid = '"AckReceipts"'::regclass AND tgenabled = 'O'
+                    AND tgtype & 1 = 0 AND tgtype & 2 = 0 AND tgtype & 4 = 4 AND tgnewtable IS NOT NULL) THEN
+    RAISE EXCEPTION 'kvittens 374: the school''s daily limit is not an AFTER INSERT statement trigger with a transition table';
+  END IF;
+  IF (SELECT array_agg(enumlabel::text ORDER BY enumsortorder) FROM pg_enum WHERE enumtypid = '"AckReminderOutcome"'::regtype)
+     IS DISTINCT FROM ARRAY['SENT', 'NOT_NEEDED', 'LAPSED', 'STOPPED', 'OFF'] THEN
+    RAISE EXCEPTION 'kvittens 374: the reminder outcomes are not the five';
+  END IF;
+  IF (SELECT count(*) FROM pg_constraint WHERE conrelid = '"AckRequests"'::regclass AND contype = 'c'
+         AND conname IN ('AckRequests_a_reminder_was_due', 'AckRequests_only_a_sent_reminder_has_a_time')) <> 2 THEN
+    RAISE EXCEPTION 'kvittens 374: the outcome''s two checks are not both there';
+  END IF;
+
+  -- The keys: the author alone is set to NULL (not the school with it), and the rest go with the person or the request.
+  SELECT * INTO def FROM pg_constraint WHERE conname = 'AckRequests_authorId_schoolId_fkey';
+  IF def.confdeltype <> 'n' OR def.confdelsetcols IS DISTINCT FROM ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = '"AckRequests"'::regclass AND attname = 'authorId')]::smallint[] THEN
+    RAISE EXCEPTION 'kvittens 374: removing the author does not set the author''s column alone to NULL';
+  END IF;
+  FOREACH fn IN ARRAY ARRAY['AckReceipts_requestId_schoolId_fkey', 'AckReceipts_guardianId_schoolId_fkey', 'AckReceipts_studentId_schoolId_fkey',
+                            'AckReceipts_schoolId_fkey', 'AckRequests_schoolId_fkey', 'AckSettings_schoolId_fkey'] LOOP
+    IF (SELECT confdeltype FROM pg_constraint WHERE conname = fn) IS DISTINCT FROM 'c' THEN RAISE EXCEPTION 'kvittens 374: % does not cascade', fn; END IF;
+  END LOOP;
+
+  -- Gallring: the request goes with the school's choice for NOTIFICATIONS.
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure) NOT LIKE '%''AckRequests''%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.gallring_purge(uuid, "RetentionDataType", integer)'::regprocedure) NOT LIKE '%"AckRequests"%' THEN
+    RAISE EXCEPTION 'kvittens 374: gallring does not carry the kvittens branch';
+  END IF;
+END $$;
 ROLLBACK;

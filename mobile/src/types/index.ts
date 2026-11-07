@@ -218,7 +218,9 @@ export type NotificationType =
   | 'CRISIS_ENDED'
   | 'CRISIS_GUARDIAN_AFTER'
   | 'LESSON_REPORT_REMINDER'
-  | 'REPORTING_RATE_DIGEST';
+  | 'REPORTING_RATE_DIGEST'
+  | 'ACK_REQUESTED'
+  | 'ACK_REMINDER';
 
 export interface NotificationRow {
   readonly id: string;

@@ -38,6 +38,9 @@
           - link "Min rapportering":
             - /url: /sv/teacher/reporting-rate
         - listitem:
+          - link "Kvittens":
+            - /url: /sv/teacher/acknowledgements
+        - listitem:
           - link "Min kalenderprenumeration":
             - /url: /sv/calendar-feed
     - link "Tillgänglighetsredogörelse":

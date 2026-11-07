@@ -3528,6 +3528,142 @@ BEGIN
   INSERT INTO "SchoolDaySettings" ("schoolId", "teacherView") VALUES (m, 'ROOMS');
 END $$;
 
+-- Kvittens (20270117091000), sections 370-374: a school of its own, with its
+-- people planted once, as the owner. The requests themselves are the sections'.
+--
+--   …f40000000001  FULL                       …f40000000006  M1, teacher, mentor of KV7A
+--   …f40000000003  EXPEDITION                 …f40000000007  M2, teacher, mentor of KV7B
+--   …f40000000005  LASARE                     …f40000000008  T3, teacher, mentors nobody
+--   …f40000000011  P1 (KV7A)   …f40000000012  P2 (KV7A)   …f40000000013  P3 (KV7B)
+--   …f40000000014  P4 (KV7A), marked as having a protected identity
+--   …f40000000015  P5 (KV7B), no guardian
+--   …f40000000021  G1 (P1 and P2)  …f40000000022  G2 (P1)  …f40000000023  G3 (P3)
+--   …f40000000024  G4 (P4)
+--   …f40000000031  the other school's FULL, …32 its pupil, …33 its guardian, …34 its mentor
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  y2 uuid;
+  ka uuid;
+  kb uuid;
+  k2 uuid;
+  m1 uuid;
+  m2 uuid;
+  po uuid;
+  go_ uuid;
+  p4 uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-kvittens-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Kvittens', 'rls-kvittens-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Kvittens', current_date - 700, current_date + 700, true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'KV7A', 7, now()) RETURNING id INTO ka;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'KV7B', 7, now()) RETURNING id INTO kb;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s1, 'kv-full@example.invalid', 'Kvittens', 'Full', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-f40000000001', true, now()),
+    (s1, 'kv-expedition@example.invalid', 'Kvittens', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-f40000000003', true, now()),
+    (s1, 'kv-lasare@example.invalid', 'Kvittens', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-f40000000005', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'kv-m1@example.invalid', 'Kvittens', 'Mentor A', 'TEACHER', '00000000-0000-4000-8000-f40000000006', true, now()) RETURNING id INTO m1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'kv-m2@example.invalid', 'Kvittens', 'Mentor B', 'TEACHER', '00000000-0000-4000-8000-f40000000007', true, now()) RETURNING id INTO m2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'kv-t3@example.invalid', 'Kvittens', 'Utan klass', 'TEACHER', '00000000-0000-4000-8000-f40000000008', true, now());
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt") VALUES
+    (s1, m1, y, 'MENTORSKAP', 'Mentor 7A', 60, ka, now()),
+    (s1, m2, y, 'MENTORSKAP', 'Mentor 7B', 60, kb, now());
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    (s1, 'kv-p1@example.invalid', 'Kvittens', 'Elev Ett', 'STUDENT', '00000000-0000-4000-8000-f40000000011', true, ka, now()),
+    (s1, 'kv-p2@example.invalid', 'Kvittens', 'Elev Två', 'STUDENT', '00000000-0000-4000-8000-f40000000012', true, ka, now()),
+    (s1, 'kv-p3@example.invalid', 'Kvittens', 'Elev Tre', 'STUDENT', '00000000-0000-4000-8000-f40000000013', true, kb, now()),
+    (s1, 'kv-p4@example.invalid', 'Kvittens', 'Elev Fyra', 'STUDENT', '00000000-0000-4000-8000-f40000000014', true, ka, now()),
+    (s1, 'kv-p5@example.invalid', 'Kvittens', 'Elev Fem', 'STUDENT', '00000000-0000-4000-8000-f40000000015', true, kb, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (s1, 'kv-g1@example.invalid', 'Kvittens', 'Vårdnadshavare Ett', 'GUARDIAN', '00000000-0000-4000-8000-f40000000021', true, now()),
+    (s1, 'kv-g2@example.invalid', 'Kvittens', 'Vårdnadshavare Två', 'GUARDIAN', '00000000-0000-4000-8000-f40000000022', true, now()),
+    (s1, 'kv-g3@example.invalid', 'Kvittens', 'Vårdnadshavare Tre', 'GUARDIAN', '00000000-0000-4000-8000-f40000000023', true, now()),
+    (s1, 'kv-g4@example.invalid', 'Kvittens', 'Vårdnadshavare Fyra', 'GUARDIAN', '00000000-0000-4000-8000-f40000000024', true, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT s1, g."id", p."id"
+    FROM (VALUES ('kv-g1@example.invalid', 'kv-p1@example.invalid'),
+                 ('kv-g1@example.invalid', 'kv-p2@example.invalid'),
+                 ('kv-g2@example.invalid', 'kv-p1@example.invalid'),
+                 ('kv-g3@example.invalid', 'kv-p3@example.invalid'),
+                 ('kv-g4@example.invalid', 'kv-p4@example.invalid')) AS v(guardian, pupil)
+    JOIN "Users" g ON g."schoolId" = s1 AND g."email" = v.guardian
+    JOIN "Users" p ON p."schoolId" = s1 AND p."email" = v.pupil;
+  SELECT id INTO p4 FROM "Users" WHERE "schoolId" = s1 AND email = 'kv-p4@example.invalid';
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p4, s1, 'MANUAL');
+
+  -- The other school: its own admin, class, pupil, guardian and mentor.
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Kvittens annan', 'rls-kvittens-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'Kvittens annan', current_date - 700, current_date + 700, true, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s2, y2, 'KV9A', 9, now()) RETURNING id INTO k2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'kv-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-f40000000031', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s2, 'kv-annan-p@example.invalid', 'Annan', 'Elev', 'STUDENT', '00000000-0000-4000-8000-f40000000032', true, k2, now()) RETURNING id INTO po;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'kv-annan-g@example.invalid', 'Annan', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-f40000000033', true, now()) RETURNING id INTO go_;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'kv-annan-m@example.invalid', 'Annan', 'Mentor', 'TEACHER', '00000000-0000-4000-8000-f40000000034', true, now()) RETURNING id INTO m1;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s2, go_, po);
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  VALUES (s2, m1, y2, 'MENTORSKAP', 'Mentor 9A', 60, k2, now());
+END $$;
+
+-- The matrix school's rows for Kvittens (20270117091000), so the role matrix
+-- (section 116) has a row of each table to probe: the switch on, one request by
+-- the school's full administrator about its first pupil, and the receipt for the
+-- pupil's guardian (unconfirmed and unreminded, as an insert must be). Written
+-- by the owner, once.
+DO $$
+DECLARE
+  m uuid;
+  author uuid;
+  pupil uuid;
+  guardian uuid;
+  req uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "AckSettings" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO author FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000105';
+  SELECT id INTO pupil FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000112';
+  SELECT id INTO guardian FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000113';
+  IF author IS NULL OR pupil IS NULL OR guardian IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school lacks the administrator, pupil or guardian for a kvittens request';
+  END IF;
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (m, true, 2);
+  -- Made three days ago, so that it counts for nothing in the hour and the day the limits look at (the tests
+  -- write requests as the same people). Its reminder time was fixed by the stamp when the fixtures ran, two
+  -- days on, which is the day of a run that follows them.
+  INSERT INTO "AckRequests" ("schoolId", "authorId", title, body, rule, "createdAt")
+  VALUES (m, author, 'Utflykt på torsdag', 'Vi åker kl. 8.', 'ANY', now() - interval '3 days') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "createdAt") VALUES (req, m, pupil, guardian, now() - interval '3 days');
+  -- Section 241 compares the guardian who has a login at two schools, choosing this one, with this
+  -- school's own guardian "who has the same child": so the request asks that guardian about the pupil too.
+  FOR guardian IN
+    SELECT u."id" FROM "Users" u JOIN "GuardianStudents" gs ON gs."guardianId" = u."id" AND gs."studentId" = pupil
+     WHERE u."schoolId" = m AND u."authId" = 'fe000000-0000-4000-8000-000000000243'
+  LOOP
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "createdAt") VALUES (req, m, pupil, guardian, now() - interval '3 days');
+  END LOOP;
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

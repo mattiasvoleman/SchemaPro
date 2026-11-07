@@ -27,6 +27,18 @@
  * store, not a file. The app has no export. A route of Krisläge that ever answers a file belongs in
  * the list below, by name, before it ships.
  *
+ * KVITTENS (20270117091000) IS DECIDED HERE TOO, though no route of it is
+ * listed: the requests, their receipts and the staff's overview answer the
+ * screen in JSON (GET /api/v1/acknowledgements/:id), and no path of them is a
+ * file or a feed. The overview names the pupils and guardians a request asked,
+ * a marked pupil among them, because the staff member who asked has the pupil
+ * in their register already and the request is only the answer to "did the
+ * guardian see it". A guardian of a marked pupil is asked and confirms like any
+ * other. There is no export of the receipts, on purpose: a list of who
+ * confirmed would be a file naming pupils and their guardians, and the first
+ * one to be written belongs in the list below, by name, as HOLDS_OUT, before
+ * it ships.
+ *
  * SKOLANS DAG (20270116090000) IS DECIDED HERE TOO, though no route of it is
  * listed: GET /api/v1/school-day and .../free answer the screen in JSON, and
  * no path of them is a file or a feed. They name the school's teachers, as the

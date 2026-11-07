@@ -222,6 +222,8 @@ describe("AppShell navigation", () => {
     expect(link("nav.myReporting")).toHaveAttribute("href", "/teacher/reporting-rate");
     // Skolans dag: in the menu always; the page says what the school has decided teachers get.
     expect(link("nav.schoolDay")).toHaveAttribute("href", "/teacher/school-day");
+    // Kvittens: ask the guardians of the mentees to confirm a message, in the menu always.
+    expect(link("nav.acknowledgements")).toHaveAttribute("href", "/teacher/acknowledgements");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
@@ -229,7 +231,7 @@ describe("AppShell navigation", () => {
     expect(screen.queryByRole("link", { name: "nav.leaveRequests" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
     // Counted inside the nav: the skip link is a link too, and not an entry.
-    expect(navLinks()).toHaveLength(12);
+    expect(navLinks()).toHaveLength(13);
 
   });
 
@@ -243,15 +245,17 @@ describe("AppShell navigation", () => {
     expect(navLinks()).toHaveLength(3);
   });
 
-  it("guardian gets the my-children link, the absence watch and the calendar feed", () => {
+  it("guardian gets the my-children link, the absence watch, the acknowledgements and the calendar feed", () => {
     navState.pathname = "/guardian";
     renderShell({ role: "GUARDIAN" });
 
     expect(link("nav.myChildren")).toHaveAttribute("href", "/guardian");
     // Frånvarobevakning: the children over a limit, in the menu always.
     expect(link("nav.absenceWatch")).toHaveAttribute("href", "/guardian/absence-watch");
+    // Kvittens: the messages the school asks the guardian to confirm, in the menu always.
+    expect(link("nav.acknowledgements")).toHaveAttribute("href", "/guardian/acknowledgements");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
-    expect(navLinks()).toHaveLength(3);
+    expect(navLinks()).toHaveLength(4);
   });
 
   it("groups the admin menu by the manual's four phases, Dataskydd and Integrationer last and unlabelled", () => {
@@ -303,6 +307,7 @@ describe("AppShell navigation", () => {
       "nav.reports",
       "nav.absenceWatch",
       "nav.reportingRate",
+      "nav.acknowledgements",
       "nav.classBook",
     ]);
 
@@ -316,7 +321,7 @@ describe("AppShell navigation", () => {
     expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
     expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(38);
+    expect(all).toHaveLength(39);
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {
@@ -439,6 +444,7 @@ describe("AppShell mobile drawer", () => {
     const close = within(drawer).getByRole("button", { name: "common.close" });
     const children = within(drawer).getByRole("link", { name: "nav.myChildren" });
     const watch = within(drawer).getByRole("link", { name: "nav.absenceWatch" });
+    const acknowledgements = within(drawer).getByRole("link", { name: "nav.acknowledgements" });
     const feed = within(drawer).getByRole("link", { name: "nav.calendarFeed" });
     // Below the menu, the tillgänglighetsredogörelse: the drawer's last stop.
     const statement = within(drawer).getByRole("link", { name: "accessibilityStatement.link" });
@@ -448,6 +454,8 @@ describe("AppShell mobile drawer", () => {
     expect(children).toHaveFocus();
     await user.tab();
     expect(watch).toHaveFocus();
+    await user.tab();
+    expect(acknowledgements).toHaveFocus();
     await user.tab();
     expect(feed).toHaveFocus();
     await user.tab();

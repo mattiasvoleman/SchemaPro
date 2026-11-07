@@ -36,8 +36,12 @@ export function homeOf(role: string | null): { group: '(guardian)' | '(student)'
   return { group: '(app)', home: '/(app)/schedule', notifications: '/(app)/notifications' };
 }
 
-/** Where a push tap goes: the role's Notiser tab, the cover requests a teacher is asked in, or the roll call of an alarm. */
-export type TapTarget = ReturnType<typeof homeOf>['notifications'] | '/(app)/cover-requests' | '/(app)/crisis';
+/**
+ * Where a push tap goes: the role's Notiser tab, the cover requests a teacher
+ * is asked in, the roll call of an alarm, or the messages a guardian is asked
+ * to confirm.
+ */
+export type TapTarget = ReturnType<typeof homeOf>['notifications'] | '/(app)/cover-requests' | '/(app)/crisis' | '/(guardian)/acknowledgements';
 
 /**
  * The notice types whose push is a question for a teacher (Vikariefrågan):
@@ -56,13 +60,32 @@ const COVER_QUESTION_TYPES: ReadonlySet<string> = new Set(['COVER_REQUESTED', 'C
 const CRISIS_ALARM_TYPES: ReadonlySet<string> = new Set(['CRISIS_ALARM', 'CRISIS_ENDED']);
 
 /**
+ * The notice types that ask a guardian to confirm a message (Kvittens): the
+ * request and its one reminder. Both are read, and answered, in the
+ * guardian's Meddelanden tab.
+ */
+const ACK_TYPES: ReadonlySet<string> = new Set(['ACK_REQUESTED', 'ACK_REMINDER']);
+
+/**
+ * The Meddelanden tab, for a guardian and a notice that asks them to confirm
+ * a message; null for anyone else and anything else. A push tap
+ * (tapTarget) and a tap on the same notice in the Notiser tab both go here.
+ */
+export function ackTarget(role: string | null, type: string | null): '/(guardian)/acknowledgements' | null {
+  return role === 'GUARDIAN' && type !== null && ACK_TYPES.has(type) ? '/(guardian)/acknowledgements' : null;
+}
+
+/**
  * What a tap on a push opens. The type is what the gateway put in the push's
  * data (notification-delivery.service: { notificationId, type }); a tap that
  * carries none, or one the role has no screen for, opens the Notiser tab as
  * every tap did before. Only a TEACHER has the Vikarie tab; both kinds of
- * staff have Larm, and a student or a guardian never leaves their own shell.
+ * staff have Larm; only a GUARDIAN has Meddelanden; and a student or a
+ * guardian never leaves their own shell.
  */
 export function tapTarget(role: string | null, type: string | null): TapTarget {
+  const messages = ackTarget(role, type);
+  if (messages !== null) return messages;
   if (type !== null && (role === 'TEACHER' || role === 'SCHOOL_ADMIN') && CRISIS_ALARM_TYPES.has(type)) return '/(app)/crisis';
   if (role === 'TEACHER' && type !== null && COVER_QUESTION_TYPES.has(type)) return '/(app)/cover-requests';
   return homeOf(role).notifications;

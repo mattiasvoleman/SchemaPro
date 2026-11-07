@@ -33,6 +33,10 @@ import type { NotificationKind } from './notifications.service';
  * an exercise when it is: no kind of alarm, no pupil, group or place, and no
  * time (the phone shows when the push arrived). Its end and the notice to the
  * guardians afterwards (CRISIS_GUARDIAN_AFTER) say as little.
+ * A request to confirm a message (ACK_REQUESTED, Kvittens) and its one
+ * reminder (ACK_REMINDER) say that a message from the school waits, and
+ * nothing of the child, the title or the text: the lock screen is read by
+ * whoever holds the phone.
  * The reporting rate (Rapporteringsgrad) is told the same way: a reminder
  * (LESSON_REPORT_REMINDER) says that lessons are waiting for their register,
  * not how many, which or when, and the weekly notice to rektor
@@ -254,6 +258,18 @@ const SV: Record<PushKind, Template> = {
     bare: 'Du har lektioner utan sparad närvaro. Öppna appen för att se vilka.',
     many: 'Du har lektioner utan sparad närvaro. Öppna appen för att se vilka.',
   },
+  ACK_REQUESTED: {
+    title: 'Meddelande från skolan',
+    one: 'Skolan ber dig bekräfta ett meddelande. Öppna appen för att läsa det.',
+    bare: 'Skolan ber dig bekräfta ett meddelande. Öppna appen för att läsa det.',
+    many: 'Skolan ber dig bekräfta ett meddelande. Öppna appen för att läsa det.',
+  },
+  ACK_REMINDER: {
+    title: 'Påminnelse från skolan',
+    one: 'Ett meddelande från skolan väntar på din bekräftelse. Öppna appen för att läsa det.',
+    bare: 'Ett meddelande från skolan väntar på din bekräftelse. Öppna appen för att läsa det.',
+    many: 'Ett meddelande från skolan väntar på din bekräftelse. Öppna appen för att läsa det.',
+  },
   REPORTING_RATE_DIGEST: {
     title: 'Rapporteringsgrad',
     one: 'Du har ett nytt veckobesked om rapporteringsgraden. Öppna appen för att se mer.',
@@ -439,6 +455,18 @@ const EN: Record<PushKind, Template> = {
     one: 'You have lessons with no saved attendance. Open the app to see which.',
     bare: 'You have lessons with no saved attendance. Open the app to see which.',
     many: 'You have lessons with no saved attendance. Open the app to see which.',
+  },
+  ACK_REQUESTED: {
+    title: 'Message from the school',
+    one: 'The school asks you to confirm a message. Open the app to read it.',
+    bare: 'The school asks you to confirm a message. Open the app to read it.',
+    many: 'The school asks you to confirm a message. Open the app to read it.',
+  },
+  ACK_REMINDER: {
+    title: 'Reminder from the school',
+    one: 'A message from the school is waiting for your confirmation. Open the app to read it.',
+    bare: 'A message from the school is waiting for your confirmation. Open the app to read it.',
+    many: 'A message from the school is waiting for your confirmation. Open the app to read it.',
   },
   REPORTING_RATE_DIGEST: {
     title: 'Reporting rate',

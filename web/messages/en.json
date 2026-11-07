@@ -224,6 +224,7 @@
     "classBook": "Class book",
     "scheduleExchange": "Schedule as a file",
     "absenceWatch": "Absence watch",
+    "acknowledgements": "Acknowledgements",
     "reportingRate": "Reporting rate",
     "myReporting": "My reporting",
     "crisis": "Crisis mode",
@@ -2337,6 +2338,10 @@
     "unreadMarker": "Unread.",
     "absenceWatchDigest": "Absence summary {from} – {to}: {open, plural, =0 {no pupil is over a limit} one {# pupil is over a limit} other {# pupils are over a limit}}, {crossed, plural, =0 {none passed a limit} one {# passed a limit} other {# passed a limit}} in the period. See Absence watch.",
     "absenceWatchDigestGuardian": "Absence summary {from} – {to}: {open, plural, =0 {{crossed, plural, one {one of your children is} other {# of your children are}} under an absence limit again} one {one of your children has absence over a limit the school has set} other {# of your children have absence over a limit the school has set}}. See Absence watch.",
+    "ack": {
+      "ACK_REQUESTED": "The school asks you to confirm: {title}",
+      "ACK_REMINDER": "Reminder: the school is waiting for your confirmation of {title}"
+    },
     "lessonReportReminder": "{count, plural, one {# new lesson was held} other {# new lessons were held}} at least {limitDays, plural, one {# day} other {# days}} ago with no saved register. Older open lessons may remain. See My reporting.",
     "reportingRateDigest": "Reporting rate {from} – {to}: {reported, number} of {held, plural, one {# lesson held} other {# lessons held}} had a saved register. See Reporting rate.",
     "cover": {
@@ -5992,6 +5997,8 @@
       "COVER_REQUEST_CLOSED": "Requests filled, withdrawn or run out unanswered",
       "COVER_REQUEST_ACCEPTED": "Colleagues who said yes to my request",
       "ABSENCE_WATCH_DIGEST": "Absence summary",
+      "ACK_REQUESTED": "Messages from the school for you to confirm",
+      "ACK_REMINDER": "Reminder about a message waiting for your confirmation",
       "LESSON_REPORT_REMINDER": "Reminders about open lessons",
       "REPORTING_RATE_DIGEST": "Weekly reporting-rate note",
       "CRISIS_GUARDIAN_AFTER": "Notice after an alarm at the school"
@@ -7401,6 +7408,217 @@
       "truncatedBody": "More than {count} findings matched, and the oldest are not shown.",
       "loadFailed": "The list could not be loaded",
       "loadFailedHint": "Nothing has changed. Reload the page in a moment."
+    }
+  },
+  "acknowledgements": {
+    "title": "Acknowledgements",
+    "subtitle": "Ask guardians to confirm that they have read a message",
+    "teacherSubtitle": "Ask the guardians of your mentees to confirm a message",
+    "guardianSubtitle": "Messages the school asks you to confirm that you have read",
+    "rule": {
+      "ANY": {
+        "label": "One guardian confirming is enough",
+        "hint": "The pupil is done as soon as one of the guardians has confirmed.",
+        "short": "One is enough"
+      },
+      "ALL": {
+        "label": "All guardians must confirm",
+        "hint": "The pupil is done when every guardian who can confirm has done so.",
+        "short": "All"
+      }
+    },
+    "settings": {
+      "title": "Acknowledgements at the school",
+      "description": "When acknowledgements are on, staff can ask guardians to confirm a message. Guardians get a notice, and whoever asked sees who has confirmed and when.",
+      "switchLabel": "Acknowledgements",
+      "onHint": "On. Staff can ask guardians to confirm messages.",
+      "offHint": "Off. Nobody can ask for an acknowledgement, but earlier requests stay. Reminders that fall due while it is off are not sent, not even when you turn it back on.",
+      "turnedOn": "Acknowledgements are on.",
+      "turnedOff": "Acknowledgements are off.",
+      "remindLabel": "Reminder",
+      "remindHint": "Every guardian who has not confirmed themselves is reminded once, also when another guardian of the same pupil has confirmed. A change applies to requests sent after you have saved it.",
+      "remindNone": "No reminder",
+      "remindOption": "After {days, plural, one {# day} other {# days}}",
+      "remindSaved": "The reminder is saved.",
+      "loadFailed": "The settings for acknowledgements could not be loaded",
+      "loadFailedHint": "Nothing has changed. Reload the page in a moment."
+    },
+    "list": {
+      "title": "Requests",
+      "description": {
+        "admin": "Every request at the school, newest first.",
+        "teacher": "Requests about your mentees, newest first."
+      },
+      "new": "Ask for acknowledgement",
+      "caption": "Requests for acknowledgement",
+      "colMessage": "Message",
+      "colRule": "Rule",
+      "colDone": "Pupils done",
+      "colWaiting": "Waiting",
+      "colReminder": "Reminder",
+      "sentBy": "Sent {date} by {author}",
+      "doneOf": "{met} of {pupils, plural, one {# pupil} other {# pupils}}",
+      "allDone": "All done",
+      "waiting": "{count, plural, =0 {None} one {# guardian} other {# guardians}}",
+      "reminder": {
+        "NONE": "None",
+        "SCHEDULED": "Goes out {date}",
+        "SENT": "Sent",
+        "NOT_NEEDED": "Not needed",
+        "LAPSED": "Not sent, too late",
+        "STOPPED": "Stopped",
+        "OFF": "Not sent, acknowledgements were off"
+      },
+      "more": "Show more",
+      "loadingMore": "Loading more…",
+      "moreFailed": "More requests could not be loaded",
+      "moreFailedHint": "The ones already shown are still here. Try again in a moment.",
+      "emptyTitle": "No requests yet",
+      "empty": {
+        "admin": "When staff ask guardians to confirm a message, it shows here with who has confirmed.",
+        "teacher": "When you ask guardians to confirm a message, it shows here with who has confirmed."
+      },
+      "loadFailed": "The requests could not be loaded",
+      "loadFailedHint": "Nothing has changed. Reload the page in a moment.",
+      "disabledTitle": {
+        "admin": "Acknowledgements are off",
+        "teacher": "The school has not turned on acknowledgements"
+      },
+      "disabled": {
+        "admin": "Turn them on above so that staff can ask for acknowledgements. Earlier requests stay below.",
+        "teacher": "An administrator can turn them on. Earlier requests stay below."
+      },
+      "sentTitle": "The request is sent",
+      "sentBody": "The request went to {guardians, plural, one {# guardian} other {# guardians}} for {pupils, plural, one {# pupil} other {# pupils}}.",
+      "sentWithout": "{count, plural, one {# pupil was left out} other {# pupils were left out}} because no guardian could be asked: {names}."
+    },
+    "form": {
+      "title": "New request",
+      "description": "The guardians of the pupils you choose get a notice and confirm with one tap.",
+      "titleLabel": "Subject",
+      "titleHint": "Short and clear, for example The trip on Thursday.",
+      "bodyLabel": "Message",
+      "bodyHint": "The same text goes to every guardian you choose. Do not name individual pupils.",
+      "counter": "{count, number} of {max, number} characters",
+      "problem": {
+        "title": "Write a subject.",
+        "titleLong": "The subject can be at most {max, number} characters.",
+        "body": "Write a message.",
+        "bodyLong": "The message can be at most {max, number} characters.",
+        "pupils": "Choose at least one pupil.",
+        "pupilsMany": "You can choose at most {max, number} pupils in one request.",
+        "nobody": "None of the chosen pupils has a guardian to ask."
+      },
+      "ruleLegend": "How many guardians must confirm?",
+      "pupilsLegend": "Pupils",
+      "pupilsHint": "The guardians of the pupils you choose are asked.",
+      "search": "Search for a pupil or class",
+      "classFilter": "Class",
+      "allClasses": "All classes",
+      "selectShown": "Select everyone shown",
+      "selectClass": "Select everyone in {class}",
+      "unselectShown": "Clear everyone shown",
+      "unselectClass": "Clear everyone in {class}",
+      "clear": "Clear selection",
+      "shown": "Showing {shown, number} of {total, plural, one {# pupil} other {# pupils}}",
+      "noMatch": "No pupil matches the search.",
+      "noPupilsTitle": {
+        "admin": "There are no pupils to ask about",
+        "teacher": "You are not a mentor for any pupils right now"
+      },
+      "noPupils": {
+        "admin": "Acknowledgements go to the guardians of the pupils at the school.",
+        "teacher": "Acknowledgements go to the guardians of pupils you are a mentor for."
+      },
+      "guardians": "{count, plural, =0 {No guardian} one {# guardian} other {# guardians}}",
+      "chosen": "{pupils, plural, =0 {No pupil chosen} one {# pupil chosen} other {# pupils chosen}}",
+      "willAsk": "{guardians, plural, =0 {No guardian to ask} one {# guardian will be asked} other {# guardians will be asked}}",
+      "withoutTitle": "{count, plural, one {# chosen pupil has no guardian to ask} other {# chosen pupils have no guardian to ask}}",
+      "withoutBody": "They are left out of the request: {names}.",
+      "moreNames": "{count} more",
+      "submit": "Send request",
+      "sending": "Sending…",
+      "failed": "The request was not sent",
+      "loadFailed": "The pupils could not be loaded",
+      "loadFailedHint": "Nothing has been sent. Try again in a moment."
+    },
+    "refusal": {
+      "ACK_DISABLED": "The school has not turned on acknowledgements. Ask an administrator to turn them on.",
+      "ACK_UNKNOWN_PUPIL": "One of the pupils is no longer at the school. The list of pupils is updated: check your choices and try again.",
+      "ACK_NOT_YOUR_PUPIL": "You can only ask for acknowledgements about pupils you are a mentor for.",
+      "ACK_NO_GUARDIANS": "None of the pupils has a guardian to ask.",
+      "ACK_TOO_MANY_REQUESTS": "You have sent so many requests in the last hour that no more can be sent right now. Nothing has been sent. Try again in a moment.",
+      "ACK_TOO_MANY_RECIPIENTS": "The school has sent so many acknowledgements today that this request would go over the day's limit. Nothing has been sent. Choose fewer pupils or try again tomorrow.",
+      "THROTTLED": "You sent too many requests in a short time. Nothing has been sent. Wait a minute and try again."
+    },
+    "detail": {
+      "back": "Back to the requests",
+      "rule": "Rule",
+      "sent": "Sent",
+      "sentValue": "{moment} by {author}",
+      "reminder": "Reminder",
+      "reminderState": {
+        "NONE": "No reminder",
+        "SCHEDULED": "Goes out {moment} to whoever has not confirmed by then, also when another guardian of the same pupil has",
+        "SENT": "Sent {moment}",
+        "NOT_NEEDED": "Not sent: when the time came, everyone had already confirmed or could no longer confirm",
+        "LAPSED": "Not sent: it was due more than 30 days ago, and a reminder that old is not sent",
+        "STOPPED": "Stopped: whoever wrote the request, or an administrator, stopped the reminder before it went out",
+        "OFF": "Not sent: acknowledgements were off at the school when the time came"
+      },
+      "stop": {
+        "button": "Stop the reminder",
+        "ask": "Stop the reminder? This cannot be undone.",
+        "askHint": "The request stays, and guardians can still confirm. Only the reminder does not go out.",
+        "confirm": "Stop",
+        "stopping": "Stopping…",
+        "done": "The reminder is stopped.",
+        "already": "The reminder could not be stopped: it had already gone out or ended. The page is updated.",
+        "failedTitle": "The reminder was not stopped",
+        "failed": "Nothing has changed. Try again in a moment.",
+        "staleTitle": "The reminder can no longer be stopped",
+        "stale": "It may already have gone out, or you may no longer be allowed to stop it. The page is updated."
+      },
+      "pupilsTitle": "Pupils",
+      "summary": "{met} of {pupils, plural, one {# pupil} other {# pupils}} done",
+      "onlyWaiting": "Show only pupils who are not done",
+      "allMet": "Every pupil is done.",
+      "pupilMet": "Done",
+      "pupilWaiting": "Waiting",
+      "pupilNobody": "Nobody can confirm",
+      "guardianConfirmed": "Confirmed {moment}",
+      "guardianWaiting": "Waiting",
+      "guardianEnded": "No longer a guardian",
+      "guardianReminded": "Reminded {moment}",
+      "loadFailed": "The request could not be loaded",
+      "loadFailedHint": "Nothing has changed. Try again in a moment.",
+      "notFoundTitle": "The request does not exist",
+      "notFound": "It may have been removed, or it is about none of your pupils."
+    },
+    "guardian": {
+      "listTitle": "Your messages",
+      "summary": "{count, plural, =0 {No message is waiting for your confirmation} one {# message is waiting for your confirmation} other {# messages are waiting for your confirmation}}",
+      "summaryMore": "The count is of the messages shown. There are more: show older.",
+      "more": "Show older",
+      "loadingMore": "Loading older…",
+      "moreFailed": "Older messages could not be loaded",
+      "moreFailedHint": "The ones already shown are still here. Try again in a moment.",
+      "from": "From {author}, {moment}",
+      "about": "About {names}",
+      "allRule": "The school asks all guardians to confirm.",
+      "waitingBadge": "Waiting for you",
+      "confirm": "I have read this",
+      "confirming": "Confirming…",
+      "confirmedAt": "Confirmed {moment}",
+      "confirmedAnnounce": "You have confirmed: {title}",
+      "goneTitle": "The message no longer applies to you",
+      "gone": "You are no longer a guardian of the child in the message, or the message is gone. The list is updated.",
+      "failedTitle": "Could not confirm",
+      "failed": "Your confirmation was not saved. Try again in a moment.",
+      "emptyTitle": "No messages to confirm",
+      "empty": "When the school asks you to confirm a message about your child, it shows here and you get a notice.",
+      "loadFailed": "The messages could not be loaded",
+      "loadFailedHint": "Reload the page in a moment."
     }
   },
   "protectedIdentity": {

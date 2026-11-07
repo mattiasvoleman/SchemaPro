@@ -229,6 +229,12 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // attendance and the leave they count. The findings are written by
   // app.absence_watch_evaluate and the ledger by app.absence_watch_digest: no
   // administrator's write reaches either, and the switch is never deleted.
+  // Kvittens (20270117091000): the switch and the reminder time are Drift's, as the leave and the
+  // notices they sit beside. A request and its receipts are written once, by the author, in one
+  // transaction; no administrator changes or removes one (a job and gallring do).
+  AckReceipts: just('DRIFT', 'insert'),
+  AckRequests: just('DRIFT', 'insert'),
+  AckSettings: just('DRIFT', 'insert', 'update'),
   AbsenceWatchDigests: readOnly,
   AbsenceWatchFindings: readOnly,
   AbsenceWatchLimits: only('DRIFT'),

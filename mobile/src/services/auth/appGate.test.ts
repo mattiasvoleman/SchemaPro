@@ -1,4 +1,4 @@
-import { appRefusal, homeOf, tapTarget, tapTypeOf } from './appGate';
+import { ackTarget, appRefusal, homeOf, tapTarget, tapTypeOf } from './appGate';
 
 /**
  * Each app admits only its own roles, and tells everyone else which app is
@@ -76,6 +76,39 @@ describe('tapTarget', () => {
     ['TEACHER', null, '/(app)/notifications'],
   ])('%s tapping %s opens %s (Krisläge)', (role, type, target) => {
     expect(tapTarget(role, type)).toBe(target);
+  });
+});
+
+/**
+ * Kvittens: a message the school asks a guardian to confirm, and its one
+ * reminder, are read and answered in the guardian's Meddelanden tab, from a
+ * push and from the same notice in the Notiser tab.
+ */
+describe('tapTarget and ackTarget (Kvittens)', () => {
+  it.each([
+    ['GUARDIAN', 'ACK_REQUESTED', '/(guardian)/acknowledgements'],
+    ['GUARDIAN', 'ACK_REMINDER', '/(guardian)/acknowledgements'],
+    // Only a guardian has the tab: another role's tap never leaves its own shell.
+    ['TEACHER', 'ACK_REQUESTED', '/(app)/notifications'],
+    ['SCHOOL_ADMIN', 'ACK_REMINDER', '/(app)/notifications'],
+    ['STUDENT', 'ACK_REQUESTED', '/(student)/notifications'],
+    // Another guardian notice stays an inbox row.
+    ['GUARDIAN', 'LEAVE_DECIDED', '/(guardian)/notifications'],
+    ['GUARDIAN', 'CRISIS_GUARDIAN_AFTER', '/(guardian)/notifications'],
+    // A push without a type, from a gateway that sent none.
+    ['GUARDIAN', null, '/(guardian)/notifications'],
+    [null, 'ACK_REQUESTED', '/(app)/notifications'],
+  ])('%s tapping %s opens %s', (role, type, target) => {
+    expect(tapTarget(role, type)).toBe(target);
+  });
+
+  it('names the Meddelanden tab only for a guardian and the two notice types', () => {
+    expect(ackTarget('GUARDIAN', 'ACK_REQUESTED')).toBe('/(guardian)/acknowledgements');
+    expect(ackTarget('GUARDIAN', 'ACK_REMINDER')).toBe('/(guardian)/acknowledgements');
+    expect(ackTarget('GUARDIAN', 'COVER_REQUESTED')).toBeNull();
+    expect(ackTarget('GUARDIAN', null)).toBeNull();
+    expect(ackTarget('TEACHER', 'ACK_REQUESTED')).toBeNull();
+    expect(ackTarget(null, 'ACK_REQUESTED')).toBeNull();
   });
 });
 
