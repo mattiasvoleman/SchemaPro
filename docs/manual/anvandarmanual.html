@@ -90,6 +90,7 @@
       <li><span>6.14 Krisläge: larm vid utrymning och inrymning</span><span class="dots"></span><span class="pg" data-pg="s614"></span></li>
       <li><span>6.15 Skolans dag i ett svep</span><span class="dots"></span><span class="pg" data-pg="s615"></span></li>
       <li><span>6.16 Kvittens: be en vårdnadshavare bekräfta ett meddelande</span><span class="dots"></span><span class="pg" data-pg="s616"></span></li>
+      <li><span>6.17 Klasslärarens schema</span><span class="dots"></span><span class="pg" data-pg="s617"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -6799,6 +6800,71 @@
     ingen gallringstyp för dem. Stängs kvittens av finns tidigare förfrågningar kvar och går att
     bekräfta.
   </p>
+
+  <h3 id="s617"><span class="num">6.17</span>Klasslärarens schema</h3>
+  <p>
+    En <strong>klasslärare</strong> är en lärare som du som schemaläggare har utsett att ändra
+    <em>en</em> klass schema, inom en ram du bestämmer. Det är tänkt för låg- och mellanstadiet,
+    där klassläraren känner sin klass dag och vill flytta en lektion, ställa in en eller byta sal
+    utan att be om hjälp varje gång. Det är en utnämning för en klass och ett läsår, och den är
+    <strong>inte</strong> detsamma som att vara mentor: ingen får rätten förrän du har gjort den.
+    Sidan finns under <span class="path">Klasslärare</span>. Alla administratörer läser den;
+    utnämningar och öppna tider skriver den som skriver Schemaläggning, och valet om att klassläraren
+    får publicera själv och publiceringen av utkast skriver den som skriver Publicering.
+  </p>
+  <ul>
+    <li><strong>Utnämning.</strong> Välj klass och lärare under <span class="ui">Utse klasslärare</span>.
+      Läraren måste vara aktiv och klassen en vanlig klass, inte en undervisningsgrupp eller halva
+      klassen. Det kan finnas flera klasslärare för en klass. Utnämningen gäller i <em>ditt</em> namn:
+      klasslärarens kontroller och publiceringar körs som du, så länge du är kvar som administratör
+      och skriver Schemaläggning, Drift och Publicering. Försvinner du eller byter profil står
+      utnämningen kvar men <em>gäller inte längre</em>; då utser en annan administratör läraren på
+      nytt (samma knapp), och utnämningen går över till hen. Utnämningar följer inte med till
+      nästa läsår, eftersom nästa läsår har nya klasser: utse på nytt.</li>
+    <li><strong>Öppna tider.</strong> En klasslärare får bara ändra lektioner som ligger inom en tid du
+      har öppnat, och bara flytta dem till en öppen tid. Du anger veckodag och från och till, för alla
+      klasser eller för en klass. Tider som ligger intill varandra slås ihop. <em>Har du inte öppnat
+      någon tid kan ingen klasslärare ändra något.</em></li>
+    <li><strong>Det som alltid är ditt.</strong> Klassläraren får inte röra en lektion med en annan
+      lärare, en lektion som delas med andra klasser eller elever, ett block som läggs parallellt, en
+      lektion för en halvklass (eller i ett ämne där klassen har halvklasser), ett ämne där elever går
+      till en ersättande grupp, en timplanspost som delas mellan lärare, en lärare som delas med en
+      annan skola, eller en sal som är utlånad till eller från en annan skola. Inte heller en lektion
+      som redan varit, har en vikarie, är inställd eller har närvaro registrerad. Försöker klassläraren
+      ändå får hen ett besked som säger vilket av skälen det är.</li>
+    <li><strong>Ändringarna är utkast.</strong> Det klassläraren gör ändrar inte schemat. Det
+      hamnar som ett <em>utkast</em> för klassen, och först när det publiceras går det till schemat:
+      en ställd-in lektion ställs in och klassen får besked, en flyttad lektion flyttas med en notis, en
+      ändring av mallen går genom samma redigerare som du själv använder (och i en skola som publicerar
+      via utkast hamnar den i skolans utkast till nästa vanliga publicering). Under
+      <span class="ui">Utkast</span> ser du varje utkast med vem som skrev det, vad det gäller och om
+      det går att publicera just nu. <span class="ui">Publicera klassens utkast</span> går igenom dem,
+      äldsta först, och säger för varje om det publicerades eller varför inte. Ett utkast som inte går
+      stannar kvar. Du kan också slänga ett utkast.</li>
+    <li><strong>Samma kontroll som din.</strong> Klassläraren ser krockar medan hen ändrar: lärare,
+      sal och klass som redan är upptagna, en otillgänglig tid, en sal som är bokad, och lov. Det är
+      samma kontroll som i schemaredigeraren; krockarna namnges med klass, ämne och tid, aldrig med
+      en lärares namn. Lärare som är markerade med skyddad identitet nämns alltså aldrig.</li>
+    <li><strong>Flera på en gång.</strong> Ett utkast bygger på lektionen som den såg ut när klassläraren
+      läste den. Har du eller någon annan ändrat lektionen sedan dess får klassläraren
+      <em>Lektionen har ändrats sedan du läste den</em> och ser vad som ändrats, och utkastet publiceras
+      inte. Två som ändrar samma utkast skriver aldrig över varandra: den som kommer sist får veta att
+      utkastet ändrats och hur det ser ut nu. Det finns högst ett utkast per lektion och lager (ett för
+      mallen och ett för ett datum); en lektion med ett utkast i det ena lagret kan inte få ett i det
+      andra förrän det första publicerats eller slängts.</li>
+    <li><strong>Klassläraren publicerar själv?</strong> Reglaget <span class="ui">Klassläraren får
+      publicera sin egen klass</span> är avstängt tills du slår på det. Då publicerar klassläraren sina
+      egna utkast, och de går igenom samma kontroll och samma ram som när du publicerar. Stäng av det
+      igen och utkasten väntar på dig.</li>
+  </ul>
+  <div class="note">
+    <span class="label">Det här ändrar inte</span>
+    <p>
+      En klasslärare får inte rätt att läsa mer än andra lärare: de ser klassens lektioner och den
+      egna utnämningen, men inte andra klassers utkast. I en skola som publicerar via utkast är
+      grundschemat dolt för lärare; klassläraren läser sin egen klass mall och inget annat av utkastet.
+    </p>
+  </div>
 
 </section>
 

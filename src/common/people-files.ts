@@ -27,6 +27,18 @@
  * store, not a file. The app has no export. A route of Krisläge that ever answers a file belongs in
  * the list below, by name, before it ships.
  *
+ * KLASSLÄRARENS SCHEMA (20270128090000) IS DECIDED HERE TOO, though no route of
+ * it is listed: its answers are JSON for the page (GET /api/v1/class-teacher/...
+ * and /api/v1/class-teachers/...), and no path of them is a file or a feed. They
+ * name no pupil at all, and no teacher but the klasslärare themselves: a lesson
+ * of a colleague is "not yours" with the class and the subject, and a clash is
+ * told by what clashes (a class, a subject, an hour), never by who teaches it, so
+ * a colleague the school has marked as having a protected identity is named
+ * nowhere. The administrators' list of appointments and drafts names the
+ * klasslärare, as the school's other staff lists do for its administrators. A
+ * route of it that ever answers a file belongs in the list below, by name, before
+ * it ships.
+ *
  * KVITTENS (20270117091000) IS DECIDED HERE TOO, though no route of it is
  * listed: the requests, their receipts and the staff's overview answer the
  * screen in JSON (GET /api/v1/acknowledgements/:id), and no path of them is a

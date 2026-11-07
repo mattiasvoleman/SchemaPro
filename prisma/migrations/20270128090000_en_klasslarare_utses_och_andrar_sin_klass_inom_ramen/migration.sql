@@ -338,9 +338,17 @@ ALTER TABLE "ClassTeacherChanges"
 -- the trigger that checks a draft against the lesson it was written for and by
 -- the gateway that finds a draft gone stale. Answered for a lesson of the
 -- caller's school only.
+--
+-- TWO TIERS. The functions the API's role runs resolve the caller's school
+-- once (app.current_school_id() is a lookup of the login's row, and in a filter
+-- or a list it would run for every lesson) and call the "_in" functions below
+-- with it. The "_in" functions take the school as an argument, so they are the
+-- API role's to run NEVER (they are not granted): a school named by a caller
+-- would be a school read across the boundary. A definer calling a definer is
+-- judged by the owner's right, so the entry points still reach them.
 -- ---------------------------------------------------------------------------
 
-CREATE FUNCTION app.class_teacher_master_snapshot(p_master uuid) RETURNS jsonb
+CREATE FUNCTION app.class_teacher_master_snapshot_in(p_school uuid, p_master uuid) RETURNS jsonb
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT jsonb_build_object(
            'dayOfWeek', m."dayOfWeek",
@@ -358,15 +366,10 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
            'students', coalesce((SELECT jsonb_agg(s."studentId" ORDER BY s."studentId")
                                    FROM "MasterLessonStudents" s WHERE s."masterLessonId" = m."id"), '[]'::jsonb))
     FROM "MasterLessons" m
-   WHERE m."id" = p_master AND m."schoolId" = app.current_school_id()
+   WHERE m."id" = p_master AND m."schoolId" = p_school
 $$;
 
-CREATE FUNCTION app.class_teacher_master_version(p_master uuid) RETURNS text
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-  SELECT md5(app.class_teacher_master_snapshot(p_master)::text)
-$$;
-
-CREATE FUNCTION app.class_teacher_calendar_snapshot(p_calendar uuid) RETURNS jsonb
+CREATE FUNCTION app.class_teacher_calendar_snapshot_in(p_school uuid, p_calendar uuid) RETURNS jsonb
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT jsonb_build_object(
            'status', c."status",
@@ -377,12 +380,27 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
            'teachers', coalesce((SELECT jsonb_agg(t."teacherId"::text || ':' || t."role"::text ORDER BY t."teacherId", t."role")
                                    FROM "CalendarLessonTeachers" t WHERE t."calendarLessonId" = c."id"), '[]'::jsonb))
     FROM "CalendarLessons" c
-   WHERE c."id" = p_calendar AND c."schoolId" = app.current_school_id()
+   WHERE c."id" = p_calendar AND c."schoolId" = p_school
+$$;
+
+CREATE FUNCTION app.class_teacher_master_snapshot(p_master uuid) RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT app.class_teacher_master_snapshot_in(app.current_school_id(), p_master)
+$$;
+
+CREATE FUNCTION app.class_teacher_master_version(p_master uuid) RETURNS text
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT md5(app.class_teacher_master_snapshot_in(app.current_school_id(), p_master)::text)
+$$;
+
+CREATE FUNCTION app.class_teacher_calendar_snapshot(p_calendar uuid) RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT app.class_teacher_calendar_snapshot_in(app.current_school_id(), p_calendar)
 $$;
 
 CREATE FUNCTION app.class_teacher_calendar_version(p_calendar uuid) RETURNS text
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-  SELECT md5(app.class_teacher_calendar_snapshot(p_calendar)::text)
+  SELECT md5(app.class_teacher_calendar_snapshot_in(app.current_school_id(), p_calendar)::text)
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -403,7 +421,7 @@ $$;
 -- Does one span of the class's weekday, its own or the whole year's, hold
 -- [p_start, p_end]? A span is not stitched to the next one: the gateway merges
 -- spans that touch when it saves them.
-CREATE FUNCTION app.class_teacher_slot_open(p_class uuid, p_day integer, p_start time, p_end time) RETURNS boolean
+CREATE FUNCTION app.class_teacher_slot_open_in(p_school uuid, p_class uuid, p_day integer, p_start time, p_end time) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT EXISTS (
     SELECT 1
@@ -412,7 +430,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
         ON o."schoolId" = g."schoolId" AND o."academicYearId" = g."academicYearId"
        AND (o."studentGroupId" IS NULL OR o."studentGroupId" = g."id")
      WHERE g."id" = p_class
-       AND g."schoolId" = app.current_school_id()
+       AND g."schoolId" = p_school
        AND o."dayOfWeek" = p_day
        AND o."startTime" <= p_start
        AND o."endTime" >= p_end
@@ -421,47 +439,51 @@ $$;
 
 -- Is the room lent to, or lent from, another school (asked for or approved, not
 -- yet ended)?
-CREATE FUNCTION app.class_teacher_room_is_lent(p_room uuid) RETURNS boolean
+CREATE FUNCTION app.class_teacher_room_is_lent_in(p_school uuid, p_room uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT EXISTS (
     SELECT 1 FROM "RoomLoans" l
      WHERE l."status" IN ('PENDING', 'APPROVED')
        AND l."endedAt" IS NULL
        AND l."endDate" >= current_date
-       AND ((l."roomId" = p_room AND l."ownerSchoolId" = app.current_school_id())
-         OR (l."localRoomId" = p_room AND l."borrowerSchoolId" = app.current_school_id()))
+       AND ((l."roomId" = p_room AND l."ownerSchoolId" = p_school)
+         OR (l."localRoomId" = p_room AND l."borrowerSchoolId" = p_school))
   )
 $$;
 
 -- A target room: the school's own, not lent, and not one that needs approval.
-CREATE FUNCTION app.class_teacher_room_refusal(p_room uuid) RETURNS text
+CREATE FUNCTION app.class_teacher_room_refusal_in(p_school uuid, p_room uuid) RETURNS text
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT CASE
            WHEN r."id" IS NULL THEN 'ROOM_NOT_FOUND'
-           WHEN app.class_teacher_room_is_lent(r."id") THEN 'SHARED_ROOM'
+           WHEN app.class_teacher_room_is_lent_in(p_school, r."id") THEN 'SHARED_ROOM'
            WHEN r."requiresApproval" THEN 'ROOM_NEEDS_APPROVAL'
          END
     FROM (SELECT 1) one
-    LEFT JOIN "Rooms" r ON r."id" = p_room AND r."schoolId" = app.current_school_id()
+    LEFT JOIN "Rooms" r ON r."id" = p_room AND r."schoolId" = p_school
+$$;
+
+CREATE FUNCTION app.class_teacher_room_refusal(p_room uuid) RETURNS text
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT app.class_teacher_room_refusal_in(app.current_school_id(), p_room)
 $$;
 
 -- What keeps a lesson of the class's grundschema from being the klasslärare's,
 -- apart from the clock. NULL when nothing does. The first reason found, in the
 -- order the schemaläggare would explain them.
-CREATE FUNCTION app.class_teacher_master_refusal(p_teacher uuid, p_class uuid, p_master uuid) RETURNS text
+CREATE FUNCTION app.class_teacher_master_refusal_in(p_school uuid, p_teacher uuid, p_class uuid, p_master uuid) RETURNS text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
-  school uuid := app.current_school_id();
   m "MasterLessons";
   req "TeachingRequirements";
 BEGIN
-  SELECT * INTO m FROM "MasterLessons" x WHERE x."id" = p_master AND x."schoolId" = school;
+  SELECT * INTO m FROM "MasterLessons" x WHERE x."id" = p_master AND x."schoolId" = p_school;
   IF NOT FOUND THEN
     RETURN 'LESSON_GONE';
   END IF;
   IF m."studentGroupId" <> p_class THEN
     IF EXISTS (SELECT 1 FROM "StudentGroups" h
-                WHERE h."id" = m."studentGroupId" AND h."halfOfId" = p_class AND h."schoolId" = school) THEN
+                WHERE h."id" = m."studentGroupId" AND h."halfOfId" = p_class AND h."schoolId" = p_school) THEN
       RETURN 'HALF_CLASS';
     END IF;
     RETURN 'OTHER_CLASS';
@@ -478,34 +500,34 @@ BEGIN
     RETURN 'OTHER_TEACHER';
   END IF;
   SELECT * INTO req FROM "TeachingRequirements" r
-   WHERE r."schoolId" = school AND r."academicYearId" = m."academicYearId"
+   WHERE r."schoolId" = p_school AND r."academicYearId" = m."academicYearId"
      AND r."studentGroupId" = m."studentGroupId" AND r."subjectId" = m."subjectId";
   IF FOUND THEN
     IF req."blockId" IS NOT NULL THEN
       RETURN 'BLOCK';
     END IF;
-    IF EXISTS (SELECT 1 FROM "TeachingRequirementShares" s WHERE s."requirementId" = req."id" AND s."schoolId" = school) THEN
+    IF EXISTS (SELECT 1 FROM "TeachingRequirementShares" s WHERE s."requirementId" = req."id" AND s."schoolId" = p_school) THEN
       RETURN 'SHARED_POST';
     END IF;
   END IF;
   -- The class has halves that read this subject: the lesson is half of a pair.
   IF EXISTS (SELECT 1 FROM "StudentGroups" h
                JOIN "MasterLessons" hm ON hm."studentGroupId" = h."id" AND hm."schoolId" = h."schoolId"
-              WHERE h."halfOfId" = p_class AND h."schoolId" = school AND hm."subjectId" = m."subjectId") THEN
+              WHERE h."halfOfId" = p_class AND h."schoolId" = p_school AND hm."subjectId" = m."subjectId") THEN
     RETURN 'HALF_CLASS';
   END IF;
   -- A replacing group takes pupils of this class out of this subject.
   IF EXISTS (SELECT 1 FROM "StudentGroups" g
                JOIN "StudentGroupMembers" gm ON gm."studentGroupId" = g."id" AND gm."schoolId" = g."schoolId"
                JOIN "Users" u ON u."id" = gm."studentId" AND u."schoolId" = gm."schoolId"
-              WHERE g."schoolId" = school AND g."academicYearId" = m."academicYearId"
+              WHERE g."schoolId" = p_school AND g."academicYearId" = m."academicYearId"
                 AND g."replacesSubjectId" = m."subjectId" AND u."studentGroupId" = p_class) THEN
     RETURN 'REPLACING_GROUP';
   END IF;
-  IF EXISTS (SELECT 1 FROM "SharedTeacherMarks" t WHERE t."teacherId" = p_teacher AND t."schoolId" = school) THEN
+  IF EXISTS (SELECT 1 FROM "SharedTeacherMarks" t WHERE t."teacherId" = p_teacher AND t."schoolId" = p_school) THEN
     RETURN 'SHARED_TEACHER';
   END IF;
-  IF m."roomId" IS NOT NULL AND app.class_teacher_room_is_lent(m."roomId") THEN
+  IF m."roomId" IS NOT NULL AND app.class_teacher_room_is_lent_in(p_school, m."roomId") THEN
     RETURN 'SHARED_ROOM';
   END IF;
   RETURN NULL;
@@ -516,24 +538,23 @@ $$;
 -- p_creating: a NEW change is being asked for, so a change waiting on the dated
 -- layer of this lesson stops it; a change already written is not stopped by its
 -- neighbour (or the two would wait for each other for ever).
-CREATE FUNCTION app.class_teacher_master_state(p_teacher uuid, p_class uuid, p_master uuid, p_creating boolean) RETURNS text
+CREATE FUNCTION app.class_teacher_master_state_in(p_school uuid, p_teacher uuid, p_class uuid, p_master uuid, p_creating boolean) RETURNS text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
-  school uuid := app.current_school_id();
   m "MasterLessons";
   refusal text;
 BEGIN
-  refusal := app.class_teacher_master_refusal(p_teacher, p_class, p_master);
+  refusal := app.class_teacher_master_refusal_in(p_school, p_teacher, p_class, p_master);
   IF refusal IS NOT NULL THEN
     RETURN refusal;
   END IF;
-  SELECT * INTO m FROM "MasterLessons" x WHERE x."id" = p_master AND x."schoolId" = school;
-  IF NOT app.class_teacher_slot_open(p_class, m."dayOfWeek", m."startTime"::time, m."endTime"::time) THEN
+  SELECT * INTO m FROM "MasterLessons" x WHERE x."id" = p_master AND x."schoolId" = p_school;
+  IF NOT app.class_teacher_slot_open_in(p_school, p_class, m."dayOfWeek", m."startTime"::time, m."endTime"::time) THEN
     RETURN 'TIME_CLOSED';
   END IF;
   IF p_creating AND EXISTS (SELECT 1 FROM "ClassTeacherChanges" c
                              JOIN "CalendarLessons" cl ON cl."id" = c."calendarLessonId" AND cl."schoolId" = c."schoolId"
-                            WHERE c."schoolId" = school AND c."status" = 'DRAFT' AND cl."masterLessonId" = m."id") THEN
+                            WHERE c."schoolId" = p_school AND c."status" = 'DRAFT' AND cl."masterLessonId" = m."id") THEN
     RETURN 'PENDING_OCCASION_CHANGE';
   END IF;
   RETURN NULL;
@@ -542,21 +563,20 @@ $$;
 
 -- What keeps one dated lesson from being the klasslärare's: the lesson-level
 -- rules of its template, and the day's own.
-CREATE FUNCTION app.class_teacher_calendar_refusal(p_teacher uuid, p_class uuid, p_calendar uuid, p_creating boolean) RETURNS text
+CREATE FUNCTION app.class_teacher_calendar_refusal_in(p_school uuid, p_teacher uuid, p_class uuid, p_calendar uuid, p_creating boolean) RETURNS text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
-  school uuid := app.current_school_id();
   c "CalendarLessons";
   tz text;
   refusal text;
 BEGIN
-  SELECT * INTO c FROM "CalendarLessons" x WHERE x."id" = p_calendar AND x."schoolId" = school;
+  SELECT * INTO c FROM "CalendarLessons" x WHERE x."id" = p_calendar AND x."schoolId" = p_school;
   IF NOT FOUND THEN
     RETURN 'LESSON_GONE';
   END IF;
   IF c."studentGroupId" <> p_class THEN
     IF EXISTS (SELECT 1 FROM "StudentGroups" h
-                WHERE h."id" = c."studentGroupId" AND h."halfOfId" = p_class AND h."schoolId" = school) THEN
+                WHERE h."id" = c."studentGroupId" AND h."halfOfId" = p_class AND h."schoolId" = p_school) THEN
       RETURN 'HALF_CLASS';
     END IF;
     RETURN 'OTHER_CLASS';
@@ -576,7 +596,7 @@ BEGIN
     RETURN 'JOINT_LESSON';
   END IF;
   IF EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t WHERE t."calendarLessonId" = c."id" AND t."role" = 'SUBSTITUTE')
-     OR EXISTS (SELECT 1 FROM "TeacherAbsenceCovers" a WHERE a."calendarLessonId" = c."id" AND a."schoolId" = school) THEN
+     OR EXISTS (SELECT 1 FROM "TeacherAbsenceCovers" a WHERE a."calendarLessonId" = c."id" AND a."schoolId" = p_school) THEN
     RETURN 'COVERED';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t WHERE t."calendarLessonId" = c."id" AND t."teacherId" = p_teacher)
@@ -584,23 +604,23 @@ BEGIN
     RETURN 'OTHER_TEACHER';
   END IF;
   IF EXISTS (SELECT 1 FROM "AttendanceRecords" a
-              WHERE a."calendarLessonId" = c."id" AND a."schoolId" = school AND a."status" <> 'UNKNOWN') THEN
+              WHERE a."calendarLessonId" = c."id" AND a."schoolId" = p_school AND a."status" <> 'UNKNOWN') THEN
     RETURN 'HAS_ATTENDANCE';
   END IF;
-  refusal := app.class_teacher_master_refusal(p_teacher, p_class, c."masterLessonId");
+  refusal := app.class_teacher_master_refusal_in(p_school, p_teacher, p_class, c."masterLessonId");
   IF refusal IS NOT NULL THEN
     RETURN refusal;
   END IF;
-  SELECT s."timezone" INTO tz FROM "Schools" s WHERE s."id" = school;
-  IF NOT app.class_teacher_slot_open(
-           p_class,
+  SELECT s."timezone" INTO tz FROM "Schools" s WHERE s."id" = p_school;
+  IF NOT app.class_teacher_slot_open_in(
+           p_school, p_class,
            extract(isodow FROM (c."startsAt" AT TIME ZONE tz))::integer,
            (c."startsAt" AT TIME ZONE tz)::time,
            (c."endsAt" AT TIME ZONE tz)::time) THEN
     RETURN 'TIME_CLOSED';
   END IF;
   IF p_creating AND EXISTS (SELECT 1 FROM "ClassTeacherChanges" t
-                             WHERE t."masterLessonId" = c."masterLessonId" AND t."schoolId" = school AND t."status" = 'DRAFT') THEN
+                             WHERE t."masterLessonId" = c."masterLessonId" AND t."schoolId" = p_school AND t."status" = 'DRAFT') THEN
     RETURN 'PENDING_TEMPLATE_CHANGE';
   END IF;
   RETURN NULL;
@@ -641,7 +661,7 @@ BEGIN
     IF p_calendar IS NULL THEN
       RETURN 'LESSON_GONE';
     END IF;
-    refusal := app.class_teacher_calendar_refusal(p_teacher, p_class, p_calendar, p_creating);
+    refusal := app.class_teacher_calendar_refusal_in(school, p_teacher, p_class, p_calendar, p_creating);
     IF refusal IS NOT NULL THEN
       RETURN refusal;
     END IF;
@@ -655,17 +675,17 @@ BEGIN
       IF extract(isodow FROM p_target_date) > 5 THEN
         RETURN 'WEEKEND';
       END IF;
-      IF NOT app.class_teacher_slot_open(p_class, extract(isodow FROM p_target_date)::integer, p_target_start, p_target_end) THEN
+      IF NOT app.class_teacher_slot_open_in(school, p_class, extract(isodow FROM p_target_date)::integer, p_target_start, p_target_end) THEN
         RETURN 'TARGET_CLOSED';
       END IF;
       IF p_target_room IS NOT NULL THEN
-        RETURN app.class_teacher_room_refusal(p_target_room);
+        RETURN app.class_teacher_room_refusal_in(school, p_target_room);
       END IF;
     ELSIF p_kind = 'OCCASION_ROOM' THEN
       IF p_target_room IS NULL THEN
         RETURN 'TARGET_MISSING';
       END IF;
-      RETURN app.class_teacher_room_refusal(p_target_room);
+      RETURN app.class_teacher_room_refusal_in(school, p_target_room);
     END IF;
     RETURN NULL;
   END IF;
@@ -674,7 +694,7 @@ BEGIN
   IF p_master IS NULL THEN
     RETURN 'LESSON_GONE';
   END IF;
-  refusal := app.class_teacher_master_state(p_teacher, p_class, p_master, p_creating);
+  refusal := app.class_teacher_master_state_in(school, p_teacher, p_class, p_master, p_creating);
   IF refusal IS NOT NULL THEN
     RETURN refusal;
   END IF;
@@ -685,11 +705,11 @@ BEGIN
   IF p_target_day NOT BETWEEN 1 AND 5 THEN
     RETURN 'WEEKEND';
   END IF;
-  IF NOT app.class_teacher_slot_open(p_class, p_target_day, p_target_start, p_target_end) THEN
+  IF NOT app.class_teacher_slot_open_in(school, p_class, p_target_day, p_target_start, p_target_end) THEN
     RETURN 'TARGET_CLOSED';
   END IF;
   IF p_target_room IS NOT NULL AND p_target_room IS DISTINCT FROM m."roomId" THEN
-    refusal := app.class_teacher_room_refusal(p_target_room);
+    refusal := app.class_teacher_room_refusal_in(school, p_target_room);
     IF refusal IS NOT NULL THEN
       RETURN refusal;
     END IF;
@@ -833,40 +853,61 @@ CREATE TRIGGER "ClassTeacherChanges_guard"
 -- when the lesson is theirs. A DRAFT school hides its grundschema from every
 -- teacher; the klasslärare reads their own class's, and nothing else of the
 -- draft, through this function alone. The class's own lessons, the lessons of
--- its halves and the lessons it joins as an extra class.
+-- its halves and the lessons it joins as an extra class. The caller's school and
+-- person are read ONCE, not for every lesson.
 CREATE FUNCTION app.class_teacher_master_lessons(p_class uuid)
 RETURNS TABLE ("id" uuid, "studentGroupId" uuid, "subjectId" uuid, "dayOfWeek" integer,
                "startTime" time, "endTime" time, "roomId" uuid, "teacherId" uuid, "coTeacherId" uuid,
                "recurrence" "LessonRecurrence", "startDate" date, "endDate" date, "isParked" boolean,
                "version" text, "refusal" text)
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-  SELECT m."id", m."studentGroupId", m."subjectId", m."dayOfWeek", m."startTime"::time, m."endTime"::time,
-         m."roomId", m."teacherId", m."coTeacherId", m."recurrence", m."startDate", m."endDate", m."isParked",
-         app.class_teacher_master_version(m."id"),
-         app.class_teacher_master_state(app.current_user_id(), p_class, m."id", true)
-    FROM "MasterLessons" m
-    JOIN "StudentGroups" cls ON cls."id" = p_class AND cls."schoolId" = m."schoolId" AND cls."academicYearId" = m."academicYearId"
-   WHERE app.is_class_teacher(p_class)
-     AND m."schoolId" = app.current_school_id()
-     AND (m."studentGroupId" = p_class
-          OR EXISTS (SELECT 1 FROM "StudentGroups" h WHERE h."id" = m."studentGroupId" AND h."halfOfId" = p_class)
-          OR EXISTS (SELECT 1 FROM "MasterLessonGroups" x WHERE x."masterLessonId" = m."id" AND x."studentGroupId" = p_class))
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+BEGIN
+  IF school IS NULL OR me IS NULL
+     OR NOT EXISTS (SELECT 1 FROM "ClassTeacherAppointments" a
+                     WHERE a."studentGroupId" = p_class AND a."userId" = me AND a."schoolId" = school) THEN
+    RETURN;
+  END IF;
+  RETURN QUERY
+    SELECT m."id", m."studentGroupId", m."subjectId", m."dayOfWeek", m."startTime"::time, m."endTime"::time,
+           m."roomId", m."teacherId", m."coTeacherId", m."recurrence", m."startDate", m."endDate", m."isParked",
+           md5(app.class_teacher_master_snapshot_in(school, m."id")::text),
+           app.class_teacher_master_state_in(school, me, p_class, m."id", true)
+      FROM "MasterLessons" m
+      JOIN "StudentGroups" cls ON cls."id" = p_class AND cls."schoolId" = m."schoolId" AND cls."academicYearId" = m."academicYearId"
+     WHERE m."schoolId" = school
+       AND (m."studentGroupId" = p_class
+            OR EXISTS (SELECT 1 FROM "StudentGroups" h WHERE h."id" = m."studentGroupId" AND h."halfOfId" = p_class)
+            OR EXISTS (SELECT 1 FROM "MasterLessonGroups" x WHERE x."masterLessonId" = m."id" AND x."studentGroupId" = p_class));
+END
 $$;
 
 -- The same for the dated lessons of [p_from, p_to].
 CREATE FUNCTION app.class_teacher_calendar_states(p_class uuid, p_from date, p_to date)
 RETURNS TABLE ("calendarLessonId" uuid, "version" text, "refusal" text)
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-  SELECT c."id",
-         app.class_teacher_calendar_version(c."id"),
-         app.class_teacher_calendar_refusal(app.current_user_id(), p_class, c."id", true)
-    FROM "CalendarLessons" c
-   WHERE app.is_class_teacher(p_class)
-     AND c."schoolId" = app.current_school_id()
-     AND c."date" BETWEEN p_from AND p_to
-     AND (c."studentGroupId" = p_class
-          OR EXISTS (SELECT 1 FROM "StudentGroups" h WHERE h."id" = c."studentGroupId" AND h."halfOfId" = p_class)
-          OR EXISTS (SELECT 1 FROM "CalendarLessonGroups" x WHERE x."calendarLessonId" = c."id" AND x."studentGroupId" = p_class))
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+BEGIN
+  IF school IS NULL OR me IS NULL
+     OR NOT EXISTS (SELECT 1 FROM "ClassTeacherAppointments" a
+                     WHERE a."studentGroupId" = p_class AND a."userId" = me AND a."schoolId" = school) THEN
+    RETURN;
+  END IF;
+  RETURN QUERY
+    SELECT c."id",
+           md5(app.class_teacher_calendar_snapshot_in(school, c."id")::text),
+           app.class_teacher_calendar_refusal_in(school, me, p_class, c."id", true)
+      FROM "CalendarLessons" c
+     WHERE c."schoolId" = school
+       AND c."date" BETWEEN p_from AND p_to
+       AND (c."studentGroupId" = p_class
+            OR EXISTS (SELECT 1 FROM "StudentGroups" h WHERE h."id" = c."studentGroupId" AND h."halfOfId" = p_class)
+            OR EXISTS (SELECT 1 FROM "CalendarLessonGroups" x WHERE x."calendarLessonId" = c."id" AND x."studentGroupId" = p_class));
+END
 $$;
 
 -- The administrator the klasslärare's checks and publication run as: the one
@@ -930,7 +971,9 @@ DECLARE
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
     -- Appointments: administrators read all and write by Schemaläggning; a
-    -- teacher reads their own.
+    -- teacher reads their own. An administrator's UPDATE reaches the row and
+    -- its check holds the area (an error, not an empty update), as every other
+    -- administrator arm does (section 116).
     CREATE POLICY "class_teacher_appointments_admin_select" ON "ClassTeacherAppointments"
         FOR SELECT TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
@@ -948,8 +991,7 @@ BEGIN
     CREATE POLICY "class_teacher_appointments_admin_update" ON "ClassTeacherAppointments"
         FOR UPDATE TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
-               AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-               AND (select app.current_user_may('SCHEMALAGGNING', true)))
+               AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
                     AND (select app.current_user_may('SCHEMALAGGNING', true)));
@@ -973,8 +1015,7 @@ BEGIN
     CREATE POLICY "class_teacher_settings_admin_update" ON "ClassTeacherSettings"
         FOR UPDATE TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
-               AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-               AND (select app.current_user_may('PUBLICERING', true)))
+               AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
                     AND (select app.current_user_may('PUBLICERING', true)));
@@ -992,8 +1033,7 @@ BEGIN
     CREATE POLICY "class_teacher_open_times_admin_update" ON "ClassTeacherOpenTimes"
         FOR UPDATE TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
-               AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-               AND (select app.current_user_may('SCHEMALAGGNING', true)))
+               AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
                     AND (select app.current_user_may('SCHEMALAGGNING', true)));
@@ -1049,8 +1089,7 @@ BEGIN
         FOR UPDATE TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
                AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-               AND "status" = 'DRAFT'
-               AND (select app.current_user_may('PUBLICERING', true)))
+               AND "status" = 'DRAFT')
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
                     AND (select app.current_user_may('PUBLICERING', true)));
@@ -1087,17 +1126,17 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- The functions answer the API's role alone. The guards are triggers and are
-  -- run by the table's writer, not called.
+  -- The functions the API calls answer its role alone. The guards are triggers
+  -- run by the table's writer, and the "_in" functions (which take a school as an
+  -- argument) are run by the entry points above as the owner; the API's role is
+  -- granted none of them.
   FOR t IN
     SELECT p.oid::regprocedure::text
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'app'
        AND p.proname IN ('class_teacher_master_snapshot', 'class_teacher_master_version',
                          'class_teacher_calendar_snapshot', 'class_teacher_calendar_version',
-                         'is_class_teacher', 'class_teacher_slot_open', 'class_teacher_room_is_lent',
-                         'class_teacher_room_refusal', 'class_teacher_master_refusal', 'class_teacher_master_state',
-                         'class_teacher_calendar_refusal', 'class_teacher_frame',
+                         'is_class_teacher', 'class_teacher_room_refusal', 'class_teacher_frame',
                          'class_teacher_master_lessons', 'class_teacher_calendar_states', 'class_teacher_actor')
   LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', t);
@@ -1113,9 +1152,17 @@ BEGIN
   FOR t IN
     SELECT p.oid::regprocedure::text
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-     WHERE n.nspname = 'app' AND p.proname IN ('class_teacher_appointment_guard', 'class_teacher_change_guard')
+     WHERE n.nspname = 'app' AND p.proname IN ('class_teacher_appointment_guard', 'class_teacher_change_guard',
+                         'class_teacher_master_snapshot_in', 'class_teacher_calendar_snapshot_in', 'class_teacher_slot_open_in',
+                         'class_teacher_room_is_lent_in', 'class_teacher_room_refusal_in', 'class_teacher_master_refusal_in',
+                         'class_teacher_master_state_in', 'class_teacher_calendar_refusal_in')
   LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', t);
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+        EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %I', t, r);
+      END IF;
+    END LOOP;
   END LOOP;
 END
 $$;

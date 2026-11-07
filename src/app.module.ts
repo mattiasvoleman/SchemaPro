@@ -43,6 +43,7 @@ import { CrisisModule } from './crisis/crisis.module';
 import { AbsenceWatchModule } from './absence-watch/absence-watch.module';
 import { ReportingRateModule } from './reporting-rate/reporting-rate.module';
 import { AckModule } from './ack/ack.module';
+import { ClassTeacherModule } from './class-teacher/class-teacher.module';
 import { SchoolDayModule } from './school-day/school-day.module';
 import { GallringModule } from './gallring/gallring.module';
 import { SchoolExportModule } from './school-export/school-export.module';
@@ -154,6 +155,7 @@ import type { ThrottleConfig } from './config/configuration';
     ReportingRateModule,
     AckModule,
     SchoolDayModule,
+    ClassTeacherModule,
     AccessLogModule,
     OpenApiModule,
     SchoolUnitsModule,

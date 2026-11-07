@@ -2863,7 +2863,12 @@ BEGIN
        -- file is built AS them under row-level security. It resolves no
        -- caller and takes none: the API role alone may run it, and it names
        -- the login of a person the order itself names (sections 355 and 357).
-       ('app', 'school_export_claim')
+       ('app', 'school_export_claim'),
+       -- Klasslärarens schema (20270128090000): the administrator a klasslärare's
+       -- checks and publication run as, answered to the klasslärare of the class
+       -- alone. It resolves the caller through app.current_user_id() first
+       -- (section 429).
+       ('app', 'class_teacher_actor')
      );
   IF unexpected IS NOT NULL THEN
     RAISE EXCEPTION 'functions read "authId" without being named in section 10: % (resolve the caller through app.current_user_id())', unexpected;
@@ -47180,21 +47185,31 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- The functions: definers with a fixed search_path; the ones the API calls run by its role alone, the guards by nobody.
+  -- The functions: definers with a fixed search_path. The ten the API calls (the policies, the gateway) run by its role
+  -- alone; the eight that take a school as an argument and the two guards by nobody: a school named by a caller would be
+  -- a school read across the boundary, and a definer calling a definer is judged by the owner's right.
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
    WHERE s.nspname = 'app' AND p.proname IN ('class_teacher_master_snapshot', 'class_teacher_master_version', 'class_teacher_calendar_snapshot',
-         'class_teacher_calendar_version', 'is_class_teacher', 'class_teacher_slot_open', 'class_teacher_room_is_lent', 'class_teacher_room_refusal',
-         'class_teacher_master_refusal', 'class_teacher_master_state', 'class_teacher_calendar_refusal', 'class_teacher_frame',
+         'class_teacher_calendar_version', 'is_class_teacher', 'class_teacher_room_refusal', 'class_teacher_frame',
          'class_teacher_master_lessons', 'class_teacher_calendar_states', 'class_teacher_actor')
      AND p.prosecdef AND p.provolatile = 's' AND p.proconfig::text LIKE '%search_path=%public%pg_temp%'
      AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')
      AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE') AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
      AND (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') OR NOT has_function_privilege('service_role', p.oid, 'EXECUTE'));
-  IF n <> 15 THEN RAISE EXCEPTION 'klasslärare 425: % of the 15 functions are stable definers with a fixed search_path run by the API role alone', n; END IF;
+  IF n <> 10 THEN RAISE EXCEPTION 'klasslärare 425: % of the 10 functions are stable definers with a fixed search_path run by the API role alone', n; END IF;
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
-   WHERE s.nspname = 'app' AND p.proname IN ('class_teacher_appointment_guard', 'class_teacher_change_guard')
-     AND p.prosecdef AND p.proconfig::text LIKE '%search_path=%public%pg_temp%' AND NOT has_function_privilege('app_authenticated', p.oid, 'EXECUTE');
-  IF n <> 2 THEN RAISE EXCEPTION 'klasslärare 425: the two guards are not definers nobody may call'; END IF;
+   WHERE s.nspname = 'app' AND p.proname IN ('class_teacher_appointment_guard', 'class_teacher_change_guard',
+         'class_teacher_master_snapshot_in', 'class_teacher_calendar_snapshot_in', 'class_teacher_slot_open_in', 'class_teacher_room_is_lent_in',
+         'class_teacher_room_refusal_in', 'class_teacher_master_refusal_in', 'class_teacher_master_state_in', 'class_teacher_calendar_refusal_in')
+     AND p.prosecdef AND p.proconfig::text LIKE '%search_path=%public%pg_temp%'
+     AND NOT has_function_privilege('app_authenticated', p.oid, 'EXECUTE') AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE')
+     AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
+     AND (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') OR NOT has_function_privilege('service_role', p.oid, 'EXECUTE'));
+  IF n <> 10 THEN RAISE EXCEPTION 'klasslärare 425: % of the 10 internal functions and guards are definers nobody may call', n; END IF;
+  -- And no function of the family is left out of both lists.
+  SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+   WHERE s.nspname = 'app' AND (p.proname LIKE 'class\_teacher\_%' OR p.proname = 'is_class_teacher');
+  IF n <> 20 THEN RAISE EXCEPTION 'klasslärare 425: the family has % functions, not the 20 listed', n; END IF;
 END $$;
 ROLLBACK;
 
@@ -47355,9 +47370,7 @@ BEGIN
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 426: a teacher removed open times'; END IF;
   PERFORM pg_temp.g5_as('0003');
-  UPDATE "ClassTeacherOpenTimes" SET "endTime" = '23:00';
-  GET DIAGNOSTICS n = ROW_COUNT;
-  IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 426: the expedition stretched the open times'; END IF;
+  PERFORM pg_temp.g5_refuses('UPDATE "ClassTeacherOpenTimes" SET "endTime" = ''23:00''', '42501', 'the expedition stretching the open times');
   PERFORM pg_temp.g5_as('0004');
   UPDATE "ClassTeacherOpenTimes" SET "endTime" = '12:30' WHERE "dayOfWeek" = 5 AND "studentGroupId" = cc;
   GET DIAGNOSTICS n = ROW_COUNT;
@@ -47385,9 +47398,14 @@ BEGIN
     PERFORM pg_temp.g5_as(who);
     SELECT "selfPublish"::text INTO v FROM "ClassTeacherSettings" WHERE "schoolId" = school;
     IF v IS DISTINCT FROM 'false' THEN RAISE EXCEPTION 'klasslärare 426: …% reads the option as %', who, v; END IF;
-    UPDATE "ClassTeacherSettings" SET "selfPublish" = true;
-    GET DIAGNOSTICS n = ROW_COUNT;
-    IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 426: …% changed the option', who; END IF;
+    IF who IN ('0003', '0005') THEN
+      -- An administrator reaches the row and meets the check of the area.
+      PERFORM pg_temp.g5_refuses('UPDATE "ClassTeacherSettings" SET "selfPublish" = true', '42501', format('…%s changing the option', who));
+    ELSE
+      UPDATE "ClassTeacherSettings" SET "selfPublish" = true;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 426: …% changed the option', who; END IF;
+    END IF;
   END LOOP;
   PERFORM pg_temp.g5_as('0001');
   PERFORM pg_temp.g5_refuses('DELETE FROM "ClassTeacherSettings"', '42501', 'a delete of the option');
@@ -47833,9 +47851,7 @@ BEGIN
   PERFORM pg_temp.g5_refuses(format($q$UPDATE "ClassTeacherChanges" SET note = 'x' WHERE id = %L$q$, c), 'CT400', 'an administrator rewriting the note');
   FOREACH v IN ARRAY ARRAY['0003', '0005'] LOOP
     PERFORM pg_temp.g5_as(v);
-    UPDATE "ClassTeacherChanges" SET status = 'PUBLISHED' WHERE id = c;
-    GET DIAGNOSTICS n = ROW_COUNT;
-    IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 428: …% published a draft', v; END IF;
+    PERFORM pg_temp.g5_refuses(format($q$UPDATE "ClassTeacherChanges" SET status = 'PUBLISHED' WHERE id = %L$q$, c), '42501', format('…%s publishing a draft', v));
     DELETE FROM "ClassTeacherChanges" WHERE id = c;
     GET DIAGNOSTICS n = ROW_COUNT;
     IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 428: …% discarded a draft', v; END IF;

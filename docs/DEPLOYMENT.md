@@ -1873,6 +1873,84 @@ Walk the full product loop once, in order:
   above. Count the notices first (`SELECT count(*) FROM "Notifications" WHERE
   "type"::text LIKE 'ACK\_%'`). What a rollback changes: nobody can ask or
   confirm, and the requests already made are gone.
+- **Klasslärarens schema**: 20270128090000 adds the enums
+  `ClassTeacherChangeKind` and `ClassTeacherChangeStatus`, the tables
+  `ClassTeacherAppointments`, `ClassTeacherSettings`, `ClassTeacherOpenTimes`
+  and `ClassTeacherChanges` (nineteen policies, all `TO app_authenticated`), and
+  seventeen `app.class_teacher_*` / `app.is_class_teacher` functions (fifteen
+  SECURITY DEFINER with a pinned `search_path` that the API role may run, two
+  triggers' guards nobody may call). No existing row is touched, no existing
+  table gains a column, nothing reaches the engine, and `gallring_due`,
+  `gallring_purge` and `gallring_pseudonymise` are not restated (their
+  `md5(prosrc)` are the same before and after). The new keys take `Schools`,
+  `AcademicYears`, `StudentGroups`, `Users`, `Rooms`, `MasterLessons` and
+  `CalendarLessons` in SHARE ROW EXCLUSIVE, NOWAIT, all at once, in a loop with
+  a 30 s ceiling: reads and foreign-key checks go on, writes to those tables
+  wait for the file (milliseconds, the new tables are empty), and if the locks
+  are not free in 30 s it stops with nothing changed (`prisma migrate resolve
+  --rolled-back 20270128090000_en_klasslarare_utses_och_andrar_sin_klass_inom_ramen`,
+  then deploy again). The API before the release knows none of the objects, so
+  it keeps working between the migration and the deploy. **The migration goes
+  in first, then the merge.**
+  **Before the migration**, as the owner: `SHOW server_version` is 17.x;
+  `prisma migrate status` lists exactly this migration as pending; the file's
+  checksum (sha256, what Prisma records) is `{{SHA}}`;
+  `SELECT to_regclass('"ClassTeacherChanges"')` is NULL; no session sits idle in
+  a transaction that holds one of the seven tables above (the query of the
+  Vikariefrågan entry).
+  **After it, before the merge:** `SELECT count(*) FROM pg_policies WHERE
+  tablename LIKE 'ClassTeacher%'` is 19; the four tables have row security on;
+  `app_authenticated` holds SELECT, INSERT, UPDATE and DELETE on appointments,
+  open times and changes, SELECT, INSERT and UPDATE on the settings, no
+  MAINTAIN; `anon` and `authenticated` nothing; `has_function_privilege('anon',
+  'app.class_teacher_actor(uuid)', 'EXECUTE')`, the same for `authenticated` and
+  `service_role`, are false; every table is empty.
+  **What it is.** A teacher is appointed klasslärare of one class by an
+  administrator who writes Schemaläggning (`/admin/class-teachers`); a mentor is
+  not one. The klasslärare then moves, cancels or changes the room of one
+  date's lesson, moves or splits a lesson of the class's grundschema, and sees
+  the clashes live, inside a **frame**: the hours the schemaläggare has opened
+  (none until some are), never a lesson with another teacher, a block, a half
+  class, a replacing group, a shared post, a teacher shared with another school
+  or a room lent to or from one, and nothing already past, covered or with a
+  register. The frame is one statement in the database
+  (`app.class_teacher_frame`), asked by row security on every write and by the
+  gateway first, which names the reason. **What a klasslärare writes is a
+  draft** in a table of its own; nothing reaches the timetable until it is
+  published, by the schemaläggare (area Publicering) or, when the school has
+  switched `selfPublish` on (off until someone does), by the klasslärare for
+  their own class. Publication runs the editor's own services
+  (`MasterLessonsService.update/create`, `CalendarLessonsService.cancel/
+  changeRoom`), as the administrator who made the appointment
+  (`app.class_teacher_actor`, only to the klasslärare of the class, the way
+  Vikariefrågan places a yes as the sender); an appointment whose administrator
+  is removed, deactivated or no longer writes Schemaläggning, Drift and
+  Publicering **lapses** (409 `CLASS_TEACHER_APPOINTER_GONE`) until another
+  administrator makes it again. Two people at once never overwrite each other:
+  a draft carries a hash of the lesson it was written against and a revision,
+  and a clash is a 409 that says what changed. **A DRAFT school** (publishMode
+  DRAFT) hides its grundschema from teachers; the klasslärare reads their own
+  class's through `app.class_teacher_master_lessons` and nothing else of it, and
+  a published template change lands in the school's draft like any other
+  grundschema edit, for the schemaläggare's ordinary publication.
+  **Rollover:** appointments do not carry into the next läsår (a new läsår has
+  new classes); the administrator appoints again.
+  **After the merge:** `GET /api/v1/class-teachers/settings` answers
+  `{"selfPublish": false}`; as a teacher with no appointment `GET
+  /api/v1/class-teacher/mine` answers `{"classes": [], "selfPublish": false}`.
+  In a test school: appoint a teacher to a class, open Monday 08:00-12:00 for
+  every class, and as the teacher cancel a lesson of that class for next
+  Monday; it shows under Utkast for the schemaläggare, and publishing it
+  cancels the lesson and tells the class. Read the log for `A class teacher
+  change was carried out but could not be marked published`.
+  **Rolling back the API** leaves four tables and the functions nobody reads;
+  the routes answer 404. To remove them (only if the feature is abandoned):
+  `DROP TABLE "ClassTeacherChanges", "ClassTeacherOpenTimes",
+  "ClassTeacherSettings", "ClassTeacherAppointments"; DROP TYPE
+  "ClassTeacherChangeKind", "ClassTeacherChangeStatus";` then drop the functions
+  (`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.proname LIKE
+  'class\_teacher\_%' OR p.proname = 'is_class_teacher'`) and `prisma migrate
+  resolve --rolled-back 20270128090000_en_klasslarare_utses_och_andrar_sin_klass_inom_ramen`.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
