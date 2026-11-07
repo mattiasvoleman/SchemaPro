@@ -8452,6 +8452,11 @@
         "pupils": "Elever",
         "qualified": "Behörig andel",
         "employment": "Tjänstgöringsgrad"
+      },
+      "compare": {
+        "label": "Jämför med schemat",
+        "hint": "Lägger till kolumnen Enligt schemat: lärarens undervisning i det lagda grundschemat. Det räknas först när du slår på det.",
+        "reading": "Räknar schemats undervisning …"
       }
     },
     "cost": {

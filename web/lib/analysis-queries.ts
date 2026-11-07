@@ -28,7 +28,7 @@ import type {
 const ROOT = ["analysis"] as const;
 export const ANALYSIS_KEYS = {
   all: ROOT,
-  keyFigures: (yearId: string) => [...ROOT, "keyFigures", yearId] as const,
+  keyFigures: (yearId: string, schedule = false) => [...ROOT, "keyFigures", yearId, schedule] as const,
   costBasis: (yearId: string) => [...ROOT, "costBasis", yearId] as const,
   payroll: (yearId: string, from: string, to: string) => [...ROOT, "payroll", yearId, from, to] as const,
   parts: [...ROOT, "parts"] as const,
@@ -50,12 +50,17 @@ export function isRateLimited(error: unknown): boolean {
   return error instanceof ApiError && error.status === 429;
 }
 
-export function useKeyFigures(yearId: string | null) {
+/**
+ * `schedule`: also each teacher's undervisning according to the grundschema, which the gateway makes only when
+ * asked (a second report over every master lesson). Switching it keeps the table on screen while it is read.
+ */
+export function useKeyFigures(yearId: string | null, schedule = false) {
   return useQuery({
-    queryKey: yearId ? ANALYSIS_KEYS.keyFigures(yearId) : [...ROOT, "keyFigures", "none"],
+    queryKey: yearId ? ANALYSIS_KEYS.keyFigures(yearId, schedule) : [...ROOT, "keyFigures", "none"],
     enabled: yearId !== null,
     retry: false,
-    queryFn: () => api.get<KeyFigures>(`${BASE}/key-figures?academicYearId=${yearId}`),
+    placeholderData: keepPreviousData,
+    queryFn: () => api.get<KeyFigures>(`${BASE}/key-figures?academicYearId=${yearId}${schedule ? "&schedule=true" : ""}`),
   });
 }
 

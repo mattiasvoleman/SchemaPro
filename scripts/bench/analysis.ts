@@ -47,11 +47,18 @@ async function main() {
   const rounds = Number(process.argv[2] ?? 7);
   const owner = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
   await owner.connect();
-  const api = new PrismaService();
-  await api.onModuleInit();
+  const real = new PrismaService();
+  await real.onModuleInit();
+  // The services call withRls and nothing else of the client; a view on a school of this size outlives the
+  // 15 s a request is given on a host this busy, and the measurement is of the work, not of the timeout.
+  const api = {
+    withRls: (user: AuthenticatedUser, fn: Parameters<PrismaService['withRls']>[1], options?: Parameters<PrismaService['withRls']>[2]) =>
+      real.withRls(user, fn, { timeoutMs: 300_000, ...options }),
+    $disconnect: () => real.$disconnect(),
+  } as unknown as PrismaService;
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
-  await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]);
-  try {
+  // Planted once; REUSE=1 measures the school an earlier KEEP=1 run left, KEEP=1 leaves it for the next.
+  const plant = async (): Promise<{ s: string; year: string }> => {
     const s = (await one<{ id: string }>(`INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('Bench', $1, 'Europe/Stockholm', now()) RETURNING id`, [SLUG])).id;
     const year = (
       await one<{ id: string }>(
@@ -127,11 +134,19 @@ async function main() {
     );
     await owner.query(
       `INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role)
-       SELECT $1, cl.id, r."teacherId", CASE WHEN (abs(hashtext(cl.id::text)) % 20) = 0 THEN 'SUBSTITUTE'::"LessonTeacherRole" ELSE 'LEAD'::"LessonTeacherRole" END
+       SELECT $1, cl.id, r."teacherId", CASE WHEN (abs(hashtext(cl.id::text)) % 20) = 0 THEN 'SUBSTITUTE'::"TeacherAssignmentRole" ELSE 'LEAD'::"TeacherAssignmentRole" END
          FROM "CalendarLessons" cl JOIN "TeachingRequirements" r ON r."studentGroupId" = cl."studentGroupId" AND r."subjectId" = cl."subjectId" WHERE cl."schoolId" = $1`,
       [s],
     ).catch((error) => console.log('held lessons not planted with teachers:', String(error.message).slice(0, 160)));
 
+    return { s, year };
+  };
+  const reuse = process.env['REUSE'] === '1';
+  if (!reuse) await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]);
+  try {
+    const { s, year } = reuse
+      ? { s: (await one<{ id: string }>(`SELECT id FROM "Schools" WHERE slug = $1`, [SLUG])).id, year: (await one<{ id: string }>(`SELECT y.id FROM "AcademicYears" y JOIN "Schools" sc ON sc.id = y."schoolId" WHERE sc.slug = $1`, [SLUG])).id }
+      : await plant();
     const counts = await one<{ pupils: string; reqs: string; masters: string; held: string }>(
       `SELECT (SELECT count(*) FROM "Users" WHERE "schoolId" = $1 AND role = 'STUDENT') AS pupils,
               (SELECT count(*) FROM "TeachingRequirements" WHERE "schoolId" = $1) AS reqs,
@@ -141,13 +156,15 @@ async function main() {
     );
     console.log(`school: ${CLASS_COUNT} classes, ${counts.pupils} pupils, ${TEACHERS} teachers, ${counts.reqs} timplansposter, ${counts.masters} master lessons, ${counts.held} held lessons`);
 
-    const adminAuth = randomUUID();
-    const admin = (
-      await one<{ id: string }>(
-        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES ($1, 'bench-admin@example.invalid', 'Admin', 'Bench', 'SCHOOL_ADMIN', 'FULL', $2, true, now()) RETURNING id`,
-        [s, adminAuth],
-      )
-    ).id;
+    if (process.env['PLANT_ONLY'] === '1') return;
+    const adminRow = reuse
+      ? await one<{ id: string; authId: string }>(`SELECT id, "authId" FROM "Users" WHERE "schoolId" = $1 AND role = 'SCHOOL_ADMIN' LIMIT 1`, [s])
+      : await one<{ id: string; authId: string }>(
+          `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES ($1, 'bench-admin@example.invalid', 'Admin', 'Bench', 'SCHOOL_ADMIN', 'FULL', $2, true, now()) RETURNING id, "authId"`,
+          [s, randomUUID()],
+        );
+    const adminAuth = adminRow.authId;
+    const admin = adminRow.id;
     const user: AuthenticatedUser = { authId: adminAuth, role: Role.SCHOOL_ADMIN, userId: admin, schoolId: s, channel: 'WEB', adminProfile: 'FULL' as never, hrRead: false };
     const staffing = new StaffingLoadService(api);
     const analysis = new AnalysisService(api, staffing, new CoverReportsService(api, { now: () => new Date() } as never));
@@ -170,15 +187,20 @@ async function main() {
         `${label.padEnd(30)} min ${quantile(times, 0).toFixed(0).padStart(5)} ms   median ${quantile(times, 0.5).toFixed(0).padStart(5)} ms   p95 ${quantile(times, 0.95).toFixed(0).padStart(5)} ms   cpu median ${quantile(cpu, 0.5).toFixed(0).padStart(5)} ms   ${(json.length / 1024).toFixed(0).padStart(5)} kB raw  ${(gzipSync(json).length / 1024).toFixed(0).padStart(4)} kB gzip`,
       );
     };
-    await measure('key figures', () => analysis.keyFigures(year, user));
-    await measure('cost basis', () => analysis.costBasis({ academicYearId: year }, user));
-    await measure('payroll basis (4 weeks)', () => analysis.payrollBasis({ academicYearId: year, ...dates }, user));
-    await measure('payroll file, CSV', () => analysis.payrollFile({ academicYearId: year, ...dates, format: 'CSV' }, user));
-    await measure('payroll file, Excel', () => analysis.payrollFile({ academicYearId: year, ...dates, format: 'XLSX' }, user));
-    // The reference: the load report alone, the part every view reads first.
-    await measure('reference: load report', () => staffing.load(year, 'planned', user, { record: false, travel: false }));
+    // The reference first: the load report alone, the part every view reads first. A view that fails is said and the rest go on.
+    const views: Array<[string, () => Promise<unknown>]> = [
+      ['reference: load report', () => staffing.load(year, 'planned', user, { record: false, travel: false })],
+      ['key figures', () => analysis.keyFigures(year, user)],
+      ['cost basis', () => analysis.costBasis({ academicYearId: year }, user)],
+      ['payroll basis (4 weeks)', () => analysis.payrollBasis({ academicYearId: year, ...dates }, user)],
+      ['payroll file, CSV', () => analysis.payrollFile({ academicYearId: year, ...dates, format: 'CSV' }, user)],
+      ['payroll file, Excel', () => analysis.payrollFile({ academicYearId: year, ...dates, format: 'XLSX' }, user)],
+    ];
+    for (const [label, work] of views) {
+      await measure(label, work).catch((error: unknown) => console.log(`${label.padEnd(30)} FAILED: ${String((error as Error).message).split('\n').pop()}`));
+    }
   } finally {
-    await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]);
+    if (process.env['KEEP'] !== '1') await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]);
     await api.$disconnect();
     await owner.end();
   }

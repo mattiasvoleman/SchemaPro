@@ -275,6 +275,22 @@ describe("Analys och planering, the administrator's page", () => {
     expect(screen.getByRole("columnheader", { name: /Elever/ })).toHaveAttribute("aria-sort", "ascending");
   });
 
+  it("asks for the schedule's undervisning only when the switch is turned on, and then adds its column", async () => {
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Nyckeltal per lärare" });
+    expect(within(table).queryByRole("columnheader", { name: /Enligt schemat/ })).toBeNull();
+    expect(paths()).toEqual([`${ROOT}/key-figures?academicYearId=y1`]);
+
+    state.key = keyFigures({ teachers: keyFigures().teachers!.map((one) => ({ ...one, scheduledMinutesPerWeek: 780 })) });
+    await userEvent.click(screen.getByRole("switch", { name: "Jämför med schemat" }));
+    await waitFor(() => expect(paths()).toContain(`${ROOT}/key-figures?academicYearId=y1&schedule=true`));
+    expect(await screen.findByRole("columnheader", { name: /Enligt schemat/ })).toBeInTheDocument();
+    expect(within(rowsOf(table)[0]!).getAllByRole("cell")[2]!.textContent).toBe("13,0");
+
+    await userEvent.click(screen.getByRole("switch", { name: "Jämför med schemat" }));
+    await waitFor(() => expect(screen.queryByRole("columnheader", { name: /Enligt schemat/ })).toBeNull());
+  });
+
   it("has no column of tjänstgöringsgrad, and no HR-based density, for a reader without HR-läs", async () => {
     state.key = keyFigures({
       hrHidden: true,
@@ -293,6 +309,7 @@ describe("Analys och planering, the administrator's page", () => {
     expect(await screen.findByText(/Enskilda lärares siffror visas inte för huvudmannens läsare/)).toBeInTheDocument();
     expect(screen.getByText("Lärartäthet")).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "Nyckeltal per lärare" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Jämför med schemat" })).toBeNull();
   });
 
   it("says what could not be judged as notices, a missing riktmärke and unrecorded behörigheter among them", async () => {

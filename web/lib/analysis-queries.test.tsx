@@ -59,6 +59,14 @@ describe("the reads", () => {
     expect(api.get).toHaveBeenCalledWith("/api/v1/analysis/cost-basis?academicYearId=y1");
   });
 
+  it("asks for the grundschema's undervisning only when told to", async () => {
+    const { Wrapper } = wrapper();
+    renderHook(() => useKeyFigures("y1", true), { wrapper: Wrapper });
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1));
+    expect(api.get).toHaveBeenCalledWith("/api/v1/analysis/key-figures?academicYearId=y1&schedule=true");
+    expect(ANALYSIS_KEYS.keyFigures("y1")).not.toEqual(ANALYSIS_KEYS.keyFigures("y1", true));
+  });
+
   it("asks nothing without a year, and nothing of the payroll without a period", async () => {
     const { Wrapper } = wrapper();
     renderHook(() => useKeyFigures(null), { wrapper: Wrapper });

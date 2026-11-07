@@ -8452,6 +8452,11 @@
         "pupils": "Pupils",
         "qualified": "Qualified share",
         "employment": "Employment degree"
+      },
+      "compare": {
+        "label": "Compare with the schedule",
+        "hint": "Adds the column According to the schedule: each teacher's teaching in the laid grundschema. It is counted only when you turn it on.",
+        "reading": "Counting the schedule's teaching …"
       }
     },
     "cost": {

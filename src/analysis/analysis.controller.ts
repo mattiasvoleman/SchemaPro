@@ -40,6 +40,7 @@ import {
   CostBasisQueryDto,
   CostRateDto,
   CreateSchoolPartDto,
+  KeyFiguresQueryDto,
   PayrollExportDto,
   PayrollQueryDto,
   UpdateSchoolPartDto,
@@ -74,12 +75,15 @@ export class AnalysisController {
     private readonly rates: CostRatesService,
   ) {}
 
-  /** `?academicYearId=` - nyckeltal per lärare (leaving out tjänstgöringsgrad without HR-läs) and per skola. */
+  /**
+   * `?academicYearId=[&schedule=true]` - nyckeltal per lärare (leaving out tjänstgöringsgrad without HR-läs) and
+   * per skola; with `schedule` each teacher's undervisning according to the grundschema too.
+   */
   @Get('key-figures')
   @UseGuards(AnalysisThrottlerGuard)
   @Throttle({ default: PER_ADDRESS })
-  keyFigures(@Query() query: AnalysisYearQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<KeyFiguresResponse> {
-    return this.analysis.keyFigures(query.academicYearId, user);
+  keyFigures(@Query() query: KeyFiguresQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<KeyFiguresResponse> {
+    return this.analysis.keyFigures(query.academicYearId, user, { schedule: query.schedule === true });
   }
 
   /** `?academicYearId=&from=&to=` - lärartid per elev gånger skolans kostnad per timme, per skoldel och årskurs. */

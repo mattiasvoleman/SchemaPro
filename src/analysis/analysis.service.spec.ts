@@ -4,6 +4,7 @@ import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock 
 import type { CoverReportsService, HoursResponse, HoursRow } from '../cover/cover-reports.service';
 import type { PrismaService } from '../database/prisma.service';
 import type { StaffingLoadService } from '../staffing/staffing-load.service';
+import { readLoadInput } from '../staffing/load-input';
 import { readPlannedInput } from '../timplan/timplan-coverage.service';
 import { readPublishedSpans } from '../timplan/timplan-delivered.sql';
 import { buildTeacherLoadReport } from '../staffing/teacher-load';
@@ -11,6 +12,7 @@ import { ANALYSIS_COST_NOT_YOURS, ANALYSIS_RANGE, AnalysisService } from './anal
 import { ANNA, BO, CY, MA, groups, pupils, schoolInput } from './__fixtures__/school';
 
 jest.mock('../timplan/timplan-coverage.service', () => ({ readPlannedInput: jest.fn() }));
+jest.mock('../staffing/load-input', () => ({ readLoadInput: jest.fn() }));
 jest.mock('../timplan/timplan-delivered.sql', () => ({
   ...jest.requireActual('../timplan/timplan-delivered.sql'),
   readPublishedSpans: jest.fn(),
@@ -75,6 +77,7 @@ describe('AnalysisService', () => {
         scheduled: null,
       }),
     };
+    (readLoadInput as jest.Mock).mockReset().mockResolvedValue({ year: { startDate: '2026-08-17', endDate: '2027-06-11' }, input });
     cover = { hours: jest.fn().mockResolvedValue(hours()) };
     service = new AnalysisService(prisma as unknown as PrismaService, staffing as unknown as StaffingLoadService, cover as unknown as CoverReportsService);
     jest.spyOn(service, 'now').mockReturnValue(NOW);
@@ -99,7 +102,7 @@ describe('AnalysisService', () => {
     it("states every teacher's figures with tjänstgöringsgrad for a reader of HR data, and records the reads", async () => {
       const result = await service.keyFigures(YEAR_ID, rektor());
 
-      expect(staffing.readReports).toHaveBeenCalledWith(tx, expect.anything(), YEAR_ID);
+      expect(staffing.readReports).toHaveBeenCalledWith(tx, expect.anything(), YEAR_ID, { scheduled: false });
       expect(result.teachers?.map((row) => row.userId).sort()).toEqual([ANNA, BO, CY].sort());
       expect(result.teachers?.find((row) => row.userId === ANNA)).toMatchObject({ employmentPercent: 100, pupils: 6 });
       expect(result.school).toMatchObject({ pupils: 6, teachers: 3, fullTimeTeachingMinutesPerWeek: 1080 });
@@ -130,6 +133,21 @@ describe('AnalysisService', () => {
       expect(result.school.teachers).toBe(3);
       expect(result.school).not.toHaveProperty('employmentFte');
       expect(recordedReads(tx)).toEqual([]);
+    });
+
+    it('makes the report over the grundschema only when it is asked for, and states it per teacher then', async () => {
+      const laid = buildTeacherLoadReport(schoolInput({ requirements: schoolInput().requirements.slice(0, 1) }));
+      staffing.readReports.mockResolvedValue({
+        read: { year: { startDate: '2026-08-17', endDate: '2027-06-11' }, input: schoolInput() },
+        planned: buildTeacherLoadReport(schoolInput()),
+        scheduled: laid,
+      });
+      const asked = await service.keyFigures(YEAR_ID, rektor(), { schedule: true });
+      expect(staffing.readReports).toHaveBeenLastCalledWith(tx, expect.anything(), YEAR_ID, { scheduled: true });
+      expect(asked.teachers?.find((row) => row.userId === ANNA)?.scheduledMinutesPerWeek).toBe(180);
+      staffing.readReports.mockClear();
+      await service.keyFigures(YEAR_ID, rektor(), { schedule: false });
+      expect(staffing.readReports).toHaveBeenLastCalledWith(tx, expect.anything(), YEAR_ID, { scheduled: false });
     });
 
     it('answers 404 for a year row security hides', async () => {
@@ -317,6 +335,20 @@ describe('AnalysisService', () => {
       expect(result.protectedInAnswer).toBe(0);
     });
 
+    it('states the tjänstgöringsgrad in force on the period\'s last day, a post that changes during the year included', async () => {
+      const input = schoolInput();
+      input.employments = input.employments.map((post) =>
+        post.userId === ANNA
+          ? { ...post, periods: [{ validFrom: '2026-11-16', validTo: null, employmentPercent: 60, reductionPercent: 0, teachingTargetMinutesPerWeek: null }] }
+          : post,
+      );
+      (readLoadInput as jest.Mock).mockResolvedValue({ year: { startDate: '2026-08-17', endDate: '2027-06-11' }, input });
+      const november = await service.payrollBasis(query, rektor());
+      expect(november.people.find((person) => person.userId === ANNA)!.employmentPercent).toBe(60);
+      const early = await service.payrollBasis({ ...query, from: '2026-11-02', to: '2026-11-13' }, rektor());
+      expect(early.people.find((person) => person.userId === ANNA)!.employmentPercent).toBe(100);
+    });
+
     it('takes a teaching group\'s skoldel from the skoldel most of its pupils are in', async () => {
       tx.schoolPart.findMany.mockResolvedValue([
         { id: 'seven', name: 'Sjuan', account: '4007', gradeFrom: 7, gradeTo: 7 },
@@ -346,11 +378,7 @@ describe('AnalysisService', () => {
       (readPublishedSpans as jest.Mock).mockResolvedValue({ horizon: [], published: null, publishedDays: [] });
       cover.hours.mockResolvedValue(hours({ toCheck: [coverRow()] }));
       const input = schoolInput({ duties: [{ userId: ANNA, minutesPerWeek: 50, countsAsTeaching: false }] });
-      staffing.readReports.mockResolvedValue({
-        read: { year: { startDate: '2026-08-17', endDate: '2027-06-11' }, input },
-        planned: buildTeacherLoadReport(input),
-        scheduled: null,
-      });
+      (readLoadInput as jest.Mock).mockResolvedValue({ year: { startDate: '2026-08-17', endDate: '2027-06-11' }, input });
       const result = await service.payrollBasis(query, rektor());
       expect(result.notices.map((notice) => notice.code)).toEqual(['ANALYSIS_NOTHING_PUBLISHED', 'ANALYSIS_COVER_TO_CHECK', 'ANALYSIS_DUTIES_UNALLOCATED']);
       expect(result.lines).toEqual([
@@ -379,6 +407,9 @@ describe('AnalysisService', () => {
         endDate: new Date('2027-06-11T00:00:00.000Z'),
       });
       (readPlannedInput as jest.Mock).mockResolvedValue(null);
+      await expect(service.payrollBasis(query, rektor())).rejects.toBeInstanceOf(NotFoundException);
+      (readPlannedInput as jest.Mock).mockResolvedValue(planned());
+      (readLoadInput as jest.Mock).mockResolvedValue(null);
       await expect(service.payrollBasis(query, rektor())).rejects.toBeInstanceOf(NotFoundException);
     });
 

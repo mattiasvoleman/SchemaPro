@@ -1,7 +1,7 @@
 import { Transform } from 'class-transformer';
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
-import { COST_CATEGORIES, PAYROLL_FORMATS, type PayrollFormat } from '../analysis.types';
+import { PAYROLL_FORMATS, type PayrollFormat } from '../analysis.types';
 import { SCHOOL_PART_ACCOUNT_MAX, SCHOOL_PART_NAME_MAX } from '../school-part-rules';
 
 const lower = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.toLowerCase() : value);
@@ -11,6 +11,18 @@ export class AnalysisYearQueryDto {
   @Transform(lower)
   @IsUUID('4', { message: 'academicYearId: läsåret anges med sitt id.' })
   academicYearId!: string;
+}
+
+/**
+ * GET /api/v1/analysis/key-figures. `schedule=true` also states each teacher's undervisning according to the
+ * grundschema: a second report over the master lessons, which is most of what the view costs, so it is asked
+ * for (the page's switch) and not made by default.
+ */
+export class KeyFiguresQueryDto extends AnalysisYearQueryDto {
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' || value === '1' ? true : value === 'false' || value === '0' ? false : value))
+  @IsBoolean({ message: 'schedule: true eller false.' })
+  schedule?: boolean;
 }
 
 /**
@@ -94,6 +106,3 @@ export class CostRateDto {
   @Max(100_000, { message: 'hourlyCost: 0 till 100 000 kronor per timme.' })
   hourlyCost!: number;
 }
-
-/** The :category of a rate route. */
-export const COST_CATEGORY_PARAM = new RegExp(`^(${COST_CATEGORIES.join('|')})$`);

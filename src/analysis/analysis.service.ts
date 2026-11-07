@@ -17,7 +17,9 @@ import {
   type StaffingCreditRow,
   type SubstituteHoursRow,
 } from '../timplan/timplan-delivered.sql';
+import { postOn } from '../staffing/employment-periods';
 import { HR_NOT_YOURS, readsHr } from '../staffing/hr-visibility';
+import { readLoadInput } from '../staffing/load-input';
 import { StaffingLoadService } from '../staffing/staffing-load.service';
 import { markedIds } from '../users/person-protections';
 import {
@@ -106,11 +108,16 @@ export class AnalysisService {
   // Nyckeltal
   // -------------------------------------------------------------------------
 
-  async keyFigures(academicYearId: string, user: AuthenticatedUser): Promise<KeyFiguresResponse> {
+  /**
+   * `schedule`: also each teacher's undervisning according to the grundschema. A second report over every master
+   * lesson of the year, which is the larger part of what these figures cost (measured: about 60 % of the CPU of
+   * the whole answer on a school of 120 teachers), so it is made when asked for.
+   */
+  async keyFigures(academicYearId: string, user: AuthenticatedUser, options: { schedule?: boolean } = {}): Promise<KeyFiguresResponse> {
     requireSchoolId(user);
     const aggregateOnly = isReader(user);
     return this.prisma.withRls(user, async (tx) => {
-      const { read, planned, scheduled } = await this.staffing.readReports(tx, user, academicYearId);
+      const { read, planned, scheduled } = await this.staffing.readReports(tx, user, academicYearId, { scheduled: options.schedule === true });
       const pupils = await readPlannedInput(tx, user, academicYearId, true);
       if (!pupils) throw new NotFoundException('Academic year not found.');
       const audiences = audiencesOf(pupils.groups, pupils.pupils);
@@ -295,7 +302,9 @@ export class AnalysisService {
     const hours = await this.cover.hours(from, to, undefined, user);
 
     return this.prisma.withRls(user, async (tx) => {
-      const read = await this.staffing.readReports(tx, user, query.academicYearId, { scheduled: false });
+      // The rows the report is made of, not the report: the payroll needs the posts, the uppdrag and the lov.
+      const read = await readLoadInput(tx, user, query.academicYearId, schoolId);
+      if (!read) throw new NotFoundException('Academic year not found.');
       const pupils = await readPlannedInput(tx, user, query.academicYearId, true);
       if (!pupils) throw new NotFoundException('Academic year not found.');
       const audiences = audiencesOf(pupils.groups, pupils.pupils);
@@ -317,7 +326,7 @@ export class AnalysisService {
         teaching.set(key, entry);
       }
 
-      const employments = new Map(read.read.input.employments.map((post) => [post.userId, post]));
+      const employments = new Map(read.input.employments.map((post) => [post.userId, post]));
       const pool = new Set((await tx.substitutePoolMember.findMany({ select: { userId: true } })).map((row) => row.userId));
       const kindOf = (userId: string): PayrollPersonKind => (pool.has(userId) && !employments.has(userId) ? 'POOL' : 'STAFF');
 
@@ -327,12 +336,17 @@ export class AnalysisService {
         year: { startDate: yearStart, endDate: yearEnd },
         teaching: [...teaching.values()],
         substitutes: hours.rows.map((row) => ({ userId: row.userId, studentGroupId: row.studentGroupId, minutes: row.minutes })),
-        duties: read.read.input.duties,
-        closures: read.read.input.closures,
+        duties: read.input.duties,
+        closures: read.input.closures,
         parts,
         partOfGroup,
         kindOf,
-        employmentPercentOf: (userId) => employments.get(userId)?.employmentPercent ?? null,
+        // The post in force on the period's last day, as the SCB underlag judges a post on its mätdatum: a post that
+        // changes from 1 november is the new percentage in a payroll for november.
+        employmentPercentOf: (userId) => {
+          const post = employments.get(userId);
+          return post ? postOn(post, to).employmentPercent : null;
+        },
       });
 
       const people = built.people.map((person) => person.userId);

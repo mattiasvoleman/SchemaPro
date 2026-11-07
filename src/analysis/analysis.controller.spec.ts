@@ -22,7 +22,9 @@ describe('AnalysisController', () => {
 
   it('hands each view its query and the caller', async () => {
     await controller.keyFigures({ academicYearId: YEAR }, user);
-    expect(analysis.keyFigures).toHaveBeenCalledWith(YEAR, user);
+    expect(analysis.keyFigures).toHaveBeenCalledWith(YEAR, user, { schedule: false });
+    await controller.keyFigures({ academicYearId: YEAR, schedule: true }, user);
+    expect(analysis.keyFigures).toHaveBeenLastCalledWith(YEAR, user, { schedule: true });
     await controller.costBasis({ academicYearId: YEAR, from: '2026-10-01', to: '2026-10-31' }, user);
     expect(analysis.costBasis).toHaveBeenCalledWith({ academicYearId: YEAR, from: '2026-10-01', to: '2026-10-31' }, user);
     const query = { academicYearId: YEAR, from: '2026-11-01', to: '2026-11-30' };

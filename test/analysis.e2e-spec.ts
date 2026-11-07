@@ -82,6 +82,12 @@ describe('/api/v1/analysis (e2e)', () => {
       }
     });
 
+    it('reads the report over the grundschema only when asked', async () => {
+      await get(`/key-figures?academicYearId=${YEAR}&schedule=true`, asUser({})).expect(200);
+      await get(`/key-figures?academicYearId=${YEAR}&schedule=false`, asUser({})).expect(200);
+      await get(`/key-figures?academicYearId=${YEAR}&schedule=1`, asUser({})).expect(200);
+    });
+
     it('leaves tjänstgöringsgrad out for a profile without HR-läs and says so', async () => {
       const hidden = await get(`/key-figures?academicYearId=${YEAR}`, asUser({ adminProfile: 'SCHEMALAGGARE' as never })).expect(200);
       expect(hidden.body.hrHidden).toBe(true);
@@ -159,6 +165,7 @@ describe('/api/v1/analysis (e2e)', () => {
     it.each([
       ['no academicYearId', '/key-figures'],
       ['an academicYearId that is no id', '/key-figures?academicYearId=igår'],
+      ['a schedule that is neither true nor false', `/key-figures?academicYearId=${YEAR}&schedule=kanske`],
       ['no academicYearId for the cost basis', '/cost-basis'],
       ['half a range for the cost basis', `/cost-basis?academicYearId=${YEAR}&from=2026-09-01`],
       ['a date that does not exist', `/cost-basis?academicYearId=${YEAR}&from=2026-02-30&to=2026-03-01`],

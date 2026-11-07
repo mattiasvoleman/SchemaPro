@@ -98,7 +98,18 @@ function admin(context: GatewayContext): Reply | null {
 }
 
 function keyFigures(context: GatewayContext): KeyFigures | Reply {
-  return admin(context) ?? { ...KEY_FIGURES, academicYearId: context.query.get("academicYearId") ?? "" };
+  const refused = admin(context);
+  if (refused) return refused;
+  // The grundschema's undervisning is made only when asked for (schedule=true): Anna's lies a little under her post's, Eva has none laid.
+  const schedule = context.query.get("schedule") === "true";
+  return {
+    ...KEY_FIGURES,
+    academicYearId: context.query.get("academicYearId") ?? "",
+    teachers: KEY_FIGURES.teachers!.map((one) => ({
+      ...one,
+      scheduledMinutesPerWeek: schedule ? (one.userId === TEACHERS.eva.id ? 0 : Math.max(0, one.teachingMinutesPerWeek - 60)) : null,
+    })),
+  };
 }
 
 function costBasis(context: GatewayContext): CostBasis | Reply {

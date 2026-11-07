@@ -17,12 +17,14 @@ import { usePeople } from "@/lib/queries";
 import { AnalysisNotices } from "@/components/analysis/analysis-notices";
 import { useAnalysisText } from "@/components/analysis/use-analysis-text";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/ui/empty-state";
 import { KpiStrip, KpiTile } from "@/components/ui/kpi";
 import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableCard } from "@/components/ui/table-card";
 
@@ -36,7 +38,9 @@ import { TableCard } from "@/components/ui/table-card";
  */
 export function KeyFiguresPanel({ yearId }: { yearId: string }) {
   const { t, number } = useAnalysisText();
-  const query = useKeyFigures(yearId);
+  // The comparison with the grundschema is a second report over every master lesson: made when asked for.
+  const [compare, setCompare] = useState(false);
+  const query = useKeyFigures(yearId, compare);
   const people = usePeople();
   const [sort, setSort] = useState<KeyFigureSort>(DEFAULT_KEY_SORT);
 
@@ -75,7 +79,7 @@ export function KeyFiguresPanel({ yearId }: { yearId: string }) {
 
   const school = view.school;
   const showEmployment = !view.hrHidden && !view.aggregateOnly;
-  const showScheduled = rows.some((row) => row.scheduledMinutesPerWeek !== null);
+  const showScheduled = compare && rows.some((row) => row.scheduledMinutesPerWeek !== null);
   const columns: ReadonlyArray<{ key: KeyFigureSortKey; numeric: boolean; show: boolean }> = [
     { key: "teacher", numeric: false, show: true },
     { key: "teaching", numeric: true, show: true },
@@ -149,6 +153,15 @@ export function KeyFiguresPanel({ yearId }: { yearId: string }) {
             <EmptyState icon={Users} headingLevel={3} title={t("keyFigures.teachers.emptyTitle")} description={t("keyFigures.teachers.emptyBody")} />
           ) : (
             <>
+              <div className="mb-3 flex items-start justify-between gap-4">
+                <div className="min-w-0 space-y-1">
+                  <Label htmlFor="analysis-compare">{t("keyFigures.compare.label")}</Label>
+                  <p id="analysis-compare-hint" className="text-sm text-muted-foreground">
+                    {compare && query.isPlaceholderData ? t("keyFigures.compare.reading") : t("keyFigures.compare.hint")}
+                  </p>
+                </div>
+                <Switch id="analysis-compare" checked={compare} aria-describedby="analysis-compare-hint" onCheckedChange={setCompare} />
+              </div>
               <p className="sr-only" aria-live="polite">
                 {t("keyFigures.teachers.sortedBy", { column: t(`keyFigures.column.${sort.key}`), direction: sort.direction })}
               </p>
