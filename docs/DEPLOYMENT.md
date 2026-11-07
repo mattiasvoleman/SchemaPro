@@ -132,6 +132,63 @@ Once the access-token hook is on (§11.2), every sign-in and refresh reads
 on either starts with `SET lock_timeout = '1s';` and is rerun if it times
 out, so that it never makes every sign-in wait behind it (§11.2).
 
+### 2.1 A migration that stopped, and the index it can leave behind
+
+Prisma records a migration that stopped as failed, and the next
+`migrate deploy` refuses (P3009) until it is told what to do about it:
+`prisma migrate resolve --rolled-back <name>`, the name being in the message,
+and then `migrate deploy` again, which runs the file **from its first
+statement**. A file with a DO block runs as one transaction and leaves nothing
+behind. A file that builds an index with `CREATE INDEX CONCURRENTLY` cannot run
+in a transaction, so Prisma runs it one statement at a time, and a build that
+is cancelled (a statement timeout, `pg_cancel_backend`, a dropped connection)
+or that fails (a unique index over rows that are not unique) leaves its index in
+the catalogue **invalid**: not used by the planner, still kept up to date by
+every write, and holding its name. The rerun then stops at the same statement
+with
+
+```
+ERROR: relation "<index>" already exists   (SQLSTATE 42P07)
+```
+
+which does not say that the index is invalid, or that the way on is to drop it.
+`IF NOT EXISTS` would not help: it sees the name, skips the statement, and the
+migration is recorded as applied with the index still invalid (tried). So the
+file does not use it, and the recovery is by hand, as the database's owner, on
+the direct connection:
+
+1. Find what a stopped build left. This reads the catalogue only:
+
+   ```sql
+   SELECT c.relname AS index, t.relname AS "table", i.indisvalid, i.indisready
+     FROM pg_index i
+     JOIN pg_class c ON c.oid = i.indexrelid
+     JOIN pg_class t ON t.oid = i.indrelid
+    WHERE NOT i.indisvalid AND c.relnamespace = 'public'::regnamespace
+    ORDER BY c.relname COLLATE "C";
+   ```
+
+   Nothing is invalid when no build was interrupted. An index in the result
+   that belongs to another migration than the one that stopped is somebody
+   else's to look at first.
+2. Drop each one the migration was building, without taking the table's writes
+   with it, and outside a transaction (`psql -c` is enough):
+   `DROP INDEX CONCURRENTLY "<index>";`
+3. Read the migration's other statements. The ones that ran before the
+   interrupted one run again, so each has to be safe to repeat (a `VALIDATE
+   CONSTRAINT` of a validated key is; a `CREATE` without `IF NOT EXISTS` of
+   something that exists is not and has to be undone first). A failed unique
+   build means rows to settle first: the error names the key that is not
+   unique.
+4. `prisma migrate resolve --rolled-back <name>`, then `prisma migrate
+   deploy`, then the query of step 1 again: no row.
+
+The files that build an index concurrently are found with `grep -l
+CONCURRENTLY prisma/migrations/*/migration.sql`. Each states its own recovery in
+its header (20270115090100 does: `DROP INDEX CONCURRENTLY
+"CalendarLessons_subjectId_schoolId_idx"` is its step 2, and its other
+statements, thirty-eight `VALIDATE CONSTRAINT`, are safe to repeat).
+
 ## 3. Create the API's least-privilege database role
 
 The API must **never** connect as `postgres` (the owner bypasses RLS). Create
