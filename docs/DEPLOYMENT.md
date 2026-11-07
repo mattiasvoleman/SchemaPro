@@ -1913,6 +1913,10 @@ Walk the full product loop once, in order:
   with either pupil or lesson when one is deleted. The state codes of the
   refusals are `LM403`–`LM415`, answered as coded 403/404/409
   (`LESSON_MOVE_*`). Nothing touches `MasterLessons`.
+  The delivered time's audience statement (`audienceStatement`, the timplan)
+  gains one column, `movedOffIds`, behind an option only it asks for; every
+  other statement of P3 is byte for byte what it was (pinned in
+  `timplan-delivered.sql.spec.ts`).
   **The seven readers** restated, each weighed against its previous body before
   it is replaced (the migration stops otherwise): `current_student_replaced_lesson_ids`
   (was 20261211090000, md5 `40ec1dad4dc5024dfbad454679c742e9`),
@@ -1957,6 +1961,17 @@ Walk the full product loop once, in order:
   name until the teacher's rows reach the pupil (the gateway's week does); the
   app has no screen for moving (a notice and the type, and the realtime
   broadcast keeps the register current).
+  **Measure** (`scripts/bench/lesson-moves.ts`: two schools of 60 classes of 25
+  pupils and six lessons a day, one with 120 pupils moved to a parallel lesson;
+  medians of 21 adjacent pairs on a shared Mac, so load moves both alike): the
+  whole day's rosters as an administrator read them 194 ms without moves and
+  124 ms with (the difference is the host's, the moved pupils are fewer on the
+  lessons they left); a register opening 51 and 53 ms; a pupil's own lessons
+  11.6 and 12.6 ms; the calendar feed for fifty pupils 372 and 291 ms; a
+  guardian's week of a moved child 122 and 143 ms (the child's moves are one
+  more indexed read, the lesson they went to has its own teachers and room).
+  The statements the feature adds execute in 0.02 ms each on the database
+  (`EXPLAIN ANALYZE`, best of 21). No hot table gained a policy arm.
   **Release note** (in these words or others): *A teacher, a mentor or an
   administrator can now move one pupil to a parallel lesson for a day, from the
   register, the klassbok or the lesson list, and take it back. The pupil is
