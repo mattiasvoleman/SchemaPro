@@ -166,7 +166,8 @@ $$;
 --            förfrågan skrevs, NULL som id för en som tagits bort.
 -- Sorteringen bland lika är namnet med COLLATE "C" och id:t: svaret ska vara
 -- detsamma på varje databas. En vårdnadshavare, en elev eller en inloggning
--- utan person får KV403.
+-- utan roll på skolan får KV403; huvudmannens läsare, som saknar rad men läser
+-- skolan som dess läsare, får vad läsaren får (hens egen andel används aldrig).
 CREATE FUNCTION app.ack_usage(p_senders integer DEFAULT 5)
 RETURNS TABLE (scope text, author_id uuid, author_name text, used integer, cap integer)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
@@ -176,7 +177,10 @@ DECLARE
   my_role text := app.current_user_role();
   cutoff timestamptz := clock_timestamp() - interval '24 hours';
 BEGIN
-  IF me IS NULL OR sch IS NULL OR my_role NOT IN ('TEACHER', 'SCHOOL_ADMIN') THEN
+  -- Staff of a school the request names. The huvudman's reader (20261212090000) is a läsare there with no Users row, so no
+  -- person id: it reads what the läsare reads, and has no share of its own to use (the ME row says 0). A login with no
+  -- school, or with no role at the school, is not staff.
+  IF sch IS NULL OR my_role IS NULL OR my_role NOT IN ('TEACHER', 'SCHOOL_ADMIN') THEN
     RAISE EXCEPTION 'ACK_NOT_STAFF' USING ERRCODE = 'KV403';
   END IF;
 

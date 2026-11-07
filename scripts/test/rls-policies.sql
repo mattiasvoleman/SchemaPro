@@ -46935,6 +46935,31 @@ BEGIN
   PERFORM pg_temp.kv_expect('380 the other school', pg_temp.ku_text(pg_temp.kv_auth(31)), 'SCHOOL 0/20000, ME 0/8000');
 END $$;
 
+-- The huvudman's reader (20261212090000) has no Users row at the school it reads, so no person id: it reads the usage as
+-- the school's läsare does (huvudman-gets.e2e-spec.ts holds every GET a läsare reaches to that), with no share of its own
+-- used. With no school named it is staff of nothing.
+DO $$
+DECLARE
+  roller uuid;
+  lasare text;
+  reader text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
+  roller := app.current_school_id();
+  lasare := pg_temp.ku_text('00000000-0000-4000-8000-000000000115');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000260')::text, true);
+  PERFORM set_config('app.chosen_school_id', roller::text, true);
+  IF app.current_school_id() IS DISTINCT FROM roller OR app.current_user_id() IS NOT NULL OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'kvittens 380: P is not the reader at the roller school (school %, person %, role %)', app.current_school_id(), app.current_user_id(), app.current_user_role();
+  END IF;
+  reader := pg_temp.ku_text('fe000000-0000-4000-8000-000000000260');
+  PERFORM set_config('app.chosen_school_id', roller::text, true);
+  PERFORM pg_temp.kv_expect('380 the reader reads as the läsare', reader, lasare);
+  IF reader NOT LIKE 'SCHOOL %, ME 0/8000%' THEN RAISE EXCEPTION 'kvittens 380: the reader''s usage is %', reader; END IF;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM pg_temp.kv_refuses('SELECT * FROM app.ack_usage()', 'KV403', 'the reader naming no school');
+END $$;
+
 -- PostgREST's role runs none of the three new functions, and the API's role runs the usage and the mark
 -- but not the numbers (section 374 holds the full list).
 SET LOCAL ROLE authenticated;
