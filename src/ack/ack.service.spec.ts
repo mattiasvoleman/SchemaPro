@@ -214,6 +214,18 @@ describe('AckService', () => {
       await expect(service.create(dto, admin)).rejects.toBe(other);
     });
 
+    it.each([
+      ['ACK_TOO_MANY_REQUESTS', 'ACK_TOO_MANY_REQUESTS'],
+      ['ACK_TOO_MANY_RECIPIENTS', 'ACK_TOO_MANY_RECIPIENTS'],
+    ])('answers a model query that the trigger refused in another class of error, by the text it raised (%s)', async (text, code) => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_enabled()': [{ enabled: true }] });
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      tx['guardianStudent']!['findMany']!.mockResolvedValue([{ studentId: 'p-1', guardianId: 'g-1' }]);
+      tx['ackRequest']!['createMany']!.mockRejectedValue(new Error(`Invalid \`prisma.ackRequest.createMany()\` invocation: ${text}`));
+      await expect(service.create(dto, admin)).rejects.toMatchObject({ response: { code } });
+    });
+
     it('lets a teacher ask about her mentees', async () => {
       const { tx, service } = setup();
       raw(tx, { 'app.ack_enabled()': [{ enabled: true }], 'app.ack_mentee_ids()': [{ ids: ['p-1', 'p-2'] }] });

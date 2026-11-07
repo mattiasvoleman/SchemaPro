@@ -74,12 +74,22 @@ function pageOf<T extends { id: string }>(rows: T[], limit: number): { rows: T[]
   return { rows: shown, next: rows.length > limit ? shown[shown.length - 1]!.id : null };
 }
 
-/** The SQLSTATE a function of the migration raised, as the adapter reports a raw refusal (P2010). */
+/**
+ * The SQLSTATE a function or trigger of the migration raised, as the adapter reports it: a raw refusal is P2010 with the
+ * code in driverAdapterError.cause, and the same text is in the message. A model query that a trigger refuses
+ * (createMany of the request and its receipts) may come back in another class, so the codes of the two limits are also
+ * read from the message the trigger raised.
+ */
 function sqlStateOf(error: unknown): string | null {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
-  const cause = (error.meta as { driverAdapterError?: { cause?: { originalCode?: unknown } } } | undefined)?.driverAdapterError?.cause;
+  const meta = (error as { meta?: { driverAdapterError?: { cause?: { originalCode?: unknown } } } } | null)?.meta;
+  const cause = meta?.driverAdapterError?.cause;
   if (typeof cause?.originalCode === 'string') return cause.originalCode;
-  return /Code: `([0-9A-Z]{5})`/.exec(error.message)?.[1] ?? null;
+  const message = error instanceof Error ? error.message : '';
+  const named = /Code: `([0-9A-Z]{5})`/.exec(message)?.[1];
+  if (named) return named;
+  if (message.includes('ACK_TOO_MANY_REQUESTS')) return 'KV429';
+  if (message.includes('ACK_TOO_MANY_RECIPIENTS')) return 'KV428';
+  return null;
 }
 
 /**

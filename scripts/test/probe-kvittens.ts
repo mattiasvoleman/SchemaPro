@@ -94,6 +94,9 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
   const mentor1 = await person('TEACHER', 'mentor1');
   const mentor2 = await person('TEACHER', 'mentor2');
   const loner = await person('TEACHER', 'loner');
+  // Who the owner's seeded requests are written by. The limit counts a person's requests in the last hour whoever wrote them,
+  // so a probe that seeds dozens "by the administrator" would use up the administrator's ten.
+  const seeder = await person('TEACHER', 'seeder');
   const p1 = await person('STUDENT', 'p1', { group: k1 });
   const p2 = await person('STUDENT', 'p2', { group: k1 });
   const p3 = await person('STUDENT', 'p3', { group: k2 });
@@ -133,7 +136,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
    * A request written the owner's way: the people's limits (ten an hour, 20 000 receipts a day) are for logged-in
    * writers, and the races below need dozens of requests.
    */
-  const seed = async (title: string, rule: 'ANY' | 'ALL', studentIds: string[], by = admin): Promise<string> => {
+  const seed = async (title: string, rule: 'ANY' | 'ALL', studentIds: string[], by: { id: string } = seeder): Promise<string> => {
     const row = await one<{ id: string }>(`INSERT INTO "AckRequests" ("schoolId", "authorId", title, body, rule) VALUES ($1, $2, $3, 'B', $4::"AckRule") RETURNING id`, [s, by.id, title, rule]);
     await owner.query(
       `INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
@@ -534,6 +537,9 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
   await check('kl: the limits are 429s with their own codes through the adapter, and write nothing', async () => {
     const sender = await person('SCHOOL_ADMIN', 'sender', { adminProfile: 'FULL' });
     const asSender = as(sender, Role.SCHOOL_ADMIN, 'FULL');
+    // The checks above wrote nine requests as the administrator, so the colleague (a person of their own) writes the rest.
+    const colleague = await person('SCHOOL_ADMIN', 'colleague', { adminProfile: 'FULL' });
+    const asColleague = as(colleague, Role.SCHOOL_ADMIN, 'FULL');
     const body = { body: 'B', rule: 'ANY' as const, studentIds: [p3.id] };
     for (let i = 1; i <= 10; i++) await service.create({ ...body, title: `Gräns ${i}` }, asSender);
     const refusedWith = async (run: () => Promise<unknown>, code: string) =>
@@ -549,7 +555,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE title = 'Gräns 11'`), 0);
     assert.equal(await notices(), noticesBefore, 'the refused request wrote notices');
     // The limit is the sender's: a colleague writes on.
-    await service.create({ ...body, title: 'Kollegan' }, asAdmin);
+    await service.create({ ...body, title: 'Kollegan' }, asColleague);
 
     // The school's day: what the school asked before is moved out of the day, the owner brings the last 24 hours to 19 999 receipts,
     // and a request that would make 20 001 is refused whole.
@@ -566,14 +572,14 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     }
     const requestsBefore = await count(`SELECT count(*) AS n FROM "AckRequests" WHERE "schoolId" = $1`, [s]);
     const noticesNow = await notices();
-    await refusedWith(() => service.create({ title: 'Över dygnet', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asAdmin), 'ACK_TOO_MANY_RECIPIENTS');
+    await refusedWith(() => service.create({ title: 'Över dygnet', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asColleague), 'ACK_TOO_MANY_RECIPIENTS');
     assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE "schoolId" = $1`, [s]), requestsBefore, 'the refused request was written');
     assert.equal(await notices(), noticesNow);
-    await service.create({ title: 'Dygnets sista', body: 'B', rule: 'ANY', studentIds: [p3.id] }, asAdmin);
-    await refusedWith(() => service.create({ title: 'Dygnets en för mycket', body: 'B', rule: 'ANY', studentIds: [p3.id] }, asAdmin), 'ACK_TOO_MANY_RECIPIENTS');
+    await service.create({ title: 'Dygnets sista', body: 'B', rule: 'ANY', studentIds: [p3.id] }, asColleague);
+    await refusedWith(() => service.create({ title: 'Dygnets en för mycket', body: 'B', rule: 'ANY', studentIds: [p3.id] }, asColleague), 'ACK_TOO_MANY_RECIPIENTS');
     // The day moves on.
     await owner.query(`UPDATE "AckReceipts" SET "createdAt" = now() - interval '25 hours' WHERE "schoolId" = $1`, [s]);
-    await service.create({ title: 'Nästa dygn', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asAdmin);
+    await service.create({ title: 'Nästa dygn', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asColleague);
   });
 
   await check('km: the lists are paged, and a read costs what the caller reads, not the school’s requests', async () => {
