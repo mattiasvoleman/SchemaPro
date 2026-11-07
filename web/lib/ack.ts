@@ -30,8 +30,12 @@ export const ACK_CUSTODY_ENDED = "ACK_CUSTODY_ENDED";
 export const ACK_UNKNOWN_PUPIL = "ACK_UNKNOWN_PUPIL";
 export const ACK_NOT_YOUR_PUPIL = "ACK_NOT_YOUR_PUPIL";
 export const ACK_NO_GUARDIANS = "ACK_NO_GUARDIANS";
-/** Both 429: an eleventh request in an hour from one sender, more than 20 000 receipts in a day for one school. */
+/**
+ * All three 429: an eleventh request in an hour from one sender, more receipts in a day than the sender's own
+ * share (8 000 for an administrator, 2 000 for a teacher), more than 20 000 receipts in a day for one school.
+ */
 export const ACK_TOO_MANY_REQUESTS = "ACK_TOO_MANY_REQUESTS";
+export const ACK_SENDER_DAY_LIMIT = "ACK_SENDER_DAY_LIMIT";
 export const ACK_TOO_MANY_RECIPIENTS = "ACK_TOO_MANY_RECIPIENTS";
 /** 403 on stopping a reminder: the reader neither wrote the request nor administers the school. */
 export const ACK_NOT_STAFF = "ACK_NOT_STAFF";
@@ -43,6 +47,7 @@ export const CREATE_REFUSALS = [
   ACK_NOT_YOUR_PUPIL,
   ACK_NO_GUARDIANS,
   ACK_TOO_MANY_REQUESTS,
+  ACK_SENDER_DAY_LIMIT,
   ACK_TOO_MANY_RECIPIENTS,
 ] as const;
 export type CreateRefusal = (typeof CREATE_REFUSALS)[number];
@@ -65,12 +70,16 @@ export interface AckPage<T> {
 
 /**
  * Where a request's one reminder stands: none (the school chose no reminder),
- * scheduled (its time has not come, or the pass has not reached it), or how it
- * ended: sent; not needed (nobody was left to remind when the time came);
- * lapsed (the time had passed more than 30 days before the pass came); stopped
- * (by the author or an administrator); off (Kvittens was off when it fell due).
+ * scheduled (its time has not come, or the pass has not reached it), written
+ * (the notices are in the guardians' inboxes, and that the e-mail and the push
+ * were taken is not confirmed: the mail is on its way, or the process stopped
+ * with it in its queue, or Resend did not take it; nothing sends it again), or
+ * how it ended: sent (the delivery confirmed the e-mail and the push too); not
+ * needed (nobody was left to remind when the time came); lapsed (the time had
+ * passed more than 30 days before the pass came); stopped (by the author or an
+ * administrator); off (Kvittens was off when it fell due).
  */
-export const ACK_REMINDER_STATES = ["NONE", "SCHEDULED", "SENT", "NOT_NEEDED", "LAPSED", "STOPPED", "OFF"] as const;
+export const ACK_REMINDER_STATES = ["NONE", "SCHEDULED", "WRITTEN", "SENT", "NOT_NEEDED", "LAPSED", "STOPPED", "OFF"] as const;
 export type AckReminderState = (typeof ACK_REMINDER_STATES)[number];
 
 export interface AckSettings {
@@ -149,8 +158,10 @@ export interface AckDetail {
   authorName: string;
   createdAt: string;
   remindAt: string | null;
-  /** When at least one reminder went; null unless the reminder is SENT. */
+  /** When at least one reminder was written to the inboxes; null unless the reminder is WRITTEN or SENT. */
   reminderSentAt: string | null;
+  /** When the delivery said the e-mail and the push were taken; null unless the reminder is SENT. */
+  reminderMirroredAt: string | null;
   reminder: AckReminderState;
   /** The reader may stop the reminder: it is scheduled, and they wrote the request or administer the school. */
   mayStopReminder: boolean;
@@ -175,6 +186,37 @@ export interface AckConfirmed {
 
 export interface AckReminderStopped {
   reminder: AckReminderState;
+}
+
+/** One use of the day's limits: rows asked for in the last 24 hours, and the most there may be. */
+export interface AckUsageLine {
+  used: number;
+  limit: number;
+}
+
+/**
+ * Kvittens' use of the day (GET /usage): the school's (an administrator only), the reader's own share, and the
+ * senders who have used most (an administrator only). A row is one guardian asked about one pupil.
+ */
+export interface AckUsage {
+  school: AckUsageLine | null;
+  mine: AckUsageLine;
+  senders: Array<AckUsageLine & { name: string }> | null;
+}
+
+/** From this share of a limit the card says it is near. */
+export const NEAR_LIMIT = 0.75;
+
+/** The share of a limit that is used, as a fraction in whole percent, rounded down: 99.6 % reads 99 %, never 100 %. */
+export function usedShare(line: AckUsageLine): number {
+  if (line.limit <= 0) return 1;
+  return Math.min(1, Math.floor((line.used * 100) / line.limit) / 100);
+}
+
+/** How full a limit is: reached (all of it used), near (from 75 %), or ok. A limit of nothing is reached. */
+export function limitState(line: AckUsageLine): "reached" | "near" | "ok" {
+  if (line.limit <= 0 || line.used >= line.limit) return "reached";
+  return line.used >= line.limit * NEAR_LIMIT ? "near" : "ok";
 }
 
 // ---------------------------------------------------------------------------

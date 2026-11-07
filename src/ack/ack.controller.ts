@@ -18,6 +18,7 @@ import type {
   AckPupilChoice,
   AckReminderStopped,
   AckSettingsView,
+  AckUsage,
 } from './ack-views';
 import { AckPageQueryDto, AckSettingsDto, CreateAckRequestDto } from './dto/ack.dto';
 
@@ -48,6 +49,12 @@ export class AckController {
     return this.ack.updateSettings(dto, user);
   }
 
+  /** How much of the day's limits is used: the caller's share, and an administrator's school and largest senders. */
+  @Get('usage')
+  usage(@CurrentUser() user: AuthenticatedUser): Promise<AckUsage> {
+    return this.ack.usage(user);
+  }
+
   /** The pupils the caller may ask about. Recorded in the read log. */
   @Get('pupils')
   pupils(@CurrentUser() user: AuthenticatedUser): Promise<AckPupilChoice[]> {
@@ -74,8 +81,9 @@ export class AckController {
   }
 
   /**
-   * Five a minute besides the database's limit (10 an hour for a person, 20 000
-   * receipts a day for a school): a request is up to 4 000 notices.
+   * Five a minute besides the database's limits (10 an hour for a person, a share
+   * of the day for a person, 20 000 receipts a day for a school): a request is up
+   * to 4 000 notices.
    */
   @Post()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })

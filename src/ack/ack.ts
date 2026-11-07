@@ -38,7 +38,14 @@ export const ACK_CUSTODY_ENDED = 'ACK_CUSTODY_ENDED';
 export const ACK_UNKNOWN_PUPIL = 'ACK_UNKNOWN_PUPIL';
 export const ACK_NOT_YOUR_PUPIL = 'ACK_NOT_YOUR_PUPIL';
 export const ACK_NO_GUARDIANS = 'ACK_NO_GUARDIANS';
-/** An eleventh request in an hour from one sender (KV429), more than 20 000 receipts in a day for one school (KV428): both 429. */
+/**
+ * An eleventh request in an hour from one sender (KV429), more receipts in a day than the sender's share (KV427), more than
+ * 20 000 receipts in a day for one school (KV428): all 429. The numbers are the database's (app.ack_day_limit); the
+ * sender's share is 8 000 for an administrator and 2 000 for a teacher, and the usage endpoint says them.
+ */
 export const ACK_TOO_MANY_REQUESTS = 'ACK_TOO_MANY_REQUESTS';
+export const ACK_SENDER_DAY_LIMIT = 'ACK_SENDER_DAY_LIMIT';
 export const ACK_TOO_MANY_RECIPIENTS = 'ACK_TOO_MANY_RECIPIENTS';
+/** The largest senders the usage names. */
+export const USAGE_SENDERS = 5;
 export const ACK_NOT_STAFF = 'ACK_NOT_STAFF';
