@@ -239,7 +239,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `SCHOOL_EXPORT_BACKGROUND` | `on` (default) or `off`: the 30-second job of the whole-school export (`/admin/dataskydd`). It takes the oldest order, if any, builds the zip as the administrator who ordered it (their login and school under row-level security) and stores it in pieces in `SchoolExportChunks`; a file is fetchable for three days and then deleted. With no order a pass is one expiry check and one claim. Needs migration `20270114090000`: run it before the API that has this job |
 | `ABSENCE_WATCH_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarobevakning's nightly count. A school's night starts at 05:00 its local time, once a night, and only for a school whose administrator has turned the bevakning on (`/admin/absence-watch`; off for every school until then). The night counts the pupils over the school's limits as of yesterday and, on the first day after a whole week or month, writes the digest of each group that has a limit. Off, nothing is counted or sent and the findings already made stay |
 | `REPORTING_RATE_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Rapporteringsgrad's nightly job. A school's night starts at 06:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch; only the reminders and the weekly notice are, under `/admin/reporting-rate`). The night stores each teacher's held and reported lessons per day, tells the teachers of lessons that stood open past the school's limit (if the school turned that on) and, on Mondays, tells rektor and the full administrators the week's totals (likewise). **Off, this is the emergency brake:** nothing is counted, reminded or sent, the days already stored stay and the pages show them unchanged (they stop getting newer), and a teacher's list of open lessons, which reads the lessons live, still answers. A value that is neither `on` nor `off` is refused at start |
-| `ACK_BACKGROUND` | `on` (default) or `off`: the quarter-hourly pass of Kvittens' reminders (`ack-reminders` in `JobRuns`). It reminds, once, each guardian who has not confirmed a request whose time the school chose has come; a school with kvittens off, or with no reminder time, has nothing for it to do. `off` stops every reminder; the requests, the confirmations and the notices of a new request go on. The test setup turns it off. |
+| `ACK_BACKGROUND` | `on` (default) or `off`: the quarter-hourly pass of Kvittens' reminders (`ack-reminders` in `JobRuns`). It reminds, once, each guardian who has not confirmed themself a request whose time the school chose has come, one request at a time and each in a transaction of its own; a school with kvittens off, or with no reminder time, has nothing for it to do. `off` stops every reminder in every school; the requests, the confirmations and the notices of a new request go on. The test setup turns it off. |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -1537,9 +1537,10 @@ Walk the full product loop once, in order:
   `ACK_REQUESTED` and `ACK_REMINDER` and nothing else (a value cannot be used
   in the transaction that adds it, so it is a file of its own, taking no lock).
   20270117091000 adds the tables `AckSettings`, `AckRequests` and
-  `AckReceipts`, the enum `AckRule`, fifteen `app.ack_*` functions (all
-  SECURITY DEFINER with a pinned `search_path`; eleven the API role may run,
-  four the owner's alone), two triggers, and `app.gallring_due` and
+  `AckReceipts`, the enums `AckRule` and `AckReminderOutcome`, nineteen
+  `app.ack_*` functions (all SECURITY DEFINER with a pinned `search_path`;
+  fourteen the API role may run, five the owner's alone), three triggers (the
+  two stamps and the school's daily limit), and `app.gallring_due` and
   `app.gallring_purge` again with the requests under the NOTIFICATIONS kind.
   No existing row is touched and no existing table gains a column. The new
   keys take `Schools` and `Users` in SHARE ROW EXCLUSIVE, NOWAIT, together in a
@@ -1563,7 +1564,20 @@ Walk the full product loop once, in order:
   it, one tap in the app or on the web. The sender sees who confirmed and when,
   and nothing else about the guardian: not whether they opened it. The school
   chooses after how many days (1–30, or never) a guardian who has not confirmed
-  is reminded, once. **What is decided, for a conversation with the school:** a
+  is reminded, once. **Every guardian who has not confirmed themself is
+  reminded, also when the other guardian of the pupil has** (the rule ANY):
+  skipping them would let the missing reminder tell a guardian that the other
+  parent has answered, which a guardian who is hidden from the other must never
+  learn, and the decision is that this weighs more than one reminder too many.
+  The staff see how each reminder ended, not only that the pass looked at it:
+  `AckRequests.reminderOutcome` is `SENT` (with `reminderSentAt`, and only
+  then), `NOT_NEEDED` (nobody was left to remind), `LAPSED` (its time was more
+  than 30 days before the pass came: closed without a word), `STOPPED` or `OFF`.
+  The author, or an administrator under Drift, can stop the reminder of a
+  request that went out wrong (`app.ack_stop_reminder`), and turning kvittens
+  off stops the reminders that fall due while it is off for good (`OFF`; they
+  are not sent when it is turned on again). Withdrawing a whole request is not
+  built: a follow-up. **What is decided, for a conversation with the school:** a
   confirmation is the only receipt there is. An ordinary notice (a leave
   decision, an unreported absence, an alarm's afterword) keeps its `readAt`
   to the recipient: no route, view or screen of the gateway, the web or the app
@@ -1579,6 +1593,32 @@ Walk the full product loop once, in order:
   GUARDIANS), and a guardian is never shown another guardian's confirmation.
   A request and its confirmations go with the school's choice for **Notiser**
   under Dataskydd; there is no kind of their own.
+  **What one person can send, and what the queue carries.** A request to a
+  whole school is some 4 000 notices and 82 mails (49 on BCC, one every 500 ms:
+  about 41 s of the delivery queue) and a push to each. A person therefore
+  writes at most **10 requests an hour** and a school gets at most **20 000
+  new receipts in 24 hours** (five requests to every guardian of a school of
+  2 000 pupils, far more than a school needs; under four minutes of mail a day
+  at most: 20 000 addresses, 49 to a mail, one mail every half second): the 11th request or the receipts past the day's are refused
+  whole with 429 (`ACK_TOO_MANY_REQUESTS`, `ACK_TOO_MANY_RECIPIENTS`) by the
+  database (triggers; the owner and the migrations are not counted, and the
+  two limits take an advisory lock each, the sender's first and the school's
+  then, so two requests at the limit do not both pass), and `POST
+  /api/v1/acknowledgements` is throttled to five a minute besides. To change a
+  number is a migration. The delivery has a second, **urgent lane** for the
+  crisis alarm and its end (`CRISIS_ALARM`, `CRISIS_ENDED`): a wave of mails
+  never stands in front of an alarm's push (ten minutes of life); the lanes
+  share the providers' pace (a mail takes the next free 500 ms slot,
+  whichever lane sends it).
+  **The reminder pass** lists the due requests (`app.ack_remind_queue`, ids
+  only) and takes them one at a time (`app.ack_remind_request`), each in a
+  transaction under the delivery door's five seconds, up to a minute a pass: a
+  request that fails or times out is rolled back alone and stays in the queue,
+  the ones after it are done, and what a pass runs out of time on is left for
+  the next (`left` in `JobRuns.counts`). A pass with a failed request is
+  recorded as failed. Both functions answer nothing to a login that resolves
+  to a person (`app.current_user_id()` set); the job's door sets no claims.
+  The guard needs no role of its own, and the routes call neither.
   **Release note** (in these words or others): *Rastra can now ask a
   guardian to confirm a message about their child. A member of staff writes the
   message, chooses the pupils (a mentor only their own) and whether one guardian
@@ -1599,7 +1639,7 @@ Walk the full product loop once, in order:
   SELECT, INSERT and UPDATE on the settings, and nothing else (`SELECT
   has_table_privilege('app_authenticated', 'public."AckReceipts"', 'UPDATE,
   DELETE, TRUNCATE')` is false; no MAINTAIN), `anon` and `authenticated`
-  nothing at all; there are 15 `app.ack_%` functions, all definer, 11 of them
+  nothing at all; there are 19 `app.ack_%` functions, all definer, 14 of them
   executable by `app_authenticated` and none by `anon`, `authenticated` or
   `service_role` (`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.proname
   LIKE 'ack\_%' AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR
@@ -1607,19 +1647,40 @@ Walk the full product loop once, in order:
   `SELECT count(*) FROM "AckSettings"` is 0; both gallring bodies carry
   `AckRequests` and have the md5 above; the enum has the two values
   (`SELECT enum_range(NULL::"NotificationType")`); no invalid index and no lock
-  wait. Do not call `app.ack_remind_due()` to see: it reminds.
+  wait. Do not call `app.ack_remind_request()` to see: it reminds
+  (`app.ack_remind_queue()` only lists ids). The policies on `AckRequests` and
+  `AckReceipts` name `ack_my_request_ids`, `ack_mentee_request_ids` and
+  `ack_authored_request_ids` as initplans (`SELECT pg_get_expr(polqual,
+  polrelid) FROM pg_policy WHERE polname LIKE 'ack\_%select'`).
   **After the merge:** `JobRuns` gets a row for `ack-reminders` within fifteen
-  minutes of the new instance serving, its counts `{"reminded": 0}`;
-  `GET /api/v1/acknowledgements` answers `[]` for every school. Then, in a
-  test school with two accounts: turn kvittens on, write a request about a
-  pupil with two guardians, confirm as one of them, see it in the sender's view,
-  and read the log for `Reminder pass failed`.
+  minutes of the new instance serving, its counts `{"reminded": 0, "requests":
+  0, "failed": 0, "left": 0}`; `GET /api/v1/acknowledgements` answers
+  `{"items": [], "next": null}` for every school. Then, in a test school with
+  two accounts: turn kvittens on, write a request about a pupil with two
+  guardians, confirm as one of them, see it in the sender's view, and read the
+  log for `Reminder pass failed` and `A request's reminder failed`.
+  **While any school has kvittens on**, watch (read-only): the passes that
+  failed or ran out of time (`SELECT day, runs, failures, counts, "lastError"
+  FROM "JobRuns" WHERE job = 'ack-reminders' AND (failures > 0 OR
+  (counts ->> 'left')::int > 0) ORDER BY day DESC LIMIT 5`); the oldest due
+  reminder nobody has dealt with, which should be under an hour old (`SELECT
+  count(*), min("remindAt") FROM "AckRequests" WHERE "remindAt" <= now() AND
+  "reminderOutcome" IS NULL`); who sends much (`SELECT "schoolId", "authorId",
+  count(*) FROM "AckRequests" WHERE "createdAt" > now() - interval '1 hour'
+  GROUP BY 1, 2 HAVING count(*) > 5`); and how far a school is from its day's
+  limit (`SELECT "schoolId", count(*) FROM "AckReceipts" WHERE "createdAt" >
+  now() - interval '24 hours' GROUP BY 1 ORDER BY 2 DESC LIMIT 5`).
+  **Not tried:** that the API *before* the release reads a `Notifications`
+  row of the two new types without failing (a client library generated from an
+  older schema may not know the enum values). Try it before the first school
+  turns kvittens on, and delete the notices in the same transaction as the
+  rollback below if it throws.
   **Rollback of the code** is a revert; the tables stay and are unread. Rollback
   of the data, only if nothing in it is wanted: `BEGIN; DELETE FROM
   "Notifications" WHERE "type"::text IN ('ACK_REQUESTED', 'ACK_REMINDER');
   DELETE FROM "NotificationOptOuts" WHERE "type"::text IN ('ACK_REQUESTED',
   'ACK_REMINDER'); DROP TABLE "AckReceipts", "AckRequests", "AckSettings";
-  COMMIT;` and the two gallring functions restored to the bodies with the md5
+  DROP TYPE "AckRule", "AckReminderOutcome"; COMMIT;` and the two gallring functions restored to the bodies with the md5
   above. Count the notices first (`SELECT count(*) FROM "Notifications" WHERE
   "type"::text LIKE 'ACK\_%'`). What a rollback changes: nobody can ask or
   confirm, and the requests already made are gone.
