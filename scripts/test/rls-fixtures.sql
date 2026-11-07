@@ -3765,6 +3765,7 @@ BEGIN
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
   VALUES (s2, 'kl-annan-teacher@example.invalid', 'Annan', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-a50000000032', true, now()) RETURNING id INTO other_teacher;
   INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s2, 'KL Annan sal', now()) RETURNING id INTO r_other;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s2, y2, 'KL9A', 9, now());
   INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime",
                            "startDate", "endDate", status, note, "requestedById", "decidedById", "decidedAt")
   VALUES (s1, r4, s2, r_other, 4, '10:00', '11:00', current_date - 100, current_date + 200, 'APPROVED', 'Idrott', other_admin, adm_full, now());
