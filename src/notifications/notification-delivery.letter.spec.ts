@@ -57,17 +57,17 @@ describe('NotificationDeliveryService.sendLetter', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('does not throw for a mail Resend refuses, or one that never gets there, and sends it once', async () => {
+  it('says false for a mail Resend refuses and for one that never gets there, and sends each once', async () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 422 });
-    await expect(service().sendLetter('kok@skolan.se', 's', 'b')).resolves.toBeDefined();
+    await expect(service().sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(false);
     fetchMock.mockRejectedValueOnce(new Error('offline'));
-    await expect(service().sendLetter('kok@skolan.se', 's', 'b')).resolves.toBeDefined();
+    await expect(service().sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('says false when the mail itself cannot be started, and logs only the class of the error', async () => {
     const delivery = service();
-    (delivery as unknown as { sendEmails: () => Promise<void> }).sendEmails = async () => {
+    (delivery as unknown as { sendEmails: () => Promise<boolean> }).sendEmails = async () => {
       throw Object.assign(new Error('secret kok@skolan.se'), { name: 'TurnError' });
     };
     await expect(delivery.sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(false);
@@ -76,11 +76,13 @@ describe('NotificationDeliveryService.sendLetter', () => {
     expect(logged).not.toContain('kok@');
   });
 
-  it('reads a refusal the delivery reports as a mail not taken, where it reports one', async () => {
+  it('says false when the mail never gets its turn at the pace, and true once it has been taken', async () => {
     const delivery = service();
-    (delivery as unknown as { sendEmails: () => Promise<boolean> }).sendEmails = async () => false;
+    (delivery as unknown as { mailTurn: () => Promise<void> }).mailTurn = async () => {
+      throw new Error('no turn');
+    };
     await expect(delivery.sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(false);
-    (delivery as unknown as { sendEmails: () => Promise<boolean> }).sendEmails = async () => true;
-    await expect(delivery.sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(service().sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(true);
   });
 });

@@ -15,6 +15,7 @@ import {
   type AckReminderStopped,
   type AckSettings,
   type AckSettingsChange,
+  type AckUsage,
 } from "@/lib/ack";
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,7 @@ const ROOT = ["ack"] as const;
 export const ACK_KEYS = {
   all: ROOT,
   settings: [...ROOT, "settings"] as const,
+  usage: [...ROOT, "usage"] as const,
   pupils: [...ROOT, "pupils"] as const,
   list: [...ROOT, "list"] as const,
   detail: (id: string) => [...ROOT, "detail", id] as const,
@@ -123,6 +125,20 @@ export function useAckSettings() {
 }
 
 /**
+ * The day's use of the limits: the school's, the reader's own share and the senders who have used most
+ * (an administrator's page). A minute is as fresh as a use that moves only with requests needs, and a
+ * request just sent reads it again (see create), since that is what changes it.
+ */
+export function useAckUsage() {
+  return useQuery({
+    queryKey: ACK_KEYS.usage,
+    retry: false,
+    staleTime: 60_000,
+    queryFn: () => api.get<AckUsage>(`${BASE}/usage`),
+  });
+}
+
+/**
  * The pupils the reader may ask about, with how many guardians each has. Read
  * when the form is open and not before, and not kept after it: the gateway
  * records each reading in the läslogg, and a list of pupils is not something
@@ -171,9 +187,17 @@ export function useAckActions() {
   const create = useMutation({
     mutationFn: (body: { title: string; body: string; rule: string; studentIds: string[] }) =>
       api.post<AckCreated>(BASE, body),
-    // The list gains the request. A refusal says nothing about the list, but 409 ACK_DISABLED says the switch moved.
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ACK_KEYS.list }),
-    onError: () => void queryClient.invalidateQueries({ queryKey: ACK_KEYS.settings }),
+    // The list gains the request, and the day's use grows by its receipts. A refusal says nothing about the list,
+    // but 409 ACK_DISABLED says the switch moved.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ACK_KEYS.list });
+      void queryClient.invalidateQueries({ queryKey: ACK_KEYS.usage });
+    },
+    // A 429 says the day's use is not what the card shows (a colleague sent too): read it again as well.
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ACK_KEYS.settings });
+      void queryClient.invalidateQueries({ queryKey: ACK_KEYS.usage });
+    },
   });
   const confirm = useMutation({
     mutationFn: (id: string) => api.post<AckConfirmed>(`${BASE}/${id}/confirm`),

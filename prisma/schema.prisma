@@ -5756,6 +5756,8 @@ model AckRequest {
   remindAt       DateTime? @db.Timestamptz(6)
   reminderSentAt DateTime? @db.Timestamptz(6)
   reminderOutcome AckReminderOutcome?
+  /// When the delivery said the reminder's e-mail and push were taken by their channels (20270119090000); set only on a SENT reminder.
+  reminderMirroredAt DateTime? @db.Timestamptz(6)
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
   school   School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
