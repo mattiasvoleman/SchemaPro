@@ -2498,6 +2498,238 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- Kvittens, after the review of F4 (20270119090000), owner checks.
+--
+--   380o  a reminder that has gone is marked as mailed by the delivery, and by nobody else
+--   381o  a sender's share of the school's day (KV427) beside the school's own (KV428)
+-- ---------------------------------------------------------------------------
+
+-- 380o: app.ack_reminder_mirrored. The delivery's door sets no claims, and the function answers nothing to a login
+-- that resolves to a person. Only a SENT reminder is marked, once; the first time stands.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  sent uuid; unconfirmed uuid; nobody uuid; scheduled uuid; stopped uuid;
+  first_time timestamptz;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (school, true, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET enabled = true, "remindAfterDays" = 2;
+  -- SENT: due, G1 has not confirmed, so G1 is reminded.
+  sent := pg_temp.kvo_request(school, full_, 'Skickad', 'ANY', 'p1:g1');
+  -- NOT_NEEDED: due, but everybody has confirmed.
+  nobody := pg_temp.kvo_request(school, full_, 'Ingen kvar', 'ANY', 'p3:g3');
+  UPDATE "AckReceipts" SET "ackedAt" = now() WHERE "requestId" = nobody;
+  -- Not yet due, and one that is stopped before the pass.
+  scheduled := pg_temp.kvo_request(school, full_, 'Inte än', 'ANY', 'p1:g2');
+  stopped := pg_temp.kvo_request(school, full_, 'Stoppad', 'ANY', 'p2:g1');
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id IN (sent, nobody, stopped);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  PERFORM app.ack_stop_reminder(stopped);
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM count(*) FROM app.ack_remind_request(sent);
+  PERFORM count(*) FROM app.ack_remind_request(nobody);
+  PERFORM pg_temp.kvo_expect('380o the pass', (SELECT string_agg(title || ':' || coalesce("reminderOutcome"::text, '-') || ':' || ("reminderMirroredAt" IS NOT NULL), ' ' ORDER BY title COLLATE "C")
+                                                 FROM "AckRequests" WHERE id IN (sent, nobody, scheduled, stopped)),
+                             'Ingen kvar:NOT_NEEDED:false Inte än:-:false Skickad:SENT:false Stoppad:STOPPED:false');
+
+  -- A login that resolves to a person marks nothing, whoever they are.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  PERFORM app.ack_reminder_mirrored(sent);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000021')::text, true);
+  PERFORM app.ack_reminder_mirrored(sent);
+  PERFORM pg_temp.kvo_expect('380o a person marks', (SELECT ("reminderMirroredAt" IS NOT NULL)::text FROM "AckRequests" WHERE id = sent), 'false');
+
+  -- The delivery's door (no claims) marks the SENT reminder, and nothing else.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM app.ack_reminder_mirrored(sent);
+  PERFORM app.ack_reminder_mirrored(nobody);
+  PERFORM app.ack_reminder_mirrored(scheduled);
+  PERFORM app.ack_reminder_mirrored(stopped);
+  PERFORM app.ack_reminder_mirrored(gen_random_uuid());
+  PERFORM pg_temp.kvo_expect('380o the delivery marks', (SELECT string_agg(title || ':' || ("reminderMirroredAt" IS NOT NULL), ' ' ORDER BY title COLLATE "C") FROM "AckRequests" WHERE id IN (sent, nobody, scheduled, stopped)),
+                             'Ingen kvar:false Inte än:false Skickad:true Stoppad:false');
+  IF (SELECT "reminderMirroredAt" FROM "AckRequests" WHERE id = sent) < (SELECT "reminderSentAt" FROM "AckRequests" WHERE id = sent) THEN
+    RAISE EXCEPTION 'kvittens 380o: the mail went before the notices were written';
+  END IF;
+
+  -- Marked once: a second word from the delivery does not move the time.
+  first_time := (SELECT "reminderMirroredAt" FROM "AckRequests" WHERE id = sent);
+  PERFORM pg_sleep(0.02);
+  PERFORM app.ack_reminder_mirrored(sent);
+  IF (SELECT "reminderMirroredAt" FROM "AckRequests" WHERE id = sent) IS DISTINCT FROM first_time THEN
+    RAISE EXCEPTION 'kvittens 380o: a second mark moved the time';
+  END IF;
+
+  -- The table says the same as the function: the column is only on a SENT reminder.
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderMirroredAt" = now() WHERE id = %L$q$, nobody), 'only_a_sent_reminder_is_mirrored');
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderMirroredAt" = now() WHERE id = %L$q$, scheduled), 'only_a_sent_reminder_is_mirrored');
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderOutcome" = 'STOPPED' WHERE id = %L$q$, sent), 'only_a_sent_reminder');
+END $$;
+ROLLBACK;
+
+-- 381o: the limits' numbers, and a sender's share. The numbers are the function's, and they keep the proportions the
+-- share was chosen for: no sender alone, and no two administrators, can use the school's day; an administrator's share
+-- holds a whole-school request of the largest school we count on (2 600 pupils, 2.2 guardians: 5 720 receipts); a
+-- teacher's holds fifteen requests to a class of sixty (132 receipts each). An unknown kind is an error, never "no limit".
+BEGIN;
+DO $$
+DECLARE
+  school_ integer := app.ack_day_limit('SCHOOL');
+  admin_ integer := app.ack_day_limit('SCHOOL_ADMIN');
+  teacher_ integer := app.ack_day_limit('TEACHER');
+BEGIN
+  PERFORM pg_temp.kvo_expect('381o the numbers', school_ || '/' || admin_ || '/' || teacher_, '20000/8000/2000');
+  IF NOT (2 * admin_ < school_ AND 3 * admin_ >= school_) THEN
+    RAISE EXCEPTION 'kvittens 381o: two administrators can use the school''s day, or three cannot';
+  END IF;
+  IF NOT (admin_ >= 5720 AND teacher_ >= 15 * 132 AND teacher_ < admin_) THEN
+    RAISE EXCEPTION 'kvittens 381o: a share is too small for what it was chosen to hold';
+  END IF;
+  BEGIN
+    PERFORM app.ack_day_limit('GUARDIAN');
+    RAISE EXCEPTION 'kvittens 381o: an unknown kind has a limit';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM NOT LIKE 'ACK_UNKNOWN_LIMIT%' THEN RAISE; END IF;
+  END;
+END $$;
+ROLLBACK;
+
+-- 381o: a teacher's share. Her requests of the last day count, whoever wrote their rows; the owner (no login) is not
+-- counted against and brings her to 1 996 of her 2 000, five hours ago, so the hour's limit is not in play. A request
+-- of four receipts (all her own pupils have: P1 with G1 and G2, P2 with G1, P4 with G4) makes the 2 000th, which is
+-- allowed; one more is refused whole (KV427) and writes nothing.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  m1 uuid := pg_temp.kvo_user('kv-m1');
+  req uuid;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  SELECT gen_random_uuid(), school, m1, 'Andel ' || g, 'B', now() - interval '5 hours' FROM generate_series(1, 100) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Andel %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 1996;
+  PERFORM pg_temp.kvo_expect('381o the owner''s rows', (SELECT count(*)::text FROM "AckReceipts" r JOIN "AckRequests" q ON q.id = r."requestId" WHERE q."authorId" = m1 AND q.title LIKE 'Andel %'), '1996');
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000006')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Den 2 000:e', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2')),
+         (req, school, pg_temp.kvo_user('kv-p2'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p4'), pg_temp.kvo_user('kv-g4'));
+  PERFORM pg_temp.kvo_expect('381o her day is full', (SELECT count(*)::text FROM "AckReceipts" r JOIN "AckRequests" q ON q.id = r."requestId" WHERE q."authorId" = m1), '2000');
+
+  -- One more, in a request of its own: refused, and the request with it.
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Över andelen', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+    RAISE EXCEPTION 'kvittens 381o: a teacher''s 2 001st receipt in a day was written';
+  EXCEPTION WHEN SQLSTATE 'KV427' THEN NULL;
+  END;
+  PERFORM pg_temp.kvo_expect('381o a refused share writes nothing', (SELECT count(*)::text FROM "AckRequests" WHERE title = 'Över andelen'), '0');
+
+  -- The share is hers: a colleague mentoring the other class, and an administrator, write on; and the school has room.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000007')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Kollegan', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3'));
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Administratören', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+  -- The share moves with the day: when her requests are more than 24 hours old she writes again.
+  PERFORM set_config('request.jwt.claims', '', true);
+  UPDATE "AckRequests" SET "createdAt" = now() - interval '25 hours' WHERE "authorId" = m1;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000006')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Nästa dygn', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+END $$;
+ROLLBACK;
+
+-- 381o: an administrator's share, 8 000, and the order of the two limits. Her rows brought to 7 995 the owner's way; a
+-- request of five (P1 with G1 and G2, P2 with G1, P3 with G3, P4 with G4) is the 8 000th; one more is refused (KV427).
+-- Then the school's day is brought past 20 000 with a teacher's rows, and the administrator, over her own share as well,
+-- is told it is her share (the sender's first); a mentor with room of her own is told it is the school's (KV428).
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  t3 uuid := pg_temp.kvo_user('kv-t3');
+  req uuid;
+  got text;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  SELECT gen_random_uuid(), school, full_, 'Admin ' || g, 'B', now() - interval '5 hours' FROM generate_series(1, 400) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Admin %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 7995;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Den 8 000:e', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2')),
+         (req, school, pg_temp.kvo_user('kv-p2'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3')),
+         (req, school, pg_temp.kvo_user('kv-p4'), pg_temp.kvo_user('kv-g4'));
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Över andelen', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+    RAISE EXCEPTION 'kvittens 381o: an administrator''s 8 001st receipt in a day was written';
+  EXCEPTION WHEN SQLSTATE 'KV427' THEN NULL;
+  END;
+  PERFORM pg_temp.kvo_expect('381o a refused share writes nothing', (SELECT count(*)::text FROM "AckRequests" WHERE title = 'Över andelen'), '0');
+
+  -- The school's day: 8 000 here, and 12 000 more of a teacher's the owner's way (no login: nothing is counted against
+  -- her): the school is at 20 000.
+  PERFORM set_config('request.jwt.claims', '', true);
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  SELECT gen_random_uuid(), school, t3, 'Lärare ' || g, 'B', now() - interval '5 hours' FROM generate_series(1, 600) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Lärare %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 12000;
+  PERFORM pg_temp.kvo_expect('381o the school''s day', (SELECT count(*)::text FROM "AckReceipts" WHERE "schoolId" = school AND "createdAt" > now() - interval '24 hours'), '20000');
+
+  -- Over both: the administrator is told it is her share. A mentor under her own share is told it is the school's.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Över båda', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+    RAISE EXCEPTION 'kvittens 381o: a receipt over both limits was written';
+  EXCEPTION WHEN SQLSTATE 'KV427' THEN NULL;
+  END;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000007')::text, true);
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Skolans dygn', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3'));
+    RAISE EXCEPTION 'kvittens 381o: a receipt past the school''s day was written';
+  EXCEPTION WHEN SQLSTATE 'KV428' THEN NULL;
+  END;
+  -- Another school's day is its own.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000031')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan'), 'Annans dag', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES (req, (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan'), pg_temp.kvo_user('kv-annan-p'), pg_temp.kvo_user('kv-annan-g'));
+
+  -- The usage the page shows is these rows: the school at 20 000 of 20 000 and the sender at 8 000 of 8 000.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  SELECT string_agg(u.scope || coalesce(':' || u.author_name, '') || ' ' || u.used || '/' || u.cap, ', ' ORDER BY u.n) INTO got
+    FROM app.ack_usage(5) WITH ORDINALITY u(scope, author_id, author_name, used, cap, n);
+  PERFORM pg_temp.kvo_expect('381o the usage', got, 'SCHOOL 20000/20000, ME 8000/8000, SENDER:Kvittens Utan klass 12000/2000, SENDER:Kvittens Full 8000/8000');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Sections 385-389 on the owner's side: Ett läsårs lektioner tas bort först
 -- (20270120090000), and the composite keys' ON UPDATE (the review of #272).
 --

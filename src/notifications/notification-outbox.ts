@@ -30,3 +30,11 @@ export interface OutboxEntry {
 
 /** Every notice of one committed transaction, delivered by one hook. */
 export type OutboxBatch = readonly OutboxEntry[];
+
+/**
+ * Told by the delivery, once, how a batch went: true when everything it wanted outside the inbox was taken by its
+ * channel (also when it wanted nothing outside the inbox), false when a channel refused, timed out or the batch was
+ * dropped. Not told at all when the process stops first: no word is also an answer, and a caller that records the
+ * outcome must read it that way.
+ */
+export type OutboxSettled = (delivered: boolean) => void;
