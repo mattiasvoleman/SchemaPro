@@ -3569,16 +3569,19 @@ BEGIN
     RAISE EXCEPTION 'rls-fixtures: the matrix school lacks the administrator, pupil or guardian for a kvittens request';
   END IF;
   INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (m, true, 2);
-  INSERT INTO "AckRequests" ("schoolId", "authorId", title, body, rule)
-  VALUES (m, author, 'Utflykt på torsdag', 'Vi åker kl. 8.', 'ANY') RETURNING id INTO req;
-  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, m, pupil, guardian);
+  -- Made three days ago, so that it counts for nothing in the hour and the day the limits look at (the tests
+  -- write requests as the same people). Its reminder time was fixed by the stamp when the fixtures ran, two
+  -- days on, which is the day of a run that follows them.
+  INSERT INTO "AckRequests" ("schoolId", "authorId", title, body, rule, "createdAt")
+  VALUES (m, author, 'Utflykt på torsdag', 'Vi åker kl. 8.', 'ANY', now() - interval '3 days') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "createdAt") VALUES (req, m, pupil, guardian, now() - interval '3 days');
   -- Section 241 compares the guardian who has a login at two schools, choosing this one, with this
   -- school's own guardian "who has the same child": so the request asks that guardian about the pupil too.
   FOR guardian IN
     SELECT u."id" FROM "Users" u JOIN "GuardianStudents" gs ON gs."guardianId" = u."id" AND gs."studentId" = pupil
      WHERE u."schoolId" = m AND u."authId" = 'fe000000-0000-4000-8000-000000000243'
   LOOP
-    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, m, pupil, guardian);
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "createdAt") VALUES (req, m, pupil, guardian, now() - interval '3 days');
   END LOOP;
 END $$;
 

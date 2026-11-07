@@ -19,16 +19,27 @@
  *       like any other, and the staff's overview names the pupil, as the register does
  *   kg  races: two guardians confirm at once (twenty rounds, both recorded, the pupil met),
  *       one guardian taps twice at once, a link removed under a confirmation (and a
- *       confirmation under a link being removed), the reminder pass and a confirmation
- *   kh  the reminder, through the real pass: only the guardian who has not confirmed, once,
- *       and nothing of the child, the title or the text in the e-mail
+ *       confirmation under a link being removed), the reminder pass and a confirmation,
+ *       the reminder pass and a stop
+ *   kh  the reminder, through the real pass: every guardian who has not confirmed, once,
+ *       also when the other guardian has (so that no reminder tells), and nothing of the
+ *       child, the title or the text in the e-mail
  *   ki  a request about two hundred pupils with two guardians each, in one transaction
+ *   kj  ten requests about the whole school fall due at once: the pass takes them one at a
+ *       time, each in a transaction of its own, so all ten are done; a request that fails
+ *       is rolled back alone and the others are done; a pass out of time leaves the rest
+ *   kk  stopping a reminder: the author, an administrator, nobody else; and a school that
+ *       turns kvittens off stops the reminders that fall due while it is off
+ *   kl  the limits: a person's eleventh request in an hour, and a school's receipts in a
+ *       day, are 429s with their own codes through the adapter, and write nothing
+ *   km  the lists are paged, and a read costs what the caller reads, not the school's
+ *       requests (the policies' ids are built once per statement)
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { AckService } from '../../src/ack/ack.service';
 import { Role } from '../../src/auth/enums/role.enum';
@@ -118,6 +129,18 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
   const notifications = new NotificationsService(api, delivery as never);
   const service = new AckService(api, notifications);
 
+  /**
+   * A request written the owner's way: the people's limits (ten an hour, 20 000 receipts a day) are for logged-in
+   * writers, and the races below need dozens of requests.
+   */
+  const seed = async (title: string, rule: 'ANY' | 'ALL', studentIds: string[], by = admin): Promise<string> => {
+    const row = await one<{ id: string }>(`INSERT INTO "AckRequests" ("schoolId", "authorId", title, body, rule) VALUES ($1, $2, $3, 'B', $4::"AckRule") RETURNING id`, [s, by.id, title, rule]);
+    await owner.query(
+      `INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+       SELECT $1, $2, gs."studentId", gs."guardianId" FROM "GuardianStudents" gs WHERE gs."schoolId" = $2 AND gs."studentId" = ANY ($3::uuid[])`,
+      [row.id, s, studentIds]);
+    return row.id;
+  };
   const statusOf = async (id: string) => {
     const detail = await service.detail(id, asAdmin);
     return Object.fromEntries(detail.pupils.map((p) => [p.name.split(' ')[0], { met: p.met, guardians: p.guardians.map((g) => `${g.name.split(' ')[0]}:${g.state}`) }]));
@@ -167,30 +190,31 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
       `SELECT "authorName", round(extract(epoch FROM "remindAt" - "createdAt") / 86400)::text AS days FROM "AckRequests" WHERE id = $1`, [main]);
     assert.equal(row.authorName, 'admin Probe');
     assert.equal(row.days, '3', 'the reminder is due after the days the school chose');
-    const list = await service.list(asAdmin);
+    const list = (await service.list(asAdmin)).items;
     assert.deepEqual(list.map((r) => [r.pupils, r.met, r.waiting]), [[2, 0, 3]]);
+    assert.equal(list[0]!.reminder, 'SCHEDULED');
     await assert.rejects(() => service.list(asLasare).then(() => service.create({ title: 'T', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asLasare)), 'a läsare wrote a request');
   });
 
   await check('kc: each guardian reads their own; one tap confirms both children at one time; nobody reads the other guardian’s tap', async () => {
-    const mineG1 = await service.mine(asG(g1));
+    const mineG1 = (await service.mine(asG(g1))).items;
     assert.equal(mineG1.length, 1);
     assert.deepEqual(mineG1[0]!.children.map((c) => c.name.split(' ')[0]).sort(), ['p1', 'p2']);
     assert.equal(mineG1[0]!.authorName, 'admin Probe');
-    assert.deepEqual((await service.mine(asG(g2)))[0]!.children.map((c) => c.name.split(' ')[0]), ['p1']);
-    assert.deepEqual(await service.mine(asG(g3)), [], 'a guardian who was not asked reads nothing');
+    assert.deepEqual((await service.mine(asG(g2))).items[0]!.children.map((c) => c.name.split(' ')[0]), ['p1']);
+    assert.deepEqual((await service.mine(asG(g3))).items, [], 'a guardian who was not asked reads nothing');
     const first = await service.confirm(main, asG(g1));
     const second = await service.confirm(main, asG(g1));
     assert.equal(second.ackedAt, first.ackedAt, 'a second tap changed the time');
     assert.equal(await count(`SELECT count(DISTINCT "ackedAt") AS n FROM "AckReceipts" WHERE "requestId" = $1 AND "ackedAt" IS NOT NULL`, [main]), 1);
-    const g2sees = await service.mine(asG(g2));
+    const g2sees = (await service.mine(asG(g2))).items;
     assert.equal(g2sees[0]!.ackedAt, null);
     assert.ok(!JSON.stringify(g2sees).includes(g1.id) && !JSON.stringify(g2sees).includes(first.ackedAt), 'a guardian reads the other guardian’s confirmation');
     const state = await statusOf(main);
     assert.deepEqual(state['p2'], { met: true, guardians: ['g1:CONFIRMED'] });
     assert.deepEqual(state['p1']!.met, false);
     assert.deepEqual(state['p1']!.guardians.sort(), ['g1:CONFIRMED', 'g2:WAITING']);
-    const row = (await service.list(asAdmin)).find((r) => r.id === main)!;
+    const row = (await service.list(asAdmin)).items.find((r) => r.id === main)!;
     assert.deepEqual([row.pupils, row.met, row.waiting], [2, 1, 1], 'the list does not count who has confirmed');
     // The staff's reading is recorded as people and as guardians.
     assert.ok((await count(`SELECT count(*) AS n FROM "PersonalDataAccess" WHERE "actorId" = $1 AND kind IN ('PEOPLE', 'GUARDIANS')`, [admin.id])) >= 2);
@@ -212,8 +236,8 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     assert.deepEqual((await service.detail(main, asMentor1)).pupils.map((p) => p.name.split(' ')[0]), ['p1', 'p2']);
     await assert.rejects(() => service.detail(main, asMentor2), (error: unknown) => (error as { status?: number }).status === 404);
     await assert.rejects(() => service.detail(main, asLoner), (error: unknown) => (error as { status?: number }).status === 404);
-    assert.deepEqual((await service.list(asMentor2)).length, 0);
-    assert.equal((await service.list(asMentor1)).length, 2);
+    assert.deepEqual((await service.list(asMentor2)).items.length, 0);
+    assert.equal((await service.list(asMentor1)).items.length, 2);
   });
 
   await check('ke: custody that ends: no confirming, no reading; what was confirmed stays; the other guardian alone meets it', async () => {
@@ -226,7 +250,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
       assert.equal((error.getResponse() as { code: string }).code, 'ACK_CUSTODY_ENDED');
       return true;
     });
-    assert.deepEqual(await service.mine(asG(g2)), [], 'a guardian whose custody has ended still reads a request about the child');
+    assert.deepEqual((await service.mine(asG(g2))).items, [], 'a guardian whose custody has ended still reads a request about the child');
     // What g2 confirmed before the custody ended stands, in the staff's overview.
     const state = await statusOf(main);
     assert.ok(state['p1']!.guardians.includes('g2:CONFIRMED'), 'a confirmation made while the custody stood was lost');
@@ -242,7 +266,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     await owner.query(`INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES ($1, $2, 'MANUAL')`, [p4.id, s]);
     const created = await service.create({ title: 'Skyddad', body: 'B', rule: 'ANY', studentIds: [p4.id, p3.id] }, asAdmin);
     assert.equal(created.guardians, 2);
-    assert.equal((await service.mine(asG(g4))).length, 1);
+    assert.equal((await service.mine(asG(g4))).items.length, 1);
     await service.confirm(created.id, asG(g4));
     const state = await statusOf(created.id);
     assert.deepEqual(state['p4'], { met: true, guardians: ['g4:CONFIRMED'] });
@@ -254,19 +278,19 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
   await check('kg: races', async () => {
     // Two guardians confirm at once, twenty times: both are recorded and the pupil is met.
     for (let round = 0; round < 20; round++) {
-      const r = await service.create({ title: `Samtidigt ${round}`, body: 'B', rule: 'ALL', studentIds: [p1.id] }, asAdmin);
+      const r = { id: await seed(`Samtidigt ${round}`, 'ALL', [p1.id]) };
       await Promise.all([service.confirm(r.id, asG(g1)), service.confirm(r.id, asG(g2))]);
       assert.equal(await count(`SELECT count(*) AS n FROM "AckReceipts" WHERE "requestId" = $1 AND "ackedAt" IS NOT NULL`, [r.id]), 2, `round ${round}: a confirmation was lost`);
       assert.equal((await statusOf(r.id))['p1']!.met, true, `round ${round}: both confirmed and the pupil is not met`);
     }
     // One guardian taps twice at once: one time.
-    const dbl = await service.create({ title: 'Dubbeltryck', body: 'B', rule: 'ANY', studentIds: [p1.id, p2.id] }, asAdmin);
+    const dbl = { id: await seed('Dubbeltryck', 'ANY', [p1.id, p2.id]) };
     const taps = await Promise.all([service.confirm(dbl.id, asG(g1)), service.confirm(dbl.id, asG(g1)), service.confirm(dbl.id, asG(g1))]);
     assert.equal(new Set(taps.map((t) => t.ackedAt)).size, 1, 'a double tap gave two times');
     assert.equal(await count(`SELECT count(DISTINCT "ackedAt") AS n FROM "AckReceipts" WHERE "requestId" = $1 AND "ackedAt" IS NOT NULL`, [dbl.id]), 1);
 
     // A link removed under a confirmation: the confirmation waits for the removal and then refuses.
-    const gone = await service.create({ title: 'Länk bort', body: 'B', rule: 'ANY', studentIds: [p2.id] }, asAdmin);
+    const gone = { id: await seed('Länk bort', 'ANY', [p2.id]) };
     const remover = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
     await remover.connect();
     try {
@@ -284,7 +308,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     await link(g1, p2);
 
     // And the other way: a confirmation in flight holds the link, so the removal waits for it and the tap stands.
-    const held = await service.create({ title: 'Håll', body: 'B', rule: 'ANY', studentIds: [p2.id] }, asAdmin);
+    const held = { id: await seed('Håll', 'ANY', [p2.id]) };
     const tapping = await asGuardianConnection(g1);
     const deleting = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
     await deleting.connect();
@@ -304,25 +328,51 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     await link(g1, p2);
 
     // The reminder pass and a confirmation: the pass leaves a request that is being confirmed, and a request being passed holds the confirmation.
-    const due = await service.create({ title: 'Påminnelse och tryck', body: 'B', rule: 'ALL', studentIds: [p2.id] }, asAdmin);
+    const due = { id: await seed('Påminnelse och tryck', 'ALL', [p2.id]) };
     await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 minute' WHERE id = $1`, [due.id]);
-    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() + interval '1 day' WHERE "schoolId" = $1 AND id <> $2 AND "reminderSentAt" IS NULL`, [s, due.id]);
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() + interval '1 day' WHERE "schoolId" = $1 AND id <> $2 AND "reminderOutcome" IS NULL`, [s, due.id]);
     const inFlight = await asGuardianConnection(g1);
     try {
       await inFlight.query(`SELECT app.ack_confirm($1::uuid)`, [due.id]);
-      assert.deepEqual(await service.remind(), { reminded: 0 }, 'the pass asked a guardian who was confirming');
-      assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE id = $1 AND "reminderSentAt" IS NOT NULL`, [due.id]), 0, 'the pass closed a request it had skipped');
+      const skipped = await service.remind();
+      assert.equal(skipped.reminded, 0, 'the pass asked a guardian who was confirming');
+      assert.equal(skipped.failed, 0, 'the pass waited for the confirmation, or failed on it');
+      assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE id = $1 AND "reminderOutcome" IS NOT NULL`, [due.id]), 0, 'the pass closed a request it had skipped');
       await inFlight.query('COMMIT');
     } finally {
       await inFlight.query('ROLLBACK').catch(() => undefined);
       await inFlight.end();
     }
-    assert.deepEqual(await service.remind(), { reminded: 0 }, 'a guardian who had confirmed was reminded');
-    assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE id = $1 AND "reminderSentAt" IS NOT NULL`, [due.id]), 1);
+    assert.equal((await service.remind()).reminded, 0, 'a guardian who had confirmed was reminded');
+    assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE id = $1 AND "reminderOutcome" = 'NOT_NEEDED'`, [due.id]), 1, 'nobody was left to remind, and the request does not say so');
+
+    // The pass and a stop: the pass in flight holds the request, the stop waits for it and answers what the pass made of it
+    // (SENT: a reminder that has gone cannot be called back); a stop made first stands, and the pass finds the request stopped.
+    const racing = { id: await seed('Pass och stopp', 'ANY', [p3.id], mentor2) };
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 minute' WHERE id = $1`, [racing.id]);
+    const passing = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
+    await passing.connect();
+    try {
+      await passing.query('BEGIN');
+      await passing.query(`SELECT * FROM app.ack_remind_request($1::uuid)`, [racing.id]);
+      const stopping = service.stopReminder(racing.id, asMentor2);
+      await waitUntilBlocked('ack_stop_reminder');
+      await passing.query('COMMIT');
+      assert.deepEqual(await stopping, { reminder: 'SENT' }, 'a stop made after the reminder went called it back, or said it had stopped it');
+    } finally {
+      await passing.query('ROLLBACK').catch(() => undefined);
+      await passing.end();
+    }
+    const first = { id: await seed('Stopp före pass', 'ANY', [p3.id], mentor2) };
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 minute' WHERE id = $1`, [first.id]);
+    assert.deepEqual(await service.stopReminder(first.id, asMentor2), { reminder: 'STOPPED' });
+    const afterStop = await service.remind();
+    assert.equal(afterStop.reminded, 0, 'the pass reminded a request that had been stopped');
+    assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE id = $1 AND "reminderOutcome" = 'STOPPED'`, [first.id]), 1, 'the pass changed a stop');
     const holder = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
     await holder.connect();
     try {
-      const again = await service.create({ title: 'Pass håller', body: 'B', rule: 'ANY', studentIds: [p2.id] }, asAdmin);
+      const again = { id: await seed('Pass håller', 'ANY', [p2.id]) };
       await holder.query('BEGIN');
       await holder.query(`SELECT 1 FROM "AckRequests" WHERE id = $1 FOR UPDATE`, [again.id]);
       const tap = service.confirm(again.id, asG(g1));
@@ -336,13 +386,14 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     }
   });
 
-  await check('kh: the reminder: the guardian who has not confirmed, once, with nothing of the child in the e-mail', async () => {
-    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() + interval '1 day' WHERE "schoolId" = $1 AND "reminderSentAt" IS NULL`, [s]);
+  await check('kh: the reminder: every guardian who has not confirmed, once, with nothing of the child in the e-mail', async () => {
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() + interval '1 day' WHERE "schoolId" = $1 AND "reminderOutcome" IS NULL`, [s]);
     const r = await service.create({ title: 'Hemligt namn på utflykt', body: 'Elev Ett ska stanna hemma.', rule: 'ALL', studentIds: [p1.id] }, asAdmin);
     await service.confirm(r.id, asG(g1));
     await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = $1`, [r.id]);
     delivered.length = 0;
-    assert.deepEqual(await service.remind(), { reminded: 1 });
+    const pass = await service.remind();
+    assert.deepEqual([pass.reminded, pass.requests, pass.failed, pass.left], [1, 1, 0, 0]);
     assert.equal(delivered.length, 1);
     const entry = delivered[0]!;
     assert.equal(entry.type, 'ACK_REMINDER');
@@ -354,11 +405,23 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     const row = await one<{ meta: { title: string } }>(`SELECT meta FROM "Notifications" WHERE type = 'ACK_REMINDER' AND "userId" = $1 AND meta ->> 'requestId' = $2`, [g2.id, r.id]);
     assert.equal(row.meta.title, 'Hemligt namn på utflykt', 'the inbox, behind the login, has the title');
     delivered.length = 0;
-    assert.deepEqual(await service.remind(), { reminded: 0 }, 'the reminder went twice');
+    assert.equal((await service.remind()).reminded, 0, 'the reminder went twice');
     assert.equal(delivered.length, 0);
     const detail = await service.detail(r.id, asAdmin);
+    assert.equal(detail.reminder, 'SENT');
     assert.equal(detail.reminderSentAt !== null, true);
+    assert.equal(detail.mayStopReminder, false, 'a reminder that has gone can be stopped');
     assert.ok(detail.pupils[0]!.guardians.find((g) => g.name.startsWith('g2'))!.remindedAt, 'staff are not told when the reminder went');
+
+    // ANY: g1 has confirmed and the pupil is met, and g2 is reminded all the same. A missing reminder would tell g2 that
+    // the other guardian has answered, which a guardian whose other parent is hidden from them must never learn.
+    const any = { id: await seed('Räcker en', 'ANY', [p1.id]) };
+    await service.confirm(any.id, asG(g1));
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = $1`, [any.id]);
+    delivered.length = 0;
+    assert.equal((await service.remind()).reminded, 1, 'the guardian who had not confirmed was not reminded because the other had');
+    assert.deepEqual(delivered[0]!.recipients.map((x) => x.userId), [g2.id]);
+    assert.equal((await service.list(asAdmin)).items.find((x) => x.id === any.id)!.reminder, 'SENT');
   });
 
   await check('ki: a request about two hundred pupils with two guardians each is one transaction that fits the gateway’s time', async () => {
@@ -387,6 +450,202 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     assert.equal(created.guardians, 2 * big);
     console.log(`    ki: ${big} pupils, ${2 * big} guardians, ${2 * big} receipts and ${2 * big} notices in ${elapsed} ms`);
     assert.ok(elapsed < 8000 * (big / 200), `the request took ${elapsed} ms against the gateway’s ten seconds`);
+  });
+
+  await check('kj: ten requests about the whole school fall due at once: one at a time, each in its own transaction, none holds up the others', async () => {
+    const pupils = (await owner.query<{ id: string }>(`SELECT id FROM "Users" WHERE "schoolId" = $1 AND email LIKE $2 || '-kv-big-p%'`, [s, marker])).rows.map((r) => r.id);
+    assert.ok(pupils.length >= 100, 'ki did not make the pupils of a school');
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() + interval '1 day' WHERE "schoolId" = $1 AND "reminderOutcome" IS NULL`, [s]);
+    const ids: string[] = [];
+    for (let i = 1; i <= 10; i++) ids.push(await seed(`Hel skola ${i}`, 'ANY', pupils, loner));
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = ANY ($1::uuid[])`, [ids]);
+    delivered.length = 0;
+    const started = Date.now();
+    const pass = await service.remind();
+    const elapsed = Date.now() - started;
+    console.log(`    kj: ${ids.length} requests of ${2 * pupils.length} guardians each reminded in ${elapsed} ms (${pass.reminded} notices)`);
+    assert.deepEqual([pass.requests, pass.failed, pass.left], [10, 0, 0]);
+    assert.equal(pass.reminded, 10 * 2 * pupils.length);
+    assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE id = ANY ($1::uuid[]) AND "reminderOutcome" = 'SENT' AND "reminderSentAt" IS NOT NULL`, [ids]), 10);
+    assert.equal(delivered.length, 10, 'the delivery got one entry per request, after each commit');
+
+    // A request that fails is rolled back alone: the ones before and after it are done, and it is done by the pass after.
+    const [before, failing, after] = [await seed('Före', 'ANY', [p3.id], mentor2), await seed('Felande', 'ANY', [p3.id], mentor2), await seed('Efter', 'ANY', [p3.id], mentor2)];
+    for (const [hours, id] of [[3, before], [2, failing], [1, after]] as const) await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - make_interval(hours => $2) WHERE id = $1`, [id, hours]);
+    await owner.query(`CREATE FUNCTION public.kv_probe_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'probe: forced failure' USING ERRCODE = 'XX001'; END $$`);
+    await owner.query(`CREATE TRIGGER kv_probe_fail BEFORE INSERT ON "Notifications" FOR EACH ROW WHEN (NEW.type = 'ACK_REMINDER' AND NEW.meta ->> 'title' = 'Felande') EXECUTE FUNCTION public.kv_probe_fail()`);
+    try {
+      const broken = await service.remind();
+      assert.deepEqual([broken.requests, broken.failed, broken.left, broken.reminded], [2, 1, 0, 2], 'the request that failed stopped the ones after it, or went unreported');
+      assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE id = ANY ($1::uuid[]) AND "reminderOutcome" = 'SENT'`, [[before, after]]), 2);
+      assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE id = $1 AND "reminderOutcome" IS NULL AND "reminderSentAt" IS NULL`, [failing]), 1, 'a request that failed was marked');
+      assert.equal(await count(`SELECT count(*) AS n FROM "AckReceipts" WHERE "requestId" = $1 AND "remindedAt" IS NOT NULL`, [failing]), 0, 'a request that failed left a receipt reminded: its guardian is never reminded');
+    } finally {
+      await owner.query(`DROP TRIGGER IF EXISTS kv_probe_fail ON "Notifications"`);
+      await owner.query(`DROP FUNCTION IF EXISTS public.kv_probe_fail()`);
+    }
+    delivered.length = 0;
+    const retried = await service.remind();
+    assert.deepEqual([retried.requests, retried.failed, retried.reminded], [1, 0, 1], 'the request that failed was not done by the next pass');
+    assert.equal(delivered.length, 1);
+
+    // A pass out of time leaves what it has not reached, counted, for the next.
+    const late = await seed('Sen', 'ANY', [p3.id], mentor2);
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 minute' WHERE id = $1`, [late]);
+    const none = await service.remind(0);
+    assert.deepEqual([none.requests, none.reminded, none.left], [0, 0, 1]);
+    assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE id = $1 AND "reminderOutcome" IS NULL`, [late]), 1);
+    assert.equal((await service.remind()).reminded, 1);
+  });
+
+  await check('kk: stopping a reminder: the author, an administrator, nobody else; and kvittens turned off stops the reminders that fall due', async () => {
+    const r = await service.create({ title: 'Fel text', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asMentor1);
+    const detailOf = (who: AuthenticatedUser) => service.detail(r.id, who);
+    assert.deepEqual([(await detailOf(asMentor1)).reminder, (await detailOf(asMentor1)).mayStopReminder], ['SCHEDULED', true]);
+    assert.equal((await detailOf(asAdmin)).mayStopReminder, true);
+    assert.equal((await detailOf(asLasare)).mayStopReminder, false, 'a läsare is told she may stop a reminder');
+    const refused = (who: AuthenticatedUser, type: new (...args: never[]) => object) => assert.rejects(() => service.stopReminder(r.id, who), (error: unknown) => error instanceof type);
+    await refused(asMentor2, NotFoundException);
+    await refused(asLoner, NotFoundException);
+    await refused(asLasare, ForbiddenException);
+    await refused(asG(g1), ForbiddenException);
+    assert.deepEqual(await service.stopReminder(r.id, asMentor1), { reminder: 'STOPPED' });
+    assert.deepEqual(await service.stopReminder(r.id, asMentor1), { reminder: 'STOPPED' }, 'stopping twice');
+    assert.deepEqual([(await detailOf(asAdmin)).reminder, (await detailOf(asAdmin)).mayStopReminder], ['STOPPED', false]);
+    assert.equal((await service.list(asAdmin)).items.find((x) => x.id === r.id)!.reminder, 'STOPPED');
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = $1`, [r.id]);
+    delivered.length = 0;
+    assert.equal((await service.remind()).reminded, 0, 'a stopped reminder went');
+    assert.equal(delivered.length, 0);
+
+    // Turned off, the reminder that falls due is not sent, now or when it is turned on again; it says so.
+    const off = await service.create({ title: 'Avstängd', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asAdmin);
+    await owner.query(`UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = $1`, [off.id]);
+    await service.updateSettings({ enabled: false }, asAdmin);
+    try {
+      assert.equal((await service.remind()).reminded, 0, 'a reminder went in a school that has turned kvittens off');
+      assert.equal((await service.detail(off.id, asAdmin)).reminder, 'OFF');
+    } finally {
+      await service.updateSettings({ enabled: true }, asAdmin);
+    }
+    assert.equal((await service.remind()).reminded, 0, 'turned on again, the reminder that fell due while it was off was sent');
+  });
+
+  await check('kl: the limits are 429s with their own codes through the adapter, and write nothing', async () => {
+    const sender = await person('SCHOOL_ADMIN', 'sender', { adminProfile: 'FULL' });
+    const asSender = as(sender, Role.SCHOOL_ADMIN, 'FULL');
+    const body = { body: 'B', rule: 'ANY' as const, studentIds: [p3.id] };
+    for (let i = 1; i <= 10; i++) await service.create({ ...body, title: `Gräns ${i}` }, asSender);
+    const refusedWith = async (run: () => Promise<unknown>, code: string) =>
+      assert.rejects(run, (error: unknown) => {
+        assert.ok(error instanceof HttpException, `not a 429: ${String(error)}`);
+        assert.equal(error.getStatus(), 429);
+        assert.equal((error.getResponse() as { code: string }).code, code);
+        return true;
+      });
+    const notices = () => count(`SELECT count(*) AS n FROM "Notifications" WHERE "schoolId" = $1 AND type = 'ACK_REQUESTED'`, [s]);
+    const noticesBefore = await notices();
+    await refusedWith(() => service.create({ ...body, title: 'Gräns 11' }, asSender), 'ACK_TOO_MANY_REQUESTS');
+    assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE title = 'Gräns 11'`), 0);
+    assert.equal(await notices(), noticesBefore, 'the refused request wrote notices');
+    // The limit is the sender's: a colleague writes on.
+    await service.create({ ...body, title: 'Kollegan' }, asAdmin);
+
+    // The school's day: what the school asked before is moved out of the day, the owner brings the last 24 hours to 19 999 receipts,
+    // and a request that would make 20 001 is refused whole.
+    await owner.query(`UPDATE "AckReceipts" SET "createdAt" = now() - interval '30 hours' WHERE "schoolId" = $1`, [s]);
+    let wanted = 19999;
+    while (wanted > 0) {
+      const bulk = await seed('Dygnets underlag', 'ANY', [], loner);
+      const written = await owner.query(
+        `INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+         SELECT $1, $2, p.id, g.id
+           FROM (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'STUDENT') p CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'GUARDIAN') g LIMIT $3`,
+        [bulk, s, wanted]);
+      wanted -= written.rowCount ?? 0;
+    }
+    const requestsBefore = await count(`SELECT count(*) AS n FROM "AckRequests" WHERE "schoolId" = $1`, [s]);
+    const noticesNow = await notices();
+    await refusedWith(() => service.create({ title: 'Över dygnet', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asAdmin), 'ACK_TOO_MANY_RECIPIENTS');
+    assert.equal(await count(`SELECT count(*) AS n FROM "AckRequests" WHERE "schoolId" = $1`, [s]), requestsBefore, 'the refused request was written');
+    assert.equal(await notices(), noticesNow);
+    await service.create({ title: 'Dygnets sista', body: 'B', rule: 'ANY', studentIds: [p3.id] }, asAdmin);
+    await refusedWith(() => service.create({ title: 'Dygnets en för mycket', body: 'B', rule: 'ANY', studentIds: [p3.id] }, asAdmin), 'ACK_TOO_MANY_RECIPIENTS');
+    // The day moves on.
+    await owner.query(`UPDATE "AckReceipts" SET "createdAt" = now() - interval '25 hours' WHERE "schoolId" = $1`, [s]);
+    await service.create({ title: 'Nästa dygn', body: 'B', rule: 'ANY', studentIds: [p1.id] }, asAdmin);
+  });
+
+  await check('km: the lists are paged, and a read costs what the caller reads, not the school’s requests', async () => {
+    // Paging: every request once, newest first, the last page says so.
+    const page = async <T extends { id: string }>(read: (query: { after?: string; limit: number }) => Promise<{ items: T[]; next: string | null }>, limit: number): Promise<string[]> => {
+      const seen: string[] = [];
+      for (let after: string | undefined, rounds = 0; rounds < 100; rounds++) {
+        const got = await read({ limit, ...(after ? { after } : {}) });
+        assert.ok(got.items.length <= limit);
+        seen.push(...got.items.map((item) => item.id));
+        if (got.next === null) return seen;
+        assert.equal(got.next, got.items[got.items.length - 1]!.id);
+        after = got.next;
+      }
+      return assert.fail('a list that never ends');
+    };
+    for (let i = 0; i < 7; i++) {
+      const id = await seed(`Sida ${i}`, 'ANY', [p3.id], mentor2);
+      await owner.query(`UPDATE "AckRequests" SET "createdAt" = now() - make_interval(hours => $2) WHERE id = $1`, [id, 100 + i]);
+    }
+    const mineAll = (await owner.query<{ id: string }>(`SELECT DISTINCT "requestId" AS id FROM "AckReceipts" WHERE "guardianId" = $1`, [g3.id])).rows.map((r) => r.id);
+    const mine = await page((query) => service.mine(asG(g3), query), 3);
+    assert.equal(new Set(mine).size, mine.length, 'a request on two pages');
+    assert.deepEqual([...mine].sort(), [...mineAll].sort(), 'the pages are not the guardian’s requests');
+    assert.deepEqual(mine, (await service.mine(asG(g3), { limit: 100 })).items.map((x) => x.id), 'the order depends on the size of the page');
+    const everything = (await owner.query<{ id: string }>(`SELECT id FROM "AckRequests" WHERE "schoolId" = $1`, [s])).rows.map((r) => r.id);
+    const listed = await page((query) => service.list(asAdmin, query), 7);
+    assert.equal(new Set(listed).size, listed.length);
+    assert.deepEqual([...listed].sort(), [...everything].sort());
+    assert.equal((await service.mine(asG(g3), { limit: 1 })).next, mine[0]);
+    const nothing = await service.mine(asG(g3), { after: randomUUID(), limit: 5 });
+    assert.deepEqual([nothing.items, nothing.next], [[], null], 'a cursor that is no request of theirs gave something');
+
+    // The cost: the school gets many requests the guardian is not asked about, and the guardian's read calls the policies' ids once
+    // and nothing per row of the school. Counted in the database's own function statistics, in a transaction of its own.
+    const others = Number(process.env['KVITTENS_REQUESTS'] ?? 300);
+    await owner.query(
+      `INSERT INTO "AckRequests" ("schoolId", "authorId", title, body) SELECT $1, $2, 'Andras ' || i, 'B' FROM generate_series(1, $3::int) i`,
+      [s, loner.id, others]);
+    await owner.query(
+      `INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+       SELECT q.id, $1, $2, $3 FROM "AckRequests" q WHERE q."schoolId" = $1 AND q.title LIKE 'Andras %'`,
+      [s, p4.id, g4.id]);
+    const readCalls = async (who: { authId: string }): Promise<Record<string, number>> => {
+      const client = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`SET LOCAL track_functions = 'all'`);
+        await client.query(`SET LOCAL ROLE app_authenticated`);
+        await client.query(`SELECT set_config('request.jwt.claims', $1, true), set_config('app.chosen_school_id', $2, true)`, [JSON.stringify({ sub: who.authId }), s]);
+        await client.query(`SELECT count(*) FROM "AckRequests"`);
+        await client.query(`SELECT count(*) FROM "AckReceipts"`);
+        await client.query('RESET ROLE');
+        const rows = await client.query<{ funcname: string; calls: string }>(`SELECT funcname, calls FROM pg_stat_xact_user_functions WHERE schemaname = 'app' AND funcname LIKE 'ack\\_%'`);
+        return Object.fromEntries(rows.rows.map((r) => [r.funcname, Number(r.calls)]));
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        await client.end();
+      }
+    };
+    const guardianCalls = await readCalls(g3);
+    assert.equal(guardianCalls['ack_my_request_ids'], 1, `the guardian's ids were built ${guardianCalls['ack_my_request_ids']} times`);
+    assert.ok(Object.values(guardianCalls).reduce((sum, n) => sum + n, 0) <= 4, `a guardian's read called ${JSON.stringify(guardianCalls)} in a school of ${others}+ requests`);
+    const teacherCalls = await readCalls(mentor2);
+    assert.equal(teacherCalls['ack_mentee_request_ids'], 1, `the teacher's ids were built ${teacherCalls['ack_mentee_request_ids']} times`);
+    assert.equal(teacherCalls['ack_authored_request_ids'], 1);
+    assert.ok(Object.values(teacherCalls).reduce((sum, n) => sum + n, 0) <= 8, `a teacher's read called ${JSON.stringify(teacherCalls)}`);
+    const t0 = Date.now();
+    const got = await service.mine(asG(g3));
+    console.log(`    km: a guardian with ${mineAll.length} of ${others + everything.length} requests reads the page in ${Date.now() - t0} ms (${JSON.stringify(guardianCalls)})`);
+    assert.ok(got.items.length > 0);
   });
 
   await sweepKvittensSchool(owner, marker);

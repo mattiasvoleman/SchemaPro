@@ -5635,14 +5635,29 @@ enum AckRule {
   ALL
 }
 
+/// How a request's one reminder ended (20270117091000): SENT (at least one
+/// guardian was reminded), NOT_NEEDED (nobody was left to remind), LAPSED (its
+/// time passed more than 30 days before the pass came), STOPPED (the author or
+/// an administrator stopped it) and OFF (the school had turned kvittens off when
+/// the time came). NULL on the request: not dealt with yet.
+enum AckReminderOutcome {
+  SENT
+  NOT_NEEDED
+  LAPSED
+  STOPPED
+  OFF
+}
+
 /// A message about one or more pupils that asks their guardians to confirm
-/// they have seen it (20270117091000). Written once, never changed: the title
-/// and body are what the guardian saw. remindAt is fixed when the request is
-/// made from the school's setting, so a later change of the setting does not
-/// move a request already out; reminderSentAt is the job's mark that its one
-/// pass is done. Personal data (free text about a pupil): gallring follows
-/// the school's choice for NOTIFICATIONS. The (authorId, schoolId) key to
-/// Users, ON DELETE SET NULL (authorId), lives in the migration.
+/// they have seen it (20270117091000). Written once: the title and body are
+/// what the guardian saw and never change. remindAt is fixed when the request
+/// is made from the school's setting, so a later change of the setting does not
+/// move a request already out; reminderOutcome is how its one reminder ended
+/// (written only by the reminder pass and app.ack_stop_reminder, so NULL until
+/// then), and reminderSentAt is when it was sent, set only for SENT. Personal
+/// data (free text about a pupil): gallring follows the school's choice for
+/// NOTIFICATIONS. The (authorId, schoolId) key to Users, ON DELETE SET NULL
+/// (authorId), lives in the migration.
 model AckRequest {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId       String   @db.Uuid
@@ -5654,6 +5669,7 @@ model AckRequest {
   rule           AckRule  @default(ANY)
   remindAt       DateTime? @db.Timestamptz(6)
   reminderSentAt DateTime? @db.Timestamptz(6)
+  reminderOutcome AckReminderOutcome?
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
   school   School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
@@ -5672,7 +5688,7 @@ model AckRequest {
 /// (20270117091000). The row is the snapshot of who was asked at the time: a
 /// guardian linked later is not in it, and a guardian whose link has ended
 /// stays in it and can no longer confirm. ackedAt and remindedAt are written by
-/// app.ack_confirm and app.ack_remind_due and nothing else.
+/// app.ack_confirm and app.ack_remind_request and nothing else.
 model AckReceipt {
   requestId  String    @db.Uuid
   studentId  String    @db.Uuid
@@ -5691,6 +5707,7 @@ model AckReceipt {
   /// A guardian's own requests, and a person removed.
   @@index([guardianId, schoolId])
   @@index([studentId, schoolId])
-  @@index([schoolId])
+  /// The school's key, and the daily limit's count of its last 24 hours.
+  @@index([schoolId, createdAt])
   @@map("AckReceipts")
 }

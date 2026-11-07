@@ -14,9 +14,12 @@
 --                 enda påminnelsen kommer (NULL: ingen). Inga personuppgifter.
 --   AckRequests   förfrågan: titel, text, och om det räcker att en
 --                 vårdnadshavare bekräftar eller om alla ska (ANY, ALL), ett
---                 val per förfrågan. Skrivs en gång och ändras aldrig: texten
---                 är det vårdnadshavaren såg. Personuppgifter (fri text om en
---                 elev): gallras med skolans val för NOTIFICATIONS.
+--                 val per förfrågan. Skrivs en gång: texten är det
+--                 vårdnadshavaren såg och ändras aldrig. Det enda som ändras
+--                 är hur påminnelsen slutade (reminderOutcome), och det skrivs
+--                 av påminnelsen och av app.ack_stop_reminder, inte av en roll.
+--                 Personuppgifter (fri text om en elev): gallras med skolans val
+--                 för NOTIFICATIONS.
 --   AckReceipts   en rad per (förfrågan, elev, vårdnadshavare): vem som
 --                 fick frågan om vilken elev, och när hen bekräftade. Raden är
 --                 ögonblicksbilden av vem som frågades då förfrågan skrevs: en
@@ -38,16 +41,51 @@
 --
 -- ## Bekräftelsen och påminnelsen
 --
--- ackedAt och remindedAt skrivs av app.ack_confirm och app.ack_remind_due och
--- av ingenting annat: ingen roll har UPDATE på AckReceipts. Bekräftelsen
+-- ackedAt och remindedAt skrivs av app.ack_confirm och app.ack_remind_request
+-- och av ingenting annat: ingen roll har UPDATE på AckReceipts. Bekräftelsen
 -- tar förfrågans rad FOR SHARE och elevens vårdnadskoppling FOR KEY SHARE:
 -- två bekräftelser väntar inte på varandra, en koppling som tas bort
 -- väntar tills bekräftelsen är klar (eller bekräftelsen på kopplingens
--- borttagning, och vägrar då), och påminnelsepasset, som tar förfrågans rad
--- FOR UPDATE SKIP LOCKED, hoppar över en förfrågan som just bekräftas i
+-- borttagning, och vägrar då), och påminnelsen, som tar förfrågans rad
+-- FOR NO KEY UPDATE SKIP LOCKED, hoppar över en förfrågan som just bekräftas i
 -- stället för att fråga någon som just svarat. En bekräftelse som kommer
--- efter passets lås väntar på det. Dubbeltryck är ofarligt: den andra hittar
--- ackedAt satt och svarar samma tid.
+-- efter påminnelsens lås väntar på det. Dubbeltryck är ofarligt: den andra hittar
+-- ackedAt satt och svarar samma tid. En bekräftelse markerar också
+-- vårdnadshavarens notiser om förfrågan som lästa: kvar att göra är det inte.
+--
+-- ## Påminnelsen: en förfrågan i taget, till var och en som inte själv bekräftat
+--
+-- Påminnelsen är ett pass av jobbet i två steg, så att ett pass alltid gör
+-- framsteg: app.ack_remind_queue ger id:na på de förfrågningar vars tid kommit
+-- (äldsta först, ingen text och inga personer), och jobbet anropar
+-- app.ack_remind_request för ett id i taget, var och en i sin egen transaktion
+-- under leveransdörrens 5 s. En förfrågan som inte hinns eller som något
+-- felar i rullas tillbaka ensam och står kvar i kön; de efter den kommer
+-- ändå. En förfrågan är som mest 2 000 elever (PUPILS_MAX), alltså några
+-- tusen rader, vilket mätt tar en sekund eller mindre.
+--
+-- Var och en av vårdnadshavarna som inte själv bekräftat påminns, också när
+-- en annan vårdnadshavare till samma elev redan bekräftat (ANY): annars
+-- avslöjar uteblivna påminnelser vem som svarat, och löftet att en
+-- vårdnadshavare aldrig ser om den andra bekräftat gäller särlevande
+-- föräldrar, av vilka en kan dölja sig för den andra. En extra påminnelse
+-- väger lättare än det.
+--
+-- Hur påminnelsen slutade lagras på förfrågan (reminderOutcome; NULL: ännu
+-- inte behandlad), så att personalen ser vad som hände: SENT (minst en
+-- påminnelse skrevs, reminderSentAt är då satt och annars aldrig), NOT_NEEDED
+-- (ingen att påminna: alla hade bekräftat eller inte längre kunde),
+-- LAPSED (tiden gick för mer än 30 dygn sedan, och den stängs utan ett ord),
+-- STOPPED (författaren eller en administratör under Drift stoppade den med
+-- app.ack_stop_reminder, för en förfrågan som skickats fel) och OFF (skolan
+-- hade slagit av kvittens när tiden kom: avstängt stoppar också påminnelserna,
+-- och en påminnelse som förfallit under tiden skickas inte i efterhand).
+--
+-- Funktionerna är jobbets, inte en inloggads: kallas de av en inloggning
+-- (app.current_user_id() satt) svarar de med ingenting och skriver ingenting.
+-- Leveransdörren, som jobbet går genom, sätter inga claims; det är det som
+-- skiljer dem åt, och därför behövs ingen egen roll. En ny roll skulle inte
+-- hindra något annat än det detta redan hindrar.
 --
 -- ## Läsning
 --
@@ -56,9 +94,32 @@
 -- upphört finns förfrågan inte för hen. Personal ser det de skrivit
 -- (författaren), och en mentor ser rader om sina mentorselever; en administratör
 -- ser skolans alla. En vårdnadshavare ser aldrig att den andra
--- vårdnadshavaren bekräftat eller inte: ingen arm ger henne en annans rad.
+-- vårdnadshavaren bekräftat eller inte: ingen arm ger henne en annans rad,
+-- och påminnelsen går ut oavsett vad den andra gjort.
 -- Allt går genom gatewayen, som loggar läsningen; ingen arm är öppen för
 -- PostgREST (bara app_authenticated).
+--
+-- Kostnaden följer det man läser, inte skolans alla förfrågningar: policyerna
+-- på AckRequests och AckReceipts frågar efter id:na en gång per uttalande, som
+-- ett initplan (en funktion som ger en uuid[] ur AckReceipts på dess index),
+-- och `id = ANY (…)` går mot primärnyckeln. En funktion som anropas per rad
+-- läste skolans hela tabell: 20 000 förfrågningar tog 1–2,5 s för en
+-- vårdnadshavare med tretton egna.
+--
+-- ## Gränser
+--
+-- Det som skickas fritt av en inloggad kostar mottagarna och leveranskön:
+-- en helskolsförfrågan är 4 000 notiser och 82 brev. En avsändare får därför
+-- skriva högst 10 förfrågningar i timmen (KV429, ACK_TOO_MANY_REQUESTS), och
+-- en skola få högst 20 000 nya rader av AckReceipts på ett dygn (KV428,
+-- ACK_TOO_MANY_RECIPIENTS): fem helskolsförfrågningar med två vårdnadshavare
+-- per elev, långt mer än skolor behöver, och knappt fyra minuters brevkö per
+-- dygn som mest (20 000 adresser, 49 per brev, ett brev var halv sekund). Gränserna gäller en inloggad skrivare (ägaren, som
+-- migreringar och provdata, har ingen) och tas med ett rådgivande lås per
+-- avsändare och per skola till commit (avsändaren först, skolan sedan, alltid
+-- i den ordningen), så att två samtidiga förfrågningar inte båda passerar.
+-- Låsen är vår egna nyckel och rör ingen annan rad; det som en
+-- främmande nyckels kontroll tar på Users (KEY SHARE) väntar inte på dem.
 --
 -- ## Gallring
 --
@@ -105,6 +166,8 @@ END
 $$;
 
 CREATE TYPE "AckRule" AS ENUM ('ANY', 'ALL');
+-- How a request's one reminder ended; see the preamble. NULL on the row: not dealt with yet.
+CREATE TYPE "AckReminderOutcome" AS ENUM ('SENT', 'NOT_NEEDED', 'LAPSED', 'STOPPED', 'OFF');
 
 -- ---------------------------------------------------------------------------
 -- AckSettings
@@ -145,8 +208,11 @@ CREATE TABLE "AckRequests" (
     -- Satt av triggern ur skolans val när förfrågan skrivs; en senare ändring
     -- av valet flyttar inte en förfrågan som redan gått ut.
     "remindAt" TIMESTAMPTZ(6),
-    -- Jobbets märke att dess enda genomgång är gjord.
+    -- När minst en påminnelse skrevs; satt bara då (SENT).
     "reminderSentAt" TIMESTAMPTZ(6),
+    -- Hur den enda genomgången slutade; NULL så länge den inte är gjord. Satt av
+    -- påminnelsen och av app.ack_stop_reminder, aldrig av en skrivare.
+    "reminderOutcome" "AckReminderOutcome",
     "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "AckRequests_pkey" PRIMARY KEY ("id"),
@@ -154,11 +220,12 @@ CREATE TABLE "AckRequests" (
     CONSTRAINT "AckRequests_an_author_has_a_name" CHECK (char_length(btrim("authorName")) BETWEEN 1 AND 200),
     CONSTRAINT "AckRequests_a_title_is_one_to_120_characters" CHECK (char_length(btrim("title")) BETWEEN 1 AND 120),
     CONSTRAINT "AckRequests_a_text_is_one_to_2000_characters" CHECK (char_length(btrim("body")) BETWEEN 1 AND 2000),
-    CONSTRAINT "AckRequests_a_reminder_was_due" CHECK ("reminderSentAt" IS NULL OR "remindAt" IS NOT NULL)
+    CONSTRAINT "AckRequests_a_reminder_was_due" CHECK ("reminderOutcome" IS NULL OR "remindAt" IS NOT NULL),
+    CONSTRAINT "AckRequests_only_a_sent_reminder_has_a_time" CHECK (("reminderOutcome" IS NOT DISTINCT FROM 'SENT') = ("reminderSentAt" IS NOT NULL))
 );
 
 -- Passet frågar efter förfrågningar vars påminnelse är förfallen och inte gjord.
-CREATE INDEX "AckRequests_reminder_due_idx" ON "AckRequests"("remindAt") WHERE "reminderSentAt" IS NULL AND "remindAt" IS NOT NULL;
+CREATE INDEX "AckRequests_reminder_due_idx" ON "AckRequests"("remindAt") WHERE "reminderOutcome" IS NULL AND "remindAt" IS NOT NULL;
 -- Gallringens villkor och skolans lista.
 CREATE INDEX "AckRequests_schoolId_createdAt_idx" ON "AckRequests"("schoolId", "createdAt");
 -- En borttagen person hittar förfrågningarna hen skrev.
@@ -193,7 +260,8 @@ CREATE TABLE "AckReceipts" (
 
 CREATE INDEX "AckReceipts_guardianId_schoolId_idx" ON "AckReceipts"("guardianId", "schoolId");
 CREATE INDEX "AckReceipts_studentId_schoolId_idx" ON "AckReceipts"("studentId", "schoolId");
-CREATE INDEX "AckReceipts_schoolId_idx" ON "AckReceipts"("schoolId");
+-- The school's key, and the daily limit's count of the school's last 24 hours.
+CREATE INDEX "AckReceipts_schoolId_createdAt_idx" ON "AckReceipts"("schoolId", "createdAt");
 
 ALTER TABLE "AckReceipts"
     ADD CONSTRAINT "AckReceipts_requestId_schoolId_fkey" FOREIGN KEY ("requestId", "schoolId")
@@ -225,12 +293,18 @@ CREATE TRIGGER "AckSettings_stamp"
     FOR EACH ROW EXECUTE FUNCTION app.ack_settings_stamp();
 
 -- remindAt is the database's, from the school's setting at the moment the
--- request is written: a writer cannot choose it, and reminderSentAt starts
--- empty. A school without a row has the default (two days). The author is the
+-- request is written: a writer cannot choose it, and the reminder starts
+-- untreated. A school without a row has the default (two days). The author is the
 -- caller: a request is never written in a colleague's name, whatever authorId
 -- the row says (the trigger runs before the policy's check), and authorName is
 -- that person's name as Users has it, which a writer cannot choose either. A
 -- writer with no login (the owner, a migration) keeps the authorId it gives.
+--
+-- A logged-in sender writes at most 10 requests in an hour (KV429). The lock is
+-- per sender and taken before the count, so two requests at the limit do not
+-- both pass; it is an advisory lock on a key of this trigger's own, which no
+-- other statement takes, held to commit, and the foreign key checks that follow
+-- take row locks (KEY SHARE on Users) that do not wait for it.
 CREATE FUNCTION app.ack_requests_stamp() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
@@ -249,6 +323,15 @@ BEGIN
   END IF;
   NEW."remindAt" := CASE WHEN days IS NULL THEN NULL ELSE now() + make_interval(days => days) END;
   NEW."reminderSentAt" := NULL;
+  NEW."reminderOutcome" := NULL;
+  IF app.current_user_id() IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('ack-author:' || NEW."authorId"::text, 0));
+    IF (SELECT count(*) FROM "AckRequests" q
+         WHERE q."authorId" = NEW."authorId" AND q."schoolId" = NEW."schoolId"
+           AND q."createdAt" > clock_timestamp() - interval '1 hour') >= 10 THEN
+      RAISE EXCEPTION 'ACK_TOO_MANY_REQUESTS' USING ERRCODE = 'KV429';
+    END IF;
+  END IF;
   RETURN NEW;
 END
 $$;
@@ -256,6 +339,35 @@ $$;
 CREATE TRIGGER "AckRequests_stamp"
     BEFORE INSERT ON "AckRequests"
     FOR EACH ROW EXECUTE FUNCTION app.ack_requests_stamp();
+
+-- A school gets at most 20 000 new rows of AckReceipts in 24 hours (KV428), for a
+-- logged-in writer. Counted after the statement, over the school's last day
+-- (AckReceipts_schoolId_createdAt_idx), so the rows of the statement itself are in
+-- it and a request that would go over rolls back whole. The school's lock is
+-- taken after the sender's (above), always in that order.
+CREATE FUNCTION app.ack_receipts_limit() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  school uuid;
+BEGIN
+  IF app.current_user_id() IS NULL THEN
+    RETURN NULL;
+  END IF;
+  FOR school IN SELECT DISTINCT i."schoolId" FROM ins i ORDER BY 1 LOOP
+    PERFORM pg_advisory_xact_lock(hashtextextended('ack-school:' || school::text, 0));
+    IF (SELECT count(*) FROM "AckReceipts" r
+         WHERE r."schoolId" = school AND r."createdAt" > clock_timestamp() - interval '24 hours') > 20000 THEN
+      RAISE EXCEPTION 'ACK_TOO_MANY_RECIPIENTS' USING ERRCODE = 'KV428';
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END
+$$;
+
+CREATE TRIGGER "AckReceipts_limit"
+    AFTER INSERT ON "AckReceipts"
+    REFERENCING NEW TABLE AS ins
+    FOR EACH STATEMENT EXECUTE FUNCTION app.ack_receipts_limit();
 
 -- ---------------------------------------------------------------------------
 -- The questions the policies and the gateway ask.
@@ -316,26 +428,38 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
        AND q."authorId" = app.current_user_id())
 $$;
 
--- The request asks about one of these pupils (a teacher's mentees, handed in by
--- the policy as an initplan so the list is built once per statement).
-CREATE FUNCTION app.ack_request_concerns(p_request uuid, p_pupils uuid[]) RETURNS boolean
+-- The ids the policies compare with, each built once per statement as an
+-- initplan (`"id" = ANY ((select app.f())::uuid[])`), not asked per row: a
+-- function the planner has to call for every row of the school's table made the
+-- read cost follow all of the school's requests instead of the caller's own.
+
+-- The requests the calling guardian has a row in for a child they are still linked to
+-- (the index (guardianId, schoolId)). After the custody has ended the request does not
+-- exist for them.
+CREATE FUNCTION app.ack_my_request_ids() RETURNS uuid[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM "AckReceipts" r
-     WHERE r."requestId" = p_request AND r."schoolId" = app.current_school_id()
-       AND r."studentId" = ANY (p_pupils))
+  SELECT coalesce(array_agg(DISTINCT r."requestId"), '{}'::uuid[])
+    FROM "AckReceipts" r
+   WHERE r."guardianId" = app.current_user_id() AND r."schoolId" = app.current_school_id()
+     AND r."studentId" = ANY ((SELECT app.current_guardian_child_ids())::uuid[])
 $$;
 
--- The calling guardian has a row in the request for one of these children (their
--- children they are still linked to, handed in by the policy). After the
--- custody has ended the request does not exist for them.
-CREATE FUNCTION app.ack_guardian_may_see(p_request uuid, p_children uuid[]) RETURNS boolean
+-- The requests that ask about one of the calling teacher's mentees (the index
+-- (studentId, schoolId)); empty for anyone but a teacher.
+CREATE FUNCTION app.ack_mentee_request_ids() RETURNS uuid[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM "AckReceipts" r
-     WHERE r."requestId" = p_request AND r."schoolId" = app.current_school_id()
-       AND r."guardianId" = app.current_user_id()
-       AND r."studentId" = ANY (p_children))
+  SELECT coalesce(array_agg(DISTINCT r."requestId"), '{}'::uuid[])
+    FROM "AckReceipts" r
+   WHERE r."schoolId" = app.current_school_id()
+     AND r."studentId" = ANY ((SELECT app.ack_mentee_ids())::uuid[])
+$$;
+
+-- The requests the caller wrote (the index (authorId, schoolId)).
+CREATE FUNCTION app.ack_authored_request_ids() RETURNS uuid[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT coalesce(array_agg(q."id"), '{}'::uuid[])
+    FROM "AckRequests" q
+   WHERE q."authorId" = app.current_user_id() AND q."schoolId" = app.current_school_id()
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -400,8 +524,10 @@ $$;
 -- The calling guardian confirms a request for every child of theirs in it who
 -- they are still linked to, at one time; answers that time, or the time of the
 -- first confirmation when they had already confirmed (a second tap changes
--- nothing). KV403: not a guardian. KV404: no such request for this guardian.
--- KV410: the guardian is no longer linked to any child in it.
+-- nothing). Their unread notices about the request (the request and the
+-- reminder) are marked read: nothing is left to do. KV403: not a guardian.
+-- KV404: no such request for this guardian. KV410: the guardian is no longer
+-- linked to any child in it.
 CREATE FUNCTION app.ack_confirm(p_request uuid) RETURNS timestamptz
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
@@ -441,61 +567,136 @@ BEGIN
   SELECT min(r."ackedAt") INTO result
     FROM "AckReceipts" r
    WHERE r."requestId" = p_request AND r."guardianId" = me AND r."schoolId" = sch AND r."ackedAt" IS NOT NULL;
+  UPDATE "Notifications" nt SET "readAt" = stamp
+   WHERE nt."userId" = me AND nt."schoolId" = sch AND nt."readAt" IS NULL
+     AND nt."type" IN ('ACK_REQUESTED', 'ACK_REMINDER')
+     AND nt."meta" ->> 'requestId' = p_request::text;
   RETURN result;
 END
 $$;
 
 -- ---------------------------------------------------------------------------
--- The reminder: once, to a guardian who has not confirmed.
+-- The reminder: once, to each guardian who has not confirmed. See the preamble.
 -- ---------------------------------------------------------------------------
 
--- The job's pass over every school. For each request whose time has come and
--- whose pass is not done, and which nobody is confirming just now, claims
--- the receipts that are unconfirmed, not reminded, still possible and about
--- a pupil who is not met, writes one ACK_REMINDER per guardian and hands the
--- notices back with the addresses, for the delivery after the commit. A
--- request more than 30 days past its time is closed without a word. A
--- guardian with two children in a request is reminded once.
-CREATE FUNCTION app.ack_remind_due()
+-- The ids of the requests whose time has come and that nobody has dealt with, the
+-- oldest first: no text, no person. The job asks for them and then takes them one at
+-- a time (ack_remind_request). Empty for a logged-in caller.
+CREATE FUNCTION app.ack_remind_queue(p_limit integer DEFAULT 200)
+RETURNS TABLE (request_id uuid)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+BEGIN
+  IF app.current_user_id() IS NOT NULL THEN
+    RETURN;
+  END IF;
+  RETURN QUERY
+    SELECT a."id"
+      FROM "AckRequests" a
+     WHERE a."remindAt" IS NOT NULL AND a."remindAt" <= clock_timestamp() AND a."reminderOutcome" IS NULL
+     ORDER BY a."remindAt"
+     LIMIT greatest(p_limit, 0);
+END
+$$;
+
+-- One request's reminder, in the transaction that calls it. Takes the request's row
+-- FOR NO KEY UPDATE SKIP LOCKED, so it skips a request that is being confirmed or
+-- stopped (the next pass finds it), and then, by what the school and the time say:
+--   OFF         the school has kvittens off: nobody is reminded;
+--   LAPSED      the time passed more than 30 days ago: closed without a word;
+--   otherwise   writes one ACK_REMINDER to each guardian who has not confirmed
+--               and still can, whatever another guardian of the pupil has done
+--               (SENT), or none when there is nobody (NOT_NEEDED). A guardian with
+--               two children in the request is reminded once.
+-- Answers the notices with the addresses, for the delivery after the commit.
+-- Answers nothing for a request that is not due, was dealt with, is locked, or to
+-- a logged-in caller.
+CREATE FUNCTION app.ack_remind_request(p_request uuid)
 RETURNS TABLE (notification_id uuid, user_id uuid, school_id uuid, email text, meta jsonb)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   q record;
+  ids uuid[] := '{}';
+  how "AckReminderOutcome";
 BEGIN
-  FOR q IN
-    SELECT a."id", a."schoolId", a."title", a."remindAt"
-      FROM "AckRequests" a
-     WHERE a."remindAt" IS NOT NULL AND a."remindAt" <= clock_timestamp() AND a."reminderSentAt" IS NULL
-     ORDER BY a."remindAt"
-     LIMIT 200
-       FOR UPDATE SKIP LOCKED
-  LOOP
-    IF q."remindAt" >= clock_timestamp() - interval '30 days' THEN
-      RETURN QUERY
-      WITH unmet AS (
-        SELECT s.student_id FROM app.ack_status_raw(ARRAY[q."id"]) s WHERE NOT s.met
-      ),
-      due AS (
-        UPDATE "AckReceipts" r SET "remindedAt" = clock_timestamp()
-         WHERE r."requestId" = q."id" AND r."ackedAt" IS NULL AND r."remindedAt" IS NULL
-           AND r."studentId" IN (SELECT u.student_id FROM unmet u)
-           AND app.ack_receipt_open(r."guardianId", r."studentId", r."schoolId")
-        RETURNING r."guardianId"
-      ),
-      who AS (SELECT DISTINCT d."guardianId" FROM due d),
-      written AS (
-        INSERT INTO "Notifications" AS nt ("schoolId", "userId", "type", "meta")
-        SELECT q."schoolId", w."guardianId", 'ACK_REMINDER',
-               jsonb_build_object('requestId', q."id", 'title', q."title")
-          FROM who w
-        RETURNING nt."id", nt."userId", nt."meta"
-      )
-      SELECT wr."id", wr."userId", q."schoolId", u."email", wr."meta"
-        FROM written wr
-        JOIN "Users" u ON u."id" = wr."userId" AND u."schoolId" = q."schoolId";
-    END IF;
-    UPDATE "AckRequests" a SET "reminderSentAt" = clock_timestamp() WHERE a."id" = q."id";
-  END LOOP;
+  IF app.current_user_id() IS NOT NULL THEN
+    RETURN;
+  END IF;
+  SELECT a."id", a."schoolId", a."title", a."remindAt" INTO q
+    FROM "AckRequests" a
+   WHERE a."id" = p_request AND a."remindAt" IS NOT NULL AND a."remindAt" <= clock_timestamp() AND a."reminderOutcome" IS NULL
+     FOR NO KEY UPDATE SKIP LOCKED;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  IF NOT coalesce((SELECT s."enabled" FROM "AckSettings" s WHERE s."schoolId" = q."schoolId"), false) THEN
+    how := 'OFF';
+  ELSIF q."remindAt" < clock_timestamp() - interval '30 days' THEN
+    how := 'LAPSED';
+  ELSE
+    WITH due AS (
+      UPDATE "AckReceipts" r SET "remindedAt" = clock_timestamp()
+       WHERE r."requestId" = q."id" AND r."schoolId" = q."schoolId" AND r."ackedAt" IS NULL AND r."remindedAt" IS NULL
+         AND app.ack_receipt_open(r."guardianId", r."studentId", r."schoolId")
+      RETURNING r."guardianId"
+    ),
+    who AS (SELECT DISTINCT d."guardianId" FROM due d),
+    written AS (
+      INSERT INTO "Notifications" AS nt ("schoolId", "userId", "type", "meta")
+      SELECT q."schoolId", w."guardianId", 'ACK_REMINDER',
+             jsonb_build_object('requestId', q."id", 'title', q."title")
+        FROM who w
+      RETURNING nt."id"
+    )
+    SELECT coalesce(array_agg(wr."id"), '{}'::uuid[]) INTO ids FROM written wr;
+    how := CASE WHEN cardinality(ids) > 0 THEN 'SENT'::"AckReminderOutcome" ELSE 'NOT_NEEDED'::"AckReminderOutcome" END;
+  END IF;
+
+  UPDATE "AckRequests" a
+     SET "reminderOutcome" = how,
+         "reminderSentAt" = CASE WHEN how = 'SENT' THEN clock_timestamp() END
+   WHERE a."id" = q."id";
+
+  RETURN QUERY
+    SELECT nt."id", nt."userId", nt."schoolId", u."email", nt."meta"
+      FROM "Notifications" nt
+      JOIN "Users" u ON u."id" = nt."userId" AND u."schoolId" = nt."schoolId"
+     WHERE nt."id" = ANY (ids);
+END
+$$;
+
+-- Stops a request's reminder: the author (a teacher, or an administrator under Drift) or
+-- any administrator under Drift, for a request that went out wrong. Answers the
+-- outcome the request has afterwards: STOPPED, or the one it already had (SENT,
+-- LAPSED ... a reminder that has gone cannot be called back), or NULL when no
+-- reminder was chosen. Stopping twice is harmless. The request's row is taken
+-- FOR NO KEY UPDATE, so a pass that is writing the reminders finishes first (and
+-- this then answers SENT) and a pass that comes after finds it stopped.
+-- KV403: not staff who may. KV404: no such request for the caller.
+CREATE FUNCTION app.ack_stop_reminder(p_request uuid) RETURNS "AckReminderOutcome"
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  me uuid := app.current_user_id();
+  sch uuid := app.current_school_id();
+  my_role text := app.current_user_role();
+  q record;
+BEGIN
+  IF me IS NULL OR NOT (my_role = 'TEACHER' OR (my_role = 'SCHOOL_ADMIN' AND app.current_user_may('DRIFT', true))) THEN
+    RAISE EXCEPTION 'ACK_NOT_STAFF' USING ERRCODE = 'KV403';
+  END IF;
+  SELECT a."remindAt", a."reminderOutcome" INTO q
+    FROM "AckRequests" a
+   WHERE a."id" = p_request AND a."schoolId" = sch
+     AND (my_role = 'SCHOOL_ADMIN' OR a."authorId" = me)
+     FOR NO KEY UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ACK_NOT_FOUND' USING ERRCODE = 'KV404';
+  END IF;
+  IF q."reminderOutcome" IS NULL AND q."remindAt" IS NOT NULL THEN
+    UPDATE "AckRequests" a SET "reminderOutcome" = 'STOPPED' WHERE a."id" = p_request;
+    RETURN 'STOPPED';
+  END IF;
+  RETURN q."reminderOutcome";
 END
 $$;
 
@@ -541,12 +742,13 @@ BEGIN
         FOR SELECT TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
                AND (select app.current_user_role()) = 'TEACHER'
-               AND (app.ack_is_author("id") OR app.ack_request_concerns("id", (select app.ack_mentee_ids()))));
+               AND ("authorId" = (select app.current_user_id())
+                    OR "id" = ANY ((select app.ack_mentee_request_ids())::uuid[])));
     CREATE POLICY "ack_requests_guardian_select" ON "AckRequests"
         FOR SELECT TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
                AND (select app.current_user_role()) = 'GUARDIAN'
-               AND app.ack_guardian_may_see("id", (select app.current_guardian_child_ids())));
+               AND "id" = ANY ((select app.ack_my_request_ids())::uuid[]));
     -- The author is the caller whatever the row says: AckRequests_stamp sets it.
     CREATE POLICY "ack_requests_staff_insert" ON "AckRequests"
         FOR INSERT TO "app_authenticated"
@@ -565,7 +767,8 @@ BEGIN
         FOR SELECT TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
                AND (select app.current_user_role()) = 'TEACHER'
-               AND ("studentId" = ANY ((select app.ack_mentee_ids())::uuid[]) OR app.ack_is_author("requestId")));
+               AND ("studentId" = ANY ((select app.ack_mentee_ids())::uuid[])
+                    OR "requestId" = ANY ((select app.ack_authored_request_ids())::uuid[])));
     CREATE POLICY "ack_receipts_guardian_select" ON "AckReceipts"
         FOR SELECT TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
@@ -898,9 +1101,21 @@ COMMENT ON FUNCTION app.ack_status(uuid[]) IS
 COMMENT ON FUNCTION app.ack_open_pairs(uuid) IS
   'Kvittens: the (pupil, guardian) pairs of a request that can still confirm, for the staff''s list; the visibility of ack_status.';
 COMMENT ON FUNCTION app.ack_confirm(uuid) IS
-  'Kvittens: the calling guardian confirms a request for the children of theirs in it they are still linked to; idempotent; KV403 not a guardian, KV404 no such request for them, KV410 custody ended.';
-COMMENT ON FUNCTION app.ack_remind_due() IS
-  'Kvittens: the job''s pass; claims and writes one ACK_REMINDER per unconfirmed guardian of a request whose time has come, and answers the notices with the addresses for the delivery after the commit.';
+  'Kvittens: the calling guardian confirms a request for the children of theirs in it they are still linked to, and their notices about it are marked read; idempotent; KV403 not a guardian, KV404 no such request for them, KV410 custody ended.';
+COMMENT ON FUNCTION app.ack_my_request_ids() IS
+  'Kvittens: the policies'' initplan for a guardian: the requests they have a row in for a child they are still linked to.';
+COMMENT ON FUNCTION app.ack_mentee_request_ids() IS
+  'Kvittens: the policies'' initplan for a teacher: the requests that ask about one of their mentees.';
+COMMENT ON FUNCTION app.ack_authored_request_ids() IS
+  'Kvittens: the policies'' initplan for a teacher: the requests they wrote.';
+COMMENT ON FUNCTION app.ack_remind_queue(integer) IS
+  'Kvittens: the job''s list of request ids whose reminder is due and not dealt with, oldest first; empty for a logged-in caller.';
+COMMENT ON FUNCTION app.ack_remind_request(uuid) IS
+  'Kvittens: the job''s pass over one request, in its own transaction; writes one ACK_REMINDER per guardian who has not confirmed and still can, records how the reminder ended, and answers the notices with the addresses for the delivery after the commit; nothing for a logged-in caller.';
+COMMENT ON FUNCTION app.ack_stop_reminder(uuid) IS
+  'Kvittens: the author, or an administrator under Drift, stops a request''s reminder; answers the outcome the request has afterwards; KV403 not staff who may, KV404 no such request for the caller.';
+COMMENT ON FUNCTION app.ack_receipts_limit() IS
+  'Kvittens: a school gets at most 20 000 new rows of AckReceipts in 24 hours for a logged-in writer (KV428).';
 
 DO $$
 DECLARE
@@ -910,19 +1125,23 @@ BEGIN
   FOREACH fn IN ARRAY ARRAY[
     'app.ack_settings_stamp()',
     'app.ack_requests_stamp()',
+    'app.ack_receipts_limit()',
     'app.ack_enabled()',
     'app.ack_remind_after_days()',
     'app.ack_mentee_ids()',
     'app.ack_receipt_open(uuid, uuid, uuid)',
     'app.ack_asks_open(uuid, uuid)',
     'app.ack_is_author(uuid)',
-    'app.ack_request_concerns(uuid, uuid[])',
-    'app.ack_guardian_may_see(uuid, uuid[])',
+    'app.ack_my_request_ids()',
+    'app.ack_mentee_request_ids()',
+    'app.ack_authored_request_ids()',
     'app.ack_status_raw(uuid[])',
     'app.ack_status(uuid[])',
     'app.ack_open_pairs(uuid)',
     'app.ack_confirm(uuid)',
-    'app.ack_remind_due()'
+    'app.ack_remind_queue(integer)',
+    'app.ack_remind_request(uuid)',
+    'app.ack_stop_reminder(uuid)'
   ] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', fn);
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
@@ -931,11 +1150,12 @@ BEGIN
       END IF;
     END LOOP;
   END LOOP;
-  -- The API role runs the policies' questions, the staff's status, the
-  -- guardian's confirmation and the job's pass. The trigger functions, the
-  -- guardian-open rule and the raw status are the owner's: a trigger needs no
-  -- grant, and the others are called by the functions above as the owner (the
-  -- raw status answers any school it is given).
+  -- The API role runs the policies' questions, the staff's status and stop, the
+  -- guardian's confirmation and the job's two steps (which answer nothing to a
+  -- logged-in caller). The trigger functions, the guardian-open rule and the raw
+  -- status are the owner's: a trigger needs no grant, and the others are called
+  -- by the functions above as the owner (the raw status answers any school it is
+  -- given).
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
     FOREACH fn IN ARRAY ARRAY[
       'app.ack_enabled()',
@@ -943,12 +1163,15 @@ BEGIN
       'app.ack_mentee_ids()',
       'app.ack_asks_open(uuid, uuid)',
       'app.ack_is_author(uuid)',
-      'app.ack_request_concerns(uuid, uuid[])',
-      'app.ack_guardian_may_see(uuid, uuid[])',
+      'app.ack_my_request_ids()',
+      'app.ack_mentee_request_ids()',
+      'app.ack_authored_request_ids()',
       'app.ack_status(uuid[])',
       'app.ack_open_pairs(uuid)',
       'app.ack_confirm(uuid)',
-      'app.ack_remind_due()'
+      'app.ack_remind_queue(integer)',
+      'app.ack_remind_request(uuid)',
+      'app.ack_stop_reminder(uuid)'
     ] LOOP
       EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO "app_authenticated"', fn);
     END LOOP;
