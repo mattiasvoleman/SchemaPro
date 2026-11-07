@@ -16,9 +16,23 @@ import { TEACHER_NAV } from "./teacher-nav";
  * it moved out: /admin/requirements 194 566 -> 191 694 B), with
  * /admin/requirements at 45 B from its 190 KB and a menu row costing about 19 B.
  *
- * A menu is data on the wire now (the layout's RSC payload, once per full page
- * load: the admin's 2.8 KB gzipped, the others' 0.6 to 1.2 KB) and not code in
- * the bundle. A row can have an icon of its own at no cost to any route.
+ * Nothing of a menu is in the JavaScript bundle now, and that is all the
+ * bundle gate (scripts/bench/bundle-size.mjs) measures. It is payload in every
+ * full page load instead: the layout's HTML and RSC carry the menu once, the
+ * admin's about 2.9 KB gzipped and the others' 0.5 to 1.2 KB, and unlike the
+ * cached bundle the document is fetched again on each full load. A row with an
+ * icon of its own costs no route a byte of JS, but its label and path (and a
+ * new icon's drawing, a few hundred bytes) are in that document. The gate for
+ * it is e2e/document-size.spec.ts: the gzipped document of an administrator
+ * and of a teacher, less the message catalog, against a ceiling, so that the
+ * next phases' rows show before anything is close.
+ *
+ * Which rows a role has is decided here, by role alone (navForRole takes the
+ * role and nothing else). A row that depends on more, the school's switches or
+ * the administrator's profile, is not a row of these files: the (app) layout
+ * decides it, as it does for the pages a profile may not open
+ * (closedMenuStyle hides those links with a style rule it writes on the
+ * server), or navForRole takes a larger argument first.
  */
 
 /**

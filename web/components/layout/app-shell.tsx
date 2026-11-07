@@ -35,7 +35,10 @@ export interface NavSection {
  * +0.7 to 0.9 KB on every route. The menus were code in that chunk, for all
  * four roles on every route, and a menu row for any one of them cost
  * /admin/requirements about 19 B of the 45 it had left. A menu item for any
- * role goes in components/layout/*-nav.ts and costs no route a byte.
+ * role goes in components/layout/*-nav.ts and adds nothing to the JavaScript
+ * bundle. It is payload in every full page load instead (the menu is in the
+ * layout's HTML and RSC), which the bundle gate does not see; the document
+ * gate does (e2e/document-size.spec.ts).
  */
 
 interface AppShellProps {
