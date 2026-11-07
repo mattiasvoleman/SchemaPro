@@ -35,6 +35,8 @@ export interface CandidatesSectionProps {
   generating: boolean;
   /** The page's optimisation profile: the first candidate is Generera's own request. */
   weights: Record<string, number>;
+  /** The school has Bästa möjliga schema on (Skolregler): the section offers "Ta fram bästa möjliga". */
+  bestEffort?: boolean;
 }
 
 /**
@@ -43,7 +45,14 @@ export interface CandidatesSectionProps {
  * comparison, its håltimmar and its week view are the compare page's, which
  * has a budget of its own.
  */
-export function CandidatesSection({ year, overview, canStart, generating, weights }: CandidatesSectionProps) {
+export function CandidatesSection({
+  year,
+  overview,
+  canStart,
+  generating,
+  weights,
+  bestEffort = false,
+}: CandidatesSectionProps) {
   const t = useTranslations("scheduleCandidates");
   const tEngine = useTranslations("engineMessages");
   const locale = useLocale();
@@ -52,6 +61,7 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
   const countId = useId();
   const reasonId = useId();
   const statusId = useId();
+  const bestEffortHintId = useId();
 
   const runDate = useMemo(
     () =>
@@ -72,6 +82,24 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
       toast.error(t(requestErrorKey(error instanceof ApiError ? error : null, "start")));
     }
   };
+
+  /*
+   * Bästa möjliga schema: ONE candidate, so no count; the page's profile is the
+   * run's base as for the first of a batch. It needs no earlier schema (the
+   * week Generera refused is the one it is for), which is why nothing here
+   * waits for a draft.
+   */
+  const runBestEffort = async () => {
+    if (!year) return;
+    try {
+      await start.mutateAsync({ academicYearId: year.id, mode: "BEST_EFFORT", weights });
+      toast.success(t("section.startedBestEffort"));
+    } catch (error) {
+      toast.error(t(requestErrorKey(error instanceof ApiError ? error : null, "start")));
+    }
+  };
+  const startingBestEffort = start.isPending && start.variables?.mode === "BEST_EFFORT";
+  const startDisabled = !year || !canStart || generating || active || start.isPending;
 
   /*
    * One reason beside the button, the first that holds: a greyed button
@@ -156,13 +184,28 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
             data-writes="SCHEMALAGGNING"
             variant="outline"
             className="w-full sm:w-auto"
-            disabled={!year || !canStart || generating || active || start.isPending}
+            disabled={startDisabled}
             onClick={run}
             aria-describedby={reason ? reasonId : active ? statusId : undefined}
           >
-            {start.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-            {start.isPending ? t("section.starting") : t("section.start")}
+            {start.isPending && !startingBestEffort ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+            {start.isPending && !startingBestEffort ? t("section.starting") : t("section.start")}
           </Button>
+          {bestEffort ? (
+            <Button
+              data-writes="SCHEMALAGGNING"
+              variant="outline"
+              className="w-full sm:w-auto"
+              disabled={startDisabled}
+              onClick={runBestEffort}
+              aria-describedby={[reason ? reasonId : active ? statusId : null, bestEffortHintId]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {startingBestEffort ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+              {startingBestEffort ? t("section.starting") : t("section.startBestEffort")}
+            </Button>
+          ) : null}
         </div>
       }
     >
@@ -189,6 +232,16 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
           ) : null}
         </div>
       )}
+      {bestEffort ? (
+        // The button's description, and not part of the card's lead: the lead
+        // is for the ordinary proposals, and this is read by those who turned
+        // the mode on and want to know what pressing it does. Same writes as
+        // the button: a reader who has none is not told about a button they
+        // are not given.
+        <p id={bestEffortHintId} data-writes="SCHEMALAGGNING" className="max-w-prose text-sm text-muted-foreground">
+          {t("section.bestEffortHint")}
+        </p>
+      ) : null}
     </SectionCard>
   );
 }

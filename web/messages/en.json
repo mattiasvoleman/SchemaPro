@@ -1546,6 +1546,8 @@
     "lessonsGenerated": "{count} master lessons generated",
     "infeasibleHint": "The constraints cannot all be met at once. The summary and the conflicts below say what needs to change.",
     "timeoutHint": "The solver did not find a schedule within its time budget. This does not mean your requirements are impossible — try running it again, or ask your administrator to raise the solver time limit. Relaxing tight availability windows also makes a schedule easier to find.",
+    "bestEffortOffer": "The school has Best possible timetable on. Under Timetable proposals you can lay a timetable that breaks as few of the school's own rules as possible and see which gave way.",
+    "bestEffortOfferLink": "Compute the best possible",
     "conflicts": "Detected conflicts",
     "noConflicts": "No conflicts reported.",
     "notesTitle": "Wishes that could not be kept",
@@ -1572,6 +1574,7 @@
     "ruleTravel": "The generator keeps the travel time between sites",
     "rulePupilGaps": "The generator keeps pupils' idle time down",
     "ruleConsecutive": "The generator tries to keep teachers' teaching in a row within their limit",
+    "ruleBestEffort": "Best possible timetable is on: Timetable proposals can lay a timetable with deviations from the school's rules",
     "rulesEdit": "Change",
     "noYearTitle": "{count, plural, one {One group} other {# groups}} in the curriculum entries has no year",
     "noYearBody": "The solver reads “no year” as “unrestricted”: frame times and breaks do not apply to these groups’ lessons, so they can land straight across a break. The year is derived from the members’ home classes, or from the group’s own year when it has no members.",
@@ -2983,7 +2986,24 @@
     "consecutive": "The generator tries to keep teachers' teaching in a row within their limit",
     "consecutiveHint": "Off by default. When on, Generate weighs in each teacher's limit on teaching in a row, which the principal or a full administrator has set on the teacher's post. It is a wish, not a promise: Generate says after the run when it did not manage it, and names the teachers to the principal, a full administrator and anyone with HR read. The wish ranks above keeping the previous timetable's places and above the pupils' idle time, so turn it on before the first generation if you can. Generating again on an existing timetable moves many lessons, not only the flagged teachers': on our test school between a fifth and nearly half.",
     "consecutiveWithPupilGapsTitle": "The pupils' idle time and the teachers' limits are both on",
-    "consecutiveWithPupilGaps": "When both weigh in, the generation has a lot to trade against each other, and on the default search time the teachers' limits were often not kept in our measurements. Generate says after the run when it did not manage it. Turn on both only if you want that anyway."
+    "consecutiveWithPupilGaps": "When both weigh in, the generation has a lot to trade against each other, and on the default search time the teachers' limits were often not kept in our measurements. Generate says after the run when it did not manage it. Turn on both only if you want that anyway.",
+    "bestEffort": "Best possible timetable",
+    "bestEffortHint": "Off by default. When on, Timetable proposals gets the button Compute the best possible, which lays a timetable even when Generate refuses because the school's own rules do not fit together. The timetable is laid so that as few rules as possible are broken, and each rule that gave way is listed as a deviation with how much. A timetable with deviations is applied only once you explicitly accept them, and publishing warns about them. Generate and the ordinary proposals run as before.",
+    "bestEffortNeverTitle": "Never gives way, in any mode:",
+    "bestEffortNeverOverlap": "A teacher, a class, a pupil or a room booked twice.",
+    "bestEffortNeverFrames": "Lessons outside the school's frame times.",
+    "bestEffortNeverTravel": "The travel time between schools and sites.",
+    "bestEffortNeverTeacher": "A teacher's lunch and night's rest, and a teacher marked as unavailable.",
+    "bestEffortNeverMeals": "Lunch, the dining hall and the breaks.",
+    "bestEffortNeverRooms": "The room type, capacity and school years that a curriculum entry requires.",
+    "bestEffortNeverLessons": "Lesson lengths and the number of lessons per week.",
+    "bestEffortNeverGroups": "A parallel block's shared start, and a group's own cap per day (Max lessons per day above).",
+    "bestEffortMayTitle": "Can give way, and is then listed as a deviation:",
+    "bestEffortMayCap": "A teacher's cap on teaching per day (the working-time rule).",
+    "bestEffortMayDays": "How many days a week a teacher teaches under the post.",
+    "bestEffortMayDistribution": "A subject's distribution over the week: at most so many lessons a day, and so many days between.",
+    "bestEffortMayRoomLock": "Room locks: a subject being allowed only in certain rooms.",
+    "bestEffortOrder": "They give way in order of mildness, the days between a subject's lessons first and the days of a post last, and only when no timetable exists without the deviation. As little as possible is then broken."
   },
   "conflictCategories": {
     "AVAILABILITY": "Availability",
@@ -4946,7 +4966,8 @@
       "PUB_RANGE_GAP": "School days without a published timetable",
       "PUB_DAY_OPS_LOST": "Day changes that disappear",
       "PUB_EMPTY_HALF": "Class halves without pupils",
-      "PUB_OTHER_SCHOOL": "Clashes with the huvudman's other schools (shared teachers, lent and borrowed rooms)"
+      "PUB_OTHER_SCHOOL": "Clashes with the huvudman's other schools (shared teachers, lent and borrowed rooms)",
+      "PUB_DEVIATIONS": "Deviations from the school's rules in the latest applied timetable"
     },
     "severity": {
       "REFUSE": "Stops",
@@ -4975,6 +4996,7 @@
       "PUB_DAY_OPS_LOST": "{count, plural, one {# day change} other {# day changes}} (substitute, room change, note) disappear with lessons that are removed.",
       "PUB_FROM_IN_PAST": "The validity starts before today, so days that have passed may get lessons afterwards.",
       "PUB_LUNCH_NOT_SET": "Lunch is not set up, so no meals are published.",
+      "PUB_DEVIATIONS": "{count, plural, one {# rule gave way} other {# rules gave way}} in the latest applied timetable proposal (Best possible timetable). The list shows which. Change the rule or move the lessons to remove the deviation, or publish anyway.",
       "PUB_NOTHING_TO_PUBLISH": "There is nothing new to publish."
     },
     "reviewTitle": "Publish the timetable",
@@ -6703,6 +6725,9 @@
       "start": "Compute proposals",
       "starting": "Starting…",
       "started": "The proposals are being computed. You can leave the page meanwhile.",
+      "startBestEffort": "Compute the best possible",
+      "startedBestEffort": "The best possible timetable is being computed. You can leave the page meanwhile.",
+      "bestEffortHint": "Compute the best possible lays a timetable even when Generate refuses because the school's own rules do not fit together, and lists the rules that gave way. Double bookings, frame times and travel time never give way. You accept the deviations before the timetable is applied.",
       "compare": "Compare the proposals",
       "blockedGenerating": "Generate is running for this school year. Proposals can be computed once the run has finished.",
       "blockedPrerequisites": "Proposals can be computed once the prerequisites above are met.",
@@ -6743,6 +6768,7 @@
       "TEACHER_GAPS": "Fewer gaps for teachers",
       "SPREAD": "More even weeks",
       "FREE": "Freer placement",
+      "BEST_EFFORT": "Best possible",
       "unknown": "Proposal {ordinal}"
     },
     "solver": {
@@ -6764,9 +6790,13 @@
       "CANDIDATE_ENGINE_TIMEOUT": "The timetable engine did not answer in time. Try again in a moment.",
       "CANDIDATE_ENGINE_FAILED": "The scheduling engine answered with an error. Try again in a moment.",
       "ENGINE_LACKS_CANDIDATES": "The timetable engine is older than the rest of the service and cannot compute proposals yet. Try again in a few minutes.",
+      "ENGINE_LACKS_BEST_EFFORT": "The timetable engine is older than the rest of the service and cannot compute a best-possible timetable yet. Try again in a few minutes.",
       "CANDIDATES_FIRST_FAILED": "The first proposal got no timetable, and the others would have met the same obstacle. What stopped it is below.",
       "CANDIDATES_FIRST_FAILED_UNNAMED": "The first proposal got no timetable, and the others would have met the same obstacle.",
       "CANDIDATES_FIRST_TIMEOUT": "The first proposal could not be finished in time, so the others were not computed.",
+      "BEST_EFFORT_FAILED": "No timetable could be laid, even with the school's own rules allowed to give way. What stopped it is a rule that never gives way, shown below.",
+      "BEST_EFFORT_FAILED_UNNAMED": "No timetable could be laid, even with the school's own rules allowed to give way.",
+      "BEST_EFFORT_TIMEOUT": "The best possible timetable did not finish within the time.",
       "CANDIDATES_NONE_APPLICABLE": "None of the proposals produced a timetable that can be applied.",
       "CANDIDATE_RUN_INTERRUPTED": "The service restarted while the proposals were being computed. Compute them again.",
       "CANDIDATE_RUN_ABANDONED": "The proposals stopped responding and have been cancelled. Compute them again.",
@@ -6791,6 +6821,8 @@
       "SCHEDULE_CANDIDATE_NOT_APPLICABLE": "The proposal cannot be applied: the run is not finished, or the proposal got no timetable.",
       "SCHEDULE_CANDIDATE_STALE": "The base timetable has changed since the proposals were computed. Refresh the proposals and compare again.",
       "SCHEDULE_CANDIDATE_STALE_PARTS": "The base timetable has changed since the proposals were computed: {parts}. Refresh the proposals and compare again.",
+      "BEST_EFFORT_NOT_ENABLED": "Best possible timetable is off for the school. Turn it on under School rules on Availability.",
+      "SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED": "The proposal's deviations were not accepted as they stand now. Open Apply again, read the deviations and accept them.",
       "CANDIDATE_GONE": "The proposal no longer exists. It may have been deleted or replaced by newer proposals.",
       "TOO_MANY": "Too many attempts in a short time. Wait a minute and try again.",
       "generic": "Something went wrong. Try again."
@@ -6808,6 +6840,7 @@
       "title": "The proposals could not be computed {date}",
       "cancelledTitle": "The proposals were cancelled",
       "conflicts": "What stopped the first proposal",
+      "conflictsBestEffort": "What stopped the timetable",
       "daysWhere": "This page shows the days to nobody, the principal included. The principal, a full administrator and anyone with HR read access see which teacher and how many days in the teacher's post and in the answer when they generate the timetable.",
       "olderBatch": "The comparison below is of the proposals from {date}.",
       "again": "Compute proposals again from Generate timetable"
@@ -6847,6 +6880,7 @@
       "currentSchedule": "Current timetable",
       "candidate": "Proposal {ordinal}",
       "sameAs": "Same as proposal {ordinal}",
+      "withDeviations": "With deviations ({count})",
       "applied": "Applied"
     },
     "row": {
@@ -6862,6 +6896,8 @@
       "wishesHint": "Teachers given lessons on the weekday they wish to have free, or teaching longer in a row than their limit",
       "pupils": "Pupils' gaps",
       "pupilsHint": "Minutes per pupil in an ordinary week",
+      "deviations": "Deviations from the rules",
+      "deviationsHint": "The school's own rules that gave way. The sentences are under Review a proposal.",
       "apply": "Apply"
     },
     "cell": {
@@ -6877,6 +6913,7 @@
       "wishNobody": "A teacher",
       "delta": "{delta} against current",
       "unplaced": "{lines, plural, =0 {All placed} one {# line · {minutes} min a week} other {# lines · {minutes} min a week}}",
+      "deviations": "{count, plural, =0 {No deviations} one {# deviation} other {# deviations}}",
       "lines": "{count, plural, one {# line} other {# lines}}",
       "movedOf": "{moved} of {of}",
       "notApplicable": "Not applicable",
@@ -6901,12 +6938,21 @@
       "applying": "Applying…",
       "checking": "Checking that the proposal still fits the draft…",
       "noLonger": "The proposal no longer fits the draft",
-      "noLongerHint": "The timetable has changed since the proposals were made, or now meets an obstacle. Close the dialog to see what changed."
+      "noLongerHint": "The timetable has changed since the proposals were made, or now meets an obstacle. Close the dialog to see what changed.",
+      "deviationsTitle": "{count, plural, one {# deviation from the school's rules} other {# deviations from the school's rules}}",
+      "deviationsIntro": "No timetable existed that kept every rule, so this one was laid with some of them allowed to give way. Read the deviations before you apply. That you accepted them is saved with the application, and publishing warns about them until the timetable has been published.",
+      "acceptDeviations": "I accept these deviations"
     },
     "review": {
       "title": "Review a proposal",
       "hint": "Who is worse off, and which lessons move.",
-      "pick": "Proposal"
+      "pick": "Proposal",
+      "deviationsTitle": "Deviations from the school's rules",
+      "deviationsHint": "The rules that were allowed to give way so that a timetable could be laid, with what each rule would have to be set to for this timetable to keep it.",
+      "deviationsNone": "Nothing gave way: the timetable keeps all of the school's rules."
+    },
+    "deviations": {
+      "daysHidden": "A teacher's limit on how many days a week they teach gave way in this timetable. The days are shown to the principal, a full administrator and anyone with HR read access."
     },
     "worse": {
       "title": "Worse for",

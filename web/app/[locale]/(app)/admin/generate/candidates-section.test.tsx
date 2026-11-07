@@ -11,7 +11,11 @@ import { CandidatesSection, type CandidatesSectionProps } from "./candidates-sec
  * it says and sends.
  */
 
-const start = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
+const start = vi.hoisted(() => ({
+  mutateAsync: vi.fn(),
+  isPending: false,
+  variables: undefined as { mode?: string } | undefined,
+}));
 vi.mock("./use-schedule-candidates", () => ({ useStartCandidates: () => start }));
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -96,6 +100,7 @@ const reasonOf = (element: HTMLElement) => document.getElementById(element.getAt
 beforeEach(() => {
   start.mutateAsync.mockReset();
   start.isPending = false;
+  start.variables = undefined;
   toast.success.mockReset();
   toast.error.mockReset();
 });
@@ -218,5 +223,80 @@ describe("the Schemaförslag section on /admin/generate", () => {
 
     renderSection({ overview: { data: undefined, isLoading: false, isError: true } });
     expect(screen.getByRole("alert").textContent).toContain("scheduleCandidates.section.loadFailed");
+  });
+
+  describe("Bästa möjliga schema", () => {
+    const bestEffortButton = () => screen.getByRole("button", { name: "scheduleCandidates.section.startBestEffort" });
+    const queryBestEffortButton = () => screen.queryByRole("button", { name: "scheduleCandidates.section.startBestEffort" });
+
+    it("offers Ta fram bästa möjliga only while the school has the mode on", () => {
+      const { unmount } = renderSection({ bestEffort: false });
+      expect(queryBestEffortButton()).toBeNull();
+      expect(screen.queryByText("scheduleCandidates.section.bestEffortHint")).toBeNull();
+      unmount();
+
+      // The prop is optional: a page that does not know the switch offers nothing.
+      const second = renderSection();
+      expect(queryBestEffortButton()).toBeNull();
+      second.unmount();
+
+      renderSection({ bestEffort: true });
+      expect(bestEffortButton()).toBeEnabled();
+      // The button says what it does: the hint is its description.
+      expect(reasonOf(bestEffortButton())?.textContent).toBe("scheduleCandidates.section.bestEffortHint");
+    });
+
+    it("starts one candidate in the mode, with the page's profile and no count, and leaves the ordinary start as it was", async () => {
+      start.mutateAsync.mockResolvedValue({ runId: "run-9" });
+      renderSection({ bestEffort: true });
+      const user = userEvent.setup();
+
+      await user.click(bestEffortButton());
+      expect(start.mutateAsync).toHaveBeenCalledTimes(1);
+      expect(start.mutateAsync).toHaveBeenCalledWith({ academicYearId: "y-1", mode: "BEST_EFFORT", weights: WEIGHTS });
+      expect(start.mutateAsync.mock.calls[0]![0]).not.toHaveProperty("count");
+      expect(toast.success).toHaveBeenCalledWith("scheduleCandidates.section.startedBestEffort");
+
+      // The ordinary start asks for the batch, without the mode.
+      await user.click(startButton());
+      expect(start.mutateAsync).toHaveBeenLastCalledWith({ academicYearId: "y-1", count: 3, weights: WEIGHTS });
+      expect(start.mutateAsync.mock.calls[1]![0]).not.toHaveProperty("mode");
+    });
+
+    it("waits for what the ordinary start waits for, with the same reason beside it", () => {
+      const { unmount } = renderSection({ bestEffort: true, generating: true });
+      expect(bestEffortButton()).toBeDisabled();
+      expect(bestEffortButton().getAttribute("aria-describedby")).toContain(startButton().getAttribute("aria-describedby")!);
+      unmount();
+
+      const second = renderSection({ bestEffort: true, canStart: false });
+      expect(bestEffortButton()).toBeDisabled();
+      second.unmount();
+
+      renderSection({
+        bestEffort: true,
+        overview: { data: overviewOf(run({ status: "RUNNING", progress: 0 })), isLoading: false, isError: false },
+      });
+      expect(bestEffortButton()).toBeDisabled();
+    });
+
+    it("says the mode being off in the school in words when the gateway refuses it", async () => {
+      start.mutateAsync.mockRejectedValue(new ApiError(409, "Off.", "BEST_EFFORT_NOT_ENABLED"));
+      renderSection({ bestEffort: true });
+
+      await userEvent.setup().click(bestEffortButton());
+      expect(toast.error).toHaveBeenCalledWith("scheduleCandidates.errors.BEST_EFFORT_NOT_ENABLED");
+    });
+
+    it("shows its own button as starting, not the ordinary one", () => {
+      start.isPending = true;
+      start.variables = { mode: "BEST_EFFORT" };
+      renderSection({ bestEffort: true });
+
+      // Both are held while a start is in flight; only the one pressed says so.
+      expect(startButton()).toBeDisabled();
+      expect(queryBestEffortButton()).toBeNull();
+      expect(screen.getAllByText("scheduleCandidates.section.starting")).toHaveLength(1);
+    });
   });
 });

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { IdleComparison, IdleSummary } from "@/lib/candidates/idle";
+import { deviationsOf, ranBestEffort } from "@/lib/candidates/deviations";
 import { isApplicable, signed, solverKey, variantLabel } from "@/lib/candidates/labels";
 import type { CandidateConflict, CandidateView, CandidatesUnplaced, PublishMode } from "@/lib/candidates/types";
 
@@ -188,6 +189,13 @@ export function ComparisonTable({
                 <span className="block text-xs">{t("table.sameAs", { ordinal: candidate.metrics.sameAs })}</span>
               ) : null}
               {isApplicable(candidate) ? null : <span className="block text-xs">{t(solverKey(candidate.solverStatus))}</span>}
+              {/* Bästa möjliga schema: marked when a rule gave way. A list that
+                  is empty is a run where nothing did, which is not an avsteg. */}
+              {deviationsOf(candidate).length > 0 ? (
+                <Badge variant="warning" className="mt-1">
+                  {t("table.withDeviations", { count: deviationsOf(candidate).length })}
+                </Badge>
+              ) : null}
               {candidate.id === appliedId ? (
                 <Badge variant="success" className="mt-1">
                   {t("table.applied")}
@@ -198,6 +206,25 @@ export function ComparisonTable({
         </TableRow>
       </TableHeader>
       <TableBody>
+        {/* Only for a batch from Bästa möjliga schema: a row of "Ej tillämpligt" in every other would be noise. */}
+        {candidates.some(ranBestEffort) ? (
+          <TableRow>
+            <TableHead scope="row" className={rowHead}>
+              {t("row.deviations")}
+              <Line muted>{t("row.deviationsHint")}</Line>
+            </TableHead>
+            <TableCell className="align-top">{notMeasured}</TableCell>
+            {candidates.map((candidate) => (
+              <TableCell key={candidate.id} className="align-top">
+                {!isApplicable(candidate) || !ranBestEffort(candidate) ? (
+                  notApplicable
+                ) : (
+                  <Line>{t("cell.deviations", { count: deviationsOf(candidate).length })}</Line>
+                )}
+              </TableCell>
+            ))}
+          </TableRow>
+        ) : null}
         <TableRow>
           <TableHead scope="row" className={rowHead}>
             {t("row.unplaced")}
