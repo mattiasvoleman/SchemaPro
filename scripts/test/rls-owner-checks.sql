@@ -1470,10 +1470,20 @@ ROLLBACK;
 --         keys they replaced are gone, each key has an index that serves the
 --         lookup of a removed parent and the planner never answers it with a
 --         Seq Scan, and the database itself, with row security out of the way,
---         refuses a row that names another school's.
+--         refuses a row that names another school's. The guard sees a table's
+--         school under any column named <something>SchoolId when it has no
+--         "schoolId" of its own (RoomLoans).
+--         What these keys also hold: the policies' SELECT arms ask the school
+--         of the ROW, and the fixtures that once planted a row naming another
+--         school's (to tell an arm asking the row's school from one asking the
+--         parent's) are gone, since such a row cannot be written. Loosen a key
+--         here and that distinction is untested again, not only this section.
 --   334   what a removed parent does is what it did: CASCADE removes the row,
 --         SET NULL nulls the column and nothing else ("schoolId" stays), RESTRICT
---         refuses.
+--         refuses. What a parent moved to another school does is nothing: the
+--         keys are ON UPDATE NO ACTION, so the move is refused by the key of
+--         the row that would have been carried along (it was CASCADE, and a room
+--         followed its room type to another school without a word).
 --
 -- The rows are rls-tenantkey-a's and -b's (fixtures: 7e<school><entity>-…).
 -- Run as the owner: the policies of the API's role add predicates of their own
@@ -1532,9 +1542,18 @@ LANGUAGE sql AS $$
   ) v(child, col, parent, del, row_n, victim_n)
 $$;
 
+-- The columns of a table that say which school a row belongs to: "schoolId", or, in a table that has none of
+-- that name (RoomLoans: the owner's school and the borrower's), every column named like <something>SchoolId.
+CREATE FUNCTION pg_temp.tk_school_cols(p_rel oid) RETURNS int2[] LANGUAGE sql AS $$
+  SELECT coalesce(
+    (SELECT array_agg(a.attnum) FROM pg_attribute a WHERE a.attrelid = p_rel AND a.attname = 'schoolId' AND NOT a.attisdropped),
+    (SELECT array_agg(a.attnum) FROM pg_attribute a WHERE a.attrelid = p_rel AND a.attnum > 0 AND NOT a.attisdropped AND a.attname ~ '[a-z]SchoolId$'))
+$$;
+
 -- The guard's predicate, over the foreign keys of one schema's tables: those whose child and parent both
--- carry "schoolId" and that do not hold the child's "schoolId" against the parent's at some position of
--- the key. Run over "public" for the guard, and over this session's temporary tables for its self-test.
+-- carry a school column (above) and that do not hold one of the child's against one of the parent's at some
+-- position of the key. Run over "public" for the guard, and over this session's temporary tables for its
+-- self-test.
 CREATE FUNCTION pg_temp.tk_gaps(p_schema oid) RETURNS TABLE (tbl text, conname text, cols text)
 LANGUAGE sql AS $$
   SELECT cl.relname::text, c.conname::text,
@@ -1543,11 +1562,11 @@ LANGUAGE sql AS $$
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum)
     FROM pg_constraint c
     JOIN pg_class cl ON cl.oid = c.conrelid AND cl.relnamespace = p_schema
-    JOIN pg_attribute cs ON cs.attrelid = c.conrelid AND cs.attname = 'schoolId' AND NOT cs.attisdropped
-    JOIN pg_attribute ps ON ps.attrelid = c.confrelid AND ps.attname = 'schoolId' AND NOT ps.attisdropped
+    CROSS JOIN LATERAL (SELECT pg_temp.tk_school_cols(c.conrelid) AS cs, pg_temp.tk_school_cols(c.confrelid) AS ps) s
    WHERE c.contype = 'f'
+     AND s.cs IS NOT NULL AND s.ps IS NOT NULL
      AND NOT EXISTS (SELECT 1 FROM generate_subscripts(c.conkey, 1) i
-                      WHERE c.conkey[i] = cs.attnum AND c.confkey[i] = ps.attnum)
+                      WHERE c.conkey[i] = ANY (s.cs) AND c.confkey[i] = ANY (s.ps))
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -1647,9 +1666,20 @@ BEGIN
   -- A table without the column on either side is none of the guard's business.
   CREATE TEMP TABLE tk_bare (id uuid PRIMARY KEY);
   CREATE TEMP TABLE tk_bare_child (id uuid PRIMARY KEY, x uuid REFERENCES tk_bare (id));
+  -- A table whose school is not called "schoolId" (RoomLoans: ownerSchoolId, borrowerSchoolId): a plain key
+  -- from it is a gap, a key that holds one of its school columns against the parent's is not.
+  CREATE TEMP TABLE tk_loan_plain (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid REFERENCES tk_parent (id));
+  CREATE TEMP TABLE tk_loan_owner (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                   FOREIGN KEY (x, "ownerSchoolId") REFERENCES tk_parent (id, "schoolId"));
+  CREATE TEMP TABLE tk_loan_borrower (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                      FOREIGN KEY (x, "borrowerSchoolId") REFERENCES tk_parent (id, "schoolId"));
+  -- The same table the other way round: a school-bound table naming a row of a table whose school is called
+  -- <x>SchoolId, plain.
+  CREATE TEMP TABLE tk_loaned (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, UNIQUE (id, "ownerSchoolId"));
+  CREATE TEMP TABLE tk_names_loaned (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid REFERENCES tk_loaned (id));
   SELECT array_agg(g.tbl ORDER BY g.tbl) INTO got FROM pg_temp.tk_gaps(pg_my_temp_schema()) g;
-  IF got IS DISTINCT FROM ARRAY['tk_both', 'tk_crossed', 'tk_plain', 'tk_wrongcol'] THEN
-    RAISE EXCEPTION 'tenant keys 330: the guard reported % over the stand-ins, not the keys that do not hold the school alone (tk_both, tk_crossed, tk_plain, tk_wrongcol)', got;
+  IF got IS DISTINCT FROM ARRAY['tk_both', 'tk_crossed', 'tk_loan_plain', 'tk_names_loaned', 'tk_plain', 'tk_wrongcol'] THEN
+    RAISE EXCEPTION 'tenant keys 330: the guard reported % over the stand-ins, not the keys that do not hold the school alone (tk_both, tk_crossed, tk_loan_plain, tk_names_loaned, tk_plain, tk_wrongcol)', got;
   END IF;
 END $$;
 ROLLBACK;
@@ -1685,10 +1715,15 @@ BEGIN
     IF def IS NULL THEN
       RAISE EXCEPTION 'tenant keys 330: % is gone', kname;
     END IF;
-    want := format('FOREIGN KEY (%I, "schoolId") REFERENCES %I(id, "schoolId") ON UPDATE CASCADE ON DELETE %s', k.col, k.parent,
+    -- ON UPDATE NO ACTION is the default and pg_get_constraintdef does not print it; the catalogue's own
+    -- letter is asked as well, so a key that follows its parent to another school (CASCADE, SET NULL) fails here.
+    want := format('FOREIGN KEY (%I, "schoolId") REFERENCES %I(id, "schoolId") ON DELETE %s', k.col, k.parent,
                    CASE k.del WHEN 'c' THEN 'CASCADE' WHEN 'r' THEN 'RESTRICT' ELSE format('SET NULL (%I)', k.col) END);
     IF def IS DISTINCT FROM want THEN
       RAISE EXCEPTION E'tenant keys 330: % is\n  %\nnot\n  %', kname, def, want;
+    END IF;
+    IF (SELECT c.confupdtype FROM pg_constraint c WHERE c.conname = kname AND c.conrelid = to_regclass(format('public.%I', k.child))) <> 'a' THEN
+      RAISE EXCEPTION 'tenant keys 330: % follows its parent when the parent is updated (ON UPDATE is not NO ACTION)', kname;
     END IF;
     IF NOT valid THEN
       RAISE EXCEPTION 'tenant keys 330: % was never validated', kname;
@@ -1915,5 +1950,39 @@ BEGIN
     END;
   END LOOP;
   IF ok <> 37 THEN RAISE EXCEPTION 'tenant keys 334: % keys of 37 removed their parent', ok; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 334, the other half: a parent moved to another school is not followed.
+--
+-- A room type of school B with one room of B's, moved to school A by an UPDATE of its "schoolId" (the owner;
+-- no role the API runs as can). ON UPDATE CASCADE would have carried the room along, and the move would have
+-- passed in silence, a room in a school that never made it; NO ACTION refuses, and the refusal is the room's
+-- key. The room type is a fresh one so that nothing but the room holds it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  rtype uuid := gen_random_uuid();
+  room uuid := gen_random_uuid();
+  cname text;
+  moved boolean := false;
+BEGIN
+  INSERT INTO "RoomTypes" (id, "schoolId", name, "updatedAt") VALUES (rtype, pg_temp.tk_id(2, 1), 'TK334 flyttad typ', now());
+  INSERT INTO "Rooms" (id, "schoolId", name, "roomTypeId", "updatedAt") VALUES (room, pg_temp.tk_id(2, 1), 'TK334 flyttat rum', rtype, now());
+  BEGIN
+    UPDATE "RoomTypes" SET "schoolId" = pg_temp.tk_id(1, 1) WHERE id = rtype;
+    moved := true;
+  EXCEPTION WHEN foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS cname = CONSTRAINT_NAME;
+  END;
+  IF moved THEN
+    RAISE EXCEPTION 'tenant keys 334: a room type was moved to another school and its room was %', (SELECT "schoolId" FROM "Rooms" WHERE id = room);
+  END IF;
+  IF cname IS DISTINCT FROM 'Rooms_roomTypeId_schoolId_fkey' THEN
+    RAISE EXCEPTION 'tenant keys 334: moving the room type was refused by % and not by Rooms_roomTypeId_schoolId_fkey', cname;
+  END IF;
 END $$;
 ROLLBACK;

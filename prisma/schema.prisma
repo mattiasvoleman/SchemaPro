@@ -579,7 +579,7 @@ model Room {
   updatedAt        DateTime @updatedAt @db.Timestamptz(6)
 
   school                  School                   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  roomType                RoomType?                @relation(fields: [roomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict)
+  roomType                RoomType?                @relation(fields: [roomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
   site                    Site?                    @relation(fields: [siteId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
@@ -880,7 +880,7 @@ model Subject {
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
   school               School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  requiredRoomType     RoomType?             @relation(fields: [requiredRoomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict)
+  requiredRoomType     RoomType?             @relation(fields: [requiredRoomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
   nationalSubject      NationalSubject?      @relation(fields: [nationalCode], references: [code], onDelete: Restrict)
   teachingRequirements TeachingRequirement[]
   masterLessons        MasterLesson[]
@@ -1902,7 +1902,7 @@ model StudentGroup {
   updatedAt      DateTime         @updatedAt @db.Timestamptz(6)
 
   school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  academicYear AcademicYear  @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  academicYear AcademicYear  @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   replacesSubject Subject?   @relation("ReplacedSubject", fields: [replacesSubjectId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   predecessor  StudentGroup? @relation("GroupSuccession", fields: [predecessorId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   successor    StudentGroup? @relation("GroupSuccession")
@@ -2297,10 +2297,10 @@ model CalendarLesson {
   updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
 
   school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  masterLesson MasterLesson? @relation(fields: [masterLessonId, schoolId], references: [id, schoolId], onDelete: SetNull)
-  subject      Subject       @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  studentGroup StudentGroup  @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  room         Room?         @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: SetNull)
+  masterLesson MasterLesson? @relation(fields: [masterLessonId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  subject      Subject       @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  studentGroup StudentGroup  @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  room         Room?         @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
 
   teachers          CalendarLessonTeacher[]
   attendanceRecords AttendanceRecord[]
@@ -2355,7 +2355,7 @@ model MasterLessonGroup {
   studentGroupId String   @db.Uuid
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
-  masterLesson MasterLesson @relation(fields: [masterLessonId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  masterLesson MasterLesson @relation(fields: [masterLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   /// The extra classes come straight from the request, so this reference is
   /// tenant-scoped like the lesson's own. `masterLessonId` is deliberately
   /// left plain: the row's school is already pinned to the group's by this
@@ -2376,7 +2376,7 @@ model MasterLessonStudent {
   studentId      String   @db.Uuid
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
-  masterLesson MasterLesson @relation(fields: [masterLessonId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  masterLesson MasterLesson @relation(fields: [masterLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   /// The one reference here that a pupil's own read policy trusts:
   /// `master_lesson_students_self_select` asks only "is this row about me?".
   /// Pinning the school to the pupil is what makes a row that answers yes
@@ -2401,8 +2401,8 @@ model StudentGroupMember {
   halfOfId       String?  @db.Uuid
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
-  studentGroup StudentGroup @relation("TeachingGroupGroup", fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  student      User         @relation("TeachingGroupStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  studentGroup StudentGroup @relation("TeachingGroupGroup", fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  student      User         @relation("TeachingGroupStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([studentGroupId, studentId])
   @@index([schoolId])
@@ -2417,8 +2417,8 @@ model CalendarLessonGroup {
   studentGroupId   String   @db.Uuid
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
 
-  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  studentGroup   StudentGroup   @relation("CalendarLessonExtraGroup", fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  studentGroup   StudentGroup   @relation("CalendarLessonExtraGroup", fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([calendarLessonId, studentGroupId])
   @@index([schoolId])
@@ -2433,8 +2433,8 @@ model CalendarLessonStudent {
   studentId        String   @db.Uuid
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
 
-  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  student        User           @relation("CalendarLessonParticipant", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  student        User           @relation("CalendarLessonParticipant", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([calendarLessonId, studentId])
   @@index([schoolId])
@@ -2455,8 +2455,8 @@ model CalendarLessonTeacher {
   createdAt        DateTime              @default(now()) @db.Timestamptz(6)
 
   school         School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  teacher        User           @relation("AssignedTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  teacher        User           @relation("AssignedTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([calendarLessonId, teacherId])
   @@index([schoolId])
@@ -2539,9 +2539,9 @@ model AttendanceRecord {
   updatedAt        DateTime         @updatedAt @db.Timestamptz(6)
 
   school         School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  student        User           @relation("AttendanceStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  recordedBy     User?          @relation("AttendanceRecorder", fields: [recordedById, schoolId], references: [id, schoolId], onDelete: SetNull)
+  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  student        User           @relation("AttendanceStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  recordedBy     User?          @relation("AttendanceRecorder", fields: [recordedById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
 
   @@unique([calendarLessonId, studentId])
   @@index([schoolId, recordedAt])
@@ -2800,8 +2800,8 @@ model AbsenceReport {
   createdAt    DateTime          @default(now()) @db.Timestamptz(6)
 
   school     School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  student    User   @relation("AbsenceStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  reportedBy User   @relation("AbsenceReporter", fields: [reportedById, schoolId], references: [id, schoolId], onDelete: Cascade)
+  student    User   @relation("AbsenceStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  reportedBy User   @relation("AbsenceReporter", fields: [reportedById, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([schoolId, date])
   @@index([studentId, date])
@@ -2833,10 +2833,10 @@ model LeaveRequest {
   createdAt     DateTime           @default(now()) @db.Timestamptz(6)
 
   school      School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  student     User   @relation("LeaveStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  requestedBy User   @relation("LeaveRequester", fields: [requestedById, schoolId], references: [id, schoolId], onDelete: Cascade)
-  decidedBy   User?  @relation("LeaveDecider", fields: [decidedById, schoolId], references: [id, schoolId], onDelete: SetNull)
-  referredBy  User?  @relation("LeaveReferrer", fields: [referredById, schoolId], references: [id, schoolId], onDelete: SetNull)
+  student     User   @relation("LeaveStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  requestedBy User   @relation("LeaveRequester", fields: [requestedById, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  decidedBy   User?  @relation("LeaveDecider", fields: [decidedById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  referredBy  User?  @relation("LeaveReferrer", fields: [referredById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
 
   @@index([schoolId, status, createdAt])
   @@index([studentId, startDate])
@@ -2874,9 +2874,9 @@ model RoomBooking {
   updatedAt    DateTime          @updatedAt @db.Timestamptz(6)
 
   school    School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  room      Room   @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  bookedBy  User   @relation("RoomBookingBooker", fields: [bookedById, schoolId], references: [id, schoolId], onDelete: Cascade)
-  decidedBy User?  @relation("RoomBookingDecider", fields: [decidedById, schoolId], references: [id, schoolId], onDelete: SetNull)
+  room      Room   @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  bookedBy  User   @relation("RoomBookingBooker", fields: [bookedById, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  decidedBy User?  @relation("RoomBookingDecider", fields: [decidedById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
 
   // Not visible here, and load-bearing: an EXCLUDE constraint on
   // (roomId, tstzrange(startsAt, endsAt)), limited to PENDING and APPROVED
@@ -2997,7 +2997,7 @@ model Notification {
   createdAt DateTime         @default(now()) @db.Timestamptz(6)
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  user   User   @relation("NotificationRecipient", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  user   User   @relation("NotificationRecipient", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([userId, createdAt])
   @@index([schoolId])
@@ -3095,9 +3095,9 @@ model AvailabilityConstraint {
   updatedAt      DateTime           @updatedAt @db.Timestamptz(6)
 
   school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  user         User?         @relation("ConstraintTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  room         Room?         @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  studentGroup StudentGroup? @relation("ConstraintGroup", fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  user         User?         @relation("ConstraintTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  room         Room?         @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  studentGroup StudentGroup? @relation("ConstraintGroup", fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   /// The uppdrag time this constraint holds, when it is one (migration
   /// 20261017090000): created and deleted by the duties service in the
   /// duty's transaction. Triggers keep it a weekly UNAVAILABLE row of the
@@ -4117,8 +4117,8 @@ model RoomPreference {
   updatedAt  DateTime @updatedAt @db.Timestamptz(6)
 
   school   School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  subject  Subject              @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  roomType RoomType?            @relation(fields: [roomTypeId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  subject  Subject              @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  roomType RoomType?            @relation(fields: [roomTypeId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   rooms    RoomPreferenceRoom[]
 
   @@index([schoolId])
@@ -4138,8 +4138,8 @@ model RoomPreferenceRoom {
   preferenceId String @db.Uuid
   roomId       String @db.Uuid
 
-  preference RoomPreference @relation(fields: [preferenceId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  room       Room           @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  preference RoomPreference @relation(fields: [preferenceId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  room       Room           @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([preferenceId, roomId])
   @@index([schoolId])

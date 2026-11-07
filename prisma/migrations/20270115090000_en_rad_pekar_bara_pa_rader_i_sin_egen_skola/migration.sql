@@ -53,7 +53,14 @@
 --      the next file (20270115090100), whose VALIDATE blocks neither a read
 --      nor a write. ON DELETE is what it was (CASCADE, RESTRICT, or SET NULL,
 --      which here names its own column: the key now holds "schoolId" too, and
---      that column is not to be nulled), and so is ON UPDATE CASCADE.
+--      that column is not to be nulled). ON UPDATE is NO ACTION, not what it was
+--      (CASCADE): a key that holds "schoolId" would, on CASCADE, carry a child
+--      along when someone moved a parent to another school (tried on 232
+--      parents: with CASCADE three went, a room with its room type, and said
+--      nothing; with NO ACTION none moves and each refusal names the key).
+--      No code path updates an "id" or a "schoolId", and the newer composite
+--      keys of the schema (Sites, RoomLoans, SupervisionShifts) are NO ACTION
+--      too.
 --   5. Three small tables get the index their new key's lookup needs: the
 --      lookup Postgres makes in the child when a parent row goes is an
 --      equality on the key's columns, and these three keys had no index of any
@@ -94,53 +101,53 @@ DECLARE
   found text := '';
 BEGIN
   FOR k IN SELECT * FROM (VALUES
-      ('AbsenceReports', 'reportedById', 'Users'),
-      ('AbsenceReports', 'studentId', 'Users'),
-      ('AttendanceRecords', 'calendarLessonId', 'CalendarLessons'),
-      ('AttendanceRecords', 'recordedById', 'Users'),
-      ('AttendanceRecords', 'studentId', 'Users'),
-      ('AvailabilityConstraints', 'roomId', 'Rooms'),
-      ('AvailabilityConstraints', 'studentGroupId', 'StudentGroups'),
-      ('AvailabilityConstraints', 'userId', 'Users'),
-      ('CalendarLessonGroups', 'calendarLessonId', 'CalendarLessons'),
-      ('CalendarLessonGroups', 'studentGroupId', 'StudentGroups'),
-      ('CalendarLessonStudents', 'calendarLessonId', 'CalendarLessons'),
-      ('CalendarLessonStudents', 'studentId', 'Users'),
-      ('CalendarLessonTeachers', 'calendarLessonId', 'CalendarLessons'),
-      ('CalendarLessonTeachers', 'teacherId', 'Users'),
-      ('CalendarLessons', 'masterLessonId', 'MasterLessons'),
-      ('CalendarLessons', 'roomId', 'Rooms'),
-      ('CalendarLessons', 'studentGroupId', 'StudentGroups'),
-      ('CalendarLessons', 'subjectId', 'Subjects'),
-      ('LeaveRequestNotices', 'leaveRequestId', 'LeaveRequests'),
-      ('LeaveRequests', 'decidedById', 'Users'),
-      ('LeaveRequests', 'referredById', 'Users'),
-      ('LeaveRequests', 'requestedById', 'Users'),
-      ('LeaveRequests', 'studentId', 'Users'),
-      ('MasterLessonGroups', 'masterLessonId', 'MasterLessons'),
-      ('MasterLessonStudents', 'masterLessonId', 'MasterLessons'),
-      ('Notifications', 'userId', 'Users'),
-      ('RoomBookings', 'bookedById', 'Users'),
-      ('RoomBookings', 'decidedById', 'Users'),
-      ('RoomBookings', 'roomId', 'Rooms'),
-      ('RoomPreferenceRooms', 'preferenceId', 'RoomPreferences'),
-      ('RoomPreferenceRooms', 'roomId', 'Rooms'),
-      ('RoomPreferences', 'roomTypeId', 'RoomTypes'),
-      ('RoomPreferences', 'subjectId', 'Subjects'),
-      ('Rooms', 'roomTypeId', 'RoomTypes'),
-      ('StudentGroupMembers', 'studentGroupId', 'StudentGroups'),
-      ('StudentGroupMembers', 'studentId', 'Users'),
-      ('StudentGroups', 'academicYearId', 'AcademicYears'),
-      ('Subjects', 'requiredRoomTypeId', 'RoomTypes')
-  ) AS v(child, col, parent)
+      ('AbsenceReports', 'reportedById', 'Users', 'c."id"'),
+      ('AbsenceReports', 'studentId', 'Users', 'c."id"'),
+      ('AttendanceRecords', 'calendarLessonId', 'CalendarLessons', 'c."id"'),
+      ('AttendanceRecords', 'recordedById', 'Users', 'c."id"'),
+      ('AttendanceRecords', 'studentId', 'Users', 'c."id"'),
+      ('AvailabilityConstraints', 'roomId', 'Rooms', 'c."id"'),
+      ('AvailabilityConstraints', 'studentGroupId', 'StudentGroups', 'c."id"'),
+      ('AvailabilityConstraints', 'userId', 'Users', 'c."id"'),
+      ('CalendarLessonGroups', 'calendarLessonId', 'CalendarLessons', 'c."id"'),
+      ('CalendarLessonGroups', 'studentGroupId', 'StudentGroups', 'c."id"'),
+      ('CalendarLessonStudents', 'calendarLessonId', 'CalendarLessons', 'c."id"'),
+      ('CalendarLessonStudents', 'studentId', 'Users', 'c."id"'),
+      ('CalendarLessonTeachers', 'calendarLessonId', 'CalendarLessons', 'c."id"'),
+      ('CalendarLessonTeachers', 'teacherId', 'Users', 'c."id"'),
+      ('CalendarLessons', 'masterLessonId', 'MasterLessons', 'c."id"'),
+      ('CalendarLessons', 'roomId', 'Rooms', 'c."id"'),
+      ('CalendarLessons', 'studentGroupId', 'StudentGroups', 'c."id"'),
+      ('CalendarLessons', 'subjectId', 'Subjects', 'c."id"'),
+      ('LeaveRequestNotices', 'leaveRequestId', 'LeaveRequests', 'c."leaveRequestId"::text || ''/'' || c."userId"::text'),
+      ('LeaveRequests', 'decidedById', 'Users', 'c."id"'),
+      ('LeaveRequests', 'referredById', 'Users', 'c."id"'),
+      ('LeaveRequests', 'requestedById', 'Users', 'c."id"'),
+      ('LeaveRequests', 'studentId', 'Users', 'c."id"'),
+      ('MasterLessonGroups', 'masterLessonId', 'MasterLessons', 'c."id"'),
+      ('MasterLessonStudents', 'masterLessonId', 'MasterLessons', 'c."id"'),
+      ('Notifications', 'userId', 'Users', 'c."id"'),
+      ('RoomBookings', 'bookedById', 'Users', 'c."id"'),
+      ('RoomBookings', 'decidedById', 'Users', 'c."id"'),
+      ('RoomBookings', 'roomId', 'Rooms', 'c."id"'),
+      ('RoomPreferenceRooms', 'preferenceId', 'RoomPreferences', 'c."id"'),
+      ('RoomPreferenceRooms', 'roomId', 'Rooms', 'c."id"'),
+      ('RoomPreferences', 'roomTypeId', 'RoomTypes', 'c."id"'),
+      ('RoomPreferences', 'subjectId', 'Subjects', 'c."id"'),
+      ('Rooms', 'roomTypeId', 'RoomTypes', 'c."id"'),
+      ('StudentGroupMembers', 'studentGroupId', 'StudentGroups', 'c."id"'),
+      ('StudentGroupMembers', 'studentId', 'Users', 'c."id"'),
+      ('StudentGroups', 'academicYearId', 'AcademicYears', 'c."id"'),
+      ('Subjects', 'requiredRoomTypeId', 'RoomTypes', 'c."id"')
+  ) AS v(child, col, parent, ident)
   LOOP
     EXECUTE format(
       'SELECT count(*) FROM %2$I c JOIN %3$I p ON p."id" = c.%1$I WHERE p."schoolId" <> c."schoolId"',
-      k.col, k.child, k.parent) INTO n;
+      k.col, k.child, k.parent, k.ident) INTO n;
     IF n > 0 THEN
       EXECUTE format(
-        'SELECT string_agg(x.what, ''; '') FROM (SELECT c.%1$I::text || '' named from school '' || c."schoolId" || '', belongs to school '' || p."schoolId" AS what FROM %2$I c JOIN %3$I p ON p."id" = c.%1$I WHERE p."schoolId" <> c."schoolId" LIMIT 3) x',
-        k.col, k.child, k.parent) INTO sample;
+        'SELECT string_agg(x.what, ''; '') FROM (SELECT ''row '' || (%4$s) || '' of school '' || c."schoolId" || '' names '' || c.%1$I::text || '' of school '' || p."schoolId" AS what FROM %2$I c JOIN %3$I p ON p."id" = c.%1$I WHERE p."schoolId" <> c."schoolId" LIMIT 3) x',
+        k.col, k.child, k.parent, k.ident) INTO sample;
       found := found || format(E'\n  %s.%s -> %s: %s row(s), e.g. %s', k.child, k.col, k.parent, n, sample);
     END IF;
   END LOOP;
@@ -216,154 +223,154 @@ CREATE UNIQUE INDEX "LeaveRequests_id_schoolId_key" ON "LeaveRequests"("id", "sc
 -- AbsenceReports
 ALTER TABLE "AbsenceReports" DROP CONSTRAINT "AbsenceReports_reportedById_fkey";
 ALTER TABLE "AbsenceReports" ADD CONSTRAINT "AbsenceReports_reportedById_schoolId_fkey" FOREIGN KEY ("reportedById", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "AbsenceReports" DROP CONSTRAINT "AbsenceReports_studentId_fkey";
 ALTER TABLE "AbsenceReports" ADD CONSTRAINT "AbsenceReports_studentId_schoolId_fkey" FOREIGN KEY ("studentId", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- AttendanceRecords
 ALTER TABLE "AttendanceRecords" DROP CONSTRAINT "AttendanceRecords_calendarLessonId_fkey";
 ALTER TABLE "AttendanceRecords" ADD CONSTRAINT "AttendanceRecords_calendarLessonId_schoolId_fkey" FOREIGN KEY ("calendarLessonId", "schoolId")
-    REFERENCES "CalendarLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "CalendarLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "AttendanceRecords" DROP CONSTRAINT "AttendanceRecords_recordedById_fkey";
 ALTER TABLE "AttendanceRecords" ADD CONSTRAINT "AttendanceRecords_recordedById_schoolId_fkey" FOREIGN KEY ("recordedById", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("recordedById") ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("recordedById") ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "AttendanceRecords" DROP CONSTRAINT "AttendanceRecords_studentId_fkey";
 ALTER TABLE "AttendanceRecords" ADD CONSTRAINT "AttendanceRecords_studentId_schoolId_fkey" FOREIGN KEY ("studentId", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- AvailabilityConstraints
 ALTER TABLE "AvailabilityConstraints" DROP CONSTRAINT "AvailabilityConstraints_roomId_fkey";
 ALTER TABLE "AvailabilityConstraints" ADD CONSTRAINT "AvailabilityConstraints_roomId_schoolId_fkey" FOREIGN KEY ("roomId", "schoolId")
-    REFERENCES "Rooms"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Rooms"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "AvailabilityConstraints" DROP CONSTRAINT "AvailabilityConstraints_studentGroupId_fkey";
 ALTER TABLE "AvailabilityConstraints" ADD CONSTRAINT "AvailabilityConstraints_studentGroupId_schoolId_fkey" FOREIGN KEY ("studentGroupId", "schoolId")
-    REFERENCES "StudentGroups"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "StudentGroups"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "AvailabilityConstraints" DROP CONSTRAINT "AvailabilityConstraints_userId_fkey";
 ALTER TABLE "AvailabilityConstraints" ADD CONSTRAINT "AvailabilityConstraints_userId_schoolId_fkey" FOREIGN KEY ("userId", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- CalendarLessonGroups
 ALTER TABLE "CalendarLessonGroups" DROP CONSTRAINT "CalendarLessonGroups_calendarLessonId_fkey";
 ALTER TABLE "CalendarLessonGroups" ADD CONSTRAINT "CalendarLessonGroups_calendarLessonId_schoolId_fkey" FOREIGN KEY ("calendarLessonId", "schoolId")
-    REFERENCES "CalendarLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "CalendarLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "CalendarLessonGroups" DROP CONSTRAINT "CalendarLessonGroups_studentGroupId_fkey";
 ALTER TABLE "CalendarLessonGroups" ADD CONSTRAINT "CalendarLessonGroups_studentGroupId_schoolId_fkey" FOREIGN KEY ("studentGroupId", "schoolId")
-    REFERENCES "StudentGroups"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "StudentGroups"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- CalendarLessonStudents
 ALTER TABLE "CalendarLessonStudents" DROP CONSTRAINT "CalendarLessonStudents_calendarLessonId_fkey";
 ALTER TABLE "CalendarLessonStudents" ADD CONSTRAINT "CalendarLessonStudents_calendarLessonId_schoolId_fkey" FOREIGN KEY ("calendarLessonId", "schoolId")
-    REFERENCES "CalendarLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "CalendarLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "CalendarLessonStudents" DROP CONSTRAINT "CalendarLessonStudents_studentId_fkey";
 ALTER TABLE "CalendarLessonStudents" ADD CONSTRAINT "CalendarLessonStudents_studentId_schoolId_fkey" FOREIGN KEY ("studentId", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- CalendarLessonTeachers
 ALTER TABLE "CalendarLessonTeachers" DROP CONSTRAINT "CalendarLessonTeachers_calendarLessonId_fkey";
 ALTER TABLE "CalendarLessonTeachers" ADD CONSTRAINT "CalendarLessonTeachers_calendarLessonId_schoolId_fkey" FOREIGN KEY ("calendarLessonId", "schoolId")
-    REFERENCES "CalendarLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "CalendarLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "CalendarLessonTeachers" DROP CONSTRAINT "CalendarLessonTeachers_teacherId_fkey";
 ALTER TABLE "CalendarLessonTeachers" ADD CONSTRAINT "CalendarLessonTeachers_teacherId_schoolId_fkey" FOREIGN KEY ("teacherId", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- CalendarLessons
 ALTER TABLE "CalendarLessons" DROP CONSTRAINT "CalendarLessons_masterLessonId_fkey";
 ALTER TABLE "CalendarLessons" ADD CONSTRAINT "CalendarLessons_masterLessonId_schoolId_fkey" FOREIGN KEY ("masterLessonId", "schoolId")
-    REFERENCES "MasterLessons"("id", "schoolId") ON DELETE SET NULL ("masterLessonId") ON UPDATE CASCADE NOT VALID;
+    REFERENCES "MasterLessons"("id", "schoolId") ON DELETE SET NULL ("masterLessonId") ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "CalendarLessons" DROP CONSTRAINT "CalendarLessons_roomId_fkey";
 ALTER TABLE "CalendarLessons" ADD CONSTRAINT "CalendarLessons_roomId_schoolId_fkey" FOREIGN KEY ("roomId", "schoolId")
-    REFERENCES "Rooms"("id", "schoolId") ON DELETE SET NULL ("roomId") ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Rooms"("id", "schoolId") ON DELETE SET NULL ("roomId") ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "CalendarLessons" DROP CONSTRAINT "CalendarLessons_studentGroupId_fkey";
 ALTER TABLE "CalendarLessons" ADD CONSTRAINT "CalendarLessons_studentGroupId_schoolId_fkey" FOREIGN KEY ("studentGroupId", "schoolId")
-    REFERENCES "StudentGroups"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "StudentGroups"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "CalendarLessons" DROP CONSTRAINT "CalendarLessons_subjectId_fkey";
 ALTER TABLE "CalendarLessons" ADD CONSTRAINT "CalendarLessons_subjectId_schoolId_fkey" FOREIGN KEY ("subjectId", "schoolId")
-    REFERENCES "Subjects"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Subjects"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- LeaveRequestNotices
 ALTER TABLE "LeaveRequestNotices" DROP CONSTRAINT "LeaveRequestNotices_leaveRequestId_fkey";
 ALTER TABLE "LeaveRequestNotices" ADD CONSTRAINT "LeaveRequestNotices_leaveRequestId_schoolId_fkey" FOREIGN KEY ("leaveRequestId", "schoolId")
-    REFERENCES "LeaveRequests"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "LeaveRequests"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- LeaveRequests
 ALTER TABLE "LeaveRequests" DROP CONSTRAINT "LeaveRequests_decidedById_fkey";
 ALTER TABLE "LeaveRequests" ADD CONSTRAINT "LeaveRequests_decidedById_schoolId_fkey" FOREIGN KEY ("decidedById", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("decidedById") ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("decidedById") ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "LeaveRequests" DROP CONSTRAINT "LeaveRequests_referredById_fkey";
 ALTER TABLE "LeaveRequests" ADD CONSTRAINT "LeaveRequests_referredById_schoolId_fkey" FOREIGN KEY ("referredById", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("referredById") ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("referredById") ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "LeaveRequests" DROP CONSTRAINT "LeaveRequests_requestedById_fkey";
 ALTER TABLE "LeaveRequests" ADD CONSTRAINT "LeaveRequests_requestedById_schoolId_fkey" FOREIGN KEY ("requestedById", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "LeaveRequests" DROP CONSTRAINT "LeaveRequests_studentId_fkey";
 ALTER TABLE "LeaveRequests" ADD CONSTRAINT "LeaveRequests_studentId_schoolId_fkey" FOREIGN KEY ("studentId", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- MasterLessonGroups
 ALTER TABLE "MasterLessonGroups" DROP CONSTRAINT "MasterLessonGroups_masterLessonId_fkey";
 ALTER TABLE "MasterLessonGroups" ADD CONSTRAINT "MasterLessonGroups_masterLessonId_schoolId_fkey" FOREIGN KEY ("masterLessonId", "schoolId")
-    REFERENCES "MasterLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "MasterLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- MasterLessonStudents
 ALTER TABLE "MasterLessonStudents" DROP CONSTRAINT "MasterLessonStudents_masterLessonId_fkey";
 ALTER TABLE "MasterLessonStudents" ADD CONSTRAINT "MasterLessonStudents_masterLessonId_schoolId_fkey" FOREIGN KEY ("masterLessonId", "schoolId")
-    REFERENCES "MasterLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "MasterLessons"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- Notifications
 ALTER TABLE "Notifications" DROP CONSTRAINT "Notifications_userId_fkey";
 ALTER TABLE "Notifications" ADD CONSTRAINT "Notifications_userId_schoolId_fkey" FOREIGN KEY ("userId", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- RoomBookings
 ALTER TABLE "RoomBookings" DROP CONSTRAINT "RoomBookings_bookedById_fkey";
 ALTER TABLE "RoomBookings" ADD CONSTRAINT "RoomBookings_bookedById_schoolId_fkey" FOREIGN KEY ("bookedById", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "RoomBookings" DROP CONSTRAINT "RoomBookings_decidedById_fkey";
 ALTER TABLE "RoomBookings" ADD CONSTRAINT "RoomBookings_decidedById_schoolId_fkey" FOREIGN KEY ("decidedById", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("decidedById") ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("decidedById") ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "RoomBookings" DROP CONSTRAINT "RoomBookings_roomId_fkey";
 ALTER TABLE "RoomBookings" ADD CONSTRAINT "RoomBookings_roomId_schoolId_fkey" FOREIGN KEY ("roomId", "schoolId")
-    REFERENCES "Rooms"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Rooms"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- RoomPreferenceRooms
 ALTER TABLE "RoomPreferenceRooms" DROP CONSTRAINT "RoomPreferenceRooms_preferenceId_fkey";
 ALTER TABLE "RoomPreferenceRooms" ADD CONSTRAINT "RoomPreferenceRooms_preferenceId_schoolId_fkey" FOREIGN KEY ("preferenceId", "schoolId")
-    REFERENCES "RoomPreferences"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "RoomPreferences"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "RoomPreferenceRooms" DROP CONSTRAINT "RoomPreferenceRooms_roomId_fkey";
 ALTER TABLE "RoomPreferenceRooms" ADD CONSTRAINT "RoomPreferenceRooms_roomId_schoolId_fkey" FOREIGN KEY ("roomId", "schoolId")
-    REFERENCES "Rooms"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Rooms"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- RoomPreferences
 ALTER TABLE "RoomPreferences" DROP CONSTRAINT "RoomPreferences_roomTypeId_fkey";
 ALTER TABLE "RoomPreferences" ADD CONSTRAINT "RoomPreferences_roomTypeId_schoolId_fkey" FOREIGN KEY ("roomTypeId", "schoolId")
-    REFERENCES "RoomTypes"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "RoomTypes"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "RoomPreferences" DROP CONSTRAINT "RoomPreferences_subjectId_fkey";
 ALTER TABLE "RoomPreferences" ADD CONSTRAINT "RoomPreferences_subjectId_schoolId_fkey" FOREIGN KEY ("subjectId", "schoolId")
-    REFERENCES "Subjects"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Subjects"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- Rooms
 ALTER TABLE "Rooms" DROP CONSTRAINT "Rooms_roomTypeId_fkey";
 ALTER TABLE "Rooms" ADD CONSTRAINT "Rooms_roomTypeId_schoolId_fkey" FOREIGN KEY ("roomTypeId", "schoolId")
-    REFERENCES "RoomTypes"("id", "schoolId") ON DELETE RESTRICT ON UPDATE CASCADE NOT VALID;
+    REFERENCES "RoomTypes"("id", "schoolId") ON DELETE RESTRICT ON UPDATE NO ACTION NOT VALID;
 
 -- StudentGroupMembers
 ALTER TABLE "StudentGroupMembers" DROP CONSTRAINT "StudentGroupMembers_studentGroupId_fkey";
 ALTER TABLE "StudentGroupMembers" ADD CONSTRAINT "StudentGroupMembers_studentGroupId_schoolId_fkey" FOREIGN KEY ("studentGroupId", "schoolId")
-    REFERENCES "StudentGroups"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "StudentGroups"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 ALTER TABLE "StudentGroupMembers" DROP CONSTRAINT "StudentGroupMembers_studentId_fkey";
 ALTER TABLE "StudentGroupMembers" ADD CONSTRAINT "StudentGroupMembers_studentId_schoolId_fkey" FOREIGN KEY ("studentId", "schoolId")
-    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- StudentGroups
 ALTER TABLE "StudentGroups" DROP CONSTRAINT "StudentGroups_academicYearId_fkey";
 ALTER TABLE "StudentGroups" ADD CONSTRAINT "StudentGroups_academicYearId_schoolId_fkey" FOREIGN KEY ("academicYearId", "schoolId")
-    REFERENCES "AcademicYears"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
+    REFERENCES "AcademicYears"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION NOT VALID;
 
 -- Subjects
 ALTER TABLE "Subjects" DROP CONSTRAINT "Subjects_requiredRoomTypeId_fkey";
 ALTER TABLE "Subjects" ADD CONSTRAINT "Subjects_requiredRoomTypeId_schoolId_fkey" FOREIGN KEY ("requiredRoomTypeId", "schoolId")
-    REFERENCES "RoomTypes"("id", "schoolId") ON DELETE RESTRICT ON UPDATE CASCADE NOT VALID;
+    REFERENCES "RoomTypes"("id", "schoolId") ON DELETE RESTRICT ON UPDATE NO ACTION NOT VALID;
 
 -- ---------------------------------------------------------------------------
 -- 5. The lookup of a removed parent, on the three small tables that had none.
