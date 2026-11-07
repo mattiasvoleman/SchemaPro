@@ -46857,3 +46857,552 @@ BEGIN
   DELETE FROM "PersonProtections";
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Elevens lektion för dagen (D7, 20270122091000), sections 395-398: a pupil is
+-- moved, for one date, from a lesson to a parallel one. Fixtures:
+-- rls-d7-school (and rls-d7-annan), planted once by the fixtures script, with
+-- fixed ids; the lessons are tomorrow's. The owner's half is 399o in
+-- rls-owner-checks.sql (the readers that no login may call, gallring, the keys).
+--
+--   395  the two doors and what a move is (parallel, held, one per lesson);
+--        the mark on the source; Ångra; a move that falls
+--   396  who may move a pupil, who reads a move, and that nobody writes one
+--        but the doors
+--   397  what the pupil's own arms and the guardian's say
+--   398  the catalogue: the arms, the privileges, the keys, the doors
+-- ---------------------------------------------------------------------------
+
+-- The helpers the sections share. Temporary, so they die with the session.
+CREATE FUNCTION pg_temp.d7_as(p_auth text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_auth)::text, true)
+$$;
+-- A login by the number of the person: 01 full, 03 expedition, 05 läsare, 06 t1, 07 t2, 08 m, 09 t4,
+-- 11 p1, 12 p2, 13 p3, 21 g1, 22 g2, 31 the other school's administrator, 34 its teacher.
+CREATE FUNCTION pg_temp.d7_auth(n integer) RETURNS text LANGUAGE sql AS $$
+  SELECT '00000000-0000-4000-8000-d7000000' || lpad(n::text, 2, '0') || '00'
+$$;
+-- A person or a school by name; a lesson by its number (d7000000-0000-4000-8000-000000000aNN).
+CREATE FUNCTION pg_temp.d7f(p_name text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT CASE p_name
+    WHEN 'school' THEN 'd7000000-0000-4000-8000-0000000000c1'
+    WHEN 'other' THEN 'd7000000-0000-4000-8000-0000000000c2'
+    ELSE ('d7000000-0000-4000-8000-b000000000' || CASE p_name
+      WHEN 'full' THEN '01' WHEN 'expedition' THEN '03' WHEN 'lasare' THEN '05' WHEN 't1' THEN '06' WHEN 't2' THEN '07'
+      WHEN 'm' THEN '08' WHEN 't4' THEN '09' WHEN 'p1' THEN '11' WHEN 'p2' THEN '12' WHEN 'p3' THEN '13'
+      WHEN 'g1' THEN '21' WHEN 'g2' THEN '22' WHEN 'pa' THEN '31' WHEN 'po' THEN '32' WHEN 'to' THEN '34' END)::uuid
+  END
+$$;
+CREATE FUNCTION pg_temp.d7_l(n integer) RETURNS uuid LANGUAGE sql AS $$
+  SELECT ('d7000000-0000-4000-8000-000000000a' || lpad(n::text, 2, '0'))::uuid
+$$;
+CREATE FUNCTION pg_temp.d7_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'elevens lektion %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- A statement that must fail with exactly this SQLSTATE.
+CREATE FUNCTION pg_temp.d7_refuses(p_sql text, p_state text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM p_state THEN
+    RAISE EXCEPTION 'elevens lektion: % should be refused with %, was %', p_what, p_state, got;
+  END IF;
+END $$;
+-- The door, as a statement: move p_pupil off p_from onto p_to (lessons by number).
+CREATE FUNCTION pg_temp.d7_move(p_pupil text, p_from integer, p_to integer) RETURNS text LANGUAGE sql AS $$
+  SELECT format('SELECT app.lesson_pupil_move(%L, %L, %L)', pg_temp.d7f(p_pupil), pg_temp.d7_l(p_from), pg_temp.d7_l(p_to))
+$$;
+-- The moves the caller reads, as one text: "pupil:from>to" by the last two digits of their ids.
+CREATE FUNCTION pg_temp.d7_moves() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(right(m."studentId"::text, 2) || ':' || right(m."fromLessonId"::text, 2) || '>' || right(m."toLessonId"::text, 2),
+                             ', ' ORDER BY m."studentId", m."fromLessonId"), '')
+    FROM "LessonPupilMoves" m
+$$;
+-- A mark of a pupil on a lesson, written by the administrator whose claims are set.
+CREATE FUNCTION pg_temp.d7_mark(p_pupil text, p_lesson integer, p_status "AttendanceStatus", p_note text DEFAULT NULL) RETURNS void LANGUAGE sql AS $$
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, note, "recordedAt", "recordedById", "updatedAt")
+  VALUES (pg_temp.d7f('school'), pg_temp.d7_l(p_lesson), pg_temp.d7f(p_pupil), p_status, p_note, now() - interval '1 hour', pg_temp.d7f('t1'), now())
+$$;
+CREATE FUNCTION pg_temp.d7_mark_of(p_pupil text, p_lesson integer) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce((SELECT a.status::text || coalesce('/' || a.note, '') FROM "AttendanceRecords" a
+                    WHERE a."calendarLessonId" = pg_temp.d7_l(p_lesson) AND a."studentId" = pg_temp.d7f(p_pupil)), 'none')
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Section 395: the two doors and what a move is.
+-- ---------------------------------------------------------------------------
+
+-- A move: the pupil is on the target (an arrival the move owns) and off the
+-- source; the mark on the source counts for nobody and is kept; Ångra puts it
+-- back.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'ABSENT', 'sjuk');
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  IF mv IS NULL THEN RAISE EXCEPTION 'move: no id came back'; END IF;
+  PERFORM pg_temp.d7_expect('move: the row', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_expect('move: the arrival is the target''s named pupil, owned by the move',
+    (SELECT string_agg(right(n."calendarLessonId"::text, 2) || ':' || (n."moveId" = mv)::text, ',') FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')),
+    '02:true');
+  PERFORM pg_temp.d7_expect('move: the mark on the source counts for nobody', pg_temp.d7_mark_of('p1', 1), 'UNKNOWN');
+  PERFORM pg_temp.d7_expect('move: ... and is kept',
+    (SELECT m."displacedMark" ->> 'status' || '/' || (m."displacedMark" ->> 'note') FROM "LessonPupilMoves" m WHERE m.id = mv), 'ABSENT/sjuk');
+  PERFORM pg_temp.d7_expect('move: who moved', (SELECT (m."movedById" = pg_temp.d7f('full'))::text FROM "LessonPupilMoves" m WHERE m.id = mv), 'true');
+  PERFORM app.lesson_pupil_move_undo(mv);
+  PERFORM pg_temp.d7_expect('undo: no move', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('undo: no arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '0');
+  PERFORM pg_temp.d7_expect('undo: the mark is back', pg_temp.d7_mark_of('p1', 1), 'ABSENT/sjuk');
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', 'LM404', 'Ångra of a move that is gone');
+END $$;
+ROLLBACK;
+
+-- Moved on, and moved back: the move keeps the lesson the pupil started on.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(2), pg_temp.d7_l(3));
+  PERFORM pg_temp.d7_expect('on: one move, from where they started', pg_temp.d7_moves(), '11:01>03');
+  PERFORM pg_temp.d7_expect('on: the arrival is on the last lesson only',
+    (SELECT string_agg(right(n."calendarLessonId"::text, 2), ',') FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '03');
+  -- Back to where they started: the move is undone, and the answer is NULL.
+  IF app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(3), pg_temp.d7_l(1)) IS NOT NULL THEN
+    RAISE EXCEPTION 'back: a move came back, not NULL';
+  END IF;
+  PERFORM pg_temp.d7_expect('back: no move', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('back: no arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '0');
+END $$;
+ROLLBACK;
+
+-- What a move is: parallel, held, in the school, a pupil, once.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 4), 'LM412', 'a lesson that does not overlap (W is at 11:00)');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 1), 'LM412', 'a lesson onto itself');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 5), 'LM410', 'a lesson that is cancelled');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 6), 'LM413', 'a lesson an activity has replaced');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 5, 1), 'LM410', 'a source that is cancelled');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 7), 'LM404', 'a lesson of another school');
+  PERFORM pg_temp.d7_refuses(format('SELECT app.lesson_pupil_move(%L, %L, %L)', pg_temp.d7f('po'), pg_temp.d7_l(1), pg_temp.d7_l(2)), 'LM404', 'a pupil of another school');
+  PERFORM pg_temp.d7_refuses(format('SELECT app.lesson_pupil_move(%L, %L, %L)', pg_temp.d7f('t1'), pg_temp.d7_l(1), pg_temp.d7_l(2)), 'LM404', 'somebody who is not a pupil');
+  -- Z (09:30-10:30) overlaps X (09:00-10:00) by half: parallel.
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(3));
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM409', 'a second move off the same lesson');
+END $$;
+ROLLBACK;
+
+-- A mark on the lesson the pupil was moved to keeps them there: Ångra, and a move
+-- on, are refused until it is taken back. A mark on the source is not that.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_mark('p1', 2, 'PRESENT');
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', 'LM415', 'Ångra of a move whose target holds a mark of the pupil');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 2, 3), 'LM415', 'a move on from a lesson that holds a mark of the pupil');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 2, 1), 'LM415', 'a move back from a lesson that holds a mark of the pupil');
+  PERFORM pg_temp.d7_expect('the move stands', pg_temp.d7_moves(), '11:01>02');
+END $$;
+ROLLBACK;
+
+-- Ångra puts the mark back only if nobody has written one since.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'EXCUSED', 'ledig');
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  -- A register saved for the source after the move (a phone's queue, say) is a mark Ångra must not write over.
+  UPDATE "AttendanceRecords" SET status = 'PRESENT', note = NULL WHERE "calendarLessonId" = pg_temp.d7_l(1) AND "studentId" = pg_temp.d7f('p1');
+  PERFORM app.lesson_pupil_move_undo(mv);
+  PERFORM pg_temp.d7_expect('a newer mark stands', pg_temp.d7_mark_of('p1', 1), 'PRESENT');
+END $$;
+ROLLBACK;
+
+-- A pupil with no mark on the source: nothing is kept, nothing is put back.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p2'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_expect('no mark, nothing kept', (SELECT coalesce(m."displacedMark"::text, 'null') FROM "LessonPupilMoves" m WHERE m.id = mv), 'null');
+  PERFORM pg_temp.d7_expect('no mark written', pg_temp.d7_mark_of('p2', 1), 'none');
+  PERFORM app.lesson_pupil_move_undo(mv);
+  PERFORM pg_temp.d7_expect('no mark after Ångra', pg_temp.d7_mark_of('p2', 1), 'none');
+END $$;
+ROLLBACK;
+
+-- A pupil already named on the target is on it; a pupil whose day has passed is not moved.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES (pg_temp.d7f('school'), pg_temp.d7_l(2), pg_temp.d7f('p1'));
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM409', 'a pupil who is named on the target already');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+-- Both lessons three days back, together, so that they still overlap.
+UPDATE "CalendarLessons" SET date = date - 3, "startsAt" = "startsAt" - interval '3 days', "endsAt" = "endsAt" - interval '3 days'
+ WHERE id IN (pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM414', 'a move for a day that has passed');
+END $$;
+ROLLBACK;
+
+-- A move falls when its lessons no longer carry it: a lesson cancelled, replaced by an activity or
+-- moved so that the two no longer overlap. A time that still overlaps changes nothing.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  -- Still parallel: 09:00-10:00 now 09:15-10:15.
+  UPDATE "CalendarLessons" SET "startsAt" = "startsAt" + interval '15 minutes', "endsAt" = "endsAt" + interval '15 minutes' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: a time that still overlaps keeps it', pg_temp.d7_moves(), '11:01>02');
+  -- A note: nothing about time or status.
+  UPDATE "CalendarLessons" SET note = 'ny sal' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: a note keeps it', pg_temp.d7_moves(), '11:01>02');
+  -- Moved to 11:15: no longer parallel.
+  UPDATE "CalendarLessons" SET "startsAt" = "startsAt" + interval '2 hours', "endsAt" = "endsAt" + interval '2 hours' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: lessons that no longer overlap', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('lapse: the arrival goes with it', (SELECT count(*)::text FROM "CalendarLessonStudents" WHERE "studentId" = pg_temp.d7f('p1')), '0');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'EVENT' WHERE id = pg_temp.d7_l(1);
+  PERFORM pg_temp.d7_expect('lapse: the source replaced by an activity', pg_temp.d7_moves(), '');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  UPDATE "CalendarLessons" SET status = 'CANCELLED' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: the target cancelled', pg_temp.d7_moves(), '');
+  -- Reinstated: the pupil is on their own lesson, and nothing brings the move back.
+  UPDATE "CalendarLessons" SET status = 'SCHEDULED' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: a reinstated lesson does not bring it back', pg_temp.d7_moves(), '');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 396: who may move a pupil, who reads a move, and that nobody writes
+-- one but the doors.
+-- ---------------------------------------------------------------------------
+
+-- Who may: an administrator with Drift (not the läsare), a teacher who teaches
+-- the source, the target or the lesson the pupil is on, or mentors the pupil
+-- the day of the move. Nobody else.
+BEGIN;
+DO $$
+DECLARE
+  who record;
+  mv uuid;
+BEGIN
+  -- (login number, what, pupil, from, to, wanted: ok or the SQLSTATE)
+  FOR who IN SELECT * FROM (VALUES
+      (1,  'full administrator',               'p1', 1, 2, 'ok'),
+      (3,  'expedition (Drift)',               'p1', 1, 2, 'ok'),
+      (5,  'läsare',                           'p1', 1, 2, 'LM403'),
+      (6,  'teacher of the source',            'p1', 1, 2, 'ok'),
+      (7,  'teacher of the target',            'p1', 1, 2, 'ok'),
+      (8,  'mentor of the pupil''s class',     'p1', 1, 2, 'ok'),
+      (8,  'mentor of another class',          'p3', 2, 1, 'LM403'),
+      (9,  'teacher of neither',               'p1', 1, 2, 'LM403'),
+      (11, 'a pupil',                          'p1', 1, 2, 'LM403'),
+      (21, 'a guardian',                       'p1', 1, 2, 'LM403'),
+      (31, 'another school''s administrator',  'p1', 1, 2, 'LM404'),
+      (34, 'another school''s teacher',        'p1', 1, 2, 'LM404')) AS t(login, what, pupil, a, b, wanted)
+  LOOP
+    BEGIN
+      PERFORM pg_temp.d7_as(pg_temp.d7_auth(who.login));
+      mv := app.lesson_pupil_move(pg_temp.d7f(who.pupil), pg_temp.d7_l(who.a), pg_temp.d7_l(who.b));
+      IF who.wanted <> 'ok' THEN RAISE EXCEPTION 'D7_TEST_FALL: % moved a pupil', who.what; END IF;
+      RAISE EXCEPTION 'D7_TEST_ROLLBACK';
+    EXCEPTION
+      WHEN OTHERS THEN
+        IF SQLERRM = 'D7_TEST_ROLLBACK' THEN
+          IF who.wanted <> 'ok' THEN RAISE EXCEPTION 'elevens lektion: % was let through', who.what; END IF;
+        ELSIF SQLERRM LIKE 'D7_TEST_FALL%' THEN
+          RAISE;
+        ELSIF SQLSTATE IS DISTINCT FROM who.wanted THEN
+          RAISE EXCEPTION 'elevens lektion: % was refused with % (%), not %', who.what, SQLSTATE, SQLERRM, who.wanted;
+        END IF;
+    END;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- A teacher of the lesson the pupil is on may send them on, and Ångra; a teacher of neither may not.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(6));
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(9));
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', 'LM403', 'Ångra by a teacher of neither lesson (the gateway cannot even read the move for them: 404 there)');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(7));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(2), pg_temp.d7_l(3));
+  -- The move now reads X to Z. T2 teaches neither: it is no longer theirs to read.
+  PERFORM pg_temp.d7_expect('the sending teacher no longer reads it', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM pg_temp.d7_expect('the move was sent on', pg_temp.d7_moves(), '11:01>03');
+  PERFORM app.lesson_pupil_move_undo((SELECT m.id FROM "LessonPupilMoves" m));
+  PERFORM pg_temp.d7_expect('and Ångra', pg_temp.d7_moves(), '');
+END $$;
+ROLLBACK;
+
+-- Who reads a move, through their own arms. The move: p1 from X to Y.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+DECLARE
+  who record;
+BEGIN
+  FOR who IN SELECT * FROM (VALUES
+      (1,  'an administrator',            '11:01>02'),
+      (5,  'the läsare',                  '11:01>02'),
+      (6,  'the teacher of the source',   '11:01>02'),
+      (7,  'the teacher of the target',   '11:01>02'),
+      (8,  'the mentor of the pupil',     '11:01>02'),
+      (9,  'a teacher of neither',        ''),
+      (11, 'the pupil',                   '11:01>02'),
+      (12, 'a classmate',                 ''),
+      (13, 'a pupil of the other class',  ''),
+      (21, 'the pupil''s guardian',       '11:01>02'),
+      (22, 'another pupil''s guardian',   ''),
+      (31, 'another school''s administrator', '')) AS t(login, what, wanted)
+  LOOP
+    PERFORM pg_temp.d7_as(pg_temp.d7_auth(who.login));
+    PERFORM pg_temp.d7_expect('reads: ' || who.what, pg_temp.d7_moves(), who.wanted);
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- Nobody writes a move but the doors: no arm, no privilege, for any role.
+BEGIN;
+DO $$
+DECLARE
+  who integer;
+  verb text;
+BEGIN
+  FOREACH who IN ARRAY ARRAY[1, 6, 8, 11, 21] LOOP
+    PERFORM pg_temp.d7_as(pg_temp.d7_auth(who));
+    FOREACH verb IN ARRAY ARRAY[
+      format('INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (%L, %L, %L, %L)', pg_temp.d7f('school'), pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2)),
+      'UPDATE "LessonPupilMoves" SET "movedById" = NULL',
+      'DELETE FROM "LessonPupilMoves"'] LOOP
+      PERFORM pg_temp.d7_refuses(verb, '42501', 'a direct write by login ' || who);
+    END LOOP;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- The doors answer the API's role alone: not PostgREST's (anon is the catalogue's, 398).
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), '42501', 'the door as authenticated');
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(gen_random_uuid())', '42501', 'Ångra as authenticated');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 397: what the pupil's own arms and the guardian's say.
+-- ---------------------------------------------------------------------------
+
+-- The lessons of the day a login reads, as a text of numbers: the pupil's own arms
+-- (PostgREST reads CalendarLessons by date alone, so RLS is the only filter).
+CREATE FUNCTION pg_temp.d7_day() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(right(l.id::text, 2), ',' ORDER BY l.id), '')
+    FROM "CalendarLessons" l WHERE l.id::text LIKE 'd7000000%'
+$$;
+
+-- The pupil's own week: the lesson they were moved to is theirs and the one they
+-- were moved off is not; a classmate keeps theirs and sees nothing of the other.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+DECLARE
+  mv uuid := (SELECT id FROM "LessonPupilMoves");
+BEGIN
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(11));
+  PERFORM pg_temp.d7_expect('the moved pupil''s own arms', pg_temp.d7_day(), '02,04');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(12));
+  PERFORM pg_temp.d7_expect('a classmate''s arms', pg_temp.d7_day(), '01,04');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(13));
+  PERFORM pg_temp.d7_expect('the other class''s arms: the arrival changes nothing for them', pg_temp.d7_day(), '02,03,05,06');
+  -- The guardian's arm is per guardian and knows nothing of the move: it still reads the source
+  -- (the gateway takes it off the child's week with the move it reads), and reads the target by the
+  -- name the arrival gives.
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(21));
+  PERFORM pg_temp.d7_expect('the guardian''s arm', pg_temp.d7_day(), '01,02,04');
+  -- Ångra: everything is as it was.
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM app.lesson_pupil_move_undo(mv);
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(11));
+  PERFORM pg_temp.d7_expect('after Ångra', pg_temp.d7_day(), '01,04');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 398: the catalogue. The arms, the privileges, the keys, the doors.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  got text;
+  fn text;
+BEGIN
+  -- The table: security on, four arms, all for the API's role, all reads, all naming the school.
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"LessonPupilMoves"'::regclass) THEN
+    RAISE EXCEPTION 'LessonPupilMoves has no row-level security';
+  END IF;
+  SELECT string_agg(policyname || ':' || cmd || ':' || roles::text, ', ' ORDER BY policyname COLLATE "C") INTO got
+    FROM pg_policies WHERE tablename = 'LessonPupilMoves';
+  PERFORM pg_temp.d7_expect('the arms', got,
+    'lesson_pupil_moves_admin_select:SELECT:{app_authenticated}, lesson_pupil_moves_guardian_select:SELECT:{app_authenticated}, '
+    'lesson_pupil_moves_student_select:SELECT:{app_authenticated}, lesson_pupil_moves_teacher_select:SELECT:{app_authenticated}');
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'LessonPupilMoves' AND qual NOT LIKE '%current_school_id%') THEN
+    RAISE EXCEPTION 'an arm of LessonPupilMoves does not name the school';
+  END IF;
+  -- Privileges: the API's role reads; nobody writes.
+  SELECT string_agg(r.rolname || ':' || p.priv, ', ' ORDER BY r.rolname COLLATE "C", p.priv COLLATE "C") INTO got
+    FROM pg_roles r,
+         unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p(priv)
+   WHERE r.rolname IN ('app_authenticated', 'authenticated', 'anon', 'service_role')
+     AND has_table_privilege(r.rolname, '"LessonPupilMoves"', p.priv);
+  -- (service_role keeps the SELECT every table gives it, as on the tables of the phases before; it writes nothing.)
+  PERFORM pg_temp.d7_expect('the privileges', got, 'app_authenticated:SELECT, service_role:SELECT');
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname IN ('authenticated', 'app_authenticated', 'service_role', 'anon')
+                 AND has_table_privilege(r.rolname, '"LessonPupilMoves"', 'MAINTAIN')) THEN
+      RAISE EXCEPTION 'a role holds MAINTAIN on LessonPupilMoves';
+    END IF;
+  END IF;
+  -- The keys: every one is composite with the school, and what each does on delete.
+  SELECT string_agg(conname || ':' || confdeltype::text, ', ' ORDER BY conname COLLATE "C") INTO got
+    FROM pg_constraint WHERE conrelid = '"LessonPupilMoves"'::regclass AND contype = 'f';
+  PERFORM pg_temp.d7_expect('the keys of the move', got,
+    'LessonPupilMoves_fromLessonId_schoolId_fkey:c, LessonPupilMoves_movedById_schoolId_fkey:n, LessonPupilMoves_schoolId_fkey:c, '
+    'LessonPupilMoves_studentId_schoolId_fkey:c, LessonPupilMoves_toLessonId_schoolId_fkey:c');
+  SELECT string_agg(conname || ':' || confdeltype::text || ':' || confupdtype::text, ', ') INTO got
+    FROM pg_constraint WHERE conrelid = '"CalendarLessonStudents"'::regclass AND conname = 'CalendarLessonStudents_moveId_schoolId_fkey';
+  PERFORM pg_temp.d7_expect('the arrival''s key', got, 'CalendarLessonStudents_moveId_schoolId_fkey:c:a');
+  IF (SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'LessonPupilMoves_movedById_schoolId_fkey')
+     NOT LIKE '%ON DELETE SET NULL ("movedById")%' THEN
+    RAISE EXCEPTION 'the mover''s key nulls more than the mover';
+  END IF;
+  -- The functions: definer with a pinned path; the three doors the API role's, nothing else anybody's.
+  FOREACH fn IN ARRAY ARRAY['lesson_pupil_move', 'lesson_pupil_move_undo', 'lesson_pupil_move_remove', 'lesson_move_may', 'lesson_move_is_mentor',
+                            'lesson_pupil_move_is_parallel', 'lesson_pupil_move_tells_the_integrations', 'lesson_pupil_moves_lapse',
+                            'lesson_pupil_arrival_is_the_moves', 'lesson_pupil_arrival_goes_with_the_move'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'app' AND p.proname = fn AND p.prosecdef
+                      AND p.proconfig @> ARRAY['search_path=public, pg_temp']) THEN
+      RAISE EXCEPTION 'app.% is not a definer with its path pinned', fn;
+    END IF;
+  END LOOP;
+  SELECT string_agg(p.proname || ':' || has_function_privilege('app_authenticated', p.oid, 'EXECUTE')::text, ', ' ORDER BY p.proname COLLATE "C") INTO got
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND (p.proname LIKE 'lesson\_pupil\_%' OR p.proname LIKE 'lesson\_move\_%');
+  PERFORM pg_temp.d7_expect('who may execute', got,
+    'lesson_move_is_mentor:true, lesson_move_may:false, lesson_pupil_arrival_goes_with_the_move:false, lesson_pupil_arrival_is_the_moves:false, '
+    'lesson_pupil_move:true, lesson_pupil_move_is_parallel:false, lesson_pupil_move_remove:false, lesson_pupil_move_tells_the_integrations:false, '
+    'lesson_pupil_move_undo:true, lesson_pupil_moves_lapse:false');
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace, pg_roles r
+              WHERE n.nspname = 'app' AND (p.proname LIKE 'lesson\_pupil\_%' OR p.proname LIKE 'lesson\_move\_%')
+                AND r.rolname IN ('anon', 'authenticated', 'service_role')
+                AND has_function_privilege(r.rolname, p.oid, 'EXECUTE')) THEN
+    RAISE EXCEPTION 'a PostgREST role or the service role may execute a function of Elevens lektion för dagen';
+  END IF;
+  -- The triggers: there, and on. The lapse looks at three columns and nothing else.
+  SELECT string_agg(c.relname || '.' || t.tgname || ':' || t.tgenabled::text, ', ' ORDER BY t.tgname COLLATE "C") INTO got
+    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+   WHERE NOT t.tgisinternal AND t.tgname IN ('CalendarLessonStudents_arrival_is_the_moves', 'CalendarLessonStudents_arrival_goes_with_the_move',
+         'LessonPupilMoves_are_parallel', 'LessonPupilMoves_tell_the_integrations', 'CalendarLessons_pupil_moves_lapse');
+  PERFORM pg_temp.d7_expect('the triggers', got,
+    'CalendarLessonStudents.CalendarLessonStudents_arrival_goes_with_the_move:O, CalendarLessonStudents.CalendarLessonStudents_arrival_is_the_moves:O, '
+    'CalendarLessons.CalendarLessons_pupil_moves_lapse:O, LessonPupilMoves.LessonPupilMoves_are_parallel:O, LessonPupilMoves.LessonPupilMoves_tell_the_integrations:O');
+  IF (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgname = 'CalendarLessons_pupil_moves_lapse')
+     NOT LIKE '%UPDATE OF "startsAt", "endsAt", status ON%' THEN
+    RAISE EXCEPTION 'the lapse does not look at exactly time and status: %', (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgname = 'CalendarLessons_pupil_moves_lapse');
+  END IF;
+  -- The school's choice: off, as a school that never said is.
+  IF (SELECT column_default FROM information_schema.columns WHERE table_name = 'SchoolDaySettings' AND column_name = 'guardianNoticeOnMove') <> 'false' THEN
+    RAISE EXCEPTION 'a guardian is told of a move unless the school says it should not be';
+  END IF;
+
+  -- The restated readers carry what they are for, and what they had before.
+  FOR fn, got IN SELECT * FROM (VALUES
+      ('app.current_student_replaced_lesson_ids()', 'LessonPupilMoves'),
+      ('app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")', 'LessonPupilMoves'),
+      ('app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")', 'g.subject = cl."subjectId"'),
+      ('app.timetable_pupil_days(uuid, uuid, date, text, "TeacherDisplay")', '"moveId" IS NULL'),
+      ('app.reporting_lessons(uuid, date, date, timestamptz)', 'LessonPupilMoves'),
+      ('app.gallring_due(uuid, "RetentionDataType", date, date)', 'LessonPupilMoves'),
+      ('app.gallring_purge(uuid, "RetentionDataType", integer)', 'LessonPupilMoves')) AS t(f, needle)
+  LOOP
+    IF position(got IN (SELECT p.prosrc FROM pg_proc p WHERE p.oid = to_regprocedure(fn))) = 0 THEN
+      RAISE EXCEPTION '% lost something it had (%)', fn, got;
+    END IF;
+  END LOOP;
+  IF position('"moveId" IS NULL' IN (SELECT p.prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname = 'timetable_week_days')) = 0 THEN
+    RAISE EXCEPTION 'the week builder counts an arrival as a lesson for named pupils';
+  END IF;
+  -- ... and every gallring branch of the phases before.
+  FOREACH fn IN ARRAY ARRAY['AttendanceRecords', 'AbsenceWatchFindings', 'TeacherReportingDays', 'ReportingReminders', 'AbsenceReports', 'LeaveRequests',
+                            'Notifications', 'AckRequests', 'ScheduleChangeLogs', 'TeacherEmploymentLogs', 'GuardianStudentHistory', 'PersonProtectionEvents',
+                            'TeacherAbsences', 'PersonalDataAccess', 'CoverRequests', 'CoverConfirmations', 'CrisisAlarms', 'Users', 'LessonPupilMoves'] LOOP
+    IF position('''' || fn || '''' IN (SELECT p.prosrc FROM pg_proc p WHERE p.oid = to_regprocedure('app.gallring_due(uuid, "RetentionDataType", date, date)'))) = 0 THEN
+      RAISE EXCEPTION 'gallring_due lost its branch for %', fn;
+    END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['AttendanceRecords', 'AbsenceWatchFindings', 'TeacherReportingDays', 'ReportingReminders', 'LessonPupilMoves', 'AbsenceReports',
+                            'CoverRequests', 'CrisisAlarms'] LOOP
+    IF position('d."tbl" = ''' || fn || '''' IN (SELECT p.prosrc FROM pg_proc p WHERE p.oid = to_regprocedure('app.gallring_purge(uuid, "RetentionDataType", integer)'))) = 0 THEN
+      RAISE EXCEPTION 'gallring_purge lost its branch for %', fn;
+    END IF;
+  END LOOP;
+END $$;
+ROLLBACK;
