@@ -23,6 +23,8 @@
  *         the same; the pupil's guardian is told only when the school said so;
  *   lm-e  a lesson that is cancelled takes the move with it (the arrival with
  *         it), and a deleted move takes its arrival;
+ *   lm-g  the delivered time's audience statement (audienceStatement) names the
+ *         pupils moved off a lesson as a column of the row, and not otherwise;
  *   lm-f  a move and a register save of the same pupil's lesson, started
  *         together eight times, always meet in one order: the move stands and
  *         the pupil's mark on the source is never anything but UNKNOWN or
@@ -43,6 +45,7 @@ import { FamilyScheduleService } from '../../src/family/family-schedule.service'
 import { LessonMovesService } from '../../src/lesson-moves/lesson-moves.service';
 import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
 import { NotificationsService } from '../../src/notifications/notifications.service';
+import { audienceStatement } from '../../src/timplan/timplan-delivered.sql';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
@@ -325,6 +328,22 @@ export async function lessonMoveChecks(owner: Client, api: PrismaService, marker
       await owner.query(`DELETE FROM "LessonPupilMoves" WHERE "schoolId" = $1`, [s]);
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessonStudents" WHERE "calendarLessonId" = $1`, [E])).n, 0);
       assert.deepEqual(await rosterOf(S, anna), [p1.userId, p2.userId].sort());
+    });
+
+    await check('(lm-g) the delivered time’s audience names the pupils moved off a lesson, and a school with no move has none', async () => {
+      const window = { academicYearId: year.id, yearStart: today, yearEnd: monday, asOf: new Date() };
+      type Row = { studentGroupId: string; movedOffIds: string[]; lessons: number };
+      const read = () => api.withRls(admin, (tx) => (tx as unknown as PrismaClient).$queryRaw<Row[]>(audienceStatement(window)));
+      const before = await read();
+      assert.ok(before.length > 0, 'the audience has no rows for the days of the probe');
+      assert.ok(before.every((row) => row.movedOffIds.length === 0), 'a pupil is moved off before anyone moved');
+      const moved = await moves.move(p1.userId!, S, E, anna);
+      const during = await read();
+      const sevenA = during.filter((row) => row.studentGroupId === k7a && row.movedOffIds.includes(p1.userId!));
+      assert.equal(sevenA.reduce((sum, row) => sum + row.lessons, 0), 1, 'the lesson Alva was moved off is not the one row that names her');
+      assert.ok(during.filter((row) => row.studentGroupId === k7b).every((row) => row.movedOffIds.length === 0), 'the lesson she went to names her as moved off');
+      await moves.undo(moved.moveId!, anna);
+      assert.ok((await read()).every((row) => row.movedOffIds.length === 0));
     });
 
     await check('(lm-f) a move and a register save started together always meet in one order', async () => {

@@ -53,7 +53,7 @@ const pupils = [
   { id: EVA, name: 'Eva', homeGroupId: C7A, groupIds: [SVA7, SV7F] },
 ];
 /** Lessons: subject, groups (own first), named pupils. */
-const lessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[]; movedOff?: string[] }[] = [
+const lessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[] }[] = [
   { id: id('1001'), name: '7A:s svenska', subjectId: SV, groupIds: [C7A], named: [] as string[] },
   { id: id('1002'), name: '7A:s svenska, Alva namngiven', subjectId: SV, groupIds: [C7A], named: [ALVA] },
   { id: id('1003'), name: '7A:s svenska med SvA7 tillagd', subjectId: SV, groupIds: [C7A, SVA7], named: [] },
@@ -62,10 +62,17 @@ const lessons: { id: string; name: string; subjectId: string; groupIds: string[]
   { id: id('1006'), name: 'Stöd7:s svenska', subjectId: SV, groupIds: [STOD7], named: [] },
   { id: id('1007'), name: '7A:s matematik', subjectId: MA, groupIds: [C7A], named: [] },
   { id: id('1008'), name: 'Sv7f:s svenska', subjectId: SV, groupIds: [SV7F], named: [] },
-  // Elevens lektion för dagen: pupils moved off a lesson for the day. They are `off`, a named one included.
-  { id: id('1009'), name: '7A:s matematik, Cim flyttad', subjectId: MA, groupIds: [C7A], named: [] as string[], movedOff: [CIM] },
+];
+/**
+ * Elevens lektion för dagen: pupils moved off a lesson for the day. They are `off`, a named one included, and
+ * one already off by a replacing group stays off once. Kept apart from `lessons` so that the readers' specs
+ * that replay the shared school and model no moves (the class book, SS12000, the timetable, the timplan) are
+ * not asked about them; the two contract specs replay these too (`movedExpected`).
+ */
+const movedLessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[]; movedOff: string[] }[] = [
+  { id: id('1009'), name: '7A:s matematik, Cim flyttad', subjectId: MA, groupIds: [C7A], named: [], movedOff: [CIM] },
   { id: id('1010'), name: '7A:s svenska, Alva namngiven och flyttad', subjectId: SV, groupIds: [C7A], named: [ALVA], movedOff: [ALVA] },
-  { id: id('1011'), name: '7A:s svenska, Bo och Eva flyttade (Eva är redan borta)', subjectId: SV, groupIds: [C7A], named: [] as string[], movedOff: [BO, EVA] },
+  { id: id('1011'), name: '7A:s svenska, Bo och Eva flyttade (Eva är redan borta)', subjectId: SV, groupIds: [C7A], named: [], movedOff: [BO, EVA] },
 ];
 
 function school(name: string, replaces: boolean, cases: Record<string, string>) {
@@ -91,7 +98,14 @@ function school(name: string, replaces: boolean, cases: Record<string, string>) 
       return [lesson.id, lessonPupils(scope, membersOf, bySubject, yearOf)];
     }),
   );
-  return { name, groups, cases, expected };
+  const movedExpected = Object.fromEntries(
+    movedLessons.map((lesson) => {
+      const keptBy = keptByOf(byId.get(lesson.groupIds[0]!));
+      const scope = { ...lesson, academicYearId: YEAR, ...(keptBy ? { keptBy } : {}) };
+      return [lesson.id, lessonPupils(scope, membersOf, bySubject, yearOf)];
+    }),
+  );
+  return { name, groups, cases, expected, movedExpected };
 }
 
 const fixture = {
@@ -101,6 +115,7 @@ const fixture = {
   subjects,
   pupils,
   lessons,
+  movedLessons,
   schools: [
     school('med SvA7, som ersätter svenska', true, {
       [ALVA]: 'i SvA7, som ersätter svenska: inte på 7A:s svenska eller halvans, men kvar där hon namnges eller där SvA7 är tillagd',

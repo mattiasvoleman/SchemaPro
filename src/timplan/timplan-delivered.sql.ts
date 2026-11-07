@@ -105,11 +105,18 @@ export interface DeliveredWindow {
  *             lesson, without a subquery per lesson for its named pupils) or
  *             'none'.
  *   range     [from, to] inside the year instead of the whole year.
+ *   movedOff  true adds the column "movedOffIds" (Elevens lektion för dagen):
+ *             the pupils moved off the lesson for the day. Only the audience
+ *             statements ask, so the rows they group differ with the pupils
+ *             moved off and a school with no move has the rows it always had;
+ *             every other statement, the default included, is without the
+ *             column and byte for byte what it was.
  */
 export interface DeliveredOptions {
   subjects?: 'timplan' | 'all';
   audience?: 'full' | 'groups' | 'none';
   range?: { from: string; to: string };
+  movedOff?: boolean;
 }
 
 /** The classification, as a CTE body; see the header. */
@@ -128,15 +135,14 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
       ? Prisma.sql`ARRAY(SELECT p."studentId" FROM "CalendarLessonStudents" p
                   WHERE p."calendarLessonId" = cl."id" ORDER BY 1) AS "studentIds"`
       : Prisma.sql`'{}'::uuid[] AS "studentIds"`;
-  // Elevens lektion för dagen: the pupils moved off the lesson for the day, who are not on it. Read with the
-  // named pupils (rule 4's audience) and in the audience's grouping, so that lessons with different pupils
-  // moved off are different rows, and a school with no move has an empty array on every row and the rows it
-  // always had.
+  // Elevens lektion för dagen: the pupils moved off the lesson for the day, who are not on it. Read beside the
+  // named pupils (rule 4's audience) and only when asked (see DeliveredOptions): no other statement carries it.
   const movedOff =
-    audience === 'full'
-      ? Prisma.sql`ARRAY(SELECT m."studentId" FROM "LessonPupilMoves" m
+    options.movedOff && audience === 'full'
+      ? Prisma.sql`,
+           ARRAY(SELECT m."studentId" FROM "LessonPupilMoves" m
                   WHERE m."fromLessonId" = cl."id" AND m."schoolId" = cl."schoolId" ORDER BY 1) AS "movedOffIds"`
-      : Prisma.sql`'{}'::uuid[] AS "movedOffIds"`;
+      : Prisma.empty;
   // Rule 5, or every subject. The default spells the line P3 wrote.
   const counted = options.subjects === 'all' ? Prisma.sql`AND TRUE` : Prisma.sql`AND s."countsTowardTimplan"`;
   // Asked only of a CANCELLED row, past or ahead: one test, written once.
@@ -169,8 +175,7 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
              ELSE 'OTHER'
            END AS "bucket",
            ${extraGroups},
-           ${students},
-           ${movedOff}
+           ${students}${movedOff}
       FROM "CalendarLessons" cl
       JOIN "StudentGroups" g ON g."id" = cl."studentGroupId"
       JOIN "Subjects" s ON s."id" = cl."subjectId"
@@ -190,7 +195,7 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
  */
 export function audienceStatement(window: DeliveredWindow): Prisma.Sql {
   return Prisma.sql`
-    WITH l AS (${deliveredLessons(window)})
+    WITH l AS (${deliveredLessons(window, { movedOff: true })})
     SELECT "studentGroupId", "subjectId", "bucket", "extraGroupIds", "studentIds", "movedOffIds",
            SUM("minutes")::int AS "minutes", COUNT(*)::int AS "lessons"
       FROM l
@@ -213,7 +218,7 @@ export function segmentedAudienceStatement(window: DeliveredWindow, boundaries: 
       ? Prisma.sql`0`
       : Prisma.sql`width_bucket("date", ${boundaries}::date[])`;
   return Prisma.sql`
-    WITH l AS (${deliveredLessons(window)})
+    WITH l AS (${deliveredLessons(window, { movedOff: true })})
     SELECT "studentGroupId", "subjectId", "bucket", "extraGroupIds", "studentIds", "movedOffIds",
            ${segment}::int AS "segment",
            SUM("minutes")::int AS "minutes", COUNT(*)::int AS "lessons"
