@@ -2,8 +2,8 @@ import { AckController } from './ack.controller';
 
 /**
  * A request for a guardian's confirmation is up to 4 000 notices, so the route that writes one is
- * throttled on its own beside the database's limit of ten an hour for a person and 20 000 receipts
- * a day for a school (migration 20270117091000). The other routes keep the general limit.
+ * throttled on its own beside the database's limit of ten an hour for a person, a share of the day for a
+ * person and 20 000 receipts a day for a school (migrations 20270117091000 and 20270119090000). The other routes keep the general limit.
  */
 describe('AckController throttling', () => {
   const proto = AckController.prototype as unknown as Record<string, object>;
@@ -13,7 +13,7 @@ describe('AckController throttling', () => {
     expect(Reflect.getMetadata('THROTTLER:TTLdefault', proto['create']!)).toBe(60_000);
   });
 
-  it.each(['settings', 'updateSettings', 'pupils', 'mine', 'list', 'detail', 'confirm', 'stopReminder'])(
+  it.each(['settings', 'updateSettings', 'usage', 'pupils', 'mine', 'list', 'detail', 'confirm', 'stopReminder'])(
     'leaves %s at the general limit',
     (route) => {
       expect(Reflect.getMetadata('THROTTLER:LIMITdefault', proto[route]!)).toBeUndefined();
