@@ -206,10 +206,12 @@ CREATE INDEX "Exams_createdByUserId_schoolId_idx" ON "Exams"("createdByUserId", 
 ALTER TABLE "Exams"
     ADD CONSTRAINT "Exams_schoolId_fkey"
     FOREIGN KEY ("schoolId") REFERENCES "Schools"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- Every key of the form (x, schoolId) is ON UPDATE NO ACTION (RLS section 388 names one that follows its
+-- parent): moving a year to another school is not something any code path does.
 ALTER TABLE "Exams"
     ADD CONSTRAINT "Exams_academicYearId_schoolId_fkey"
     FOREIGN KEY ("academicYearId", "schoolId") REFERENCES "AcademicYears"("id", "schoolId")
-    ON DELETE CASCADE ON UPDATE CASCADE;
+    ON DELETE CASCADE ON UPDATE NO ACTION;
 -- A subject deleted takes its exams with it, as it takes a lesson and a credit.
 ALTER TABLE "Exams"
     ADD CONSTRAINT "Exams_subjectId_schoolId_fkey"

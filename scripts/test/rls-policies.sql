@@ -47174,7 +47174,7 @@ BEGIN
     ('ExamPlanSettings', 'ExamPlanSettings_replacementSubjectId_schoolId_fkey', 'Subjects', 'replacementSubjectId,schoolId', 'id,schoolId', 'n', 'a', 'replacementSubjectId'),
     ('ExamRooms', 'ExamRooms_roomId_schoolId_fkey', 'Rooms', 'roomId,schoolId', 'id,schoolId', 'c', 'a', NULL),
     ('Exams', 'Exams_schoolId_fkey', 'Schools', 'schoolId', 'id', 'c', 'c', NULL),
-    ('Exams', 'Exams_academicYearId_schoolId_fkey', 'AcademicYears', 'academicYearId,schoolId', 'id,schoolId', 'c', 'c', NULL),
+    ('Exams', 'Exams_academicYearId_schoolId_fkey', 'AcademicYears', 'academicYearId,schoolId', 'id,schoolId', 'c', 'a', NULL),
     ('Exams', 'Exams_subjectId_schoolId_fkey', 'Subjects', 'subjectId,schoolId', 'id,schoolId', 'c', 'a', NULL),
     ('Exams', 'Exams_activityId_schoolId_fkey', 'ScheduleActivities', 'activityId,schoolId', 'id,schoolId', 'n', 'a', 'activityId'),
     ('Exams', 'Exams_createdByUserId_schoolId_fkey', 'Users', 'createdByUserId,schoolId', 'id,schoolId', 'n', 'a', 'createdByUserId'),
