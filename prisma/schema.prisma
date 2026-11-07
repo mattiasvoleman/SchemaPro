@@ -286,6 +286,12 @@ model School {
   reportingReminders      ReportingReminder[]
   ackSettings             AckSetting?
   ackRequests             AckRequest[]
+  /// Checklistor (20270129091000).
+  instructionTemplates    InstructionTemplate[]
+  instructionProofs       InstructionProof[]
+  consentLists            ConsentList[]
+  consentEntries          ConsentEntry[]
+  consentAsks             ConsentAsk[]
   ackReceipts             AckReceipt[]
   reportingDigests        ReportingDigest[]
   absenceReports          AbsenceReport[]
@@ -450,6 +456,9 @@ model User {
   /// The requests for a guardian's confirmation that name this person: as the guardian asked, or as the child asked about (Kvittens, 20270117091000).
   ackReceiptsAsGuardian AckReceipt[] @relation("AckGuardian")
   ackReceiptsAsStudent  AckReceipt[] @relation("AckStudent")
+  /// What a pupil has been instructed in and has consented to (Checklistor, 20270129091000): they follow the pupil, not the class.
+  instructionProofs     InstructionProof[] @relation("ProofStudent")
+  consentEntries        ConsentEntry[]     @relation("ConsentStudent")
   absenceReports      AbsenceReport[]   @relation("AbsenceStudent")
   reportedAbsences    AbsenceReport[]   @relation("AbsenceReporter")
   leaveRequests       LeaveRequest[]    @relation("LeaveStudent")
@@ -4990,6 +4999,9 @@ enum RetentionDataType {
   CRISIS_DRILLS
   /// Krisläge, the real alarms (skarpa larm): kept as the school decides (20270113090000).
   CRISIS_ALARMS
+  /// Checklistor (F5): the instruction proofs and the consents. Kept while the pupil is at the school and
+  /// then as long as the school decides; a pupil still at the school is never due (20270129090000).
+  CHECKLISTS
 }
 
 /// PURGE_AFTER `months`; KEEP (bevaras); UNDECIDED (back to ej beslutat).
@@ -5805,4 +5817,163 @@ model SchoolDaySettings {
   updatedAt   DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@map("SchoolDaySettings")
+}
+
+// -----------------------------------------------------------------------------
+// Checklistor: instruktionsbevis och samtyckeslistor (Omgång 9, F5)
+// -----------------------------------------------------------------------------
+
+/// A consent entry is a decision a member of staff wrote down, or (GRANTED only) a
+/// guardian's own confirmation in the app, through Kvittens.
+enum ConsentEntryKind {
+  GRANTED
+  /// The guardian said no. It is an answer and not the lack of one.
+  DECLINED
+  /// A consent that was given and has been taken back.
+  WITHDRAWN
+}
+
+/// Where an entry comes from: staff wrote it down (paper, a call, a meeting), or the
+/// guardian confirmed a Kvittens request that asked for the consent (ALL guardians).
+enum ConsentEntrySource {
+  REGISTERED
+  KVITTENS
+}
+
+/// A school's template for an instruction ("Cirkelsågen", "Kemikalier i NO", "Kast och
+/// stöt"): the subject it belongs to and the moment (20270129091000). Not personal data. A
+/// template that has proofs is retired (active = false), never deleted: no role has DELETE.
+/// The (subjectId, schoolId) key to Subjects, ON DELETE SET NULL (subjectId), lives in the migration.
+model InstructionTemplate {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId    String   @db.Uuid
+  subjectId   String?  @db.Uuid
+  title       String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  proofs InstructionProof[]
+
+  @@unique([id, schoolId])
+  @@index([subjectId, schoolId])
+  @@map("InstructionTemplates")
+}
+
+/// That a pupil has been instructed in a template's moment, on a date, by a person
+/// (20270129091000). The proof is the pupil's: it is keyed to the pupil and not to a class or
+/// a group, so it follows the pupil through a change of class and through the year rollover.
+/// Written once (no role has UPDATE): a tick made in error is voided (voidedAt, by
+/// app.checklist_void_proof) and stays, as evidence of what was written. A second instruction on
+/// another date is another proof; the same pupil, template and date is one. recordedById and
+/// recordedAt are the database's (the caller and the clock); instructorId is who gave the
+/// instruction, the recorder unless they name a colleague. The keys to Users from instructorId,
+/// recordedById and voidedById are ON DELETE SET NULL (column alone) and live in the migration.
+/// Personal data of a pupil: gallring follows the school's choice for CHECKLISTS.
+model InstructionProof {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId     String    @db.Uuid
+  templateId   String    @db.Uuid
+  studentId    String    @db.Uuid
+  instructedOn DateTime  @db.Date
+  instructorId String?   @db.Uuid
+  recordedById String?   @db.Uuid
+  recordedAt   DateTime  @default(now()) @db.Timestamptz(6)
+  note         String?
+  voidedAt     DateTime? @db.Timestamptz(6)
+  voidedById   String?   @db.Uuid
+  voidReason   String?
+
+  school   School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  template InstructionTemplate @relation(fields: [templateId, schoolId], references: [id, schoolId], onDelete: NoAction, onUpdate: NoAction)
+  student  User                @relation("ProofStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([templateId, schoolId, studentId])
+  @@index([schoolId, instructedOn])
+  @@index([studentId, schoolId])
+  @@index([instructorId, schoolId])
+  @@index([recordedById, schoolId])
+  @@index([voidedById, schoolId])
+  @@map("InstructionProofs")
+}
+
+/// A consent list for a class: what the school asks the guardians to consent to, in the
+/// words they are shown (20270129091000). One list per purpose and class ("Fotografering
+/// 7A, läsåret 2026/27"); the class name is stamped, so the list stays readable when the class
+/// is gone (the key to StudentGroups is ON DELETE SET NULL (studentGroupId), in the migration).
+/// closedAt is set by app.checklist_close_list and ends the list: nothing more is written to it.
+model ConsentList {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String    @db.Uuid
+  studentGroupId String?   @db.Uuid
+  groupName      String    @default("")
+  title          String
+  body           String
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  closedAt       DateTime? @db.Timestamptz(6)
+
+  school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  entries ConsentEntry[]
+  asks    ConsentAsk[]
+
+  @@unique([id, schoolId])
+  @@index([studentGroupId, schoolId])
+  @@index([createdById, schoolId])
+  @@index([schoolId, createdAt])
+  @@map("ConsentLists")
+}
+
+/// One answer about one pupil on one list, in the order they were given (20270129091000).
+/// Append-only: what a pupil's consent is now is the latest entry; the earlier ones stay as the
+/// history (a consent that was given and withdrawn shows both). REGISTERED entries are written
+/// by staff, with who and when (recordedById, recordedAt) and the date on the paper (givenOn);
+/// KVITTENS entries are written by a trigger when the last guardian a Kvittens request asked has
+/// confirmed it. Personal data of a pupil: gallring follows the school's choice for CHECKLISTS.
+model ConsentEntry {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId     String             @db.Uuid
+  listId       String             @db.Uuid
+  studentId    String             @db.Uuid
+  kind         ConsentEntryKind
+  source       ConsentEntrySource @default(REGISTERED)
+  givenOn      DateTime           @db.Date
+  givenBy      String?
+  note         String?
+  /// The Kvittens request that made a KVITTENS entry; no key, since the request is gallrad before the entry.
+  ackRequestId String?            @db.Uuid
+  recordedById String?            @db.Uuid
+  recordedAt   DateTime           @default(now()) @db.Timestamptz(6)
+
+  school  School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  list    ConsentList @relation(fields: [listId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  student User        @relation("ConsentStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([listId, schoolId, studentId, recordedAt])
+  @@index([schoolId, recordedAt])
+  @@index([studentId, schoolId])
+  @@index([recordedById, schoolId])
+  @@map("ConsentEntries")
+}
+
+/// A Kvittens request that asked for a list's consent, with the rule ALL (20270129091000): the
+/// link that lets the app and the web ask the guardians through Kvittens and not through a
+/// second confirmation flow. The key to AckRequests (ackRequestId, schoolId) is ON DELETE CASCADE
+/// and lives in the migration; the request is gallrad with the school's choice for NOTIFICATIONS,
+/// and the entries it produced stay.
+model ConsentAsk {
+  ackRequestId String   @db.Uuid
+  schoolId     String   @db.Uuid
+  listId       String   @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  school School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  list   ConsentList @relation(fields: [listId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([ackRequestId, schoolId])
+  @@index([listId, schoolId])
+  @@index([schoolId])
+  @@map("ConsentAsks")
 }

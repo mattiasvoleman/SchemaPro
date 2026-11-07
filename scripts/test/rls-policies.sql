@@ -20195,6 +20195,9 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('CancellationBatchCredits', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('CancellationBatchLessons', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('CancellationBatches', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('ConsentAsks', '{DRIFT}', '{}', '{}', '{}'),
+  ('ConsentEntries', '{DRIFT}', '{}', '{}', '{}'),
+  ('ConsentLists', '{DRIFT}', '{}', '{}', '{}'),
   ('CoverConfirmations', '{DRIFT}', '{}', '{}', '{}'),
   ('CoverRequestLessons', '{DRIFT}', '{}', '{}', '{}'),
   ('CoverRequestRecipients', '{DRIFT}', '{DRIFT}', '{}', '{}'),
@@ -20213,6 +20216,8 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('HuvudmanSchoolEvents', '{}', '{}', '{}', '{}'),
   ('HuvudmanSchoolRequests', '{}', '{}', '{}', '{}'),
   ('HuvudmanSchools', '{}', '{}', '{}', '{}'),
+  ('InstructionProofs', '{DRIFT}', '{}', '{}', '{}'),
+  ('InstructionTemplates', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('IntegrationApiKeys', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
   ('LeaveDelegationDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('LeaveRequests', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
@@ -47009,3 +47014,953 @@ BEGIN
 END $$;
 ROLLBACK;
 
+
+-- ---------------------------------------------------------------------------
+-- Checklistor (F5, 20270129091000), sections 430-434: instruktionsbevis and
+-- samtyckeslistor per klass. Fixtures: rls-checklistor-school (and
+-- rls-checklistor-annan), planted once by the fixtures script.
+--
+--   430  the tables and what their triggers do
+--   431  who reads and who writes (a teacher by relation to the pupil)
+--   432  voiding a tick, closing a list, and the Kvittens bridge
+--   433  the catalogue: arms, privileges, functions, keys and the gallring branch
+--   434  the owner's side (rls-owner-checks.sql): a removed person, the keys' indexes, gallring
+--
+-- Everybody is found by e-mail address (cl-*@example.invalid); pupils p1..p7, teachers t1..t6.
+-- ---------------------------------------------------------------------------
+
+-- The helpers the sections share. Temporary, so they die with the session.
+CREATE FUNCTION pg_temp.cl_sub(p_who text) RETURNS text LANGUAGE sql AS $$
+  SELECT '00000000-0000-4000-8000-f500000000' || CASE p_who
+    WHEN 'full' THEN '01' WHEN 'expedition' THEN '03' WHEN 'lasare' THEN '05'
+    WHEN 't1' THEN '06' WHEN 't2' THEN '07' WHEN 't3' THEN '08' WHEN 't4' THEN '09' WHEN 't5' THEN '0a' WHEN 't6' THEN '0b'
+    WHEN 'p1' THEN '11' WHEN 'p2' THEN '12' WHEN 'p3' THEN '13' WHEN 'p4' THEN '14' WHEN 'p5' THEN '15' WHEN 'p6' THEN '16' WHEN 'p7' THEN '17'
+    WHEN 'g1' THEN '21' WHEN 'g2' THEN '22' WHEN 'g3' THEN '23' WHEN 'g4' THEN '24'
+    WHEN 'annan-admin' THEN '31' WHEN 'annan-p' THEN '32' WHEN 'annan-t' THEN '34' END
+$$;
+CREATE FUNCTION pg_temp.cl_as(p_who text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', pg_temp.cl_sub(p_who))::text, true)
+$$;
+-- The people by name, set once per transaction by the administrator.
+CREATE FUNCTION pg_temp.cl_load() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      ('p1'),('p2'),('p3'),('p4'),('p5'),('p6'),('p7'),('g1'),('g2'),('g3'),('g4'),
+      ('t1'),('t2'),('t3'),('t4'),('t5'),('t6'),('full'),('expedition'),('lasare')) v(k)
+  LOOP
+    PERFORM set_config('app.test_cl_' || r.k, (SELECT id::text FROM "Users" WHERE email = 'cl-' || r.k || '@example.invalid'), true);
+  END LOOP;
+  PERFORM set_config('app.test_cl_school', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_cl_c7a', (SELECT id::text FROM "StudentGroups" WHERE name = 'CL7A'), true);
+  PERFORM set_config('app.test_cl_c7b', (SELECT id::text FROM "StudentGroups" WHERE name = 'CL7B'), true);
+  PERFORM set_config('app.test_cl_tg', (SELECT id::text FROM "StudentGroups" WHERE name = 'CLSLJ1'), true);
+  PERFORM set_config('app.test_cl_subject', (SELECT id::text FROM "Subjects" WHERE code = 'CLS'), true);
+END $$;
+CREATE FUNCTION pg_temp.clf(p_name text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT current_setting('app.test_cl_' || p_name)::uuid
+$$;
+CREATE FUNCTION pg_temp.cl_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'checklistor %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- A statement that must fail with exactly this SQLSTATE.
+CREATE FUNCTION pg_temp.cl_refuses(p_sql text, p_state text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM p_state THEN
+    RAISE EXCEPTION 'checklistor: % should be refused with %, was %', p_what, p_state, got;
+  END IF;
+END $$;
+-- A statement the caller cannot do: refused for lack of a privilege or by a policy, or an
+-- UPDATE or DELETE that no policy lets reach a row.
+CREATE FUNCTION pg_temp.cl_denied(p_sql text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+BEGIN
+  EXECUTE p_sql;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF p_sql ~* '^(UPDATE|DELETE)' AND n = 0 THEN RETURN; END IF;
+  RAISE EXCEPTION 'checklistor: % was not denied (% rows)', p_what, n;
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+-- The pupils (p1, p2, ...) the valid proofs of a template are about, as the caller sees them, in one text.
+CREATE FUNCTION pg_temp.cl_proof_pupils(p_template uuid) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(substr(u.email, 4, 2), ',' ORDER BY u.email), '')
+    FROM "InstructionProofs" p JOIN "Users" u ON u.id = p."studentId" WHERE p."templateId" = p_template AND p."voidedAt" IS NULL
+$$;
+-- The rows themselves, counted without the join to Users (which is under row security too and would hide a pupil the
+-- reader cannot read: a leak shown as an empty text).
+CREATE FUNCTION pg_temp.cl_proof_count(p_template uuid) RETURNS bigint LANGUAGE sql AS $$
+  SELECT count(*) FROM "InstructionProofs" p WHERE p."templateId" = p_template
+$$;
+-- The pupils of a list's answers, as the caller sees them.
+CREATE FUNCTION pg_temp.cl_answer_pupils(p_list uuid) RETURNS text LANGUAGE sql AS $$
+  SELECT string_agg(substr(u.email, 4, 2), ',' ORDER BY u.email)
+    FROM "ConsentEntries" e JOIN "Users" u ON u.id = e."studentId" WHERE e."listId" = p_list
+$$;
+-- One template, one proof for each of p1 p2 p3 p4 p5 p7, and one list for 7A with an answer for p1, p2 and p4, as the
+-- full administrator writes them. The ids are kept (cl_tpl, cl_list).
+CREATE FUNCTION pg_temp.cl_seed() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  school uuid := app.current_school_id();
+  tpl uuid := gen_random_uuid();
+  lst uuid := gen_random_uuid();
+  who text;
+BEGIN
+  INSERT INTO "InstructionTemplates" (id, "schoolId", "subjectId", title, description)
+  VALUES (tpl, school, pg_temp.clf('subject'), 'Cirkelsågen', 'Skydd, nödstopp och arbetsställning.');
+  FOREACH who IN ARRAY ARRAY['p1','p2','p3','p4','p5','p7'] LOOP
+    INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (school, tpl, pg_temp.clf(who), current_date - 2);
+  END LOOP;
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body)
+  VALUES (lst, school, pg_temp.clf('c7a'), 'Fotografering', 'Jag samtycker till att mitt barn fotograferas i skolans verksamhet.');
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES
+    (school, lst, pg_temp.clf('p1'), 'GRANTED', current_date - 1),
+    (school, lst, pg_temp.clf('p2'), 'DECLINED', current_date - 1),
+    (school, lst, pg_temp.clf('p4'), 'GRANTED', current_date - 1);
+  PERFORM set_config('app.test_cl_tpl', tpl::text, true);
+  PERFORM set_config('app.test_cl_list', lst::text, true);
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 430: the tables and what their triggers do.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.cl_as('full');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  t record;
+  p record;
+  l record;
+  e record;
+  tpl uuid;
+  tpl2 uuid;
+  lst uuid;
+  req uuid;
+BEGIN
+  PERFORM pg_temp.cl_load();
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'checklistor 430: expected the full administrator'; END IF;
+
+  -- A template: active from the start; a moment is named once in a subject (case and blanks do not tell two apart).
+  tpl := gen_random_uuid();
+  INSERT INTO "InstructionTemplates" (id, "schoolId", "subjectId", title) VALUES (tpl, school, pg_temp.clf('subject'), 'Cirkelsågen');
+  SELECT * INTO t FROM "InstructionTemplates" WHERE id = tpl;
+  IF NOT t.active OR t.description IS NOT NULL THEN RAISE EXCEPTION 'checklistor 430: a template does not start active and bare: %', t; END IF;
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", "subjectId", title) VALUES (%L, %L, '  cirkelsågen ')$q$, school, pg_temp.clf('subject')),
+                             '23505', 'the same moment twice in a subject');
+  INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (school, 'Cirkelsågen');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (%L, 'CIRKELSÅGEN')$q$, school),
+                             '23505', 'the same moment twice with no subject');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (%L, '')$q$, school), '23514', 'an empty title');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (%L, %L)$q$, school, repeat('t', 121)), '23514', 'a title of 121 characters');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title, description) VALUES (%L, 'Beskrivning', '  ')$q$, school), '23514', 'a blank description');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title, description) VALUES (%L, 'Lång', %L)$q$, school, repeat('d', 2001)), '23514', 'a description of 2001 characters');
+  INSERT INTO "InstructionTemplates" ("schoolId", title, description) VALUES (school, repeat('t', 120), repeat('d', 2000));
+  -- A subject of no school of ours is no subject (the composite key).
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", "subjectId", title) VALUES (%L, %L, 'Utan ämne')$q$, school, gen_random_uuid()),
+                             '23503', 'a subject that does not exist');
+  -- Retiring a template changes it and its clock; it cannot move to another school; nobody removes one.
+  PERFORM pg_sleep(0.01);
+  UPDATE "InstructionTemplates" SET active = false WHERE id = tpl;
+  IF (SELECT "updatedAt" FROM "InstructionTemplates" WHERE id = tpl) <= t."updatedAt" THEN RAISE EXCEPTION 'checklistor 430: retiring did not move updatedAt'; END IF;
+  PERFORM pg_temp.cl_refuses(format($q$UPDATE "InstructionTemplates" SET "schoolId" = %L WHERE id = %L$q$, gen_random_uuid(), tpl), '42501', 'moving a template to another school');
+  PERFORM pg_temp.cl_denied('DELETE FROM "InstructionTemplates"', 'removing a template');
+  PERFORM pg_temp.cl_denied('TRUNCATE "InstructionTemplates"', 'truncating the templates');
+  UPDATE "InstructionTemplates" SET active = true WHERE id = tpl;
+
+  -- A proof is written in the caller's name, at the database's clock, whatever the row says, and is born unvoided.
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "recordedById", "recordedAt", "voidedAt", "voidedById", "voidReason")
+  VALUES (school, tpl, pg_temp.clf('p1'), current_date, pg_temp.clf('t1'), now() - interval '10 days', now(), pg_temp.clf('t1'), 'Fel');
+  SELECT * INTO p FROM "InstructionProofs" WHERE "templateId" = tpl AND "studentId" = pg_temp.clf('p1');
+  IF p."recordedById" <> pg_temp.clf('full') OR p."instructorId" <> pg_temp.clf('full') THEN
+    RAISE EXCEPTION 'checklistor 430: a proof was written in another name: recorded by %, instructor %', p."recordedById", p."instructorId";
+  END IF;
+  IF p."recordedAt" < now() - interval '1 minute' THEN RAISE EXCEPTION 'checklistor 430: a proof was back-dated to %', p."recordedAt"; END IF;
+  IF p."voidedAt" IS NOT NULL OR p."voidedById" IS NOT NULL OR p."voidReason" IS NOT NULL THEN RAISE EXCEPTION 'checklistor 430: a proof was born voided'; END IF;
+  -- One proof per pupil, template and day; another day is another proof.
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$, school, tpl, pg_temp.clf('p1')),
+                             '23505', 'the same instruction twice in a day');
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (school, tpl, pg_temp.clf('p1'), current_date - 1);
+  -- The instructor: a colleague on the staff, or nobody else.
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId") VALUES (school, tpl, pg_temp.clf('p2'), current_date, pg_temp.clf('t1'));
+  IF (SELECT "instructorId" FROM "InstructionProofs" WHERE "templateId" = tpl AND "studentId" = pg_temp.clf('p2')) <> pg_temp.clf('t1')
+     OR (SELECT "recordedById" FROM "InstructionProofs" WHERE "templateId" = tpl AND "studentId" = pg_temp.clf('p2')) <> pg_temp.clf('full') THEN
+    RAISE EXCEPTION 'checklistor 430: the instructor is not the colleague named, or the recorder not the caller';
+  END IF;
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId") VALUES (%L, %L, %L, current_date, %L)$q$, school, tpl, pg_temp.clf('p3'), pg_temp.clf('g1')),
+                             'CL422', 'a guardian as the instructor');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId") VALUES (%L, %L, %L, current_date, %L)$q$, school, tpl, pg_temp.clf('p3'), pg_temp.clf('p1')),
+                             'CL422', 'a pupil as the instructor');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId") VALUES (%L, %L, %L, current_date, %L)$q$, school, tpl, pg_temp.clf('p3'), gen_random_uuid()),
+                             'CL422', 'an instructor who is nobody of the school');
+  -- The pupil: an active pupil of the school.
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$, school, tpl, pg_temp.clf('g1')),
+                             'CL422', 'a proof about a guardian');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$, school, tpl, pg_temp.clf('p6')),
+                             'CL422', 'a proof about a pupil who has left');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$, school, tpl, gen_random_uuid()),
+                             'CL422', 'a proof about nobody');
+  -- The day: not one that has not come, and not before 2000.
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date + 2)$q$, school, tpl, pg_temp.clf('p3')),
+                             'CL422', 'an instruction on a day to come');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, DATE '1999-12-31')$q$, school, tpl, pg_temp.clf('p3')),
+                             '23514', 'an instruction in the last century');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", note) VALUES (%L, %L, %L, current_date, ' ')$q$, school, tpl, pg_temp.clf('p3')),
+                             '23514', 'a blank note');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", note) VALUES (%L, %L, %L, current_date, %L)$q$, school, tpl, pg_temp.clf('p3'), repeat('n', 501)),
+                             '23514', 'a note of 501 characters');
+  -- A retired template takes no more proofs; a template of nowhere is no template.
+  tpl2 := gen_random_uuid();
+  INSERT INTO "InstructionTemplates" (id, "schoolId", title, active) VALUES (tpl2, school, 'Avvecklad', false);
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$, school, tpl2, pg_temp.clf('p3')),
+                             'CL409', 'a proof in a retired template');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$, school, gen_random_uuid(), pg_temp.clf('p3')),
+                             '23503', 'a proof in a template that does not exist');
+  -- Nobody changes or removes a proof.
+  PERFORM pg_temp.cl_denied('UPDATE "InstructionProofs" SET note = ''Ändrad''', 'changing a proof');
+  PERFORM pg_temp.cl_denied('UPDATE "InstructionProofs" SET "voidedAt" = now()', 'voiding a proof by the table');
+  PERFORM pg_temp.cl_denied('DELETE FROM "InstructionProofs"', 'removing a proof');
+  PERFORM pg_temp.cl_denied('TRUNCATE "InstructionProofs"', 'truncating the proofs');
+
+  -- A list: for a class of the school, in the caller's name, born open, with the class's name.
+  lst := gen_random_uuid();
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", "groupName", title, body, "createdById", "createdAt")
+  VALUES (lst, school, pg_temp.clf('c7a'), 'Någon annan klass', 'Fotografering', 'Samtycke.', pg_temp.clf('t1'), now() - interval '9 days');
+  SELECT * INTO l FROM "ConsentLists" WHERE id = lst;
+  IF l."groupName" <> 'CL7A' OR l."createdById" <> pg_temp.clf('full') OR l."closedAt" IS NOT NULL OR l."createdAt" < now() - interval '1 minute' THEN
+    RAISE EXCEPTION 'checklistor 430: a list was written with name %, by %, closed %, at %', l."groupName", l."createdById", l."closedAt", l."createdAt";
+  END IF;
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, ' fotografering', 'Samtycke.')$q$, school, pg_temp.clf('c7a')),
+                             '23505', 'the same list twice for a class');
+  INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (school, pg_temp.clf('c7b'), 'Fotografering', 'Samtycke.');
+  INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (school, pg_temp.clf('c7a'), 'Publicering', 'Samtycke.');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, 'Utflykt', 'Samtycke.')$q$, school, pg_temp.clf('tg')),
+                             'CL422', 'a list for a teaching group');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, 'Utflykt', 'Samtycke.')$q$, school, gen_random_uuid()),
+                             'CL422', 'a list for a class that does not exist');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", title, body) VALUES (%L, 'Utflykt', 'Samtycke.')$q$, school), 'CL422', 'a list for no class');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, '', 'Samtycke.')$q$, school, pg_temp.clf('c7a')), '23514', 'an empty title of a list');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, 'Tom text', ' ')$q$, school, pg_temp.clf('c7a')), '23514', 'a blank text of a list');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, 'Lång text', %L)$q$, school, pg_temp.clf('c7a'), repeat('b', 2001)), '23514', 'a text of 2001 characters');
+  PERFORM pg_temp.cl_denied('UPDATE "ConsentLists" SET title = ''Ändrad''', 'changing a list');
+  PERFORM pg_temp.cl_denied('UPDATE "ConsentLists" SET "closedAt" = now()', 'closing a list by the table');
+  PERFORM pg_temp.cl_denied('DELETE FROM "ConsentLists"', 'removing a list');
+
+  -- An answer: in the caller's name at the database's clock, for an active pupil, not for a day to come, and only the staff's kind.
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", "givenBy", note, "recordedById", "recordedAt")
+  VALUES (school, lst, pg_temp.clf('p1'), 'GRANTED', current_date - 4, 'mamma Anna', 'Lapp i facket.', pg_temp.clf('t1'), now() - interval '10 days');
+  SELECT * INTO e FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1');
+  IF e."recordedById" <> pg_temp.clf('full') OR e."recordedAt" < now() - interval '1 minute' OR e.source <> 'REGISTERED' OR e."ackRequestId" IS NOT NULL THEN
+    RAISE EXCEPTION 'checklistor 430: an answer was written by %, at %, from % (%)', e."recordedById", e."recordedAt", e.source, e."ackRequestId";
+  END IF;
+  -- Several answers about a pupil are the history, not a conflict.
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (school, lst, pg_temp.clf('p1'), 'WITHDRAWN', current_date);
+  IF (SELECT count(*) FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1')) <> 2 THEN RAISE EXCEPTION 'checklistor 430: the history of an answer was not kept'; END IF;
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date + 2)$q$, school, lst, pg_temp.clf('p2')),
+                             'CL422', 'an answer dated in the future');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date)$q$, school, lst, pg_temp.clf('g1')),
+                             'CL422', 'an answer about a guardian');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date)$q$, school, lst, pg_temp.clf('p6')),
+                             'CL422', 'an answer about a pupil who has left');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", "givenBy") VALUES (%L, %L, %L, 'GRANTED', current_date, ' ')$q$, school, lst, pg_temp.clf('p2')),
+                             '23514', 'a blank giver');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", note) VALUES (%L, %L, %L, 'GRANTED', current_date, %L)$q$, school, lst, pg_temp.clf('p2'), repeat('n', 301)),
+                             '23514', 'a note of 301 characters');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', DATE '1999-01-01')$q$, school, lst, pg_temp.clf('p2')),
+                             '23514', 'an answer in the last century');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date)$q$, school, gen_random_uuid(), pg_temp.clf('p2')),
+                             '23503', 'an answer on a list that does not exist');
+  -- The staff do not write the Kvittens kind, nor name a request: those are the trigger's (432).
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, source, "givenOn", "ackRequestId") VALUES (%L, %L, %L, 'GRANTED', 'KVITTENS', current_date, %L)$q$, school, lst, pg_temp.clf('p2'), gen_random_uuid()),
+                             '42501', 'a KVITTENS answer written by the staff');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", "ackRequestId") VALUES (%L, %L, %L, 'GRANTED', current_date, %L)$q$, school, lst, pg_temp.clf('p2'), gen_random_uuid()),
+                             '42501', 'a staff answer that names a request');
+  PERFORM pg_temp.cl_denied('UPDATE "ConsentEntries" SET kind = ''GRANTED''', 'changing an answer');
+  PERFORM pg_temp.cl_denied('DELETE FROM "ConsentEntries"', 'removing an answer');
+  PERFORM pg_temp.cl_denied('TRUNCATE "ConsentEntries"', 'truncating the answers');
+
+  -- An ask: a request of the rule ALL that nobody has answered, and nothing else.
+  UPDATE "AckSettings" SET enabled = true;
+  IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true); END IF;
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req, school, 'Samtycke', 'Text', 'ANY');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.clf('p3'), pg_temp.clf('g3'));
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, req, school, lst),
+                             'CL422', 'a request of the rule ANY as a consent');
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req, school, 'Samtycke', 'Text', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.clf('p3'), pg_temp.clf('g3'));
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, school, lst);
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, req, school, lst),
+                             '23505', 'a request linked twice');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, gen_random_uuid(), school, lst),
+                             'CL422', 'a request that does not exist (the guard answers before the key)');
+  PERFORM pg_temp.cl_denied('UPDATE "ConsentAsks" SET "listId" = "listId"', 'changing a link');
+  PERFORM pg_temp.cl_denied('DELETE FROM "ConsentAsks"', 'removing a link');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 431: who reads and who writes.
+--
+-- One template with a proof for each of p1 p2 p3 p4 p5 p7 and one list for 7A with an answer for p1, p2 and p4.
+-- Who teaches whom: t1 teaches the teaching group, with p7 named on its lesson (p1, p5, p7), and has a parked lesson of 7B,
+-- which occupies nothing (so not p3); t3 teaches 7B (p3, p5, and not p6 who has left); t4 co-teaches the teaching
+-- group lesson (p1, p5, p7); t2 mentors 7A (p1, p2, p4) and teaches nobody; t5 teaches a class of the year that is not
+-- active; t6 nothing.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.cl_as('full');
+DO $$
+DECLARE
+  tpl uuid;
+  lst uuid;
+  who text;
+  want text;
+BEGIN
+  PERFORM pg_temp.cl_load();
+  PERFORM pg_temp.cl_seed();
+  tpl := pg_temp.clf('tpl');
+  lst := pg_temp.clf('list');
+
+  -- The administrators read all of it, whatever their profile: the läsare too.
+  FOREACH who IN ARRAY ARRAY['full', 'expedition', 'lasare'] LOOP
+    PERFORM pg_temp.cl_as(who);
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads the proofs', pg_temp.cl_proof_pupils(tpl), 'p1,p2,p3,p4,p5,p7');
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads the list', (SELECT count(*)::text FROM "ConsentLists" WHERE id = lst), '1');
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads the answers', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst), '3');
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads the templates', (SELECT count(*)::text FROM "InstructionTemplates" WHERE id = tpl), '1');
+  END LOOP;
+
+  -- A teacher reads the proofs of the pupils they teach and mentor, and nobody else's.
+  FOR who, want IN SELECT * FROM (VALUES
+      ('t1', 'p1,p5,p7'),
+      ('t2', 'p1,p2,p4'),
+      ('t3', 'p3,p5'),
+      ('t4', 'p1,p5,p7'),
+      ('t5', ''),
+      ('t6', '')) v(k, w)
+  LOOP
+    PERFORM pg_temp.cl_as(who);
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads proofs', pg_temp.cl_proof_pupils(tpl), want);
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads proofs (count)', pg_temp.cl_proof_count(tpl)::text, coalesce(cardinality(string_to_array(nullif(want, ''), ',')), 0)::text);
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads templates', (SELECT count(*)::text FROM "InstructionTemplates" WHERE id = tpl), '1');
+  END LOOP;
+  -- The same for the answers: of the pupils they teach or mentor.
+  PERFORM pg_temp.cl_as('t1');
+  PERFORM pg_temp.cl_expect('431 t1 reads the answers of the pupils they teach', pg_temp.cl_answer_pupils(lst), 'p1');
+  PERFORM pg_temp.cl_as('t2');
+  PERFORM pg_temp.cl_expect('431 the mentor reads the answers of the mentees', pg_temp.cl_answer_pupils(lst), 'p1,p2,p4');
+  PERFORM pg_temp.cl_as('t3');
+  PERFORM pg_temp.cl_expect('431 a teacher of 7B reads no answer of 7A', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst), '0');
+  PERFORM pg_temp.cl_as('t5');
+  PERFORM pg_temp.cl_expect('431 a teacher of a past year reads no answer', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst), '0');
+
+  -- The lists a teacher reads are those of the classes of the pupils they teach or mentor (7A for t1, t2, t4; not t3, t5, t6).
+  FOR who, want IN SELECT * FROM (VALUES ('t1', '1'), ('t2', '1'), ('t3', '0'), ('t4', '1'), ('t5', '0'), ('t6', '0')) v(k, w) LOOP
+    PERFORM pg_temp.cl_as(who);
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads the list of 7A', (SELECT count(*)::text FROM "ConsentLists" WHERE id = lst), want);
+  END LOOP;
+  -- The sets themselves, as the policies ask for them.
+  PERFORM pg_temp.cl_as('t1');
+  PERFORM pg_temp.cl_expect('431 t1 teaches', (SELECT string_agg(substr(u.email, 4, 2), ',' ORDER BY u.email) FROM "Users" u WHERE u.id = ANY (app.checklist_taught_ids())), 'p1,p5,p7');
+  PERFORM pg_temp.cl_as('t3');
+  PERFORM pg_temp.cl_expect('431 t3 teaches', (SELECT string_agg(substr(u.email, 4, 2), ',' ORDER BY u.email) FROM "Users" u WHERE u.id = ANY (app.checklist_taught_ids())), 'p3,p5');
+  PERFORM pg_temp.cl_as('t4');
+  PERFORM pg_temp.cl_expect('431 t4 teaches', (SELECT string_agg(substr(u.email, 4, 2), ',' ORDER BY u.email) FROM "Users" u WHERE u.id = ANY (app.checklist_taught_ids())), 'p1,p5,p7');
+  PERFORM pg_temp.cl_as('t2');
+  PERFORM pg_temp.cl_expect('431 a mentor who teaches nobody', cardinality(app.checklist_taught_ids())::text || '/' || cardinality(app.checklist_visible_ids())::text, '0/3');
+  PERFORM pg_temp.cl_as('t5');
+  PERFORM pg_temp.cl_expect('431 a teacher of a year that is not active', cardinality(app.checklist_visible_ids())::text, '0');
+  -- Anyone but a teacher teaches nobody.
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('431 an administrator teaches nobody', cardinality(app.checklist_taught_ids())::text || '/' || cardinality(app.checklist_class_ids())::text, '0/0');
+
+  -- A guardian and a pupil read none of it, and write none of it.
+  FOREACH who IN ARRAY ARRAY['g1', 'p1'] LOOP
+    PERFORM pg_temp.cl_as(who);
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads proofs', pg_temp.cl_proof_count(tpl)::text, '0');
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads templates', (SELECT count(*)::text FROM "InstructionTemplates"), '0');
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads lists', (SELECT count(*)::text FROM "ConsentLists"), '0');
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads answers', (SELECT count(*)::text FROM "ConsentEntries"), '0');
+    PERFORM pg_temp.cl_expect('431 ' || who || ' reads asks', (SELECT count(*)::text FROM "ConsentAsks"), '0');
+    -- The instructor is named (a colleague), so that the policy is what refuses and not the stamp.
+    PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId") VALUES (%L, %L, %L, current_date - 5, %L)$q$, pg_temp.clf('school'), tpl, pg_temp.clf('p1'), pg_temp.clf('t1')),
+                               '42501', who || ' ticking a proof');
+    PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date)$q$, pg_temp.clf('school'), lst, pg_temp.clf('p1')),
+                               '42501', who || ' giving a consent');
+    PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (%L, 'Egen mall')$q$, pg_temp.clf('school')), '42501', who || ' making a template');
+    PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, 'Egen lista', 'Text')$q$, pg_temp.clf('school'), pg_temp.clf('c7a')), '42501', who || ' making a list');
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- 431, the writes: a teacher ticks the pupils they teach and writes the answers of their mentees; the administrators by
+-- Drift; the others none.
+BEGIN;
+SELECT pg_temp.cl_as('full');
+DO $$
+DECLARE
+  school uuid;
+  tpl uuid;
+  lst uuid;
+  req uuid;
+  other uuid;
+  who text;
+  pupil text;
+  want boolean;
+  p record;
+  n integer := 0;
+BEGIN
+  PERFORM pg_temp.cl_load();
+  PERFORM pg_temp.cl_seed();
+  school := pg_temp.clf('school');
+  tpl := pg_temp.clf('tpl');
+  lst := pg_temp.clf('list');
+
+  -- Ticking: who may tick whom, and a refusal that is the policy's (the instructor is a colleague, so the stamp lets it by).
+  -- Each tick is on a day of its own, since the same pupil, template and day is one proof.
+  FOR who, pupil, want IN SELECT * FROM (VALUES
+      ('t1', 'p1', true), ('t1', 'p5', true), ('t1', 'p7', true), ('t1', 'p3', false), ('t1', 'p2', false),
+      ('t2', 'p1', false), ('t2', 'p2', false),
+      ('t3', 'p3', true), ('t3', 'p5', true), ('t3', 'p1', false),
+      ('t4', 'p7', true), ('t4', 'p1', true), ('t4', 'p3', false),
+      ('t5', 'p7', false), ('t5', 'p1', false), ('t6', 'p1', false),
+      ('expedition', 'p3', true), ('lasare', 'p3', false)) v(k, pupil, ok)
+  LOOP
+    PERFORM pg_temp.cl_as(who);
+    n := n + 1;
+    IF want THEN
+      EXECUTE format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", note) VALUES (%L, %L, %L, current_date - 7 - %s, %L)$q$,
+                     school, tpl, pg_temp.clf(pupil), n, 'bock av ' || who);
+      SELECT * INTO p FROM "InstructionProofs" WHERE "templateId" = tpl AND "studentId" = pg_temp.clf(pupil) AND note = 'bock av ' || who;
+      IF p."recordedById" <> pg_temp.clf(who) OR p."instructorId" <> pg_temp.clf(who) THEN
+        RAISE EXCEPTION 'checklistor 431: % ticked % but the proof says recorded by % and instructor %', who, pupil, p."recordedById", p."instructorId";
+      END IF;
+    ELSE
+      PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId") VALUES (%L, %L, %L, current_date - 8, %L)$q$,
+                                        school, tpl, pg_temp.clf(pupil), pg_temp.clf('t3')),
+                                 '42501', who || ' ticking ' || pupil);
+    END IF;
+  END LOOP;
+  -- A teacher names a colleague who gave the instruction: the colleague is the instructor, the writer the recorder.
+  PERFORM pg_temp.cl_as('t1');
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId", note) VALUES (school, tpl, pg_temp.clf('p1'), current_date - 9, pg_temp.clf('t3'), 'vikarie');
+  SELECT * INTO p FROM "InstructionProofs" WHERE note = 'vikarie';
+  PERFORM pg_temp.cl_expect('431 a colleague gave the instruction', (p."instructorId" = pg_temp.clf('t3'))::text || (p."recordedById" = pg_temp.clf('t1'))::text, 'truetrue');
+  -- Another school's name on the row is refused by the stamp, which finds no pupil of it, before the policy is asked.
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$, gen_random_uuid(), tpl, pg_temp.clf('p3')),
+                             'CL422', 'a proof under another school');
+
+  -- Templates: the administrators by Drift only; no teacher.
+  FOREACH who IN ARRAY ARRAY['t1', 't2', 'lasare'] LOOP
+    PERFORM pg_temp.cl_as(who);
+    PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (%L, 'Från %s')$q$, school, who), '42501', who || ' making a template');
+    PERFORM pg_temp.cl_denied(format($q$UPDATE "InstructionTemplates" SET active = false WHERE id = %L$q$, tpl), who || ' retiring a template');
+  END LOOP;
+  PERFORM pg_temp.cl_as('expedition');
+  INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (school, 'Från expeditionen');
+  UPDATE "InstructionTemplates" SET active = false WHERE id = tpl;
+  UPDATE "InstructionTemplates" SET active = true WHERE id = tpl;
+
+  -- Answers: the mentor writes about the mentees (the protected one too); a teacher who only teaches the pupil does not.
+  FOR who, pupil, want IN SELECT * FROM (VALUES
+      ('t2', 'p1', true), ('t2', 'p2', true), ('t2', 'p4', true), ('t2', 'p3', false), ('t2', 'p5', false),
+      ('t1', 'p1', false), ('t3', 'p3', false), ('t4', 'p1', false), ('t5', 'p1', false), ('t6', 'p1', false),
+      ('expedition', 'p3', true), ('full', 'p3', true), ('lasare', 'p1', false)) v(k, pupil, ok)
+  LOOP
+    PERFORM pg_temp.cl_as(who);
+    IF want THEN
+      EXECUTE format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", note) VALUES (%L, %L, %L, 'GRANTED', current_date - 1, %L)$q$,
+                     school, lst, pg_temp.clf(pupil), 'svar av ' || who);
+      SELECT * INTO p FROM "ConsentEntries" WHERE "listId" = lst AND note = 'svar av ' || who AND "studentId" = pg_temp.clf(pupil);
+      IF p."recordedById" <> pg_temp.clf(who) THEN RAISE EXCEPTION 'checklistor 431: % answered for % but the answer says recorded by %', who, pupil, p."recordedById"; END IF;
+    ELSE
+      PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date - 1)$q$, school, lst, pg_temp.clf(pupil)),
+                                 '42501', who || ' answering for ' || pupil);
+    END IF;
+  END LOOP;
+
+  -- Lists: a teacher makes one for a class they have a mentee in; an administrator by Drift for any class.
+  FOR who, pupil, want IN SELECT * FROM (VALUES
+      ('t2', 'c7a', true), ('t2', 'c7b', false), ('t1', 'c7a', false), ('t3', 'c7b', false), ('t4', 'c7a', false), ('t6', 'c7a', false),
+      ('expedition', 'c7b', true), ('lasare', 'c7b', false)) v(k, c, ok)
+  LOOP
+    PERFORM pg_temp.cl_as(who);
+    IF want THEN
+      EXECUTE format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, %L, 'Text')$q$, school, pg_temp.clf(pupil), 'Lista av ' || who);
+      IF (SELECT "createdById" FROM "ConsentLists" WHERE title = 'Lista av ' || who) <> pg_temp.clf(who) THEN RAISE EXCEPTION 'checklistor 431: a list of % was made by someone else', who; END IF;
+    ELSE
+      PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, %L, 'Text')$q$, school, pg_temp.clf(pupil), 'Lista av ' || who),
+                                 '42501', who || ' making a list for ' || pupil);
+    END IF;
+  END LOOP;
+  -- A teacher reads a list they made, whatever the class; and a list of 7A that t2 made is read by the teachers of 7A's pupils.
+  PERFORM pg_temp.cl_as('t2');
+  PERFORM pg_temp.cl_expect('431 the mentor reads their own list', (SELECT count(*)::text FROM "ConsentLists" WHERE title = 'Lista av t2'), '1');
+  PERFORM pg_temp.cl_as('t3');
+  PERFORM pg_temp.cl_expect('431 a teacher of 7B does not read it', (SELECT count(*)::text FROM "ConsentLists" WHERE title = 'Lista av t2'), '0');
+  PERFORM pg_temp.cl_as('t4');
+  PERFORM pg_temp.cl_expect('431 a teacher of a 7A pupil reads it', (SELECT count(*)::text FROM "ConsentLists" WHERE title = 'Lista av t2'), '1');
+
+  -- Asks: a teacher links the request they wrote about their mentees to a list of a class they mentor.
+  PERFORM pg_temp.cl_as('full');
+  UPDATE "AckSettings" SET enabled = true;
+  IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true); END IF;
+  PERFORM pg_temp.cl_as('t2');
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req, school, 'Samtycke: Fotografering', 'Jag samtycker.', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.clf('p1'), pg_temp.clf('g1'));
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, school, lst);
+  PERFORM pg_temp.cl_expect('431 the mentor reads the ask', (SELECT count(*)::text FROM "ConsentAsks"), '1');
+  PERFORM pg_temp.cl_as('t1');
+  PERFORM pg_temp.cl_expect('431 a teacher of a pupil on the list reads the ask', (SELECT count(*)::text FROM "ConsentAsks"), '1');
+  PERFORM pg_temp.cl_as('t3');
+  PERFORM pg_temp.cl_expect('431 a teacher of 7B reads no ask', (SELECT count(*)::text FROM "ConsentAsks"), '0');
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM pg_temp.cl_expect('431 the guardian asked reads no ask', (SELECT count(*)::text FROM "ConsentAsks"), '0');
+  -- A teacher cannot link a colleague's request; an administrator by Drift can.
+  PERFORM pg_temp.cl_as('full');
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req, school, 'Administratörens', 'Text', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.clf('p1'), pg_temp.clf('g1'));
+  PERFORM pg_temp.cl_as('t2');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, req, school, lst), '42501', 'a mentor linking the administrator''s request');
+  PERFORM pg_temp.cl_as('expedition');
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, school, lst);
+  PERFORM pg_temp.cl_as('lasare');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, gen_random_uuid(), school, lst), 'CL422', 'the läsare linking a request that is nobody''s (the guard answers first)');
+
+  -- The other school sees none of this and writes nothing here.
+  PERFORM pg_temp.cl_as('annan-admin');
+  other := app.current_school_id();
+  IF other = school THEN RAISE EXCEPTION 'checklistor 431: the other school''s administrator is in this school'; END IF;
+  PERFORM pg_temp.cl_expect('431 another school reads the templates', (SELECT count(*)::text FROM "InstructionTemplates"), '0');
+  PERFORM pg_temp.cl_expect('431 another school reads the proofs', (SELECT count(*)::text FROM "InstructionProofs"), '0');
+  PERFORM pg_temp.cl_expect('431 another school reads the lists', (SELECT count(*)::text FROM "ConsentLists"), '0');
+  PERFORM pg_temp.cl_expect('431 another school reads the answers', (SELECT count(*)::text FROM "ConsentEntries"), '0');
+  PERFORM pg_temp.cl_expect('431 another school reads the asks', (SELECT count(*)::text FROM "ConsentAsks"), '0');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId") VALUES (%L, %L, %L, current_date, %L)$q$, school, tpl, pg_temp.clf('p1'), pg_temp.clf('t1')),
+                             '42501', 'another school''s administrator ticking a pupil of this school');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date)$q$, school, lst, pg_temp.clf('p1')),
+                             '42501', 'another school''s administrator answering for a pupil of this school');
+  PERFORM pg_temp.cl_as('annan-t');
+  PERFORM pg_temp.cl_expect('431 another school''s teacher reads none', (SELECT count(*)::text FROM "InstructionProofs") || (SELECT count(*)::text FROM "ConsentLists"), '00');
+  PERFORM pg_temp.cl_expect('431 another school''s teacher teaches their own', cardinality(app.checklist_taught_ids())::text, '1');
+END $$;
+ROLLBACK;
+
+-- 431, the marks: a teacher cannot read the school's marks of a protected identity (the administrators' register), and the gateway
+-- builds the sheet for paper by asking which of the pupils are marked. Staff are told which among the ids given; nobody else is told
+-- anything, and nobody is told of another school's marks.
+BEGIN;
+SELECT pg_temp.cl_as('full');
+DO $$
+DECLARE
+  who text;
+  ids uuid[];
+BEGIN
+  PERFORM pg_temp.cl_load();
+  ids := ARRAY[pg_temp.clf('p1'), pg_temp.clf('p4'), pg_temp.clf('p3')];
+  IF (SELECT count(*) FROM "PersonProtections") < 1 THEN RAISE EXCEPTION 'checklistor 431: the administrator reads no mark (the fixture marks p4)'; END IF;
+  FOREACH who IN ARRAY ARRAY['full', 'expedition', 'lasare', 't1', 't2', 't3', 't5'] LOOP
+    PERFORM pg_temp.cl_as(who);
+    PERFORM pg_temp.cl_expect('431 marks, ' || who || ' is told the marked among the ids', (SELECT string_agg(substr(u.email, 4, 2), ',') FROM "Users" u WHERE u.id = ANY (app.checklist_protected_ids(ids))), 'p4');
+    PERFORM pg_temp.cl_expect('431 marks, ' || who || ' is told nothing about ids that are not marked', cardinality(app.checklist_protected_ids(ARRAY[pg_temp.clf('p1'), pg_temp.clf('p3')]))::text, '0');
+    PERFORM pg_temp.cl_expect('431 marks, ' || who || ' asks about nobody', cardinality(app.checklist_protected_ids('{}'::uuid[]))::text, '0');
+  END LOOP;
+  -- A teacher reads no mark through the table: the answer is the gateway's to use and not to pass on.
+  FOREACH who IN ARRAY ARRAY['t1', 't2'] LOOP
+    PERFORM pg_temp.cl_as(who);
+    PERFORM pg_temp.cl_expect('431 marks, ' || who || ' reads the register of marks', (SELECT count(*)::text FROM "PersonProtections"), '0');
+  END LOOP;
+  -- A guardian and a pupil are told nothing, and neither is the administrator of another school.
+  FOREACH who IN ARRAY ARRAY['g1', 'p1', 'p4', 'annan-admin', 'annan-t'] LOOP
+    PERFORM pg_temp.cl_as(who);
+    PERFORM pg_temp.cl_expect('431 marks, ' || who || ' is told nothing', cardinality(app.checklist_protected_ids(ids))::text, '0');
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 432: voiding a tick, closing a list, and the Kvittens bridge: the last guardian's confirmation is the consent.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.cl_as('full');
+DO $$
+DECLARE
+  school uuid;
+  tpl uuid;
+  lst uuid;
+  proof uuid;
+  was timestamptz;
+  at timestamptz;
+  p record;
+  l record;
+BEGIN
+  PERFORM pg_temp.cl_load();
+  PERFORM pg_temp.cl_seed();
+  school := pg_temp.clf('school');
+  tpl := pg_temp.clf('tpl');
+  lst := pg_temp.clf('list');
+
+  -- Voiding a tick: the writer, or an administrator by Drift. The tick stays, with who, when and why.
+  PERFORM pg_temp.cl_as('t1');
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", note) VALUES (school, tpl, pg_temp.clf('p1'), current_date - 20, 'fel bock');
+  SELECT id INTO proof FROM "InstructionProofs" WHERE note = 'fel bock';
+  PERFORM pg_temp.cl_as('t4');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, 'Fel elev')$q$, proof), 'CL404', 'a teacher voiding a colleague''s tick');
+  PERFORM pg_temp.cl_as('t2');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, 'Fel elev')$q$, proof), 'CL404', 'a mentor voiding a tick that is not theirs');
+  PERFORM pg_temp.cl_as('t1');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, NULL)$q$, proof), 'CL422', 'voiding with no reason');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, '   ')$q$, proof), 'CL422', 'voiding with a blank reason');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, %L)$q$, proof, repeat('r', 301)), 'CL422', 'voiding with a reason of 301 characters');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, 'Fel')$q$, gen_random_uuid()), 'CL404', 'voiding a tick that does not exist');
+  was := app.checklist_void_proof(proof, ' Fel elev ');
+  SELECT * INTO p FROM "InstructionProofs" WHERE id = proof;
+  IF p."voidedAt" IS DISTINCT FROM was OR p."voidedById" <> pg_temp.clf('t1') OR p."voidReason" <> 'Fel elev' OR p."note" <> 'fel bock' THEN
+    RAISE EXCEPTION 'checklistor 432: a voided tick says %', p;
+  END IF;
+  -- A second call changes nothing and answers the first time.
+  PERFORM pg_temp.cl_as('full');
+  at := app.checklist_void_proof(proof, 'En annan anledning');
+  IF at IS DISTINCT FROM was OR (SELECT "voidReason" FROM "InstructionProofs" WHERE id = proof) <> 'Fel elev' OR (SELECT "voidedById" FROM "InstructionProofs" WHERE id = proof) <> pg_temp.clf('t1') THEN
+    RAISE EXCEPTION 'checklistor 432: voiding twice changed the tick or answered another time';
+  END IF;
+  -- The tick is still read, voided; the same pupil, template and day may be ticked again.
+  IF (SELECT count(*) FROM "InstructionProofs" WHERE "templateId" = tpl AND "studentId" = pg_temp.clf('p1') AND "instructedOn" = current_date - 20) <> 1 THEN
+    RAISE EXCEPTION 'checklistor 432: a voided tick is not kept';
+  END IF;
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", note) VALUES (school, tpl, pg_temp.clf('p1'), current_date - 20, 'rätt bock');
+  IF (SELECT count(*) FROM "InstructionProofs" WHERE "templateId" = tpl AND "studentId" = pg_temp.clf('p1') AND "instructedOn" = current_date - 20 AND "voidedAt" IS NULL) <> 1 THEN
+    RAISE EXCEPTION 'checklistor 432: the corrected tick is not the one valid tick of the day';
+  END IF;
+  -- An administrator voids any tick; nobody else does.
+  SELECT id INTO proof FROM "InstructionProofs" WHERE note = 'rätt bock';
+  PERFORM pg_temp.cl_as('lasare');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, 'Fel')$q$, proof), 'CL403', 'the läsare voiding a tick');
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, 'Fel')$q$, proof), 'CL403', 'a guardian voiding a tick');
+  PERFORM pg_temp.cl_as('p1');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, 'Fel')$q$, proof), 'CL403', 'a pupil voiding their own tick');
+  PERFORM pg_temp.cl_as('annan-admin');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_void_proof(%L, 'Fel')$q$, proof), 'CL404', 'another school''s administrator voiding a tick');
+  PERFORM pg_temp.cl_as('expedition');
+  PERFORM app.checklist_void_proof(proof, 'Expeditionen rättar');
+  IF (SELECT "voidedById" FROM "InstructionProofs" WHERE id = proof) <> pg_temp.clf('expedition') THEN RAISE EXCEPTION 'checklistor 432: the administrator who voided is not named'; END IF;
+
+  -- Closing a list: its maker, or an administrator by Drift. Nothing is written to a closed list.
+  PERFORM pg_temp.cl_as('t2');
+  INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (school, pg_temp.clf('c7a'), 'Utflykt', 'Text');
+  SELECT * INTO l FROM "ConsentLists" WHERE title = 'Utflykt';
+  PERFORM pg_temp.cl_as('t1');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_close_list(%L)$q$, l.id), 'CL404', 'a teacher closing a colleague''s list');
+  PERFORM pg_temp.cl_as('lasare');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_close_list(%L)$q$, l.id), 'CL403', 'the läsare closing a list');
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_close_list(%L)$q$, l.id), 'CL403', 'a guardian closing a list');
+  PERFORM pg_temp.cl_as('annan-admin');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_close_list(%L)$q$, l.id), 'CL404', 'another school''s administrator closing a list');
+  PERFORM pg_temp.cl_as('t2');
+  PERFORM pg_temp.cl_refuses(format($q$SELECT app.checklist_close_list(%L)$q$, gen_random_uuid()), 'CL404', 'closing a list that does not exist');
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (school, l.id, pg_temp.clf('p1'), 'GRANTED', current_date);
+  was := app.checklist_close_list(l.id);
+  IF (SELECT "closedAt" FROM "ConsentLists" WHERE id = l.id) IS DISTINCT FROM was THEN RAISE EXCEPTION 'checklistor 432: a closed list does not say when'; END IF;
+  PERFORM pg_temp.cl_as('full');
+  IF app.checklist_close_list(l.id) IS DISTINCT FROM was THEN RAISE EXCEPTION 'checklistor 432: closing twice answered another time'; END IF;
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'WITHDRAWN', current_date)$q$, school, l.id, pg_temp.clf('p1')),
+                             'CL409', 'an answer on a closed list');
+  -- What was written stays readable, and the name is free again for a new list of the class.
+  PERFORM pg_temp.cl_expect('432 the answers of a closed list are kept', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = l.id), '1');
+  INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (school, pg_temp.clf('c7a'), 'Utflykt', 'Text');
+  -- An administrator closes another's list.
+  PERFORM pg_temp.cl_as('t2');
+  INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (school, pg_temp.clf('c7a'), 'Teaterbesök', 'Text');
+  SELECT * INTO l FROM "ConsentLists" WHERE title = 'Teaterbesök';
+  PERFORM pg_temp.cl_as('expedition');
+  PERFORM app.checklist_close_list(l.id);
+  IF (SELECT "closedAt" FROM "ConsentLists" WHERE id = l.id) IS NULL THEN RAISE EXCEPTION 'checklistor 432: an administrator did not close the list'; END IF;
+END $$;
+ROLLBACK;
+
+-- 432, the bridge. A request of the rule ALL, linked to a list, is the consent when the last guardian asked has confirmed it.
+BEGIN;
+SELECT pg_temp.cl_as('full');
+DO $$
+DECLARE
+  school uuid;
+  lst uuid;
+  lst2 uuid;
+  req uuid;
+  req2 uuid;
+  req3 uuid;
+  ent "ConsentEntries"%ROWTYPE;
+  latest "ConsentEntryKind";
+  today date;
+BEGIN
+  PERFORM pg_temp.cl_load();
+  school := pg_temp.clf('school');
+  today := (clock_timestamp() AT TIME ZONE 'Europe/Stockholm')::date;
+  UPDATE "AckSettings" SET enabled = true;
+  IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true); END IF;
+  lst := gen_random_uuid();
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst, school, pg_temp.clf('c7a'), 'Fotografering', 'Jag samtycker till fotografering.');
+  -- p1 has two guardians (g1, g2) and p2 one (g1): the request asks all of them.
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req, school, 'Samtycke: Fotografering', 'Jag samtycker till fotografering.', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES
+    (req, school, pg_temp.clf('p1'), pg_temp.clf('g1')), (req, school, pg_temp.clf('p1'), pg_temp.clf('g2')), (req, school, pg_temp.clf('p2'), pg_temp.clf('g1'));
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, school, lst);
+  PERFORM pg_temp.cl_expect('432 nothing is consent before anyone confirms', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst), '0');
+
+  -- The first guardian confirms: p2 had only them, so p2 is met; p1 still waits for the other.
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM app.ack_confirm(req);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 the pupil with one guardian', pg_temp.cl_answer_pupils(lst), 'p2');
+  SELECT * INTO ent FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p2');
+  IF ent.kind <> 'GRANTED' OR ent.source <> 'KVITTENS' OR ent."ackRequestId" <> req OR ent."recordedById" IS NOT NULL OR ent."givenOn" <> today OR ent."givenBy" IS NOT NULL
+     OR ent."recordedAt" < now() - interval '1 minute' THEN
+    RAISE EXCEPTION 'checklistor 432: the consent from Kvittens says %', ent;
+  END IF;
+  -- A second tap changes nothing.
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM app.ack_confirm(req);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 a second tap writes no second answer', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst), '1');
+  -- The other guardian confirms: p1 is met.
+  PERFORM pg_temp.cl_as('g2');
+  PERFORM app.ack_confirm(req);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 the pupil with two guardians', pg_temp.cl_answer_pupils(lst), 'p1,p2');
+  -- A withdrawal after it is the later answer, and the history keeps both.
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", note) VALUES (school, lst, pg_temp.clf('p1'), 'WITHDRAWN', today, 'Mamma ringde.');
+  SELECT kind INTO latest FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1') ORDER BY "recordedAt" DESC, id DESC LIMIT 1;
+  IF latest <> 'WITHDRAWN' THEN RAISE EXCEPTION 'checklistor 432: the withdrawal is not the latest answer'; END IF;
+  PERFORM pg_temp.cl_expect('432 the history keeps both', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1')), '2');
+
+  -- A request that is no consent's writes nothing when it is confirmed.
+  req2 := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req2, school, 'Utflykt på torsdag', 'Vi åker kl. 8.', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req2, school, pg_temp.clf('p2'), pg_temp.clf('g1'));
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM app.ack_confirm(req2);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 an ordinary request is no consent', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst), '3');
+
+  -- A request that has been answered cannot be linked afterwards: the confirmation was for something else.
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, req2, school, lst), 'CL422', 'linking a request a guardian has confirmed');
+
+  -- The list closed before the last confirmation: the confirmation goes through, the list takes nothing.
+  lst2 := gen_random_uuid();
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst2, school, pg_temp.clf('c7a'), 'Stängd lista', 'Text');
+  req3 := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req3, school, 'Samtycke: Stängd lista', 'Text', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req3, school, pg_temp.clf('p2'), pg_temp.clf('g1'));
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req3, school, lst2);
+  PERFORM app.checklist_close_list(lst2);
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM app.ack_confirm(req3);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 a confirmation never fails for a list''s sake, and a closed list takes none', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst2), '0');
+  IF (SELECT "ackedAt" FROM "AckReceipts" WHERE "requestId" = req3) IS NULL THEN RAISE EXCEPTION 'checklistor 432: the guardian''s confirmation was lost with the closed list'; END IF;
+
+  -- Custody that ended without a confirmation is not a consent: the guardian who stays confirms, the other's link goes, and
+  -- the Kvittens status says met, but no answer is written, since nobody has said yes after it.
+  lst2 := gen_random_uuid();
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst2, school, pg_temp.clf('c7a'), 'Vårdnad upphör', 'Text');
+  req3 := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req3, school, 'Samtycke: Vårdnad upphör', 'Text', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES
+    (req3, school, pg_temp.clf('p1'), pg_temp.clf('g1')), (req3, school, pg_temp.clf('p1'), pg_temp.clf('g2'));
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req3, school, lst2);
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM app.ack_confirm(req3);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 one of two has confirmed', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst2), '0');
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.clf('g2') AND "studentId" = pg_temp.clf('p1');
+  PERFORM pg_temp.cl_expect('432 the status says met', (SELECT bool_and(s.met)::text FROM app.ack_status(ARRAY[req3]) s), 'true');
+  PERFORM pg_temp.cl_expect('432 but nobody gave the consent', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst2), '0');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 433: the catalogue. The arms, who holds a privilege, which function the API's role may run, the keys, the
+-- Kvittens trigger and the gallring branch. The rows are 430-432's.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl text;
+  r text;
+  fn text;
+  want text;
+  part text;
+  got text;
+  priv text;
+  holds boolean;
+  def record;
+  tables constant text[] := ARRAY['InstructionTemplates', 'InstructionProofs', 'ConsentLists', 'ConsentEntries', 'ConsentAsks'];
+  owner_only constant text[] := ARRAY[
+    'app.checklist_templates_stamp()', 'app.instruction_proofs_stamp()', 'app.consent_lists_stamp()', 'app.consent_entries_stamp()',
+    'app.consent_asks_guard()', 'app.consent_from_kvittens()'];
+  api_may constant text[] := ARRAY[
+    'app.checklist_taught_ids()', 'app.checklist_visible_ids()', 'app.checklist_class_ids()', 'app.checklist_mentee_class_ids()',
+    'app.checklist_protected_ids(uuid[])', 'app.checklist_void_proof(uuid, text)', 'app.checklist_close_list(uuid)'];
+BEGIN
+  -- Row security on; every arm for the API's role alone.
+  FOREACH tbl IN ARRAY tables LOOP
+    IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('%I', tbl)::regclass) THEN
+      RAISE EXCEPTION 'checklistor 433: % has no row security', tbl;
+    END IF;
+  END LOOP;
+  FOR tbl, want IN SELECT * FROM (VALUES
+      ('InstructionTemplates', 'checklist_templates_admin_insert:a, checklist_templates_admin_update:w, checklist_templates_staff_select:r'),
+      ('InstructionProofs', 'checklist_proofs_admin_insert:a, checklist_proofs_admin_select:r, checklist_proofs_teacher_insert:a, checklist_proofs_teacher_select:r'),
+      ('ConsentLists', 'consent_lists_admin_insert:a, consent_lists_admin_select:r, consent_lists_teacher_insert:a, consent_lists_teacher_select:r'),
+      ('ConsentEntries', 'consent_entries_admin_insert:a, consent_entries_admin_select:r, consent_entries_teacher_insert:a, consent_entries_teacher_select:r'),
+      ('ConsentAsks', 'consent_asks_admin_insert:a, consent_asks_admin_select:r, consent_asks_teacher_insert:a, consent_asks_teacher_select:r')
+    ) v(t, w)
+  LOOP
+    SELECT string_agg(polname::text || ':' || polcmd::text, ', ' ORDER BY polname::text) INTO got FROM pg_policy WHERE polrelid = format('%I', tbl)::regclass;
+    IF got IS DISTINCT FROM want THEN RAISE EXCEPTION E'checklistor 433: the arms of %: got\n%\nwanted\n%', tbl, got, want; END IF;
+    IF EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = format('%I', tbl)::regclass
+                  AND (SELECT array_agg(rolname::text) FROM pg_roles WHERE oid = ANY (p.polroles)) IS DISTINCT FROM ARRAY['app_authenticated']) THEN
+      RAISE EXCEPTION 'checklistor 433: an arm of % is for a role other than the API''s alone', tbl;
+    END IF;
+  END LOOP;
+
+  -- Privileges on the tables: the API's role selects and inserts (the templates are also updated: retired), nothing is
+  -- removed or truncated, PostgREST's roles hold nothing, and service_role keeps only the SELECT every table gives it.
+  FOREACH tbl IN ARRAY tables LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        holds := (r = 'app_authenticated' AND priv IN ('SELECT', 'INSERT')) OR (r = 'app_authenticated' AND priv = 'UPDATE' AND tbl = 'InstructionTemplates')
+                 OR (r = 'service_role' AND priv = 'SELECT');
+        IF has_table_privilege(r, format('%I', tbl), priv) IS DISTINCT FROM holds THEN
+          RAISE EXCEPTION 'checklistor 433: % % % on % (it should%)', r, CASE WHEN holds THEN 'lacks' ELSE 'holds' END, priv, tbl, CASE WHEN holds THEN '' ELSE ' not' END;
+        END IF;
+      END LOOP;
+      IF current_setting('server_version_num')::int >= 170000 AND has_table_privilege(r, format('%I', tbl), 'MAINTAIN') THEN
+        RAISE EXCEPTION 'checklistor 433: % holds MAINTAIN on %', r, tbl;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  -- Functions: the owner's six are nobody's; the API's role runs the other seven; no other role runs any. Thirteen in all.
+  IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'app' AND (p.proname LIKE 'checklist\_%' OR p.proname LIKE 'instruction\_%' OR p.proname LIKE 'consent\_%')) <> cardinality(owner_only || api_may) THEN
+    RAISE EXCEPTION 'checklistor 433: the app schema has % checklist functions, not the %',
+      (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'app' AND (p.proname LIKE 'checklist\_%' OR p.proname LIKE 'instruction\_%' OR p.proname LIKE 'consent\_%')), cardinality(owner_only || api_may);
+  END IF;
+  FOREACH fn IN ARRAY owner_only || api_may LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = fn::regprocedure AND prosecdef
+                      AND EXISTS (SELECT 1 FROM unnest(proconfig) c WHERE c LIKE 'search_path=%')) THEN
+      RAISE EXCEPTION 'checklistor 433: % is not a definer function with a search path of its own', fn;
+    END IF;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_function_privilege(r, fn::regprocedure, 'EXECUTE') THEN RAISE EXCEPTION 'checklistor 433: % may run %', r, fn; END IF;
+    END LOOP;
+    IF has_function_privilege('app_authenticated', fn::regprocedure, 'EXECUTE') <> (fn = ANY (api_may)) THEN
+      RAISE EXCEPTION 'checklistor 433: the API''s role % run %', CASE WHEN fn = ANY (api_may) THEN 'may not' ELSE 'may' END, fn;
+    END IF;
+  END LOOP;
+
+  -- What the teacher's arms compare with is built once per statement, as an initplan over the caller's own ids.
+  FOR tbl, want, part IN SELECT * FROM (VALUES
+      ('checklist_proofs_teacher_select', 'checklist_visible_ids', 'q'),
+      ('checklist_proofs_teacher_insert', 'checklist_taught_ids', 'c'),
+      ('consent_lists_teacher_select', 'checklist_class_ids', 'q'),
+      ('consent_lists_teacher_insert', 'checklist_mentee_class_ids', 'c'),
+      ('consent_entries_teacher_select', 'checklist_visible_ids', 'q'),
+      ('consent_entries_teacher_insert', 'ack_mentee_ids', 'c')) v(pol, fnname, part)
+  LOOP
+    SELECT CASE WHEN part = 'q' THEN pg_get_expr(polqual, polrelid) ELSE pg_get_expr(polwithcheck, polrelid) END INTO got FROM pg_policy WHERE polname = tbl;
+    IF got IS NULL OR position(want IN got) = 0 OR got !~ '\(\s*SELECT\s+app\.' THEN
+      RAISE EXCEPTION E'checklistor 433: % is not an initplan over %: %', tbl, want, got;
+    END IF;
+  END LOOP;
+
+  -- The Kvittens bridge: an AFTER UPDATE statement trigger on the receipts, with both transition tables, enabled.
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'AckReceipts_consent' AND tgrelid = '"AckReceipts"'::regclass AND tgenabled = 'O'
+                    AND tgtype & 1 = 0 AND tgtype & 2 = 0 AND tgtype & 16 = 16 AND tgnewtable IS NOT NULL AND tgoldtable IS NOT NULL) THEN
+    RAISE EXCEPTION 'checklistor 433: the bridge is not an AFTER UPDATE statement trigger with both transition tables';
+  END IF;
+  FOR tbl, want IN SELECT * FROM (VALUES
+      ('InstructionTemplates', 'InstructionTemplates_stamp'), ('InstructionProofs', 'InstructionProofs_stamp'), ('ConsentLists', 'ConsentLists_stamp'),
+      ('ConsentEntries', 'ConsentEntries_stamp'), ('ConsentAsks', 'ConsentAsks_guard')) v(t, trg)
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = want AND tgrelid = format('%I', tbl)::regclass AND tgenabled = 'O' AND tgtype & 2 = 2) THEN
+      RAISE EXCEPTION 'checklistor 433: % is missing, off or not a BEFORE trigger on %', want, tbl;
+    END IF;
+  END LOOP;
+
+  -- The kinds.
+  IF (SELECT array_agg(enumlabel::text ORDER BY enumsortorder) FROM pg_enum WHERE enumtypid = '"ConsentEntryKind"'::regtype) IS DISTINCT FROM ARRAY['GRANTED', 'DECLINED', 'WITHDRAWN']
+     OR (SELECT array_agg(enumlabel::text ORDER BY enumsortorder) FROM pg_enum WHERE enumtypid = '"ConsentEntrySource"'::regtype) IS DISTINCT FROM ARRAY['REGISTERED', 'KVITTENS']
+     OR NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumtypid = '"RetentionDataType"'::regtype AND enumlabel = 'CHECKLISTS') THEN
+    RAISE EXCEPTION 'checklistor 433: the answers'' kinds, sources or the gallring type are not what the migration wrote';
+  END IF;
+
+  -- The keys: the ones to Users and groups that a person leaves set only their own column to NULL (never the school with
+  -- it), the pupil's go with the pupil, the list's with the list, and every composite key leaves a change of id alone.
+  FOR def IN SELECT conname, conrelid::regclass::text AS tbl, confdeltype, confupdtype, confdelsetcols, conkey FROM pg_constraint
+              WHERE contype = 'f' AND conrelid::regclass::text IN ('"InstructionTemplates"', '"InstructionProofs"', '"ConsentLists"', '"ConsentEntries"', '"ConsentAsks"')
+  LOOP
+    IF def.conname ~ '_schoolId_fkey$' AND array_length(def.conkey, 1) = 1 THEN
+      IF def.confdeltype <> 'c' THEN RAISE EXCEPTION 'checklistor 433: % does not cascade', def.conname; END IF;
+      CONTINUE;
+    END IF;
+    IF def.confupdtype <> 'a' THEN RAISE EXCEPTION 'checklistor 433: % does not leave a change of id alone (ON UPDATE NO ACTION)', def.conname; END IF;
+    want := CASE
+      WHEN def.conname IN ('InstructionTemplates_subjectId_schoolId_fkey', 'InstructionProofs_instructorId_schoolId_fkey', 'InstructionProofs_recordedById_schoolId_fkey',
+                           'InstructionProofs_voidedById_schoolId_fkey', 'ConsentLists_studentGroupId_schoolId_fkey', 'ConsentLists_createdById_schoolId_fkey',
+                           'ConsentEntries_recordedById_schoolId_fkey') THEN 'n'
+      WHEN def.conname IN ('InstructionProofs_studentId_schoolId_fkey', 'ConsentEntries_studentId_schoolId_fkey', 'ConsentEntries_listId_schoolId_fkey',
+                           'ConsentAsks_ackRequestId_schoolId_fkey', 'ConsentAsks_listId_schoolId_fkey') THEN 'c'
+      WHEN def.conname = 'InstructionProofs_templateId_schoolId_fkey' THEN 'a'
+      ELSE 'unknown' END;
+    IF def.confdeltype::text <> want THEN RAISE EXCEPTION 'checklistor 433: % is ON DELETE % and not %', def.conname, def.confdeltype, want; END IF;
+    IF want = 'n' AND (def.confdelsetcols IS NULL OR cardinality(def.confdelsetcols) <> 1
+                       OR def.confdelsetcols[1] <> def.conkey[1]) THEN
+      RAISE EXCEPTION 'checklistor 433: % sets more than its own column to NULL', def.conname;
+    END IF;
+  END LOOP;
+
+  -- Gallring: the pupil's proofs and answers and the empty lists go with the school's choice for CHECKLISTS, and every
+  -- earlier branch is still carried. The pseudonymisation leaves them (a pupil who has left is pseudonymised on the
+  -- school's choice for DEPARTED_PEOPLE; the proof stays as long as CHECKLISTS says).
+  FOREACH want IN ARRAY ARRAY['AckRequests', 'CoverRequests', 'CoverConfirmations', 'CrisisAlarms', 'PersonProtectionEvents', 'TeacherReportingDays',
+                              'ReportingReminders', 'AbsenceWatchFindings', 'GuardianStudentHistory', 'InstructionProofs', 'ConsentEntries', 'ConsentLists'] LOOP
+    IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure) NOT LIKE '%''' || want || '''%' THEN
+      RAISE EXCEPTION 'checklistor 433: gallring_due lost the branch of %', want;
+    END IF;
+    IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.gallring_purge(uuid, "RetentionDataType", integer)'::regprocedure) NOT LIKE '%"' || want || '"%' THEN
+      RAISE EXCEPTION 'checklistor 433: gallring_purge lost the branch of %', want;
+    END IF;
+  END LOOP;
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.gallring_pseudonymise(uuid, uuid[])'::regprocedure) ~ 'InstructionProofs|ConsentEntries|ConsentLists' THEN
+    RAISE EXCEPTION 'checklistor 433: the pseudonymisation touches the checklists; the decision is that it leaves them to CHECKLISTS';
+  END IF;
+END $$;
+ROLLBACK;

@@ -237,6 +237,15 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   AckReceipts: just('DRIFT', 'insert'),
   AckRequests: just('DRIFT', 'insert'),
   AckSettings: just('DRIFT', 'insert', 'update'),
+  // Checklistor (20270129091000): the templates, the ticks, the lists and their answers are Drift's, as the
+  // notices and the leave they sit beside. A template is made and retired (update) and never removed; a proof, a
+  // list and an answer are written once, and no administrator changes or removes one: a tick made in error is
+  // voided and a list closed by two functions, and gallring removes (the pupil's own, once they have left).
+  ConsentAsks: just('DRIFT', 'insert'),
+  ConsentEntries: just('DRIFT', 'insert'),
+  ConsentLists: just('DRIFT', 'insert'),
+  InstructionProofs: just('DRIFT', 'insert'),
+  InstructionTemplates: just('DRIFT', 'insert', 'update'),
   AbsenceWatchDigests: readOnly,
   AbsenceWatchFindings: readOnly,
   AbsenceWatchLimits: only('DRIFT'),

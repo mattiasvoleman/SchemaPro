@@ -2727,3 +2727,251 @@ BEGIN
 END $$;
 ROLLBACK;
 
+
+-- ---------------------------------------------------------------------------
+-- Checklistor (F5, 20270129091000), section 434: the owner's side. What needs the owner: removing a person, a class, a
+-- subject and a request; the keys across schools; the keys' indexes; and a gallring run.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.clo_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'checklistor %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- A statement the tables must refuse, by a fragment of the constraint's name (or the SQLSTATE).
+CREATE FUNCTION pg_temp.clo_refuses(p_sql text, p_fragment text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE p_sql;
+  RAISE EXCEPTION 'checklistor: accepted: %', p_sql;
+EXCEPTION WHEN check_violation OR unique_violation OR foreign_key_violation OR not_null_violation OR SQLSTATE 'CL422' OR SQLSTATE 'CL409' THEN
+  IF position(p_fragment IN SQLERRM) = 0 AND p_fragment <> SQLSTATE THEN
+    RAISE EXCEPTION 'checklistor: % was refused, but not by %: %', p_sql, p_fragment, SQLERRM;
+  END IF;
+END $$;
+CREATE FUNCTION pg_temp.clo_user(p_email text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT id FROM "Users" WHERE email = 'cl-' || p_email || '@example.invalid'
+$$;
+-- A request of the rule ALL, as the owner writes it, with a receipt for each pair 'p1:g1,p1:g2'.
+CREATE FUNCTION pg_temp.clo_request(p_school uuid, p_author uuid, p_title text, p_pairs text) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  req uuid := gen_random_uuid();
+  pair text;
+BEGIN
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, rule) VALUES (req, p_school, p_author, p_title, 'Text för ' || p_title, 'ALL');
+  FOREACH pair IN ARRAY string_to_array(p_pairs, ',') LOOP
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+    VALUES (req, p_school, pg_temp.clo_user(split_part(pair, ':', 1)), pg_temp.clo_user(split_part(pair, ':', 2)));
+  END LOOP;
+  RETURN req;
+END $$;
+
+-- 434a: the keys across schools, what removing a person, a class, a subject and a request takes, and the keys' indexes.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-checklistor-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-checklistor-annan');
+  full_ uuid := pg_temp.clo_user('full');
+  c7a uuid := (SELECT id FROM "StudentGroups" WHERE name = 'CL7A');
+  cx uuid;
+  subj uuid := (SELECT id FROM "Subjects" WHERE code = 'CLS');
+  tpl uuid := gen_random_uuid();
+  tpl_o uuid := gen_random_uuid();
+  lst uuid := gen_random_uuid();
+  lst_x uuid := gen_random_uuid();
+  lst_o uuid := gen_random_uuid();
+  req uuid;
+  fk record;
+BEGIN
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (school, (SELECT "academicYearId" FROM "StudentGroups" WHERE id = c7a), 'CLX', 7, now()) RETURNING id INTO cx;
+  INSERT INTO "InstructionTemplates" (id, "schoolId", "subjectId", title) VALUES (tpl, school, subj, 'Cirkelsågen');
+  INSERT INTO "InstructionTemplates" (id, "schoolId", title) VALUES (tpl_o, other, 'Annans mall');
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdById") VALUES (lst, school, c7a, 'Fotografering', 'Text', pg_temp.clo_user('t1'));
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdById") VALUES (lst_x, school, cx, 'Fotografering', 'Text', pg_temp.clo_user('t3'));
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst_o, other, (SELECT id FROM "StudentGroups" WHERE name = 'CL9A'), 'Annan lista', 'Text');
+
+  -- A key across schools is refused by the composite key, whatever the stamp lets by.
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$,
+                                     other, tpl, pg_temp.clo_user('annan-p')), 'InstructionProofs_templateId_schoolId_fkey');
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date)$q$,
+                                     other, lst, pg_temp.clo_user('annan-p')), 'ConsentEntries_listId_schoolId_fkey');
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$,
+                                     school, tpl, pg_temp.clo_user('annan-p')), 'CL422');
+  -- A class of another school is no class of a list's school, and neither is a subject.
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, 'Fel klass', 'Text')$q$,
+                                     school, (SELECT id FROM "StudentGroups" WHERE name = 'CL9A')), 'CL422');
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", "subjectId", title) VALUES (%L, %L, 'Fel ämne')$q$,
+                                     school, (SELECT id FROM "Subjects" WHERE code = 'ASL')), 'InstructionTemplates_subjectId_schoolId_fkey');
+  -- An instructor of another school is no instructor.
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId") VALUES (%L, %L, %L, current_date, %L)$q$,
+                                     school, tpl, pg_temp.clo_user('p1'), pg_temp.clo_user('annan-t')), 'CL422');
+
+  -- What a person who is removed takes, and what stays. A teacher who gave instruction and wrote ticks and answers:
+  -- the rows stay without them. A pupil: all that is about the pupil goes.
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId", "recordedById")
+  VALUES (school, tpl, pg_temp.clo_user('p1'), current_date - 5, pg_temp.clo_user('t1'), pg_temp.clo_user('t1'));
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId", "recordedById")
+  VALUES (school, tpl, pg_temp.clo_user('p5'), current_date - 5, pg_temp.clo_user('t1'), pg_temp.clo_user('t1'));
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", "recordedById") VALUES
+    (school, lst, pg_temp.clo_user('p1'), 'GRANTED', current_date - 1, pg_temp.clo_user('t1')),
+    (school, lst_x, pg_temp.clo_user('p5'), 'GRANTED', current_date - 1, pg_temp.clo_user('t1'));
+  UPDATE "InstructionProofs" SET "voidedAt" = now(), "voidedById" = pg_temp.clo_user('t1'), "voidReason" = 'Test' WHERE "studentId" = pg_temp.clo_user('p5');
+  DELETE FROM "Users" WHERE id = pg_temp.clo_user('t1');
+  PERFORM pg_temp.clo_expect('434a a removed teacher', (SELECT concat_ws('|', count(*), count("instructorId"), count("recordedById"), count("voidedById"), count("voidedAt")) FROM "InstructionProofs" WHERE "templateId" = tpl), '2|0|0|0|1');
+  PERFORM pg_temp.clo_expect('434a a removed teacher''s answers', (SELECT count(*)::text FROM "ConsentEntries" WHERE "schoolId" = school) || '|' || (SELECT count("recordedById")::text FROM "ConsentEntries" WHERE "schoolId" = school), '2|0');
+  PERFORM pg_temp.clo_expect('434a a removed teacher''s list', (SELECT count(*)::text FROM "ConsentLists" WHERE "schoolId" = school AND "createdById" IS NULL), '1');
+  DELETE FROM "Users" WHERE id = pg_temp.clo_user('p5');
+  PERFORM pg_temp.clo_expect('434a a removed pupil', (SELECT count(*)::text FROM "InstructionProofs" WHERE "templateId" = tpl) || '|' || (SELECT count(*)::text FROM "ConsentEntries" WHERE "schoolId" = school), '1|1');
+  -- A removed class leaves its list, with the name it had.
+  DELETE FROM "StudentGroups" WHERE id = cx;
+  PERFORM pg_temp.clo_expect('434a a removed class', (SELECT concat_ws('|', "studentGroupId" IS NULL, "schoolId" = school, "groupName") FROM "ConsentLists" WHERE id = lst_x), 't|t|CLX');
+  -- A removed subject leaves its template, without a subject.
+  DELETE FROM "Subjects" WHERE id = subj;
+  PERFORM pg_temp.clo_expect('434a a removed subject', (SELECT concat_ws('|', "subjectId" IS NULL, "schoolId" = school, active) FROM "InstructionTemplates" WHERE id = tpl), 't|t|t');
+  -- A template with proofs is not removed; one without is (the owner's, since no role has DELETE).
+  PERFORM pg_temp.clo_refuses(format($q$DELETE FROM "InstructionTemplates" WHERE id = %L$q$, tpl), 'InstructionProofs_templateId_schoolId_fkey');
+  DELETE FROM "InstructionTemplates" WHERE id = tpl_o;
+  -- A removed request takes its link and leaves the answers it wrote.
+  req := pg_temp.clo_request(school, full_, 'Samtycke: Fotografering', 'p2:g1');
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, school, lst);
+  UPDATE "AckReceipts" SET "ackedAt" = now() WHERE "requestId" = req;
+  PERFORM pg_temp.clo_expect('434a the bridge, as the owner updates', (SELECT count(*)::text FROM "ConsentEntries" WHERE "ackRequestId" = req), '1');
+  DELETE FROM "AckRequests" WHERE id = req;
+  PERFORM pg_temp.clo_expect('434a a removed request', (SELECT count(*)::text FROM "ConsentAsks" WHERE "ackRequestId" = req) || '|' || (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst), '0|2');
+
+  -- Every foreign key of the five tables has an index that starts with its columns (the FK index audit).
+  FOR fk IN
+    SELECT c.conname, c.conrelid::regclass::text AS tbl
+      FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid::regclass::text IN ('"InstructionTemplates"', '"InstructionProofs"', '"ConsentLists"', '"ConsentEntries"', '"ConsentAsks"')
+       AND NOT EXISTS (
+             SELECT 1 FROM pg_index i
+              WHERE i.indrelid = c.conrelid AND i.indisvalid
+                AND (i.indkey::int2[])[0:cardinality(c.conkey) - 1] = c.conkey)
+  LOOP
+    RAISE EXCEPTION 'checklistor 434a: % on % has no index that starts with its columns', fk.conname, fk.tbl;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid
+              WHERE c.relname IN ('InstructionTemplates', 'InstructionProofs', 'ConsentLists', 'ConsentEntries', 'ConsentAsks') AND NOT i.indisvalid) THEN
+    RAISE EXCEPTION 'checklistor 434a: an index is invalid';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 434b: gallring. The proofs and answers of a pupil who has left go when the school's period for CHECKLISTS has passed since;
+-- a pupil who is still at the school has none due, however long the period; a list goes when it is old and empty. Nothing is
+-- due under another kind, nothing under no decision, and the other school's rows stay.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-checklistor-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-checklistor-annan');
+  full_ uuid := pg_temp.clo_user('full');
+  c7a uuid := (SELECT id FROM "StudentGroups" WHERE name = 'CL7A');
+  tpl uuid := gen_random_uuid();
+  tpl_o uuid := gen_random_uuid();
+  lst uuid := gen_random_uuid();
+  lst_old_empty uuid := gen_random_uuid();
+  lst_new_empty uuid := gen_random_uuid();
+  lst_o uuid := gen_random_uuid();
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  p1 uuid := pg_temp.clo_user('p1');
+  p2 uuid := pg_temp.clo_user('p2');
+  p3 uuid := pg_temp.clo_user('p3');
+  run uuid;
+  n integer;
+  total integer := 0;
+  counts jsonb;
+  pr_p1 uuid;
+BEGIN
+  INSERT INTO "InstructionTemplates" (id, "schoolId", title) VALUES (tpl, school, 'Gallring');
+  INSERT INTO "InstructionTemplates" (id, "schoolId", title) VALUES (tpl_o, other, 'Annans');
+  -- p1 left 400 days ago, p2 left 100 days ago, p3 is at the school. Each has a proof and an answer.
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES
+    (school, tpl, p1, current_date - 500), (school, tpl, p2, current_date - 500), (school, tpl, p3, current_date - 500),
+    (other, tpl_o, pg_temp.clo_user('annan-p'), current_date - 500);
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdAt") VALUES (lst, school, c7a, 'Foto', 'Text', now() - interval '900 days');
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdAt") VALUES (lst_old_empty, school, c7a, 'Gammal tom', 'Text', now() - interval '900 days');
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst_new_empty, school, c7a, 'Ny tom', 'Text');
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdAt")
+  VALUES (lst_o, other, (SELECT id FROM "StudentGroups" WHERE name = 'CL9A'), 'Annans gamla', 'Text', now() - interval '900 days');
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES
+    (school, lst, p1, 'GRANTED', current_date - 500), (school, lst, p2, 'GRANTED', current_date - 500), (school, lst, p3, 'GRANTED', current_date - 500);
+  ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '400 days' WHERE id = p1;
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '100 days' WHERE id = p2;
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '400 days' WHERE id = pg_temp.clo_user('annan-p');
+  ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  SELECT id INTO pr_p1 FROM "InstructionProofs" WHERE "studentId" = p1;
+
+  -- What is due, as the one predicate answers it, a year after: p1's proof and answer, and the old empty list, nothing of p2 (who
+  -- left too recently), p3 (still at the school) or the other school.
+  PERFORM pg_temp.clo_expect('434b due',
+    (SELECT string_agg(d.tbl || ':' || (CASE WHEN d.id = pr_p1 THEN 'p1' ELSE '' END), ' ' ORDER BY d.tbl) FROM app.gallring_due(school, 'CHECKLISTS', today - 365, today) d),
+    'ConsentEntries: ConsentLists: InstructionProofs:p1');
+  PERFORM pg_temp.clo_expect('434b due, the old empty list only',
+    (SELECT string_agg(d.id::text, ' ') FROM app.gallring_due(school, 'CHECKLISTS', today - 365, today) d WHERE d.tbl = 'ConsentLists'), lst_old_empty::text);
+  -- A pupil who is at the school has none due, however far on the cutoff is; neither has the list with their answer.
+  PERFORM pg_temp.clo_expect('434b a pupil at the school is never due',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'CHECKLISTS', today + 10000, today) d
+      WHERE d.id IN (SELECT id FROM "InstructionProofs" WHERE "studentId" = p3) OR d.id IN (SELECT id FROM "ConsentEntries" WHERE "studentId" = p3)), '0');
+  PERFORM pg_temp.clo_expect('434b a list with an answer of a pupil at the school stays',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'CHECKLISTS', today + 10000, today) d WHERE d.id = lst), '0');
+  -- Nothing under another kind, and nothing of the other school under this school's.
+  IF EXISTS (SELECT 1 FROM unnest(ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'NOTIFICATIONS', 'CHANGE_LOGS', 'ABSENCE_REASONS', 'ACCESS_LOG', 'COVER_REQUESTS',
+                                         'CRISIS_DRILLS', 'CRISIS_ALARMS', 'DEPARTED_PEOPLE']::"RetentionDataType"[]) t
+              WHERE EXISTS (SELECT 1 FROM app.gallring_due(school, t, today - 365, today) d WHERE d.tbl IN ('InstructionProofs', 'ConsentEntries', 'ConsentLists'))) THEN
+    RAISE EXCEPTION 'checklistor 434b: a checklist row is due under another kind than CHECKLISTS';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.gallring_due(school, 'CHECKLISTS', today - 365, today) d WHERE d.id IN (SELECT id FROM "InstructionProofs" WHERE "schoolId" = other UNION SELECT lst_o)) THEN
+    RAISE EXCEPTION 'checklistor 434b: the other school''s rows are due under this school''s run';
+  END IF;
+
+  -- No decision: nothing goes. A decision of twelve months: the run takes p1's proof and answer and the old empty list, in batches of one.
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'CHECKLISTS', 100) <> 0 THEN RAISE EXCEPTION 'checklistor 434b: a school with no decision lost a row'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (school, 'CHECKLISTS', 'PURGE_AFTER', 12, 'CL 434', full_, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'CHECKLISTS', 1) <> 1 THEN RAISE EXCEPTION 'checklistor 434b: a batch of one took more or less than one row'; END IF;
+  IF (SELECT (complete ->> 'CHECKLISTS')::boolean FROM "GallringRuns" WHERE id = run) THEN RAISE EXCEPTION 'checklistor 434b: a full batch said nothing was left'; END IF;
+  LOOP
+    n := app.gallring_purge(run, 'CHECKLISTS', 1);
+    EXIT WHEN n = 0;
+    total := total + n;
+  END LOOP;
+  PERFORM app.gallring_finish(run, '{}', now());
+  IF total <> 2 THEN RAISE EXCEPTION 'checklistor 434b: the batches after the first took % more rows, not two', total; END IF;
+  PERFORM pg_temp.clo_expect('434b what is left',
+    (SELECT concat_ws('|', (SELECT count(*) FROM "InstructionProofs" WHERE "schoolId" = school), (SELECT count(*) FROM "ConsentEntries" WHERE "schoolId" = school),
+                      (SELECT string_agg(title, ',' ORDER BY title) FROM "ConsentLists" WHERE "schoolId" = school))),
+    '2|2|Foto,Ny tom');
+  SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
+  IF (counts ->> 'CHECKLISTS')::integer <> 3 THEN RAISE EXCEPTION 'checklistor 434b: the run counts % under CHECKLISTS, not three (the proof, the answer and the old list)', counts ->> 'CHECKLISTS'; END IF;
+  PERFORM pg_temp.clo_expect('434b the other school is left alone',
+    (SELECT count(*)::text FROM "InstructionProofs" WHERE "schoolId" = other) || '|' || (SELECT count(*)::text FROM "ConsentLists" WHERE "schoolId" = other), '1|1');
+  -- KEEP stops it at once.
+  ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '400 days' WHERE id = p3;
+  ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, reference, "decidedById", "decidedAt")
+  VALUES (school, 'CHECKLISTS', 'KEEP', 'CL 434 keep', full_, now() - interval '1 hour');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'CHECKLISTS', 100) <> 0 THEN RAISE EXCEPTION 'checklistor 434b: a school that keeps its checklists lost a row'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+
+  -- A pupil who comes back is not due: the school reactivates p2 (last, since a reactivation queues a deferred event on Users that
+  -- stops the next ALTER TABLE), and nothing of p2 is due however far on the cutoff is.
+  UPDATE "Users" SET "isActive" = true WHERE id = p2;
+  PERFORM pg_temp.clo_expect('434b a pupil who is back',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'CHECKLISTS', today + 10000, today) d
+      WHERE d.id IN (SELECT id FROM "InstructionProofs" WHERE "studentId" = p2 UNION SELECT id FROM "ConsentEntries" WHERE "studentId" = p2)), '0');
+END $$;
+ROLLBACK;
