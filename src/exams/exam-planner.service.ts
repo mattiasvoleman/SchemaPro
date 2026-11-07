@@ -28,6 +28,7 @@ import {
   EXAM_PLANNING_OFF,
   EXAM_ROOM_TAKEN,
   EXAM_STALE,
+  EXAM_TOO_MANY,
   forbiddenExam,
 } from './exam-errors';
 import { clockOf, invigilatorsNeeded, minuteOf, seatGroups } from './exam-plan';
@@ -59,6 +60,9 @@ import {
 
 /** The engine's route; see optimization-engine/app/api/v1/exams.py. */
 const PLAN_EXAMS_PATH = '/api/v1/plan-exams';
+
+/** The most exams the engine takes in one request. */
+const MAX_EXAMS = 300;
 
 /** The wait for one proposal: the engine's own budget (20 s by default) and its headroom, with a margin. */
 const PLAN_TIMEOUT_MS = 90_000;
@@ -193,6 +197,10 @@ export class ExamPlannerService {
         metrics: { placed: 0, unplaced: built.unplaced.length, loss: 0, roomsUsed: 0, invigilatorPasses: 0, maxLoad: 0, minLoad: 0, solveSeconds: 0 },
       };
     } else {
+      // The engine takes at most MAX_EXAMS in one request; a school with more lays them a week at a time.
+      if (built.request.exams.length > MAX_EXAMS) {
+        throw badExam(EXAM_TOO_MANY, `Planera högst ${MAX_EXAMS} prov åt gången: välj de prov som hör till en provvecka.`, { limit: MAX_EXAMS });
+      }
       const response = await this.proxy.callAiEngine<PlanExamsResponse>(PLAN_EXAMS_PATH, built.request, engineMaps(), {
         timeoutMs: PLAN_TIMEOUT_MS,
       });

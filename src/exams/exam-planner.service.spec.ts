@@ -271,6 +271,12 @@ describe('ExamPlannerService', () => {
       expect(JSON.stringify(proposal)).not.toContain('T2 Lärare');
     });
 
+    it('asks for no more exams than the engine takes in one request', async () => {
+      world.exams = Array.from({ length: 301 }, (_, index) => row({ id: `many-${index}` }));
+      expect(await code(service.propose({ academicYearId: YEAR }, user))).toBe('EXAM_TOO_MANY');
+      expect(engine).not.toHaveBeenCalled();
+    });
+
     it('keeps what the engine says of an exam it left out, on the exam', async () => {
       answerFor(({ exam }) => ({
         unplaced: [{ exam, reason: 'EXAM_ROOMS_TAKEN', params: { rooms: 2 }, message: 'rooms taken' }],
