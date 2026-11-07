@@ -225,6 +225,78 @@ class TestSubjectEdgesHard:
 
         assert refused.value.code == "PLACEMENT_EDGE_NO_OTHER_LESSON"
 
+    def test_the_model_reads_each_week_on_its_own(self) -> None:
+        """The pre-flight above skips a class with a lock, so this is the model's A/B split and nobody else's.
+
+        Idrott every week, not first. Slöjd runs in the odd weeks only and the
+        class's one lesson of the even weeks is a lock at 10:00, after idrott's
+        slot: in an even week nothing stands before idrott at 08:00 or 09:00,
+        and a model that took slöjd of the odd weeks as the opener of every week
+        would answer OPTIMAL, a timetable that breaks the rule every second week.
+        """
+        slojd = str(uuid4())
+        requirements = [_requirement(IDROTT, CLASS_7A), _requirement(slojd, CLASS_7A, recurrence="ODD_WEEKS")]
+        lock = {
+            "id": str(uuid4()), "teacherId": str(uuid4()), "studentGroupId": CLASS_7A, "dayOfWeek": 1,
+            "startTime": "10:00:00", "endTime": "11:00:00", "recurrence": "EVEN_WEEKS",
+        }
+        payload = _payload(requirements, fixedLessons=[lock], placementRules=_edges("HARD", (IDROTT, True, False)))
+
+        response = _solve(payload, day_end=660)
+
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts is not None
+        assert "SUBJECT_EDGE_CANNOT_BE_KEPT" in {detail.code for detail in response.conflicts.conflicts}
+
+    @pytest.mark.parametrize(("edge", "rows"), [("first", (IDROTT, True, False)), ("last", (IDROTT, False, True))])
+    def test_a_lesson_of_a_parallel_block_is_first_and_last_beside_its_partner(
+        self, edge: str, rows: tuple[str, bool, bool],
+    ) -> None:
+        """Two groups that share pupils with 7A and not with each other run at the same hour: neither is before the other.
+
+        The day is one hour long, so idrott of one group and matte of the other
+        start together and end together. A model that counted "starts at the
+        same time" as earlier (or "ends at the same time" as later) would find
+        the other group's lesson to stand behind, and keep a rule nothing keeps.
+        """
+        group_one, group_two = str(uuid4()), str(uuid4())
+        payload = _payload(
+            [_requirement(IDROTT, group_one, size=10), _requirement(MATTE, group_two, size=10)],
+            groups=[{"id": CLASS_7A, "lunchHeadcount": 20}],
+            groupConflicts=[[CLASS_7A, group_one], [CLASS_7A, group_two]],
+            placementRules=_edges("HARD", rows),
+        )
+
+        response = _solve(payload, day_end=540)
+
+        assert response.status == "INFEASIBLE", edge
+        assert response.conflicts is not None
+        assert "SUBJECT_EDGE_CANNOT_BE_KEPT" in {detail.code for detail in response.conflicts.conflicts}
+
+    @pytest.mark.parametrize(("edge", "rows"), [("first", (IDROTT, True, False)), ("last", (IDROTT, False, True))])
+    def test_a_lock_of_a_parallel_block_is_first_and_last_beside_its_partner(
+        self, edge: str, rows: tuple[str, bool, bool],
+    ) -> None:
+        """The same with the partner's lesson locked at that hour: a lock that starts or ends with it does not stand behind it."""
+        group_one, group_two = str(uuid4()), str(uuid4())
+        lock = {
+            "id": str(uuid4()), "teacherId": str(uuid4()), "studentGroupId": group_two, "dayOfWeek": 1,
+            "startTime": "08:00:00", "endTime": "09:00:00",
+        }
+        payload = _payload(
+            [_requirement(IDROTT, group_one, size=10)],
+            groups=[{"id": CLASS_7A, "lunchHeadcount": 20}],
+            groupConflicts=[[CLASS_7A, group_one], [CLASS_7A, group_two]],
+            fixedLessons=[lock],
+            placementRules=_edges("HARD", rows),
+        )
+
+        response = _solve(payload, day_end=540)
+
+        assert response.status == "INFEASIBLE", edge
+        assert response.conflicts is not None
+        assert "SUBJECT_EDGE_CANNOT_BE_KEPT" in {detail.code for detail in response.conflicts.conflicts}
+
 
 class TestSubjectEdgesSoft:
     """Rule 1 as a wish: paid for in the full model, never a refusal."""
@@ -639,6 +711,16 @@ class TestSharedRooms:
         payload = _payload(requirements, rooms=[_gym()], placementRules=_shared("HARD"))
 
         assert _solve(payload, day_end=540).status == "INFEASIBLE"
+
+    def test_a_class_of_the_odd_weeks_and_a_class_of_the_even_weeks_share_the_hour(self) -> None:
+        """The other way round: 30 and 30 pupils in a hall of 50 never meet, so the hall holds them in the same hour."""
+        requirements = [
+            _requirement(IDROTT, CLASS_7A, requiredRoomType="GYM", size=30, recurrence="ODD_WEEKS"),
+            _requirement(IDROTT, CLASS_7B, requiredRoomType="GYM", size=30, recurrence="EVEN_WEEKS"),
+        ]
+        payload = _payload(requirements, rooms=[_gym()], placementRules=_shared("HARD"))
+
+        assert _solve(payload, day_end=540).status in {"OPTIMAL", "FEASIBLE"}
 
 
 def _refusal(payload: dict[str, object], **settings: object) -> InvalidScheduleInputError | None:
