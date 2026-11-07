@@ -105,6 +105,10 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   // each control offered to the profile that writes it.
   "/admin/people": null,
   "/admin/timplan": "PLANERING",
+  // Klasslärarens schema: the appointments and the open hours are Schemaläggning's, the option and
+  // the publishing of a class's drafts Publicering's. Open to every administrator, and each control
+  // offered to the profile that writes its area, as on /admin/people.
+  "/admin/class-teachers": null,
   "/admin/requirements": "PLANERING",
   "/admin/staffing": "PLANERING",
   "/admin/constraints": "PLANERING",
@@ -206,7 +210,10 @@ export interface ReadOnlyPage {
  * and uppdrag, planering's: a läsare reads both, so its notice names who
  * changes each.
  */
-const NOTICE_AREAS: Readonly<Record<string, readonly AdminArea[]>> = { "/admin/people": ["PERSONAL", "PLANERING"] };
+const NOTICE_AREAS: Readonly<Record<string, readonly AdminArea[]>> = {
+  "/admin/people": ["PERSONAL", "PLANERING"],
+  "/admin/class-teachers": ["SCHEMALAGGNING", "PUBLICERING"],
+};
 
 /**
  * The admin pages a profile opens read-only (Läsbehörighet): every page a
