@@ -211,6 +211,9 @@
       "name": "SupervisionWeek"
     },
     {
+      "name": "Swaps"
+    },
+    {
       "name": "TeacherAbsenceReasons"
     },
     {
@@ -18043,6 +18046,118 @@
         ]
       }
     },
+    "/api/v1/swaps/apply": {
+      "post": {
+        "tags": [
+          "Swaps"
+        ],
+        "operationId": "SwapsController_apply",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplySwapDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/swaps/suggest": {
+      "post": {
+        "tags": [
+          "Swaps"
+        ],
+        "operationId": "SwapsController_suggest",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestSwapsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
     "/api/v1/teacher-absence-reasons": {
       "get": {
         "tags": [
@@ -21683,6 +21798,34 @@
           "academicYearId",
           "basisSha256",
           "changes"
+        ]
+      },
+      "ApplySwapDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "moves": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 60,
+            "items": {
+              "$ref": "#/components/schemas/SwapMoveDto"
+            }
+          },
+          "propagate": {
+            "type": "boolean"
+          },
+          "versionName": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "lessonId",
+          "moves"
         ]
       },
       "AssignSubstituteDto": {
@@ -26555,6 +26698,64 @@
         },
         "required": [
           "personId"
+        ]
+      },
+      "SuggestSwapsDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 30
+          }
+        },
+        "required": [
+          "lessonId"
+        ]
+      },
+      "SwapMoveDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "$ref": "#/components/schemas/SwapSlotDto"
+          },
+          "to": {
+            "$ref": "#/components/schemas/SwapSlotDto"
+          }
+        },
+        "required": [
+          "lessonId",
+          "from",
+          "to"
+        ]
+      },
+      "SwapSlotDto": {
+        "type": "object",
+        "properties": {
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "startTime": {
+            "type": "string"
+          },
+          "endTime": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dayOfWeek",
+          "startTime",
+          "endTime"
         ]
       },
       "SwitchPublishModeDto": {

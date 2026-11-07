@@ -33,9 +33,11 @@ import type {
  *      grid's other hard kinds, asked of the moves as ONE move, as the card
  *      of a block is. A candidate it refuses is not a proposal.
  *
- * The cheap passes are bounded so that a school with thousands of lessons
- * still answers: `maxEdges` units per direction for chains, and a time budget
- * after which the list is what has been judged so far and says so.
+ * The passes are bounded so that a school with thousands of lessons still
+ * answers: `maxEdges` units per direction for chains, `maxCandidates` candidates
+ * in all, and a time budget for judging, after which the list is what has been
+ * judged so far and says so. The budget never cuts the first `limit` candidates
+ * off: a slow host gets a short list, never an empty one.
  */
 
 export interface SwapSearchInput {
@@ -51,8 +53,10 @@ export interface SwapSearchInput {
   judge: (moves: readonly SwapMove[]) => Promise<boolean>;
   /** How many proposals to return. */
   limit: number;
-  /** Stop judging after this many milliseconds. */
+  /** Stop judging after this many milliseconds, once `limit` candidates have been judged. */
   budgetMs: number;
+  /** The most candidates to cost and order. */
+  maxCandidates?: number;
   /** Units to try per direction when building chains (the cheapest ones). */
   maxEdges?: number;
   now?: () => number;
@@ -119,6 +123,7 @@ export async function searchSwaps(input: SwapSearchInput): Promise<SwapSearchRes
     return { proposals: [], candidates: 0, judged: 0, refused: 0, truncated: false, immovable: 'NOT_PLACED' };
   }
   const maxEdges = input.maxEdges ?? 40;
+  const maxCandidates = input.maxCandidates ?? 1500;
   let truncated = false;
 
   // Partners: distinct units of one length, free to move, standing elsewhere.
@@ -177,8 +182,12 @@ export async function searchSwaps(input: SwapSearchInput): Promise<SwapSearchRes
   const from = cheapest(reachable, (v) => input.soft(movesOf(picked, v.slot)).score);
   const into = cheapest(reaching, (w) => input.soft(movesOf(w, picked.slot)).score);
   if (reachable.length > from.length || reaching.length > into.length) truncated = true;
-  for (const v of from) {
+  chains: for (const v of from) {
     for (const w of into) {
+      if (candidates.length >= maxCandidates) {
+        truncated = true;
+        break chains;
+      }
       if (v.id === w.id || slotKey(v.slot) === slotKey(w.slot)) continue;
       if (!stands(v, w)) continue;
       add('CHAIN', [picked, v, w], [v, w, picked]);
@@ -192,7 +201,7 @@ export async function searchSwaps(input: SwapSearchInput): Promise<SwapSearchRes
   let refused = 0;
   for (const candidate of candidates) {
     if (proposals.length >= input.limit) break;
-    if (now() - started > input.budgetMs) {
+    if (judged >= input.limit && now() - started > input.budgetMs) {
       truncated = true;
       break;
     }

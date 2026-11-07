@@ -6,7 +6,7 @@ import type { OtherSchoolHold } from '../optimization/other-school-holds';
 import { frameWindow, type GapConstraint, type GapSpan } from './swap-gaps';
 import { buildSoftMeasure, type SoftMeasure } from './swap-soft';
 import type { SwapData } from './swap-snapshot';
-import { buildUnits, slotKey, weeksMeet } from './swap-units';
+import { buildUnits, weeksMeet } from './swap-units';
 import type {
   ExternalTouch,
   HardCode,
@@ -379,10 +379,5 @@ export class SwapContext {
       if (refusal !== null) return refusal;
     }
     return null;
-  }
-
-  /** The slot a unit stands in, as a key. */
-  keyOf(unit: SwapUnit): string {
-    return slotKey(unit.slot);
   }
 }

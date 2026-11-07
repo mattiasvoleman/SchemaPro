@@ -81,6 +81,8 @@ export interface SwapSuggestion {
     refused: number;
     truncated: boolean;
     elapsedMs: number;
+    /** Where the time went: the snapshot read, indexing it, warming the roster reads, the search. */
+    phasesMs: { read: number; index: number; warm: number; search: number };
   };
 }
 
@@ -148,16 +150,28 @@ export class SwapsService {
         selectedLocked: false,
         proposals: [],
         immovable,
-        stats: { partners: 0, candidates: 0, judged: 0, refused: 0, truncated: false, elapsedMs: Date.now() - started },
+        stats: {
+          partners: 0,
+          candidates: 0,
+          judged: 0,
+          refused: 0,
+          truncated: false,
+          elapsedMs: Date.now() - started,
+          phasesMs: { read: 0, index: 0, warm: 0, search: 0 },
+        },
       });
       if (picked.isParked) return empty('PARKED');
 
+      const read = Date.now();
       const data = await readSwapData(tx, user, picked.academicYearId);
+      const indexing = Date.now();
       const context = new SwapContext(data);
       const unit = context.unitOf.get(picked.id);
       if (!unit) return empty('NOT_PLACED');
       const reads = new SwapReads(data.lessons);
+      const warming = Date.now();
       await reads.warm(tx, data);
+      const searching = Date.now();
 
       const result = await searchSwaps({
         lessonId: picked.id,
@@ -197,6 +211,7 @@ export class SwapsService {
           refused: result.refused,
           truncated: result.truncated,
           elapsedMs: Date.now() - started,
+          phasesMs: { read: indexing - read, index: warming - indexing, warm: searching - warming, search: Date.now() - searching },
         },
       };
     });
