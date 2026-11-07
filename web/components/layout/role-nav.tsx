@@ -1,6 +1,6 @@
 import "server-only";
 import type { LucideIcon } from "lucide-react";
-import type { NavSection } from "@/components/layout/app-shell";
+import type { NavItem, NavSection } from "@/components/layout/app-shell";
 import type { UserRole } from "@/lib/types";
 import { ADMIN_NAV } from "./admin-nav";
 import { GUARDIAN_NAV } from "./guardian-nav";
@@ -21,17 +21,14 @@ import { TEACHER_NAV } from "./teacher-nav";
  * the bundle. A row can have an icon of its own at no cost to any route.
  */
 
-/** A row as the role's file writes it: the glyph is the component. */
-export interface NavEntry {
-  labelKey: string;
-  href: string;
-  icon: LucideIcon;
-}
+/**
+ * A row as the role's file writes it: AppShell's NavItem, with the glyph as
+ * the component and not yet the element. Derived from NavItem so that a field
+ * added there is a field of every row, and navForRole carries it to the shell.
+ */
+export type NavEntry = Omit<NavItem, "icon"> & { icon: LucideIcon };
 
-export interface NavGroup {
-  labelKey: string | null;
-  items: NavEntry[];
-}
+export type NavGroup = Omit<NavSection, "items"> & { items: NavEntry[] };
 
 const MENUS: Record<UserRole, NavGroup[]> = {
   SCHOOL_ADMIN: ADMIN_NAV,
@@ -57,8 +54,10 @@ export function navForRole(role: UserRole): NavSection[] {
     }
     return element;
   };
-  return MENUS[role].map((group) => ({
-    labelKey: group.labelKey,
-    items: group.items.map((item) => ({ labelKey: item.labelKey, href: item.href, icon: glyph(item.icon) })),
+  // Spread, so that a field a row has beyond the glyph goes to the shell with
+  // it and is not dropped here unseen.
+  return MENUS[role].map(({ items, ...group }) => ({
+    ...group,
+    items: items.map(({ icon, ...entry }) => ({ ...entry, icon: glyph(icon) })),
   }));
 }

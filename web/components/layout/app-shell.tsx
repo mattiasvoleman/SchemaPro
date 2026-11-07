@@ -12,6 +12,8 @@ import { NotificationBell } from "@/components/layout/notification-bell";
 import { UserMenu } from "./user-menu";
 import { Button } from "@/components/ui/button";
 
+// role-nav.tsx derives the rows its files write (NavEntry, NavGroup) from these
+// two, so a field added here is a field of every row there.
 export interface NavItem {
   labelKey: string;
   href: string;
