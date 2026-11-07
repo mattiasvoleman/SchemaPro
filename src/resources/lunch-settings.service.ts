@@ -44,6 +44,7 @@ import {
   isPlacesNeedALimitCheck,
   placementDataOf,
   touchesPlacesRule,
+  type StoredPlacesRule,
 } from './placement-rules';
 
 /**
@@ -114,8 +115,9 @@ export class LunchSettingsService {
           // Rule 2 that is on needs a limit, judged on the row as it would
           // be, so the stored row is read, in this same transaction, only when
           // the request says something about that rule.
+          let stored: StoredPlacesRule | null = null;
           if (touchesPlacesRule(dto)) {
-            const stored = await tx.lunchSetting.findUnique({
+            stored = await tx.lunchSetting.findUnique({
               where: { schoolId },
               select: {
                 placementPlacesMode: true,
@@ -129,7 +131,15 @@ export class LunchSettingsService {
           }
           return tx.lunchSetting.upsert({
             where: { schoolId },
-            create: { schoolId, ...data },
+            // INSERT ... ON CONFLICT DO UPDATE: Postgres judges the CHECKs on
+            // the row the create half proposes BEFORE it finds the conflict.
+            // A request that names rule 2's mode and not its limits (absent
+            // keeps, says the contract) proposes a row with no limit, and
+            // LunchSettings_placementPlaces_needs_a_limit_check refuses it
+            // although the stored row is fine. So the create half carries the
+            // stored rule 2 under what the request names. A school's first
+            // row has no stored rule (null) and starts from the defaults.
+            create: { schoolId, ...stored, ...data },
             update: data,
           });
         }),

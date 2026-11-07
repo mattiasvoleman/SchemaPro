@@ -389,7 +389,8 @@ describe('LunchSettingsService', () => {
 
   describe('Placeringsregler', () => {
     type Sent = { create: Record<string, unknown>; update: Record<string, unknown> };
-    const sentOf = () => tx.lunchSetting.upsert.mock.calls[0]?.[0] as Sent;
+    // The last call: a test that PUTs twice reads the second.
+    const sentOf = () => tx.lunchSetting.upsert.mock.calls.at(-1)?.[0] as Sent;
     const refusal = async (promise: Promise<unknown>) => {
       try {
         await promise;
@@ -523,6 +524,45 @@ describe('LunchSettingsService', () => {
       await service.upsert(dto({ placementEdgeMode: 'HARD', placementSharedMode: 'HARD' }), testUser());
 
       expect(sentOf().update).toMatchObject({ placementEdgeMode: 'HARD', placementSharedMode: 'HARD' });
+    });
+
+    describe('the create half of the upsert, which Postgres judges before it finds the row', () => {
+      it('carries the rule 2 that is stored under what the request names, so the mode alone does not propose a rule with no limit', async () => {
+        tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'OFF', maxClassRoomsPerDay: 2, maxTeacherBuildingsPerDay: 1 }));
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+        await service.upsert(dto({ placementPlacesMode: 'SOFT' }), testUser());
+
+        expect(sentOf().create).toMatchObject({
+          placementPlacesMode: 'SOFT',
+          maxClassRoomsPerDay: 2,
+          maxTeacherBuildingsPerDay: 1,
+          maxTeacherRoomsPerDay: null,
+        });
+        // The update half is what it was: only what the request names.
+        expect(sentOf().update).toMatchObject({ placementPlacesMode: 'SOFT' });
+        expect(sentOf().update).not.toHaveProperty('maxClassRoomsPerDay');
+      });
+
+      it('lets what the request names win over what is stored, a null clearing the limit', async () => {
+        tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'HARD', maxClassRoomsPerDay: 2, maxTeacherRoomsPerDay: 3 }));
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+        await service.upsert(dto({ maxClassRoomsPerDay: null, maxTeacherRoomsPerDay: 5 }), testUser());
+
+        expect(sentOf().create).toMatchObject({ placementPlacesMode: 'HARD', maxClassRoomsPerDay: null, maxTeacherRoomsPerDay: 5 });
+      });
+
+      it('adds nothing of the stored row to a request that says nothing about rule 2, or to a school with no row', async () => {
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+        await service.upsert(dto({ placementEdgeMode: 'SOFT' }), testUser());
+        expect(sentOf().create).not.toHaveProperty('placementPlacesMode');
+        expect(sentOf().create).not.toHaveProperty('maxClassRoomsPerDay');
+
+        tx.lunchSetting.findUnique.mockResolvedValue(null);
+        await service.upsert(dto({ placementPlacesMode: 'SOFT', maxTeacherBuildingsPerDay: 1 }), testUser());
+        expect(Object.keys(sentOf().create).filter((key) => key.startsWith('max') && key !== 'maxLessonsPerDayPerGroup')).toEqual(['maxTeacherBuildingsPerDay']);
+      });
     });
 
     it('answers the database’s own CHECK, met by a request that raced another, with the same 400', async () => {
