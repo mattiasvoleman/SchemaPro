@@ -20214,6 +20214,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('HuvudmanSchoolRequests', '{}', '{}', '{}', '{}'),
   ('HuvudmanSchools', '{}', '{}', '{}', '{}'),
   ('IntegrationApiKeys', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
+  ('KitchenSettings', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('LeaveDelegationDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('LeaveRequests', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('LessonLogs', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
@@ -46854,5 +46855,444 @@ BEGIN
     RAISE EXCEPTION 'flöden: the family''s own week names % for a marked teacher, not what it named before (KXB)', labels;
   END IF;
   DELETE FROM "PersonProtections";
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Måltidskollen (D8, 20270123090000), sections 400-404: the kitchen gets the
+-- portions of each sitting. Fixtures: rls-maltidskollen-school (and
+-- rls-maltidskollen-annan), planted once by the fixtures script; D below is
+-- the day they plant, today + 3 (see the fixtures for who is absent when).
+--
+--   400  the table and its constraints
+--   401  who reads and who writes
+--   402  the counts: what is a portion, and what is not
+--   403  the letter's two doors
+--   404  the catalogue: arms, privileges, functions
+-- ---------------------------------------------------------------------------
+
+-- The helpers the sections share. Temporary, so they die with the session.
+CREATE FUNCTION pg_temp.d8_as(p_auth text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_auth)::text, true)
+$$;
+CREATE FUNCTION pg_temp.d8_auth(n integer) RETURNS text LANGUAGE sql AS $$
+  SELECT '00000000-0000-4000-8000-f8000000' || lpad(n::text, 4, '0')
+$$;
+-- The day the fixtures plant, as the text the counts speak.
+CREATE FUNCTION pg_temp.d8_day(p_offset integer) RETURNS text LANGUAGE sql AS $$
+  SELECT to_char(current_date + 3 + p_offset, 'YYYY-MM-DD')
+$$;
+CREATE FUNCTION pg_temp.d8_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'måltidskollen %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- A statement that must fail with exactly this SQLSTATE.
+CREATE FUNCTION pg_temp.d8_refuses(p_sql text, p_state text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM p_state THEN
+    RAISE EXCEPTION 'måltidskollen: % should be refused with %, was %', p_what, p_state, got;
+  END IF;
+END $$;
+-- The counts of one class on one day, as "pupils/before/after/activity", or "-" when the class is not in them.
+CREATE FUNCTION pg_temp.d8_class(p_doc jsonb, p_name text, p_offset integer) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce((SELECT (c ->> 'pupils') || '/' || (c ->> 'absentBefore') || '/' || (c ->> 'absentAfter') || '/' || (c ->> 'underActivity')
+                     FROM jsonb_array_elements(p_doc -> 'classes') c
+                    WHERE c ->> 'name' = p_name AND c ->> 'day' = pg_temp.d8_day(p_offset)), '-')
+$$;
+CREATE FUNCTION pg_temp.d8_staff(p_doc jsonb, p_offset integer) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce((SELECT string_agg((s ->> 'start') || '-' || (s ->> 'end') || '=' || (s ->> 'staff'), ',' ORDER BY s ->> 'start')
+                     FROM jsonb_array_elements(p_doc -> 'staff') s WHERE s ->> 'day' = pg_temp.d8_day(p_offset)), '')
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Section 400: the table and its constraints.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+BEGIN
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  -- The fixtures' school has a cut-off, an address and the letter on.
+  PERFORM pg_temp.d8_expect('400 the row', (SELECT "cutoffTime"::text || '/' || "letterEnabled" || '/' || "kitchenEmail" FROM "KitchenSettings"), '08:30:00/true/kok@example.invalid');
+
+  -- A letter that is on has an address and an hour.
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "cutoffTime" = NULL', '23514', 'a letter that is on without an hour');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "kitchenEmail" = NULL', '23514', 'a letter that is on without an address');
+  UPDATE "KitchenSettings" SET "letterEnabled" = false, "cutoffTime" = NULL, "kitchenEmail" = NULL;
+  PERFORM pg_temp.d8_expect('400 a school may have neither', (SELECT "cutoffTime" IS NULL AND NOT "letterEnabled" AND "kitchenEmail" IS NULL FROM "KitchenSettings")::text, 'true');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "letterEnabled" = true', '23514', 'the letter on with nothing set');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "letterEnabled" = true, "cutoffTime" = ''08:30''', '23514', 'the letter on without an address');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "letterEnabled" = true, "kitchenEmail" = ''kok@example.invalid''', '23514', 'the letter on without an hour');
+
+  -- One address, not a list and not a header.
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "kitchenEmail" = ''a@example.invalid, b@example.invalid''', '23514', 'two addresses with a comma');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "kitchenEmail" = ''a@example.invalid;b@example.invalid''', '23514', 'two addresses with a semicolon');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "kitchenEmail" = ''a b@example.invalid''', '23514', 'a space');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "kitchenEmail" = ''Köket <kok@example.invalid>''', '23514', 'a display name');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "kitchenEmail" = ''kok@example''', '23514', 'a host without a dot');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "kitchenEmail" = ''kok''', '23514', 'no at-sign');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "kitchenEmail" = ''''', '23514', 'an empty string (the gateway writes null)');
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "kitchenEmail" = ''' || repeat('a', 250) || '@example.invalid''', '23514', 'an address over 254 characters');
+  -- A time of day, not 24:00.
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "cutoffTime" = ''24:00''', '23514', 'a cut-off of 24:00');
+  UPDATE "KitchenSettings" SET "cutoffTime" = '23:59', "kitchenEmail" = 'kok.skolan@example.invalid', "letterEnabled" = true;
+  PERFORM pg_temp.d8_expect('400 a good row', (SELECT "cutoffTime"::text || '/' || "kitchenEmail" FROM "KitchenSettings"), '23:59:00/kok.skolan@example.invalid');
+
+  -- One row per school.
+  PERFORM pg_temp.d8_refuses('INSERT INTO "KitchenSettings" ("schoolId") VALUES (app.current_school_id())', '23505', 'a second row for the school');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 401: who reads and who writes.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  who record;
+  n bigint;
+BEGIN
+  -- The four profiles that write Drift write the settings; the läsare reads them and writes nothing.
+  FOR who IN SELECT * FROM (VALUES (1, 'FULL', true), (2, 'REKTOR', true), (3, 'SCHEMALAGGARE', true), (4, 'EXPEDITION', true), (5, 'LASARE', false)) v(n, profile, writes) LOOP
+    PERFORM pg_temp.d8_as(pg_temp.d8_auth(who.n));
+    PERFORM pg_temp.d8_expect('401 ' || who.profile || ' reads', (SELECT count(*) FROM "KitchenSettings")::text, '1');
+    IF who.writes THEN
+      UPDATE "KitchenSettings" SET "cutoffTime" = '08:45';
+      GET DIAGNOSTICS n = ROW_COUNT;
+      PERFORM pg_temp.d8_expect('401 ' || who.profile || ' writes', n::text, '1');
+    ELSE
+      PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "cutoffTime" = ''08:45''', '42501', 'a läsare changing the cut-off');
+    END IF;
+  END LOOP;
+
+  -- Nobody deletes.
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  PERFORM pg_temp.d8_refuses('DELETE FROM "KitchenSettings"', '42501', 'a delete');
+
+  -- A teacher, a pupil and a guardian read nothing and write nothing.
+  FOR who IN SELECT * FROM (VALUES (6, 'teacher'), (11, 'pupil'), (7, 'guardian')) v(n, role) LOOP
+    PERFORM pg_temp.d8_as(pg_temp.d8_auth(who.n));
+    PERFORM pg_temp.d8_expect('401 a ' || who.role || ' reads', (SELECT count(*) FROM "KitchenSettings")::text, '0');
+    UPDATE "KitchenSettings" SET "cutoffTime" = '06:00';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    PERFORM pg_temp.d8_expect('401 a ' || who.role || ' writes', n::text, '0');
+    PERFORM pg_temp.d8_refuses('INSERT INTO "KitchenSettings" ("schoolId") VALUES (gen_random_uuid())', '42501', 'a ' || who.role || ' inserting');
+  END LOOP;
+
+  -- The other school's administrator reads its own row and no other, and changes nobody else's.
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(31));
+  PERFORM pg_temp.d8_expect('401 the other school reads its own', (SELECT count(*) || '/' || bool_and("cutoffTime" = '09:00') FROM "KitchenSettings"), '1/true');
+  UPDATE "KitchenSettings" SET "cutoffTime" = '09:15';
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  PERFORM pg_temp.d8_expect('401 the first school is untouched by the other''s change', (SELECT "cutoffTime"::text FROM "KitchenSettings"), '08:45:00');
+  -- A row for a school that is not the caller's is refused.
+  PERFORM pg_temp.d8_refuses('INSERT INTO "KitchenSettings" ("schoolId") VALUES (gen_random_uuid())', '42501', 'a row for a school that is not the caller''s');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 402: the counts. D has two classes at 10:30-11:00: MD7A with four
+-- pupils (p4 has left; p1 is reported absent the evening before, p2 at 09:00
+-- on D, p3 only from 10:45) and MD7B with two (q1 is reported from 08:00 to
+-- 11:00, and its class has a replacement lesson over lunch), and a teacher
+-- with a pedagogisk lunch at 10:45-11:15. D + 1 has MD7A alone.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  doc jsonb;
+  who record;
+  d0 date := current_date + 3;
+BEGIN
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  doc := app.meal_counts_for_me(d0, d0 + 1);
+  PERFORM pg_temp.d8_expect('402 cut-off', doc ->> 'cutoff', '08:30');
+  PERFORM pg_temp.d8_expect('402 MD7A', pg_temp.d8_class(doc, 'MD7A', 0), '4/1/1/false');
+  PERFORM pg_temp.d8_expect('402 MD7B', pg_temp.d8_class(doc, 'MD7B', 0), '2/1/0/true');
+  PERFORM pg_temp.d8_expect('402 MD7A the day after', pg_temp.d8_class(doc, 'MD7A', 1), '4/0/0/false');
+  PERFORM pg_temp.d8_expect('402 MD7B has no sitting the day after', pg_temp.d8_class(doc, 'MD7B', 1), '-');
+  PERFORM pg_temp.d8_expect('402 the staff', pg_temp.d8_staff(doc, 0), '10:30-11:00=1');
+  PERFORM pg_temp.d8_expect('402 no staff the day after', pg_temp.d8_staff(doc, 1), '');
+  PERFORM pg_temp.d8_expect('402 staff are modelled', doc ->> 'staffModelled', 'true');
+  PERFORM pg_temp.d8_expect('402 no other school''s class', (SELECT count(*) FROM jsonb_array_elements(doc -> 'classes') c WHERE c ->> 'name' = 'MD9A')::text, '0');
+  PERFORM pg_temp.d8_expect('402 a window outside the sittings is empty', (app.meal_counts_for_me(d0 + 10, d0 + 12) -> 'classes')::text, '[]');
+  -- Nothing but numbers and the classes' names leaves the function.
+  PERFORM pg_temp.d8_expect('402 no pupil is named', (doc::text ~* '(Elev|@example|Måltid)')::text, 'false');
+
+  -- The expedition and the läsare read the same counts; a teacher, a pupil and a guardian are refused.
+  FOR who IN SELECT * FROM (VALUES (4, 'EXPEDITION'), (5, 'LASARE'), (3, 'SCHEMALAGGARE')) v(n, profile) LOOP
+    PERFORM pg_temp.d8_as(pg_temp.d8_auth(who.n));
+    PERFORM pg_temp.d8_expect('402 ' || who.profile || ' reads the same', (app.meal_counts_for_me(d0, d0 + 1))::text, doc::text);
+  END LOOP;
+  FOR who IN SELECT * FROM (VALUES (6, 'teacher'), (11, 'pupil'), (7, 'guardian')) v(n, role) LOOP
+    PERFORM pg_temp.d8_as(pg_temp.d8_auth(who.n));
+    PERFORM pg_temp.d8_refuses(format('SELECT app.meal_counts_for_me(%L, %L)', d0, d0 + 1), '42501', 'a ' || who.role || ' asking for the counts');
+    PERFORM pg_temp.d8_refuses('SELECT app.meal_letter_last_for_me()', '42501', 'a ' || who.role || ' asking for the last letter');
+  END LOOP;
+
+  -- The other school's administrator has its own class and sees nothing of the first school's.
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(31));
+  doc := app.meal_counts_for_me(d0, d0 + 1);
+  PERFORM pg_temp.d8_expect('402 the other school''s class', pg_temp.d8_class(doc, 'MD9A', 0) || ' ' || pg_temp.d8_class(doc, 'MD7A', 0), '1/0/0/false -');
+  PERFORM pg_temp.d8_expect('402 the other school''s cut-off', doc ->> 'cutoff', '09:00');
+  PERFORM pg_temp.d8_expect('402 the other school has no staff in the model', doc ->> 'staffModelled', 'false');
+
+  -- The range: at most 31 days, in order.
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  PERFORM pg_temp.d8_refuses(format('SELECT app.meal_counts_for_me(%L, %L)', d0 + 1, d0), '22023', 'a range that ends before it starts');
+  PERFORM pg_temp.d8_refuses(format('SELECT app.meal_counts_for_me(%L, %L)', d0, d0 + 31), '22023', 'a range of 32 days');
+  PERFORM pg_temp.d8_refuses('SELECT app.meal_counts_for_me(NULL, NULL)', '22023', 'no range');
+  PERFORM app.meal_counts_for_me(d0, d0 + 30);
+
+  -- The cut-off decides what is counted off. At 09:30 p2's report (09:00) is before it; at 07:00 the evening's
+  -- reports still are; a report made at the very minute is after.
+  UPDATE "KitchenSettings" SET "cutoffTime" = '09:30';
+  PERFORM pg_temp.d8_expect('402 a later cut-off counts p2 off', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/2/0/false');
+  UPDATE "KitchenSettings" SET "cutoffTime" = '07:00';
+  PERFORM pg_temp.d8_expect('402 an earlier cut-off', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/1/1/false');
+  UPDATE "KitchenSettings" SET "cutoffTime" = '09:00';
+  PERFORM pg_temp.d8_expect('402 a report at the minute of the cut-off is after it', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/1/1/false');
+  UPDATE "KitchenSettings" SET "cutoffTime" = '09:00:01';
+  PERFORM pg_temp.d8_expect('402 a report a second before the cut-off is before it', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/2/0/false');
+  -- No cut-off, no absence taken off (and nothing called "after" either).
+  UPDATE "KitchenSettings" SET "letterEnabled" = false, "cutoffTime" = NULL;
+  doc := app.meal_counts_for_me(d0, d0);
+  PERFORM pg_temp.d8_expect('402 no cut-off MD7A', pg_temp.d8_class(doc, 'MD7A', 0), '4/0/0/false');
+  PERFORM pg_temp.d8_expect('402 no cut-off MD7B', pg_temp.d8_class(doc, 'MD7B', 0), '2/0/0/true');
+  PERFORM pg_temp.d8_expect('402 no cut-off, no time', doc ->> 'cutoff', NULL);
+END $$;
+ROLLBACK;
+
+BEGIN;
+DO $$
+DECLARE
+  doc jsonb;
+  d0 date := current_date + 3;
+  p1 uuid; p2 uuid; q1 uuid;
+BEGIN
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  SELECT id INTO p1 FROM "Users" WHERE email = 'md-p1@example.invalid';
+  SELECT id INTO q1 FROM "Users" WHERE email = 'md-q1@example.invalid';
+
+  -- A pupil who has left is not counted, and neither is their report.
+  UPDATE "Users" SET "isActive" = false WHERE id = p1;
+  PERFORM pg_temp.d8_expect('402 a pupil who leaves', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '3/0/1/false');
+  UPDATE "Users" SET "isActive" = true WHERE id = p1;
+
+  -- A second report by the same pupil is still one pupil, counted by the first report's time.
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, "createdAt")
+  VALUES (app.current_school_id(), p1, (SELECT id FROM "Users" WHERE email = 'md-expedition@example.invalid'), d0, (d0 + time '09:00') AT TIME ZONE 'Europe/Stockholm');
+  PERFORM pg_temp.d8_expect('402 two reports, one pupil', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/1/1/false');
+  -- A report for the end of the sitting only (11:00-12:00) leaves the pupil eating; one that covers the whole of it takes them off.
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, "startTime", "endTime", "createdAt")
+  VALUES (app.current_school_id(), (SELECT id FROM "Users" WHERE email = 'md-p5@example.invalid'), (SELECT id FROM "Users" WHERE email = 'md-expedition@example.invalid'), d0, '10:00', '10:59', (d0 + time '06:00') AT TIME ZONE 'Europe/Stockholm');
+  PERFORM pg_temp.d8_expect('402 a report that ends a minute before the sitting does', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/1/1/false');
+  UPDATE "AbsenceReports" SET "endTime" = '11:00' WHERE "studentId" = (SELECT id FROM "Users" WHERE email = 'md-p5@example.invalid') AND date = d0;
+  PERFORM pg_temp.d8_expect('402 a report that covers the whole sitting', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/2/1/false');
+  UPDATE "AbsenceReports" SET "startTime" = '10:30' WHERE "studentId" = (SELECT id FROM "Users" WHERE email = 'md-p5@example.invalid') AND date = d0;
+  PERFORM pg_temp.d8_expect('402 a report that starts as the sitting does', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/2/1/false');
+  UPDATE "AbsenceReports" SET "startTime" = '10:31' WHERE "studentId" = (SELECT id FROM "Users" WHERE email = 'md-p5@example.invalid') AND date = d0;
+  PERFORM pg_temp.d8_expect('402 a report that starts a minute into the sitting does not', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7A', 0), '4/1/1/false');
+
+  -- A report for another day is another day's.
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, "createdAt")
+  VALUES (app.current_school_id(), q1, (SELECT id FROM "Users" WHERE email = 'md-expedition@example.invalid'), d0 + 1, now());
+  PERFORM pg_temp.d8_expect('402 the day after is untouched', pg_temp.d8_class(app.meal_counts_for_me(d0, d0 + 1), 'MD7B', 0), '2/1/0/true');
+
+  -- The activity: a cancelled replacement lesson, or a removed activity, is no longer over lunch.
+  UPDATE "CalendarLessons" SET status = 'CANCELLED' WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'MD7B') AND date = d0;
+  PERFORM pg_temp.d8_expect('402 a cancelled replacement lesson', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7B', 0), '2/1/0/false');
+  UPDATE "CalendarLessons" SET status = 'SCHEDULED' WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'MD7B') AND date = d0;
+  UPDATE "CalendarLessons" SET "startsAt" = (d0 + time '11:00') AT TIME ZONE 'Europe/Stockholm', "endsAt" = (d0 + time '14:30') AT TIME ZONE 'Europe/Stockholm'
+   WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'MD7B') AND date = d0;
+  PERFORM pg_temp.d8_expect('402 a replacement lesson that starts as the sitting ends', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7B', 0), '2/1/0/false');
+  UPDATE "CalendarLessons" SET "startsAt" = (d0 + time '10:59') AT TIME ZONE 'Europe/Stockholm'
+   WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'MD7B') AND date = d0;
+  PERFORM pg_temp.d8_expect('402 one that starts a minute before it ends', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7B', 0), '2/1/0/true');
+  UPDATE "ScheduleActivities" SET "removedAt" = now(), "removedByUserId" = (SELECT id FROM "Users" WHERE email = 'md-full@example.invalid');
+  PERFORM pg_temp.d8_expect('402 a removed activity', pg_temp.d8_class(app.meal_counts_for_me(d0, d0), 'MD7B', 0), '2/1/0/false');
+END $$;
+ROLLBACK;
+
+BEGIN;
+DO $$
+DECLARE
+  doc jsonb;
+  d0 date := current_date + 3;
+  school uuid;
+  t1 uuid;
+  duty uuid;
+  con uuid;
+BEGIN
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  school := app.current_school_id();
+  SELECT id INTO t1 FROM "Users" WHERE email = 'md-t1@example.invalid';
+  SELECT id INTO duty FROM "TeacherDuties" WHERE "userId" = t1;
+
+  -- A second teacher whose lunch is after the sittings is in no sitting; one whose slot straddles two sittings goes to the one with most of it.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'md-t2@example.invalid', 'Måltid', 'Lärare Två', 'TEACHER', '00000000-0000-4000-8000-f80000000041', true, now());
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  SELECT school, (SELECT id FROM "Users" WHERE email = 'md-t2@example.invalid'), "academicYearId", 'PEDAGOGISK_LUNCH', 'Lunch', 30, now() FROM "TeacherDuties" WHERE id = duty
+  RETURNING id INTO duty;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, "updatedAt")
+  VALUES (school, 'TEACHER', (SELECT id FROM "Users" WHERE email = 'md-t2@example.invalid'), extract(isodow FROM d0)::integer, '12:00', '12:30', 'UNAVAILABLE', now()) RETURNING id INTO con;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, duty, con);
+  PERFORM pg_temp.d8_expect('402 a lunch after the sittings', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1');
+  UPDATE "AvailabilityConstraints" SET "startTime" = '10:50', "endTime" = '11:20' WHERE id = con;
+  PERFORM pg_temp.d8_expect('402 a second teacher in the sitting', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=2');
+  -- Another weekday is no lunch on D.
+  UPDATE "AvailabilityConstraints" SET "dayOfWeek" = (extract(isodow FROM d0)::integer % 7) + 1 WHERE id = con;
+  PERFORM pg_temp.d8_expect('402 a lunch on another weekday', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1');
+  -- A duty of another kind is no lunch.
+  UPDATE "AvailabilityConstraints" SET "dayOfWeek" = extract(isodow FROM d0)::integer WHERE id = con;
+  UPDATE "TeacherDuties" SET kind = 'MENTORSKAP', "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'MD7A') WHERE id = duty;
+  PERFORM pg_temp.d8_expect('402 a mentor''s time is no lunch', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1');
+  UPDATE "TeacherDuties" SET kind = 'PEDAGOGISK_LUNCH', "studentGroupId" = NULL WHERE id = duty;
+  -- A duty that ends before D is no lunch on D; one that begins on D is.
+  UPDATE "TeacherDuties" SET "validTo" = d0 - 1 WHERE id = duty;
+  PERFORM pg_temp.d8_expect('402 a duty that ended', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1');
+  UPDATE "TeacherDuties" SET "validTo" = d0 WHERE id = duty;
+  PERFORM pg_temp.d8_expect('402 a duty that ends on D', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=2');
+  UPDATE "TeacherDuties" SET "validTo" = NULL, "validFrom" = d0 WHERE id = duty;
+  PERFORM pg_temp.d8_expect('402 a duty that begins on D', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=2');
+  UPDATE "TeacherDuties" SET "validFrom" = d0 + 1 WHERE id = duty;
+  PERFORM pg_temp.d8_expect('402 a duty that begins after D', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1');
+  UPDATE "TeacherDuties" SET "validFrom" = NULL WHERE id = duty;
+  -- A teacher whose time lies across two sittings goes to the one with most of it, and to the earlier on a tie: with
+  -- MD7B at 11:00-11:30 the first teacher (10:45-11:15) has 15 minutes in each, the second (10:50-11:20) 10 and 20.
+  UPDATE "CalendarLunches" SET "startsAt" = (d0 + time '11:00') AT TIME ZONE 'Europe/Stockholm', "endsAt" = (d0 + time '11:30') AT TIME ZONE 'Europe/Stockholm'
+   WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'MD7B') AND date = d0;
+  PERFORM pg_temp.d8_expect('402 a tie and the most overlap', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1,11:00-11:30=1');
+  UPDATE "AvailabilityConstraints" SET "startTime" = '10:40', "endTime" = '11:10' WHERE id = con;
+  PERFORM pg_temp.d8_expect('402 the most overlap, the earlier', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=2');
+  UPDATE "AvailabilityConstraints" SET "startTime" = '10:50', "endTime" = '11:20' WHERE id = con;
+  UPDATE "CalendarLunches" SET "startsAt" = (d0 + time '10:30') AT TIME ZONE 'Europe/Stockholm', "endsAt" = (d0 + time '11:00') AT TIME ZONE 'Europe/Stockholm'
+   WHERE "studentGroupId" = (SELECT id FROM "StudentGroups" WHERE name = 'MD7B') AND date = d0;
+  -- A teacher who has left does not eat; with no one left the model has no staff.
+  UPDATE "Users" SET "isActive" = false WHERE id = t1;
+  PERFORM pg_temp.d8_expect('402 a teacher who left', pg_temp.d8_staff(app.meal_counts_for_me(d0, d0), 0), '10:30-11:00=1');
+  UPDATE "Users" SET "isActive" = false WHERE email = 'md-t2@example.invalid';
+  doc := app.meal_counts_for_me(d0, d0);
+  PERFORM pg_temp.d8_expect('402 no teacher left', pg_temp.d8_staff(doc, 0) || '/' || (doc ->> 'staffModelled'), '/false');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 403: the letter's two doors, as the API's role asks them (no principal).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  d0 date := current_date + 3;
+  school uuid;
+  due text;
+  doc jsonb;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  -- Only the school with the letter on, at the hours from the cut-off for three hours, on a day with a sitting.
+  due := (SELECT string_agg(s::text, ',') FROM app.meal_letter_schools(((d0 + time '08:29:59') AT TIME ZONE 'Europe/Stockholm'), 180) s);
+  PERFORM pg_temp.d8_expect('403 a second before the cut-off', due, NULL);
+  due := (SELECT string_agg(s::text, ',') FROM app.meal_letter_schools(((d0 + time '08:30:00') AT TIME ZONE 'Europe/Stockholm'), 180) s);
+  PERFORM pg_temp.d8_expect('403 at the cut-off', (due IS NOT NULL AND due NOT LIKE '%,%')::text, 'true');
+  school := due::uuid;
+  PERFORM pg_temp.d8_expect('403 the school is the fixtures''', (SELECT count(*) FROM app.meal_letter_schools(((d0 + time '11:29:59') AT TIME ZONE 'Europe/Stockholm'), 180))::text, '1');
+  PERFORM pg_temp.d8_expect('403 three hours on', (SELECT count(*) FROM app.meal_letter_schools(((d0 + time '11:30:00') AT TIME ZONE 'Europe/Stockholm'), 180))::text, '0');
+  PERFORM pg_temp.d8_expect('403 a shorter grace', (SELECT count(*) FROM app.meal_letter_schools(((d0 + time '09:30:00') AT TIME ZONE 'Europe/Stockholm'), 60))::text, '0');
+  PERFORM pg_temp.d8_expect('403 no grace', (SELECT count(*) FROM app.meal_letter_schools(((d0 + time '08:30:00') AT TIME ZONE 'Europe/Stockholm'), 0))::text, '0');
+  -- The day after has a sitting for MD7A; a day with none gets no letter.
+  PERFORM pg_temp.d8_expect('403 the day after', (SELECT count(*) FROM app.meal_letter_schools((((d0 + 1) + time '08:45') AT TIME ZONE 'Europe/Stockholm'), 180))::text, '1');
+  PERFORM pg_temp.d8_expect('403 a day with no sitting', (SELECT count(*) FROM app.meal_letter_schools((((d0 + 2) + time '08:45') AT TIME ZONE 'Europe/Stockholm'), 180))::text, '0');
+  -- The school's own time, not UTC's: 08:30 in Stockholm is 07:30 or 06:30 in UTC.
+  PERFORM pg_temp.d8_expect('403 the cut-off is in the school''s time', (SELECT count(*) FROM app.meal_letter_schools(((d0 + time '11:00') AT TIME ZONE 'UTC'), 180))::text, '0');
+
+  -- The letter: the address, the school's name and the day's counts.
+  doc := app.meal_letter(school, d0);
+  PERFORM pg_temp.d8_expect('403 the address', doc ->> 'email', 'kok@example.invalid');
+  PERFORM pg_temp.d8_expect('403 the school', doc ->> 'school', 'RLS Måltidskollen');
+  PERFORM pg_temp.d8_expect('403 the counts', pg_temp.d8_class(doc, 'MD7A', 0) || ' ' || pg_temp.d8_class(doc, 'MD7B', 0) || ' ' || pg_temp.d8_staff(doc, 0), '4/1/1/false 2/1/0/true 10:30-11:00=1');
+  PERFORM pg_temp.d8_expect('403 the cut-off', doc ->> 'cutoff', '08:30');
+  PERFORM pg_temp.d8_expect('403 an unknown school', (app.meal_letter(gen_random_uuid(), d0) IS NULL)::text, 'true');
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(31));
+  PERFORM pg_temp.d8_expect('403 a school with the letter off', (app.meal_letter(app.current_school_id(), d0) IS NULL)::text, 'true');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 404: the catalogue. The arms, who holds a privilege, and which
+-- function the API's role may run.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  fn text;
+  r text;
+  app_oid oid := (SELECT oid FROM pg_roles WHERE rolname = 'app_authenticated');
+BEGIN
+  PERFORM pg_temp.d8_expect('404 row security', (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."KitchenSettings"'::regclass)::text, 'true');
+  -- Three arms, every one of them the API's role's, none public.
+  PERFORM pg_temp.d8_expect('404 the arms',
+    (SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) FROM pg_policy WHERE polrelid = 'public."KitchenSettings"'::regclass),
+    'kitchen_settings_admin_insert:a,kitchen_settings_admin_select:r,kitchen_settings_admin_update:w');
+  PERFORM pg_temp.d8_expect('404 the arms are the API role''s',
+    (SELECT bool_and(polroles = ARRAY[app_oid]) FROM pg_policy WHERE polrelid = 'public."KitchenSettings"'::regclass)::text, 'true');
+  -- Select, insert and update; no delete, no truncate; nothing for the other roles.
+  PERFORM pg_temp.d8_expect('404 the API role''s privileges',
+    (SELECT string_agg(p, ',' ORDER BY p) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+      WHERE has_table_privilege('app_authenticated', 'public."KitchenSettings"', p)), 'INSERT,SELECT,UPDATE');
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      PERFORM pg_temp.d8_expect('404 ' || r, (SELECT string_agg(p, ',') FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p
+                                                WHERE has_table_privilege(r, 'public."KitchenSettings"', p)), NULL);
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    PERFORM pg_temp.d8_expect('404 service_role', (SELECT string_agg(p, ',' ORDER BY p) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p
+                                                    WHERE has_table_privilege('service_role', 'public."KitchenSettings"', p)), 'SELECT');
+  END IF;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    PERFORM pg_temp.d8_expect('404 MAINTAIN is the owner''s', (has_table_privilege('app_authenticated', 'public."KitchenSettings"', 'MAINTAIN'))::text, 'false');
+  END IF;
+  -- The school's key cascades.
+  PERFORM pg_temp.d8_expect('404 the key to the school',
+    (SELECT confdeltype::text FROM pg_constraint WHERE conrelid = 'public."KitchenSettings"'::regclass AND contype = 'f'), 'c');
+
+  -- The functions: the core is the owner's, the four doors are the API role's, nobody else's, nobody public.
+  FOREACH fn IN ARRAY ARRAY['app.meal_counts(uuid, date, date)'] LOOP
+    PERFORM pg_temp.d8_expect('404 ' || fn, has_function_privilege('app_authenticated', fn, 'EXECUTE')::text, 'false');
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.meal_counts_for_me(date, date)', 'app.meal_letter_last_for_me()', 'app.meal_letter_schools(timestamptz, integer)', 'app.meal_letter(uuid, date)'] LOOP
+    PERFORM pg_temp.d8_expect('404 ' || fn, has_function_privilege('app_authenticated', fn, 'EXECUTE')::text, 'true');
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.meal_counts(uuid, date, date)', 'app.meal_counts_for_me(date, date)', 'app.meal_letter_last_for_me()', 'app.meal_letter_schools(timestamptz, integer)', 'app.meal_letter(uuid, date)'] LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+        PERFORM pg_temp.d8_expect('404 ' || fn || ' for ' || r, has_function_privilege(r, fn, 'EXECUTE')::text, 'false');
+      END IF;
+    END LOOP;
+    PERFORM pg_temp.d8_expect('404 ' || fn || ' for public',
+      (SELECT (p.proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0))::text FROM pg_proc p WHERE p.oid = fn::regprocedure), 'false');
+    -- A definer with a fixed search path, which a caller cannot change.
+    PERFORM pg_temp.d8_expect('404 ' || fn || ' is a definer with a path',
+      (SELECT (p.prosecdef AND p.proconfig @> ARRAY['search_path=public, pg_temp'])::text FROM pg_proc p WHERE p.oid = fn::regprocedure), 'true');
+  END LOOP;
+  -- The heavier ones are not JIT-compiled for 30 ms of work.
+  PERFORM pg_temp.d8_expect('404 jit is off in the counts',
+    (SELECT bool_and(p.proconfig @> ARRAY['jit=off'])::text FROM pg_proc p
+      WHERE p.oid IN ('app.meal_counts(uuid, date, date)'::regprocedure, 'app.meal_counts_for_me(date, date)'::regprocedure,
+                      'app.meal_letter_schools(timestamptz, integer)'::regprocedure, 'app.meal_letter(uuid, date)'::regprocedure)), 'true');
 END $$;
 ROLLBACK;
