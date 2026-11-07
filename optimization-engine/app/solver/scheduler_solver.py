@@ -5547,6 +5547,17 @@ class SchedulerSolver:
             model.AddHint(decision.room_index, winner.Value(source.room_index))
         for literal, source_literal in hint_literals:
             model.AddHint(literal, winner.Value(source_literal))
+        if request.search is not None:
+            # A schemaförslag candidate's phase 2 starts from a COMPLETE hint,
+            # and the best-effort candidate is one: the slack the prices read
+            # is among the variables the hint would otherwise leave to chance.
+            # See _complete_the_hint.
+            self._complete_the_hint(
+                model, request, winner, lunch_full, winner_lunch, seconds=remaining,
+            )
+            remaining = _remaining()
+            if remaining < self.MIN_PHASE_SECONDS:
+                return _phase1_response()
         phase2 = self._generation_solver(request, remaining)
         phase2_code = _solve_guarded(
             phase2, model, what="best-effort phase 2", request_id=request.request_id,

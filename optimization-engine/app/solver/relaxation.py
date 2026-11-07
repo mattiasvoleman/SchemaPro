@@ -430,17 +430,20 @@ def _work_day_deviations(
     lessons: list[ScheduledLesson],
     by_requirement: dict[UUID, AnonymousRequirement],
 ) -> list[ConflictDetail]:
+    """The days a post allows, counted the way the model holds them.
+
+    For every set L of locked weekdays the gateway sent for the post (one per
+    real week the locks make), the generated lessons may take at most
+    max(0, N - |L|) weekdays outside L: so the breach in that week is
+    |G \\ L| - max(0, N - |L|), G being the weekdays the generated lessons of
+    that ISO week take. The worst of them is the line. Read off the post's own
+    sets and not off the locked lessons, so the report and the model cannot
+    read two weeks from one payload.
+    """
     if not request.teacher_day_limits:
         return []
     found: list[ConflictDetail] = []
     for week in WEEKS:
-        locked_days: dict[UUID, set[int]] = defaultdict(set)
-        for fixed in request.fixed_lessons:
-            if not meet(fixed.recurrence, week) or _clock(fixed.end_time) <= _clock(fixed.start_time):
-                continue
-            for teacher in (fixed.teacher_id, fixed.co_teacher_id):
-                if teacher is not None:
-                    locked_days[teacher].add(fixed.day_of_week)
         days: dict[UUID, Counter[int]] = defaultdict(Counter)
         requirements_of: dict[tuple[UUID, int], list[UUID]] = defaultdict(list)
         for lesson in lessons:
@@ -456,12 +459,15 @@ def _work_day_deviations(
             generated = days.get(limit.teacher_id)
             if not generated:
                 continue
-            held = locked_days.get(limit.teacher_id, set())
-            used = set(generated) | held
-            allowed = max(limit.max_teaching_days_per_week, len(held))
-            over = len(used) - allowed
-            if over <= 0:
+            worst: tuple[int, frozenset[int]] | None = None
+            for held in {frozenset(weekdays) for weekdays in limit.locked_weekdays}:
+                outside = [day for day in generated if day not in held]
+                over = len(outside) - max(0, limit.max_teaching_days_per_week - len(held))
+                if over > 0 and (worst is None or over > worst[0]):
+                    worst = (over, held)
+            if worst is None:
                 continue
+            over, held = worst
             # The lightest days the generated lessons add: where moving a
             # lesson costs least, and so where a reader should look first.
             added = sorted((day for day in generated if day not in held), key=lambda d: generated[d])
@@ -472,12 +478,14 @@ def _work_day_deviations(
                 params={
                     "limit": str(limit.id),
                     "days": limit.max_teaching_days_per_week,
-                    "taught": len(used),
+                    "taught": len(set(generated) | held),
                     "over": over,
-                    "needed": len(used),
+                    "needed": len(set(generated) | held),
                 },
                 requirement_ids=list(dict.fromkeys(
-                    requirement for day in extra for requirement in requirements_of[(limit.teacher_id, day)]
+                    requirement
+                    for day in extra
+                    for requirement in requirements_of[(limit.teacher_id, day)]
                 )),
                 resource_ids=[limit.id],
             ))

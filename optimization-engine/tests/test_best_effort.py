@@ -153,6 +153,27 @@ class TestTheContract:
         assert response.deviations is None
         assert response.conflicts is not None
 
+    def test_a_candidate_call_carries_the_mode_and_the_search_together(self) -> None:
+        # The gateway's schemaförslag call sends `search` on every request:
+        # its budget, workers and seed shape the solve, and the mode is the
+        # same mode. Phase 2 then starts from a completed hint.
+        payload = _payload(
+            teacherWorkRules=[{"id": RULE, "teacherId": TEACHER, "maxTeachingMinutesPerDay": 120}],
+            search={"maxSeconds": 10, "workers": 2, "seed": 1, "probes": False},
+        )
+        response = _solve(payload, days="1")
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        assert _codes(response) == ["DEVIATION_TEACHER_DAILY_CAP"]
+
+    def test_a_refusal_without_probes_is_still_a_refusal_of_a_hard_rule(self) -> None:
+        payload = _payload(
+            requirements=[_requirement(lessonsPerWeek=2)],
+            search={"maxSeconds": 10, "probes": False},
+        )
+        response = _solve(payload, days="1", end=540)
+        assert response.status == "INFEASIBLE"
+        assert response.deviations is None
+
     def test_the_category_is_new_and_only_deviations_use_it(self) -> None:
         response = _solve(
             _payload(teacherWorkRules=[{"id": RULE, "teacherId": TEACHER, "maxTeachingMinutesPerDay": 120}]),
@@ -780,3 +801,97 @@ class TestTheStrictModelIsUntouched:
         for prefix in self.PREFIXES[:-1]:
             assert [name for name in names if name.startswith(prefix)], prefix
         assert not relax.empty
+
+
+# ---------------------------------------------------------------------------
+# The report against the strict model, on random weeks
+# ---------------------------------------------------------------------------
+
+
+def _random_week(seed: int) -> tuple[dict[str, object], str]:
+    """A small week with rules on the list, pushed hard enough to bind often."""
+    import random
+
+    rng = random.Random(seed)
+    teachers = [str(uuid4()) for _ in range(rng.randint(1, 3))]
+    requirements = []
+    for index in range(rng.randint(2, 4)):
+        requirements.append(_requirement(
+            id=str(uuid4()),
+            studentGroupId=str(uuid4()),
+            teacherId=rng.choice(teachers),
+            lessonsPerWeek=rng.randint(1, 4),
+            **({"maxLessonsPerDay": rng.randint(1, 2)} if rng.random() < 0.5 else {}),
+            **({"minDaysBetween": 2} if rng.random() < 0.4 else {}),
+        ))
+    rules = [
+        {"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": rng.choice([60, 120, 180])}
+        for teacher in teachers
+        if rng.random() < 0.6
+    ]
+    limits = [
+        {
+            "id": str(uuid4()), "teacherId": teacher,
+            "maxTeachingDaysPerWeek": rng.randint(1, 2), "lockedWeekdays": [[]],
+        }
+        for teacher in teachers
+        if rng.random() < 0.5
+    ]
+    payload = _payload(
+        requirements=requirements, rooms=4, teacherWorkRules=rules, teacherDayLimits=limits,
+    )
+    return payload, rng.choice(["1,2", "1,2,3", "1,2,3,4"])
+
+
+def _keeps_every_rule(payload: dict[str, object], response: OptimizeScheduleResponse, days: str) -> bool:
+    """Whether the STRICT model accepts exactly this timetable's days and times.
+
+    The strict build of the same week, every lesson's start pinned to the one
+    the response placed it at: feasible if and only if no rule on the list is
+    broken. The lessons of one requirement are interchangeable, so they are
+    matched in time order, longest first.
+    """
+    from ortools.sat.python import cp_model
+
+    solver = SchedulerSolver(_settings(days=days))
+    request = OptimizeScheduleRequest.model_validate(_strict(payload))
+    model, _, decisions, *_ = solver._build_model(request, use_assumptions=False)
+    placed: dict[UUID, list[ScheduledLesson]] = {}
+    for lesson in response.lessons:
+        placed.setdefault(lesson.requirement_id, []).append(lesson)
+    by_requirement: dict[UUID, list] = {}
+    for decision in decisions:
+        by_requirement.setdefault(decision.lesson.requirement.id, []).append(decision)
+    grid = solver._grid
+    for requirement_id, group in by_requirement.items():
+        lessons = sorted(
+            placed[requirement_id], key=lambda lesson: (lesson.day_of_week, lesson.start_time),
+        )
+        for decision, lesson in zip(group, lessons, strict=True):
+            minutes = int(lesson.start_time[:2]) * 60 + int(lesson.start_time[3:5])
+            slot = (minutes - grid.day_start_minutes) // grid.slot_minutes
+            day_index = list(grid.schedule_days).index(lesson.day_of_week)
+            model.Add(decision.start == day_index * grid.slots_per_day + slot)
+    cp = cp_model.CpSolver()
+    cp.parameters.num_workers = 1
+    cp.parameters.max_time_in_seconds = 20
+    return cp.Solve(model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+
+class TestTheReportAgreesWithTheStrictModel:
+    @pytest.mark.parametrize("seed", range(30))
+    def test_no_deviation_exactly_when_the_strict_model_accepts_the_timetable(self, seed: int) -> None:
+        payload, days = _random_week(seed)
+        try:
+            response = _solve(payload, days=days)
+        except InvalidScheduleInputError as refusal:
+            # A hard rule refused the week in both modes: not this test's subject.
+            assert not refusal.code.startswith(("TEACHER_DAILY_CAP", "TEACHER_WORK_DAYS", "SUBJECT_DISTRIBUTION"))
+            return
+        if not response.lessons:
+            assert response.status in ("INFEASIBLE", "TIMEOUT")
+            return
+        kept = _keeps_every_rule(payload, response, days)
+        assert kept == (response.deviations == []), [
+            (detail.code, detail.params) for detail in response.deviations or []
+        ]
