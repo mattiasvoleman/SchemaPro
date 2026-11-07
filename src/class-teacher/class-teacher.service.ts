@@ -370,7 +370,8 @@ export class ClassTeacherService {
         throw new ConflictException({
           message: 'Det finns redan ett utkast för lektionen. Öppna det i stället.',
           code: CODES.DRAFT_EXISTS,
-          ...(existing ? { existing: toChangeView(existing) } : {}),
+          // Flat, for the global filter forwards a problem's code and flat params only: the page reads the week again for the draft itself.
+          ...(existing ? { params: { draftId: existing.id } } : {}),
         });
       }
       return rethrowClassTeacherError(error);
@@ -380,11 +381,11 @@ export class ClassTeacherService {
   /** Edits a waiting draft the writer has read at `dto.rev`; anyone else's change in between is a 409 with the draft as it stands. */
   async update(classId: string, changeId: string, dto: UpdateChangeDto, user: AuthenticatedUser): Promise<ChangeView> {
     try {
-      const outcome = await this.prisma.withRls(user, async (tx) => {
+      const outcome = await this.prisma.withRls(user, async (tx): Promise<{ conflict: ChangeView; done?: undefined } | { done: ChangeView; conflict?: undefined }> => {
         await this.requireAppointed(tx, user, classId);
         const current = await tx.classTeacherChange.findFirst({ where: { id: changeId, studentGroupId: classId } });
         if (!current) throw new NotFoundException({ message: 'Utkastet finns inte.', code: CODES.GONE });
-        if (current.status !== 'DRAFT' || current.rev !== dto.rev) return { conflict: toChangeView(current) } as const;
+        if (current.status !== 'DRAFT' || current.rev !== dto.rev) return { conflict: toChangeView(current) };
         const merged = { ...current, ...mergedOf(dto) } as unknown as ChangeRow;
         const refusal = await askFrame(tx, frameInputOf(merged), false);
         if (refusal) throw frameRefusal(refusal);
@@ -393,12 +394,10 @@ export class ClassTeacherService {
           data: patchOf(dto),
         });
         const after = await tx.classTeacherChange.findUnique({ where: { id: changeId } });
-        if (written.count === 0 || !after) return { conflict: after ? toChangeView(after) : toChangeView(current) } as const;
-        return { done: toChangeView(after) } as const;
+        if (written.count === 0 || !after) return { conflict: after ? toChangeView(after) : toChangeView(current) };
+        return { done: toChangeView(after) };
       });
-      if ('conflict' in outcome) {
-        throw staleDraft(outcome.conflict);
-      }
+      if (outcome.conflict) throw staleDraft(outcome.conflict);
       return outcome.done;
     } catch (error) {
       return rethrowClassTeacherError(error);

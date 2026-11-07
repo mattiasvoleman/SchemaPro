@@ -3690,7 +3690,7 @@ DECLARE
   y2 uuid;
   ca uuid; cb uuid; cc uuid; cd uuid; ha uuid; sva uuid;
   k1 uuid; k2 uuid; t3 uuid; k3 uuid; k4 uuid; adm_full uuid; adm_sched uuid; adm_exp uuid; p1 uuid; p2 uuid; p3 uuid;
-  ma uuid; sv uuid; mu uuid; en uuid; sl uuid; idr uuid;
+  ma uuid; sv uuid; mu uuid; en uuid; sl uuid; idr uuid; nat uuid;
   r1 uuid; r2 uuid; r3 uuid; r4 uuid; r_other uuid;
   blk uuid; req uuid;
   m_ma uuid; m_ma_fri uuid; m_sv uuid; m_id uuid; m_en uuid; m_sl uuid;
@@ -3747,6 +3747,7 @@ BEGIN
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'KL Engelska', 'KLEN', now()) RETURNING id INTO en;
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'KL Slöjd', 'KLSL', now()) RETURNING id INTO sl;
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'KL Idrott', 'KLID', now()) RETURNING id INTO idr;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'KL NO', 'KLNO', now()) RETURNING id INTO nat;
   -- SvA4 takes the pupils it has out of svenska.
   UPDATE "StudentGroups" SET "replacesSubjectId" = sv WHERE id = sva;
 
@@ -3799,6 +3800,9 @@ BEGIN
     (s1, y, en,  ca, k1, r1, 4, '11:00', '11:30', false, now()),
     (s1, y, ma,  ca, k1, r1, 5, '08:30', '09:30', false, now()),
     (s1, y, sl,  ha, k1, r1, 2, '10:00', '11:00', false, now()),
+    -- NO is read by the whole class on Tuesday and by its half on Wednesday: the whole class's lesson is half of a pair.
+    (s1, y, nat, ca, k1, r2, 2, '11:00', '12:00', false, now()),
+    (s1, y, nat, ha, k1, r2, 3, '11:00', '12:00', false, now()),
     (s1, y, ma,  cb, k2, r2, 1, '08:30', '09:30', false, now()),
     (s1, y, ma,  cb, k2, r2, 5, '08:30', '09:30', false, now()),
     (s1, y, ma,  cc, k3, r1, 2, '08:30', '09:30', false, now()),

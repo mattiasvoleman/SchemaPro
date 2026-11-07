@@ -351,7 +351,7 @@ describe('ClassTeacherService.create', () => {
     tx['classTeacherChange']!['findFirst']!.mockResolvedValue(changeRow({ id: 'earlier' }));
     await expect(service.create('class-1', dto, teacher)).rejects.toMatchObject({
       status: 409,
-      response: { code: CODES.DRAFT_EXISTS, existing: expect.objectContaining({ id: 'earlier' }) },
+      response: { code: CODES.DRAFT_EXISTS, params: { draftId: 'earlier' } },
     });
     expect(tx['classTeacherChange']!['findFirst']).toHaveBeenCalledWith({ where: { studentGroupId: 'class-1', status: 'DRAFT', calendarLessonId: 'lesson-1' } });
   });

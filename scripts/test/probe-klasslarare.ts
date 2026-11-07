@@ -217,7 +217,8 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
     const twice = await refusedWith(() => teacherService.create(g4a, { kind: 'OCCASION_ROOM', calendarLessonId: lMon, baseVersion: mon.version, targetRoomId: sal2 }, karin));
     assert.equal(twice.status, 409);
     assert.equal(twice.response.code, 'CLASS_TEACHER_DRAFT_EXISTS');
-    assert.equal((twice.response.existing as { id: string }).id, made.id);
+    // The global filter forwards a problem's code and flat params only, so the draft is named by id.
+    assert.equal((twice.response.params as { draftId: string }).draftId, made.id);
 
     // The Thursday’s room changes under Karin, and a draft against the old version is refused with the lesson as it is.
     const thu = await occasion(lThu, thursday);
@@ -225,13 +226,15 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
     const stale = await refusedWith(() => teacherService.create(g4a, { kind: 'OCCASION_CANCEL', calendarLessonId: lThu, baseVersion: thu.version }, karin));
     assert.equal(stale.status, 409);
     assert.equal(stale.response.code, 'CLASS_TEACHER_STALE');
-    assert.equal(((stale.response.current as { snapshot: { roomId: string } }).snapshot).roomId, sal2);
+    const nowThu = await occasion(lThu, thursday);
+    assert.notEqual(nowThu.version, thu.version);
+    assert.equal((stale.response.params as { version: string }).version, nowThu.version);
     await owner.query(`UPDATE "CalendarLessons" SET "roomId" = $2 WHERE id = $1`, [lThu, sal1]);
 
     // Another class’s lesson, asked for in Karin’s class: the frame says whose it is.
     const other = await refusedWith(() => teacherService.create(g4a, { kind: 'OCCASION_CANCEL', calendarLessonId: lTue4b, baseVersion: 'a'.repeat(32) }, karin));
     assert.equal(other.status, 403);
-    assert.deepEqual([other.response.code, other.response.reason], ['CLASS_TEACHER_OUTSIDE_FRAME', 'OTHER_CLASS']);
+    assert.deepEqual([other.response.code, (other.response.params as { reason: string }).reason], ['CLASS_TEACHER_OUTSIDE_FRAME', 'OTHER_CLASS']);
     const stranger = await refusedWith(() => teacherService.create(g4b, { kind: 'OCCASION_CANCEL', calendarLessonId: lTue4b, baseVersion: 'a'.repeat(32) }, karin));
     assert.equal(stranger.response.code, 'CLASS_TEACHER_NOT_APPOINTED');
     // A teacher who is nobody’s klasslärare is refused at the door, and writes nothing.
@@ -242,7 +245,7 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
     const closed = await refusedWith(() =>
       teacherService.create(g4a, { kind: 'OCCASION_MOVE', calendarLessonId: lThu, baseVersion: thu.version, targetDate: friday, targetStart: '09:00', targetEnd: '10:00' }, karin),
     );
-    assert.deepEqual([closed.response.code, closed.response.reason], ['CLASS_TEACHER_OUTSIDE_FRAME', 'TARGET_CLOSED']);
+    assert.deepEqual([closed.response.code, (closed.response.params as { reason: string }).reason], ['CLASS_TEACHER_OUTSIDE_FRAME', 'TARGET_CLOSED']);
     assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ClassTeacherChanges" WHERE "schoolId" = $1`, [s])).n, 1);
   });
 
@@ -252,7 +255,7 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
     const late = await refusedWith(() => teacherService.update(g4a, monDraft, { rev: 1, note: 'Mitt' }, karin));
     assert.equal(late.status, 409);
     assert.equal(late.response.code, 'CLASS_TEACHER_REV');
-    assert.deepEqual([(late.response.current as { rev: number }).rev, (late.response.current as { note: string }).note], [2, 'Studiebesök i Eksjö']);
+    assert.equal((late.response.params as { rev: number }).rev, 2);
     const lateDiscard = await refusedWith(() => teacherService.discard(g4a, monDraft, 1, karin));
     assert.equal(lateDiscard.response.code, 'CLASS_TEACHER_REV');
     // A draft is about a lesson and a writer for good.
@@ -324,7 +327,7 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
     assert.equal((await one<{ by: string }>(`SELECT "publishedByUserId" AS by FROM "ClassTeacherChanges" WHERE id = $1`, [made.id])).by, sara.userId);
     // A cancelled lesson is closed to a second change.
     const again = await refusedWith(() => teacherService.create(g4a, { kind: 'OCCASION_ROOM', calendarLessonId: lMon, baseVersion: 'a'.repeat(32), targetRoomId: sal2 }, karin));
-    assert.equal(again.response.reason, 'NOT_SCHEDULED');
+    assert.equal((again.response.params as { reason: string }).reason, 'NOT_SCHEDULED');
     await adminService.updateSettings({ selfPublish: false }, sara);
   });
 
