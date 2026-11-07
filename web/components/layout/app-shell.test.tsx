@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps, MouseEvent, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
+import { navForRole } from "./role-nav";
 import { closedPages, readOnlyPages, type AdminProfile } from "@/lib/admin-areas";
 import { closedMenuStyle, closedPagesFor, readOnlyNoticesFor, readOnlyStyle } from "@/components/admin/area-refusal";
 import { ClosedPageGate, ProfileProvider } from "@/components/profile-context";
@@ -75,10 +76,12 @@ vi.mock("next-intl", () => ({
     values ? `${namespace}.${key}(${Object.values(values).join("|")})` : `${namespace}.${key}`,
 }));
 
+// The menu is the (app) layout's to hand in, built by the same navForRole.
 function renderShell(overrides: Partial<ComponentProps<typeof AppShell>> = {}) {
   return render(
     <AppShell
       role="SCHOOL_ADMIN"
+      sections={navForRole(overrides.role ?? "SCHOOL_ADMIN")}
       userName="Alma Berg"
       email="alma@example.com"
       schoolName="Norra Real"
@@ -568,7 +571,13 @@ const shellFor = (profile: AdminProfile, body = "page body") => {
   menuStyles.push(style);
   return render(
     <ProfileProvider profile={{ adminProfile: profile } as Profile} school={null} closed={closedFor(profile)}>
-      <AppShell role="SCHOOL_ADMIN" userName="Alma Berg" email="alma@example.com" schoolName="Norra Real">
+      <AppShell
+        role="SCHOOL_ADMIN"
+        sections={navForRole("SCHOOL_ADMIN")}
+        userName="Alma Berg"
+        email="alma@example.com"
+        schoolName="Norra Real"
+      >
         <ClosedPageGate>
           <p>{body}</p>
         </ClosedPageGate>
@@ -672,7 +681,13 @@ describe("AppShell for a läsare (Läsbehörighet)", () => {
     menuStyles.push(style);
     return render(
       <ProfileProvider profile={{ adminProfile: "LASARE" } as Profile} school={null} closed={closedFor("LASARE")}>
-        <AppShell role="SCHOOL_ADMIN" userName="Lisa Läsare" email="lisa@example.com" schoolName="Norra Real">
+        <AppShell
+          role="SCHOOL_ADMIN"
+          sections={navForRole("SCHOOL_ADMIN")}
+          userName="Lisa Läsare"
+          email="lisa@example.com"
+          schoolName="Norra Real"
+        >
           <ClosedPageGate>
             {readOnlyNoticesFor(pages, "LASARE")}
             <button type="button" data-writes="SCHEMALAGGNING">
