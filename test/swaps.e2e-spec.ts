@@ -89,6 +89,26 @@ describe('Byten och flyttar (e2e)', () => {
       expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
     });
 
+    /*
+     * parseTimeString wraps an hour past 23 into the next day, so "34:00" used
+     * to be judged on minute 2040 and stored as 10:00: a teacher booked twice by
+     * a request the clash rule had cleared. It is a 400 at the door now, with
+     * nothing read or written.
+     */
+    it.each(['24:00', '25:00', '34:00', '12:60', '8:00'])('refuses the clock %s, as the new start, the new end and the old start: a 400, never a double booking', async (clock) => {
+      harness.tx.$queryRaw.mockResolvedValue([{ mode: 'DIRECT' }]);
+      const bodies = [
+        { lessonId: A, moves: [{ lessonId: A, from: slot(1), to: { dayOfWeek: 2, startTime: clock, endTime: '09:00' } }, move(B, 2, 1)] },
+        { lessonId: A, moves: [{ lessonId: A, from: slot(1), to: { dayOfWeek: 2, startTime: '08:00', endTime: clock } }, move(B, 2, 1)] },
+        { lessonId: A, moves: [{ lessonId: A, from: { dayOfWeek: 1, startTime: clock, endTime: '09:00' }, to: slot(2) }, move(B, 2, 1)] },
+      ];
+      for (const body of bodies) {
+        await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send(body).expect(400);
+      }
+      expect(harness.tx['masterLesson']!['findMany']).not.toHaveBeenCalled();
+      expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
+    });
+
     it('reaches the handler for an administrator: a lesson named twice is the service’s 400', async () => {
       harness.tx.$queryRaw.mockResolvedValue([{ mode: 'DIRECT' }]);
       await request(http())

@@ -62,6 +62,26 @@ describe('searchSwaps', () => {
     expect(result.truncated).toBe(false);
   });
 
+  /*
+   * A chain is three units moving to three slots. Two partners standing in ONE
+   * slot would make the second leg of "a → v → w → a" a move to where v already
+   * is: the chain would be a swap of a and w with a lesson that does not move
+   * dressed as a third. The prune and the judge accept it (nothing is wrong
+   * with it), so only this condition keeps it out of the list.
+   */
+  it('offers no chain through two partners that stand in one slot: that is a swap with a lesson that does not move', async () => {
+    const v = lesson('v', 2, 480);
+    const w = lesson('w', 2, 480);
+    const result = await search([a, v, w]);
+    const swaps = result.proposals.filter((p) => p.kind === 'SWAP');
+    expect(swaps.map((p) => p.moves.map((m) => m.lessonId).join('>')).sort()).toEqual(['a>v', 'a>w']);
+    expect(result.proposals.filter((p) => p.kind === 'CHAIN')).toHaveLength(0);
+    expect(result.candidates).toBe(2);
+    for (const proposal of result.proposals) {
+      for (const move of proposal.moves) expect(move.to).not.toEqual(move.from);
+    }
+  });
+
   it('moves the picked unit to the partner’s slot and the partner to the picked unit’s, each keeping its length', async () => {
     const short = lesson('short', 2, 600, { endMinutes: 600 + 60 });
     const [swap] = (await search([a, short])).proposals;

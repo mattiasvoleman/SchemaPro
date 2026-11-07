@@ -29,13 +29,18 @@
  *          and a teacher's principal, whom the database will not let write;
  *   (sw-e) a locked lesson picked by the scheduler is still offered;
  *   (sw-f) a teacher whose post holds a limit (HR data) is counted against it
- *          without being worded, and the read is a row in the läslogg.
+ *          without being worded, and the read is a row in the läslogg;
+ *   (sw-g) a lesson that moved to another DAY, at the same clock, is SWAP_STALE
+ *          (the version check's day condition: start and end moved together
+ *          cover for one another, the day alone did not);
+ *   (sw-h) a clock past the end of the day ("34:00" wraps to 10:00 where the
+ *          teacher's other lesson stands) is a 400 that writes nothing.
  *
  * Independent of what earlier CI steps left in the database: it works in a
  * school of its own and counts on nothing in the seed.
  */
 import { strict as assert } from 'node:assert';
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
@@ -314,6 +319,57 @@ async function run(owner: Client, api: PrismaService, seeded: SeededSchool) {
       assert.deepEqual(Object.keys(cost).sort(), ['after', 'before', 'code', 'delta', 'unit']);
     }
     assert.ok((await reads()) > before, 'the read of a post was not recorded');
+  });
+
+  await check('(sw-g) a lesson that moved to another day at the same clock is SWAP_STALE and nothing is written', async () => {
+    const proposal = offered[0]!;
+    const victim = proposal.moves[1]!.lessonId;
+    const was = (await owner.query(`SELECT "dayOfWeek" AS day FROM "MasterLessons" WHERE id = $1`, [victim])).rows[0].day as number;
+    await owner.query(`UPDATE "MasterLessons" SET "dayOfWeek" = $2 WHERE id = $1`, [victim, was === 5 ? 4 : was + 1]);
+    const before = await fingerprint();
+    try {
+      await assert.rejects(swaps.apply(bodyOf(classLesson.id, proposal), asAdmin), (error: unknown) => {
+        assert.ok(error instanceof ConflictException);
+        assert.equal((error.getResponse() as { code?: string }).code, 'SWAP_STALE');
+        return true;
+      });
+      assert.equal(await fingerprint(), before);
+    } finally {
+      await owner.query(`UPDATE "MasterLessons" SET "dayOfWeek" = $2 WHERE id = $1`, [victim, was]);
+    }
+  });
+
+  await check('(sw-h) a clock past the end of the day is a 400 that writes nothing, not a double booking', async () => {
+    // A lesson moved to "34:00": 10:00 once the day has wrapped, where another lesson of its teacher stands.
+    const ends = new Map(
+      (await owner.query(`SELECT id, extract(hour FROM "endTime")::int * 60 + extract(minute FROM "endTime")::int AS "end" FROM "MasterLessons" WHERE "academicYearId" = $1`, [year])).rows.map(
+        (r: { id: string; end: number }) => [r.id, r.end] as const,
+      ),
+    );
+    const a = start.find((r) => seeded.classes.some((c) => c.id === r.groupId) && r.teacherId && start.some((b) => b.id !== r.id && b.teacherId === r.teacherId && b.day !== r.day))!;
+    const b = start.find((r) => r.id !== a.id && r.teacherId === a.teacherId && r.day !== a.day)!;
+    const c = start.find((r) => seeded.classes.some((k) => k.id === r.groupId) && r.groupId !== a.groupId && r.teacherId !== a.teacherId)!;
+    const slotOf = (r: Row) => ({ dayOfWeek: r.day, startTime: clock(r.start), endTime: clock(ends.get(r.id)!) });
+    const wrapped = { dayOfWeek: b.day, startTime: clock(b.start + 24 * 60), endTime: clock(ends.get(b.id)! + 24 * 60) };
+    assert.ok(Number(wrapped.startTime.slice(0, 2)) > 23);
+    const before = await fingerprint();
+    // Without a frame: the stage's ramtid refuses 34:00 for being outside the school day, which hid the fault in a school that has one.
+    const frames = (await owner.query(`DELETE FROM "FrameTimes" WHERE "schoolId" = $1 RETURNING *`, [school])).rows as Array<Record<string, unknown>>;
+    try {
+      await assert.rejects(
+        swaps.apply({ lessonId: a.id, moves: [{ lessonId: a.id, from: slotOf(a), to: wrapped }, { lessonId: c.id, from: slotOf(c), to: slotOf(c) }] }, asAdmin),
+        (error: unknown) => error instanceof BadRequestException,
+      );
+      assert.equal(await fingerprint(), before, 'a wrapped clock was written');
+    } finally {
+      for (const frame of frames) {
+        const columns = Object.keys(frame);
+        await owner.query(
+          `INSERT INTO "FrameTimes" (${columns.map((column) => `"${column}"`).join(', ')}) VALUES (${columns.map((_, index) => `$${index + 1}`).join(', ')})`,
+          columns.map((column) => frame[column]),
+        );
+      }
+    }
   });
 
   await check('(sw-d) a teacher’s principal cannot write the timetable: the database refuses and nothing moves', async () => {

@@ -15,7 +15,13 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-const TIME = /^\d{2}:\d{2}$/;
+/**
+ * A clock of the day and nothing else: 00:00 to 23:59. `\d{2}:\d{2}` also let
+ * "34:00" through, and parseTimeString wraps an hour past 23 into the next day
+ * (34:00 is stored as 10:00), so a request could be judged at one time and
+ * written at another.
+ */
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** Byten och flyttar: the swaps and chains a picked lesson can take part in. */
 export class SuggestSwapsDto {
@@ -37,10 +43,10 @@ export class SwapSlotDto {
   @Max(7)
   dayOfWeek!: number;
 
-  @Matches(TIME, { message: 'startTime must be HH:MM.' })
+  @Matches(TIME, { message: 'startTime must be HH:MM, 00:00–23:59.' })
   startTime!: string;
 
-  @Matches(TIME, { message: 'endTime must be HH:MM.' })
+  @Matches(TIME, { message: 'endTime must be HH:MM, 00:00–23:59.' })
   endTime!: string;
 }
 

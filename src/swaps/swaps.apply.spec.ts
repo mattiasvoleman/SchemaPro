@@ -17,7 +17,7 @@ const user = { userId: 'u1', role: 'SCHOOL_ADMIN', schoolId: SCHOOL } as never;
 const clockOf = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 
 /** The tx of an apply: the clash reads of the world, the row locks, the writes recorded. */
-function applyTx(world: World, lessons: () => SwapLesson[] = () => world.data.lessons) {
+function applyTx(world: World, lessons: () => SwapLesson[] = () => world.data.lessons, parked: ReadonlySet<string> = new Set()) {
   const base = fakeTx(world, lessons);
   const written: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
   const changeLog: Array<Record<string, unknown>> = [];
@@ -36,6 +36,7 @@ function applyTx(world: World, lessons: () => SwapLesson[] = () => world.data.le
             .map((lesson) => ({
               ...rowOf(lesson),
               isLocked: lesson.isLocked,
+              isParked: parked.has(lesson.id),
               school: { id: SCHOOL, timezone: 'Europe/Stockholm' },
             }))
             .sort((a, b) => (a.id < b.id ? -1 : 1));
@@ -210,6 +211,123 @@ describe('SwapsService.apply', () => {
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as ConflictException).message).toMatch(/already|group|Teacher|Room/);
     expect(written).toHaveLength(0);
+  });
+
+  /*
+   * THE VERSION CHECK. A proposal is about the timetable the page saw. Each of
+   * the four things that can have moved since — the day, the start, the end,
+   * the tray — is a condition of its own, and each has a test of its own: with
+   * the start and the end moved together (a lesson an hour later) they cover
+   * for one another, and the day and the tray were not asked at all.
+   */
+  describe('is a 409 SWAP_STALE for a lesson that has moved since the proposal, whichever way', () => {
+    const stale = async (changed: (lesson: SwapLesson) => SwapLesson, parked = false) => {
+      const { lesson, swap } = await aGoodSwap(world);
+      const victim = swap.moves[1]!.lessonId;
+      const lessons = world.data.lessons.map((l) => (l.id === victim ? changed(l) : l));
+      const { tx, written } = applyTx(world, () => lessons, parked ? new Set([victim]) : undefined);
+      const { swaps, snapshot } = build(world, tx);
+      await expect(
+        swaps.apply(
+          {
+            lessonId: lesson.id,
+            moves: swap.moves.map((move) => ({
+              lessonId: move.lessonId,
+              from: { dayOfWeek: move.from.dayOfWeek, startTime: clockOf(move.from.startMinutes), endTime: clockOf(move.from.endMinutes) },
+              to: { dayOfWeek: move.to.dayOfWeek, startTime: clockOf(move.to.startMinutes), endTime: clockOf(move.to.endMinutes) },
+            })),
+          },
+          user,
+        ),
+      ).rejects.toMatchObject({ response: { code: SWAP_STALE } });
+      expect(written).toHaveLength(0);
+      expect(snapshot).not.toHaveBeenCalled();
+    };
+
+    it('on another day at the same clock', () => stale((l) => ({ ...l, dayOfWeek: l.dayOfWeek === 5 ? 4 : l.dayOfWeek + 1 })));
+    it('from the same start to another end', () => stale((l) => ({ ...l, endMinutes: l.endMinutes + 30 })));
+    it('to the same end from another start', () => stale((l) => ({ ...l, startMinutes: l.startMinutes + 30 })));
+    it('onto the tray since the proposal', () => stale((l) => l, true));
+  });
+
+  /*
+   * A CLOCK THE DTO'S PATTERN WOULD HAVE STOPPED, for the caller that does not
+   * pass through it. parseTimeString wraps an hour past 23 into the next day, so
+   * "34:00" is stored as 10:00; judged by the string it was minute 2040, where
+   * nothing stands, and a teacher was booked twice. The clock is read from the
+   * parsed time, and what does not survive the parse is a 400 before anything
+   * is judged or written.
+   */
+  describe('a clock past the end of the day', () => {
+    /** A lesson, another lesson of its teacher on another day, and a third lesson that moves nowhere. */
+    function aTeacherWhoseOtherLessonStandsThere() {
+      for (const a of world.data.lessons) {
+        const b = world.data.lessons.find(
+          (l) => l.id !== a.id && l.teacherId === a.teacherId && l.dayOfWeek !== a.dayOfWeek && l.endMinutes - l.startMinutes === a.endMinutes - a.startMinutes,
+        );
+        const c = world.data.lessons.find((l) => l.teacherId !== a.teacherId && l.studentGroupId !== a.studentGroupId && l.id !== b?.id);
+        if (b && c) return { a, b, c };
+      }
+      throw new Error('the world has no such teacher');
+    }
+
+    const request = (a: SwapLesson, c: SwapLesson, to: { dayOfWeek: number; startTime: string; endTime: string }) => ({
+      lessonId: a.id,
+      moves: [
+        { lessonId: a.id, from: { dayOfWeek: a.dayOfWeek, startTime: clockOf(a.startMinutes), endTime: clockOf(a.endMinutes) }, to },
+        // An unrelated lesson that stays where it is: the second unit a swap must have.
+        { lessonId: c.id, from: { dayOfWeek: c.dayOfWeek, startTime: clockOf(c.startMinutes), endTime: clockOf(c.endMinutes) }, to: { dayOfWeek: c.dayOfWeek, startTime: clockOf(c.startMinutes), endTime: clockOf(c.endMinutes) } },
+      ],
+    });
+
+    it('is a 400 that writes nothing, not a double booking: 34:00 lands where the teacher’s other lesson stands', async () => {
+      const { a, b, c } = aTeacherWhoseOtherLessonStandsThere();
+      // 34:00 is 10:00 once the day has wrapped — b's own clock, plus 24 hours.
+      const wrapped = { dayOfWeek: b.dayOfWeek, startTime: clockOf(b.startMinutes + 24 * 60), endTime: clockOf(b.endMinutes + 24 * 60) };
+      expect(Number(wrapped.startTime.slice(0, 2))).toBeGreaterThan(23);
+      const { tx, written } = applyTx(world);
+      const { swaps, snapshot } = build(world, tx);
+      await expect(swaps.apply(request(a, c, wrapped), user)).rejects.toBeInstanceOf(BadRequestException);
+      expect(written).toHaveLength(0);
+      expect(snapshot).not.toHaveBeenCalled();
+    });
+
+    // Hours of an hour's length, so that only the clock is wrong and the length rule is not what refuses them.
+    it.each([
+      ['24:00', '25:00'],
+      ['32:30', '33:30'],
+      ['12:60', '13:60'],
+      ['08:75', '09:75'],
+    ])('is a 400 for %s–%s, which wraps to an hour where nothing stands', async (startTime, endTime) => {
+      const { a, c } = aTeacherWhoseOtherLessonStandsThere();
+      expect(a.endMinutes - a.startMinutes).toBe(60);
+      const { tx, written } = applyTx(world);
+      const { swaps } = build(world, tx);
+      await expect(swaps.apply(request(a, c, { dayOfWeek: 1, startTime, endTime }), user)).rejects.toBeInstanceOf(BadRequestException);
+      expect(written).toHaveLength(0);
+    });
+
+    it('reads the clock it judges from the clock it writes: a good request is judged and written on the same minutes', async () => {
+      const { lesson, swap } = await aGoodSwap(world);
+      const { tx, written } = applyTx(world);
+      const { swaps } = build(world, tx);
+      await swaps.apply(
+        {
+          lessonId: lesson.id,
+          moves: swap.moves.map((move) => ({
+            lessonId: move.lessonId,
+            from: { dayOfWeek: move.from.dayOfWeek, startTime: clockOf(move.from.startMinutes), endTime: clockOf(move.from.endMinutes) },
+            to: { dayOfWeek: move.to.dayOfWeek, startTime: clockOf(move.to.startMinutes), endTime: clockOf(move.to.endMinutes) },
+          })),
+        },
+        user,
+      );
+      for (const move of swap.moves) {
+        const row = written.find((entry) => entry.where['id'] === move.lessonId)!;
+        const stored = row.data['startTime'] as Date;
+        expect(stored.getUTCHours() * 60 + stored.getUTCMinutes()).toBe(move.to.startMinutes);
+      }
+    });
   });
 
   it('refuses a lesson named twice, a picked lesson outside the moves and a single unit', async () => {

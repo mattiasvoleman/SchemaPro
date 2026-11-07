@@ -371,10 +371,12 @@ export class SwapsService {
       const leader = rows[0]!;
       if (rows.some((row) => row.academicYearId !== leader.academicYearId)) throw swapStale();
 
+      // The minutes are the parsed clocks' — the very values written below — so that
+      // the clash rule judges the time that is stored.
       const moves: SwapMove[] = dto.moves.map((move) => ({
         lessonId: move.lessonId,
-        from: { dayOfWeek: move.from.dayOfWeek, startMinutes: toMinutes(move.from.startTime), endMinutes: toMinutes(move.from.endTime) },
-        to: { dayOfWeek: move.to.dayOfWeek, startMinutes: toMinutes(move.to.startTime), endMinutes: toMinutes(move.to.endTime) },
+        from: { dayOfWeek: move.from.dayOfWeek, startMinutes: clockMinutes(move.from.startTime), endMinutes: clockMinutes(move.from.endTime) },
+        to: { dayOfWeek: move.to.dayOfWeek, startMinutes: clockMinutes(move.to.startTime), endMinutes: clockMinutes(move.to.endTime) },
       }));
       const byId = new Map(rows.map((row) => [row.id, row]));
       for (const move of moves) {
@@ -548,10 +550,22 @@ export class SwapsService {
   }
 }
 
-const toMinutes = (time: string): number => {
-  const [h, m] = time.split(':');
-  return Number(h) * 60 + Number(m);
-};
+/**
+ * The minutes of a clock as the database will hold it: read from the parsed
+ * time, the Date that is written, and not from the string.
+ *
+ * parseTimeString wraps an hour past 23 into the next day, so "34:00" is
+ * stored as 10:00. Counted from the string it is minute 2040 — a time where
+ * nothing stands — and the clash rule found no clash for a lesson that was then
+ * written on top of another. A clock that does not come out of the parse as it
+ * went in ("34:00", "12:60") is refused here, behind the DTO's pattern, for the
+ * callers that do not pass through it.
+ */
+function clockMinutes(value: string): number {
+  const minutes = minutesOf(parseTimeString(value));
+  if (clockOf(minutes) !== value) throw new BadRequestException(`moves: ${value} is not a clock of the day (HH:MM, 00:00–23:59).`);
+  return minutes;
+}
 
 function swapStale(): ConflictException {
   return new ConflictException({
