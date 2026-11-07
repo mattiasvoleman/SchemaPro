@@ -309,6 +309,7 @@ describe("AppShell navigation", () => {
       "nav.absenceWatch",
       "nav.reportingRate",
       "nav.acknowledgements",
+      "nav.meals",
       "nav.classBook",
     ]);
 
@@ -322,7 +323,7 @@ describe("AppShell navigation", () => {
     expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
     expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(40);
+    expect(all).toHaveLength(41);
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {
