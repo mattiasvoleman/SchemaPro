@@ -124,6 +124,9 @@
         - link "Kvittens":
           - /url: /sv/admin/acknowledgements
       - listitem:
+        - link "Checklistor":
+          - /url: /sv/admin/checklists
+      - listitem:
         - link "Klassbok":
           - /url: /sv/admin/klassbok
     - list:

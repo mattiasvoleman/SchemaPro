@@ -168,6 +168,9 @@ export const ADMIN_NAV: NavGroup[] = [
       // The attendance icon (Ledighetsansökningar): a
       // confirmation is a tick against a name, like the register's.
       { labelKey: "acknowledgements", href: "/admin/acknowledgements", icon: ClipboardCheck },
+      // Checklistor: the instruction proofs and the classes' consent lists. Beside Kvittens, which
+      // asks the guardians the consent lists ask. The attendance icon again: a tick against a name.
+      { labelKey: "checklists", href: "/admin/checklists", icon: ClipboardCheck },
       // Lektionslogg's klassbok: a class's lessons over a period, printed. The subjects' book.
       { labelKey: "classBook", href: "/admin/klassbok", icon: BookOpen },
     ],

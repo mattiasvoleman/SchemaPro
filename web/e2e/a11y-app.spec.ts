@@ -86,17 +86,6 @@ const WRITE_VERBS =
 /** Reading controls whose names begin with a write verb: `page` as on disk, `name` the control's. */
 const READ_CONTROLS: Array<{ page: string; name: RegExp; reason: string }> = [];
 
-/*
- * A page with no row in the menu yet. The läsare's notice is shown by the
- * menu's current link (readOnlyStyle), so a page the menu does not list has
- * none to hang it on: the page is open to be read and its write controls are
- * hidden (data-writes needs no link), but the notice is missing until the row
- * exists. Checklistor waits for the menu of #275. The test below insists the
- * entry is removed the day the row is added: a listed page whose link exists
- * fails, so the notice is checked again.
- */
-const NOT_IN_MENU = ["/admin/checklists"];
-
 /** Reads the gateway takes as a POST: the activation plan /admin/years shows every administrator. */
 const READ_POSTS = [/\/activation\/preview$/];
 
@@ -133,11 +122,7 @@ for (const route of APP_ROUTES.filter((entry) => entry.page.startsWith("/admin")
       await expect(page.getByRole("heading", { level: 1, name: "Sidan hör till ett annat område" })).toBeVisible();
       return;
     }
-    const inMenu = (await page.locator(`nav[aria-label="Huvudmeny"] a[href$="${route.url.split("?")[0]}"]`).count()) > 0;
-    if (NOT_IN_MENU.includes(route.page)) {
-      expect(inMenu, `${route.page} has a menu row now: take it out of NOT_IN_MENU so its notice is checked`).toBe(false);
-      await expect(notice).toHaveCount(0);
-    } else if (gate === null && !route.page.startsWith("/admin/people")) {
+    if (gate === null && !route.page.startsWith("/admin/people")) {
       await expect(notice).toHaveCount(0);
     } else {
       await expect(notice).toBeVisible();

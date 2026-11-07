@@ -41,6 +41,10 @@ export const TEACHER_NAV: NavGroup[] = [
       // Kvittens: ask the guardians of the teacher's mentees to confirm a message. Always in
       // the menu: the page says so when the school has not turned it on. The attendance icon.
       { labelKey: "acknowledgements", href: "/teacher/acknowledgements", icon: ClipboardCheck },
+      // Checklistor: tick off the pupils of one's groups who have had an instruction, and keep a mentor
+      // class's consent list. Always in the menu: a teacher who teaches nobody gets an empty list, said
+      // kindly. The attendance icon.
+      { labelKey: "checklists", href: "/teacher/checklists", icon: ClipboardCheck },
       { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
     ],
   },
