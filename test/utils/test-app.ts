@@ -36,6 +36,7 @@ import { NotificationsModule } from '../../src/notifications/notifications.modul
 import { AttendanceModule } from '../../src/attendance/attendance.module';
 import { ResourcesModule } from '../../src/resources/resources.module';
 import { CalendarModule } from '../../src/calendar/calendar.module';
+import { SwapsModule } from '../../src/swaps/swaps.module';
 import { UsersModule } from '../../src/users/users.module';
 import { ImportModule } from '../../src/import/import.module';
 import { ScheduleExchangeModule } from '../../src/schedule-exchange/exchange.module';
@@ -169,6 +170,7 @@ export const FEATURE_MODULES = [
   ResourcesModule,
   UsersModule,
   CalendarModule,
+  SwapsModule,
   RoomBookingsModule,
   StaffingModule,
   TimplanModule,

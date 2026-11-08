@@ -2269,8 +2269,10 @@ export class MasterLessonsService {
       },
     });
     const sameDay = reads
-      ? await reads.once(
-          `sameDay|${lesson.academicYearId}|${candidate.dayOfWeek}|${[...new Set([...(lesson.id ? [lesson.id] : []), ...(options.excludeIds ?? [])])].sort().join(',')}`,
+      ? await reads.dayLessons(
+          lesson.academicYearId,
+          candidate.dayOfWeek,
+          [...new Set([...(lesson.id ? [lesson.id] : []), ...(options.excludeIds ?? [])])],
           readSameDay,
         )
       : await readSameDay();
