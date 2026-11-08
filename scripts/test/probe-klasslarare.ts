@@ -49,7 +49,13 @@
  *         shows a draft school's grundschema to nobody who may not read it;
  *   kl-p  a läsår that has ended, a date outside the läsår, the klasslärare's words added to the lesson's note;
  *   kl-q  a room changed for one date and published is not written back by a later change of the template: it is a
- *         clash (EXCEPTION) until the room is put back, and then the change goes through.
+ *         clash (EXCEPTION) until the room is put back, and then the change goes through;
+ *   kl-r  a room the school shares (Delade salar, G3) holds two classes whose pupils fit it and refuses three, and the
+ *         klasslärare's verdict says what the editor's own check (the one the swaps of G1 are applied through) says,
+ *         for a lesson of the template and for one date, and what the gate of a room change on one date says;
+ *   kl-s  a lesson an exam week (G4, through the schedule activities of D3) has cancelled, and the replacement lesson
+ *         it laid, meet the klasslärare as named reasons and never as an error, for a draft written before and one
+ *         written after; a change of the template goes on over the cancelled lesson and leaves it be.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -60,10 +66,12 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { CalendarLessonsService } from '../../src/calendar/calendar-lessons.service';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
+import { ScheduleActivitiesService } from '../../src/publication/schedule-activities.service';
 import { ClassTeacherAdminService } from '../../src/class-teacher/class-teacher-admin.service';
 import { ClassTeacherEngine } from '../../src/class-teacher/class-teacher-engine';
 import { ClassTeacherService } from '../../src/class-teacher/class-teacher.service';
 import type { PrismaService } from '../../src/database/prisma.service';
+import { rostersOfYear } from '../../src/year-rollover/projected-rosters';
 import type { NotificationsService } from '../../src/notifications/notifications.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 
@@ -780,6 +788,178 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
 
     await owner.query(`DELETE FROM "CalendarLessons" WHERE id = $1`, [lesson]);
     await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [lessonMaster]);
+  });
+
+  await check('(kl-r) a room the school shares holds two classes whose pupils fit and refuses three, and the klasslärare’s verdict says what the editor’s own check says, for the template and for a date', async () => {
+    const g4c = await groupOf('4C');
+    const aula = await roomOf('Aula');
+    await owner.query(`UPDATE "Rooms" SET "canBeShared" = true, capacity = 20 WHERE id = $1`, [aula]);
+    await owner.query(`INSERT INTO "LunchSettings" ("schoolId", "lunchEnabled", "lunchStartTime", "lunchEndTime", "lunchMinutes", "placementSharedMode", "updatedAt") VALUES ($1, false, '11:00', '13:00', 30, 'HARD', now()) ON CONFLICT ("schoolId") DO UPDATE SET "placementSharedMode" = 'HARD'`, [s]);
+    // Eight pupils in each of the three classes: two fit twenty seats, three do not.
+    for (const [label, group] of [['a', g4a], ['b', g4b], ['c', g4c]] as const) {
+      await owner.query(
+        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "studentGroupId", "authId", "isActive", "updatedAt")
+         SELECT $1, $2 || n || '@example.invalid', 'elev' || n, 'Probe', 'STUDENT', $3, gen_random_uuid(), true, now() FROM generate_series(1, 8) n`,
+        [s, `${marker}-kl-aula-${label}`, group],
+      );
+    }
+    const mine = await master(svenska, g4a, sal1, karin, 1, '11:00', '12:00');
+    const mineDated = await dated(mine, svenska, g4a, sal1, karin, monday, '11:00', '12:00');
+    const theirs = await master(matte, g4b, aula, lars, 4, '10:00', '11:00');
+    const theirsDated = await dated(theirs, matte, g4b, aula, lars, thursday, '10:00', '11:00');
+    const intoTheHall = { targetDayOfWeek: 4, targetStart: '10:00', targetEnd: '11:00', targetRoomId: aula };
+    const templateVerdict = () => verdictOf({ kind: 'TEMPLATE_MOVE', masterLessonId: mine, ...intoTheHall });
+    const dateVerdict = () => verdictOf({ kind: 'OCCASION_MOVE', calendarLessonId: mineDated, targetDate: thursday, targetStart: '10:00', targetEnd: '11:00', targetRoomId: aula });
+    /** What the editor's own check (findConflicts, the one a hand edit and the swaps of G1 are applied through) says of the same hour in the same room. */
+    const editorsKinds = async () =>
+      (
+        await api.withRls(sara, async (tx) =>
+          masters.findConflicts(
+            tx,
+            await rostersOfYear(tx, sara, year),
+            { id: mine, academicYearId: year, studentGroupId: g4a, subjectId: svenska },
+            { dayOfWeek: 4, startMinutes: 600, endMinutes: 660, teacherId: karin.userId, coTeacherId: null, roomId: aula, extraGroupIds: [], studentIds: [] },
+          ),
+        )
+      ).map((one) => one.kind);
+
+    // Two classes, sixteen pupils in a hall of twenty: the klasslärare may put 4A beside 4B, as the editor may.
+    assert.deepEqual(await templateVerdict(), { state: 'OK' });
+    assert.deepEqual(await dateVerdict(), { state: 'OK' });
+    assert.deepEqual(await editorsKinds(), []);
+
+    // A third class in the hall at the same hour: twenty-four pupils, and the hour is refused by all of them.
+    const third = await master(engelska, g4c, aula, unlucky, 4, '10:00', '11:00');
+    const thirdDated = await dated(third, engelska, g4c, aula, unlucky, thursday, '10:00', '11:00');
+    // The hall cannot hold the three together, so each of the two lessons already there is a clash of its own, as the editor counts them.
+    assert.deepEqual(await editorsKinds(), ['ROOM', 'ROOM']);
+    assert.deepEqual(kindsOf(await templateVerdict()), ['ROOM', 'ROOM']);
+    assert.deepEqual(kindsOf(await dateVerdict()), ['ROOM', 'ROOM']);
+    // The template: the draft is written, and the publisher is told the same at publication, the lesson staying where it was.
+    const draft = await teacherService.create(g4a, { kind: 'TEMPLATE_MOVE', masterLessonId: mine, ...intoTheHall, baseVersion: (await template(mine)).version }, karin);
+    const refused = (await adminService.publish(g4a, [draft.id], sara)).outcomes[0] as { outcome: string; conflicts?: Array<{ kind: string }> };
+    assert.deepEqual([refused.outcome, refused.conflicts?.map((one) => one.kind)], ['CONFLICT', ['ROOM', 'ROOM']]);
+    assert.equal((await one<{ dayOfWeek: number }>(`SELECT "dayOfWeek" FROM "MasterLessons" WHERE id = $1`, [mine])).dayOfWeek, 1);
+    await teacherService.discard(g4a, draft.id, (await one<{ rev: number }>(`SELECT rev FROM "ClassTeacherChanges" WHERE id = $1`, [draft.id])).rev, karin);
+    await owner.query(`DELETE FROM "CalendarLessons" WHERE id = $1`, [thirdDated]);
+    await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [third]);
+
+    // One date's room: a lesson of 4A on the Thursday at the hour 4B is in the hall. The verdict and the gate of the room change
+    // (CalendarLessonsService.changeRoom, with G3's own test of the shared room) agree, in both directions.
+    const there = await master(matte, g4a, sal1, karin, 4, '10:00', '11:00');
+    const thereDated = await dated(there, matte, g4a, sal1, karin, thursday, '10:00', '11:00');
+    await owner.query(`DELETE FROM "CalendarLessons" WHERE id = $1`, [mineDated]);
+    await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [mine]);
+    const inTheHall = () => verdictOf({ kind: 'OCCASION_ROOM', calendarLessonId: thereDated, targetRoomId: aula });
+    assert.deepEqual(await inTheHall(), { state: 'OK' });
+    const roomChange = await teacherService.create(g4a, { kind: 'OCCASION_ROOM', calendarLessonId: thereDated, baseVersion: (await occasion(thereDated, thursday)).version, targetRoomId: aula }, karin);
+    assert.deepEqual((await adminService.publish(g4a, [roomChange.id], sara)).outcomes, [{ id: roomChange.id, outcome: 'PUBLISHED' }]);
+    assert.equal((await one<{ roomId: string }>(`SELECT "roomId" FROM "CalendarLessons" WHERE id = $1`, [thereDated])).roomId, aula);
+    // Put back, and a third class comes to the hall that hour: the verdict says ROOM and the publication of a draft written meanwhile is refused.
+    await owner.query(`UPDATE "CalendarLessons" SET "roomId" = $2 WHERE id = $1`, [thereDated, sal1]);
+    const crowd = await master(engelska, g4c, aula, unlucky, 4, '10:00', '11:00');
+    const crowdDated = await dated(crowd, engelska, g4c, aula, unlucky, thursday, '10:00', '11:00');
+    assert.deepEqual(kindsOf(await inTheHall()), ['ROOM', 'ROOM']);
+    const crowded = await teacherService.create(g4a, { kind: 'OCCASION_ROOM', calendarLessonId: thereDated, baseVersion: (await occasion(thereDated, thursday)).version, targetRoomId: aula }, karin);
+    const gate = (await adminService.publish(g4a, [crowded.id], sara)).outcomes[0] as { outcome: string; conflicts?: Array<{ kind: string }> };
+    assert.deepEqual([gate.outcome, gate.conflicts?.map((one) => one.kind)], ['CONFLICT', ['ROOM', 'ROOM']]);
+    assert.equal((await one<{ roomId: string }>(`SELECT "roomId" FROM "CalendarLessons" WHERE id = $1`, [thereDated])).roomId, sal1);
+    // The day operations' own door for the same room change says the same, so the verdict never promises what the gate refuses.
+    const direct = await refusedWith(() => calendar.changeRoom(thereDated, { roomId: aula }, sara));
+    assert.equal(direct.status, 409);
+    await teacherService.discard(g4a, crowded.id, (await one<{ rev: number }>(`SELECT rev FROM "ClassTeacherChanges" WHERE id = $1`, [crowded.id])).rev, karin);
+
+    await owner.query(`DELETE FROM "CalendarLessons" WHERE "schoolId" = $1 AND id = ANY ($2::uuid[])`, [s, [thereDated, crowdDated, theirsDated, mineDated]]);
+    await owner.query(`DELETE FROM "MasterLessons" WHERE "schoolId" = $1 AND id = ANY ($2::uuid[])`, [s, [there, crowd, theirs, mine]]);
+    await owner.query(`DELETE FROM "LunchSettings" WHERE "schoolId" = $1`, [s]);
+    await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND role = 'STUDENT'`, [s]);
+    await owner.query(`DELETE FROM "StudentGroups" WHERE id = $1`, [g4c]);
+  });
+
+  await check('(kl-s) a lesson an exam week has cancelled, and the replacement lesson it laid, meet the klasslärare as named reasons and never as an error', async () => {
+    const activities = new ScheduleActivitiesService(api, realtime, notifications);
+    // A replacement lesson is laid for a class that has pupils to be on it.
+    await owner.query(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "studentGroupId", "authId", "isActive", "updatedAt")
+       VALUES ($1, $2, 'Ella', 'Probe', 'STUDENT', $3, gen_random_uuid(), true, now())`,
+      [s, `${marker}-kl-prov-elev@example.invalid`, g4a],
+    );
+    // The replacement lesson's subject is one that does not count towards the timplan (the minutes go as credits).
+    const prov = (await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, code, "countsTowardTimplan", "updatedAt") VALUES ($1, 'Prov', 'KLPR', false, now()) RETURNING id`, [s])).id;
+    const examMaster = await master(matte, g4a, sal1, karin, 2, '09:00', '10:00');
+    const examDated = await dated(examMaster, matte, g4a, sal1, karin, tuesday, '09:00', '10:00');
+    const reasonOf = async (id: string) => (await weekOf(karin, g4a, tuesday)).occasions.find((row) => row.id === id)?.refusal;
+
+    // A draft written before the exam week was laid: the date's room (a change of the template for the same lesson waits behind it).
+    const roomDraft = await teacherService.create(g4a, { kind: 'OCCASION_ROOM', calendarLessonId: examDated, baseVersion: (await occasion(examDated, tuesday)).version, targetRoomId: sal2 }, karin);
+
+    // The exam: a schedule activity (D3) for 4A over the lesson's hour, which cancels the lesson and lays one replacement lesson.
+    const made = await activities.create(
+      { academicYearId: year, name: 'Prov i matematik 4A', fromDate: tuesday, toDate: tuesday, startTime: '09:00', endTime: '10:00', scope: 'GROUPS', groupIds: [g4a], replacementSubjectId: prov, teachers: [{ studentGroupId: g4a, teacherId: lars.userId }], notify: false },
+      sara,
+    );
+    assert.equal(made.cancelled >= 1, true, 'the activity cancelled the lesson');
+    assert.equal((await one<{ status: string }>(`SELECT status FROM "CalendarLessons" WHERE id = $1`, [examDated])).status, 'CANCELLED');
+    const replacement = await one<{ id: string }>(`SELECT sal."calendarLessonId" AS id FROM "ScheduleActivityLessons" sal WHERE sal."activityId" = $1`, [made.activity.id]);
+    assert.ok(replacement, 'the activity laid a replacement lesson');
+
+    // The week names both: the cancelled lesson and the replacement lesson are not the klasslärare's to change, with a reason each.
+    const cancelledReason = await reasonOf(examDated);
+    const replacementReason = await reasonOf(replacement.id);
+    assert.equal(cancelledReason, 'NOT_SCHEDULED');
+    assert.equal(replacementReason, 'NOT_A_REGULAR_LESSON');
+    // A new draft against either is refused at the door with the reason and its code: a 403, never a 500.
+    for (const [id, reason] of [[examDated, cancelledReason], [replacement.id, replacementReason]] as const) {
+      for (const kind of ['OCCASION_CANCEL', 'OCCASION_ROOM', 'OCCASION_MOVE'] as const) {
+        const body = {
+          kind,
+          calendarLessonId: id,
+          baseVersion: 'a'.repeat(32),
+          ...(kind === 'OCCASION_ROOM' ? { targetRoomId: sal2 } : {}),
+          ...(kind === 'OCCASION_MOVE' ? { targetDate: tuesday, targetStart: '10:00', targetEnd: '11:00' } : {}),
+        };
+        const refused = await refusedWith(() => teacherService.create(g4a, body, karin));
+        assert.deepEqual([refused.status, refused.response.code], [403, 'CLASS_TEACHER_OUTSIDE_FRAME'], `${kind} on ${String(reason)}`);
+        assert.equal((refused.response.params as { reason: string }).reason, reason);
+      }
+    }
+    // The preview says the same without writing: a verdict that is a refusal with the reason, not an error.
+    for (const [id, reason] of [[examDated, cancelledReason], [replacement.id, replacementReason]] as const) {
+      const previewed = (await teacherService.preview(g4a, { kind: 'OCCASION_CANCEL', calendarLessonId: id }, karin)).verdict;
+      assert.deepEqual(previewed, { state: 'REFUSED', reason });
+    }
+
+    // The draft written before the exam week: its lesson has changed under it, and the check, the list and the publication say so.
+    const checked = (await teacherService.check(g4a, karin)).find((row) => row.change.id === roomDraft.id)!;
+    assert.ok(['STALE', 'REFUSED'].includes(checked.verdict.state), `the room draft reads as ${checked.verdict.state}`);
+    const seen = (await adminService.drafts(g4a, sara)).find((row) => row.change.id === roomDraft.id)!;
+    assert.ok(['STALE', 'REFUSED'].includes(seen.verdict.state));
+    const published = (await adminService.publish(g4a, [roomDraft.id], sara)).outcomes[0] as { outcome: string };
+    assert.ok(['STALE', 'REFUSED'].includes(published.outcome), `publishing the room draft answers ${published.outcome}`);
+    assert.equal((await one<{ roomId: string }>(`SELECT "roomId" FROM "CalendarLessons" WHERE id = $1`, [examDated])).roomId, sal1, 'the cancelled lesson keeps its room');
+    await teacherService.discard(g4a, roomDraft.id, (await one<{ rev: number }>(`SELECT rev FROM "ClassTeacherChanges" WHERE id = $1`, [roomDraft.id])).rev, karin);
+
+    // A draft for the template's hour, written after, goes on over the cancelled lesson: it is judged and published, and the
+    // cancelled lesson, which no change of the template moves, stays cancelled where it was.
+    const hourDraft = await teacherService.create(g4a, { kind: 'TEMPLATE_MOVE', masterLessonId: examMaster, baseVersion: (await template(examMaster)).version, targetDayOfWeek: 2, targetStart: '09:30', targetEnd: '10:30' }, karin);
+    const hourVerdict = (await teacherService.check(g4a, karin)).find((row) => row.change.id === hourDraft.id)!.verdict;
+    assert.ok(['OK', 'CONFLICT'].includes(hourVerdict.state), `the template draft reads as ${hourVerdict.state}`);
+    const hourOutcome = (await adminService.publish(g4a, [hourDraft.id], sara)).outcomes[0] as { outcome: string };
+    assert.equal(hourOutcome.outcome, 'PUBLISHED');
+    const after = await one<{ status: string; start: string }>(`SELECT status, to_char("startsAt" AT TIME ZONE 'Europe/Stockholm', 'HH24:MI') AS start FROM "CalendarLessons" WHERE id = $1`, [examDated]);
+    assert.deepEqual([after.status, after.start], ['CANCELLED', '09:00']);
+
+    // Taking the exam week away goes through with the template moved since (the editor's reversal knows a lesson whose template has
+    // moved: it does not put the old hour back beside the new one), and the klasslärare's week is read as ever.
+    await activities.remove(made.activity.id, sara);
+    assert.equal((await weekOf(karin, g4a, tuesday)).className, '4A');
+    assert.deepEqual(
+      (await template(examMaster)).start,
+      '09:30',
+    );
+    await owner.query(`DELETE FROM "CalendarLessons" WHERE "schoolId" = $1 AND "masterLessonId" = $2`, [s, examMaster]);
+    await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [examMaster]);
+    await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND role = 'STUDENT'`, [s]);
   });
 
 }
