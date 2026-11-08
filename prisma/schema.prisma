@@ -3334,7 +3334,7 @@ model ExternalBooking {
   cancelledAt      DateTime? @db.Timestamptz(6)
   registeredById   String?   @db.Uuid
   createdAt        DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
   school           School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   room             Room?             @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)

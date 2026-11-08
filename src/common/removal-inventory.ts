@@ -198,10 +198,10 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('CrisisPupils', ['studentId', 'schoolId'], 'CASCADE', others),
   key('CoverConfirmations', ['userId', 'schoolId'], 'CASCADE', others),
   // Kvittens (20270117091000): the requests a guardian was asked, and the ones asked about a pupil, go with the person.
-  // Lokal (20270204091000): a booking of a resource is its booker's, as a room booking is.
-  key('ResourceBookings', ['bookedById', 'schoolId'], 'CASCADE', others),
   key('AckReceipts', ['guardianId', 'schoolId'], 'CASCADE', others),
   key('AckReceipts', ['studentId', 'schoolId'], 'CASCADE', others),
+  // Lokal (20270204091000): a booking of a resource is its booker's, as a room booking is.
+  key('ResourceBookings', ['bookedById', 'schoolId'], 'CASCADE', others),
   // Checklistor (20270129091000): a pupil's instruction proofs and answers on consent lists go with the pupil.
   key('InstructionProofs', ['studentId', 'schoolId'], 'CASCADE', others),
   key('ConsentEntries', ['studentId', 'schoolId'], 'CASCADE', others),

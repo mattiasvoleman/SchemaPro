@@ -210,7 +210,9 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
   },
   'GET /api/v1/utilisation/csv': {
     rule: 'NAMES_STAFF',
-    why: 'Utnyttjande (Lokal): rooms and resources and minutes, the school\'s CSV dialect. It names nobody at all, staff included, so there is nobody to hold out.',
+    why:
+      'Utnyttjande (Lokal): rooms and resources and minutes, the school\'s CSV dialect. It names nobody at all, staff included, so there is nobody to hold out; ' +
+      'the gateway\'s vocabulary has no class for a file that names no one (the web\'s has NAMES_NOBODY), and NAMES_STAFF is the closest: no pupil or guardian is in it.',
   },
   'GET /api/v1/staffing/scb-file': {
     rule: 'KEEPS_AND_SAYS',

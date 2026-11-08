@@ -5045,7 +5045,7 @@ ROLLBACK;
 -- rls-policies.sql's.
 -- ---------------------------------------------------------------------------
 
-CREATE FUNCTION pg_temp.lo_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.k3_owner_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   IF p_got IS DISTINCT FROM p_want THEN RAISE EXCEPTION E'lokal %: got\n%\nwanted\n%', p_label, p_got, p_want; END IF;
 END $$;
@@ -5090,10 +5090,10 @@ BEGIN
 
   -- What is due a year on, by the one predicate: the two old series, not the one that ended 100 days ago, not the running one,
   -- not the other school's; and nothing of it under any other kind.
-  PERFORM pg_temp.lo_expect('444b due',
+  PERFORM pg_temp.k3_owner_expect('444b due',
     (SELECT string_agg(d.id::text, ' ' ORDER BY d.id::text) FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today - 365, today) d WHERE d.tbl = 'ExternalBookings'),
     (SELECT string_agg(i::text, ' ' ORDER BY i::text) FROM unnest(ARRAY[old_ended, old_cancelled]) i));
-  PERFORM pg_temp.lo_expect('444b nothing is due of anything else',
+  PERFORM pg_temp.k3_owner_expect('444b nothing is due of anything else',
     (SELECT count(*)::text FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today - 365, today) d WHERE d.tbl <> 'ExternalBookings'), '0');
   IF EXISTS (SELECT 1 FROM unnest(ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'NOTIFICATIONS', 'CHANGE_LOGS', 'ABSENCE_REASONS', 'ACCESS_LOG', 'COVER_REQUESTS',
                                          'CRISIS_DRILLS', 'CRISIS_ALARMS', 'CHECKLISTS', 'DEPARTED_PEOPLE']::"RetentionDataType"[]) t
@@ -5101,9 +5101,9 @@ BEGIN
     RAISE EXCEPTION 'lokal 444b: a series is due under another kind than EXTERNAL_BOOKINGS';
   END IF;
   -- A running series is never due, however far on the cutoff is, until it has ended.
-  PERFORM pg_temp.lo_expect('444b a running series is not due',
+  PERFORM pg_temp.k3_owner_expect('444b a running series is not due',
     (SELECT count(*)::text FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today + 30, today) d WHERE d.id = running), '0');
-  PERFORM pg_temp.lo_expect('444b a series of the other school is not due under this school''s run',
+  PERFORM pg_temp.k3_owner_expect('444b a series of the other school is not due under this school''s run',
     (SELECT count(*)::text FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today - 365, today) d WHERE d.id = theirs), '0');
 
   -- No decision: nothing goes. A decision of twelve months: the run takes the two series, one at a time, with their days.
@@ -5125,13 +5125,13 @@ BEGIN
   IF total <> 1 THEN RAISE EXCEPTION 'lokal 444b: the batches after the first took % more series, not one', total; END IF;
   SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
   IF (counts ->> 'EXTERNAL_BOOKINGS')::integer <> 2 THEN RAISE EXCEPTION 'lokal 444b: the run counts % under EXTERNAL_BOOKINGS, not two series', counts ->> 'EXTERNAL_BOOKINGS'; END IF;
-  PERFORM pg_temp.lo_expect('444b what is left of the school',
+  PERFORM pg_temp.k3_owner_expect('444b what is left of the school',
     (SELECT string_agg(organisation, ',' ORDER BY organisation) FROM "ExternalBookings" WHERE "schoolId" = school), 'Nyss slut,Pågår');
-  PERFORM pg_temp.lo_expect('444b the days went with their series, and the school''s own booking stayed',
+  PERFORM pg_temp.k3_owner_expect('444b the days went with their series, and the school''s own booking stayed',
     (SELECT string_agg(coalesce(x.organisation, title), ',' ORDER BY coalesce(x.organisation, title))
        FROM "RoomBookings" b LEFT JOIN "ExternalBookings" x ON x.id = b."externalBookingId" WHERE b."schoolId" = school),
     'Egen,Nyss slut,Pågår');
-  PERFORM pg_temp.lo_expect('444b the other school was left alone',
+  PERFORM pg_temp.k3_owner_expect('444b the other school was left alone',
     (SELECT count(*)::text FROM "ExternalBookings" WHERE "schoolId" = other) || '/' || (SELECT count(*)::text FROM "RoomBookings" WHERE "schoolId" = other), '1/1');
 
   -- The branch is there in the source (and the others are kept: RLS sections 350 and 374 and src/gallring/gallring-branches.spec.ts say which).
@@ -5170,11 +5170,11 @@ BEGIN
   VALUES (school, res, decider, 'Beslutad av den borttagne', 1, 'APPROVED', gone, now(), now() + interval '301 days', now() + interval '301 days 1 hour') RETURNING id INTO decided;
 
   DELETE FROM "Users" WHERE id = gone;
-  PERFORM pg_temp.lo_expect('444c the series stays, with nobody as registrar',
+  PERFORM pg_temp.k3_owner_expect('444c the series stays, with nobody as registrar',
     (SELECT concat_ws('|', count(*), count("registeredById")) FROM "ExternalBookings" WHERE id = series), '1|0');
-  PERFORM pg_temp.lo_expect('444c the days they booked went with them', (SELECT count(*)::text FROM "RoomBookings" WHERE "externalBookingId" = series), '0');
-  PERFORM pg_temp.lo_expect('444c their other bookings went too', (SELECT count(*)::text FROM "ResourceBookings" WHERE id = mine), '0');
-  PERFORM pg_temp.lo_expect('444c a decision they made stays, unlinked',
+  PERFORM pg_temp.k3_owner_expect('444c the days they booked went with them', (SELECT count(*)::text FROM "RoomBookings" WHERE "externalBookingId" = series), '0');
+  PERFORM pg_temp.k3_owner_expect('444c their other bookings went too', (SELECT count(*)::text FROM "ResourceBookings" WHERE id = mine), '0');
+  PERFORM pg_temp.k3_owner_expect('444c a decision they made stays, unlinked',
     (SELECT concat_ws('|', count(*), count("decidedById")) FROM "ResourceBookings" WHERE id = decided), '1|0');
 END $$;
 ROLLBACK;
@@ -5207,7 +5207,7 @@ BEGIN
   EXCEPTION WHEN foreign_key_violation THEN NULL;
   END;
   DELETE FROM "Schools" WHERE id = school;
-  PERFORM pg_temp.lo_expect('444d nothing of the school is left',
+  PERFORM pg_temp.k3_owner_expect('444d nothing of the school is left',
     (SELECT concat_ws('/', (SELECT count(*) FROM "ResourceTypes" WHERE "schoolId" = school), (SELECT count(*) FROM "Resources" WHERE "schoolId" = school),
                       (SELECT count(*) FROM "ExternalBookings" WHERE "schoolId" = school), (SELECT count(*) FROM "ResourceBookings" WHERE "schoolId" = school))), '0/0/0/0');
 END $$;
