@@ -182,6 +182,23 @@ describe('Route guard coverage (e2e)', () => {
     for (const method of ['createTemplate', 'updateTemplate', 'tick', 'voidProof', 'createList', 'record', 'ask', 'close']) {
       expect(of('ChecklistsController', method)).toEqual({ kind: 'area', areas: ['DRIFT'] });
     }
+    // Lokal: the kinds of resource and the resources are Planering's (as the rooms are); a teacher reads them and books.
+    for (const method of ['create', 'update', 'remove']) {
+      expect(of('ResourceTypesController', method)).toEqual({ kind: 'area', areas: ['PLANERING'] });
+      expect(of('ResourcesController', method)).toEqual({ kind: 'area', areas: ['PLANERING'] });
+    }
+    // Lokal: a booking of a resource is decided and cancelled under Drift, as a room booking is; so is every write of a series
+    // of external bookings (preview included: it is a POST, and a reader who cannot register has no use for it).
+    for (const method of ['create', 'cancel', 'decide']) {
+      expect(of('ResourceBookingsController', method)).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    }
+    for (const method of ['preview', 'create', 'update', 'cancel', 'remove', 'cancelDay']) {
+      expect(of('ExternalBookingsController', method)).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    }
+    // Lokal: the utilisation report writes nothing and names no person: every administrator reads it, whatever the profile.
+    for (const method of ['report', 'csv']) {
+      expect(of('UtilisationController', method)).toMatchObject({ kind: 'any' });
+    }
     // Rapporteringsgrad: the switches and the limit are Drift's; a teacher reads their own page.
     expect(of('ReportingRateController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('PublicationsController', 'publish')).toEqual({ kind: 'area', areas: ['PUBLICERING', 'DRIFT'] });

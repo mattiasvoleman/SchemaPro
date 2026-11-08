@@ -14,6 +14,7 @@ import { huvudmanRoutes } from "./gateway-huvudman";
 import { leaveRoutes } from "./gateway-leave";
 import { lessonLogRoutes } from "./gateway-lesson-logs";
 import { lessonMoveRoutes } from "./gateway-lesson-moves";
+import { localRoutes } from "./gateway-local";
 import { mealRoutes } from "./gateway-meals";
 import { miscRoutes } from "./gateway-misc";
 import { publicRoutes } from "./gateway-public";
@@ -54,6 +55,7 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-school-day.ts", routes: schoolDayRoutes },
   { file: "gateway-ack.ts", routes: ackRoutes },
   { file: "gateway-meals.ts", routes: mealRoutes },
+  { file: "gateway-local.ts", routes: localRoutes },
   { file: "gateway-class-teacher.ts", routes: classTeacherRoutes },
   { file: "gateway-class-teachers.ts", routes: classTeachersRoutes },
   { file: "gateway-checklists.ts", routes: checklistsRoutes },

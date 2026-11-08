@@ -1,10 +1,12 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, Logger } from '@nestjs/common';
 import {
   createPrismaMock,
   createTxMock,
   testUser,
+  type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { rawSql } from '../../test/utils/locking-read';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { CalendarService } from '../calendar/calendar.service';
@@ -74,6 +76,7 @@ function storedRow(data: Record<string, unknown>) {
 
 describe('PublicationsService (DIRECT)', () => {
   let tx: TxMock;
+  let prisma: PrismaMock;
   let service: PublicationsService;
   let calendar: { materialise: jest.Mock };
   let coverage: { scheduled: jest.Mock; planned: jest.Mock };
@@ -103,8 +106,9 @@ describe('PublicationsService (DIRECT)', () => {
     };
     load = { load: jest.fn() };
     notifications = { recipientsForLessons: jest.fn(async () => []), notifyUsers: jest.fn() };
+    prisma = createPrismaMock(tx);
     service = new PublicationsService(
-      createPrismaMock(tx) as unknown as PrismaService,
+      prisma as unknown as PrismaService,
       calendar as unknown as CalendarService,
       coverage as unknown as TimplanCoverageService,
       load as unknown as StaffingLoadService,
@@ -482,6 +486,106 @@ describe('PublicationsService (DIRECT)', () => {
         ['LEGACY_PUBLISH', 'PUBLISHED'],
         ['LEGACY_PUBLISH', 'REFUSED'],
       ]);
+    });
+  });
+
+  describe('external bookings that now clash with a lesson (Lokal)', () => {
+    /** Lets every moment the after-commit hooks have been queued for pass. */
+    const settle = async () => {
+      for (let turn = 0; turn < 4; turn += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    };
+
+    /** The database counts `days` days of external bookings that stand in a room with a lesson. */
+    const clashing = (days: number) =>
+      tx.$queryRaw.mockImplementation((...call: unknown[]) =>
+        Promise.resolve(rawSql(call).includes('count(DISTINCT d."id")') ? [{ days }] : []),
+      );
+
+    beforeEach(() => {
+      tx.user.findMany.mockResolvedValue([{ id: 'admin-1' }, { id: 'admin-2' }]);
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it.each([
+      ['publish', (dto: object) => service.publish({ academicYearId: YEAR_ID, ...dto }, testUser())],
+      ['the old POST /calendar/publish', (dto: object) => service.legacyPublish({ academicYearId: YEAR_ID, ...dto }, testUser())],
+    ])('tells the expedition after %s has committed, in a transaction of its own, with the number of days', async (_name, run) => {
+      clashing(3);
+
+      await run({});
+      const transactions = prisma.withRls.mock.calls.length;
+      // Registered with the transaction, and run when it has committed: not before.
+      expect(prisma.onCommit).toHaveBeenCalledWith(tx, expect.any(Function));
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      await settle();
+
+      expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          schoolId: SCHOOL_ID,
+          userIds: ['admin-1', 'admin-2'],
+          type: 'EXTERNAL_BOOKING_CLASH',
+          meta: { days: 3 },
+        }),
+      );
+      // One more transaction than the publication's own: the hook's.
+      expect(prisma.withRls).toHaveBeenCalledTimes(transactions + 1);
+      expect(tx.user.findMany).toHaveBeenCalledWith({
+        where: { role: 'SCHOOL_ADMIN', isActive: true, adminProfile: { in: ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION'] } },
+        select: { id: true },
+      });
+    });
+
+    it.each([
+      ['publish', () => service.publish({ academicYearId: YEAR_ID }, testUser())],
+      ['the old POST /calendar/publish', () => service.legacyPublish({ academicYearId: YEAR_ID }, testUser())],
+    ])('tells nobody after %s when no day clashes', async (_name, run) => {
+      clashing(0);
+
+      await run();
+      await settle();
+
+      expect(prisma.onCommit).toHaveBeenCalledTimes(1);
+      expect(tx.user.findMany.mock.calls.some(([query]) => query.where.role === 'SCHOOL_ADMIN')).toBe(false);
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+    });
+
+    it('tells nobody of a publication that was refused and rolled back', async () => {
+      clashing(3);
+      tx.publicationSettings.findUnique.mockResolvedValue({ publishMode: 'DIRECT', gateMissingRoom: 'REFUSE' });
+      tx.masterLesson.findMany.mockResolvedValue([lesson({ roomId: null })]);
+
+      await expect(service.publish({ academicYearId: YEAR_ID, acknowledgeWarnings: true }, testUser())).rejects.toBeInstanceOf(ConflictException);
+      await settle();
+
+      expect(prisma.onCommit).not.toHaveBeenCalled();
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+    });
+
+    it('logs a failure to tell and carries on: the publication stands', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      clashing(3);
+      notifications.notifyUsers.mockRejectedValue(new Error('outbox is full'));
+
+      await expect(service.publish({ academicYearId: YEAR_ID }, testUser())).resolves.toMatchObject({ result: RESULT });
+      await settle();
+
+      expect(warn).toHaveBeenCalledWith(`External bookings were not checked after a publication [school=${SCHOOL_ID}]: outbox is full`);
+    });
+
+    it('logs a failure that is no Error as an unknown one', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      clashing(3);
+      notifications.notifyUsers.mockRejectedValue('gone');
+
+      await expect(service.legacyPublish({ academicYearId: YEAR_ID }, testUser())).resolves.toEqual(RESULT);
+      await settle();
+
+      expect(warn).toHaveBeenCalledWith(`External bookings were not checked after a publication [school=${SCHOOL_ID}]: unknown`);
     });
   });
 

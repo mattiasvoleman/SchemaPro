@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import type { Room } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -92,6 +92,15 @@ export class RoomsService {
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     try {
       await this.prisma.withRls(user, async (tx) => {
+        // Lokal: a room that is let out is not deleted from under its tenant (the key from the series is
+        // RESTRICT); asked first, so the answer says why and what to do.
+        const series = await tx.externalBooking.count({ where: { roomId: id } });
+        if (series > 0) {
+          throw new ConflictException({
+            message: `Salen hyrs ut i ${series} serie(r) av externa bokningar. Ta bort dem under Externa bokningar först.`,
+            code: 'ROOM_IS_LET_OUT',
+          });
+        }
         // A room a förläggning names is the post's place, and the key to it is
         // NO ACTION: said by name here, before the room lock's refusal, so the
         // school knows which post to open rather than meeting a bare 409.

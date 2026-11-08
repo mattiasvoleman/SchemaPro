@@ -132,3 +132,28 @@ export function loanBookingRefusal(
   }
   return null;
 }
+
+/** A RoomLoans row as loanBookingRefusal reads it: the clock and the dates as text. */
+export function toLoanRows(
+  loans: ReadonlyArray<{
+    status: string;
+    roomId: string;
+    localRoomId: string | null;
+    dayOfWeek: number;
+    startTime: Date;
+    endTime: Date;
+    startDate: Date;
+    endDate: Date;
+  }>,
+): LoanRow[] {
+  return loans.map((loan) => ({
+    status: loan.status,
+    roomId: loan.roomId,
+    localRoomId: loan.localRoomId,
+    dayOfWeek: loan.dayOfWeek,
+    startTime: loan.startTime.toISOString().slice(11, 16),
+    endTime: loan.endTime.toISOString().slice(11, 16),
+    startDate: loan.startDate.toISOString().slice(0, 10),
+    endDate: loan.endDate.toISOString().slice(0, 10),
+  }));
+}

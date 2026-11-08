@@ -45,6 +45,7 @@ import { OptimizationModule } from '../../src/optimization/optimization.module';
 import { IntegrationModule } from '../../src/integration/integration.module';
 import { FamilyModule } from '../../src/family/family.module';
 import { RoomBookingsModule } from '../../src/room-bookings/room-bookings.module';
+import { LocalModule } from '../../src/local/local.module';
 import { HealthModule } from '../../src/health/health.module';
 import { StaffingModule } from '../../src/staffing/staffing.module';
 import { TimplanModule } from '../../src/timplan/timplan.module';
@@ -180,6 +181,7 @@ export const FEATURE_MODULES = [
   CalendarModule,
   SwapsModule,
   RoomBookingsModule,
+  LocalModule,
   StaffingModule,
   TimplanModule,
   YearRolloverModule,

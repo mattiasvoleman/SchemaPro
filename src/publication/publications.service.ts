@@ -21,6 +21,7 @@ import type { PeriodLoad } from '../staffing/teacher-load';
 import { readsHr } from '../staffing/hr-visibility';
 import { TimplanCoverageService } from '../timplan/timplan-coverage.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { flagAfterPublication } from '../local/external-clashes';
 import { RealtimeService } from '../realtime/realtime.service';
 import { carryDraft, draftWindow } from './draft-publish';
 import { reapplyActiveBatches } from './cancellation-batches.service';
@@ -437,6 +438,7 @@ export class PublicationsService {
             await snapshotSittings(tx, { id: row.id, schoolId, academicYearId: dto.academicYearId });
             await this.tellClasses(tx, schoolId, run.masters, run.changedMasterIds ?? []);
           }
+          this.flagExternalClashesAfterCommit(tx, user, schoolId);
           return {
             kind: 'published',
             mode: context.mode,
@@ -692,6 +694,7 @@ export class PublicationsService {
             },
             select: { id: true },
           });
+          this.flagExternalClashesAfterCommit(tx, user, schoolId);
           return { kind: 'published', result };
         },
         { timeoutMs: 120_000 },
@@ -710,6 +713,22 @@ export class PublicationsService {
   }
 
   // ---------------------------------------------------------------------
+
+  /**
+   * Lokal (K3): a publication writes a term of lessons and asks no booking, so a lesson may land in a room
+   * an association has on Tuesdays. Once the publication has committed, the expedition is told how many days
+   * of external bookings now clash (external-clashes.ts). After the commit and in a transaction of its own:
+   * a publication that is rolled back tells nobody, and a failure here is logged and never undoes one.
+   */
+  private flagExternalClashesAfterCommit(tx: PrismaClient, user: AuthenticatedUser, schoolId: string): void {
+    this.prisma.onCommit(tx, async () => {
+      try {
+        await this.prisma.withRls(user, (db) => flagAfterPublication(db, this.notifications, schoolId));
+      } catch (error) {
+        this.logger.warn(`External bookings were not checked after a publication [school=${schoolId}]: ${error instanceof Error ? error.message : 'unknown'}`);
+      }
+    });
+  }
 
   private async logRefusal(
     user: AuthenticatedUser,

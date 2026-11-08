@@ -360,6 +360,32 @@ describe('RoomsService', () => {
       });
     });
 
+    describe('a room that is let out (Lokal)', () => {
+      it('is refused, saying in how many series, before the locks are even asked about', async () => {
+        tx.externalBooking.count.mockResolvedValue(3);
+
+        const error = await service.remove(ROOM_ID, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+          code: 'ROOM_IS_LET_OUT',
+          message: 'Salen hyrs ut i 3 serie(r) av externa bokningar. Ta bort dem under Externa bokningar först.',
+        });
+        expect(tx.externalBooking.count).toHaveBeenCalledWith({ where: { roomId: ROOM_ID } });
+        expect(tx.roomPreference.findMany).not.toHaveBeenCalled();
+        expect(tx.room.delete).not.toHaveBeenCalled();
+      });
+
+      it('is deleted when no series is kept in it', async () => {
+        tx.externalBooking.count.mockResolvedValue(0);
+        tx.room.delete.mockResolvedValue({ id: ROOM_ID });
+
+        await expect(service.remove(ROOM_ID, testUser())).resolves.toBeUndefined();
+
+        expect(tx.room.delete).toHaveBeenCalledWith({ where: { id: ROOM_ID } });
+      });
+    });
+
     it('refuses to delete the last room a lock names', async () => {
       /*
        * RoomPreferenceRooms cascades, so the rule would survive with an empty

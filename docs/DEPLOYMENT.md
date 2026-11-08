@@ -4545,3 +4545,63 @@ and no job, notice or setting is added.
   notice. The Excel file keeps every character.
 - Rolling back the API past this release leaves two unused tables. Nothing
   else reads them.
+
+## 17. Lokal: resources and external bookers (K3)
+
+Two migrations add what the school needs to lend out more than rooms and to let a
+room to an association after school: `20270204090000_nya_slag_av_notiser_och_gallring_for_externa_bokningar`
+(the enum values `NotificationType.EXTERNAL_BOOKING_CLASH` and
+`RetentionDataType.EXTERNAL_BOOKINGS`, and nothing else) and
+`20270204091000_en_forening_hyr_en_sal_och_skolan_lanar_ut_mer_an_salar` (the tables
+`ResourceTypes`, `Resources`, `ResourceBookings` and `ExternalBookings`, the column
+`RoomBookings.externalBookingId`, four triggers, 18 policies, and the gallring branch).
+Route families: `/api/v1/resource-types`, `/api/v1/resources`, `/api/v1/resource-bookings`,
+`/api/v1/external-bookings`, `/api/v1/utilisation`. Nothing is on by default and no setting
+or environment variable is added: a school with no resources and no series sees an empty
+page.
+
+The days of an external series are rows of `RoomBookings` (or `ResourceBookings`) that carry
+the series' id and the title "Extern bokning", so the room's exclusion constraint and every
+reader of bookings (the teachers' free-room search, the cover board, Skolans dag) see the hire
+without being taught it. The hirer's organisation, contact person, telephone number and
+address are in `ExternalBookings` alone, read by administrators through the gateway only
+(no grant for `authenticated` or `anon`), and are personal data about somebody who is not a
+user: they are gallrade with the series (`EXTERNAL_BOOKINGS`), left out of every notice, and
+written `(dold)` in the extract of the person who registered the series.
+
+### 17.1 Deploy order
+
+1. Run the migrations before the merge (section 2). The first only adds enum values and takes
+   no lock. The second takes `Schools`, `Users`, `Rooms` and `Sites` in `SHARE ROW EXCLUSIVE`
+   and `RoomBookings` in `ACCESS EXCLUSIVE` (it adds a nullable column), all `NOWAIT` in a loop
+   for at most 30 seconds; it stops with nothing done if they are never free at once (rerun it
+   after `prisma migrate resolve --rolled-back 20270204091000_en_forening_hyr_en_sal_och_skolan_lanar_ut_mer_an_salar`).
+   The API before this release never reads the new tables or the column.
+2. Merge. The API deploys from `main`; there is no engine change.
+3. Verify as the owner:
+   - `SELECT count(*) FROM pg_policies WHERE tablename IN ('ResourceTypes','Resources','ResourceBookings','ExternalBookings');` is 18,
+     every one `TO app_authenticated` alone;
+   - `app_authenticated` holds SELECT, INSERT, UPDATE and DELETE on the four tables and nothing else, `service_role` SELECT only,
+     `authenticated` and `anon` nothing, and no role MAINTAIN (PostgreSQL 17);
+   - `app.gallring_due` and `app.gallring_purge` are F5's bodies with one branch for `ExternalBookings`:
+     `md5(prosrc)` before `166943b0d5d22801fe9a1be96a722d95` and `2390088f88e967fda35af6d56e63d3f9`, after
+     `9581d0360a19741db05f1fa7e609207f` and `6b5601ad006da9fa3309664e108f4720`; `gallring_pseudonymise` is untouched
+     (`6f18f62fc354bde849aa2e8b01eeceda`);
+   - the four tables are empty and `RoomBookings.externalBookingId` is null in every row.
+
+### 17.2 Operations
+
+- A resource's quantity is kept by a trigger that takes the resource's advisory lock and counts the most that is held at one
+  minute; the refusal is SQLSTATE `23P01` with the name `ResourceBookings_quantity_is_kept`, answered 409 `RESOURCE_QUANTITY_USED`.
+  A series that two administrators register at once ends in one 409 (`EXTERNAL_BOOKING_CONFLICTS`), never a 500.
+- A publication writes lessons without asking the bookings. After it commits, the administrators who write Drift get one notice
+  (`EXTERNAL_BOOKING_CLASH`, a number of days and nothing else) when a day of a series now stands in a room with a lesson; the
+  list is `/admin/external-bookings`. Nothing is moved by Rastra.
+- A person who registered a series that still runs is not removed (`EXTERNAL_BOOKINGS_REGISTERED`, 409): the days are bookings in
+  their name and go with them. A room or a resource with a series is not deleted (`ROOM_IS_LET_OUT`, `RESOURCE_IS_LET_OUT`).
+  A series that is over or cancelled can be removed by Drift, with its days (`DELETE /api/v1/external-bookings/:id`).
+- Gallring: the new kind starts at "ej beslutat" in every school. A series is due when its last day, or its cancellation, is older than
+  the school's period; one that runs is never due.
+- Reports: `GET /api/v1/utilisation` and `/utilisation/csv` read lessons and bookings for at most 400 days. The CSV is the school's dialect
+  (UTF-8 with BOM, `;`).
+- Rolling back the API past this release leaves four unused tables and one null column. Nothing else reads them.
