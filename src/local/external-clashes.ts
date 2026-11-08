@@ -48,7 +48,7 @@ export async function clashRows(tx: PrismaClient, seriesIds: readonly string[] |
       JOIN "Rooms" r ON r."id" = d."roomId" AND r."schoolId" = d."schoolId"
       JOIN "CalendarLessons" l ON l."roomId" = d."roomId" AND l."schoolId" = d."schoolId"
        AND l."status" IN ('SCHEDULED', 'COMPLETED')
-       AND l."startsAt" < d."endsAt" AND l."endsAt" > d."startsAt"
+       AND l."startsAt" >= d."startsAt" - interval '2 days' AND l."startsAt" < d."endsAt" AND l."endsAt" > d."startsAt"
       LEFT JOIN "Subjects" s ON s."id" = l."subjectId" AND s."schoolId" = l."schoolId"
       LEFT JOIN "StudentGroups" g ON g."id" = l."studentGroupId" AND g."schoolId" = l."schoolId"
      WHERE d."externalBookingId" IS NOT NULL
@@ -66,7 +66,7 @@ export async function clashCount(tx: PrismaClient): Promise<number> {
       FROM "RoomBookings" d
       JOIN "CalendarLessons" l ON l."roomId" = d."roomId" AND l."schoolId" = d."schoolId"
        AND l."status" IN ('SCHEDULED', 'COMPLETED')
-       AND l."startsAt" < d."endsAt" AND l."endsAt" > d."startsAt"
+       AND l."startsAt" >= d."startsAt" - interval '2 days' AND l."startsAt" < d."endsAt" AND l."endsAt" > d."startsAt"
      WHERE d."externalBookingId" IS NOT NULL
        AND d."status" IN ('PENDING', 'APPROVED')
        AND d."endsAt" > now()`;

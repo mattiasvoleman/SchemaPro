@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { createTxMock, type TxMock } from '../../test/utils/prisma-mock';
 import { rawSql } from '../../test/utils/locking-read';
-import { readResourceFacts, readRoomFacts, readStatics } from './external-facts';
+import { readLateLessons, readResourceFacts, readRoomFacts, readStatics } from './external-facts';
 
 const ROOM_ID = '44444444-4444-4444-8444-444444444441';
 const RESOURCE_ID = '55555555-5555-4555-8555-555555555551';
@@ -183,6 +183,42 @@ describe('the facts a series is checked against', () => {
         activities: [],
         closures: [],
       });
+    });
+  });
+
+  describe('readLateLessons', () => {
+    const spans = [
+      { startsAt: new Date('2027-02-02T17:00:00.000Z'), endsAt: new Date('2027-02-02T19:00:00.000Z') },
+      { startsAt: new Date('2027-02-09T17:00:00.000Z'), endsAt: new Date('2027-02-09T19:00:00.000Z') },
+    ];
+
+    it('answers the lessons the statement found, as they came', async () => {
+      const found = [{ startsAt: new Date('2027-02-09T16:30:00.000Z'), endsAt: new Date('2027-02-09T17:30:00.000Z'), lesson: 'Idrott 7A' }];
+      tx.$queryRaw.mockResolvedValue(found);
+
+      await expect(readLateLessons(client(), ROOM_ID, spans, 5)).resolves.toEqual(found);
+    });
+
+    it('hands the days as arrays of instants, then the room and the limit, in one statement', async () => {
+      tx.$queryRaw.mockResolvedValue([]);
+
+      await readLateLessons(client(), ROOM_ID, spans, 5);
+
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      const call = tx.$queryRaw.mock.calls[0]!;
+      expect(call.slice(1)).toEqual([['2027-02-02T17:00:00.000Z', '2027-02-09T17:00:00.000Z'], ['2027-02-02T19:00:00.000Z', '2027-02-09T19:00:00.000Z'], ROOM_ID, 5]);
+    });
+
+    it('looks only at lessons that hold the room, and only near the days', async () => {
+      tx.$queryRaw.mockResolvedValue([]);
+
+      await readLateLessons(client(), ROOM_ID, spans, 5);
+
+      const sql = rawSql(tx.$queryRaw.mock.calls[0]!);
+      expect(sql).toContain('"CalendarLessons"');
+      expect(sql).toContain(`IN ('SCHEDULED', 'COMPLETED')`);
+      expect(sql).toContain(`interval '2 days'`);
+      expect(sql).not.toContain('"RoomBookings"');
     });
   });
 

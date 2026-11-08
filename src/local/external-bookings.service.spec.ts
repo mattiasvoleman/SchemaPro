@@ -61,6 +61,7 @@ const freshWorld = (): World => ({
   resourceFacts: [],
   counts: [],
   clashes: [],
+  late: [] as Array<{ startsAt: Date; endsAt: Date; lesson: string }>,
 });
 
 const noFacts = { date: null, dow: null, smin: null, emin: null };
@@ -108,6 +109,7 @@ describe('ExternalBookingsService', () => {
     tx.$queryRaw.mockImplementation((...call: unknown[]) => {
       const sql = rawSql(call);
       if (sql.includes('AS "timezone"')) return Promise.resolve([world.statics]);
+      if (sql.includes('late lessons')) return Promise.resolve(world.late);
       if (sql.includes(`'LESSON' AS "kind"`)) return Promise.resolve(world.facts);
       if (sql.includes('SELECT DISTINCT b."id"')) return Promise.resolve(world.resourceFacts);
       if (sql.includes('count(*)::int AS "total"')) return Promise.resolve(world.counts);
@@ -503,18 +505,10 @@ describe('ExternalBookingsService', () => {
     });
 
     describe('a lesson that landed while the days were written', () => {
+      const lateLesson = { startsAt: new Date('2027-02-09T17:00:00.000Z'), endsAt: new Date('2027-02-09T19:00:00.000Z'), lesson: 'Idrott 7A' };
+
       it('is found after the writes and refuses the series, naming the day and the lesson', async () => {
-        world.clashes = [
-          {
-            seriesId: SERIES_ID,
-            dayId: DAY_ID,
-            organisation: 'Idrottsföreningen',
-            targetName: 'Gymnastiksalen',
-            startsAt: new Date('2027-02-09T17:00:00.000Z'),
-            endsAt: new Date('2027-02-09T19:00:00.000Z'),
-            lesson: 'Idrott 7A',
-          },
-        ];
+        world.late = [lateLesson];
 
         const error = await create().catch((e: unknown) => e);
 
@@ -525,13 +519,28 @@ describe('ExternalBookingsService', () => {
           params: { blocked: 1 },
           conflicts: [{ date: '2027-02-09', conflicts: [{ kind: 'LESSON', severity: 'BLOCK', label: 'Idrott 7A' }] }],
         });
-        // Asked for this series alone, after the days were written, and no more than a handful.
-        expect(tx.roomBooking.createMany.mock.invocationCallOrder[0]!).toBeLessThan(
-          tx.$queryRaw.mock.invocationCallOrder[tx.$queryRaw.mock.calls.findIndex((call) => rawSql(call).includes('JOIN "ExternalBookings" x'))]!,
-        );
-        const asked = tx.$queryRaw.mock.calls.find((call) => rawSql(call).includes('JOIN "ExternalBookings" x'))!;
-        expect((asked[1] as Prisma.Sql).values).toEqual([[SERIES_ID]]);
-        expect(asked[2]).toBe(5);
+        // Asked for after the days were written, and no more than a handful.
+        const at = tx.$queryRaw.mock.calls.findIndex((call) => rawSql(call).includes('late lessons'));
+        expect(tx.roomBooking.createMany.mock.invocationCallOrder[0]!).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[at]!);
+        expect(tx.$queryRaw.mock.calls[at]!.slice(1)).toEqual([expect.any(Array), expect.any(Array), ROOM_ID, 5]);
+      });
+
+      it('is asked for with the room and the days that were written, and no others', async () => {
+        await create();
+
+        const asked = tx.$queryRaw.mock.calls.find((call) => rawSql(call).includes('late lessons'))!;
+        const [starts, , room] = asked.slice(1) as [string[], string[], string];
+        const written = (tx.roomBooking.createMany.mock.calls[0]![0] as { data: Array<{ startsAt: Date }> }).data.map((row) => row.startsAt.toISOString());
+        expect(room).toBe(ROOM_ID);
+        expect(starts).toEqual(written);
+      });
+
+      it('is not asked for when the days are a resource’s: lessons hold rooms', async () => {
+        giveResource(30);
+
+        await create(resourceRule({ roomId: undefined }));
+
+        expect(tx.$queryRaw.mock.calls.some((call) => rawSql(call).includes('late lessons'))).toBe(false);
       });
     });
 

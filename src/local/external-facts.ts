@@ -113,7 +113,8 @@ export async function readRoomFacts(
     SELECT 'LESSON' AS "kind", l."startsAt", l."endsAt", btrim(coalesce(sub."name", '') || ' ' || coalesce(g."name", '')) AS "label",
            NULL::text AS "date", NULL::int AS "dow", NULL::int AS "smin", NULL::int AS "emin"
       FROM occ
-      JOIN "CalendarLessons" l ON l."roomId" = ${roomId}::uuid AND l."startsAt" < occ.e AND l."endsAt" > occ.s AND l."status" IN ('SCHEDULED', 'COMPLETED')
+      JOIN "CalendarLessons" l ON l."roomId" = ${roomId}::uuid AND l."startsAt" >= occ.s - interval '2 days' AND l."startsAt" < occ.e AND l."endsAt" > occ.s
+       AND l."status" IN ('SCHEDULED', 'COMPLETED')
       LEFT JOIN "Subjects" sub ON sub."id" = l."subjectId" AND sub."schoolId" = l."schoolId"
       LEFT JOIN "StudentGroups" g ON g."id" = l."studentGroupId" AND g."schoolId" = l."schoolId"
     UNION ALL
@@ -122,11 +123,11 @@ export async function readRoomFacts(
       JOIN "RoomBookings" b ON b."roomId" = ${roomId}::uuid AND b."startsAt" < occ.e AND b."endsAt" > occ.s AND b."status" IN ('PENDING', 'APPROVED')
     UNION ALL
     SELECT 'ACTIVITY', l."startsAt", l."endsAt", coalesce(cb."name", ''), NULL, NULL, NULL, NULL
-      FROM occ
-      JOIN "CalendarLessons" l ON l."startsAt" < occ.e AND l."endsAt" > occ.s AND l."status" = 'SCHEDULED'
-      JOIN "ScheduleActivityLessons" al ON al."calendarLessonId" = l."id" AND al."schoolId" = l."schoolId"
+      FROM "ScheduleActivityLessons" al
       JOIN "ScheduleActivities" a ON a."id" = al."activityId" AND a."schoolId" = al."schoolId" AND a."removedAt" IS NULL
       JOIN "CancellationBatches" cb ON cb."id" = a."batchId" AND cb."schoolId" = a."schoolId"
+      JOIN "CalendarLessons" l ON l."id" = al."calendarLessonId" AND l."schoolId" = al."schoolId" AND l."status" = 'SCHEDULED'
+      JOIN occ ON l."startsAt" < occ.e AND l."endsAt" > occ.s
     UNION ALL
     SELECT 'CLOSED', NULL, NULL, coalesce(c."reason", ''), to_char(c."date", 'YYYY-MM-DD'), c."dayOfWeek",
            (extract(hour FROM c."startTime") * 60 + extract(minute FROM c."startTime"))::int,
@@ -164,3 +165,34 @@ export async function readResourceFacts(
   return rows.map((row) => ({ start: row.startsAt.getTime(), end: row.endsAt.getTime(), quantity: row.quantity }));
 }
 
+export interface LateLesson {
+  startsAt: Date;
+  endsAt: Date;
+  lesson: string;
+}
+
+/**
+ * The lessons that hold a room at any of the given spans, read after the days of a series are written: the room is
+ * held by us until we commit, so what is found here landed (a publication) between the plan and the writes. Only
+ * lessons, and only the room's own index: the check runs once for every series, and the broader read of the clash
+ * list (a join to the series and the room) was the largest single cost of registering one.
+ */
+export async function readLateLessons(
+  tx: PrismaClient,
+  roomId: string,
+  spans: ReadonlyArray<{ startsAt: Date; endsAt: Date }>,
+  limit: number,
+): Promise<LateLesson[]> {
+  const starts = spans.map((span) => span.startsAt.toISOString());
+  const ends = spans.map((span) => span.endsAt.toISOString());
+  return tx.$queryRaw<LateLesson[]>`
+    /* late lessons */
+    WITH occ AS (SELECT t.s, t.e FROM unnest(${starts}::timestamptz[], ${ends}::timestamptz[]) AS t(s, e))
+    SELECT l."startsAt", l."endsAt", btrim(coalesce(sub."name", '') || ' ' || coalesce(g."name", '')) AS "lesson"
+      FROM occ
+      JOIN "CalendarLessons" l ON l."roomId" = ${roomId}::uuid AND l."startsAt" >= occ.s - interval '2 days' AND l."startsAt" < occ.e AND l."endsAt" > occ.s
+       AND l."status" IN ('SCHEDULED', 'COMPLETED')
+      LEFT JOIN "Subjects" sub ON sub."id" = l."subjectId" AND sub."schoolId" = l."schoolId"
+      LEFT JOIN "StudentGroups" g ON g."id" = l."studentGroupId" AND g."schoolId" = l."schoolId"
+     LIMIT ${limit}`;
+}

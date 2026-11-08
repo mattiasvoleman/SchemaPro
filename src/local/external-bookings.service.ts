@@ -9,7 +9,7 @@ import { markedIds } from '../users/person-protections';
 import { loanBookingRefusal } from '../room-bookings/loan-holds';
 import type { CreateExternalBookingDto, ExternalBookingRuleDto, UpdateExternalBookingDto } from './dto/external-booking.dto';
 import { clashRows, toClashResponse } from './external-clashes';
-import { readResourceFacts, readRoomFacts, readStatics } from './external-facts';
+import { readLateLessons, readResourceFacts, readRoomFacts, readStatics } from './external-facts';
 import {
   isBlocked,
   resourceDayConflicts,
@@ -269,10 +269,13 @@ export class ExternalBookingsService {
 
         // The days are written, so what reads the room now is a room nobody else can claim until we
         // commit (the plan was read before the writes): a lesson that landed in between is found here.
-        const late = await clashRows(tx, [series.id], 5);
+        const late = plan.target.kind === 'ROOM' ? await readLateLessons(tx, plan.target.id, free, 5) : [];
         if (late.length > 0) {
           throw conflictsException(
-            late.map((row) => ({ date: toClashResponse(row, plan.timeZone).date, conflicts: [{ kind: 'LESSON' as const, severity: 'BLOCK' as const, label: row.lesson }] })),
+            late.map((row) => ({
+              date: free.find((planned) => planned.startsAt < row.endsAt && row.startsAt < planned.endsAt)?.date ?? plan.rule.startDate,
+              conflicts: [{ kind: 'LESSON' as const, severity: 'BLOCK' as const, label: row.lesson }],
+            })),
             'En lektion lades in medan bokningen registrerades.',
           );
         }

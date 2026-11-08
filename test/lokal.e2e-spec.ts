@@ -85,6 +85,7 @@ interface World {
   resourceFacts: Array<Record<string, unknown>>;
   counts: Array<Record<string, unknown>>;
   clashes: Array<Record<string, unknown>>;
+  late: Array<Record<string, unknown>>;
 }
 
 describe('Lokal (e2e)', () => {
@@ -120,11 +121,13 @@ describe('Lokal (e2e)', () => {
       resourceFacts: [],
       counts: [],
       clashes: [],
+      late: [],
     };
     harness.tx.$queryRaw.mockReset();
     harness.tx.$queryRaw.mockImplementation((...call: unknown[]) => {
       const sql = rawSql(call);
       if (sql.includes('AS "timezone"')) return Promise.resolve([world.statics]);
+      if (sql.includes('late lessons')) return Promise.resolve(world.late);
       if (sql.includes(`'LESSON' AS "kind"`)) return Promise.resolve(world.facts);
       if (sql.includes('SELECT DISTINCT b."id"')) return Promise.resolve(world.resourceFacts);
       if (sql.includes('count(*)::int AS "total"')) return Promise.resolve(world.counts);
