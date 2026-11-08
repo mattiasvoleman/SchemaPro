@@ -59,6 +59,10 @@ ConflictCategory = Literal[
     # (språkval, elevens val). A category of its own because the fix is the
     # block on the timplan page, not any one of its rows.
     "TEACHING_BLOCK",
+    # Bästa möjliga schema: a rule that gave way in the timetable that came
+    # back. Not a refusal and not a proof: a measured breach, listed under
+    # `deviations` and never under `conflicts`. See app/solver/relaxation.py.
+    "DEVIATION",
     # Placeringsregler (G3): a school's own hard placement rule, named when the
     # week cannot keep it. One category per rule, because the fix is a
     # different setting on the same card: the subject's edge rule, the limit
@@ -1148,6 +1152,27 @@ class PupilGaps(CamelModel):
     )
 
 
+class Relaxation(CamelModel):
+    """Bästa möjliga schema: place the week even when its rules cannot all hold.
+
+    ABSENT IS TODAY'S SOLVE, BYTE FOR BYTE. A request without this field is
+    answered as it always was: every rule hard, a week that cannot hold them
+    refused by name with nothing placed. The gateway sends it only for a
+    school that turned the mode on and only for a run that asked for it, so an
+    engine that does not know the field is never sent it by a school that did
+    not choose it (extra="forbid" would answer 422, which is the right answer
+    from an engine too old for the mode).
+
+    WHAT MAY GIVE WAY IS NOT THE REQUEST'S TO CHOOSE. It is the one list in
+    app/solver/relaxation.py (RELAXABLE_RULES); there is no `rules` field here
+    on purpose, because a per-request list would be a second place to read
+    "what is hard", and a reader who changed it would change what a school may
+    be handed. The only field is the mode, which leaves room for a second one.
+    """
+
+    mode: Literal["BEST_EFFORT"]
+
+
 PlacementMode = Literal["SOFT", "HARD"]
 
 
@@ -1384,6 +1409,9 @@ class OptimizeScheduleRequest(CamelModel):
     # Optional, and absent on every request but a schemaförslag candidate's;
     # absent is today's solve byte for byte. See SearchOptions.
     search: SearchOptions | None = None
+    # Optional, and absent on every request but a best-effort run's; absent is
+    # today's solve byte for byte. See Relaxation.
+    relaxation: Relaxation | None = None
 
     @field_validator("group_conflicts")
     @classmethod
@@ -1692,4 +1720,14 @@ class OptimizeScheduleResponse(CamelModel):
     pupil_idle_minutes: float | None = Field(
         default=None, alias="pupilIdleMinutes", ge=0,
         exclude_if=lambda value: value is None,
+    )
+    #: Bästa möjliga schema: what gave way in the timetable returned, one line
+    #: per rule and place (category DEVIATION; see relaxation.deviations_of).
+    #: PRESENT, EVEN EMPTY, ONLY ON THE ANSWER TO A REQUEST THAT CARRIED
+    #: `relaxation`, where an empty list says "the mode ran and nothing gave
+    #: way"; OMITTED on every other response, so a strict answer is byte for
+    #: byte what it was. A refusal never carries it: it names the HARD rule
+    #: that stopped the week, under `conflicts`, as it always did.
+    deviations: list[ConflictDetail] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
     )

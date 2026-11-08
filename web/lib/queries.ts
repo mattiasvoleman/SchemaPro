@@ -583,6 +583,8 @@ export interface LunchSettingsInput {
   generatorKeepsPupilGapsDown?: boolean;
   /** The same for the teachers' limit on teaching in a row. */
   generatorKeepsConsecutiveTeaching?: boolean;
+  /** The same for Bästa möjliga schema. */
+  generatorBestEffort?: boolean;
   /**
    * Placeringsregler: the ten keys go together, or none do (an API from before
    * them refuses the first it does not know). Weights are 1..1000, limits

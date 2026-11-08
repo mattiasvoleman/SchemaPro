@@ -1,4 +1,4 @@
-import { IsIn, IsISO8601, IsOptional, Matches } from 'class-validator';
+import { IsBoolean, IsIn, IsISO8601, IsOptional, Matches } from 'class-validator';
 import type { TeacherView } from '../school-day.types';
 
 /** A date from 2000-01-01 to 2100-12-31: the years the week arithmetic stays inside. */
@@ -41,4 +41,13 @@ export class FreeQueryDto {
 export class SchoolDaySettingsDto {
   @IsIn(TEACHER_VIEWS, { message: 'teacherView: NONE, ROOMS eller ALL.' })
   teacherView!: TeacherView;
+
+  /**
+   * Whether a guardian is told when their child is moved to a parallel lesson for a day (Elevens lektion för
+   * dagen). Left out: what the school has (off, for a school that never said). The teachers of the two lessons
+   * are told either way.
+   */
+  @IsOptional()
+  @IsBoolean({ message: 'guardianNoticeOnMove: true eller false.' })
+  guardianNoticeOnMove?: boolean;
 }

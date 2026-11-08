@@ -8,11 +8,16 @@ import type { PrismaService } from '../database/prisma.service';
 import type { JobRunner } from '../jobs/job-runner';
 import type { RealtimeService } from '../realtime/realtime.service';
 import { BASIS_PARTS, type BasisParts } from './candidate-basis';
+import { BEST_EFFORT_VARIANT, snapshotNameOf, variantOf, variantsFor } from './candidate-variants';
+import { deviationsDigestOf, storedDeviationsOf } from './deviations';
 import type { StartCandidatesDto } from './dto/schedule-candidates.dto';
 import { TEACHER_FREE_DAY_WISH_NOT_KEPT, freeDayWishMessage } from './free-day-wishes';
 import type { AiEngineConflictAnalysis } from './interfaces/ai-engine-payload.interface';
 import type { CandidateSolution, OptimizationProxyService, PreparedSchedule } from './optimization-proxy.service';
 import {
+  BEST_EFFORT_NO_REFRESH,
+  BEST_EFFORT_NOT_ENABLED,
+  SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED,
   CANDIDATE_ENGINE_FAILED,
   CANDIDATE_ENGINE_TIMEOUT,
   CANDIDATE_GONE,
@@ -40,10 +45,11 @@ import {
   SWEEP_JOB,
   yearHasActiveCandidateRun,
 } from './schedule-candidates.service';
-import { ENGINE_LACKS_CANDIDATES } from './optimization-proxy.service';
+import { ENGINE_LACKS_BEST_EFFORT, ENGINE_LACKS_CANDIDATES } from './optimization-proxy.service';
 import {
   CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
   TEACHER_WORK_DAYS_HIDDEN,
+  DEVIATION_WORK_DAYS_HIDDEN_MESSAGE,
   WORK_DAYS_HIDDEN_MESSAGE,
   WorkDaysRefusal,
 } from './work-days';
@@ -1115,9 +1121,9 @@ describe('ScheduleCandidatesService', () => {
       });
       expect(overview.latest!.candidates).toEqual([
         // A row from before the wishes were measured: not measured, not "none".
-        { id: CANDIDATE, ordinal: 1, variant: 'KEEP', weights: null, solverStatus: 'OPTIMAL', lessonCount: 2, errorCode: null, errorParams: null, metrics: { moved: 1, movedOf: 2, roomChanges: 0, kept: 1, sameAs: null }, conflicts: [], notes: null },
+        { id: CANDIDATE, ordinal: 1, variant: 'KEEP', weights: null, solverStatus: 'OPTIMAL', lessonCount: 2, errorCode: null, errorParams: null, metrics: { moved: 1, movedOf: 2, roomChanges: 0, kept: 1, sameAs: null }, conflicts: [], notes: null, deviations: null, deviationsDigest: null },
         // The summary's values, scalars only: what its sentence substitutes.
-        { id: 'c2', ordinal: 2, variant: 'TEACHER_GAPS', weights: { disruption: 2, teacherGap: 8 }, solverStatus: 'TIMEOUT', lessonCount: 0, errorCode: 'CONFLICT_CORE_SUMMARY', errorParams: { count: 1 }, metrics: null, conflicts: [{ category: 'INSUFFICIENT_RESOURCES', message: 'm', resourceNames: [] }], notes: null },
+        { id: 'c2', ordinal: 2, variant: 'TEACHER_GAPS', weights: { disruption: 2, teacherGap: 8 }, solverStatus: 'TIMEOUT', lessonCount: 0, errorCode: 'CONFLICT_CORE_SUMMARY', errorParams: { count: 1 }, metrics: null, conflicts: [{ category: 'INSUFFICIENT_RESOURCES', message: 'm', resourceNames: [] }], notes: null, deviations: null, deviationsDigest: null },
       ]);
       expect(overview.draftNotes).toBeNull();
       // Nobody to name, so no read of Users.
@@ -1322,6 +1328,8 @@ describe('ScheduleCandidatesService', () => {
         mode: 'DRAFT',
         futureCalendarLessons: 0,
         coverAssignments: 0,
+        deviations: null,
+        deviationsDigest: null,
       });
       // Not READ ONLY: the fetch writes its Läslogg row for the posts' day
       // limits it reads (Lärarens dag), and a read-only transaction would
@@ -1346,6 +1354,8 @@ describe('ScheduleCandidatesService', () => {
         mode: 'DRAFT',
         futureCalendarLessons: 0,
         coverAssignments: 0,
+        deviations: null,
+        deviationsDigest: null,
       });
     });
 
@@ -1613,6 +1623,502 @@ describe('ScheduleCandidatesService', () => {
       expect(tx.scheduleCandidateRun.updateMany).toHaveBeenCalledWith({
         where: { id: { in: ['timed-out'] }, discardedAt: null },
         data: { discardedAt: expect.any(Date) },
+      });
+    });
+  });
+
+  describe('Bästa möjliga schema', () => {
+    const ANNA = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+    const WORK_RULE = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+    const POST = 'cccccccc-3333-4333-8333-cccccccccccc';
+    const bestEffort = (overrides: Partial<StartCandidatesDto> = {}) => dto({ mode: 'BEST_EFFORT', ...overrides });
+    const switchedOn = (on = true) => tx.lunchSetting.findUnique.mockResolvedValue({ generatorBestEffort: on });
+
+    /** The engine's lines as the proxy hands them over, realised: a cap that gave way, a subject's per-day cap, a part-timer's days. */
+    const realised = {
+      cap: {
+        category: 'DEVIATION' as const,
+        code: 'DEVIATION_TEACHER_DAILY_CAP',
+        params: { rule: WORK_RULE, day: 1, minutes: 360, taught: 375, over: 15, needed: 375 },
+        message: `The cap that the working-time rule ${WORK_RULE} sets gave way on Monday.`,
+        requirementIds: [], roomIds: [], constraintIds: [], resourceIds: [WORK_RULE], resourceNames: [], subjectIds: [ANNA],
+      },
+      perDay: {
+        category: 'DEVIATION' as const,
+        code: 'DEVIATION_SUBJECT_PER_DAY',
+        params: { requirement: 'Matematik för 7A', day: 2, maxPerDay: 1, count: 2, over: 1, needed: 2 },
+        message: 'Matematik för 7A has 2 lessons on Tuesday.',
+        requirementIds: [], roomIds: [], constraintIds: [], resourceIds: [], resourceNames: [], subjectIds: [],
+      },
+      days: {
+        category: 'DEVIATION' as const,
+        code: 'DEVIATION_TEACHER_WORK_DAYS',
+        params: {},
+        message: DEVIATION_WORK_DAYS_HIDDEN_MESSAGE,
+        requirementIds: [], roomIds: [], constraintIds: [], resourceIds: [], resourceNames: [], subjectIds: [],
+      },
+    };
+
+    describe('POST candidates with mode BEST_EFFORT', () => {
+      // The engine answers the mode with a list, as it always does.
+      beforeEach(() => proxy.solveCandidate.mockResolvedValue(solved({ deviations: [] })));
+      const refusal = async (body = bestEffort()) => {
+        const error = (await service.start(body, user).catch((caught: unknown) => caught)) as HttpException;
+        expect(error).toBeInstanceOf(HttpException);
+        return { status: error.getStatus(), body: error.getResponse() as { code?: string } };
+      };
+
+      it('is refused 409 BEST_EFFORT_NOT_ENABLED while the school’s switch is off — no row, or a row that says off — and starts nothing', async () => {
+        // No Skolregler row at all.
+        tx.lunchSetting.findUnique.mockResolvedValue(null);
+        await expect(refusal()).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: BEST_EFFORT_NOT_ENABLED }) });
+        switchedOn(false);
+        await expect(refusal()).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: BEST_EFFORT_NOT_ENABLED }) });
+        expect(tx.lunchSetting.findUnique).toHaveBeenCalledWith({ where: { schoolId: SCHOOL }, select: { generatorBestEffort: true } });
+        expect(tx.scheduleCandidateRun.create).not.toHaveBeenCalled();
+        expect(proxy.prepareSchedule).not.toHaveBeenCalled();
+        expect(proxy.solveCandidate).not.toHaveBeenCalled();
+      });
+
+      it('refuses before it takes a single lock, so a school that has not switched it on holds nobody up', async () => {
+        switchedOn(false);
+        await refusal();
+        expect(steps.some((step) => step.includes('hashtext'))).toBe(false);
+      });
+
+      it('plans ONE candidate — ordinal 1, the code BEST_EFFORT, the run’s weights as they are, no seed — and sends the engine the mode', async () => {
+        switchedOn();
+        await startAndRun(bestEffort({ weights: { spread: 4 } as never }));
+
+        expect(tx.scheduleCandidateRun.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ requested: 1, leaseSeconds: 190, weights: { spread: 4 }, refreshOfId: null }),
+          select: { id: true },
+        });
+        // The lead call: probes on, so a refusal on a hard rule is explained.
+        expect(proxy.solveCandidate.mock.calls.map(([, options]) => options)).toEqual([
+          { weights: { spread: 4 }, search: { workers: 4, probes: true, maxSeconds: 30 }, bestEffort: true, timeoutMs: 95_000 },
+        ]);
+        expect(stored.map((row) => [row['ordinal'], row['variant'], row['seed'], row['weights']])).toEqual([[1, 'BEST_EFFORT', null, { spread: 4 }]]);
+        expect(run).toMatchObject({ status: 'SUCCEEDED', progress: 1 });
+      });
+
+      it('sends no weights when the request names none, as KEEP does', async () => {
+        switchedOn();
+        await startAndRun(bestEffort());
+        expect(proxy.solveCandidate.mock.calls[0]![1]).toMatchObject({ weights: null, bestEffort: true });
+      });
+
+      it('does not ask for a draft: the mode is for the week Generera placed nothing in', async () => {
+        switchedOn();
+        tx.masterLesson.count.mockResolvedValue(0);
+        await expect(startAndRun(bestEffort())).resolves.toEqual({ runId: RUN });
+        expect(tx.masterLesson.count).not.toHaveBeenCalled();
+        // …where an ordinary run still needs one.
+        await expect(refusal(dto())).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: CANDIDATES_NEED_A_DRAFT }) });
+      });
+
+      it('does not read a count: the run has one candidate, whatever a client sent beside the mode', async () => {
+        switchedOn();
+        await startAndRun(bestEffort({ count: 4 }));
+        expect(proxy.solveCandidate).toHaveBeenCalledTimes(1);
+        expect(stored).toHaveLength(1);
+      });
+
+      it('keeps every other guard of a start: Generera running, a run active, the year’s locks', async () => {
+        switchedOn();
+        tx.optimizationJob.count.mockResolvedValue(1);
+        await expect(refusal()).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: GENERATE_RUNNING }) });
+        tx.optimizationJob.count.mockResolvedValue(0);
+        tx.scheduleCandidateRun.findFirst.mockResolvedValueOnce({ id: OLD_RUN });
+        await expect(refusal()).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: CANDIDATES_RUNNING }) });
+        expect(tx.scheduleCandidateRun.create).not.toHaveBeenCalled();
+      });
+
+      it('400 BEST_EFFORT_NO_REFRESH for the mode together with a refresh, before anything is read', async () => {
+        switchedOn();
+        await expect(refusal(bestEffort({ refreshOf: OLD_RUN }))).resolves.toEqual({ status: 400, body: expect.objectContaining({ code: BEST_EFFORT_NO_REFRESH }) });
+        expect(prisma.withRls).not.toHaveBeenCalled();
+        expect(prisma.withDeliveryService).not.toHaveBeenCalled();
+      });
+
+      it('stores the first candidate’s refusal of a hard rule and ends the run there, as any first candidate does', async () => {
+        switchedOn();
+        proxy.solveCandidate.mockResolvedValueOnce({ status: 'INFEASIBLE', lessons: [], lunches: null, conflicts: conflictAnalysis });
+        await startAndRun(bestEffort());
+        expect(run).toMatchObject({ status: 'FAILED', errorCode: CANDIDATES_FIRST_FAILED });
+        expect(stored).toHaveLength(1);
+        expect(stored[0]).toMatchObject({ solverStatus: 'INFEASIBLE', deviations: Prisma.DbNull });
+      });
+    });
+
+    describe('a run that is not the mode’s', () => {
+      it('sends the engine exactly what it sent, reads no switch, and stores no deviations — null, not an empty list', async () => {
+        await startAndRun(dto({ count: 2 }));
+        for (const [, options] of proxy.solveCandidate.mock.calls) expect(options).not.toHaveProperty('bestEffort');
+        expect(tx.lunchSetting.findUnique).not.toHaveBeenCalled();
+        expect(stored.map((row) => row['deviations'])).toEqual([Prisma.DbNull, Prisma.DbNull]);
+      });
+
+      it('stores none even if the solution somehow carried a list: the mode was not asked for', async () => {
+        proxy.solveCandidate.mockResolvedValue(solved({ deviations: [realised.perDay] }));
+        await startAndRun(dto({ count: 2 }));
+        expect(stored.map((row) => row['deviations'])).toEqual([Prisma.DbNull, Prisma.DbNull]);
+      });
+    });
+
+    describe('the task stores what gave way', () => {
+      beforeEach(() => switchedOn());
+
+      it('stores the list as the candidate keeps it: a cap with its teacher kept for the server, a part-timer’s days hidden whole', async () => {
+        proxy.solveCandidate.mockResolvedValueOnce(solved({ deviations: [realised.perDay, realised.cap, realised.days] }));
+        await startAndRun(bestEffort());
+
+        expect(stored[0]!['deviations']).toEqual([
+          { category: 'DEVIATION', code: 'DEVIATION_SUBJECT_PER_DAY', params: realised.perDay.params, message: realised.perDay.message, resourceNames: [] },
+          { category: 'DEVIATION', code: 'DEVIATION_TEACHER_DAILY_CAP', params: realised.cap.params, message: realised.cap.message, resourceNames: [], subjectIds: [ANNA] },
+          { category: 'DEVIATION', code: TEACHER_WORK_DAYS_HIDDEN, params: {}, message: DEVIATION_WORK_DAYS_HIDDEN_MESSAGE, resourceNames: [] },
+        ]);
+        // Written once with the candidate, in the same create as its timetable.
+        expect(stored[0]).toMatchObject({ solverStatus: 'OPTIMAL', variant: 'BEST_EFFORT' });
+        // No person's name, no id array, and no figure of a post anywhere in a stored row.
+        const text = JSON.stringify(stored[0]);
+        expect(text).not.toMatch(/Anna|Svensson|requirementIds|resourceIds|roomIds/);
+        expect(text).not.toContain(POST);
+      });
+
+      it('stores an empty list when nothing gave way — the mode ran, which null does not say', async () => {
+        proxy.solveCandidate.mockResolvedValueOnce(solved({ deviations: [] }));
+        await startAndRun(bestEffort());
+        expect(stored[0]!['deviations']).toEqual([]);
+        expect(stored[0]!['deviations']).not.toBe(Prisma.DbNull);
+      });
+
+      it('stores a FEASIBLE timetable’s list as an OPTIMAL one’s', async () => {
+        proxy.solveCandidate.mockResolvedValueOnce(solved({ status: 'FEASIBLE', deviations: [realised.perDay] }));
+        await startAndRun(bestEffort());
+        expect(stored[0]).toMatchObject({ solverStatus: 'FEASIBLE' });
+        expect(stored[0]!['deviations']).toHaveLength(1);
+      });
+
+      it('stores none for an answer the demand guard rejected: there is no timetable to have deviations in', async () => {
+        proxy.solveCandidate.mockResolvedValueOnce(solved({ rejected: true, lessons: [], lunches: null, deviations: [realised.perDay] }));
+        await startAndRun(bestEffort());
+        expect(stored[0]).toMatchObject({ solverStatus: 'REJECTED', deviations: Prisma.DbNull });
+      });
+
+      it('fails the run, and stores nothing, if a timetable of the mode comes without its list — it could not say that nothing gave way', async () => {
+        proxy.solveCandidate.mockResolvedValueOnce(solved());
+        await startAndRun(bestEffort());
+        expect(stored).toEqual([]);
+        expect(run).toMatchObject({ status: 'FAILED', errorCode: ENGINE_LACKS_BEST_EFFORT });
+      });
+
+      it('fails the run with the proxy’s sentence when the engine is older than the mode', async () => {
+        proxy.solveCandidate.mockRejectedValueOnce(new HttpException({ message: 'older', code: ENGINE_LACKS_BEST_EFFORT }, 503));
+        await startAndRun(bestEffort());
+        expect(run).toMatchObject({ status: 'FAILED', errorCode: ENGINE_LACKS_BEST_EFFORT });
+        expect(engineFailureOf(new HttpException({ message: 'older', code: ENGINE_LACKS_BEST_EFFORT }, 503))).toMatchObject({ code: ENGINE_LACKS_BEST_EFFORT });
+        // The engine refused the field at once: it is not solving for the run.
+        expect(run).not.toHaveProperty('engineBusyUntil', expect.any(Date));
+      });
+    });
+
+    describe('refresh of a batch of the mode', () => {
+      const oldBatch = (variant: string) => ({
+        academicYearId: YEAR,
+        status: 'SUCCEEDED',
+        weights: null,
+        candidates: [
+          { ordinal: 1, variant, weights: null, seed: null, solverStatus: 'OPTIMAL', lessons: [{ requirementId: 'req-ma', roomId: ROOM, dayOfWeek: 4, startTime: '13:00', endTime: '14:00' }] },
+        ],
+      });
+
+      it('keeps the mode: the engine is sent it, a draft is not asked for, and the switch is read', async () => {
+        switchedOn();
+        tx.masterLesson.count.mockResolvedValue(0);
+        tx.scheduleCandidateRun.findUnique.mockResolvedValue(oldBatch('BEST_EFFORT'));
+        proxy.solveCandidate.mockResolvedValue(solved({ deviations: [realised.perDay] }));
+
+        await startAndRun(dto({ refreshOf: OLD_RUN }));
+
+        expect(tx.lunchSetting.findUnique).toHaveBeenCalled();
+        expect(tx.masterLesson.count).not.toHaveBeenCalled();
+        const [, options] = proxy.solveCandidate.mock.calls[0]!;
+        expect(options).toMatchObject({
+          bestEffort: true,
+          weights: { disruption: 40 },
+          previousLessons: [{ requirementId: 'anon-ma', dayOfWeek: 4, startTime: '13:00:00' }],
+        });
+        expect(stored.map((row) => [row['ordinal'], row['variant']])).toEqual([[1, 'BEST_EFFORT']]);
+        expect(stored[0]!['deviations']).toHaveLength(1);
+      });
+
+      it('is refused while the switch is off — whoever began the batch', async () => {
+        switchedOn(false);
+        tx.scheduleCandidateRun.findUnique.mockResolvedValue(oldBatch('BEST_EFFORT'));
+        const error = (await service.start(dto({ refreshOf: OLD_RUN }), user).catch((caught: unknown) => caught)) as HttpException;
+        expect(error.getResponse()).toMatchObject({ code: BEST_EFFORT_NOT_ENABLED });
+        expect(tx.scheduleCandidateRun.create).not.toHaveBeenCalled();
+      });
+
+      it('leaves an ordinary batch ordinary: no mode, no switch read, a draft asked for', async () => {
+        tx.scheduleCandidateRun.findUnique.mockResolvedValue(oldBatch('KEEP'));
+        await startAndRun(dto({ refreshOf: OLD_RUN }));
+        expect(tx.lunchSetting.findUnique).not.toHaveBeenCalled();
+        expect(tx.masterLesson.count).toHaveBeenCalled();
+        expect(proxy.solveCandidate.mock.calls[0]![1]).not.toHaveProperty('bestEffort');
+        expect(stored[0]!['deviations']).toBe(Prisma.DbNull);
+      });
+    });
+
+    describe('GET candidates: what the page is shown', () => {
+      const NOW = new Date('2026-10-17T12:00:00.000Z');
+      const runRow = (candidates: unknown[]) =>
+        ({
+          id: RUN, status: 'SUCCEEDED', requested: 1, progress: 1,
+          createdAt: new Date('2026-10-17T11:50:00.000Z'), startedAt: new Date('2026-10-17T11:50:01.000Z'), finishedAt: new Date('2026-10-17T11:53:00.000Z'),
+          error: null, errorCode: null, errorParams: null, createdById: user.userId, appliedCandidateId: null, appliedAt: null, refreshOfId: null,
+          heartbeatAt: new Date('2026-10-17T11:53:00.000Z'), leaseSeconds: 250, unplaced: null, draftNotes: null, candidates,
+        }) as never;
+      const candidateRow = (overrides: Record<string, unknown> = {}) => ({
+        id: CANDIDATE, ordinal: 1, variant: 'BEST_EFFORT', weights: null, solverStatus: 'OPTIMAL', errorCode: null, errorParams: null,
+        metrics: { moved: 1, movedOf: 2, kept: 1, roomChanges: 0, sameAs: null, lessonCount: 2, unplaced: null },
+        conflicts: [], notes: [], deviations: storedDeviationsOf([realised.perDay, realised.cap, realised.days]), ...overrides,
+      });
+      const overviewOf = async (candidates: unknown[]) => {
+        tx.scheduleCandidateRun.findFirst.mockResolvedValueOnce(runRow(candidates));
+        return (await service.overview(YEAR, user, NOW)).latest!.candidates;
+      };
+
+      it('shows the list as sentences with the cap’s teacher NAMED in it — by the name now, never an id — and a part-timer’s days hidden', async () => {
+        tx.user.findMany.mockResolvedValue([{ id: ANNA, firstName: 'Anna', lastName: 'Svensson' }]);
+        tx.personProtection.findMany.mockResolvedValue([]);
+
+        const [view] = await overviewOf([candidateRow()]);
+
+        expect(view!.deviations).toEqual([
+          { category: 'DEVIATION', code: 'DEVIATION_SUBJECT_PER_DAY', params: realised.perDay.params, message: realised.perDay.message, resourceNames: [] },
+          {
+            category: 'DEVIATION',
+            code: 'DEVIATION_TEACHER_DAILY_CAP',
+            params: { ...realised.cap.params, rule: 'Anna Svensson' },
+            message: `The cap that the working-time rule Anna Svensson sets gave way on Monday.`,
+            resourceNames: [],
+          },
+          { category: 'DEVIATION', code: TEACHER_WORK_DAYS_HIDDEN, params: {}, message: DEVIATION_WORK_DAYS_HIDDEN_MESSAGE, resourceNames: [] },
+        ]);
+        expect(JSON.stringify(view)).not.toContain(ANNA);
+        expect(JSON.stringify(view)).not.toContain(WORK_RULE);
+        expect(view!.deviationsDigest).toBe(deviationsDigestOf(CANDIDATE, candidateRow().deviations));
+        expect(view!.deviationsDigest).toMatch(/^[0-9a-f]{64}$/);
+        // The teacher is read with the others in one read of Users.
+        expect(tx.user.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.user.findMany).toHaveBeenCalledWith({ where: { id: { in: [ANNA] } }, select: { id: true, firstName: true, lastName: true } });
+      });
+
+      it('names nobody who is marked with a protected identity: the sentence keeps the row’s id where the name would be', async () => {
+        tx.user.findMany.mockResolvedValue([{ id: ANNA, firstName: 'Anna', lastName: 'Svensson' }]);
+        tx.personProtection.findMany.mockResolvedValue([{ userId: ANNA }]);
+
+        const [view] = await overviewOf([candidateRow()]);
+
+        expect(tx.personProtection.findMany).toHaveBeenCalledWith({ where: { userId: { in: [ANNA] } }, select: { userId: true } });
+        expect(JSON.stringify(view!.deviations)).not.toMatch(/Anna|Svensson/);
+        expect(view!.deviations![1]!.params!['rule']).toBe(WORK_RULE);
+      });
+
+      it('reads no mark and no name when no cap gave way', async () => {
+        const [view] = await overviewOf([candidateRow({ deviations: storedDeviationsOf([realised.perDay, realised.days]) })]);
+        expect(view!.deviations).toHaveLength(2);
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+        expect(tx.personProtection.findMany).not.toHaveBeenCalled();
+      });
+
+      it('shows null for a candidate that is not the mode’s, an empty list for one where nothing gave way, and neither has a digest', async () => {
+        const views = await overviewOf([candidateRow({ deviations: null }), candidateRow({ id: 'c2', ordinal: 2, deviations: [] })]);
+        expect(views.map((view) => [view.deviations, view.deviationsDigest])).toEqual([[null, null], [[], null]]);
+      });
+
+      it('shows none for a candidate that found no timetable, whatever its row holds', async () => {
+        const [view] = await overviewOf([candidateRow({ solverStatus: 'INFEASIBLE', metrics: null })]);
+        expect(view).toMatchObject({ deviations: null, deviationsDigest: null });
+      });
+
+      it('has a digest that no other candidate with the same list shares', async () => {
+        const views = await overviewOf([candidateRow(), candidateRow({ id: 'c2', ordinal: 2 })]);
+        expect(views[0]!.deviationsDigest).not.toBe(views[1]!.deviationsDigest);
+      });
+    });
+
+    describe('GET candidates/runs/:runId/check: what the apply dialog shows and the administrator accepts', () => {
+      const withDeviations = storedDeviationsOf([realised.perDay, realised.cap]);
+      const arrange = (candidates: unknown[]) =>
+        tx.scheduleCandidateRun.findUnique.mockResolvedValue({ academicYearId: YEAR, basis: BASIS, basisParts: PARTS, discardedAt: null, candidates });
+
+      it('says the run’s deviations and the digest the apply asks for', async () => {
+        arrange([{ id: CANDIDATE, solverStatus: 'OPTIMAL', deviations: withDeviations }]);
+        tx.user.findMany.mockResolvedValue([{ id: ANNA, firstName: 'Anna', lastName: 'Svensson' }]);
+        tx.personProtection.findMany.mockResolvedValue([]);
+
+        const check = await service.check(RUN, user);
+
+        expect(check.deviationsDigest).toBe(deviationsDigestOf(CANDIDATE, withDeviations));
+        expect(check.deviations).toHaveLength(2);
+        expect(check.deviations![1]!.params!['rule']).toBe('Anna Svensson');
+        expect(JSON.stringify(check)).not.toContain(ANNA);
+      });
+
+      it('says the same when the batch is stale or refused — the dialog still has the list to show', async () => {
+        arrange([{ id: CANDIDATE, solverStatus: 'OPTIMAL', deviations: withDeviations }]);
+        proxy.prepareSchedule.mockResolvedValueOnce({ ready: false, refusalCode: 'BLOCK_PARTLY_LOCKED_SUMMARY' });
+        await expect(service.check(RUN, user)).resolves.toMatchObject({
+          stale: true,
+          deviationsDigest: deviationsDigestOf(CANDIDATE, withDeviations),
+        });
+      });
+
+      it.each([
+        ['a run of ordinary candidates', [{ id: CANDIDATE, solverStatus: 'OPTIMAL', deviations: null }]],
+        ['a run of the mode where nothing gave way', [{ id: CANDIDATE, solverStatus: 'OPTIMAL', deviations: [] }]],
+        ['a candidate that found no timetable', [{ id: CANDIDATE, solverStatus: 'INFEASIBLE', deviations: withDeviations }]],
+        ['a run with no candidates', []],
+      ])('says null and null for %s', async (_label, candidates) => {
+        arrange(candidates);
+        await expect(service.check(RUN, user)).resolves.toMatchObject({ deviations: null, deviationsDigest: null });
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('POST candidates/:id/apply: the school accepts what gave way, or nothing is written', () => {
+      const deviations = storedDeviationsOf([realised.perDay, realised.cap, realised.days]);
+      const digest = deviationsDigestOf(CANDIDATE, deviations)!;
+      const created = new Date('2026-10-17T11:50:00.000Z');
+      const candidateWith = (overrides: Record<string, unknown> = {}) => ({
+        id: CANDIDATE, runId: RUN, ordinal: 1, variant: 'BEST_EFFORT', solverStatus: 'OPTIMAL',
+        lessons: [{ requirementId: 'req-ma', roomId: ROOM, dayOfWeek: 1, startTime: '08:00', endTime: '09:00' }],
+        lunches: null, metrics: { moved: 0 }, deviations, run: { academicYearId: YEAR }, ...overrides,
+      });
+
+      beforeEach(() => {
+        run = { status: 'SUCCEEDED', progress: 1, basis: BASIS, basisParts: PARTS };
+        tx.scheduleCandidate.findUnique.mockResolvedValue(candidateWith());
+        tx.scheduleCandidateRun.findUnique.mockImplementation(async () => ({ id: RUN, status: run.status, basis: BASIS, basisParts: PARTS, createdAt: created }));
+        switchedOn();
+      });
+
+      const refusal = async (accepted?: string) => {
+        const error = (await service.apply(CANDIDATE, 'DRAFT', user, accepted).catch((caught: unknown) => caught)) as HttpException;
+        expect(error).toBeInstanceOf(HttpException);
+        return { status: error.getStatus(), body: error.getResponse() as Record<string, unknown> };
+      };
+      /** Nothing of the timetable, the run or the safety version was touched. */
+      const nothingWritten = () => {
+        expect(proxy.applyCandidateWrite).not.toHaveBeenCalled();
+        expect(proxy.prepareSchedule).not.toHaveBeenCalled();
+        expect(versions.snapshotInTransaction).not.toHaveBeenCalled();
+        expect(tx.scheduleCandidateRun.update).not.toHaveBeenCalled();
+        expect(tx.scheduleCandidateRun.updateMany).not.toHaveBeenCalled();
+        expect(run.appliedCandidateId).toBeUndefined();
+        expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+      };
+
+      it('refuses a candidate with deviations 409 SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED, with the count, when nothing is accepted — and writes nothing', async () => {
+        await expect(refusal(undefined)).resolves.toEqual({
+          status: 409,
+          body: expect.objectContaining({ code: SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED, params: { count: 3 } }),
+        });
+        nothingWritten();
+      });
+
+      it.each([
+        ['an empty string', ''],
+        ['a value that is not a digest', 'yes'],
+        ['another candidate’s digest', deviationsDigestOf('77777777-7777-4777-8777-777777777777', deviations)!],
+        ['the digest of fewer deviations', deviationsDigestOf(CANDIDATE, deviations.slice(0, 2))!],
+        ['the right digest in capitals', deviationsDigestOf(CANDIDATE, deviations)!.toUpperCase()],
+        ['the right digest with a space after it', `${deviationsDigestOf(CANDIDATE, deviations)!} `],
+      ])('refuses %s, and writes nothing', async (_label, accepted) => {
+        await expect(refusal(accepted)).resolves.toMatchObject({
+          status: 409,
+          body: expect.objectContaining({ code: SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED, params: { count: 3 } }),
+        });
+        nothingWritten();
+      });
+
+      it('refuses a digest read off a row that has since been changed by hand', async () => {
+        tx.scheduleCandidate.findUnique.mockResolvedValue(candidateWith({ deviations: deviations.slice(0, 1) }));
+        await expect(refusal(digest)).resolves.toMatchObject({ body: expect.objectContaining({ code: SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED, params: { count: 1 } }) });
+        nothingWritten();
+      });
+
+      it('applies it with the digest, and keeps the acceptance in the REGENERATE entry: the list, its digest and the moment — no teacher id, no name', async () => {
+        await expect(service.apply(CANDIDATE, 'DRAFT', user, digest)).resolves.toEqual({ lessonsCreated: 2, versionId: 'version-1' });
+
+        const { after, snapshot } = proxy.applyCandidateWrite.mock.calls[0]![1];
+        expect(snapshot.name).toBe('Före schemaförslag 1 – Bästa möjliga');
+        expect(after).toMatchObject({ source: 'CANDIDATE', runId: RUN, ordinal: 1, variant: 'BEST_EFFORT', deviationsDigest: digest });
+        expect(after.acceptedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+        expect(after.deviations).toHaveLength(3);
+        expect(after.deviations.map((entry: { code: string }) => entry.code)).toEqual(['DEVIATION_SUBJECT_PER_DAY', 'DEVIATION_TEACHER_DAILY_CAP', TEACHER_WORK_DAYS_HIDDEN]);
+        const text = JSON.stringify(after);
+        expect(text).not.toContain(ANNA);
+        expect(text).not.toContain('subjectIds');
+        expect(run.appliedCandidateId).toBe(CANDIDATE);
+      });
+
+      it('checks the acceptance after the candidate is known to be applicable and before any lock-taking write of the year', async () => {
+        await refusal(undefined);
+        // It read the school's switch and nothing past it: no Generera check, no run to stop, no masters locked.
+        expect(steps.some((step) => step.includes('FROM "MasterLessons"'))).toBe(false);
+        expect(tx.optimizationJob.count).not.toHaveBeenCalled();
+      });
+
+      it('refuses 409 BEST_EFFORT_NOT_ENABLED, whatever digest, once the school has turned the mode off — the consent is withdrawn with it', async () => {
+        switchedOn(false);
+        await expect(refusal(digest)).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: BEST_EFFORT_NOT_ENABLED }) });
+        tx.lunchSetting.findUnique.mockResolvedValue(null);
+        await expect(refusal(digest)).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: BEST_EFFORT_NOT_ENABLED }) });
+        nothingWritten();
+      });
+
+      it('takes no digest from a candidate with none — null or an empty list — and is not stopped by one that is sent', async () => {
+        for (const clean of [null, []]) {
+          proxy.applyCandidateWrite.mockClear();
+          tx.scheduleCandidate.findUnique.mockResolvedValue(candidateWith({ deviations: clean, ordinal: 2, variant: 'SPREAD' }));
+          await expect(service.apply(CANDIDATE, 'DRAFT', user)).resolves.toMatchObject({ lessonsCreated: 2 });
+          await expect(service.apply(CANDIDATE, 'DRAFT', user, 'any digest at all')).resolves.toMatchObject({ lessonsCreated: 2 });
+        }
+        // A candidate of an ordinary run does not so much as read the school's switch.
+        expect(tx.lunchSetting.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('writes nothing about deviations into the entry of a candidate that has none, and a bare [] for one where the mode found none', async () => {
+        tx.scheduleCandidate.findUnique.mockResolvedValue(candidateWith({ deviations: null, ordinal: 2, variant: 'SPREAD' }));
+        await service.apply(CANDIDATE, 'DRAFT', user);
+        expect(proxy.applyCandidateWrite.mock.calls[0]![1].after).not.toHaveProperty('deviations');
+        expect(proxy.applyCandidateWrite.mock.calls[0]![1].after).not.toHaveProperty('deviationsDigest');
+
+        tx.scheduleCandidate.findUnique.mockResolvedValue(candidateWith({ deviations: [] }));
+        await service.apply(CANDIDATE, 'DRAFT', user);
+        const after = proxy.applyCandidateWrite.mock.calls[1]![1].after;
+        expect(after.deviations).toEqual([]);
+        expect(after).not.toHaveProperty('deviationsDigest');
+        expect(after).not.toHaveProperty('acceptedAt');
+      });
+
+      it('lets the existing refusals go first: a run that is not finished is NOT_APPLICABLE, not a missing acceptance', async () => {
+        run = { status: 'RUNNING', progress: 0, basis: BASIS, basisParts: PARTS };
+        await expect(refusal(undefined)).resolves.toMatchObject({ body: expect.objectContaining({ code: SCHEDULE_CANDIDATE_NOT_APPLICABLE }) });
+      });
+    });
+
+    describe('the variant', () => {
+      it('is not one of the table’s four, and is still named in the safety version', () => {
+        expect(variantsFor(4).map((variant) => variant.code)).not.toContain('BEST_EFFORT');
+        expect(variantOf('BEST_EFFORT')).toBe(BEST_EFFORT_VARIANT);
+        expect(variantOf('NOT_A_VARIANT')).toBeUndefined();
+        expect(snapshotNameOf(1, 'BEST_EFFORT')).toBe('Före schemaförslag 1 – Bästa möjliga');
+        expect(BEST_EFFORT_VARIANT).toMatchObject({ ordinal: 1, overrides: {}, seed: null });
       });
     });
   });

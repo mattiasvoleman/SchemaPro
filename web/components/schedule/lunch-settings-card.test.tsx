@@ -394,6 +394,104 @@ describe("LunchSettingsCard", () => {
     });
   });
 
+  describe("Bästa möjliga schema", () => {
+    // The mode that lets Schemaförslag lay a week with some of the school's own
+    // rules broken. Off until the school turns it on, beside the others and on
+    // the same terms, and its own key on the save.
+    const off = { generatorKeepsTravelTime: false, generatorKeepsPupilGapsDown: false, generatorKeepsConsecutiveTeaching: false };
+
+    it("is off for a school that never turned it on, and for an API that sends no such field", async () => {
+      saved({ ...off, generatorBestEffort: false });
+      const { unmount } = render(<LunchSettingsCard />);
+      expect((await screen.findByRole("switch", { name: "bestEffort" })).getAttribute("aria-checked")).toBe("false");
+      unmount();
+
+      saved(off);
+      render(<LunchSettingsCard />);
+      expect((await screen.findByRole("switch", { name: "bestEffort" })).getAttribute("aria-checked")).toBe("false");
+    });
+
+    it("reads on when the school turned it on, and offers nothing to save for a reading", async () => {
+      saved({ ...off, generatorBestEffort: true });
+      render(<LunchSettingsCard />);
+
+      const best = await screen.findByRole("switch", { name: "bestEffort" });
+      await waitFor(() => expect(best.getAttribute("aria-checked")).toBe("true"));
+      expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it("sends both ways it is turned, and leaves the other switches as they were", async () => {
+      saved({ ...off, generatorKeepsTravelTime: true, generatorBestEffort: false });
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      const best = await screen.findByRole("switch", { name: "bestEffort" });
+      await user.click(best);
+      await user.click(screen.getByRole("button", { name: "save" }));
+      expect(save.mock.calls[0]?.[0]).toMatchObject({
+        generatorBestEffort: true,
+        generatorKeepsTravelTime: true,
+        generatorKeepsPupilGapsDown: false,
+        generatorKeepsConsecutiveTeaching: false,
+      });
+
+      await user.click(best);
+      await user.click(screen.getByRole("button", { name: "save" }));
+      expect(save.mock.calls[1]?.[0]).toMatchObject({ generatorBestEffort: false });
+    });
+
+    it("leaves the switch out of a save to an API that predates it", async () => {
+      // That API refuses a key it does not know (forbidNonWhitelisted).
+      saved(off);
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      expect((await screen.findByRole("switch", { name: "bestEffort" })).getAttribute("aria-checked")).toBe("false");
+      await waitFor(() => expect(field("seats").value).toBe("180"));
+      fireEvent.change(field("seats"), { target: { value: "200" } });
+      await user.click(screen.getByRole("button", { name: "save" }));
+
+      expect(save.mock.calls[0]?.[0]).not.toHaveProperty("generatorBestEffort");
+    });
+
+    it("says what the mode never gives way on and what it can, as two lists the switch is described by", async () => {
+      // The reader is told, where the mode is chosen, that a double booking,
+      // the frame times and the travel time are not among the rules that give
+      // way (relaxation.py HARD_RULES): as lists, not one run of text.
+      saved({ ...off, generatorBestEffort: false });
+      render(<LunchSettingsCard />);
+
+      const best = await screen.findByRole("switch", { name: "bestEffort" });
+      const hint = document.getElementById(best.getAttribute("aria-describedby") ?? "")!;
+      expect(hint).not.toBeNull();
+      expect(hint.textContent).toContain("bestEffortHint");
+
+      const [never, may] = within(hint).getAllByRole("list");
+      expect(within(never!).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+        "bestEffortNeverOverlap",
+        "bestEffortNeverFrames",
+        "bestEffortNeverTravel",
+        "bestEffortNeverTeacher",
+        "bestEffortNeverMeals",
+        "bestEffortNeverRooms",
+        "bestEffortNeverLessons",
+        "bestEffortNeverShared",
+        "bestEffortNeverGroups",
+      ]);
+      expect(within(may!).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+        "bestEffortMayCap",
+        "bestEffortMayDays",
+        "bestEffortMayDistribution",
+        "bestEffortMayRoomLock",
+      ]);
+      // Each list is introduced by its own sentence, in the order they are read.
+      const text = hint.textContent ?? "";
+      expect(text.indexOf("bestEffortNeverTitle")).toBeLessThan(text.indexOf("bestEffortNeverOverlap"));
+      expect(text.indexOf("bestEffortMayTitle")).toBeGreaterThan(text.indexOf("bestEffortNeverGroups"));
+      expect(text.indexOf("bestEffortMayTitle")).toBeLessThan(text.indexOf("bestEffortMayCap"));
+    });
+  });
+
   it("sends the seat count as a number once one is typed", async () => {
     const user = userEvent.setup();
     render(<LunchSettingsCard />);
@@ -1042,6 +1140,23 @@ describe("LunchSettingsCard: Placeringsregler", () => {
         maxClassBuildingsPerDay: null,
         maxTeacherBuildingsPerDay: null,
       });
+    });
+  });
+
+  it("sends Bästa möjliga schema's switch (G2) and the placement keys together, each from its own side", async () => {
+    stored({ generatorBestEffort: false, placementPlacesMode: "SOFT", maxClassRoomsPerDay: 2 });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    await user.click(await screen.findByRole("switch", { name: "bestEffort" }));
+    await pick(user, await rule("shared.title"), "HARD");
+    await user.click(saveButton());
+
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      generatorBestEffort: true,
+      placementSharedMode: "HARD",
+      placementPlacesMode: "SOFT",
+      maxClassRoomsPerDay: 2,
     });
   });
 

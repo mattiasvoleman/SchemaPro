@@ -147,6 +147,9 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/reporting-rate": "DRIFT",
   // Kvittens: the switch and the reminder are Drift's, as the notices they send to guardians; a request is written by Drift too.
   "/admin/acknowledgements": "DRIFT",
+  // Måltidskollen: the cut-off, the kitchen's address and the letter's switch are Drift's, as the attendance the counts
+  // rest on; the counts themselves are read by every administrator.
+  "/admin/meals": "DRIFT",
   // Lektionslogg: the klassbok reads for everyone; removing a log is drift's.
   "/admin/klassbok": "DRIFT",
   "/admin/dataskydd": "DECIDES",

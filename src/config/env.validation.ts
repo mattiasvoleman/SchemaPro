@@ -252,6 +252,16 @@ export class EnvironmentVariables {
   ABSENCE_WATCH_BACKGROUND: string = 'on';
 
   /**
+   * Måltidskollen's daily letter to the kitchen (src/meal-counts/meal-letter.job.ts):
+   * a two-minute look at which schools have passed their cut-off today. It sends
+   * only for a school whose administrator has turned the letter on and given an
+   * address (off until then), so on does nothing for a school that has not. `on`
+   * unless set to `off`; the test setup turns it off.
+   */
+  @IsIn(['on', 'off'])
+  MEAL_LETTER_BACKGROUND: string = 'on';
+
+  /**
    * The nightly reporting rate (src/reporting-rate/reporting-rate.job.ts):
    * it stores each teacher's held and reported lessons for the last 90 days
    * for every school with lessons, and sends the reminders and the weekly

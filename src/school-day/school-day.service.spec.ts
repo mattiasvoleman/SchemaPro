@@ -108,17 +108,34 @@ describe('datesOf', () => {
 describe('SchoolDayService', () => {
   describe('settings', () => {
     it('answers NONE for a school that has not decided, and what it decided otherwise', async () => {
-      expect(await setup({ view: null }).service.settings(admin)).toEqual({ teacherView: 'NONE' });
-      expect(await setup({ view: 'ROOMS' }).service.settings(teacher)).toEqual({ teacherView: 'ROOMS' });
+      expect(await setup({ view: null }).service.settings(admin)).toEqual({ teacherView: 'NONE', guardianNoticeOnMove: false });
+      expect(await setup({ view: 'ROOMS' }).service.settings(teacher)).toEqual({ teacherView: 'ROOMS', guardianNoticeOnMove: false });
+    });
+
+    it('answers the school’s choice about telling a guardian of a move, off until it says so (Elevens lektion för dagen)', async () => {
+      const on = setup({ view: 'ROOMS' });
+      model(on.tx, 'schoolDaySettings', 'findUnique').mockResolvedValue({ teacherView: 'ROOMS', guardianNoticeOnMove: true });
+      expect(await on.service.settings(admin)).toEqual({ teacherView: 'ROOMS', guardianNoticeOnMove: true });
     });
 
     it('saves the decision as one row per school', async () => {
       const { service, tx } = setup({ view: 'ALL' });
-      expect(await service.updateSettings({ teacherView: 'ALL' }, admin)).toEqual({ teacherView: 'ALL' });
+      expect(await service.updateSettings({ teacherView: 'ALL' }, admin)).toEqual({ teacherView: 'ALL', guardianNoticeOnMove: false });
+      // A choice that is not sent is left as it is: the upsert does not carry it.
       expect(model(tx, 'schoolDaySettings', 'upsert')).toHaveBeenCalledWith({
         where: { schoolId: 'school-1' },
         create: { schoolId: 'school-1', teacherView: 'ALL' },
         update: { teacherView: 'ALL' },
+      });
+    });
+
+    it('saves the school’s choice about telling a guardian of a move beside the view, when it is sent', async () => {
+      const { service, tx } = setup({ view: 'ALL' });
+      await service.updateSettings({ teacherView: 'ALL', guardianNoticeOnMove: true }, admin);
+      expect(model(tx, 'schoolDaySettings', 'upsert')).toHaveBeenCalledWith({
+        where: { schoolId: 'school-1' },
+        create: { schoolId: 'school-1', teacherView: 'ALL', guardianNoticeOnMove: true },
+        update: { teacherView: 'ALL', guardianNoticeOnMove: true },
       });
     });
   });

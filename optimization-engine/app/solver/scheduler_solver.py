@@ -43,6 +43,14 @@ from app.solver.placement import (
     add_subject_edges,
 )
 from app.solver.rasts import blocks_for, blocks_with_demand, forbidden_starts
+from app.solver.relaxation import (
+    Relax,
+    deviations_of,
+    dominating_scale,
+    prices_anything,
+    strip as strip_relaxable,
+    upper_bound,
+)
 from app.solver.servings import allowed_starts
 from app.schemas.schedule import (
     PlaceLimits,
@@ -1403,6 +1411,7 @@ class SchedulerSolver:
         *,
         use_assumptions: bool,
         include_objective: bool = True,
+        relax: Relax | None = None,
     ) -> tuple[
         cp_model.CpModel,
         AssumptionRegistry,
@@ -1411,6 +1420,13 @@ class SchedulerSolver:
         dict[tuple[UUID, int], cp_model.IntVar],
     ]:
         """Construct the CP-SAT model.
+
+        `relax` is Bästa möjliga schema's: when given, the rules on the list in
+        app/solver/relaxation.py are built as priced rows (a slack at the
+        rule's price) instead of hard ones, and the prices are collected in it.
+        None builds the model every strict request has always had, variable
+        for variable; nothing below reads it except where a relaxable rule is
+        built.
 
         `use_assumptions` is threaded through to the registry; see its docstring
         for why the default build keeps CpModel.assumptions empty.
@@ -1462,6 +1478,7 @@ class SchedulerSolver:
             building_key=building_key,
             shared_rooms=shared_rooms,
             assume_shared=self._shared_assumption(model, registry, request),
+            relax=relax,
         )
         self._add_availability_constraints(model, registry, decisions, rooms, request.constraints)
         # Before the locked lessons, whose rows read the sites; the day cache
@@ -1530,13 +1547,20 @@ class SchedulerSolver:
             day_vars,
             teacher_days,
             day_literals,
+            relax,
         )
         # Ämnesfördelning. On the day variables alone, so its place among the
         # rule builders says nothing; it reads `day_vars` as the spread
         # objective does and builds the same one per lesson where both run.
-        self._add_distribution_constraints(model, registry, decisions, day_vars)
+        self._add_distribution_constraints(model, registry, decisions, day_vars, relax)
+        if relax is not None:
+            self._add_room_lock_prices(model, decisions, rooms, room_plan, request, relax)
         # Placeringsregler, the HARD half: constraints in both phases, each
         # under its own named assumption. The SOFT half is in the objective.
+        # Only rule 3 can be HARD (rules 1 and 2 are OFF or SOFT in the
+        # database), and a hard rule 3 is a physical limit that Bästa möjliga
+        # schema never lets give way (relaxation.HARD_RULES), so the relax
+        # above neither prices it nor drops it.
         self._placement_rules(
             model, registry, request, decisions, room_plan, day_vars, day_literals,
             soft=False,
@@ -1580,12 +1604,29 @@ class SchedulerSolver:
             pupil_terms = self._add_pupil_gap_objective(
                 model, request, decisions, day_vars, day_literals, lunch_starts,
             )
-            if pupil_terms:
-                model.Minimize(
-                    pupil_gap_scale(request) * sum(objective_terms) + sum(pupil_terms),
-                )
+            if relax is None or relax.empty:
+                if pupil_terms:
+                    model.Minimize(
+                        pupil_gap_scale(request) * sum(objective_terms) + sum(pupil_terms),
+                    )
+                else:
+                    model.Minimize(sum(objective_terms) if objective_terms else 0)
             else:
-                model.Minimize(sum(objective_terms) if objective_terms else 0)
+                # The rules that gave way are priced ABOVE every soft rule
+                # together (relaxation.dominating_scale), so the solver breaks
+                # one only when no timetable keeps it, and the soft objective
+                # then chooses among the timetables that break the least.
+                soft = (
+                    pupil_gap_scale(request) * sum(objective_terms) + sum(pupil_terms)
+                    if pupil_terms
+                    else (sum(objective_terms) if objective_terms else 0)
+                )
+                scale = dominating_scale(upper_bound(model, soft) if not isinstance(soft, int) else 0)
+                model.Minimize(scale * relax.total() + soft)
+        elif relax is not None and not relax.empty:
+            # The satisfaction build of a best-effort run: no soft objective,
+            # but the deviations are still what it is asked to keep small.
+            model.Minimize(relax.total())
         return model, registry, decisions, room_plan, lunch_starts
 
     def _dining_hall_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
@@ -4931,6 +4972,104 @@ class SchedulerSolver:
         status = _solve_guarded(probe, model, what=what, request_id=request.request_id)
         return status, probe
 
+    def _prechecks(
+        self, request: OptimizeScheduleRequest,
+    ) -> tuple[
+        OptimizeScheduleResponse | None,
+        int,
+        dict[tuple[UUID, int], int],
+        dict[int | None, StageLoad],
+    ]:
+        """Everything solve() settles BEFORE a model is built, as one step.
+
+        The request's own refusals (_validate_request), the arithmetic verdicts
+        that decide a week in microseconds, and the lunches alone. Returns the
+        refusal if one of them decided the week, the start step the models are
+        built on, the lunch stage's starts as a warm start, and the years the
+        count found tight. Moved here unchanged from solve() so that Bästa
+        möjliga schema can run exactly the same checks on the week with its
+        relaxable rules taken out (relaxation.strip): the hard rules are
+        refused by name there, in the same words, and by the same code.
+        """
+        self._validate_request(request)
+        # THE STEP, beside the grid it counts in. Per request, because the week
+        # decides it: one lesson locked at 08:05 takes a school searched every
+        # thirty minutes back to every five, and a log that only named the
+        # grid would not show why the same school slowed down.
+        step = _start_step(request, self._grid)
+        logger.info(
+            "start step: slot_minutes=%d step_slots=%d step_minutes=%d",
+            self._grid.slot_minutes, step, step * self._grid.slot_minutes,
+        )
+        # A/B-VECKOR: EVERY VERDICT BELOW COUNTS ONE REAL WEEK. A school with
+        # alternating lessons is judged on each week on its own
+        # (_week_requests): the odd week's lessons and locks, then the even
+        # week's, each a request with every lesson every week, so each
+        # verdict counts exactly what it always counted. A week's request is
+        # a relaxation of the model — the model holds every one of its rows
+        # in that week over at least these lessons — so a week a verdict
+        # refuses is a week the model refuses, and every row it names is a
+        # row of that week. A school without alternating lessons has one
+        # week, the request itself, and is judged exactly as before.
+        weeks = _week_requests(request)
+        lunch_hints: dict[tuple[UUID, int], int] = {}
+        # The years found tight by the count below, heaviest first across
+        # the weeks: carried to a TIMEOUT, which then says so.
+        nearly_full: dict[int | None, StageLoad] = {}
+        for week in weeks:
+            # Arithmetic first, models second: a hall the school cannot fit in
+            # is decided here in microseconds and reported the way a solve
+            # would have.
+            verdict = (
+                self._dining_hall_verdict(week)
+                or self._clique_hours_verdict(week)
+                or self._teacher_hours_verdict(week)
+                or self._lesson_gaps_verdict(week)
+            )
+            if verdict is not None:
+                return (
+                    OptimizeScheduleResponse(
+                        request_id=request.request_id,
+                        status="INFEASIBLE",
+                        lessons=[],
+                        conflicts=verdict,
+                    ),
+                    step, lunch_hints, nearly_full,
+                )
+        for week in weeks:
+            # Then the lunches alone: a small model that proves what the full
+            # one could not in a minute, or hands it a warm start. See
+            # _lunch_stage_one. Its starts are a warm start for the one week
+            # it was asked about, so a school of two weeks takes none.
+            verdict, week_hints = self._lunch_stage_one(week)
+            if week is request:
+                lunch_hints = week_hints
+            # And the clique's hours once more, with every rule the model keeps
+            # its classes by: after every verdict above, so a week one of them
+            # decides keeps its answer. See _class_hours_verdict.
+            verdict = verdict or self._class_hours_verdict(week)
+            # And last, the year's least week with its TEACHERS in the count,
+            # which the class counts leave out: after every verdict above, so
+            # a week one of them decides keeps its answer. See week_load.
+            if verdict is None:
+                loads = self._week_loads(week)
+                verdict = self._week_load_verdict(loads)
+                for load in loads:
+                    held = nearly_full.get(load.year)
+                    if held is None or load.load > held.load:
+                        nearly_full[load.year] = load
+            if verdict is not None:
+                return (
+                    OptimizeScheduleResponse(
+                        request_id=request.request_id,
+                        status="INFEASIBLE",
+                        lessons=[],
+                        conflicts=verdict,
+                    ),
+                    step, lunch_hints, nearly_full,
+                )
+        return None, step, lunch_hints, nearly_full
+
     def solve(self, request: OptimizeScheduleRequest) -> OptimizeScheduleResponse:
         """Two-phase solve: prove a timetable exists, then improve it.
 
@@ -4979,77 +5118,11 @@ class SchedulerSolver:
         if scoped is not self._settings:
             return SchedulerSolver(scoped).solve(request)
         entered = time.monotonic()
-        self._validate_request(request)
-        # THE STEP, beside the grid it counts in. Per request, because the week
-        # decides it: one lesson locked at 08:05 takes a school searched every
-        # thirty minutes back to every five, and a log that only named the
-        # grid would not show why the same school slowed down.
-        step = _start_step(request, self._grid)
-        logger.info(
-            "start step: slot_minutes=%d step_slots=%d step_minutes=%d",
-            self._grid.slot_minutes, step, step * self._grid.slot_minutes,
-        )
-        # A/B-VECKOR: EVERY VERDICT BELOW COUNTS ONE REAL WEEK. A school with
-        # alternating lessons is judged on each week on its own
-        # (_week_requests): the odd week's lessons and locks, then the even
-        # week's, each a request with every lesson every week, so each
-        # verdict counts exactly what it always counted. A week's request is
-        # a relaxation of the model — the model holds every one of its rows
-        # in that week over at least these lessons — so a week a verdict
-        # refuses is a week the model refuses, and every row it names is a
-        # row of that week. A school without alternating lessons has one
-        # week, the request itself, and is judged exactly as before.
-        weeks = _week_requests(request)
-        lunch_hints: dict[tuple[UUID, int], int] = {}
-        # The years found tight by the count below, heaviest first across
-        # the weeks: carried to a TIMEOUT, which then says so.
-        nearly_full: dict[int | None, StageLoad] = {}
-        for week in weeks:
-            # Arithmetic first, models second: a hall the school cannot fit in
-            # is decided here in microseconds and reported the way a solve
-            # would have.
-            verdict = (
-                self._dining_hall_verdict(week)
-                or self._clique_hours_verdict(week)
-                or self._teacher_hours_verdict(week)
-                or self._lesson_gaps_verdict(week)
-            )
-            if verdict is not None:
-                return OptimizeScheduleResponse(
-                    request_id=request.request_id,
-                    status="INFEASIBLE",
-                    lessons=[],
-                    conflicts=verdict,
-                )
-        for week in weeks:
-            # Then the lunches alone: a small model that proves what the full
-            # one could not in a minute, or hands it a warm start. See
-            # _lunch_stage_one. Its starts are a warm start for the one week
-            # it was asked about, so a school of two weeks takes none.
-            verdict, week_hints = self._lunch_stage_one(week)
-            if week is request:
-                lunch_hints = week_hints
-            # And the clique's hours once more, with every rule the model keeps
-            # its classes by: after every verdict above, so a week one of them
-            # decides keeps its answer. See _class_hours_verdict.
-            verdict = verdict or self._class_hours_verdict(week)
-            # And last, the year's least week with its TEACHERS in the count,
-            # which the class counts leave out: after every verdict above, so
-            # a week one of them decides keeps its answer. See week_load.
-            if verdict is None:
-                loads = self._week_loads(week)
-                verdict = self._week_load_verdict(loads)
-                for load in loads:
-                    held = nearly_full.get(load.year)
-                    if held is None or load.load > held.load:
-                        nearly_full[load.year] = load
-            if verdict is not None:
-                return OptimizeScheduleResponse(
-                    request_id=request.request_id,
-                    status="INFEASIBLE",
-                    lessons=[],
-                    conflicts=verdict,
-                )
+        if request.relaxation is not None:
+            return self._solve_best_effort(request, entered)
+        refusal, step, lunch_hints, nearly_full = self._prechecks(request)
+        if refusal is not None:
+            return refusal
 
         rooms = request.rooms
         model, _, decisions, room_plan, lunch_full = self._build_model(
@@ -5338,6 +5411,207 @@ class SchedulerSolver:
 
         # Phase 2 came up empty: fall back to the phase-1 schedule rather than
         # returning nothing. FEASIBLE, deliberately.
+        return _phase1_response()
+
+    def _solve_best_effort(
+        self, request: OptimizeScheduleRequest, entered: float,
+    ) -> OptimizeScheduleResponse:
+        """Bästa möjliga schema: place the week even when its rules cannot all hold.
+
+        THE SAME TWO PHASES AS solve(), ON THE SAME WEEK, with the rules on the
+        list in app/solver/relaxation.py priced instead of enforced, and a
+        list of what gave way beside the timetable.
+
+        EVERY REFUSAL IS THE STRICT ONE, ON THE HARD RULES. The request's own
+        checks, the arithmetic verdicts, the lunches alone, the proof of
+        infeasibility and its explanation, and the probes of a timeout all run
+        on `strip(request)` — the week with the relaxable rules taken out. A
+        week the hard rules alone cannot hold is refused by name with the
+        strict words (its core can only name hard rules, there being no others
+        in the model), and a week that survives them is placed.
+
+        PHASE 1 finds a timetable of the HARD rules with the deviations priced
+        (the satisfaction build keeps an objective of the prices alone, and
+        stops at its first solution); PHASE 2 re-solves the full model, whose
+        objective is the prices times a number larger than the whole soft
+        objective (relaxation.dominating_scale) plus the soft objective, from
+        phase 1's solution. A timetable that keeps every rule is the optimum of
+        both whenever one exists, so a week the strict mode places comes back
+        with an empty `deviations`; that is measured, not assumed
+        (benchmarks/hogstadium.py --best-effort).
+
+        THE CLOCK STARTS AT THE REQUEST, builds included: two builds of a
+        priced model are not free, and the deployment's budget is the whole of
+        what a school waits for.
+        """
+        if not prices_anything(request):
+            # Nothing on the list is in the week: the strict solve is the
+            # best-effort solve, and says so with an empty list.
+            strict = SchedulerSolver(self._settings).solve(
+                request.model_copy(update={"relaxation": None}),
+            )
+            if strict.lessons:
+                strict = strict.model_copy(update={"deviations": []})
+            return strict
+        hard = strip_relaxable(request)
+        refusal, step, lunch_hints, nearly_full = self._prechecks(hard)
+        if refusal is not None:
+            return refusal
+
+        rooms = request.rooms
+        grid = self._grid
+        full_relax = Relax(grid.slot_minutes)
+        feas_relax = Relax(grid.slot_minutes)
+        model, _, decisions, room_plan, lunch_full = self._build_model(
+            request, use_assumptions=False, include_objective=True, relax=full_relax,
+        )
+        feas_model, _, feas_decisions, feas_plan, lunch_feas = self._build_model(
+            request, use_assumptions=False, include_objective=False, relax=feas_relax,
+        )
+        total_budget = self._settings.solver_max_time_seconds
+        tight = sorted(nearly_full.values(), key=lambda load: -load.load)
+
+        def _remaining() -> float:
+            return total_budget - (time.monotonic() - entered)
+
+        def _timeout() -> OptimizeScheduleResponse:
+            return OptimizeScheduleResponse(
+                request_id=request.request_id,
+                status="TIMEOUT",
+                lessons=[],
+                conflicts=self._with_tight_week(self._probe_timeout(hard), tight),
+            )
+
+        self._hint_previous_lessons(feas_model, feas_decisions, request.previous_lessons)
+        for key, slot in lunch_hints.items():
+            if key in lunch_feas:
+                feas_model.AddHint(lunch_feas[key], slot)
+
+        # ---- phase 1a: the hard rules, the deviations priced ----------------
+        phase1 = self._generation_solver(request, min(max(0.0, _remaining()), self.CLEAN_SAT_CAP_SECONDS))
+        phase1.parameters.stop_after_first_solution = True
+        phase1_code = _solve_guarded(
+            phase1, feas_model, what="best-effort phase 1a", request_id=request.request_id,
+        )
+        if phase1_code == cp_model.MODEL_INVALID:
+            msg = f"CP-SAT rejected the generated model: {feas_model.Validate()}"
+            raise SolverBuildError(msg)
+        if phase1_code == cp_model.INFEASIBLE:
+            # Proved on the model with every slack free, i.e. on the hard
+            # rules: named by the strict explanation of the week without the
+            # relaxable ones.
+            return self._explain_infeasible(hard, deadline=entered + total_budget)
+        if phase1_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            winner = phase1
+            winner_decisions, winner_plan, winner_lunch = feas_decisions, feas_plan, lunch_feas
+            if (
+                len(decisions) != len(feas_decisions)
+                or set(room_plan.literals) != set(feas_plan.literals)
+                or set(room_plan.rooms_of) != set(feas_plan.rooms_of)
+                or set(lunch_full) != set(lunch_feas)
+            ):
+                msg = "objective-free and full builds disagree on model structure"
+                raise SolverBuildError(msg)
+            hint_pairs = list(zip(decisions, feas_decisions))
+            hint_literals = [
+                (literal, feas_plan.literals[key][class_index])
+                for key, literals in room_plan.literals.items()
+                for class_index, literal in literals.items()
+            ] + [
+                (literal, feas_plan.rooms_of[key][room])
+                for key, named in room_plan.rooms_of.items()
+                for room, literal in named.items()
+            ]
+        else:
+            # ---- phase 1b: the full model, cleared of its objective -----------
+            remaining = _remaining()
+            if remaining < self.MIN_PHASE_SECONDS:
+                return _timeout()
+            clone_model = model.Clone()
+            clone_model.ClearObjective()
+            phase1b = self._generation_solver(request, remaining)
+            phase1b_code = _solve_guarded(
+                phase1b, clone_model, what="best-effort phase 1b",
+                request_id=request.request_id, degrade=False,
+            )
+            if phase1b_code == cp_model.MODEL_INVALID:
+                msg = f"CP-SAT rejected the generated model: {clone_model.Validate()}"
+                raise SolverBuildError(msg)
+            if phase1b_code == cp_model.INFEASIBLE:
+                return self._explain_infeasible(hard, deadline=entered + total_budget)
+            if phase1b_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                return _timeout()
+            winner = phase1b
+            winner_decisions, winner_plan, winner_lunch = decisions, room_plan, lunch_full
+            hint_pairs = [(decision, decision) for decision in decisions]
+            hint_literals = [
+                (literal, literal)
+                for literals in room_plan.literals.values()
+                for literal in literals.values()
+            ] + [
+                (literal, literal)
+                for named in room_plan.rooms_of.values()
+                for literal in named.values()
+            ]
+
+        locked_rooms = resolve_room_locks(request.requirements, request.room_preferences, rooms)
+
+        def _answer(
+            solver: cp_model.CpSolver,
+            used: list[LessonDecision],
+            plan: RoomPlan,
+            lunch: dict[tuple[UUID, int], cp_model.IntVar],
+            status: SolverStatus,
+        ) -> OptimizeScheduleResponse:
+            lessons = self._extract_lessons(solver, used, rooms, plan)
+            return OptimizeScheduleResponse(
+                request_id=request.request_id,
+                status=status,
+                lessons=lessons,
+                lunches=self._lunches_of(solver, lunch, request.rules),
+                conflicts=None,
+                pupil_idle_minutes=pupil_idle_minutes(request, lessons),
+                deviations=deviations_of(
+                    request, lessons, rooms, locked_rooms,
+                    tuple(grid.schedule_days),
+                    flatten=lambda fixed: _teacher_locks(fixed)[0],
+                ),
+            )
+
+        def _phase1_response() -> OptimizeScheduleResponse:
+            return _answer(winner, winner_decisions, winner_plan, winner_lunch, "FEASIBLE")
+
+        remaining = _remaining()
+        if remaining < self.MIN_PHASE_SECONDS:
+            return _phase1_response()
+
+        # ---- phase 2: the full model, from the phase-1 timetable -------------
+        model.ClearHints()
+        for decision, source in hint_pairs:
+            model.AddHint(decision.start, winner.Value(source.start))
+            model.AddHint(decision.room_index, winner.Value(source.room_index))
+        for literal, source_literal in hint_literals:
+            model.AddHint(literal, winner.Value(source_literal))
+        if request.search is not None:
+            # A schemaförslag candidate's phase 2 starts from a COMPLETE hint,
+            # and the best-effort candidate is one: the slack the prices read
+            # is among the variables the hint would otherwise leave to chance.
+            # See _complete_the_hint.
+            self._complete_the_hint(
+                model, request, winner, lunch_full, winner_lunch, seconds=remaining,
+            )
+            remaining = _remaining()
+            if remaining < self.MIN_PHASE_SECONDS:
+                return _phase1_response()
+        phase2 = self._generation_solver(request, remaining)
+        phase2_code = _solve_guarded(
+            phase2, model, what="best-effort phase 2", request_id=request.request_id,
+        )
+        if phase2_code == cp_model.MODEL_INVALID:
+            msg = f"CP-SAT rejected the generated model: {model.Validate()}"
+            raise SolverBuildError(msg)
+        if phase2_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return _answer(phase2, decisions, room_plan, lunch_full, self._map_status(phase2_code))
         return _phase1_response()
 
     # Ceiling on the solve that completes phase 2's hint, and its share of
@@ -10638,6 +10912,7 @@ class SchedulerSolver:
         building_key: Callable[[AnonymousRoom], object] | None = None,
         shared_rooms: dict[UUID, SharedRoom] | None = None,
         assume_shared: Callable[[UUID], cp_model.IntVar] | None = None,
+        relax: Relax | None = None,
     ) -> RoomPlan:
         """Enforce room capacity by interchangeability class, not by named room.
 
@@ -10663,13 +10938,24 @@ class SchedulerSolver:
             for preference in (room_preferences or [])
             if preference.kind == "WISH"
         ]
-        allowed, key = self._lock_aware(
-            resolve_room_locks(
-                [decision.lesson.requirement for decision in decisions],
-                room_preferences or [],
-                rooms,
-            ),
+        locked = resolve_room_locks(
+            [decision.lesson.requirement for decision in decisions],
+            room_preferences or [],
+            rooms,
         )
+        if relax is not None:
+            # BÄSTA MÖJLIGA SCHEMA: a lock is priced and not enforced, so it
+            # leaves eligibility — a lesson may reach any room its type, size
+            # and years allow — and its rooms join the partition as a
+            # preference set does, so that a class is wholly inside or wholly
+            # outside them and _add_room_lock_prices can read a class off by
+            # its first room (_class_is_preferred).
+            preference_sets = [
+                *preference_sets,
+                *(set(rooms_of) for rooms_of in dict.fromkeys(locked.values())),
+            ]
+            locked = {}
+        allowed, key = self._lock_aware(locked)
         return add_room_allocation(
             model,
             decisions,
@@ -11335,6 +11621,48 @@ class SchedulerSolver:
 
         return penalties
 
+    def _add_room_lock_prices(
+        self,
+        model: cp_model.CpModel,
+        decisions: list[LessonDecision],
+        rooms: list[AnonymousRoom],
+        room_plan: RoomPlan,
+        request: OptimizeScheduleRequest,
+        relax: Relax,
+    ) -> None:
+        """Price every lesson placed outside the rooms its subject is locked to.
+
+        The lock is what resolve_room_locks says it is for the requirement —
+        the narrowest span wins, ties union — read off the SAME function the
+        strict build enforces it with, so the two modes cannot disagree about
+        which rooms a requirement is locked to. The price is one unit of
+        ROOM_LOCK for a lesson outside them, and nothing for a lesson with one
+        eligible class (its placement is decided; the constant steers nothing
+        and the report counts it from the timetable anyway).
+        """
+        locked = resolve_room_locks(
+            [decision.lesson.requirement for decision in decisions],
+            request.room_preferences,
+            rooms,
+        )
+        if not locked:
+            return
+        for decision in decisions:
+            allowed_rooms = locked.get(decision.lesson.requirement.id)
+            if allowed_rooms is None:
+                continue
+            literals = room_plan.literals.get(decision.lesson.key())
+            if not literals:
+                continue
+            inside = [
+                literal
+                for class_index, literal in literals.items()
+                if _class_is_preferred(room_plan, class_index, rooms, set(allowed_rooms))
+            ]
+            if not inside or len(inside) == len(literals):
+                continue
+            relax.add(1 - sum(inside), "ROOM_LOCK")
+
     def _add_disruption_objective(
         self,
         model: cp_model.CpModel,
@@ -11474,6 +11802,7 @@ class SchedulerSolver:
         registry: AssumptionRegistry,
         decisions: list[LessonDecision],
         day_vars: dict[str, cp_model.IntVar],
+        relax: Relax | None = None,
     ) -> None:
         """Ämnesfördelning: at most N lessons a day, no two lesson days too close.
 
@@ -11517,6 +11846,14 @@ class SchedulerSolver:
         that cannot bind — a cap no day can reach, or days apart for a single
         lesson with nothing locked. A school that has written no rule gets the
         model it had, variable for variable.
+
+        BÄSTA MÖJLIGA SCHEMA (`relax`, None in every strict build): the same
+        rows with an amount the rule may be exceeded by, at the rule's price.
+        A day's count may pass its cap by `over` lessons (SUBJECT_PER_DAY, per
+        lesson), and a pair of days too close — or a day next to a locked
+        one — is allowed by a flag that costs SUBJECT_DAYS_APART. The
+        assumption literals stay pinned: the rows are the rules, and the
+        slack is what the rows are priced by.
         """
         by_requirement: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
@@ -11600,7 +11937,14 @@ class SchedulerSolver:
                     len(group),
                 )
                 for day_index, cap in caps.items():
-                    model.Add(counts[day_index] <= cap).OnlyEnforceIf(per_day_literal)
+                    if relax is None:
+                        model.Add(counts[day_index] <= cap).OnlyEnforceIf(per_day_literal)
+                    else:
+                        over = relax.over(
+                            model, f"distover_{requirement_id}_{day_index}",
+                            len(group) - cap, "SUBJECT_PER_DAY",
+                        )
+                        model.Add(counts[day_index] <= cap + over).OnlyEnforceIf(per_day_literal)
 
             if near or shut:
                 apart_literal = registry.register(
@@ -11622,11 +11966,24 @@ class SchedulerSolver:
                     for day_index, flag in used.items():
                         model.AddImplication(literals[day_index], flag)
                 for first, second in near:
-                    model.AddBoolOr(
-                        [used[first].Not(), used[second].Not()],
-                    ).OnlyEnforceIf(apart_literal)
+                    clause = [used[first].Not(), used[second].Not()]
+                    if relax is not None:
+                        clause.append(relax.flag(
+                            model, f"distnear_{requirement_id}_{first}_{second}",
+                            "SUBJECT_DAYS_APART",
+                        ))
+                    model.AddBoolOr(clause).OnlyEnforceIf(apart_literal)
                 for day_index in shut:
-                    model.AddBoolAnd([used[day_index].Not()]).OnlyEnforceIf(apart_literal)
+                    if relax is None:
+                        model.AddBoolAnd([used[day_index].Not()]).OnlyEnforceIf(apart_literal)
+                    else:
+                        model.AddBoolOr([
+                            used[day_index].Not(),
+                            relax.flag(
+                                model, f"distshut_{requirement_id}_{day_index}",
+                                "SUBJECT_DAYS_APART",
+                            ),
+                        ]).OnlyEnforceIf(apart_literal)
 
     def _add_pupil_gap_objective(
         self,
@@ -13993,6 +14350,7 @@ class SchedulerSolver:
         day_vars: dict[str, cp_model.IntVar],
         teacher_days: dict[tuple[UUID, int], _TeacherDay],
         literals: _TeacherDayLiterals,
+        relax: Relax | None = None,
     ) -> None:
         """Lärarens dag: at most a cap of minutes a day, on at most N days a week.
 
@@ -14130,6 +14488,15 @@ class SchedulerSolver:
         person as both lead and co-teacher is one lesson for them, not two. A
         split post's lesson is its own lead's minutes and day, and never the
         other lead's: Bertil's cap counts his one lesson of the three.
+
+        BÄSTA MÖJLIGA SCHEMA (`relax`, None in every strict build). The two
+        rows that hang on a rule's literal become priced: a day's minutes may
+        pass the cap by `over` slots (TEACHER_DAILY_CAP, per slot), and a
+        week's days may pass the post's by `extra` days (TEACHER_WORK_DAYS,
+        per day). The linking rows stay bare and exact, as they are implied by
+        the teacher's own no-overlap and say nothing about the rule. The
+        residual is still floored at zero: a locked day is a fact, and what
+        the generated lessons add to it is what is priced.
         """
         capped = [
             rule for rule in work_rules if rule.max_teaching_minutes_per_day is not None
@@ -14269,9 +14636,23 @@ class SchedulerSolver:
                         # day's too: one LP row sees the cap and the days limit
                         # together, and presolve gets no sum against a number
                         # to throw on — the docstring's two CP-SAT paragraphs.
-                        model.Add(
-                            taught(view, day_index) <= residual * works(view, day_index),
-                        ).OnlyEnforceIf(literal)
+                        if relax is None:
+                            model.Add(
+                                taught(view, day_index) <= residual * works(view, day_index),
+                            ).OnlyEnforceIf(literal)
+                        else:
+                            slot_minutes_here = self._grid.slot_minutes
+                            ceiling = max(0, bringable - residual)
+                            over = relax.over(
+                                model,
+                                f"ldcapover_{teacher_id}_{day_index}_{view.week or 'all'}",
+                                -(-ceiling // slot_minutes_here),
+                                "TEACHER_DAILY_CAP",
+                            )
+                            model.Add(
+                                taught(view, day_index)
+                                <= residual * works(view, day_index) + slot_minutes_here * over,
+                            ).OnlyEnforceIf(literal)
 
             for limit in limits:
                 # One row per week the locks make: the days outside that
@@ -14309,10 +14690,21 @@ class SchedulerSolver:
                         continue
                     # A count of `works`, under the literal: no weighted row
                     # against a constant here either.
-                    for candidates, allowed in weeks:
-                        model.Add(
-                            sum(works(view, day_index) for day_index in candidates) <= allowed,
-                        ).OnlyEnforceIf(literal)
+                    for set_index, (candidates, allowed) in enumerate(weeks):
+                        if relax is None:
+                            model.Add(
+                                sum(works(view, day_index) for day_index in candidates) <= allowed,
+                            ).OnlyEnforceIf(literal)
+                        else:
+                            extra = relax.over(
+                                model,
+                                f"lddaysover_{teacher_id}_{view.week or 'all'}_{set_index}",
+                                len(candidates) - allowed, "TEACHER_WORK_DAYS",
+                            )
+                            model.Add(
+                                sum(works(view, day_index) for day_index in candidates)
+                                <= allowed + extra,
+                            ).OnlyEnforceIf(literal)
                     # The linking rows, bare and implied — see the docstring —
                     # on every day, the locked ones included: they are what
                     # tells the LP that a locked day holds its room and no

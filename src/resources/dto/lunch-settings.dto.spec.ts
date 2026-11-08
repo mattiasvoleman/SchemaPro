@@ -73,6 +73,16 @@ describe('UpsertLunchSettingsDto limits', () => {
     ]);
   });
 
+  it('takes the best-effort switch as true or false, and refuses null, a string and a number', async () => {
+    await expect(failing({ ...base, generatorBestEffort: true })).resolves.toEqual([]);
+    await expect(failing({ ...base, generatorBestEffort: false })).resolves.toEqual([]);
+    // Absent is not a decision: an older tab's PUT leaves the stored value.
+    await expect(failing({ ...base })).resolves.toEqual([]);
+    for (const wrong of [null, 'true', 1]) {
+      await expect(failing({ ...base, generatorBestEffort: wrong })).resolves.toEqual(['generatorBestEffort']);
+    }
+  });
+
   it('refuses a null travel switch, which the NOT NULL column would answer with a 500', async () => {
     await expect(failing({ ...base, generatorKeepsTravelTime: null })).resolves.toEqual([
       'generatorKeepsTravelTime',

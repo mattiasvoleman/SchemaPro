@@ -134,6 +134,8 @@ export interface LessonForAction {
   /** The lesson's attendance beyond its class, for the grade span a vikarie is asked about. */
   extraGroups: { studentGroupId: string }[];
   participants: { studentId: string }[];
+  /** The pupils moved off the lesson for the day (Elevens lektion för dagen): not told what happens to it. */
+  movesFrom?: { studentId: string }[];
 }
 
 /** The cover board's day of a lesson, for its realtime notice. */
@@ -1041,6 +1043,7 @@ export class CalendarLessonsService {
         teachers: { select: { teacherId: true, role: true } },
         extraGroups: { select: { studentGroupId: true } },
         participants: { select: { studentId: true } },
+        movesFrom: { select: { studentId: true } },
       },
     });
     if (!lesson) {
@@ -1075,7 +1078,7 @@ export class CalendarLessonsService {
     tx: PrismaClient,
     lesson: Pick<
       LessonForAction,
-      'schoolId' | 'subjectId' | 'studentGroupId' | 'startsAt' | 'subject' | 'extraGroups' | 'participants'
+      'schoolId' | 'subjectId' | 'studentGroupId' | 'startsAt' | 'subject' | 'extraGroups' | 'participants' | 'movesFrom'
     >,
     options: {
       type: LessonNoticeType;
@@ -1086,7 +1089,9 @@ export class CalendarLessonsService {
       timezone?: string;
     },
   ): Promise<void> {
-    const pupilsAndGuardians = await this.notifications.recipientsForLessons(tx, [scopeOf(lesson)]);
+    // (A pupil moved off the lesson for the day is not told what becomes of it; one moved onto it is a named
+    // pupil, read before the change, so a cancellation still reaches the pupil who was to be there.)
+    const pupilsAndGuardians = await this.notifications.recipientsForLessons(tx, [scopeOf({ ...lesson, movedOff: lesson.movesFrom })]);
     const recipients = [...new Set([...pupilsAndGuardians, ...options.teacherIds])];
     if (recipients.length === 0) return;
     const timezone = options.timezone ?? (await schoolTimezone(tx, lesson.schoolId));

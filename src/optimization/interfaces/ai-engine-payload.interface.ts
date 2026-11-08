@@ -575,6 +575,19 @@ export interface SearchOptions {
   workers?: number;
 }
 
+/**
+ * Bästa möjliga schema: place the week even when the school's own shaping
+ * rules cannot all hold. The engine's Relaxation (schemas/schedule.py). Sent
+ * ONLY by a schemaförslag run the school asked the mode for, and never by
+ * Generera: absent is today's request byte for byte, and an engine older than
+ * the field answers 422 to it (its models forbid extras), which the proxy
+ * says as ENGINE_LACKS_BEST_EFFORT. Which rules may give way is the engine's
+ * one list (relaxation.RELAXABLE_RULES), not a field of the request.
+ */
+export interface RelaxationOptions {
+  mode: 'BEST_EFFORT';
+}
+
 /** Optional hard scheduling rules forwarded to the engine. */
 export interface ScheduleRules {
   /** HH:MM:SS */
@@ -665,6 +678,8 @@ export interface AiEngineScheduleRequest {
   roomPreferences: AnonymousRoomPreference[];
   /** A schemaförslag's search settings; see SearchOptions. Never sent by Generera. */
   search?: SearchOptions;
+  /** Bästa möjliga schema; see RelaxationOptions. Never sent by Generera. */
+  relaxation?: RelaxationOptions;
 }
 
 /**
@@ -747,6 +762,9 @@ export type ConflictCategory =
   // same times, or is refused before the model: members that differ, share a
   // teacher or pupils, or are partly locked.
   | 'TEACHING_BLOCK'
+  // Bästa möjliga schema: a rule that gave way in a timetable that was placed.
+  // A measured breach listed under `deviations`, never under `conflicts`.
+  | 'DEVIATION'
   // Placeringsregler: a school's own HARD placement rule, named when the week
   // cannot keep it. One category per rule, because the fix is a different
   // setting on the same card: the subject's edge rule, the limit on places,
@@ -792,9 +810,10 @@ export interface AiEngineConflictDetail {
    * whose free-day wish a note says was not kept (free-day-wishes.ts), whom
    * the job view names for every reader; and the teachers on the walk's line
    * (TEACHER_TRAVEL_CANNOT_BE_KEPT, stored-conflicts.ts), named the same way,
-   * in the job view and the candidates'. No answer of the API carries it:
-   * the job view is a whitelist, and the synchronous trigger answers with a
-   * status.
+   * in the job view and the candidates'. And the teacher a cap that gave way
+   * is about (DEVIATION_TEACHER_DAILY_CAP), named the same way. No answer of
+   * the API carries it: the job view is a whitelist, and the synchronous
+   * trigger answers with a status.
    */
   subjectIds?: string[];
 }
@@ -831,6 +850,15 @@ export interface AiEngineScheduleResponse {
    */
   lunches?: AiEngineLunch[];
   conflicts?: AiEngineConflictAnalysis | null;
+  /**
+   * Bästa möjliga schema: what gave way in the timetable returned, one line per
+   * rule and place (category DEVIATION; deviations.ts). PRESENT, EVEN EMPTY,
+   * ONLY on the answer to a request that carried `relaxation` (an empty list
+   * says the mode ran and nothing gave way); omitted on every other answer,
+   * and on a refusal, which names the hard rule that stopped the week under
+   * `conflicts` as it always did.
+   */
+  deviations?: AiEngineConflictDetail[];
   /**
    * Elevernas håltimmar in the timetable returned, locked lessons included:
    * idle pupil-minutes in an ordinary week, counted as the håltimmesrapport

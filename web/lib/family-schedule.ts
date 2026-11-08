@@ -40,6 +40,8 @@ export interface FamilyLesson {
   substitute: boolean;
   topic?: string | null;
   homework?: string | null;
+  /** The child is on this lesson because they were moved to it for the day (Elevens lektion för dagen). */
+  movedHere?: boolean;
 }
 
 export interface FamilyMeal {

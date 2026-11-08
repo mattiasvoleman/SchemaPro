@@ -107,6 +107,7 @@ describe('LunchSettingsService', () => {
     generatorKeepsTravelTime: false,
     generatorKeepsPupilGapsDown: false,
     generatorKeepsConsecutiveTeaching: false,
+    generatorBestEffort: false,
     placementEdgeMode: 'OFF',
     placementEdgeWeight: 250,
     placementPlacesMode: 'OFF',
@@ -225,6 +226,36 @@ describe('LunchSettingsService', () => {
       };
       expect(older.update).not.toHaveProperty('generatorKeepsConsecutiveTeaching');
       expect(older.create).not.toHaveProperty('generatorKeepsConsecutiveTeaching');
+    });
+
+    it('writes the best-effort switch when the form sends it, on both halves of the upsert, true and false alike', async () => {
+      for (const value of [true, false]) {
+        tx.lunchSetting.upsert.mockClear();
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow({ generatorBestEffort: value }));
+        await expect(service.upsert(dto({ generatorBestEffort: value }), testUser())).resolves.toMatchObject({
+          generatorBestEffort: value,
+        });
+        const sent = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        };
+        // false is a decision too: dropped as falsy it could never be turned off again.
+        expect(sent.create['generatorBestEffort']).toBe(value);
+        expect(sent.update['generatorBestEffort']).toBe(value);
+      }
+    });
+
+    it('leaves the best-effort switch alone when a tab from before it does not send one', async () => {
+      // Writing `false` here would withdraw the consent a colleague gave, and
+      // with it every candidate with deviations still on the page.
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+      await service.upsert(dto({ generatorKeepsConsecutiveTeaching: true }), testUser());
+      const older = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(older.update).not.toHaveProperty('generatorBestEffort');
+      expect(older.create).not.toHaveProperty('generatorBestEffort');
     });
 
     it('stores an absent seat count as null rather than dropping the field', async () => {
@@ -595,6 +626,29 @@ describe('LunchSettingsService', () => {
         await service.upsert(dto({ maxClassRoomsPerDay: null, maxTeacherRoomsPerDay: 5 }), testUser());
 
         expect(sentOf().create).toMatchObject({ placementPlacesMode: 'SOFT', maxClassRoomsPerDay: null, maxTeacherRoomsPerDay: 5 });
+      });
+
+      it('keeps Bästa möjliga schema’s switch (G2) beside the stored rule 2: each side’s fields are in both halves only when named', async () => {
+        tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'OFF', maxClassRoomsPerDay: 2 }));
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+        await service.upsert(dto({ generatorBestEffort: true, placementPlacesMode: 'SOFT' }), testUser());
+
+        expect(sentOf().create).toMatchObject({ generatorBestEffort: true, placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 2 });
+        expect(sentOf().update).toMatchObject({ generatorBestEffort: true, placementPlacesMode: 'SOFT' });
+        expect(sentOf().update).not.toHaveProperty('maxClassRoomsPerDay');
+
+        // A tab from before either: neither field is written, in either half.
+        await service.upsert(dto(), testUser());
+        for (const arm of [sentOf().create, sentOf().update]) {
+          expect(arm).not.toHaveProperty('generatorBestEffort');
+          expect(arm).not.toHaveProperty('placementPlacesMode');
+        }
+        // The stored rule 2 is not read for a request that does not touch it, and the switch alone does not touch it.
+        tx.lunchSetting.findUnique.mockClear();
+        await service.upsert(dto({ generatorBestEffort: false }), testUser());
+        expect(tx.lunchSetting.findUnique).not.toHaveBeenCalled();
+        expect(sentOf().create).toMatchObject({ generatorBestEffort: false });
       });
 
       it('adds nothing of the stored row to a request that says nothing about rule 2, or to a school with no row', async () => {
