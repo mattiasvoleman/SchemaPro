@@ -2110,7 +2110,11 @@ Walk the full product loop once, in order:
     is why the default keeps it. **A proof names its pupil only as long as the pupil is not pseudonymised**, and
     that is the school's separate choice for *Avgångna personer*: a school that wants to be able to show *who* was
     instructed must choose at least as long a period there as for *Checklistor*. The pseudonymisation does not
-    touch the proofs (a proof of a pseudonymised pupil stays, without a name); this is flagged in the pull request.
+    touch the proofs (a proof of a pseudonymised pupil stays, without a name), nor the free text staff wrote in
+    them: `ConsentEntries.givenBy` (who gave the answer, often a guardian's name) and the two `note` columns stay
+    until the rows are purged, so the *Checklistor* period also decides how long a guardian's name is kept
+    (granskning #288, LÅG-4; `gallring_pseudonymise` is a third shared function and is left alone); this is
+    flagged in the pull request.
   - *A consent is a guardian's.* Staff write it down from a paper, a call or a meeting (who wrote it and when are
     the database's; the date on the paper and who gave it are the writer's), or ask the guardians through Kvittens
     with the rule ALL, which is the only confirmation there is: when the last guardian a request asked has
@@ -2136,7 +2140,9 @@ Walk the full product loop once, in order:
     is built by the gateway and holds the marked out: they are not in its rows or counts, `heldOut` says how many, and
     the paper says so. It is the gateway's and not the browser's because a teacher, who prints too, cannot read the
     marks (the register of marks is the administrators'): `app.checklist_protected_ids` tells the gateway, for the
-    ids it is given, which are marked, and the gateway passes none of them on. There is no export file. The tables are in
+    ids it is given, which are marked (a teacher is told only about the pupils they read, an administrator about any
+    pupil of the school), and the gateway passes none of them on. The list of who can have given an instruction
+    leaves a colleague with a protected identity out for a teacher, as Skolans dag does for the staff on one screen. There is no export file. The tables are in
     the registerutdrag, in the removal's inventory and so in the whole-school export's person tables.
   Reads that name pupils (a roster, a list, a pupil's card) are recorded in the läslogg as PEOPLE.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
