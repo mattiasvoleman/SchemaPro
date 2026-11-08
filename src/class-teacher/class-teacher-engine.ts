@@ -223,7 +223,7 @@ export class ClassTeacherEngine {
       const hidden = options.forTeacher === true && mode === 'DRAFT' && !layerIsDated;
       return { state: 'CONFLICT', conflicts: hidden ? conflicts.map(({ kind }) => ({ kind })) : conflicts };
     }
-    const removes = layerIsDated || mode === 'DRAFT' ? null : await this.removalOf(tx, change);
+    const removes = mode === 'DRAFT' ? null : await this.removalOf(tx, change);
     return removes ? { state: 'OK', removes } : { state: 'OK' };
   }
 
@@ -462,21 +462,23 @@ export class ClassTeacherEngine {
       case 'OK':
         break;
     }
+    // A draft that is claimed is the draft the publisher read, field for field: any edit counts the revision up and so
+    // fails the claim. What the claim adds is the revision it leaves the draft at, which the mark below is made at.
     const claimed = await this.prisma.withRls(actor, async (tx) => {
       const taken = await tx.classTeacherChange.updateMany({
         where: { id: change.id, rev: change.rev, status: 'DRAFT' },
         data: { updatedAt: new Date() },
       });
       if (taken.count !== 1) return null;
-      return tx.classTeacherChange.findUnique({ where: { id: change.id } });
+      return tx.classTeacherChange.findUnique({ where: { id: change.id }, select: { rev: true } });
     });
     if (!claimed) return { id: change.id, outcome: 'GONE' };
     try {
-      await this.carryOut(actor, claimed);
+      await this.carryOut(actor, change);
     } catch (error) {
       if (error instanceof ConflictException) {
         // The editor's own check found a clash this one did not (a write in between): named by asking again.
-        const again = await this.prisma.withRls(actor, (tx) => this.evaluate(tx, claimed, options)).catch(() => null);
+        const again = await this.prisma.withRls(actor, (tx) => this.evaluate(tx, change, options)).catch(() => null);
         return { id: change.id, outcome: 'CONFLICT', conflicts: again?.state === 'CONFLICT' ? again.conflicts : [] };
       }
       if (error instanceof HttpException) {
@@ -528,7 +530,8 @@ export class ClassTeacherEngine {
         const outcome = await this.publishOne(actor, fresh, options);
         outcomes.set(change.id, outcome);
         if (outcome.outcome === 'PUBLISHED') published += 1;
-        else if (outcome.outcome === 'CONFLICT' || outcome.outcome === 'STALE') retry.push(fresh);
+        // Only a clash can go away because another draft went first; a lesson that has changed under a draft stays changed.
+        else if (outcome.outcome === 'CONFLICT') retry.push(fresh);
       }
       if (published === 0) break;
       pending = retry;

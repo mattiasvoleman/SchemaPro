@@ -501,6 +501,8 @@ describe('ClassTeacherService.check, preview and publish', () => {
     expect(result).toEqual([{ change: expect.objectContaining({ id: 'change-1' }), verdict: { state: 'OK' } }]);
     const asWhom = (prisma.withRls as unknown as jest.Mock).mock.calls.map((call) => (call[0] as { userId: string }).userId);
     expect(asWhom).toEqual(['teacher-1', 'admin-9']);
+    // For a klasslärare: a school that publishes through a draft shows its draft grundschema to no teacher.
+    expect(engine.evaluate).toHaveBeenCalledWith(tx, expect.objectContaining({ id: 'change-1' }), { forTeacher: true });
   });
 
   it('answers a refused check with the database’s words', async () => {

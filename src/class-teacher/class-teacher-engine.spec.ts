@@ -248,6 +248,17 @@ describe('ClassTeacherEngine.evaluate', () => {
     expect(datedConflicts).not.toHaveBeenCalled();
   });
 
+  it('does not judge a cancellation against the day, however crowded it is: a lesson that is taken away clashes with nothing', async () => {
+    const { engine, tx } = setup();
+    tx['calendarLesson']!['findUnique']!.mockResolvedValue({
+      id: 'lesson-1', date: day('2027-03-22'), startsAt: new Date('2027-03-22T08:30:00.000Z'), endsAt: new Date('2027-03-22T09:30:00.000Z'), roomId: 'room-1', subjectId: 'subject-1',
+      studentGroupId: 'class-1', studentGroup: { academicYearId: 'year-1' }, teachers: [], extraGroups: [], participants: [],
+    });
+    (datedConflicts as jest.Mock).mockResolvedValue([{ kind: 'ROOM' }]);
+    expect(await engine.evaluate(tx as never, row())).toEqual({ state: 'OK' });
+    expect(datedConflicts).not.toHaveBeenCalled();
+  });
+
   it('asks the dated check about a move, on the date and the hours it asks for, and is a CONFLICT with what it names', async () => {
     const { engine, tx } = setup();
     tx['calendarLesson']!['findUnique']!.mockResolvedValue({
@@ -750,6 +761,15 @@ describe('ClassTeacherEngine.evaluate: the rest of what the editor holds a place
     }
   });
 
+  it('reads the board with the year’s own numbering of its årskurser', async () => {
+    const { engine, tx } = setup();
+    tx['masterLesson']!['findUnique']!.mockResolvedValue(grundschema);
+    tx['academicYear']!['findUnique']!.mockResolvedValue({ gradeNumbering: 'TIOARIG' });
+    await engine.evaluate(tx as never, move());
+    expect(readBoardFacts).toHaveBeenCalledWith(tx, expect.objectContaining({ gradeNumbering: 'TIOARIG' }));
+    expect(tx['academicYear']!['findUnique']).toHaveBeenCalledWith({ where: { id: 'year-1' }, select: { gradeNumbering: true } });
+  });
+
   it('reads the board for the groups of the lesson on the day it moves to, and a school that holds nothing finds nothing', async () => {
     const { engine, tx } = setup();
     tx['masterLesson']!['findUnique']!.mockResolvedValue(grundschema);
@@ -767,6 +787,36 @@ describe('ClassTeacherEngine.evaluate: the rest of what the editor holds a place
       expect(await engine.evaluate(tx as never, change)).toEqual({
         state: 'CONFLICT',
         conflicts: [{ kind: 'EXCEPTION', other: { className: '4A', subjectName: 'Matte', date: '2027-03-23', start: '13:00', end: '14:00' } }],
+      });
+    }
+  });
+
+  it('asks for the lessons the change would rewrite and no others: the template’s own, still to be held, with no register', async () => {
+    const { engine, tx } = setup();
+    tx['masterLesson']!['findUnique']!.mockResolvedValue(grundschema);
+    await engine.evaluate(tx as never, move());
+    expect(tx['calendarLesson']!['findMany']!.mock.calls[0]![0].where).toEqual({
+      masterLessonId: 'master-1',
+      status: 'SCHEDULED',
+      startsAt: { gt: expect.any(Date) },
+      attendanceRecords: { none: {} },
+    });
+  });
+
+  it('meets a lesson that differs from the template in one respect alone: its day, its start or its end', async () => {
+    // Template: Monday 08:30-09:30. Monday 2027-04-05 is CEST, so 08:30 is 06:30Z.
+    for (const [what, row, shown] of [
+      ['the day', dated('2027-04-06', '06:30', '07:30'), { date: '2027-04-06', start: '08:30', end: '09:30' }],
+      ['the start', dated('2027-04-05', '07:00', '07:30'), { date: '2027-04-05', start: '09:00', end: '09:30' }],
+      ['the end', dated('2027-04-05', '06:30', '08:00'), { date: '2027-04-05', start: '08:30', end: '10:00' }],
+    ] as const) {
+      const { engine, tx } = setup();
+      tx['masterLesson']!['findUnique']!.mockResolvedValue(grundschema);
+      tx['calendarLesson']!['findMany']!.mockResolvedValue([row]);
+      const verdict = await engine.evaluate(tx as never, move());
+      expect({ what, verdict }).toEqual({
+        what,
+        verdict: { state: 'CONFLICT', conflicts: [{ kind: 'EXCEPTION', other: { className: '4A', subjectName: 'Matte', ...shown } }] },
       });
     }
   });
@@ -843,6 +893,21 @@ describe('ClassTeacherEngine.evaluate: the rest of what the editor holds a place
   });
 
   describe('what a klasslärare reads of a school that publishes through a draft', () => {
+    it('is told by a publication for a teacher, too: the outcome names the clash by its kind alone, and publishClass hands the flag to each draft', async () => {
+      (publishModeOf as jest.Mock).mockResolvedValue('DRAFT');
+      const { engine, tx, masters } = setup();
+      tx['masterLesson']!['findUnique']!.mockResolvedValue(grundschema);
+      tx['masterLesson']!['findMany']!.mockResolvedValue([{ id: 'master-2', dayOfWeek: 2, startTime: time('10:00'), endTime: time('11:00'), subject: { name: 'Svenska' }, studentGroup: { name: '4B' } }]);
+      masters.findConflicts.mockResolvedValue([{ kind: 'ROOM', message: 'x', masterLessonId: 'master-2' }]);
+      expect(await engine.publishOne(actor, move(), { forTeacher: true })).toEqual({ id: 'change-1', outcome: 'CONFLICT', conflicts: [{ kind: 'ROOM' }] });
+      expect(((await engine.publishOne(actor, move())) as { conflicts: Array<{ other?: unknown }> }).conflicts[0]!.other).toBeDefined();
+      tx['classTeacherChange']!['findMany']!.mockResolvedValue([move()]);
+      tx['classTeacherChange']!['findUnique']!.mockResolvedValue(move());
+      const publishOne = jest.spyOn(engine, 'publishOne');
+      await engine.publishClass(actor, 'class-1', undefined, { forTeacher: true });
+      expect(publishOne).toHaveBeenCalledWith(actor, expect.objectContaining({ id: 'change-1' }), { forTeacher: true });
+    });
+
     const clash = [{ kind: 'TEACHER', message: 'x', masterLessonId: 'master-2' }, { kind: 'AVAILABILITY', message: 'y' }];
     const other = { id: 'master-2', dayOfWeek: 2, startTime: time('10:00'), endTime: time('11:00'), subject: { name: 'Svenska' }, studentGroup: { name: '4B' } };
 
@@ -885,7 +950,7 @@ describe('ClassTeacherEngine: a date’s lesson moved, the protection against a 
   const lessonRow = {
     id: 'lesson-1', status: 'SCHEDULED', date: day('2027-03-22'), startsAt: new Date('2027-03-22T08:30:00.000Z'), subjectId: 'subject-1', studentGroupId: 'class-1',
     studentGroup: { academicYearId: 'year-1' }, subject: { name: 'Matte' }, note: null as string | null, roomId: 'room-1' as string | null,
-    teachers: [{ teacherId: 'teacher-1' }], extraGroups: [], participants: [],
+    teachers: [{ teacherId: 'teacher-1' }], extraGroups: [], participants: [{ studentId: 'pupil-1' }],
   };
   const world = (lesson: Record<string, unknown> = lessonRow) => {
     const made = setup();
@@ -954,7 +1019,7 @@ describe('ClassTeacherEngine: a date’s lesson moved, the protection against a 
     await engine.publishOne(actor, moved);
     const [, context, placement] = (datedConflicts as jest.Mock).mock.calls.at(-1)!;
     expect(context.basis).toEqual({ kind: 'CURRENT' });
-    expect(placement).toMatchObject({ lessonId: 'lesson-1', date: '2027-03-23', subjectId: 'subject-1', schoolId: 'school-1', participantIds: [], roomId: 'room-1' });
+    expect(placement).toMatchObject({ lessonId: 'lesson-1', date: '2027-03-23', subjectId: 'subject-1', schoolId: 'school-1', participantIds: ['pupil-1'], roomId: 'room-1' });
     expect((datedConflicts as jest.Mock).mock.calls.at(-1)![0]).toBe(tx);
   });
 });

@@ -161,6 +161,20 @@ describe('datedConflicts', () => {
     expect(await datedConflicts(tx as never, context, placement())).toHaveLength(1);
   });
 
+  it('tells two lessons that clash the same way as two clashes, one for each', async () => {
+    const { tx, masters, context } = setup();
+    tx['calendarLesson']!['findMany']!.mockResolvedValue([
+      other({ id: 'cl-2' }),
+      other({ id: 'cl-3', studentGroupId: 'class-8', studentGroup: { name: '5A' }, subject: { name: 'Engelska' }, startsAt: new Date('2027-03-23T08:00:00.000Z'), endsAt: new Date('2027-03-23T09:30:00.000Z') }),
+    ]);
+    masters.findConflicts.mockResolvedValue([
+      { kind: 'GROUP', message: 'a', masterLessonId: 'cl-2' },
+      { kind: 'GROUP', message: 'b', masterLessonId: 'cl-3' },
+    ]);
+    const found = await datedConflicts(tx as never, context, placement());
+    expect(found.map((view) => view.other?.className)).toEqual(['5B', '5A']);
+  });
+
   it('is blocked by an approved booking of the room, and only an approved one, and only of a room', async () => {
     const { tx, context } = setup();
     tx['roomBooking']!['findFirst']!.mockResolvedValue({ id: 'booking-1' });
