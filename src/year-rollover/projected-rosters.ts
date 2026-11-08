@@ -104,7 +104,8 @@ export interface RosterViewer {
 /** A basis, or what a reader that may not need one knows to compute it lazily. */
 export type BasisOrYear = RosterBasis | { viewer: RosterViewer; known?: YearFlags | SettledCount };
 
-const CURRENT: CurrentRosters = Object.freeze({ kind: 'CURRENT' });
+/** The one CURRENT basis (roster-readers.inventory.spec.ts: nothing else builds one). Exported for the specs that need a basis without a database. */
+export const CURRENT: CurrentRosters = Object.freeze({ kind: 'CURRENT' });
 
 const STAFF: ReadonlySet<string> = new Set([Role.SCHOOL_ADMIN, Role.TEACHER]);
 
