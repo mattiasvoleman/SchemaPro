@@ -75,6 +75,35 @@
  * not named and is counted. A route of Skolans dag that ever answers a file
  * belongs in the list below, by name, before it ships.
  *
+ * ELEVENS LEKTION FÖR DAGEN (20270122091000) IS DECIDED HERE TOO, though no
+ * route of it is listed: GET /api/v1/lesson-moves/lessons/:id (a lesson's
+ * moves) and .../pupils and .../candidates answer the screen in JSON, and no
+ * path of them is a file or a feed. They name pupils on purpose, a marked one too: the
+ * register already names the pupil to the teacher who moves them, the list of
+ * a lesson's moves is that register's own list, and a pupil nobody could pick
+ * is a pupil who stays on a lesson they have left. The mover is named to the
+ * administrators and to the mover, and not to a colleague on the lesson when
+ * the mover is marked (the same list Skolans dag leaves a marked teacher out
+ * with). No notice, push or e-mail names the pupil, the class or the mover; the
+ * row carries the pupil's id and the two lessons, and the web and the app word
+ * it from the subjects and the time. No calendar feed names a pupil. The
+ * registerutdrag of the mover holds back the pupil, the lessons and the mark
+ * the move set aside (person-tables.ts); the pupil's own extract has all of it.
+ * A route of the moves that ever answers a file belongs in the list below, by
+ * name, before it ships.
+ *
+ * MÅLTIDSKOLLEN (20270123090000) IS DECIDED HERE TOO, though no route of it is
+ * listed: GET /api/v1/meal-counts answers the screen in JSON and GET
+ * /api/v1/meal-counts/csv is a file (windows-1252, `;`) of the same counts, and
+ * neither names a person. They are numbers (the portions of each lunch sitting,
+ * the absence taken off and the staff as counts) and the names of classes; a
+ * pupil with a protected identity is a pupil in a count, as every pupil is, and
+ * is named nowhere. The daily letter to the kitchen is the same view as text.
+ * The file and the print are the web's (web/lib/people-files.ts, NAMES_NOBODY).
+ * A route of Måltidskollen that ever names a pupil, which allergies and diets
+ * are not stored in Rastra to avoid, belongs in the list below, by name, as
+ * HOLDS_OUT, before it ships.
+ *
  * Why the database cannot hold this instead: an export is built in the
  * gateway or the browser from ordinary reads under RLS, and nothing in the
  * catalogue says which reads become a file. The rule that can be held there

@@ -230,7 +230,8 @@
     "crisis": "Krisläge",
     "myCrisis": "Larm",
     "schemavisaren": "Schemavisaren",
-    "schoolDay": "Skolans dag"
+    "schoolDay": "Skolans dag",
+    "meals": "Måltidskollen"
   },
   "dashboard": {
     "title": "Översikt",
@@ -2417,6 +2418,7 @@
       "ACK_REQUESTED": "Skolan ber dig bekräfta: {title}",
       "ACK_REMINDER": "Påminnelse: skolan väntar på din bekräftelse av {title}"
     },
+    "lessonPupilMoved": "En elevs lektion {when} är nu {subject}.",
     "lessonReportReminder": "{count, plural, one {# ny lektion hölls} other {# nya lektioner hölls}} för minst {limitDays, plural, one {# dag} other {# dagar}} sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Se Min rapportering.",
     "reportingRateDigest": "Rapporteringsgrad {from} – {to}: {reported, number} av {held, plural, one {# hållen lektion} other {# hållna lektioner}} hade ett sparat register. Se Rapporteringsgrad.",
     "cover": {
@@ -6203,6 +6205,7 @@
       "COVER_REQUEST_ACCEPTED": "Kollegor som tackat ja till min förfrågan",
       "ABSENCE_WATCH_DIGEST": "Frånvarosammanställning",
       "ACK_REQUESTED": "Meddelanden från skolan som du ska bekräfta",
+      "LESSON_PUPIL_MOVED": "Elever som byter lektion för en dag",
       "ACK_REMINDER": "Påminnelse om ett meddelande som väntar på din bekräftelse",
       "LESSON_REPORT_REMINDER": "Påminnelser om öppna lektioner",
       "REPORTING_RATE_DIGEST": "Veckobesked om rapporteringsgrad",
@@ -7341,6 +7344,7 @@
       "mentorDuties": "{count, plural, one {# mentorsuppdrag} other {# mentorsuppdrag}} tappar klassen",
       "sharedLessons": "{count, plural, one {# lektion} other {# lektioner}} i grundschemat och kalendern som delas med andra grupper tappar gruppen",
       "lessonLogs": "{count, plural, one {# lektionslogg} other {# lektionsloggar}} på de lektionerna",
+      "lessonMoves": "{count, plural, one {# flytt av en elev till en parallell lektion} other {# flyttar av elever till parallella lektioner}} för en dag på de lektionerna",
       "lunchSittings": "{count, plural, one {# lunch} other {# luncher}} i grundschemat",
       "calendarBreaks": "{count, plural, one {# rast eller lunch} other {# raster och luncher}} i kalendern",
       "availabilityConstraints": "{count, plural, one {# tillgänglighetsregel} other {# tillgänglighetsregler}}",
@@ -8522,6 +8526,69 @@
       "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
     }
   },
+  "lessonMoves": {
+    "action": "Flytta elev",
+    "title": "Flytta en elev till en parallell lektion",
+    "description": "Eleven flyttas för den här lektionens dag. Schemat i övrigt är som det var, och flytten går att ångra.",
+    "pupil": "Elev",
+    "pupilPlaceholder": "Välj en elev",
+    "noPupils": "Det finns ingen elev på lektionen som du får flytta.",
+    "pupilsFailed": "Eleverna kunde inte läsas in.",
+    "pupilsFailedHint": "Försök igen om en stund.",
+    "arrived": "flyttad hit",
+    "candidates": "Lektioner som överlappar {subject} {start}–{end}",
+    "noCandidates": "Ingen annan lektion överlappar den här i tid.",
+    "candidatesFailed": "Lektionerna kunde inte läsas in.",
+    "candidatesFailedHint": "Försök igen om en stund.",
+    "headcount": "{count, plural, one {# elev} other {# elever}}",
+    "capacity": "salen rymmer {count}",
+    "confirm": "Flytta",
+    "moved": "Eleven är flyttad.",
+    "undone": "Flytten är ångrad.",
+    "undo": "Ångra",
+    "sectionTitle": "Flyttade elever",
+    "sectionDescription": "Elever som är flyttade till eller från den här lektionen för dagen. De räknas på lektionen de går på, inte som frånvarande på den här.",
+    "departure": "Flyttad till {subject} ({className}, {start}–{end})",
+    "arrival": "Kommer från {subject} ({className}, {start}–{end})",
+    "movedBy": "flyttad av {name}",
+    "warning": {
+      "TARGET_ROOM_OVER_CAPACITY": "Salen rymmer {capacity} men får {headcount}"
+    },
+    "refusal": {
+      "LESSON_MOVE_NOT_PARALLEL": "Överlappar inte i tid",
+      "LESSON_MOVE_LESSON_OVER": "Lektionen eleven går från är slut",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {Lektionen eleven går från hålls inte} other {Är inställd}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "Är ersatt av en schemabrytande aktivitet",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "Eleven går redan på den här lektionen",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "Eleven har en annan lektion samtidigt"
+    },
+    "errors": {
+      "LESSON_MOVE_NOT_ALLOWED": "Du får inte flytta den här eleven. Det får en administratör med Drift, en lärare på någon av lektionerna och elevens mentor.",
+      "LESSON_MOVE_NOT_FOUND": "Flytten finns inte längre.",
+      "LESSON_MOVE_LESSON_NOT_FOUND": "Lektionen finns inte.",
+      "LESSON_MOVE_NOT_PARALLEL": "Lektionerna överlappar inte i tid, så eleven kan inte flyttas dit.",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {Lektionen eleven går från hålls inte.} other {Lektionen eleven ska flyttas till är inställd.}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "{side, select, FROM {Lektionen eleven går från är ersatt av en schemabrytande aktivitet.} other {Lektionen eleven ska flyttas till är ersatt av en schemabrytande aktivitet.}}",
+      "LESSON_MOVE_IN_THE_PAST": "En flytt görs för i dag eller senare.",
+      "LESSON_MOVE_LESSON_OVER": "Lektionen är slut. Ingen ny flytt görs ur en avslutad lektion. En flytt som redan gjorts kan samma dag ångras av en administratör med Drift eller en lärare på lektionen eleven flyttades från, och flyttas vidare av en administratör med Drift eller en lärare på lektionen eleven står på. Be någon av dem.",
+      "LESSON_MOVE_PUPIL_NOT_ON_LESSON": "Eleven går inte på lektionen.",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "Eleven går redan på den lektionen.",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "Eleven skulle få två lektioner samtidigt.",
+      "LESSON_MOVE_HAS_ATTENDANCE": "Eleven har redan en närvaromarkering på lektionen de flyttats till. Ta bort markeringen först.",
+      "LESSON_MOVE_EXISTS": "Eleven är redan flyttad från lektionen.",
+      "LESSON_MOVE_CHANGED": "Flytten ändrades just nu. Försök igen.",
+      "LESSON_MOVE_NOT_A_PUPIL": "Eleven finns inte."
+    },
+    "settings": {
+      "title": "Notis när en elev byter lektion",
+      "description": "Lärarna på de två lektionerna får alltid en notis. Här väljer skolan om vårdnadshavaren också får en när barnet flyttas till en parallell lektion för en dag.",
+      "guardianNotice": "Berätta för vårdnadshavaren när ett barn byter lektion för en dag",
+      "hint": "Notisen säger att ett barns lektion har ändrats och när, aldrig vem som flyttade barnet. Av som förval.",
+      "saved": "Valet är sparat.",
+      "loadFailed": "Valet kunde inte läsas in.",
+      "loadFailedHint": "Försök igen om en stund."
+    }
+  },
   "absenceStats": {
     "title": "Frånvarostatistik över tid",
     "teacherSubtitle": "Frånvaron i klasserna där du är mentor, månad för månad över tre läsår",
@@ -8712,5 +8779,107 @@
       "legend": "Giltig och ogiltig är elevens andel av de registrerade minuterna. Klass är klassens giltiga och ogiltiga frånvaro tillsammans, Rapp. klassens rapporteringsgrad. ”–” betyder att siffra saknas: ingen registrering för eleven, eller för få elever i klassen.",
       "footer": "Uppgifter om en enskild elev, som underlag för utvecklingssamtal. Förvara och kassera utskriften enligt skolans rutiner."
     }
+  },
+  "meals": {
+    "title": "Måltidskollen",
+    "subtitle": "Portioner per lunchsittning, för köket.",
+    "intro": "Antalen räknas från det publicerade schemat: eleverna i klasserna som äter i sittningen, minus anmäld frånvaro som kommit före brytpunkten, plus personal som äter med. De gäller från i dag, eftersom klasslistorna är dagens.",
+    "view": {
+      "label": "Vy",
+      "day": "Dagen",
+      "week": "Veckan framåt"
+    },
+    "day": {
+      "pick": "Dag",
+      "previous": "Föregående dag",
+      "next": "Nästa dag",
+      "today": "I dag"
+    },
+    "actions": {
+      "print": "Skriv ut",
+      "csv": "Hämta fil för Excel",
+      "csvFailed": "Filen kunde inte hämtas. Försök igen om en stund."
+    },
+    "print": {
+      "dayTitle": "Portioner {date}",
+      "weekTitle": "Portioner {from} – {to}",
+      "school": "Rastra Måltidskollen"
+    },
+    "kpi": {
+      "portions": "Portioner",
+      "pupils": "Elever",
+      "absent": "Frånvaro, avdragen",
+      "staff": "Personal",
+      "after": "Anmäld efter brytpunkten",
+      "notIncluded": "Ingår inte",
+      "afterDetail": "Visas, dras inte av"
+    },
+    "table": {
+      "captionDay": "Portioner per sittning {date}",
+      "captionWeek": "Portioner per dag, veckan framåt",
+      "column": {
+        "sitting": "Sittning",
+        "sittings": "Sittningar",
+        "classes": "Klasser",
+        "date": "Dag",
+        "pupils": "Elever",
+        "absent": "Frånvaro före brytpunkten",
+        "staff": "Personal",
+        "portions": "Portioner",
+        "after": "Efter brytpunkten"
+      },
+      "activity": "aktivitet",
+      "activityTitle": "Klassen har en schemabrytande aktivitet över sittningen och räknas med.",
+      "total": "Totalt",
+      "none": "Ingen sittning",
+      "open": "Visa dagen",
+      "openFor": "Visa {date}",
+      "notIncluded": "–"
+    },
+    "empty": {
+      "title": "Ingen lunch i det publicerade schemat den här dagen",
+      "body": "Det gäller helger, lov och dagar som schemat inte är publicerat för. Lunchen publiceras med schemat."
+    },
+    "emptyWeek": {
+      "title": "Ingen lunch i det publicerade schemat den närmaste veckan",
+      "body": "Publicera schemat, eller välj en annan dag under Dagen."
+    },
+    "notes": {
+      "title": "Så här räknas det",
+      "cutoff": "Frånvaro som anmälts före klockan {time} den dagen är avdragen. Frånvaro som anmäls senare dras inte av utan visas för sig, så att du ser vad som ändrats sedan beställningen.",
+      "noCutoff": "Ingen brytpunkt är satt, så ingen frånvaro dras av. Ange en brytpunkt under Brytpunkt och brev.",
+      "partial": "Bara frånvaro som täcker hela sittningen dras av: en elev som är borta en del av den äter.",
+      "staff": "Personal räknas enligt den pedagogiska lunch med fast tid som är lagd under Tjänstefördelning.",
+      "noStaff": "Personal ingår inte: ingen pedagogisk lunch med fast tid är lagd under Tjänstefördelning.",
+      "activity": "Klasser med en schemabrytande aktivitet över sittningen räknas med, eftersom aktiviteten inte säger om klassen äter i skolan.",
+      "diet": "Allergier och kostval ingår inte. De lagras inte i Rastra."
+    },
+    "settings": {
+      "title": "Brytpunkt och brev till köket",
+      "description": "Brytpunkten är den tid på dagen då köket lägger sin beställning. Brevet går varje skoldag vid brytpunkten till köksadressen, genom Rastras vanliga utskick.",
+      "cutoffLabel": "Brytpunkt",
+      "cutoffHint": "Skolans tid, TT:MM. Utan brytpunkt dras ingen frånvaro av.",
+      "emailLabel": "Köksadress",
+      "emailHint": "En adress. Den är skolans, inte en användare, och används bara för brevet.",
+      "letterLabel": "Skicka ett brev till köket varje skoldag",
+      "letterOn": "Brevet går klockan {time} varje dag som har en sittning.",
+      "letterOff": "Brevet är av. Det går inget brev förrän du slår på det.",
+      "letterNeeds": "Ange en brytpunkt och en köksadress för att slå på brevet.",
+      "privacy": "Brevet och filen innehåller bara antal och klassernas namn, aldrig en elevs namn.",
+      "lastLetter": "Senaste brev: {date}",
+      "noLetterYet": "Inget brev har gått ännu.",
+      "save": "Spara",
+      "saved": "Inställningarna är sparade.",
+      "problem": {
+        "cutoff": "Brytpunkten ska vara en tid TT:MM.",
+        "email": "Köksadressen ska vara en e-postadress, bara en.",
+        "letter": "Brevet kan bara vara på när brytpunkt och köksadress är angivna."
+      },
+      "loadFailed": "Inställningarna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
+    },
+    "loadFailed": "Portionerna kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "retry": "Försök igen"
   }
 }

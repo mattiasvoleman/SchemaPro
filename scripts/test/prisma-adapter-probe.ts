@@ -149,6 +149,7 @@ import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
 import { coverRequestsChecks, sweepCoverRequestsSchool } from './probe-cover-requests';
 import { krislageChecks, sweepKrislageSchool } from './probe-krislage';
 import { kvittensChecks, sweepKvittensSchool } from './probe-kvittens';
+import { lessonMoveChecks, sweepLessonMovesSchool } from './probe-lesson-moves';
 import { skolansDagChecks, sweepSkolansDagSchool } from './probe-skolans-dag';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
@@ -5457,7 +5458,12 @@ async function runChecks(
           // rastvaktspass of the day, their own or taken as vikarie, one
           // SELECT; the day's decisions on them are asked only when it
           // returns a pass, and this school has none.
-          'suggest a substitute': 31,
+          // +1 since Elevens lektion för dagen (20270122091000): the roster
+          // reader asks which pupils were moved off the lesson for the day,
+          // one indexed SELECT on LessonPupilMoves by fromLessonId, with the
+          // named pupils it already reads. Nothing is read of the move when
+          // the lesson's roster is the recorded one.
+          'suggest a substitute': 32,
           // The assignment enters the publication lock and locks the lesson
           // row and the substitute (+3: two writers cannot both put one
           // person on two lessons at one hour, nor cover during a DRAFT
@@ -5478,7 +5484,9 @@ async function runChecks(
           // +1 since Rastvakt i vardagen (20261210090000): the substitute's
           // rastvaktspass of the day for the warning a pass then gives
           // (COVER_TEACHER_ON_SUPERVISION), one SELECT, as in the suggestion.
-          'assign a substitute': 37,
+          // +1 since Elevens lektion för dagen, as in the suggestion: the
+          // lesson's moves, read with its roster for the booking's notice.
+          'assign a substitute': 38,
           // +1 each since Publicering: app.enter_grundschema_write, the shared
           // publication lock and the mode in one statement, first (below).
           // +1 since Halvklasser on a PATCH that meets another group's lesson
@@ -5943,6 +5951,7 @@ async function runChecks(
   await coverRequestsChecks(owner, api, MARKER, check);
   await krislageChecks(owner, api, MARKER, check);
   await kvittensChecks(owner, api, MARKER, check);
+  await lessonMoveChecks(owner, api, MARKER, check);
   await skolansDagChecks(owner, api, MARKER, check);
   await elevlistanChecks(owner, api, MARKER, check);
   await massvalChecks(owner, api, MARKER, check);
@@ -6445,6 +6454,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepKrislageSchool(owner, MARKER);
   // Kvittens' school, likewise.
   await sweepKvittensSchool(owner, MARKER);
+  // Elevens lektion för dagen's school, likewise.
+  await sweepLessonMovesSchool(owner, MARKER);
   // Skolans dag's school, likewise.
   await sweepSkolansDagSchool(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.

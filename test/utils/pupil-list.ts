@@ -21,6 +21,8 @@ export interface PupilListSchool {
   groups: PupilListGroup[];
   cases: Record<string, string>;
   expected: Record<string, { on: string[]; off: string[] }>;
+  /** The same school's answer for the lessons pupils were moved off (PupilListFixture.movedLessons). */
+  movedExpected: Record<string, { on: string[]; off: string[] }>;
 }
 
 export interface PupilListFixture {
@@ -30,6 +32,8 @@ export interface PupilListFixture {
   subjects: { id: string; name: string; nationalCode: string }[];
   pupils: { id: string; name: string; homeGroupId: string; groupIds: string[] }[];
   lessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[] }[];
+  /** Lessons a pupil was moved off for the day (Elevens lektion för dagen); only the contract specs replay them. */
+  movedLessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[]; movedOff: string[] }[];
   schools: PupilListSchool[];
 }
 

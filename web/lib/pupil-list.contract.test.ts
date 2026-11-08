@@ -15,10 +15,12 @@ interface Fixture {
   academicYearId: string;
   pupils: { id: string; homeGroupId: string; groupIds: string[] }[];
   lessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[] }[];
+  movedLessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[]; movedOff: string[] }[];
   schools: {
     name: string;
     groups: { id: string; kind: string; halfOfId: string | null; replacesSubjectId: string | null; academicYearId: string }[];
     expected: Record<string, { on: string[]; off: string[] }>;
+    movedExpected: Record<string, { on: string[]; off: string[] }>;
   }[];
 }
 
@@ -36,6 +38,16 @@ describe("the web's lesson pupils agree with the gateway's", () => {
       const keptBy = keptByOf(groups.get(lesson.groupIds[0]!));
       const scope = { ...lesson, academicYearId: f.academicYearId, ...(keptBy ? { keptBy } : {}) };
       expect([lesson.name, lessonPupils(scope, membersOf, bySubject, yearsOf(school.groups))]).toEqual([lesson.name, school.expected[lesson.id]]);
+    }
+  });
+
+  it.each(f.schools.map((school) => [school.name, school] as const))("%s: pupils moved off a lesson for the day are off it, as on the gateway", (_name, school) => {
+    const groups = new Map(school.groups.map((group) => [group.id, group]));
+    const bySubject = replacingBySubject(replacedSubjectOf(school.groups));
+    for (const lesson of f.movedLessons) {
+      const keptBy = keptByOf(groups.get(lesson.groupIds[0]!));
+      const scope = { ...lesson, academicYearId: f.academicYearId, ...(keptBy ? { keptBy } : {}) };
+      expect([lesson.name, lessonPupils(scope, membersOf, bySubject, yearsOf(school.groups))]).toEqual([lesson.name, school.movedExpected[lesson.id]]);
     }
   });
 });

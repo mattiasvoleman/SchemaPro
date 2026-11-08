@@ -176,6 +176,12 @@ export interface DeliveredAudienceRow {
   /** Sorted; empty on an unshared lesson. */
   extraGroupIds: string[];
   studentIds: string[];
+  /**
+   * The pupils moved off these lessons for the day (Elevens lektion för dagen): the lesson is not theirs, and
+   * its minutes are not in their timplan; the lesson they were moved to is, as a named pupil's. Sorted; empty
+   * on every row of a school with no move, and absent in a fixture older than the move.
+   */
+  movedOffIds?: string[];
   minutes: number;
   lessons: number;
 }
@@ -1216,6 +1222,8 @@ export function computeDeliveredCoverage(
     for (const row of [...pupil.groupIds.flatMap((id) => audiencesByGroup.get(id) ?? []), ...(audiencesByPupil.get(pupil.id) ?? [])]) {
       if (seen.has(row)) continue;
       seen.add(row);
+      // Moved off these lessons for the day: not theirs, whatever else reaches them to it.
+      if (row.movedOffIds?.includes(pupil.id)) continue;
       if (
         pupil.replacements.length > 0 &&
         leaves(pupil, row.subjectId, [row.studentGroupId, ...row.extraGroupIds], row.studentIds.includes(pupil.id))

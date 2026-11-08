@@ -55,9 +55,10 @@ import type { Persona } from "./stub/sessions";
  * Room above the measured figure. Two fetches of one build agree to the byte,
  * and two builds to within a byte or so (measured: the teacher's figure was
  * 9 452 and 9 453). A menu row whose icon another row has costs a few tens of
- * bytes; ten admin rows with ten icons that no row had cost 1 995 B, 459 B over
- * this room (measured, 2026-11-07), and the next phase's one or two rows are
- * well inside it.
+ * bytes (Måltidskollen's, with Lunchsittningar's icon: 92 B, measured in CI
+ * 2026-11-08, on top of 12 946); ten admin rows with ten icons that no row had
+ * cost 1 995 B, 459 B over this room (measured, 2026-11-07), and the next
+ * phase's one or two rows are well inside it.
  */
 const MARGIN = 1_536;
 
@@ -81,7 +82,7 @@ interface Measured {
 }
 
 const PAGES: Measured[] = [
-  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 12_946 },
+  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_038 },
   { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_452 },
 ];
 
