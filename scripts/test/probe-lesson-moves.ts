@@ -32,8 +32,10 @@
  *   lm-h  a lesson that ended this morning is still today's: the teacher of
  *         the target alone cannot move a pupil off it (409, and the door says
  *         LM416 itself when asked past the gateway), the colleague's mark
- *         stands with its author, and Ångra of a move whose source has ended
- *         since is refused too (the review of #281, MEDEL-1).
+ *         stands with its author, and a move made while the source ran is not
+ *         the target teacher's to undo once the source has ended (the review of
+ *         #281, MEDEL-1); the source's teacher and an administrator can, and the
+ *         mark comes back with its author and time (round 2, MEDEL-1).
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -413,8 +415,16 @@ export async function lessonMoveChecks(owner: Client, api: PrismaService, marker
       const E3 = await lesson(k7b, en, '12:00', '12:45');
       await teach(S3, anna);
       await teach(E3, bertil);
+      // Anna's own mark on Alva in S3, which the move sets aside and Ångra must put back with her as its author.
+      await owner.query(
+        `INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, note, "recordedAt", "recordedById", "updatedAt")
+         VALUES ($1, $2, $3, 'ABSENT', 'skolkade enligt Anna', now() - interval '2 hours', $4, now())`,
+        [s, S3, p1.userId, anna.userId],
+      );
       const made = await moves.move(p1.userId!, S3, E3, bertil);
       assert.equal(made.moved, true);
+      const madeForBo = await moves.move(p2.userId!, S3, E3, bertil).catch((error) => error);
+      assert.ok(madeForBo && (madeForBo as { moved?: boolean }).moved === true, 'Bo could not be moved to the lesson of 7B');
       await owner.query(
         `UPDATE "CalendarLessons" SET date = (now() AT TIME ZONE 'Europe/Stockholm')::date,
                 "startsAt" = CASE id WHEN $1 THEN now() - interval '3 hours' ELSE now() - interval '150 minutes' END,
@@ -423,10 +433,29 @@ export async function lessonMoveChecks(owner: Client, api: PrismaService, marker
           WHERE id IN ($1, $2)`,
         [S3, E3],
       );
-      assert.equal((await moveRows()).length, 1, 'the move fell with the move of the lessons');
+      assert.equal((await moveRows()).length, 2, 'the moves fell with the move of the lessons');
       await assert.rejects(moves.undo(made.moveId!, bertil), refusedWith(409, 'LESSON_MOVE_LESSON_OVER'));
       await assert.rejects(moves.move(p1.userId!, E3, S3, bertil), refusedWith(409, 'LESSON_MOVE_LESSON_OVER'));
-      assert.equal((await moveRows()).length, 1, 'the move stands');
+      assert.equal((await moveRows()).length, 2, 'the moves stand');
+      assert.equal(await markOf(S3, p1), 'UNKNOWN', 'the colleague’s mark was written over');
+
+      // The source's teacher undoes it: Alva is back, and her mark with its author and its time, not Anna's of this minute.
+      await moves.undo(made.moveId!, anna);
+      const back = await one<{ status: string; note: string | null; recordedById: string | null; old: boolean }>(
+        `SELECT status::text, note, "recordedById", ("recordedAt" < now() - interval '90 minutes') AS old FROM "AttendanceRecords" WHERE "calendarLessonId" = $1 AND "studentId" = $2`,
+        [S3, p1.userId],
+      );
+      assert.deepEqual(back, { status: 'ABSENT', note: 'skolkade enligt Anna', recordedById: anna.userId, old: true });
+      assert.deepEqual((await moveRows()).map((row) => row.studentId), [p2.userId]);
+      // A first move off a lesson that is over is for nobody: not Anna, who teaches it, and not the administrator (Alva is on it again).
+      await assert.rejects(moves.move(p1.userId!, S3, E3, anna), refusedWith(409, 'LESSON_MOVE_LESSON_OVER'));
+      await assert.rejects(moves.move(p1.userId!, S3, E3, admin), refusedWith(409, 'LESSON_MOVE_LESSON_OVER'));
+      assert.deepEqual((await moveRows()).map((row) => row.studentId), [p2.userId], 'a first move was made off a lesson that is over');
+      // An administrator with Drift undoes the other one by sending Bo back (a move back is Ångra).
+      const sentBack = await moves.move(p2.userId!, E3, S3, admin);
+      assert.equal(sentBack.moved, false);
+      assert.deepEqual(await moveRows(), []);
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessonStudents" WHERE "calendarLessonId" = $1`, [E3])).n, 0, 'an arrival is left on the target');
       await owner.query(`DELETE FROM "CalendarLessons" WHERE id = ANY($1::uuid[])`, [[S2, E2, S3, E3]]);
       assert.deepEqual(await moveRows(), []);
     });
