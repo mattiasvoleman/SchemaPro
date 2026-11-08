@@ -2177,9 +2177,10 @@ Walk the full product loop once, in order:
   `ClassTeacherChangeKind` and `ClassTeacherChangeStatus`, the tables
   `ClassTeacherAppointments`, `ClassTeacherSettings`, `ClassTeacherOpenTimes`
   and `ClassTeacherChanges` (nineteen policies, all `TO app_authenticated`), and
-  seventeen `app.class_teacher_*` / `app.is_class_teacher` functions (fifteen
-  SECURITY DEFINER with a pinned `search_path` that the API role may run, two
-  triggers' guards nobody may call). No existing row is touched, no existing
+  twenty-one `app.class_teacher_*` / `app.is_class_teacher` functions, every one
+  SECURITY DEFINER with a pinned `search_path`: ten the API role may run, nine
+  that take the school as an argument and that nobody may run (the entry points
+  call them as the owner), and two triggers' guards nobody may call. No existing row is touched, no existing
   table gains a column, nothing reaches the engine, and `gallring_due`,
   `gallring_purge` and `gallring_pseudonymise` are not restated (their
   `md5(prosrc)` are the same before and after). The new keys take `Schools`,
@@ -2194,12 +2195,14 @@ Walk the full product loop once, in order:
   in first, then the merge.**
   **Before the migration**, as the owner: `SHOW server_version` is 17.x;
   `prisma migrate status` lists exactly this migration as pending; the file's
-  checksum (sha256, what Prisma records) is `672ff584cc9cdfdd0c1fc90873150495abfa9e0f40cee5e3fcb0a2f129dfd4e3`;
+  checksum (sha256, what Prisma records) is `177bc639b8de0e1bf01feb4684dd015bafe4bda1a49694ab5637821090dceefa`;
   `SELECT to_regclass('"ClassTeacherChanges"')` is NULL; no session sits idle in
   a transaction that holds one of the seven tables above (the query of the
   Vikariefrågan entry).
   **After it, before the merge:** `SELECT count(*) FROM pg_policies WHERE
-  tablename LIKE 'ClassTeacher%'` is 19; the four tables have row security on;
+  tablename LIKE 'ClassTeacher%'` is 19 and `SELECT count(*) FROM pg_proc WHERE
+  pronamespace = 'app'::regnamespace AND (proname LIKE 'class\_teacher\_%' OR
+  proname = 'is_class_teacher')` is 21; the four tables have row security on;
   `app_authenticated` holds SELECT, INSERT, UPDATE and DELETE on appointments,
   open times and changes, SELECT, INSERT and UPDATE on the settings, no
   MAINTAIN; `anon` and `authenticated` nothing; `has_function_privilege('anon',
@@ -2212,8 +2215,10 @@ Walk the full product loop once, in order:
   the clashes live, inside a **frame**: the hours the schemaläggare has opened
   (none until some are), never a lesson with another teacher, a block, a half
   class, a replacing group, a shared post, a teacher shared with another school
-  or a room lent to or from one, and nothing already past, covered or with a
-  register. The frame is one statement in the database
+  or a room lent to or from one, and nothing already past (by the instant: today
+  at an hour that has passed is past), covered or with a register, and nothing of
+  a läsår that has ended (`YEAR_ENDED`; a date to move a lesson to must lie in
+  the class's läsår). The frame is one statement in the database
   (`app.class_teacher_frame`), asked by row security on every write and by the
   gateway first, which names the reason. **What a klasslärare writes is a
   draft** in a table of its own; nothing reaches the timetable until it is
@@ -2228,13 +2233,28 @@ Walk the full product loop once, in order:
   Publicering **lapses** (409 `CLASS_TEACHER_APPOINTER_GONE`) until another
   administrator makes it again. Two people at once never overwrite each other:
   a draft carries a hash of the lesson it was written against and a revision,
-  and a clash is a 409 that says what changed. **A DRAFT school** (publishMode
+  and a clash is a 409 that says what changed. **A change is held to the rules
+  the editor holds a placement to and to no rules of its own**: the clash rule
+  (`MasterLessonsService.findConflicts`) for the template, and for one date the
+  same rule held against that date's lessons, and G1's board rules (the stage's
+  ramtid, the class's meal, a closure on årskurser: `src/swaps/board-rules.ts`)
+  for both. **Publishing is claimed**: of two who publish the same draft at once
+  one carries it out (the other is told it is gone). **A change of the template
+  in a school that publishes at once** moves the future dated lessons and removes
+  the ones that would land in the past or past the template's end; the klasslärare
+  is told how many (and how many carry a lesson log) before it is published, and a
+  lesson that was moved for its date is met as a clash until the date has passed,
+  since the move would put it on a third day. **A DRAFT school** (publishMode
   DRAFT) hides its grundschema from teachers; the klasslärare reads their own
-  class's through `app.class_teacher_master_lessons` and nothing else of it, and
-  a published template change lands in the school's draft like any other
-  grundschema edit, for the schemaläggare's ordinary publication.
+  class's through `app.class_teacher_master_lessons`, and the check and the
+  preview name a clash with the rest of the draft by its kind alone ("the room is
+  taken"), never whose lesson or when. A published template change lands in the
+  school's draft like any other grundschema edit, for the schemaläggare's ordinary
+  publication.
   **Rollover:** appointments do not carry into the next läsår (a new läsår has
-  new classes); the administrator appoints again.
+  new classes); the administrator appoints again. An appointment on a läsår that
+  has ended is no longer offered (`GET /api/v1/class-teacher/mine`) and every
+  change of its classes is refused by the database (`YEAR_ENDED`).
   **After the merge:** `GET /api/v1/class-teachers/settings` answers
   `{"selfPublish": false}`; as a teacher with no appointment `GET
   /api/v1/class-teacher/mine` answers `{"classes": [], "selfPublish": false}`.

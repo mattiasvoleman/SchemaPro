@@ -7037,7 +7037,9 @@
       till en ersättande grupp, en timplanspost som delas mellan lärare, en lärare som delas med en
       annan skola, eller en sal som är utlånad till eller från en annan skola. Inte heller en lektion
       som redan varit, har en vikarie, är inställd eller har närvaro registrerad. Försöker klassläraren
-      ändå får hen ett besked som säger vilket av skälen det är.</li>
+      ändå får hen ett besked som säger vilket av skälen det är. När läsåret är slut ändras inget i dess
+      klasser längre (klassläraren får inte klassen i sin lista, och databasen nekar ändringen), och en
+      ny tid för ett datum måste ligga i klassens läsår och inte ha börjat.</li>
     <li><strong>Ändringarna är utkast.</strong> Det klassläraren gör ändrar inte schemat. Det
       hamnar som ett <em>utkast</em> för klassen, och först när det publiceras går det till schemat:
       en ställd-in lektion ställs in och klassen får besked, en flyttad lektion flyttas med en notis, en
@@ -7048,16 +7050,27 @@
       äldsta först, och säger för varje om det publicerades eller varför inte. Ett utkast som inte går
       stannar kvar. Du kan också slänga ett utkast.</li>
     <li><strong>Samma kontroll som din.</strong> Klassläraren ser krockar medan hen ändrar: lärare,
-      sal och klass som redan är upptagna, en otillgänglig tid, en sal som är bokad, och lov. Det är
-      samma kontroll som i schemaredigeraren; krockarna namnges med klass, ämne och tid, aldrig med
-      en lärares namn. Lärare som är markerade med skyddad identitet nämns alltså aldrig.</li>
+      sal och klass som redan är upptagna (också elever som går i en annan grupp, och ombyte och dusch
+      före och efter en lektion), en otillgänglig tid, en sal som är bokad, och lov. Det är samma
+      kontroll som i schemaredigeraren, för mallen och för ett datum, och dessutom de hårda regler
+      som Byten och flyttar håller: stadiets ramtid, klassens lunch och en stängd årskurs. Krockarna
+      namnges med klass, ämne och tid, aldrig med en lärares namn. Lärare som är markerade med skyddad
+      identitet nämns alltså aldrig. I en skola som publicerar via utkast ser klassläraren inte heller
+      vilken lektion i skolans utkast en krock är med, bara att salen eller klassen är upptagen.
+      <em>Tar en ändring av mallen bort kommande lektioner ur kalendern</em> (de skulle hamna på en tid
+      som redan har börjat eller efter mallens slut) står det med antal innan den publiceras, och
+      därtill om någon skrivit lektionslogg eller läxa på dem. En lektion som redan flyttats för ett
+      datum stoppar en ändring av mallen tills datumet har passerat, annars skulle den hamna på en
+      tredje dag.</li>
     <li><strong>Flera på en gång.</strong> Ett utkast bygger på lektionen som den såg ut när klassläraren
       läste den. Har du eller någon annan ändrat lektionen sedan dess får klassläraren
       <em>Lektionen har ändrats sedan du läste den</em> och ser vad som ändrats, och utkastet publiceras
       inte. Två som ändrar samma utkast skriver aldrig över varandra: den som kommer sist får veta att
       utkastet ändrats och hur det ser ut nu. Det finns högst ett utkast per lektion och lager (ett för
       mallen och ett för ett datum); en lektion med ett utkast i det ena lagret kan inte få ett i det
-      andra förrän det första publicerats eller slängts.</li>
+      andra förrän det första publicerats eller slängts. Publicerar två samma utkast samtidigt
+      (klassläraren och du, eller två flikar) går det igenom en gång; den andra får veta att utkastet
+      inte längre väntar.</li>
     <li><strong>Klassläraren publicerar själv?</strong> Reglaget <span class="ui">Klasslärare publicerar sin klass utkast
       själva</span> under <span class="ui">Publicering</span> är avstängt tills du slår på det. Då publicerar klassläraren sina
       egna utkast, och de går igenom samma kontroll och samma ram som när du publicerar. Stäng av det
