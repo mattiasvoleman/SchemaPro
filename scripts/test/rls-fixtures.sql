@@ -4760,7 +4760,11 @@ DECLARE
   post uuid;
 BEGIN
   SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
-  IF m IS NULL OR EXISTS (SELECT 1 FROM "TeachingRequirementPlacements" WHERE "schoolId" = m) THEN
+  -- Guarded by the subject this block creates, not by the placement: a probe
+  -- or a hand that removed the placement leaves the subject behind, and a
+  -- second insert of it would stop the fixtures on Subjects_schoolId_code_key
+  -- (review of #293, LÅG-5).
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "Subjects" WHERE "schoolId" = m AND code = 'RLSF') THEN
     RETURN;
   END IF;
   SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = m AND "isActive";

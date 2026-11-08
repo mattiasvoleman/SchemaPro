@@ -233,6 +233,21 @@ describe('SwapsService.suggest: what it offers is what a brute force finds', () 
     const offered = await parked.suggest({ lessonId: 'x' }, user);
     expect(offered).toMatchObject({ proposals: [], immovable: 'PARKED' });
   });
+
+  it('answers a lesson Generera wrote from a förläggning with nothing and says why (LÅG-2 of #293)', async () => {
+    const placedTx = fakeTx(world);
+    (placedTx as unknown as { masterLesson: Record<string, unknown> }).masterLesson['findUnique'] = jest.fn(async () => ({
+      id: 'x',
+      academicYearId: YEAR,
+      isParked: false,
+      fromPlacement: true,
+    }));
+    const { swaps: placed } = service(world, placedTx);
+    (readSwapData as jest.Mock).mockResolvedValue(world.data);
+    const offered = await placed.suggest({ lessonId: 'x' }, user);
+    expect(offered).toMatchObject({ proposals: [], immovable: 'PLACED' });
+    expect(readSwapData).not.toHaveBeenCalledWith(placedTx, expect.anything(), expect.anything());
+  });
 });
 
 describe('SwapsService.suggest says what applying a proposal would take out of the published calendar', () => {
@@ -344,5 +359,34 @@ describe('SwapsService.apply refuses a move it cannot stand behind', () => {
         user,
       ),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('is a 409 LESSON_IS_PLACED, writing nothing, for a lesson Generera wrote from a förläggning (LÅG-2 of #293)', async () => {
+    const world = makeWorld({ seed: 7 });
+    const tx = fakeTx(world) as unknown as Record<string, unknown>;
+    const [a, b] = world.data.lessons as [SwapLesson, SwapLesson];
+    const row = (lesson: SwapLesson, fromPlacement: boolean) => ({
+      id: lesson.id,
+      academicYearId: YEAR,
+      fromPlacement,
+      school: { id: 'school', timezone: 'Europe/Stockholm' },
+    });
+    tx['$queryRaw'] = jest.fn(async () => [{ mode: 'DIRECT' }]);
+    const updateMany = jest.fn();
+    (tx['masterLesson'] as Record<string, unknown>)['findMany'] = jest.fn(async () => [row(a, true), row(b, false)]);
+    (tx['masterLesson'] as Record<string, unknown>)['updateMany'] = updateMany;
+    const { swaps } = service(world, tx as never);
+    const attempt = swaps.apply(
+      {
+        lessonId: b.id,
+        moves: [
+          { lessonId: a.id, from: { dayOfWeek: 1, startTime: '08:00', endTime: '09:00' }, to: { dayOfWeek: 2, startTime: '08:00', endTime: '09:00' } },
+          { lessonId: b.id, from: { dayOfWeek: 2, startTime: '08:00', endTime: '09:00' }, to: { dayOfWeek: 1, startTime: '08:00', endTime: '09:00' } },
+        ],
+      },
+      user,
+    );
+    await expect(attempt).rejects.toMatchObject({ response: expect.objectContaining({ code: 'LESSON_IS_PLACED', lessonIds: [a.id] }) });
+    expect(updateMany).not.toHaveBeenCalled();
   });
 });

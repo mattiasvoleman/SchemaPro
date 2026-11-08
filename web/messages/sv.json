@@ -1064,10 +1064,10 @@
         "UNKNOWN": "Förläggningarna passar inte posten."
       },
       "verdict": {
-        "TEACHER": "Läraren har redan {otherKind, select, PLACEMENT {en annan förlagd lektion} other {en låst lektion}}: {subjectName} med {className}, {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}.",
-        "ROOM": "Salen är redan upptagen av {otherKind, select, PLACEMENT {en annan förlagd lektion} other {en låst lektion}}: {subjectName} med {className}, {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}.",
-        "GROUP": "Klassen eller gruppen har redan {otherKind, select, PLACEMENT {en annan förlagd lektion} other {en låst lektion}}: {subjectName} med {className}, {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}.",
-        "PUPILS": "Elever i gruppen är också med i en annan grupp som har {otherKind, select, PLACEMENT {en annan förlagd lektion} other {en låst lektion}}: {subjectName} med {className}, {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}.",
+        "TEACHER": "Läraren har redan {otherKind, select, PLACEMENT {en annan förlagd lektion} other {en lektion som Generera behåller}}: {subjectName} med {className}, {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}.",
+        "ROOM": "Salen är redan upptagen av {otherKind, select, PLACEMENT {en annan förlagd lektion} other {en lektion som Generera behåller}}: {subjectName} med {className}, {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}.",
+        "GROUP": "Klassen eller gruppen har redan {otherKind, select, PLACEMENT {en annan förlagd lektion} other {en lektion som Generera behåller}}: {subjectName} med {className}, {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}.",
+        "PUPILS": "Elever i gruppen är också med i en annan grupp som har {otherKind, select, PLACEMENT {en annan förlagd lektion} other {en lektion som Generera behåller}}: {subjectName} med {className}, {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}.",
         "AVAILABILITY": "{resource, select, TEACHER {Läraren} ROOM {Salen} other {Klassen}} är markerad som inte tillgänglig då.",
         "FRAME": "Tiden ligger utanför ramtiden för klassens stadium.",
         "LUNCH": "Tiden ligger på klassens lunch.",
@@ -1930,6 +1930,7 @@
     "retry": "Försök igen",
     "closeAction": "Stäng",
     "parked": "Lektionen ligger på Parkering och har ingen tid att byta. Lägg tillbaka den i schemat först.",
+    "placed": "Lektionen är förlagd på timplanen, och Generera skriver om den därifrån. Flytta den genom att ändra förläggningen på timplansposten.",
     "notPlaced": "Lektionen ligger inte i grundschemat och kan inte bytas.",
     "lockedPicked": "Lektionen är låst. Du får flytta den, men generatorn lämnar den som den är tills du låst upp den.",
     "withParallel": "Den här lektionen ligger parallellt med {count, plural, =1 {1 annan lektion} other {# andra lektioner}}. De flyttas alltid tillsammans.",

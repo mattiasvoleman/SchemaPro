@@ -80,12 +80,12 @@ describe("why a row cannot stand", () => {
   });
 
   it("names the other lesson as a class and a subject, and what kind of lesson it is", () => {
-    expect(svT("verdict.TEACHER", CLASH)).toBe("Läraren har redan en låst lektion: Matematik med 7B, tisdag 10:00–11:00.");
+    expect(svT("verdict.TEACHER", CLASH)).toBe("Läraren har redan en lektion som Generera behåller: Matematik med 7B, tisdag 10:00–11:00.");
     expect(svT("verdict.ROOM", { ...CLASH, otherKind: "PLACEMENT" })).toBe(
       "Salen är redan upptagen av en annan förlagd lektion: Matematik med 7B, tisdag 10:00–11:00.",
     );
     expect(enT("verdict.GROUP", CLASH)).toBe(
-      "The class or group already has a locked lesson: Matematik with 7B, Tuesday 10:00–11:00.",
+      "The class or group already has a lesson Generera keeps: Matematik with 7B, Tuesday 10:00–11:00.",
     );
   });
 

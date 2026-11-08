@@ -96,7 +96,7 @@ export interface SwapSuggestion {
   unit: { lessonIds: string[]; links: ParallelLink[] };
   selectedLocked: boolean;
   proposals: SwapProposal[];
-  immovable?: "PARKED" | "NOT_PLACED";
+  immovable?: "PARKED" | "NOT_PLACED" | "PLACED";
   stats: {
     partners: number;
     candidates: number;

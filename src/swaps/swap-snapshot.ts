@@ -125,6 +125,7 @@ export async function readSwapData(
           endTime: true,
           isLocked: true,
           isGenerated: true,
+          fromPlacement: true,
           recurrence: true,
           startDate: true,
           endDate: true,
@@ -210,7 +211,9 @@ export async function readSwapData(
       recurrence: row.recurrence as LessonRecurrence,
       startDate: dayOf(row.startDate),
       endDate: dayOf(row.endDate),
-      isLocked: row.isLocked,
+      // A lesson Generera wrote from a förläggning is never a partner, locked
+      // or not: the next Generera puts it back where its förläggning stands.
+      isLocked: row.isLocked || row.fromPlacement,
       isGenerated: row.isGenerated,
       extraGroupIds: row.extraGroups.map((entry) => entry.studentGroupId).sort(),
       studentIds: row.participants.map((entry) => entry.studentId).sort(),

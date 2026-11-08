@@ -5714,6 +5714,37 @@ describe('OptimizationProxyService', () => {
         expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
       });
 
+      it('deletes a lesson Generera wrote from a förläggning with the draft, but counts it as no content of it', async () => {
+        const draftRow = (id: string, fromPlacement: boolean) => ({
+          id,
+          subjectId: SUBJECT_ID,
+          studentGroupId: GROUP_ID,
+          teacherId: TEACHER_ID,
+          coTeacherId: null,
+          roomId: ROOM_ID,
+          dayOfWeek: 3,
+          startTime: tenAm,
+          endTime: new Date('1970-01-01T11:00:00.000Z'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          isParked: false,
+          fromPlacement,
+        });
+        arrange({ draftLessons: [draftRow('placed-master', true), draftRow('engine-master', false)] });
+        placed([placement()]);
+
+        const prepared = await prisma.withRls(testUser(), (client: never) =>
+          service.prepareSchedule(client, ACADEMIC_YEAR, testUser()),
+        );
+
+        if (!prepared.ready) throw new Error('expected the fetch to be ready');
+        // The write deletes both (and writes the förläggning again)…
+        expect(prepared.draftIds).toEqual(['engine-master', 'placed-master']);
+        // …but "moved" and the draft's coverage read only the engine's.
+        expect(prepared.draftLessons.map((lesson: { id: string }) => lesson.id)).toEqual(['engine-master']);
+      });
+
       it('keeps the förläggning out of the basis part an apply compares with the preserved masters', async () => {
         arrange();
         type Prepared = Awaited<ReturnType<OptimizationProxyService['prepareSchedule']>>;

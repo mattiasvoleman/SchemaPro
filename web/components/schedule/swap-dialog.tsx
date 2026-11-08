@@ -242,7 +242,7 @@ export function SwapDialog({
 
         {suggestion?.immovable ? (
           <Notice tone="warning">
-            <p>{suggestion.immovable === "PARKED" ? t("parked") : t("notPlaced")}</p>
+            <p>{suggestion.immovable === "PARKED" ? t("parked") : suggestion.immovable === "PLACED" ? t("placed") : t("notPlaced")}</p>
           </Notice>
         ) : null}
 

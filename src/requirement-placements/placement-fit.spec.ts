@@ -38,6 +38,8 @@ describe('placementFitOf', () => {
 
   it('refuses a length the post does not have, and counts each of a split post’s lengths', () => {
     expect(placementFitOf(post(), [row(45)])).toBe('LENGTH');
+    // One row of a length the post lacks is enough, beside rows that fit.
+    expect(placementFitOf(post(), [row(60), row(45)])).toBe('LENGTH');
     const split = post({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
     expect(placementFitOf(split, [row(80), row(40)])).toBeNull();
     expect(placementFitOf(split, [row(80), row(80)])).toBe('COUNT');

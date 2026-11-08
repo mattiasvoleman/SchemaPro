@@ -1064,10 +1064,10 @@
         "UNKNOWN": "The placed lessons do not fit the entry."
       },
       "verdict": {
-        "TEACHER": "The teacher already has {otherKind, select, PLACEMENT {another placed lesson} other {a locked lesson}}: {subjectName} with {className}, {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}.",
-        "ROOM": "The room is already taken by {otherKind, select, PLACEMENT {another placed lesson} other {a locked lesson}}: {subjectName} with {className}, {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}.",
-        "GROUP": "The class or group already has {otherKind, select, PLACEMENT {another placed lesson} other {a locked lesson}}: {subjectName} with {className}, {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}.",
-        "PUPILS": "Pupils of the group are also in another group that has {otherKind, select, PLACEMENT {another placed lesson} other {a locked lesson}}: {subjectName} with {className}, {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}.",
+        "TEACHER": "The teacher already has {otherKind, select, PLACEMENT {another placed lesson} other {a lesson Generera keeps}}: {subjectName} with {className}, {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}.",
+        "ROOM": "The room is already taken by {otherKind, select, PLACEMENT {another placed lesson} other {a lesson Generera keeps}}: {subjectName} with {className}, {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}.",
+        "GROUP": "The class or group already has {otherKind, select, PLACEMENT {another placed lesson} other {a lesson Generera keeps}}: {subjectName} with {className}, {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}.",
+        "PUPILS": "Pupils of the group are also in another group that has {otherKind, select, PLACEMENT {another placed lesson} other {a lesson Generera keeps}}: {subjectName} with {className}, {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}.",
         "AVAILABILITY": "{resource, select, TEACHER {The teacher} ROOM {The room} other {The class}} is marked as unavailable then.",
         "FRAME": "The time is outside the frame time of the class's stage.",
         "LUNCH": "The time is on the class's lunch.",
@@ -1930,6 +1930,7 @@
     "retry": "Try again",
     "closeAction": "Close",
     "parked": "The lesson is on the tray and has no time to trade. Put it back in the timetable first.",
+    "placed": "The lesson is placed on the curriculum, and Generera writes it again from there. Move it by changing the placement on its curriculum entry.",
     "notPlaced": "The lesson is not in the master timetable and cannot be swapped.",
     "lockedPicked": "The lesson is locked. You may move it, but the generator leaves it as it is until you unlock it.",
     "withParallel": "This lesson stands in parallel with {count, plural, =1 {1 other lesson} other {# other lessons}}. They always move together.",

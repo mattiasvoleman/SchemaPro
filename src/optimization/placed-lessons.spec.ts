@@ -198,6 +198,11 @@ describe('placementsKeyOf', () => {
     const b = read({ id: 'b', dayOfWeek: 4 });
     expect(placementsKeyOf([a, b])).toBe(placementsKeyOf([b, a]));
     expect(placementsKeyOf([a, b])).not.toBe(placementsKeyOf([a, { ...b, startTime: at('13:00') }]));
+    // Every field a write writes from: the room and the weeks too, so a
+    // förläggning given another room or weeks while the solver ran is stale.
+    expect(placementsKeyOf([a, b])).not.toBe(placementsKeyOf([a, { ...b, roomId: 'pool' }]));
+    expect(placementsKeyOf([a, b])).not.toBe(placementsKeyOf([a, { ...b, recurrence: 'ODD_WEEKS' }]));
+    expect(placementsKeyOf([a, b])).not.toBe(placementsKeyOf([a, { ...b, minutes: 40 }]));
     expect(placementsKeyOf([])).toBe('');
   });
 });
