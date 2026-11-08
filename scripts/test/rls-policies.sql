@@ -55363,13 +55363,17 @@ BEGIN
   END LOOP;
 
   -- Privileges on the tables: the API's role holds what its arms use; PostgREST's roles (authenticated, anon) hold nothing; the
-  -- service role keeps SELECT only; nobody holds MAINTAIN, TRUNCATE, REFERENCES or TRIGGER.
+  -- service role keeps SELECT only; nobody holds MAINTAIN, TRUNCATE, REFERENCES or TRIGGER. The four privileges that can be
+  -- granted on a single column are asked with has_any_column_privilege (true for the table or for any column of it):
+  -- has_table_privilege is false for a role that holds SELECT on "contactEmail" alone, which is the way to the hirer's
+  -- contact through PostgREST (section 454 does the same for the Kvittens tables).
   FOREACH tbl IN ARRAY ARRAY['ResourceTypes', 'Resources', 'ResourceBookings', 'ExternalBookings'] LOOP
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
       CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
       FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
         holds := (r = 'app_authenticated' AND priv IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')) OR (r = 'service_role' AND priv = 'SELECT');
-        IF has_table_privilege(r, format('%I', tbl), priv) IS DISTINCT FROM holds THEN
+        IF (CASE WHEN priv IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES') THEN has_any_column_privilege(r, format('%I', tbl), priv)
+                 ELSE has_table_privilege(r, format('%I', tbl), priv) END) IS DISTINCT FROM holds THEN
           RAISE EXCEPTION 'lokal 444a: % % % on % (it should%)', r, CASE WHEN holds THEN 'lacks' ELSE 'holds' END, priv, tbl, CASE WHEN holds THEN '' ELSE ' not' END;
         END IF;
       END LOOP;
