@@ -194,6 +194,7 @@ describe('/api/v1/meal-counts (e2e)', () => {
 
     it.each([
       ['a cut-off of 24:00', { cutoffTime: '24:00' }],
+      ['a cut-off of 29:59', { cutoffTime: '29:59' }],
       ['a cut-off of 8:30', { cutoffTime: '8:30' }],
       ['a cut-off with seconds', { cutoffTime: '08:30:00' }],
       ['two addresses with a comma', { kitchenEmail: 'a@skolan.se, b@skolan.se' }],

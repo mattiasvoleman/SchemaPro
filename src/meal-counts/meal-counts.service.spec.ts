@@ -145,6 +145,26 @@ describe('MealCountsService settings', () => {
       );
     });
 
+    it('keeps the kitchen\'s address when the save names only the hour, with the letter on and with it off', async () => {
+      const { service, tx } = setup();
+      tx['kitchenSetting']!['findUnique']!.mockResolvedValue({ cutoffTime: time('08:30'), letterEnabled: true, kitchenEmail: 'kok@skolan.se' });
+      await service.updateSettings({ cutoffTime: '09:00' }, admin);
+      expect(tx['kitchenSetting']!['upsert']).toHaveBeenLastCalledWith(
+        expect.objectContaining({ update: { cutoffTime: time('09:00'), letterEnabled: true, kitchenEmail: 'kok@skolan.se' } }),
+      );
+      // A letter that is off does not need the address, and the save must not take it away: the hour is all it named.
+      tx['kitchenSetting']!['findUnique']!.mockResolvedValue({ cutoffTime: time('08:30'), letterEnabled: false, kitchenEmail: 'kok@skolan.se' });
+      await service.updateSettings({ cutoffTime: '09:15' }, admin);
+      expect(tx['kitchenSetting']!['upsert']).toHaveBeenLastCalledWith(
+        expect.objectContaining({ update: { cutoffTime: time('09:15'), letterEnabled: false, kitchenEmail: 'kok@skolan.se' } }),
+      );
+      // Nor the other way round: an address alone leaves the hour where it was.
+      await service.updateSettings({ kitchenEmail: 'ny@skolan.se' }, admin);
+      expect(tx['kitchenSetting']!['upsert']).toHaveBeenLastCalledWith(
+        expect.objectContaining({ update: { cutoffTime: time('08:30'), letterEnabled: false, kitchenEmail: 'ny@skolan.se' } }),
+      );
+    });
+
     it('turns the letter on only when the merged settings have an hour and an address', async () => {
       const { service, tx } = setup();
       tx['kitchenSetting']!['findUnique']!.mockResolvedValue({ cutoffTime: time('08:30'), letterEnabled: false, kitchenEmail: null });

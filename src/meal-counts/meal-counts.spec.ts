@@ -2,6 +2,7 @@ import { encodeWindows1252 } from '../common/windows-1252';
 import fixture from './__fixtures__/week.json';
 import {
   buildMealView,
+  CLOCK,
   CSV_HEADER,
   MEAL_COUNTS_BAD_ANSWER,
   mealCsv,
@@ -87,6 +88,18 @@ describe('buildMealView', () => {
   it('puts staff only in the sitting whose window they were placed in', () => {
     const moved = buildMealView({ ...rows, staff: [{ day: '2027-02-04', start: '11:00', end: '11:30', staff: 2 }] }, '2027-02-04', '2027-02-04');
     expect(moved.days[0]!.sittings.map((s) => [s.start, s.staff, s.portions])).toEqual([['10:30', 0, 46], ['11:00', 2, 32]]);
+  });
+});
+
+describe('CLOCK', () => {
+  // The cut-off the settings take: a time of day, 00:00 to 23:59, written with two digits and no seconds. The hour
+  // 24 to 29 and the minute 60 to 69 are what a pattern that is a digit short of right lets through.
+  it.each(['00:00', '08:30', '19:05', '23:59'])('takes %s', (value) => {
+    expect(CLOCK.test(value)).toBe(true);
+  });
+
+  it.each(['24:00', '29:59', '30:00', '23:60', '23:69', '8:30', '08:3', '08:30:00', ' 08:30', '0830', ''])('refuses %j', (value) => {
+    expect(CLOCK.test(value)).toBe(false);
   });
 });
 
