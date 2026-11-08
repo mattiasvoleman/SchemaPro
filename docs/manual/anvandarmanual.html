@@ -7586,10 +7586,12 @@
     <li><strong>Filen.</strong> <span class="ui">CSV för Excel</span> är Excels svenska format:
       windows-1252, semikolon, decimalkomma och radslut CRLF, utan BOM. <span class="ui">Excel</span> är en
       .xlsx där minuter och timmar är tal, så att de går att summera. Båda har samma kolumner: signatur,
-      efternamn, förnamn, e-post, typ (personal eller vikariepool), tjänstgöringsgrad (den som gäller
+      löne-id, efternamn, förnamn, e-post, typ (personal eller vikariepool), tjänstgöringsgrad (den som gäller
       periodens sista dag, så en tjänst som ändras från den 1 november är den nya i en novemberfil),
       skoldel, konto,
-      minuter för undervisning, uppdrag och vikariepass, totalt i timmar och periodens båda dagar. Tecken som
+      minuter för undervisning, uppdrag och vikariepass, totalt i timmar och periodens båda dagar. Löne-id är
+      lönesystemets eget id för anställningen. Rastra har det inte, så kolumnen är tom på varje rad; den finns
+      så att kolumnerna inte flyttar sig den dag den fylls i. Tecken som
       windows-1252 inte rymmer (ett polskt ł) skrivs som närmaste bokstav i CSV-filen och räknas i en notis;
       Excel-filen behåller dem.</li>
     <li><strong>Vem ser vad.</strong> Nyckeltalen läser alla administratörer, utan tjänstgöringsgrad om du inte
@@ -7600,8 +7602,15 @@
       av dem: lärarens egen belastning står där den alltid stått, under Min tjänst. Att du läser en lärares tid
       och tjänst, och att du hämtar en fil som nämner personer, skrivs i läsloggen.</li>
     <li><strong>Skyddad identitet.</strong> Löneunderlaget ska betala alla, så en person med skyddad
-      identitet finns med i filen och i vyn, och en notis säger hur många. Nyckeltalen och kostnaden nämner
-      bara lärare vid id och namn som registret redan visar för dig, och kostnadsfilen nämner ingen.</li>
+      identitet finns med i filen och i vyn, och en notis säger hur många. Personen står där med sin signatur
+      (tjänstens för läsåret), aldrig med namn eller e-post, och de raderna står sist, i signaturernas ordning.
+      Filen skickas ofta med e-post eller läggs i en delad mapp, så vem signaturen är stannar i Rastra: den som
+      betalar lönen får veta det av skolan. När du hämtar filen säger meddelandet hur många personer med
+      skyddad identitet den har. Har en sådan person ingen signatur (en vikarie i poolen har ingen tjänst och
+      därför ingen signatur) säger raden inget om vem det är. En varning säger hur många det gäller: ge en
+      lärare en signatur under Tjänstefördelning (4.3) innan filen skickas, och säg själv till lönekontoret
+      vilka övriga rader det är. Nyckeltalen och kostnaden nämner bara lärare vid id och namn som registret
+      redan visar för dig, och kostnadsfilen nämner ingen.</li>
   </ul>
   <p>
     Under fliken <span class="path">Skoldelar och satser</span> anger skolan det som inte går att räkna fram.

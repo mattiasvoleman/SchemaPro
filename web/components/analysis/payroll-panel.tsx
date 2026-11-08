@@ -38,6 +38,11 @@ export function previousMonth(today: Date): { from: string; to: string } {
  * lessons of the whole school and the period is the payroll's month, not a
  * default. The file is built by the gateway (Excel's Swedish CSV in
  * windows-1252, or an .xlsx) and handed over as it is.
+ *
+ * A person the school has marked as having a protected identity is named by
+ * signature here as in the file, never by name or e-mail, though the page
+ * reads the register: the answer says who (PayrollPerson.protectedIdentity),
+ * and those rows stand after the named, by signature, as in the file.
  */
 export function PayrollPanel({ yearId }: { yearId: string }) {
   const { t, number, day } = useAnalysisText();
@@ -55,13 +60,22 @@ export function PayrollPanel({ yearId }: { yearId: string }) {
     [people.data],
   );
   const nameOf = (userId: string): string => names.get(userId) ?? t("unknownPerson");
+  const personOf = useMemo(() => new Map((view?.people ?? []).map((person) => [person.userId, person])), [view]);
+  const isMarked = (userId: string): boolean => personOf.get(userId)?.protectedIdentity === true;
+  /** What a row is sorted by: the name, or for a marked person the signature, after every name. */
+  const keyOf = (userId: string): string => (isMarked(userId) ? (personOf.get(userId)?.signature ?? "") : nameOf(userId));
   const lines = useMemo(
     () =>
       view
-        ? [...view.lines].sort((a, b) => compareSwedish(nameOf(a.userId), nameOf(b.userId)) || a.userId.localeCompare(b.userId))
+        ? [...view.lines].sort(
+            (a, b) =>
+              Number(isMarked(a.userId)) - Number(isMarked(b.userId)) ||
+              compareSwedish(keyOf(a.userId), keyOf(b.userId)) ||
+              a.userId.localeCompare(b.userId),
+          )
         : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [view, names],
+    [view, names, personOf],
   );
   const partOf = new Map((view?.parts ?? []).map((part) => [part.id, part]));
   const valid = from !== "" && to !== "" && from <= to;
@@ -71,7 +85,11 @@ export function PayrollPanel({ yearId }: { yearId: string }) {
     try {
       const file = await order.mutateAsync({ academicYearId: yearId, from: period.from, to: period.to, format });
       saveBase64(file.filename, file.contentType, file.contentBase64);
-      toast.success(t("payroll.downloaded", { file: file.filename }));
+      toast.success(
+        file.protectedInFile > 0
+          ? t("payroll.downloadedProtected", { file: file.filename, people: file.protectedInFile })
+          : t("payroll.downloaded", { file: file.filename }),
+      );
     } catch (error) {
       toast.error(isNotYours(error, HR_NOT_YOURS) ? t("payroll.notYoursBody") : error instanceof Error ? error.message : t("loadFailedHint"));
     }
@@ -158,7 +176,14 @@ export function PayrollPanel({ yearId }: { yearId: string }) {
                     return (
                       <TableRow key={`${line.userId}-${line.schoolPartId ?? "none"}`}>
                         <TableCell className="font-medium">
-                          {nameOf(line.userId)}
+                          {isMarked(line.userId) ? (
+                            <>
+                              {personOf.get(line.userId)?.signature ?? t("payroll.noSignature")}
+                              <span className="ml-2 font-normal text-muted-foreground">{t("payroll.protected")}</span>
+                            </>
+                          ) : (
+                            nameOf(line.userId)
+                          )}
                           {line.kind === "POOL" ? <span className="ml-2 font-normal text-muted-foreground">{t("payroll.pool")}</span> : null}
                         </TableCell>
                         <TableCell>

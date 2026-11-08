@@ -170,8 +170,8 @@ const payroll = (over: Partial<PayrollBasis> = {}): PayrollBasis => ({
   to: "2026-10-31",
   parts: PARTS,
   people: [
-    { userId: "t1", kind: "STAFF", teachingMinutes: 1200, dutyMinutes: 120, substituteMinutes: 0, employmentPercent: 100 },
-    { userId: "pool-1", kind: "POOL", teachingMinutes: 0, dutyMinutes: 0, substituteMinutes: 90, employmentPercent: null },
+    { userId: "t1", kind: "STAFF", teachingMinutes: 1200, dutyMinutes: 120, substituteMinutes: 0, employmentPercent: 100, signature: "AL", protectedIdentity: false },
+    { userId: "pool-1", kind: "POOL", teachingMinutes: 0, dutyMinutes: 0, substituteMinutes: 90, employmentPercent: null, signature: null, protectedIdentity: false },
   ],
   lines: [
     { userId: "t1", kind: "STAFF", schoolPartId: "high", account: "4030", teachingMinutes: 1200, dutyMinutes: 120, substituteMinutes: 0 },
@@ -491,6 +491,85 @@ describe("Analys och planering, löneunderlag", () => {
     await userEvent.click(screen.getByRole("button", { name: "Visa underlag" }));
     expect(await screen.findByText(/1 personer med skyddad identitet finns med i underlaget/)).toBeInTheDocument();
     expect(screen.getByText(/Perioden är beskuren till läsåret: 17 aug\. 2026 – 31 aug\. 2026\./)).toBeInTheDocument();
+  });
+
+  describe("a person with a protected identity", () => {
+    // Bo Ek (t2) and Vera Vikarie (pool-1) are marked; the page reads the register, which names them.
+    const marked = () =>
+      payroll({
+        people: [
+          { userId: "t1", kind: "STAFF", teachingMinutes: 1200, dutyMinutes: 120, substituteMinutes: 0, employmentPercent: 100, signature: "AL", protectedIdentity: false },
+          { userId: "t2", kind: "STAFF", teachingMinutes: 60, dutyMinutes: 0, substituteMinutes: 0, employmentPercent: 50, signature: "BE", protectedIdentity: true },
+          { userId: "pool-1", kind: "POOL", teachingMinutes: 0, dutyMinutes: 0, substituteMinutes: 90, employmentPercent: null, signature: null, protectedIdentity: true },
+          { userId: "t3", kind: "STAFF", teachingMinutes: 30, dutyMinutes: 0, substituteMinutes: 0, employmentPercent: 80, signature: "CÅ", protectedIdentity: false },
+        ],
+        lines: [
+          { userId: "pool-1", kind: "POOL", schoolPartId: null, account: null, teachingMinutes: 0, dutyMinutes: 0, substituteMinutes: 90 },
+          { userId: "t2", kind: "STAFF", schoolPartId: "high", account: "4030", teachingMinutes: 60, dutyMinutes: 0, substituteMinutes: 0 },
+          { userId: "t3", kind: "STAFF", schoolPartId: "high", account: "4030", teachingMinutes: 30, dutyMinutes: 0, substituteMinutes: 0 },
+          { userId: "t1", kind: "STAFF", schoolPartId: "high", account: "4030", teachingMinutes: 1200, dutyMinutes: 120, substituteMinutes: 0 },
+        ],
+        protectedInAnswer: 2,
+        notices: [
+          { code: "ANALYSIS_PROTECTED_IN_FILE", params: { people: 2 } },
+          { code: "ANALYSIS_PROTECTED_WITHOUT_SIGNATURE", params: { people: 1 } },
+        ],
+      });
+
+    it("is named by signature and never by name, after the named and by signature as in the file, and one with no signature says so", async () => {
+      state.pay = marked();
+      renderPage();
+      await openTab("Löneunderlag");
+      await userEvent.click(screen.getByRole("button", { name: "Visa underlag" }));
+      const table = await screen.findByRole("table", { name: "Löneunderlag per person och skoldel" });
+      expect(rowsOf(table).map((row) => within(row).getAllByRole("cell")[0]!.textContent)).toEqual([
+        "Lind, Anna",
+        "Åkesson, Cy",
+        // No signature sorts first among the marked, as the empty signature does in the file.
+        "Utan signaturskyddad identitet" + "vikariepool",
+        "BEskyddad identitet",
+      ]);
+      expect(table.textContent).not.toMatch(/Ek|Bo\b|Vera|Vikarie,/);
+    });
+
+    it("is said in the notices, the missing signature as a warning", async () => {
+      state.pay = marked();
+      renderPage();
+      await openTab("Löneunderlag");
+      await userEvent.click(screen.getByRole("button", { name: "Visa underlag" }));
+      const said = await screen.findByText(/De står med signatur, utan namn och e-post, här och i filen\./);
+      expect(said.closest("div[data-tone]")?.getAttribute("data-tone")).toBe("neutral");
+      const warning = screen.getByText(/1 av dem har ingen signatur, så deras rader säger inte vem de är\./);
+      expect(warning.closest("div[data-tone]")?.getAttribute("data-tone")).toBe("warning");
+    });
+
+    it("is counted when the file is handed over: the toast says how many stand by signature", async () => {
+      state.pay = marked();
+      const file: PayrollFile = { filename: "loneunderlag-2026-10-01-2026-10-31.xlsx", contentType: "application/x", contentBase64: "QUJD", notices: [], protectedInFile: 2 };
+      api.post.mockResolvedValue(file);
+      renderPage();
+      await openTab("Löneunderlag");
+      await userEvent.click(screen.getByRole("button", { name: "Visa underlag" }));
+      await screen.findByRole("table", { name: "Löneunderlag per person och skoldel" });
+      await userEvent.click(screen.getByRole("button", { name: "Excel" }));
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(
+          "loneunderlag-2026-10-01-2026-10-31.xlsx är hämtad. 2 personer med skyddad identitet står i den med signatur, utan namn och e-post.",
+        ),
+      );
+    });
+
+    it("is named by signature in English too", async () => {
+      state.pay = marked();
+      renderPage("en");
+      await userEvent.click(screen.getByRole("tab", { name: "Payroll basis" }));
+      await userEvent.click(screen.getByRole("button", { name: "Show basis" }));
+      const table = await screen.findByRole("table", { name: "Payroll basis per person and school part" });
+      expect(rowsOf(table).map((row) => within(row).getAllByRole("cell")[0]!.textContent).slice(2)).toEqual([
+        "No signatureprotected identitysubstitute pool",
+        "BEprotected identity",
+      ]);
+    });
   });
 
   it("refuses a period that ends before it begins", async () => {

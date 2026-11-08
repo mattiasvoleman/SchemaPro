@@ -10,6 +10,8 @@ const WARNING: ReadonlySet<AnalysisNoticeCode> = new Set([
   "ANALYSIS_NOTHING_PUBLISHED",
   "ANALYSIS_COVER_TO_CHECK",
   "ANALYSIS_CHARACTERS_REPLACED",
+  // A row of figures alone: payroll cannot tell whose it is until the school says.
+  "ANALYSIS_PROTECTED_WITHOUT_SIGNATURE",
 ]);
 
 /** The gateway's notices of an answer, each a sentence, the ones that change a figure as warnings. */

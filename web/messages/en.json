@@ -8683,7 +8683,8 @@
       "ANALYSIS_COVER_TO_CHECK": "{lessons} held cover lessons are left out, because the substitute was absent over the lesson themself. They are checked under Reports, Substitute hours.",
       "ANALYSIS_LEFT_IN_PERIOD": "{people} people left before the end of the period. Their time is counted up to the day they were deactivated (lessons over by then, duties to the day before), and anyone who left before the period is not in it.",
       "ANALYSIS_DUTIES_UNALLOCATED": "{people} people have duties but no teaching or cover in the period. Their duties are on a line with no school part and no account, for the school to book by hand.",
-      "ANALYSIS_PROTECTED_IN_FILE": "{people} people with a protected identity are in the basis, because payroll pays everyone.",
+      "ANALYSIS_PROTECTED_IN_FILE": "{people} people with a protected identity are in the basis, because payroll pays everyone. They are listed by signature, without name or e-mail, here and in the file.",
+      "ANALYSIS_PROTECTED_WITHOUT_SIGNATURE": "{people} of them have no signature, so their rows do not say who they are. Give them a signature under Staffing before the file is sent, or tell the payroll office yourself which rows they are.",
       "ANALYSIS_CHARACTERS_REPLACED": "{characters} characters that windows-1252 cannot hold were replaced in the CSV file. The Excel file keeps them."
     },
     "keyFigures": {
@@ -8775,6 +8776,7 @@
       "csv": "CSV for Excel",
       "xlsx": "Excel",
       "downloaded": "{file} was downloaded.",
+      "downloadedProtected": "{file} was downloaded. {people} people with a protected identity are in it by signature, without name or e-mail.",
       "emptyTitle": "No time in the period",
       "emptyBody": "No teaching, no duties and no cover were found in the period.",
       "caption": "Payroll basis per person and school part",
@@ -8788,7 +8790,9 @@
         "total": "Total (h)"
       },
       "pool": "substitute pool",
-      "noPart": "Not allocated"
+      "noPart": "Not allocated",
+      "protected": "protected identity",
+      "noSignature": "No signature"
     },
     "settings": {
       "deciders": "School parts and hourly costs are changed by the rektor and a full administrator. You can read them.",

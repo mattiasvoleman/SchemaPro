@@ -73,7 +73,10 @@ import type { CostBasisQueryDto, PayrollExportDto, PayrollQueryDto } from './dto
  * through and through (each person's time and tjänst) and goes to rektor, a
  * full administrator and those with HR-läs, as the SCB file does, and its
  * file keeps people with a protected identity and says how many (payroll pays
- * everyone: KEEPS_AND_SAYS). A teacher has none of it: the controller says so.
+ * everyone: KEEPS_AND_SAYS). It names such a person by signature alone, never
+ * by name or e-mail, and the page does the same: the file travels, and which
+ * signature is whom stays in Rastra. A teacher has none of it: the controller
+ * says so.
  *
  * LÄSLOGG. A reader of per-teacher figures reads teachers' tjänst: EMPLOYMENT
  * for each teacher in the answer, and PEOPLE beside it where the answer states
@@ -279,7 +282,10 @@ export class AnalysisService {
   /**
    * The löneunderlag, and with `withNames` the rows of the file. HR data
    * through and through: refused to a reader who does not read HR data before
-   * anything is read, not handed a file with holes (as the SCB file is).
+   * anything is read, not handed a file with holes (as the SCB file is). The
+   * names and e-mail addresses are read for the people the school has not
+   * marked, and for them alone: a marked person's row has the signature and
+   * nothing else of who they are.
    */
   private async payroll(
     query: PayrollQueryDto,
@@ -373,6 +379,7 @@ export class AnalysisService {
       }
 
       const employments = new Map(read.input.employments.map((post) => [post.userId, post]));
+      const marked = await markedIds(tx, schoolId);
       const pool = new Set((await tx.substitutePoolMember.findMany({ select: { userId: true } })).map((row) => row.userId));
       const kindOf = (userId: string): PayrollPersonKind => (pool.has(userId) && !employments.has(userId) ? 'POOL' : 'STAFF');
 
@@ -395,11 +402,14 @@ export class AnalysisService {
           const post = employments.get(userId);
           return post ? postOn(post, to).employmentPercent : null;
         },
+        signatureOf: (userId) => employments.get(userId)?.signature ?? null,
+        protectedOf: (userId) => marked.has(userId),
       });
 
       const people = built.people.map((person) => person.userId);
-      const marked = await markedIds(tx, schoolId);
-      const protectedInAnswer = people.filter((userId) => marked.has(userId)).length;
+      const protectedInAnswer = built.people.filter((person) => person.protectedIdentity).length;
+      // A marked person with no signature (no post, or none on it: a vikarie of the pool) has a row that says nothing of who it is.
+      const protectedWithoutSignature = built.people.filter((person) => person.protectedIdentity && !person.signature).length;
       // Who is in the answer: their tjänst (EMPLOYMENT) and the person (PEOPLE), recorded in the read's transaction.
       await recordRead(tx, 'EMPLOYMENT', people, user.channel);
       await recordRead(tx, 'PEOPLE', people, user.channel);
@@ -411,6 +421,9 @@ export class AnalysisService {
       if (leftInPeriod.length > 0) notices.push({ code: 'ANALYSIS_LEFT_IN_PERIOD', params: { people: leftInPeriod.length } });
       if (built.dutiesUnallocated > 0) notices.push({ code: 'ANALYSIS_DUTIES_UNALLOCATED', params: { people: built.dutiesUnallocated } });
       if (protectedInAnswer > 0) notices.push({ code: 'ANALYSIS_PROTECTED_IN_FILE', params: { people: protectedInAnswer } });
+      if (protectedWithoutSignature > 0) {
+        notices.push({ code: 'ANALYSIS_PROTECTED_WITHOUT_SIGNATURE', params: { people: protectedWithoutSignature } });
+      }
 
       const response: PayrollBasisResponse = {
         academicYearId: query.academicYearId,
@@ -424,25 +437,30 @@ export class AnalysisService {
       };
       if (!withNames) return { response, rows: [] };
 
-      const users = people.length === 0 ? [] : await tx.user.findMany({ where: { id: { in: people } }, select: { id: true, firstName: true, lastName: true, email: true } });
+      // Names for the people the school has not marked, and no others: a marked person's name is not read at all.
+      const named = built.people.filter((person) => !person.protectedIdentity).map((person) => person.userId);
+      const users = named.length === 0 ? [] : await tx.user.findMany({ where: { id: { in: named } }, select: { id: true, firstName: true, lastName: true, email: true } });
       const byId = new Map(users.map((person) => [person.id, person]));
       const partById = new Map(parts.map((part) => [part.id, part]));
       const collator = new Intl.Collator('sv');
       const rank = new Map<string | null, number>([...parts].sort(byGrade).map((part, index) => [part.id, index]));
       const personOf = new Map(built.people.map((person) => [person.userId, person]));
       const rows = built.lines
-        .map((line): PayrollFileRow & { userId: string; partRank: number } => {
+        .map((line): PayrollFileRow & { userId: string; partRank: number; protectedIdentity: boolean } => {
           const person = byId.get(line.userId);
           const part = line.schoolPartId === null ? undefined : partById.get(line.schoolPartId);
+          // Every line is of a person in the answer (buildPayroll).
+          const of = personOf.get(line.userId)!;
           return {
             userId: line.userId,
             partRank: rank.get(line.schoolPartId) ?? parts.length,
-            signature: employments.get(line.userId)?.signature ?? '',
+            protectedIdentity: of.protectedIdentity,
+            signature: of.signature ?? '',
             lastName: person?.lastName ?? '',
             firstName: person?.firstName ?? '',
             email: person?.email ?? '',
             kindLabel: KIND_LABEL[line.kind],
-            employmentPercent: personOf.get(line.userId)?.employmentPercent ?? null,
+            employmentPercent: of.employmentPercent,
             partName: part?.name ?? NO_PART,
             account: part?.account ?? '',
             teachingMinutes: line.teachingMinutes,
@@ -450,9 +468,16 @@ export class AnalysisService {
             substituteMinutes: line.substituteMinutes,
           };
         })
+        // The named by name; then the marked, by signature, together at the end: their names are not read, so a
+        // name cannot place them, and the payroll office finds them where it looks for a signature and no name.
         .sort(
           (a, b) =>
-            collator.compare(a.lastName, b.lastName) || collator.compare(a.firstName, b.firstName) || a.userId.localeCompare(b.userId) || a.partRank - b.partRank,
+            Number(a.protectedIdentity) - Number(b.protectedIdentity) ||
+            (a.protectedIdentity
+              ? collator.compare(a.signature, b.signature)
+              : collator.compare(a.lastName, b.lastName) || collator.compare(a.firstName, b.firstName)) ||
+            a.userId.localeCompare(b.userId) ||
+            a.partRank - b.partRank,
         );
       return { response, rows };
     });

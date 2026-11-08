@@ -19,6 +19,8 @@ const payroll = (overrides: Partial<PayrollInput> = {}) =>
     partOfGroup: (groupId) => partByGroup[groupId] ?? null,
     kindOf: (userId) => (userId.startsWith('pool') ? 'POOL' : 'STAFF'),
     employmentPercentOf: (userId) => (userId === 'anna' ? 80 : null),
+    signatureOf: (userId) => (userId === 'anna' ? 'AN' : null),
+    protectedOf: (userId) => userId === 'bo',
     ...overrides,
   });
 
@@ -59,7 +61,20 @@ describe('buildPayroll: teaching and cover per skoldel', () => {
       { userId: 'anna', kind: 'STAFF', schoolPartId: 'high', account: '4030', teachingMinutes: 180, dutyMinutes: 0, substituteMinutes: 0 },
     ]);
     expect(result.people).toEqual([
-      { userId: 'anna', kind: 'STAFF', teachingMinutes: 225, dutyMinutes: 0, substituteMinutes: 0, employmentPercent: 80 },
+      { userId: 'anna', kind: 'STAFF', teachingMinutes: 225, dutyMinutes: 0, substituteMinutes: 0, employmentPercent: 80, signature: 'AN', protectedIdentity: false },
+    ]);
+  });
+
+  it("carries each person's signature and mark as the caller says them, a marked person's too", () => {
+    const result = payroll({
+      teaching: [
+        { userId: 'anna', studentGroupId: 'g7', minutes: 60 },
+        { userId: 'bo', studentGroupId: 'g7', minutes: 30 },
+      ],
+    });
+    expect(result.people.map((person) => [person.userId, person.signature, person.protectedIdentity])).toEqual([
+      ['anna', 'AN', false],
+      ['bo', null, true],
     ]);
   });
 

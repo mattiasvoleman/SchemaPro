@@ -1,7 +1,9 @@
 /*
  * Analys och planering (K1): the shapes the gateway answers with
  * (src/analysis/analysis.types.ts is the other copy). Ids only, never a name:
- * the page names people from the register it already reads.
+ * the page names people from the register it already reads, all but a person
+ * the payroll's answer says is marked (PayrollPerson.protectedIdentity), whom it
+ * names by signature.
  */
 
 export const COST_CATEGORIES = ["TEACHER", "UNQUALIFIED_TEACHER", "SUBSTITUTE"] as const;
@@ -34,6 +36,7 @@ export type AnalysisNoticeCode =
   | "ANALYSIS_LEFT_IN_PERIOD"
   | "ANALYSIS_DUTIES_UNALLOCATED"
   | "ANALYSIS_PROTECTED_IN_FILE"
+  | "ANALYSIS_PROTECTED_WITHOUT_SIGNATURE"
   | "ANALYSIS_CHARACTERS_REPLACED";
 
 export interface AnalysisNotice {
@@ -147,6 +150,10 @@ export interface PayrollPerson {
   dutyMinutes: number;
   substituteMinutes: number;
   employmentPercent: number | null;
+  /** The post's lärarsignatur in the läsår, or null. */
+  signature: string | null;
+  /** Marked as having a protected identity: named by signature alone, on the page as in the file. */
+  protectedIdentity: boolean;
 }
 
 export interface PayrollBasis {

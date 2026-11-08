@@ -30,13 +30,18 @@ describe('payrollTable', () => {
   it('has the header the file promises and a row per line, hours to two decimals and the period on every row', () => {
     const table = payrollTable([row(), row({ partName: 'Ej fördelat', account: '', employmentPercent: null, teachingMinutes: 0, dutyMinutes: 100, substituteMinutes: 0 })], '2026-11-02', '2026-11-27');
     expect(table[0]).toEqual([...PAYROLL_HEADERS]);
-    expect(table[1]).toEqual(['ÅKE', 'Ångström', 'Östen', 'osten@example.invalid', 'Personal', '87.5', 'Högstadiet', '4030', '450', '60', '45', '9.25', '2026-11-02', '2026-11-27']);
-    expect(table[2]).toEqual(['ÅKE', 'Ångström', 'Östen', 'osten@example.invalid', 'Personal', '', 'Ej fördelat', '', '0', '100', '0', '1.67', '2026-11-02', '2026-11-27']);
+    expect(table[1]).toEqual(['ÅKE', '', 'Ångström', 'Östen', 'osten@example.invalid', 'Personal', '87.5', 'Högstadiet', '4030', '450', '60', '45', '9.25', '2026-11-02', '2026-11-27']);
+    expect(table[2]).toEqual(['ÅKE', '', 'Ångström', 'Östen', 'osten@example.invalid', 'Personal', '', 'Ej fördelat', '', '0', '100', '0', '1.67', '2026-11-02', '2026-11-27']);
+  });
+
+  it('has a Löne-id column beside the signature, empty on every row: Rastra holds no payroll id', () => {
+    expect(PAYROLL_HEADERS.slice(0, 5)).toEqual(['Signatur', 'Löne-id', 'Efternamn', 'Förnamn', 'E-post']);
+    expect(payrollTable([row(), row({ signature: '' })], 'a', 'b').slice(1).map((cells) => cells[1])).toEqual(['', '']);
   });
 
   it('keeps up to three decimals of a tjänstgöringsgrad and no trailing zeros', () => {
-    expect(payrollTable([row({ employmentPercent: 80 })], 'a', 'b')[1]![5]).toBe('80');
-    expect(payrollTable([row({ employmentPercent: 33.333 })], 'a', 'b')[1]![5]).toBe('33.333');
+    expect(payrollTable([row({ employmentPercent: 80 })], 'a', 'b')[1]![6]).toBe('80');
+    expect(payrollTable([row({ employmentPercent: 33.333 })], 'a', 'b')[1]![6]).toBe('33.333');
   });
 });
 
@@ -59,7 +64,7 @@ describe('renderPayrollCsv: Excel\'s Swedish CSV', () => {
     expect(lines).toHaveLength(3);
     expect(lines[2]).toBe('');
     expect(lines[0]!.split(';')).toEqual([...PAYROLL_HEADERS]);
-    expect(lines[1]).toBe('ÅKE;Ångström;Östen;osten@example.invalid;Personal;87,5;Högstadiet;4030;450;60;45;9,25;2026-11-02;2026-11-27');
+    expect(lines[1]).toBe('ÅKE;;Ångström;Östen;osten@example.invalid;Personal;87,5;Högstadiet;4030;450;60;45;9,25;2026-11-02;2026-11-27');
   });
 
   it('quotes a field that holds a semicolon, a quote or a line break, and guards a formula', () => {
@@ -75,6 +80,22 @@ describe('renderPayrollCsv: Excel\'s Swedish CSV', () => {
     const odd = renderPayrollCsv(payrollTable([row({ lastName: 'Łukasz', firstName: '中' })], 'a', 'b'));
     expect(odd.replaced).toBe(2);
     expect(decode(odd.bytes)).toContain('Lukasz;?;');
+  });
+});
+
+describe('a person with a protected identity: the signature and nothing else of who they are', () => {
+  // What the service hands the writer for a marked person: the names and the e-mail are never read.
+  const marked = row({ signature: 'XY', lastName: '', firstName: '', email: '' });
+  const table = payrollTable([row(), marked], '2026-11-02', '2026-11-27');
+
+  it('writes the CSV row with the signature, empty name and e-mail columns, and every figure', () => {
+    const lines = decode(renderPayrollCsv(table).bytes).split('\r\n');
+    expect(lines[2]).toBe('XY;;;;;Personal;87,5;Högstadiet;4030;450;60;45;9,25;2026-11-02;2026-11-27');
+  });
+
+  it('writes the same row in the workbook', () => {
+    const read = readXlsx(renderPayrollXlsx(table));
+    expect(read.rows[2]).toEqual(['XY', '', '', '', '', 'Personal', '87.5', 'Högstadiet', '4030', '450', '60', '45', '9.25', '2026-11-02', '2026-11-27']);
   });
 });
 

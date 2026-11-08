@@ -8,7 +8,8 @@
  * lists it already reads, as the load report does. The one answer that names
  * people is the payroll file, which is built here (payroll-files.ts) because
  * it must be Excel's Swedish CSV (windows-1252) and an .xlsx, which the web
- * cannot write.
+ * cannot write. It names everyone in it but a person with a protected
+ * identity, who stands by signature alone (PayrollPerson.protectedIdentity).
  */
 
 /**
@@ -63,8 +64,10 @@ export type AnalysisNoticeCode =
   | 'ANALYSIS_LEFT_IN_PERIOD'
   /** Uppdrag with no teaching to follow are on a line of their own: no skoldel, no konto. */
   | 'ANALYSIS_DUTIES_UNALLOCATED'
-  /** People with a protected identity are in the file, as payroll pays everyone. */
+  /** People with a protected identity are in the file, as payroll pays everyone: by signature, with no name and no e-mail. */
   | 'ANALYSIS_PROTECTED_IN_FILE'
+  /** Of those, people with no signature: their rows say nothing of who they are, so the school must tell payroll, or give them one. */
+  | 'ANALYSIS_PROTECTED_WITHOUT_SIGNATURE'
   /** Characters windows-1252 cannot hold were replaced in the CSV (the Excel file keeps them). */
   | 'ANALYSIS_CHARACTERS_REPLACED';
 
@@ -235,6 +238,15 @@ export interface PayrollPerson {
   substituteMinutes: number;
   /** Tjänstgöringsgrad. HR data; the whole answer is for readers of HR data. */
   employmentPercent: number | null;
+  /** Lärarsignatur: the post's in the läsår, null without a post or a signature (a vikarie of the pool has none). */
+  signature: string | null;
+  /**
+   * The school has marked the person as having a protected identity. The file and the page
+   * then name them by `signature` alone, never by name or e-mail: payroll pays everyone, and
+   * which signature is whom stays in Rastra. Said per person, to the readers of HR data the
+   * answer is for, so that the page need not read the school's marks to leave the name out.
+   */
+  protectedIdentity: boolean;
 }
 
 export interface PayrollBasisResponse {
@@ -244,7 +256,7 @@ export interface PayrollBasisResponse {
   parts: SchoolPartView[];
   people: PayrollPerson[];
   lines: PayrollLine[];
-  /** People with a protected identity who are in the answer, as payroll pays everyone. */
+  /** People with a protected identity who are in the answer, as payroll pays everyone (by signature: protectedIdentity). */
   protectedInAnswer: number;
   notices: AnalysisNotice[];
 }

@@ -4498,7 +4498,17 @@ and no job, notice or setting is added.
 - Payroll basis and its file: rektor, a full administrator and a reader with
   HR-läs, never the huvudman's reader (`HR_NOT_YOURS` before anything is read).
   The file keeps people with a protected identity and says how many
-  (`protectedInFile`); both are recorded in the read log.
+  (`protectedInFile`); both are recorded in the read log. Such a person is in
+  the file by the post's signature alone, with the `Löne-id`, name and e-mail
+  columns empty and the rows last, by signature; the gateway does not read
+  their names at all. The JSON answer says each person's `signature` and
+  `protectedIdentity`, and the page names a marked person by signature too.
+  Rastra holds no payroll id, so `Löne-id` (the second column) is empty on
+  every row. A marked person with no signature (a pool vikarie has no post) is
+  a row of figures alone, and `ANALYSIS_PROTECTED_WITHOUT_SIGNATURE` says how
+  many: the school tells the payroll office which rows they are.
+  The file's columns changed in this release (`Löne-id` after `Signatur`): an
+  import set up on the first version's columns must be moved one column.
   A person who has been deactivated (`Users.deactivatedAt`) is booked up to
   that moment and no further: lessons and covers that were over by it
   (`endsAt <= deactivatedAt`, D6's rule, through statement E's `endedBy`), the

@@ -29,7 +29,11 @@
  *   (le)  a period that ends before the stamp's day is what it always was;
  *   (lf)  a vikarie who left: the cover over by the stamp stands, the cover after it does not;
  *   (lg)  made active again: the trigger clears the stamp and she is booked as if she had never
- *         left, the gap included (the earlier leave is not kept).
+ *         left, the gap included (the earlier leave is not kept);
+ *   (lh)  Bo marked as having a protected identity (PersonProtections, by hand): the answer says
+ *         his signature and the mark and no name; both files have his row by signature (BO) and
+ *         every figure, with Löne-id, name and e-mail empty, and nothing of his name or address
+ *         anywhere; Anna is named as before; protectedInFile is 1. The mark is removed after.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
@@ -40,6 +44,7 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { CoverReportsService } from '../../src/cover/cover-reports.service';
 import { PrismaService } from '../../src/database/prisma.service';
+import { readXlsx } from '../../src/schedule-exchange/xlsx';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
 
 function requiredEnv(name: string): string {
@@ -242,6 +247,41 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
     // Ten mornings and the two lessons on the 15th: 720; ämnesansvar 120 and rastvakt 200.
     assert.deepEqual([anna_.teachingMinutes, anna_.dutyMinutes], [720, 320]);
     assert.deepEqual(answer.notices.find((n) => n.code === 'ANALYSIS_LEFT_IN_PERIOD')?.params, { people: 1 }, 'only Dan has left');
+  });
+
+  await check('(lh) a marked teacher is in the answer and both files by signature, with no name and no e-mail', async () => {
+    await lesson('2026-10-20', '10:00', '11:00', bo.id);
+    await owner.query(`INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES ($1, $2, 'MANUAL')`, [bo.id, s]);
+    try {
+      const email = (await one<{ email: string }>(`SELECT email FROM "Users" WHERE id = $1`, [bo.id])).email;
+      const answer = await payroll('2026-10-12', '2026-10-23');
+      const bo_ = totalsOf(answer, bo.id)!;
+      assert.deepEqual([bo_.signature, bo_.protectedIdentity], ['BO', true]);
+      assert.equal(totalsOf(answer, anna.id)!.protectedIdentity, false);
+      assert.equal(answer.protectedInAnswer, 1);
+      assert.ok(!JSON.stringify(answer).includes(email), 'the answer names him');
+
+      const request = { academicYearId: year, from: '2026-10-12', to: '2026-10-23' };
+      const csv = await analysis.payrollFile({ ...request, format: 'CSV' }, asAdmin);
+      const lines = new TextDecoder('windows-1252').decode(Buffer.from(csv.contentBase64, 'base64')).split('\r\n').filter(Boolean);
+      assert.equal(lines[0]!.split(';').slice(0, 5).join(';'), 'Signatur;Löne-id;Efternamn;Förnamn;E-post');
+      const row = lines.find((line) => line.startsWith('BO;'));
+      assert.ok(row, 'his row is not in the CSV');
+      assert.equal(row!.split(';').slice(0, 6).join(';'), 'BO;;;;;Personal');
+      assert.equal(row!.split(';')[9], String(bo_.teachingMinutes));
+      assert.ok(!lines.join('\n').includes(email) && !lines.some((line) => line.split(';')[3] === 'Bo'), 'the CSV names him');
+      assert.ok(lines.some((line) => line.startsWith('AN;;Analys;Anna;anna-')), 'Anna is not named as before');
+      assert.equal(csv.protectedInFile, 1);
+
+      const xlsx = await analysis.payrollFile({ ...request, format: 'XLSX' }, asAdmin);
+      const sheet = readXlsx(Buffer.from(xlsx.contentBase64, 'base64')).rows;
+      assert.deepEqual(sheet.find((cells) => cells[0] === 'BO')!.slice(0, 6), ['BO', '', '', '', '', 'Personal']);
+      assert.ok(!JSON.stringify(sheet).includes(email) && !sheet.some((cells) => cells[3] === 'Bo'), 'the workbook names him');
+      assert.deepEqual(sheet.find((cells) => cells[0] === 'AN')!.slice(2, 4), ['Analys', 'Anna']);
+      assert.equal(xlsx.protectedInFile, 1);
+    } finally {
+      await owner.query(`DELETE FROM "PersonProtections" WHERE "userId" = $1`, [bo.id]);
+    }
   });
 }
 
