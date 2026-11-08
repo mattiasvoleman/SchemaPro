@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
-import type { LeaveRequestStatus } from "@/lib/types";
+import type { LeaveConsent, LeaveContact, LeaveRequestStatus } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // The leave inboxes: rektor's /admin/leave and the mentor's /teacher/ledighet
@@ -44,6 +44,12 @@ export interface LeaveInboxRequest {
   decidedAt: string | null;
   decisionNote: string | null;
   createdAt: string;
+  /** Filed closer to its first day than the school's minimum (Ledighetspolicy). */
+  shortNotice: boolean;
+  /** A third party's details; for rektor and the deciding mentor, as the family wrote them. */
+  contact: LeaveContact | null;
+  /** Where the guardians' consent stands; counts for staff, never who. */
+  consent: LeaveConsent;
   decidedAs: LeaveDecider | null;
   student: { id: string; name: string; className: string | null };
   requestedBy: string | null;

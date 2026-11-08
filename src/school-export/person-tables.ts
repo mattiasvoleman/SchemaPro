@@ -5,7 +5,7 @@ import { idForms, normalize, type TermIndex } from './free-text';
 
 /**
  * Registerutdrag (GDPR art. 15): every table that holds a row about a person,
- * and what the extract does with it. The whole-school export's seven data
+ * and what the extract does with it. The whole-school export's eight data
  * files cover what a school holds in bulk; the rest of what Rastra keeps about
  * a person is in tables a school never exports, and an extract that said "all
  * your data" and left them out would say what is not true.
@@ -23,7 +23,7 @@ import { idForms, normalize, type TermIndex } from './free-text';
  *   - DUMPED: the rows where a person column is one of the persons asked for,
  *     every column, as the table has them (data/person/<table>.csv). A
  *     column that holds a token, a secret or a hash is written "(dold)".
- *   - COVERED by one of the seven data files, which say it better (ids
+ *   - COVERED by one of the eight data files, which say it better (ids
  *     resolved to addresses, the lesson's date and subject).
  *   - ACCOUNT: the person's own notice settings, devices and calendar feeds,
  *     which no administrator can read (no arm of row-level security), so an
@@ -66,6 +66,12 @@ export interface PersonDump {
   pupil?: { column: string; hides: readonly string[] };
   /** Rows that belong to a person through a parent row: [column, parent table, parent's person column]. */
   through?: ReadonlyArray<readonly [string, string, string]>;
+  /**
+   * Columns that hold the data of somebody who is not a user and so is not the person asked for (an association's
+   * contact person, Lokal): written "(dold)" where the cell has something, as a secret is. The copy must not harm
+   * another's rights (GDPR art. 15.4), and the row is the registrar's act, not the hirer's data.
+   */
+  thirdParty?: readonly string[];
   kind: AccessKind;
 }
 
@@ -80,6 +86,10 @@ const dump = (
 const aboutPupil = (decision: PersonTableDecision, column: string, hides: readonly string[]): PersonTableDecision =>
   'dump' in decision ? { dump: { ...decision.dump, pupil: { column, hides } } } : decision;
 
+/** The rows hold somebody else's data in these columns: see PersonDump.thirdParty. */
+const withThirdParty = (decision: PersonTableDecision, columns: readonly string[]): PersonTableDecision =>
+  'dump' in decision ? { dump: { ...decision.dump, thirdParty: columns } } : decision;
+
 const staff = (columns: readonly string[], through?: PersonDump['through']) => dump(columns, 'EMPLOYMENT', through);
 const away = (columns: readonly string[], through?: PersonDump['through']) => dump(columns, 'STAFF_ABSENCES', through);
 
@@ -88,11 +98,14 @@ const away = (columns: readonly string[], through?: PersonDump['through']) => du
  * catalogue has it.
  */
 export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
-  // The seven data files.
+  // The eight data files.
   AttendanceRecords: { covered: 'data/narvaro.csv (the pupil\'s marks; the marks a teacher recorded are the pupils\' data, not the teacher\'s)' },
   GuardianStudents: { covered: 'data/kopplingar.csv' },
   AbsenceReports: { covered: 'data/franvaroanmalningar.csv' },
   LeaveRequests: { covered: 'data/ledigheter.csv' },
+  // The answers of the guardians a school asked to consent to a leave request (20270205091000): no role reads the table, so
+  // the file asks the database's own function for an administrator who decides (app.leave_consents_export).
+  LeaveConsents: { covered: 'data/samtycken.csv (the guardian\'s own answers: whether they consented, and when)' },
   Notifications: { covered: 'data/notiser.csv' },
   PersonalDataAccess: { covered: 'data/laslogg.csv (who read about the person, and what the person read)' },
 
@@ -116,6 +129,12 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   // The person's code in the löneunderlag while marked (20270206091000): theirs, as the mark is.
   PayrollPseudonyms: dump(['userId']),
   RoomBookings: dump(['bookedById', 'decidedById']),
+  // Lokal (20270204091000): what a member of staff booked of a resource and decided, and the series of
+  // external bookings they registered. The series carries the hirer's name, telephone number and address;
+  // the hirer is not a user and has no extract of their own, so their details are in the extract of the
+  // person who registered them only as the school's own record of who it let to.
+  ResourceBookings: dump(['bookedById', 'decidedById']),
+  ExternalBookings: withThirdParty(dump(['registeredById']), ['organisation', 'contactName', 'contactPhone', 'contactEmail', 'purpose', 'note']),
   RoomLoans: dump(['decidedById', 'requestedById']),
   HuvudmanSchools: dump(['acceptedById']),
   HuvudmanSchoolEvents: dump(['byUserId']),

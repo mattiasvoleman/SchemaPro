@@ -18,6 +18,7 @@ import {
   LEAVE_REQUEST_TOO_LONG,
   LeaveService,
 } from './leave.service';
+import { LeaveConsentJob } from './leave-consent.job';
 
 /**
  * A row as Prisma returns it: only the fields the query selected, so a field
@@ -59,13 +60,13 @@ describe('LeaveService', () => {
   let service: LeaveService;
   let tx: TxMock;
   let prisma: PrismaMock;
-  let notifications: { notifyUsers: jest.Mock; deliver: jest.Mock };
+  let notifications: { notifyUsers: jest.Mock; deliver: jest.Mock; deliverCommitted: jest.Mock };
 
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(NOW);
     tx = createTxMock();
     prisma = createPrismaMock(tx);
-    notifications = { notifyUsers: jest.fn().mockResolvedValue(1), deliver: jest.fn() };
+    notifications = { notifyUsers: jest.fn().mockResolvedValue(1), deliver: jest.fn(), deliverCommitted: jest.fn() };
     service = new LeaveService(prisma as unknown as PrismaService, notifications as unknown as NotificationsService);
   });
 
@@ -96,13 +97,22 @@ describe('LeaveService', () => {
       meta: { leaveRequestId: REQUEST_ID, studentName: 'Ella Elev', startDate: '2027-02-15', endDate: '2027-02-16', schoolDays: 2 },
     });
 
+    /** The raw queries of a filing by what they ask: the policy's check, the mentors' notices, the guardians' consent notices. */
+    const routed = (answers: { told?: unknown[]; refusal?: unknown; asked?: unknown[] }) =>
+      jest.fn().mockImplementation((strings: TemplateStringsArray) => {
+        const sql = strings.join('?');
+        if (sql.includes('app.leave_filing_check(')) return Promise.resolve(answers.refusal ? [answers.refusal] : []);
+        if (sql.includes('app.leave_consent_notices(')) return Promise.resolve(answers.asked ?? []);
+        return Promise.resolve(answers.told ?? []);
+      });
+
     const arrange = (told: unknown[] = []) => {
       tx.user.findUnique.mockImplementation(({ where, select }: { where?: { id?: string }; select?: Record<string, unknown> }) =>
         Promise.resolve(where?.id === STUDENT_ID ? asSelected({ id: STUDENT_ID, role: 'STUDENT', schoolId: SCHOOL_ID }, select) : null),
       );
       tx.guardianStudent.findFirst.mockResolvedValue({ id: LINK_ID });
-      tx.leaveRequest.create.mockResolvedValue({ id: REQUEST_ID, studentId: STUDENT_ID, status: 'PENDING' });
-      tx.$queryRaw = jest.fn().mockResolvedValue(told);
+      tx.leaveRequest.create.mockResolvedValue({ id: REQUEST_ID, studentId: STUDENT_ID, status: 'PENDING', consentRequired: false, shortNotice: false });
+      tx.$queryRaw = routed({ told });
     };
 
     it('rejects an inverted date range with its code before opening a transaction', async () => {
@@ -123,6 +133,8 @@ describe('LeaveService', () => {
         id: REQUEST_ID,
         studentId: STUDENT_ID,
         status: 'PENDING',
+        consentRequired: false,
+        shortNotice: false,
       });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
@@ -134,8 +146,11 @@ describe('LeaveService', () => {
           startDate: day('2027-02-15'),
           endDate: day('2027-02-16'),
           reason: 'Familjeresa',
+          contactName: null,
+          contactPhone: null,
+          contactRelation: null,
         },
-        select: { id: true, studentId: true, status: true },
+        select: { id: true, studentId: true, status: true, consentRequired: true, shortNotice: true },
       });
     });
 
@@ -144,9 +159,9 @@ describe('LeaveService', () => {
 
       await service.createLeaveRequest(leaveDto() as never, guardianUser());
 
-      const call = rawCall(tx.$queryRaw as jest.Mock);
-      expect(call.sql).toContain('app.leave_request_notices(');
-      expect(call.values).toEqual([REQUEST_ID]);
+      const calls = (tx.$queryRaw as jest.Mock).mock.calls.map((_, index) => rawCall(tx.$queryRaw as jest.Mock, index));
+      const notices = calls.find((call) => call.sql.includes('app.leave_request_notices('))!;
+      expect(notices.values).toEqual([REQUEST_ID]);
     });
 
     it('refuses a request of more than a year before opening a transaction, and takes one of exactly a year', async () => {
@@ -217,6 +232,109 @@ describe('LeaveService', () => {
       await expect(service.createLeaveRequest(leaveDto() as never, guardianUser())).rejects.toThrow(ForbiddenException);
       expect(tx.leaveRequest.create).not.toHaveBeenCalled();
       expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    describe('the school’s policy (Ledighetspolicy)', () => {
+      it('asks the policy before it writes, with the dates and the contact as the form gave them', async () => {
+        arrange();
+
+        await service.createLeaveRequest(
+          leaveDto({ contactName: ' Farmor Gun ', contactPhone: '070-123 45 67', contactRelation: '' }) as never,
+          guardianUser(),
+        );
+
+        const check = rawCall(tx.$queryRaw as jest.Mock, 0);
+        expect(check.sql).toContain('app.leave_filing_check(');
+        // A contact given in part reaches the check as given: the database refuses it by its code.
+        expect(check.values).toEqual(['2027-02-15', 'Farmor Gun', '070-123 45 67', null]);
+      });
+
+      it.each([
+        ['LEAVE_REQUEST_TOO_LATE', 7, { days: 7 }],
+        ['LEAVE_CONTACT_REQUIRED', null, undefined],
+        ['LEAVE_CONTACT_INCOMPLETE', null, undefined],
+      ])('refuses a filing the policy refuses with %s, as a 400 with its code, and writes nothing', async (code, days, params) => {
+        arrange();
+        tx.$queryRaw = routed({ refusal: { code, days } });
+
+        const error = await service.createLeaveRequest(leaveDto() as never, guardianUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getResponse()).toMatchObject({ code, ...(params ? { params } : {}) });
+        expect(tx.leaveRequest.create).not.toHaveBeenCalled();
+      });
+
+      it('writes the contact in the three columns, trimmed', async () => {
+        arrange();
+
+        await service.createLeaveRequest(
+          leaveDto({ contactName: ' Farmor Gun ', contactPhone: ' 070-123 45 67 ', contactRelation: ' Farmor ' }) as never,
+          guardianUser(),
+        );
+
+        expect(tx.leaveRequest.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ contactName: 'Farmor Gun', contactPhone: '070-123 45 67', contactRelation: 'Farmor' }),
+          }),
+        );
+      });
+
+      it('hands the guardians’ consent notices to the delivery, one entry, with their addresses, and no name, date or reason', async () => {
+        arrange();
+        const asked = [
+          { notificationId: NOTICE_A, userId: ANNA, email: 'anna@x.se', type: 'LEAVE_CONSENT_REQUESTED', meta: { leaveRequestId: REQUEST_ID, studentName: 'Ella Elev' }, schoolId: SCHOOL_ID },
+          { notificationId: NOTICE_B, userId: BERTIL, email: null, type: 'LEAVE_CONSENT_REQUESTED', meta: { leaveRequestId: REQUEST_ID, studentName: 'Ella Elev' }, schoolId: SCHOOL_ID },
+        ];
+        tx.$queryRaw = routed({ asked });
+
+        await service.createLeaveRequest(leaveDto() as never, guardianUser());
+
+        expect(notifications.deliver).toHaveBeenCalledTimes(1);
+        const [deliveredTx, entry] = notifications.deliver.mock.calls[0];
+        expect(deliveredTx).toBe(tx);
+        expect(entry).toMatchObject({
+          schoolId: SCHOOL_ID,
+          type: 'LEAVE_CONSENT_REQUESTED',
+          meta: {},
+          recipients: [
+            { userId: ANNA, notificationId: NOTICE_A },
+            { userId: BERTIL, notificationId: NOTICE_B },
+          ],
+          email: { recipients: [{ userId: ANNA, email: 'anna@x.se' }] },
+        });
+        expect(JSON.stringify(entry)).not.toMatch(/Ella|2027|Familjeresa/);
+      });
+
+      it.each([
+        ['LV414', 'LEAVE_CONTACT_REQUIRED'],
+        ['LV415', 'LEAVE_CONTACT_INCOMPLETE'],
+      ])('answers the trigger\'s %s, from a policy that changed between the check and the write, as the 400 %s', async (state, code) => {
+        arrange();
+        tx.leaveRequest.create.mockRejectedValue(Object.assign(new Error('trigger'), { meta: { driverAdapterError: { cause: { originalCode: state } } } }));
+
+        const error = await service.createLeaveRequest(leaveDto() as never, guardianUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getResponse()).toMatchObject({ code });
+      });
+
+      it('lets any other failure of the write through unchanged', async () => {
+        arrange();
+        const failure = new Error('connection reset');
+        tx.leaveRequest.create.mockRejectedValue(failure);
+
+        await expect(service.createLeaveRequest(leaveDto() as never, guardianUser())).rejects.toBe(failure);
+      });
+
+      it('answers a race with the policy, which the trigger refuses, as the same 400', async () => {
+        arrange();
+        tx.leaveRequest.create.mockRejectedValue(Object.assign(new Error('LEAVE_REQUEST_TOO_LATE'), { meta: { driverAdapterError: { cause: { originalCode: 'LV413', detail: 'days=7' } } } }));
+
+        const error = await service.createLeaveRequest(leaveDto() as never, guardianUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getResponse()).toMatchObject({ code: 'LEAVE_REQUEST_TOO_LATE', params: { days: 7 } });
+      });
     });
 
     it('lets a pupil file for themselves, as pupil and requester', async () => {
@@ -299,6 +417,100 @@ describe('LeaveService', () => {
         where: { id: REQUEST_ID, status: 'PENDING' },
         data: { status: 'APPROVED', decidedById: ADMIN_ID, decidedAs: 'ADMIN', decidedAt: NOW, decisionNote: null },
       });
+    });
+
+    describe('the guardians’ consent (Ledighetspolicy)', () => {
+      const raw = (met: boolean) =>
+        jest.fn().mockImplementation((strings: TemplateStringsArray) =>
+          Promise.resolve(strings.join('?').includes('app.leave_consent_met(') ? [{ met }] : []),
+        );
+
+      it('approves a request that needs consent once the database says it has it', async () => {
+        arrangePending({ consentRequired: true });
+        tx.$queryRaw = raw(true);
+
+        await expect(service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser())).resolves.toMatchObject({ status: 'APPROVED' });
+
+        const call = rawCall(tx.$queryRaw as jest.Mock);
+        expect(call.sql).toContain('app.leave_consent_met(');
+        expect(call.values).toEqual([REQUEST_ID]);
+      });
+
+      it('answers 409 LEAVE_AWAITING_CONSENT while a guardian who can still answer has not, and writes nothing', async () => {
+        arrangePending({ consentRequired: true });
+        tx.$queryRaw = raw(false);
+
+        const error = await service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: 'LEAVE_AWAITING_CONSENT' });
+        expect(tx.leaveRequest.updateMany).not.toHaveBeenCalled();
+        expect(tx.absenceReport.createMany).not.toHaveBeenCalled();
+      });
+
+      it('rejects a request that still waits for consent without asking the database whether it has it: a rejection grants nothing', async () => {
+        arrangePending({ consentRequired: true });
+        tx.$queryRaw = raw(false);
+
+        await expect(service.decideLeaveRequest(REQUEST_ID, { status: 'REJECTED', note: 'Vi har inte nått alla vårdnadshavare' } as never, testUser())).resolves.toMatchObject({
+          status: 'REJECTED',
+          absenceDays: 0,
+        });
+
+        expect(rawCalls().filter((sql) => sql.includes('app.leave_consent_met('))).toEqual([]);
+        expect(tx.leaveRequest.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: REQUEST_ID, status: 'PENDING' } }));
+        expect(tx.absenceReport.createMany).not.toHaveBeenCalled();
+      });
+
+      it('asks nothing of a request the school did not ask consent for', async () => {
+        arrangePending({ consentRequired: false });
+        tx.$queryRaw = raw(false);
+
+        await service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser());
+
+        expect(rawCalls().filter((sql) => sql.includes('app.leave_consent_met('))).toEqual([]);
+      });
+
+      it('answers a request a guardian’s no ended as already decided', async () => {
+        arrangePending({ consentRequired: true, status: 'GUARDIAN_DECLINED' });
+
+        const error = await service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: LEAVE_REQUEST_DECIDED });
+      });
+
+      it('answers the trigger\'s LV409, a request a guardian\'s no ended between the read and the write, as already decided', async () => {
+        arrangePending({ consentRequired: true });
+        tx.$queryRaw = raw(true);
+        tx.leaveRequest.updateMany.mockRejectedValue(Object.assign(new Error('LEAVE_REQUEST_STOPPED'), { meta: { driverAdapterError: { cause: { originalCode: 'LV409' } } } }));
+
+        const error = await service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: LEAVE_REQUEST_DECIDED });
+      });
+
+      it('lets any other failure of a decision through unchanged', async () => {
+        arrangePending();
+        const failure = new Error('connection reset');
+        tx.leaveRequest.updateMany.mockRejectedValue(failure);
+
+        await expect(service.decideLeaveRequest(REQUEST_ID, { status: 'REJECTED' }, testUser())).rejects.toBe(failure);
+      });
+
+      it('answers the database’s refusal of a decision that raced the last answer with the same 409', async () => {
+        arrangePending({ consentRequired: true });
+        tx.$queryRaw = raw(true);
+        tx.leaveRequest.updateMany.mockRejectedValue(Object.assign(new Error('LEAVE_AWAITING_CONSENT'), { meta: { driverAdapterError: { cause: { originalCode: 'LV412' } } } }));
+
+        const error = await service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: 'LEAVE_AWAITING_CONSENT' });
+      });
+
+      const rawCalls = () => (tx.$queryRaw as jest.Mock).mock.calls.map((_, index) => rawCall(tx.$queryRaw as jest.Mock, index).sql);
     });
 
     it('writes one full-day absence per skoldag: not on the weekends, not on sportlovet', async () => {
@@ -556,6 +768,11 @@ describe('LeaveService', () => {
       decidedAs: null,
       referredAt: null,
       referredById: null,
+      consentRequired: false,
+      shortNotice: false,
+      contactName: null,
+      contactPhone: null,
+      contactRelation: null,
     };
     const decided = {
       ...pending,
@@ -582,6 +799,21 @@ describe('LeaveService', () => {
       yearPendingRequests: 1,
       ...overrides,
     });
+    const consentFact = (requestId: string, overrides: Record<string, unknown> = {}) => ({
+      requestId,
+      required: false,
+      state: 'NOT_REQUIRED',
+      asked: null,
+      given: null,
+      waiting: null,
+      mine: 'NOT_ASKED',
+      ...overrides,
+    });
+    /** The list's two raw questions by what they ask: the facts for staff, and the consent for everybody. */
+    const routedRaw = (facts: unknown[], consents: unknown[] = [consentFact(REQUEST_ID), consentFact(OTHER_ID)]) =>
+      jest.fn().mockImplementation((strings: TemplateStringsArray) =>
+        Promise.resolve(strings.join('?').includes('app.leave_consent_facts(') ? consents : facts),
+      );
     const PEOPLE = [
       { id: STUDENT_ID, firstName: 'Ella', lastName: 'Elev', studentGroup: { name: '7A' } },
       { id: GUARDIAN_ID, firstName: 'Vera', lastName: 'Vårdnadshavare', studentGroup: null },
@@ -591,7 +823,7 @@ describe('LeaveService', () => {
 
     beforeEach(() => {
       tx.leaveRequest.findMany.mockResolvedValue([pending, decided]);
-      tx.$queryRaw = jest.fn().mockResolvedValue([fact(REQUEST_ID), fact(OTHER_ID, { decidingMentorIds: [] })]);
+      tx.$queryRaw = routedRaw([fact(REQUEST_ID), fact(OTHER_ID, { decidingMentorIds: [] })]);
       tx.user.findMany.mockResolvedValue(PEOPLE);
     });
 
@@ -608,7 +840,11 @@ describe('LeaveService', () => {
       const call = rawCall(tx.$queryRaw as jest.Mock);
       expect(call.sql).toContain('app.leave_request_facts(');
       expect(call.values).toEqual([[REQUEST_ID, OTHER_ID]]);
-      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      // Then the consent of the same rows, in one call.
+      const consent = rawCall(tx.$queryRaw as jest.Mock, 1);
+      expect(consent.sql).toContain('app.leave_consent_facts(');
+      expect(consent.values).toEqual([[REQUEST_ID, OTHER_ID]]);
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
     });
 
     it('answers each row as the families have read it, and adds who decides it now, the mentors, the läsår so far and the names', async () => {
@@ -636,6 +872,9 @@ describe('LeaveService', () => {
         mentors: [{ id: ANNA, name: 'Anna Mentor' }],
         decidingMentors: [{ id: ANNA, name: 'Anna Mentor' }],
         year: { name: '2026/27', startDate: '2026-08-17', endDate: '2027-06-11', approvedDays: 5, approvedRequests: 2, pendingRequests: 1 },
+        shortNotice: false,
+        contact: null,
+        consent: { required: false, state: 'NOT_REQUIRED', mine: 'NOT_ASKED', asked: null, given: null, waiting: null },
       });
       expect(result[1]).toMatchObject({
         decidedById: ADMIN_ID,
@@ -680,11 +919,13 @@ describe('LeaveService', () => {
     });
 
     it('answers a family its own requests without the facts, and records LEAVE_REQUESTS', async () => {
-      tx.$queryRaw = jest.fn();
+      tx.$queryRaw = routedRaw([]);
 
       const result = await service.listLeaveRequests({}, testUser({ role: Role.GUARDIAN, userId: GUARDIAN_ID, schoolId: SCHOOL_ID, channel: 'APP' }));
 
-      expect(tx.$queryRaw).not.toHaveBeenCalled();
+      // Only the consent is asked for a family: the other facts are the decider's.
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(rawCall(tx.$queryRaw as jest.Mock).sql).toContain('app.leave_consent_facts(');
       expect(result.map((request) => request.id)).toEqual([REQUEST_ID, OTHER_ID]);
       expect(result[1]).toMatchObject({
         reason: 'Familjeresa',
@@ -701,7 +942,7 @@ describe('LeaveService', () => {
     });
 
     it('a pending request no mentor decides is rektor’s', async () => {
-      (tx.$queryRaw as jest.Mock).mockResolvedValue([fact(REQUEST_ID, { decidingMentorIds: [], mentorIds: [] }), fact(OTHER_ID)]);
+      tx.$queryRaw = routedRaw([fact(REQUEST_ID, { decidingMentorIds: [], mentorIds: [] }), fact(OTHER_ID)]);
 
       const result = await service.listLeaveRequests({}, testUser({ schoolId: SCHOOL_ID }));
 
@@ -709,7 +950,7 @@ describe('LeaveService', () => {
     });
 
     it('leaves out a row the facts do not answer for, and a year it does not know', async () => {
-      (tx.$queryRaw as jest.Mock).mockResolvedValue([fact(OTHER_ID, { yearName: null, yearStart: null, yearEnd: null })]);
+      tx.$queryRaw = routedRaw([fact(OTHER_ID, { yearName: null, yearStart: null, yearEnd: null })]);
 
       const result = await service.listLeaveRequests({}, testUser({ schoolId: SCHOOL_ID }));
 
@@ -721,7 +962,7 @@ describe('LeaveService', () => {
       // app.leave_request_facts gives a TEACHER's decided row no läsår and no
       // totals: the pupil may no longer be theirs.
       const none = { yearName: null, yearStart: null, yearEnd: null, yearApprovedDays: null, yearApprovedRequests: null, yearPendingRequests: null };
-      tx.$queryRaw.mockResolvedValue([fact(REQUEST_ID), fact(OTHER_ID, { ...none, decidingMentorIds: [] })]);
+      tx.$queryRaw = routedRaw([fact(REQUEST_ID), fact(OTHER_ID, { ...none, decidingMentorIds: [] })]);
 
       const result = await service.listLeaveRequests({}, testUser({ role: Role.TEACHER, userId: ANNA, schoolId: SCHOOL_ID }));
 
@@ -730,11 +971,53 @@ describe('LeaveService', () => {
     });
 
     it('answers no year when the facts give the läsår without its totals', async () => {
-      tx.$queryRaw.mockResolvedValue([fact(OTHER_ID, { yearApprovedDays: null })]);
+      tx.$queryRaw = routedRaw([fact(OTHER_ID, { yearApprovedDays: null })]);
 
       const result = await service.listLeaveRequests({}, testUser({ schoolId: SCHOOL_ID }));
 
       expect(result[0]!.year).toBeNull();
+    });
+
+    it('adds the contact when all three are there, the flag, and the consent as the database tells it', async () => {
+      tx.leaveRequest.findMany.mockResolvedValue([
+        { ...pending, consentRequired: true, shortNotice: true, contactName: 'Farmor Gun', contactPhone: '070-1234567', contactRelation: 'Farmor' },
+        decided,
+      ]);
+      tx.$queryRaw = routedRaw(
+        [fact(REQUEST_ID), fact(OTHER_ID)],
+        [consentFact(REQUEST_ID, { required: true, state: 'WAITING', asked: 2, given: 1, waiting: 1 }), consentFact(OTHER_ID)],
+      );
+
+      const result = await service.listLeaveRequests({}, testUser({ schoolId: SCHOOL_ID }));
+
+      expect(result[0]).toMatchObject({
+        shortNotice: true,
+        contact: { name: 'Farmor Gun', phone: '070-1234567', relation: 'Farmor' },
+        consent: { required: true, state: 'WAITING', asked: 2, given: 1, waiting: 1 },
+      });
+      expect(result[1]).toMatchObject({ contact: null });
+    });
+
+    it('answers a guardian only their own part of the consent, never a count', async () => {
+      tx.leaveRequest.findMany.mockResolvedValue([{ ...pending, consentRequired: true }]);
+      tx.$queryRaw = routedRaw([], [consentFact(REQUEST_ID, { required: true, state: 'WAITING', mine: 'WAITING' })]);
+
+      const result = await service.listLeaveRequests({}, testUser({ role: Role.GUARDIAN, userId: GUARDIAN_ID, schoolId: SCHOOL_ID }));
+
+      expect(result[0]!.consent).toEqual({ required: true, state: 'WAITING', mine: 'WAITING', asked: null, given: null, waiting: null });
+    });
+
+    it('tells a row the consent facts do not answer for from the row itself: a stopped request is refused, a held one waits', async () => {
+      tx.leaveRequest.findMany.mockResolvedValue([
+        { ...pending, consentRequired: true, status: 'GUARDIAN_DECLINED' },
+        { ...pending, id: OTHER_ID, consentRequired: true },
+      ]);
+      tx.$queryRaw = routedRaw([fact(REQUEST_ID), fact(OTHER_ID)], []);
+
+      const result = await service.listLeaveRequests({}, testUser({ schoolId: SCHOOL_ID }));
+
+      expect(result[0]!.consent).toMatchObject({ required: true, state: 'REFUSED' });
+      expect(result[1]!.consent).toMatchObject({ required: true, state: 'WAITING' });
     });
 
     it('asks no facts and no names for an empty inbox, and records nothing', async () => {
@@ -753,6 +1036,201 @@ describe('LeaveService', () => {
       await service.listLeaveRequests({}, user);
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Every guardian's consent (Ledighetspolicy)
+  // -----------------------------------------------------------------------
+
+  describe('answerConsent', () => {
+    const consentRow = (type: string, userId: string, notificationId: string, email: string | null) => ({
+      notificationId,
+      userId,
+      email,
+      type,
+      meta: type === 'LEAVE_REQUESTED' ? { leaveRequestId: REQUEST_ID, studentName: 'Ella Elev', startDate: '2027-02-15', endDate: '2027-02-16', schoolDays: 2 } : { leaveRequestId: REQUEST_ID, studentName: 'Ella Elev' },
+      schoolId: SCHOOL_ID,
+    });
+    const arrange = (told: unknown[], state = 'GIVEN') => {
+      tx.$queryRaw = jest.fn().mockImplementation((strings: TemplateStringsArray) =>
+        Promise.resolve(strings.join('?').includes('app.leave_consent_facts(') ? [{ requestId: REQUEST_ID, state }] : told),
+      );
+    };
+    const answerError = (state: string) => Object.assign(new Error(`database ${state}`), { meta: { driverAdapterError: { cause: { originalCode: state } } } });
+
+    it('hands the answer to the database as the guardian, and answers what it came to', async () => {
+      arrange([], 'WAITING');
+      const user = guardianUser();
+
+      await expect(service.answerConsent(REQUEST_ID, { consent: true }, user)).resolves.toEqual({ id: REQUEST_ID, answer: 'GIVEN', state: 'WAITING' });
+
+      expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      const call = rawCall(tx.$queryRaw as jest.Mock);
+      expect(call.sql).toContain('app.leave_consent_answer(');
+      expect(call.values).toEqual([REQUEST_ID, true]);
+    });
+
+    it('hands the last yes’ mentor notices to the delivery as LEAVE_REQUESTED, with the days and no reason', async () => {
+      arrange([consentRow('LEAVE_REQUESTED', ANNA, NOTICE_A, 'anna@skolan.se')]);
+
+      await service.answerConsent(REQUEST_ID, { consent: true }, guardianUser());
+
+      expect(notifications.deliver).toHaveBeenCalledTimes(1);
+      const [, entry] = notifications.deliver.mock.calls[0];
+      expect(entry).toMatchObject({ schoolId: SCHOOL_ID, type: 'LEAVE_REQUESTED', recipients: [{ userId: ANNA, notificationId: NOTICE_A }] });
+      expect(entry.email.recipients).toEqual([{ userId: ANNA, email: 'anna@skolan.se' }]);
+    });
+
+    it('hands a no’s notice to whoever applied, and it says neither who said no nor the child', async () => {
+      arrange([consentRow('LEAVE_CONSENT_REFUSED', GUARDIAN_ID, NOTICE_B, 'vera@x.se')], 'REFUSED');
+
+      await expect(service.answerConsent(REQUEST_ID, { consent: false }, guardianUser())).resolves.toEqual({ id: REQUEST_ID, answer: 'REFUSED', state: 'REFUSED' });
+
+      const [, entry] = notifications.deliver.mock.calls[0];
+      expect(entry).toMatchObject({ type: 'LEAVE_CONSENT_REFUSED', meta: {}, recipients: [{ userId: GUARDIAN_ID, notificationId: NOTICE_B }] });
+      expect(JSON.stringify(entry)).not.toMatch(/Ella|vårdnadshavare som/i);
+    });
+
+    it('delivers nothing for an answer that was already given', async () => {
+      arrange([]);
+
+      await service.answerConsent(REQUEST_ID, { consent: true }, guardianUser());
+
+      expect(notifications.deliver).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['LV403', ForbiddenException, 'LEAVE_CONSENT_NOT_A_GUARDIAN'],
+      ['LV404', NotFoundException, 'LEAVE_CONSENT_NOT_FOUND'],
+      ['LV409', ConflictException, 'LEAVE_CONSENT_REQUEST_ENDED'],
+      ['LV410', ConflictException, 'LEAVE_CONSENT_CUSTODY_ENDED'],
+      ['LV411', ConflictException, 'LEAVE_CONSENT_ANSWERED'],
+    ])('answers the database’s %s as its HTTP error with the code %s', async (state, type, code) => {
+      tx.$queryRaw = jest.fn().mockRejectedValue(answerError(state));
+
+      const error = await service.answerConsent(REQUEST_ID, { consent: true }, guardianUser()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(type);
+      expect((error as { getResponse: () => unknown }).getResponse()).toMatchObject({ code });
+    });
+
+    it('lets any other failure through unchanged', async () => {
+      const failure = new Error('connection reset');
+      tx.$queryRaw = jest.fn().mockRejectedValue(failure);
+
+      await expect(service.answerConsent(REQUEST_ID, { consent: true }, guardianUser())).rejects.toBe(failure);
+    });
+  });
+
+  describe('the school’s policy', () => {
+    const POLICY = { requireAllGuardians: true, minDaysAhead: 7, shortNotice: 'FLAG', contact: 'OPTIONAL' };
+
+    it('reads the policy for the caller’s school through the database’s question, for any role', async () => {
+      tx.$queryRaw = jest.fn().mockResolvedValue([POLICY]);
+
+      await expect(service.getPolicy(guardianUser())).resolves.toEqual(POLICY);
+
+      expect(rawCall(tx.$queryRaw as jest.Mock).sql).toContain('app.leave_policy()');
+    });
+
+    it('answers all three off when the database answers nothing', async () => {
+      tx.$queryRaw = jest.fn().mockResolvedValue([]);
+
+      await expect(service.getPolicy(guardianUser())).resolves.toEqual({ requireAllGuardians: false, minDaysAhead: null, shortNotice: 'REFUSE', contact: 'OFF' });
+    });
+
+    it('records the whole policy for the caller’s school with one upsert, and answers it as the database reads it', async () => {
+      tx.$queryRaw = jest.fn().mockResolvedValue([POLICY]);
+      tx.leavePolicy.upsert.mockResolvedValue({});
+
+      await expect(service.setPolicy(POLICY as never, testUser({ schoolId: SCHOOL_ID }))).resolves.toEqual(POLICY);
+
+      expect(tx.leavePolicy.upsert).toHaveBeenCalledWith({
+        where: { schoolId: SCHOOL_ID },
+        create: { schoolId: SCHOOL_ID, ...POLICY },
+        update: POLICY,
+      });
+    });
+  });
+
+  describe('consentPass', () => {
+    const rows = [
+      { notificationId: NOTICE_A, userId: ANNA, email: 'anna@x.se', type: 'LEAVE_CONSENT_REMINDER', meta: {}, schoolId: SCHOOL_ID },
+      { notificationId: NOTICE_B, userId: BERTIL, email: null, type: 'LEAVE_REQUESTED', meta: { leaveRequestId: REQUEST_ID, studentName: 'Ella Elev', startDate: '2027-02-15', endDate: '2027-02-16', schoolDays: 2 }, schoolId: SCHOOL_ID },
+    ];
+
+    it('asks the database for the pass through the delivery door, delivers what it wrote, and counts the reminders', async () => {
+      tx.$queryRaw = jest.fn().mockResolvedValue(rows);
+
+      await expect(service.consentPass(50)).resolves.toEqual({ notices: 2, reminded: 1 });
+
+      expect(prisma.withDeliveryService).toHaveBeenCalledTimes(1);
+      const call = rawCall(tx.$queryRaw as jest.Mock);
+      expect(call.sql).toContain('app.leave_consent_pass(');
+      expect(call.values).toEqual([50]);
+      // After the commit, through the entries a transaction with no outbox is handed over as: the door has none to wait for.
+      expect(notifications.deliver).not.toHaveBeenCalled();
+      expect(notifications.deliverCommitted).toHaveBeenCalledTimes(1);
+      const [entries] = notifications.deliverCommitted.mock.calls[0];
+      expect(entries.map((entry: { type: string }) => entry.type).sort()).toEqual(['LEAVE_CONSENT_REMINDER', 'LEAVE_REQUESTED']);
+    });
+
+    it('does nothing when nothing is due', async () => {
+      tx.$queryRaw = jest.fn().mockResolvedValue([]);
+
+      await expect(service.consentPass()).resolves.toEqual({ notices: 0, reminded: 0 });
+      expect(notifications.deliver).not.toHaveBeenCalled();
+      expect(notifications.deliverCommitted).toHaveBeenCalledWith([]);
+    });
+  });
+
+  describe('LeaveConsentJob', () => {
+    const setup = (consentPass: jest.Mock, background = true) => {
+      const jobs = { register: jest.fn(), unregister: jest.fn(), settled: jest.fn() };
+      const config = { get: jest.fn().mockReturnValue({ background }) };
+      const job = new LeaveConsentJob({ consentPass } as never, config as never, jobs as never);
+      return { job, jobs };
+    };
+
+    it('registers a pass every quarter of an hour, and not when the background is off', () => {
+      const on = setup(jest.fn());
+      on.job.onModuleInit();
+      expect(on.jobs.register).toHaveBeenCalledWith(expect.objectContaining({ name: 'leave-consent', intervalMs: 900_000 }));
+      const off = setup(jest.fn(), false);
+      off.job.onModuleInit();
+      expect(off.jobs.register).not.toHaveBeenCalled();
+    });
+
+    it('registers nothing without a runner or a config, and unregisters on shutdown', () => {
+      const bare = new LeaveConsentJob({ consentPass: jest.fn() } as never);
+      expect(() => bare.onModuleInit()).not.toThrow();
+      expect(() => bare.onModuleDestroy()).not.toThrow();
+      const { job, jobs } = setup(jest.fn());
+      job.onModuleDestroy();
+      expect(jobs.unregister).toHaveBeenCalledWith('leave-consent');
+    });
+
+    it('counts a pass in JobRuns, records a failed one as failed, and never throws', async () => {
+      const counts = { notices: 3, reminded: 2 };
+      const ok = setup(jest.fn().mockResolvedValue(counts));
+      await ok.job.tick();
+      expect(ok.jobs.settled).toHaveBeenCalledWith('leave-consent', expect.any(Date), { ok: true, counts });
+
+      const failing = setup(jest.fn().mockRejectedValue(new Error('connection')));
+      await expect(failing.job.tick()).resolves.toBeUndefined();
+      expect(failing.jobs.settled).toHaveBeenCalledWith('leave-consent', expect.any(Date), expect.objectContaining({ ok: false }));
+    });
+
+    it('lets a pass that is still running finish instead of starting another', async () => {
+      let finish!: (counts: { notices: number; reminded: number }) => void;
+      const pass = jest.fn().mockReturnValue(new Promise((resolve) => (finish = resolve)));
+      const { job } = setup(pass);
+      const first = job.tick();
+      const second = job.tick();
+      finish({ notices: 0, reminded: 0 });
+      await Promise.all([first, second]);
+      expect(pass).toHaveBeenCalledTimes(1);
     });
   });
 

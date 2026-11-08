@@ -167,7 +167,7 @@ export function formatDocument(files: readonly DataFile[], tables: readonly Tabl
     out.push(
       '## `data/person/`: övriga tabeller',
       '',
-      'Det Rastra i övrigt har om personen skrivs som en fil per tabell. Kolumnerna är tabellens egna, i tabellens ordning, och id:n är Rastras interna id:n (de som `data/personer.csv` bär). En kolumn som innehåller en nyckel, ett hemligt värde eller en kontrollsumma står som `(dold)`. En tabell utan rader för personen skrivs inte. Tabellerna: ' +
+      'Det Rastra i övrigt har om personen skrivs som en fil per tabell. Kolumnerna är tabellens egna, i tabellens ordning, och id:n är Rastras interna id:n (de som `data/personer.csv` bär). En kolumn som innehåller en nyckel, ett hemligt värde eller en kontrollsumma står som `(dold)`, och det gör också namnet och kontaktuppgifterna hos en extern hyrande i `ExternalBookings` (den som hyr är ingen användare och inte den som utdraget gäller; kvar står att personen registrerat serien). En tabell utan rader för personen skrivs inte. Tabellerna: ' +
         tables.map((table) => `\`${table.table}\``).join(', ') +
         '.',
       '',

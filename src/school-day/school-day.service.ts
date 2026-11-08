@@ -379,7 +379,7 @@ export class SchoolDayService {
   private bookingRows(tx: PrismaClient, start: Date, end: Date) {
     return tx.roomBooking.findMany({
       where: { status: { in: ['PENDING', 'APPROVED'] }, startsAt: { lt: end }, endsAt: { gt: start } },
-      select: { roomId: true, bookedById: true, title: true, startsAt: true, endsAt: true },
+      select: { roomId: true, bookedById: true, externalBookingId: true, title: true, startsAt: true, endsAt: true },
     });
   }
 
@@ -401,7 +401,8 @@ export class SchoolDayService {
         if (!clipped) continue;
         out.push({ resource: 'ROOM', resourceId: row.roomId, date, ...clipped, kind: 'BOOKING', label: row.title });
         // A marked person is on no row, so their id is on no block either; the room still shows that it is held.
-        if (access.grids && !held.has(row.bookedById)) {
+        // A day of an external booking holds the room and nobody's day: the administrator who registered it is not away for it (Lokal).
+        if (access.grids && !held.has(row.bookedById) && !row.externalBookingId) {
           out.push({ resource: 'TEACHER', resourceId: row.bookedById, date, ...clipped, kind: 'BOOKING', label: row.title });
         }
       }

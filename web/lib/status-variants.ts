@@ -146,11 +146,12 @@ export const BOOKING_STATUS_VARIANT = {
   CANCELLED: "outline",
 } as const satisfies Record<RoomBookingStatus, StatusVariant>;
 
-/** A leave request. */
+/** A leave request. A guardian's no ends it for everybody: finished, not refused by the school. */
 export const LEAVE_STATUS_VARIANT = {
   PENDING: "warning",
   APPROVED: "success",
   REJECTED: "destructive",
+  GUARDIAN_DECLINED: "outline",
 } as const satisfies Record<LeaveRequestStatus, StatusVariant>;
 
 /** An attendance mark. EXCUSED is information, not an alarm; UNKNOWN is not yet taken. */

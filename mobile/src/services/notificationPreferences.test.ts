@@ -47,10 +47,18 @@ describe('notification preferences', () => {
     expect(preferenceLabel(translatorFor('en'), 'LESSON_REPORT_REMINDER', true)).toBe('Reminders about open lessons');
     expect(preferenceLabel(t, 'REPORTING_RATE_DIGEST', true)).toBe('Veckobesked om rapporteringsgrad');
     expect(preferenceLabel(translatorFor('en'), 'REPORTING_RATE_DIGEST', true)).toBe('Weekly reporting-rate note');
+    expect(preferenceLabel(t, 'EXTERNAL_BOOKING_CLASH', true)).toBe('Externa bokningar som krockar med en lektion');
+    expect(preferenceLabel(translatorFor('en'), 'EXTERNAL_BOOKING_CLASH', true)).toBe('External bookings that clash with a lesson');
     expect(preferenceLabel(t, 'ACK_REQUESTED', true)).toBe('Meddelanden som ber om bekräftelse');
     expect(preferenceLabel(translatorFor('en'), 'ACK_REQUESTED', true)).toBe('Messages that ask for confirmation');
     expect(preferenceLabel(t, 'ACK_REMINDER', true)).toBe('Påminnelse om obekräftade meddelanden');
     expect(preferenceLabel(translatorFor('en'), 'ACK_REMINDER', true)).toBe('Reminder about unconfirmed messages');
+    expect(preferenceLabel(t, 'LEAVE_CONSENT_REQUESTED', true)).toBe('Ledighetsansökningar som väntar på ditt samtycke');
+    expect(preferenceLabel(translatorFor('en'), 'LEAVE_CONSENT_REQUESTED', true)).toBe('Leave requests waiting for your consent');
+    expect(preferenceLabel(t, 'LEAVE_CONSENT_REMINDER', true)).toBe('Påminnelse om ledighetsansökningar som väntar på ditt samtycke');
+    expect(preferenceLabel(translatorFor('en'), 'LEAVE_CONSENT_REMINDER', true)).toBe('Reminder about leave requests waiting for your consent');
+    expect(preferenceLabel(t, 'LEAVE_CONSENT_REFUSED', true)).toBe('Ledighetsansökningar som avslutats för att en vårdnadshavare inte samtyckte');
+    expect(preferenceLabel(translatorFor('en'), 'LEAVE_CONSENT_REFUSED', true)).toBe('Leave requests that ended because a guardian did not consent');
     expect(preferenceLabel(t, 'LESSON_PUPIL_MOVED', true)).toBe('Elever som byter lektion för en dag');
     expect(preferenceLabel(translatorFor('en'), 'LESSON_PUPIL_MOVED', true)).toBe('Pupils who change lesson for a day');
     expect(preferenceLabel(t, 'LESSON_SUBSTITUTE', true)).toBe('Vikarier på mina lektioner');

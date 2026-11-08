@@ -179,7 +179,47 @@ export interface AbsenceReportRow {
   readonly removable?: boolean;
 }
 
-export type LeaveRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+/** GUARDIAN_DECLINED (Ledighetspolicy): a guardian did not consent, and the request ended there. */
+export type LeaveRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'GUARDIAN_DECLINED';
+
+/**
+ * The school's three choices about leave (Ledighetspolicy, GET /leave-policy).
+ * All off as a school leaves them: `{ false, null, 'REFUSE', 'OFF' }`.
+ * `shortNotice` means something only when `minDaysAhead` is set.
+ */
+export type LeaveShortNotice = 'REFUSE' | 'FLAG';
+export type LeaveContactMode = 'OFF' | 'OPTIONAL' | 'REQUIRED';
+
+export interface LeavePolicy {
+  /** Every guardian with active custody consents before the request is decided. */
+  readonly requireAllGuardians: boolean;
+  /** Calendar days before the first day, 1..90; null: no minimum. */
+  readonly minDaysAhead: number | null;
+  /** What a request that comes later meets: a refusal, or a flag for whoever decides. */
+  readonly shortNotice: LeaveShortNotice;
+  /** The temporary contact during the leave: not asked for, asked for, or required. */
+  readonly contact: LeaveContactMode;
+}
+
+/** A third party's details, written by the family: shown to the family that wrote them, never in a notice. */
+export interface LeaveContact {
+  readonly name: string;
+  readonly phone: string;
+  readonly relation: string;
+}
+
+/** The request's consent as a whole; WAITING means someone who can answer has not. */
+export type LeaveConsentState = 'NOT_REQUIRED' | 'WAITING' | 'GIVEN' | 'REFUSED';
+/** The signed-in guardian's own part; NOT_ASKED for everyone else and for whoever applied. */
+export type LeaveConsentMine = 'NOT_ASKED' | 'WAITING' | 'GIVEN' | 'REFUSED' | 'ENDED';
+
+export interface LeaveConsent {
+  /** The school asked for consent when the request was written. */
+  readonly required: boolean;
+  readonly state: LeaveConsentState;
+  readonly mine: LeaveConsentMine;
+  // asked / given / waiting are the staff's counts; a family gets null and the app draws none.
+}
 
 export interface LeaveRequestRow {
   readonly id: string;
@@ -192,6 +232,13 @@ export interface LeaveRequestRow {
   /** MENTOR or ADMIN once decided (Mentorns ledighetsbeslut); null before, and for older decisions. */
   readonly decidedAs: 'MENTOR' | 'ADMIN' | null;
   readonly createdAt: string;
+  // The three below come from Ledighetspolicy. A gateway from before it sends none, and a row without
+  // them is drawn as it always was: the app shows only what the answer says.
+  /** The request came closer to the first day than the school's minimum, and was flagged instead of refused. */
+  readonly shortNotice?: boolean;
+  /** The temporary contact the family gave; null when none was. */
+  readonly contact?: LeaveContact | null;
+  readonly consent?: LeaveConsent;
 }
 
 export type NotificationType =
@@ -221,7 +268,11 @@ export type NotificationType =
   | 'REPORTING_RATE_DIGEST'
   | 'ACK_REQUESTED'
   | 'ACK_REMINDER'
-  | 'LESSON_PUPIL_MOVED';
+  | 'LESSON_PUPIL_MOVED'
+  | 'EXTERNAL_BOOKING_CLASH'
+  | 'LEAVE_CONSENT_REQUESTED'
+  | 'LEAVE_CONSENT_REMINDER'
+  | 'LEAVE_CONSENT_REFUSED';
 
 export interface NotificationRow {
   readonly id: string;

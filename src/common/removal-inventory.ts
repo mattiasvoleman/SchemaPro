@@ -200,6 +200,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   // Kvittens (20270117091000): the requests a guardian was asked, and the ones asked about a pupil, go with the person.
   key('AckReceipts', ['guardianId', 'schoolId'], 'CASCADE', others),
   key('AckReceipts', ['studentId', 'schoolId'], 'CASCADE', others),
+  // Lokal (20270204091000): a booking of a resource is its booker's, as a room booking is.
+  key('ResourceBookings', ['bookedById', 'schoolId'], 'CASCADE', others),
   // Checklistor (20270129091000): a pupil's instruction proofs and answers on consent lists go with the pupil.
   key('InstructionProofs', ['studentId', 'schoolId'], 'CASCADE', others),
   key('ConsentEntries', ['studentId', 'schoolId'], 'CASCADE', others),
@@ -222,6 +224,11 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('NotificationOptOuts', ['userId', 'schoolId'], 'CASCADE', account('noticeSettings')),
   key('DevicePushTokens', ['userId', 'schoolId'], 'CASCADE', account('pushDevices')),
   key('LeaveRequestNotices', ['userId', 'schoolId'], 'CASCADE', account('notices')),
+  // Ledighetspolicy (20270205091000): the answers of the guardians a school asked to consent to a leave request. No role
+  // reads the table (RLS 449), so a dry run under an administrator's RLS cannot count it; the rows go with the person.
+  key('LeaveConsents', ['guardianId', 'schoolId'], 'CASCADE', {
+    uncounted: 'the answers of the guardians a school asked to consent to a leave request, read by no role (RLS 449): the rows go with the person',
+  }),
   key('CalendarFeeds', ['studentId', 'schoolId'], 'CASCADE', account('calendarFeeds')),
   key('CalendarFeeds', ['userId', 'schoolId'], 'CASCADE', account('calendarFeeds')),
   key('TeachingRequirements', ['coTeacherId', 'schoolId'], 'SET NULL', kept),
@@ -232,6 +239,11 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('LeaveRequests', ['decidedById', 'schoolId'], 'SET NULL', kept),
   key('LeaveRequests', ['referredById', 'schoolId'], 'SET NULL', kept),
   key('RoomBookings', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  // Lokal (20270204091000): the decider of a booking of a resource, and the one who registered a series of
+  // external bookings, are unlinked; the series stays (its hirer is not the person). A person with a running
+  // series is refused first (UsersService.remove), for the days they booked go with them.
+  key('ResourceBookings', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  key('ExternalBookings', ['registeredById', 'schoolId'], 'SET NULL', kept),
   key('TimplanStatementPublications', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
   key('TimetablePublications', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CancellationBatches', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
@@ -382,6 +394,8 @@ export const GROUP_BELOW_PARENTS = [
  */
 export const STUDENT_BELOW: readonly BelowKey<never>[] = [
   below('LeaveRequests', 'LeaveRequestNotices', ['leaveRequestId', 'schoolId'], 'CASCADE', { with: 'leaveRequests' }),
+  // The guardians asked to consent to a request go with the request (a request deleted takes the answers; the contact is a column of it).
+  below('LeaveRequests', 'LeaveConsents', ['leaveRequestId', 'schoolId'], 'CASCADE', { with: 'leaveRequests' }),
   below('DevicePushTokens', 'PushTickets', ['tokenId', 'schoolId'], 'CASCADE', { with: 'accounts' }),
   below('AvailabilityConstraints', 'TeacherDutySlots', ['availabilityConstraintId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherDuties', 'TeacherDutySlots', ['teacherDutyId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),

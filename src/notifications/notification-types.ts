@@ -55,6 +55,17 @@ import type { NotificationKind } from './notifications.service';
  * the school has said so (LESSON_PUPIL_MOVED). A choice for both: the in-app
  * row is always written. The push and the e-mail say that a pupil's lesson has
  * changed and when, never who, and never the lesson the pupil left or went to.
+ *
+ * Lokal (K3): an administrator who writes Drift is told, after a publication, that days of an
+ * external booking now stand in a room that has a lesson (EXTERNAL_BOOKING_CLASH). A choice, and
+ * only a number: the hirer is not a user, and a notice goes on as e-mail and push, so the name
+ * and the contact are on the page behind the login and nowhere else.
+ *
+ * Ledighetspolicy (K4): when the school asks every guardian to consent to a leave
+ * request, a guardian is asked (LEAVE_CONSENT_REQUESTED) and, once, reminded
+ * (LEAVE_CONSENT_REMINDER); whoever applied is told when a guardian did not consent
+ * (LEAVE_CONSENT_REFUSED). All three are choices for a guardian, and the in-app row
+ * is always written. None of them says who applied or who refused.
  */
 
 export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
@@ -85,6 +96,10 @@ export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
   'ACK_REQUESTED',
   'ACK_REMINDER',
   'LESSON_PUPIL_MOVED',
+  'EXTERNAL_BOOKING_CLASH',
+  'LEAVE_CONSENT_REQUESTED',
+  'LEAVE_CONSENT_REMINDER',
+  'LEAVE_CONSENT_REFUSED',
 ];
 
 type ChoosingRole = 'GUARDIAN' | 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN';
@@ -114,10 +129,10 @@ const LESSONS: readonly NotificationKind[] = [
 ];
 
 export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = {
-  GUARDIAN: [...LESSONS, 'LESSON_PUPIL_MOVED', 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST', 'CRISIS_GUARDIAN_AFTER', 'ACK_REQUESTED', 'ACK_REMINDER'],
+  GUARDIAN: [...LESSONS, 'LESSON_PUPIL_MOVED', 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST', 'CRISIS_GUARDIAN_AFTER', 'ACK_REQUESTED', 'ACK_REMINDER', 'LEAVE_CONSENT_REQUESTED', 'LEAVE_CONSENT_REMINDER', 'LEAVE_CONSENT_REFUSED'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
   TEACHER: [...STAFF, 'LESSON_PUPIL_MOVED', 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'LESSON_REPORT_REMINDER'],
-  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED', 'REPORTING_RATE_DIGEST'],
+  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED', 'REPORTING_RATE_DIGEST', 'EXTERNAL_BOOKING_CLASH'],
 };
 
 /**

@@ -1,8 +1,9 @@
 import type { Prisma } from '@prisma/client';
-import { DATA_FILES, FRANVARO, KOPPLINGAR, LASLOGG, LEDIGHETER, NARVARO, NOTISER, PERSONER, type DataEnv, type DataFile } from './data-files';
+import { DATA_FILES, FRANVARO, KOPPLINGAR, LASLOGG, LEDIGHETER,
+  SAMTYCKEN, NARVARO, NOTISER, PERSONER, type DataEnv, type DataFile } from './data-files';
 
 /**
- * The seven data files with the database scripted: what each turns a row into,
+ * The eight data files with the database scripted: what each turns a row into,
  * what it holds out and blanks for a protected identity, and what it hands the
  * läslogg. The queries themselves are proved against Postgres by
  * scripts/test/probe-school-export.ts (two schools, a marked pupil and teacher);
@@ -68,7 +69,7 @@ describe('the data files', () => {
       for (const column of file.columns) expect(column.name).toMatch(/^[a-z_]+$/);
     }
     expect(DATA_FILES.map((f) => f.path)).toEqual([
-      'data/personer.csv', 'data/kopplingar.csv', 'data/narvaro.csv', 'data/franvaroanmalningar.csv', 'data/ledigheter.csv', 'data/notiser.csv', 'data/laslogg.csv',
+      'data/personer.csv', 'data/kopplingar.csv', 'data/narvaro.csv', 'data/franvaroanmalningar.csv', 'data/ledigheter.csv', 'data/samtycken.csv', 'data/notiser.csv', 'data/laslogg.csv',
     ]);
   });
 
@@ -180,11 +181,44 @@ describe('the data files', () => {
       const leave = {
         id: 'v1', student: PUPIL, studentEmail: 's@x', requester: OTHER, requesterEmail: 'g@x', start: '2026-11-02', end: '2026-11-03', reason: 'släkt', status: 'APPROVED',
         decider: null, deciderEmail: null, decidedAt: 'd', decisionNote: null, decidedAs: 'ADMIN', referrer: null, referredAt: null, created: 'c', at: 'x', hid: 1,
+        consentRequired: true, shortNotice: false, contactName: 'Farmor Gun', contactPhone: '070-1234567', contactRelation: 'Farmor',
       };
       const l = harness([[leave], [{ held: 0 }]], { markedOut: [MARKED] });
-      expect(await rowsOf(LEDIGHETER, l.env)).toEqual([['v1', PUPIL, 's@x', OTHER, 'g@x', '2026-11-02', '2026-11-03', 'släkt', 'APPROVED', '', '', 'd', '', 'ADMIN', '', '', 'c']]);
+      expect(await rowsOf(LEDIGHETER, l.env)).toEqual([['v1', PUPIL, 's@x', OTHER, 'g@x', '2026-11-02', '2026-11-03', 'släkt', 'APPROVED', '', '', 'd', '', 'ADMIN', '', '', 'c', 'true', 'false', 'Farmor Gun', '070-1234567', 'Farmor']]);
       expect(l.held).toEqual([['data/ledigheter.csv', 'blanked', 1], ['data/ledigheter.csv', 'rows', 0]]);
       expect(l.named).toContainEqual(['LEAVE_REQUESTS', [PUPIL]]);
+    });
+
+    it('asks the database for the contact as a third party\'s: hidden by the name, in an extract of somebody else and where it names a marked person', async () => {
+      const h = harness([[], [{ held: 0 }]], { markedOut: [MARKED] });
+      await rowsOf(LEDIGHETER, h.env);
+      const sql = textOf(h.calls[0]!);
+      // The three cells hide together, on the name, and are counted among the cells that were blanked.
+      for (const column of ['contactName', 'contactPhone', 'contactRelation']) {
+        expect(sql).toMatch(new RegExp(`CASE WHEN .*THEN NULL ELSE l."${column}" END AS "${column}"`, 's'));
+        expect(sql).toContain(`l."${column}" IS NOT NULL AND`);
+      }
+      expect(sql).toContain('l."consentRequired" AS "consentRequired"');
+      expect(sql).toContain('l."shortNotice" AS "shortNotice"');
+    });
+
+    /** The expression that decides whether the contact\'s name is written, from its CASE to its ELSE. */
+    const nameRule = (sql: string): string => {
+      const end = sql.indexOf('ELSE l."contactName" END');
+      return sql.slice(sql.lastIndexOf('CASE WHEN', end), end);
+    };
+
+    it('hides the contact in an extract about somebody else because the row is not about them, and not in the school\'s own file', async () => {
+      // The review of #292 (MEDEL-2): without this a teacher\'s extract gave a third party\'s name and telephone number, and
+      // nothing that ran in CI said so (the mutant that dropped it passed every unit test and the probe).
+      const scoped = harness([[], [{ held: 0 }]], { markedOut: [MARKED], scope: { ids: [OTHER] } });
+      await rowsOf(LEDIGHETER, scoped.env);
+      expect(nameRule(textOf(scoped.calls[0]!))).toContain('NOT (l."studentId" = ANY(');
+      const school = harness([[], [{ held: 0 }]], { markedOut: [MARKED] });
+      await rowsOf(LEDIGHETER, school.env);
+      // The school\'s file is about nobody in particular: only a marked person in the name hides the contact.
+      expect(nameRule(textOf(school.calls[0]!))).not.toContain('NOT (l."studentId" = ANY(');
+      expect(nameRule(textOf(school.calls[0]!))).toContain('position(');
     });
 
     it('widen a person\'s scope to the leave they asked for and decided', async () => {
@@ -231,6 +265,83 @@ describe('the data files', () => {
       expect(selects[1]).toContain('l."reason"');
       expect(selects[2]).toContain('ar."note"');
       expect(valuesOf(h.calls[0]!)).toEqual(expect.arrayContaining([['anna ek']]));
+    });
+  });
+
+  describe('samtycken.csv', () => {
+    const answer = {
+      request: 'v1', guardian: OTHER, guardianEmail: 'g@x', student: PUPIL, consented: true, answeredAt: '2026-11-02T08:00:00Z', remindedAt: null,
+      created: '2026-11-01T08:00:00Z', guardianKey: OTHER, at: '2026-11-01 08:00:00.000000+00', hid: 0,
+    };
+
+    it('writes a guardian\'s answer with when they answered, empty for a question not yet answered, and names the persons for the läslogg', async () => {
+      const waiting = { ...answer, request: 'v2', consented: null, answeredAt: null, at: '2026-11-01 09:00:00.000000+00' };
+      const refused = { ...answer, request: 'v3', consented: false, remindedAt: '2026-11-03T08:00:00Z' };
+      const h = harness([[answer, waiting, refused]]);
+      expect(await rowsOf(SAMTYCKEN, h.env)).toEqual([
+        ['v1', OTHER, 'g@x', PUPIL, 'true', '2026-11-02T08:00:00Z', '', '2026-11-01T08:00:00Z'],
+        ['v2', OTHER, 'g@x', PUPIL, '', '', '', '2026-11-01T08:00:00Z'],
+        ['v3', OTHER, 'g@x', PUPIL, 'false', '2026-11-02T08:00:00Z', '2026-11-03T08:00:00Z', '2026-11-01T08:00:00Z'],
+      ]);
+      expect(h.named).toEqual([['GUARDIANS', [OTHER, OTHER, OTHER]], ['LEAVE_REQUESTS', [PUPIL, PUPIL, PUPIL]]]);
+    });
+
+    it('asks the database\'s own function for the rows, for the persons the scope names and without the requests about a marked pupil', async () => {
+      const h = harness([[]], { markedOut: [MARKED], scope: { ids: [OTHER] } });
+      await rowsOf(SAMTYCKEN, h.env);
+      const sql = textOf(h.calls[0]!);
+      expect(sql).toContain('app.leave_consents_export(');
+      // Never the table: no role reads it.
+      expect(sql).not.toMatch(/FROM "LeaveConsents"/);
+      expect(valuesOf(h.calls[0]!)).toEqual(expect.arrayContaining([[OTHER], [MARKED]]));
+    });
+
+    it('asks only for the person the extract is about, not for the persons who come along with it (a no is not handed on to the other guardian)', async () => {
+      const along = '00000000-0000-4000-8000-0000000000aa';
+      // The function's first argument is the guardians asked for; the persons of the scope also stand in the rules that hide a cell,
+      // which is why the whole list of values is not searched. The page size follows the markedOut list, then three null keys.
+      const guardiansAskedFor = (call: Prisma.Sql): unknown => {
+        const values = valuesOf(call);
+        return values[values.indexOf(5000) - 2];
+      };
+      const h = harness([[]], { scope: { ids: [OTHER, along], subject: OTHER } });
+      await rowsOf(SAMTYCKEN, h.env);
+      expect(guardiansAskedFor(h.calls[0]!)).toEqual([OTHER]);
+      // A scope without the subject named is read as the extract's shape is: the person asked for first.
+      const first = harness([[]], { scope: { ids: [OTHER, along] } });
+      await rowsOf(SAMTYCKEN, first.env);
+      expect(guardiansAskedFor(first.calls[0]!)).toEqual([OTHER]);
+      // The whole school's file names no one.
+      const school = harness([[]]);
+      await rowsOf(SAMTYCKEN, school.env);
+      expect(guardiansAskedFor(school.calls[0]!)).toBeNull();
+    });
+
+    it('asks for the whole school with no persons named when the scope is the school\'s', async () => {
+      const h = harness([[]]);
+      await rowsOf(SAMTYCKEN, h.env);
+      // The function's first argument is null: the school's all. (The scope's list is not among the values at all.)
+      expect(valuesOf(h.calls[0]!)).toContain(null);
+      expect(valuesOf(h.calls[0]!)).not.toContainEqual([OTHER]);
+    });
+
+    it('hides the guardian\'s id and address where the guardian is a marked person, and the pupil where the scope is not about the pupil', async () => {
+      const h = harness([[{ ...answer, guardian: null, guardianEmail: null, student: null, hid: 2 }]], { markedOut: [MARKED], scope: { ids: [OTHER] } });
+      await rowsOf(SAMTYCKEN, h.env);
+      const sql = textOf(h.calls[0]!);
+      for (const column of ['guardianId', 'guardianEmail', 'studentId']) expect(sql).toMatch(new RegExp(`CASE WHEN .*THEN NULL ELSE c."${column}" END`, 's'));
+      // The pupil is hidden by the same rule as the leave file\'s: not one of the persons asked for.
+      expect(sql).toContain('NOT (c."studentId" = ANY(');
+      expect(h.held).toEqual([['data/samtycken.csv', 'blanked', 2]]);
+    });
+
+    it('pages by the key the file never shows, so a page of blanked guardians is followed on from the right row', async () => {
+      const full = Array.from({ length: 5000 }, (_, i) => ({ ...answer, request: `r${i}`, guardian: null, guardianKey: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`, at: `2026-11-01 08:00:${String(i % 60).padStart(2, '0')}.000000+00` }));
+      const h = harness([full, []]);
+      await rowsOf(SAMTYCKEN, h.env);
+      const values = valuesOf(h.calls[1]!);
+      expect(values).toContain(full[4999]!.guardianKey);
+      expect(values).toContain('r4999');
     });
   });
 

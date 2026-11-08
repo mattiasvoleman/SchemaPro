@@ -150,6 +150,8 @@ import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
 import { coverRequestsChecks, sweepCoverRequestsSchool } from './probe-cover-requests';
 import { krislageChecks, sweepKrislageSchool } from './probe-krislage';
 import { kvittensChecks, sweepKvittensSchool } from './probe-kvittens';
+import { pagingOrderChecks, sweepPagingSchool } from './probe-paging-order';
+import { ledighetspolicyChecks, sweepLedighetspolicySchool } from './probe-ledighetspolicy';
 import { lessonMoveChecks, sweepLessonMovesSchool } from './probe-lesson-moves';
 import { checklistorChecks, sweepChecklistorSchool } from './probe-checklistor';
 import { skolansDagChecks, sweepSkolansDagSchool } from './probe-skolans-dag';
@@ -6049,12 +6051,14 @@ async function runChecks(
   await coverRequestsChecks(owner, api, MARKER, check);
   await krislageChecks(owner, api, MARKER, check);
   await kvittensChecks(owner, api, MARKER, check);
+  await ledighetspolicyChecks(owner, api, MARKER, check);
   await lessonMoveChecks(owner, api, MARKER, check);
   await checklistorChecks(owner, api, MARKER, check);
   await skolansDagChecks(owner, api, MARKER, check);
   await klasslarareChecks(owner, api, MARKER, check);
   await elevlistanChecks(owner, api, MARKER, check);
   await massvalChecks(owner, api, MARKER, check);
+  await pagingOrderChecks(owner, api, MARKER, check);
 }
 
 
@@ -6555,6 +6559,10 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepKrislageSchool(owner, MARKER);
   // Kvittens' school, likewise.
   await sweepKvittensSchool(owner, MARKER);
+  // The order of a page's school, likewise.
+  await sweepPagingSchool(owner, MARKER);
+  // Ledighetspolicyns school, likewise.
+  await sweepLedighetspolicySchool(owner, MARKER);
   // Elevens lektion för dagen's school, likewise.
   await sweepLessonMovesSchool(owner, MARKER);
   // Checklistor's school, likewise.

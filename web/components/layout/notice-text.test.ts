@@ -64,6 +64,30 @@ describe("the notice of a pupil moved to a parallel lesson for a day (Elevens le
   });
 });
 
+describe("the expedition's notice of days that clash with a lesson (Lokal)", () => {
+  // The hirer is not a user and a notice goes on as e-mail and push: if a newer gateway puts a name or a room in the meta, the
+  // sentence still must not say it.
+  const meta = { days: 3, organisation: "Hjo innebandy", contactName: "Kim Kontakt", roomName: "Idrottshallen" };
+
+  it("says how many days clash, in both languages, with the plural right", () => {
+    expect(say("sv", row("EXTERNAL_BOOKING_CLASH", meta))).toBe("3 dagar av externa bokningar står nu i en sal som har en lektion. Se Externa bokningar.");
+    expect(say("en", row("EXTERNAL_BOOKING_CLASH", meta))).toBe("3 days of external bookings now stand in a room that has a lesson. See External bookings.");
+    expect(say("sv", row("EXTERNAL_BOOKING_CLASH", { days: 1 }))).toContain("1 dag av externa bokningar");
+    expect(say("en", row("EXTERNAL_BOOKING_CLASH", { days: 1 }))).toContain("1 day of external bookings");
+  });
+
+  it("never says the hirer, the contact or the room", () => {
+    for (const text of [say("sv", row("EXTERNAL_BOOKING_CLASH", meta)), say("en", row("EXTERNAL_BOOKING_CLASH", meta))]) {
+      expect(text).not.toMatch(/Hjo|Kim|Kontakt|Idrottshallen/);
+    }
+  });
+
+  it("leads to the list of external bookings, and says nothing of a number it was not given", () => {
+    expect(noticeHref(row("EXTERNAL_BOOKING_CLASH", meta))).toBe("/admin/external-bookings");
+    expect(say("sv", row("EXTERNAL_BOOKING_CLASH", {}))).toContain("0 dagar");
+  });
+});
+
 describe("the guardian's notice of a message to confirm (Kvittens)", () => {
   const title = "Utflykten på torsdag";
   // A pupil's name and the text of the message are not in a notice's meta; if a newer gateway puts them there, the sentence still must not say them.
@@ -89,6 +113,57 @@ describe("the guardian's notice of a message to confirm (Kvittens)", () => {
     for (const type of ["ACK_REQUESTED", "ACK_REMINDER"] as const) {
       expect(noticeHref(row(type, meta))).toBe("/guardian/acknowledgements");
       expect(noticeHref(row(type, meta), "GUARDIAN")).toBe("/guardian/acknowledgements");
+    }
+  });
+});
+
+describe("the guardian's notices of a leave request that asks for consent (Ledighetspolicy)", () => {
+  // Who applied and who answered are not in a notice's meta; if a newer gateway puts them there, the sentence still must not say them.
+  const meta = {
+    leaveRequestId: "l-1",
+    studentName: "Ada Berg",
+    startDate: "2027-03-01",
+    endDate: "2027-03-05",
+    requestedBy: "Gun Berg",
+    refusedBy: "Tom Berg",
+  };
+  const TYPES = ["LEAVE_CONSENT_REQUESTED", "LEAVE_CONSENT_REMINDER", "LEAVE_CONSENT_REFUSED"] as const;
+
+  it("asks for the consent, naming the child and the days, in both languages", () => {
+    expect(say("sv", row("LEAVE_CONSENT_REQUESTED", meta))).toBe("Skolan ber dig samtycka till en ledighetsansökan för Ada Berg (2027-03-01 – 2027-03-05).");
+    expect(say("en", row("LEAVE_CONSENT_REQUESTED", meta))).toBe("The school asks you to consent to a leave request for Ada Berg (2027-03-01 – 2027-03-05).");
+  });
+
+  it("reminds in words that tell it from the request", () => {
+    expect(say("sv", row("LEAVE_CONSENT_REMINDER", meta))).toBe("Påminnelse: ledighetsansökan för Ada Berg (2027-03-01 – 2027-03-05) väntar på ditt samtycke.");
+    expect(say("en", row("LEAVE_CONSENT_REMINDER", meta))).toBe("Reminder: the leave request for Ada Berg (2027-03-01 – 2027-03-05) is waiting for your consent.");
+  });
+
+  it("tells whoever applied that the request was ended because a guardian did not consent, and not which", () => {
+    expect(say("sv", row("LEAVE_CONSENT_REFUSED", meta))).toBe(
+      "Ledighetsansökan för Ada Berg (2027-03-01 – 2027-03-05) har avslutats, eftersom en vårdnadshavare inte samtyckte.",
+    );
+    expect(say("en", row("LEAVE_CONSENT_REFUSED", meta))).toBe(
+      "The leave request for Ada Berg (2027-03-01 – 2027-03-05) has been ended because a guardian did not consent.",
+    );
+  });
+
+  it("never says who applied or who answered, whatever the meta carries", () => {
+    for (const type of TYPES) {
+      for (const text of [say("sv", row(type, meta)), say("en", row(type, meta))]) expect(text).not.toMatch(/Gun|Tom|undefined/);
+    }
+  });
+
+  it("leaves a missing name or date empty rather than printing undefined", () => {
+    for (const text of [say("sv", row("LEAVE_CONSENT_REQUESTED", {})), say("en", row("LEAVE_CONSENT_REFUSED", {}))]) {
+      expect(text).not.toMatch(/undefined|null/);
+    }
+  });
+
+  it("leads all three to the guardian's page, where the requests are listed, whoever the reader is", () => {
+    for (const type of TYPES) {
+      expect(noticeHref(row(type, meta))).toBe("/guardian");
+      expect(noticeHref(row(type, meta), "GUARDIAN")).toBe("/guardian");
     }
   });
 });

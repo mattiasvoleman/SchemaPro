@@ -297,7 +297,7 @@ describe('Ss12000Service', () => {
       await service.persons(SCHOOL_ID);
 
       expect(tx.user.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ orderBy: { lastName: 'asc' } }),
+        expect.objectContaining({ orderBy: [{ lastName: 'asc' }, { id: 'asc' }] }),
       );
     });
   });
@@ -562,7 +562,7 @@ describe('Ss12000Service', () => {
 
       expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
         }),
       );
     });
@@ -656,7 +656,7 @@ describe('Ss12000Service', () => {
               lte: new Date('2026-08-31T00:00:00.000Z'),
             },
           },
-          orderBy: { startsAt: 'asc' },
+          orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
         }),
       );
     });

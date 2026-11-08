@@ -38,10 +38,15 @@ export function homeOf(role: string | null): { group: '(guardian)' | '(student)'
 
 /**
  * Where a push tap goes: the role's Notiser tab, the cover requests a teacher
- * is asked in, the roll call of an alarm, or the messages a guardian is asked
- * to confirm.
+ * is asked in, the roll call of an alarm, the messages a guardian is asked to
+ * confirm, or the leave requests a guardian is asked to consent to.
  */
-export type TapTarget = ReturnType<typeof homeOf>['notifications'] | '/(app)/cover-requests' | '/(app)/crisis' | '/(guardian)/acknowledgements';
+export type TapTarget =
+  | ReturnType<typeof homeOf>['notifications']
+  | '/(app)/cover-requests'
+  | '/(app)/crisis'
+  | '/(guardian)/acknowledgements'
+  | '/(guardian)/leave';
 
 /**
  * The notice types whose push is a question for a teacher (Vikariefrågan):
@@ -76,16 +81,36 @@ export function ackTarget(role: string | null, type: string | null): '/(guardian
 }
 
 /**
+ * The notice types of Ledighetspolicy for a guardian: a request for consent to
+ * a leave request, its one reminder, and the end of a request a guardian did
+ * not consent to (to whoever applied). All three are read in the guardian's
+ * Ledighet tab, where the request is answered or its end is read.
+ */
+const LEAVE_CONSENT_TYPES: ReadonlySet<string> = new Set(['LEAVE_CONSENT_REQUESTED', 'LEAVE_CONSENT_REMINDER', 'LEAVE_CONSENT_REFUSED']);
+
+/**
+ * The Ledighet tab, for a guardian and a notice of Ledighetspolicy; null for
+ * anyone else and anything else. A push tap (tapTarget) and a tap on the same
+ * notice in the Notiser tab both go here.
+ */
+export function leaveConsentTarget(role: string | null, type: string | null): '/(guardian)/leave' | null {
+  return role === 'GUARDIAN' && type !== null && LEAVE_CONSENT_TYPES.has(type) ? '/(guardian)/leave' : null;
+}
+
+/**
  * What a tap on a push opens. The type is what the gateway put in the push's
  * data (notification-delivery.service: { notificationId, type }); a tap that
  * carries none, or one the role has no screen for, opens the Notiser tab as
  * every tap did before. Only a TEACHER has the Vikarie tab; both kinds of
- * staff have Larm; only a GUARDIAN has Meddelanden; and a student or a
+ * staff have Larm; only a GUARDIAN has Meddelanden, and Ledighet, where a
+ * request for consent to a leave request is answered; and a student or a
  * guardian never leaves their own shell.
  */
 export function tapTarget(role: string | null, type: string | null): TapTarget {
   const messages = ackTarget(role, type);
   if (messages !== null) return messages;
+  const leave = leaveConsentTarget(role, type);
+  if (leave !== null) return leave;
   if (type !== null && (role === 'TEACHER' || role === 'SCHOOL_ADMIN') && CRISIS_ALARM_TYPES.has(type)) return '/(app)/crisis';
   if (role === 'TEACHER' && type !== null && COVER_QUESTION_TYPES.has(type)) return '/(app)/cover-requests';
   return homeOf(role).notifications;

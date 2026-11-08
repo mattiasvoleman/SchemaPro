@@ -5038,3 +5038,386 @@ BEGIN
                             (SELECT ("reminderMirroredAt" > "reminderSentAt")::text FROM "AckRequests" WHERE id = waits), 'true');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Lokal (K3, 20270204091000), section 444b-d, on the owner's side: what gallring does with a series of external bookings and its
+-- days, what the removal of the person who registered one leaves, and what a delete of a school takes. 440-443 and 444a are
+-- rls-policies.sql's.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.k3_owner_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN RAISE EXCEPTION E'lokal %: got\n%\nwanted\n%', p_label, p_got, p_want; END IF;
+END $$;
+
+-- 444b: gallring. A series that has ended, or been cancelled, longer ago than the school's period goes with its days (and only
+-- then); a series that runs never does, however long the period; nothing is due under another kind; the other school's stay.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-lokal-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-lokal-annan');
+  full_ uuid := (SELECT id FROM "Users" WHERE email = 'lk-full@example.invalid');
+  full_o uuid := (SELECT id FROM "Users" WHERE email = 'lk-annan-full@example.invalid');
+  hall uuid := (SELECT id FROM "Rooms" WHERE "schoolId" = school AND name = 'Idrottshallen');
+  hall_o uuid := (SELECT id FROM "Rooms" WHERE "schoolId" = other);
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  old_ended uuid; old_cancelled uuid; recent uuid; running uuid; theirs uuid;
+  run uuid;
+  n integer;
+  total integer := 0;
+  counts jsonb;
+  src text;
+BEGIN
+  -- Four series of the school: over for 500 days, cancelled 500 days ago (its last day only 165 days past), over for 100 days, running.
+  -- Each has one day; the old ones' days are past.
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (school, hall, 'Gammal', 'A', '070', ARRAY[2]::smallint[], today - 600, today - 500, '18:00', '20:00', full_) RETURNING id INTO old_ended;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById", "cancelledAt")
+  VALUES (school, hall, 'Avbokad', 'B', '070', ARRAY[2]::smallint[], today - 560, today - 165, '18:00', '20:00', full_, now() - interval '500 days') RETURNING id INTO old_cancelled;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (school, hall, 'Nyss slut', 'C', '070', ARRAY[2]::smallint[], today - 200, today - 100, '18:00', '20:00', full_) RETURNING id INTO recent;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (school, hall, 'Pågår', 'D', '070', ARRAY[2]::smallint[], today - 10, today + 60, '18:00', '20:00', full_) RETURNING id INTO running;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (other, hall_o, 'Annans gamla', 'E', '070', ARRAY[2]::smallint[], today - 600, today - 500, '18:00', '20:00', full_o) RETURNING id INTO theirs;
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt", "externalBookingId")
+  SELECT x."schoolId", x."roomId", x."registeredById", 'Extern bokning', (x."endDate" - 3 + time '18:00')::timestamp AT TIME ZONE 'Europe/Stockholm', (x."endDate" - 3 + time '20:00')::timestamp AT TIME ZONE 'Europe/Stockholm', now(), x.id
+    FROM "ExternalBookings" x WHERE x.id IN (old_ended, old_cancelled, recent, running, theirs);
+  -- A booking of the school's own that gallring must not touch.
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, hall, full_, 'Egen', now() - interval '600 days', now() - interval '600 days' + interval '1 hour', now());
+
+  -- What is due a year on, by the one predicate: the two old series, not the one that ended 100 days ago, not the running one,
+  -- not the other school's; and nothing of it under any other kind.
+  PERFORM pg_temp.k3_owner_expect('444b due',
+    (SELECT string_agg(d.id::text, ' ' ORDER BY d.id::text) FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today - 365, today) d WHERE d.tbl = 'ExternalBookings'),
+    (SELECT string_agg(i::text, ' ' ORDER BY i::text) FROM unnest(ARRAY[old_ended, old_cancelled]) i));
+  PERFORM pg_temp.k3_owner_expect('444b nothing is due of anything else',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today - 365, today) d WHERE d.tbl <> 'ExternalBookings'), '0');
+  IF EXISTS (SELECT 1 FROM unnest(ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'NOTIFICATIONS', 'CHANGE_LOGS', 'ABSENCE_REASONS', 'ACCESS_LOG', 'COVER_REQUESTS',
+                                         'CRISIS_DRILLS', 'CRISIS_ALARMS', 'CHECKLISTS', 'DEPARTED_PEOPLE']::"RetentionDataType"[]) t
+              WHERE EXISTS (SELECT 1 FROM app.gallring_due(school, t, today - 365, today) d WHERE d.tbl = 'ExternalBookings')) THEN
+    RAISE EXCEPTION 'lokal 444b: a series is due under another kind than EXTERNAL_BOOKINGS';
+  END IF;
+  -- A running series is never due, however far on the cutoff is, until it has ended.
+  PERFORM pg_temp.k3_owner_expect('444b a running series is not due',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today + 30, today) d WHERE d.id = running), '0');
+  PERFORM pg_temp.k3_owner_expect('444b a series of the other school is not due under this school''s run',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today - 365, today) d WHERE d.id = theirs), '0');
+
+  -- No decision: nothing goes. A decision of twelve months: the run takes the two series, one at a time, with their days.
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'EXTERNAL_BOOKINGS', 100) <> 0 THEN RAISE EXCEPTION 'lokal 444b: a school with no decision lost a series'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (school, 'EXTERNAL_BOOKINGS', 'PURGE_AFTER', 12, 'LK 444', full_, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'EXTERNAL_BOOKINGS', 1) <> 1 THEN RAISE EXCEPTION 'lokal 444b: a batch of one took more or less than one series'; END IF;
+  LOOP
+    n := app.gallring_purge(run, 'EXTERNAL_BOOKINGS', 1);
+    EXIT WHEN n = 0;
+    total := total + n;
+  END LOOP;
+  PERFORM app.gallring_finish(run, '{}', now());
+  IF total <> 1 THEN RAISE EXCEPTION 'lokal 444b: the batches after the first took % more series, not one', total; END IF;
+  SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
+  IF (counts ->> 'EXTERNAL_BOOKINGS')::integer <> 2 THEN RAISE EXCEPTION 'lokal 444b: the run counts % under EXTERNAL_BOOKINGS, not two series', counts ->> 'EXTERNAL_BOOKINGS'; END IF;
+  PERFORM pg_temp.k3_owner_expect('444b what is left of the school',
+    (SELECT string_agg(organisation, ',' ORDER BY organisation) FROM "ExternalBookings" WHERE "schoolId" = school), 'Nyss slut,Pågår');
+  PERFORM pg_temp.k3_owner_expect('444b the days went with their series, and the school''s own booking stayed',
+    (SELECT string_agg(coalesce(x.organisation, title), ',' ORDER BY coalesce(x.organisation, title))
+       FROM "RoomBookings" b LEFT JOIN "ExternalBookings" x ON x.id = b."externalBookingId" WHERE b."schoolId" = school),
+    'Egen,Nyss slut,Pågår');
+  PERFORM pg_temp.k3_owner_expect('444b the other school was left alone',
+    (SELECT count(*)::text FROM "ExternalBookings" WHERE "schoolId" = other) || '/' || (SELECT count(*)::text FROM "RoomBookings" WHERE "schoolId" = other), '1/1');
+
+  -- The branch is there in the source (and the others are kept: RLS sections 350 and 374 and src/gallring/gallring-branches.spec.ts say which).
+  SELECT prosrc INTO src FROM pg_proc WHERE oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure;
+  IF src NOT LIKE '%''ExternalBookings''%' OR src NOT LIKE '%EXTERNAL_BOOKINGS%' THEN RAISE EXCEPTION 'lokal 444b: gallring_due has no branch for the external bookings'; END IF;
+  SELECT prosrc INTO src FROM pg_proc WHERE oid = 'app.gallring_purge(uuid, "RetentionDataType", integer)'::regprocedure;
+  IF src NOT LIKE '%WHEN ''EXTERNAL_BOOKINGS'' THEN%' OR src NOT LIKE '%DELETE FROM "ExternalBookings"%' THEN RAISE EXCEPTION 'lokal 444b: gallring_purge has no branch for the external bookings'; END IF;
+END $$;
+ROLLBACK;
+
+-- 444c: a person who registered a series is removed. The series stays, with nobody as its registrar; the days they booked go with
+-- them (the key from a booking to its booker is CASCADE, as every booking's), which is why the gateway refuses the removal of a
+-- person whose series still runs; the person's other bookings of a resource go too, and a decision they made stays, unlinked.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-lokal-school');
+  hall uuid := (SELECT id FROM "Rooms" WHERE "schoolId" = school AND name = 'Idrottshallen');
+  gone uuid;
+  decider uuid;
+  rtype uuid; res uuid; series uuid; mine uuid; decided uuid;
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+BEGIN
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'lk-borta@example.invalid', 'Lokal', 'Borta', 'SCHOOL_ADMIN', gen_random_uuid(), true, now()) RETURNING id INTO gone;
+  decider := (SELECT id FROM "Users" WHERE email = 'lk-t2@example.invalid');
+  INSERT INTO "ResourceTypes" ("schoolId", name) VALUES (school, 'Borttagningens') RETURNING id INTO rtype;
+  INSERT INTO "Resources" ("schoolId", "resourceTypeId", name, quantity) VALUES (school, rtype, 'Borttagningens resurs', 10) RETURNING id INTO res;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactEmail", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (school, hall, 'Registrerad av den borttagne', 'F', 'f@example.invalid', ARRAY[2]::smallint[], today + 300, today + 330, '18:00', '20:00', gone) RETURNING id INTO series;
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt", "externalBookingId")
+  VALUES (school, hall, gone, 'Extern bokning', ((today + 305) + time '18:00')::timestamp AT TIME ZONE 'Europe/Stockholm', ((today + 305) + time '20:00')::timestamp AT TIME ZONE 'Europe/Stockholm', now(), series);
+  INSERT INTO "ResourceBookings" ("schoolId", "resourceId", "bookedById", title, quantity, "startsAt", "endsAt")
+  VALUES (school, res, gone, 'Den borttagnes', 1, now() + interval '300 days', now() + interval '300 days 1 hour') RETURNING id INTO mine;
+  INSERT INTO "ResourceBookings" ("schoolId", "resourceId", "bookedById", title, quantity, status, "decidedById", "decidedAt", "startsAt", "endsAt")
+  VALUES (school, res, decider, 'Beslutad av den borttagne', 1, 'APPROVED', gone, now(), now() + interval '301 days', now() + interval '301 days 1 hour') RETURNING id INTO decided;
+
+  DELETE FROM "Users" WHERE id = gone;
+  PERFORM pg_temp.k3_owner_expect('444c the series stays, with nobody as registrar',
+    (SELECT concat_ws('|', count(*), count("registeredById")) FROM "ExternalBookings" WHERE id = series), '1|0');
+  PERFORM pg_temp.k3_owner_expect('444c the days they booked went with them', (SELECT count(*)::text FROM "RoomBookings" WHERE "externalBookingId" = series), '0');
+  PERFORM pg_temp.k3_owner_expect('444c their other bookings went too', (SELECT count(*)::text FROM "ResourceBookings" WHERE id = mine), '0');
+  PERFORM pg_temp.k3_owner_expect('444c a decision they made stays, unlinked',
+    (SELECT concat_ws('|', count(*), count("decidedById")) FROM "ResourceBookings" WHERE id = decided), '1|0');
+END $$;
+ROLLBACK;
+
+-- 444d: the removal of a school takes everything of Lokal (the keys from the four tables to Schools are CASCADE), and a resource or
+-- a room that has a series is not deleted from under it, nor a kind that has a resource (restrict), by anyone.
+BEGIN;
+DO $$
+DECLARE
+  school uuid;
+  hall uuid;
+  rtype uuid; res uuid; series uuid;
+BEGIN
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('RLS Lokal tillfällig', 'rls-lokal-tillfallig', 'Europe/Stockholm', now()) RETURNING id INTO school;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'Tillfälliga hallen', now()) RETURNING id INTO hall;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'lk-tillf@example.invalid', 'Lokal', 'Tillfällig', 'SCHOOL_ADMIN', gen_random_uuid(), true, now());
+  INSERT INTO "ResourceTypes" ("schoolId", name) VALUES (school, 'Slag') RETURNING id INTO rtype;
+  INSERT INTO "Resources" ("schoolId", "resourceTypeId", name) VALUES (school, rtype, 'Resurs') RETURNING id INTO res;
+  INSERT INTO "ExternalBookings" ("schoolId", "resourceId", "resourceQuantity", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime")
+  VALUES (school, res, 1, 'Förening', 'G', '070', ARRAY[3]::smallint[], current_date + 10, current_date + 20, '18:00', '19:00') RETURNING id INTO series;
+  BEGIN
+    DELETE FROM "Resources" WHERE id = res;
+    RAISE EXCEPTION 'lokal 444d: a resource that is let out was deleted';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "ResourceTypes" WHERE id = rtype;
+    RAISE EXCEPTION 'lokal 444d: a kind with a resource was deleted';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  DELETE FROM "Schools" WHERE id = school;
+  PERFORM pg_temp.k3_owner_expect('444d nothing of the school is left',
+    (SELECT concat_ws('/', (SELECT count(*) FROM "ResourceTypes" WHERE "schoolId" = school), (SELECT count(*) FROM "Resources" WHERE "schoolId" = school),
+                      (SELECT count(*) FROM "ExternalBookings" WHERE "schoolId" = school), (SELECT count(*) FROM "ResourceBookings" WHERE "schoolId" = school))), '0/0/0/0');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Ledighetspolicy (K4, 20270205091000), the owner's side: sections 445o-449o. The checks a
+-- policy cannot make (a table's own CHECKs and the gate, for a writer with no login), and
+-- the job's pass, whose logic needs requests made in the past. Fixtures: rls-kvittens-school.
+--
+--   445o  what the tables hold whoever writes them
+--   448o  the pass: one reminder, to a guardian who can still answer, two days after the
+--         request; the mentors of a request a custody that ended made clear, once
+--   449o  gone with the request and with the person
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.k4o_user(p_email text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT id FROM "Users" WHERE email = p_email || '@example.invalid'
+$$;
+CREATE FUNCTION pg_temp.k4o_refuses(p_sql text, p_state text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM p_state THEN
+    RAISE EXCEPTION 'ledighetspolicy: % should be refused with %, was %', p_what, p_state, got;
+  END IF;
+END $$;
+-- A request made by `by`, `age` ago, from `from` days ahead for one day; the owner writes it, so nothing is stamped
+-- and nothing is refused, and the trigger that asks the guardians reads the row as written.
+CREATE FUNCTION pg_temp.k4o_request(p_pupil text, p_by text, p_age interval, p_from integer, p_consent boolean) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  req uuid := gen_random_uuid();
+BEGIN
+  INSERT INTO "LeaveRequests" (id, "schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "consentRequired", "createdAt")
+  VALUES (req, (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school'), pg_temp.k4o_user(p_pupil), pg_temp.k4o_user(p_by),
+          current_date + p_from, current_date + p_from, 'Resa', p_consent, now() - p_age);
+  RETURN req;
+END $$;
+-- Who has what, as text: the recipients' short names, sorted, of the notices of a type.
+CREATE FUNCTION pg_temp.k4o_rows(p_rows text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  got text;
+BEGIN
+  EXECUTE p_rows INTO got;
+  RETURN coalesce(got, '');
+END $$;
+
+-- 445o: what the tables hold whoever writes them.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  req uuid;
+  other uuid;
+BEGIN
+  IF school IS NULL THEN RAISE EXCEPTION 'ledighetspolicy 445o: the fixtures did not run'; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  req := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 10, false);
+  -- The contact is all three or none, whoever writes it: the CHECKs, not the trigger, which a writer with no login passes.
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET "contactName" = 'Farmor' WHERE id = %L$q$, req), 'LV409', 'a contact written on a request already filed');
+  PERFORM pg_temp.k4o_refuses(format($q$INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "contactName")
+    VALUES (%L, %L, %L, current_date, current_date, 'Resa', 'Farmor')$q$, school, pg_temp.k4o_user('kv-p1'), pg_temp.k4o_user('kv-g1')), '23514', 'a name alone, written with no trigger in the way');
+  PERFORM pg_temp.k4o_refuses(format($q$INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "contactName", "contactPhone", "contactRelation")
+    VALUES (%L, %L, %L, current_date, current_date, 'Resa', 'Farmor', '123', 'Farmor')$q$, school, pg_temp.k4o_user('kv-p1'), pg_temp.k4o_user('kv-g1')), '23514', 'a telephone number of three characters, written with no trigger in the way');
+  -- A stopped request is a consent request whose no ended it, with no decider.
+  PERFORM pg_temp.k4o_refuses(format($q$INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, status)
+    VALUES (%L, %L, %L, current_date, current_date, 'Resa', 'GUARDIAN_DECLINED')$q$, school, pg_temp.k4o_user('kv-p1'), pg_temp.k4o_user('kv-g1')), '23514', 'a stopped request the school never asked consent for');
+  PERFORM pg_temp.k4o_refuses(format($q$INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, status, "consentRequired", "decidedById")
+    VALUES (%L, %L, %L, current_date, current_date, 'Resa', 'GUARDIAN_DECLINED', true, %L)$q$, school, pg_temp.k4o_user('kv-p1'), pg_temp.k4o_user('kv-g1'), pg_temp.k4o_user('kv-full')), '23514', 'a stopped request with a decider');
+  -- The gate holds for the owner too: a stop needs a guardian's no, and a decision needs the consent.
+  req := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 10, true);
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'GUARDIAN_DECLINED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV416', 'a stop with no no');
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV412', 'an approval before the consent');
+  -- A rejection grants nothing and is not held back (the review of #292, MEDEL-1).
+  other := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 11, true);
+  UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAt" = now() WHERE id = other;
+  IF (SELECT status FROM "LeaveRequests" WHERE id = other) <> 'REJECTED' THEN RAISE EXCEPTION 'ledighetspolicy 445o: a request that waits for consent could not be rejected'; END IF;
+  UPDATE "LeaveConsents" SET consented = false, "answeredAt" = now() WHERE "leaveRequestId" = req;
+  IF NOT FOUND THEN RAISE EXCEPTION 'ledighetspolicy 445o: the trigger asked nobody for a request that needs consent'; END IF;
+  -- A no is not a yes: the consent is not there, and the stop is now allowed.
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV412', 'an approval after a no');
+  UPDATE "LeaveRequests" SET status = 'GUARDIAN_DECLINED', "decidedAt" = now() WHERE id = req;
+  IF app.leave_consent_met_raw(req, school) THEN RAISE EXCEPTION 'ledighetspolicy 445o: a request a guardian refused has its consent'; END IF;
+END $$;
+ROLLBACK;
+
+-- 448o: the pass.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  due uuid;
+  early uuid;
+  past uuid;
+  answered uuid;
+  gone uuid;
+  rejected uuid;
+  held uuid;
+  clear uuid;
+  rows_ text;
+BEGIN
+  IF school IS NULL THEN RAISE EXCEPTION 'ledighetspolicy 448o: the fixtures did not run'; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  -- Three days old and G2 has not answered: due. One day old: not yet. The leave over: no point. G2 answered: nothing to ask.
+  due := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '3 days', 10, true);
+  early := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '1 day', 11, true);
+  past := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '3 days', -5, true);
+  answered := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '3 days', 12, true);
+  UPDATE "LeaveConsents" SET consented = true, "answeredAt" = now() WHERE "leaveRequestId" = answered;
+  -- A custody that has ended: the guardian of P3 is no longer linked, so nobody can be reminded.
+  gone := pg_temp.k4o_request('kv-p3', 'kv-full', interval '3 days', 13, true);
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.k4o_user('kv-g3') AND "studentId" = pg_temp.k4o_user('kv-p3');
+  -- A request rektor rejected while it waited is not reminded: the wait is over.
+  rejected := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '3 days', 16, true);
+  UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAt" = now() WHERE id = rejected;
+  -- The pass is the delivery door's, which sets no claims. A login of any kind is not it, also one with no person row (the
+  -- huvudman's reader, a municipal administrator): the guard asks the claims, not the person (the review of #292, LÅG-1).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid())::text, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass answered a login with no person row'; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', gen_random_uuid()::text, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass answered a login set the older way'; END IF;
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+
+  IF (SELECT count(*) FROM "LeaveConsents" WHERE "leaveRequestId" IN (due, early, past, answered, gone)) <> 5 THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the trigger did not ask the guardians of the five requests';
+  END IF;
+  -- (Kept in a table first: a statement does not see the rows its own function wrote.)
+  CREATE TEMP TABLE k4o_pass ON COMMIT DROP AS SELECT * FROM app.leave_consent_pass();
+  SELECT string_agg(n.type::text || ' ' || split_part(u.email, '@', 1) || ' ' || (n.meta ->> 'leaveRequestId' = due::text)::text || ' ' || coalesce(split_part(p.email, '@', 1), '-'), ', ' ORDER BY u.email)
+    INTO rows_
+    FROM k4o_pass p
+    JOIN "Notifications" n ON n.id = p."notificationId"
+    JOIN "Users" u ON u.id = p."userId";
+  IF rows_ IS DISTINCT FROM 'LEAVE_CONSENT_REMINDER kv-g2 true kv-g2' THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the first pass wrote %, not one reminder to G2 for the request that is due', rows_;
+  END IF;
+  IF (SELECT count(*) FROM "LeaveConsents" WHERE "remindedAt" IS NOT NULL) <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass marked a guardian that was not reminded'; END IF;
+  -- Once: a second pass writes nothing. The reminder says what the first notice does, and nothing of who applied.
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the second pass reminded again'; END IF;
+  IF (SELECT meta::text FROM "Notifications" WHERE type = 'LEAVE_CONSENT_REMINDER' AND "userId" = pg_temp.k4o_user('kv-g2')) LIKE '%' || pg_temp.k4o_user('kv-g1')::text || '%' THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the reminder says who applied';
+  END IF;
+  -- Two days is the line: a request 47 hours old waits, one 49 hours old is reminded.
+  early := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '47 hours', 14, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass() p WHERE p.type = 'LEAVE_CONSENT_REMINDER') <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a request of 47 hours was reminded'; END IF;
+  early := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '49 hours', 15, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass() p WHERE p.type = 'LEAVE_CONSENT_REMINDER') <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a request of 49 hours was not reminded'; END IF;
+  -- A limit of none is a pass that does nothing.
+  UPDATE "LeaveConsents" SET "remindedAt" = NULL WHERE "leaveRequestId" = due;
+  IF (SELECT count(*) FROM app.leave_consent_pass(0)) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a pass with a limit of none wrote a reminder'; END IF;
+  -- A decided request is not reminded: the guardian's no ended it.
+  UPDATE "LeaveConsents" SET consented = false, "answeredAt" = now() WHERE "leaveRequestId" = due;
+  UPDATE "LeaveRequests" SET status = 'GUARDIAN_DECLINED', "decidedAt" = now() WHERE id = due;
+  UPDATE "LeaveConsents" SET consented = NULL, "answeredAt" = NULL WHERE "leaveRequestId" = due;
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a request that has ended was reminded'; END IF;
+
+  -- THE MENTORS. A request a custody that ended made clear is told to the mentor who decides it, once. Rektor delegates five days;
+  -- M1 mentors KV7A, where P1 is, and M2 KV7B, where P3 and P5 are.
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, 5);
+  held := pg_temp.k4o_request('kv-p1', 'kv-full', interval '0', 30, true);
+  clear := pg_temp.k4o_request('kv-p5', 'kv-full', interval '0', 31, true);
+  -- A pupil nobody can answer for has the consent at the filing, so the filing's own trigger tells the mentor.
+  IF (SELECT count(*) FROM "LeaveRequestNotices" WHERE "leaveRequestId" = clear AND "userId" = pg_temp.k4o_user('kv-m2')) <> 1 THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the mentor of a pupil nobody answers for is not told at the filing';
+  END IF;
+  SELECT string_agg(split_part(u.email, '@', 1) || ' ' || (p.meta ->> 'leaveRequestId')::uuid::text, ', ' ORDER BY p.meta ->> 'leaveRequestId')
+    INTO rows_
+    FROM app.leave_consent_pass() p JOIN "Users" u ON u.id = p."userId" WHERE p.type = 'LEAVE_REQUESTED';
+  IF rows_ IS NOT NULL AND rows_ LIKE '%' || held::text || '%' THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass told a mentor of a request that waits: %', rows_; END IF;
+  IF (SELECT count(*) FROM "LeaveRequestNotices" WHERE "leaveRequestId" = held) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a mentor is marked told of a request that waits'; END IF;
+  -- The guardian left: the request is clear, and the next pass tells the mentor, once.
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.k4o_user('kv-g1') AND "studentId" = pg_temp.k4o_user('kv-p1');
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.k4o_user('kv-g2') AND "studentId" = pg_temp.k4o_user('kv-p1');
+  SELECT string_agg(split_part(u.email, '@', 1), ', ') INTO rows_
+    FROM app.leave_consent_pass() p JOIN "Users" u ON u.id = p."userId" WHERE p.type = 'LEAVE_REQUESTED' AND p.meta ->> 'leaveRequestId' = held::text;
+  IF rows_ IS DISTINCT FROM 'kv-m1' THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass told % of the released request, not M1', rows_; END IF;
+  IF (SELECT count(*) FROM app.leave_consent_pass() p WHERE p.type = 'LEAVE_REQUESTED' AND p.meta ->> 'leaveRequestId' = held::text) <> 0 THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the pass told the mentor twice';
+  END IF;
+  IF (SELECT count(*) FROM "LeaveRequestNotices" WHERE "leaveRequestId" = held AND "userId" = pg_temp.k4o_user('kv-m1')) <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the mentor is not marked told'; END IF;
+  -- The answer of the last guardian tells the mentor in its own transaction, so the pass has nothing left for it.
+  IF (SELECT count(*) FROM "Notifications" WHERE type = 'LEAVE_REQUESTED' AND meta ->> 'leaveRequestId' = held::text) <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 448o: not exactly one notice for the mentor'; END IF;
+END $$;
+ROLLBACK;
+
+-- 449o: gone with the request and with the person.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  a uuid;
+  b uuid;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  a := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 10, true);
+  b := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 11, true);
+  -- The request goes (gallring deletes a request whole): its answers go with it, the other request's do not.
+  DELETE FROM "LeaveRequests" WHERE id = a;
+  IF EXISTS (SELECT 1 FROM "LeaveConsents" WHERE "leaveRequestId" = a) THEN RAISE EXCEPTION 'ledighetspolicy 449o: the answers outlived their request'; END IF;
+  IF (SELECT count(*) FROM "LeaveConsents" WHERE "leaveRequestId" = b) <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 449o: the other request lost its answers'; END IF;
+  -- The guardian goes: the row about them goes, the request stays, and holds nothing up for want of them.
+  DELETE FROM "Users" WHERE id = pg_temp.k4o_user('kv-g2');
+  IF EXISTS (SELECT 1 FROM "LeaveConsents" WHERE "leaveRequestId" = b) THEN RAISE EXCEPTION 'ledighetspolicy 449o: the answers outlived the guardian'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM "LeaveRequests" WHERE id = b) THEN RAISE EXCEPTION 'ledighetspolicy 449o: the request went with the guardian who was asked'; END IF;
+  IF NOT app.leave_consent_met_raw(b, school) THEN RAISE EXCEPTION 'ledighetspolicy 449o: a request nobody is left to answer has no consent'; END IF;
+END $$;
+ROLLBACK;

@@ -4,8 +4,11 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { GuardianChild } from "@/lib/guardian-queries";
-import type { MySchool } from "@/lib/types";
+import type { LeavePolicy, LeaveRequest, MySchool } from "@/lib/types";
 import GuardianPage from "./page";
+
+const NO_POLICY: LeavePolicy = { requireAllGuardians: false, minDaysAhead: null, shortNotice: "REFUSE", contact: "OFF" };
+const NO_CONSENT: LeaveRequest["consent"] = { required: false, state: "NOT_REQUIRED", mine: "NOT_ASKED", asked: null, given: null, waiting: null };
 
 /**
  * The guardian's start page and its "Undervisningstid" cards (timplan P4):
@@ -24,6 +27,9 @@ const state = vi.hoisted(() => ({
   reports: [] as Record<string, unknown>[],
   leaves: [] as Record<string, unknown>[],
   requestLeave: vi.fn(),
+  /** What the school asks of a leave request (Ledighetspolicy); as delivered: nothing. */
+  policy: undefined as LeavePolicy | undefined,
+  answerConsent: vi.fn(),
   /** The login's schools (Flera skolor per inloggning); none: one school. */
   schools: [] as MySchool[],
 }));
@@ -60,6 +66,10 @@ vi.mock("@/lib/guardian-queries", () => ({
   useLeaveRequests: () => ({ data: state.leaves }),
   useAbsenceReportActions: () => ({ report: { isPending: false }, remove: { isPending: false } }),
   useLeaveRequestActions: () => ({ request: { isPending: false, mutateAsync: state.requestLeave } }),
+}));
+vi.mock("@/lib/leave-policy-queries", () => ({ useLeavePolicy: () => ({ data: state.policy }) }));
+vi.mock("@/lib/leave-consent-queries", () => ({
+  useAnswerLeaveConsent: () => ({ isPending: false, mutateAsync: state.answerConsent }),
 }));
 vi.mock("@/components/teaching-time-card", () => ({
   TeachingTimeCard: ({ studentId, childName }: { studentId: string; childName?: string }) => (
@@ -101,6 +111,9 @@ beforeEach(() => {
   state.reports = [];
   state.childrenAskedFor = [];
   state.leaves = [];
+  state.policy = NO_POLICY;
+  state.requestLeave.mockResolvedValue({ id: "l-new", studentId: "c-1", status: "PENDING", consentRequired: false, shortNotice: false });
+  state.answerConsent.mockResolvedValue({ id: "l-1", answer: "GIVEN", state: "WAITING" });
   state.role = "GUARDIAN";
   state.children = [
     { linkId: "l-1", id: "c-1", firstName: "Alva", lastName: "Elev", isActive: true, studentGroupId: "g-7a" },
@@ -122,6 +135,9 @@ describe("the guardian's leave requests", () => {
     decisionNote: null,
     decidedAs,
     createdAt: "2026-10-10T08:00:00.000Z",
+    shortNotice: false,
+    contact: null,
+    consent: NO_CONSENT,
   });
 
   it("says who decided: the mentor or rektor, and nothing while it waits or for an older decision", async () => {
@@ -157,6 +173,189 @@ describe("the guardian's leave requests", () => {
     const year = new Date(Date.parse(`${start}T00:00:00Z`) + 365 * 86_400_000).toISOString().slice(0, 10);
     expect(end.dataset["min"]).toBe(start);
     expect(end.dataset["max"]).toBe(year);
+  });
+});
+
+/**
+ * Ledighetspolicy (K4) on the page: the form asks and explains only what the
+ * school's policy says, and the list says only what a request carries. The
+ * words of each part are components/guardian/leave-extras.test.tsx's, with the
+ * real messages; here the keys stand for them.
+ */
+describe("the leave form and list under the school's policy (Ledighetspolicy)", () => {
+  const FULL = { name: "Maria Ek", phone: "070-123 45 67", relation: "Mormor" };
+  const fill = async (user: ReturnType<typeof userEvent.setup>, contact = FULL) => {
+    await user.type(await screen.findByRole("textbox", { name: "guardian.leavePolicy.contactName" }), contact.name);
+    await user.type(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactPhone" }), contact.phone);
+    await user.type(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactRelation" }), contact.relation);
+  };
+  const submit = () => screen.getByRole("button", { name: /guardian.leaveSubmit/ });
+
+  it("asks and explains nothing more as delivered, and sends exactly the request it always did", async () => {
+    const user = userEvent.setup();
+    render(<GuardianPage />);
+    await user.type(screen.getByRole("textbox", { name: "guardian.reason" }), "Familjeresa");
+    expect(screen.queryByText(/^guardian\.leavePolicy/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /guardian.leavePolicy/ })).not.toBeInTheDocument();
+    await user.click(submit());
+    await waitFor(() => expect(state.requestLeave).toHaveBeenCalledTimes(1));
+    expect(Object.keys(state.requestLeave.mock.calls[0]![0] as object).sort()).toEqual(["endDate", "reason", "startDate", "studentId"]);
+    expect(toast.success).toHaveBeenCalledWith("guardian.leaveSubmitted");
+  });
+
+  it("explains the minimum, and what a later request meets: refused, or flagged for whoever decides", async () => {
+    state.policy = { ...NO_POLICY, minDaysAhead: 14, shortNotice: "REFUSE" };
+    const { unmount } = render(<GuardianPage />);
+    expect(await screen.findByText(/guardian.leavePolicy.minAhead/)).toHaveTextContent("guardian.leavePolicy.refuse");
+    unmount();
+    state.policy = { ...NO_POLICY, minDaysAhead: 14, shortNotice: "FLAG" };
+    render(<GuardianPage />);
+    const line = await screen.findByText(/guardian.leavePolicy.minAhead/);
+    expect(line).toHaveTextContent("guardian.leavePolicy.flag");
+    expect(line).not.toHaveTextContent("guardian.leavePolicy.refuse");
+  });
+
+  it("says that every guardian is asked to consent when the school asks them to", async () => {
+    state.policy = { ...NO_POLICY, requireAllGuardians: true };
+    render(<GuardianPage />);
+    expect(await screen.findByText("guardian.leavePolicy.allGuardians")).toBeInTheDocument();
+    expect(screen.queryByText("guardian.leavePolicy.contactLegend")).not.toBeInTheDocument();
+  });
+
+  it("holds the request back until a required contact is whole, and then sends it trimmed and clears it", async () => {
+    state.policy = { ...NO_POLICY, contact: "REQUIRED" };
+    const user = userEvent.setup();
+    render(<GuardianPage />);
+    await user.type(screen.getByRole("textbox", { name: "guardian.reason" }), "Familjeresa");
+    expect(await screen.findByText("guardian.leavePolicy.contactLegend")).toBeInTheDocument();
+    // Required, said in words, and on each field for assistive technology.
+    expect(screen.getByRole("group")).toHaveAccessibleName(/guardian.leavePolicy.contactLegend.*guardian.leavePolicy.contactRequired/);
+    expect(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactName" })).toBeRequired();
+    expect(submit()).toBeDisabled();
+
+    await user.type(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactName" }), "  Maria Ek ");
+    await user.type(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactPhone" }), "070-123 45 67");
+    expect(submit()).toBeDisabled();
+    await user.type(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactRelation" }), "Mormor");
+    expect(submit()).toBeEnabled();
+
+    await user.click(submit());
+    await waitFor(() => expect(state.requestLeave).toHaveBeenCalledTimes(1));
+    expect(state.requestLeave.mock.calls[0]![0]).toMatchObject({
+      reason: "Familjeresa",
+      contactName: "Maria Ek",
+      contactPhone: "070-123 45 67",
+      contactRelation: "Mormor",
+    });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactName" })).toHaveValue(""));
+  });
+
+  it("lets an optional contact be left out, but not given in part or with a phone number the gateway would refuse", async () => {
+    state.policy = { ...NO_POLICY, contact: "OPTIONAL" };
+    const user = userEvent.setup();
+    render(<GuardianPage />);
+    await user.type(screen.getByRole("textbox", { name: "guardian.reason" }), "Familjeresa");
+    expect((await screen.findByText("guardian.leavePolicy.contactLegend")).closest("legend")).toHaveTextContent("common.optional");
+    expect(submit()).toBeEnabled();
+
+    await user.type(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactName" }), "Maria Ek");
+    expect(submit()).toBeDisabled();
+    // Told once the reader has left the fields, not while the others are still to be typed.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await user.tab();
+    await user.tab();
+    await user.tab();
+    await user.tab();
+    expect(await screen.findByRole("alert")).toHaveTextContent("guardian.leaveContactIncomplete");
+
+    await user.type(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactPhone" }), "ring mig");
+    await user.type(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactRelation" }), "Mormor");
+    expect(submit()).toBeDisabled();
+    expect(await screen.findByRole("alert")).toHaveTextContent("guardian.leavePolicy.contactPhoneInvalid");
+    await user.clear(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactPhone" }));
+    await user.type(screen.getByRole("textbox", { name: "guardian.leavePolicy.contactPhone" }), "070-123 45 67");
+    expect(submit()).toBeEnabled();
+  });
+
+  it("sends no contact the school does not ask for, even if one was typed before the policy changed", async () => {
+    state.policy = { ...NO_POLICY, contact: "OPTIONAL" };
+    const user = userEvent.setup();
+    const { rerender } = render(<GuardianPage />);
+    await fill(user);
+    state.policy = NO_POLICY;
+    rerender(<GuardianPage />);
+    await user.type(screen.getByRole("textbox", { name: "guardian.reason" }), "Familjeresa");
+    await user.click(submit());
+    await waitFor(() => expect(state.requestLeave).toHaveBeenCalledTimes(1));
+    expect(Object.keys(state.requestLeave.mock.calls[0]![0] as object)).not.toContain("contactName");
+  });
+
+  it("tells a request that asked for consent from one that did not", async () => {
+    state.requestLeave.mockResolvedValue({ id: "l-new", studentId: "c-1", status: "PENDING", consentRequired: true, shortNotice: false });
+    const user = userEvent.setup();
+    render(<GuardianPage />);
+    await user.type(screen.getByRole("textbox", { name: "guardian.reason" }), "Familjeresa");
+    await user.click(submit());
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("guardian.leaveSubmittedConsent"));
+  });
+
+  it.each([
+    ["too late", new ApiError(400, "The school asks for a leave request at least 14 days before the first day.", "LEAVE_REQUEST_TOO_LATE", { days: 14 }), "guardian.leaveTooLate"],
+    ["no contact", new ApiError(400, "The school requires a contact.", "LEAVE_CONTACT_REQUIRED"), "guardian.leaveContactRequired"],
+    ["a contact in part", new ApiError(400, "The contact is incomplete.", "LEAVE_CONTACT_INCOMPLETE"), "guardian.leaveContactIncomplete"],
+  ])("says in the guardian's language what the gateway refused for %s", async (_what, error, said) => {
+    state.requestLeave.mockRejectedValue(error);
+    const user = userEvent.setup();
+    render(<GuardianPage />);
+    await user.type(screen.getByRole("textbox", { name: "guardian.reason" }), "Familjeresa");
+    await user.click(submit());
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(said));
+    expect(toast.error).not.toHaveBeenCalledWith(error.message);
+  });
+
+  const asked = (id: string, over: Partial<LeaveRequest>) => ({
+    id,
+    studentId: "c-1",
+    requestedById: "g-1",
+    startDate: "2026-10-19",
+    endDate: "2026-10-21",
+    reason: `Resa ${id}`,
+    status: "PENDING",
+    decidedById: null,
+    decidedAt: null,
+    decisionNote: null,
+    decidedAs: null,
+    createdAt: "2026-10-10T08:00:00.000Z",
+    shortNotice: false,
+    contact: null,
+    consent: NO_CONSENT,
+    ...over,
+  });
+
+  it("adds nothing to a request that carries nothing, and says what the others carry", async () => {
+    state.leaves = [
+      asked("l-plain", {}),
+      asked("l-waiting", { consent: { ...NO_CONSENT, required: true, state: "WAITING" } }),
+      asked("l-contact", { contact: FULL }),
+      asked("l-ended", { status: "GUARDIAN_DECLINED", consent: { ...NO_CONSENT, required: true, state: "REFUSED" } }),
+    ];
+    render(<GuardianPage />);
+    expect(await screen.findByText("guardian.consent.waiting")).toBeInTheDocument();
+    expect(screen.getByText("guardian.consent.declined")).toBeInTheDocument();
+    expect(screen.getByText("guardian.contactTitle")).toBeInTheDocument();
+    const plain = screen.getByText("Resa l-plain").closest("li")!;
+    expect(plain.querySelectorAll("p")).toHaveLength(2);
+    // The ended request has its own status, in words.
+    expect(screen.getByText("Resa l-ended").closest("li")).toHaveTextContent("guardian.statusGUARDIAN_DECLINED");
+  });
+
+  it("takes a guardian's yes from the list and says it was recorded", async () => {
+    state.leaves = [asked("l-ask", { consent: { ...NO_CONSENT, required: true, state: "WAITING", mine: "WAITING" } })];
+    const user = userEvent.setup();
+    render(<GuardianPage />);
+    await user.click(await screen.findByRole("button", { name: "guardian.consent.yesNamed" }));
+    await waitFor(() => expect(state.answerConsent).toHaveBeenCalledWith({ id: "l-ask", consent: true }));
+    expect(toast.success).toHaveBeenCalledWith("guardian.consent.answeredYes");
   });
 });
 

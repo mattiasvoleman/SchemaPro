@@ -22,6 +22,13 @@ import { translatorFor } from '../../i18n';
 import type { AbsenceReportRow, ChildRow, LeaveRequestRow } from '../../types';
 
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
+jest.mock('expo-router', () => ({
+  // As a focused tab: the leave screen reads when it is shown.
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('react').useEffect(effect, [effect]);
+  },
+}));
 jest.mock('../../context/AuthContext', () => {
   const value = { authState: { isAuthenticated: true, teacherId: 'g1', role: 'GUARDIAN' }, isLoading: false };
   return { useAuth: () => value };
@@ -42,12 +49,13 @@ jest.mock('../../services/absenceReports', () => ({
 jest.mock('../../services/leaveRequests', () => ({
   ...jest.requireActual('../../services/leaveRequests'),
   fetchLeaveRequests: jest.fn(),
+  fetchLeavePolicy: jest.fn(),
   requestLeave: jest.fn(),
 }));
 
 import { fetchChildren } from '../../services/children';
 import { fetchAbsenceReports, reportAbsence } from '../../services/absenceReports';
-import { fetchLeaveRequests, requestLeave } from '../../services/leaveRequests';
+import { DEFAULT_LEAVE_POLICY, fetchLeavePolicy, fetchLeaveRequests, requestLeave } from '../../services/leaveRequests';
 import { GuardianHomeScreen } from './GuardianHomeScreen';
 import { LeaveRequestsScreen } from './LeaveRequestsScreen';
 
@@ -131,6 +139,7 @@ beforeEach(() => {
   jest.mocked(fetchChildren).mockResolvedValue([ELLA, LIAM]);
   jest.mocked(fetchAbsenceReports).mockResolvedValue([]);
   jest.mocked(fetchLeaveRequests).mockResolvedValue([]);
+  jest.mocked(fetchLeavePolicy).mockResolvedValue(DEFAULT_LEAVE_POLICY);
   jest.mocked(reportAbsence).mockResolvedValue({ id: 'new', studentId: 'c1', date: '' });
   jest.mocked(requestLeave).mockResolvedValue({} as LeaveRequestRow);
   jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);

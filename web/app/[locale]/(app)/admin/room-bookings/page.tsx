@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { MapPin } from "lucide-react";
@@ -15,6 +15,7 @@ import type { RoomBookingStatus } from "@/lib/types";
 import { DecisionList, type Decision, type DecisionRequest } from "@/components/admin/decision-list";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FilterBar } from "@/components/ui/filter-bar";
 import { LoadError } from "@/components/ui/load-error";
@@ -22,13 +23,77 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Filter = Extract<RoomBookingStatus, "PENDING" | "APPROVED" | "REJECTED">;
+type Kind = "ROOM" | "RESOURCE";
+
+/*
+ * The bookings of resources (Lokal), fetched the first time the Resurser tab
+ * is opened: a visit that only decides rooms pays for none of it. A chunk that
+ * does not arrive is said in a toast, the tab goes back to Salar, and the next
+ * open fetches afresh.
+ */
+const loadResourceRequests = () => import("./resource-requests");
+let ResourceRequests = lazy(loadResourceRequests);
 
 export default function RoomBookingsPage() {
   const t = useTranslations("adminRoomBookings");
   const tStatus = useTranslations("roomBooking");
+  const [kind, setKind] = useState<Kind>("ROOM");
+  const [filter, setFilter] = useState<Filter>("PENDING");
+  const [resourcesLoad, setResourcesLoad] = useState(0);
+
+  return (
+    <Page>
+      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+
+      <FilterBar>
+        <Tabs value={kind} onValueChange={(value) => setKind(value as Kind)}>
+          <TabsList aria-label={t("kindLabel")}>
+            <TabsTrigger value="ROOM">{t("kindRooms")}</TabsTrigger>
+            <TabsTrigger value="RESOURCE">{t("kindResources")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)}>
+          <TabsList aria-label={t("filterLabel")}>
+            <TabsTrigger value="PENDING">{tStatus("statusPENDING")}</TabsTrigger>
+            <TabsTrigger value="APPROVED">{tStatus("statusAPPROVED")}</TabsTrigger>
+            <TabsTrigger value="REJECTED">{tStatus("statusREJECTED")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </FilterBar>
+
+      {kind === "ROOM" ? (
+        <RoomRequests filter={filter} />
+      ) : (
+        <DialogLoadBoundary
+          key={resourcesLoad}
+          onError={() => {
+            // A chunk that failed to load says so in the reader's language; the error's own text is English and technical.
+            toast.error(t("resourcesLoadChunkFailed"));
+            ResourceRequests = lazy(loadResourceRequests);
+            setKind("ROOM");
+            setResourcesLoad((attempt) => attempt + 1);
+          }}
+        >
+          <Suspense
+            fallback={
+              <div aria-busy="true">
+                <Skeleton className="h-64 w-full" />
+              </div>
+            }
+          >
+            <ResourceRequests filter={filter} />
+          </Suspense>
+        </DialogLoadBoundary>
+      )}
+    </Page>
+  );
+}
+
+function RoomRequests({ filter }: { filter: Filter }) {
+  const t = useTranslations("adminRoomBookings");
+  const tStatus = useTranslations("roomBooking");
   const tCommon = useTranslations("common");
   const locale = useLocale();
-  const [filter, setFilter] = useState<Filter>("PENDING");
   const { data: bookings, isLoading, isError } = useRoomBookingRequests(filter);
   const roomsQuery = useRooms();
   const peopleQuery = usePeople();
@@ -86,19 +151,7 @@ export default function RoomBookingsPage() {
   });
 
   return (
-    <Page>
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
-
-      <FilterBar>
-        <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)}>
-          <TabsList aria-label={t("filterLabel")}>
-            <TabsTrigger value="PENDING">{tStatus("statusPENDING")}</TabsTrigger>
-            <TabsTrigger value="APPROVED">{tStatus("statusAPPROVED")}</TabsTrigger>
-            <TabsTrigger value="REJECTED">{tStatus("statusREJECTED")}</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </FilterBar>
-
+    <>
       {namesFailed ? <LoadError variant="inline" title={t("namesFailed")} hint={t("namesFailedHint")} /> : null}
 
       {isLoading ? (
@@ -132,6 +185,6 @@ export default function RoomBookingsPage() {
           writes="DRIFT"
         />
       )}
-    </Page>
+    </>
   );
 }

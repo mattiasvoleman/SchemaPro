@@ -167,6 +167,16 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     rule: "NAMES_NOBODY",
     why: "The gateway's file of the same counts (windows-1252, ;): a row per day and sitting with the classes' names and numbers, no pupil. This only hands the bytes over (downloadMealCsv).",
   },
+  "app/[locale]/(app)/admin/utilisation/page.tsx": {
+    files: "Utnyttjande printed (Skriv ut, which is also how a PDF is made): the period, per room and resource",
+    rule: "NAMES_NOBODY",
+    why: "The names of rooms and resources and shares of time, never a person: how much of each is booked, not by whom or for what.",
+  },
+  "lib/local-queries.ts": {
+    files: "utnyttjande-<yyyy-mm-dd>-<yyyy-mm-dd>.csv",
+    rule: "NAMES_NOBODY",
+    why: "The gateway's file of the same report (;, a row per room or resource and week): names of rooms and resources and minutes, no person. This only hands the bytes over (downloadUtilisationCsv).",
+  },
   "lib/school-export.ts": {
     files: "rastra-skolexport-<skola>-<datum>.zip",
     rule: "HANDS_OVER",

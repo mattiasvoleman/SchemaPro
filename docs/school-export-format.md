@@ -111,7 +111,7 @@ Källa: LeaveRequests.
 | `fran` | Första dagen (ÅÅÅÅ-MM-DD). |
 | `till` | Sista dagen (ÅÅÅÅ-MM-DD). |
 | `skal` | Skälet som ansökan gavs. Tomt om det nämner en person med skyddad identitet, och i ett registerutdrag om ansökan inte gäller personen utdraget är om. |
-| `status` | PENDING (väntar), APPROVED (beviljad) eller REJECTED (avslagen). |
+| `status` | PENDING (väntar), APPROVED (beviljad), REJECTED (avslagen) eller GUARDIAN_DECLINED (en vårdnadshavare som skolan bad om samtycke sa nej, och ansökan avslutades; ingen beslutsfattare). |
 | `beslut_av_id` | Id på den som beslutade. Tomt om personen är borttagen eller har skyddad identitet. |
 | `beslut_av_epost` | E-postadress till den som beslutade. |
 | `beslut_tid` | När beslutet fattades (UTC). |
@@ -120,6 +120,26 @@ Källa: LeaveRequests.
 | `hanvisad_av_id` | Id på mentorn som lämnade vidare till rektor. Tomt om ingen, eller skyddad identitet. |
 | `hanvisad_tid` | När ansökan lämnades vidare (UTC). |
 | `skapad` | När ansökan gjordes (UTC). |
+| `samtycke_kravdes` | true om skolan bad om varje vårdnadshavares samtycke när ansökan gjordes (skolans val Ledighetspolicy). Vem som samtyckt lagras som en egen uppgift per vårdnadshavare som ingen roll läser; här står bara att samtycke krävdes och, i status, om en vårdnadshavare sa nej. |
+| `kort_varsel` | true om ansökan kom närmare första dagen än skolans minsta antal dagar i förväg (skolans val Ledighetspolicy). |
+| `kontakt_namn` | Namn på den tillfälliga kontakten under ledigheten, en tredje parts uppgift som den som ansökte gav. Tomt om ingen gavs. Tomt också i ett registerutdrag om ansökan inte gäller personen utdraget är om, och om namnet är en person med skyddad identitet. |
+| `kontakt_telefon` | Kontaktens telefonnummer. Tomt på samma villkor som namnet. |
+| `kontakt_relation` | Kontaktens relation till eleven. Tomt på samma villkor som namnet. |
+
+## `data/samtycken.csv`: Vårdnadshavarnas svar på förfrågan om samtycke till ledighet
+
+Källa: LeaveConsents.
+
+| Kolumn | Innehåll |
+|---|---|
+| `ansokan_id` | Ansökans id (ledigheter.csv). |
+| `vardnadshavare_id` | Id på vårdnadshavaren som frågades (personer.csv). Tomt om personen har skyddad identitet. I ett registerutdrag står bara svaren från personen utdraget gäller, också när närstående följer med. |
+| `vardnadshavare_epost` | Vårdnadshavarens e-postadress. |
+| `elev_id` | Id på eleven ansökan gäller. Tomt i ett registerutdrag om ansökan inte gäller personen utdraget är om. En ansökan om en elev med skyddad identitet finns inte i filen. |
+| `svar` | true om vårdnadshavaren samtyckte, false om hen inte gjorde det (och ansökan avslutades), tomt om hen inte har svarat. |
+| `svarade` | När vårdnadshavaren svarade (UTC), tomt om hen inte har svarat. |
+| `paminnd` | När den enda påminnelsen skrevs (UTC), tomt om ingen skrevs. |
+| `fragad` | När vårdnadshavaren frågades, det vill säga när ansökan gjordes (UTC). |
 
 ## `data/notiser.csv`: Notiser
 
@@ -155,4 +175,4 @@ Källa: PersonalDataAccess.
 
 ## `data/person/`: övriga tabeller
 
-Det Rastra i övrigt har om personen skrivs som en fil per tabell. Kolumnerna är tabellens egna, i tabellens ordning, och id:n är Rastras interna id:n (de som `data/personer.csv` bär). En kolumn som innehåller en nyckel, ett hemligt värde eller en kontrollsumma står som `(dold)`. En tabell utan rader för personen skrivs inte. Tabellerna: `AbsenceWatchFindings`, `AckReceipts`, `AckRequests`, `AttendanceSharingDecisions`, `AvailabilityConstraints`, `CalendarLessonStudents`, `CalendarLessonTeachers`, `CancellationBatches`, `ClassTeacherAppointments`, `ClassTeacherChanges`, `ConsentEntries`, `ConsentLists`, `CoverConfirmations`, `CoverRequestLessons`, `CoverRequestRecipients`, `CoverRequests`, `CrisisAlarms`, `CrisisCallTeachers`, `CrisisPupils`, `CrisisReports`, `ExamInvigilators`, `Exams`, `GuardianStudentHistory`, `HuvudmanSchoolEvents`, `HuvudmanSchools`, `InstructionProofs`, `IntegrationApiKeys`, `LeaveDelegationDecisions`, `LessonLogs`, `LessonPupilMoves`, `LessonSubstituteNotes`, `LocalTimplans`, `MasterLessons`, `MasterLessonStudents`, `OptimizationJobs`, `PayrollPseudonyms`, `PersonProtectionEvents`, `PersonProtections`, `PublicTimetableHidden`, `PublicTimetableLinks`, `RetentionDecisions`, `RoomBookings`, `RoomLoans`, `ScheduleActivities`, `ScheduleActivityTeachers`, `ScheduleCandidateRuns`, `ScheduleChangeLogs`, `ScheduleVersions`, `SchoolExports`, `SharedTeacherMarks`, `Ss12000DutyLinks`, `Ss12000Sources`, `Ss12000SyncRuns`, `StudentEnrollments`, `StudentGroupMembers`, `SubstituteAvailabilities`, `SubstitutePoolMembers`, `SupervisionCovers`, `SupervisionShifts`, `TeacherAbsenceCovers`, `TeacherAbsences`, `TeacherDuties`, `TeacherDutySlots`, `TeacherEmploymentLogs`, `TeacherEmploymentPeriods`, `TeacherEmployments`, `TeacherPublicLabels`, `TeacherReportingDays`, `TeacherSubjectQualifications`, `TeacherWorkRules`, `TeachingRequirements`, `TeachingRequirementShares`, `TimetablePublications`, `TimplanStatementPublications`, `TimplanStatements`, `UserRoleChanges`.
+Det Rastra i övrigt har om personen skrivs som en fil per tabell. Kolumnerna är tabellens egna, i tabellens ordning, och id:n är Rastras interna id:n (de som `data/personer.csv` bär). En kolumn som innehåller en nyckel, ett hemligt värde eller en kontrollsumma står som `(dold)`, och det gör också namnet och kontaktuppgifterna hos en extern hyrande i `ExternalBookings` (den som hyr är ingen användare och inte den som utdraget gäller; kvar står att personen registrerat serien). En tabell utan rader för personen skrivs inte. Tabellerna: `AbsenceWatchFindings`, `AckReceipts`, `AckRequests`, `AttendanceSharingDecisions`, `AvailabilityConstraints`, `CalendarLessonStudents`, `CalendarLessonTeachers`, `CancellationBatches`, `ClassTeacherAppointments`, `ClassTeacherChanges`, `ConsentEntries`, `ConsentLists`, `CoverConfirmations`, `CoverRequestLessons`, `CoverRequestRecipients`, `CoverRequests`, `CrisisAlarms`, `CrisisCallTeachers`, `CrisisPupils`, `CrisisReports`, `ExamInvigilators`, `Exams`, `ExternalBookings`, `GuardianStudentHistory`, `HuvudmanSchoolEvents`, `HuvudmanSchools`, `InstructionProofs`, `IntegrationApiKeys`, `LeaveDelegationDecisions`, `LessonLogs`, `LessonPupilMoves`, `LessonSubstituteNotes`, `LocalTimplans`, `MasterLessons`, `MasterLessonStudents`, `OptimizationJobs`, `PayrollPseudonyms`, `PersonProtectionEvents`, `PersonProtections`, `PublicTimetableHidden`, `PublicTimetableLinks`, `ResourceBookings`, `RetentionDecisions`, `RoomBookings`, `RoomLoans`, `ScheduleActivities`, `ScheduleActivityTeachers`, `ScheduleCandidateRuns`, `ScheduleChangeLogs`, `ScheduleVersions`, `SchoolExports`, `SharedTeacherMarks`, `Ss12000DutyLinks`, `Ss12000Sources`, `Ss12000SyncRuns`, `StudentEnrollments`, `StudentGroupMembers`, `SubstituteAvailabilities`, `SubstitutePoolMembers`, `SupervisionCovers`, `SupervisionShifts`, `TeacherAbsenceCovers`, `TeacherAbsences`, `TeacherDuties`, `TeacherDutySlots`, `TeacherEmploymentLogs`, `TeacherEmploymentPeriods`, `TeacherEmployments`, `TeacherPublicLabels`, `TeacherReportingDays`, `TeacherSubjectQualifications`, `TeacherWorkRules`, `TeachingRequirements`, `TeachingRequirementShares`, `TimetablePublications`, `TimplanStatementPublications`, `TimplanStatements`, `UserRoleChanges`.
