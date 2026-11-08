@@ -63,7 +63,7 @@ export class CreateAbsenceReportDto {
  */
 export const LEAVE_REQUEST_MAX_DAYS = 366;
 
-/** The contact's limits are LeaveRequests_a_contact_is_short's (20270201091000). */
+/** The contact's limits are LeaveRequests_a_contact_is_short's (20270205091000). */
 export const LEAVE_CONTACT_NAME_MAX = 100;
 export const LEAVE_CONTACT_RELATION_MAX = 60;
 const LEAVE_CONTACT_PHONE = /^[0-9+()\s-]{5,30}$/;
@@ -85,7 +85,7 @@ export class CreateLeaveRequestDto {
   reason!: string;
 
   /**
-   * A temporary contact during the leave (Ledighetspolicy, 20270201091000): a third
+   * A temporary contact during the leave (Ledighetspolicy, 20270205091000): a third
    * party's name, telephone and relation to the pupil. All three or none; an empty
    * string is none, as a form sends it. Whether the school asks for it, and requires it,
    * is the school's policy (GET /api/v1/leave-policy); the database refuses a filing that
@@ -113,7 +113,7 @@ export class AnswerLeaveConsentDto {
 }
 
 /**
- * The school's leave policy (Ledighetspolicy, 20270201091000), all of it, so that "off" is
+ * The school's leave policy (Ledighetspolicy, 20270205091000), all of it, so that "off" is
  * said rather than left out: every guardian's consent, the fewest days ahead (1 to 90, or
  * null for no minimum) with what a later request meets, and the temporary contact.
  */

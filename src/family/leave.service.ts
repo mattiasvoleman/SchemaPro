@@ -34,7 +34,7 @@ export const APPROVED_LEAVE_NOTE = 'Approved leave';
 export const LEAVE_REQUEST_DECIDED = 'LEAVE_REQUEST_DECIDED';
 export const LEAVE_REQUEST_TOO_LONG = 'LEAVE_REQUEST_TOO_LONG';
 export const LEAVE_REQUEST_ENDS_BEFORE_START = 'LEAVE_REQUEST_ENDS_BEFORE_START';
-/** Ledighetspolicy (20270201091000): the school's choices, in the codes the families' pages word. */
+/** Ledighetspolicy (20270205091000): the school's choices, in the codes the families' pages word. */
 export const LEAVE_REQUEST_TOO_LATE = 'LEAVE_REQUEST_TOO_LATE';
 export const LEAVE_CONTACT_REQUIRED = 'LEAVE_CONTACT_REQUIRED';
 export const LEAVE_CONTACT_INCOMPLETE = 'LEAVE_CONTACT_INCOMPLETE';
@@ -159,7 +159,7 @@ export interface LeaveRequestView {
   } | null;
 }
 
-/** A row of app.leave_consent_facts (20270201091000). */
+/** A row of app.leave_consent_facts (20270205091000). */
 interface ConsentFactRow {
   requestId: string;
   required: boolean;
@@ -682,7 +682,7 @@ export class LeaveService {
   }
 
   // ---------------------------------------------------------------------
-  // Every guardian's consent (Ledighetspolicy, 20270201091000)
+  // Every guardian's consent (Ledighetspolicy, 20270205091000)
   // ---------------------------------------------------------------------
 
   /**

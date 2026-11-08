@@ -94,7 +94,7 @@ export async function tellNewMentors(
 }
 
 /*
- * THE CONSENT NOTICES (Ledighetspolicy, 20270201091000).
+ * THE CONSENT NOTICES (Ledighetspolicy, 20270205091000).
  *
  * When the school asks every guardian to consent to a leave request, the database
  * writes the notices from the rows: the request for consent to the other guardians

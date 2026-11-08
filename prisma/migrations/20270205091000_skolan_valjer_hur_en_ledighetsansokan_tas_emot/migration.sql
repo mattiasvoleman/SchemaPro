@@ -107,7 +107,7 @@
 -- loop: en vägran rullar tillbaka delbehandlingen och försöker igen 50 ms
 -- senare, och den väntar aldrig med ett lås i handen. Efter 30 s stannar den med
 -- ingenting gjort och kan köras om (prisma migrate resolve --rolled-back, sedan
--- deploy). Den nya statusen och notistyperna kom i 20270201090000.
+-- deploy). Den nya statusen och notistyperna kom i 20270205090000.
 
 DO $$
 DECLARE
@@ -122,7 +122,7 @@ BEGIN
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Schools, Users and LeaveRequests were not free at once in 30 s: nothing is changed. Prisma now holds this migration as failed, so run "prisma migrate resolve --rolled-back 20270201091000_skolan_valjer_hur_en_ledighetsansokan_tas_emot" and then "prisma migrate deploy" again';
+        RAISE EXCEPTION 'Schools, Users and LeaveRequests were not free at once in 30 s: nothing is changed. Prisma now holds this migration as failed, so run "prisma migrate resolve --rolled-back 20270205091000_skolan_valjer_hur_en_ledighetsansokan_tas_emot" and then "prisma migrate deploy" again';
       END IF;
       PERFORM pg_sleep(0.05);
     END;

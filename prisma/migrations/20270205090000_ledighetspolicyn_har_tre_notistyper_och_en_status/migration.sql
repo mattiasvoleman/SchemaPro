@@ -1,6 +1,6 @@
 -- Ledighetspolicyn har tre notistyper och en status.
 --
--- Ledighetspolicyn (20270201091000) låter skolan be om varje vårdnadshavares
+-- Ledighetspolicyn (20270205091000) låter skolan be om varje vårdnadshavares
 -- samtycke till en ledighetsansökan. Den andra vårdnadshavaren får en notis
 -- (LEAVE_CONSENT_REQUESTED), en enda påminnelse om hen inte svarat
 -- (LEAVE_CONSENT_REMINDER), och den som ansökte får veta när en vårdnadshavare
@@ -10,7 +10,7 @@
 --
 -- Egen migrering: ett värde som läggs till i en enum kan inte användas i den
 -- transaktion som lägger till det (som 20270117090000, 20270112090000 och
--- 20261018090000), och 20270201091000 skriver notiser av typerna och har en
+-- 20261018090000), och 20270205091000 skriver notiser av typerna och har en
 -- CHECK som nämner statusen. Inget annat står här, ingen rad skrivs och inget
 -- lås tas: ALTER TYPE ... ADD VALUE tar inget lås på någon tabell, så den
 -- API-version som körs medan migreringen går märker ingenting. Den känner

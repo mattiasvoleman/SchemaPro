@@ -68,7 +68,7 @@ enum LeaveRequestStatus {
   PENDING
   APPROVED
   REJECTED
-  /// A guardian the school asked for consent answered no, and that ended the request (20270201090000, K4).
+  /// A guardian the school asked for consent answered no, and that ended the request (20270205090000, K4).
   /// Never a decision of the school: decidedById and decidedAs stay empty.
   GUARDIAN_DECLINED
 }
@@ -126,11 +126,11 @@ enum NotificationType {
   ACK_REQUESTED
   /// One reminder to a guardian who has not confirmed in the time the school chose; says only that a request waits (20270117090000).
   ACK_REMINDER
-  /// A leave request for the guardian's child waits for their consent, because the school asks every guardian: the child and the dates, not the reason, and not who applied (20270201090000).
+  /// A leave request for the guardian's child waits for their consent, because the school asks every guardian: the child and the dates, not the reason, and not who applied (20270205090000).
   LEAVE_CONSENT_REQUESTED
-  /// One reminder to a guardian who has not answered a request for consent (20270201090000).
+  /// One reminder to a guardian who has not answered a request for consent (20270205090000).
   LEAVE_CONSENT_REMINDER
-  /// To whoever applied: a guardian did not consent and the request ended. Says not which guardian (20270201090000).
+  /// To whoever applied: a guardian did not consent and the request ended. Says not which guardian (20270205090000).
   LEAVE_CONSENT_REFUSED
 }
 
@@ -2895,13 +2895,13 @@ model LeaveRequest {
   /// referred request is never decided as MENTOR.
   referredAt    DateTime?          @db.Timestamptz(6)
   referredById  String?            @db.Uuid
-  /// Set from the school's policy when the request is filed, by a trigger (20270201091000):
+  /// Set from the school's policy when the request is filed, by a trigger (20270205091000):
   /// the school asked every guardian with active custody to consent. A later change of the
   /// policy moves no request already filed. Who has consented is LeaveConsents', never stored here.
   consentRequired Boolean          @default(false)
   /// Filed with fewer days to its first day than the school's minimum; set by the same trigger.
   shortNotice   Boolean            @default(false)
-  /// A temporary contact during the leave (20270201091000): a third party's name, telephone and
+  /// A temporary contact during the leave (20270205091000): a third party's name, telephone and
   /// relation to the pupil. Read by whoever reads the request, which a teacher other than the
   /// deciding mentor does not; goes with the request in gallring. All three or none.
   contactName     String?
@@ -5096,7 +5096,7 @@ model LeaveRequestNotice {
   @@map("LeaveRequestNotices")
 }
 
-/// How a school receives a leave request (Ledighetspolicy, 20270201091000): three
+/// How a school receives a leave request (Ledighetspolicy, 20270205091000): three
 /// choices, all off until an administrator who decides turns one on. A school with
 /// no row has all three off, which is the flow before this existed. One row per
 /// school; no personal data. The values are copied onto a request when it is filed
@@ -5129,7 +5129,7 @@ enum LeaveContactMode {
   REQUIRED
 }
 
-/// One guardian the school asked to consent to a leave request (20270201091000): the
+/// One guardian the school asked to consent to a leave request (20270205091000): the
 /// snapshot of who held custody when it was filed, apart from whoever filed it. A
 /// guardian linked later is not asked; one whose custody has ended stays in the table and
 /// holds up nothing (app.ack_receipt_open is the rule, as for Kvittens). consented is
