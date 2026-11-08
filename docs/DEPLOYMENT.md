@@ -1950,19 +1950,25 @@ Walk the full product loop once, in order:
   next try needs, as 20270117091000 does for `Schools` and `Users`. A single
   `lock_timeout` is not enough: it bounds the wait and not the hold, and the queue
   behind a waiting lock request is the harm.
-  *(6) The two doors of the delivery answer no login at all (20270202090000, after
-  the review).* `app.ack_remind_request` and `app.ack_reminder_mirrored` stood
-  back for a session that resolves to a person, and a login with no person row (the
-  huvudman's reader, the municipality's administrator) slipped past that. They now
-  answer nothing to a session with any claims, and are run only by the delivery's
-  door, which sets none. The migration replaces the two bodies (the guard is the only
-  difference) and touches no table, so it takes no table lock. **Before it:**
-  `md5(prosrc)` of `app.ack_remind_request` is `894541402de92108263324294f19c4db` and of
-  `app.ack_reminder_mirrored` `edaea80452b04494beeb73668086bcc0`; **after it** they are
-  `6836f7ae29327c074a4dc7b62776837b` and `308fe14167295988d49d575cdf0f1856`, the count of
-  `app.ack_%` functions is still 22, and `app.ack_usage` (`2534cef97c828b5999ce076aff18f9d3`)
-  and the three gallring functions are untouched. A session with any claims, a person or not, is
-  handed nothing by either door.
+  *(6) The three doors of the delivery answer no login at all (20270202090000, after
+  the reviews of #277 and #289).* `app.ack_remind_queue` (the list of due request ids),
+  `app.ack_remind_request` and `app.ack_reminder_mirrored` stood back for a session that
+  resolves to a person, and a login with no person row (the huvudman's reader, the
+  municipality's administrator) slipped past that; the list handed such a login every
+  school's due request ids. They now answer nothing to a session with any claims, and
+  are run only by the delivery's door, which sets none. The migration replaces the three
+  bodies (the guard is the only difference, the same text in all three) and touches no
+  table, so it takes no table lock. **Before it:** `md5(prosrc)` of `app.ack_remind_queue`
+  is `1917f84de8c01162277654565db52463`, of `app.ack_remind_request`
+  `894541402de92108263324294f19c4db` and of `app.ack_reminder_mirrored`
+  `edaea80452b04494beeb73668086bcc0`; **after it** they are
+  `7a4ed5aa8bf98b87a1f85dc542c56b80`, `6836f7ae29327c074a4dc7b62776837b` and
+  `308fe14167295988d49d575cdf0f1856`, the count of `app.ack_%` functions is still 22,
+  and `app.ack_usage` (`2534cef97c828b5999ce076aff18f9d3`) and the gallring functions
+  are untouched. A session with any claims, a person or not, is handed nothing by any
+  of the three. Functions outside Kvittens that guard on `app.current_user_id() IS NOT
+  NULL` as "logged in" are not changed here; each wants its own pass, with a 450o-style
+  test per door.
 - **Ett läsårs lektioner tas bort först**: 20270120090000 adds the function
   `app.academic_year_lessons_go_first()` (SECURITY DEFINER, `search_path`
   pinned to `public, pg_temp`, EXECUTE revoked from PUBLIC and from `anon`,

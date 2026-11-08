@@ -47012,11 +47012,12 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Kvittens, after the independent review of #277 (20270202090000), sections 450 and 454. Their logic needs rows the
--- API's role cannot make (a SENT reminder, an old receipt, a removed sender, a profile without Drift): that is
--- 450o-453o in rls-owner-checks.sql.
+-- API's role cannot make (a due request, a SENT reminder, an old receipt, a removed sender, a profile without Drift):
+-- that is 450o-453o in rls-owner-checks.sql.
 --
---   450  a login with no person row (the huvudman's reader) runs the delivery's doors without error and gets nothing;
---        the usage's own-share row carries the person's id, and the reader's none
+--   450  the delivery's three doors (the list, the pass, the mark) and a login with no person row (the huvudman's
+--        reader): the guard is the first statement of each door, the same in all three, and no setting of the
+--        session's claims makes a door raise; the usage's own-share row carries the person's id, and the reader's none
 --   454  the column privileges: nobody holds one, on any of the three tables
 -- ---------------------------------------------------------------------------
 
@@ -47029,6 +47030,18 @@ END $$;
 
 -- ---------------------------------------------------------------------------
 -- Section 450: the doors, for a login with no person row
+--
+-- As the API's role there is no due request to hand a door (the database stamps remindAt a day or more ahead and no
+-- role moves it: 450o plants one as the owner), so what a door DOES for a login is 450o's. What this section holds the
+-- guard to without one:
+--   * its text. The guard is the first statement of each of the three doors and the same in all of them: no claims and
+--     no lone subject setting, an empty string read as none. A door whose guard asks for a person row
+--     (app.current_user_id()), drops one of the two settings, joins them with AND, reads an empty string as a login,
+--     reads the setting without missing_ok or is gone is refused here by name. A refactor that moves the guard into a
+--     helper moves this check with it.
+--   * its behaviour under every setting a session can carry. A door raises for none of them (a pooled connection reads
+--     '' and not NULL; the old guard raised on a claims setting that is not JSON), answers a login nothing, and
+--     answers the delivery (no claims) without error.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -47037,7 +47050,19 @@ DECLARE
   roller uuid;
   n bigint;
   seen text;
+  guard constant text := $g$IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RETURN; END IF;$g$;
+  door text;
+  src text;
+  shape text[];
 BEGIN
+  -- The guard, as the text of each door. Comments go, and every run of white space is one space.
+  FOREACH door IN ARRAY ARRAY['app.ack_remind_queue(integer)', 'app.ack_remind_request(uuid)', 'app.ack_reminder_mirrored(uuid)'] LOOP
+    src := btrim(regexp_replace(regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = door::regprocedure), '--[^\n]*', '', 'g'), '\s+', ' ', 'g'));
+    IF NOT starts_with(substring(src FROM 'BEGIN (.*)$'), guard) THEN
+      RAISE EXCEPTION 'kvittens 450: the first statement of % is not the delivery''s guard', door;
+    END IF;
+  END LOOP;
+
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
   roller := app.current_school_id();
   -- The huvudman's reader at the roller school: claims, a school chosen, and no Users row there.
@@ -47048,9 +47073,30 @@ BEGIN
   END IF;
 
   -- The doors are the API's to run (the delivery runs them as that role), and a login runs them to no effect and no error.
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000);
+  PERFORM pg_temp.kq_expect('450 the reader is handed no list', n::text, '0');
   SELECT count(*) INTO n FROM app.ack_remind_request(gen_random_uuid());
   PERFORM pg_temp.kq_expect('450 the reader is handed no notice', n::text, '0');
   PERFORM app.ack_reminder_mirrored(gen_random_uuid());
+
+  -- Every setting a session can carry (claims, then the lone subject setting). The first is the delivery's own: no
+  -- claims, an empty string after a login's transaction on a pooled connection. The others are logins of some kind, or
+  -- not JSON at all; none of them makes a door raise, and none is handed a thing.
+  FOREACH shape SLICE 1 IN ARRAY ARRAY[
+    ARRAY['', '', 'door'], ARRAY[' ', '', 'login'], ARRAY['{}', '', 'login'], ARRAY['null', '', 'login'],
+    ARRAY['{"role":"authenticated"}', '', 'login'], ARRAY['', 'fe000000-0000-4000-8000-000000000260', 'login'],
+    ARRAY['{"sub":"fe000000-0000-4000-8000-000000000260"}', 'fe000000-0000-4000-8000-000000000260', 'login']
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', shape[1], true);
+    PERFORM set_config('request.jwt.claim.sub', shape[2], true);
+    SELECT (SELECT count(*) FROM app.ack_remind_queue(1000)) + (SELECT count(*) FROM app.ack_remind_request(gen_random_uuid())) INTO n;
+    PERFORM app.ack_reminder_mirrored(gen_random_uuid());
+    IF shape[3] = 'login' AND n <> 0 THEN
+      RAISE EXCEPTION 'kvittens 450: a session with claims [%] and subject [%] was handed % rows', shape[1], shape[2], n;
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000260')::text, true);
 
   -- The usage's own-share row names the person it is for. The reader has none: the gateway answers "no share" for a row
   -- with no person (mine: null), and so shows the reader no "Din andel 0 av 8 000". A person's row names them, or the

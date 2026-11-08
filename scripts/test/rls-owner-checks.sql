@@ -3372,7 +3372,7 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Kvittens, after the independent review of #277 (20270202090000), owner checks.
 --
---   450o  the delivery's two doors answer nothing to any login, a person or not
+--   450o  the delivery's three doors (the list, the pass, the mark) answer nothing to any login, a person or not
 --   451o  the sender rows of the usage are read under Drift
 --   452o  the day's window in the usage: the school's rows, one's own and the senders'
 --   453o  a removed sender's share, and the mark leaves the time the reminder went alone
@@ -3397,11 +3397,13 @@ BEGIN
   RETURN seen;
 END $$;
 
--- 450o: app.ack_remind_request and app.ack_reminder_mirrored are the delivery's doors, and the delivery sets no claims.
--- A session with any claims gets nothing from them, and that includes a login that is no person: the huvudman's reader
--- (a läsare of the school it chose, with no Users row there, so app.current_user_id() is NULL) is the one a guard on the
--- person row let through. A subject setting alone (the older claim style, which Supabase's auth.uid() also reads) is a
--- login too. The same functions then do their work for the door, so none of this passes because they do nothing at all.
+-- 450o: app.ack_remind_queue, app.ack_remind_request and app.ack_reminder_mirrored are the delivery's doors, and the
+-- delivery sets no claims. A session with any claims gets nothing from them, and that includes a login that is no person:
+-- the huvudman's reader (a läsare of the school it chose, with no Users row there, so app.current_user_id() is NULL) is
+-- the one a guard on the person row let through, and the list is the door that handed it every school's due requests.
+-- A subject setting alone (the older claim style, which Supabase's auth.uid() also reads) is a login too. The same
+-- functions then do their work for the door, so none of this passes because they do nothing at all. (The guard's text and
+-- the doors' behaviour under every setting without a due row are 450's.)
 BEGIN;
 DO $$
 DECLARE
@@ -3426,9 +3428,11 @@ BEGIN
   UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = ANY (asked || waits);
 
   -- The delivery's door (no claims; the empty string is what a pooled connection reads after a login's transaction)
-  -- takes the first one: SENT, and not yet marked.
+  -- is handed the four due requests by the list, and takes the first one: SENT, and not yet marked.
   PERFORM set_config('request.jwt.claims', '', true);
   PERFORM set_config('request.jwt.claim.sub', '', true);
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000) q WHERE q.request_id = ANY (asked || waits);
+  IF n <> 4 THEN RAISE EXCEPTION 'kvittens 450o: the door''s list holds % of the four due requests, not 4', n; END IF;
   SELECT count(*) INTO n FROM app.ack_remind_request(waits);
   IF n <> 1 THEN RAISE EXCEPTION 'kvittens 450o: the door wrote % notices for the first request, not 1', n; END IF;
   PERFORM pg_temp.kq_expect('450o the first reminder is SENT and not marked',
@@ -3441,6 +3445,8 @@ BEGIN
   IF app.current_user_id() IS NOT NULL OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_school_id() IS DISTINCT FROM roller THEN
     RAISE EXCEPTION 'kvittens 450o: P is not the reader at the roller school (school %, person %, role %)', app.current_school_id(), app.current_user_id(), app.current_user_role();
   END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a login with no person was handed the list of % due requests, of every school', n; END IF;
   SELECT count(*) INTO n FROM app.ack_remind_request(by_reader);
   IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a login with no person was handed % notices to deliver', n; END IF;
   PERFORM app.ack_reminder_mirrored(waits);
@@ -3450,6 +3456,8 @@ BEGIN
   -- resolves, which is what makes it tell a guard on the person row from a guard on any login.
   PERFORM set_config('request.jwt.claims', '', true);
   PERFORM set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-f40000000001', true);
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a session with only a subject setting was handed the list of % due requests', n; END IF;
   SELECT count(*) INTO n FROM app.ack_remind_request(by_sub);
   IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a session with only a subject setting was handed % notices to deliver', n; END IF;
   PERFORM app.ack_reminder_mirrored(waits);
@@ -3458,6 +3466,8 @@ BEGIN
   -- A person.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
   IF app.current_user_id() IS DISTINCT FROM full_ THEN RAISE EXCEPTION 'kvittens 450o: the person is not Full'; END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a person was handed the list of % due requests', n; END IF;
   SELECT count(*) INTO n FROM app.ack_remind_request(by_person);
   IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a person was handed % notices to deliver', n; END IF;
   PERFORM app.ack_reminder_mirrored(waits);
@@ -3483,6 +3493,8 @@ BEGIN
   PERFORM pg_temp.kq_expect('450o the door takes the requests',
                             (SELECT string_agg(coalesce("reminderOutcome"::text, '-'), ',' ORDER BY title COLLATE "C") FROM "AckRequests" WHERE id = ANY (asked)), 'SENT,SENT,SENT');
   PERFORM pg_temp.kq_expect('450o the door marks', (SELECT ("reminderMirroredAt" IS NOT NULL)::text FROM "AckRequests" WHERE id = waits), 'true');
+  PERFORM pg_temp.kq_expect('450o the list no longer holds what the door took',
+                            (SELECT count(*)::text FROM app.ack_remind_queue(1000) q WHERE q.request_id = ANY (asked || waits)), '0');
 END $$;
 ROLLBACK;
 
