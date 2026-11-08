@@ -302,6 +302,10 @@ describe('Portal and platform surfaces (e2e)', () => {
     });
 
     it('validates the contact of a leave request before any transaction: a telephone of digits, a name of 100, a relation of 60', async () => {
+      // The test before this one leaves $queryRaw answering LEAVE_REQUEST_TOO_LATE (clearAllMocks clears the calls, not the answers), which
+      // is a 400 too: without this, every refusal below would pass with the DTO's rule swapped for /^.*$/ (the review of #292, round two).
+      const asked = jest.fn().mockResolvedValue([]);
+      Object.assign(harness.tx, { $queryRaw: asked });
       const filed = (extra: Record<string, unknown>) =>
         request(http())
           .post('/api/v1/leave-requests')
@@ -318,6 +322,8 @@ describe('Portal and platform surfaces (e2e)', () => {
       await filed({ contactName: 'Gun', contactPhone: '070-1234567', contactRelation: 'r'.repeat(61) }).expect(400);
       await filed({ contactName: 5 }).expect(400);
       expect(harness.tx['leaveRequest']!['create']).not.toHaveBeenCalled();
+      // Refused by the DTO, so the filing check was never asked: no 400 here came from the database's function.
+      expect(asked).not.toHaveBeenCalled();
       // An empty string is none, as a form sends it.
       harness.tx['guardianStudent']!['findFirst']!.mockResolvedValue({ id: RECORD_ID, studentId: STUDENT_ID });
       harness.tx['user']!['findUnique']!.mockResolvedValue({ schoolId: SCHOOL_ID });
