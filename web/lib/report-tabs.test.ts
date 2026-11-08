@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { reportTabOf } from "./report-tabs";
 
 describe("reportTabOf", () => {
-  it("reads the two named tabs and falls back to Närvaro", () => {
+  it("reads the three named tabs and falls back to Närvaro", () => {
+    expect(reportTabOf("absence-stats")).toBe("absence-stats");
+    expect(reportTabOf("absenceStats")).toBe("attendance");
     expect(reportTabOf("staffing")).toBe("staffing");
     expect(reportTabOf("cover")).toBe("cover");
     expect(reportTabOf("attendance")).toBe("attendance");
