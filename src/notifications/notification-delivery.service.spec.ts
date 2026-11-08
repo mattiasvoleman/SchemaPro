@@ -1,7 +1,9 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Logger } from '@nestjs/common';
 import { createPrismaMock, createTxMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
-import { MAX_PENDING_BATCHES, NotificationDeliveryService } from './notification-delivery.service';
+import { EMAIL_TIMEOUT_MS, MAX_PENDING_BATCHES, NotificationDeliveryService } from './notification-delivery.service';
 import type { OutboxEntry } from './notification-outbox';
 
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
@@ -227,6 +229,200 @@ describe('NotificationDeliveryService (e-mail)', () => {
     delivery.enqueue([]);
     for (let i = 0; i <= MAX_PENDING_BATCHES + 1; i++) delivery.enqueue([entry()]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('Delivery queue full'));
+  });
+
+  describe('a turn in the mail chain that throws', () => {
+    it('costs the mail it was for and not the process’s e-mail: the next mail goes', async () => {
+      const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      // A BigInt interval makes the turn's arithmetic throw (a TypeError), once the interval is back to a number nothing does.
+      delivery.emailIntervalMs = 10n as unknown as number;
+      delivery.enqueue([entry({ meta: { n: 'refused' } })]);
+      await delivery.idle();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith('Email dispatch skipped [turn, TypeError]');
+
+      delivery.emailIntervalMs = 0;
+      delivery.enqueue([entry({ meta: { n: 'next' } })]);
+      await delivery.idle();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(bccOf(0)).toEqual(['u1@example.invalid', 'u2@example.invalid']);
+    });
+
+    it('goes on to the next mail of the same batch, and the mails behind it in the queue', async () => {
+      let turns = 0;
+      const turn = jest.spyOn(Date, 'now').mockImplementation(() => {
+        turns += 1;
+        // The first turn's first reading throws; everything else reads the clock as usual.
+        if (turns === 1) throw new RangeError('clock');
+        return performance.timeOrigin + performance.now();
+      });
+      try {
+        const wide = entry({ email: { subject: 'S', body: 'B', recipients: Array.from({ length: 98 }, (_v, i) => ({ userId: `w${i}`, email: `w${i}@example.invalid` })) } });
+        delivery.enqueue([wide]);
+        delivery.enqueue([entry({ meta: { n: 'after' } })]);
+        await delivery.idle();
+      } finally {
+        turn.mockRestore();
+      }
+      // Two mails for the wide entry (the first turn threw, so one is lost) and one for the batch after it.
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('a mail Resend does not answer', () => {
+    /** A fetch that answers nothing, and rejects the way fetch does when its signal aborts. */
+    const silent = (_url: string, init: { signal: AbortSignal }) =>
+      new Promise<never>((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+
+    it('is given up after the limit, so the lane goes on to the next mail instead of waiting minutes', async () => {
+      const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      delivery.emailTimeoutMs = 25;
+      fetchMock.mockImplementationOnce(silent);
+      const started = Date.now();
+      delivery.enqueue([entry({ meta: { n: 'hangs' } })]);
+      delivery.enqueue([entry({ meta: { n: 'goes' } })]);
+      await delivery.idle();
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith('Email dispatch failed [timeout 25 ms]');
+      // Logged without an address, a subject or a text.
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/example\.invalid|"S"|"B"/);
+    });
+
+    it('is sent with a signal of ten seconds unless the limit is changed', async () => {
+      const timeout = jest.spyOn(AbortSignal, 'timeout');
+      delivery.enqueue([entry()]);
+      await delivery.idle();
+      expect(timeout).toHaveBeenCalledWith(EMAIL_TIMEOUT_MS);
+      expect(EMAIL_TIMEOUT_MS).toBe(10_000);
+      expect((fetchMock.mock.calls[0][1] as { signal: AbortSignal }).signal).toBeInstanceOf(AbortSignal);
+      timeout.mockRestore();
+    });
+
+    it('is given up over a real socket too; and an answer that stalls after its headers holds nothing, since the mail does not read the body', async () => {
+      const server = createServer((req, res) => {
+        requests += 1;
+        // The first mail is never answered; the second gets its headers and no body (all the service looks at is the status); the third is answered.
+        if (requests === 1) return;
+        if (requests === 2) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.write('{"id":');
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"id":"mail"}');
+      });
+      let requests = 0;
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      // The service posts to Resend's own address; the real fetch is pointed at the server instead.
+      globalThis.fetch = ((url: string, init?: RequestInit) => realFetch(String(url).replace('https://api.resend.com', base), init)) as typeof fetch;
+      try {
+        const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+        delivery.emailTimeoutMs = 80;
+        const started = Date.now();
+        const told: boolean[] = [];
+        delivery.enqueue([entry({ meta: { n: 1 } })], (delivered) => told.push(delivered));
+        delivery.enqueue([entry({ meta: { n: 2 } })], (delivered) => told.push(delivered));
+        delivery.enqueue([entry({ meta: { n: 3 } })], (delivered) => told.push(delivered));
+        await delivery.idle();
+        expect(requests).toBe(3);
+        expect(told).toEqual([false, true, true]);
+        expect(Date.now() - started).toBeLessThan(2_000);
+        expect(warn).toHaveBeenCalledWith('Email dispatch failed [timeout 80 ms]');
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it('is a refused mail like any other: not sent again, and the rest of the batch goes', async () => {
+      delivery.emailTimeoutMs = 25;
+      fetchMock.mockImplementationOnce(silent);
+      const wide = entry({ email: { subject: 'S', body: 'B', recipients: Array.from({ length: 98 }, (_v, i) => ({ userId: `w${i}`, email: `w${i}@example.invalid` })) } });
+      delivery.enqueue([wide]);
+      await delivery.idle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(bccOf(1)).toHaveLength(49);
+      expect(bccOf(1)[0]).toBe('w49@example.invalid');
+    });
+  });
+
+  describe('telling the sender how the batch went', () => {
+    it('says true when Resend took every mail, after the last one', async () => {
+      const told: boolean[] = [];
+      const wide = entry({ email: { subject: 'S', body: 'B', recipients: Array.from({ length: 98 }, (_v, i) => ({ userId: `w${i}`, email: `w${i}@example.invalid` })) } });
+      delivery.enqueue([wide], (delivered) => told.push(delivered));
+      expect(told).toEqual([]);
+      await delivery.idle();
+      expect(told).toEqual([true]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('says true at once for a batch with nothing to deliver, and never twice', async () => {
+      const told: boolean[] = [];
+      delivery.enqueue([], (delivered) => told.push(delivered));
+      expect(told).toEqual([true]);
+      // An opt-out of everybody leaves no mail: the inbox row is the whole delivery.
+      tx.$queryRaw.mockResolvedValue([{ user_id: 'u1' }, { user_id: 'u2' }]);
+      delivery.enqueue([entry()], (delivered) => told.push(delivered));
+      await delivery.idle();
+      expect(told).toEqual([true, true]);
+    });
+
+    it.each([
+      ['a status Resend refuses with', () => fetchMock.mockResolvedValueOnce({ ok: false, status: 422 })],
+      ['a connection that fails', () => fetchMock.mockRejectedValueOnce(new Error('ECONNRESET'))],
+      ['no answer in time', () => fetchMock.mockImplementationOnce((_u: string, init: { signal: AbortSignal }) => new Promise((_r, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))))],
+    ])('says false for %s, although the lane goes on', async (_name, fail) => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      delivery.emailTimeoutMs = 25;
+      fail();
+      const told: boolean[] = [];
+      delivery.enqueue([entry()], (delivered) => told.push(delivered));
+      delivery.enqueue([entry()], (delivered) => told.push(delivered));
+      await delivery.idle();
+      expect(told).toEqual([false, true]);
+    });
+
+    it('says false for a batch whose delivery threw, and for one the full queue refused', async () => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      prisma.withDeliveryService.mockRejectedValueOnce(new TypeError('boom'));
+      const told: boolean[] = [];
+      delivery.enqueue([entry()], (delivered) => told.push(delivered));
+      await delivery.idle();
+      expect(told).toEqual([false]);
+
+      fetchMock.mockImplementation(() => new Promise(() => undefined));
+      for (let i = 0; i <= MAX_PENDING_BATCHES; i++) delivery.enqueue([entry()]);
+      delivery.enqueue([entry()], (delivered) => told.push(delivered));
+      expect(told).toEqual([false, false]);
+    });
+
+    it('is told once for a batch that is split between the lanes, true only if both went', async () => {
+      const told: boolean[] = [];
+      const alarm = entry({ type: 'CRISIS_ALARM', meta: {}, email: { subject: 'A', body: 'B', recipients: [{ userId: 'u1', email: 'u1@example.invalid' }] } });
+      delivery.enqueue([alarm, entry()], (delivered) => told.push(delivered));
+      await delivery.idle();
+      expect(told).toEqual([true]);
+
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
+      delivery.enqueue([alarm, entry()], (delivered) => told.push(delivered));
+      await delivery.idle();
+      expect(told).toEqual([true, false]);
+    });
+
+    it('does not let a listener that throws stop the lane', async () => {
+      const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      delivery.enqueue([entry()], () => {
+        throw new RangeError('listener');
+      });
+      delivery.enqueue([entry()]);
+      await delivery.idle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith('A delivery listener failed [RangeError]');
+    });
   });
 });
 
@@ -489,5 +685,177 @@ describe('NotificationDeliveryService (push)', () => {
     await delivery.idle();
     expect(settled).toHaveLength(0);
     expect(warn).toHaveBeenCalledWith('Push tickets with errors [MessageRateExceeded=1, Unknown=1, sent=2]');
+  });
+
+  describe('telling the sender how the batch went', () => {
+    const told = async (batch: OutboxEntry[]): Promise<boolean[]> => {
+      const answers: boolean[] = [];
+      delivery.enqueue(batch, (delivered) => answers.push(delivered));
+      await delivery.idle();
+      return answers;
+    };
+
+    it('says true when Expo took the request, also when it refuses one device or says one is gone', async () => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      expect(await told([lesson()])).toEqual([true]);
+      expo.send.mockResolvedValue([
+        { status: 'ok', id: 'ticket-ok-1' },
+        { status: 'error', message: 'gone', details: { error: 'DeviceNotRegistered' } },
+      ]);
+      expect(await told([lesson()])).toEqual([true]);
+      expo.send.mockResolvedValue([{ status: 'error', details: { error: 'MessageRateExceeded' } }, { status: 'ok', id: 'x' }]);
+      expect(await told([lesson()])).toEqual([true]);
+    });
+
+    it('says false when the client could not get a chunk through (it answers RequestFailed, as it does after a timeout)', async () => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      expo.send.mockResolvedValue([{ status: 'ok', id: 'ticket-ok-1' }, { status: 'error', details: { error: 'RequestFailed' } }]);
+      expect(await told([lesson()])).toEqual([false]);
+    });
+
+    // Expo refuses our credentials for every device alike: the request was not taken by the channel, and a reminder
+    // must not read "taken" for a push no phone will get. The client's own answer for a chunk it could not get
+    // through is the same kind of word.
+    it.each(['InvalidCredentials', 'MismatchSenderId', 'RequestFailed'])('says false when the channel itself refuses (%s), although another ticket was ok', async (code) => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      expo.send.mockResolvedValue([{ status: 'ok', id: 'ticket-ok-1' }, { status: 'error', details: { error: code } }]);
+      expect(await told([lesson()])).toEqual([false]);
+      // What was taken is still stored: the answer does not undo the ok ticket.
+      expect(settled).toHaveLength(1);
+      expect(settled[0]!.values[2]).toBe(JSON.stringify([{ id: 'ticket-ok-1', tokenId: 't-u1' }]));
+    });
+
+    // One device or one message: the channel took the request, and sending it again would change nothing.
+    it.each(['DeviceNotRegistered', 'MessageTooBig', 'MessageRateExceeded'])('says true when Expo refuses one device or message (%s), as it took the request', async (code) => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      expo.send.mockResolvedValue([{ status: 'ok', id: 'ticket-ok-1' }, { status: 'error', details: { error: code } }]);
+      expect(await told([lesson()])).toEqual([true]);
+    });
+
+    it('says false for a channel refusal among device refusals, and true when only the device ones are there', async () => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      expo.send.mockResolvedValue([{ status: 'error', details: { error: 'MessageRateExceeded' } }, { status: 'error', details: { error: 'InvalidCredentials' } }]);
+      expect(await told([lesson()])).toEqual([false]);
+      expo.send.mockResolvedValue([{ status: 'error', details: { error: 'MessageTooBig' } }, { status: 'error', details: { error: 'DeviceNotRegistered' } }]);
+      expect(await told([lesson()])).toEqual([true]);
+    });
+
+    it('says false when the settling of the tickets failed, and goes on to the next batch', async () => {
+      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      tx.$executeRaw.mockRejectedValueOnce(new Error('connection lost'));
+      const answers: boolean[] = [];
+      delivery.enqueue([lesson()], (delivered) => answers.push(delivered));
+      delivery.enqueue([lesson()], (delivered) => answers.push(delivered));
+      await delivery.idle();
+      expect(answers).toEqual([false, true]);
+    });
+
+    it('says true at once for a notice the push has nothing to do with, when push is off and so is e-mail', async () => {
+      enabled = false;
+      expect(delivery.wants({ type: 'LESSON_CANCELLED' })).toBe(false);
+      const answers: boolean[] = [];
+      delivery.enqueue([], (delivered) => answers.push(delivered));
+      expect(answers).toEqual([true]);
+    });
+  });
+});
+
+// A batch that goes out by both channels. The two are told apart in the answer (true only when both took it) but not
+// in the work: for the crisis alarm the push is what counts (its life is ten minutes, and a phone in a pocket hears
+// nothing of a mail), so a mail that Resend refuses must never keep the same batch's push from going. These tests need
+// no socket and no clock, which the two that read an answer over a real one do.
+describe('NotificationDeliveryService (mail and push in one batch)', () => {
+  let tx: TxMock;
+  let prisma: ReturnType<typeof createPrismaMock>;
+  let expo: { send: jest.Mock; receipts: jest.Mock };
+  let delivery: NotificationDeliveryService;
+  const fetchMock = jest.fn();
+  const realFetch = globalThis.fetch;
+  const config = { get: (key: string) => (key === 'push' ? { enabled: true, apiUrl: 'https://x.invalid' } : undefined) };
+
+  const alarm = (): OutboxEntry =>
+    entry({
+      type: 'CRISIS_ALARM',
+      meta: {},
+      recipients: [{ userId: 'u1', notificationId: 'n1' }],
+      email: { subject: 'Larm', body: 'B', recipients: [{ userId: 'u1', email: 'u1@example.invalid' }] },
+    });
+  const told = async (batch: OutboxEntry[]): Promise<boolean[]> => {
+    const answers: boolean[] = [];
+    delivery.enqueue(batch, (delivered) => answers.push(delivered));
+    await delivery.idle();
+    return answers;
+  };
+
+  beforeEach(() => {
+    tx = createTxMock();
+    prisma = createPrismaMock(tx);
+    expo = {
+      send: jest.fn(async (messages: unknown[]) => messages.map((_m, i) => ({ status: 'ok', id: `ticket-${i}-abc` }))),
+      receipts: jest.fn(),
+    };
+    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, expo as never);
+    delivery.emailIntervalMs = 0;
+    jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+    tx.$queryRaw.mockImplementation(async (sql: { strings: string[] }) =>
+      sql.strings.join('?').includes('app.push_targets(')
+        ? [{ token_id: 't-u1', user_id: 'u1', token: 'ExponentPushToken[aaaaaaaa]', locale: 'sv', timezone: 'Europe/Stockholm' }]
+        : [],
+    );
+    tx.$executeRaw.mockResolvedValue(1);
+    fetchMock.mockReset();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    process.env.RESEND_API_KEY = 'resend-key';
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.RESEND_API_KEY;
+    jest.restoreAllMocks();
+  });
+
+  it('sends the push although the mail of the same batch was refused, and tells the batch false, once', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 429 });
+    expect(await told([alarm()])).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(expo.send).toHaveBeenCalledTimes(1);
+    expect(expo.send.mock.calls[0]![0]).toHaveLength(1);
+  });
+
+  it('sends the push although the mail could not be sent at all (the connection failed)', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNRESET'));
+    expect(await told([alarm()])).toEqual([false]);
+    expect(expo.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the mail although the push was refused, and tells the batch false', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    expo.send.mockResolvedValue([{ status: 'error', details: { error: 'InvalidCredentials' } }]);
+    expect(await told([alarm()])).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the batch true only when both channels took it', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    expect(await told([alarm()])).toEqual([true]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(expo.send).toHaveBeenCalledTimes(1);
+  });
+
+  // The order is today's, and it is pinned so that changing it is a decision and not a slip: the push comes after the
+  // batch's mails, so a Resend that does not answer holds an alarm's push for up to the mail timeout and the turn in
+  // the mail chain (the push's own life is ten minutes). Sending the push first would take that wait away; this test
+  // is the one to change with it.
+  it('sends the batch’s mails first and its push after them', async () => {
+    const order: string[] = [];
+    fetchMock.mockImplementation(async () => {
+      order.push('mail');
+      return { ok: true, status: 200 };
+    });
+    expo.send.mockImplementation(async (messages: unknown[]) => {
+      order.push('push');
+      return messages.map((_m, i) => ({ status: 'ok', id: `ticket-${i}-abc` }));
+    });
+    expect(await told([alarm()])).toEqual([true]);
+    expect(order).toEqual(['mail', 'push']);
   });
 });

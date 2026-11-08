@@ -184,3 +184,86 @@ describe('PUB_CLASHES, Elevlistan i uppföljningen: the shared school\'s three c
     expect((await clashFinding(tx as unknown as PrismaClient, testUser(), year, [lessons[0]!, lessons[2]!])).count).toBe(1);
   });
 });
+
+describe('PUB_CLASHES in a shared room (Delade salar)', () => {
+  // 7A (Alva, Bo) and 7B (Cim, Dag) both have a lesson in the hall on Monday
+  // at ten. The school marks the hall shared with `capacity` seats while the
+  // rule is on; four pupils then fit four seats and not three.
+  let tx: TxMock;
+  const client = () => tx as unknown as PrismaClient;
+  const homes = [
+    { id: 'alva', studentGroupId: '7A' },
+    { id: 'bo', studentGroupId: '7A' },
+    { id: 'cim', studentGroupId: '7B' },
+    { id: 'dag', studentGroupId: '7B' },
+  ];
+  const lessons = [
+    gateLesson('a', '7A', 'MA', { roomId: 'hall' }),
+    gateLesson('b', '7B', 'SV', { roomId: 'hall' }),
+  ];
+
+  const arrange = (mode: 'OFF' | 'SOFT' | 'HARD' | null, room: { canBeShared: boolean; capacity: number | null } | null) => {
+    tx.availabilityConstraint.findMany.mockResolvedValue([]);
+    tx.teachingRequirement.findMany.mockResolvedValue([]);
+    tx.academicYear.findUnique.mockResolvedValue({ isActive: true, predecessorId: null });
+    tx.studentGroup.findMany.mockResolvedValue([]);
+    tx.studentGroupMember.findMany.mockResolvedValue([]);
+    tx.user.findMany.mockImplementation((query: Query = {}) => {
+      const where = query.where ?? {};
+      if (where['id']?.in) return Promise.resolve(homes.filter((row) => where['id'].in.includes(row.id)));
+      const classes = where['studentGroupId']?.in ?? [where['studentGroupId']];
+      return Promise.resolve(homes.filter((row) => classes.includes(row.studentGroupId)));
+    });
+    tx.lunchSetting.findFirst.mockResolvedValue(mode === null ? null : { placementSharedMode: mode });
+    tx.room.findMany.mockImplementation((query: Query = {}) =>
+      Promise.resolve(room !== null && query.where?.['canBeShared'] ? [{ id: 'hall', ...room }] : []),
+    );
+  };
+
+  beforeEach(() => {
+    tx = createTxMock();
+  });
+
+  it('is no clash when the pupils of both lessons fit the hall’s seats', async () => {
+    arrange('HARD', { canBeShared: true, capacity: 4 });
+    expect((await clashFinding(client(), testUser(), YEAR, lessons)).count).toBe(0);
+    expect(tx.lunchSetting.findFirst).toHaveBeenCalledWith({
+      where: { school: { academicYears: { some: { id: YEAR } } } },
+      select: { placementSharedMode: true },
+    });
+    expect(tx.room.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['hall'] }, canBeShared: true, capacity: { not: null } },
+      select: { id: true, canBeShared: true, capacity: true },
+    });
+  });
+
+  it('is a ROOM clash, named once, when they do not', async () => {
+    arrange('SOFT', { canBeShared: true, capacity: 3 });
+    const finding = await clashFinding(client(), testUser(), YEAR, lessons);
+    expect(finding.count).toBe(1);
+    expect(finding.entries?.[0]?.label).toMatch(/^Sal dubbelbokad: /);
+  });
+
+  it('is a clash as before for a hall nobody marked, a hall with no capacity, and a school with the rule off', async () => {
+    arrange('HARD', null);
+    expect((await clashFinding(client(), testUser(), YEAR, lessons)).count).toBe(1);
+    arrange('HARD', { canBeShared: true, capacity: null });
+    expect((await clashFinding(client(), testUser(), YEAR, lessons)).count).toBe(1);
+    tx.room.findMany.mockClear();
+    arrange('OFF', { canBeShared: true, capacity: 100 });
+    expect((await clashFinding(client(), testUser(), YEAR, lessons)).count).toBe(1);
+    arrange(null, { canBeShared: true, capacity: 100 });
+    expect((await clashFinding(client(), testUser(), YEAR, lessons)).count).toBe(1);
+    // With the rule off the rooms were not asked about.
+    expect(tx.room.findMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ canBeShared: true }) }),
+    );
+  });
+
+  it('asks nothing about the rule when no placed lesson has a room', async () => {
+    arrange('HARD', { canBeShared: true, capacity: 4 });
+    const roomless = lessons.map((lesson) => ({ ...lesson, roomId: null }));
+    expect((await clashFinding(client(), testUser(), YEAR, roomless)).count).toBe(0);
+    expect(tx.lunchSetting.findFirst).not.toHaveBeenCalled();
+  });
+});

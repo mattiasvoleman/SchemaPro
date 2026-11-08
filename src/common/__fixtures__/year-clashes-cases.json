@@ -2181,6 +2181,819 @@
           }
         ]
       }
+    },
+    {
+      "name": "delade salar: two classes whose pupils fit the hall share it",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "s-a",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "s-b",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "a1",
+            "7a"
+          ],
+          [
+            "a2",
+            "7a"
+          ],
+          [
+            "b1",
+            "7b"
+          ],
+          [
+            "b2",
+            "7b"
+          ],
+          [
+            "c1",
+            "7c"
+          ],
+          [
+            "c2",
+            "7c"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": [],
+        "sharedRooms": [
+          {
+            "roomId": "hall",
+            "seats": 4
+          }
+        ]
+      },
+      "clashes": {}
+    },
+    {
+      "name": "delade salar: two classes over the seats clash in the hall",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "s-a",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "s-b",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "a1",
+            "7a"
+          ],
+          [
+            "a2",
+            "7a"
+          ],
+          [
+            "b1",
+            "7b"
+          ],
+          [
+            "b2",
+            "7b"
+          ],
+          [
+            "c1",
+            "7c"
+          ],
+          [
+            "c2",
+            "7c"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": [],
+        "sharedRooms": [
+          {
+            "roomId": "hall",
+            "seats": 3
+          }
+        ]
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "delade salar: a hall nobody has marked shared clashes as before",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "s-a",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "s-b",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "a1",
+            "7a"
+          ],
+          [
+            "a2",
+            "7a"
+          ],
+          [
+            "b1",
+            "7b"
+          ],
+          [
+            "b2",
+            "7b"
+          ],
+          [
+            "c1",
+            "7c"
+          ],
+          [
+            "c2",
+            "7c"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "delade salar: three lessons whose pairs fit but not all three clash in pairs",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "s-a",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "s-b",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "c",
+            "subjectId": "s-c",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t3",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7c",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "a1",
+            "7a"
+          ],
+          [
+            "a2",
+            "7a"
+          ],
+          [
+            "b1",
+            "7b"
+          ],
+          [
+            "b2",
+            "7b"
+          ],
+          [
+            "c1",
+            "7c"
+          ],
+          [
+            "c2",
+            "7c"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": [],
+        "sharedRooms": [
+          {
+            "roomId": "hall",
+            "seats": 4
+          }
+        ]
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "b"
+          },
+          {
+            "kind": "ROOM",
+            "otherLessonId": "c"
+          }
+        ],
+        "b": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "a"
+          },
+          {
+            "kind": "ROOM",
+            "otherLessonId": "c"
+          }
+        ],
+        "c": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "a"
+          },
+          {
+            "kind": "ROOM",
+            "otherLessonId": "b"
+          }
+        ]
+      }
+    },
+    {
+      "name": "delade salar: a long lesson beside two that follow each other fits the hall",
+      "input": {
+        "lessons": [
+          {
+            "id": "long",
+            "subjectId": "s-long",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "10:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "first",
+            "subjectId": "s-first",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "second",
+            "subjectId": "s-second",
+            "dayOfWeek": 1,
+            "startTime": "09:00",
+            "endTime": "10:00",
+            "teacherId": "t3",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7c",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "a1",
+            "7a"
+          ],
+          [
+            "a2",
+            "7a"
+          ],
+          [
+            "b1",
+            "7b"
+          ],
+          [
+            "b2",
+            "7b"
+          ],
+          [
+            "c1",
+            "7c"
+          ],
+          [
+            "c2",
+            "7c"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": [],
+        "sharedRooms": [
+          {
+            "roomId": "hall",
+            "seats": 4
+          }
+        ]
+      },
+      "clashes": {}
+    },
+    {
+      "name": "delade salar: odd and even weeks add no pupils to each other",
+      "input": {
+        "lessons": [
+          {
+            "id": "every",
+            "subjectId": "s-every",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "odd",
+            "subjectId": "s-odd",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ODD_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "even",
+            "subjectId": "s-even",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t3",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7c",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "EVEN_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "a1",
+            "7a"
+          ],
+          [
+            "a2",
+            "7a"
+          ],
+          [
+            "b1",
+            "7b"
+          ],
+          [
+            "b2",
+            "7b"
+          ],
+          [
+            "c1",
+            "7c"
+          ],
+          [
+            "c2",
+            "7c"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": [],
+        "sharedRooms": [
+          {
+            "roomId": "hall",
+            "seats": 4
+          }
+        ]
+      },
+      "clashes": {}
+    },
+    {
+      "name": "delade salar: a class nobody knows keeps the hall exclusive",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "s-a",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "x",
+            "subjectId": "s-x",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7x",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "a1",
+            "7a"
+          ],
+          [
+            "a2",
+            "7a"
+          ],
+          [
+            "b1",
+            "7b"
+          ],
+          [
+            "b2",
+            "7b"
+          ],
+          [
+            "c1",
+            "7c"
+          ],
+          [
+            "c2",
+            "7c"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": [],
+        "sharedRooms": [
+          {
+            "roomId": "hall",
+            "seats": 1000
+          }
+        ]
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "x"
+          }
+        ],
+        "x": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "delade salar: the same teacher still clashes in a shared hall",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "s-a",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "s-b",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "a1",
+            "7a"
+          ],
+          [
+            "a2",
+            "7a"
+          ],
+          [
+            "b1",
+            "7b"
+          ],
+          [
+            "b2",
+            "7b"
+          ],
+          [
+            "c1",
+            "7c"
+          ],
+          [
+            "c2",
+            "7c"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": [],
+        "sharedRooms": [
+          {
+            "roomId": "hall",
+            "seats": 4
+          }
+        ]
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "delade salar: the same class still clashes in a shared hall",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "s-a",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "s-b",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": "hall",
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "a1",
+            "7a"
+          ],
+          [
+            "a2",
+            "7a"
+          ],
+          [
+            "b1",
+            "7b"
+          ],
+          [
+            "b2",
+            "7b"
+          ],
+          [
+            "c1",
+            "7c"
+          ],
+          [
+            "c2",
+            "7c"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": [],
+        "sharedRooms": [
+          {
+            "roomId": "hall",
+            "seats": 4
+          }
+        ]
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "a"
+          }
+        ]
+      }
     }
   ]
 }

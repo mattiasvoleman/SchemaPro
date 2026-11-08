@@ -616,7 +616,7 @@ export class SchoolSlice {
 
   /** The parts of the given lessons an event carries. */
   async lessonParts(ids: readonly string[]) {
-    const [teachers, extra, students, pending] = await inTurn(() => chunked([...ids], (chunk) =>
+    const [teachers, extra, students, pending, moves] = await inTurn(() => chunked([...ids], (chunk) =>
         this.tx.calendarLessonTeacher.findMany({ where: { calendarLessonId: { in: chunk } }, select: { calendarLessonId: true, teacherId: true, role: true } }),
       ), () => chunked([...ids], (chunk) =>
         this.tx.calendarLessonGroup.findMany({ where: { calendarLessonId: { in: chunk } }, select: { calendarLessonId: true, studentGroupId: true } }),
@@ -624,6 +624,9 @@ export class SchoolSlice {
         this.tx.calendarLessonStudent.findMany({ where: { calendarLessonId: { in: chunk } }, select: { calendarLessonId: true, studentId: true } }),
       ), () => chunked([...ids], (chunk) =>
         this.tx.publicationPendingRemoval.findMany({ where: { calendarLessonId: { in: chunk } }, select: { calendarLessonId: true, masterLessonId: true } }),
+      ), () => chunked([...ids], (chunk) =>
+        // Elevens lektion för dagen: the pupils moved off each of these lessons, whom its event says do not take part.
+        this.tx.lessonPupilMove.findMany({ where: { fromLessonId: { in: chunk } }, select: { fromLessonId: true, studentId: true } }),
       ));
     const group = <T extends { calendarLessonId: string }>(rows: T[]) => {
       const map = new Map<string, T[]>();
@@ -635,6 +638,7 @@ export class SchoolSlice {
       extraGroups: group(extra),
       students: group(students),
       pendingKey: new Map(pending.map((row) => [row.calendarLessonId, row.masterLessonId])),
+      movedOff: moves.reduce((map, row) => map.set(row.fromLessonId, [...(map.get(row.fromLessonId) ?? []), row.studentId]), new Map<string, string[]>()),
     };
   }
 

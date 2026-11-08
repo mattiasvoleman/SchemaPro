@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
 import { runsOn } from '../calendar/lesson-recurrence';
+import { sharedRoomTakes } from '../calendar/shared-room-day';
 import { isoWeekday, timeToString } from '../calendar/publish-days';
 import { effectiveSegments } from './publication-validity';
 import { snapshotRanges } from './published-grundschema';
@@ -438,7 +439,7 @@ export async function reversePlan(
     if (lesson.roomId !== null) {
       // The room's other SCHEDULED lessons, and its live bookings (the
       // booking flow's own predicate: PENDING or APPROVED), over the slot.
-      const other = await tx.calendarLesson.findFirst({
+      const found = await tx.calendarLesson.findFirst({
         where: {
           id: { not: lesson.id },
           roomId: lesson.roomId,
@@ -448,6 +449,12 @@ export async function reversePlan(
         },
         select: { id: true },
       });
+      // A lesson there is no taking when the room is a shared one that holds
+      // both classes' pupils (Delade salar): asked only now that one was found.
+      const other =
+        found && (await sharedRoomTakes(tx, schoolId, lesson.id, lesson.roomId, lesson.startsAt, lesson.endsAt))
+          ? null
+          : found;
       const booking = other
         ? null
         : await tx.roomBooking.findFirst({

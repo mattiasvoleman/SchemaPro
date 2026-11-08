@@ -14,7 +14,8 @@
  * one, and the rooms that stand on no site.
  *
  * On Salar rather than a page of its own: sites are the rooms' frame, set up
- * once, and a menu row would cost every route bytes.
+ * once, and a menu row for them would be one more row in every administrator's
+ * menu for something touched once.
  */
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";

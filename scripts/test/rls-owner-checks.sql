@@ -1473,6 +1473,8 @@ ROLLBACK;
 --         refuses a row that names another school's. The guard sees a table's
 --         school under any column named <something>SchoolId when it has no
 --         "schoolId" of its own (RoomLoans).
+--         What a key does when its PARENT is updated is asked of every composite
+--         key that holds a school, not only these: section 388.
 --         What these keys also hold: the policies' SELECT arms ask the school
 --         of the ROW, and the fixtures that once planted a row naming another
 --         school's (to tell an arm asking the row's school from one asking the
@@ -2492,5 +2494,2547 @@ BEGIN
   run := app.gallring_begin(school, now());
   IF app.gallring_purge(run, 'NOTIFICATIONS', 100) <> 0 THEN RAISE EXCEPTION 'kvittens 374o: a school that keeps its notices lost a request'; END IF;
   PERFORM app.gallring_finish(run, '{}', now());
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Kvittens, after the review of F4 (20270119090000), owner checks.
+--
+--   380o  a reminder that has gone is marked as mailed by the delivery, and by nobody else
+--   381o  a sender's share of the school's day (KV427) beside the school's own (KV428)
+-- ---------------------------------------------------------------------------
+
+-- 380o: app.ack_reminder_mirrored. The delivery's door sets no claims, and the function answers nothing to a login
+-- that resolves to a person. Only a SENT reminder is marked, once; the first time stands.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  sent uuid; unconfirmed uuid; nobody uuid; scheduled uuid; stopped uuid;
+  first_time timestamptz;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (school, true, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET enabled = true, "remindAfterDays" = 2;
+  -- SENT: due, G1 has not confirmed, so G1 is reminded.
+  sent := pg_temp.kvo_request(school, full_, 'Skickad', 'ANY', 'p1:g1');
+  -- NOT_NEEDED: due, but everybody has confirmed.
+  nobody := pg_temp.kvo_request(school, full_, 'Ingen kvar', 'ANY', 'p3:g3');
+  UPDATE "AckReceipts" SET "ackedAt" = now() WHERE "requestId" = nobody;
+  -- Not yet due, and one that is stopped before the pass.
+  scheduled := pg_temp.kvo_request(school, full_, 'Inte än', 'ANY', 'p1:g2');
+  stopped := pg_temp.kvo_request(school, full_, 'Stoppad', 'ANY', 'p2:g1');
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id IN (sent, nobody, stopped);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  PERFORM app.ack_stop_reminder(stopped);
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM count(*) FROM app.ack_remind_request(sent);
+  PERFORM count(*) FROM app.ack_remind_request(nobody);
+  PERFORM pg_temp.kvo_expect('380o the pass', (SELECT string_agg(title || ':' || coalesce("reminderOutcome"::text, '-') || ':' || ("reminderMirroredAt" IS NOT NULL), ' ' ORDER BY title COLLATE "C")
+                                                 FROM "AckRequests" WHERE id IN (sent, nobody, scheduled, stopped)),
+                             'Ingen kvar:NOT_NEEDED:false Inte än:-:false Skickad:SENT:false Stoppad:STOPPED:false');
+
+  -- A login that resolves to a person marks nothing, whoever they are.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  PERFORM app.ack_reminder_mirrored(sent);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000021')::text, true);
+  PERFORM app.ack_reminder_mirrored(sent);
+  PERFORM pg_temp.kvo_expect('380o a person marks', (SELECT ("reminderMirroredAt" IS NOT NULL)::text FROM "AckRequests" WHERE id = sent), 'false');
+
+  -- The delivery's door (no claims) marks the SENT reminder, and nothing else.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM app.ack_reminder_mirrored(sent);
+  PERFORM app.ack_reminder_mirrored(nobody);
+  PERFORM app.ack_reminder_mirrored(scheduled);
+  PERFORM app.ack_reminder_mirrored(stopped);
+  PERFORM app.ack_reminder_mirrored(gen_random_uuid());
+  PERFORM pg_temp.kvo_expect('380o the delivery marks', (SELECT string_agg(title || ':' || ("reminderMirroredAt" IS NOT NULL), ' ' ORDER BY title COLLATE "C") FROM "AckRequests" WHERE id IN (sent, nobody, scheduled, stopped)),
+                             'Ingen kvar:false Inte än:false Skickad:true Stoppad:false');
+  IF (SELECT "reminderMirroredAt" FROM "AckRequests" WHERE id = sent) < (SELECT "reminderSentAt" FROM "AckRequests" WHERE id = sent) THEN
+    RAISE EXCEPTION 'kvittens 380o: the mail went before the notices were written';
+  END IF;
+
+  -- Marked once: a second word from the delivery does not move the time.
+  first_time := (SELECT "reminderMirroredAt" FROM "AckRequests" WHERE id = sent);
+  PERFORM pg_sleep(0.02);
+  PERFORM app.ack_reminder_mirrored(sent);
+  IF (SELECT "reminderMirroredAt" FROM "AckRequests" WHERE id = sent) IS DISTINCT FROM first_time THEN
+    RAISE EXCEPTION 'kvittens 380o: a second mark moved the time';
+  END IF;
+
+  -- The table says the same as the function: the column is only on a SENT reminder.
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderMirroredAt" = now() WHERE id = %L$q$, nobody), 'only_a_sent_reminder_is_mirrored');
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderMirroredAt" = now() WHERE id = %L$q$, scheduled), 'only_a_sent_reminder_is_mirrored');
+  PERFORM pg_temp.kvo_refuses(format($q$UPDATE "AckRequests" SET "reminderOutcome" = 'STOPPED' WHERE id = %L$q$, sent), 'only_a_sent_reminder');
+END $$;
+ROLLBACK;
+
+-- 381o: the limits' numbers, and a sender's share. The numbers are the function's, and they keep the proportions the
+-- share was chosen for: no sender alone, and no two administrators, can use the school's day; an administrator's share
+-- holds a whole-school request of the largest school we count on (2 600 pupils, 2.2 guardians: 5 720 receipts); a
+-- teacher's holds fifteen requests to a class of sixty (132 receipts each). An unknown kind is an error, never "no limit".
+BEGIN;
+DO $$
+DECLARE
+  school_ integer := app.ack_day_limit('SCHOOL');
+  admin_ integer := app.ack_day_limit('SCHOOL_ADMIN');
+  teacher_ integer := app.ack_day_limit('TEACHER');
+BEGIN
+  PERFORM pg_temp.kvo_expect('381o the numbers', school_ || '/' || admin_ || '/' || teacher_, '20000/8000/2000');
+  IF NOT (2 * admin_ < school_ AND 3 * admin_ >= school_) THEN
+    RAISE EXCEPTION 'kvittens 381o: two administrators can use the school''s day, or three cannot';
+  END IF;
+  IF NOT (admin_ >= 5720 AND teacher_ >= 15 * 132 AND teacher_ < admin_) THEN
+    RAISE EXCEPTION 'kvittens 381o: a share is too small for what it was chosen to hold';
+  END IF;
+  BEGIN
+    PERFORM app.ack_day_limit('GUARDIAN');
+    RAISE EXCEPTION 'kvittens 381o: an unknown kind has a limit';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM NOT LIKE 'ACK_UNKNOWN_LIMIT%' THEN RAISE; END IF;
+  END;
+END $$;
+ROLLBACK;
+
+-- 381o: a teacher's share. Her requests of the last day count, whoever wrote their rows; the owner (no login) is not
+-- counted against and brings her to 1 996 of her 2 000, five hours ago, so the hour's limit is not in play. A request
+-- of four receipts (all her own pupils have: P1 with G1 and G2, P2 with G1, P4 with G4) makes the 2 000th, which is
+-- allowed; one more is refused whole (KV427) and writes nothing.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  m1 uuid := pg_temp.kvo_user('kv-m1');
+  req uuid;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  SELECT gen_random_uuid(), school, m1, 'Andel ' || g, 'B', now() - interval '5 hours' FROM generate_series(1, 100) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Andel %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 1996;
+  PERFORM pg_temp.kvo_expect('381o the owner''s rows', (SELECT count(*)::text FROM "AckReceipts" r JOIN "AckRequests" q ON q.id = r."requestId" WHERE q."authorId" = m1 AND q.title LIKE 'Andel %'), '1996');
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000006')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Den 2 000:e', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2')),
+         (req, school, pg_temp.kvo_user('kv-p2'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p4'), pg_temp.kvo_user('kv-g4'));
+  PERFORM pg_temp.kvo_expect('381o her day is full', (SELECT count(*)::text FROM "AckReceipts" r JOIN "AckRequests" q ON q.id = r."requestId" WHERE q."authorId" = m1), '2000');
+
+  -- One more, in a request of its own: refused, and the request with it.
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Över andelen', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+    RAISE EXCEPTION 'kvittens 381o: a teacher''s 2 001st receipt in a day was written';
+  EXCEPTION WHEN SQLSTATE 'KV427' THEN NULL;
+  END;
+  PERFORM pg_temp.kvo_expect('381o a refused share writes nothing', (SELECT count(*)::text FROM "AckRequests" WHERE title = 'Över andelen'), '0');
+
+  -- The share is hers: a colleague mentoring the other class, and an administrator, write on; and the school has room.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000007')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Kollegan', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3'));
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Administratören', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+  -- The share moves with the day: when her requests are more than 24 hours old she writes again.
+  PERFORM set_config('request.jwt.claims', '', true);
+  UPDATE "AckRequests" SET "createdAt" = now() - interval '25 hours' WHERE "authorId" = m1;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000006')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Nästa dygn', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+END $$;
+ROLLBACK;
+
+-- 381o: an administrator's share, 8 000, and the order of the two limits. Her rows brought to 7 995 the owner's way; a
+-- request of five (P1 with G1 and G2, P2 with G1, P3 with G3, P4 with G4) is the 8 000th; one more is refused (KV427).
+-- Then the school's day is brought past 20 000 with a teacher's rows, and the administrator, over her own share as well,
+-- is told it is her share (the sender's first); a mentor with room of her own is told it is the school's (KV428).
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  t3 uuid := pg_temp.kvo_user('kv-t3');
+  req uuid;
+  got text;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  SELECT gen_random_uuid(), school, full_, 'Admin ' || g, 'B', now() - interval '5 hours' FROM generate_series(1, 400) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Admin %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 7995;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Den 8 000:e', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2')),
+         (req, school, pg_temp.kvo_user('kv-p2'), pg_temp.kvo_user('kv-g1')), (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3')),
+         (req, school, pg_temp.kvo_user('kv-p4'), pg_temp.kvo_user('kv-g4'));
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Över andelen', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+    RAISE EXCEPTION 'kvittens 381o: an administrator''s 8 001st receipt in a day was written';
+  EXCEPTION WHEN SQLSTATE 'KV427' THEN NULL;
+  END;
+  PERFORM pg_temp.kvo_expect('381o a refused share writes nothing', (SELECT count(*)::text FROM "AckRequests" WHERE title = 'Över andelen'), '0');
+
+  -- The school's day: 8 000 here, and 12 000 more of a teacher's the owner's way (no login: nothing is counted against
+  -- her): the school is at 20 000.
+  PERFORM set_config('request.jwt.claims', '', true);
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  SELECT gen_random_uuid(), school, t3, 'Lärare ' || g, 'B', now() - interval '5 hours' FROM generate_series(1, 600) g;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  SELECT q.id, school, p.id, gu.id
+    FROM (SELECT id FROM "AckRequests" WHERE "schoolId" = school AND title LIKE 'Lärare %') q
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND email LIKE 'kv-p_@example.invalid') p
+    CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND email LIKE 'kv-g_@example.invalid') gu
+   LIMIT 12000;
+  PERFORM pg_temp.kvo_expect('381o the school''s day', (SELECT count(*)::text FROM "AckReceipts" WHERE "schoolId" = school AND "createdAt" > now() - interval '24 hours'), '20000');
+
+  -- Over both: the administrator is told it is her share. A mentor under her own share is told it is the school's.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Över båda', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'));
+    RAISE EXCEPTION 'kvittens 381o: a receipt over both limits was written';
+  EXCEPTION WHEN SQLSTATE 'KV427' THEN NULL;
+  END;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000007')::text, true);
+  BEGIN
+    INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), school, 'Skolans dygn', 'B') RETURNING id INTO req;
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.kvo_user('kv-p3'), pg_temp.kvo_user('kv-g3'));
+    RAISE EXCEPTION 'kvittens 381o: a receipt past the school''s day was written';
+  EXCEPTION WHEN SQLSTATE 'KV428' THEN NULL;
+  END;
+  -- Another school's day is its own.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000031')::text, true);
+  INSERT INTO "AckRequests" (id, "schoolId", title, body) VALUES (gen_random_uuid(), (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan'), 'Annans dag', 'B') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+  VALUES (req, (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-annan'), pg_temp.kvo_user('kv-annan-p'), pg_temp.kvo_user('kv-annan-g'));
+
+  -- The usage the page shows is these rows: the school at 20 000 of 20 000 and the sender at 8 000 of 8 000.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  SELECT string_agg(u.scope || coalesce(':' || u.author_name, '') || ' ' || u.used || '/' || u.cap, ', ' ORDER BY u.n) INTO got
+    FROM app.ack_usage(5) WITH ORDINALITY u(scope, author_id, author_name, used, cap, n);
+  PERFORM pg_temp.kvo_expect('381o the usage', got, 'SCHOOL 20000/20000, ME 8000/8000, SENDER:Kvittens Utan klass 12000/2000, SENDER:Kvittens Full 8000/8000');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 385-389 on the owner's side: Ett läsårs lektioner tas bort först
+-- (20270120090000), and the composite keys' ON UPDATE (the review of #272).
+--
+-- A year's removal cascades into its lessons by two routes, and which route runs
+-- first is the order of the keys' triggers by name, which a key dropped and added
+-- again moves. Run the wrong way round, the lessons lose their master lesson
+-- before they go and app.ss12000_v_lessons() files an AdhocActivity tombstone for
+-- each of them. A BEFORE DELETE trigger on AcademicYears takes the lessons first,
+-- whoever removes the year. It runs as the owner (SECURITY DEFINER); the reasons
+-- are in the migration, and what they rest on is tested here.
+--
+--   385  the trigger and its function in the catalogue: BEFORE DELETE, per row,
+--        on, the owner's, a fixed search_path, no EXECUTE for anyone, and the
+--        premise of the owner's rights (row security is not forced on the
+--        tables it deletes from)
+--   386  every door files the same tombstones: a DELETE of the year as the
+--        owner, as the API's role and as PostgREST's, for a year that was sent
+--        and for the active one (a CalendarEvent for each lesson, an AdhocActivity
+--        only for the one that never had a master lesson; among the lessons a
+--        cancelled one, one with a teacher, one with an attendance record and one
+--        dated before today, which a trigger that chose its lessons would leave
+--        to the cascade) and for one that was never sent (none), and nothing else
+--        of the school goes
+--   387  who reaches it and who does not: a profile that writes PLANERING and
+--        not DRIFT (the year goes, and its lessons go first all the same: the
+--        service's own DELETE of them deleted nothing for it), a profile that
+--        writes DRIFT and not PLANERING, another school's administrator and a
+--        teacher (the year stays, the lessons stay), and a year whose removal is
+--        refused (the lessons come back)
+--   388  a composite key that holds a school does not follow its parent when the
+--        parent is updated (ON UPDATE CASCADE): 98 older ones are named, and the
+--        list only gets shorter
+--   389  the guard of 388 over stand-ins, and over the list
+--
+-- These run as the owner and set the role of the API and of PostgREST with the
+-- claims of a signed-in person, because they read the tombstones, which only the
+-- owner reads. The rows are this section's own (ids 7f...), in two schools of its
+-- own, and are rolled back.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.ylg_id(n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('7f' || lpad(to_hex(n), 6, '0') || '-0000-4000-8000-000000000000')::uuid
+$$;
+
+-- The number a row of this section was given, from its id.
+CREATE FUNCTION pg_temp.ylg_n(p_id uuid) RETURNS int LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('x' || substr(p_id::text, 3, 6))::bit(24)::int
+$$;
+
+CREATE FUNCTION pg_temp.ylg_auth(n int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('00000000-0000-4000-8000-7f' || lpad(n::text, 10, '0'))::uuid
+$$;
+
+-- Two schools. School 1 has an active year (10), a year that was sent (11) and one that was never sent
+-- (12); a class in each (33, 30, 31) with a master lesson (53, 50, 51). The active year has two lessons, one
+-- that keeps its master lesson (67) and one that never had it (68). The sent year has three plain lessons, of
+-- which two keep their master lesson and one never had it (60-62), and four more that keep it and that a
+-- trigger written to be selective would be tempted to leave to the cascade: one that is CANCELLED (72), one
+-- with a teacher (73), one with an attendance record (74) and one dated before today and before the year
+-- began (75; 2020, the others are 2097-2099). The unsent year has three (63-65) and a lesson (66) that names
+-- the sent year's class as an extra group. Its people: a full administrator (80), a teacher (81), an
+-- administrator of the expedition (82), one of the schedulers (84), a pupil (85). School 2 has a year (20),
+-- a class (32) with two lessons (70 keyed, 71 not) and a full administrator (83).
+--
+-- A lesson that keeps its master lesson is what shows a lesson left to the cascade: the master lessons' key
+-- runs first and sets "masterLessonId" to NULL on it, and it is filed as an AdhocActivity too. A lesson that
+-- never had one is filed as one whichever way it goes, and shows nothing. So every lesson that must not be
+-- skipped is keyed (67, 72-75): a trigger that skips the active year, the lessons that have a teacher or an
+-- attendance record, the cancelled ones or the past ones leaves them to the cascade, and 386 sees it (the
+-- review of #276, M2).
+CREATE FUNCTION pg_temp.ylg_world() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  s1 uuid := pg_temp.ylg_id(1);
+  s2 uuid := pg_temp.ylg_id(2);
+  lesson record;
+BEGIN
+  INSERT INTO "Schools" (id, name, slug, timezone, "updatedAt") VALUES
+    (s1, 'YLG skola 1', 'ylg-1', 'Europe/Stockholm', now()),
+    (s2, 'YLG skola 2', 'ylg-2', 'Europe/Stockholm', now());
+  INSERT INTO "AcademicYears" (id, "schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt") VALUES
+    (pg_temp.ylg_id(10), s1, 'aktivt',  '2098-08-17', '2099-06-12', true,  'NIOARIG', now()),
+    (pg_temp.ylg_id(11), s1, 'förra',   '2097-08-18', '2098-06-12', false, 'NIOARIG', now()),
+    (pg_temp.ylg_id(12), s1, 'nästa',   '2099-08-16', '2100-06-12', false, 'NIOARIG', now()),
+    (pg_temp.ylg_id(20), s2, 'aktivt',  '2098-08-17', '2099-06-12', true,  'NIOARIG', now());
+  INSERT INTO "Subjects" (id, "schoolId", name, code, "updatedAt") VALUES
+    (pg_temp.ylg_id(40), s1, 'YLG ämne 1', 'YL1', now()),
+    (pg_temp.ylg_id(41), s2, 'YLG ämne 2', 'YL2', now());
+  INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES
+    (pg_temp.ylg_id(30), s1, pg_temp.ylg_id(11), 'YLG förra',  'TEACHING_GROUP', 7, now()),
+    (pg_temp.ylg_id(31), s1, pg_temp.ylg_id(12), 'YLG nästa',  'TEACHING_GROUP', 7, now()),
+    (pg_temp.ylg_id(32), s2, pg_temp.ylg_id(20), 'YLG andra',  'TEACHING_GROUP', 7, now()),
+    (pg_temp.ylg_id(33), s1, pg_temp.ylg_id(10), 'YLG aktivt', 'TEACHING_GROUP', 7, now());
+  INSERT INTO "MasterLessons" (id, "schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES
+    (pg_temp.ylg_id(50), s1, pg_temp.ylg_id(11), pg_temp.ylg_id(40), pg_temp.ylg_id(30), 1, '08:00', '08:50', now()),
+    (pg_temp.ylg_id(51), s1, pg_temp.ylg_id(12), pg_temp.ylg_id(40), pg_temp.ylg_id(31), 1, '08:00', '08:50', now()),
+    (pg_temp.ylg_id(52), s2, pg_temp.ylg_id(20), pg_temp.ylg_id(41), pg_temp.ylg_id(32), 1, '08:00', '08:50', now()),
+    (pg_temp.ylg_id(53), s1, pg_temp.ylg_id(10), pg_temp.ylg_id(40), pg_temp.ylg_id(33), 1, '08:00', '08:50', now());
+  FOR lesson IN SELECT * FROM (VALUES
+      (60, s1, 50, 40, 30, date '2097-08-25', 'SCHEDULED'), (61, s1, 50, 40, 30, date '2097-09-01', 'SCHEDULED'), (62, s1, NULL, 40, 30, date '2097-09-02', 'SCHEDULED'),
+      (63, s1, 51, 40, 31, date '2099-08-23', 'SCHEDULED'), (64, s1, 51, 40, 31, date '2099-08-30', 'SCHEDULED'), (65, s1, NULL, 40, 31, date '2099-09-01', 'SCHEDULED'),
+      (66, s1, 51, 40, 31, date '2099-09-06', 'SCHEDULED'),
+      (67, s1, 53, 40, 33, date '2098-08-24', 'SCHEDULED'), (68, s1, NULL, 40, 33, date '2098-08-25', 'SCHEDULED'),
+      (70, s2, 52, 41, 32, date '2098-08-24', 'SCHEDULED'), (71, s2, NULL, 41, 32, date '2098-08-25', 'SCHEDULED'),
+      (72, s1, 50, 40, 30, date '2097-09-08', 'CANCELLED'), (73, s1, 50, 40, 30, date '2097-09-15', 'SCHEDULED'),
+      (74, s1, 50, 40, 30, date '2097-09-22', 'SCHEDULED'), (75, s1, 50, 40, 30, date '2020-02-03', 'SCHEDULED')) v(n, school, master, subject, grp, day, state)
+  LOOP
+    INSERT INTO "CalendarLessons" (id, "schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+    VALUES (pg_temp.ylg_id(lesson.n), lesson.school, CASE WHEN lesson.master IS NULL THEN NULL ELSE pg_temp.ylg_id(lesson.master) END,
+            pg_temp.ylg_id(lesson.subject), pg_temp.ylg_id(lesson.grp), lesson.day,
+            (lesson.day + time '08:00') AT TIME ZONE 'Europe/Stockholm', (lesson.day + time '08:50') AT TIME ZONE 'Europe/Stockholm',
+            lesson.state::"LessonStatus", now());
+  END LOOP;
+  INSERT INTO "CalendarLessonGroups" (id, "schoolId", "calendarLessonId", "studentGroupId")
+  VALUES (pg_temp.ylg_id(90), s1, pg_temp.ylg_id(66), pg_temp.ylg_id(30));
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (pg_temp.ylg_id(80), s1, 'ylg-full@example.invalid',   'Full',  'Admin',   'SCHOOL_ADMIN', 'FULL',          pg_temp.ylg_auth(80), true, now()),
+    (pg_temp.ylg_id(81), s1, 'ylg-lararen@example.invalid', 'Lärare', 'Ett',     'TEACHER',      NULL,            pg_temp.ylg_auth(81), true, now()),
+    (pg_temp.ylg_id(82), s1, 'ylg-exp@example.invalid',    'Exp',   'Admin',   'SCHOOL_ADMIN', 'EXPEDITION',    pg_temp.ylg_auth(82), true, now()),
+    (pg_temp.ylg_id(84), s1, 'ylg-sched@example.invalid',  'Sched', 'Admin',   'SCHOOL_ADMIN', 'SCHEMALAGGARE', pg_temp.ylg_auth(84), true, now()),
+    (pg_temp.ylg_id(85), s1, 'ylg-eleven@example.invalid', 'Elev',  'Ett',     'STUDENT',      NULL,            pg_temp.ylg_auth(85), true, now()),
+    (pg_temp.ylg_id(83), s2, 'ylg-full2@example.invalid',  'Full',  'Andra',   'SCHOOL_ADMIN', 'FULL',          pg_temp.ylg_auth(83), true, now());
+  -- What hangs on a lesson: a teacher (73) and a pupil's attendance (74), which go with it.
+  INSERT INTO "CalendarLessonTeachers" (id, "schoolId", "calendarLessonId", "teacherId")
+  VALUES (pg_temp.ylg_id(91), s1, pg_temp.ylg_id(73), pg_temp.ylg_id(81));
+  INSERT INTO "AttendanceRecords" (id, "schoolId", "calendarLessonId", "studentId", "updatedAt")
+  VALUES (pg_temp.ylg_id(92), s1, pg_temp.ylg_id(74), pg_temp.ylg_id(85), now());
+  DELETE FROM "Ss12000Tombstones" WHERE "schoolId" IN (s1, s2);
+END $$;
+
+-- The tombstones a school has for the lessons of this section, as '<resource> <numbers>; <resource> <numbers>',
+-- the numbers being the lessons' (60-79): '' when there are none.
+CREATE FUNCTION pg_temp.ylg_tombs(p_school uuid) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(r.resource || ' ' || r.ids, '; ' ORDER BY r.resource COLLATE "C"), '')
+    FROM (SELECT t.resource, string_agg(pg_temp.ylg_n(t."emittedId")::text, ',' ORDER BY pg_temp.ylg_n(t."emittedId")) AS ids
+            FROM "Ss12000Tombstones" t
+           WHERE t."schoolId" = p_school AND t."emittedId" IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 79) n)
+           GROUP BY t.resource) r
+$$;
+
+-- The numbers of the lessons of this section that are left, among 60-79.
+CREATE FUNCTION pg_temp.ylg_lessons() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(pg_temp.ylg_n(l.id)::text, ',' ORDER BY pg_temp.ylg_n(l.id)), '')
+    FROM "CalendarLessons" l WHERE l.id IN (SELECT pg_temp.ylg_id(n) FROM generate_series(60, 79) n)
+$$;
+
+-- Removes one year by a DELETE of its own, as <p_role> (the owner when null) with the claims of person <p_who>.
+-- Answers what the statement did: the number of rows, 'denied' for a missing privilege, or 'error: ...'.
+-- Back as the owner.
+CREATE FUNCTION pg_temp.ylg_delete_year(p_year int, p_role text, p_who int) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+  -- Everything of pg_temp's is read before the role is set: a role without the privilege to create temporary
+  -- objects does not see the schema.
+  year_id uuid := pg_temp.ylg_id(p_year);
+  claims text := json_build_object('sub', pg_temp.ylg_auth(p_who))::text;
+BEGIN
+  IF p_role IS NOT NULL THEN
+    EXECUTE format('SET LOCAL ROLE %I', p_role);
+    PERFORM set_config('request.jwt.claims', claims, true);
+  END IF;
+  BEGIN
+    DELETE FROM "AcademicYears" WHERE id = year_id;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      RESET ROLE;
+      RETURN 'denied';
+    WHEN OTHERS THEN
+      RESET ROLE;
+      RETURN 'error: ' || SQLERRM;
+  END;
+  RESET ROLE;
+  RETURN n::text;
+END $$;
+
+-- One scenario, in a subtransaction that is always rolled back: the world, then <p_prep> (SQL, as the owner),
+-- then (when p_probe) what person <p_who> does with a DELETE of lesson 60 on its own, then the DELETE of year
+-- <p_year> by person <p_who> as <p_role>. Answers what is left: the statement's answer, whether the year is,
+-- the lessons of the section, the tombstones of school 1 and of school 2, and the probe's answer.
+CREATE FUNCTION pg_temp.ylg_scenario(p_year int, p_role text, p_who int, p_prep text DEFAULT NULL, p_probe boolean DEFAULT false)
+RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  answer text;
+  probe text := NULL;
+  n bigint;
+  result jsonb;
+  lesson_60 uuid := pg_temp.ylg_id(60);
+  claims text := json_build_object('sub', pg_temp.ylg_auth(p_who))::text;
+BEGIN
+  BEGIN
+    PERFORM pg_temp.ylg_world();
+    IF p_prep IS NOT NULL THEN EXECUTE p_prep; END IF;
+    IF p_probe THEN
+      BEGIN
+        EXECUTE format('SET LOCAL ROLE %I', p_role);
+        PERFORM set_config('request.jwt.claims', claims, true);
+        DELETE FROM "CalendarLessons" WHERE id = lesson_60;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        probe := n::text;
+        RESET ROLE;
+        RAISE EXCEPTION 'rollback the probe' USING ERRCODE = 'TF998';
+      EXCEPTION WHEN SQLSTATE 'TF998' THEN NULL;
+      END;
+      RESET ROLE;
+    END IF;
+    answer := pg_temp.ylg_delete_year(p_year, p_role, p_who);
+    result := jsonb_build_object(
+      'answer', answer,
+      'year', EXISTS (SELECT 1 FROM "AcademicYears" WHERE id = pg_temp.ylg_id(p_year)),
+      'lessons', pg_temp.ylg_lessons(),
+      'tombs1', pg_temp.ylg_tombs(pg_temp.ylg_id(1)),
+      'tombs2', pg_temp.ylg_tombs(pg_temp.ylg_id(2)),
+      'probe', probe);
+    RAISE EXCEPTION 'rollback' USING ERRCODE = 'TF999';
+  EXCEPTION WHEN SQLSTATE 'TF999' THEN NULL;
+  END;
+  RETURN result;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 385: the trigger, in the catalogue.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  t record;
+  fn record;
+  grantee oid;
+  role_ text;
+BEGIN
+  SELECT * INTO t FROM pg_trigger WHERE tgrelid = '"AcademicYears"'::regclass AND tgname = 'AcademicYears_a_lessons_go_first' AND NOT tgisinternal;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'lektioner först 385: AcademicYears has no trigger AcademicYears_a_lessons_go_first';
+  END IF;
+  -- tgtype: 1 ROW, 2 BEFORE, 8 DELETE, 16 UPDATE, 4 INSERT, 32 TRUNCATE, 64 INSTEAD: BEFORE DELETE for each row, and that alone.
+  IF t.tgtype <> 1 + 2 + 8 THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger is not BEFORE DELETE FOR EACH ROW and nothing else (tgtype %)', t.tgtype;
+  END IF;
+  IF t.tgenabled <> 'O' THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger is not enabled (tgenabled %)', t.tgenabled;
+  END IF;
+  IF t.tgfoid <> 'app.academic_year_lessons_go_first()'::regprocedure THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger runs % and not app.academic_year_lessons_go_first()', t.tgfoid::regproc;
+  END IF;
+  IF t.tgattr::text <> '' OR t.tgqual IS NOT NULL THEN
+    RAISE EXCEPTION 'lektioner först 385: the trigger has a column list or a WHEN: it would not run for every year';
+  END IF;
+
+  SELECT p.prosecdef, p.proconfig, p.proowner, p.proacl, p.prorettype::regtype::text AS ret, p.prolang
+    INTO fn FROM pg_proc p WHERE p.oid = 'app.academic_year_lessons_go_first()'::regprocedure;
+  IF NOT fn.prosecdef THEN
+    RAISE EXCEPTION 'lektioner först 385: the function runs as its caller: a profile that may delete a year and not lessons would delete none (386, 387)';
+  END IF;
+  -- However the setting is spelled (public, pg_temp / "public", "pg_temp"), it is that one and no other.
+  IF fn.proconfig IS NULL OR cardinality(fn.proconfig) <> 1 OR replace(replace(fn.proconfig[1], '"', ''), ' ', '') <> 'search_path=public,pg_temp' THEN
+    RAISE EXCEPTION 'lektioner först 385: the function''s settings are %, not a fixed search_path of public, pg_temp', fn.proconfig;
+  END IF;
+  IF fn.ret <> 'trigger' THEN
+    RAISE EXCEPTION 'lektioner först 385: the function returns %', fn.ret;
+  END IF;
+
+  -- It runs as the tables' owner, whose rights are the year's own cascade's: the referential actions run as
+  -- the owner of the table whose rows they delete, and row security is not forced on an owner.
+  IF fn.proowner <> (SELECT relowner FROM pg_class WHERE oid = '"AcademicYears"'::regclass)
+     OR fn.proowner <> (SELECT relowner FROM pg_class WHERE oid = '"CalendarLessons"'::regclass)
+     OR fn.proowner <> (SELECT relowner FROM pg_class WHERE oid = '"StudentGroups"'::regclass) THEN
+    RAISE EXCEPTION 'lektioner först 385: the function is not owned by the owner of AcademicYears, CalendarLessons and StudentGroups';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid IN ('"AcademicYears"'::regclass, '"CalendarLessons"'::regclass, '"StudentGroups"'::regclass) AND relforcerowsecurity) THEN
+    RAISE EXCEPTION 'lektioner först 385: row security is forced on a table the trigger deletes from or reads: the owner is no longer outside it, and neither is the year''s cascade';
+  END IF;
+  -- Nobody holds EXECUTE on it: not PUBLIC, not the roles that are named, nobody but the owner. A trigger
+  -- needs none to fire.
+  FOR grantee IN SELECT a.grantee FROM aclexplode(coalesce(fn.proacl, acldefault('f', fn.proowner))) a WHERE a.grantee <> fn.proowner LOOP
+    RAISE EXCEPTION 'lektioner först 385: EXECUTE on the function is held by %', CASE WHEN grantee = 0 THEN 'PUBLIC' ELSE grantee::regrole::text END;
+  END LOOP;
+  FOREACH role_ IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_)
+       AND has_function_privilege(role_, 'app.academic_year_lessons_go_first()', 'EXECUTE') THEN
+      RAISE EXCEPTION 'lektioner först 385: % can execute the function', role_;
+    END IF;
+  END LOOP;
+
+  -- No other trigger on the year deletes the lessons, or the year would be deleted by two.
+  IF EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = '"AcademicYears"'::regclass AND NOT g.tgisinternal AND g.tgname <> t.tgname
+               AND g.tgtype & 8 = 8 AND g.tgtype & 2 = 2) THEN
+    RAISE EXCEPTION 'lektioner först 385: another BEFORE DELETE trigger on AcademicYears has been added: it may run before the lessons go (it is named AcademicYears_a_..., which sorts first only while it stays alone)';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 386: every door files the same tombstones.
+--
+-- A sent year (11): a CalendarEvent for each of its seven lessons (60-62, 72-75) and an AdhocActivity for the
+-- one that never had a master lesson (62). Of the seven, four are the kind a trigger that chose its lessons
+-- would leave to the cascade, which files an AdhocActivity for each of those too: 72 is CANCELLED, 73 has a
+-- teacher, 74 has an attendance record and 75 is dated before today (and before the year began). The active
+-- year (10): a CalendarEvent for each of its two lessons (67 keyed, 68 not) and an AdhocActivity for 68; a
+-- trigger that left the active year to the cascade files one for 67 as well. A year that was never sent (12):
+-- none. The lesson of the unsent year that names the sent year's class as an extra group (66) stays, and
+-- school 2 is not touched. The lessons are the rows of the section: 60-68 and 72-75 of school 1, 70-71 of
+-- school 2.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  door record;
+  r jsonb;
+  sent_tombs constant text := 'AdhocActivity 62; CalendarEvent 60,61,62,72,73,74,75';
+BEGIN
+  FOR door IN SELECT * FROM (VALUES
+      ('the owner', NULL::text, 0), ('the API''s role', 'app_authenticated', 80), ('PostgREST''s role', 'authenticated', 80)) v(who, via, person)
+  LOOP
+    r := pg_temp.ylg_scenario(11, door.via, door.person);
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 386: % did not remove the sent year: %', door.who, r;
+    END IF;
+    IF r ->> 'tombs1' <> sent_tombs THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the sent year, not [%] (an AdhocActivity for a lesson that had a master lesson: the cascade ran the master lessons'' key before the classes'', so the lesson was left to it: a cancelled one, one with a teacher or an attendance record, a past one, or all of the year''s)', door.who, r ->> 'tombs1', sent_tombs;
+    END IF;
+    IF r ->> 'lessons' <> '63,64,65,66,67,68,70,71' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the sent year went, not [63,64,65,66,67,68,70,71] (its own seven go; the other years'', the one with the extra group included, and school 2''s stay)', door.who, r ->> 'lessons';
+    END IF;
+    IF r ->> 'tombs2' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for school 2 when a year of school 1 went', door.who, r ->> 'tombs2';
+    END IF;
+
+    -- The active year is a sent year too (app.ss12000_year_is_emitted): its lessons are filed the same way.
+    r := pg_temp.ylg_scenario(10, door.via, door.person);
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 386: % did not remove the active year: %', door.who, r;
+    END IF;
+    IF r ->> 'tombs1' <> 'AdhocActivity 68; CalendarEvent 67,68' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the active year, not [AdhocActivity 68; CalendarEvent 67,68] (an AdhocActivity for the lesson that had a master lesson: the active year was left to the cascade)', door.who, r ->> 'tombs1';
+    END IF;
+    IF r ->> 'lessons' <> '60,61,62,63,64,65,66,70,71,72,73,74,75' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the active year went, not [60,61,62,63,64,65,66,70,71,72,73,74,75]', door.who, r ->> 'lessons';
+    END IF;
+    IF r ->> 'tombs2' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for school 2 when the active year of school 1 went', door.who, r ->> 'tombs2';
+    END IF;
+
+    r := pg_temp.ylg_scenario(12, door.via, door.person);
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 386: % did not remove the unsent year: %', door.who, r;
+    END IF;
+    IF r ->> 'tombs1' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 386: % filed [%] for the lessons of a year that was never sent, and the flow sends none', door.who, r ->> 'tombs1';
+    END IF;
+    IF r ->> 'lessons' <> '60,61,62,67,68,70,71,72,73,74,75' THEN
+      RAISE EXCEPTION 'lektioner först 386: % left lessons [%] after the unsent year went, not [60,61,62,67,68,70,71,72,73,74,75]', door.who, r ->> 'lessons';
+    END IF;
+  END LOOP;
+
+  -- What the set is the set of: the lessons removed on their own first, with the trigger out of the way, which
+  -- is what the service did since #272. The trigger makes every door file that.
+  r := pg_temp.ylg_scenario(11, NULL, 0, 'ALTER TABLE "AcademicYears" DISABLE TRIGGER "AcademicYears_a_lessons_go_first"; DELETE FROM "CalendarLessons" WHERE id IN (SELECT pg_temp.ylg_id(n) FROM unnest(ARRAY[60, 61, 62, 72, 73, 74, 75]) n)');
+  IF r ->> 'tombs1' <> sent_tombs THEN
+    RAISE EXCEPTION 'lektioner först 386: the lessons removed first, with the trigger out of the way, filed [%], not the set the doors above are held to [%]', r ->> 'tombs1', sent_tombs;
+  END IF;
+  r := pg_temp.ylg_scenario(10, NULL, 0, 'ALTER TABLE "AcademicYears" DISABLE TRIGGER "AcademicYears_a_lessons_go_first"; DELETE FROM "CalendarLessons" WHERE id IN (SELECT pg_temp.ylg_id(n) FROM unnest(ARRAY[67, 68]) n)');
+  IF r ->> 'tombs1' <> 'AdhocActivity 68; CalendarEvent 67,68' THEN
+    RAISE EXCEPTION 'lektioner först 386: the active year''s lessons removed first, with the trigger out of the way, filed [%], not the set the doors above are held to [AdhocActivity 68; CalendarEvent 67,68]', r ->> 'tombs1';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 387: who reaches the trigger, who does not, and what a refusal does.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  r jsonb;
+  via text;
+  all_lessons constant text := '60,61,62,63,64,65,66,67,68,70,71,72,73,74,75';
+  sent_tombs constant text := 'AdhocActivity 62; CalendarEvent 60,61,62,72,73,74,75';
+BEGIN
+  -- A profile that writes PLANERING and not DRIFT (none does today: this is the next one). The simulation
+  -- must bite: its own DELETE of a lesson deletes nothing, and its DELETE of the year deletes the year, and
+  -- the lessons go first all the same.
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    r := pg_temp.ylg_scenario(11, via, 84,
+      $q$CREATE OR REPLACE FUNCTION app.admin_profile_writes(p_profile "AdminProfile") RETURNS "AdminArea"[] LANGUAGE sql IMMUTABLE AS
+         $f$ SELECT CASE p_profile WHEN 'SCHEMALAGGARE' THEN ARRAY['PLANERING']::"AdminArea"[] ELSE '{}'::"AdminArea"[] END $f$ $q$, true);
+    IF r ->> 'probe' IS DISTINCT FROM '0' THEN
+      RAISE EXCEPTION 'lektioner först 387: the profile that writes PLANERING only deleted % lesson(s) of its own by a DELETE as %: the simulation does not bite', r ->> 'probe', via;
+    END IF;
+    IF r ->> 'answer' <> '1' OR (r ->> 'year')::boolean THEN
+      RAISE EXCEPTION 'lektioner först 387: a profile that writes PLANERING only did not remove the year as %: %', via, r;
+    END IF;
+    IF r ->> 'tombs1' <> sent_tombs OR r ->> 'lessons' <> '63,64,65,66,67,68,70,71' THEN
+      RAISE EXCEPTION 'lektioner först 387: a profile that writes PLANERING only, as %, filed [%] and left lessons [%]: the lessons did not go first (the cascade ran, as the owner, in the keys'' order)', via, r ->> 'tombs1', r ->> 'lessons';
+    END IF;
+  END LOOP;
+
+  -- A profile that writes DRIFT and not PLANERING (the expedition) cannot remove the year; a teacher cannot; the
+  -- administrator of another school cannot. Nothing is removed and nothing is filed, as either role.
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    r := pg_temp.ylg_scenario(11, via, 82);
+    IF r ->> 'answer' <> '0' OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 387: the expedition, as %, removed or filed something: %', via, r;
+    END IF;
+    r := pg_temp.ylg_scenario(11, via, 83);
+    IF r ->> 'answer' <> '0' OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' OR r ->> 'tombs2' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 387: the administrator of another school, as %, reached the year or its lessons: %', via, r;
+    END IF;
+    r := pg_temp.ylg_scenario(11, via, 81);
+    IF r ->> 'answer' NOT IN ('0', 'denied') OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' THEN
+      RAISE EXCEPTION 'lektioner först 387: a teacher, as %, reached the year or its lessons: %', via, r;
+    END IF;
+  END LOOP;
+
+  -- A year whose removal is refused takes nothing with it: the lessons are back (one statement, one transaction).
+  r := pg_temp.ylg_scenario(11, NULL, 0,
+    $q$CREATE FUNCTION app.ylg_refuses() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RAISE EXCEPTION 'ylg refuses'; END $f$;
+       CREATE TRIGGER "AcademicYears_z_ylg_refuses" BEFORE DELETE ON "AcademicYears" FOR EACH ROW EXECUTE FUNCTION app.ylg_refuses()$q$);
+  IF r ->> 'answer' NOT LIKE 'error: ylg refuses%' OR NOT (r ->> 'year')::boolean OR r ->> 'lessons' <> all_lessons OR r ->> 'tombs1' <> '' THEN
+    RAISE EXCEPTION 'lektioner först 387: a removal that was refused took lessons or tombstones with it: %', r;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 388: a key that holds a school does not follow its parent.
+--
+-- Section 330 asks that a key between two tables that carry a school hold the school: (x, "schoolId") ->
+-- parent ("id", "schoolId"). It did not ask what the key does when the parent is UPDATEd. ON UPDATE CASCADE
+-- carries the child along when a parent's id or school is changed: a parent moved to another school took its
+-- rows with it, without a word (tried on 232 parents in the review of #272: with CASCADE three went, a room
+-- with its room type; with NO ACTION none moved and each refusal named the key). 20270115090000 made the
+-- thirty-eight keys it replaced NO ACTION. The composite keys before them are the ones named below, 98 on the
+-- schema of 20270118090000: 93 older, with the five that came with #273 and #274 after #272. They are named
+-- because they are, not because they are right; no code path updates an id or a school of any parent, and
+-- nothing is carried along that the owner has not asked for. The list only gets shorter: a key that is made
+-- NO ACTION (or removed) is taken off it here, and the section fails until it is. A new key that follows its
+-- parent fails by name, and adding its name to the list instead fails the list's ceiling (98): raising it is a
+-- decision that shows in the diff.
+--
+-- A key is "one that holds a school" when it has more than one column and one of them is a school column of
+-- its table: "schoolId", or in a table without one, a column named like <something>SchoolId (RoomLoans),
+-- as section 330 reads a table's school. "Follows its parent" is any ON UPDATE but NO ACTION and RESTRICT.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.tk_follows(p_schema oid) RETURNS TABLE (tbl text, conname text, cols text, on_update text)
+LANGUAGE sql AS $$
+  SELECT cl.relname::text, c.conname::text,
+         (SELECT string_agg(a.attname, ',' ORDER BY u.ord)
+            FROM unnest(c.conkey) WITH ORDINALITY u(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum),
+         CASE c.confupdtype WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END
+    FROM pg_constraint c
+    JOIN pg_class cl ON cl.oid = c.conrelid AND cl.relnamespace = p_schema
+    CROSS JOIN LATERAL (SELECT pg_temp.tk_school_cols(c.conrelid) AS cs) s
+   WHERE c.contype = 'f'
+     AND cardinality(c.conkey) > 1
+     AND s.cs IS NOT NULL
+     AND EXISTS (SELECT 1 FROM unnest(c.conkey) k WHERE k = ANY (s.cs))
+     AND c.confupdtype NOT IN ('a', 'r')
+$$;
+
+BEGIN;
+DO $$
+DECLARE
+  exempt constant text[] := ARRAY[
+    'AcademicYearTimplans.AcademicYearTimplans_academicYearId_schoolId_fkey',
+    'AcademicYearTimplans.AcademicYearTimplans_localTimplanId_schoolId_fkey',
+    'AckReceipts.AckReceipts_requestId_schoolId_fkey',  -- #273, after #272
+    'CalendarFeeds.CalendarFeeds_studentId_schoolId_fkey',
+    'CalendarFeeds.CalendarFeeds_userId_schoolId_fkey',
+    'CalendarLunches.CalendarLunches_studentGroupId_schoolId_fkey',
+    'CalendarRasts.CalendarRasts_studentGroupId_schoolId_fkey',
+    'CancellationBatchCredits.CancellationBatchCredits_batchId_schoolId_fkey',
+    'CancellationBatchCredits.CancellationBatchCredits_creditId_schoolId_fkey',
+    'CancellationBatchLessons.CancellationBatchLessons_batchId_schoolId_fkey',
+    'CancellationBatchLessons.CancellationBatchLessons_calendarLessonId_schoolId_fkey',
+    'CancellationBatches.CancellationBatches_academicYearId_schoolId_fkey',
+    'CoverConfirmations.CoverConfirmations_calendarLessonId_schoolId_fkey',
+    'CoverRequestLessons.CoverRequestLessons_calendarLessonId_schoolId_fkey',
+    'DevicePushTokens.DevicePushTokens_userId_schoolId_fkey',
+    'GuardianStudents.GuardianStudents_guardianId_schoolId_fkey',
+    'GuardianStudents.GuardianStudents_studentId_schoolId_fkey',
+    'IntegrationKeyWebhookSecrets.IntegrationKeyWebhookSecrets_keyId_schoolId_fkey',
+    'LeaveDelegationDecisions.LeaveDelegationDecisions_decidedById_schoolId_fkey',
+    'LeaveRequestNotices.LeaveRequestNotices_userId_schoolId_fkey',
+    'LocalTimplanEntries.LocalTimplanEntries_localTimplanId_schoolId_fkey',
+    'LocalTimplanEntries.LocalTimplanEntries_subjectId_schoolId_fkey',
+    'LunchSittings.LunchSittings_academicYearId_schoolId_fkey',
+    'LunchSittings.LunchSittings_studentGroupId_schoolId_fkey',
+    'MasterLessonGroups.MasterLessonGroups_studentGroupId_schoolId_fkey',
+    'MasterLessonStudents.MasterLessonStudents_studentId_schoolId_fkey',
+    'MasterLessons.MasterLessons_academicYearId_schoolId_fkey',
+    'MasterLessons.MasterLessons_coTeacherId_schoolId_fkey',
+    'MasterLessons.MasterLessons_roomId_schoolId_fkey',
+    'MasterLessons.MasterLessons_studentGroupId_schoolId_fkey',
+    'MasterLessons.MasterLessons_subjectId_schoolId_fkey',
+    'MasterLessons.MasterLessons_teacherId_schoolId_fkey',
+    'NotificationOptOuts.NotificationOptOuts_userId_schoolId_fkey',
+    'PersonalDataAccess.PersonalDataAccess_actorId_schoolId_fkey',
+    'PersonalDataAccess.PersonalDataAccess_apiKeyId_schoolId_fkey',
+    'PublicTimetableHidden.PublicTimetableHidden_targetGroupId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableHidden.PublicTimetableHidden_targetRoomId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableHidden.PublicTimetableHidden_targetStudentId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableLinks.PublicTimetableLinks_academicYearId_schoolId_fkey',
+    'PublicTimetableLinks.PublicTimetableLinks_targetGroupId_schoolId_fkey',
+    'PublicTimetableLinks.PublicTimetableLinks_targetRoomId_schoolId_fkey',
+    'PublicTimetableLinks.PublicTimetableLinks_targetStudentId_schoolId_fkey',  -- #274, after #272
+    'PublicTimetableLinks.PublicTimetableLinks_targetTeacherId_schoolId_fkey',
+    'PublicationPendingRemovals.PublicationPendingRemovals_academicYearId_schoolId_fkey',
+    'PublicationPendingRemovals.PublicationPendingRemovals_calendarLessonId_schoolId_fkey',
+    'PublishedLessons.PublishedLessons_publicationId_academicYearId_schoolId_fkey',
+    'PublishedLunchSittings.PublishedLunchSittings_publicationId_academicYearId_schoolId_fk',
+    'PushTickets.PushTickets_tokenId_schoolId_fkey',
+    'RetentionDecisions.RetentionDecisions_decidedById_schoolId_fkey',
+    'ScheduleActivities.ScheduleActivities_academicYearId_schoolId_fkey',
+    'ScheduleActivities.ScheduleActivities_batchId_schoolId_fkey',
+    'ScheduleActivities.ScheduleActivities_replacementSubjectId_schoolId_fkey',
+    'ScheduleActivityLessons.ScheduleActivityLessons_activityId_schoolId_fkey',
+    'ScheduleActivityLessons.ScheduleActivityLessons_calendarLessonId_schoolId_fkey',
+    'ScheduleActivityTeachers.ScheduleActivityTeachers_activityId_schoolId_fkey',
+    'ScheduleCandidateRuns.ScheduleCandidateRuns_academicYearId_schoolId_fkey',
+    'ScheduleCandidates.ScheduleCandidates_runId_schoolId_fkey',
+    'SchoolBreaks.SchoolBreaks_academicYearId_schoolId_fkey',
+    'Ss12000DutyLinks.Ss12000DutyLinks_academicYearId_schoolId_fkey',
+    'Ss12000DutyLinks.Ss12000DutyLinks_userId_schoolId_fkey',
+    'Ss12000SourceSecrets.Ss12000SourceSecrets_sourceId_schoolId_fkey',
+    'Ss12000SubscriptionDeliveries.Ss12000SubscriptionDeliveries_subscription_fkey',
+    'Ss12000Subscriptions.Ss12000Subscriptions_keyId_schoolId_fkey',
+    'Ss12000SyncChanges.Ss12000SyncChanges_runId_schoolId_fkey',
+    'Ss12000SyncRuns.Ss12000SyncRuns_sourceId_schoolId_fkey',
+    'StudentEnrollments.StudentEnrollments_academicYearId_schoolId_fkey',
+    'StudentEnrollments.StudentEnrollments_studentId_schoolId_fkey',
+    'SubstituteAvailabilities.SubstituteAvailabilities_member_fkey',
+    'SubstitutePoolMembers.SubstitutePoolMembers_userId_schoolId_fkey',
+    'TeacherAbsenceCovers.TeacherAbsenceCovers_calendarLessonId_schoolId_fkey',
+    'TeacherAbsences.TeacherAbsences_userId_schoolId_fkey',
+    'TeacherDuties.TeacherDuties_academicYearId_schoolId_fkey',
+    'TeacherDuties.TeacherDuties_userId_schoolId_fkey',
+    'TeacherEmploymentLogs.TeacherEmploymentLogs_academicYearId_schoolId_fkey',
+    'TeacherEmploymentLogs.TeacherEmploymentLogs_userId_schoolId_fkey',
+    'TeacherEmploymentPeriods.TeacherEmploymentPeriods_employment_fkey',
+    'TeacherEmployments.TeacherEmployments_academicYearId_schoolId_fkey',
+    'TeacherEmployments.TeacherEmployments_userId_schoolId_fkey',
+    'TeacherPublicLabels.TeacherPublicLabels_userId_schoolId_fkey',
+    'TeacherSubjectQualifications.TeacherSubjectQualifications_subjectId_schoolId_fkey',
+    'TeacherSubjectQualifications.TeacherSubjectQualifications_userId_schoolId_fkey',
+    'TeacherWorkRules.TeacherWorkRules_userId_schoolId_fkey',
+    'TeachingBlocks.TeachingBlocks_academicYearId_schoolId_fkey',
+    'TeachingRequirementShares.TeachingRequirementShares_requirementId_schoolId_fkey',
+    'TeachingRequirementShares.TeachingRequirementShares_teacherId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_academicYearId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_coTeacherId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_studentGroupId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_subjectId_schoolId_fkey',
+    'TeachingRequirements.TeachingRequirements_teacherId_schoolId_fkey',
+    'TimetablePublications.TimetablePublications_academicYearId_schoolId_fkey',
+    'TimplanCredits.TimplanCredits_academicYearId_schoolId_fkey',
+    'TimplanCredits.TimplanCredits_studentGroupId_schoolId_fkey',
+    'TimplanCredits.TimplanCredits_subjectId_schoolId_fkey',
+    'TimplanStatementPublications.TimplanStatementPublications_academicYearId_schoolId_fkey',
+    'TimplanStatements.TimplanStatements_publicationId_academicYearId_asOfDate_schoolI',
+    'TimplanStatements.TimplanStatements_studentId_schoolId_fkey',
+    'UserRoleChanges.UserRoleChanges_userId_schoolId_fkey'];
+  -- The list can only get shorter. It is checked to be exactly the keys that follow their parent (below), so
+  -- a new key that follows could be passed by adding its name; the ceiling (max_names) makes that a decision
+  -- that shows in the diff, a number raised on purpose with a reason in the change. 98 is what the schema of
+  -- 20270118090000 has. When the list gets shorter, lower the ceiling with it, or the next name added fits
+  -- under it.
+  max_names constant int := 98;
+  found text[];
+  extra text[];
+  gone text[];
+  dup text[];
+BEGIN
+  SELECT array_agg(f.tbl || '.' || f.conname ORDER BY f.tbl || '.' || f.conname COLLATE "C") INTO found FROM pg_temp.tk_follows('public'::regnamespace) f;
+  SELECT array_agg(f ORDER BY f COLLATE "C") INTO extra FROM unnest(found) f WHERE f <> ALL (exempt);
+  SELECT array_agg(e ORDER BY e COLLATE "C") INTO gone FROM unnest(exempt) e WHERE e <> ALL (coalesce(found, '{}'));
+  SELECT array_agg(e ORDER BY e COLLATE "C") INTO dup FROM (SELECT e FROM unnest(exempt) e GROUP BY e HAVING count(*) > 1) d;
+  IF extra IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 388: a key that holds a school follows its parent when the parent is updated (ON UPDATE is not NO ACTION): % (make it ON UPDATE NO ACTION, as 20270115090000 did for 38 others: a parent moved to another school would carry its rows along without a word)', extra;
+  END IF;
+  IF gone IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 388: a key this list names no longer follows its parent (it is gone, or it is NO ACTION now): % (take it off the list)', gone;
+  END IF;
+  IF dup IS NOT NULL THEN
+    RAISE EXCEPTION 'tenant keys 388: named twice in the list: %', dup;
+  END IF;
+  IF cardinality(exempt) > max_names THEN
+    RAISE EXCEPTION 'tenant keys 388: the list names % keys, more than its ceiling of %: a key that follows its parent was added to the list instead of being made ON UPDATE NO ACTION (if it has to follow, raise max_names in this change and say why)', cardinality(exempt), max_names;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 389: the guard's predicate, over stand-ins.
+--
+-- The keys that follow their parent are reported, those that do not are not: NO ACTION and RESTRICT, a key of
+-- one column, a key that holds nothing of the child's school, and a table without a school. A guard that let
+-- one of the first through, or reported one of the last, fails here.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  got text[];
+BEGIN
+  CREATE TEMP TABLE tk_up_parent (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, other uuid NOT NULL, UNIQUE (id, "schoolId"), UNIQUE (id, other));
+  -- Do not follow.
+  CREATE TEMP TABLE tk_up_noaction (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                    FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE NO ACTION);
+  CREATE TEMP TABLE tk_up_default (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                   FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId"));
+  CREATE TEMP TABLE tk_up_restrict (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                    FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE RESTRICT);
+  CREATE TEMP TABLE tk_up_single (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid REFERENCES tk_up_parent (id) ON UPDATE CASCADE);
+  -- A key that holds nothing of the child's school (the parent's school is held by a column that is not the child's).
+  CREATE TEMP TABLE tk_up_other (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid, y uuid,
+                                 FOREIGN KEY (x, y) REFERENCES tk_up_parent (id, other) ON UPDATE CASCADE);
+  -- Tables with no school of their own.
+  CREATE TEMP TABLE tk_up_bare_parent (id uuid PRIMARY KEY, y uuid NOT NULL, UNIQUE (id, y));
+  CREATE TEMP TABLE tk_up_bare (id uuid PRIMARY KEY, x uuid, y uuid, FOREIGN KEY (x, y) REFERENCES tk_up_bare_parent (id, y) ON UPDATE CASCADE);
+  -- Follow.
+  CREATE TEMP TABLE tk_up_cascade (id uuid PRIMARY KEY, "schoolId" uuid NOT NULL, x uuid,
+                                   FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE CASCADE);
+  CREATE TEMP TABLE tk_up_setnull (id uuid PRIMARY KEY, "schoolId" uuid, x uuid,
+                                   FOREIGN KEY (x, "schoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE SET NULL);
+  -- A table whose school is not called "schoolId" (RoomLoans: ownerSchoolId, borrowerSchoolId).
+  CREATE TEMP TABLE tk_up_loan_owner (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                      FOREIGN KEY (x, "ownerSchoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE CASCADE);
+  CREATE TEMP TABLE tk_up_loan_noaction (id uuid PRIMARY KEY, "ownerSchoolId" uuid NOT NULL, "borrowerSchoolId" uuid NOT NULL, x uuid,
+                                         FOREIGN KEY (x, "borrowerSchoolId") REFERENCES tk_up_parent (id, "schoolId") ON UPDATE NO ACTION);
+  SELECT array_agg(f.tbl ORDER BY f.tbl COLLATE "C") INTO got FROM pg_temp.tk_follows(pg_my_temp_schema()) f;
+  IF got IS DISTINCT FROM ARRAY['tk_up_cascade', 'tk_up_loan_owner', 'tk_up_setnull'] THEN
+    RAISE EXCEPTION 'tenant keys 389: the guard reported % over the stand-ins, not the keys that follow their parent (tk_up_cascade, tk_up_loan_owner, tk_up_setnull)', got;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Frånvarostatistik över tid (D6, 20270121090000), the owner's side of sections
+-- 390-394: what a policy cannot say, and what only the owner may call.
+--
+--   390o  the table: its columns (not one that names a person), its checks
+--         (five pupils behind a group and behind a figure, a month is its first
+--         day), its keys (a class of the same school, gone with its class),
+--         and its two unique indexes
+--   391o  the count, month by month, from hand-made marks: the definition
+--         (what a mark of each kind comes to, a cancelled lesson, a late
+--         arrival capped at the lesson), the class a pupil sat in on the day,
+--         the smallest group, and that a second night changes nothing
+--   392o  the nights: the plan, the trim, the guard over a month whose marks
+--         may be gone, and the sums that outlive the attendance they were
+--         counted from; the lessons of a month are Rapporteringsgradens (once
+--         each, a teacher who has left still has hers, and the two lesson
+--         functions differ by that one condition and no other)
+--   394   the mentor: the pupils and the classes of Frånvarobevakningen's
+--         mentor definition are the ones the statistics hand a mentor
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.d6o_expect(p_label text, p_got text, p_expected text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_expected THEN
+    RAISE EXCEPTION E'frånvarostatistik %:\n   got      %\n   expected %', p_label, coalesce(p_got, '<null>'), p_expected;
+  END IF;
+END $$;
+
+-- A statement that must be refused, with a part of the refusal's text.
+CREATE FUNCTION pg_temp.d6o_refuses(p_sql text, p_fragment text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  refused boolean := false;
+  msg text;
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    refused := true;
+    msg := SQLERRM || ' [' || SQLSTATE || ']';
+  END;
+  IF NOT refused THEN
+    RAISE EXCEPTION 'frånvarostatistik: % was not refused', p_sql;
+  END IF;
+  IF msg NOT LIKE '%' || p_fragment || '%' THEN
+    RAISE EXCEPTION 'frånvarostatistik: % was refused with [%], not [%]', p_sql, msg, p_fragment;
+  END IF;
+END $$;
+
+-- A school of its own: a läsår from 2025-08-01 to 2096, class A with p_a pupils and class B with p_b (a1.., b1..;
+-- pupil emails d6o-<slug>-<name>), one subject and one teacher. The pupils' history begins on 2025-08-01.
+CREATE FUNCTION pg_temp.d6o_school(p_slug text, p_a integer, p_b integer) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  s uuid; y uuid; ga uuid; gb uuid; u uuid; i integer;
+BEGIN
+  PERFORM set_config('session_replication_role', 'origin', true);
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('D6 ' || p_slug, p_slug, 'Europe/Stockholm', now()) RETURNING id INTO s;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s, 'D6 ' || p_slug, '2025-08-01', '2096-07-31', true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, y, 'A', 7, now()) RETURNING id INTO ga;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, y, 'B', 7, now()) RETURNING id INTO gb;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'D6', 'D6', now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'd6o-' || p_slug || '-t@example.invalid', 'D6', 'Lärare', 'TEACHER', gen_random_uuid(), true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s, 'd6o-' || p_slug || '-adm@example.invalid', 'D6', 'Admin', 'SCHOOL_ADMIN', 'FULL', gen_random_uuid(), true, now());
+  FOR i IN 1..p_a LOOP
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+    VALUES (s, 'd6o-' || p_slug || '-a' || i || '@example.invalid', 'A', 'Elev' || i, 'STUDENT', gen_random_uuid(), true, now()) RETURNING id INTO u;
+  END LOOP;
+  FOR i IN 1..p_b LOOP
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+    VALUES (s, 'd6o-' || p_slug || '-b' || i || '@example.invalid', 'B', 'Elev' || i, 'STUDENT', gen_random_uuid(), true, now()) RETURNING id INTO u;
+  END LOOP;
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom")
+  SELECT s, x."id", y, CASE WHEN x."email" ~ '-a[0-9]+@' THEN ga ELSE gb END, 7, '2025-08-01' FROM "Users" x WHERE x."schoolId" = s AND x."role" = 'STUDENT';
+  UPDATE "Users" SET "studentGroupId" = CASE WHEN "email" ~ '-a[0-9]+@' THEN ga ELSE gb END WHERE "schoolId" = s AND "role" = 'STUDENT';
+  RETURN s;
+END $$;
+
+-- Acts as the scenario school's administrator for the rest of the transaction (the doors read the claims).
+CREATE FUNCTION pg_temp.d6o_login(p_school uuid, p_slug text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', (SELECT "authId" FROM "Users" WHERE "schoolId" = p_school AND email = 'd6o-' || p_slug || '-adm@example.invalid'), 'role', 'authenticated')::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+END $$;
+
+-- A lesson of a class with its marks: p_marks is 'a1=PRESENT,a2=EXCUSED' (the pupil's name, its status). The lesson is
+-- p_mins long from p_hour:00, and the teacher of the school is on it.
+CREATE FUNCTION pg_temp.d6o_lesson(p_school uuid, p_slug text, p_class text, p_day date, p_hour integer, p_mins integer,
+                                   p_status text, p_marks text) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  l uuid;
+  starts timestamptz := (p_day + make_time(p_hour, 0, 0)) AT TIME ZONE 'Europe/Stockholm';
+  m text;
+BEGIN
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (p_school, (SELECT id FROM "Subjects" WHERE "schoolId" = p_school AND code = 'D6'),
+          (SELECT id FROM "StudentGroups" WHERE "schoolId" = p_school AND name = p_class), p_day, starts,
+          starts + make_interval(mins => p_mins), p_status::"LessonStatus", now()) RETURNING id INTO l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role)
+  VALUES (p_school, l, (SELECT id FROM "Users" WHERE "schoolId" = p_school AND email = 'd6o-' || p_slug || '-t@example.invalid'), 'LEAD');
+  IF coalesce(p_marks, '') <> '' THEN
+    FOREACH m IN ARRAY string_to_array(p_marks, ',') LOOP
+      INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+      VALUES (p_school, l, (SELECT id FROM "Users" WHERE "schoolId" = p_school AND email = 'd6o-' || p_slug || '-' || split_part(m, '=', 1) || '@example.invalid'),
+              split_part(m, '=', 2)::"AttendanceStatus", now());
+    END LOOP;
+  END IF;
+  RETURN l;
+END $$;
+
+-- The stored figures of a school's month, as one line: 'class pupils/registered recorded/valid/absent/late/lateCount held/reported'.
+CREATE FUNCTION pg_temp.d6o_rows(p_school uuid, p_month date) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(coalesce(g."name", 'school') || ' ' || a."pupils" || '/' || a."pupilsRegistered" || ' '
+                             || coalesce(a."recordedMinutes"::text, '-') || '/' || coalesce(a."validMinutes"::text, '-') || '/' || coalesce(a."absentMinutes"::text, '-')
+                             || '/' || coalesce(a."lateMinutes"::text, '-') || '/' || coalesce(a."lateCount"::text, '-')
+                             || ' ' || a."lessonsHeld" || '/' || a."lessonsReported", ' | ' ORDER BY coalesce(g."name", '')), '')
+    FROM "AbsenceStatsMonths" a LEFT JOIN "StudentGroups" g ON g."id" = a."studentGroupId"
+   WHERE a."schoolId" = p_school AND a."month" = p_month
+$$;
+
+-- Asks a door of the statistics under a login's claims (ok:<rows> or err:<SQLSTATE>), as the owner may.
+CREATE FUNCTION pg_temp.d6o_as(p_sub text, p_q text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n integer;
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN p_sub IS NULL THEN '' ELSE json_build_object('sub', p_sub, 'role', 'authenticated')::text END, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  BEGIN
+    EXECUTE 'SELECT count(*) FROM (' || p_q || ') x' INTO n;
+    RETURN 'ok:' || n;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN 'err:' || SQLSTATE;
+  END;
+END $$;
+
+-- 390o: the table.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-franvarostatistik-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-franvarostatistik-annan');
+  c8a uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8A');
+  c_other uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = other AND name = 'FS9A');
+  ins constant text := 'INSERT INTO "AbsenceStatsMonths" ("schoolId", "studentGroupId", "month", "throughDay", "pupils", "pupilsRegistered", "recordedMinutes", "validMinutes", "absentMinutes", "lateMinutes", "lateCount", "lessonsHeld", "lessonsReported") VALUES ';
+  fk record;
+  cols text;
+BEGIN
+  -- No column names a person, and no key goes to Users: the sums have no pupil, and a test fails a table that gets one.
+  SELECT string_agg(a.attname, ',' ORDER BY a.attnum) INTO cols
+    FROM pg_attribute a WHERE a.attrelid = '"AbsenceStatsMonths"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  PERFORM pg_temp.d6o_expect('390o the columns', cols,
+    'id,schoolId,studentGroupId,month,throughDay,pupils,pupilsRegistered,recordedMinutes,validMinutes,absentMinutes,lateMinutes,lateCount,lessonsHeld,lessonsReported,computedAt');
+  PERFORM pg_temp.d6o_expect('390o the keys',
+    (SELECT string_agg(c.confrelid::regclass::text || ' ' || c.confdeltype::text || c.confupdtype::text, ', ' ORDER BY c.confrelid::regclass::text)
+       FROM pg_constraint c WHERE c.conrelid = '"AbsenceStatsMonths"'::regclass AND c.contype = 'f'),
+    '"Schools" cc, "StudentGroups" ca');
+  PERFORM pg_temp.d6o_expect('390o the class key is composite',
+    (SELECT array_length(c.conkey, 1)::text FROM pg_constraint c WHERE c.conrelid = '"AbsenceStatsMonths"'::regclass AND c.conname = 'AbsenceStatsMonths_studentGroupId_schoolId_fkey'), '2');
+
+  -- The smallest group is one number in three places.
+  PERFORM pg_temp.d6o_expect('390o the group size', app.absence_stats_min_group()::text, '5');
+  PERFORM pg_temp.d6o_expect('390o the check says the same',
+    (SELECT CASE WHEN pg_get_constraintdef(c.oid) LIKE '%pupils% >= 5%' THEN 'five' ELSE pg_get_constraintdef(c.oid) END
+       FROM pg_constraint c WHERE c.conrelid = '"AbsenceStatsMonths"'::regclass AND c.conname = 'AbsenceStatsMonths_a_group_has_five_pupils'), 'five');
+
+  -- A good row, and each way a row is refused (the fixtures' own months out of the way).
+  DELETE FROM "AbsenceStatsMonths" WHERE "schoolId" = school;
+  EXECUTE ins || format('(%L, NULL, ''2020-03-01'', ''2020-03-31'', 9, 9, 100, 10, 20, 5, 1, 10, 9)', school);
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, NULL, ''2020-03-01'', ''2020-03-31'', 9, 9, 100, 10, 20, 5, 1, 10, 9)', school), 'AbsenceStatsMonths_school_month_key');
+  EXECUTE ins || format('(%L, %L, ''2020-03-01'', ''2020-03-31'', 9, 9, 100, 10, 20, 5, 1, 10, 9)', school, c8a);
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-03-01'', ''2020-03-15'', 9, 9, 100, 10, 20, 5, 1, 10, 9)', school, c8a), 'AbsenceStatsMonths_class_month_key');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 4, 0, NULL, NULL, NULL, NULL, NULL, 10, 9)', school, c8a), 'a_group_has_five_pupils');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 10, 100, 10, 20, 5, 1, 10, 9)', school, c8a), 'counts_are_counts');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 9, 100, 10, 20, 5, 1, 9, 10)', school, c8a), 'counts_are_counts');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 9, 100, 10, 20, 5, 1, -1, -2)', school, c8a), 'counts_are_counts');
+  -- Fewer than five pupils behind the minutes: none may be stored. Five or more: all must be.
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 4, 100, 10, 20, 5, 1, 10, 9)', school, c8a), 'a_figure_has_five_pupils_behind_it');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 4, 0, 0, 0, 0, 0, 10, 9)', school, c8a), 'a_figure_has_five_pupils_behind_it');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 5, NULL, NULL, NULL, NULL, NULL, 10, 9)', school, c8a), 'a_figure_has_five_pupils_behind_it');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 5, 100, 10, 20, NULL, 1, 10, 9)', school, c8a), 'a_figure_has_five_pupils_behind_it');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 5, 100, 50, 40, 20, 1, 10, 9)', school, c8a), 'a_figure_has_five_pupils_behind_it');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 5, 100, -5, 20, 5, 1, 10, 9)', school, c8a), 'a_figure_has_five_pupils_behind_it');
+  -- A month is its first day, and the last day counted is in it.
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-02'', ''2020-04-30'', 9, 9, 100, 10, 20, 5, 1, 10, 9)', school, c8a), 'a_month_is_its_first_day');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-05-01'', 9, 9, 100, 10, 20, 5, 1, 10, 9)', school, c8a), 'a_through_day_is_in_the_month');
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-03-31'', 9, 9, 100, 10, 20, 5, 1, 10, 9)', school, c8a), 'a_through_day_is_in_the_month');
+  -- The class is the school's own: another school's class cannot carry a row of this one.
+  PERFORM pg_temp.d6o_refuses(ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 9, 100, 10, 20, 5, 1, 10, 9)', school, c_other), 'AbsenceStatsMonths_studentGroupId_schoolId_fkey');
+  EXECUTE ins || format('(%L, %L, ''2020-04-01'', ''2020-04-30'', 9, 9, 100, 10, 20, 5, 1, 10, 9)', other, c_other);
+
+  -- A school takes its months with it; a class takes its own and the school's stay.
+  PERFORM pg_temp.d6o_expect('390o the class before it is gone', (SELECT count(*)::text FROM "AbsenceStatsMonths" WHERE "schoolId" = school), '2');
+  DELETE FROM "AbsenceStatsMonths" WHERE "schoolId" = other;
+  PERFORM set_config('session_replication_role', 'replica', true);
+  DELETE FROM "StudentEnrollments" WHERE "studentGroupId" = c8a;
+  DELETE FROM "CalendarLessons" WHERE "studentGroupId" = c8a;
+  DELETE FROM "TeacherDuties" WHERE "studentGroupId" = c8a;
+  UPDATE "StudentGroups" SET "predecessorId" = NULL WHERE "predecessorId" = c8a;
+  PERFORM set_config('session_replication_role', 'origin', true);
+  DELETE FROM "StudentGroups" WHERE id = c8a;
+  PERFORM pg_temp.d6o_expect('390o a class takes its months and the school keeps its own',
+    (SELECT count(*) || '/' || count(*) FILTER (WHERE "studentGroupId" IS NULL) FROM "AbsenceStatsMonths" WHERE "schoolId" = school), '1/1');
+END $$;
+ROLLBACK;
+
+-- 391o: the count. A school of its own, in February 2026.
+--
+-- Class A has six pupils (a1..a6), class B four (b1..b4). A's lessons:
+--   Mon 2026-02-02 08:00  50 min: a1 PRESENT, a2 EXCUSED, a3 ABSENT, a4 LATE, a5 UNKNOWN, a6 no mark
+--   Mon 2026-02-02 09:00  10 min: a1 ABSENT, a4 LATE (15 minutes of a lesson of 10: 10)
+--   Mon 2026-02-02 10:00  50 min CANCELLED: everyone ABSENT (counts for nothing)
+--   Mon 2026-02-02 11:00  50 min COMPLETED: a1 ABSENT, a2 PRESENT, a5 PRESENT
+--   Tue 2026-02-03 08:00  50 min: nobody marked (held, never reported)
+-- B's lesson Mon 2026-02-02 09:00 (50 min): b1..b4 PRESENT.
+-- So A: recorded 4*50 + 2*10 + 3*50 = 370 (the UNKNOWN is not recorded), valid 50, absent 50 + 10 + 50 = 110,
+-- late 15 + 10 = 25 in two marks, five pupils with a mark (a1..a5), four lessons held and three reported. B
+-- has four pupils: no row, but its 200 minutes and its lesson are in the school's: ten pupils, nine with
+-- a mark, 570 recorded, five lessons held and four reported.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-def', 6, 4);
+  feb constant date := '2026-02-01';
+  l uuid;
+  w text;
+BEGIN
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-def', 'A', '2026-02-02', 8, 50, 'SCHEDULED', 'a1=PRESENT,a2=EXCUSED,a3=ABSENT,a4=LATE,a5=UNKNOWN');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-def', 'A', '2026-02-02', 9, 10, 'SCHEDULED', 'a1=ABSENT,a4=LATE');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-def', 'A', '2026-02-02', 10, 50, 'CANCELLED', 'a1=ABSENT,a2=ABSENT,a3=ABSENT,a4=ABSENT,a5=ABSENT,a6=ABSENT');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-def', 'A', '2026-02-02', 11, 50, 'COMPLETED', 'a1=ABSENT,a2=PRESENT,a5=PRESENT');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-def', 'A', '2026-02-03', 8, 50, 'SCHEDULED', NULL);
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-def', 'B', '2026-02-02', 9, 50, 'SCHEDULED', 'b1=PRESENT,b2=PRESENT,b3=PRESENT,b4=PRESENT');
+
+  SELECT m.written || '/' || m.removed || '/' || m.classes INTO w FROM app.absence_stats_month(s, feb, '2026-03-01') m;
+  PERFORM pg_temp.d6o_expect('391o the first night writes the school and one class', w, '2/0/1');
+  PERFORM pg_temp.d6o_expect('391o the month, by hand', pg_temp.d6o_rows(s, feb),
+    'school 10/9 570/50/110/25/2 5/4 | A 6/5 370/50/110/25/2 4/3');
+  PERFORM pg_temp.d6o_expect('391o the last day counted', (SELECT string_agg(DISTINCT "throughDay"::text, ',') FROM "AbsenceStatsMonths" WHERE "schoolId" = s), '2026-02-28');
+  SELECT m.written || '/' || m.removed || '/' || m.classes INTO w FROM app.absence_stats_month(s, feb, '2026-03-01') m;
+  PERFORM pg_temp.d6o_expect('391o a second night changes nothing', w, '0/0/1');
+
+  -- The month that is going on counts up to the day asked, and says which.
+  SELECT m.written || '/' || m.removed || '/' || m.classes INTO w FROM app.absence_stats_month(s, feb, '2026-02-02') m;
+  PERFORM pg_temp.d6o_expect('391o a month counted to its second day rewrites both rows', w, '2/0/1');
+  PERFORM pg_temp.d6o_expect('391o the day it counted to', (SELECT string_agg(DISTINCT "throughDay"::text, ',') FROM "AbsenceStatsMonths" WHERE "schoolId" = s), '2026-02-02');
+  PERFORM pg_temp.d6o_expect('391o the lesson of the 3rd is not in it', pg_temp.d6o_rows(s, feb),
+    'school 10/9 570/50/110/25/2 4/4 | A 6/5 370/50/110/25/2 3/3');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+
+  -- One changed mark changes the class and the school, and nothing else is written.
+  UPDATE "AttendanceRecords" SET status = 'EXCUSED'
+   WHERE "calendarLessonId" = (SELECT id FROM "CalendarLessons" WHERE "schoolId" = s AND date = '2026-02-02' AND extract(hour FROM "startsAt" AT TIME ZONE 'Europe/Stockholm') = 11)
+     AND "studentId" = (SELECT id FROM "Users" WHERE "schoolId" = s AND email = 'd6o-d6o-def-a1@example.invalid');
+  SELECT m.written || '/' || m.removed || '/' || m.classes INTO w FROM app.absence_stats_month(s, feb, '2026-03-01') m;
+  PERFORM pg_temp.d6o_expect('391o a changed mark rewrites the two rows', w, '2/0/1');
+  PERFORM pg_temp.d6o_expect('391o and moves 50 minutes from ogiltig to giltig', pg_temp.d6o_rows(s, feb),
+    'school 10/9 570/100/60/25/2 5/4 | A 6/5 370/100/60/25/2 4/3');
+  UPDATE "AttendanceRecords" SET status = 'ABSENT'
+   WHERE "calendarLessonId" = (SELECT id FROM "CalendarLessons" WHERE "schoolId" = s AND date = '2026-02-02' AND extract(hour FROM "startsAt" AT TIME ZONE 'Europe/Stockholm') = 11)
+     AND "studentId" = (SELECT id FROM "Users" WHERE "schoolId" = s AND email = 'd6o-d6o-def-a1@example.invalid');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+
+  -- A pupil with five marks gone: the class has five pupils and four with a mark, so the minutes go, not the lessons.
+  DELETE FROM "AttendanceRecords" WHERE "studentId" = (SELECT id FROM "Users" WHERE "schoolId" = s AND email = 'd6o-d6o-def-a5@example.invalid');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('391o four pupils with a mark: no minute for the class, the lessons stay; the school has eight', pg_temp.d6o_rows(s, feb),
+    'school 10/8 520/50/110/25/2 5/4 | A 6/4 -/-/-/-/- 4/3');
+
+  -- A pupil with a mark and no history is in the school's sums and in no class's.
+  PERFORM set_config('session_replication_role', 'origin', true);
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'd6o-d6o-def-x1@example.invalid', 'X', 'Utan klass', 'STUDENT', gen_random_uuid(), true, now());
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-def', 'A', '2026-02-04', 8, 50, 'SCHEDULED', 'x1=ABSENT');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('391o a pupil with no class is in the school and in no class', pg_temp.d6o_rows(s, feb),
+    'school 11/9 570/50/160/25/2 6/5 | A 6/4 -/-/-/-/- 5/4');
+END $$;
+ROLLBACK;
+
+-- 391o: the class a pupil sat in on the day. a1 sits in A until 2026-02-04, then in B (a move that A's history keeps);
+-- the activation then empties both classes and the months come out the same. Lessons of A on the 2nd and the 3rd
+-- (a1 present, the rest present) and of B on the 4th and the 5th.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-cls', 5, 4);
+  feb constant date := '2026-02-01';
+  a1 uuid;
+  ga uuid;
+  gb uuid;
+  y uuid;
+  before text;
+  pa text;
+  pb text;
+  five constant text := 'a1=PRESENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT';
+BEGIN
+  SELECT id INTO a1 FROM "Users" WHERE "schoolId" = s AND email = 'd6o-d6o-cls-a1@example.invalid';
+  SELECT id INTO ga FROM "StudentGroups" WHERE "schoolId" = s AND name = 'A';
+  SELECT id INTO gb FROM "StudentGroups" WHERE "schoolId" = s AND name = 'B';
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = s;
+  PERFORM set_config('session_replication_role', 'replica', true);
+  UPDATE "StudentEnrollments" SET "validTo" = '2026-02-04' WHERE "studentId" = a1;
+  INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom") VALUES (s, a1, y, gb, 7, '2026-02-04');
+  UPDATE "Users" SET "studentGroupId" = gb WHERE id = a1;
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-cls', 'A', '2026-02-02', 8, 50, 'SCHEDULED', five);
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-cls', 'A', '2026-02-03', 8, 50, 'SCHEDULED', five);
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-cls', 'B', '2026-02-04', 8, 50, 'SCHEDULED', 'a1=ABSENT,b1=PRESENT,b2=PRESENT,b3=PRESENT,b4=PRESENT');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-cls', 'B', '2026-02-05', 8, 50, 'SCHEDULED', 'a1=ABSENT,b1=PRESENT,b2=PRESENT,b3=PRESENT,b4=PRESENT');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  -- A: five pupils, each marked on both its days (the day a1 left is the day after the last). B: four and a1 = five, a1 absent twice.
+  PERFORM pg_temp.d6o_expect('391o the class on the day', pg_temp.d6o_rows(s, feb),
+    'school 9/9 1000/0/100/0/0 4/4 | A 5/5 500/0/0/0/0 2/2 | B 5/5 500/0/100/0/0 2/2');
+  before := pg_temp.d6o_rows(s, feb);
+  -- The patterns read the class by the day as well: A's are the Monday and Tuesday of its five pupils, with a1 only on
+  -- the days he sat in it; B's are the Wednesday and Thursday of its four and a1, who is absent on both.
+  PERFORM pg_temp.d6o_login(s, 'd6o-cls');
+  pa := (SELECT string_agg(key || ' ' || recorded_minutes || '/' || absent_minutes, ' | ' ORDER BY key) FROM app.absence_stats_patterns(ga, NULL, '2026-02-01', '2026-02-28') WHERE dimension = 'WEEKDAY');
+  pb := (SELECT string_agg(key || ' ' || recorded_minutes || '/' || absent_minutes, ' | ' ORDER BY key) FROM app.absence_stats_patterns(gb, NULL, '2026-02-01', '2026-02-28') WHERE dimension = 'WEEKDAY');
+  PERFORM pg_temp.d6o_expect('391o the patterns of A, by the day', pa, '1 250/0 | 2 250/0');
+  PERFORM pg_temp.d6o_expect('391o the patterns of B, by the day', pb, '3 250/50 | 4 250/50');
+  -- The pupils of a class add up to the class: a1's rows are the days he sat in each, not every mark of the month.
+  PERFORM pg_temp.d6o_expect('391o the pupils of A add up to A’s month',
+    (SELECT sum(recorded_minutes) || '/' || sum(absent_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(ga, '2026-02-01', '2026-02-28')), '500/0/5');
+  PERFORM pg_temp.d6o_expect('391o and a1 has his two days in A',
+    (SELECT recorded_minutes || '/' || absent_minutes FROM app.absence_stats_class_pupils(ga, '2026-02-01', '2026-02-28') WHERE first_name = 'A' AND last_name = 'Elev1'), '100/0');
+  PERFORM pg_temp.d6o_expect('391o the pupils of B add up to B’s month',
+    (SELECT sum(recorded_minutes) || '/' || sum(absent_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(gb, '2026-02-01', '2026-02-28')), '500/100/5');
+  PERFORM pg_temp.d6o_expect('391o and a1 has his two days in B, absent on both',
+    (SELECT recorded_minutes || '/' || absent_minutes FROM app.absence_stats_class_pupils(gb, '2026-02-01', '2026-02-28') WHERE first_name = 'A' AND last_name = 'Elev1'), '100/100');
+  -- The period's first day counts: one lesson, on the 2nd, five pupils.
+  PERFORM pg_temp.d6o_expect('391o a period that is the first lesson day only has that day',
+    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(ga, '2026-02-02', '2026-02-02')), '250/5');
+  -- The period's last day is the day a1 joined B: he is on the list with that day's lesson.
+  PERFORM pg_temp.d6o_expect('391o a period that ends the day a1 joined B has him, with that day',
+    (SELECT recorded_minutes || '/' || absent_minutes FROM app.absence_stats_class_pupils(gb, '2026-02-02', '2026-02-04') WHERE first_name = 'A' AND last_name = 'Elev1'), '50/50');
+  -- A period that holds only the days before the move shows a1 in A only.
+  PERFORM pg_temp.d6o_expect('391o a period of the days before the move: a1 is in A and in no B',
+    (SELECT count(*) FROM app.absence_stats_class_pupils(gb, '2026-02-02', '2026-02-03') WHERE first_name = 'A' AND last_name = 'Elev1')::text, '0');
+  -- The activation: every pupil moves on and the classes are left empty. The months stand.
+  UPDATE "Users" SET "studentGroupId" = NULL WHERE "schoolId" = s AND role = 'STUDENT';
+  UPDATE "StudentEnrollments" SET "validTo" = '2026-02-28' WHERE "schoolId" = s AND "validTo" IS NULL;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('391o the activation empties the classes and the month is the same', pg_temp.d6o_rows(s, feb), before);
+  PERFORM pg_temp.d6o_login(s, 'd6o-cls');
+  PERFORM pg_temp.d6o_expect('391o and so are the patterns of A',
+    (SELECT string_agg(key || ' ' || recorded_minutes || '/' || absent_minutes, ' | ' ORDER BY key) FROM app.absence_stats_patterns(ga, NULL, '2026-02-01', '2026-02-28') WHERE dimension = 'WEEKDAY'), pa);
+  -- And without the history it would not be: the marks would belong to no class.
+  DELETE FROM "StudentEnrollments" WHERE "schoolId" = s;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('391o with no history the classes have no pupils and no row', pg_temp.d6o_rows(s, feb), 'school 9/9 1000/0/100/0/0 4/4');
+END $$;
+ROLLBACK;
+
+
+-- 391o: a class and its predecessor. The five pupils a1..a5 of A move on to N (A's successor) on 2026-01-15; a6 goes to B, whose
+-- mentor is somebody else. A had a lesson on 2025-12-01 (a6 present too) and N has one on 2026-02-02. N's pupils are N's own
+-- five, with the days of both classes (as N's patterns are): a6 sat in A and never came to N, so she is not on N's list, not
+-- for an administrator and not for N's mentor, who could not open her card either. A period that holds only the days in N
+-- shows N's day alone.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-lin', 6, 0);
+  ga uuid; gb uuid; gn uuid; y uuid; mentor uuid; msub uuid := gen_random_uuid(); a6 uuid; names text; r record; opened int := 0;
+  five constant text := 'a1=PRESENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT';
+BEGIN
+  SELECT id INTO ga FROM "StudentGroups" WHERE "schoolId" = s AND name = 'A';
+  SELECT id INTO gb FROM "StudentGroups" WHERE "schoolId" = s AND name = 'B';
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = s;
+  SELECT id INTO a6 FROM "Users" WHERE "schoolId" = s AND email = 'd6o-d6o-lin-a6@example.invalid';
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt") VALUES (s, y, 'N', 8, ga, now()) RETURNING id INTO gn;
+  UPDATE "StudentEnrollments" SET "validTo" = '2026-01-15' WHERE "schoolId" = s AND "studentGroupId" = ga;
+  INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom")
+  SELECT s, x."id", y, CASE WHEN x."email" ~ '-a6@' THEN gb ELSE gn END, 8, '2026-01-15' FROM "Users" x WHERE x."schoolId" = s AND x."role" = 'STUDENT';
+  UPDATE "Users" SET "studentGroupId" = CASE WHEN "email" ~ '-a6@' THEN gb ELSE gn END WHERE "schoolId" = s AND "role" = 'STUDENT';
+  PERFORM set_config('session_replication_role', 'origin', true);
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'd6o-d6o-lin-mn@example.invalid', 'M', 'MentorN', 'TEACHER', msub, true, now()) RETURNING id INTO mentor;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  VALUES (s, mentor, y, 'MENTORSKAP', 'Mentor N', 60, gn, now());
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-lin', 'A', '2025-12-01', 8, 50, 'SCHEDULED', five || ',a6=PRESENT');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-lin', 'N', '2026-02-02', 8, 50, 'SCHEDULED', five);
+  PERFORM pg_temp.d6o_login(s, 'd6o-lin');
+  PERFORM pg_temp.d6o_expect('391o the cohort in N has the days in A and in N',
+    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(gn, '2025-11-01', '2026-02-28')), '500/5');
+  PERFORM pg_temp.d6o_expect('391o and the days in N alone, when the period is those',
+    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(gn, '2026-01-20', '2026-02-28')), '250/5');
+  PERFORM pg_temp.d6o_expect('391o A itself has its own day, and the successor’s is not its: all six sat in A',
+    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(ga, '2025-11-01', '2026-02-28')), '300/6');
+  PERFORM pg_temp.d6o_expect('391o a6 is on A’s list and on no list of N’s',
+    (SELECT count(*)::text FROM app.absence_stats_class_pupils(gn, '2025-08-01', '2026-11-06') WHERE last_name = 'Elev6'), '0');
+  PERFORM pg_temp.d6o_expect('391o and N’s list is N’s five, by name',
+    (SELECT string_agg(last_name, ',' ORDER BY last_name COLLATE "C") FROM app.absence_stats_class_pupils(gn, '2025-08-01', '2026-11-06')), 'Elev1,Elev2,Elev3,Elev4,Elev5');
+  -- The mentor of N, asking for a period that reaches back into A (the web’s “Alla” and “Föregående läsår”).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', msub, 'role', 'authenticated')::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  SELECT string_agg(last_name || ' ' || recorded_minutes, ',' ORDER BY last_name COLLATE "C") INTO names
+    FROM app.absence_stats_class_pupils(gn, '2025-08-01', '2026-11-06');
+  PERFORM pg_temp.d6o_expect('391o the mentor of N gets N’s five and nobody who only sat in A', names, 'Elev1 100,Elev2 100,Elev3 100,Elev4 100,Elev5 100');
+  -- Every pupil the list names the mentor may open: the list and the card are the same set.
+  FOR r IN SELECT student_id FROM app.absence_stats_class_pupils(gn, '2025-08-01', '2026-11-06') LOOP
+    IF pg_temp.d6o_as(msub::text, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, r.student_id)) <> 'ok:1' THEN
+      RAISE EXCEPTION 'frånvarostatistik 391o: the mentor of N is listed a pupil whose card she may not open (%)', r.student_id;
+    END IF;
+    opened := opened + 1;
+  END LOOP;
+  PERFORM pg_temp.d6o_expect('391o and she opened all five', opened::text, '5');
+  PERFORM pg_temp.d6o_expect('391o a6’s card is not hers', pg_temp.d6o_as(msub::text, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, a6)), 'err:AS403');
+  PERFORM pg_temp.d6o_expect('391o and A’s list is not hers', pg_temp.d6o_as(msub::text, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2025-08-01', '2026-11-06')$q$, ga)), 'err:AS403');
+END $$;
+ROLLBACK;
+
+-- 392o: the nights. The plan, the trim, the refusal of a day that is not over, the guard over a month whose
+-- marks may be gone, and the sums that outlive the attendance.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-plan', 6, 0);
+  months text;
+  -- The school's today (its clock is Stockholm's), not the session's: between 23:00 and 24:00 UTC the two dates differ and
+  -- the session's current_date is a day that is over for the school.
+  school_today constant date := (clock_timestamp() AT TIME ZONE 'Europe/Stockholm')::date;
+BEGIN
+  -- A lesson in every month of the läsår but November: a month with nothing to count (the summer, a school's gap) is not asked for.
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-plan', 'A', t.d, 8, 50, 'SCHEDULED', NULL)
+    FROM unnest(ARRAY['2025-08-18', '2025-09-01', '2025-10-06', '2025-12-01', '2026-01-12', '2026-02-02', '2026-03-02']::date[]) AS t(d);
+  -- The school's läsår begins 2025-08-01, so for the night of 2026-03-15 the window starts in August 2025; the months of
+  -- the last 62 days are January to March, and three older ones are asked for besides, newest first.
+  SELECT string_agg(to_char(p.month, 'YYYY-MM'), ' ' ORDER BY ord) INTO months FROM app.absence_stats_plan(s, '2026-03-15') WITH ORDINALITY p(month, ord);
+  PERFORM pg_temp.d6o_expect('392o the plan, nothing counted yet, November has no lesson', months, '2026-03 2026-02 2026-01 2025-12 2025-10 2025-09');
+  SELECT string_agg(to_char(p.month, 'YYYY-MM'), ' ' ORDER BY ord) INTO months FROM app.absence_stats_plan(s, '2026-03-15', 0) WITH ORDINALITY p(month, ord);
+  PERFORM pg_temp.d6o_expect('392o the plan with no backfill', months, '2026-03 2026-02 2026-01');
+  SELECT string_agg(to_char(p.month, 'YYYY-MM'), ' ' ORDER BY ord) INTO months FROM app.absence_stats_plan(s, '2026-03-15', 1) WITH ORDINALITY p(month, ord);
+  PERFORM pg_temp.d6o_expect('392o the plan with a backfill of one', months, '2026-03 2026-02 2026-01 2025-12');
+  PERFORM app.absence_stats_month(s, '2025-12-01', '2026-03-15');
+  PERFORM app.absence_stats_month(s, '2025-10-01', '2026-03-15');
+  PERFORM app.absence_stats_month(s, '2025-09-01', '2026-03-15');
+  SELECT string_agg(to_char(p.month, 'YYYY-MM'), ' ' ORDER BY ord) INTO months FROM app.absence_stats_plan(s, '2026-03-15') WITH ORDINALITY p(month, ord);
+  PERFORM pg_temp.d6o_expect('392o the plan the next night', months, '2026-03 2026-02 2026-01 2025-08');
+  PERFORM app.absence_stats_month(s, '2025-08-01', '2026-03-15');
+  SELECT string_agg(to_char(p.month, 'YYYY-MM'), ' ' ORDER BY ord) INTO months FROM app.absence_stats_plan(s, '2026-03-15') WITH ORDINALITY p(month, ord);
+  PERFORM pg_temp.d6o_expect('392o the plan when the läsår is counted: November never was asked for', months, '2026-03 2026-02 2026-01');
+  -- A month counted though it has no lesson leaves a row of nothing, which the doors leave out.
+  PERFORM app.absence_stats_month(s, '2025-11-01', '2026-03-15');
+  PERFORM pg_temp.d6o_expect('392o an empty month asked for leaves a row', pg_temp.d6o_rows(s, '2025-11-01'), 'school 6/0 -/-/-/-/- 0/0');
+  -- The first of the months asked for, and the last day a night may count to.
+  PERFORM pg_temp.d6o_expect('392o the plan on the 1st of March reaches back to December: 61 days before is the 30th',
+    (SELECT string_agg(to_char(p.month, 'YYYY-MM'), ' ' ORDER BY ord) FROM app.absence_stats_plan(s, '2026-03-01', 0) WITH ORDINALITY p(month, ord)), '2026-03 2026-02 2026-01 2025-12');
+  PERFORM pg_temp.d6o_expect('392o before the läsår there is nothing to count',
+    (SELECT count(*)::text FROM app.absence_stats_plan(s, '2025-08-15')), '1');
+
+  -- The trim: months before the window, and only they.
+  INSERT INTO "AbsenceStatsMonths" ("schoolId", "month", "throughDay", pupils, "pupilsRegistered", "lessonsHeld", "lessonsReported")
+  VALUES (s, '2024-01-01', '2024-01-31', 9, 0, 0, 0), (s, '2025-07-01', '2025-07-31', 9, 0, 0, 0);
+  PERFORM pg_temp.d6o_expect('392o the trim removes the two months before the läsår', app.absence_stats_trim(s, '2026-03-15')::text, '2');
+  PERFORM pg_temp.d6o_expect('392o and not the first month of it', (SELECT count(*)::text FROM "AbsenceStatsMonths" WHERE "schoolId" = s AND month = '2025-08-01' AND "studentGroupId" IS NULL), '1');
+  PERFORM pg_temp.d6o_expect('392o and a second trim finds nothing', app.absence_stats_trim(s, '2026-03-15')::text, '0');
+
+  -- A day that is not over, a month that is not a month, a school that is not there.
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_plan(%L, %L)', s, school_today), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_plan(%L, NULL)', s), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-03-01'', %L)', s, school_today), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-03-01'', %L)', s, school_today + 3), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
+  PERFORM pg_temp.d6o_refuses(format('SELECT app.absence_stats_trim(%L, %L)', s, school_today), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-03-02'', ''2026-03-15'')', s), 'ABSENCE_STATS_BAD_MONTH');
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-04-01'', ''2026-03-15'')', s), 'ABSENCE_STATS_BAD_MONTH');
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, NULL, ''2026-03-15'')', s), 'ABSENCE_STATS_BAD_MONTH');
+  PERFORM pg_temp.d6o_refuses('SELECT * FROM app.absence_stats_plan(gen_random_uuid(), ''2026-03-15'')', 'ABSENCE_STATS_NO_SCHOOL');
+  PERFORM pg_temp.d6o_refuses('SELECT * FROM app.absence_stats_month(gen_random_uuid(), ''2026-03-01'', ''2026-03-15'')', 'ABSENCE_STATS_NO_SCHOOL');
+  PERFORM pg_temp.d6o_refuses('SELECT app.absence_stats_trim(gen_random_uuid(), ''2026-03-15'')', 'ABSENCE_STATS_NO_SCHOOL');
+END $$;
+ROLLBACK;
+
+-- 392o: a school of three pupils has no row at all.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-small', 3, 0);
+BEGIN
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-small', 'A', '2026-02-02', 8, 50, 'SCHEDULED', 'a1=ABSENT,a2=PRESENT,a3=PRESENT');
+  PERFORM pg_temp.d6o_expect('392o a school of three writes nothing', (SELECT written || '/' || removed || '/' || classes FROM app.absence_stats_month(s, '2026-02-01', '2026-03-01')), '0/0/0');
+  PERFORM pg_temp.d6o_expect('392o and has no row', (SELECT count(*)::text FROM "AbsenceStatsMonths" WHERE "schoolId" = s), '0');
+END $$;
+ROLLBACK;
+
+-- 392o: the guard over a month whose marks may be gone. Without a decision to purge the attendance, a month whose
+-- marks are gone is counted as nobody having reported (the control); with one, the month is left as it was counted,
+-- and a decision to keep it afterwards does not give the marks back.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-ctl', 5, 0);
+  g uuid := pg_temp.d6o_school('d6o-grd', 5, 0);
+  five constant text := 'a1=PRESENT,a2=ABSENT,a3=PRESENT,a4=PRESENT,a5=PRESENT';
+  counted constant text := 'school 5/5 250/0/50/0/0 1/1 | A 5/5 250/0/50/0/0 1/1';
+BEGIN
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-ctl', 'A', '2026-02-02', 8, 50, 'SCHEDULED', five);
+  PERFORM pg_temp.d6o_lesson(g, 'd6o-grd', 'A', '2026-02-02', 8, 50, 'SCHEDULED', five);
+  PERFORM app.absence_stats_month(s, '2026-02-01', '2026-03-01');
+  PERFORM app.absence_stats_month(g, '2026-02-01', '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o counted, the control school', pg_temp.d6o_rows(s, '2026-02-01'), counted);
+  PERFORM pg_temp.d6o_expect('392o counted, the guarded school', pg_temp.d6o_rows(g, '2026-02-01'), counted);
+
+  -- The control: its marks are purged and the month is counted again.
+  DELETE FROM "AttendanceRecords" WHERE "schoolId" = s;
+  PERFORM app.absence_stats_month(s, '2026-02-01', '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o with no decision the month is counted again, as a month nobody reported', pg_temp.d6o_rows(s, '2026-02-01'),
+    'school 5/0 -/-/-/-/- 1/0 | A 5/0 -/-/-/-/- 1/0');
+
+  -- The guarded school has decided to purge after a month (a decision not yet in force counts too: it is a day's notice).
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (g, 'ATTENDANCE', 'PURGE_AFTER', 1);
+  DELETE FROM "AttendanceRecords" WHERE "schoolId" = g;
+  PERFORM pg_temp.d6o_expect('392o with a decision the month is left as it was', (SELECT m.written || '/' || m.removed || '/' || m.classes FROM app.absence_stats_month(g, '2026-02-01', '2026-03-01') m), '0/0/0');
+  PERFORM pg_temp.d6o_expect('392o and its sums are still there', pg_temp.d6o_rows(g, '2026-02-01'), counted);
+  PERFORM pg_temp.d6o_expect('392o and the plan does not ask for it', (SELECT count(*)::text FROM app.absence_stats_plan(g, '2026-03-15')), '0');
+  -- To keep it later does not bring the marks back.
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (g, 'ATTENDANCE', 'KEEP');
+  PERFORM pg_temp.d6o_expect('392o after a decision to keep, the month is still left alone', (SELECT m.written || '/' || m.removed || '/' || m.classes FROM app.absence_stats_month(g, '2026-02-01', '2026-03-01') m), '0/0/0');
+  PERFORM pg_temp.d6o_expect('392o and the sums stand', pg_temp.d6o_rows(g, '2026-02-01'), counted);
+  -- A month inside the period of the decision is counted as usual: the month of today.
+  PERFORM pg_temp.d6o_expect('392o the month of today is counted',
+    (SELECT count(*)::text FROM app.absence_stats_plan(g, current_date - 1) p WHERE p.month = date_trunc('month', current_date - 1)::date), '1');
+END $$;
+ROLLBACK;
+
+-- 392o: the sums outlive the attendance. A school purges after a month; the real gallring takes the marks of February
+-- 2026 and nothing of the sums, which no kind of gallring lists.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-gal', 5, 0);
+  five constant text := 'a1=PRESENT,a2=ABSENT,a3=PRESENT,a4=PRESENT,a5=PRESENT';
+  counted constant text := 'school 5/5 250/0/50/0/0 1/1 | A 5/5 250/0/50/0/0 1/1';
+  run uuid;
+  t "RetentionDataType";
+  listed integer := 0;
+BEGIN
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-gal', 'A', '2026-02-02', 8, 50, 'SCHEDULED', five);
+  PERFORM app.absence_stats_month(s, '2026-02-01', '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o counted before the gallring', pg_temp.d6o_rows(s, '2026-02-01'), counted);
+
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, "decidedAt") VALUES (s, 'ATTENDANCE', 'PURGE_AFTER', 1, now() - interval '3 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  FOREACH t IN ARRAY enum_range(NULL::"RetentionDataType") LOOP
+    SELECT listed + count(*) INTO listed FROM app.gallring_due(s, t, current_date + 1, current_date) d WHERE d.tbl = 'AbsenceStatsMonths';
+  END LOOP;
+  PERFORM pg_temp.d6o_expect('392o no kind of gallring lists the sums', listed::text, '0');
+
+  run := app.gallring_begin(s, now());
+  IF app.gallring_purge(run, 'ATTENDANCE', 1000) < 5 THEN RAISE EXCEPTION 'frånvarostatistik 392o: the gallring took fewer than the five marks'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+  PERFORM pg_temp.d6o_expect('392o the marks are gone', (SELECT count(*)::text FROM "AttendanceRecords" WHERE "schoolId" = s), '0');
+  PERFORM pg_temp.d6o_expect('392o the sums are not', pg_temp.d6o_rows(s, '2026-02-01'), counted);
+  -- The nightly job still reads the three läsår: the pupil-level door finds nothing left of the pupil, the sums do.
+  PERFORM pg_temp.d6o_expect('392o and the nights leave them', (SELECT m.written || '/' || m.removed FROM app.absence_stats_month(s, '2026-02-01', '2026-03-01') m), '0/0');
+END $$;
+ROLLBACK;
+
+-- 392o: a Sunday is the seventh weekday (the patterns count the ISO weekday), and the pass is the school's wall clock.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-pat', 5, 0);
+BEGIN
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-pat', 'A', '2026-02-01', 8, 50, 'SCHEDULED', 'a1=ABSENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-pat', 'A', '2026-02-02', 23, 50, 'SCHEDULED', 'a1=PRESENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT');
+  PERFORM pg_temp.d6o_login(s, 'd6o-pat');
+  PERFORM pg_temp.d6o_expect('392o the weekdays and the passes',
+    (SELECT string_agg(dimension || ' ' || key || ' ' || recorded_minutes || '/' || absent_minutes, ' | ' ORDER BY dimension, key)
+       FROM app.absence_stats_patterns((SELECT id FROM "StudentGroups" WHERE "schoolId" = s AND name = 'A'), NULL, '2026-02-01', '2026-02-28') WHERE dimension <> 'SUBJECT'),
+    'SLOT 08:00 250/50 | SLOT 23:00 250/0 | WEEKDAY 1 250/0 | WEEKDAY 7 250/50');
+  PERFORM pg_temp.d6o_expect('392o and a pupil''s',
+    (SELECT string_agg(key || ' ' || recorded_minutes || '/' || absent_minutes, ' | ' ORDER BY key)
+       FROM app.absence_stats_patterns(NULL, (SELECT id FROM "Users" WHERE "schoolId" = s AND email = 'd6o-d6o-pat-a1@example.invalid'), '2026-02-01', '2026-02-28') WHERE dimension = 'WEEKDAY'),
+    '1 50/0 | 7 50/50');
+END $$;
+ROLLBACK;
+
+-- 392o: the window is the three latest läsår that have begun, in the plan, the trim and the doors. Years of 2022, 2023,
+-- 2024 and 2025 have begun on 2026-03-15 and one of 2026 has not; a row from before the window that the trim has not yet
+-- removed is read by nobody.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-win', 5, 0);
+  ga uuid;
+BEGIN
+  SELECT id INTO ga FROM "StudentGroups" WHERE "schoolId" = s AND name = 'A';
+  -- The pupils sat in the class from the start of 2022, and there are lessons before the window and in it.
+  UPDATE "StudentEnrollments" SET "validFrom" = '2022-01-01' WHERE "schoolId" = s;
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-win', 'A', t.d, 8, 50, 'SCHEDULED', NULL)
+    FROM unnest(ARRAY['2022-07-04', '2022-09-05', '2022-12-05']::date[]) AS t(d);
+  PERFORM set_config('session_replication_role', 'origin', true);
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES
+    (s, 'W22', '2022-08-01', '2023-07-31', false, now()), (s, 'W23', '2023-08-01', '2024-07-31', false, now()),
+    (s, 'W24', '2024-08-01', '2025-07-31', false, now()), (s, 'W27', '2096-08-01', '2097-07-31', false, now());
+  PERFORM pg_temp.d6o_expect('392o the window of 2026-03-15 begins with the third latest läsår that has begun', app.absence_stats_window_first(s, '2026-03-15')::text, '2023-08-01');
+  PERFORM pg_temp.d6o_expect('392o a year earlier the window is a year earlier', app.absence_stats_window_first(s, '2025-03-15')::text, '2022-08-01');
+  PERFORM pg_temp.d6o_expect('392o with only one läsår begun it begins with it', app.absence_stats_window_first(s, '2023-03-15')::text, '2022-08-01');
+  PERFORM pg_temp.d6o_expect('392o a school with no läsår has no window', (SELECT app.absence_stats_window_first(gen_random_uuid(), '2026-03-15')::text), NULL);
+  -- The night of 2023-03-15: the three months of the last 62 days, and of the older ones those with a lesson inside the window
+  -- (2022-09 and 2022-12, not 2022-07, which began before the läsår).
+  PERFORM pg_temp.d6o_expect('392o the plan reaches back to the window and no further', (SELECT count(*)::text FROM app.absence_stats_plan(s, '2023-03-15', 100)), '5');
+  INSERT INTO "AbsenceStatsMonths" ("schoolId", "studentGroupId", "month", "throughDay", pupils, "pupilsRegistered", "lessonsHeld", "lessonsReported") VALUES
+    (s, NULL, '2023-01-01', '2023-01-31', 9, 0, 5, 5), (s, NULL, '2024-09-01', '2024-09-30', 9, 0, 5, 5),
+    (s, ga, '2023-01-01', '2023-01-31', 9, 0, 5, 5), (s, ga, '2024-09-01', '2024-09-30', 9, 0, 5, 5);
+  PERFORM pg_temp.d6o_login(s, 'd6o-win');
+  PERFORM pg_temp.d6o_expect('392o a month before the window is not read in the school''s months', (SELECT string_agg(to_char(month, 'YYYY-MM'), ' ') FROM app.absence_stats_series()), '2024-09');
+  PERFORM pg_temp.d6o_expect('392o nor in a class''s', (SELECT string_agg(to_char(month, 'YYYY-MM'), ' ') FROM app.absence_stats_series(ga)), '2024-09');
+  PERFORM pg_temp.d6o_expect('392o nor in the classes of a period', (SELECT string_agg(class_name || ' ' || lessons_held, ' ') FROM app.absence_stats_classes('2023-01-01', '2026-03-01')), 'A 5');
+END $$;
+ROLLBACK;
+
+-- 392o: the lessons are Rapporteringsgradens, once each. Class A has six pupils, B five.
+--   L1 A Mon 08:00, one teacher, a mark                       held and reported for A
+--   L2 A Mon 09:00, two teachers, no mark                     held once, not reported
+--   L3 B Mon 10:00, joined with class A, a mark               held and reported for both
+--   L4 a teaching group across classes (G), a mark            the school's, no class's
+--   L5 a half of A (H), a mark                                A's
+--   L6 A Tue 10:00 cancelled                                  nobody's
+-- A: held L1 L2 L3 L5 = 4, reported 3. B: L3 = 1/1. The school: L1-L5 = 5, reported L1 L3 L4 L5 = 4.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-rep', 6, 5);
+  y uuid; ga uuid; gb uuid; gg uuid; gh uuid; t2 uuid; l uuid;
+BEGIN
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = s;
+  SELECT id INTO ga FROM "StudentGroups" WHERE "schoolId" = s AND name = 'A';
+  SELECT id INTO gb FROM "StudentGroups" WHERE "schoolId" = s AND name = 'B';
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt") VALUES (s, y, 'G', 'TEACHING_GROUP', now()) RETURNING id INTO gg;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "halfOfId", "updatedAt") VALUES (s, y, 'H', 'TEACHING_GROUP', ga, now()) RETURNING id INTO gh;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'd6o-d6o-rep-t2@example.invalid', 'D6', 'Lärare2', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO t2;
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-rep', 'A', '2026-02-02', 8, 50, 'SCHEDULED', 'a1=PRESENT');
+  l := pg_temp.d6o_lesson(s, 'd6o-rep', 'A', '2026-02-02', 9, 50, 'SCHEDULED', NULL);
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, t2, 'ASSISTANT');
+  l := pg_temp.d6o_lesson(s, 'd6o-rep', 'B', '2026-02-02', 10, 50, 'SCHEDULED', 'b1=PRESENT');
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (s, l, ga);
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-rep', 'G', '2026-02-03', 8, 50, 'SCHEDULED', 'a1=PRESENT');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-rep', 'H', '2026-02-03', 9, 50, 'SCHEDULED', 'a2=PRESENT');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-rep', 'A', '2026-02-03', 10, 50, 'CANCELLED', 'a1=ABSENT');
+  PERFORM app.absence_stats_month(s, '2026-02-01', '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o the lessons, once each', 
+    (SELECT string_agg(coalesce(g.name, 'school') || ' ' || a."lessonsHeld" || '/' || a."lessonsReported", ' | ' ORDER BY coalesce(g.name, '')) FROM "AbsenceStatsMonths" a LEFT JOIN "StudentGroups" g ON g.id = a."studentGroupId" WHERE a."schoolId" = s AND a.month = '2026-02-01'),
+    'school 5/4 | A 4/3 | B 1/1');
+  -- And they are the ones Rapporteringsgraden counts: a lesson once, however many teachers stand on it.
+  PERFORM pg_temp.d6o_expect('392o the school’s are D2’s distinct lessons',
+    (SELECT count(DISTINCT r.lesson_id) || '/' || count(DISTINCT r.lesson_id) FILTER (WHERE r.reported) FROM app.reporting_lessons(s, '2026-02-01', '2026-02-28', clock_timestamp()) r), '5/4');
+END $$;
+ROLLBACK;
+
+-- 392o: a teacher who has left still has the lessons she held. Class A has five pupils, and a teacher t and a
+-- colleague t2:
+--   L1 Mon 2026-02-02 08:00  t, a mark                     held and reported
+--   L2 Tue 2026-02-03 08:00  t, no mark                    held, not reported
+--   L3 Wed 2026-02-04 08:00  t and t2, a mark              held and reported, once
+--   L4 Mon 2026-02-16 08:00  t, a mark                     held and reported while t is a teacher of the school
+-- Everyone active: 4 held, 3 reported. Reporting lessons is the live question (who is to report now), so a month that
+-- is counted again after t has left must not lose what she held: t leaves on 2026-03-15 and February is the same; t
+-- leaves on 2026-02-10 and L4, which no one was left to report, goes while L1-L3 stay; t is back and L4 is again.
+-- (Rapporteringsgraden's own function drops the teacher in every one of these, which is its question and not this.)
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-gone', 5, 0);
+  feb constant date := '2026-02-01';
+  t uuid;
+  t2 uuid;
+  l uuid;
+  all5 constant text := 'a1=PRESENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT';
+  whole constant text := 'school 5/5 750/0/50/0/0 4/3 | A 5/5 750/0/50/0/0 4/3';
+BEGIN
+  SELECT id INTO t FROM "Users" WHERE "schoolId" = s AND email = 'd6o-d6o-gone-t@example.invalid';
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-02', 8, 50, 'SCHEDULED', all5);
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-03', 8, 50, 'SCHEDULED', NULL);
+  l := pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-04', 8, 50, 'SCHEDULED', 'a1=ABSENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT');
+  PERFORM set_config('session_replication_role', 'origin', true);
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'd6o-d6o-gone-t2@example.invalid', 'D6', 'Lärare2', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO t2;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, t2, 'ASSISTANT');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-16', 8, 50, 'SCHEDULED', all5);
+
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o everyone active: four held, three reported', pg_temp.d6o_rows(s, feb), whole);
+
+  -- Leaves after the month (deactivatedAt is the instant the trigger would have written; the triggers are off here).
+  PERFORM set_config('session_replication_role', 'replica', true);
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = '2026-03-15 12:00+01' WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a teacher who left after the month: February is what it was', pg_temp.d6o_rows(s, feb), whole);
+  PERFORM pg_temp.d6o_expect('392o and the reporting function drops her, which is its question',
+    (SELECT count(DISTINCT lesson_id)::text FROM app.reporting_lessons(s, '2026-02-01', '2026-02-28', clock_timestamp())), '1');
+
+  -- Leaves in the middle of it: the lesson after she left has no one left to report it.
+  UPDATE "Users" SET "deactivatedAt" = '2026-02-10 12:00+01' WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a teacher who left on the 10th: L1 to L3 stay, L4 goes',
+    pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 3/2 | A 5/5 750/0/50/0/0 3/2');
+  -- The instant is the lesson's end: a lesson over before she left is hers, one that ends after is not.
+  UPDATE "Users" SET "deactivatedAt" = '2026-02-02 08:50+01' WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o left the minute L1 ended: L1 is hers, L2 is not, L3 has t2',
+    pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 2/2 | A 5/5 750/0/50/0/0 2/2');
+  UPDATE "Users" SET "deactivatedAt" = '2026-02-02 08:49+01' WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o left a minute before L1 ended: only L3, which t2 held',
+    pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 1/1 | A 5/5 750/0/50/0/0 1/1');
+
+  -- Back again: the lessons come back.
+  UPDATE "Users" SET "isActive" = true, "deactivatedAt" = NULL WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a teacher who is back: four held, three reported', pg_temp.d6o_rows(s, feb), whole);
+
+  -- Only a teacher counts: a lesson whose only person is an administrator of the school is nobody's to report.
+  l := pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-05', 8, 50, 'SCHEDULED', all5);
+  DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, t2, 'LEAD');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a lesson of t2 alone is held and reported', pg_temp.d6o_rows(s, feb),
+    'school 5/5 1000/0/50/0/0 5/4 | A 5/5 1000/0/50/0/0 5/4');
+  UPDATE "Users" SET role = 'SCHOOL_ADMIN', "adminProfile" = 'FULL' WHERE id = t2;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o t2 an administrator: her lesson is no teacher’s, and L3 still has t',
+    pg_temp.d6o_rows(s, feb), 'school 5/5 1000/0/50/0/0 4/3 | A 5/5 1000/0/50/0/0 4/3');
+END $$;
+ROLLBACK;
+
+-- 392o: the two lesson functions are one definition. app.absence_stats_lessons is app.reporting_lessons with the one line
+-- about the teacher, and nothing else: whoever rewrites the one (Elevens lektion för dagen adds a condition about a pupil
+-- moved off a lesson) has to carry it into the other, or the history's reporting rate is not Rapporteringsgradens.
+-- Compared as the catalogue holds them, with the comments cut and the white space collapsed.
+BEGIN;
+CREATE FUNCTION pg_temp.d6o_norm(p_src text) RETURNS text LANGUAGE sql IMMUTABLE AS $f$
+  SELECT btrim(regexp_replace(regexp_replace(p_src, '--[^' || chr(10) || ']*', '', 'g'), '\s+', ' ', 'g'))
+$f$;
+DO $$
+DECLARE
+  d2 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.reporting_lessons(uuid, date, date, timestamptz)'::regprocedure));
+  d6 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.absence_stats_lessons(uuid, date, date, timestamptz)'::regprocedure));
+  live constant text := E'AND u."role" = ''TEACHER'' AND u."isActive"';
+  gone constant text := E'AND u."role" = ''TEACHER'' AND (u."deactivatedAt" IS NULL OR cl."endsAt" <= u."deactivatedAt")';
+BEGIN
+  PERFORM pg_temp.d6o_expect('392o D2 asks who is a teacher now', ((length(d2) - length(replace(d2, live, ''))) / length(live))::text, '1');
+  PERFORM pg_temp.d6o_expect('392o the history asks who had not left', ((length(d6) - length(replace(d6, gone, ''))) / length(gone))::text, '1');
+  PERFORM pg_temp.d6o_expect('392o and not who is a teacher now', ((length(d6) - length(replace(d6, live, ''))) / length(live))::text, '0');
+  PERFORM pg_temp.d6o_expect('392o the two bodies are the same but for that line', (replace(d2, live, gone) = d6)::text, 'true');
+  PERFORM pg_temp.d6o_expect('392o neither is a definer or has a path of its own (they are inlined into the caller)',
+    (SELECT string_agg(p.proname || ':' || p.prosecdef::text || ':' || coalesce(p.proconfig::text, ''), ',' ORDER BY p.proname COLLATE "C")
+       FROM pg_proc p WHERE p.oid IN ('app.reporting_lessons(uuid, date, date, timestamptz)'::regprocedure, 'app.absence_stats_lessons(uuid, date, date, timestamptz)'::regprocedure)),
+    'absence_stats_lessons:false:,reporting_lessons:false:');
+  PERFORM pg_temp.d6o_expect('392o the history’s is the owner’s alone',
+    (SELECT string_agg(r || ':' || has_function_privilege(r, 'app.absence_stats_lessons(uuid, date, date, timestamptz)', 'EXECUTE')::text, ',' ORDER BY r COLLATE "C")
+       FROM unnest(ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated']) r WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)),
+    'anon:false,app_authenticated:false,authenticated:false,service_role:false');
+  -- The control: the check cuts what it says it cuts (a body that differs in a comment and in white space only is the same).
+  PERFORM pg_temp.d6o_expect('392o a comment and the white space are not a difference',
+    (pg_temp.d6o_norm(E'SELECT 1   -- one\n  FROM t') = pg_temp.d6o_norm(E'SELECT 1 FROM t'))::text, 'true');
+  PERFORM pg_temp.d6o_expect('392o a condition is', (pg_temp.d6o_norm(E'SELECT 1 FROM t WHERE a') = pg_temp.d6o_norm(E'SELECT 1 FROM t WHERE b'))::text, 'false');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 394o: the mentor is the mentor of Frånvarobevakningen. For each
+-- teacher, the pupils whose statistics they can open are the pupils
+-- app.absence_watch_mentees names for them (less the marked), and the classes
+-- they reach are the classes those pupils sit in: one definition, asked
+-- twice. A teacher the watch gives no pupil reaches none.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  full_sub constant text := '00000000-0000-4000-8000-d60000000001';
+  school uuid;
+  today date;
+  t record;
+  mine uuid[];
+  theirs uuid[];
+  my_classes uuid[];
+  their_classes uuid[];
+  c record;
+  p record;
+  total int := 0;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', full_sub)::text, true);
+  school := app.current_school_id();
+  today := app.school_today();
+  FOR t IN SELECT * FROM (VALUES ('fs-m1@example.invalid', '00000000-0000-4000-8000-d60000000006'),
+                                 ('fs-m2@example.invalid', '00000000-0000-4000-8000-d60000000007'),
+                                 ('fs-t3@example.invalid', '00000000-0000-4000-8000-d60000000008')) v(email, sub)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', full_sub)::text, true);
+    -- What the watch says: the mentor's mentees, today, but not the marked.
+    SELECT coalesce(array_agg(mm.student_id ORDER BY mm.student_id), '{}') INTO theirs
+      FROM app.absence_watch_mentees(school, today) mm
+     WHERE mm.mentor_id = (SELECT id FROM "Users" WHERE "schoolId" = school AND email = t.email)
+       AND NOT EXISTS (SELECT 1 FROM "PersonProtections" pp WHERE pp."userId" = mm.student_id AND pp."schoolId" = school);
+    SELECT coalesce(array_agg(DISTINCT e."studentGroupId" ORDER BY e."studentGroupId"), '{}') INTO their_classes
+      FROM app.absence_watch_mentees(school, today) mm
+      JOIN "StudentEnrollments" e ON e."studentId" = mm.student_id AND e."schoolId" = school
+       AND e."validFrom" <= today AND (e."validTo" IS NULL OR today < e."validTo")
+     WHERE mm.mentor_id = (SELECT id FROM "Users" WHERE "schoolId" = school AND email = t.email);
+    -- What the statistics say, asked of every pupil and class of the school.
+    mine := '{}';
+    my_classes := '{}';
+    FOR p IN SELECT id FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' ORDER BY id LOOP
+      total := total + 1;
+      IF pg_temp.d6o_as(t.sub, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p.id)) = 'ok:1' THEN
+        mine := mine || p.id;
+      END IF;
+    END LOOP;
+    FOR c IN SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name IN ('FS8A', 'FS8B', 'FS8C') ORDER BY id LOOP
+      total := total + 1;
+      IF pg_temp.d6o_as(t.sub, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c.id)) LIKE 'ok:%' THEN
+        my_classes := my_classes || c.id;
+      END IF;
+    END LOOP;
+    IF mine IS DISTINCT FROM theirs OR my_classes IS DISTINCT FROM their_classes THEN
+      RAISE EXCEPTION 'frånvarostatistik 394: % reaches pupils % and classes %, the watch gives pupils % and classes %', t.email, mine, my_classes, theirs, their_classes;
+    END IF;
+  END LOOP;
+  -- And the control: the mentors have pupils (the check is not two empty sets).
+  IF (SELECT count(*) FROM app.absence_watch_mentees(school, today)) < 14 THEN
+    RAISE EXCEPTION 'frånvarostatistik 394: the watch gives the mentors % pupils, not the fixtures'' 14 (eight and six, p9 among them)', (SELECT count(*) FROM app.absence_watch_mentees(school, today));
+  END IF;
+  RAISE NOTICE 'frånvarostatistik 394: % calls', total;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 399o: Elevens lektion för dagen (D7, 20270122091000), the owner's
+-- side. What no login may call (the readers of the feed and of Schemavisaren,
+-- rapporteringsgrad, gallring), what the keys do past row security, what an
+-- arrival may be, and that the integrations are told. The doors themselves are
+-- written by the sections 395-398 of rls-policies.sql; here the owner takes the
+-- claims of the school's full administrator and walks through the same door.
+-- Fixtures: rls-d7-school (and rls-d7-annan), with fixed ids.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.d7_as(p_auth text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_auth)::text, true)
+$$;
+CREATE FUNCTION pg_temp.d7_auth(n integer) RETURNS text LANGUAGE sql AS $$
+  SELECT '00000000-0000-4000-8000-d7000000' || lpad(n::text, 2, '0') || '00'
+$$;
+CREATE FUNCTION pg_temp.d7f(p_name text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT CASE p_name
+    WHEN 'school' THEN 'd7000000-0000-4000-8000-0000000000c1'
+    WHEN 'other' THEN 'd7000000-0000-4000-8000-0000000000c2'
+    ELSE ('d7000000-0000-4000-8000-b000000000' || CASE p_name
+      WHEN 'full' THEN '01' WHEN 't1' THEN '06' WHEN 't2' THEN '07' WHEN 'p1' THEN '11' WHEN 'p2' THEN '12' WHEN 'p3' THEN '13'
+      WHEN 'po' THEN '32' END)::uuid
+  END
+$$;
+CREATE FUNCTION pg_temp.d7_l(n integer) RETURNS uuid LANGUAGE sql AS $$
+  SELECT ('d7000000-0000-4000-8000-000000000a' || lpad(n::text, 2, '0'))::uuid
+$$;
+CREATE FUNCTION pg_temp.d7_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'elevens lektion %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+CREATE FUNCTION pg_temp.d7_refuses(p_sql text, p_state text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM p_state THEN
+    RAISE EXCEPTION 'elevens lektion: % should be refused with %, was %', p_what, p_state, got;
+  END IF;
+END $$;
+-- The moves as one text, "pupil:from>to" by the last two digits of their ids.
+CREATE FUNCTION pg_temp.d7_moves() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(right(m."studentId"::text, 2) || ':' || right(m."fromLessonId"::text, 2) || '>' || right(m."toLessonId"::text, 2),
+                             ', ' ORDER BY m."studentId", m."fromLessonId"), '')
+    FROM "LessonPupilMoves" m WHERE m."schoolId" = pg_temp.d7f('school')
+$$;
+CREATE FUNCTION pg_temp.d7_day1() RETURNS date LANGUAGE sql AS $$
+  SELECT date FROM "CalendarLessons" WHERE id = pg_temp.d7_l(1)
+$$;
+-- A feed or a viewer page as the numbers/subjects of its lessons that are not cancelled.
+CREATE FUNCTION pg_temp.d7_feed(p_pupil text) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(right(x ->> 'id', 2), ',' ORDER BY x ->> 'id'), '')
+    FROM jsonb_array_elements(app.calendar_feed_pupil_lessons(pg_temp.d7f('school'), pg_temp.d7f(p_pupil),
+           pg_temp.d7_day1(), pg_temp.d7_day1(), 'Europe/Stockholm', 'SIGNATURE')) x
+   WHERE NOT (x ->> 'cancelled')::boolean
+$$;
+CREATE FUNCTION pg_temp.d7_page(p_pupil text) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(l ->> 'subject', ',' ORDER BY l ->> 'start', l ->> 'subject'), '')
+    FROM jsonb_array_elements(app.timetable_pupil_days(pg_temp.d7f('school'), pg_temp.d7f(p_pupil),
+           pg_temp.d7_day1(), 'Europe/Stockholm', 'SIGNATURE')) d,
+         jsonb_array_elements(d -> 'lessons') l
+   WHERE NOT (l ->> 'cancelled')::boolean
+$$;
+CREATE FUNCTION pg_temp.d7_class(p_class text) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(l ->> 'subject', ',' ORDER BY l ->> 'start', l ->> 'subject'), '')
+    FROM jsonb_array_elements(app.timetable_week_days(pg_temp.d7f('school'), 'GROUP',
+           (SELECT id FROM "StudentGroups" WHERE name = p_class AND "schoolId" = pg_temp.d7f('school')),
+           pg_temp.d7_day1(), 'Europe/Stockholm', 'SIGNATURE', false, 0)) d,
+         jsonb_array_elements(d -> 'lessons') l
+   WHERE NOT coalesce((l ->> 'cancelled')::boolean, false)
+$$;
+
+-- The calendar feed of a pupil and the viewer's page of the pupil, the week of the class and of the
+-- target: the feed leaves the source out and has the target; the class lesson the pupil arrived at
+-- is still on the class's page and on its other pupils' pages (an arrival does not make it a lesson
+-- for named pupils).
+BEGIN;
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_expect('before: the feed of a D77A pupil', pg_temp.d7_feed('p1'), '01,04');
+  PERFORM pg_temp.d7_expect('before: the page of a D77B pupil', pg_temp.d7_page('p3'), 'D7 Engelska,D7 Svenska');
+  PERFORM pg_temp.d7_expect('before: the page of D77B', pg_temp.d7_class('D77B'), 'D7 Engelska,D7 Svenska');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_expect('the moved pupil''s feed', pg_temp.d7_feed('p1'), '02,04');
+  PERFORM pg_temp.d7_expect('a classmate''s feed', pg_temp.d7_feed('p2'), '01,04');
+  PERFORM pg_temp.d7_expect('the target class''s pupil''s feed', pg_temp.d7_feed('p3'), '02,03');
+  PERFORM pg_temp.d7_expect('the moved pupil''s page', pg_temp.d7_page('p1'), 'D7 Engelska,D7 Svenska');
+  PERFORM pg_temp.d7_expect('the target class''s pupil still has the lesson on their page', pg_temp.d7_page('p3'), 'D7 Engelska,D7 Svenska');
+  PERFORM pg_temp.d7_expect('the target class''s own page still has the lesson', pg_temp.d7_class('D77B'), 'D7 Engelska,D7 Svenska');
+  PERFORM pg_temp.d7_expect('the source class''s page is the class''s lessons', pg_temp.d7_class('D77A'), 'D7 Matematik,D7 Svenska');
+END $$;
+ROLLBACK;
+
+-- Rapporteringsgrad: a lesson whose only pupil was a named one who is moved off has no one on its list.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := pg_temp.d7f('school');
+  stoed uuid;
+  lonely uuid := gen_random_uuid();
+  other uuid := gen_random_uuid();
+  cnt text;
+BEGIN
+  -- A group no one is in, a lesson of it two days back naming p1 alone, and a parallel lesson of D77B.
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  SELECT school, y.id, 'D7 stöd', 7, now() FROM "AcademicYears" y WHERE y."schoolId" = school LIMIT 1 RETURNING id INTO stoed;
+  INSERT INTO "CalendarLessons" (id, "schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  SELECT lonely, school, l."subjectId", stoed, l.date - 2, l."startsAt" - interval '2 days', l."endsAt" - interval '2 days', 'SCHEDULED', now()
+    FROM "CalendarLessons" l WHERE l.id = pg_temp.d7_l(1);
+  INSERT INTO "CalendarLessons" (id, "schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  SELECT other, school, l."subjectId", l."studentGroupId", l.date - 2, l."startsAt" - interval '2 days', l."endsAt" - interval '2 days', 'SCHEDULED', now()
+    FROM "CalendarLessons" l WHERE l.id = pg_temp.d7_l(2);
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId") VALUES (school, lonely, pg_temp.d7f('t1'));
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES (school, lonely, pg_temp.d7f('p1'));
+  SELECT count(*)::text INTO cnt FROM app.reporting_lessons(school, (current_date - 5), (current_date + 1), now() + interval '2 days') r WHERE r.lesson_id = lonely;
+  PERFORM pg_temp.d7_expect('a lesson naming a pupil is a lesson with a list', cnt, '1');
+  -- The move, written past the doors (they refuse the past; the table's trigger does not).
+  INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (school, pg_temp.d7f('p1'), lonely, other);
+  SELECT count(*)::text INTO cnt FROM app.reporting_lessons(school, (current_date - 5), (current_date + 1), now() + interval '2 days') r WHERE r.lesson_id = lonely;
+  PERFORM pg_temp.d7_expect('moved off, nobody is on its list', cnt, '0');
+END $$;
+ROLLBACK;
+
+-- Gallring: a move is due with the register of the day it took a pupil out of, for ATTENDANCE only, and goes
+-- in the night; another school's does not, and a move newer than the limit stays.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := pg_temp.d7f('school');
+  day date;
+  due text;
+  run uuid;
+  n integer;
+  counts jsonb;
+BEGIN
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM set_config('request.jwt.claims', '', true);
+  day := pg_temp.d7_day1();
+  SELECT string_agg(d.tbl, ',') INTO due FROM app.gallring_due(school, 'ATTENDANCE', day, day) d WHERE d.tbl = 'LessonPupilMoves';
+  PERFORM pg_temp.d7_expect('not due before the day is past the limit', coalesce(due, 'none'), 'none');
+  SELECT string_agg(d.tbl, ',') INTO due FROM app.gallring_due(school, 'ATTENDANCE', day + 1, day + 1) d WHERE d.tbl = 'LessonPupilMoves';
+  PERFORM pg_temp.d7_expect('due with the register', coalesce(due, 'none'), 'LessonPupilMoves');
+  SELECT string_agg(d.tbl, ',') INTO due FROM app.gallring_due(school, 'ABSENCE_REPORTS', day + 1, day + 1) d WHERE d.tbl = 'LessonPupilMoves';
+  PERFORM pg_temp.d7_expect('not another kind''s', coalesce(due, 'none'), 'none');
+  SELECT string_agg(d.tbl, ',') INTO due FROM app.gallring_due(pg_temp.d7f('other'), 'ATTENDANCE', day + 1, day + 1) d WHERE d.tbl = 'LessonPupilMoves';
+  PERFORM pg_temp.d7_expect('not another school''s', coalesce(due, 'none'), 'none');
+
+  -- The night: the school keeps attendance for 12 months; make the lessons of the move old, and run.
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (school, 'ATTENDANCE', 'PURGE_AFTER', 12, 'D7 398', pg_temp.d7f('full'), now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  UPDATE "CalendarLessons" SET status = 'SCHEDULED' WHERE id = pg_temp.d7_l(1);
+  ALTER TABLE "CalendarLessons" DISABLE TRIGGER "CalendarLessons_pupil_moves_lapse";
+  UPDATE "CalendarLessons" SET date = date - 900, "startsAt" = "startsAt" - interval '900 days', "endsAt" = "endsAt" - interval '900 days'
+   WHERE id IN (pg_temp.d7_l(1), pg_temp.d7_l(2));
+  ALTER TABLE "CalendarLessons" ENABLE TRIGGER "CalendarLessons_pupil_moves_lapse";
+  run := app.gallring_begin(school, now());
+  LOOP
+    n := app.gallring_purge(run, 'ATTENDANCE', 1);
+    EXIT WHEN n = 0;
+  END LOOP;
+  PERFORM app.gallring_finish(run, '{}', now());
+  PERFORM pg_temp.d7_expect('the night takes the move', pg_temp.d7_moves(), '');
+  SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
+  IF (counts ->> 'ATTENDANCE')::integer < 1 THEN
+    RAISE EXCEPTION 'elevens lektion 399o: the run counts % under ATTENDANCE, not the move', counts ->> 'ATTENDANCE';
+  END IF;
+  PERFORM pg_temp.d7_expect('... and the arrival is not the gallring''s to take (it goes with the move by its key)',
+    (SELECT count(*)::text FROM "CalendarLessonStudents" WHERE "studentId" = pg_temp.d7f('p1')), '0');
+END $$;
+ROLLBACK;
+
+-- A pupil removed takes the move and its arrival; a lesson removed takes the move and the other lesson's arrival.
+BEGIN;
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p2'), pg_temp.d7_l(1), pg_temp.d7_l(3));
+  PERFORM set_config('request.jwt.claims', '', true);
+  DELETE FROM "Users" WHERE id = pg_temp.d7f('p1');
+  PERFORM pg_temp.d7_expect('a removed pupil takes the move', pg_temp.d7_moves(), '12:01>03');
+  PERFORM pg_temp.d7_expect('... and the arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" WHERE "calendarLessonId" = pg_temp.d7_l(2)), '0');
+  DELETE FROM "CalendarLessons" WHERE id = pg_temp.d7_l(3);
+  PERFORM pg_temp.d7_expect('a removed lesson takes the move', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('... and the pupil is where the class is', (SELECT count(*)::text FROM "CalendarLessonStudents" WHERE "studentId" = pg_temp.d7f('p2')), '0');
+END $$;
+ROLLBACK;
+
+-- An arrival is the move's: its lesson and its pupil are the move's, and one deleted by itself takes the move.
+BEGIN;
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM set_config('request.jwt.claims', '', true);
+  mv := (SELECT id FROM "LessonPupilMoves" WHERE "schoolId" = pg_temp.d7f('school'));
+  PERFORM pg_temp.d7_refuses(format('INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId", "moveId") VALUES (%L, %L, %L, %L)',
+    pg_temp.d7f('school'), pg_temp.d7_l(3), pg_temp.d7f('p2'), mv), 'LM409', 'an arrival of another lesson and pupil than the move''s');
+  PERFORM pg_temp.d7_refuses(format('INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId", "moveId") VALUES (%L, %L, %L, %L)',
+    pg_temp.d7f('school'), pg_temp.d7_l(3), pg_temp.d7f('p2'), gen_random_uuid()), 'LM409', 'an arrival of a move that is not there');
+  PERFORM pg_temp.d7_refuses(format('UPDATE "CalendarLessonStudents" SET "calendarLessonId" = %L WHERE "moveId" = %L', pg_temp.d7_l(3), mv), 'LM409', 'an arrival moved to another lesson');
+  -- A named pupil without a move is as before.
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES (pg_temp.d7f('school'), pg_temp.d7_l(3), pg_temp.d7f('p2'));
+  DELETE FROM "CalendarLessonStudents" WHERE "moveId" = mv;
+  PERFORM pg_temp.d7_expect('an arrival taken away by itself takes the move', pg_temp.d7_moves(), '');
+END $$;
+ROLLBACK;
+
+-- A move across two schools is refused by the keys, whoever writes it; so is a lesson moved onto itself, and two
+-- lessons that do not overlap, written past the doors.
+BEGIN;
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses(format('INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (%L, %L, %L, %L)',
+    pg_temp.d7f('school'), pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(7)), 'LM404', 'a target of another school');
+  PERFORM pg_temp.d7_refuses(format('INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (%L, %L, %L, %L)',
+    pg_temp.d7f('school'), pg_temp.d7f('po'), pg_temp.d7_l(1), pg_temp.d7_l(2)), 'LM404', 'a pupil of another school');
+  -- The trigger is the first line; the keys are the second, and hold with the trigger away.
+  ALTER TABLE "LessonPupilMoves" DISABLE TRIGGER "LessonPupilMoves_are_parallel";
+  PERFORM pg_temp.d7_refuses(format('INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (%L, %L, %L, %L)',
+    pg_temp.d7f('school'), pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(7)), '23503', 'a target of another school, past the trigger');
+  PERFORM pg_temp.d7_refuses(format('INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (%L, %L, %L, %L)',
+    pg_temp.d7f('school'), pg_temp.d7f('po'), pg_temp.d7_l(1), pg_temp.d7_l(2)), '23503', 'a pupil of another school, past the trigger');
+  ALTER TABLE "LessonPupilMoves" ENABLE TRIGGER "LessonPupilMoves_are_parallel";
+  PERFORM pg_temp.d7_refuses(format('INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (%L, %L, %L, %L)',
+    pg_temp.d7f('school'), pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(1)), '23514', 'a lesson moved onto itself');
+  PERFORM pg_temp.d7_refuses(format('INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (%L, %L, %L, %L)',
+    pg_temp.d7f('school'), pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(4)), 'LM412', 'two lessons that do not overlap, written past the door');
+END $$;
+ROLLBACK;
+
+-- The integrations are told of both lessons by a move (one call, so that a move one way and a move the other
+-- take the version rows in one order): each lesson's CalendarEvent version is written in this transaction.
+BEGIN;
+DO $$
+DECLARE
+  mv uuid;
+  school uuid := pg_temp.d7f('school');
+BEGIN
+  IF NOT app.ss12000_year_is_emitted((SELECT "academicYearId" FROM "StudentGroups" WHERE name = 'D77A' AND "schoolId" = school)) THEN
+    RAISE EXCEPTION 'elevens lektion 399o: the fixture year is not emitted, so the versions cannot be checked';
+  END IF;
+  PERFORM pg_temp.d7_expect('before: no version written in this transaction',
+    (SELECT count(*)::text FROM "Ss12000EntityVersions" WHERE resource = 'CalendarEvent' AND "entityId" IN (pg_temp.d7_l(1), pg_temp.d7_l(2)) AND xid = pg_current_xact_id()), '0');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_expect('a move tells the integrations of both lessons',
+    (SELECT count(*)::text FROM "Ss12000EntityVersions" WHERE resource = 'CalendarEvent' AND "entityId" IN (pg_temp.d7_l(1), pg_temp.d7_l(2)) AND xid = pg_current_xact_id()), '2');
+  PERFORM pg_temp.d7_expect('... and not a third', (SELECT count(*)::text FROM "Ss12000EntityVersions" WHERE resource = 'CalendarEvent' AND "entityId" = pg_temp.d7_l(3) AND xid = pg_current_xact_id()), '0');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 429o: Klasslärarens schema (G5, 20270128090000), the owner's side.
+-- Two rules the database keeps in two places, and the function that asks the
+-- second place only if the first is gone: the rows the tables forbid are written
+-- here with their guard taken away (inside a transaction that is rolled back),
+-- so that the function's own test is the only thing between the row and the
+-- answer. Without this a loosened function passes every section, because no row
+-- the tables allow can tell it from the original. Fixtures: rls-klasslarare-school.
+--
+--   * a room loan that has ended is not a loan: app.class_teacher_room_is_lent_in
+--     asks for endedAt IS NULL as well as for the status, and the table's CHECK
+--     (an ended loan says when, and only a WITHDRAWN or REVOKED one has ended)
+--     keeps a PENDING or APPROVED loan from having ended;
+--   * a klasslärare belongs to a home class, not to the half of one: the guard
+--     of the appointments asks for halfOfId IS NULL as well as for the kind, and
+--     the trigger of the groups (HC409) keeps a class from being the half of one.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  school uuid;
+  room uuid;
+  class uuid;
+  teacher uuid;
+  half uuid;
+  year uuid;
+  got text := 'none';
+BEGIN
+  SELECT id INTO school FROM "Schools" WHERE slug = 'rls-klasslarare-school';
+  SELECT id INTO room FROM "Rooms" WHERE "schoolId" = school AND name = 'KL Sal U (utgången)';
+  SELECT id, "academicYearId" INTO class, year FROM "StudentGroups" WHERE "schoolId" = school AND name = 'KL4A';
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND email = 'kl-t3@example.invalid';
+  IF school IS NULL OR room IS NULL OR class IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'klasslärare 429o: the fixtures did not run (school %, room %, class %, teacher %)', school, room, class, teacher;
+  END IF;
+
+  -- A room loan that has ended. The fixture's loan was approved and its last day has gone by: not lent, by its dates.
+  IF app.class_teacher_room_is_lent_in(school, room) THEN
+    RAISE EXCEPTION 'klasslärare 429o: the room whose loan has run out is lent';
+  END IF;
+  -- Take the CHECK away and let the loan run on for ten days with the moment it was ended written on it: by its status and its
+  -- dates alone the room would be lent; it is not, because the loan has ended.
+  ALTER TABLE "RoomLoans" DROP CONSTRAINT "RoomLoans_an_ended_loan_says_when";
+  UPDATE "RoomLoans" SET "endDate" = current_date + 10, "endedAt" = now() WHERE "roomId" = room AND "ownerSchoolId" = school;
+  IF NOT FOUND THEN RAISE EXCEPTION 'klasslärare 429o: the fixture has no loan of the room'; END IF;
+  IF app.class_teacher_room_is_lent_in(school, room) THEN
+    RAISE EXCEPTION 'klasslärare 429o: a loan that has ended (endedAt written) lends the room';
+  END IF;
+  -- The control: without the moment it ended, the same row lends it. The stand-in bites, and the function reads the column.
+  UPDATE "RoomLoans" SET "endedAt" = NULL WHERE "roomId" = room AND "ownerSchoolId" = school;
+  IF NOT app.class_teacher_room_is_lent_in(school, room) THEN
+    RAISE EXCEPTION 'klasslärare 429o: the approved loan with no end does not lend the room';
+  END IF;
+
+  -- A half of a class that is itself a class (kind CLASS with a halfOfId): the trigger of the groups refuses it, so it is
+  -- written past the trigger.
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "halfOfId", "updatedAt")
+    VALUES (school, year, 'KL4A-klass', 4, 'CLASS', class, now());
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM 'HC409' THEN
+    RAISE EXCEPTION 'klasslärare 429o: a class that is the half of one was %, not refused with HC409', got;
+  END IF;
+  ALTER TABLE "StudentGroups" DISABLE TRIGGER "StudentGroups_half_is_of_a_class";
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "halfOfId", "updatedAt")
+  VALUES (school, year, 'KL4A-klass', 4, 'CLASS', class, now()) RETURNING id INTO half;
+  -- A teacher of the school, a group of the right kind, and still no appointment: it is the half of a class.
+  got := 'none';
+  BEGIN
+    INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId") VALUES (school, year, half, teacher);
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM 'CT400' THEN
+    RAISE EXCEPTION 'klasslärare 429o: appointing a klasslärare of the half of a class was %, not refused with CT400', got;
+  END IF;
+  -- The control: the same teacher, appointed to the class itself.
+  INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId") VALUES (school, year, class, teacher);
+END $$;
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Checklistor (F5, 20270129091000), section 434: the owner's side. What needs the owner: removing a person, a class, a
+-- subject and a request; the keys across schools; the keys' indexes; and a gallring run.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.clo_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'checklistor %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- A statement the tables must refuse, by a fragment of the constraint's name (or the SQLSTATE).
+CREATE FUNCTION pg_temp.clo_refuses(p_sql text, p_fragment text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE p_sql;
+  RAISE EXCEPTION 'checklistor: accepted: %', p_sql;
+EXCEPTION WHEN check_violation OR unique_violation OR foreign_key_violation OR not_null_violation OR SQLSTATE 'CL422' OR SQLSTATE 'CL409' THEN
+  IF position(p_fragment IN SQLERRM) = 0 AND p_fragment <> SQLSTATE THEN
+    RAISE EXCEPTION 'checklistor: % was refused, but not by %: %', p_sql, p_fragment, SQLERRM;
+  END IF;
+END $$;
+CREATE FUNCTION pg_temp.clo_user(p_email text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT id FROM "Users" WHERE email = 'cl-' || p_email || '@example.invalid'
+$$;
+-- A request of the rule ALL, as the owner writes it, with a receipt for each pair 'p1:g1,p1:g2'.
+CREATE FUNCTION pg_temp.clo_request(p_school uuid, p_author uuid, p_title text, p_pairs text) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  req uuid := gen_random_uuid();
+  pair text;
+BEGIN
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, rule) VALUES (req, p_school, p_author, p_title, 'Text för ' || p_title, 'ALL');
+  FOREACH pair IN ARRAY string_to_array(p_pairs, ',') LOOP
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
+    VALUES (req, p_school, pg_temp.clo_user(split_part(pair, ':', 1)), pg_temp.clo_user(split_part(pair, ':', 2)));
+  END LOOP;
+  RETURN req;
+END $$;
+
+-- 434a: the keys across schools, what removing a person, a class, a subject and a request takes, and the keys' indexes.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-checklistor-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-checklistor-annan');
+  full_ uuid := pg_temp.clo_user('full');
+  c7a uuid := (SELECT id FROM "StudentGroups" WHERE name = 'CL7A');
+  cx uuid;
+  subj uuid := (SELECT id FROM "Subjects" WHERE code = 'CLS');
+  tpl uuid := gen_random_uuid();
+  tpl_o uuid := gen_random_uuid();
+  lst uuid := gen_random_uuid();
+  lst_x uuid := gen_random_uuid();
+  lst_o uuid := gen_random_uuid();
+  req uuid;
+  fk record;
+BEGIN
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (school, (SELECT "academicYearId" FROM "StudentGroups" WHERE id = c7a), 'CLX', 7, now()) RETURNING id INTO cx;
+  INSERT INTO "InstructionTemplates" (id, "schoolId", "subjectId", title) VALUES (tpl, school, subj, 'Cirkelsågen');
+  INSERT INTO "InstructionTemplates" (id, "schoolId", title) VALUES (tpl_o, other, 'Annans mall');
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdById") VALUES (lst, school, c7a, 'Fotografering', 'Text', pg_temp.clo_user('t1'));
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdById") VALUES (lst_x, school, cx, 'Fotografering', 'Text', pg_temp.clo_user('t3'));
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst_o, other, (SELECT id FROM "StudentGroups" WHERE name = 'CL9A'), 'Annan lista', 'Text');
+
+  -- A key across schools is refused by the composite key, whatever the stamp lets by.
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$,
+                                     other, tpl, pg_temp.clo_user('annan-p')), 'InstructionProofs_templateId_schoolId_fkey');
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date)$q$,
+                                     other, lst, pg_temp.clo_user('annan-p')), 'ConsentEntries_listId_schoolId_fkey');
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES (%L, %L, %L, current_date)$q$,
+                                     school, tpl, pg_temp.clo_user('annan-p')), 'CL422');
+  -- A class of another school is no class of a list's school, and neither is a subject.
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body) VALUES (%L, %L, 'Fel klass', 'Text')$q$,
+                                     school, (SELECT id FROM "StudentGroups" WHERE name = 'CL9A')), 'CL422');
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", "subjectId", title) VALUES (%L, %L, 'Fel ämne')$q$,
+                                     school, (SELECT id FROM "Subjects" WHERE code = 'ASL')), 'InstructionTemplates_subjectId_schoolId_fkey');
+  -- An instructor of another school is no instructor.
+  PERFORM pg_temp.clo_refuses(format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId") VALUES (%L, %L, %L, current_date, %L)$q$,
+                                     school, tpl, pg_temp.clo_user('p1'), pg_temp.clo_user('annan-t')), 'CL422');
+
+  -- What a person who is removed takes, and what stays. A teacher who gave instruction and wrote ticks and answers:
+  -- the rows stay without them. A pupil: all that is about the pupil goes.
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId", "recordedById")
+  VALUES (school, tpl, pg_temp.clo_user('p1'), current_date - 5, pg_temp.clo_user('t1'), pg_temp.clo_user('t1'));
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId", "recordedById")
+  VALUES (school, tpl, pg_temp.clo_user('p5'), current_date - 5, pg_temp.clo_user('t1'), pg_temp.clo_user('t1'));
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", "recordedById") VALUES
+    (school, lst, pg_temp.clo_user('p1'), 'GRANTED', current_date - 1, pg_temp.clo_user('t1')),
+    (school, lst_x, pg_temp.clo_user('p5'), 'GRANTED', current_date - 1, pg_temp.clo_user('t1'));
+  UPDATE "InstructionProofs" SET "voidedAt" = now(), "voidedById" = pg_temp.clo_user('t1'), "voidReason" = 'Test' WHERE "studentId" = pg_temp.clo_user('p5');
+  DELETE FROM "Users" WHERE id = pg_temp.clo_user('t1');
+  PERFORM pg_temp.clo_expect('434a a removed teacher', (SELECT concat_ws('|', count(*), count("instructorId"), count("recordedById"), count("voidedById"), count("voidedAt")) FROM "InstructionProofs" WHERE "templateId" = tpl), '2|0|0|0|1');
+  PERFORM pg_temp.clo_expect('434a a removed teacher''s answers', (SELECT count(*)::text FROM "ConsentEntries" WHERE "schoolId" = school) || '|' || (SELECT count("recordedById")::text FROM "ConsentEntries" WHERE "schoolId" = school), '2|0');
+  PERFORM pg_temp.clo_expect('434a a removed teacher''s list', (SELECT count(*)::text FROM "ConsentLists" WHERE "schoolId" = school AND "createdById" IS NULL), '1');
+  DELETE FROM "Users" WHERE id = pg_temp.clo_user('p5');
+  PERFORM pg_temp.clo_expect('434a a removed pupil', (SELECT count(*)::text FROM "InstructionProofs" WHERE "templateId" = tpl) || '|' || (SELECT count(*)::text FROM "ConsentEntries" WHERE "schoolId" = school), '1|1');
+  -- A removed class leaves its list, with the name it had.
+  DELETE FROM "StudentGroups" WHERE id = cx;
+  PERFORM pg_temp.clo_expect('434a a removed class', (SELECT concat_ws('|', "studentGroupId" IS NULL, "schoolId" = school, "groupName") FROM "ConsentLists" WHERE id = lst_x), 't|t|CLX');
+  -- A removed subject leaves its template, without a subject.
+  DELETE FROM "Subjects" WHERE id = subj;
+  PERFORM pg_temp.clo_expect('434a a removed subject', (SELECT concat_ws('|', "subjectId" IS NULL, "schoolId" = school, active) FROM "InstructionTemplates" WHERE id = tpl), 't|t|t');
+  -- A template with proofs is not removed; one without is (the owner's, since no role has DELETE).
+  PERFORM pg_temp.clo_refuses(format($q$DELETE FROM "InstructionTemplates" WHERE id = %L$q$, tpl), 'InstructionProofs_templateId_schoolId_fkey');
+  DELETE FROM "InstructionTemplates" WHERE id = tpl_o;
+  -- A removed request takes its link and leaves the answers it wrote.
+  req := pg_temp.clo_request(school, full_, 'Samtycke: Fotografering', 'p2:g1');
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, school, lst);
+  UPDATE "AckReceipts" SET "ackedAt" = now() WHERE "requestId" = req;
+  PERFORM pg_temp.clo_expect('434a the bridge, as the owner updates', (SELECT count(*)::text FROM "ConsentEntries" WHERE "ackRequestId" = req), '1');
+  DELETE FROM "AckRequests" WHERE id = req;
+  PERFORM pg_temp.clo_expect('434a a removed request', (SELECT count(*)::text FROM "ConsentAsks" WHERE "ackRequestId" = req) || '|' || (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst), '0|2');
+
+  -- Every foreign key of the five tables has an index that starts with its columns (the FK index audit).
+  FOR fk IN
+    SELECT c.conname, c.conrelid::regclass::text AS tbl
+      FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid::regclass::text IN ('"InstructionTemplates"', '"InstructionProofs"', '"ConsentLists"', '"ConsentEntries"', '"ConsentAsks"')
+       AND NOT EXISTS (
+             SELECT 1 FROM pg_index i
+              WHERE i.indrelid = c.conrelid AND i.indisvalid
+                AND (i.indkey::int2[])[0:cardinality(c.conkey) - 1] = c.conkey)
+  LOOP
+    RAISE EXCEPTION 'checklistor 434a: % on % has no index that starts with its columns', fk.conname, fk.tbl;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid
+              WHERE c.relname IN ('InstructionTemplates', 'InstructionProofs', 'ConsentLists', 'ConsentEntries', 'ConsentAsks') AND NOT i.indisvalid) THEN
+    RAISE EXCEPTION 'checklistor 434a: an index is invalid';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 434b: gallring. The proofs and answers of a pupil who has left go when the school's period for CHECKLISTS has passed since;
+-- a pupil who is still at the school has none due, however long the period; a list goes when it is old and empty. Nothing is
+-- due under another kind, nothing under no decision, and the other school's rows stay.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-checklistor-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-checklistor-annan');
+  full_ uuid := pg_temp.clo_user('full');
+  c7a uuid := (SELECT id FROM "StudentGroups" WHERE name = 'CL7A');
+  tpl uuid := gen_random_uuid();
+  tpl_o uuid := gen_random_uuid();
+  lst uuid := gen_random_uuid();
+  lst_old_empty uuid := gen_random_uuid();
+  lst_new_empty uuid := gen_random_uuid();
+  lst_o uuid := gen_random_uuid();
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  p1 uuid := pg_temp.clo_user('p1');
+  p2 uuid := pg_temp.clo_user('p2');
+  p3 uuid := pg_temp.clo_user('p3');
+  run uuid;
+  n integer;
+  total integer := 0;
+  counts jsonb;
+  pr_p1 uuid;
+  pe_p1 uuid;
+BEGIN
+  INSERT INTO "InstructionTemplates" (id, "schoolId", title) VALUES (tpl, school, 'Gallring');
+  INSERT INTO "InstructionTemplates" (id, "schoolId", title) VALUES (tpl_o, other, 'Annans');
+  -- p1 left 400 days ago, p2 left 100 days ago, p3 is at the school. Each has a proof and an answer.
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn") VALUES
+    (school, tpl, p1, current_date - 500), (school, tpl, p2, current_date - 500), (school, tpl, p3, current_date - 500),
+    (other, tpl_o, pg_temp.clo_user('annan-p'), current_date - 500);
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdAt") VALUES (lst, school, c7a, 'Foto', 'Text', now() - interval '900 days');
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdAt") VALUES (lst_old_empty, school, c7a, 'Gammal tom', 'Text', now() - interval '900 days');
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst_new_empty, school, c7a, 'Ny tom', 'Text');
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body, "createdAt")
+  VALUES (lst_o, other, (SELECT id FROM "StudentGroups" WHERE name = 'CL9A'), 'Annans gamla', 'Text', now() - interval '900 days');
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES
+    (school, lst, p1, 'GRANTED', current_date - 500), (school, lst, p2, 'GRANTED', current_date - 500), (school, lst, p3, 'GRANTED', current_date - 500);
+  ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '400 days' WHERE id = p1;
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '100 days' WHERE id = p2;
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '400 days' WHERE id = pg_temp.clo_user('annan-p');
+  ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  SELECT id INTO pr_p1 FROM "InstructionProofs" WHERE "studentId" = p1;
+  SELECT id INTO pe_p1 FROM "ConsentEntries" WHERE "studentId" = p1;
+
+  -- What is due, as the one predicate answers it, a year after: p1's proof and answer, and the old empty list, nothing of p2 (who
+  -- left too recently), p3 (still at the school) or the other school. The answer is named as the proof is, so that it is p1's
+  -- answer that is due and not p2's (a comparison turned the wrong way in the answers' branch left the old text as it was; review
+  -- of #288, round 2, MEDEL-4).
+  PERFORM pg_temp.clo_expect('434b due',
+    (SELECT string_agg(d.tbl || ':' || (CASE WHEN d.id IN (pr_p1, pe_p1) THEN 'p1' ELSE '' END), ' ' ORDER BY d.tbl) FROM app.gallring_due(school, 'CHECKLISTS', today - 365, today) d),
+    'ConsentEntries:p1 ConsentLists: InstructionProofs:p1');
+  PERFORM pg_temp.clo_expect('434b due, the old empty list only',
+    (SELECT string_agg(d.id::text, ' ') FROM app.gallring_due(school, 'CHECKLISTS', today - 365, today) d WHERE d.tbl = 'ConsentLists'), lst_old_empty::text);
+  -- A pupil who is at the school has none due, however far on the cutoff is; neither has the list with their answer.
+  PERFORM pg_temp.clo_expect('434b a pupil at the school is never due',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'CHECKLISTS', today + 10000, today) d
+      WHERE d.id IN (SELECT id FROM "InstructionProofs" WHERE "studentId" = p3) OR d.id IN (SELECT id FROM "ConsentEntries" WHERE "studentId" = p3)), '0');
+  PERFORM pg_temp.clo_expect('434b a list with an answer of a pupil at the school stays',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'CHECKLISTS', today + 10000, today) d WHERE d.id = lst), '0');
+  -- Nothing under another kind, and nothing of the other school under this school's.
+  IF EXISTS (SELECT 1 FROM unnest(ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'NOTIFICATIONS', 'CHANGE_LOGS', 'ABSENCE_REASONS', 'ACCESS_LOG', 'COVER_REQUESTS',
+                                         'CRISIS_DRILLS', 'CRISIS_ALARMS', 'DEPARTED_PEOPLE']::"RetentionDataType"[]) t
+              WHERE EXISTS (SELECT 1 FROM app.gallring_due(school, t, today - 365, today) d WHERE d.tbl IN ('InstructionProofs', 'ConsentEntries', 'ConsentLists'))) THEN
+    RAISE EXCEPTION 'checklistor 434b: a checklist row is due under another kind than CHECKLISTS';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.gallring_due(school, 'CHECKLISTS', today - 365, today) d WHERE d.id IN (SELECT id FROM "InstructionProofs" WHERE "schoolId" = other UNION SELECT lst_o)) THEN
+    RAISE EXCEPTION 'checklistor 434b: the other school''s rows are due under this school''s run';
+  END IF;
+
+  -- No decision: nothing goes. A decision of twelve months: the run takes p1's proof and answer and the old empty list, in batches of one.
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'CHECKLISTS', 100) <> 0 THEN RAISE EXCEPTION 'checklistor 434b: a school with no decision lost a row'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (school, 'CHECKLISTS', 'PURGE_AFTER', 12, 'CL 434', full_, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'CHECKLISTS', 1) <> 1 THEN RAISE EXCEPTION 'checklistor 434b: a batch of one took more or less than one row'; END IF;
+  IF (SELECT (complete ->> 'CHECKLISTS')::boolean FROM "GallringRuns" WHERE id = run) THEN RAISE EXCEPTION 'checklistor 434b: a full batch said nothing was left'; END IF;
+  LOOP
+    n := app.gallring_purge(run, 'CHECKLISTS', 1);
+    EXIT WHEN n = 0;
+    total := total + n;
+  END LOOP;
+  PERFORM app.gallring_finish(run, '{}', now());
+  IF total <> 2 THEN RAISE EXCEPTION 'checklistor 434b: the batches after the first took % more rows, not two', total; END IF;
+  PERFORM pg_temp.clo_expect('434b what is left',
+    (SELECT concat_ws('|', (SELECT count(*) FROM "InstructionProofs" WHERE "schoolId" = school), (SELECT count(*) FROM "ConsentEntries" WHERE "schoolId" = school),
+                      (SELECT string_agg(title, ',' ORDER BY title) FROM "ConsentLists" WHERE "schoolId" = school))),
+    '2|2|Foto,Ny tom');
+  -- ... and whose: p1's proof and answer went, p2's and p3's stay (p2 left too recently, p3 is at the school).
+  PERFORM pg_temp.clo_expect('434b whose proofs and answers are left',
+    'proofs ' || coalesce((SELECT string_agg(x.l, ',' ORDER BY x.l)
+                             FROM (SELECT CASE "studentId" WHEN p1 THEN 'p1' WHEN p2 THEN 'p2' WHEN p3 THEN 'p3' END AS l FROM "InstructionProofs" WHERE "schoolId" = school) x), '')
+      || ' answers ' || coalesce((SELECT string_agg(x.l, ',' ORDER BY x.l)
+                                    FROM (SELECT CASE "studentId" WHEN p1 THEN 'p1' WHEN p2 THEN 'p2' WHEN p3 THEN 'p3' END AS l FROM "ConsentEntries" WHERE "schoolId" = school) x), ''),
+    'proofs p2,p3 answers p2,p3');
+  SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
+  IF (counts ->> 'CHECKLISTS')::integer <> 3 THEN RAISE EXCEPTION 'checklistor 434b: the run counts % under CHECKLISTS, not three (the proof, the answer and the old list)', counts ->> 'CHECKLISTS'; END IF;
+  PERFORM pg_temp.clo_expect('434b the other school is left alone',
+    (SELECT count(*)::text FROM "InstructionProofs" WHERE "schoolId" = other) || '|' || (SELECT count(*)::text FROM "ConsentLists" WHERE "schoolId" = other), '1|1');
+  -- KEEP stops it at once.
+  ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '400 days' WHERE id = p3;
+  ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, reference, "decidedById", "decidedAt")
+  VALUES (school, 'CHECKLISTS', 'KEEP', 'CL 434 keep', full_, now() - interval '1 hour');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'CHECKLISTS', 100) <> 0 THEN RAISE EXCEPTION 'checklistor 434b: a school that keeps its checklists lost a row'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+
+  -- A pupil who comes back is not due: the school reactivates p2 (last, since a reactivation queues a deferred event on Users that
+  -- stops the next ALTER TABLE), and nothing of p2 is due however far on the cutoff is.
+  UPDATE "Users" SET "isActive" = true WHERE id = p2;
+  PERFORM pg_temp.clo_expect('434b a pupil who is back',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'CHECKLISTS', today + 10000, today) d
+      WHERE d.id IN (SELECT id FROM "InstructionProofs" WHERE "studentId" = p2 UNION SELECT id FROM "ConsentEntries" WHERE "studentId" = p2)), '0');
+END $$;
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Kvittens, after the independent review of #277 (20270202090000), owner checks.
+--
+--   450o  the delivery's three doors (the list, the pass, the mark) answer nothing to any login, a person or not
+--   451o  the sender rows of the usage are read under Drift
+--   452o  the day's window in the usage: the school's rows, one's own and the senders'
+--   453o  a removed sender's share, and the mark leaves the time the reminder went alone
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.kq_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'kvittens %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- The usage as one text for a caller, in the order the function answers (claims set for this transaction).
+CREATE FUNCTION pg_temp.kq_usage(p_auth text, p_senders integer DEFAULT 5) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  seen text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p_auth)::text, true);
+  SELECT coalesce(string_agg(u.scope || coalesce(':' || u.author_name, '') || ' ' || u.used || '/' || u.cap, ', ' ORDER BY u.n), '')
+    INTO seen
+    FROM app.ack_usage(p_senders) WITH ORDINALITY u(scope, author_id, author_name, used, cap, n);
+  PERFORM set_config('request.jwt.claims', '', true);
+  RETURN seen;
+END $$;
+
+-- 450o: app.ack_remind_queue, app.ack_remind_request and app.ack_reminder_mirrored are the delivery's doors, and the
+-- delivery sets no claims. A session with any claims gets nothing from them, and that includes a login that is no person:
+-- the huvudman's reader (a läsare of the school it chose, with no Users row there, so app.current_user_id() is NULL) is
+-- the one a guard on the person row let through, and the list is the door that handed it every school's due requests.
+-- A subject setting alone (the older claim style, which Supabase's auth.uid() also reads) is a login too. The same
+-- functions then do their work for the door, so none of this passes because they do nothing at all. (The guard's text and
+-- the doors' behaviour under every setting without a due row are 450's.)
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  roller uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  waits uuid;        -- a SENT reminder that waits for the delivery's mark
+  by_reader uuid;    -- a due request each of the three logins asks the pass to take
+  by_sub uuid;
+  by_person uuid;
+  asked uuid[];
+  n bigint;
+  notices bigint;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (school, true, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET enabled = true, "remindAfterDays" = 2;
+  waits := pg_temp.kvo_request(school, full_, 'Väntar på märket', 'ANY', 'p1:g1');
+  by_reader := pg_temp.kvo_request(school, full_, 'Läsarens', 'ANY', 'p1:g1');
+  by_sub := pg_temp.kvo_request(school, full_, 'Subjektets', 'ANY', 'p2:g1');
+  by_person := pg_temp.kvo_request(school, full_, 'Personens', 'ANY', 'p3:g3');
+  asked := ARRAY[by_reader, by_sub, by_person];
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = ANY (asked || waits);
+
+  -- The delivery's door (no claims; the empty string is what a pooled connection reads after a login's transaction)
+  -- is handed the four due requests by the list, and takes the first one: SENT, and not yet marked.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000) q WHERE q.request_id = ANY (asked || waits);
+  IF n <> 4 THEN RAISE EXCEPTION 'kvittens 450o: the door''s list holds % of the four due requests, not 4', n; END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_request(waits);
+  IF n <> 1 THEN RAISE EXCEPTION 'kvittens 450o: the door wrote % notices for the first request, not 1', n; END IF;
+  PERFORM pg_temp.kq_expect('450o the first reminder is SENT and not marked',
+                            (SELECT "reminderOutcome"::text || ':' || ("reminderMirroredAt" IS NOT NULL) FROM "AckRequests" WHERE id = waits), 'SENT:false');
+  notices := (SELECT count(*) FROM "Notifications" WHERE "schoolId" = school AND "type"::text = 'ACK_REMINDER');
+
+  -- The huvudman's reader at the roller school: a login with no person there.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000260')::text, true);
+  PERFORM set_config('app.chosen_school_id', roller::text, true);
+  IF app.current_user_id() IS NOT NULL OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_school_id() IS DISTINCT FROM roller THEN
+    RAISE EXCEPTION 'kvittens 450o: P is not the reader at the roller school (school %, person %, role %)', app.current_school_id(), app.current_user_id(), app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a login with no person was handed the list of % due requests, of every school', n; END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_request(by_reader);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a login with no person was handed % notices to deliver', n; END IF;
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM set_config('app.chosen_school_id', '', true);
+
+  -- A subject setting alone: no claims JSON, the older style. On this database auth.uid() does not read it, so no person
+  -- resolves, which is what makes it tell a guard on the person row from a guard on any login.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-f40000000001', true);
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a session with only a subject setting was handed the list of % due requests', n; END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_request(by_sub);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a session with only a subject setting was handed % notices to deliver', n; END IF;
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+
+  -- A person.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-f40000000001')::text, true);
+  IF app.current_user_id() IS DISTINCT FROM full_ THEN RAISE EXCEPTION 'kvittens 450o: the person is not Full'; END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a person was handed the list of % due requests', n; END IF;
+  SELECT count(*) INTO n FROM app.ack_remind_request(by_person);
+  IF n <> 0 THEN RAISE EXCEPTION 'kvittens 450o: a person was handed % notices to deliver', n; END IF;
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  -- Nothing was written by any of the three: no outcome, no notice, no guardian marked as reminded, no mark.
+  PERFORM pg_temp.kq_expect('450o nothing reminded by a login',
+                            (SELECT string_agg(coalesce("reminderOutcome"::text, '-'), ',' ORDER BY title COLLATE "C") FROM "AckRequests" WHERE id = ANY (asked)), '-,-,-');
+  PERFORM pg_temp.kq_expect('450o no notice written by a login',
+                            ((SELECT count(*) FROM "Notifications" WHERE "schoolId" = school AND "type"::text = 'ACK_REMINDER') - notices)::text, '0');
+  PERFORM pg_temp.kq_expect('450o no guardian marked reminded by a login',
+                            (SELECT count(*)::text FROM "AckReceipts" WHERE "requestId" = ANY (asked) AND "remindedAt" IS NOT NULL), '0');
+  PERFORM pg_temp.kq_expect('450o nothing marked mailed by a login',
+                            (SELECT ("reminderMirroredAt" IS NOT NULL)::text FROM "AckRequests" WHERE id = waits), 'false');
+
+  -- The door does all of it: the three requests are taken (they were due and waiting, so they are not skipped for some
+  -- other reason) and the SENT reminder is marked.
+  SELECT count(*) INTO n FROM app.ack_remind_request(by_reader);
+  SELECT n + count(*) INTO n FROM app.ack_remind_request(by_sub);
+  SELECT n + count(*) INTO n FROM app.ack_remind_request(by_person);
+  IF n <> 3 THEN RAISE EXCEPTION 'kvittens 450o: the door wrote % notices for the three requests, not 3', n; END IF;
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM pg_temp.kq_expect('450o the door takes the requests',
+                            (SELECT string_agg(coalesce("reminderOutcome"::text, '-'), ',' ORDER BY title COLLATE "C") FROM "AckRequests" WHERE id = ANY (asked)), 'SENT,SENT,SENT');
+  PERFORM pg_temp.kq_expect('450o the door marks', (SELECT ("reminderMirroredAt" IS NOT NULL)::text FROM "AckRequests" WHERE id = waits), 'true');
+  PERFORM pg_temp.kq_expect('450o the list no longer holds what the door took',
+                            (SELECT count(*)::text FROM app.ack_remind_queue(1000) q WHERE q.request_id = ANY (asked || waits)), '0');
+END $$;
+ROLLBACK;
+
+-- 451o: the sender rows of the usage name people, so they are read under Drift (a gate on the function and not only on
+-- the route). Every profile of today reads Drift, so the real function shows them to every administrator and the gate
+-- decides nothing yet; the first profile without it would, and there is no such profile to ask. A stand-in for
+-- app.current_user_may that says no to a read of Drift, made inside this transaction and rolled back with it, is that
+-- profile: the school and one's own share are shown, no sender is.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  the_md5 text := md5((SELECT prosrc FROM pg_proc WHERE oid = 'app.current_user_may("AdminArea", boolean)'::regprocedure));
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  PERFORM pg_temp.kvo_request(school, full_, 'Drift-grinden', 'ANY', 'p1:g1');
+  PERFORM pg_temp.kq_expect('451o an administrator who reads Drift is told the senders',
+                            pg_temp.kq_usage('00000000-0000-4000-8000-f40000000001'), 'SCHOOL 1/20000, ME 1/8000, SENDER:Kvittens Full 1/8000');
+
+  CREATE OR REPLACE FUNCTION app.current_user_may(p_area "AdminArea", p_write boolean) RETURNS boolean LANGUAGE sql STABLE AS $f$
+    SELECT NOT (p_area = 'DRIFT' AND NOT coalesce(p_write, true))
+  $f$;
+  IF md5((SELECT prosrc FROM pg_proc WHERE oid = 'app.current_user_may("AdminArea", boolean)'::regprocedure)) = the_md5 THEN
+    RAISE EXCEPTION 'kvittens 451o: the stand-in for the Drift gate was not made';
+  END IF;
+  PERFORM pg_temp.kq_expect('451o an administrator who may not read Drift is told no sender, and still the school and their own share',
+                            pg_temp.kq_usage('00000000-0000-4000-8000-f40000000001'), 'SCHOOL 1/20000, ME 1/8000');
+END $$;
+ROLLBACK;
+
+-- 452o: the day is the last 24 hours, in all three of the usage's counts. A request with its receipts made 24 hours and
+-- ten minutes ago is no part of it, one made 23 hours and fifty minutes ago is. (The limits count the same window:
+-- 381o moves a request across it and watches the limit open.)
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  old_req uuid := gen_random_uuid();
+  new_req uuid := gen_random_uuid();
+  long_ago constant timestamptz := now() - interval '24 hours 10 minutes';
+  lately constant timestamptz := now() - interval '23 hours 50 minutes';
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  INSERT INTO "AckRequests" (id, "schoolId", "authorId", title, body, "createdAt")
+  VALUES (old_req, school, full_, 'Över ett dygn', 'B', long_ago), (new_req, school, full_, 'Strax under ett dygn', 'B', lately);
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "createdAt")
+  VALUES (old_req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'), long_ago),
+         (old_req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2'), long_ago),
+         (new_req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g1'), lately),
+         (new_req, school, pg_temp.kvo_user('kv-p1'), pg_temp.kvo_user('kv-g2'), lately),
+         (new_req, school, pg_temp.kvo_user('kv-p2'), pg_temp.kvo_user('kv-g1'), lately);
+  PERFORM pg_temp.kvo_expect('452o the rows are there', (SELECT count(*)::text FROM "AckReceipts" WHERE "schoolId" = school), '5');
+  PERFORM pg_temp.kq_expect('452o only the last 24 hours are counted: the school, one''s own share and the sender',
+                            pg_temp.kq_usage('00000000-0000-4000-8000-f40000000001'), 'SCHOOL 3/20000, ME 3/8000, SENDER:Kvittens Full 3/8000');
+END $$;
+ROLLBACK;
+
+-- 453o: a sender whose Users row is gone (a teacher removed after she asked) has no role to look up, and is read with the
+-- stricter share, a teacher's 2 000, never an administrator's 8 000: the name stays, the person does not. And the mark
+-- that the delivery makes moves nothing else: the time the reminder went is the pass's and stays what it was, with the
+-- mark after it.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  full_ uuid := pg_temp.kvo_user('kv-full');
+  gone uuid;
+  waits uuid;
+  went timestamptz;
+BEGIN
+  INSERT INTO "AckSettings" ("schoolId", enabled, "remindAfterDays") VALUES (school, true, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET enabled = true, "remindAfterDays" = 2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'kv-borta@example.invalid', 'Kvittens', 'Borta', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO gone;
+  PERFORM pg_temp.kvo_request(school, gone, 'Borttagens', 'ANY', 'p1:g1');
+  DELETE FROM "Users" WHERE id = gone;
+  PERFORM pg_temp.kq_expect('453o a removed sender is read with the teacher''s share',
+                            pg_temp.kq_usage('00000000-0000-4000-8000-f40000000001'), 'SCHOOL 1/20000, ME 0/8000, SENDER:Kvittens Borta 1/2000');
+
+  waits := pg_temp.kvo_request(school, full_, 'Går och märks', 'ANY', 'p1:g1');
+  UPDATE "AckRequests" SET "remindAt" = now() - interval '1 hour' WHERE id = waits;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM count(*) FROM app.ack_remind_request(waits);
+  went := (SELECT "reminderSentAt" FROM "AckRequests" WHERE id = waits);
+  IF went IS NULL THEN RAISE EXCEPTION 'kvittens 453o: the request was not sent'; END IF;
+  PERFORM pg_sleep(0.02);
+  PERFORM app.ack_reminder_mirrored(waits);
+  PERFORM pg_temp.kq_expect('453o the mark leaves the time the reminder went alone',
+                            (SELECT "reminderSentAt" = went FROM "AckRequests" WHERE id = waits)::text, 'true');
+  PERFORM pg_temp.kq_expect('453o the mark is after the time the reminder went',
+                            (SELECT ("reminderMirroredAt" > "reminderSentAt")::text FROM "AckRequests" WHERE id = waits), 'true');
 END $$;
 ROLLBACK;

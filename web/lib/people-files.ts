@@ -79,6 +79,16 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     rule: "HOLDS_OUT",
     why: "Names teachers beside their lessons and no pupil: a teacher the school has marked as having a protected identity is shown as 'Skyddad identitet' in the row and in every lesson, and the sheet says how many were left out. The marks are read at the click, and a read that fails prints nothing.",
   },
+  "components/absence-stats/pupil-print.ts": {
+    files: "a pupil's frånvarostatistik printed (Skriv ut on the elevkort, which is also how a PDF is made): one A4 for the development talk",
+    rule: "HOLDS_OUT",
+    why: "Names one pupil and the pupil's absence: a pupil the school has marked as having a protected identity is never printed, and the card says so. An administrator's marks are read at the click and a read that fails prints nothing; the card of a pupil the gateway flags (isProtected) has no button, and a mentor, who may not read the marks, is never handed a marked pupil.",
+  },
+  "components/checklists/print-actions.ts": {
+    files: "an instruction roster (Instruktionsbevis) and a consent list (Samtycken) printed (Skriv ut, which is also how a PDF is made)",
+    rule: "HANDS_OVER",
+    why: "A row per pupil, made by the gateway (GET .../roster/print and GET .../consent-lists/:id/print): it holds a pupil with a protected identity out of the rows and the counts and says how many in heldOut, and the sheet is drawn from that answer alone, with the count and that the screen has them. The screen names every pupil the reader may see (they read the register already). The gateway decides, since a teacher cannot read the marks; a read that fails prints nothing.",
+  },
   "app/[locale]/(app)/admin/reports/staffing-report.tsx": {
     files: "tjanstefordelning-….csv (samverkan), scb-pedagogisk-personal-….txt and .csv",
     rule: "KEEPS_AND_SAYS",
@@ -88,6 +98,16 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     files: "vikarietimmar-lektioner-….csv, vikarietimmar-summering-….csv",
     rule: "KEEPS_AND_SAYS",
     why: "The payroll pays everyone in it; a vikarie left out goes unpaid.",
+  },
+  "components/analysis/payroll-panel.tsx": {
+    files: "loneunderlag-<från>-<till>.csv (Excels svenska CSV, windows-1252) and .xlsx",
+    rule: "HANDS_OVER",
+    why: "The gateway builds the file (POST /analysis/payroll-basis/export): payroll pays everyone, so a person with a protected identity is in it and the order says how many (protectedInFile). The web only hands it over; HR data, so only readers of HR data are offered it.",
+  },
+  "components/analysis/cost-basis-panel.tsx": {
+    files: "kostnad-per-elev-<läsår>.csv",
+    rule: "NAMES_NOBODY",
+    why: "Skoldelar, årskurser, timmar and kronor: the aggregates of the cost basis, no teacher and no pupil.",
   },
   "app/[locale]/(app)/admin/schedule-exchange/page.tsx": {
     files: "the timetable as CSV, Excel, Untis GPU and aSc XML",
@@ -137,6 +157,16 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
   "components/import/csv-import-dialog.tsx": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only." },
   "components/timplan/timplan-import-dialog.tsx": { files: "the timplan template", rule: "NAMES_NOBODY", why: "Headers only." },
   "lib/csv.ts": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only (downloadTemplate)." },
+  "app/[locale]/(app)/admin/meals/page.tsx": {
+    files: "Måltidskollen printed (Skriv ut, which is also how a PDF is made): the day or the week ahead",
+    rule: "NAMES_NOBODY",
+    why: "Counts and the names of classes (7A, 8B), never a pupil: the portions of each lunch sitting, the absence taken off as a number and the staff as a number. A protected pupil is a pupil in a count and is named nowhere.",
+  },
+  "lib/meal-counts-queries.ts": {
+    files: "portioner-<yyyy-mm-dd>[-<yyyy-mm-dd>].csv",
+    rule: "NAMES_NOBODY",
+    why: "The gateway's file of the same counts (windows-1252, ;): a row per day and sitting with the classes' names and numbers, no pupil. This only hands the bytes over (downloadMealCsv).",
+  },
   "lib/school-export.ts": {
     files: "rastra-skolexport-<skola>-<datum>.zip",
     rule: "HANDS_OVER",

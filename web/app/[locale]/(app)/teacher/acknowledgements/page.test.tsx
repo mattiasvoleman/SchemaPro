@@ -164,6 +164,7 @@ describe("the teacher's list", () => {
     state.list = [
       row("NONE", { remindAt: null }),
       row("SCHEDULED"),
+      row("WRITTEN"),
       row("SENT"),
       row("NOT_NEEDED"),
       row("LAPSED"),
@@ -180,6 +181,7 @@ describe("the teacher's list", () => {
     expect(reminders).toEqual([
       "Ingen",
       `Går ${day("2026-11-07T08:30:00.000Z")}`,
+      "Lagd i inkorgen",
       "Skickad",
       "Behövs inte",
       "Skickades inte, för sent",
@@ -525,6 +527,7 @@ describe("a new request", () => {
     ["ACK_NO_GUARDIANS", 422, "Ingen av eleverna har en vårdnadshavare att fråga."],
     ["ACK_UNKNOWN_PUPIL", 422, "En av eleverna finns inte längre på skolan. Elevlistan är uppdaterad: kontrollera dina val och försök igen."],
     ["ACK_TOO_MANY_REQUESTS", 429, "Du har skickat så många förfrågningar den senaste timmen att fler inte får skickas just nu. Inget har skickats. Försök igen om en stund."],
+    ["ACK_SENDER_DAY_LIMIT", 429, "Du har bett om så många kvittenser det senaste dygnet att den här förfrågan skulle gå över din andel av dagen. Inget har skickats. Välj färre elever eller försök igen senare: din andel räknas över de senaste 24 timmarna. Måste förfrågan gå ut nu kan en annan administratör skicka den, eftersom var och en har en egen andel."],
     ["ACK_TOO_MANY_RECIPIENTS", 429, "Skolan har skickat så många kvittenser i dag att den här förfrågan skulle gå över dagens gräns. Inget har skickats. Välj färre elever eller försök igen i morgon."],
   ])("says a refusal (%s) in the form, in Swedish, with everything typed and chosen still there", async (code, status, sentence) => {
     const user = userEvent.setup();
@@ -697,7 +700,12 @@ describe("one request", () => {
   it.each([
     ["NONE", { remindAt: null }, "Ingen påminnelse"],
     ["SCHEDULED", {}, `Skickas ${moment("2026-11-07T08:30:00.000Z")} till dem som då inte har bekräftat, också när en annan vårdnadshavare till samma elev har gjort det`],
-    ["SENT", { reminderSentAt: "2026-11-07T08:31:00.000Z" }, `Skickad ${moment("2026-11-07T08:31:00.000Z")}`],
+    [
+      "WRITTEN",
+      { reminderSentAt: "2026-11-07T08:31:00.000Z", reminderMirroredAt: null },
+      `Lagd i vårdnadshavarnas inkorgar ${moment("2026-11-07T08:31:00.000Z")}. Att e-post och push gick iväg är inte bekräftat: det kan dröja några minuter, och det uteblir om tjänsten startades om eller e-postleverantören inte svarade. Påminnelsen skickas inte igen.`,
+    ],
+    ["SENT", { reminderSentAt: "2026-11-07T08:31:00.000Z", reminderMirroredAt: "2026-11-07T08:32:00.000Z" }, `Skickad ${moment("2026-11-07T08:31:00.000Z")}`],
     ["NOT_NEEDED", {}, "Skickades inte: när tiden kom hade alla redan bekräftat, eller så kunde ingen längre bekräfta"],
     ["LAPSED", {}, "Skickades inte: den skulle ha gått för mer än 30 dagar sedan, och en så gammal påminnelse skickas inte"],
     ["STOPPED", {}, "Stoppad: den som skrev förfrågan, eller en administratör, stoppade påminnelsen innan den gick"],
@@ -979,5 +987,31 @@ describe("English", () => {
     await user.click(await screen.findByRole("button", { name: "Ask for acknowledgement" }));
     expect(await screen.findByRole("radio", { name: "All guardians must confirm" })).toBeInTheDocument();
     expect(await screen.findByText("No pupil chosen. No guardian to ask.")).toBeInTheDocument();
+  });
+
+  it("says a reminder written to the inboxes, and the refusal of the sender's own share, in English", async () => {
+    const user = userEvent.setup();
+    state.detail = detail({ reminder: "WRITTEN", reminderSentAt: "2026-11-07T08:31:00.000Z", reminderMirroredAt: null });
+    state.list = [listItem({ reminder: "WRITTEN", remindAt: "2026-11-07T08:30:00.000Z" })];
+    renderPage("en");
+
+    const row = (await screen.findByRole("button", { name: "Utflykten på torsdag" })).closest("tr")!;
+    expect(row).toHaveTextContent("In the inbox");
+    await user.click(screen.getByRole("button", { name: "Utflykten på torsdag" }));
+    const line = (await screen.findByText("Reminder", { selector: "dt" })).nextElementSibling!;
+    expect(line.textContent).toMatch(/^Written to the guardians' inboxes .*That the e-mail and the push went out is not confirmed.* The reminder is not sent again\.$/);
+
+    await user.click(await screen.findByRole("button", { name: "Back to the requests" }));
+    api.post.mockRejectedValue(new ApiError(429, "English prose for a log.", "ACK_SENDER_DAY_LIMIT"));
+    await user.click(await screen.findByRole("button", { name: "Ask for acknowledgement" }));
+    await user.click(await screen.findByRole("checkbox", { name: /Ada Berg/ }));
+    await user.click(screen.getByLabelText("Subject"));
+    await user.paste("Utflykten");
+    await user.click(screen.getByLabelText("Message"));
+    await user.paste("På torsdag");
+    await user.click(screen.getByRole("button", { name: "Send request" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You have asked for so many acknowledgements in the last 24 hours that this request would go over your share of the day. Nothing has been sent. Choose fewer pupils or try again later: your share is counted over the last 24 hours. If the request has to go out now, another administrator can send it, since each administrator has a share of their own.",
+    );
   });
 });

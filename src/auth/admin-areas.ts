@@ -213,6 +213,13 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ScheduleCandidates: just('SCHEMALAGGNING', 'insert', 'delete'),
   ScheduleChangeLogs: just('SCHEMALAGGNING', 'insert'),
   ScheduleVersions: only('SCHEMALAGGNING'),
+  // Klasslärarens schema (20270128090000): the appointment and the open times are the schemaläggare's
+  // to make; the school's option to let a klasslärare publish is Publicering's, and a draft is written
+  // by the klasslärare alone, so an administrator only publishes it (the status) or discards it.
+  ClassTeacherAppointments: only('SCHEMALAGGNING'),
+  ClassTeacherOpenTimes: only('SCHEMALAGGNING'),
+  ClassTeacherSettings: just('PUBLICERING', 'insert', 'update'),
+  ClassTeacherChanges: just('PUBLICERING', 'update', 'delete'),
 
   // Publicering: what is published, to whom, and Schemavisaren.
   PublicTimetableLinks: only('PUBLICERING'),
@@ -240,6 +247,15 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   AckReceipts: just('DRIFT', 'insert'),
   AckRequests: just('DRIFT', 'insert'),
   AckSettings: just('DRIFT', 'insert', 'update'),
+  // Checklistor (20270129091000): the templates, the ticks, the lists and their answers are Drift's, as the
+  // notices and the leave they sit beside. A template is made and retired (update) and never removed; a proof, a
+  // list and an answer are written once, and no administrator changes or removes one: a tick made in error is
+  // voided and a list closed by two functions, and gallring removes (the pupil's own, once they have left).
+  ConsentAsks: just('DRIFT', 'insert'),
+  ConsentEntries: just('DRIFT', 'insert'),
+  ConsentLists: just('DRIFT', 'insert'),
+  InstructionProofs: just('DRIFT', 'insert'),
+  InstructionTemplates: just('DRIFT', 'insert', 'update'),
   AbsenceWatchDigests: readOnly,
   AbsenceWatchFindings: readOnly,
   AbsenceWatchLimits: only('DRIFT'),
@@ -253,6 +269,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ReportingDigests: readOnly,
   ReportingSettings: just('DRIFT', 'insert', 'update'),
   TeacherReportingDays: readOnly,
+  // Måltidskollen (20270123090000): the cut-off, the letter's switch and the kitchen's address are
+  // Drift's, as the attendance and the leave the counts rest on. The settings are never deleted:
+  // the letter is turned off. The counts are not stored: app.meal_counts reads them.
+  KitchenSettings: just('DRIFT', 'insert', 'update'),
   AttendanceRecords: only('DRIFT'),
   CalendarLessonGroups: only('DRIFT'),
   CalendarLessonStudents: only('DRIFT'),
@@ -267,6 +287,13 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ScheduleActivities: only('DRIFT'),
   ScheduleActivityLessons: only('DRIFT'),
   ScheduleActivityTeachers: only('DRIFT'),
+  // Provplanering (20270127090000): an exam becomes an activity, so Drift's.
+  ExamGroups: only('DRIFT'),
+  ExamInvigilators: only('DRIFT'),
+  ExamPlanSettings: only('DRIFT'),
+  ExamRooms: only('DRIFT'),
+  ExamSittings: only('DRIFT'),
+  Exams: only('DRIFT'),
   CoverSettings: only('DRIFT'),
   LeaveRequests: only('DRIFT'),
   // Lektionslogg (20261203090000): rektor removes a log that should not
@@ -294,6 +321,12 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   CrisisCalls: just('DRIFT', 'insert'),
   CrisisPupils: just('DRIFT', 'insert'),
   CrisisReports: just('DRIFT', 'insert'),
+  // Elevens lektion för dagen (20270122091000): a pupil moved to a parallel
+  // lesson for a day. Read by every administrator and written by none: the
+  // doors (app.lesson_pupil_move, app.lesson_pupil_move_undo) ask Drift
+  // themselves, and a teacher who teaches either lesson or mentors the pupil
+  // may move them too, which no administrator's arm could say.
+  LessonPupilMoves: readOnly,
   RoomBookings: only('DRIFT'),
   // Lokal (20270204091000): a booking of a resource is Drift's as a room's is. A series of external
   // bookings is registered and cancelled by Drift, never deleted by an administrator (gallring
@@ -349,6 +382,11 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   RetentionDecisions: just('DECIDES', 'insert'),
   TeacherEmploymentPeriods: only('DECIDES'),
   TeacherEmployments: only('DECIDES'),
+  // Analys och planering (20270130090000): the skoldelar a payroll is booked on
+  // and the cost of an hour in a personalkategori are the school's economy,
+  // decided like the tjänst % of a post. Every administrator reads both.
+  SchoolParts: only('DECIDES'),
+  StaffCostRates: only('DECIDES'),
 
   // Read by every administrator; written by a trigger or a job.
   GallringRuns: readOnly,

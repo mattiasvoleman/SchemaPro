@@ -104,6 +104,18 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Matematik (Tue 13 Oct 08:00) has moved to another room.',
   ],
   [
+    'LESSON_PUPIL_MOVED, the two subjects and the time, never the pupil or who moved them',
+    row('LESSON_PUPIL_MOVED', { fromSubjectName: 'Svenska', toSubjectName: 'Engelska', startsAt: at, studentName: 'Alva Andersson', movedByName: 'Rektor Rask' }),
+    'En elev byter lektion (tis 13 okt 08:00): Engelska i stället för Svenska.',
+    'A pupil changes lesson (Tue 13 Oct 08:00): Engelska instead of Svenska.',
+  ],
+  [
+    'LESSON_PUPIL_MOVED, undone',
+    row('LESSON_PUPIL_MOVED', { fromSubjectName: 'Svenska', toSubjectName: 'Engelska', startsAt: at, undone: true }),
+    'Bytet av lektion (tis 13 okt 08:00) är ångrat: det är Svenska som gäller.',
+    'The change of lesson (Tue 13 Oct 08:00) is undone: Svenska stands.',
+  ],
+  [
     'SCHEDULE_CHANGED',
     row('SCHEDULE_CHANGED', { subjectName: 'Matematik' }),
     'Veckoschemat för Matematik har ändrats.',
@@ -379,9 +391,9 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all twenty-six types the gateway writes', () => {
+  it('covers all twenty-seven types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(26);
+    expect(types.size).toBe(27);
   });
 
   it.each([

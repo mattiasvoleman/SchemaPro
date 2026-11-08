@@ -36,9 +36,9 @@ export interface RoomBookingResult {
  * unknown-request error instead, and matching that class after the upgrade
  * turned every double booking into a 500.
  */
-const ROOM_HELD_ONCE = 'RoomBookings_room_is_held_once';
+export const ROOM_HELD_ONCE = 'RoomBookings_room_is_held_once';
 
-function isRoomAlreadyHeld(error: unknown): boolean {
+export function isRoomAlreadyHeld(error: unknown): boolean {
   return (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === 'P2039' &&

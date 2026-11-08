@@ -4,8 +4,9 @@ import { Prisma } from '@prisma/client';
 import type { PushConfig } from '../config/configuration';
 import { PrismaService } from '../database/prisma.service';
 import { ExpoPushClient, type ExpoMessage } from './expo-push.client';
-import { RECIPIENT_CHUNK, type OutboxBatch, type OutboxEntry } from './notification-outbox';
+import { RECIPIENT_CHUNK, type OutboxBatch, type OutboxEntry, type OutboxSettled } from './notification-outbox';
 import { NEVER_EXTERNAL, deliveredRegardless } from './notification-types';
+import { isTimeoutError } from './request-timeout';
 import type { NotificationKind } from './notifications.service';
 import { pushKindOf, pushText, type PushKind, type PushLocale } from './push-messages';
 
@@ -19,6 +20,16 @@ export const PUSH_TTL_SECONDS = 86_400;
 export const URGENT_PUSH_TTL_SECONDS = 600;
 export const URGENT_PUSH_CHANNEL = 'crisis';
 const URGENT_PUSH_TYPES: ReadonlySet<string> = new Set(['CRISIS_ALARM', 'CRISIS_ENDED']);
+
+/**
+ * The ticket errors that say the channel itself did not take the request, so that a reminder is not told "taken":
+ * the client's own answer for a chunk it could not get through or got no answer for (RequestFailed), and the two
+ * refusals of our credentials, which are the same for every device (InvalidCredentials, MismatchSenderId: Expo does
+ * not accept the project's push credentials, or the sender they name is not the one the tokens belong to). The rest
+ * are one device's or one message's: DeviceNotRegistered (the device is gone, and revoked), MessageTooBig and
+ * MessageRateExceeded. The channel took those requests, and a retry would not change them.
+ */
+const CHANNEL_ERRORS: ReadonlySet<string> = new Set(['RequestFailed', 'InvalidCredentials', 'MismatchSenderId']);
 
 interface PushTarget {
   token_id: string;
@@ -55,6 +66,22 @@ export const EMAIL_BCC_CHUNK = 49;
 export const EMAIL_INTERVAL_MS = 500;
 
 /**
+ * How long a mail may wait for Resend's answer before it is given up (logged, not retried, like any refused mail).
+ * Resend answers in well under a second; a mail that has had ten has no answer coming. The mails of a lane go one
+ * at a time, so a mail that never answers holds the lane (the ordinary one carries every school's notices), and
+ * without a limit it held it for as long as the runtime waits for a response, five minutes. Ten seconds is twenty
+ * mail intervals: long enough for a slow answer, short enough that a Resend that does not answer at all costs a
+ * wave one lane-ful of seconds a mail, not minutes.
+ */
+export const EMAIL_TIMEOUT_MS = 10_000;
+
+/** A queued batch, and who wants to know how it went. */
+interface Queued {
+  batch: OutboxBatch;
+  settled?: OutboxSettled;
+}
+
+/**
  * Delivers what NotificationsService wrote, after the transaction that wrote
  * it has committed: e-mail through Resend, as before, and push through Expo
  * when PUSH_NOTIFICATIONS=expo.
@@ -86,7 +113,21 @@ export const EMAIL_INTERVAL_MS = 500;
  * late must not bring the next mail closer than the interval, and Resend
  * refuses what comes faster than two a second. So an alarm's mail waits one
  * turn, not the other lane's whole backlog, and the total rate is the one the
- * providers allow.
+ * providers allow. A turn that throws costs the mail it was for and nothing more
+ * (the chain goes on from a settled link, mailTurn).
+ *
+ * A REQUEST NOBODY ANSWERS IS GIVEN UP. A mail waits EMAIL_TIMEOUT_MS for Resend
+ * (ExpoPushClient has its own limit for Expo): the mails of a lane go one at a
+ * time, so one that never answered held the lane, and the ordinary lane carries
+ * every school's notices, for as long as the runtime waits, five minutes. It is
+ * logged and not sent again, like any mail Resend refused.
+ *
+ * HOW A BATCH WENT. enqueue takes a listener (OutboxSettled) that is told once,
+ * when the batch has been worked through: true when every mail was taken by Resend
+ * and every push request by Expo (or there was nothing outside the inbox), false
+ * when one was refused, timed out, or the batch was dropped. It is not told when the
+ * process stops with the batch in the queue, which is in memory: no word is an answer
+ * too. Kvittens' reminder uses it to say "Skickad" only when the mail went.
  *
  * E-mail is BCC mail per notifyUsers chunk, with the caller's subject and
  * body, unchanged, minus the recipients who opted out of the type
@@ -118,7 +159,7 @@ export const EMAIL_INTERVAL_MS = 500;
 export class NotificationDeliveryService {
   private readonly logger = new Logger(NotificationDeliveryService.name);
   /** The ordinary lane and the urgent one; each is serial, and they run beside each other. */
-  private readonly lanes: Record<'ordinary' | 'urgent', { queue: OutboxBatch[]; running: Promise<void> | null }> = {
+  private readonly lanes: Record<'ordinary' | 'urgent', { queue: Queued[]; running: Promise<void> | null }> = {
     ordinary: { queue: [], running: null },
     urgent: { queue: [], running: null },
   };
@@ -128,6 +169,8 @@ export class NotificationDeliveryService {
   private mailTurns: Promise<void> = Promise.resolve();
   /** The pause between two mails; a spec sets it to 0. */
   emailIntervalMs = EMAIL_INTERVAL_MS;
+  /** How long a mail waits for Resend's answer; a spec shortens it. */
+  emailTimeoutMs = EMAIL_TIMEOUT_MS;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -150,22 +193,50 @@ export class NotificationDeliveryService {
     return Boolean(process.env.RESEND_API_KEY);
   }
 
-  /** Queues one committed transaction's notices: the alarms in the urgent lane, the rest in the ordinary one. Never throws. */
-  enqueue(batch: OutboxBatch): void {
-    if (batch.length === 0) return;
+  /**
+   * Queues one committed transaction's notices: the alarms in the urgent lane, the rest in the ordinary one. Never
+   * throws. `settled`, when given, is told once how the whole batch went (OutboxSettled): at once and true for a
+   * batch with nothing to deliver outside the inbox, after the last lane has finished otherwise.
+   */
+  enqueue(batch: OutboxBatch, settled?: OutboxSettled): void {
+    if (batch.length === 0) {
+      this.tell(settled, true);
+      return;
+    }
     const urgent = batch.filter((entry) => URGENT_PUSH_TYPES.has(entry.type));
-    if (urgent.length > 0) this.offer('urgent', urgent);
-    if (urgent.length < batch.length) this.offer('ordinary', urgent.length === 0 ? batch : batch.filter((entry) => !URGENT_PUSH_TYPES.has(entry.type)));
+    const ordinary = urgent.length === 0 ? batch : batch.filter((entry) => !URGENT_PUSH_TYPES.has(entry.type));
+    // The lanes finish apart; the caller hears once, when both have, and "delivered" only if both delivered.
+    let lanes = (urgent.length > 0 ? 1 : 0) + (ordinary.length > 0 ? 1 : 0);
+    let all = true;
+    const part: OutboxSettled | undefined = settled
+      ? (delivered) => {
+          all = all && delivered;
+          lanes -= 1;
+          if (lanes === 0) this.tell(settled, all);
+        }
+      : undefined;
+    if (urgent.length > 0) this.offer('urgent', urgent, part);
+    if (ordinary.length > 0) this.offer('ordinary', ordinary, part);
   }
 
-  private offer(name: 'ordinary' | 'urgent', batch: OutboxBatch): void {
+  private offer(name: 'ordinary' | 'urgent', batch: OutboxBatch, settled?: OutboxSettled): void {
     const lane = this.lanes[name];
     if (lane.queue.length >= MAX_PENDING_BATCHES) {
       this.logger.warn(`Delivery queue full; ${batch.length} notice(s) not mirrored [pending=${lane.queue.length}${name === 'urgent' ? ', lane=urgent' : ''}]`);
+      this.tell(settled, false);
       return;
     }
-    lane.queue.push(batch);
+    lane.queue.push({ batch, settled });
     if (!lane.running) lane.running = this.drain(name);
+  }
+
+  /** Tells whoever asked how a batch went. A listener that throws must not stop the lane. */
+  private tell(settled: OutboxSettled | undefined, delivered: boolean): void {
+    try {
+      settled?.(delivered);
+    } catch (error) {
+      this.logger.warn(`A delivery listener failed [${error instanceof Error ? error.name : 'unknown'}]`);
+    }
   }
 
   /** Resolves once both queues are empty and nothing is being delivered. */
@@ -178,24 +249,34 @@ export class NotificationDeliveryService {
   private async drain(name: 'ordinary' | 'urgent'): Promise<void> {
     const lane = this.lanes[name];
     try {
-      for (let batch = lane.queue.shift(); batch; batch = lane.queue.shift()) {
+      for (let next = lane.queue.shift(); next; next = lane.queue.shift()) {
+        let delivered = false;
         try {
-          await this.deliver(batch);
+          delivered = await this.deliver(next.batch);
         } catch (error) {
-          this.logger.warn(`Delivery failed [${error instanceof Error ? error.name : 'unknown'}, notices=${batch.length}]`);
+          this.logger.warn(`Delivery failed [${error instanceof Error ? error.name : 'unknown'}, notices=${next.batch.length}]`);
         }
+        this.tell(next.settled, delivered);
       }
     } finally {
       lane.running = null;
     }
   }
 
-  private async deliver(batch: OutboxBatch): Promise<void> {
-    for (const entry of batch) await this.email(entry);
-    if (this.pushEnabled()) await this.push(batch);
+  /** Whether every mail and every push the batch wanted was taken by its channel. */
+  private async deliver(batch: OutboxBatch): Promise<boolean> {
+    let delivered = true;
+    for (const entry of batch) delivered = (await this.email(entry)) && delivered;
+    if (this.pushEnabled()) delivered = (await this.push(batch)) && delivered;
+    return delivered;
   }
 
-  private async push(batch: OutboxBatch): Promise<void> {
+  /**
+   * Whether Expo took every request. A device it says is gone, and a refusal for one device or one message, is not the
+   * channel failing; a refusal of our credentials, or a request the client could not get through, is (CHANNEL_ERRORS).
+   */
+  private async push(batch: OutboxBatch): Promise<boolean> {
+    let taken = true;
     const notices = new Map<string, PushNotice>();
     for (const entry of batch) {
       const kind = pushKindOf(entry.type, entry.meta);
@@ -295,6 +376,7 @@ export class NotificationDeliveryService {
         const code = ticket.details?.error ?? 'Unknown';
         errors.set(code, (errors.get(code) ?? 0) + 1);
         if (code === 'DeviceNotRegistered') dead.add(tokenId);
+        if (CHANNEL_ERRORS.has(code)) taken = false;
       });
       if (errors.size > 0) {
         this.logger.warn(
@@ -309,17 +391,19 @@ export class NotificationDeliveryService {
         );
       }
     }
+    return taken;
   }
 
-  private async email(entry: OutboxEntry): Promise<void> {
-    if (!entry.email || !this.emailConfigured() || NEVER_EXTERNAL.has(entry.type)) return;
+  /** Whether every mail of the entry was taken by Resend (also when there was none to send). */
+  private async email(entry: OutboxEntry): Promise<boolean> {
+    if (!entry.email || !this.emailConfigured() || NEVER_EXTERNAL.has(entry.type)) return true;
     const withAddress = entry.email.recipients.filter((r) => Boolean(r.email));
-    if (withAddress.length === 0) return;
+    if (withAddress.length === 0) return true;
     const optedOut = deliveredRegardless(entry.type, entry.meta)
       ? new Set<string>()
       : await this.optOuts(entry.schoolId, withAddress.map((r) => r.userId), entry.type);
     const addresses = withAddress.filter((r) => !optedOut.has(r.userId)).map((r) => r.email);
-    await this.sendEmails(addresses, entry.email.subject, entry.email.body);
+    return this.sendEmails(addresses, entry.email.subject, entry.email.body);
   }
 
   /** Who of `userIds` said no to `type` outside the app (NotificationOptOuts). */
@@ -343,17 +427,29 @@ export class NotificationDeliveryService {
       }
       this.lastMailAt = Date.now();
     });
-    this.mailTurns = turn;
+    // A turn that throws must not close the mail for the process: every later turn is chained to this one, and
+    // a rejected link would be skipped by all of them (and rejected by every mailTurn) until a restart. The
+    // caller of THIS turn still hears of it.
+    this.mailTurns = turn.catch(() => undefined);
     await turn;
   }
 
-  private async sendEmails(addresses: string[], subject: string, body: string): Promise<void> {
+  /** Whether Resend took every mail (also when there was none to send). A mail that fails is logged and not sent again. */
+  private async sendEmails(addresses: string[], subject: string, body: string): Promise<boolean> {
     const apiKey = process.env.RESEND_API_KEY;
     const from = process.env.EMAIL_FROM ?? 'Rastra Schema <noreply@schemapro.app>';
-    if (!apiKey || addresses.length === 0) return;
+    if (!apiKey || addresses.length === 0) return true;
 
+    let taken = true;
     for (let at = 0; at < addresses.length; at += EMAIL_BCC_CHUNK) {
-      await this.mailTurn();
+      try {
+        await this.mailTurn();
+      } catch (error) {
+        // No turn, no pace to keep: this mail is not sent, and the next one asks for a turn of its own.
+        this.logger.warn(`Email dispatch skipped [turn, ${error instanceof Error ? error.name : 'unknown'}]`);
+        taken = false;
+        continue;
+      }
       try {
         const response = await fetch('https://api.resend.com/emails', {
           method: 'POST',
@@ -369,13 +465,37 @@ export class NotificationDeliveryService {
             subject,
             text: body,
           }),
+          signal: AbortSignal.timeout(this.emailTimeoutMs),
         });
         if (!response.ok) {
           this.logger.warn(`Email dispatch failed [status=${response.status}]`);
+          taken = false;
         }
-      } catch {
-        this.logger.warn('Email dispatch failed [network]');
+      } catch (error) {
+        this.logger.warn(`Email dispatch failed [${isTimeoutError(error) ? `timeout ${this.emailTimeoutMs} ms` : 'network'}]`);
+        taken = false;
       }
+    }
+    return taken;
+  }
+
+  /**
+   * A letter to one address that is no user (Måltidskollen's kitchen): no inbox row, no push and no opt-out to
+   * honour, because the address is the school's and there is no person behind it to choose. It takes its turn at
+   * the mail pace like every other mail (mailTurn), so the providers' rate holds for it too, and a mail that
+   * Resend refuses is logged and not sent again. It does not wait in the lanes: it is one mail, once a day.
+   *
+   * Answers false when the mail was not taken: Resend is not set up here, or Resend refused it, did not answer
+   * or the mail never got its turn (sendEmails says so), so the caller can leave its claim open and try again
+   * inside its window. True otherwise. Never throws, and never sends a letter twice by itself.
+   */
+  async sendLetter(address: string, subject: string, body: string): Promise<boolean> {
+    if (!this.emailConfigured()) return false;
+    try {
+      return await this.sendEmails([address], subject, body);
+    } catch (error) {
+      this.logger.warn(`Letter dispatch failed [${error instanceof Error ? error.name : 'unknown'}]`);
+      return false;
     }
   }
 }

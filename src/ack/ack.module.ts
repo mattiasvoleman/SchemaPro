@@ -11,5 +11,7 @@ import { AckService } from './ack.service';
 @Module({
   controllers: [AckController],
   providers: [AckService, AckJob],
+  // Checklistor asks the guardians for a consent through the same service (the rule ALL), and links the request to its list.
+  exports: [AckService],
 })
 export class AckModule {}

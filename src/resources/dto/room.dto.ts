@@ -8,7 +8,21 @@ import {
   MaxLength,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
+
+/**
+ * Placeringsregler (20270126090000), regel 3: the room may hold several
+ * lessons at the same time as long as their pupils fit its capacity together.
+ * The column is NOT NULL with a default of false (exclusive, as every room has
+ * always been), so null has no "cleared" meaning and is refused by name, and
+ * absent leaves the mark as it is. A room without a capacity has no limit to
+ * share under and stays exclusive whatever this says: the generator reads the
+ * mark only while the school's Skolregler hold the rule on (placementSharedMode)
+ * and only on a room with a capacity.
+ */
+export const CAN_BE_SHARED_MESSAGE =
+  'canBeShared: om flera grupper får ha lektion i salen samtidigt anges med true eller false.';
 
 export class CreateRoomDto {
   @IsString()
@@ -77,6 +91,11 @@ export class CreateRoomDto {
   @IsOptional()
   @IsBoolean()
   requiresApproval?: boolean;
+
+  /** Several groups may be in the room at once, up to its capacity (regel 3). Absent means false. */
+  @ValidateIf((dto: CreateRoomDto) => dto.canBeShared !== undefined)
+  @IsBoolean({ message: CAN_BE_SHARED_MESSAGE })
+  canBeShared?: boolean;
 }
 
 export class UpdateRoomDto {
@@ -147,4 +166,9 @@ export class UpdateRoomDto {
   @IsOptional()
   @IsBoolean()
   requiresApproval?: boolean;
+
+  /** Absent leaves the mark as it is. */
+  @ValidateIf((dto: UpdateRoomDto) => dto.canBeShared !== undefined)
+  @IsBoolean({ message: CAN_BE_SHARED_MESSAGE })
+  canBeShared?: boolean;
 }

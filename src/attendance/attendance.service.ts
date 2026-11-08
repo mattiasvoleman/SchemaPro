@@ -13,7 +13,7 @@ import { parseDateString, zonedTimeToUtc } from '../common/utils/time';
 import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { calendarLessonRosters, type CalendarRosterLesson } from '../calendar/lesson-roster';
+import { calendarLessonRosters, movedOffOf, type CalendarRosterLesson } from '../calendar/lesson-roster';
 import { isLockTimeout } from '../publication/publish-mode';
 import type { ReportAttendanceDto } from './dto/report-attendance.dto';
 
@@ -29,6 +29,14 @@ export const ATTENDANCE_REGISTER_BUSY = 'ATTENDANCE_REGISTER_BUSY';
 export interface AttendanceReportResult {
   created: number;
   updated: number;
+  /**
+   * Entries turned away because the pupil was moved off the lesson for the day
+   * (Elevens lektion för dagen): a mark on a lesson the pupil is not on would
+   * count for nobody, and a register queued on a phone before the move must
+   * still drain, so the entry is dropped and counted, not refused. Absent when
+   * none was.
+   */
+  movedAway?: number;
 }
 
 /** The pupils of a lesson whose absence was reported before it. */
@@ -202,11 +210,27 @@ export class AttendanceService {
         );
       }
 
+      // Elevens lektion för dagen: a move and a register save meet in one order. The
+      // lesson's row FOR SHARE conflicts with the FOR NO KEY UPDATE a move takes
+      // (app.lesson_pupil_move), so a mark saved before a move is committed when the move
+      // sets it aside, and a save that comes after reads the move below. Waits at most the
+      // 5 s above, then 409 ATTENDANCE_REGISTER_BUSY, as for any other row it waits for.
+      // Taken by a definer function: a teacher has no UPDATE policy on CalendarLessons, and a
+      // row lock under row security runs that policy over the row, locking nothing for them.
+      await tx.$executeRaw(Prisma.sql`SELECT app.lesson_pupil_register_lock(${dto.calendarLessonId}::uuid)`);
+      const movedOff = new Set(
+        ((await movedOffOf(tx, [dto.calendarLessonId], dto.records.map((entry) => entry.studentId))).get(dto.calendarLessonId) ?? []).map(
+          (row) => row.studentId,
+        ),
+      );
+      const records = dto.records.filter((entry) => !movedOff.has(entry.studentId));
+      const movedAway = dto.records.length - records.length;
+
       // Every role, admins included: being allowed to record for the lesson
       // says nothing about who was in the room. Resolved inside the same
       // transaction as the writes, so a membership removed concurrently cannot
       // let a row slip through between the check and the upsert.
-      const studentIds = [...new Set(dto.records.map((entry) => entry.studentId))];
+      const studentIds = [...new Set(records.map((entry) => entry.studentId))];
       await this.assertStudentsAreOnRoster(tx, lesson, studentIds);
 
       let created = 0;
@@ -244,7 +268,7 @@ export class AttendanceService {
        * waits for. An SS12000 apply writes none of these: a pupil it links
        * moves one row of the pupil's.
        */
-      const inWriteOrder = [...dto.records].sort((a, b) => (a.studentId < b.studentId ? -1 : a.studentId > b.studentId ? 1 : 0));
+      const inWriteOrder = [...records].sort((a, b) => (a.studentId < b.studentId ? -1 : a.studentId > b.studentId ? 1 : 0));
 
       const now = new Date();
       const recordedById = user.userId ?? null;
@@ -383,7 +407,7 @@ export class AttendanceService {
         }
       }
 
-      return { created, updated };
+      return movedAway > 0 ? { created, updated, movedAway } : { created, updated };
     });
   }
 
@@ -536,7 +560,10 @@ export class AttendanceService {
    * class is the group, on a lesson dated from..to (the administrator's
    * attendance report; read from PostgREST until Läslogg). At most
    * GROUP_ATTENDANCE_LIMIT marks, as the direct read was. ATTENDANCE in the
-   * läslogg, naming the pupils whose marks were returned.
+   * läslogg, naming the pupils whose marks were returned. UNKNOWN is no
+   * mark: it is what a pupil's mark on a lesson they were moved off becomes
+   * (Elevens lektion för dagen), and the reports leave it out as the absence
+   * watch, the minutes and SS12000 do.
    */
   async groupRecords(
     groupId: string,
@@ -557,6 +584,7 @@ export class AttendanceService {
         where: {
           student: { studentGroupId: groupId },
           calendarLesson: { date: { gte: from, lte: to } },
+          status: { not: 'UNKNOWN' },
         },
         select: {
           studentId: true,
@@ -582,13 +610,17 @@ export class AttendanceService {
     });
   }
 
-  /** The dashboard's attendance figure since a day. Counts only, so not in the läslogg. */
+  /**
+   * The dashboard's attendance figure since a day. Counts only, so not in the läslogg. A mark of UNKNOWN is not
+   * counted as recorded: a move writes one on the lesson the pupil was moved off (recordedAt = the move), and the
+   * figure the principal reads first would otherwise count the pupil twice.
+   */
   async summary(sinceDay: string, user: AuthenticatedUser): Promise<AttendanceSummaryResult> {
     const since = parseDateString(sinceDay);
     const groups = await this.prisma.queryWithRls(user, (db) =>
       db.attendanceRecord.groupBy({
         by: ['status'],
-        where: { recordedAt: { gte: since } },
+        where: { recordedAt: { gte: since }, status: { not: 'UNKNOWN' } },
         _count: { _all: true },
       }),
     );

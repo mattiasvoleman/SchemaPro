@@ -36,6 +36,20 @@ describe("a lesson's pupils agree with the shared fixture", () => {
     }
   });
 
+  it.each(f.schools.map((school) => [school.name, school] as const))('%s: a pupil moved off a lesson is off it, once, whatever else keeps them off', (_name, school) => {
+    const groups = new Map(school.groups.map((group) => [group.id, group]));
+    const bySubject = replacingBySubject(replacedSubjectOf(school.groups));
+    for (const lesson of f.movedLessons) {
+      const keptBy = keptByOf(groups.get(lesson.groupIds[0]!));
+      const scope = { ...lesson, academicYearId: f.academicYearId, ...(keptBy ? { keptBy } : {}) };
+      const answer = lessonPupils(scope, pupilListMembers(), bySubject, yearsOf(school.groups));
+      expect([lesson.name, answer]).toEqual([lesson.name, school.movedExpected[lesson.id]]);
+      // Whoever was moved is off and not on; nobody is off twice; and the rest of the lesson is as without the move.
+      for (const moved of lesson.movedOff) expect([answer.off.includes(moved), answer.on.includes(moved)]).toEqual([true, false]);
+      expect(new Set(answer.off).size).toBe(answer.off.length);
+    }
+  });
+
   it('a school with no replacing group: nobody is off, and on is the union of the groups and the named, as before', () => {
     const members = pupilListMembers();
     for (const lesson of f.lessons) {

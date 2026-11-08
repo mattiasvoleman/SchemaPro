@@ -7,6 +7,9 @@
   },
   "tags": [
     {
+      "name": "AbsenceStats"
+    },
+    {
       "name": "AbsenceWatch"
     },
     {
@@ -20,6 +23,9 @@
     },
     {
       "name": "Ack"
+    },
+    {
+      "name": "Analysis"
     },
     {
       "name": "Attendance"
@@ -43,6 +49,15 @@
       "name": "CancellationBatches"
     },
     {
+      "name": "Checklists"
+    },
+    {
+      "name": "ClassTeacher"
+    },
+    {
+      "name": "ClassTeacherAdmin"
+    },
+    {
       "name": "Cover"
     },
     {
@@ -59,6 +74,9 @@
     },
     {
       "name": "Devices"
+    },
+    {
+      "name": "Exams"
     },
     {
       "name": "Family"
@@ -85,6 +103,9 @@
       "name": "LessonLog"
     },
     {
+      "name": "LessonMoves"
+    },
+    {
       "name": "LocalTimplans"
     },
     {
@@ -101,6 +122,9 @@
     },
     {
       "name": "Me"
+    },
+    {
+      "name": "MealCounts"
     },
     {
       "name": "NationalTimplans"
@@ -209,6 +233,9 @@
     },
     {
       "name": "SupervisionWeek"
+    },
+    {
+      "name": "Swaps"
     },
     {
       "name": "TeacherAbsenceReasons"
@@ -417,6 +444,343 @@
             "DRIFT"
           ]
         }
+      }
+    },
+    "/api/v1/absence-stats/classes": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_classes",
+        "parameters": [
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/classes/{classId}": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_classView",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/classes/{classId}/pupils": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_classPupils",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/pupils/{studentId}": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_pupil",
+        "parameters": [
+          {
+            "name": "studentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/school": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_school",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/window": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_window",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
       }
     },
     "/api/v1/absence-watch": {
@@ -1772,6 +2136,47 @@
         }
       }
     },
+    "/api/v1/acknowledgements/usage": {
+      "get": {
+        "tags": [
+          "Ack"
+        ],
+        "operationId": "AckController_usage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
     "/api/v1/acknowledgements/{id}": {
       "get": {
         "tags": [
@@ -1923,6 +2328,604 @@
           "areas": [
             "DRIFT"
           ]
+        }
+      }
+    },
+    "/api/v1/analysis/cost-basis": {
+      "get": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_costBasis",
+        "parameters": [
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-rate-limit": {
+          "limit": 600,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/analysis/cost-rates": {
+      "get": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_listRates",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/analysis/cost-rates/{category}": {
+      "put": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_putRate",
+        "parameters": [
+          {
+            "name": "category",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CostRateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
+        }
+      },
+      "delete": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_removeRate",
+        "parameters": [
+          {
+            "name": "category",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
+        }
+      }
+    },
+    "/api/v1/analysis/key-figures": {
+      "get": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_keyFigures",
+        "parameters": [
+          {
+            "name": "schedule",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-rate-limit": {
+          "limit": 600,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/analysis/payroll-basis": {
+      "get": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_payrollBasis",
+        "parameters": [
+          {
+            "name": "from",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-rate-limit": {
+          "limit": 600,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/analysis/payroll-basis/export": {
+      "post": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_payrollFile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollExportDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-rate-limit": {
+          "limit": 600,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/analysis/school-parts": {
+      "get": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_listParts",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "post": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_createPart",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSchoolPartDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
+        }
+      }
+    },
+    "/api/v1/analysis/school-parts/{id}": {
+      "delete": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_removePart",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
+        }
+      },
+      "patch": {
+        "tags": [
+          "Analysis"
+        ],
+        "operationId": "AnalysisController_updatePart",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSchoolPartDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
         }
       }
     },
@@ -3255,6 +4258,1940 @@
         "x-admin-write": {
           "areas": [
             "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/checklists/consent-lists": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_lists",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "includeClosed",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      },
+      "post": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_createList",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConsentListDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/checklists/consent-lists/{id}": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/checklists/consent-lists/{id}/ask": {
+      "post": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_ask",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskConsentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 5,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/checklists/consent-lists/{id}/close": {
+      "post": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_close",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/checklists/consent-lists/{id}/entries": {
+      "post": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_record",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordConsentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/checklists/consent-lists/{id}/print": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_detailForPaper",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/checklists/groups": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_groups",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/checklists/instructors": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_instructors",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/checklists/proofs": {
+      "post": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_tick",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TickProofsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/checklists/proofs/{id}/void": {
+      "post": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_voidProof",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoidProofDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/checklists/settings": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_settings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/checklists/students/{id}": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_student",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/checklists/templates": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_templates",
+        "parameters": [
+          {
+            "name": "includeRetired",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      },
+      "post": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_createTemplate",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTemplateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/checklists/templates/{id}": {
+      "patch": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_updateTemplate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTemplateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/checklists/templates/{id}/roster": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_roster",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "groupId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/checklists/templates/{id}/roster/print": {
+      "get": {
+        "tags": [
+          "Checklists"
+        ],
+        "operationId": "ChecklistsController_rosterForPaper",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "groupId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/class-teacher/classes/{classId}/changes": {
+      "post": {
+        "tags": [
+          "ClassTeacher"
+        ],
+        "operationId": "ClassTeacherController_create",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateChangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/class-teacher/classes/{classId}/changes/{changeId}": {
+      "delete": {
+        "tags": [
+          "ClassTeacher"
+        ],
+        "operationId": "ClassTeacherController_discard",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "changeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "rev",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      },
+      "patch": {
+        "tags": [
+          "ClassTeacher"
+        ],
+        "operationId": "ClassTeacherController_update",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "changeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateChangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/class-teacher/classes/{classId}/check": {
+      "get": {
+        "tags": [
+          "ClassTeacher"
+        ],
+        "operationId": "ClassTeacherController_check",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/class-teacher/classes/{classId}/preview": {
+      "post": {
+        "tags": [
+          "ClassTeacher"
+        ],
+        "operationId": "ClassTeacherController_preview",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewChangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/class-teacher/classes/{classId}/publish": {
+      "post": {
+        "tags": [
+          "ClassTeacher"
+        ],
+        "operationId": "ClassTeacherController_publish",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/class-teacher/classes/{classId}/week": {
+      "get": {
+        "tags": [
+          "ClassTeacher"
+        ],
+        "operationId": "ClassTeacherController_week",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/class-teacher/mine": {
+      "get": {
+        "tags": [
+          "ClassTeacher"
+        ],
+        "operationId": "ClassTeacherController_mine",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/class-teachers/appointments": {
+      "get": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_appointments",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "post": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_appoint",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppointDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING"
+          ]
+        }
+      }
+    },
+    "/api/v1/class-teachers/appointments/{id}": {
+      "delete": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING"
+          ]
+        }
+      }
+    },
+    "/api/v1/class-teachers/classes/{classId}/publish": {
+      "post": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_publish",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT",
+            "PUBLICERING"
+          ]
+        }
+      }
+    },
+    "/api/v1/class-teachers/drafts": {
+      "get": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_drafts",
+        "parameters": [
+          {
+            "name": "studentGroupId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/class-teachers/drafts/{id}": {
+      "delete": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_discard",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PUBLICERING"
+          ]
+        }
+      }
+    },
+    "/api/v1/class-teachers/open-times": {
+      "get": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_openTimes",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_setOpenTimes",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenTimesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING"
+          ]
+        }
+      }
+    },
+    "/api/v1/class-teachers/settings": {
+      "get": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_settings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "ClassTeacherAdmin"
+        ],
+        "operationId": "ClassTeacherAdminController_updateSettings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassTeacherSettingsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PUBLICERING"
           ]
         }
       }
@@ -5410,6 +8347,707 @@
         ],
         "x-rate-limit": {
           "limit": 20,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/exams": {
+      "get": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_list",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "post": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_create",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExamDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/exams/counter": {
+      "get": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_counter",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/exams/plan": {
+      "post": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_plan",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanExamsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 6,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/exams/plan/apply": {
+      "post": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_apply",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyExamPlanDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 10,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/exams/rooms": {
+      "get": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_rooms",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/exams/rooms/{roomId}": {
+      "put": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_markRoom",
+        "parameters": [
+          {
+            "name": "roomId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamRoomDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      },
+      "delete": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_unmarkRoom",
+        "parameters": [
+          {
+            "name": "roomId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/exams/settings": {
+      "get": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_settings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_updateSettings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamSettingsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/exams/{id}": {
+      "delete": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        }
+      },
+      "patch": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateExamDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/exams/{id}/unplan": {
+      "post": {
+        "tags": [
+          "Exams"
+        ],
+        "operationId": "ExamsController_unplan",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 10,
           "ttlSeconds": 60
         }
       }
@@ -8365,6 +12003,270 @@
         }
       }
     },
+    "/api/v1/lesson-moves": {
+      "post": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_move",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveLessonPupilDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/lesson-moves/lessons/{lessonId}": {
+      "get": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_forLesson",
+        "parameters": [
+          {
+            "name": "lessonId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/lesson-moves/lessons/{lessonId}/candidates": {
+      "get": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_candidates",
+        "parameters": [
+          {
+            "name": "lessonId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "studentId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/lesson-moves/lessons/{lessonId}/pupils": {
+      "get": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_pupils",
+        "parameters": [
+          {
+            "name": "lessonId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/lesson-moves/{id}": {
+      "delete": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_undo",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "ttlSeconds": 60
+        }
+      }
+    },
     "/api/v1/local-timplans": {
       "get": {
         "tags": [
@@ -9789,6 +13691,224 @@
         "x-rate-limit": {
           "limit": 6000,
           "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/meal-counts": {
+      "get": {
+        "tags": [
+          "MealCounts"
+        ],
+        "operationId": "MealCountsController_view",
+        "parameters": [
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "days",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 14
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/meal-counts/csv": {
+      "get": {
+        "tags": [
+          "MealCounts"
+        ],
+        "operationId": "MealCountsController_csv",
+        "parameters": [
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "days",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 14
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/meal-counts/settings": {
+      "get": {
+        "tags": [
+          "MealCounts"
+        ],
+        "operationId": "MealCountsController_settings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "MealCounts"
+        ],
+        "operationId": "MealCountsController_updateSettings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MealSettingsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
         }
       }
     },
@@ -12172,6 +16292,7 @@
                 "ACCESS_LOG",
                 "ATTENDANCE",
                 "CHANGE_LOGS",
+                "CHECKLISTS",
                 "COVER_REQUESTS",
                 "CRISIS_ALARMS",
                 "CRISIS_DRILLS",
@@ -18043,6 +22164,118 @@
         ]
       }
     },
+    "/api/v1/swaps/apply": {
+      "post": {
+        "tags": [
+          "Swaps"
+        ],
+        "operationId": "SwapsController_apply",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplySwapDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/swaps/suggest": {
+      "post": {
+        "tags": [
+          "Swaps"
+        ],
+        "operationId": "SwapsController_suggest",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestSwapsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
     "/api/v1/teacher-absence-reasons": {
       "get": {
         "tags": [
@@ -21510,6 +25743,10 @@
               "DIRECT",
               "DRAFT"
             ]
+          },
+          "acceptedDeviations": {
+            "type": "string",
+            "maxLength": 128
           }
         },
         "required": [
@@ -21534,6 +25771,30 @@
         },
         "required": [
           "basis",
+          "items"
+        ]
+      },
+      "ApplyExamPlanDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 300,
+            "items": {
+              "$ref": "#/components/schemas/ApplyItemDto"
+            }
+          },
+          "notify": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "academicYearId",
           "items"
         ]
       },
@@ -21684,6 +25945,64 @@
           "basisSha256",
           "changes"
         ]
+      },
+      "ApplySwapDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "moves": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 60,
+            "items": {
+              "$ref": "#/components/schemas/SwapMoveDto"
+            }
+          },
+          "propagate": {
+            "type": "boolean"
+          },
+          "versionName": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "lessonId",
+          "moves"
+        ]
+      },
+      "AppointDto": {
+        "type": "object",
+        "properties": {
+          "studentGroupId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "studentGroupId",
+          "userId"
+        ]
+      },
+      "AskConsentDto": {
+        "type": "object",
+        "properties": {
+          "studentIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
       },
       "AssignSubstituteDto": {
         "type": "object",
@@ -22007,6 +26326,17 @@
           "roomId"
         ]
       },
+      "ClassTeacherSettingsDto": {
+        "type": "object",
+        "properties": {
+          "selfPublish": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "selfPublish"
+        ]
+      },
       "CopyLocalTimplanDto": {
         "type": "object",
         "properties": {
@@ -22027,6 +26357,19 @@
             "maximum": 11
           }
         }
+      },
+      "CostRateDto": {
+        "type": "object",
+        "properties": {
+          "hourlyCost": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100000
+          }
+        },
+        "required": [
+          "hourlyCost"
+        ]
       },
       "CoverSettingsDto": {
         "type": "object",
@@ -22376,6 +26719,87 @@
           "scope"
         ]
       },
+      "CreateChangeDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "OCCASION_CANCEL",
+              "OCCASION_MOVE",
+              "OCCASION_ROOM",
+              "TEMPLATE_MOVE",
+              "TEMPLATE_SPLIT"
+            ]
+          },
+          "masterLessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "calendarLessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "baseVersion": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "targetDate": {
+            "type": "string"
+          },
+          "targetDayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "targetStart": {
+            "type": "string"
+          },
+          "targetEnd": {
+            "type": "string"
+          },
+          "targetRoomId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "keepEnd": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "kind",
+          "baseVersion"
+        ]
+      },
+      "CreateConsentListDto": {
+        "type": "object",
+        "properties": {
+          "classId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1700
+          }
+        },
+        "required": [
+          "classId",
+          "title",
+          "body"
+        ]
+      },
       "CreateCoverRequestDto": {
         "type": "object",
         "properties": {
@@ -22404,6 +26828,76 @@
         "required": [
           "lessons",
           "recipientIds"
+        ]
+      },
+      "CreateExamDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "subjectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 72
+          },
+          "lengthMinutes": {
+            "type": "number",
+            "minimum": 5,
+            "maximum": 480
+          },
+          "writers": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 2000
+          },
+          "windowKind": {
+            "type": "string",
+            "enum": [
+              "FIXED",
+              "WEEK"
+            ]
+          },
+          "windowFrom": {
+            "type": "string"
+          },
+          "windowTo": {
+            "type": "string"
+          },
+          "fixedStart": {
+            "type": "string"
+          },
+          "earliestStart": {
+            "type": "string"
+          },
+          "latestEnd": {
+            "type": "string"
+          },
+          "groupIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 60,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "required": [
+          "academicYearId",
+          "subjectId",
+          "name",
+          "lengthMinutes",
+          "writers",
+          "windowKind",
+          "windowFrom",
+          "windowTo",
+          "groupIds"
         ]
       },
       "CreateFrameTimeDto": {
@@ -22858,6 +27352,9 @@
           },
           "requiresApproval": {
             "type": "boolean"
+          },
+          "canBeShared": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -23125,6 +27622,35 @@
           "endDate"
         ]
       },
+      "CreateSchoolPartDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "account": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "gradeFrom": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "gradeTo": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 9
+          }
+        },
+        "required": [
+          "name",
+          "account",
+          "gradeFrom",
+          "gradeTo"
+        ]
+      },
       "CreateSchoolUnitDto": {
         "type": "object",
         "properties": {
@@ -23262,6 +27788,12 @@
             "nullable": true,
             "minimum": 2,
             "maximum": 6
+          },
+          "notFirstInDay": {
+            "type": "boolean"
+          },
+          "notLastInDay": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -23579,6 +28111,28 @@
           "studentGroupId"
         ]
       },
+      "CreateTemplateDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "subjectId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
       "CreateTimplanCreditDto": {
         "type": "object",
         "properties": {
@@ -23824,6 +28378,59 @@
             "maxLength": 300
           }
         }
+      },
+      "ExamRoomDto": {
+        "type": "object",
+        "properties": {
+          "seats": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 2000
+          }
+        },
+        "required": [
+          "seats"
+        ]
+      },
+      "ExamSettingsDto": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "maxPerClassPerDay": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "maxPerClassPerWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 30
+          },
+          "writersPerInvigilator": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "turnoverMinutes": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 120
+          },
+          "replacementSubjectId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "required": [
+          "enabled",
+          "maxPerClassPerDay",
+          "maxPerClassPerWeek",
+          "writersPerInvigilator",
+          "turnoverMinutes"
+        ]
       },
       "ExecuteActivationDto": {
         "type": "object",
@@ -25090,6 +29697,23 @@
           "marks"
         ]
       },
+      "MealSettingsDto": {
+        "type": "object",
+        "properties": {
+          "cutoffTime": {
+            "type": "string",
+            "nullable": true
+          },
+          "letterEnabled": {
+            "type": "boolean"
+          },
+          "kitchenEmail": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 254
+          }
+        }
+      },
       "MoveBlockCardDto": {
         "type": "object",
         "properties": {
@@ -25141,6 +29765,28 @@
           "endTime"
         ]
       },
+      "MoveLessonPupilDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "fromLessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "toLessonId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "studentId",
+          "fromLessonId",
+          "toLessonId"
+        ]
+      },
       "MoveLunchSittingDto": {
         "type": "object",
         "properties": {
@@ -25178,6 +29824,7 @@
                 "LEAVE_REQUESTED",
                 "LESSON_CANCELLED",
                 "LESSON_COVER_WITHDRAWN",
+                "LESSON_PUPIL_MOVED",
                 "LESSON_REINSTATED",
                 "LESSON_REPORT_REMINDER",
                 "LESSON_ROOM_CHANGED",
@@ -25227,6 +29874,52 @@
           }
         }
       },
+      "OpenSpanDto": {
+        "type": "object",
+        "properties": {
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "startTime": {
+            "type": "string"
+          },
+          "endTime": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dayOfWeek",
+          "startTime",
+          "endTime"
+        ]
+      },
+      "OpenTimesDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "studentGroupId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "spans": {
+            "type": "array",
+            "maxItems": 40,
+            "items": {
+              "$ref": "#/components/schemas/OpenSpanDto"
+            }
+          }
+        },
+        "required": [
+          "academicYearId",
+          "spans"
+        ]
+      },
       "PassDecisionDto": {
         "type": "object",
         "properties": {
@@ -25258,6 +29951,34 @@
           "absenceId",
           "kind",
           "expected"
+        ]
+      },
+      "PayrollExportDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "CSV",
+              "XLSX"
+            ]
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "academicYearId",
+          "format"
         ]
       },
       "PlaceHalvesDto": {
@@ -25303,6 +30024,27 @@
           "startTime"
         ]
       },
+      "PlanExamsDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "examIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 300,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "required": [
+          "academicYearId"
+        ]
+      },
       "PoolMemberDto": {
         "type": "object",
         "properties": {
@@ -25313,6 +30055,58 @@
         },
         "required": [
           "userId"
+        ]
+      },
+      "PreviewChangeDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "OCCASION_CANCEL",
+              "OCCASION_MOVE",
+              "OCCASION_ROOM",
+              "TEMPLATE_MOVE",
+              "TEMPLATE_SPLIT"
+            ]
+          },
+          "masterLessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "calendarLessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetDate": {
+            "type": "string"
+          },
+          "targetDayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "targetStart": {
+            "type": "string"
+          },
+          "targetEnd": {
+            "type": "string"
+          },
+          "targetRoomId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "keepEnd": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "kind"
         ]
       },
       "PreviewImportDto": {
@@ -25452,6 +30246,19 @@
         "required": [
           "academicYearId"
         ]
+      },
+      "PublishDto": {
+        "type": "object",
+        "properties": {
+          "changeIds": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
       },
       "PublishScheduleDto": {
         "type": "object",
@@ -25606,6 +30413,44 @@
         },
         "required": [
           "shares"
+        ]
+      },
+      "RecordConsentDto": {
+        "type": "object",
+        "properties": {
+          "studentIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "DECLINED",
+              "GRANTED",
+              "WITHDRAWN"
+            ]
+          },
+          "givenOn": {
+            "type": "string"
+          },
+          "givenBy": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "studentIds",
+          "kind"
         ]
       },
       "RecordLeaveDelegationDto": {
@@ -25819,6 +30664,7 @@
               "ACCESS_LOG",
               "ATTENDANCE",
               "CHANGE_LOGS",
+              "CHECKLISTS",
               "COVER_REQUESTS",
               "CRISIS_ALARMS",
               "CRISIS_DRILLS",
@@ -26127,6 +30973,9 @@
               "NONE",
               "ROOMS"
             ]
+          },
+          "guardianNoticeOnMove": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -26521,6 +31370,12 @@
           "refreshOf": {
             "type": "string",
             "format": "uuid"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "BEST_EFFORT"
+            ]
           }
         },
         "required": [
@@ -26555,6 +31410,64 @@
         },
         "required": [
           "personId"
+        ]
+      },
+      "SuggestSwapsDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 30
+          }
+        },
+        "required": [
+          "lessonId"
+        ]
+      },
+      "SwapMoveDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "$ref": "#/components/schemas/SwapSlotDto"
+          },
+          "to": {
+            "$ref": "#/components/schemas/SwapSlotDto"
+          }
+        },
+        "required": [
+          "lessonId",
+          "from",
+          "to"
+        ]
+      },
+      "SwapSlotDto": {
+        "type": "object",
+        "properties": {
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "startTime": {
+            "type": "string"
+          },
+          "endTime": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dayOfWeek",
+          "startTime",
+          "endTime"
         ]
       },
       "SwitchPublishModeDto": {
@@ -26685,6 +31598,39 @@
         },
         "required": [
           "subjectId"
+        ]
+      },
+      "TickProofsDto": {
+        "type": "object",
+        "properties": {
+          "templateId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "studentIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "instructedOn": {
+            "type": "string"
+          },
+          "instructorId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "templateId",
+          "studentIds"
         ]
       },
       "TriggerOptimizationDto": {
@@ -26820,6 +31766,44 @@
           }
         }
       },
+      "UpdateChangeDto": {
+        "type": "object",
+        "properties": {
+          "rev": {
+            "type": "number",
+            "minimum": 1
+          },
+          "targetDate": {
+            "type": "string"
+          },
+          "targetDayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "targetStart": {
+            "type": "string"
+          },
+          "targetEnd": {
+            "type": "string"
+          },
+          "targetRoomId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "keepEnd": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "rev"
+        ]
+      },
       "UpdateCrisisSettingsDto": {
         "type": "object",
         "properties": {
@@ -26843,6 +31827,71 @@
         "required": [
           "startProfiles",
           "notifyGuardiansAfter"
+        ]
+      },
+      "UpdateExamDto": {
+        "type": "object",
+        "properties": {
+          "subjectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 72
+          },
+          "lengthMinutes": {
+            "type": "number",
+            "minimum": 5,
+            "maximum": 480
+          },
+          "writers": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 2000
+          },
+          "windowKind": {
+            "type": "string",
+            "enum": [
+              "FIXED",
+              "WEEK"
+            ]
+          },
+          "windowFrom": {
+            "type": "string"
+          },
+          "windowTo": {
+            "type": "string"
+          },
+          "fixedStart": {
+            "type": "string"
+          },
+          "earliestStart": {
+            "type": "string"
+          },
+          "latestEnd": {
+            "type": "string"
+          },
+          "groupIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 60,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "required": [
+          "subjectId",
+          "name",
+          "lengthMinutes",
+          "writers",
+          "windowKind",
+          "windowFrom",
+          "windowTo",
+          "groupIds"
         ]
       },
       "UpdateFrameTimeDto": {
@@ -27132,6 +32181,9 @@
           },
           "requiresApproval": {
             "type": "boolean"
+          },
+          "canBeShared": {
+            "type": "boolean"
           }
         }
       },
@@ -27311,6 +32363,29 @@
           }
         }
       },
+      "UpdateSchoolPartDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "account": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "gradeFrom": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "gradeTo": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 9
+          }
+        }
+      },
       "UpdateSchoolUnitDto": {
         "type": "object",
         "properties": {
@@ -27441,6 +32516,12 @@
             "nullable": true,
             "minimum": 2,
             "maximum": 6
+          },
+          "notFirstInDay": {
+            "type": "boolean"
+          },
+          "notLastInDay": {
+            "type": "boolean"
           }
         }
       },
@@ -27719,6 +32800,30 @@
           }
         }
       },
+      "UpdateTemplateDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "subjectId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean"
+          }
+        }
+      },
       "UpdateTimplanCreditDto": {
         "type": "object",
         "properties": {
@@ -27865,6 +32970,72 @@
           },
           "generatorKeepsConsecutiveTeaching": {
             "type": "boolean"
+          },
+          "generatorBestEffort": {
+            "type": "boolean"
+          },
+          "placementEdgeMode": {
+            "type": "string",
+            "enum": [
+              "HARD",
+              "OFF",
+              "SOFT"
+            ]
+          },
+          "placementEdgeWeight": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "placementPlacesMode": {
+            "type": "string",
+            "enum": [
+              "HARD",
+              "OFF",
+              "SOFT"
+            ]
+          },
+          "placementPlacesWeight": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "maxClassRoomsPerDay": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "maxTeacherRoomsPerDay": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "maxClassBuildingsPerDay": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "maxTeacherBuildingsPerDay": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "placementSharedMode": {
+            "type": "string",
+            "enum": [
+              "HARD",
+              "OFF",
+              "SOFT"
+            ]
+          },
+          "placementSharedWeight": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000
           }
         },
         "required": [
@@ -27983,6 +33154,13 @@
             ]
           },
           "gateOtherSchool": {
+            "type": "string",
+            "enum": [
+              "REFUSE",
+              "WARN"
+            ]
+          },
+          "gateDeviations": {
             "type": "string",
             "enum": [
               "REFUSE",
@@ -28297,6 +33475,19 @@
             "maximum": 7
           }
         }
+      },
+      "VoidProofDto": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "reason"
+        ]
       },
       "WithdrawAbsenceDto": {
         "type": "object",

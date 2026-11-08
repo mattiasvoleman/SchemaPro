@@ -666,3 +666,60 @@ describe('writeXlsx and readXlsx: every cell is text and comes back as written',
     expect(readXlsx(writeXlsx(light, { sheetName: 'S' })).rows).toEqual(light);
   });
 });
+
+describe('writeXlsx: number columns (the löneunderlag)', () => {
+  const table = [
+    ['Namn', 'Minuter', 'Timmar', 'Kommentar'],
+    ['Anna', '120', '2.00', '12'],
+    ['Bo', '-30', '0.50', '=1+1'],
+    ['Cy', '', 'tre', '3,5'],
+  ];
+  const sheetOf = (buf: Buffer): string => readZip(buf).get('xl/worksheets/sheet1.xml')!.toString('utf8');
+  const stylesOf = (buf: Buffer): string => readZip(buf).get('xl/styles.xml')!.toString('utf8');
+  const options = { sheetName: 'Underlag', numberColumns: { 1: 'integer', 2: 'decimal' } as const };
+
+  it('writes a plain number of a number column as a number, so that it sums, and everything else as text', () => {
+    const sheet = sheetOf(writeXlsx(table, options));
+    expect(sheet).toContain('<c r="B2" s="3"><v>120</v></c>');
+    expect(sheet).toContain('<c r="B3" s="3"><v>-30</v></c>');
+    expect(sheet).toContain('<c r="C2" s="4"><v>2.00</v></c>');
+    expect(sheet).toContain('<c r="C3" s="4"><v>0.50</v></c>');
+    // Column D is not a number column: "12" stays text, and so does a formula, which is never evaluated.
+    expect(sheet).toMatch(/<c r="D2" s="2" t="s">/);
+    expect(sheet).toMatch(/<c r="D3" s="2" t="s">/);
+  });
+
+  it('keeps the header text, leaves an empty cell empty, and writes a word in a number column as text', () => {
+    const sheet = sheetOf(writeXlsx(table, options));
+    expect(sheet).toMatch(/<c r="B1" s="1" t="s">/);
+    expect(sheet).not.toContain('r="B4"');
+    expect(sheet).toMatch(/<c r="C4" s="2" t="s">/);
+  });
+
+  it('gives the number columns their formats and the column its default style', () => {
+    const buf = writeXlsx(table, options);
+    const styles = stylesOf(buf);
+    expect(styles).toContain('<cellXfs count="5">');
+    expect(styles).toContain('numFmtId="1"');
+    expect(styles).toContain('numFmtId="2"');
+    const sheet = sheetOf(buf);
+    expect(sheet).toContain('<col min="2" max="2"');
+    expect(sheet).toMatch(/<col min="2" max="2" width="[\d.]+" style="3"/);
+    expect(sheet).toMatch(/<col min="3" max="3" width="[\d.]+" style="4"/);
+    expect(sheet).toMatch(/<col min="4" max="4" width="[\d.]+" style="2"/);
+  });
+
+  it('reads back through readXlsx as the numbers it wrote', () => {
+    const read = readXlsx(writeXlsx(table, options));
+    expect(read.rows[1]).toEqual(['Anna', '120', '2.00', '12']);
+    expect(read.rows[2]).toEqual(['Bo', '-30', '0.50', '=1+1']);
+    expect(read.rows[3]).toEqual(['Cy', '', 'tre', '3,5']);
+  });
+
+  it('is the package it always was without the option: three formats, every cell text', () => {
+    const plain = writeXlsx(table, { sheetName: 'Underlag' });
+    expect(stylesOf(plain)).toContain('<cellXfs count="3">');
+    expect(sheetOf(plain)).not.toMatch(/<c r="B2" s="3"/);
+    expect(sheetOf(plain)).toMatch(/<c r="B2" s="2" t="s">/);
+  });
+});

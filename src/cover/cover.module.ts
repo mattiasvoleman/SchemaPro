@@ -41,5 +41,7 @@ import { CoverRequestsService } from './cover-requests.service';
     CoverRequestsService,
     CoverRequestsJob,
   ],
+  // Analys och planering builds its löneunderlag on the hour statement (src/analysis).
+  exports: [CoverReportsService],
 })
 export class CoverModule {}

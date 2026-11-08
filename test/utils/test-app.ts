@@ -36,6 +36,7 @@ import { NotificationsModule } from '../../src/notifications/notifications.modul
 import { AttendanceModule } from '../../src/attendance/attendance.module';
 import { ResourcesModule } from '../../src/resources/resources.module';
 import { CalendarModule } from '../../src/calendar/calendar.module';
+import { SwapsModule } from '../../src/swaps/swaps.module';
 import { UsersModule } from '../../src/users/users.module';
 import { ImportModule } from '../../src/import/import.module';
 import { ScheduleExchangeModule } from '../../src/schedule-exchange/exchange.module';
@@ -57,9 +58,16 @@ import { SharingModule } from '../../src/sharing/sharing.module';
 import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
 import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module';
+import { MealCountsModule } from '../../src/meal-counts/meal-counts.module';
 import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.module';
+import { AbsenceStatsModule } from '../../src/absence-stats/absence-stats.module';
 import { AckModule } from '../../src/ack/ack.module';
+import { LessonMovesModule } from '../../src/lesson-moves/lesson-moves.module';
+import { ChecklistsModule } from '../../src/checklists/checklists.module';
 import { SchoolDayModule } from '../../src/school-day/school-day.module';
+import { ExamsModule } from '../../src/exams/exams.module';
+import { ClassTeacherModule } from '../../src/class-teacher/class-teacher.module';
+import { AnalysisModule } from '../../src/analysis/analysis.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { SchoolExportModule } from '../../src/school-export/school-export.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
@@ -168,6 +176,7 @@ export const FEATURE_MODULES = [
   ResourcesModule,
   UsersModule,
   CalendarModule,
+  SwapsModule,
   RoomBookingsModule,
   StaffingModule,
   TimplanModule,
@@ -188,10 +197,19 @@ export const FEATURE_MODULES = [
   SchoolExportModule,
   // Frånvarobevakning's job is @Optional on the runner too, and the setup turns it off.
   AbsenceWatchModule,
+  MealCountsModule,
   // Rapporteringsgrad's job is @Optional on the runner too, and the setup turns it off.
   ReportingRateModule,
+  // Frånvarostatistik's job likewise.
+  AbsenceStatsModule,
   AckModule,
+  // Elevens lektion för dagen: moves a pupil to a parallel lesson for a day; no timer.
+  LessonMovesModule,
+  ChecklistsModule,
   SchoolDayModule,
+  ExamsModule,
+  ClassTeacherModule,
+  AnalysisModule,
   SignInModule,
   HuvudmanModule,
   AccessLogModule,

@@ -263,7 +263,10 @@ export class OptimizationController {
    * because in DIRECT the write also takes the replaced lessons off the
    * calendar, as Generera's does. No solver call, so the room apply's limit.
    * 409 PUBLISH_MODE_CHANGED, SCHEDULE_CANDIDATE_BUSY, _NOT_APPLICABLE or
-   * _STALE (with the basis parts that changed); see the service.
+   * _STALE (with the basis parts that changed); see the service. A candidate
+   * whose school rules gave way (Bästa möjliga schema) is applied only with
+   * `acceptedDeviations`, its digest: 409 SCHEDULE_CANDIDATE_DEVIATIONS_NOT_
+   * ACCEPTED or BEST_EFFORT_NOT_ENABLED, with nothing written.
    */
   @Post('candidates/:id/apply')
   @HttpCode(HttpStatus.OK)
@@ -273,7 +276,7 @@ export class OptimizationController {
     @Body() dto: ApplyCandidateDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<CandidateApplyOutcome> {
-    return this.candidates.apply(id, dto.expectedMode, user);
+    return this.candidates.apply(id, dto.expectedMode, user, dto.acceptedDeviations);
   }
 
   /**

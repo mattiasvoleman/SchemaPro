@@ -29,9 +29,11 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { WindowedThrottlerStorage } from './common/windowed-throttler-storage';
 import { OptimizationModule } from './optimization/optimization.module';
 import { AttendanceModule } from './attendance/attendance.module';
+import { LessonMovesModule } from './lesson-moves/lesson-moves.module';
 import { ResourcesModule } from './resources/resources.module';
 import { UsersModule } from './users/users.module';
 import { CalendarModule } from './calendar/calendar.module';
+import { SwapsModule } from './swaps/swaps.module';
 import { RoomBookingsModule } from './room-bookings/room-bookings.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { StaffingModule } from './staffing/staffing.module';
@@ -41,9 +43,15 @@ import { YearRolloverModule } from './year-rollover/year-rollover.module';
 import { CoverModule } from './cover/cover.module';
 import { CrisisModule } from './crisis/crisis.module';
 import { AbsenceWatchModule } from './absence-watch/absence-watch.module';
+import { MealCountsModule } from './meal-counts/meal-counts.module';
 import { ReportingRateModule } from './reporting-rate/reporting-rate.module';
+import { AbsenceStatsModule } from './absence-stats/absence-stats.module';
 import { AckModule } from './ack/ack.module';
+import { ClassTeacherModule } from './class-teacher/class-teacher.module';
+import { ChecklistsModule } from './checklists/checklists.module';
 import { SchoolDayModule } from './school-day/school-day.module';
+import { ExamsModule } from './exams/exams.module';
+import { AnalysisModule } from './analysis/analysis.module';
 import { GallringModule } from './gallring/gallring.module';
 import { SchoolExportModule } from './school-export/school-export.module';
 import { AccessLogModule } from './access-log/access-log.module';
@@ -137,9 +145,11 @@ import type { ThrottleConfig } from './config/configuration';
 
     OptimizationModule,
     AttendanceModule,
+    LessonMovesModule,
     ResourcesModule,
     UsersModule,
     CalendarModule,
+    SwapsModule,
     RoomBookingsModule,
     RealtimeModule,
     StaffingModule,
@@ -151,9 +161,15 @@ import type { ThrottleConfig } from './config/configuration';
     GallringModule,
     SchoolExportModule,
     AbsenceWatchModule,
+    MealCountsModule,
     ReportingRateModule,
+    AbsenceStatsModule,
     AckModule,
+    ChecklistsModule,
     SchoolDayModule,
+    ExamsModule,
+    ClassTeacherModule,
+    AnalysisModule,
     AccessLogModule,
     OpenApiModule,
     SchoolUnitsModule,
