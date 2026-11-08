@@ -4471,3 +4471,87 @@ BEGIN
   PERFORM pg_temp.d7_expect('... and not a third', (SELECT count(*)::text FROM "Ss12000EntityVersions" WHERE resource = 'CalendarEvent' AND "entityId" = pg_temp.d7_l(3) AND xid = pg_current_xact_id()), '0');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 429o: Klasslärarens schema (G5, 20270128090000), the owner's side.
+-- Two rules the database keeps in two places, and the function that asks the
+-- second place only if the first is gone: the rows the tables forbid are written
+-- here with their guard taken away (inside a transaction that is rolled back),
+-- so that the function's own test is the only thing between the row and the
+-- answer. Without this a loosened function passes every section, because no row
+-- the tables allow can tell it from the original. Fixtures: rls-klasslarare-school.
+--
+--   * a room loan that has ended is not a loan: app.class_teacher_room_is_lent_in
+--     asks for endedAt IS NULL as well as for the status, and the table's CHECK
+--     (an ended loan says when, and only a WITHDRAWN or REVOKED one has ended)
+--     keeps a PENDING or APPROVED loan from having ended;
+--   * a klasslärare belongs to a home class, not to the half of one: the guard
+--     of the appointments asks for halfOfId IS NULL as well as for the kind, and
+--     the trigger of the groups (HC409) keeps a class from being the half of one.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  school uuid;
+  room uuid;
+  class uuid;
+  teacher uuid;
+  half uuid;
+  year uuid;
+  got text := 'none';
+BEGIN
+  SELECT id INTO school FROM "Schools" WHERE slug = 'rls-klasslarare-school';
+  SELECT id INTO room FROM "Rooms" WHERE "schoolId" = school AND name = 'KL Sal U (utgången)';
+  SELECT id, "academicYearId" INTO class, year FROM "StudentGroups" WHERE "schoolId" = school AND name = 'KL4A';
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND email = 'kl-t3@example.invalid';
+  IF school IS NULL OR room IS NULL OR class IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'klasslärare 429o: the fixtures did not run (school %, room %, class %, teacher %)', school, room, class, teacher;
+  END IF;
+
+  -- A room loan that has ended. The fixture's loan was approved and its last day has gone by: not lent, by its dates.
+  IF app.class_teacher_room_is_lent_in(school, room) THEN
+    RAISE EXCEPTION 'klasslärare 429o: the room whose loan has run out is lent';
+  END IF;
+  -- Take the CHECK away and let the loan run on for ten days with the moment it was ended written on it: by its status and its
+  -- dates alone the room would be lent; it is not, because the loan has ended.
+  ALTER TABLE "RoomLoans" DROP CONSTRAINT "RoomLoans_an_ended_loan_says_when";
+  UPDATE "RoomLoans" SET "endDate" = current_date + 10, "endedAt" = now() WHERE "roomId" = room AND "ownerSchoolId" = school;
+  IF NOT FOUND THEN RAISE EXCEPTION 'klasslärare 429o: the fixture has no loan of the room'; END IF;
+  IF app.class_teacher_room_is_lent_in(school, room) THEN
+    RAISE EXCEPTION 'klasslärare 429o: a loan that has ended (endedAt written) lends the room';
+  END IF;
+  -- The control: without the moment it ended, the same row lends it. The stand-in bites, and the function reads the column.
+  UPDATE "RoomLoans" SET "endedAt" = NULL WHERE "roomId" = room AND "ownerSchoolId" = school;
+  IF NOT app.class_teacher_room_is_lent_in(school, room) THEN
+    RAISE EXCEPTION 'klasslärare 429o: the approved loan with no end does not lend the room';
+  END IF;
+
+  -- A half of a class that is itself a class (kind CLASS with a halfOfId): the trigger of the groups refuses it, so it is
+  -- written past the trigger.
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "halfOfId", "updatedAt")
+    VALUES (school, year, 'KL4A-klass', 4, 'CLASS', class, now());
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM 'HC409' THEN
+    RAISE EXCEPTION 'klasslärare 429o: a class that is the half of one was %, not refused with HC409', got;
+  END IF;
+  ALTER TABLE "StudentGroups" DISABLE TRIGGER "StudentGroups_half_is_of_a_class";
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "halfOfId", "updatedAt")
+  VALUES (school, year, 'KL4A-klass', 4, 'CLASS', class, now()) RETURNING id INTO half;
+  -- A teacher of the school, a group of the right kind, and still no appointment: it is the half of a class.
+  got := 'none';
+  BEGIN
+    INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId") VALUES (school, year, half, teacher);
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM 'CT400' THEN
+    RAISE EXCEPTION 'klasslärare 429o: appointing a klasslärare of the half of a class was %, not refused with CT400', got;
+  END IF;
+  -- The control: the same teacher, appointed to the class itself.
+  INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId") VALUES (school, year, class, teacher);
+END $$;
+ROLLBACK;

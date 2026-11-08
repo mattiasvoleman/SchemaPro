@@ -49085,7 +49085,8 @@ BEGIN
   UPDATE "Users" SET "isActive" = true WHERE id = t3;
   -- The guard names a half by its link as well as by its kind, but the database never lets a class have one: a half is
   -- a teaching group of a class (HC409), so the guard's test of the link is never the only thing between a half and
-  -- an appointment. This pins the rule that makes it so; the day it goes, the guard's own test is all that is left.
+  -- an appointment. This pins the rule that makes it so; section 429o of rls-owner-checks.sql writes such a half past
+  -- the trigger, as only the owner can, and shows that the guard refuses it by its own test.
   PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "halfOfId", "updatedAt") VALUES (%L, %L, 'KL4A-klass', 4, 'CLASS', %L, now())$q$, school, y, ca),
                              'HC409', 'a half of a class that is itself a class');
   -- The class of another school: the guard does not find it in this one (and the key would not either).
@@ -49648,6 +49649,7 @@ DECLARE
   l_ma uuid; l_en uuid; l_sv uuid; l_sl uuid; l_ro uuid; l_id uuid; l_past uuid; l_k2 uuid;
   m_ma uuid; m_sv uuid; m_mu uuid; m_en uuid;
   r2 uuid; r3 uuid; r4 uuid;
+  y_next uuid;
   d_mon date; d_thu date; d_tue date; d_fri date; d_sat date;
   v text;
   c uuid;
@@ -49926,8 +49928,10 @@ BEGIN
   today_s := (now() AT TIME ZONE tzs)::date;
   PERFORM pg_temp.g5_as('0001');
   UPDATE "AcademicYears" SET "startDate" = d_tue, "endDate" = d_tue + 1 WHERE id = y;
-  -- Another läsår of the school begins the day after: a day of that one is no day of the class's.
-  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (school, 'Klasslärare nästa', d_thu, d_thu + 100, false, now());
+  -- Another läsår of the school begins the day after, with a class of its own: a day of that one is no day of the class's
+  -- (the year asked about is the class's, not any class of the school's).
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (school, 'Klasslärare nästa', d_thu, d_thu + 100, false, now()) RETURNING id INTO y_next;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (school, y_next, 'KL5A', 5, now());
   PERFORM pg_temp.g5_as('0006');
   w := concat_ws(' ', pg_temp.g5_move(k1, ca, l_en, d_mon, '10:00'), pg_temp.g5_move(k1, ca, l_en, d_tue, '10:00'),
                       pg_temp.g5_move(k1, ca, l_en, d_tue + 1, '10:00'), pg_temp.g5_move(k1, ca, l_en, d_thu, '10:00'));
