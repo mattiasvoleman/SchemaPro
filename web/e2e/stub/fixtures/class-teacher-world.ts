@@ -37,8 +37,9 @@ import {
  * cancelled Swedish and the two days already gone show the other ways a lesson
  * is shut. Eva's appointment to 8A has lapsed, the administrator who made it
  * having left. 7A has two drafts: the Tuesday English moved in the weekly
- * template, which the check passes, and the Thursday mentor hour moved on its
- * date, which the check finds a clash for. A clash is named by class, subject
+ * template, which the check passes but says would take two future lessons out
+ * of the calendar (one of them with a homework on it), and the Thursday mentor
+ * hour moved on its date, which the check finds a clash for. A clash is named by class, subject
  * and time, never by a teacher.
  *
  * Times are HH:MM, as the gateway sends them.
@@ -183,8 +184,11 @@ const CLASH: Verdict = {
   ],
 };
 
+/** A move of the weekly template that takes lessons out of the published calendar: said before it is published. */
+const REMOVES: Verdict = { state: "OK", removes: { lessons: 2, withLog: 1 } };
+
 export const CHECK: CheckRow[] = [
-  { change: TEMPLATE_DRAFT, verdict: { state: "OK" } },
+  { change: TEMPLATE_DRAFT, verdict: REMOVES },
   { change: OCCASION_DRAFT, verdict: CLASH },
 ];
 
@@ -194,7 +198,7 @@ export const DRAFT_ROWS: DraftRowView[] = [
     className: CLASS_7A.name,
     authorName: `${author.firstName} ${author.lastName}`,
     subjectName: subjectName(ENGLISH.subjectId),
-    verdict: { state: "OK" },
+    verdict: REMOVES,
   },
   {
     change: OCCASION_DRAFT,
