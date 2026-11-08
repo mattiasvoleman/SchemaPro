@@ -4630,6 +4630,7 @@ DECLARE
   total integer := 0;
   counts jsonb;
   pr_p1 uuid;
+  pe_p1 uuid;
 BEGIN
   INSERT INTO "InstructionTemplates" (id, "schoolId", title) VALUES (tpl, school, 'Gallring');
   INSERT INTO "InstructionTemplates" (id, "schoolId", title) VALUES (tpl_o, other, 'Annans');
@@ -4650,12 +4651,15 @@ BEGIN
   UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '400 days' WHERE id = pg_temp.clo_user('annan-p');
   ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
   SELECT id INTO pr_p1 FROM "InstructionProofs" WHERE "studentId" = p1;
+  SELECT id INTO pe_p1 FROM "ConsentEntries" WHERE "studentId" = p1;
 
   -- What is due, as the one predicate answers it, a year after: p1's proof and answer, and the old empty list, nothing of p2 (who
-  -- left too recently), p3 (still at the school) or the other school.
+  -- left too recently), p3 (still at the school) or the other school. The answer is named as the proof is, so that it is p1's
+  -- answer that is due and not p2's (a comparison turned the wrong way in the answers' branch left the old text as it was; review
+  -- of #288, round 2, MEDEL-4).
   PERFORM pg_temp.clo_expect('434b due',
-    (SELECT string_agg(d.tbl || ':' || (CASE WHEN d.id = pr_p1 THEN 'p1' ELSE '' END), ' ' ORDER BY d.tbl) FROM app.gallring_due(school, 'CHECKLISTS', today - 365, today) d),
-    'ConsentEntries: ConsentLists: InstructionProofs:p1');
+    (SELECT string_agg(d.tbl || ':' || (CASE WHEN d.id IN (pr_p1, pe_p1) THEN 'p1' ELSE '' END), ' ' ORDER BY d.tbl) FROM app.gallring_due(school, 'CHECKLISTS', today - 365, today) d),
+    'ConsentEntries:p1 ConsentLists: InstructionProofs:p1');
   PERFORM pg_temp.clo_expect('434b due, the old empty list only',
     (SELECT string_agg(d.id::text, ' ') FROM app.gallring_due(school, 'CHECKLISTS', today - 365, today) d WHERE d.tbl = 'ConsentLists'), lst_old_empty::text);
   -- A pupil who is at the school has none due, however far on the cutoff is; neither has the list with their answer.
@@ -4696,6 +4700,13 @@ BEGIN
     (SELECT concat_ws('|', (SELECT count(*) FROM "InstructionProofs" WHERE "schoolId" = school), (SELECT count(*) FROM "ConsentEntries" WHERE "schoolId" = school),
                       (SELECT string_agg(title, ',' ORDER BY title) FROM "ConsentLists" WHERE "schoolId" = school))),
     '2|2|Foto,Ny tom');
+  -- ... and whose: p1's proof and answer went, p2's and p3's stay (p2 left too recently, p3 is at the school).
+  PERFORM pg_temp.clo_expect('434b whose proofs and answers are left',
+    'proofs ' || coalesce((SELECT string_agg(x.l, ',' ORDER BY x.l)
+                             FROM (SELECT CASE "studentId" WHEN p1 THEN 'p1' WHEN p2 THEN 'p2' WHEN p3 THEN 'p3' END AS l FROM "InstructionProofs" WHERE "schoolId" = school) x), '')
+      || ' answers ' || coalesce((SELECT string_agg(x.l, ',' ORDER BY x.l)
+                                    FROM (SELECT CASE "studentId" WHEN p1 THEN 'p1' WHEN p2 THEN 'p2' WHEN p3 THEN 'p3' END AS l FROM "ConsentEntries" WHERE "schoolId" = school) x), ''),
+    'proofs p2,p3 answers p2,p3');
   SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
   IF (counts ->> 'CHECKLISTS')::integer <> 3 THEN RAISE EXCEPTION 'checklistor 434b: the run counts % under CHECKLISTS, not three (the proof, the answer and the old list)', counts ->> 'CHECKLISTS'; END IF;
   PERFORM pg_temp.clo_expect('434b the other school is left alone',
