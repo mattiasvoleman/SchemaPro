@@ -93,6 +93,7 @@
       <li><span>6.17 Frånvarostatistik över tid</span><span class="dots"></span><span class="pg" data-pg="s617"></span></li>
       <li><span>6.18 Måltidskollen: portioner för köket</span><span class="dots"></span><span class="pg" data-pg="s618"></span></li>
       <li><span>6.19 Klasslärarens schema</span><span class="dots"></span><span class="pg" data-pg="s619"></span></li>
+      <li><span>6.20 Checklistor: instruktionsbevis och samtyckeslistor</span><span class="dots"></span><span class="pg" data-pg="s620"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -7453,6 +7454,86 @@
 
 <!-- ============================ 7 ============================ -->
 <section class="chapter" id="ch7">
+  <h3 id="s620"><span class="num">6.20</span>Checklistor: instruktionsbevis och samtyckeslistor</h3>
+  <p>
+    <strong>Checklistor</strong> ersätter pappren och kalkylbladen som lärare och mentorer för över
+    två saker: vilka elever som har fått <strong>instruktion</strong> i något som kräver det
+    (maskinerna i slöjden, laborationssäkerhet i NO, idrottens moment) och vilka vårdnadshavare som
+    har <strong>samtyckt</strong> till något för en klass (fotografering, publicering, en utflykt).
+    Båda finns under <span class="path">Checklistor</span>. Den som skriver Drift gör mallar och listor
+    och bockar för vilken elev som helst; en läsare ser allt och ändrar ingenting.
+  </p>
+  <ul>
+    <li><strong>Mallar.</strong> En mall är ett moment, med ett namn (högst 120 tecken), ett ämne om det hör
+      till ett, och en beskrivning av vad instruktionen innehåller (högst 2 000), så att alla bockar av
+      samma sak. Ett moment finns bara en gång i varje ämne. <strong>En mall tas aldrig bort</strong>:
+      bockarna ska finnas kvar. Är den inte längre aktuell väljer du <span class="ui">Avveckla</span>;
+      då går det inte att bocka av i den, och <span class="ui">Ta fram igen</span> ångrar det.</li>
+    <li><strong>Bocka av.</strong> Välj en mall och en grupp (en klass eller en undervisningsgrupp), välj eleverna
+      som har fått instruktionen (<span class="ui">Välj alla som saknas</span> hjälper) och tryck
+      <span class="ui">Bocka av valda</span>. Du anger dagen instruktionen gavs (inte en dag som inte har
+      kommit) och, om det inte var du, vem som gav den: personalen väljs ur skolans lista. Samma elev, mall och
+      dag blir en bock, hur många gånger du än trycker. En ny instruktion en annan dag är en ny bock,
+      och i listan står den senaste med <em>+2 tidigare</em> om det finns fler.</li>
+    <li><strong>Ett bevis gäller eleven, inte klassen.</strong> Bocken sitter på eleven. Byter eleven klass,
+      eller läsåret rullas över, finns den kvar och syns i den nya klassens lista. Den som har slutat på skolan
+      behåller sina bevis (hur länge: se Dataskydd nedan). Ett elevkort, som du öppnar genom att klicka på
+      elevens namn, visar alla bockar och var eleven står på samtyckeslistorna.</li>
+    <li><strong>Upphäv en bock som blivit fel.</strong> Den som gjorde bocken, eller en administratör, väljer
+      <span class="ui">Upphäv</span> och skriver varför (högst 300 tecken). Bocken tas inte bort: den står kvar på
+      elevkortet, markerad som upphävd, med vem som upphävde den, när och varför, och räknas inte längre som instruktion.
+      Det finns inget sätt att ändra eller ta bort en bock, eftersom den kan behövas som bevis.</li>
+    <li><strong>Samtyckeslistor.</strong> <span class="ui">Ny samtyckeslista</span>: välj klass, skriv en rubrik och
+      texten vårdnadshavarna ska samtycka till, med de ord de kommer att se (högst 1 700 tecken). Det kan finnas en
+      öppen lista med samma namn per klass. Listan visar varje elev i klassen och var eleven står:
+      <em>Samtycke</em>, <em>Har tackat nej</em>, <em>Återkallat</em>, <em>Frågad i appen</em> (och hur många
+      vårdnadshavare som väntar) eller <em>Saknas</em>. Ikon och text bär betydelsen, inte bara färgen.</li>
+    <li><strong>Skriv in ett svar från papper.</strong> Markera eleverna och välj
+      <span class="ui">Registrera samtycke</span>, <span class="ui">Registrera nej</span> eller
+      <span class="ui">Återkalla samtycke</span>. Du anger dagen på pappret, vem som lämnade det (fritt, till exempel
+      <em>mamma Anna</em>) och en anteckning. Vem som skrev in det och när bestämmer Rastra, inte du. Svaren läggs
+      bara till: ett samtycke som tas tillbaka är ett nytt svar, och <em>Återkallat</em> syns i listan direkt. Historiken
+      per elev visar alla svar, det senaste först, och det senaste avgör.</li>
+    <li><strong>Fråga vårdnadshavarna i appen.</strong> Är <a href="#s616">Kvittens</a> påslaget kan du fråga genom den:
+      <span class="ui">Fråga vårdnadshavarna i appen</span> för de markerade eleverna, eller
+      <span class="ui">Fråga alla som saknar svar</span>. Det går ut som en kvittensförfrågan med regeln <em>Alla
+      vårdnadshavare ska bekräfta</em>, med listans text och meningen att en bekräftelse är samtycket och att det går att ta
+      tillbaka genom att kontakta skolan. Det finns inget annat bekräftelseflöde: vårdnadshavaren bekräftar under
+      Meddelanden, och <strong>när den sista vårdnadshavaren som fick frågan har bekräftat</strong> skriver Rastra in
+      samtycket själv, med dagen. Bekräftar bara en av två står eleven kvar som <em>Frågad i appen</em>. Har någon skrivit in <em>Återkallat</em> eller
+      <em>Har tackat nej</em> efter att förfrågan gick ut räknas inte en sen bekräftelse av just den förfrågan: eleven står kvar
+      som återkallad. Vill du ha samtycket igen, fråga om med en ny förfrågan. En vårdnadshavare
+      vars vårdnad har upphört håller inte upp svaret, men ett samtycke skrivs aldrig in bara för att den andra
+      försvann: ingen har då sagt ja.</li>
+    <li><strong>Avsluta listan</strong> när den inte ska användas längre (den som gjorde listan, eller en administratör).
+      Inget kan skrivas till en avslutad lista, det som skrivits finns kvar, och klassen kan få en ny lista med samma namn.</li>
+    <li><strong>Skriv ut.</strong> <span class="ui">Skriv ut</span> ger listan eller bocklistan på papper. Skyddad identitet:
+      på skärmen står varje elev du får se vid namn, som i registret, men <strong>en elev som skolan har markerat som
+      skyddad finns inte med på pappret</strong>, och pappret säger hur många som är utelämnade. Det finns ingen fil att hämta.</li>
+  </ul>
+  <h4>Vem får göra vad</h4>
+  <p>
+    En <strong>lärare</strong> bockar av elever i sina egna grupper och lektioner i det aktiva läsåret (de lektioner där hen
+    är lärare eller medlärare, med lektionens klasser, undervisningsgrupper och namngivna elever; en parkerad lektion räknas
+    inte), och ser också sina mentorselevers bevis. Samtyckeslistor gör och skriver en lärare för klasser hen är mentor för
+    (samma mentorsbegrepp som i Kvittens och frånvarobevakningen), och ser svaren för elever hen undervisar eller är mentor för.
+    Vårdnadshavare och elever ser ingenting här: vårdnadshavaren bekräftar i appen eller på webben under Meddelanden.
+    Att du öppnar en lista, en bocklista eller ett elevkort skrivs i läsloggen.
+  </p>
+  <h4>Dataskydd</h4>
+  <p>
+    Bevisen och samtyckena har en <strong>gallringstyp för sig</strong> under <span class="path">Dataskydd</span>:
+    <em>Checklistor</em>. De sparas så länge eleven går på skolan och därefter så länge ni bestämmer. <strong>Förvalet är
+    <em>Ej beslutat</em>, och då gallras ingenting.</strong> En elev som går kvar på skolan har aldrig något som gallras,
+    hur lång tid ni än väljer. Ett instruktionsbevis kan behövas för arbetsmiljöansvaret långt efter att eleven har slutat,
+    och det är därför det inte gallras av sig självt. Välj en period för <em>Slutade personer</em> som är minst lika lång som
+    för <em>Checklistor</em>: sedan en elev har pseudonymiserats finns beviset kvar, men inte längre med ett namn.
+    Pseudonymiseringen tar elevens namn men inte det som personalen har skrivit fritt: namnet på den som lämnade ett svar
+    (till exempel en vårdnadshavares) och anteckningarna på bevis och svar står kvar tills raderna gallras, alltså efter
+    tiden för <em>Checklistor</em>. Skriv inte mer i dem än det behövs.
+    Förfrågningarna i appen gallras med skolans val för <em>Notiser</em>, men samtycket de gav finns kvar på listan.
+  </p>
+
   <h2><span class="num">7</span>Integrationer</h2>
   <p class="lede">Koppla Rastra Schema till skolans övriga system, och bestäm hur länge uppgifterna sparas.</p>
 
@@ -8164,6 +8245,7 @@
       <tr><td class="k">Vikarieförfrågningar</td><td>Avslutade förfrågningar om vikarie som avslutades före gränsdagen, med vilka lektioner de gällde och vem som tillfrågades och svarade, och vikariernas bekräftelser av pass från före gränsdagen. En fråga som fortfarande står öppen gallras aldrig.</td><td>Vikariebesluten och vikariepassen, så att vikarietimmar och lön stämmer. Rättvisan visar bara de förfrågningar som finns kvar.</td></tr>
       <tr><td class="k">Krisläge: övningar</td><td>Övningar som avslutades före gränsdagen, med grupperna, lärarna, eleverna och varje markering.</td><td>—</td></tr>
       <tr><td class="k">Krisläge: skarpa larm</td><td>Skarpa larm som avslutades före gränsdagen, med allt som hör till dem. Ett larm som pågår gallras aldrig.</td><td>—</td></tr>
+      <tr><td class="k">Checklistor</td><td>Instruktionsbevis och svar på samtyckeslistor för elever som avaktiverades före gränsdagen, och samtyckeslistor som är äldre än gränsdagen och tomma. En elev som går kvar på skolan har aldrig något som gallras.</td><td>Mallarna. Bevisen kan behövas för arbetsmiljöansvaret efter att eleven slutat: välj minst lika lång tid som för Slutade personer, annars finns beviset kvar men utan namn.</td></tr>
       <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort, utom när en annan skola fortfarande använder den (2.3); då är det bara den här skolans uppgift om personen som pseudonymiseras. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur och anteckning tas bort från personens tjänster.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur och anteckning; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
     </tbody>
   </table>

@@ -87,6 +87,7 @@ export type GroupKeyKind =
   | 'homePupils'
   | 'successors'
   | 'mentorDuties'
+  | 'consentLists'
   | 'enrolments'
   | 'classTeacher';
 
@@ -115,6 +116,9 @@ export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
   }),
   key('StudentGroups', ['predecessorId', 'schoolId'], 'SET NULL', { counted: 'successors' }),
   key('TeacherDuties', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'mentorDuties' }),
+  // A consent list belongs to a class (Checklistor, 20270129091000). The list and its answers are kept when the class
+  // goes, as the record of who consented to what: the list only loses the class it was made for.
+  key('ConsentLists', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'consentLists' }),
   key('StudentEnrollments', ['studentGroupId', 'academicYearId', 'schoolId'], 'SET NULL', { counted: 'enrolments' }),
   // Klasslärarens schema (20270128090000): the class's klasslärare, the hours open to them and their drafts go with the class.
   key('ClassTeacherAppointments', ['studentGroupId', 'academicYearId', 'schoolId'], 'CASCADE', { counted: 'classTeacher' }),
@@ -196,6 +200,9 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   // Kvittens (20270117091000): the requests a guardian was asked, and the ones asked about a pupil, go with the person.
   key('AckReceipts', ['guardianId', 'schoolId'], 'CASCADE', others),
   key('AckReceipts', ['studentId', 'schoolId'], 'CASCADE', others),
+  // Checklistor (20270129091000): a pupil's instruction proofs and answers on consent lists go with the pupil.
+  key('InstructionProofs', ['studentId', 'schoolId'], 'CASCADE', others),
+  key('ConsentEntries', ['studentId', 'schoolId'], 'CASCADE', others),
   key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),
   // Klasslärarens schema (20270128090000): a teacher's appointment goes with them.
   key('ClassTeacherAppointments', ['userId', 'schoolId'], 'CASCADE', others),
@@ -247,6 +254,12 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('ClassTeacherAppointments', ['appointedByUserId', 'schoolId'], 'SET NULL', kept),
   key('ClassTeacherChanges', ['authorId', 'schoolId'], 'SET NULL', kept),
   key('ClassTeacherChanges', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
+  // Checklistor: what a member of staff wrote or gave stays without them (the tick, the answer, the list).
+  key('InstructionProofs', ['instructorId', 'schoolId'], 'SET NULL', kept),
+  key('InstructionProofs', ['recordedById', 'schoolId'], 'SET NULL', kept),
+  key('InstructionProofs', ['voidedById', 'schoolId'], 'SET NULL', kept),
+  key('ConsentEntries', ['recordedById', 'schoolId'], 'SET NULL', kept),
+  key('ConsentLists', ['createdById', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['requestedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['acceptedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CrisisAlarms', ['startedByUserId', 'schoolId'], 'SET NULL', kept),

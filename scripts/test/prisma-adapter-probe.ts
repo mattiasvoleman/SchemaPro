@@ -151,6 +151,7 @@ import { coverRequestsChecks, sweepCoverRequestsSchool } from './probe-cover-req
 import { krislageChecks, sweepKrislageSchool } from './probe-krislage';
 import { kvittensChecks, sweepKvittensSchool } from './probe-kvittens';
 import { lessonMoveChecks, sweepLessonMovesSchool } from './probe-lesson-moves';
+import { checklistorChecks, sweepChecklistorSchool } from './probe-checklistor';
 import { skolansDagChecks, sweepSkolansDagSchool } from './probe-skolans-dag';
 import { klasslarareChecks, sweepKlasslarareSchool } from './probe-klasslarare';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
@@ -6049,6 +6050,7 @@ async function runChecks(
   await krislageChecks(owner, api, MARKER, check);
   await kvittensChecks(owner, api, MARKER, check);
   await lessonMoveChecks(owner, api, MARKER, check);
+  await checklistorChecks(owner, api, MARKER, check);
   await skolansDagChecks(owner, api, MARKER, check);
   await klasslarareChecks(owner, api, MARKER, check);
   await elevlistanChecks(owner, api, MARKER, check);
@@ -6555,6 +6557,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepKvittensSchool(owner, MARKER);
   // Elevens lektion för dagen's school, likewise.
   await sweepLessonMovesSchool(owner, MARKER);
+  // Checklistor's school, likewise.
+  await sweepChecklistorSchool(owner, MARKER);
   // Skolans dag's school, likewise.
   await sweepSkolansDagSchool(owner, MARKER);
   // Klasslärarens schema's school, likewise.

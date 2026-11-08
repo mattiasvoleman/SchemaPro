@@ -175,6 +175,9 @@ export const ADMIN_NAV: NavGroup[] = [
       // (Lunchsittningar): the same meal, counted instead of placed, and an icon the menu already
       // names, so the row costs the document its label and path and no drawing of its own.
       { labelKey: "meals", href: "/admin/meals", icon: UtensilsCrossed },
+      // Checklistor: the instruction proofs and the classes' consent lists. Beside Kvittens, which
+      // asks the guardians the consent lists ask. The attendance icon again: a tick against a name.
+      { labelKey: "checklists", href: "/admin/checklists", icon: ClipboardCheck },
       // Lektionslogg's klassbok: a class's lessons over a period, printed. The subjects' book.
       { labelKey: "classBook", href: "/admin/klassbok", icon: BookOpen },
     ],

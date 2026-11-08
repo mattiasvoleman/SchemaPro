@@ -130,6 +130,9 @@
         - link "Måltidskollen":
           - /url: /sv/admin/meals
       - listitem:
+        - link "Checklistor":
+          - /url: /sv/admin/checklists
+      - listitem:
         - link "Klassbok":
           - /url: /sv/admin/klassbok
     - list:

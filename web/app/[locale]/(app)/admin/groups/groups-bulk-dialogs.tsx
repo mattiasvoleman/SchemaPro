@@ -162,7 +162,7 @@ export function describeGroupRemoval(
       ]),
       ...(GROUP_BELOW_PARENTS.some((key) => consequences[key] > 0) ? [t("groupConsequences.below", {})] : []),
     ],
-    loses: lines(["homePupils", "enrolments", "mentorDuties", "sharedLessons", "successors"]),
+    loses: lines(["homePupils", "enrolments", "mentorDuties", "consentLists", "sharedLessons", "successors"]),
     notes: consequences.fromSource > 0 ? [t("fromSource", { count: consequences.fromSource })] : [],
     exhaustive: true,
   };

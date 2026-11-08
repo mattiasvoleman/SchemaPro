@@ -4442,6 +4442,195 @@ BEGIN
   VALUES (m, yr, grp, teacher, 'OCCASION_CANCEL', lesson, 'fixture', '{}');
 END $$;
 
+-- Checklistor (F5, 20270129091000), sections 430-434. A school with the people the tests
+-- need: pupils in two classes and one teaching group, and a teacher in each relation to them
+-- (teaches, co-teaches with a named pupil, mentors, teaches a parked lesson only, teaches a
+-- class of a year that is not active, has nothing to do with any of them). The tests find
+-- everybody by e-mail address (cl-*@example.invalid). The auth ids are f5000000NNNN.
+--
+--   pupils    p1 C7A + TG1         p2 C7A          p3 C7B         p4 C7A, protected identity
+--             p5 C7B + TG1         p6 C7B, has left                p7 C6A (last year's class)
+--   teachers  t1 teaches TG1 (L1) and a parked lesson of C7B   t2 mentors C7A (p1 p2 p4)
+--             t3 teaches C7B (L3)                              t4 co-teaches L1, p7 named on it
+--             t5 teaches C6A of the inactive year               t6 nothing
+--   guardians g1 (p1 p2)  g2 (p1)  g3 (p3)  g4 (p4)
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  yo uuid;
+  y2 uuid;
+  ca uuid;
+  cb uuid;
+  c6 uuid;
+  tg uuid;
+  c9 uuid;
+  subj uuid;
+  t1 uuid;
+  t2 uuid;
+  t3 uuid;
+  t4 uuid;
+  t5 uuid;
+  t6 uuid;
+  p1 uuid;
+  p2 uuid;
+  p3 uuid;
+  p4 uuid;
+  p5 uuid;
+  p6 uuid;
+  p7 uuid;
+  l1 uuid;
+  po uuid;
+  tr uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-checklistor-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Checklistor', 'rls-checklistor-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Checklistor', current_date - 700, current_date + 700, true, now()) RETURNING id INTO y;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Checklistor förra året', current_date - 2000, current_date - 1000, false, now()) RETURNING id INTO yo;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s1, y, 'CL7A', 7, now()) RETURNING id INTO ca;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s1, y, 'CL7B', 7, now()) RETURNING id INTO cb;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s1, yo, 'CL6A', 6, now()) RETURNING id INTO c6;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'CLSLJ1', 'TEACHING_GROUP', 7, now()) RETURNING id INTO tg;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'Checklistor slöjd', 'CLS', now()) RETURNING id INTO subj;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s1, 'cl-full@example.invalid', 'Checklistor', 'Full', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-f50000000001', true, now()),
+    (s1, 'cl-expedition@example.invalid', 'Checklistor', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-f50000000003', true, now()),
+    (s1, 'cl-lasare@example.invalid', 'Checklistor', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-f50000000005', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'cl-t1@example.invalid', 'Checklistor', 'Slöjdläraren', 'TEACHER', '00000000-0000-4000-8000-f50000000006', true, now()) RETURNING id INTO t1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'cl-t2@example.invalid', 'Checklistor', 'Mentorn', 'TEACHER', '00000000-0000-4000-8000-f50000000007', true, now()) RETURNING id INTO t2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'cl-t3@example.invalid', 'Checklistor', 'Klassläraren B', 'TEACHER', '00000000-0000-4000-8000-f50000000008', true, now()) RETURNING id INTO t3;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'cl-t4@example.invalid', 'Checklistor', 'Medläraren', 'TEACHER', '00000000-0000-4000-8000-f50000000009', true, now()) RETURNING id INTO t4;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'cl-t5@example.invalid', 'Checklistor', 'Förra årets', 'TEACHER', '00000000-0000-4000-8000-f5000000000a', true, now()) RETURNING id INTO t5;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'cl-t6@example.invalid', 'Checklistor', 'Utan elever', 'TEACHER', '00000000-0000-4000-8000-f5000000000b', true, now()) RETURNING id INTO t6;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  VALUES (s1, t2, y, 'MENTORSKAP', 'Mentor 7A', 60, ca, now());
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    (s1, 'cl-p1@example.invalid', 'Checklistor', 'Elev Ett', 'STUDENT', '00000000-0000-4000-8000-f50000000011', true, ca, now()),
+    (s1, 'cl-p2@example.invalid', 'Checklistor', 'Elev Två', 'STUDENT', '00000000-0000-4000-8000-f50000000012', true, ca, now()),
+    (s1, 'cl-p3@example.invalid', 'Checklistor', 'Elev Tre', 'STUDENT', '00000000-0000-4000-8000-f50000000013', true, cb, now()),
+    (s1, 'cl-p4@example.invalid', 'Checklistor', 'Elev Fyra', 'STUDENT', '00000000-0000-4000-8000-f50000000014', true, ca, now()),
+    (s1, 'cl-p5@example.invalid', 'Checklistor', 'Elev Fem', 'STUDENT', '00000000-0000-4000-8000-f50000000015', true, cb, now()),
+    (s1, 'cl-p6@example.invalid', 'Checklistor', 'Elev Sex', 'STUDENT', '00000000-0000-4000-8000-f50000000016', true, cb, now()),
+    (s1, 'cl-p7@example.invalid', 'Checklistor', 'Elev Sju', 'STUDENT', '00000000-0000-4000-8000-f50000000017', true, c6, now());
+  SELECT id INTO p1 FROM "Users" WHERE "schoolId" = s1 AND email = 'cl-p1@example.invalid';
+  SELECT id INTO p2 FROM "Users" WHERE "schoolId" = s1 AND email = 'cl-p2@example.invalid';
+  SELECT id INTO p3 FROM "Users" WHERE "schoolId" = s1 AND email = 'cl-p3@example.invalid';
+  SELECT id INTO p4 FROM "Users" WHERE "schoolId" = s1 AND email = 'cl-p4@example.invalid';
+  SELECT id INTO p5 FROM "Users" WHERE "schoolId" = s1 AND email = 'cl-p5@example.invalid';
+  SELECT id INTO p6 FROM "Users" WHERE "schoolId" = s1 AND email = 'cl-p6@example.invalid';
+  SELECT id INTO p7 FROM "Users" WHERE "schoolId" = s1 AND email = 'cl-p7@example.invalid';
+  ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '400 days' WHERE id = p6;
+  ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, tg, p1), (s1, tg, p5);
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p4, s1, 'MANUAL');
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (s1, 'cl-g1@example.invalid', 'Checklistor', 'Vårdnadshavare Ett', 'GUARDIAN', '00000000-0000-4000-8000-f50000000021', true, now()),
+    (s1, 'cl-g2@example.invalid', 'Checklistor', 'Vårdnadshavare Två', 'GUARDIAN', '00000000-0000-4000-8000-f50000000022', true, now()),
+    (s1, 'cl-g3@example.invalid', 'Checklistor', 'Vårdnadshavare Tre', 'GUARDIAN', '00000000-0000-4000-8000-f50000000023', true, now()),
+    (s1, 'cl-g4@example.invalid', 'Checklistor', 'Vårdnadshavare Fyra', 'GUARDIAN', '00000000-0000-4000-8000-f50000000024', true, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT s1, g."id", p."id"
+    FROM (VALUES ('cl-g1@example.invalid', 'cl-p1@example.invalid'),
+                 ('cl-g1@example.invalid', 'cl-p2@example.invalid'),
+                 ('cl-g2@example.invalid', 'cl-p1@example.invalid'),
+                 ('cl-g3@example.invalid', 'cl-p3@example.invalid'),
+                 ('cl-g4@example.invalid', 'cl-p4@example.invalid')) AS v(guardian, pupil)
+    JOIN "Users" g ON g."schoolId" = s1 AND g."email" = v.guardian
+    JOIN "Users" p ON p."schoolId" = s1 AND p."email" = v.pupil;
+
+  -- Lessons. L1: the teaching group, t1 teaches and t4 co-teaches, p7 is named on it. A parked lesson of
+  -- 7B is t1's and occupies nothing. L3: 7B's, t3 teaches. L6: 6A's of the year that is not active, t5.
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "coTeacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (s1, y, subj, tg, t1, t4, 1, '08:00', '09:00', now()) RETURNING id INTO l1;
+  INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId") VALUES (s1, l1, p7);
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "isParked", "updatedAt")
+  VALUES (s1, y, subj, cb, t1, 2, '08:00', '09:00', true, now());
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (s1, y, subj, cb, t3, 3, '08:00', '09:00', now());
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (s1, yo, subj, c6, t5, 4, '08:00', '09:00', now());
+
+  -- The other school: its own administrator, teacher, class, pupil and guardian.
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Checklistor annan', 'rls-checklistor-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'Checklistor annan', current_date - 700, current_date + 700, true, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s2, y2, 'CL9A', 9, now()) RETURNING id INTO c9;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'cl-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-f50000000031', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s2, 'cl-annan-p@example.invalid', 'Annan', 'Elev', 'STUDENT', '00000000-0000-4000-8000-f50000000032', true, c9, now()) RETURNING id INTO po;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'cl-annan-t@example.invalid', 'Annan', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-f50000000034', true, now()) RETURNING id INTO tr;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s2, 'Annan slöjd', 'ASL', now()) RETURNING id INTO subj;
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (s2, y2, subj, c9, tr, 1, '08:00', '09:00', now());
+END $$;
+
+-- The matrix school's rows for Checklistor (20270129091000), so the role matrix (section 116) has a row
+-- of each table to probe: a template, a proof of the school's first pupil, a consent list for the
+-- pupil's class with one answer, and a Kvittens request of the rule ALL, unanswered, that asks for it.
+-- Written by the owner, once.
+DO $$
+DECLARE
+  m uuid;
+  author uuid;
+  pupil uuid;
+  guardian uuid;
+  klass uuid;
+  tpl uuid;
+  lst uuid;
+  req uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "InstructionTemplates" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO author FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000105';
+  SELECT id, "studentGroupId" INTO pupil, klass FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000112';
+  SELECT id INTO guardian FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000113';
+  IF author IS NULL OR pupil IS NULL OR guardian IS NULL OR klass IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school lacks the administrator, pupil, guardian or class for a checklist';
+  END IF;
+  INSERT INTO "InstructionTemplates" ("schoolId", title, description)
+  VALUES (m, 'Cirkelsågen', 'Skydd, nödstopp och arbetsställning.') RETURNING id INTO tpl;
+  INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "instructorId", "recordedById")
+  VALUES (m, tpl, pupil, current_date - 3, author, author);
+  INSERT INTO "ConsentLists" ("schoolId", "studentGroupId", title, body, "createdById")
+  VALUES (m, klass, 'Fotografering', 'Jag samtycker till att mitt barn fotograferas i skolans verksamhet.', author) RETURNING id INTO lst;
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", "recordedById")
+  VALUES (m, lst, pupil, 'GRANTED', current_date - 2, author);
+  INSERT INTO "AckRequests" ("schoolId", "authorId", title, body, rule, "createdAt")
+  VALUES (m, author, 'Samtycke: Fotografering', 'Jag samtycker.', 'ALL', now() - interval '3 days') RETURNING id INTO req;
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "createdAt") VALUES (req, m, pupil, guardian, now() - interval '3 days');
+  -- Section 241 compares the guardian who has a login at two schools, choosing this one, with this school's own
+  -- guardian "who has the same child": so the request asks that guardian about the pupil too (as Kvittens' does).
+  FOR guardian IN
+    SELECT u."id" FROM "Users" u JOIN "GuardianStudents" gs ON gs."guardianId" = u."id" AND gs."studentId" = pupil
+     WHERE u."schoolId" = m AND u."authId" = 'fe000000-0000-4000-8000-000000000243'
+  LOOP
+    INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId", "createdAt") VALUES (req, m, pupil, guardian, now() - interval '3 days');
+  END LOOP;
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, m, lst);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

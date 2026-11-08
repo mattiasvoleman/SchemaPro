@@ -133,6 +133,7 @@ export const miscRoutes: GatewayRoute[] = [
         publicLinks: 0,
         enrolments: 3 * ids.length,
         mentorDuties: 0,
+        consentLists: 0,
         fromSource: 0,
       },
     };

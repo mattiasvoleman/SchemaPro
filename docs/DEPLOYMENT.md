@@ -2680,6 +2680,83 @@ Walk the full product loop once, in order:
   (`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.proname LIKE
   'class\_teacher\_%' OR p.proname = 'is_class_teacher'`) and `prisma migrate
   resolve --rolled-back 20270128090000_en_klasslarare_utses_och_andrar_sin_klass_inom_ramen`.
+
+- **Checklistor** (instruktionsbevis and samtyckeslistor per klass): 20270129090000 adds the
+  `RetentionDataType` value `CHECKLISTS` and nothing else (a value cannot be used in the transaction that adds
+  it, so it is a file of its own, taking no lock). 20270129091000 adds the tables `InstructionTemplates`,
+  `InstructionProofs`, `ConsentLists`, `ConsentEntries` and `ConsentAsks`, the enums `ConsentEntryKind` and
+  `ConsentEntrySource`, thirteen functions (all SECURITY DEFINER with a pinned `search_path`: seven the API role
+  runs, six the owner's alone, the stamps and the bridge), five stamping triggers on the new tables, one
+  statement trigger on `AckReceipts` (`AckReceipts_consent`, AFTER UPDATE with both transition tables: it does
+  nothing for a request that belongs to no consent list), nineteen policies for the API role, and
+  `app.gallring_due` and `app.gallring_purge` again with the new kind. No existing row is touched and no existing
+  table gains a column. The new keys take `Schools`, `Users`, `StudentGroups`, `Subjects`, `AckRequests` and
+  `AckReceipts` in SHARE ROW EXCLUSIVE, NOWAIT, together in a loop: reads and foreign-key checks go on, writes to
+  those wait for the file, and if all six are not free at once in 30 s it stops with nothing changed (`prisma
+  migrate resolve --rolled-back 20270129091000_instruktionsbevis_och_samtyckeslistor_per_klass`, then deploy
+  again). The API before the release knows none of the objects and never asks for the new kind, so it keeps
+  working between the migration and the deploy; the migrations go in first, then the merge. The gallring
+  functions are built on the bodies Elevens lektion för dagen (D7, 20270122091000) left, which are `main`'s and
+  production's before this release: the md5 of the bodies is `a7b1da5813d0acf54b1474ad6f96c9c3` (due) and
+  `b23e04aec610ebbf1795b832d5054273` (purge) before, and `166943b0d5d22801fe9a1be96a722d95` and
+  `2390088f88e967fda35af6d56e63d3f9` after; the difference is the one branch marked `checklistor` in each
+  (three tables in `due`, three deletes in `purge`), and D7's `LessonPupilMoves` branch is carried in both. (An
+  earlier version of this migration was built on 20270117091000's bodies, `f884a3c7…` and `21746d39…`, and
+  would have dropped D7's branch without a git conflict, since the stamp puts this file after D7's; the review
+  of #288 found it, `src/gallring/gallring-branches.spec.ts` now fails on any phase that does, and RLS 433 checks the
+  branch in the database. **Check `md5(prosrc)` before this migration: it must be D7's.**) `gallring_pseudonymise`
+  (`6f18f62fc354bde849aa2e8b01eeceda`) is not touched, on purpose (see the decision below).
+  **Nothing changes for a school until someone uses it**: the pages are `/admin/checklists` and
+  `/teacher/checklists`, and asking the guardians in the app needs Kvittens (F4) to be on for the school.
+  **What is decided, for a conversation with the school:**
+  - *A proof is the pupil's, not the class's.* `InstructionProofs` carries a pupil and a template, never a class
+    or a group, so it follows the pupil through a change of class and the year rollover (the rollover moves
+    `Users.studentGroupId` and nothing else). A tick made in error is voided with a reason and stays; the same
+    pupil, template and day is one proof; no role can change or remove one.
+  - *"Sparas permanent" means this retention rule* (the new kind `CHECKLISTS` on Dataskydd): proofs and consents
+    are kept as long as the pupil is at the school and then as long as the school decides. Until the school
+    records a period nothing is purged (the default is "ej beslutat"), and a pupil who is still at the school
+    never has anything due, whatever period was chosen: only rows of a pupil who has left (`Users.deactivatedAt`)
+    more than that period ago, and consent lists that are older than the period and empty, are removed. An
+    instruction proof can be needed for the work-environment responsibility long after the pupil has left, which
+    is why the default keeps it. **A proof names its pupil only as long as the pupil is not pseudonymised**, and
+    that is the school's separate choice for *Avgångna personer*: a school that wants to be able to show *who* was
+    instructed must choose at least as long a period there as for *Checklistor*. The pseudonymisation does not
+    touch the proofs (a proof of a pseudonymised pupil stays, without a name), nor the free text staff wrote in
+    them: `ConsentEntries.givenBy` (who gave the answer, often a guardian's name) and the two `note` columns stay
+    until the rows are purged, so the *Checklistor* period also decides how long a guardian's name is kept
+    (granskning #288, LÅG-4; `gallring_pseudonymise` is a third shared function and is left alone); this is
+    flagged in the pull request.
+  - *A consent is a guardian's.* Staff write it down from a paper, a call or a meeting (who wrote it and when are
+    the database's; the date on the paper and who gave it are the writer's), or ask the guardians through Kvittens
+    with the rule ALL, which is the only confirmation there is: when the last guardian a request asked has
+    confirmed it, a trigger writes the pupil's answer (source `KVITTENS`). Two guardians who confirm at the same
+    moment are serialised by a lock of the trigger's own, per request, so the answer is written once, by whichever
+    is last. A confirmation that is only "met" because the other guardian's custody ended is *not* written as a
+    consent: nobody said yes after it. Nor does the last confirmation undo what staff wrote after the request was
+    made: a `WITHDRAWN` or a `DECLINED` newer than the request stays the latest answer (the trigger writes nothing
+    for that pupil), and the pupil is granted again only by a request made after it, the school asking again
+    (granskning #288, MEDEL-2). An answer is only ever added: a consent taken back is another answer,
+    `WITHDRAWN`, and the list shows it at once; what a pupil's consent is now is the latest answer
+    (`src/checklists/consent-state.ts`), or "frågad i appen" while a request made after it waits for a guardian.
+    The guardians' own withdrawal in the app is not built (a follow-up): until then staff write it down.
+  - *Who may do what.* An administrator under Drift manages templates and reads and writes everything of the
+    school (the läsare reads and writes nothing). A teacher ticks the pupils in their own groups and lessons of
+    the school's active year (`app.checklist_taught_ids`: the lessons where they are teacher or co-teacher, a
+    parked lesson excluded, with the lesson's classes, teaching groups and named pupils) and reads those and their
+    mentees; consents are written by the mentor (the same mentor definition as Kvittens and the frånvarobevakning).
+    Guardians and pupils see nothing here; they confirm in Meddelanden.
+  - *Skyddad identitet.* The screen names every pupil the staff member may read, a protected one too, as the
+    register does (the staff who ticks has the pupil in their register already, and a consent that is not on the
+    page is a consent nobody looked for). The **sheet for paper** (`GET …/roster/print` and `GET …/consent-lists/:id/print`)
+    is built by the gateway and holds the marked out: they are not in its rows or counts, `heldOut` says how many, and
+    the paper says so. It is the gateway's and not the browser's because a teacher, who prints too, cannot read the
+    marks (the register of marks is the administrators'): `app.checklist_protected_ids` tells the gateway, for the
+    ids it is given, which are marked (a teacher is told only about the pupils they read, an administrator about any
+    pupil of the school), and the gateway passes none of them on. The list of who can have given an instruction
+    leaves a colleague with a protected identity out for a teacher, as Skolans dag does for the staff on one screen. There is no export file. The tables are in
+    the registerutdrag, in the removal's inventory and so in the whole-school export's person tables.
+  Reads that name pupils (a roster, a list, a pupil's card) are recorded in the läslogg as PEOPLE.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

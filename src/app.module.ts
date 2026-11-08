@@ -48,6 +48,7 @@ import { ReportingRateModule } from './reporting-rate/reporting-rate.module';
 import { AbsenceStatsModule } from './absence-stats/absence-stats.module';
 import { AckModule } from './ack/ack.module';
 import { ClassTeacherModule } from './class-teacher/class-teacher.module';
+import { ChecklistsModule } from './checklists/checklists.module';
 import { SchoolDayModule } from './school-day/school-day.module';
 import { ExamsModule } from './exams/exams.module';
 import { GallringModule } from './gallring/gallring.module';
@@ -163,6 +164,7 @@ import type { ThrottleConfig } from './config/configuration';
     ReportingRateModule,
     AbsenceStatsModule,
     AckModule,
+    ChecklistsModule,
     SchoolDayModule,
     ExamsModule,
     ClassTeacherModule,

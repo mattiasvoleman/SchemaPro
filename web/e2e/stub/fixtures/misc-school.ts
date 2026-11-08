@@ -271,6 +271,7 @@ const RETENTION_KINDS: RetentionKind[] = [
   kind("COVER_REQUESTS"),
   kind("CRISIS_DRILLS"),
   kind("CRISIS_ALARMS"),
+  kind("CHECKLISTS"),
   kind("DEPARTED_PEOPLE", {
     current: DEPARTED_36,
     preview: { cutoff: addMonths(TODAY, -36), due: 0, held: 1 },

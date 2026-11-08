@@ -236,6 +236,8 @@ describe("AppShell navigation", () => {
     expect(link("nav.schoolDay")).toHaveAttribute("href", "/teacher/school-day");
     // Kvittens: ask the guardians of the mentees to confirm a message, in the menu always.
     expect(link("nav.acknowledgements")).toHaveAttribute("href", "/teacher/acknowledgements");
+    // Checklistor: instruction proofs and consent lists, in the menu always.
+    expect(link("nav.checklists")).toHaveAttribute("href", "/teacher/checklists");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
@@ -323,6 +325,7 @@ describe("AppShell navigation", () => {
       "nav.reportingRate",
       "nav.acknowledgements",
       "nav.meals",
+      "nav.checklists",
       "nav.classBook",
     ]);
 
