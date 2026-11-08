@@ -25,6 +25,7 @@
  *   (lc)  the clash: a lesson that lands in a booked room is listed, in the detail and in the notice the
  *         expedition and the full administrator get and the läsare does not; a cancelled series and a
  *         cancelled day clash with nothing;
+ *   (lg)  the register extract of the person who registered a series: the series is there, the hirer's details are `(dold)` and in no file;
  *   (ld)  the series' own life: the contact changes, the rule does not, cancel, cancel a day, remove;
  *   (le)  the report: a week of the hall as the figures say, and the CSV;
  *   (lf)  forty rooms, a term of Tuesdays each, a full schedule: the whole registration in under 2 s (or, on a
@@ -32,6 +33,10 @@
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ConflictException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { Role } from '../../src/auth/enums/role.enum';
@@ -48,6 +53,7 @@ import { utilisationCsv } from '../../src/local/utilisation-csv';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import type { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
 import { RoomBookingsService } from '../../src/room-bookings/room-bookings.service';
+import { SubjectAccessService } from '../../src/school-export/subject-access.service';
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -307,6 +313,23 @@ async function checks(owner: PrismaClient, api: PrismaService, slug: string): Pr
     // A cancelled lesson clashes with nothing.
     await owner.calendarLesson.updateMany({ where: { schoolId: s, date: new Date(`${wk(5)}T00:00:00Z`) }, data: { status: 'CANCELLED' } });
     assert.equal((await external.clashes(asAdmin)).filter((c) => c.seriesId === seriesId).length, 0);
+  });
+
+  await check("(lg) the register extract of the person who registered a series says that they did, and none of what the hirer left", async () => {
+    const answer = await new SubjectAccessService(api).extract(asAdmin, admin.id, false);
+    const dir = mkdtempSync(join(tmpdir(), 'k3-probe-'));
+    try {
+      writeFileSync(join(dir, 'x.zip'), Buffer.from(answer.contentBase64, 'base64'));
+      const all = execFileSync('unzip', ['-p', join(dir, 'x.zip')], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+      const file = execFileSync('unzip', ['-p', join(dir, 'x.zip'), 'data/person/externalbookings.csv'], { encoding: 'utf8' });
+      assert.ok(file.includes(seriesId) && file.includes(admin.id), 'the series is in the extract of the person who registered it');
+      assert.ok(file.includes('(dold)'), 'and the hirer\'s columns are hidden');
+      for (const token of ['Hjo innebandy', 'Kim Kontakt', '070-123 45 67', 'kim@forening.example', 'Innebandy, damer']) {
+        assert.ok(!all.includes(token), `${token} is in no file of the extract`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   // --- (ld) its own life ---------------------------------------------------------------------------
