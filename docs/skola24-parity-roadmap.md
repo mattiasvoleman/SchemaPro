@@ -173,8 +173,24 @@ re-check of availability at approval time, and the requester gets a
 auto-approve; admins booking directly skip approval. New NestJS
 `RoomBookingsModule` (`POST /api/v1/room-bookings`, `PATCH :id/cancel`,
 `PATCH :id/decide`). Migrations: `20260713230000_room_bookings`,
-`20260713230100_room_booking_notification`. Still open: cross-school room
+`20260713230100_room_booking_notification`. Still open at v1: cross-school room
 sharing, recurring bookings, and an availability grid/heatmap view.
+
+**8b. Lokal: resources, external bookers and utilisation — ✅ SHIPPED (K3, 2027-02)**
+Cross-school room sharing shipped as room loans (round 7). K3 adds what was left of
+Skola24 Lokal: **bookable resources that are not rooms** (the school's own kinds,
+a quantity, a place; equipment, a vehicle, a space nobody teaches in) booked and
+approved on the room bookings' flow; **external bookers after school** (an
+association hires the sports hall every Tuesday 18–20 for a term, registered by
+the expedition with organisation, contact, telephone and address — the hirer has
+no login), as a series whose days are ordinary bookings, checked against lessons,
+bookings, the ramtid, closures, loans and schemabrytande aktiviteter, with a day
+that a later publication puts a lesson on flagged to the expedition; and a
+**utilisation report** per room and resource (share of school time and of evenings
+and weekends booked, per week and per term, print and CSV). Migrations
+`20270204090000` and `20270204091000`; the contact is personal data about a
+non-user and is gallrad (`EXTERNAL_BOOKINGS`), in the register extract (hidden)
+and in the removal inventory.
 
 **8 (original scope).** Room booking (Skola24 Lokal parity) — let teachers book
 free rooms themselves: room-availability view (data already present), booking
