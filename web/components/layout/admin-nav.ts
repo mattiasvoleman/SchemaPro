@@ -2,6 +2,7 @@ import "server-only";
 import {
   BarChart3,
   BookOpen,
+  Boxes,
   CalendarClock,
   CalendarDays,
   CalendarOff,
@@ -9,6 +10,7 @@ import {
   CalendarSearch,
   ClipboardCheck,
   Coffee,
+  DoorOpen,
   GraduationCap,
   Grid3x3,
   KeyRound,
@@ -103,6 +105,10 @@ export const ADMIN_NAV: NavGroup[] = [
       // card itself stays on tillgänglighet — the hall's size and the break's
       // length, one row for the school, where this is the flow through the day.
       { labelKey: "lunchServings", href: "/admin/lunch-servings", icon: UtensilsCrossed },
+      // Resurser: what the school lends out that is not a lokal, and its kinds. Last in the phase:
+      // the rooms are Grunddata, and these are the things a booking is made of beside them.
+      // The boxes say a stock of things; a teacher books them on the teacher's Boka resurs.
+      { labelKey: "resources", href: "/admin/resources", icon: Boxes },
     ],
   },
   {
@@ -158,6 +164,13 @@ export const ADMIN_NAV: NavGroup[] = [
       { labelKey: "activities", href: "/admin/activities", icon: CalendarRange },
       { labelKey: "leaveRequests", href: "/admin/leave", icon: ClipboardCheck },
       { labelKey: "roomBookings", href: "/admin/room-bookings", icon: MapPin },
+      // Externa bokningar: a room or a resource let to an association or a company for a series of
+      // days, registered by the expedition. Beside the bookings it adds days to. An open door: the
+      // room is let to somebody from outside.
+      { labelKey: "externalBookings", href: "/admin/external-bookings", icon: DoorOpen },
+      // Utnyttjande: how much of each room and resource is booked, for a period. Beside the bookings
+      // it counts, and before the other reports. The reports' icon, already in the shell.
+      { labelKey: "utilisation", href: "/admin/utilisation", icon: BarChart3 },
       { labelKey: "reports", href: "/admin/reports", icon: BarChart3 },
       // Frånvarobevakning: the limits for absence and the pupils who passed
       // one, counted from the attendance Rapporter reads. The reports' icon:

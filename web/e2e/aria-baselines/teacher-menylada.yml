@@ -23,6 +23,9 @@
           - link "Boka lokal":
             - /url: /sv/teacher/rooms
         - listitem:
+          - link "Boka resurs":
+            - /url: /sv/teacher/resources
+        - listitem:
           - link "Skolans dag":
             - /url: /sv/teacher/school-day
         - listitem:

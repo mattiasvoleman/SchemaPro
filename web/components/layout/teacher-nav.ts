@@ -1,5 +1,5 @@
 import "server-only";
-import { BarChart3, BookOpen, CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, UserX } from "lucide-react";
+import { BarChart3, BookOpen, Boxes, CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, UserX } from "lucide-react";
 import type { NavGroup } from "./role-nav";
 
 /* The teacher's menu (see role-nav.tsx for how it reaches the shell). */
@@ -21,6 +21,9 @@ export const TEACHER_NAV: NavGroup[] = [
       // homework. The admin menu's subjects icon.
       { labelKey: "classBook", href: "/teacher/klassbok", icon: BookOpen },
       { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
+      // Boka resurs: tablets, a minibus, the hall, for a time; beside the lokal booking it is made like.
+      // The admin menu's Resurser icon.
+      { labelKey: "myResources", href: "/teacher/resources", icon: Boxes },
       // Skolans dag: the school's day and week, in the form the school has
       // decided teachers get (the page says so when it has decided none). The
       // week's icon.

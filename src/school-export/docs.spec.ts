@@ -27,6 +27,20 @@ describe('the format document', () => {
   });
 });
 
+describe('the format document and the hirer of an external booking (Lokal)', () => {
+  it('says that the hirer’s name and contact are written (dold) in ExternalBookings, and that the registrar stays', () => {
+    const text = formatDocument(DATA_FILES, tableFiles());
+
+    expect(text).toContain('och det gör också namnet och kontaktuppgifterna hos en extern hyrande i `ExternalBookings`');
+    expect(text).toContain('kvar står att personen registrerat serien');
+    expect(text).toMatch(/Tabellerna: .*`ExternalBookings`/);
+  });
+
+  it('writes nothing of the person tables for an extract that has none', () => {
+    expect(formatDocument(DATA_FILES, [])).not.toContain('ExternalBookings');
+  });
+});
+
 describe('the README', () => {
   const at = new Date('2026-11-05T12:00:00.000Z');
 

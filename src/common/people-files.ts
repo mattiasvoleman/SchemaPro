@@ -133,6 +133,15 @@
  * årskurser and kronor with no person, and NAMES_NOBODY there. A route of Analys och planering that ever answers a file naming people belongs in the
  * list below, by name, before it ships.
  *
+ * LOKAL (20270204091000) IS DECIDED HERE TOO, though no route of it is listed: the utilisation report (GET /api/v1/utilisation) answers the screen in JSON and
+ * GET /api/v1/utilisation/csv is a file (UTF-8, `;`) of the same figures, and neither names a person: they are rooms and resources and minutes. The routes
+ * of external bookings (/api/v1/external-bookings) answer administrators in JSON and name the person who registered a series (left out when that
+ * person has a protected identity) and the hirer's organisation, contact person, telephone number and address. The hirer is not a user and so has no
+ * protected identity in Rastra to hold out; the details are the school's own record of who it let to, read by administrators alone, never put in a notice, a
+ * calendar feed or a file, and written "(dold)" in the extract of the person who registered the series (person-tables.ts, thirdParty). A booking of a resource names
+ * its booker to an administrator only, a marked booker left out. The print and the file of the report are the web's (web/lib/people-files.ts,
+ * NAMES_NOBODY). A route of Lokal that ever answers a file naming the hirer belongs in the list below, by name, as HOLDS_OUT, before it ships.
+ *
  * Why the database cannot hold this instead: an export is built in the
  * gateway or the browser from ordinary reads under RLS, and nothing in the
  * catalogue says which reads become a file. The rule that can be held there
@@ -198,6 +207,12 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
     why:
       'Registerutdrag (GDPR art. 15): one person\'s own data, the person themselves included if marked, and no other marked person (held out and counted). ' +
       'The extract of a marked person names nobody else, by id or address, in any file; any extract leaves out the pupil\'s part of a row that is not about the person.',
+  },
+  'GET /api/v1/utilisation/csv': {
+    rule: 'NAMES_STAFF',
+    why:
+      'Utnyttjande (Lokal): rooms and resources and minutes, the school\'s CSV dialect. It names nobody at all, staff included, so there is nobody to hold out; ' +
+      'the gateway\'s vocabulary has no class for a file that names no one (the web\'s has NAMES_NOBODY), and NAMES_STAFF is the closest: no pupil or guardian is in it.',
   },
   'GET /api/v1/staffing/scb-file': {
     rule: 'KEEPS_AND_SAYS',

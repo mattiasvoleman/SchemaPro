@@ -511,6 +511,17 @@ describe('CoverSuggestionsService', () => {
     });
   });
 
+  describe('the basis of a proposal', () => {
+    it('asks for the day’s bookings that make a person busy, a day of an external hire (Lokal) making nobody busy', async () => {
+      const tx = createTxMock();
+
+      await basisOf(tx as never, D, 'Europe/Stockholm');
+
+      expect(tx.roomBooking.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.roomBooking.findMany.mock.calls[0]![0].where).toMatchObject({ status: { in: ['PENDING', 'APPROVED'] }, externalBookingId: null });
+    });
+  });
+
   describe('Sammanhängande undervisning in the day proposal and its apply', () => {
     const queued = () =>
       tx.$queryRaw.mockResolvedValue([

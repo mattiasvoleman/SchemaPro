@@ -118,6 +118,8 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   // Rastvaktsschema: the areas and the passes, planering's as the uppdrag are.
   "/admin/supervision": "PLANERING",
   "/admin/lunch-servings": "PLANERING",
+  // Resurser: the kinds and the resources are written by Planering, as the lokaler are; the läsare reads both.
+  "/admin/resources": "PLANERING",
   "/admin/generate": "SCHEMALAGGNING",
   "/admin/timetable": "SCHEMALAGGNING",
   "/admin/gaps": "SCHEMALAGGNING",
@@ -150,6 +152,10 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/activities/exams": "DRIFT",
   "/admin/leave": "DRIFT",
   "/admin/room-bookings": "DRIFT",
+  // Externa bokningar: registering and cancelling a series are Drift's, as the lokalbokningar its days stand among; the läsare reads.
+  "/admin/external-bookings": "DRIFT",
+  // Utnyttjande: reads only, and names no person, so no area gates it and every administrator opens it whole.
+  "/admin/utilisation": null,
   "/admin/reports": "DRIFT",
   // Frånvarobevakning: the switch and the limits are Drift's, as the attendance they count.
   "/admin/absence-watch": "DRIFT",

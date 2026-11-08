@@ -33,6 +33,7 @@ export interface NotificationRow {
     | "ACK_REQUESTED"
     | "ACK_REMINDER"
     | "LESSON_PUPIL_MOVED"
+    | "EXTERNAL_BOOKING_CLASH"
     | "CRISIS_ALARM"
     | "CRISIS_ENDED"
     | "CRISIS_GUARDIAN_AFTER"
@@ -58,6 +59,8 @@ const HREF: Partial<Record<NotificationRow["type"], string>> = {
   LESSON_REPORT_REMINDER: "/teacher/reporting-rate",
   REPORTING_RATE_DIGEST: "/admin/reporting-rate",
   // Kvittens: the guardian to the message they are asked to confirm.
+  // Lokal: the expedition to the list of days that clash with a lesson.
+  EXTERNAL_BOOKING_CLASH: "/admin/external-bookings",
   ACK_REQUESTED: "/guardian/acknowledgements",
   ACK_REMINDER: "/guardian/acknowledgements",
 };
@@ -117,6 +120,9 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
       // Kvittens: the message's title, which is behind the login (the push and the e-mail say
       // only that a message waits), and never the child. One key per type under "ack", for the bundle.
       return t(`ack.${entry.type}`, { title: str("title") });
+    case "EXTERNAL_BOOKING_CLASH":
+      // Lokal: how many days clash, never the hirer (the list is on the page).
+      return t("externalBookingClash", { days: Number(meta.days ?? 0) });
     case "LESSON_PUPIL_MOVED":
       // Elevens lektion för dagen: the lesson the pupil is on now (where they went, or where they are back when
       // the move is undone) and its time, never who moved them or who they are. One sentence for both, because

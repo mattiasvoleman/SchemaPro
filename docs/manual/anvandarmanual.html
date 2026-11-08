@@ -95,6 +95,7 @@
       <li><span>6.19 Klasslärarens schema</span><span class="dots"></span><span class="pg" data-pg="s619"></span></li>
       <li><span>6.20 Checklistor: instruktionsbevis och samtyckeslistor</span><span class="dots"></span><span class="pg" data-pg="s620"></span></li>
       <li><span>6.21 Analys och planering</span><span class="dots"></span><span class="pg" data-pg="s621"></span></li>
+      <li><span>6.22 Lokal: resurser, externa och utnyttjande</span><span class="dots"></span><span class="pg" data-pg="s622"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -6211,7 +6212,8 @@
     under <span class="path">Drift › Lokalbokningar</span>. Bokningar tar hänsyn
     till schemat, så en sal som redan har lektion går inte att boka. En sal
     som skolan lånar ut till en annan skola går inte att boka under lånets
-    tider, och en lånad sal går bara att boka under dem (2.5).
+    tider, och en lånad sal går bara att boka under dem (2.5). Resurser som inte
+    är salar, och föreningar som hyr en sal, finns i 6.22.
   </p>
 
   <h3 id="s69"><span class="num">6.9</span>Rapporter</h3>
@@ -7628,6 +7630,87 @@
       beräkning av lön, semester eller sjukavdrag. Kontrollera fördelningen på skoldelar och uppdrag mot
       skolans egna avtal innan filen läses in, och kom ihåg att en lektion som lästs in som hållen först då
       räknas som undervisning: för en period som pågår är underlaget så färskt som lektionsloggen.
+    </p>
+  </div>
+
+  <h3 id="s622"><span class="num">6.22</span>Lokal: resurser, externa och utnyttjande</h3>
+  <p>
+    Skolan lånar ut mer än salar, och en förening kan hyra idrottshallen efter skoltid. Det här avsnittet har
+    tre delar: <strong>resurser</strong> som går att boka (surfplattor, minibussen, aulan), <strong>externa
+    bokningar</strong> för den som inte är användare, och <strong>utnyttjanderapporten</strong> som visar hur
+    mycket en sal eller resurs används.
+  </p>
+  <h4>Resurser</h4>
+  <p>
+    Under <span class="path">Planering › Resurser</span> skapar du skolans egna <em>slag</em> (Surfplattor,
+    Minibuss, Aulan) och sedan resurserna: ett namn, ett slag, <em>antal</em> (30 surfplattor är en resurs med
+    antal 30), en plats (ett skolområde, 3.3, och en rad text som &quot;Skåp 3 i B-huset&quot;) och om en bokning
+    ska vänta på ditt beslut. Lärare bokar under <span class="path">Boka resurs</span> och väljer hur många de
+    vill ha; Rastra håller ihop räkningen, så att ingen kan boka fler än det finns vid samma minut.
+    En bokning som väntar räknas som hållen. Beslutet fattas där lokalbokningarna avgörs
+    (<span class="path">Drift › Lokalbokningar</span>, växeln <span class="ui">Resurser</span>) och den som bokade får besked.
+    Ett slag som används, och en resurs som hyrs ut, tas inte bort.
+  </p>
+  <h4>Externa bokare</h4>
+  <p>
+    <span class="path">Drift › Externa bokningar</span> är för föreningen som hyr idrottshallen varje tisdag 18–20 en
+    termin. Den som hyr loggar inte in; expeditionen eller en administratör registrerar bokningen med
+    <strong>organisation, kontaktperson, telefon och e-post</strong> (minst en av de två sista). Välj sal eller
+    resurs, veckodagar (och om det är varannan vecka), första och sista datum och klockslag. Knappen
+    <span class="ui">Förhandsgranska</span> visar varje dag i serien och vad som står i vägen:
+  </p>
+  <ul>
+    <li><strong>Lektion</strong>: en lektion som håller sin tid använder salen. En inställd lektion gör det inte.</li>
+    <li><strong>Bokning</strong>: en annan bokning håller salen, eller (för en resurs) antalet är slut.</li>
+    <li><strong>Ramtid</strong>: dagen ligger i skolans ramtid för de årskurser salen får användas av. En lov för hela
+      skolan tar bort ramtiden den dagen; en studiedag gör det inte.</li>
+    <li><strong>Stängd</strong>: salen har en stängning den tiden. <strong>Lån</strong>: salen är utlånad till en annan skola
+      (eller lånad och lånet gäller inte hela tiden).</li>
+    <li><strong>Aktivitet</strong> (varning): en schemabrytande aktivitet har en lektion då. Ersättningslektionerna anger ingen sal,
+      så aktiviteten kan använda salen utan att Rastra vet det; titta efter.</li>
+  </ul>
+  <p>
+    Står något i vägen för en dag vägras serien i sin helhet, så att ingen får en halv termin av misstag. Kryssa i
+    <span class="ui">Hoppa över dagar som krockar</span> för att boka de lediga dagarna; de dagar som lämnades ute står på
+    serien. Varje dag blir en vanlig bokning av salen, med rubriken &quot;Extern bokning&quot; och inget om den som hyr, så
+    lärarnas sök efter ledig sal, vikarietavlan och Skolans dag ser salen som upptagen. Schemavisaren visar inte
+    externa bokningar. En serie ändras inte; vill ni något annat avbokar ni den och registrerar en ny.
+    Kontaktuppgifterna går att ändra.
+  </p>
+  <div class="note">
+    <span class="label">En lektion som kommer efter bokningen</span>
+    <p>
+      En publicering lägger en termins lektioner utan att fråga bokningarna. Hamnar en lektion i en sal som en förening
+      har, får administratörer under Drift en notis med antalet dagar, och sidan visar dem under
+      <em>Krockar</em> med lektionen och dagen. Rastra flyttar ingenting: ni avgör vilken som viker.
+    </p>
+  </div>
+  <p>
+    Den som hyr är personuppgifter om någon utan inloggning. Uppgifterna syns bara för administratörer, i detaljvyn för en serie,
+    och står inte i någon notis. De gallras med bokningen: på <span class="path">Dataskydd</span> (7.4) finns typen
+    <em>Externa bokningar</em>, som tas bort när serien har slutat eller avbokats för längre sedan än ni valt. Ett
+    pågående avtal gallras aldrig. En serie som är avslutad eller avbokad kan tas bort för hand
+    (<span class="ui">Ta bort serien</span>) om den hyrande ber att bli glömd. Den som har registrerat en pågående serie kan inte
+    tas bort som person förrän serien är avbokad, eftersom salen annars skulle bli ledig utan att någon sagt det.
+    I registerutdraget för den som registrerat står serien, men den hyrandes namn och kontakt är dolda.
+  </p>
+  <h4>Utnyttjande</h4>
+  <p>
+    <span class="path">Drift › Utnyttjande</span> visar för varje sal och resurs hur stor del av <em>skoltiden</em> som är
+    bokad och hur stor del av <em>kvällar och helger</em> (öppettiderna, 07–22 om ni inte ändrar dem, utanför skoltiden).
+    Välj en termin (hösttermin är 1 augusti–31 december, vårtermin 1 januari–31 juli) eller egna datum, högst 400 dagar.
+    Skoltiden är skolans ramtider för salens årskurser på de dagar skolan har lektioner; en lov för hela skolan räknas
+    som öppettid, inte skoltid. &quot;Bokad&quot; är en lektion som håller sin tid och en godkänd bokning (en som väntar är inte
+    använd än), och tid som hålls av både en lektion och en bokning räknas en gång. För en resurs med fler än en räknas
+    enhetsminuter. Varje rad har en rad per vecka. <span class="ui">Skriv ut</span> ger rapporten på papper och
+    <span class="ui">Ladda ned CSV</span> en fil i skolans CSV-format. Saknar skolan ramtider finns ingen skoltid att dela med, och sidan säger det.
+    Alla administratörer läser rapporten; den nämner ingen person.
+  </p>
+  <div class="check">
+    <span class="label">Lägg in ramtiderna först</span>
+    <p>
+      Förhandsgranskningens &quot;Ramtid&quot; och rapportens andel av skoltiden bygger på ramtiderna under Planering. Utan dem
+      kan en förening hyra en sal mitt på dagen, bara lektionerna står i vägen.
     </p>
   </div>
 
