@@ -148,6 +148,10 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('AbsenceWatchFindings', ['studentId', 'schoolId'], 'CASCADE', others),
   key('MasterLessonStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'lessonParticipations' }),
   key('CalendarLessonStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'lessonParticipations' }),
+  // Elevens lektion för dagen (20270122091000): the days a pupil was moved to a parallel lesson go with the pupil
+  // (their arrival is a CalendarLessonStudents row above); a member of staff who moved a pupil is kept without them.
+  key('LessonPupilMoves', ['studentId', 'schoolId'], 'CASCADE', others),
+  key('LessonPupilMoves', ['movedById', 'schoolId'], 'SET NULL', kept),
   key('GuardianStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'guardianLinks' }),
   key('GuardianStudents', ['guardianId', 'schoolId'], 'CASCADE', others),
   key('AbsenceReports', ['studentId', 'schoolId'], 'CASCADE', { counted: 'absenceReports' }),
@@ -281,7 +285,7 @@ const below = <Kind extends string>(
 ): BelowKey<Kind> => ({ parent, table, columns, onDelete, tell });
 
 /** The kinds a group delete counts a level down (GroupRemovalConsequences). */
-export type GroupBelowKind = 'attendanceMarks' | 'lessonLogs';
+export type GroupBelowKind = 'attendanceMarks' | 'lessonLogs' | 'lessonMoves';
 
 /**
  * The line of a group's dialog that names what hangs on its lessons and its
@@ -297,6 +301,12 @@ export const GROUP_BELOW: readonly BelowKey<GroupBelowKind>[] = [
   below('CalendarLessons', 'LessonLogs', ['calendarLessonId', 'schoolId'], 'CASCADE', { counted: 'lessonLogs' }),
   below('CalendarLessons', 'CalendarLessonGroups', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'CalendarLessonStudents', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
+  // Elevens lektion för dagen: a lesson takes the moves off it and onto it.
+  // (counted once, by the table: a move reached through both of its lessons is one move)
+  below('CalendarLessons', 'LessonPupilMoves', ['fromLessonId', 'schoolId'], 'CASCADE', { counted: 'lessonMoves' }),
+  below('CalendarLessons', 'LessonPupilMoves', ['toLessonId', 'schoolId'], 'CASCADE', { counted: 'lessonMoves' }),
+  // ... and a move takes its arrival with it, told with the move.
+  below('LessonPupilMoves', 'CalendarLessonStudents', ['moveId', 'schoolId'], 'CASCADE', { counted: 'lessonMoves' }),
   below('CalendarLessons', 'CalendarLessonTeachers', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'CancellationBatchLessons', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'ScheduleActivityLessons', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
@@ -346,6 +356,9 @@ export const STUDENT_BELOW: readonly BelowKey<never>[] = [
   below('TeacherAbsences', 'CoverRequestLessons', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherAbsences', 'CoverConfirmations', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('CrisisPupils', 'CrisisReports', ['callId', 'studentId'], 'CASCADE', { with: 'otherRows' }),
+  // Elevens lektion för dagen: a pupil's move takes the pupil's arrival with it (the pupil's own arrival row is
+  // counted above, by the pupil's key; this is the same row reached through the move).
+  below('LessonPupilMoves', 'CalendarLessonStudents', ['moveId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherEmployments', 'TeacherEmploymentPeriods', ['employmentId', 'schoolId', 'userId', 'academicYearId'], 'CASCADE', {
     with: 'otherRows',
   }),
