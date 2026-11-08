@@ -455,6 +455,12 @@ describe('judgePlacements', () => {
       expect((await judge(fakeTx(), [row()]))[0]?.reason).toBe('LUNCH');
     });
 
+    it('LUNCH is the school’s placed meals only: Generera’s own sittings, which it lays again, are not read (MEDEL-1 of #293)', async () => {
+      (readBoardFacts as jest.Mock).mockResolvedValue(facts());
+      await judge(fakeTx(), [row()]);
+      expect((readBoardFacts as jest.Mock).mock.calls.at(-1)![1]).toMatchObject({ handPlacedSittingsOnly: true });
+    });
+
     it('GRADE_RULE: a weekly row that closes the hour to the årskurs', async () => {
       (readBoardFacts as jest.Mock).mockResolvedValue(
         facts({

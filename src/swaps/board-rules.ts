@@ -158,6 +158,15 @@ export interface BoardReadInput {
    * own closures (a dated row on årskurser counts besides the weekly one).
    */
   date?: { day: string; localMinutes: (instant: Date) => number };
+  /**
+   * Förlagda poster: hold the lesson to the meals the SCHOOL placed only
+   * (LunchSittings with isGenerated false), and not to the ones Generera
+   * itself laid, which the next Generera deletes and lays again around the
+   * förläggning (review of #293, MEDEL-1): a förläggning in the lunch window
+   * is the engine's to fit a meal around, or to refuse by name. Absent for
+   * the swaps and the klasslärare, for whom the week's meals are as they lie.
+   */
+  handPlacedSittingsOnly?: boolean;
 }
 
 export async function readBoardFacts(tx: PrismaClient, input: BoardReadInput): Promise<BoardFacts> {
@@ -172,7 +181,12 @@ export async function readBoardFacts(tx: PrismaClient, input: BoardReadInput): P
       select: { minGradeLevel: true, maxGradeLevel: true, dayOfWeek: true, startTime: true, endTime: true },
     }),
     await tx.lunchSitting.findMany({
-      where: { academicYearId, studentGroupId: { in: [...groupIds] }, dayOfWeek: weekday },
+      where: {
+        academicYearId,
+        studentGroupId: { in: [...groupIds] },
+        dayOfWeek: weekday,
+        ...(input.handPlacedSittingsOnly ? { isGenerated: false } : {}),
+      },
       select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true },
     }),
     await tx.availabilityConstraint.findMany({

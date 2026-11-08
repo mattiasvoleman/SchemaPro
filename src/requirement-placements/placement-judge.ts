@@ -340,6 +340,10 @@ export async function judgePlacements(
         basis: input.basis,
         groupIds: [...new Set(stillOpen.filter((i) => rows[i]!.dayOfWeek === day).map((i) => rows[i]!.studentGroupId))],
         weekday: day,
+        // The meals the school placed, not the ones Generera laid and lays
+        // again around the förläggning (MEDEL-1 of #293); a förläggning that
+        // leaves a class no lunch is the engine's to refuse by name.
+        handPlacedSittingsOnly: true,
       });
       boards.set(day, facts);
     }
