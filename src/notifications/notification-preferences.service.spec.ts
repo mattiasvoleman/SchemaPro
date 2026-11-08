@@ -41,6 +41,9 @@ describe('NotificationPreferencesService', () => {
       { type: 'CRISIS_GUARDIAN_AFTER', enabled: true, required: false },
       { type: 'ACK_REQUESTED', enabled: true, required: false },
       { type: 'ACK_REMINDER', enabled: true, required: false },
+      { type: 'LEAVE_CONSENT_REQUESTED', enabled: true, required: false },
+      { type: 'LEAVE_CONSENT_REMINDER', enabled: true, required: false },
+      { type: 'LEAVE_CONSENT_REFUSED', enabled: true, required: false },
     ]);
     // Read by the caller's own id, under their RLS, in one statement.
     expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);

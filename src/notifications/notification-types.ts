@@ -49,6 +49,12 @@ import type { NotificationKind } from './notifications.service';
  * are choices, and a guardian who switches the push and the e-mail off still
  * finds the request in the app: the in-app row is always written. Neither
  * names the child; the title is behind the login.
+ *
+ * Ledighetspolicy (K4): when the school asks every guardian to consent to a leave
+ * request, a guardian is asked (LEAVE_CONSENT_REQUESTED) and, once, reminded
+ * (LEAVE_CONSENT_REMINDER); whoever applied is told when a guardian did not consent
+ * (LEAVE_CONSENT_REFUSED). All three are choices for a guardian, and the in-app row
+ * is always written. None of them says who applied or who refused.
  */
 
 export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
@@ -78,6 +84,9 @@ export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
   'REPORTING_RATE_DIGEST',
   'ACK_REQUESTED',
   'ACK_REMINDER',
+  'LEAVE_CONSENT_REQUESTED',
+  'LEAVE_CONSENT_REMINDER',
+  'LEAVE_CONSENT_REFUSED',
 ];
 
 type ChoosingRole = 'GUARDIAN' | 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN';
@@ -107,7 +116,7 @@ const LESSONS: readonly NotificationKind[] = [
 ];
 
 export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = {
-  GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST', 'CRISIS_GUARDIAN_AFTER', 'ACK_REQUESTED', 'ACK_REMINDER'],
+  GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST', 'CRISIS_GUARDIAN_AFTER', 'ACK_REQUESTED', 'ACK_REMINDER', 'LEAVE_CONSENT_REQUESTED', 'LEAVE_CONSENT_REMINDER', 'LEAVE_CONSENT_REFUSED'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
   TEACHER: [...STAFF, 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'LESSON_REPORT_REMINDER'],
   SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED', 'REPORTING_RATE_DIGEST'],

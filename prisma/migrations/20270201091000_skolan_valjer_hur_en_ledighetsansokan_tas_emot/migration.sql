@@ -518,9 +518,9 @@ $$;
 -- filed, with the guardians' addresses, which the gateway hands to the e-mail and the push
 -- (the filer may not read another person's address).
 CREATE FUNCTION app.leave_consent_notices(p_request uuid)
-RETURNS TABLE ("notificationId" uuid, "userId" uuid, "email" text, "type" text, "meta" jsonb)
+RETURNS TABLE ("notificationId" uuid, "userId" uuid, "email" text, "type" text, "meta" jsonb, "schoolId" uuid)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-  SELECT n."id", n."userId", u."email", n."type"::text, n."meta"
+  SELECT n."id", n."userId", u."email", n."type"::text, n."meta", n."schoolId"
     FROM "LeaveRequests" r
     JOIN "Notifications" n
       ON n."schoolId" = r."schoolId" AND n."createdAt" = now() AND n."type" = 'LEAVE_CONSENT_REQUESTED'
@@ -544,7 +544,7 @@ $$;
 -- The request's row is taken FOR NO KEY UPDATE, so answers and a decision meet in an
 -- order; the school's mentor lock comes after it, as it does in a filing.
 CREATE FUNCTION app.leave_consent_answer(p_request uuid, p_consent boolean)
-RETURNS TABLE ("notificationId" uuid, "userId" uuid, "email" text, "type" text, "meta" jsonb)
+RETURNS TABLE ("notificationId" uuid, "userId" uuid, "email" text, "type" text, "meta" jsonb, "schoolId" uuid)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   me uuid := app.current_user_id();
@@ -604,9 +604,9 @@ BEGIN
                  'startDate', q."startDate"::text,
                  'endDate', q."endDate"::text)
           FROM "Users" s WHERE s."id" = q."studentId" AND s."schoolId" = q."schoolId"
-        RETURNING nt."id", nt."userId", nt."type", nt."meta"
+        RETURNING nt."id", nt."userId", nt."type", nt."meta", nt."schoolId"
       )
-      SELECT w."id", w."userId", u."email", w."type"::text, w."meta"
+      SELECT w."id", w."userId", u."email", w."type"::text, w."meta", w."schoolId"
         FROM written w JOIN "Users" u ON u."id" = w."userId" AND u."schoolId" = sch;
     RETURN;
   END IF;
@@ -614,7 +614,7 @@ BEGIN
   IF app.leave_consent_met_raw(p_request, sch) THEN
     PERFORM pg_advisory_xact_lock(hashtext('leave_tell_mentors'), hashtext(sch::text));
     RETURN QUERY
-      SELECT t."notificationId", t."userId", t."email", 'LEAVE_REQUESTED'::text, t."meta"
+      SELECT t."notificationId", t."userId", t."email", 'LEAVE_REQUESTED'::text, t."meta", sch
         FROM app.leave_tell_mentors(sch, p_request) t
        ORDER BY t."userId";
   END IF;
@@ -628,7 +628,7 @@ $$;
 -- notices with the addresses for the delivery after the commit. The owner's: nothing for a
 -- logged-in caller, and the delivery door, which sets no claims, is what tells them apart.
 CREATE FUNCTION app.leave_consent_pass(p_limit integer DEFAULT 200)
-RETURNS TABLE ("notificationId" uuid, "userId" uuid, "email" text, "type" text, "meta" jsonb)
+RETURNS TABLE ("notificationId" uuid, "userId" uuid, "email" text, "type" text, "meta" jsonb, "schoolId" uuid)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   school uuid;
@@ -667,9 +667,9 @@ BEGIN
         FROM due d
         JOIN marked m ON m."leaveRequestId" = d."leaveRequestId" AND m."schoolId" = d."schoolId" AND m."guardianId" = d."guardianId"
         JOIN "Users" s ON s."id" = d."studentId" AND s."schoolId" = d."schoolId"
-      RETURNING nt."id", nt."userId", nt."type", nt."meta"
+      RETURNING nt."id", nt."userId", nt."type", nt."meta", nt."schoolId"
     )
-    SELECT w."id", w."userId", u."email", w."type"::text, w."meta"
+    SELECT w."id", w."userId", u."email", w."type"::text, w."meta", w."schoolId"
       FROM written w JOIN "Users" u ON u."id" = w."userId";
 
   FOR school IN
@@ -679,7 +679,7 @@ BEGIN
   LOOP
     PERFORM pg_advisory_xact_lock(hashtext('leave_tell_mentors'), hashtext(school::text));
     RETURN QUERY
-      SELECT t."notificationId", t."userId", t."email", 'LEAVE_REQUESTED'::text, t."meta"
+      SELECT t."notificationId", t."userId", t."email", 'LEAVE_REQUESTED'::text, t."meta", school
         FROM app.leave_tell_mentors(school, NULL) t
        ORDER BY t."userId";
   END LOOP;

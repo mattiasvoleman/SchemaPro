@@ -92,3 +92,92 @@ export async function tellNewMentors(
   deliverLeaveNotices(notifications, tx, schoolId, rows);
   return rows.length;
 }
+
+/*
+ * THE CONSENT NOTICES (Ledighetspolicy, 20270201091000).
+ *
+ * When the school asks every guardian to consent to a leave request, the database
+ * writes the notices from the rows: the request for consent to the other guardians
+ * when the request is filed (a trigger), the one reminder (app.leave_consent_pass),
+ * the refusal to whoever applied (app.leave_consent_answer), and the
+ * LEAVE_REQUESTED the mentors are owed when the last guardian says yes or a
+ * custody that ended makes the request clear. The functions hand the rows back with
+ * the addresses, and this hands them to the delivery after the commit.
+ *
+ * What they say: that a leave request waits, or ended. The e-mail names no child, no
+ * date, no reason, and neither who applied nor who did not consent: separated
+ * guardians may hide from one another, and a mail is read on any screen. The push
+ * says less still (push-messages.ts). The inbox row has the child and the dates, behind
+ * the login.
+ */
+
+/** A row of app.leave_consent_notices, app.leave_consent_answer or app.leave_consent_pass. */
+export interface ConsentNoticeRow {
+  notificationId: string;
+  userId: string;
+  email: string | null;
+  type: string;
+  meta: Record<string, unknown>;
+  schoolId: string;
+}
+
+const CONSENT_MAIL = {
+  LEAVE_CONSENT_REQUESTED: {
+    subject: 'A leave request needs your consent / En ledighetsansökan behöver ditt samtycke',
+    body:
+      'A leave request for your child is waiting for your consent. Log in to Rastra timetable to read it and answer.\n\n' +
+      'En ledighetsansökan för ditt barn väntar på ditt samtycke. Logga in i Rastra Schema för att läsa den och svara.',
+  },
+  LEAVE_CONSENT_REMINDER: {
+    subject: 'Reminder: a leave request needs your consent / Påminnelse: en ledighetsansökan behöver ditt samtycke',
+    body:
+      'A leave request for your child is still waiting for your consent. Log in to Rastra timetable to read it and answer.\n\n' +
+      'En ledighetsansökan för ditt barn väntar fortfarande på ditt samtycke. Logga in i Rastra Schema för att läsa den och svara.',
+  },
+  LEAVE_CONSENT_REFUSED: {
+    subject: 'Your leave request has ended / Din ledighetsansökan har avslutats',
+    body:
+      'A leave request you made has ended because it did not get every guardian\'s consent. Log in to Rastra timetable to read more.\n\n' +
+      'En ledighetsansökan du gjort har avslutats eftersom den inte fick alla vårdnadshavares samtycke. Logga in i Rastra Schema för att läsa mer.',
+  },
+} as const;
+
+type ConsentKind = keyof typeof CONSENT_MAIL;
+
+const isConsentKind = (type: string): type is ConsentKind => Object.prototype.hasOwnProperty.call(CONSENT_MAIL, type);
+
+/**
+ * The delivery's entries for notices the database wrote about a request's consent: one per
+ * school and kind (an entry has one school and one type), and the mentors' LEAVE_REQUESTED
+ * as the filing's are, one per request.
+ */
+export function consentNoticeEntries(rows: readonly ConsentNoticeRow[]): OutboxEntry[] {
+  const mentors = new Map<string, LeaveNoticeRow[]>();
+  const others = new Map<string, ConsentNoticeRow[]>();
+  for (const row of rows) {
+    if (row.type === 'LEAVE_REQUESTED') mentors.set(row.schoolId, [...(mentors.get(row.schoolId) ?? []), row]);
+    else if (isConsentKind(row.type)) others.set(`${row.schoolId}/${row.type}`, [...(others.get(`${row.schoolId}/${row.type}`) ?? []), row]);
+  }
+  return [
+    ...[...mentors].flatMap(([schoolId, told]) => leaveNoticeEntries(schoolId, told)),
+    ...[...others.values()].map((told) => {
+      const type = told[0]!.type as ConsentKind;
+      return {
+        schoolId: told[0]!.schoolId,
+        type,
+        meta: {},
+        recipients: told.map((row) => ({ userId: row.userId, notificationId: row.notificationId })),
+        email: {
+          subject: CONSENT_MAIL[type].subject,
+          body: CONSENT_MAIL[type].body,
+          recipients: told.flatMap((row) => (row.email ? [{ userId: row.userId, email: row.email }] : [])),
+        },
+      };
+    }),
+  ];
+}
+
+/** Queues the e-mail and the push of the consent notices the database wrote in `tx`. */
+export function deliverConsentNotices(notifications: Pick<NotificationsService, 'deliver'>, tx: PrismaClient, rows: readonly ConsentNoticeRow[]): void {
+  for (const entry of consentNoticeEntries(rows)) notifications.deliver(tx, entry);
+}
