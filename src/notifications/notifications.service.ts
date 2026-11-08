@@ -34,7 +34,10 @@ export type NotificationKind =
   | 'ACK_REQUESTED'
   | 'ACK_REMINDER'
   | 'LESSON_PUPIL_MOVED'
-  | 'EXTERNAL_BOOKING_CLASH';
+  | 'EXTERNAL_BOOKING_CLASH'
+  | 'LEAVE_CONSENT_REQUESTED'
+  | 'LEAVE_CONSENT_REMINDER'
+  | 'LEAVE_CONSENT_REFUSED';
 
 
 /** Where a transaction's outbox is kept (PrismaService.commitLocal). */

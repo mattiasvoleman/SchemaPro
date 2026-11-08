@@ -381,6 +381,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // administrators' read of it is not a write, and the row goes with the school.
   SchoolDaySettings: just('DECIDES', 'insert', 'update'),
   LeaveDelegationDecisions: just('DECIDES', 'insert'),
+  // Ledighetspolicy (20270205091000): how a school receives a leave request (every guardian's consent, the
+  // fewest days ahead, a temporary contact) is a decision, like the delegation beside it. One row per school,
+  // never deleted by an arm. LeaveConsents has no administrator's arm at all: only the functions write it.
+  LeavePolicies: just('DECIDES', 'insert', 'update'),
   RetentionDecisions: just('DECIDES', 'insert'),
   TeacherEmploymentPeriods: only('DECIDES'),
   TeacherEmployments: only('DECIDES'),

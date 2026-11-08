@@ -33,6 +33,10 @@ import type { NotificationKind } from './notifications.service';
  * an exercise when it is: no kind of alarm, no pupil, group or place, and no
  * time (the phone shows when the push arrived). Its end and the notice to the
  * guardians afterwards (CRISIS_GUARDIAN_AFTER) say as little.
+ * A request for a guardian's consent to a leave request (LEAVE_CONSENT_REQUESTED, its
+ * one reminder LEAVE_CONSENT_REMINDER, and LEAVE_CONSENT_REFUSED to whoever applied)
+ * say that a leave request waits or ended and nothing else: not the child, the dates,
+ * who applied or who did not consent. The lock screen is read by whoever holds the phone.
  * A request to confirm a message (ACK_REQUESTED, Kvittens) and its one
  * reminder (ACK_REMINDER) say that a message from the school waits, and
  * nothing of the child, the title or the text: the lock screen is read by
@@ -282,6 +286,24 @@ const SV: Record<PushKind, Template> = {
     bare: 'Ett meddelande från skolan väntar på din bekräftelse. Öppna appen för att läsa det.',
     many: 'Ett meddelande från skolan väntar på din bekräftelse. Öppna appen för att läsa det.',
   },
+  LEAVE_CONSENT_REQUESTED: {
+    title: 'Ledighet',
+    one: 'En ledighetsansökan väntar på ditt samtycke. Öppna appen för att svara.',
+    bare: 'En ledighetsansökan väntar på ditt samtycke. Öppna appen för att svara.',
+    many: 'Ledighetsansökningar väntar på ditt samtycke. Öppna appen för att svara.',
+  },
+  LEAVE_CONSENT_REMINDER: {
+    title: 'Ledighet',
+    one: 'En ledighetsansökan väntar fortfarande på ditt samtycke. Öppna appen för att svara.',
+    bare: 'En ledighetsansökan väntar fortfarande på ditt samtycke. Öppna appen för att svara.',
+    many: 'Ledighetsansökningar väntar fortfarande på ditt samtycke. Öppna appen för att svara.',
+  },
+  LEAVE_CONSENT_REFUSED: {
+    title: 'Ledighet',
+    one: 'En ledighetsansökan har avslutats. Öppna appen för att läsa mer.',
+    bare: 'En ledighetsansökan har avslutats. Öppna appen för att läsa mer.',
+    many: 'Ledighetsansökningar har avslutats. Öppna appen för att läsa mer.',
+  },
   REPORTING_RATE_DIGEST: {
     title: 'Rapporteringsgrad',
     one: 'Du har ett nytt veckobesked om rapporteringsgraden. Öppna appen för att se mer.',
@@ -491,6 +513,24 @@ const EN: Record<PushKind, Template> = {
     one: 'A message from the school is waiting for your confirmation. Open the app to read it.',
     bare: 'A message from the school is waiting for your confirmation. Open the app to read it.',
     many: 'A message from the school is waiting for your confirmation. Open the app to read it.',
+  },
+  LEAVE_CONSENT_REQUESTED: {
+    title: 'Leave',
+    one: 'A leave request is waiting for your consent. Open the app to answer.',
+    bare: 'A leave request is waiting for your consent. Open the app to answer.',
+    many: 'Leave requests are waiting for your consent. Open the app to answer.',
+  },
+  LEAVE_CONSENT_REMINDER: {
+    title: 'Leave',
+    one: 'A leave request is still waiting for your consent. Open the app to answer.',
+    bare: 'A leave request is still waiting for your consent. Open the app to answer.',
+    many: 'Leave requests are still waiting for your consent. Open the app to answer.',
+  },
+  LEAVE_CONSENT_REFUSED: {
+    title: 'Leave',
+    one: 'A leave request has ended. Open the app to read more.',
+    bare: 'A leave request has ended. Open the app to read more.',
+    many: 'Leave requests have ended. Open the app to read more.',
   },
   REPORTING_RATE_DIGEST: {
     title: 'Reporting rate',

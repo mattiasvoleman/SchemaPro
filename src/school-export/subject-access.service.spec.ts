@@ -44,7 +44,7 @@ describe('SubjectAccessService', () => {
     await expect(service.extract(testUser({ schoolId: SCHOOL }), PUPIL, false)).rejects.toMatchObject({ status: 404 });
   });
 
-  it('gives a zip of the seven data files and the manifest, named for the day and the first of the id, never the person', async () => {
+  it('gives a zip of the eight data files and the manifest, named for the day and the first of the id, never the person', async () => {
     marks([]);
     const answer = await service.extract(testUser({ schoolId: SCHOOL }), PUPIL, false);
     expect(answer).toMatchObject({ contentType: 'application/zip', subjectIsMarked: false, relatedIncluded: 0, relatedHeldOut: 0 });
@@ -52,7 +52,7 @@ describe('SubjectAccessService', () => {
     const files = unzip(answer.contentBase64);
     expect([...files.keys()].slice(0, 2)).toEqual(['README.txt', 'FORMAT.md']);
     expect([...files.keys()].filter((name) => name.startsWith('data/'))).toEqual([
-      'data/personer.csv', 'data/kopplingar.csv', 'data/narvaro.csv', 'data/franvaroanmalningar.csv', 'data/ledigheter.csv', 'data/notiser.csv', 'data/laslogg.csv',
+      'data/personer.csv', 'data/kopplingar.csv', 'data/narvaro.csv', 'data/franvaroanmalningar.csv', 'data/ledigheter.csv', 'data/samtycken.csv', 'data/notiser.csv', 'data/laslogg.csv',
     ]);
     expect(files.has('csv/amnen.csv')).toBe(false);
     expect(JSON.parse(files.get('manifest.json')!.toString('utf8')).kind).toBe('registerutdrag');

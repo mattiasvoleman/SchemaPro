@@ -14,8 +14,10 @@ import {
   type GuardianChild,
 } from "@/lib/guardian-queries";
 import { lastLeaveDay, leaveRequestError } from "@/lib/leave-errors";
+import { EMPTY_CONTACT, contactFields, contactProblem, hasLeaveExtras, policyAsks } from "@/lib/leave-policy";
+import { useLeavePolicy } from "@/lib/leave-policy-queries";
 import { LEAVE_STATUS_VARIANT } from "@/lib/status-variants";
-import type { AbsenceReport, AbsenceReportType, MySchool } from "@/lib/types";
+import type { AbsenceReport, AbsenceReportType, LeaveContact, LeavePolicy, LeaveRequest, MySchool } from "@/lib/types";
 import { toDateString } from "@/lib/utils";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -78,6 +80,34 @@ const OtherSchools = lazy<React.ComponentType<{ schools: MySchool[] }>>(() =>
 );
 
 /*
+ * Ledighetspolicy (K4): the form's part that the school's choices add (the
+ * minimum, the request for consent, the contact) and the list's (the contact,
+ * where the guardians' consent stands, the question to a guardian the school
+ * waits for). One chunk, fetched when the policy or a request asks for it: a
+ * school that has chosen nothing, every school as delivered, downloads none of
+ * it. A chunk that does not arrive renders nothing, as above.
+ */
+const LeavePolicyFields = lazy<
+  React.ComponentType<{
+    policy: LeavePolicy;
+    contact: LeaveContact;
+    problem: ReturnType<typeof contactProblem>;
+    onChange: (contact: LeaveContact) => void;
+  }>
+>(() =>
+  import("@/components/guardian/leave-extras").then(
+    (module) => ({ default: module.LeavePolicyFields }),
+    () => ({ default: () => null }),
+  ),
+);
+const LeaveRowExtras = lazy<React.ComponentType<{ leave: LeaveRequest; name: string; span: string }>>(() =>
+  import("@/components/guardian/leave-extras").then(
+    (module) => ({ default: module.LeaveRowExtras }),
+    () => ({ default: () => null }),
+  ),
+);
+
+/*
  * The confirmation before a report is taken back, fetched on its first open:
  * /guardian is the heaviest route of its tier, and Radix Dialog is in none of
  * its chunks. A chunk that does not arrive is said in a toast, and the next
@@ -112,6 +142,7 @@ export default function GuardianPage() {
   );
   const reportsQuery = useAbsenceReports();
   const leavesQuery = useLeaveRequests();
+  const policyQuery = useLeavePolicy();
   const absenceActions = useAbsenceReportActions();
   const leaveActions = useLeaveRequestActions();
   const reports = reportsQuery.data ?? [];
@@ -130,6 +161,7 @@ export default function GuardianPage() {
   const [leaveStart, setLeaveStart] = useState<string | null>(null);
   const [leaveEnd, setLeaveEnd] = useState<string | null>(null);
   const [leaveReason, setLeaveReason] = useState("");
+  const [leaveContact, setLeaveContact] = useState<LeaveContact>(EMPTY_CONTACT);
 
   // The report a confirmation is about stays set while the dialog closes, so
   // its title does not empty under the fade.
@@ -192,23 +224,33 @@ export default function GuardianPage() {
     }
   };
 
+  // Ledighetspolicy: the contact the school asks for, and what keeps it from being sent. Off as delivered.
+  const policy = policyQuery.data;
+  const contactAsk = policy?.contact ?? "OFF";
+  const contactIssue = contactProblem(contactAsk, leaveContact);
+
   const doRequestLeave = async () => {
-    if (!selectedLeaveChildId || leaveReason.trim().length < 3) return;
+    if (!selectedLeaveChildId || leaveReason.trim().length < 3 || contactIssue !== null) return;
     try {
-      await leaveActions.request.mutateAsync({
+      const sent = await leaveActions.request.mutateAsync({
         studentId: selectedLeaveChildId,
         startDate: leaveFrom,
         endDate: leaveTo,
         reason: leaveReason.trim(),
+        ...contactFields(contactAsk, leaveContact),
       });
-      toast.success(t("leaveSubmitted"));
+      toast.success(t(sent?.consentRequired ? "leaveSubmittedConsent" : "leaveSubmitted"));
       setLeaveReason("");
+      setLeaveContact(EMPTY_CONTACT);
     } catch (error) {
       toast.error(
         leaveRequestError(error, {
           tooLong: (days) => t("leaveTooLong", { days }),
           endsBeforeStart: t("leaveEndsBeforeStart"),
           fallback: tCommon("error"),
+          tooLate: (days) => t("leaveTooLate", { days }),
+          contactRequired: t("leaveContactRequired"),
+          contactIncomplete: t("leaveContactIncomplete"),
         }),
       );
     }
@@ -462,6 +504,11 @@ export default function GuardianPage() {
                 />
               </FormField>
             </div>
+            {policyAsks(policy) ? (
+              <Suspense fallback={null}>
+                <LeavePolicyFields policy={policy} contact={leaveContact} problem={contactIssue} onChange={setLeaveContact} />
+              </Suspense>
+            ) : null}
             <FormField id="leave-reason" label={t("reason")}>
               <Textarea rows={3} value={leaveReason} onChange={(e) => setLeaveReason(e.target.value)} />
             </FormField>
@@ -471,7 +518,8 @@ export default function GuardianPage() {
               disabled={
                 leaveActions.request.isPending ||
                 !selectedLeaveChildId ||
-                leaveReason.trim().length < 3
+                leaveReason.trim().length < 3 ||
+                contactIssue !== null
               }
             >
               {leaveActions.request.isPending ? (
@@ -521,6 +569,15 @@ export default function GuardianPage() {
                     <p className="text-xs text-muted-foreground">
                       {t("decisionNote")}: {leave.decisionNote}
                     </p>
+                  ) : null}
+                  {hasLeaveExtras(leave) ? (
+                    <Suspense fallback={null}>
+                      <LeaveRowExtras
+                        leave={leave}
+                        name={childName(leave.studentId)}
+                        span={spanText(leave.startDate, leave.endDate)}
+                      />
+                    </Suspense>
                   ) : null}
                 </li>
               ))}

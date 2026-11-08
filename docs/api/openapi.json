@@ -11898,6 +11898,100 @@
         }
       }
     },
+    "/api/v1/leave-policy": {
+      "get": {
+        "tags": [
+          "Family"
+        ],
+        "operationId": "FamilyController_getLeavePolicy",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "GUARDIAN",
+          "STUDENT",
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      },
+      "put": {
+        "tags": [
+          "Family"
+        ],
+        "operationId": "FamilyController_recordLeavePolicy",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordLeavePolicyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
+        }
+      }
+    },
     "/api/v1/leave-requests": {
       "get": {
         "tags": [
@@ -11913,6 +12007,7 @@
               "type": "string",
               "enum": [
                 "APPROVED",
+                "GUARDIAN_DECLINED",
                 "PENDING",
                 "REJECTED"
               ]
@@ -12005,6 +12100,69 @@
         },
         "x-rate-limit": {
           "limit": 10,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/leave-requests/{id}/consent": {
+      "post": {
+        "tags": [
+          "Family"
+        ],
+        "operationId": "FamilyController_answerLeaveConsent",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerLeaveConsentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "GUARDIAN"
+        ],
+        "x-rate-limit": {
+          "limit": 20,
           "ttlSeconds": 60
         }
       }
@@ -27135,6 +27293,17 @@
           "lessons"
         ]
       },
+      "AnswerLeaveConsentDto": {
+        "type": "object",
+        "properties": {
+          "consent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "consent"
+        ]
+      },
       "ApplyCandidateDto": {
         "type": "object",
         "properties": {
@@ -28503,6 +28672,17 @@
             "type": "string",
             "minLength": 3,
             "maxLength": 1000
+          },
+          "contactName": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "contactPhone": {
+            "type": "string"
+          },
+          "contactRelation": {
+            "type": "string",
+            "maxLength": 60
           }
         },
         "required": [
@@ -31480,6 +31660,9 @@
                 "CRISIS_ENDED",
                 "CRISIS_GUARDIAN_AFTER",
                 "EXTERNAL_BOOKING_CLASH",
+                "LEAVE_CONSENT_REFUSED",
+                "LEAVE_CONSENT_REMINDER",
+                "LEAVE_CONSENT_REQUESTED",
                 "LEAVE_DECIDED",
                 "LEAVE_REQUESTED",
                 "LESSON_CANCELLED",
@@ -32168,6 +32351,41 @@
         },
         "required": [
           "mentorMaxSchoolDays"
+        ]
+      },
+      "RecordLeavePolicyDto": {
+        "type": "object",
+        "properties": {
+          "requireAllGuardians": {
+            "type": "boolean"
+          },
+          "minDaysAhead": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 90
+          },
+          "shortNotice": {
+            "type": "string",
+            "enum": [
+              "FLAG",
+              "REFUSE"
+            ]
+          },
+          "contact": {
+            "type": "string",
+            "enum": [
+              "OFF",
+              "OPTIONAL",
+              "REQUIRED"
+            ]
+          }
+        },
+        "required": [
+          "requireAllGuardians",
+          "minDaysAhead",
+          "shortNotice",
+          "contact"
         ]
       },
       "RefillPublicationDto": {

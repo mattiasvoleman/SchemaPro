@@ -4730,6 +4730,21 @@ BEGIN
   VALUES (m, room_, admin_, 'Extern bokning', (current_date + 405)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '18 hours', (current_date + 405)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '20 hours', now(), series);
 END $$;
 
+-- The matrix school's row for Ledighetspolicyn (20270205091000), so the role matrix
+-- (section 116) has a row of LeavePolicies to copy. All three choices are off, as a school
+-- with no row has them: the matrix school's other tests file leave requests, and a policy
+-- that asked for consent or a minimum would change what they meet. Written once, by the owner.
+DO $$
+DECLARE
+  m uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "LeavePolicies" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  INSERT INTO "LeavePolicies" ("schoolId") VALUES (m);
+END $$;
+
 -- The matrix school's row for Förlagda poster (20270207090000), so the role matrix (section 116) has a
 -- row of the table to probe. A post of its own, in a subject of its own: the school's other post carries
 -- a share (the Delade lektioner block above), and a post with shares cannot have a förläggning (SHARES),

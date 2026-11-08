@@ -73,6 +73,10 @@ describe("status variants", () => {
     expect(LEAVE_STATUS_VARIANT.REJECTED).toBe("destructive");
   });
 
+  it("reads a leave request ended by a guardian's no as finished, not as the school's refusal", () => {
+    expect(LEAVE_STATUS_VARIANT.GUARDIAN_DECLINED).toBe("outline");
+  });
+
   it("tells a consent taken back from a consent given, and from one nobody has answered", () => {
     expect(CONSENT_STATE_VARIANT.GRANTED).toBe("success");
     // "Do not" is destructive twice over; the badge's text and icon tell a no from a withdrawal.

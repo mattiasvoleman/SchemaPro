@@ -108,6 +108,11 @@ export interface AckConfig {
   background: boolean;
 }
 
+export interface LeaveConsentConfig {
+  /** The pass over the leave requests that wait for every guardian's consent (LEAVE_CONSENT_BACKGROUND, default on). */
+  background: boolean;
+}
+
 /** Schemaförslag (src/optimization/schedule-candidates.service.ts). */
 export interface CandidatesConfig {
   /** CANDIDATE_MAX_SECONDS: the solve budget of every candidate, KEEP's included, 5..120 (30). */
@@ -150,6 +155,7 @@ export interface Configuration {
   reportingRate: ReportingRateConfig;
   absenceStats: AbsenceStatsConfig;
   ack: AckConfig;
+  leaveConsent: LeaveConsentConfig;
   candidates: CandidatesConfig;
 }
 
@@ -236,6 +242,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     ack: {
       background: env.ACK_BACKGROUND !== 'off',
+    },
+    leaveConsent: {
+      background: env.LEAVE_CONSENT_BACKGROUND !== 'off',
     },
     candidates: {
       maxSeconds: env.CANDIDATE_MAX_SECONDS ?? DEFAULT_CANDIDATES_CONFIG.maxSeconds,

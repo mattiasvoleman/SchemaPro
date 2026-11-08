@@ -41,7 +41,7 @@ class MemorySink implements ByteSink {
 /**
  * Registerutdrag (GDPR art. 15): everything Rastra holds about one person, as a
  * zip, for the administrators who decide. It is the whole-school export's code
- * with a scope: the same seven data files (data-files.ts), asked for the
+ * with a scope: the same eight data files (data-files.ts), asked for the
  * person's rows and not the school's, and beside them one file per table that
  * holds a row about a person (person-tables.ts, which is held to the removal's
  * inventory of those tables by a test), so what the person is given is what the
@@ -111,7 +111,7 @@ export class SubjectAccessService {
       schoolName: head.school,
       now: new Date(),
       kind: 'person',
-      scope: { ids },
+      scope: { ids, subject: personId },
       marked,
       exempt: [personId],
       // The person asked for is not looked for in free text: a note about them is theirs.

@@ -16,8 +16,8 @@ export class AbsenceReportsQueryDto {
 /** GET /api/v1/leave-requests: one status, or all of them. */
 export class LeaveRequestsQueryDto {
   @IsOptional()
-  @IsIn(['PENDING', 'APPROVED', 'REJECTED'])
-  status?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  @IsIn(['PENDING', 'APPROVED', 'REJECTED', 'GUARDIAN_DECLINED'])
+  status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'GUARDIAN_DECLINED';
 }
 
 /** GET /api/v1/guardian-links: one pupil's guardians. */

@@ -32,6 +32,9 @@ export interface NotificationRow {
     | "ABSENCE_WATCH_DIGEST"
     | "ACK_REQUESTED"
     | "ACK_REMINDER"
+    | "LEAVE_CONSENT_REQUESTED"
+    | "LEAVE_CONSENT_REMINDER"
+    | "LEAVE_CONSENT_REFUSED"
     | "LESSON_PUPIL_MOVED"
     | "EXTERNAL_BOOKING_CLASH"
     | "CRISIS_ALARM"
@@ -63,6 +66,10 @@ const HREF: Partial<Record<NotificationRow["type"], string>> = {
   EXTERNAL_BOOKING_CLASH: "/admin/external-bookings",
   ACK_REQUESTED: "/guardian/acknowledgements",
   ACK_REMINDER: "/guardian/acknowledgements",
+  // Ledighetspolicy: the guardian, and whoever applied, to the page that lists the leave requests.
+  LEAVE_CONSENT_REQUESTED: "/guardian",
+  LEAVE_CONSENT_REMINDER: "/guardian",
+  LEAVE_CONSENT_REFUSED: "/guardian",
 };
 
 /**
@@ -128,6 +135,12 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
       // the move is undone) and its time, never who moved them or who they are. One sentence for both, because
       // this chunk is in every route's own JavaScript and the admin tier has bytes to spare for no more.
       return t("lessonPupilMoved", { subject: str("subjectName"), when });
+    case "LEAVE_CONSENT_REQUESTED":
+    case "LEAVE_CONSENT_REMINDER":
+    case "LEAVE_CONSENT_REFUSED":
+      // Ledighetspolicy: the child and the days, never who applied or who said no (the push and the e-mail say
+      // only that a request waits or has ended). One key per type under "leaveConsent", for the bundle.
+      return t(`leaveConsent.${entry.type}`, { student: str("studentName"), from: str("startDate"), to: str("endDate") });
     case "LESSON_REPORT_REMINDER":
       // Rapporteringsgrad: how many lessons and the school's limit, never which
       // lesson, its subject, its class or its time (the e-mail says no more).

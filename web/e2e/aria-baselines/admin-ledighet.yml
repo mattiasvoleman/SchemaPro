@@ -35,3 +35,24 @@
         - textbox "Kommentar till vårdnadshavaren , Ella Nord, <datum>–<datum> (valfritt)"
         - button "Bevilja Ella Nord, <datum>–<datum>": Bevilja
         - button "Avslå Ella Nord, <datum>–<datum>": Avslå
+  - region "Så tar skolan emot ledighetsansökningar":
+    - heading "Så tar skolan emot ledighetsansökningar" [level=2]
+    - text: Valen gäller ansökningar som skrivs efter att du har sparat. Är inget valt tar skolan emot ansökningar som förut.
+    - checkbox "Be alla vårdnadshavare samtycka"
+    - text: Be alla vårdnadshavare samtycka
+    - paragraph: En ansökan går till beslut först när alla vårdnadshavare med aktiv vårdnad har samtyckt. Den som ansökte räknas som att ha samtyckt, och de andra får en notis. Ett nej avslutar ansökan.
+    - text: Minsta antal dagar före första dagen
+    - textbox "Minsta antal dagar före första dagen"
+    - paragraph: Kalenderdagar, 1 till 90. Lämna tomt för inget minimum.
+    - text: En ansökan som kommer för sent
+    - combobox "En ansökan som kommer för sent" [disabled]:
+      - option "Neka – formuläret tar inte emot den" [selected]
+      - option "Flagga – den som beslutar ser att den kom sent"
+    - paragraph: Gäller när ett minsta antal dagar är valt.
+    - text: Kontakt under ledigheten
+    - combobox "Kontakt under ledigheten":
+      - option "Av – skolan frågar inte efter någon kontakt" [selected]
+      - option "Frivillig – familjen kan lämna en kontakt"
+      - option "Obligatorisk – en ansökan kräver en kontakt"
+    - paragraph: Namn, telefon och relation till barnet. Uppgifterna tillhör en tredje part och syns bara för familjen, administratörer och mentorn som beslutar, aldrig i notiser eller e-post.
+    - button "Spara valen" [disabled]

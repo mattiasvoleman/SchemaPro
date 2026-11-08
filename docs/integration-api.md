@@ -28,7 +28,12 @@ curl -H "X-API-Key: sp_..." https://<host>/ss12000/v1/persons?limit=100
 ```
 
 Paginated responses: `{ totalCount, limit, offset, data: [...] }` with
-`?limit=` (≤500, default 100) and `?offset=`.
+`?limit=` (≤500, default 100) and `?offset=`. Every list is sorted on a key that
+ends in the row's id (persons: surname, then id; activities: weekday, start time,
+then id; calendarEvents: start time, then id), so rows that tie on the first key
+come in the same order on every page and none falls between two pages. A row
+created or removed between two page reads still moves the offset: read the pages
+one after another and compare `totalCount` on the last with the first.
 
 ## Read endpoints
 
