@@ -80,12 +80,20 @@ export function isReplacedByActivity(lesson: Pick<MoveLesson, 'status' | 'cancel
  * database's order: a source that is over, a lesson an activity has replaced,
  * a lesson not held, a lesson that does not overlap the pupil's own. The pupil
  * may be on `current` (a lesson a move put them on), which is not the target
- * either. `now` is the caller's clock, so that no test depends on the date it
- * is run.
+ * either.
+ *
+ * `now` is the caller's clock, so that no test depends on the date it is run,
+ * and it is passed for a pupil on their own lesson only, a FIRST move: that is
+ * refused for everybody once the lesson is over. A pupil a move has put on
+ * another lesson is being corrected (moved on, or back), which the database
+ * allows after the end to an administrator with Drift and a teacher on the
+ * lesson that is left (app.lesson_move_may_correct) and refuses to the rest;
+ * the gateway cannot tell which the caller is without asking, so it leaves the
+ * clock out and the door answers with LM416.
  */
-export function refusalOf(origin: MoveLesson, target: MoveLesson, now: Date): MoveRefusal | null {
+export function refusalOf(origin: MoveLesson, target: MoveLesson, now?: Date): MoveRefusal | null {
   if (target.id === origin.id) return { code: LESSON_MOVE_NOT_PARALLEL };
-  if (isOver(origin, now)) return { code: LESSON_MOVE_LESSON_OVER, side: 'FROM' };
+  if (now && isOver(origin, now)) return { code: LESSON_MOVE_LESSON_OVER, side: 'FROM' };
   if (isReplacedByActivity(origin)) return { code: LESSON_MOVE_REPLACED_BY_ACTIVITY, side: 'FROM' };
   if (isReplacedByActivity(target)) return { code: LESSON_MOVE_REPLACED_BY_ACTIVITY, side: 'TO' };
   if (!isHeld(origin)) return { code: LESSON_MOVE_LESSON_NOT_HELD, side: 'FROM' };

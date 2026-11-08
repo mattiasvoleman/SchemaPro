@@ -115,6 +115,14 @@ describe('refusalOf: why the pupil cannot go there', () => {
     expect(refusalOf(lesson('x', '09:00', '11:00'), lesson('y', '09:00', '10:00'), at('10:30'))).toBeNull();
   });
 
+  it('asks no clock of a pupil who is being corrected: the database knows who may correct a move after the end', () => {
+    // Without a clock (a pupil a move has put on another lesson) an origin that is over is not a reason of the gateway's.
+    expect(refusalOf(origin, lesson('y', '09:00', '10:00'))).toBeNull();
+    expect(refusalOf(origin, lesson('y', '09:00', '10:00'), undefined)).toBeNull();
+    // ... but what is wrong with the lessons is: the parallel rules stay.
+    expect(refusalOf(origin, lesson('w', '11:00', '12:00'))).toEqual({ code: LESSON_MOVE_NOT_PARALLEL });
+  });
+
   it('names a source that is cancelled or replaced, as the source', () => {
     expect(refusalOf(lesson('x', '09:00', '10:00', { status: 'CANCELLED', cancelCause: 'MANUAL' }), lesson('y', '09:00', '10:00'), NOW)).toEqual({
       code: LESSON_MOVE_LESSON_NOT_HELD,

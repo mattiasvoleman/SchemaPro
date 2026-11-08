@@ -176,7 +176,9 @@ export class LessonMovesService {
         orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
         take: 2000,
       });
-      const now = new Date();
+      // A first move off a lesson that is over is refused for everybody; correcting a move after the end is for
+      // those who may save the lesson's register, which the database knows (see refusalOf), so no clock then.
+      const now = context.prev ? undefined : new Date();
       const overlapping = day.filter((row) => row.id !== origin.id && row.id !== current.id && overlaps(asLesson(row), asLesson(origin)));
 
       const pupilRosters = await calendarLessonRosters(tx, day, { pupils: 'ACTIVE', among: [studentId] });
@@ -216,7 +218,7 @@ export class LessonMovesService {
 
       const warnings: MoveWarning[] = [];
       if (!backToStart) {
-        const refusal = refusalOf(asLesson(origin), asLesson(target), new Date());
+        const refusal = refusalOf(asLesson(origin), asLesson(target), context.prev ? undefined : new Date());
         if (refusal) throw refusalError(refusal);
         const day = await tx.calendarLesson.findMany({
           where: { schoolId, date: origin.date, id: { not: target.id } },
@@ -476,7 +478,8 @@ const MESSAGES: Readonly<Record<string, string>> = {
   LESSON_MOVE_LESSON_NOT_HELD: 'Lektionen är inställd och hålls inte.',
   LESSON_MOVE_REPLACED_BY_ACTIVITY: 'Lektionen är ersatt av en schemabrytande aktivitet.',
   LESSON_MOVE_IN_THE_PAST: 'En flytt görs för i dag eller senare.',
-  LESSON_MOVE_LESSON_OVER: 'Lektionen eleven flyttas från är slut. Närvaron för den rättas i lektionens register.',
+  LESSON_MOVE_LESSON_OVER:
+    'Lektionen är slut. Ingen ny flytt görs ur en avslutad lektion. En flytt som redan gjorts kan samma dag ångras av en administratör med Drift eller en lärare på lektionen eleven flyttades från, och flyttas vidare av en administratör med Drift eller en lärare på lektionen eleven står på. Be någon av dem.',
   LESSON_MOVE_PUPIL_NOT_ON_LESSON: 'Eleven går inte på lektionen.',
   LESSON_MOVE_ALREADY_ON_TARGET: 'Eleven går redan på den lektionen.',
   LESSON_MOVE_PUPIL_DOUBLE_BOOKED: 'Eleven skulle få två lektioner samtidigt.',

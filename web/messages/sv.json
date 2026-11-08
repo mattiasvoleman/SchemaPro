@@ -8513,7 +8513,7 @@
       "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {Lektionen eleven går från hålls inte.} other {Lektionen eleven ska flyttas till är inställd.}}",
       "LESSON_MOVE_REPLACED_BY_ACTIVITY": "{side, select, FROM {Lektionen eleven går från är ersatt av en schemabrytande aktivitet.} other {Lektionen eleven ska flyttas till är ersatt av en schemabrytande aktivitet.}}",
       "LESSON_MOVE_IN_THE_PAST": "En flytt görs för i dag eller senare.",
-      "LESSON_MOVE_LESSON_OVER": "Lektionen eleven flyttas från är slut. Närvaron för den rättas i lektionens register.",
+      "LESSON_MOVE_LESSON_OVER": "Lektionen är slut. Ingen ny flytt görs ur en avslutad lektion. En flytt som redan gjorts kan samma dag ångras av en administratör med Drift eller en lärare på lektionen eleven flyttades från, och flyttas vidare av en administratör med Drift eller en lärare på lektionen eleven står på. Be någon av dem.",
       "LESSON_MOVE_PUPIL_NOT_ON_LESSON": "Eleven går inte på lektionen.",
       "LESSON_MOVE_ALREADY_ON_TARGET": "Eleven går redan på den lektionen.",
       "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "Eleven skulle få två lektioner samtidigt.",

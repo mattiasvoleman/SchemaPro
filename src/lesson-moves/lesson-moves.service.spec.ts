@@ -233,6 +233,34 @@ describe('LessonMovesService', () => {
       await expect(service.move(PUPIL, X, Y, teacher(TEACHER_Y))).resolves.toMatchObject({ moved: true });
     });
 
+    it('leaves a pupil who is moved on from a lesson a move put them on to the database after the first source ended', async () => {
+      // Moved from X to Y; X ended at 10:00, Y runs to 11:00 and the pupil goes on to Z. Who may do that after the end is the
+      // database's to say (an administrator with Drift, a teacher on the lesson the pupil stands on): no refusal from the clock here.
+      tx['lessonPupilMove']!['findFirst']!.mockResolvedValue({ id: MOVE, fromLessonId: X });
+      lessons[Y] = row(Y, '09:00', '11:00');
+      lessons[Z] = row(Z, '09:30', '10:30');
+      rosters[Y] = [PUPIL];
+      rosters[Z] = [];
+      jest.setSystemTime(at('10:15'));
+      await expect(service.move(PUPIL, Y, Z, teacher(TEACHER_Y))).resolves.toMatchObject({ moved: true });
+      const call = tx['$queryRaw']!.mock.calls.find(([sql]) => String(sql?.strings).includes('app.lesson_pupil_move'));
+      expect(call![0].values).toEqual([PUPIL, Y, Z]);
+    });
+
+    it('sends a pupil back to a first source that has ended through the door, which answers who may', async () => {
+      tx['lessonPupilMove']!['findFirst']!.mockResolvedValue({ id: MOVE, fromLessonId: X });
+      jest.setSystemTime(at('10:30'));
+      tx['$queryRaw']!.mockResolvedValue([{ id: null }]);
+      await expect(service.move(PUPIL, Y, X, admin())).resolves.toEqual({ moved: false, moveId: null, warnings: [] });
+      const refused = new Prisma.PrismaClientKnownRequestError('boom', {
+        code: 'P2010',
+        clientVersion: 'x',
+        meta: { driverAdapterError: { cause: { originalCode: 'LM416', originalMessage: 'LESSON_MOVE_LESSON_OVER: ...' } } },
+      });
+      tx['$queryRaw']!.mockRejectedValue(refused);
+      await expect(service.move(PUPIL, Y, X, teacher(TEACHER_Y))).rejects.toMatchObject({ response: { code: 'LESSON_MOVE_LESSON_OVER' }, status: 409 });
+    });
+
     it('answers the database’s refusal of a source that is over (a clock that ran between the gateway and the door) with the same code', async () => {
       const over = new Prisma.PrismaClientKnownRequestError('boom', {
         code: 'P2010',
@@ -325,6 +353,15 @@ describe('LessonMovesService', () => {
       expect(result.candidates[2]!.refusal).toEqual({ code: 'LESSON_MOVE_REPLACED_BY_ACTIVITY', side: 'TO' });
       // W (11:00) does not overlap and is not a candidate at all.
       expect(result.candidates.some((candidate) => candidate.id === W)).toBe(false);
+    });
+
+    it('offers the lessons to a pupil who stands on a lesson a move put them on, though the first source has ended: that is a correction, and the door judges who may', async () => {
+      tx['lessonPupilMove']!['findFirst']!.mockResolvedValue({ id: MOVE, fromLessonId: X });
+      lessons[Y] = row(Y, '09:00', '11:00');
+      rosters[Y] = [PUPIL];
+      jest.setSystemTime(at('10:15'));
+      const result = await service.candidates(Y, PUPIL, admin());
+      expect(result.candidates.every((candidate) => candidate.refusal?.code !== 'LESSON_MOVE_LESSON_OVER')).toBe(true);
     });
 
     it('refuses every lesson, as the source being over, once the pupil’s lesson has ended', async () => {

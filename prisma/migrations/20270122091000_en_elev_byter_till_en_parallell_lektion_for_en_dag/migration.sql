@@ -51,13 +51,21 @@
 --     app.leave_mentors, ledighetsbeslutets och frånvarobevakningens enda
 --     definition av en mentor);
 --   * dagen är inte förbi och lektionen eleven flyttas från är inte slut: en
---     flytt görs för i dag eller senare, och aldrig ur en lektion vars
---     sluttid har passerat (LM416). Flytten skriver över elevens markering på
---     källan, och en lektions register är dess lärares: den som bara
---     undervisar målet får inte genom flytten ändra eller radera en markering
---     på en lektion hen inte kan spara register för. En administratör som
---     behöver rätta en avslutad lektion gör det i registret, där markeringen
---     får en författare;
+--     flytt görs för i dag eller senare, och en ny flytt görs aldrig ur en
+--     lektion vars sluttid har passerat (LM416, för alla). En ny flytt skriver
+--     över elevens markering på källan, och en lektions register är dess
+--     lärares: den som bara undervisar målet får inte genom flytten ändra
+--     eller radera en markering på en lektion hen inte kan spara register för;
+--   * en flytt som redan gjorts kan rättas efter lektionens slut, samma dag,
+--     men bara av dem som får spara den lektionens register: en administratör
+--     med Drift och en lärare på lektionen (app.lesson_move_may_correct).
+--     Ångra och en flytt tillbaka lägger tillbaka källärarens egen markering
+--     med dess författare och tid, så de gäller källektionen; en flytt vidare
+--     skriver ingenting på den första källan (markeringen bärs med i
+--     displacedMark) och tar bara eleven ur den lektion hen står på, så den
+--     gäller den lektionen. Den som bara undervisar målet, en mentor och alla
+--     andra får LM416. Ångra tar aldrig bort en markering på målet: den
+--     vägras (LM415) för alla tills markeringen är borttagen;
 --   * eleven står inte redan på mållektionen som namngiven.
 --
 -- Vem som är på källektionen (hemklass, grupp, ersättande grupp) och att
@@ -458,6 +466,28 @@ $$;
 
 REVOKE ALL ON FUNCTION app.lesson_move_may(uuid, uuid[], date) FROM PUBLIC;
 
+-- Who may correct a move after a lesson is over: those who may save that
+-- lesson's register (AttendanceService), an administrator with Drift or a
+-- teacher assigned to it. Asked for the lesson a correction takes the pupil
+-- out of (Ångra and a move back: the first source, where the source teacher's
+-- own mark is put back; a move on: the lesson the pupil stands on). Not the
+-- mentor, not the teacher of the target alone: that is the one who could
+-- erase a colleague's mark, which is the whole of what LM416 is for.
+CREATE FUNCTION app.lesson_move_may_correct(p_lesson uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT CASE app.current_user_role()::text
+    WHEN 'SCHOOL_ADMIN' THEN app.current_user_may('DRIFT', true)
+    WHEN 'TEACHER' THEN
+      EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t
+               WHERE t."calendarLessonId" = p_lesson
+                 AND t."teacherId" = app.current_user_id()
+                 AND t."schoolId" = app.current_school_id())
+    ELSE false
+  END
+$$;
+
+REVOKE ALL ON FUNCTION app.lesson_move_may_correct(uuid) FROM PUBLIC;
+
 -- Whether the calling teacher mentors the pupil on the day: the read arm's
 -- question (the policy cannot call leave_mentors, which reads the enrolments).
 CREATE FUNCTION app.lesson_move_is_mentor(p_student uuid, p_on date) RETURNS boolean
@@ -520,6 +550,8 @@ DECLARE
   origin uuid;
   origin_date date;
   origin_ends timestamptz;
+  leaving uuid;
+  leaving_ends timestamptz;
   mark record;
   displaced jsonb;
   new_id uuid;
@@ -562,13 +594,28 @@ BEGIN
     RAISE EXCEPTION 'LESSON_MOVE_IN_THE_PAST: en flytt görs för i dag eller senare' USING ERRCODE = 'LM414';
   END IF;
   -- The day is not the hour: a lesson that ended this morning is still
-  -- today's. Its register is its teachers' to change, and a move writes the
-  -- pupil's mark on it (UNKNOWN, recordedById the mover), so the teacher of the
-  -- target alone could erase a colleague's mark by moving the pupil. now() is
-  -- the transaction's start: a lesson that ends exactly now is over.
-  IF origin_ends <= now() THEN
-    RAISE EXCEPTION 'LESSON_MOVE_LESSON_OVER: lektionen eleven flyttas från är slut, så dess register ändras inte genom en flytt'
-      USING ERRCODE = 'LM416';
+  -- today's. Its register is its teachers' to change. now() is the
+  -- transaction's start: a lesson that ends exactly now is over.
+  IF prev."id" IS NULL THEN
+    -- A new move writes the pupil's mark on the source (UNKNOWN, the mover as
+    -- author), so the teacher of the target alone could erase a colleague's
+    -- mark by moving the pupil off a lesson that is over. Refused for everybody.
+    IF origin_ends <= now() THEN
+      RAISE EXCEPTION 'LESSON_MOVE_LESSON_OVER: lektionen eleven flyttas från är slut, så ingen ny flytt görs ur den'
+        USING ERRCODE = 'LM416';
+    END IF;
+  ELSE
+    -- Back to the start (Ångra, from here) puts the source teacher's own mark
+    -- back, so the first source is the lesson it is about; a move on writes
+    -- nothing on the first source (the displaced mark is carried) and takes the
+    -- pupil out of the lesson they stand on, so that one is. Over: only those
+    -- who may save that lesson's register may correct the move.
+    leaving := CASE WHEN p_to = origin THEN origin ELSE p_from END;
+    SELECT l."endsAt" INTO leaving_ends FROM "CalendarLessons" l WHERE l."id" = leaving;
+    IF leaving_ends <= now() AND NOT app.lesson_move_may_correct(leaving) THEN
+      RAISE EXCEPTION 'LESSON_MOVE_LESSON_OVER: lektionen är slut, så en flytt rättas bara av en administratör med Drift eller en lärare på lektionen eleven lämnar'
+        USING ERRCODE = 'LM416';
+    END IF;
   END IF;
 
   -- Leaving a lesson the pupil was moved onto: not while it holds a mark of
@@ -666,10 +713,11 @@ BEGIN
   IF on_day < app.school_today() THEN
     RAISE EXCEPTION 'LESSON_MOVE_IN_THE_PAST: en flytt ångras för i dag eller senare' USING ERRCODE = 'LM414';
   END IF;
-  -- Ångra puts the pupil's mark back on the lesson they were moved from: the
-  -- same register the move may not touch once the lesson is over.
-  IF ends_at <= now() THEN
-    RAISE EXCEPTION 'LESSON_MOVE_LESSON_OVER: lektionen eleven flyttades från är slut, så dess register ändras inte genom att flytten ångras'
+  -- Ångra puts the pupil's mark back on the lesson they were moved from, with
+  -- its author and time: once that lesson is over, only those who may save its
+  -- register may do it (the source's teacher, an administrator with Drift).
+  IF ends_at <= now() AND NOT app.lesson_move_may_correct(m."fromLessonId") THEN
+    RAISE EXCEPTION 'LESSON_MOVE_LESSON_OVER: lektionen eleven flyttades från är slut, så flytten ångras bara av en administratör med Drift eller en lärare på den lektionen'
       USING ERRCODE = 'LM416';
   END IF;
   IF EXISTS (SELECT 1 FROM "AttendanceRecords" a
@@ -1468,7 +1516,7 @@ BEGIN
   -- The functions answer the API's role alone.
   FOREACH t IN ARRAY ARRAY[
     'app.lesson_pupil_move(uuid, uuid, uuid)', 'app.lesson_pupil_move_undo(uuid)',
-    'app.lesson_pupil_move_remove(uuid, boolean)', 'app.lesson_move_may(uuid, uuid[], date)',
+    'app.lesson_pupil_move_remove(uuid, boolean)', 'app.lesson_move_may(uuid, uuid[], date)', 'app.lesson_move_may_correct(uuid)',
     'app.lesson_move_is_mentor(uuid, date)', 'app.lesson_pupil_move_is_parallel()',
     'app.lesson_pupil_move_tells_the_integrations()', 'app.lesson_pupil_moves_lapse()',
     'app.lesson_pupil_arrival_is_the_moves()', 'app.lesson_pupil_arrival_goes_with_the_move()',
@@ -1487,15 +1535,17 @@ $$;
 COMMENT ON TABLE "LessonPupilMoves" IS
   'Elevens lektion för dagen: en elev flyttad från en lektion till en parallell för ett datum. Skrivs bara av app.lesson_pupil_move / app.lesson_pupil_move_undo; faller när lektionerna inte längre bär den. Ankomsten är en rad i CalendarLessonStudents med moveId.';
 COMMENT ON FUNCTION app.lesson_pupil_move(uuid, uuid, uuid) IS
-  'Flyttar en elev (p_student) från lektionen hen är på (p_from) till en parallell lektion (p_to) för dagen. Svarar flyttens id, eller NULL när eleven skickas tillbaka till sin ursprungliga lektion. Frågar app.lesson_move_may, tar lektionernas rader i id-ordning och sätter elevens markering på källan till UNKNOWN, men aldrig på en lektion som är slut (LM416). Felen har SQLSTATE LM4xx.';
+  'Flyttar en elev (p_student) från lektionen hen är på (p_from) till en parallell lektion (p_to) för dagen. Svarar flyttens id, eller NULL när eleven skickas tillbaka till sin ursprungliga lektion. Frågar app.lesson_move_may, tar lektionernas rader i id-ordning och sätter elevens markering på källan till UNKNOWN, men aldrig vid en ny flytt ur en lektion som är slut (LM416); efter slutet rättas en flytt (tillbaka, vidare) bara av den som får spara lektionens register. Felen har SQLSTATE LM4xx.';
 COMMENT ON FUNCTION app.lesson_pupil_move_undo(uuid) IS
-  'Ångrar en flytt: tar bort den (ankomsten går med) och lägger tillbaka elevens markering på källan om ingen skrivit en ny. Vägras (LM415) när eleven har en markering på mållektionen, och (LM414, LM416) när källektionens dag är förbi eller lektionen är slut.';
+  'Ångrar en flytt: tar bort den (ankomsten går med) och lägger tillbaka elevens markering på källan om ingen skrivit en ny. Vägras (LM415) när eleven har en markering på mållektionen (den tas aldrig bort), (LM414) när källektionens dag är förbi, och (LM416) när källektionen är slut och den som ångrar varken är en administratör med Drift eller en lärare på den.';
 COMMENT ON FUNCTION app.lesson_pupil_move_remove(uuid, boolean) IS
   'Tar bort en flytt och, med p_restore, lägger tillbaka den undanflyttade markeringen. Den som anropar har lektionernas lås och har frågat app.lesson_move_may.';
 COMMENT ON FUNCTION app.lesson_pupil_register_lock(uuid) IS
   'Registret tar lektionens rad FOR SHARE, så en flytt och ett sparat register möts i en ordning. En funktion för att en lärare saknar UPDATE-policy på CalendarLessons och ett radlås under RLS då inte tar något lås.';
 COMMENT ON FUNCTION app.lesson_move_may(uuid, uuid[], date) IS
   'Får den inloggade flytta eleven: en administratör med Drift, eller en lärare som undervisar någon av lektionerna eller är elevens mentor den dagen (app.leave_mentors).';
+COMMENT ON FUNCTION app.lesson_move_may_correct(uuid) IS
+  'Får den inloggade rätta en flytt efter att lektionen är slut: den som får spara lektionens register, en administratör med Drift eller en lärare på lektionen. Inte mentorn och inte målets lärare. Frågas för lektionen rättelsen tar eleven ur.';
 COMMENT ON FUNCTION app.lesson_move_is_mentor(uuid, date) IS
   'Om den inloggade läraren är elevens mentor den dagen (ledighetsbeslutets definition). Läsarmens fråga.';
 COMMENT ON FUNCTION app.lesson_pupil_move_is_parallel() IS
