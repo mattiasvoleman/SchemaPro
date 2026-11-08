@@ -275,7 +275,15 @@ export async function absenceStatsChecks(owner: Client, api: PrismaService, mark
       assert.equal(first.reporting.ratePct, 100);
       assert.equal(first.pupils, 7);
       assert.equal(first.partial, false);
-      if (!today.endsWith('-01')) assert.equal(view.series.at(-1)?.partial, true, 'the month that is going on is not marked partial');
+      // The month that is going on is in the series, and partial, once a school day has been counted in it (the lessons are on
+      // weekdays up to yesterday). When the month's first days are a weekend, or today is the 1st, the series ends with the last
+      // month, which is whole: what the series ends with depends on the school's last lesson day, not on the date.
+      const lastLessonDay = (await one<{ d: string }>(`SELECT max(date)::text AS d FROM "CalendarLessons" WHERE "schoolId" = $1`, [s])).d;
+      assert.equal(
+        view.series.at(-1)?.partial,
+        lastLessonDay.slice(0, 7) === today.slice(0, 7),
+        'the series ends with a month that is partial exactly when the last lesson day is in the month that is going on',
+      );
       const classes = await service.classes({}, admin);
       assert.deepEqual(classes.classes.map((c) => [c.className, c.yearName]), [['FS7A', 'probe frånvarostatistik']]);
       assert.equal(classes.classes[0]?.pupils, 7);
@@ -506,6 +514,10 @@ export async function absenceStatsChecks(owner: Client, api: PrismaService, mark
       const cohort = await service.classView(class8, {}, admin2);
       assert.ok(cohort.series.length >= 1);
       assert.ok(cohort.series.every((month) => month.classNames.includes('FF7A')), 'the cohort’s series does not reach last year’s class');
+      // And its list: the six who are in 8A now, with the minutes of the days they sat in 7A (the days come from the lineage, the pupils from the class itself).
+      const cohortList = await service.classPupils(class8, { from: first.yearStart, to: await dayOf(today, 60) }, admin2);
+      assert.deepEqual(cohortList.pupils.map((pupil) => pupil.firstName), ['q1', 'q2', 'q3', 'q4', 'q5', 'q6']);
+      assert.ok(cohortList.pupils.every((pupil) => pupil.figures.recordedMinutes > 0), 'the cohort’s days in last year’s class are not in 8A’s list');
       // The control: without the history the class has no pupils to list, and the months of its pupils would have no class.
       await owner.query('BEGIN');
       await owner.query(`SET LOCAL session_replication_role = replica`);

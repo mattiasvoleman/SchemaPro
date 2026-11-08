@@ -847,17 +847,22 @@ END
 $$;
 
 -- Eleverna i en klass under en period med sina summor, för ett utvecklingssamtal:
--- de som hörde till klassen eller en föregångare någon dag i perioden
--- (StudentEnrollments, som månadsraderna och mönstren läser en klass), och deras
--- markeringar för DAGARNA de hörde dit, som klassens månadsrad och mönster räknar
--- dem (segmentet som täcker lektionens datum). Elevernas summor blir därmed
--- klassens summa: en elev som bytte klass mitt i en månad räknas i den gamla
--- klassen till bytet och i den nya efter det, och mentorn ser inte frånvaron
--- under dagar eleven hörde till en annan klass och en annan mentor. (Elevens
--- eget kort, app.absence_stats_pupil, visar alla hens markeringar.) En
--- administratör med eget användar-id eller klassens mentor; en markerad elev är
--- en tom rad för en administratör (is_protected, utan namn och siffror) och
--- finns inte alls för en mentor.
+-- KLASSENS EGNA elever, de som var inskrivna i den någon dag i perioden
+-- (StudentEnrollments), och deras markeringar för DAGARNA de hörde till klassen
+-- eller en föregångare (segmentet som täcker lektionens datum, som klassens
+-- mönster räknar dem). Vilka som står i listan avgörs alltså av klassen själv,
+-- aldrig av släktlinjen: den som bara satt i föregångaren (7A) och inte följde
+-- med till 8A har en annan mentor eller ingen, och mentorn för 8A kan inte
+-- öppna hens kort, så hen står inte heller i 8A:s lista, hur långt bak perioden
+-- än når. Släktlinjen avgör bara dagarna för de elever som är kvar.
+-- Summan av listan är därför klassens egen månad för en period inom klassen
+-- (en elev som bytte klass mitt i en månad räknas i den gamla klassen till
+-- bytet och i den nya efter det), och för en period som når in i
+-- föregångaren mindre än kullens summa i serien, med de elever som inte
+-- följde med utanför. (Elevens eget kort, app.absence_stats_pupil, visar alla
+-- hens markeringar.) En administratör med eget användar-id eller klassens
+-- mentor; en markerad elev är en tom rad för en administratör (is_protected,
+-- utan namn och siffror) och finns inte alls för en mentor.
 CREATE FUNCTION app.absence_stats_class_pupils(p_class uuid, p_from date, p_to date)
 RETURNS TABLE (student_id uuid, first_name text, last_name text, is_protected boolean,
                recorded_minutes integer, valid_minutes integer, absent_minutes integer, late_minutes integer, late_count integer)
@@ -890,7 +895,8 @@ BEGIN
        AND e."validFrom" <= p_to AND (e."validTo" IS NULL OR e."validTo" > p_from)
   ),
   pupils AS (
-    SELECT DISTINCT sg.id FROM segments sg
+    SELECT DISTINCT e."studentId" AS id FROM "StudentEnrollments" e
+     WHERE e."schoolId" = sid AND e."studentGroupId" = p_class AND e."validFrom" <= p_to AND (e."validTo" IS NULL OR e."validTo" > p_from)
   ),
   marked AS (
     SELECT p.id, EXISTS (SELECT 1 FROM "PersonProtections" pp WHERE pp."userId" = p.id AND pp."schoolId" = sid) AS is_marked
@@ -1159,7 +1165,7 @@ COMMENT ON FUNCTION app.absence_stats_series(uuid) IS
 COMMENT ON FUNCTION app.absence_stats_classes(date, date) IS
   'Frånvarostatistik: klasserna i en period med summan av sina månader (en administratör: alla; en mentor: sina klasser).';
 COMMENT ON FUNCTION app.absence_stats_class_pupils(uuid, date, date) IS
-  'Frånvarostatistik: eleverna i en klass under en period med sina summor för dagarna de hörde till klassen, ur markeringarna som finns kvar; en markerad elev utelämnas (för en administratör en tom rad).';
+  'Frånvarostatistik: klassens egna elever under en period med sina summor för dagarna de hörde till klassen eller en föregångare, ur markeringarna som finns kvar; en markerad elev utelämnas (för en administratör en tom rad).';
 COMMENT ON FUNCTION app.absence_stats_pupil_head(uuid) IS
   'Frånvarostatistik: en elevs namn, klass idag och första och sista dagen med en markering kvar.';
 COMMENT ON FUNCTION app.absence_stats_pupil(uuid, date, date) IS

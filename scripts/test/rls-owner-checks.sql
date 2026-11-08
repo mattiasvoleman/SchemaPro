@@ -3492,6 +3492,21 @@ CREATE FUNCTION pg_temp.d6o_rows(p_school uuid, p_month date) RETURNS text LANGU
    WHERE a."schoolId" = p_school AND a."month" = p_month
 $$;
 
+-- Asks a door of the statistics under a login's claims (ok:<rows> or err:<SQLSTATE>), as the owner may.
+CREATE FUNCTION pg_temp.d6o_as(p_sub text, p_q text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n integer;
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN p_sub IS NULL THEN '' ELSE json_build_object('sub', p_sub, 'role', 'authenticated')::text END, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  BEGIN
+    EXECUTE 'SELECT count(*) FROM (' || p_q || ') x' INTO n;
+    RETURN 'ok:' || n;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN 'err:' || SQLSTATE;
+  END;
+END $$;
+
 -- 390o: the table.
 BEGIN;
 DO $$
@@ -3686,6 +3701,9 @@ BEGIN
     (SELECT sum(recorded_minutes) || '/' || sum(absent_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(gb, '2026-02-01', '2026-02-28')), '500/100/5');
   PERFORM pg_temp.d6o_expect('391o and a1 has his two days in B, absent on both',
     (SELECT recorded_minutes || '/' || absent_minutes FROM app.absence_stats_class_pupils(gb, '2026-02-01', '2026-02-28') WHERE first_name = 'A' AND last_name = 'Elev1'), '100/100');
+  -- The period's first day counts: one lesson, on the 2nd, five pupils.
+  PERFORM pg_temp.d6o_expect('391o a period that is the first lesson day only has that day',
+    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(ga, '2026-02-02', '2026-02-02')), '250/5');
   -- The period's last day is the day a1 joined B: he is on the list with that day's lesson.
   PERFORM pg_temp.d6o_expect('391o a period that ends the day a1 joined B has him, with that day',
     (SELECT recorded_minutes || '/' || absent_minutes FROM app.absence_stats_class_pupils(gb, '2026-02-02', '2026-02-04') WHERE first_name = 'A' AND last_name = 'Elev1'), '50/50');
@@ -3708,33 +3726,62 @@ END $$;
 ROLLBACK;
 
 
--- 391o: a class and its predecessor. The five pupils of A move on to N (A's successor) on 2026-01-15; A had a lesson on
--- 2025-12-01 and N has one on 2026-02-02. N's pupils are the cohort's, with the days of both (as N's months and patterns
--- are), and a period that holds only the days in N shows N's day alone.
+-- 391o: a class and its predecessor. The five pupils a1..a5 of A move on to N (A's successor) on 2026-01-15; a6 goes to B, whose
+-- mentor is somebody else. A had a lesson on 2025-12-01 (a6 present too) and N has one on 2026-02-02. N's pupils are N's own
+-- five, with the days of both classes (as N's patterns are): a6 sat in A and never came to N, so she is not on N's list, not
+-- for an administrator and not for N's mentor, who could not open her card either. A period that holds only the days in N
+-- shows N's day alone.
 BEGIN;
 DO $$
 DECLARE
-  s uuid := pg_temp.d6o_school('d6o-lin', 5, 0);
-  ga uuid; gn uuid; y uuid;
+  s uuid := pg_temp.d6o_school('d6o-lin', 6, 0);
+  ga uuid; gb uuid; gn uuid; y uuid; mentor uuid; msub uuid := gen_random_uuid(); a6 uuid; names text; r record; opened int := 0;
   five constant text := 'a1=PRESENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT';
 BEGIN
   SELECT id INTO ga FROM "StudentGroups" WHERE "schoolId" = s AND name = 'A';
+  SELECT id INTO gb FROM "StudentGroups" WHERE "schoolId" = s AND name = 'B';
   SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = s;
+  SELECT id INTO a6 FROM "Users" WHERE "schoolId" = s AND email = 'd6o-d6o-lin-a6@example.invalid';
   PERFORM set_config('session_replication_role', 'replica', true);
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt") VALUES (s, y, 'N', 8, ga, now()) RETURNING id INTO gn;
   UPDATE "StudentEnrollments" SET "validTo" = '2026-01-15' WHERE "schoolId" = s AND "studentGroupId" = ga;
   INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom")
-  SELECT s, x."id", y, gn, 8, '2026-01-15' FROM "Users" x WHERE x."schoolId" = s AND x."role" = 'STUDENT';
-  UPDATE "Users" SET "studentGroupId" = gn WHERE "schoolId" = s AND "role" = 'STUDENT';
-  PERFORM pg_temp.d6o_lesson(s, 'd6o-lin', 'A', '2025-12-01', 8, 50, 'SCHEDULED', five);
+  SELECT s, x."id", y, CASE WHEN x."email" ~ '-a6@' THEN gb ELSE gn END, 8, '2026-01-15' FROM "Users" x WHERE x."schoolId" = s AND x."role" = 'STUDENT';
+  UPDATE "Users" SET "studentGroupId" = CASE WHEN "email" ~ '-a6@' THEN gb ELSE gn END WHERE "schoolId" = s AND "role" = 'STUDENT';
+  PERFORM set_config('session_replication_role', 'origin', true);
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'd6o-d6o-lin-mn@example.invalid', 'M', 'MentorN', 'TEACHER', msub, true, now()) RETURNING id INTO mentor;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  VALUES (s, mentor, y, 'MENTORSKAP', 'Mentor N', 60, gn, now());
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-lin', 'A', '2025-12-01', 8, 50, 'SCHEDULED', five || ',a6=PRESENT');
   PERFORM pg_temp.d6o_lesson(s, 'd6o-lin', 'N', '2026-02-02', 8, 50, 'SCHEDULED', five);
   PERFORM pg_temp.d6o_login(s, 'd6o-lin');
   PERFORM pg_temp.d6o_expect('391o the cohort in N has the days in A and in N',
     (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(gn, '2025-11-01', '2026-02-28')), '500/5');
   PERFORM pg_temp.d6o_expect('391o and the days in N alone, when the period is those',
     (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(gn, '2026-01-20', '2026-02-28')), '250/5');
-  PERFORM pg_temp.d6o_expect('391o A itself has its own day, and the successor’s is not its',
-    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(ga, '2025-11-01', '2026-02-28')), '250/5');
+  PERFORM pg_temp.d6o_expect('391o A itself has its own day, and the successor’s is not its: all six sat in A',
+    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(ga, '2025-11-01', '2026-02-28')), '300/6');
+  PERFORM pg_temp.d6o_expect('391o a6 is on A’s list and on no list of N’s',
+    (SELECT count(*)::text FROM app.absence_stats_class_pupils(gn, '2025-08-01', '2026-11-06') WHERE last_name = 'Elev6'), '0');
+  PERFORM pg_temp.d6o_expect('391o and N’s list is N’s five, by name',
+    (SELECT string_agg(last_name, ',' ORDER BY last_name COLLATE "C") FROM app.absence_stats_class_pupils(gn, '2025-08-01', '2026-11-06')), 'Elev1,Elev2,Elev3,Elev4,Elev5');
+  -- The mentor of N, asking for a period that reaches back into A (the web’s “Alla” and “Föregående läsår”).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', msub, 'role', 'authenticated')::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  SELECT string_agg(last_name || ' ' || recorded_minutes, ',' ORDER BY last_name COLLATE "C") INTO names
+    FROM app.absence_stats_class_pupils(gn, '2025-08-01', '2026-11-06');
+  PERFORM pg_temp.d6o_expect('391o the mentor of N gets N’s five and nobody who only sat in A', names, 'Elev1 100,Elev2 100,Elev3 100,Elev4 100,Elev5 100');
+  -- Every pupil the list names the mentor may open: the list and the card are the same set.
+  FOR r IN SELECT student_id FROM app.absence_stats_class_pupils(gn, '2025-08-01', '2026-11-06') LOOP
+    IF pg_temp.d6o_as(msub::text, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, r.student_id)) <> 'ok:1' THEN
+      RAISE EXCEPTION 'frånvarostatistik 391o: the mentor of N is listed a pupil whose card she may not open (%)', r.student_id;
+    END IF;
+    opened := opened + 1;
+  END LOOP;
+  PERFORM pg_temp.d6o_expect('391o and she opened all five', opened::text, '5');
+  PERFORM pg_temp.d6o_expect('391o a6’s card is not hers', pg_temp.d6o_as(msub::text, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, a6)), 'err:AS403');
+  PERFORM pg_temp.d6o_expect('391o and A’s list is not hers', pg_temp.d6o_as(msub::text, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2025-08-01', '2026-11-06')$q$, ga)), 'err:AS403');
 END $$;
 ROLLBACK;
 
@@ -4089,21 +4136,6 @@ BEGIN
   PERFORM pg_temp.d6o_expect('392o a condition is', (pg_temp.d6o_norm(E'SELECT 1 FROM t WHERE a') = pg_temp.d6o_norm(E'SELECT 1 FROM t WHERE b'))::text, 'false');
 END $$;
 ROLLBACK;
-
--- Asks a door of the statistics under a login's claims (ok:<rows> or err:<SQLSTATE>), as the owner may.
-CREATE FUNCTION pg_temp.d6o_as(p_sub text, p_q text) RETURNS text LANGUAGE plpgsql AS $$
-DECLARE
-  n integer;
-BEGIN
-  PERFORM set_config('request.jwt.claims', CASE WHEN p_sub IS NULL THEN '' ELSE json_build_object('sub', p_sub, 'role', 'authenticated')::text END, true);
-  PERFORM set_config('app.chosen_school_id', '', true);
-  BEGIN
-    EXECUTE 'SELECT count(*) FROM (' || p_q || ') x' INTO n;
-    RETURN 'ok:' || n;
-  EXCEPTION WHEN OTHERS THEN
-    RETURN 'err:' || SQLSTATE;
-  END;
-END $$;
 
 -- ---------------------------------------------------------------------------
 -- 394o: the mentor is the mentor of Frånvarobevakningen. For each

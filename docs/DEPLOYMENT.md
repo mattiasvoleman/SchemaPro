@@ -2140,10 +2140,15 @@ Walk the full product loop once, in order:
   rewrites `app.reporting_lessons` next (Elevens lektion för dagen, 20270122, adds a
   condition about a pupil moved off a lesson) must restate `app.absence_stats_lessons` with it, in
   the same migration, after its md5 guard (the body's md5 is in the PR). (10) *A class's
-  pupils add up to the class:* `app.absence_stats_class_pupils` counts a pupil's marks for the
-  days she was in the class or a predecessor (the segment of `StudentEnrollments` that
-  covers the lesson's date, as the class's months and patterns count them), not every mark
-  of the period; her own card shows all of them.
+  pupils are the class's own, and add up to the class:* `app.absence_stats_class_pupils` lists the
+  pupils enrolled in **the class itself** some day of the period (never those who only sat in
+  a predecessor and went to another class or left: their mentor is somebody else, and the
+  class's mentor cannot open their card), and counts a listed pupil's marks for the days she
+  was in the class or a predecessor (the segment of `StudentEnrollments` that covers the
+  lesson's date, as the class's months and patterns count them), not every mark of the
+  period; her own card shows all of them. For a period inside the class the pupils' sums are
+  the class's month; for a period that reaches back into a predecessor they are less than
+  the cohort's sum in the series, by the pupils who did not come along.
   **Release note** (in these words or others): *From the first night after this release
   Rastra counts, every night, the school's and each class's absence by month for the last
   three läsår, without recording any individual pupil, and shows it with the reporting rate
