@@ -3666,6 +3666,204 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Frånvarostatistik över tid (20270121090000), sections 390-394. One school with three
+-- läsår (absolute dates, so that the months below are the same every day the suite runs;
+-- the last läsår runs to 2096 so that "today" is always inside it, as the mentor
+-- definition needs), a cohort that follows its class 6A -> 7A -> 8A, a second class 8B
+-- and a tiny one 8C (three pupils), three months of lessons and marks (September 2024,
+-- 2025 and 2026), a week in August 2026 in which only three of 8B's six pupils were
+-- marked, one lesson cancelled with every pupil marked absent, a day nobody reported, and
+-- a pupil the school has marked as having a protected identity. The enrolments and the
+-- lessons are planted with the triggers held off (session_replication_role): the history
+-- is written by a trigger and guarded against every other writer.
+--
+--   logins  …d60000000001 full, …02 rektor, …03 expedition, …05 läsare, …61 the huvudman's planner
+--           …06 mentor of 8A (m1), …07 mentor of 8B (m2), …08 a teacher without a class (t3)
+--           …d60000001N the pupils (p1..p9 in 8A, p11..p16 in 8B, p21..p23 in 8C)
+--           …d60000000041 p1's guardian; …51 the other school's administrator
+--
+-- The cohort (p1..p9) is in 6A until 2025-08-01, in 7A until 2026-08-01, and in 8A after.
+-- p1 is absent: Wednesday 09:00 in September 2024, Thursday 10:00 in 2025, Monday 08:00 in
+-- 2026 (four a month, 200 minutes). p2 is excused on 2026-09-03 and -04 (six lessons,
+-- 300 minutes). p3 is late on every Friday 08:00 (four a month). p4 has no mark on the
+-- 10:00 lessons of 2026. p9 (marked) is absent on 2026-09-02 (150 minutes). p11 is absent
+-- on Tuesday 09:00 in 2026-09. Nobody was marked on 2026-09-24, and 8A's 08:00 lesson of
+-- 2026-09-10 is cancelled with everyone marked absent (which counts for nothing).
+DO $$
+DECLARE
+  s uuid; s2 uuid;
+  y1 uuid; y2 uuid; y3 uuid; z uuid;
+  c1 uuid; c2 uuid; c3 uuid; d3 uuid; e3 uuid; k2 uuid;
+  m1 uuid; m2 uuid; t3 uuid;
+  i int;
+  u uuid;
+  h uuid; km uuid;
+  d date; hh int;
+  l uuid;
+  subj uuid;
+  ma uuid; sv uuid; idr uuid;
+  cls record;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-franvarostatistik-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Frånvarostatistik', 'rls-franvarostatistik-school', 'Europe/Stockholm', now()) RETURNING id INTO s;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s, 'FS 24/25', '2024-08-01', '2025-07-31', false, now()) RETURNING id INTO y1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "predecessorId", "updatedAt")
+  VALUES (s, 'FS 25/26', '2025-08-01', '2026-07-31', false, y1, now()) RETURNING id INTO y2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "predecessorId", "updatedAt")
+  VALUES (s, 'FS 26/27', '2026-08-01', '2096-07-31', true, y2, now()) RETURNING id INTO y3;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, y1, 'FS6A', 6, now()) RETURNING id INTO c1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt") VALUES (s, y2, 'FS7A', 7, c1, now()) RETURNING id INTO c2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt") VALUES (s, y3, 'FS8A', 8, c2, now()) RETURNING id INTO c3;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, y3, 'FS8B', 8, now()) RETURNING id INTO d3;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, y3, 'FS8C', 8, now()) RETURNING id INTO e3;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'Matematik', 'FSMA', now()) RETURNING id INTO ma;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'Svenska', 'FSSV', now()) RETURNING id INTO sv;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'Idrott', 'FSID', now()) RETURNING id INTO idr;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s, 'fs-full@example.invalid', 'Statistik', 'Full', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-d60000000001', true, now()),
+    (s, 'fs-rektor@example.invalid', 'Statistik', 'Rektor', 'SCHOOL_ADMIN', 'REKTOR', '00000000-0000-4000-8000-d60000000002', true, now()),
+    (s, 'fs-expedition@example.invalid', 'Statistik', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-d60000000003', true, now()),
+    (s, 'fs-lasare@example.invalid', 'Statistik', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-d60000000005', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'fs-m1@example.invalid', 'Statistik', 'Mentor A', 'TEACHER', '00000000-0000-4000-8000-d60000000006', true, now()) RETURNING id INTO m1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'fs-m2@example.invalid', 'Statistik', 'Mentor B', 'TEACHER', '00000000-0000-4000-8000-d60000000007', true, now()) RETURNING id INTO m2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'fs-t3@example.invalid', 'Statistik', 'Utan klass', 'TEACHER', '00000000-0000-4000-8000-d60000000008', true, now()) RETURNING id INTO t3;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt") VALUES
+    (s, m1, y3, 'MENTORSKAP', 'Mentor 8A', 60, c3, now()),
+    (s, m2, y3, 'MENTORSKAP', 'Mentor 8B', 60, d3, now());
+
+  -- The pupils, in no class yet: the history below puts them in their classes.
+  FOREACH i IN ARRAY ARRAY[1,2,3,4,5,6,7,8,9, 11,12,13,14,15,16, 21,22,23] LOOP
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+    VALUES (s, 'fs-p' || i || '@example.invalid', 'Elev', 'Statistik' || lpad(i::text, 2, '0'), 'STUDENT',
+            ('00000000-0000-4000-8000-d6000000' || lpad((10 + i)::text, 4, '0'))::uuid, true, now());
+  END LOOP;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'fs-g1@example.invalid', 'Statistik', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-d60000000041', true, now()) RETURNING id INTO u;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT s, u, p."id" FROM "Users" p WHERE p."schoolId" = s AND p."email" = 'fs-p1@example.invalid';
+  -- p9 has a protected identity.
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source)
+  SELECT p."id", s, 'MANUAL' FROM "Users" p WHERE p."schoolId" = s AND p."email" = 'fs-p9@example.invalid';
+
+  -- The history and the lessons, with the triggers held off.
+  SET session_replication_role = replica;
+  FOR cls IN SELECT "id", "email" FROM "Users" WHERE "schoolId" = s AND role = 'STUDENT' LOOP
+    IF cls.email ~ '^fs-p[1-9]@' THEN
+      INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom", "validTo") VALUES
+        (s, cls.id, y1, c1, 6, '2024-08-01', '2025-08-01'),
+        (s, cls.id, y2, c2, 7, '2025-08-01', '2026-08-01'),
+        (s, cls.id, y3, c3, 8, '2026-08-01', NULL);
+      UPDATE "Users" SET "studentGroupId" = c3 WHERE id = cls.id;
+    ELSIF cls.email ~ '^fs-p1[1-6]@' THEN
+      INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom", "validTo")
+      VALUES (s, cls.id, y3, d3, 8, '2026-08-01', NULL);
+      UPDATE "Users" SET "studentGroupId" = d3 WHERE id = cls.id;
+    ELSE
+      INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom", "validTo")
+      VALUES (s, cls.id, y3, e3, 8, '2026-08-01', NULL);
+      UPDATE "Users" SET "studentGroupId" = e3 WHERE id = cls.id;
+    END IF;
+  END LOOP;
+
+  -- Every weekday of the three Septembers, three lessons a day (08:00, 09:00, 10:00; 50 minutes), for the cohort's
+  -- class of the year; and in 2026 for 8B and 8C as well. A week of August 2026 for 8B alone.
+  FOR d IN SELECT g::date FROM generate_series('2024-09-01'::date, '2026-09-30'::date, interval '1 day') g
+            WHERE extract(isodow FROM g) < 6
+              AND (to_char(g, 'YYYY-MM') IN ('2024-09', '2025-09', '2026-09')
+                   OR g BETWEEN '2026-08-24' AND '2026-08-28') LOOP
+    FOR hh IN 8..10 LOOP
+      subj := CASE hh WHEN 8 THEN ma WHEN 9 THEN sv ELSE idr END;
+      IF to_char(d, 'YYYY-MM') = '2024-09' THEN
+        z := c1;
+      ELSIF to_char(d, 'YYYY-MM') = '2025-09' THEN
+        z := c2;
+      ELSE
+        z := c3;
+      END IF;
+      IF d NOT BETWEEN '2026-08-24' AND '2026-08-28' THEN
+        INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+        VALUES (s, subj, z, d, (d + make_time(hh, 0, 0)) AT TIME ZONE 'Europe/Stockholm',
+                (d + make_time(hh, 0, 0)) AT TIME ZONE 'Europe/Stockholm' + interval '50 minutes',
+                CASE WHEN d = '2026-09-10' AND hh = 8 THEN 'CANCELLED' ELSE 'SCHEDULED' END::"LessonStatus", now())
+        RETURNING id INTO l;
+        INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, m1, 'LEAD');
+      END IF;
+      IF d >= '2026-08-01' THEN
+        INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+        VALUES (s, subj, d3, d, (d + make_time(hh, 0, 0)) AT TIME ZONE 'Europe/Stockholm',
+                (d + make_time(hh, 0, 0)) AT TIME ZONE 'Europe/Stockholm' + interval '50 minutes', 'SCHEDULED', now())
+        RETURNING id INTO l;
+        INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, m2, 'LEAD');
+        IF d >= '2026-09-01' THEN
+          INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+          VALUES (s, subj, e3, d, (d + make_time(hh, 0, 0)) AT TIME ZONE 'Europe/Stockholm',
+                  (d + make_time(hh, 0, 0)) AT TIME ZONE 'Europe/Stockholm' + interval '50 minutes', 'SCHEDULED', now())
+          RETURNING id INTO l;
+          INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, t3, 'LEAD');
+        END IF;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  -- The marks: a pupil of the lesson's class on the lesson's day, as described at the top. Nobody on 2026-09-24
+  -- (nor 8C, 8B's other days of August, or the marks 8B's last three pupils never got).
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  SELECT cl."schoolId", cl."id", e."studentId",
+         (CASE
+            WHEN cl."status" = 'CANCELLED' THEN 'ABSENT'
+            WHEN u."email" = 'fs-p1@example.invalid' AND to_char(cl."date", 'YYYY-MM') = '2024-09' AND extract(isodow FROM cl."date") = 3 AND extract(hour FROM cl."startsAt" AT TIME ZONE 'Europe/Stockholm') = 9 THEN 'ABSENT'
+            WHEN u."email" = 'fs-p1@example.invalid' AND to_char(cl."date", 'YYYY-MM') = '2025-09' AND extract(isodow FROM cl."date") = 4 AND extract(hour FROM cl."startsAt" AT TIME ZONE 'Europe/Stockholm') = 10 THEN 'ABSENT'
+            WHEN u."email" = 'fs-p1@example.invalid' AND to_char(cl."date", 'YYYY-MM') = '2026-09' AND extract(isodow FROM cl."date") = 1 AND extract(hour FROM cl."startsAt" AT TIME ZONE 'Europe/Stockholm') = 8 THEN 'ABSENT'
+            WHEN u."email" = 'fs-p2@example.invalid' AND cl."date" IN ('2026-09-03', '2026-09-04') THEN 'EXCUSED'
+            WHEN u."email" = 'fs-p3@example.invalid' AND extract(isodow FROM cl."date") = 5 AND extract(hour FROM cl."startsAt" AT TIME ZONE 'Europe/Stockholm') = 8 THEN 'LATE'
+            WHEN u."email" = 'fs-p9@example.invalid' AND cl."date" = '2026-09-02' THEN 'ABSENT'
+            WHEN u."email" = 'fs-p11@example.invalid' AND to_char(cl."date", 'YYYY-MM') = '2026-09' AND extract(isodow FROM cl."date") = 2 AND extract(hour FROM cl."startsAt" AT TIME ZONE 'Europe/Stockholm') = 9 THEN 'ABSENT'
+            ELSE 'PRESENT'
+          END)::"AttendanceStatus", now()
+    FROM "CalendarLessons" cl
+    JOIN "StudentEnrollments" e ON e."schoolId" = cl."schoolId" AND e."studentGroupId" = cl."studentGroupId"
+     AND e."validFrom" <= cl."date" AND (e."validTo" IS NULL OR cl."date" < e."validTo")
+    JOIN "Users" u ON u."id" = e."studentId"
+   WHERE cl."schoolId" = s
+     AND cl."date" <> '2026-09-24'
+     AND NOT (u."email" = 'fs-p4@example.invalid' AND extract(hour FROM cl."startsAt" AT TIME ZONE 'Europe/Stockholm') = 10 AND cl."date" >= '2026-08-01')
+     AND NOT (cl."date" BETWEEN '2026-08-24' AND '2026-08-28' AND u."email" !~ '^fs-p1[1-3]@');
+  SET session_replication_role = origin;
+
+  -- The months, counted as the nightly job counts them (the sections read the stored sums). Every month of the
+  -- three läsår, up to yesterday: the months with no lesson are rows of nothing, which the doors leave out.
+  FOR d IN SELECT g::date FROM generate_series('2024-08-01'::date, date_trunc('month', current_date - 1)::date, interval '1 month') g LOOP
+    PERFORM app.absence_stats_month(s, d, current_date - 1);
+  END LOOP;
+
+  -- The other school: an administrator and a class, so that nothing here reaches it.
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Frånvarostatistik annan', 'rls-franvarostatistik-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'FS annan', '2026-08-01', '2096-07-31', true, now()) RETURNING id INTO y1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s2, y1, 'FS9A', 9, now()) RETURNING id INTO k2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'fs-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-d60000000051', true, now());
+
+  -- A huvudman of its own that owns the school, and its planner, who reads the school as the läsare
+  -- (…d60000000061). Its own, so that the sections about the existing huvudman count what they counted.
+  INSERT INTO "Huvudmen" (name, "organisationNumber") VALUES ('RLS Frånvarostatistik huvudman', '2121000090') RETURNING id INTO h;
+  INSERT INTO "HuvudmanMembers" ("huvudmanId", "authId", email, "firstName", "lastName", role, "isActive", "invitedAt")
+  VALUES (h, '00000000-0000-4000-8000-d60000000061', 'fs-hm@example.invalid', 'Statistik', 'Planerare', 'PLANERARE', true, now())
+  RETURNING id INTO km;
+  INSERT INTO "HuvudmanSchools" ("schoolId", "huvudmanId", "requestedById") VALUES (s, h, km);
+  INSERT INTO "HuvudmanSchoolEvents" ("huvudmanId", "schoolId", kind, "byMemberId") VALUES (h, s, 'REQUESTED', km);
+  INSERT INTO "HuvudmanSchoolEvents" ("huvudmanId", "schoolId", kind, "byUserId") VALUES (h, s, 'JOINED', NULL);
+END $$;
+
 -- Klasslärarens schema (20270128090000), sections 425-429: a school of its own, with its
 -- people, classes and lessons planted once, as the owner. The changes themselves are the sections'.
 --

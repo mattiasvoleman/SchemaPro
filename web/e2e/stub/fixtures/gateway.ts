@@ -1,4 +1,5 @@
 import { route, type GatewayRoute } from "../gateway-routes";
+import { absenceStatsRoutes } from "./gateway-absence-stats";
 import { absenceWatchRoutes } from "./gateway-absence-watch";
 import { ackRoutes } from "./gateway-ack";
 import { candidateRoutes } from "./gateway-candidates";
@@ -42,6 +43,7 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-lesson-logs.ts", routes: lessonLogRoutes },
   { file: "gateway-huvudman.ts", routes: huvudmanRoutes },
   { file: "gateway-absence-watch.ts", routes: absenceWatchRoutes },
+  { file: "gateway-absence-stats.ts", routes: absenceStatsRoutes },
   { file: "gateway-crisis.ts", routes: crisisRoutes },
   { file: "gateway-reporting-rate.ts", routes: reportingRateRoutes },
   { file: "gateway-school-day.ts", routes: schoolDayRoutes },

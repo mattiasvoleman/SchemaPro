@@ -2086,6 +2086,7 @@
       "attendance": "Närvaro",
       "staffing": "Tjänstefördelning",
       "cover": "Vikarietimmar",
+      "absenceStats": "Frånvarostatistik",
       "title": "Rapporter",
       "subtitle": "Närvaro, tjänstefördelning och vikarietimmar för en period"
     },
@@ -6195,7 +6196,7 @@
     "kind": {
       "ATTENDANCE": {
         "name": "Närvaro",
-        "body": "Närvaroregistreringar för lektioner före gränsdagen."
+        "body": "Närvaroregistreringar för lektioner före gränsdagen. Månadssummor av frånvaro per klass och för skolan, utan enskilda elever och med minst fem elever bakom varje siffra, sparas i tre läsår oavsett detta beslut."
       },
       "ABSENCE_REPORTS": {
         "name": "Frånvaroanmälningar",
@@ -8465,6 +8466,197 @@
       "saved": "Valet är sparat",
       "loadFailed": "Valet kunde inte hämtas",
       "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
+    }
+  },
+  "absenceStats": {
+    "title": "Frånvarostatistik över tid",
+    "teacherSubtitle": "Frånvaron i klasserna där du är mentor, månad för månad över tre läsår",
+    "backToWatch": "Till Frånvarobevakning",
+    "link": "Frånvarostatistik över tid",
+    "intro": "Giltig och ogiltig frånvaro i procent av de registrerade minuterna, månad för månad över tre läsår: för skolan, för varje klass och för varje elev. Rapporteringsgraden står bredvid, eftersom en månad där få lektioner har ett sparat register säger mindre än siffran ger sken av. Räkningen görs varje natt för dagarna fram till och med i går, och ingen siffra visas för en grupp med färre än {min} elever.",
+    "percent": "{percent} %",
+    "minutes": "{count} min",
+    "retry": "Försök igen",
+    "loadFailedHint": "Inga siffror visas och inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "period": {
+      "label": "Period",
+      "YEAR": "Läsåret hittills",
+      "PREVIOUS": "Föregående läsår",
+      "LAST_90": "Senaste 90 dagarna",
+      "ALL": "Alla tre läsåren",
+      "range": "Perioden är {from} – {to}"
+    },
+    "school": {
+      "title": "Skolan månad för månad",
+      "description": "Alla klasser tillsammans. Under en siffra står samma månad året före, när den finns.",
+      "caption": "Skolans frånvaro per månad",
+      "loadFailed": "Skolans frånvaro kunde inte hämtas",
+      "emptyTitle": "Ingen frånvaro att visa än",
+      "emptyBody": "Siffrorna räknas varje natt för dagarna fram till och med i går. De första kommer när en lektion har fått sina markeringar sparade."
+    },
+    "series": {
+      "column": {
+        "month": "Månad",
+        "pupils": "Elever med markering",
+        "valid": "Giltig frånvaro",
+        "invalid": "Ogiltig frånvaro",
+        "late": "Sena ankomster",
+        "reporting": "Rapporteringsgrad"
+      },
+      "year": "Läsår {name}",
+      "going": "Hittills, till och med {date}",
+      "classNames": "Klass: {names}",
+      "pupilsOf": "{registered} av {pupils}",
+      "figure": "{minutes} · {percent}",
+      "previous": "Förra året: {value}",
+      "previousNone": "Förra året: ingen siffra",
+      "noFigure": "Ingen siffra: färre än {min} elever har markeringar",
+      "noLessons": "Inga hållna lektioner",
+      "reportedOf": "{reported} av {held} lektioner",
+      "empty": "Ingen månad har räknats än. Siffrorna räknas varje natt för dagarna fram till och med i går."
+    },
+    "chart": {
+      "label": "Diagram över giltig och ogiltig frånvaro per månad. Samma siffror står i tabellen under.",
+      "axis": "Andel av de registrerade minuterna",
+      "invalid": "Ogiltig frånvaro",
+      "valid": "Giltig frånvaro",
+      "previous": "Samma månad året före",
+      "going": "Månad som pågår",
+      "none": "Ingen siffra"
+    },
+    "classes": {
+      "title": "Klasser",
+      "description": "Summan av klassens månader under perioden. Välj en klass för dess månader, mönster och elever.",
+      "mentorDescription": "Klasserna där du är mentor, summerade över perioden. Välj en klass för dess månader, mönster och elever.",
+      "caption": "Frånvaro per klass",
+      "column": {
+        "class": "Klass",
+        "open": "Visa klassen"
+      },
+      "monthsCounted": "{count, plural, =0 {ingen månad med siffra} one {# månad med siffra} other {# månader med siffra}}",
+      "open": "Visa",
+      "openNamed": "Visa klass {name}",
+      "empty": {
+        "admin": {
+          "title": "Inga klasser att visa",
+          "body": "Klasser med elever och sparade markeringar visas här."
+        },
+        "mentor": {
+          "title": "Du är inte mentor för någon klass",
+          "body": "Här visas klasserna där du har uppdraget mentorskap."
+        }
+      },
+      "loadFailed": "Klasserna kunde inte hämtas"
+    },
+    "class": {
+      "title": "Klass {name}",
+      "loadFailed": "Klassens månader och mönster kunde inte hämtas",
+      "series": {
+        "title": "Klassen månad för månad",
+        "description": "Klassen och dess föregångare, om klassen har bytt namn eller årskurs. Under en siffra står samma månad året före, när den finns.",
+        "caption": "Frånvaro per månad i klass {name}"
+      },
+      "patterns": {
+        "title": "Mönster",
+        "description": "På vilka veckodagar, vilka pass och i vilka ämnen frånvaron faller under perioden, som andel av de registrerade minuterna."
+      }
+    },
+    "patterns": {
+      "suppressedTitle": "Mönster visas inte",
+      "suppressedBody": "Färre än {min} elever har markeringar under perioden. Ett mönster skulle då peka ut enskilda elever.",
+      "empty": "Inga markeringar under perioden.",
+      "groupSize": "Mönstret bygger på {count, plural, one {# elev} other {# elever}} med markeringar.",
+      "recorded": "{minutes} registrerade",
+      "caption": {
+        "weekdays": "Frånvaro per veckodag",
+        "slots": "Frånvaro per pass",
+        "subjects": "Frånvaro per ämne"
+      },
+      "column": {
+        "weekdays": "Veckodag",
+        "slots": "Pass (starttid)",
+        "subjects": "Ämne",
+        "valid": "Giltig",
+        "invalid": "Ogiltig",
+        "total": "Sammanlagt"
+      }
+    },
+    "pupils": {
+      "title": "Elever",
+      "description": "Varje elevs frånvaro under perioden, som underlag för utvecklingssamtal. Att öppna listan och elevkorten registreras i läsloggen.",
+      "caption": "Elevernas frånvaro i klassen",
+      "column": {
+        "pupil": "Elev",
+        "card": "Elevkort"
+      },
+      "noRegistration": "Ingen registrering i perioden",
+      "open": "Elevkort",
+      "openNamed": "Visa elevkort för {name}",
+      "heldOut": "{count, plural, one {# elev med skyddad identitet visas inte i listan.} other {# elever med skyddad identitet visas inte i listan.}}",
+      "empty": {
+        "title": "Inga elever att visa",
+        "body": "Klassen har inga elever på listan under perioden."
+      },
+      "loadFailed": "Eleverna kunde inte hämtas"
+    },
+    "reader": {
+      "title": "Elever visas inte för huvudmannens läsare",
+      "body": "Huvudmannens läsare ser skolans och klassernas summor, aldrig en enskild elev. Elevlistan och elevkorten är därför dolda."
+    },
+    "card": {
+      "back": "Till klass {name}",
+      "backList": "Till elevlistan",
+      "class": "Klass {name}",
+      "noClass": "Ingen klass",
+      "period": "Mönstren gäller {from} – {to}",
+      "print": "Skriv ut",
+      "protectedTitle": "Eleven har skyddad identitet",
+      "protectedBody": "Kortet visas för dig här, men det skrivs aldrig ut. Utskrift görs inte för en elev med skyddad identitet.",
+      "printProtected": "Utskrift görs inte för en elev med skyddad identitet",
+      "printProtectedBody": "Ingenting har skrivits ut.",
+      "printFailed": "Det gick inte att kontrollera skyddad identitet",
+      "printFailedHint": "Ingenting har skrivits ut. Försök igen om en stund.",
+      "printUseButton": "Elevkortet skrivs ut med knappen Skriv ut på kortet, inte med webbläsarens utskrift.",
+      "basisTitle": "Vad siffrorna bygger på",
+      "marksFrom": "Markeringar finns kvar från {from} till {to}. Närvaron före {from} har gallrats eller rapporterades aldrig; de månaderna visas som ”Ingen registrering”, inte som ingen frånvaro.",
+      "noMarks": "Det finns inga markeringar kvar för eleven. Närvaron har gallrats eller rapporterades aldrig, och ingen månad har en siffra.",
+      "readNote": "Att öppna elevkortet registreras i läsloggen.",
+      "noRegistration": "Ingen registrering",
+      "recorded": "Registrerade minuter",
+      "months": {
+        "title": "Månad för månad",
+        "description": "Eleven mot klassen: klassens giltiga och ogiltiga frånvaro och klassens rapporteringsgrad står bredvid. Under en siffra står samma månad året före, när den finns.",
+        "caption": "Frånvaro per månad för {name}"
+      },
+      "column": {
+        "class": "Klassen",
+        "classReporting": "Klassens rapporteringsgrad"
+      },
+      "lessons": "{count, plural, one {# lektion} other {# lektioner}} med markering",
+      "previousNone": "Förra året: ingen registrering",
+      "classFigures": "Giltig {valid} · ogiltig {invalid}",
+      "classNoFigure": "Ingen siffra för klassen",
+      "noClassSeries": "Eleven går inte i någon klass, så det finns ingen klass att jämföra med.",
+      "patterns": {
+        "title": "Mönster för eleven",
+        "description": "På vilka veckodagar, vilka pass och i vilka ämnen elevens frånvaro faller under perioden."
+      },
+      "loadFailed": "Elevkortet kunde inte hämtas"
+    },
+    "sheet": {
+      "title": "Frånvaro över tid",
+      "printed": "Utskrivet {date}",
+      "monthsLabel": "Månader",
+      "patternsLabel": "Mönster",
+      "patterns": "Mönster, {from} – {to}",
+      "column": {
+        "valid": "Giltig %",
+        "invalid": "Ogiltig %",
+        "class": "Klass %",
+        "reporting": "Rapp. %"
+      },
+      "legend": "Giltig och ogiltig är elevens andel av de registrerade minuterna. Klass är klassens giltiga och ogiltiga frånvaro tillsammans, Rapp. klassens rapporteringsgrad. ”–” betyder att siffra saknas: ingen registrering för eleven, eller för få elever i klassen.",
+      "footer": "Uppgifter om en enskild elev, som underlag för utvecklingssamtal. Förvara och kassera utskriften enligt skolans rutiner."
     }
   },
   "classTeacher": {

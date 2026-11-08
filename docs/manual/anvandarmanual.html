@@ -90,7 +90,8 @@
       <li><span>6.14 Krisläge: larm vid utrymning och inrymning</span><span class="dots"></span><span class="pg" data-pg="s614"></span></li>
       <li><span>6.15 Skolans dag i ett svep</span><span class="dots"></span><span class="pg" data-pg="s615"></span></li>
       <li><span>6.16 Kvittens: be en vårdnadshavare bekräfta ett meddelande</span><span class="dots"></span><span class="pg" data-pg="s616"></span></li>
-      <li><span>6.17 Klasslärarens schema</span><span class="dots"></span><span class="pg" data-pg="s617"></span></li>
+      <li><span>6.17 Frånvarostatistik över tid</span><span class="dots"></span><span class="pg" data-pg="s617"></span></li>
+      <li><span>6.18 Klasslärarens schema</span><span class="dots"></span><span class="pg" data-pg="s618"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -6896,7 +6897,117 @@
     bekräfta.
   </p>
 
-  <h3 id="s617"><span class="num">6.17</span>Klasslärarens schema</h3>
+  <h3 id="s617"><span class="num">6.17</span>Frånvarostatistik över tid</h3>
+  <p>
+    Frånvarostatistiken visar hur frånvaron utvecklas, månad för månad över de
+    tre senaste läsåren, för hela skolan, för varje klass och för varje elev,
+    med rapporteringsgraden (6.13) bredvid så att en låg frånvaro går att läsa mot
+    hur mycket av närvaron som faktiskt registrerats. Den finns som en egen flik,
+    <span class="path">Rapporter › Frånvarostatistik</span>, och den behöver
+    ingen inställning: den räknas varje natt för alla skolor och går inte att
+    slå av.
+  </p>
+
+  <h4>Vad du ser</h4>
+  <ul>
+    <li><strong>Skolans månader.</strong> För varje månad: registrerade minuter, giltig och ogiltig frånvaro i minuter och i procent, antalet sena ankomster, och rapporteringsgraden (hur stor del av de hållna lektionerna som har ett sparat register). Under varje månad står <em>samma månad året före</em>, så att en höst går att jämföra med förra höstens. Månaden som pågår märks <em>hittills</em> och räknas till och med i går.</li>
+    <li><strong>Klasserna.</strong> En tabell över skolans klasser för ett läsår eller en period, och för en vald klass dess månader och dess <strong>mönster</strong>: veckodag, pass (lektionens starttid) och ämne, så att det syns om frånvaron samlas på måndagar, på första lektionen eller i ett ämne. En klass månader är kullens: förra årets klass (7A) och årets (8A) läses som en följd.</li>
+    <li><strong>Eleverna.</strong> För en klass: varje elev med sin frånvaro under perioden. För en enskild elev ett kort inför utvecklingssamtalet: elevens tre läsår månad för månad, klassens månader bredvid, mönstren och en knapp <span class="ui">Skriv ut</span> som ger en A4 per elev.</li>
+  </ul>
+
+  <h4>Så räknas det</h4>
+  <p>
+    Minuterna räknas som i närvarorapporten (6.9) och frånvarobevakningen (6.12):
+    <em>Närvarande</em> är närvaro, <em>Giltig</em> är giltig frånvaro, <em>Ogiltig</em>
+    är ogiltig frånvaro och <em>Sen</em> är 15 minuter ogiltig frånvaro (högst
+    lektionens längd) och dessutom en sen ankomst som räknas för sig. <em>Okänd</em>
+    räknas ingenstans, och en inställd lektion är aldrig frånvaro. Andelen är
+    frånvaron av de registrerade minuterna, och en månad utan registrerade minuter
+    visas som <em>ingen registrering</em>, aldrig som noll procents frånvaro.
+    En elev räknas till den klass hen gick i <em>den dag lektionen hölls</em>, inte
+    den klass hen går i idag; därför står förra årets klasser kvar med sin
+    historik när läsårsaktiveringen har flyttat eleverna och tömt dem. Det gäller
+    också klassens elevlista. Den har <em>klassens egna elever</em>: de som var inskrivna i
+    klassen någon dag i perioden, inte elever som bara gick i förra årets klass och sedan
+    bytte till en annan klass eller lämnade skolan (deras mentor är en annan). Varje elevs
+    summa är för <em>dagarna hen gick i klassen</em> eller i förra årets klass (som en
+    följd). För en period inom klassen blir eleverna därmed klassens summa; en elev som
+    bytte klass mitt i en månad räknas i den gamla klassen fram till bytet och i den nya
+    efter det. Når perioden in i förra årets klass är summan av listan mindre än kullens
+    summa i diagrammet, med de elever som inte följde med utanför. Elevens eget kort visar
+    alla hens markeringar, i vilken klass hen än var.
+  </p>
+  <p>
+    <strong>Antalet hållna lektioner</strong> och rapporteringsgraden är rapporteringsgradens
+    (6.13), men räknade för den tid då lektionerna hölls: en lektion som en lärare höll
+    räknas också om läraren har slutat sedan, så att en månad för två år sedan inte
+    blir tommare av att personalen byts. (Rapporteringsgraden på sin egen sida frågar vilka
+    lektioner en lärare som arbetar idag ska rapportera, och räknar därför inte lektioner
+    vars lärare har slutat.) En lektion efter att läraren slutat räknas inte, för då finns
+    ingen som rapporterar den.
+  </p>
+
+  <h4>Vem ser vad</h4>
+  <ul>
+    <li><strong>Administratören</strong> ser hela skolan, varje klass och varje elev, med vilken administratörsprofil som helst, som i närvarorapporten.</li>
+    <li><strong>Mentorn</strong> ser sina egna mentorselever och de klasser hen är mentor för (samma mentorsdefinition som frånvarobevakningen, idag), på sidan <span class="path">Frånvarostatistik</span> som nås från Frånvarobevakning. Inga andra lärare ser något.</li>
+    <li><strong>Huvudmannens läsare</strong> ser skolans och klassernas summor och aldrig en enskild elev.</li>
+    <li>Elever och vårdnadshavare ser ingenting här.</li>
+    <li>Att öppna en enskild elevs statistik, eller en klass elevlista, skrivs i skolans läslogg (7.4) som en läsning av närvaro och namn. Summor över en klass eller skolan nämner ingen och skrivs inte.</li>
+  </ul>
+
+  <h4>Skyddad identitet</h4>
+  <p>
+    En elev som skolan markerat med skyddad identitet (7.4) finns inte i någon
+    elevlista, i ingen utskrift och inte på mentorns sida. I administratörens
+    klasslista står en tom rad i elevens ställe och hur många som utelämnats; en
+    mentor får ingen sådan rad, för ett tal skulle peka ut eleven. Eleven räknas
+    med i klassens och skolans summor, som inte nämner någon. Administratören kan öppna
+    elevens kort från elevregistret och får veta att eleven är markerad; kortet
+    skrivs inte ut.
+  </p>
+
+  <h4>Gallring och den minsta gruppen</h4>
+  <div class="warn">
+    <span class="label">Läs det här innan ni bestämmer hur länge närvaron sparas</span>
+    <p>
+      Närvaron gallras efter skolans beslut (7.4), och en enskild elevs statistik
+      räknas bara av de markeringar som finns kvar: det som gallrats syns inte, och
+      kortet säger från vilken dag markeringar finns. Ingenting om en enskild elev
+      sparas för sig. För att tre läsår ska gå att visa även när närvaron sparas
+      kortare sparar Rastra <strong>summor per klass och månad, och för hela skolan</strong>,
+      utan en enda elev i sig. Summorna <strong>gallras inte med närvaron</strong>: de tas bort
+      när månaden ligger före det tredje läsårets början, eller med klassen eller skolan.
+      Det gäller också skolor som beslutat gallra närvaron efter en månad.
+    </p>
+    <p>
+      En siffra bygger alltid på minst <strong>fem elever</strong>. En klass med färre
+      än fem elever får ingen månad sparad och inget mönster (dess minuter ingår bara
+      i skolans summa), och en månad där färre än fem elever har en registrering visar
+      lektionerna och rapporteringsgraden men inga minuter. Siffran är densamma i
+      databasen, i API:et och i den här texten.
+    </p>
+  </div>
+  <p>
+    Summorna för en månad räknas om för de senaste 62 dagarna (ett register kan
+    sparas dagar efter lektionen) och fylls på bakåt, tre månader per natt, så att
+    en skolas tre läsår är på plats efter ungefär en vecka. Har skolan någon gång
+    beslutat gallra närvaron räknas inte månader före den kortaste gallringstid
+    skolan någonsin valt om, så att en månad vars markeringar gallrats inte skrivs
+    över med en tom.
+  </p>
+
+  <h4>Utskriften per elev</h4>
+  <p>
+    <span class="ui">Skriv ut</span> på elevens kort ger en A4 med månaderna, klassen
+    bredvid, rapporteringsgraden och mönstren, för utvecklingssamtalet. En utskrift
+    lämnar systemet: knappen läser skyddad identitet när du trycker och skriver
+    ingenting för en markerad elev. Webbläsarens egen utskrift (Ctrl+P) går inte
+    genom knappen, så använd knappen för papper som ska lämna rummet. Inget kön
+    redovisas: Rastra har inget könsfält och statistiken skapar inget.
+  </p>
+
+  <h3 id="s618"><span class="num">6.18</span>Klasslärarens schema</h3>
   <p>
     En <strong>klasslärare</strong> är en lärare som du som schemaläggare har utsett att ändra
     <em>en</em> klass schema, inom en ram du bestämmer. Det är tänkt för låg- och mellanstadiet,
