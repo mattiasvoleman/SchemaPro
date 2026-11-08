@@ -3382,7 +3382,9 @@ ROLLBACK;
 --         the smallest group, and that a second night changes nothing
 --   392o  the nights: the plan, the trim, the guard over a month whose marks
 --         may be gone, and the sums that outlive the attendance they were
---         counted from
+--         counted from; the lessons of a month are Rapporteringsgradens (once
+--         each, a teacher who has left still has hers, and the two lesson
+--         functions differ by that one condition and no other)
 --   394   the mentor: the pupils and the classes of Frånvarobevakningen's
 --         mentor definition are the ones the statistics hand a mentor
 -- ---------------------------------------------------------------------------
@@ -3675,6 +3677,21 @@ BEGIN
   pb := (SELECT string_agg(key || ' ' || recorded_minutes || '/' || absent_minutes, ' | ' ORDER BY key) FROM app.absence_stats_patterns(gb, NULL, '2026-02-01', '2026-02-28') WHERE dimension = 'WEEKDAY');
   PERFORM pg_temp.d6o_expect('391o the patterns of A, by the day', pa, '1 250/0 | 2 250/0');
   PERFORM pg_temp.d6o_expect('391o the patterns of B, by the day', pb, '3 250/50 | 4 250/50');
+  -- The pupils of a class add up to the class: a1's rows are the days he sat in each, not every mark of the month.
+  PERFORM pg_temp.d6o_expect('391o the pupils of A add up to A’s month',
+    (SELECT sum(recorded_minutes) || '/' || sum(absent_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(ga, '2026-02-01', '2026-02-28')), '500/0/5');
+  PERFORM pg_temp.d6o_expect('391o and a1 has his two days in A',
+    (SELECT recorded_minutes || '/' || absent_minutes FROM app.absence_stats_class_pupils(ga, '2026-02-01', '2026-02-28') WHERE first_name = 'A' AND last_name = 'Elev1'), '100/0');
+  PERFORM pg_temp.d6o_expect('391o the pupils of B add up to B’s month',
+    (SELECT sum(recorded_minutes) || '/' || sum(absent_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(gb, '2026-02-01', '2026-02-28')), '500/100/5');
+  PERFORM pg_temp.d6o_expect('391o and a1 has his two days in B, absent on both',
+    (SELECT recorded_minutes || '/' || absent_minutes FROM app.absence_stats_class_pupils(gb, '2026-02-01', '2026-02-28') WHERE first_name = 'A' AND last_name = 'Elev1'), '100/100');
+  -- The period's last day is the day a1 joined B: he is on the list with that day's lesson.
+  PERFORM pg_temp.d6o_expect('391o a period that ends the day a1 joined B has him, with that day',
+    (SELECT recorded_minutes || '/' || absent_minutes FROM app.absence_stats_class_pupils(gb, '2026-02-02', '2026-02-04') WHERE first_name = 'A' AND last_name = 'Elev1'), '50/50');
+  -- A period that holds only the days before the move shows a1 in A only.
+  PERFORM pg_temp.d6o_expect('391o a period of the days before the move: a1 is in A and in no B',
+    (SELECT count(*) FROM app.absence_stats_class_pupils(gb, '2026-02-02', '2026-02-03') WHERE first_name = 'A' AND last_name = 'Elev1')::text, '0');
   -- The activation: every pupil moves on and the classes are left empty. The months stand.
   UPDATE "Users" SET "studentGroupId" = NULL WHERE "schoolId" = s AND role = 'STUDENT';
   UPDATE "StudentEnrollments" SET "validTo" = '2026-02-28' WHERE "schoolId" = s AND "validTo" IS NULL;
@@ -3691,6 +3708,36 @@ END $$;
 ROLLBACK;
 
 
+-- 391o: a class and its predecessor. The five pupils of A move on to N (A's successor) on 2026-01-15; A had a lesson on
+-- 2025-12-01 and N has one on 2026-02-02. N's pupils are the cohort's, with the days of both (as N's months and patterns
+-- are), and a period that holds only the days in N shows N's day alone.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-lin', 5, 0);
+  ga uuid; gn uuid; y uuid;
+  five constant text := 'a1=PRESENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT';
+BEGIN
+  SELECT id INTO ga FROM "StudentGroups" WHERE "schoolId" = s AND name = 'A';
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = s;
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt") VALUES (s, y, 'N', 8, ga, now()) RETURNING id INTO gn;
+  UPDATE "StudentEnrollments" SET "validTo" = '2026-01-15' WHERE "schoolId" = s AND "studentGroupId" = ga;
+  INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "studentGroupId", "gradeLevel", "validFrom")
+  SELECT s, x."id", y, gn, 8, '2026-01-15' FROM "Users" x WHERE x."schoolId" = s AND x."role" = 'STUDENT';
+  UPDATE "Users" SET "studentGroupId" = gn WHERE "schoolId" = s AND "role" = 'STUDENT';
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-lin', 'A', '2025-12-01', 8, 50, 'SCHEDULED', five);
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-lin', 'N', '2026-02-02', 8, 50, 'SCHEDULED', five);
+  PERFORM pg_temp.d6o_login(s, 'd6o-lin');
+  PERFORM pg_temp.d6o_expect('391o the cohort in N has the days in A and in N',
+    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(gn, '2025-11-01', '2026-02-28')), '500/5');
+  PERFORM pg_temp.d6o_expect('391o and the days in N alone, when the period is those',
+    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(gn, '2026-01-20', '2026-02-28')), '250/5');
+  PERFORM pg_temp.d6o_expect('391o A itself has its own day, and the successor’s is not its',
+    (SELECT sum(recorded_minutes) || '/' || count(*) FROM app.absence_stats_class_pupils(ga, '2025-11-01', '2026-02-28')), '250/5');
+END $$;
+ROLLBACK;
+
 -- 392o: the nights. The plan, the trim, the refusal of a day that is not over, the guard over a month whose
 -- marks may be gone, and the sums that outlive the attendance.
 BEGIN;
@@ -3698,6 +3745,9 @@ DO $$
 DECLARE
   s uuid := pg_temp.d6o_school('d6o-plan', 6, 0);
   months text;
+  -- The school's today (its clock is Stockholm's), not the session's: between 23:00 and 24:00 UTC the two dates differ and
+  -- the session's current_date is a day that is over for the school.
+  school_today constant date := (clock_timestamp() AT TIME ZONE 'Europe/Stockholm')::date;
 BEGIN
   -- A lesson in every month of the läsår but November: a month with nothing to count (the summer, a school's gap) is not asked for.
   PERFORM pg_temp.d6o_lesson(s, 'd6o-plan', 'A', t.d, 8, 50, 'SCHEDULED', NULL)
@@ -3735,11 +3785,11 @@ BEGIN
   PERFORM pg_temp.d6o_expect('392o and a second trim finds nothing', app.absence_stats_trim(s, '2026-03-15')::text, '0');
 
   -- A day that is not over, a month that is not a month, a school that is not there.
-  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_plan(%L, current_date)', s), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_plan(%L, %L)', s, school_today), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
   PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_plan(%L, NULL)', s), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
-  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-03-01'', current_date)', s), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
-  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-03-01'', current_date + 3)', s), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
-  PERFORM pg_temp.d6o_refuses(format('SELECT app.absence_stats_trim(%L, current_date)', s), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-03-01'', %L)', s, school_today), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
+  PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-03-01'', %L)', s, school_today + 3), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
+  PERFORM pg_temp.d6o_refuses(format('SELECT app.absence_stats_trim(%L, %L)', s, school_today), 'ABSENCE_STATS_DAY_IS_NOT_OVER');
   PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-03-02'', ''2026-03-15'')', s), 'ABSENCE_STATS_BAD_MONTH');
   PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, ''2026-04-01'', ''2026-03-15'')', s), 'ABSENCE_STATS_BAD_MONTH');
   PERFORM pg_temp.d6o_refuses(format('SELECT * FROM app.absence_stats_month(%L, NULL, ''2026-03-15'')', s), 'ABSENCE_STATS_BAD_MONTH');
@@ -3927,6 +3977,116 @@ BEGIN
   -- And they are the ones Rapporteringsgraden counts: a lesson once, however many teachers stand on it.
   PERFORM pg_temp.d6o_expect('392o the school’s are D2’s distinct lessons',
     (SELECT count(DISTINCT r.lesson_id) || '/' || count(DISTINCT r.lesson_id) FILTER (WHERE r.reported) FROM app.reporting_lessons(s, '2026-02-01', '2026-02-28', clock_timestamp()) r), '5/4');
+END $$;
+ROLLBACK;
+
+-- 392o: a teacher who has left still has the lessons she held. Class A has five pupils, and a teacher t and a
+-- colleague t2:
+--   L1 Mon 2026-02-02 08:00  t, a mark                     held and reported
+--   L2 Tue 2026-02-03 08:00  t, no mark                    held, not reported
+--   L3 Wed 2026-02-04 08:00  t and t2, a mark              held and reported, once
+--   L4 Mon 2026-02-16 08:00  t, a mark                     held and reported while t is a teacher of the school
+-- Everyone active: 4 held, 3 reported. Reporting lessons is the live question (who is to report now), so a month that
+-- is counted again after t has left must not lose what she held: t leaves on 2026-03-15 and February is the same; t
+-- leaves on 2026-02-10 and L4, which no one was left to report, goes while L1-L3 stay; t is back and L4 is again.
+-- (Rapporteringsgraden's own function drops the teacher in every one of these, which is its question and not this.)
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('d6o-gone', 5, 0);
+  feb constant date := '2026-02-01';
+  t uuid;
+  t2 uuid;
+  l uuid;
+  all5 constant text := 'a1=PRESENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT';
+  whole constant text := 'school 5/5 750/0/50/0/0 4/3 | A 5/5 750/0/50/0/0 4/3';
+BEGIN
+  SELECT id INTO t FROM "Users" WHERE "schoolId" = s AND email = 'd6o-d6o-gone-t@example.invalid';
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-02', 8, 50, 'SCHEDULED', all5);
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-03', 8, 50, 'SCHEDULED', NULL);
+  l := pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-04', 8, 50, 'SCHEDULED', 'a1=ABSENT,a2=PRESENT,a3=PRESENT,a4=PRESENT,a5=PRESENT');
+  PERFORM set_config('session_replication_role', 'origin', true);
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'd6o-d6o-gone-t2@example.invalid', 'D6', 'Lärare2', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO t2;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, t2, 'ASSISTANT');
+  PERFORM pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-16', 8, 50, 'SCHEDULED', all5);
+
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o everyone active: four held, three reported', pg_temp.d6o_rows(s, feb), whole);
+
+  -- Leaves after the month (deactivatedAt is the instant the trigger would have written; the triggers are off here).
+  PERFORM set_config('session_replication_role', 'replica', true);
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = '2026-03-15 12:00+01' WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a teacher who left after the month: February is what it was', pg_temp.d6o_rows(s, feb), whole);
+  PERFORM pg_temp.d6o_expect('392o and the reporting function drops her, which is its question',
+    (SELECT count(DISTINCT lesson_id)::text FROM app.reporting_lessons(s, '2026-02-01', '2026-02-28', clock_timestamp())), '1');
+
+  -- Leaves in the middle of it: the lesson after she left has no one left to report it.
+  UPDATE "Users" SET "deactivatedAt" = '2026-02-10 12:00+01' WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a teacher who left on the 10th: L1 to L3 stay, L4 goes',
+    pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 3/2 | A 5/5 750/0/50/0/0 3/2');
+  -- The instant is the lesson's end: a lesson over before she left is hers, one that ends after is not.
+  UPDATE "Users" SET "deactivatedAt" = '2026-02-02 08:50+01' WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o left the minute L1 ended: L1 is hers, L2 is not, L3 has t2',
+    pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 2/2 | A 5/5 750/0/50/0/0 2/2');
+  UPDATE "Users" SET "deactivatedAt" = '2026-02-02 08:49+01' WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o left a minute before L1 ended: only L3, which t2 held',
+    pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 1/1 | A 5/5 750/0/50/0/0 1/1');
+
+  -- Back again: the lessons come back.
+  UPDATE "Users" SET "isActive" = true, "deactivatedAt" = NULL WHERE id = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a teacher who is back: four held, three reported', pg_temp.d6o_rows(s, feb), whole);
+
+  -- Only a teacher counts: a lesson whose only person is an administrator of the school is nobody's to report.
+  l := pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-05', 8, 50, 'SCHEDULED', all5);
+  DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, t2, 'LEAD');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a lesson of t2 alone is held and reported', pg_temp.d6o_rows(s, feb),
+    'school 5/5 1000/0/50/0/0 5/4 | A 5/5 1000/0/50/0/0 5/4');
+  UPDATE "Users" SET role = 'SCHOOL_ADMIN', "adminProfile" = 'FULL' WHERE id = t2;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o t2 an administrator: her lesson is no teacher’s, and L3 still has t',
+    pg_temp.d6o_rows(s, feb), 'school 5/5 1000/0/50/0/0 4/3 | A 5/5 1000/0/50/0/0 4/3');
+END $$;
+ROLLBACK;
+
+-- 392o: the two lesson functions are one definition. app.absence_stats_lessons is app.reporting_lessons with the one line
+-- about the teacher, and nothing else: whoever rewrites the one (Elevens lektion för dagen adds a condition about a pupil
+-- moved off a lesson) has to carry it into the other, or the history's reporting rate is not Rapporteringsgradens.
+-- Compared as the catalogue holds them, with the comments cut and the white space collapsed.
+BEGIN;
+CREATE FUNCTION pg_temp.d6o_norm(p_src text) RETURNS text LANGUAGE sql IMMUTABLE AS $f$
+  SELECT btrim(regexp_replace(regexp_replace(p_src, '--[^' || chr(10) || ']*', '', 'g'), '\s+', ' ', 'g'))
+$f$;
+DO $$
+DECLARE
+  d2 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.reporting_lessons(uuid, date, date, timestamptz)'::regprocedure));
+  d6 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.absence_stats_lessons(uuid, date, date, timestamptz)'::regprocedure));
+  live constant text := E'AND u."role" = ''TEACHER'' AND u."isActive"';
+  gone constant text := E'AND u."role" = ''TEACHER'' AND (u."deactivatedAt" IS NULL OR cl."endsAt" <= u."deactivatedAt")';
+BEGIN
+  PERFORM pg_temp.d6o_expect('392o D2 asks who is a teacher now', ((length(d2) - length(replace(d2, live, ''))) / length(live))::text, '1');
+  PERFORM pg_temp.d6o_expect('392o the history asks who had not left', ((length(d6) - length(replace(d6, gone, ''))) / length(gone))::text, '1');
+  PERFORM pg_temp.d6o_expect('392o and not who is a teacher now', ((length(d6) - length(replace(d6, live, ''))) / length(live))::text, '0');
+  PERFORM pg_temp.d6o_expect('392o the two bodies are the same but for that line', (replace(d2, live, gone) = d6)::text, 'true');
+  PERFORM pg_temp.d6o_expect('392o neither is a definer or has a path of its own (they are inlined into the caller)',
+    (SELECT string_agg(p.proname || ':' || p.prosecdef::text || ':' || coalesce(p.proconfig::text, ''), ',' ORDER BY p.proname COLLATE "C")
+       FROM pg_proc p WHERE p.oid IN ('app.reporting_lessons(uuid, date, date, timestamptz)'::regprocedure, 'app.absence_stats_lessons(uuid, date, date, timestamptz)'::regprocedure)),
+    'absence_stats_lessons:false:,reporting_lessons:false:');
+  PERFORM pg_temp.d6o_expect('392o the history’s is the owner’s alone',
+    (SELECT string_agg(r || ':' || has_function_privilege(r, 'app.absence_stats_lessons(uuid, date, date, timestamptz)', 'EXECUTE')::text, ',' ORDER BY r COLLATE "C")
+       FROM unnest(ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated']) r WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)),
+    'anon:false,app_authenticated:false,authenticated:false,service_role:false');
+  -- The control: the check cuts what it says it cuts (a body that differs in a comment and in white space only is the same).
+  PERFORM pg_temp.d6o_expect('392o a comment and the white space are not a difference',
+    (pg_temp.d6o_norm(E'SELECT 1   -- one\n  FROM t') = pg_temp.d6o_norm(E'SELECT 1 FROM t'))::text, 'true');
+  PERFORM pg_temp.d6o_expect('392o a condition is', (pg_temp.d6o_norm(E'SELECT 1 FROM t WHERE a') = pg_temp.d6o_norm(E'SELECT 1 FROM t WHERE b'))::text, 'false');
 END $$;
 ROLLBACK;
 

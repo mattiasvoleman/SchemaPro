@@ -47392,7 +47392,7 @@ BEGIN;
 DO $$
 DECLARE
   names constant text[] := ARRAY['absence_stats_min_group', 'absence_stats_window_first', 'absence_stats_window', 'absence_stats_plan',
-    'absence_stats_month', 'absence_stats_trim', 'absence_stats_pupil_access', 'absence_stats_class_access', 'absence_stats_series',
+    'absence_stats_lessons', 'absence_stats_month', 'absence_stats_trim', 'absence_stats_pupil_access', 'absence_stats_class_access', 'absence_stats_series',
     'absence_stats_classes', 'absence_stats_class_pupils', 'absence_stats_pupil_head', 'absence_stats_pupil', 'absence_stats_patterns'];
   api constant text[] := ARRAY['absence_stats_window', 'absence_stats_plan', 'absence_stats_month', 'absence_stats_trim', 'absence_stats_series',
     'absence_stats_classes', 'absence_stats_class_pupils', 'absence_stats_pupil_head', 'absence_stats_pupil', 'absence_stats_patterns'];
@@ -47410,12 +47410,17 @@ BEGIN
   FOR f IN SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'app' AND p.proname = ANY (names) ORDER BY p.proname
   LOOP
-    -- The one that is no secret and reads nothing (the group size) is the only one that is not the owner's.
-    IF f.proname <> 'absence_stats_min_group' AND NOT f.prosecdef THEN
+    -- Two are not definers: the group size (no secret, reads nothing) and the lessons (D2's function with one line
+    -- changed, which is inlined into the definer that calls it and so has no path of its own: every name in it is
+    -- schema-qualified, and the owner's section 392o holds it to D2's text). The lessons are still the owner's alone.
+    IF f.proname NOT IN ('absence_stats_min_group', 'absence_stats_lessons') AND NOT f.prosecdef THEN
       wrong := wrong || format('%s is not SECURITY DEFINER', f.proname);
     END IF;
-    IF f.proname <> 'absence_stats_min_group' AND NOT EXISTS (SELECT 1 FROM unnest(f.proconfig) c WHERE c LIKE 'search_path=%') THEN
+    IF f.proname NOT IN ('absence_stats_min_group', 'absence_stats_lessons') AND NOT EXISTS (SELECT 1 FROM unnest(f.proconfig) c WHERE c LIKE 'search_path=%') THEN
       wrong := wrong || format('%s has no search_path', f.proname);
+    END IF;
+    IF f.proname = 'absence_stats_lessons' AND (f.prosecdef OR f.proconfig IS NOT NULL OR f.provolatile <> 's') THEN
+      wrong := wrong || format('%s is not a plain STABLE function that can be inlined', f.proname);
     END IF;
     IF (f.proname = ANY (writers)) <> (f.provolatile = 'v') THEN
       wrong := wrong || format('%s is %s: only %s write', f.proname, f.provolatile, writers);

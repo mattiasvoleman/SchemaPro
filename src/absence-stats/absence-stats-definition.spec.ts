@@ -95,13 +95,69 @@ describe('a minute of absence is defined once', () => {
   });
 });
 
-describe('the lessons are Rapporteringsgradens', () => {
-  it('app.absence_stats_month reads app.reporting_lessons, once a lesson, and asks no definition of its own', () => {
+/**
+ * The text of the LAST definition of an app function across all migrations, in migration order (a later
+ * CREATE OR REPLACE is the one that is live), with the migration it stands in. Comments are cut and whitespace
+ * collapsed, so the comparison is of what the database runs.
+ */
+function liveBody(name: string): { migration: string; body: string } {
+  const dirs = readdirSync(join(ROOT, 'prisma', 'migrations'))
+    .filter((dir) => /^\d{14}_/.test(dir))
+    .sort();
+  const create = new RegExp(`CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+${name.replace('.', '\\.')}\\s*\\(`, 'gi');
+  let found: { migration: string; body: string } | null = null;
+  for (const dir of dirs) {
+    const sql = read(`prisma/migrations/${dir}/migration.sql`);
+    for (const match of sql.matchAll(create)) {
+      const tag = /\bAS\s+(\$[A-Za-z_]*\$)/.exec(sql.slice(match.index))?.[1];
+      if (!tag) throw new Error(`${name} in ${dir} has no dollar-quoted body`);
+      const open = sql.indexOf(tag, match.index) + tag.length;
+      const close = sql.indexOf(tag, open);
+      found = { migration: dir, body: sql.slice(open, close).replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim() };
+    }
+  }
+  if (!found) throw new Error(`No migration defines ${name}`);
+  return found;
+}
+
+/** The one line that differs: D2 asks who is a teacher now, the history asks who had not left when the lesson was over. */
+const D2_TEACHER = `AND u."role" = 'TEACHER' AND u."isActive"`;
+const HISTORY_TEACHER = `AND u."role" = 'TEACHER' AND (u."deactivatedAt" IS NULL OR cl."endsAt" <= u."deactivatedAt")`;
+
+describe('the lessons are Rapporteringsgradens, with the one line about the teacher', () => {
+  it('app.absence_stats_month reads app.absence_stats_lessons, once a lesson, and asks no definition of its own', () => {
     const text = compact(functionBody(STATS, 'app.absence_stats_month'));
-    expect(text).toContain(compact('FROM app.reporting_lessons(p_school, m_first, m_last, clock_timestamp())'));
+    expect(text).toContain(compact('FROM app.absence_stats_lessons(p_school, m_first, m_last, clock_timestamp())'));
     expect(text).toContain(compact('SELECT DISTINCT ON (r.lesson_id) r.lesson_id, r.reported'));
-    // No second reading of the register or the teachers: D2's function is the definition.
+    // No second reading of the register or the teachers here: the lessons function is the definition.
     expect(text).not.toContain('"calendarlessonteachers"');
+    // And not D2's own, which asks who is a teacher now and would drop every lesson of a teacher who has left.
+    expect(text).not.toContain(compact('app.reporting_lessons('));
+  });
+
+  it('app.absence_stats_lessons is the live app.reporting_lessons but for the line about the teacher, and nothing else', () => {
+    const d2 = liveBody('app.reporting_lessons');
+    const history = liveBody('app.absence_stats_lessons');
+    // The line is there, once, in each. (D2's own migration is not necessarily the one that is live: Elevens lektion för
+    // dagen rewrites it, and whoever does has to carry the same into the history's function, in the same or a later migration.)
+    expect(d2.body.split(D2_TEACHER)).toHaveLength(2);
+    expect(history.body.split(HISTORY_TEACHER)).toHaveLength(2);
+    expect(history.body).not.toContain(D2_TEACHER);
+    expect(history.body).toBe(d2.body.replace(D2_TEACHER, HISTORY_TEACHER));
+  });
+
+  it('says which migration it compared when it fails, so that the one that has to change is named', () => {
+    const d2 = liveBody('app.reporting_lessons');
+    const history = liveBody('app.absence_stats_lessons');
+    expect(history.migration >= '20270121090000').toBe(true);
+    expect(d2.migration >= '20270112090100').toBe(true);
+  });
+
+  it('knows what it reads (this test is not vacuous): a changed condition is not the same text', () => {
+    const d2 = liveBody('app.reporting_lessons').body;
+    expect(d2.replace(D2_TEACHER, HISTORY_TEACHER)).not.toBe(d2);
+    expect(d2.replace(D2_TEACHER, HISTORY_TEACHER).replace(`cl."endsAt" <= p_now`, `cl."endsAt" <= now()`)).not.toBe(d2.replace(D2_TEACHER, HISTORY_TEACHER));
+    expect(() => liveBody('app.absence_stats_nothing')).toThrow('No migration defines');
   });
 });
 

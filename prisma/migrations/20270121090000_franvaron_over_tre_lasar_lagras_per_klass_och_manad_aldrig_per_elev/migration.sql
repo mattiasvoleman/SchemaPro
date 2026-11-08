@@ -32,12 +32,31 @@
 -- aktiv nu, statistiken ser också den som slutat, eftersom en elev som lämnat
 -- skolan hör till hur hösten för två år sedan såg ut.
 --
--- Rapporteringsgraden är D2:s, inte en ny: lektionerna kommer ur
--- app.reporting_lessons (20270112090100), den enda definitionen av en hållen
--- lektion med lärare på sig och av en rapporterad, en gång per lektion (den har
--- en rad per lärare). En lektion räknas för klassen den ligger på, för en
--- halvklass för dess klass, och för en klass den delar med en annan; en
--- undervisningsgrupp över klassgränser räknas för skolan och ingen klass.
+-- Rapporteringsgraden är D2:s, med ETT villkor ändrat: lektionerna kommer ur
+-- app.absence_stats_lessons, som är app.reporting_lessons (20270112090100),
+-- definitionen av en hållen lektion med lärare på sig och av en rapporterad,
+-- en gång per lektion (den har en rad per lärare), utom i en enda sak. D2
+-- frågar vem som arbetar NU (Users.isActive), vilket är rätt för "vad ska
+-- läraren rapportera", men fel för en månad för två år sedan: en lärare som
+-- har slutat tappade då alla sina lektioner ur historiken, och en månad som
+-- en gång är lagrad räknas aldrig om (planen frågar bara efter månader utan
+-- rad, och när markeringarna har gallrats går den inte att räkna om alls).
+-- Här gäller det som gällde lektionsdagen: läraren räknas om hen inte hade
+-- slutat när lektionen var slut (Users.deactivatedAt är null, eller senare än
+-- lektionens slut). D2:s egen funktion är orörd, och dess lärarlista likaså.
+--
+-- Funktionerna är två texter för samma definition, så de binds ihop: en test
+-- (src/absence-stats/absence-stats-definition.spec.ts) och ett avsnitt i
+-- rls-owner-checks.sql (392o) fäller om app.absence_stats_lessons skiljer sig
+-- från den senaste app.reporting_lessons på något annat än den raden. Skriver
+-- en senare fas om app.reporting_lessons (Elevens lektion för dagen, 20270122,
+-- lägger ett villkor om en elev som flyttats från lektionen) fäller de båda
+-- tills app.absence_stats_lessons bär samma ändring: rapporteringsgraden i
+-- historiken ska vara den som Rapporteringsgraden visar för samma månad.
+--
+-- En lektion räknas för klassen den ligger på, för en halvklass för dess klass,
+-- och för en klass den delar med en annan; en undervisningsgrupp över
+-- klassgränser räknas för skolan och ingen klass.
 --
 -- ## Vilken klass en elev hörde till
 --
@@ -168,7 +187,7 @@ CREATE TABLE "AbsenceStatsMonths" (
     "lateMinutes" INTEGER,
     "lateCount" INTEGER,
     -- Rapporteringsgraden: hållna lektioner med lärare på sig, och hur många av
-    -- dem som har ett sparat register (app.reporting_lessons), en gång per lektion.
+    -- dem som har ett sparat register (app.absence_stats_lessons, D2:s definition), en gång per lektion.
     "lessonsHeld" INTEGER NOT NULL,
     "lessonsReported" INTEGER NOT NULL,
     "computedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT clock_timestamp(),
@@ -331,6 +350,78 @@ BEGIN
 END
 $$;
 
+-- De hållna lektionerna med lärare på sig och om de är rapporterade, för en
+-- månad som kan ligga flera år tillbaka: app.reporting_lessons (20270112090100)
+-- med EN ändrad rad. D2:s funktion svarar på "vilka lektioner ska en lärare som
+-- arbetar nu rapportera" och kräver att läraren är aktiv nu; historiken frågar
+-- vilka lektioner som hölls, och en lärare som har slutat höll dem. Läraren
+-- räknas därför om hen inte hade slutat när lektionen var slut:
+--
+--     AND u."role" = 'TEACHER' AND u."isActive"                               (D2)
+--     AND u."role" = 'TEACHER' AND (u."deactivatedAt" IS NULL OR cl."endsAt" <= u."deactivatedAt")
+--
+-- (Users_deactivation_is_dated: isActive är det samma som deactivatedAt IS NULL.
+-- En lektion efter att läraren slutat har ingen som rapporterar den och räknas
+-- inte, som i D2.) Resten är D2:s ord för ord, också elevlistans villkor, så att
+-- en lektion utan lista inte kräver ett register; skriver en senare release om
+-- app.reporting_lessons ska den här bära samma ändring (se huvudet).
+--
+-- Inte SECURITY DEFINER och utan SET, som D2:s, och med samma skäl: den ska kunna
+-- läsas in i anroparen, och varje namn är schemakvalificerat eftersom en
+-- inlinad kropp kör med anroparens search_path. Ägarens ensam; anropas bara av
+-- app.absence_stats_month. Inga kommentarer i kroppen, så att den går att jämföra
+-- med D2:s (proven klipper kommentarer och blanksteg; prod-efter jämför tecken
+-- för tecken).
+CREATE FUNCTION app.absence_stats_lessons(p_school uuid, p_from date, p_to date, p_now timestamptz)
+RETURNS TABLE (lesson_id uuid, teacher_id uuid, day date,
+               starts_at timestamptz, ends_at timestamptz, reported boolean)
+LANGUAGE sql STABLE AS $$
+  SELECT cl."id", t."teacherId", cl."date", cl."startsAt", cl."endsAt", r."saved"
+    FROM "public"."CalendarLessons" cl
+    JOIN "public"."CalendarLessonTeachers" t
+      ON t."calendarLessonId" = cl."id" AND t."schoolId" = cl."schoolId"
+    JOIN "public"."Users" u
+      ON u."id" = t."teacherId" AND u."schoolId" = cl."schoolId"
+     AND u."role" = 'TEACHER' AND (u."deactivatedAt" IS NULL OR cl."endsAt" <= u."deactivatedAt")
+   CROSS JOIN LATERAL (
+           SELECT EXISTS (SELECT 1 FROM "public"."AttendanceRecords" a
+                           WHERE a."calendarLessonId" = t."calendarLessonId" AND a."status" <> 'UNKNOWN') AS "saved") r
+   WHERE cl."schoolId" = p_school
+     AND cl."date" BETWEEN p_from AND p_to
+     AND cl."status" IN ('SCHEDULED', 'COMPLETED')
+     AND cl."endsAt" <= p_now
+     AND (
+           r."saved"
+        OR EXISTS (SELECT 1 FROM "public"."Users" p
+                    WHERE p."studentGroupId" = cl."studentGroupId" AND p."role" = 'STUDENT' AND p."isActive")
+        OR EXISTS (SELECT 1 FROM "public"."StudentEnrollments" e
+                    WHERE e."studentGroupId" = cl."studentGroupId"
+                      AND e."validFrom" <= cl."date" AND (e."validTo" IS NULL OR cl."date" < e."validTo"))
+        OR EXISTS (SELECT 1 FROM "public"."StudentGroupMembers" m
+                    JOIN "public"."Users" p ON p."id" = m."studentId"
+                   WHERE m."studentGroupId" = cl."studentGroupId" AND p."role" = 'STUDENT')
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
+                    JOIN "public"."Users" p ON p."studentGroupId" = x."studentGroupId"
+                   WHERE x."calendarLessonId" = cl."id" AND p."role" = 'STUDENT' AND p."isActive")
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
+                    JOIN "public"."StudentEnrollments" e ON e."studentGroupId" = x."studentGroupId"
+                   WHERE x."calendarLessonId" = cl."id"
+                     AND e."validFrom" <= cl."date" AND (e."validTo" IS NULL OR cl."date" < e."validTo"))
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
+                    JOIN "public"."StudentGroupMembers" m ON m."studentGroupId" = x."studentGroupId"
+                    JOIN "public"."Users" p ON p."id" = m."studentId"
+                   WHERE x."calendarLessonId" = cl."id" AND p."role" = 'STUDENT')
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonStudents" n
+                    JOIN "public"."Users" p ON p."id" = n."studentId"
+                   WHERE n."calendarLessonId" = cl."id" AND p."role" = 'STUDENT')
+         )
+     AND NOT EXISTS (
+           SELECT 1 FROM "public"."TeacherAbsences" ab
+            WHERE ab."schoolId" = cl."schoolId" AND ab."userId" = t."teacherId"
+              AND ab."status" = 'ACTIVE'
+              AND ab."startsAt" < cl."endsAt" AND cl."startsAt" < ab."endsAt")
+$$;
+
 -- Räknar om en månad för skolan: en rad för skolan och en för varje klass med
 -- minst fem elever, och tar bort de rader månaden inte längre har skäl till.
 -- Räknar bara en månad vars markeringar kan finnas kvar; annars rör den ingenting.
@@ -425,10 +516,10 @@ BEGIN
       FROM with_class w WHERE w.grp IS NOT NULL
      GROUP BY w.grp
   ),
-  -- Lektionerna är D2:s, en gång per lektion.
+  -- Lektionerna är D2:s (utom att en lärare som slutat räknas för lektionerna som hölls), en gång per lektion.
   rl AS MATERIALIZED (
     SELECT DISTINCT ON (r.lesson_id) r.lesson_id, r.reported
-      FROM app.reporting_lessons(p_school, m_first, m_last, clock_timestamp()) r
+      FROM app.absence_stats_lessons(p_school, m_first, m_last, clock_timestamp()) r
      ORDER BY r.lesson_id
   ),
   -- Lektionens klasser: dess egen grupp och de extra grupperna, slagna upp med sin nyckel (inte en genomläsning av
@@ -756,10 +847,17 @@ END
 $$;
 
 -- Eleverna i en klass under en period med sina summor, för ett utvecklingssamtal:
--- de som hörde till klassen någon dag i perioden (StudentEnrollments), alla
--- deras markeringar i perioden. En administratör med eget användar-id eller
--- klassens mentor; en markerad elev är en tom rad för en administratör
--- (is_protected, utan namn och siffror) och finns inte alls för en mentor.
+-- de som hörde till klassen eller en föregångare någon dag i perioden
+-- (StudentEnrollments, som månadsraderna och mönstren läser en klass), och deras
+-- markeringar för DAGARNA de hörde dit, som klassens månadsrad och mönster räknar
+-- dem (segmentet som täcker lektionens datum). Elevernas summor blir därmed
+-- klassens summa: en elev som bytte klass mitt i en månad räknas i den gamla
+-- klassen till bytet och i den nya efter det, och mentorn ser inte frånvaron
+-- under dagar eleven hörde till en annan klass och en annan mentor. (Elevens
+-- eget kort, app.absence_stats_pupil, visar alla hens markeringar.) En
+-- administratör med eget användar-id eller klassens mentor; en markerad elev är
+-- en tom rad för en administratör (is_protected, utan namn och siffror) och
+-- finns inte alls för en mentor.
 CREATE FUNCTION app.absence_stats_class_pupils(p_class uuid, p_from date, p_to date)
 RETURNS TABLE (student_id uuid, first_name text, last_name text, is_protected boolean,
                recorded_minutes integer, valid_minutes integer, absent_minutes integer, late_minutes integer, late_count integer)
@@ -778,11 +876,21 @@ BEGIN
     RAISE EXCEPTION 'ABSENCE_STATS_BAD_PERIOD: från före till, högst 1 200 dagar' USING ERRCODE = 'AS400';
   END IF;
   RETURN QUERY
-  WITH pupils AS (
-    SELECT DISTINCT e."studentId" AS id
+  WITH RECURSIVE lineage AS (
+    SELECT g."id", g."predecessorId", 1 AS depth FROM "StudentGroups" g WHERE g."id" = p_class AND g."schoolId" = sid
+    UNION ALL
+    SELECT g."id", g."predecessorId", l.depth + 1
+      FROM lineage l JOIN "StudentGroups" g ON g."id" = l."predecessorId" AND g."schoolId" = sid
+     WHERE l.depth < 4
+  ),
+  segments AS (
+    SELECT e."studentId" AS id, e."validFrom", e."validTo"
       FROM "StudentEnrollments" e
-     WHERE e."schoolId" = sid AND e."studentGroupId" = p_class
+     WHERE e."schoolId" = sid AND e."studentGroupId" IN (SELECT l.id FROM lineage l)
        AND e."validFrom" <= p_to AND (e."validTo" IS NULL OR e."validTo" > p_from)
+  ),
+  pupils AS (
+    SELECT DISTINCT sg.id FROM segments sg
   ),
   marked AS (
     SELECT p.id, EXISTS (SELECT 1 FROM "PersonProtections" pp WHERE pp."userId" = p.id AND pp."schoolId" = sid) AS is_marked
@@ -799,6 +907,8 @@ BEGIN
       JOIN "AttendanceRecords" a ON a."studentId" = m.id AND a."schoolId" = sid AND a."status" <> 'UNKNOWN'
       JOIN "CalendarLessons" cl ON cl."id" = a."calendarLessonId" AND cl."schoolId" = sid
      WHERE NOT m.is_marked AND cl."date" BETWEEN p_from AND p_to AND cl."status" IN ('SCHEDULED', 'COMPLETED')
+       AND EXISTS (SELECT 1 FROM segments sg
+                    WHERE sg.id = a."studentId" AND sg."validFrom" <= cl."date" AND (sg."validTo" IS NULL OR cl."date" < sg."validTo"))
      GROUP BY a."studentId"
   )
   SELECT CASE WHEN m.is_marked THEN NULL ELSE m.id END,
@@ -1034,8 +1144,10 @@ COMMENT ON FUNCTION app.absence_stats_window() IS
   'Frånvarostatistik: första månaden i fönstret, skolans dag idag och läsåret som rymmer idag, för en administratör eller en lärare.';
 COMMENT ON FUNCTION app.absence_stats_plan(uuid, date, integer) IS
   'Frånvarostatistik: månaderna jobbet räknar denna natt, i skolans datum: de senaste 62 dagarna och högst p_backfill äldre som saknar en rad, har en hållen lektion och minst fem elever på klasslistorna, bara de vars markeringar kan finnas kvar.';
+COMMENT ON FUNCTION app.absence_stats_lessons(uuid, date, date, timestamptz) IS
+  'Frånvarostatistik: app.reporting_lessons (Rapporteringsgrad) med en ändrad rad: en lärare räknas om hen inte hade slutat när lektionen var slut, så att en månad för två år sedan har sina lektioner också när läraren har slutat. En test och 392o fäller om den skiljer sig från den senaste app.reporting_lessons på något annat.';
 COMMENT ON FUNCTION app.absence_stats_month(uuid, date, date) IS
-  'Frånvarostatistik: räknar om en månad för skolan och varje klass med minst fem elever (klassen vid lektionens dag, lektionerna ur app.reporting_lessons), och tar bort rader månaden inte längre har skäl till.';
+  'Frånvarostatistik: räknar om en månad för skolan och varje klass med minst fem elever (klassen vid lektionens dag, lektionerna ur app.absence_stats_lessons), och tar bort rader månaden inte längre har skäl till.';
 COMMENT ON FUNCTION app.absence_stats_trim(uuid, date) IS
   'Frånvarostatistik: tar bort månader före de tre senaste läsårens början.';
 COMMENT ON FUNCTION app.absence_stats_pupil_access(uuid) IS
@@ -1047,7 +1159,7 @@ COMMENT ON FUNCTION app.absence_stats_series(uuid) IS
 COMMENT ON FUNCTION app.absence_stats_classes(date, date) IS
   'Frånvarostatistik: klasserna i en period med summan av sina månader (en administratör: alla; en mentor: sina klasser).';
 COMMENT ON FUNCTION app.absence_stats_class_pupils(uuid, date, date) IS
-  'Frånvarostatistik: eleverna i en klass under en period med sina summor, ur markeringarna som finns kvar; en markerad elev utelämnas (för en administratör en tom rad).';
+  'Frånvarostatistik: eleverna i en klass under en period med sina summor för dagarna de hörde till klassen, ur markeringarna som finns kvar; en markerad elev utelämnas (för en administratör en tom rad).';
 COMMENT ON FUNCTION app.absence_stats_pupil_head(uuid) IS
   'Frånvarostatistik: en elevs namn, klass idag och första och sista dagen med en markering kvar.';
 COMMENT ON FUNCTION app.absence_stats_pupil(uuid, date, date) IS
@@ -1064,6 +1176,7 @@ BEGIN
     'app.absence_stats_min_group()',
     'app.absence_stats_window_first(uuid, date)',
     'app.absence_stats_plan(uuid, date, integer)',
+    'app.absence_stats_lessons(uuid, date, date, timestamptz)',
     'app.absence_stats_month(uuid, date, date)',
     'app.absence_stats_trim(uuid, date)',
     'app.absence_stats_window()',

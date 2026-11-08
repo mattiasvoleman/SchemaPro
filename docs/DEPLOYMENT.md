@@ -2077,12 +2077,14 @@ Walk the full product loop once, in order:
 - **Frånvarostatistik över tid**: 20270121090000 adds the table
   `AbsenceStatsMonths` (the sums of absence per class and month, and per school
   and month, with no column that names a person and no key to `Users`) and
-  fourteen `app.absence_stats_*` functions (all SECURITY DEFINER with a pinned
-  `search_path` but `app.absence_stats_min_group()`, which reads nothing). The
+  fifteen `app.absence_stats_*` functions (all SECURITY DEFINER with a pinned
+  `search_path` but `app.absence_stats_min_group()`, which reads nothing, and
+  `app.absence_stats_lessons()`, see (9)). The
   table has row security and **no policy and no grant**: only the functions read or
   write it, so a PostgREST call and the API's own role are refused (42501); the
   functions' EXECUTE is the API role's for the ten the gateway and the job call,
-  and nobody's for the rest. No existing row is touched, no existing table gains a
+  and nobody's for the rest (five: the group size, the window's first month, the
+  two access checks and the lessons). No existing row is touched, no existing table gains a
   column, and `app.gallring_due` and `app.gallring_purge` are **not** rewritten
   (their md5 stay what the previous migration left them: due `f884a3c7…`, purge
   `21746d39…`, pseudonymise `6f18f62f…` in production). The new keys take `Schools`
@@ -2126,7 +2128,22 @@ Walk the full product loop once, in order:
   identity:* a marked pupil is in no list and in no mentor's reach; the sums count them; the
   print is the web's and holds them out. (7) *Reads are logged:* a class's pupils and a
   pupil's card are recorded as ATTENDANCE and PEOPLE; the sums are not. (8) *No gender
-  split:* the model has no such field and none is added.
+  split:* the model has no such field and none is added. (9) *The lessons of a month
+  are Rapporteringsgradens, but not of the teachers who work now.* `app.absence_stats_lessons`
+  is `app.reporting_lessons` (20270112090100) with one line changed: D2 asks whether the
+  teacher is active **now** (`Users."isActive"`), the history asks whether she had not left
+  when the lesson was over (`"deactivatedAt" IS NULL OR "endsAt" <= "deactivatedAt"`).
+  Without it a month, once stored, lost every lesson of a teacher who has since left and
+  was never counted again (the plan asks only for months without a row). The two are
+  one definition in two texts, and a jest spec (`absence-stats-definition.spec.ts`) and
+  the owner's section 392o fail if they differ in anything but that line, so whoever
+  rewrites `app.reporting_lessons` next (Elevens lektion för dagen, 20270122, adds a
+  condition about a pupil moved off a lesson) must restate `app.absence_stats_lessons` with it, in
+  the same migration, after its md5 guard (the body's md5 is in the PR). (10) *A class's
+  pupils add up to the class:* `app.absence_stats_class_pupils` counts a pupil's marks for the
+  days she was in the class or a predecessor (the segment of `StudentEnrollments` that
+  covers the lesson's date, as the class's months and patterns count them), not every mark
+  of the period; her own card shows all of them.
   **Release note** (in these words or others): *From the first night after this release
   Rastra counts, every night, the school's and each class's absence by month for the last
   three läsår, without recording any individual pupil, and shows it with the reporting rate
@@ -2139,7 +2156,7 @@ Walk the full product loop once, in order:
   'AbsenceStatsMonths'` are both 0; `prisma migrate status` lists exactly this migration as
   pending; no session sits idle in a transaction that holds `Schools` or `StudentGroups`
   (`SELECT pid, state, now() - xact_start FROM pg_stat_activity WHERE xact_start IS NOT NULL
-  AND state <> 'active'`). **After it:** the 14 functions exist, the table has
+  AND state <> 'active'`). **After it:** the 15 functions exist, the table has
   row security and `SELECT count(*) FROM pg_policies WHERE tablename = 'AbsenceStatsMonths'`
   is 0; `SELECT has_table_privilege('app_authenticated', '"AbsenceStatsMonths"', 'SELECT')`
   is false (and, on Postgres 17, `MAINTAIN` too); the gallring functions' `md5(prosrc)` are
@@ -2149,7 +2166,7 @@ Walk the full product loop once, in order:
   läsår; no row has `pupils` under 5; `JobRuns` has `absence-stats` with `failed` 0.
   **Rollback of the code** is a revert; the table stays and is unread. Rollback of the
   data, only if nothing in it is wanted: `DROP TABLE "AbsenceStatsMonths"; DROP FUNCTION
-  app.absence_stats_min_group(), …` (the fourteen, by name); the gallring functions were
+  app.absence_stats_min_group(), …` (the fifteen, by name); the gallring functions were
   never touched.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).

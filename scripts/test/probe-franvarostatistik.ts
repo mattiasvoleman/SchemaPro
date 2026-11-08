@@ -35,6 +35,10 @@
  *   ff  a läsårsaktivering empties last year's classes and the history stands
  *       still: the class's pupils are still listed with their minutes over the
  *       year, the sums are the same, and the cohort's months are one series
+ *   fg  the teacher who taught every lesson leaves: her user is deactivated and
+ *       every stored month is counted again, through the job and straight; the
+ *       held and reported lessons of every month are what they were (the
+ *       live reporting function drops them all, which is its question)
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -228,6 +232,34 @@ export async function absenceStatsChecks(owner: Client, api: PrismaService, mark
       assert.ok(again.months >= 3, 'the recent months are not asked for every night');
     });
 
+    await check('(fg) the teacher of every lesson leaves, and every month counted again keeps the lessons she held: held and reported are what they were', async () => {
+      const lessonsOf = async () => ({
+        school: (await stored(null)).map((row) => [row.month, row.held, row.reported]),
+        cls: (await stored(group)).map((row) => [row.month, row.held, row.reported]),
+      });
+      const before = await lessonsOf();
+      assert.ok(before.school.length >= 3 && before.school.every(([, held]) => Number(held) > 0), 'no months with lessons to count again');
+      assert.deepEqual(before.school, before.cls, 'the class holds every lesson of the school');
+      const months = before.school.map(([month]) => month!);
+      try {
+        // She leaves (the trigger writes deactivatedAt, which is after every one of the lessons).
+        await owner.query(`UPDATE "Users" SET "isActive" = false WHERE id = $1`, [mentor.userId]);
+        assert.ok((await one<{ gone: boolean }>(`SELECT "deactivatedAt" IS NOT NULL AS gone FROM "Users" WHERE id = $1`, [mentor.userId])).gone);
+        // The question Rapporteringsgraden asks, who is to report now, has no lesson left: the history's does not ask it.
+        assert.equal(await count(`SELECT count(*) AS n FROM app.reporting_lessons($1::uuid, $2::date - 200, $2::date, clock_timestamp())`, [s, today]), 0);
+        // The recent months through the night, as the API runs it...
+        await job.runSchool(s, midnight(today));
+        // ...and every month asked for again, old ones included (a backfill counts a month that has no row; this counts one that has).
+        for (const month of months) {
+          await owner.query(`SELECT * FROM app.absence_stats_month($1::uuid, $2::date, $3::date)`, [s, month, yesterday]);
+        }
+        assert.deepEqual(await lessonsOf(), before, 'a month counted again after she left lost the lessons she held');
+      } finally {
+        await owner.query(`UPDATE "Users" SET "isActive" = true WHERE id = $1`, [mentor.userId]);
+      }
+      assert.ok(!(await one<{ gone: boolean }>(`SELECT "deactivatedAt" IS NOT NULL AS gone FROM "Users" WHERE id = $1`, [mentor.userId])).gone);
+    });
+
     await check('(fb) an administrator reads the school, the classes, a class with its patterns, its pupils and a pupil’s card; the pupils are named in the read log, the sums are not', async () => {
       const readsBefore = await count(`SELECT count(*) AS n FROM "PersonalDataAccess" WHERE "schoolId" = $1`, [s]);
       const view = await service.school(admin);
@@ -273,7 +305,8 @@ export async function absenceStatsChecks(owner: Client, api: PrismaService, mark
       assert.equal(card.months.filter((month) => month.figures !== null).length, months.length);
       assert.equal(card.classSeries?.length, months.length);
       assert.equal(card.patterns.suppressed, false);
-      assert.equal(card.marksTo, yesterday);
+      // The last day with a mark is the last school day up to yesterday: on a Sunday or a Monday that is not yesterday.
+      assert.equal(card.marksTo, (await one<{ d: string }>(`SELECT max(date)::text AS d FROM "CalendarLessons" WHERE "schoolId" = $1`, [s])).d);
       const logged = await rows<{ kind: string; subjects: number }>(
         `SELECT kind::text AS kind, cardinality("subjectIds") AS subjects FROM "PersonalDataAccess" WHERE "schoolId" = $1 AND "actorId" = $2 ORDER BY "at", kind::text`,
         [s, admin.userId],
