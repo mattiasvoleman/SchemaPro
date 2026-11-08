@@ -44,13 +44,15 @@ export interface PlacementErrors {
 const MODES: PlacementRuleMode[] = ["OFF", "SOFT", "HARD"];
 
 /**
- * Rule 1 is Av or Mjuk until it has been measured hard on a large school: a
- * hard one cost 4.5 times the first timetable with eight workers, the same
- * track as the hard sammanhängande undervisning that was dropped for its
- * cost. The API refuses HARD for it (PLACEMENT_EDGE_HARD_NOT_OFFERED) and the
- * engine still builds it; this is the card's half.
+ * Rules 1 and 2 are Av or Mjuk until a hard one has been measured on a large
+ * school: a hard rule 1 cost 4.5 times the first timetable with eight workers
+ * and a hard rule 2 2.8 to 3.6 times, the same track as the hard
+ * sammanhängande undervisning that was dropped for its cost. The API refuses
+ * HARD for them (PLACEMENT_EDGE_HARD_NOT_OFFERED, PLACEMENT_PLACES_HARD_NOT_OFFERED),
+ * the database does too (…_off_or_soft_check) and the engine still builds
+ * them; this is the card's half. Only Delade salar keeps all three.
  */
-const EDGE_MODES: PlacementRuleMode[] = ["OFF", "SOFT"];
+const SOFT_ONLY_MODES: PlacementRuleMode[] = ["OFF", "SOFT"];
 
 /**
  * One choice of three, drawn as buttons that read as a row: native radios, so
@@ -166,7 +168,7 @@ export function PlacementRulesFields({
           name="placement-edge-mode"
           value={values.placementEdgeMode}
           describedBy="placement-edge-hint placement-edge-hard-hint"
-          modes={EDGE_MODES}
+          modes={SOFT_ONLY_MODES}
           onChange={(mode) => onChange({ placementEdgeMode: mode })}
         />
         {values.placementEdgeMode === "SOFT"
@@ -185,10 +187,14 @@ export function PlacementRulesFields({
         <p id="placement-places-hint" className="text-sm text-muted-foreground">
           {t("places.hint")}
         </p>
+        <p id="placement-places-hard-hint" className="text-sm text-muted-foreground">
+          {t("places.hardHint")}
+        </p>
         <ModeChoice
           name="placement-places-mode"
           value={values.placementPlacesMode}
-          describedBy="placement-places-hint"
+          describedBy="placement-places-hint placement-places-hard-hint"
+          modes={SOFT_ONLY_MODES}
           onChange={(mode) => onChange({ placementPlacesMode: mode })}
         />
         {values.placementPlacesMode === "SOFT"

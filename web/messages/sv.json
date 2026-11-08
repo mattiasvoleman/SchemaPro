@@ -3032,7 +3032,7 @@
     "modeHint": {
       "OFF": "Regeln används inte.",
       "SOFT": "Ett önskemål med en vikt, som Generera väger mot de andra önskemålen. Generera försöker hålla regeln men vägrar aldrig för att den inte gick.",
-      "HARD": "Ett krav. Går det inte att hålla tillsammans med resten av reglerna går schemat inte att lägga: Generera vägrar då och skriver ut orsaken."
+      "HARD": "Ett krav, som än så länge bara Delade salar kan vara. Går det inte att hålla tillsammans med resten av reglerna går schemat inte att lägga: Generera vägrar då och skriver ut orsaken."
     },
     "weight": "Vikt",
     "weightHint": "1–1000. Som jämförelse väger ett önskat fridagsval 40 och sammanhängande undervisning 250.",
@@ -3046,7 +3046,8 @@
     },
     "places": {
       "title": "Salar och byggnader per dag",
-      "hint": "Högst så många olika byggnader och salar per dag, för en klass och för en lärare var för sig. 1 betyder en enda hela dagen. Byggnad är salens uppgift Byggnad under Salar; salar utan byggnad räknas som samma byggnad. Lika salar av samma typ, storlek och årskurser räknas som en sal. Regeln räknar hur många olika som besöks och inte i vilken ordning: en dag som går A–B–A räknas som två byggnader. Klassen räknas på den grupps egna lektioner."
+      "hint": "Högst så många olika byggnader och salar per dag, för en klass och för en lärare var för sig. 1 betyder en enda hela dagen. Byggnad är salens uppgift Byggnad under Salar; salar utan byggnad räknas som samma byggnad. Lika salar av samma typ, storlek och årskurser räknas som en sal. Regeln räknar hur många olika som besöks och inte i vilken ordning: en dag som går A–B–A räknas som två byggnader. Klassen räknas på den grupps egna lektioner.",
+      "hardHint": "Hård finns inte för den här regeln ännu: en hård regel kan göra att Generera tar mycket längre tid, och den är inte mätt på en stor skola. Mjuk höll gränserna i mätningen. Välj Av eller Mjuk."
     },
     "limit": {
       "classRoom": "Klassens olika salar per dag",
@@ -3060,7 +3061,8 @@
     "limitsMissing": "Ange minst en gräns, annars har regeln inget att hålla. Välj Av om du inte vill ha den.",
     "errors": {
       "PLACEMENT_EDGE_HARD_NOT_OFFERED": "Regeln Inte först eller sist på dagen kan inte vara hård ännu. Välj Av eller Mjuk.",
-      "PLACEMENT_PLACES_NEEDS_A_LIMIT": "Regeln Salar och byggnader per dag behöver minst en gräns när den är Mjuk eller Hård. Ange en gräns eller välj Av."
+      "PLACEMENT_PLACES_NEEDS_A_LIMIT": "Regeln Salar och byggnader per dag behöver minst en gräns när den är Mjuk. Ange en gräns eller välj Av.",
+      "PLACEMENT_PLACES_HARD_NOT_OFFERED": "Regeln Salar och byggnader per dag kan inte vara hård ännu. Välj Av eller Mjuk."
     },
     "shared": {
       "title": "Delade salar",

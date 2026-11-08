@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import type { LunchSetting } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { offeredMode } from '../common/placement-modes';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { toWallClock } from '../common/utils/time';
@@ -34,6 +35,11 @@ function toResponse(row: LunchSetting): LunchSettingsResponse {
     ...row,
     lunchStartTime: toWallClock(row.lunchStartTime),
     lunchEndTime: toWallClock(row.lunchEndTime),
+    // A HARD that rule 1 or 2 is not offered at (the CHECK keeps one out of the
+    // table) is read as the SOFT the generator holds it at, so the card draws
+    // the mode that is applied and a save does not send the refused one back.
+    placementEdgeMode: offeredMode('edge', row.placementEdgeMode),
+    placementPlacesMode: offeredMode('places', row.placementPlacesMode),
   };
 }
 import { parseTimeString } from '../common/utils/time';
@@ -41,6 +47,7 @@ import type { UpsertLunchSettingsDto } from './dto/lunch-settings.dto';
 import {
   assertPlacesHaveALimit,
   edgeCannotBeHard,
+  placesCannotBeHard,
   placesNeedALimit,
   isPlacesNeedALimitCheck,
   placementDataOf,
@@ -88,9 +95,12 @@ export class LunchSettingsService {
   ): Promise<LunchSettingsResponse> {
     const schoolId = requireSchoolId(user);
     this.assertFitsTheSolverGrid(dto);
-    // Rule 1 is offered as OFF or SOFT until it is measured hard (BESLUT in
-    // the PR of Placeringsregler); the engine and the CHECK still know HARD.
+    // Rules 1 and 2 are offered as OFF or SOFT until a hard one is measured
+    // (BESLUT 3 and 4 in the PR of Placeringsregler); the database refuses
+    // them for every other way in (…_off_or_soft_check), the engine still
+    // knows HARD. Only rule 3 is offered hard (src/common/placement-modes.ts).
     if (dto.placementEdgeMode === 'HARD') throw edgeCannotBeHard();
+    if (dto.placementPlacesMode === 'HARD') throw placesCannotBeHard();
 
     const data = {
       lunchEnabled: dto.lunchEnabled,

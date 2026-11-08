@@ -4131,19 +4131,21 @@ model LunchSetting {
   /// placed, each OFF until the school turns it on (OFF sends the engine
   /// nothing, and the week is generated exactly as before), SOFT (a weight,
   /// on the scale of the other wishes) or HARD (a week that cannot keep it is
-  /// refused by name). In this row for the reason the switches above are: they
-  /// sit in the same form, Skolregler.
+  /// refused by name). Only rule 3 is offered HARD: rules 1 and 2 are OFF or
+  /// SOFT by CHECK (…_off_or_soft_check) until a hard one is measured. In this
+  /// row for the reason the switches above are: they sit in the same form,
+  /// Skolregler.
   ///
   /// Rule 1: a subject marked "not first" or "not last" (Subject.notFirstInDay,
   /// notLastInDay) is kept off the first or last lesson of a class's day.
   placementEdgeMode                 PlacementRuleMode @default(OFF)
   /// SOFT only: 1..1000 (LunchSettings_placementEdgeWeight_check). Kept when
-  /// the mode is OFF or HARD, so switching back does not lose the figure.
+  /// the mode is OFF, so switching back does not lose the figure.
   placementEdgeWeight               Int               @default(250)
   /// Rule 2: a class and a teacher (apart) are in at most this many DIFFERENT
   /// room groups and different buildings in a day. 1 is a single one, never a
-  /// change; the same room twice is one. The mode is SOFT or HARD only while at
-  /// least one of the four limits is set (LunchSettings_placementPlaces_needs_a_limit_check).
+  /// change; the same room twice is one. The mode is SOFT only while at least
+  /// one of the four limits is set (LunchSettings_placementPlaces_needs_a_limit_check).
   placementPlacesMode               PlacementRuleMode @default(OFF)
   placementPlacesWeight             Int               @default(250)
   /// 1..20, null = no limit (LunchSettings_max…PerDay_check).
@@ -4169,7 +4171,9 @@ model LunchSetting {
 /// Placeringsregler: how a placement rule is held. OFF is the school without
 /// the rule (nothing is sent to the engine); SOFT pays a weight for every
 /// breach and refuses nothing; HARD forbids the breach, and a week that cannot
-/// keep it is refused by name.
+/// keep it is refused by name. The type is the three rules', but only rule 3
+/// (placementSharedMode) is offered HARD: a CHECK keeps rules 1 and 2 at OFF or
+/// SOFT until a hard one has been measured.
 enum PlacementRuleMode {
   OFF
   SOFT

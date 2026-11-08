@@ -2082,14 +2082,23 @@ Walk the full product loop once, in order:
   of the second (`maxClassRoomsPerDay`, `maxTeacherRoomsPerDay`,
   `maxClassBuildingsPerDay`, `maxTeacherBuildingsPerDay`: null);
   on `Subjects` `notFirstInDay` and `notLastInDay`, and on `Rooms`
-  `canBeShared` (false). Eight CHECKs, each named `LunchSettings_…_check`: a
-  weight is 1 to 1000, a limit 1 to 20 or null (rule 2 is "at most N different room groups and buildings a day", 1 being a single one, not a count of changes), and rule 2 in SOFT or HARD
+  `canBeShared` (false). Ten CHECKs, each named `LunchSettings_…_check`: a
+  weight is 1 to 1000, a limit 1 to 20 or null (rule 2 is "at most N different room groups and buildings a day", 1 being a single one, not a count of changes), and rule 2 that is on
   has at least one limit (`…_placementPlaces_needs_a_limit_check`; the API
-  says so first, a 400 with the code `PLACEMENT_PLACES_NEEDS_A_LIMIT`). The
-  CHECKs allow `placementEdgeMode = 'HARD'`, and the API does not: rule 1 is
-  offered as OFF or SOFT until it is measured hard, a request that names
-  `HARD` for it is a 400 with the code `PLACEMENT_EDGE_HARD_NOT_OFFERED`, and
-  the engine still builds it. No new
+  says so first, a 400 with the code `PLACEMENT_PLACES_NEEDS_A_LIMIT`).
+  **Only rule 3 (Delade salar) is offered HARD**: rules 1 and 2 are OFF or
+  SOFT until a hard one is measured (a hard rule 1 cost 4.5 times the first
+  timetable, a hard rule 2 2.8 to 3.6 times with eight workers, 9 with one,
+  against a production limit of 60 s at the floor). The two last CHECKs say
+  so (`LunchSettings_placementEdgeMode_off_or_soft_check` and
+  `LunchSettings_placementPlacesMode_off_or_soft_check`), because the
+  Skolregler row is also written by a school's administrator straight against
+  PostgREST and a stored HARD would go to the engine and lock the card; the
+  API refuses a request that names HARD for them (400, the codes
+  `PLACEMENT_EDGE_HARD_NOT_OFFERED` and `PLACEMENT_PLACES_HARD_NOT_OFFERED`),
+  the gateway reads a stored one as SOFT in any case, and the engine still
+  builds all six. Offering a hard rule 1 or 2 later is dropping its CHECK, a
+  migration of its own, with the card and the API. No new
   table, so no arm, no GRANT and nothing in the role matrix moves (RLS
   sections 415 to 419 hold it, role by role, as the API's role and as
   PostgREST's). **All three rules are OFF for every school until that school
@@ -2129,7 +2138,9 @@ Walk the full product loop once, in order:
   WHERE "placementEdgeMode" <> 'OFF' OR "placementPlacesMode" <> 'OFF' OR
   "placementSharedMode" <> 'OFF'`, `SELECT count(*) FROM "Subjects" WHERE
   "notFirstInDay" OR "notLastInDay"` and `SELECT count(*) FROM "Rooms" WHERE
-  "canBeShared"` are all 0.
+  "canBeShared"` are all 0, and so is `SELECT count(*) FROM "LunchSettings"
+  WHERE "placementEdgeMode" = 'HARD' OR "placementPlacesMode" = 'HARD'` (the
+  two CHECKs keep it so).
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

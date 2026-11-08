@@ -55,13 +55,14 @@ export const LUNCH_SETTINGS: LunchSettings = {
   // line for it.
   generatorKeepsConsecutiveTeaching: true,
   // Placeringsregler, one of each kind, so the sweep meets Mjuk with its
-  // weight, Hård with limits (1 is a single one all day, an empty box none)
-  // and the Generera page's line for each.
+  // weight, Mjuk with limits (1 is a single one all day, an empty box none),
+  // Hård (only Delade salar is offered hard) and the Generera page's line for
+  // each.
   placementEdgeMode: "SOFT",
   placementEdgeWeight: 250,
-  placementPlacesMode: "HARD",
+  placementPlacesMode: "SOFT",
   placementPlacesWeight: 250,
-  placementSharedMode: "SOFT",
+  placementSharedMode: "HARD",
   placementSharedWeight: 400,
   maxClassRoomsPerDay: 2,
   maxTeacherRoomsPerDay: null,

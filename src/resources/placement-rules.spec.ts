@@ -3,10 +3,12 @@ import { Prisma } from '@prisma/client';
 import {
   PLACE_LIMIT_FIELDS,
   PLACEMENT_EDGE_HARD_NOT_OFFERED,
+  PLACEMENT_PLACES_HARD_NOT_OFFERED,
   PLACEMENT_PLACES_NEEDS_A_LIMIT,
   PLACEMENT_FIELDS,
   assertPlacesHaveALimit,
   edgeCannotBeHard,
+  placesCannotBeHard,
   placesNeedALimit,
   isPlacesNeedALimitCheck,
   placementDataOf,
@@ -126,6 +128,19 @@ describe('edgeCannotBeHard', () => {
       message: expect.stringMatching(/^placementEdgeMode: .*OFF eller SOFT\.$/),
     });
     expect(PLACEMENT_EDGE_HARD_NOT_OFFERED).toBe('PLACEMENT_EDGE_HARD_NOT_OFFERED');
+  });
+});
+
+describe('placesCannotBeHard', () => {
+  it('is a 400 with its own code, naming the field and the way out, on rule 1’s terms', () => {
+    const error = placesCannotBeHard();
+    expect(error.getStatus()).toBe(400);
+    expect(error.getResponse()).toMatchObject({
+      code: PLACEMENT_PLACES_HARD_NOT_OFFERED,
+      message: expect.stringMatching(/^placementPlacesMode: .*OFF eller SOFT\.$/),
+    });
+    expect(PLACEMENT_PLACES_HARD_NOT_OFFERED).toBe('PLACEMENT_PLACES_HARD_NOT_OFFERED');
+    expect(PLACEMENT_PLACES_HARD_NOT_OFFERED).not.toBe(PLACEMENT_EDGE_HARD_NOT_OFFERED);
   });
 });
 

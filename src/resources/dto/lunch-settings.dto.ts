@@ -124,7 +124,7 @@ export class UpsertLunchSettingsDto {
   @IsIn(PLACEMENT_RULE_MODES, { message: PLACEMENT_MODE_MESSAGE })
   placementEdgeMode?: PlacementRuleMode;
 
-  /** SOFT only. Kept while the mode is OFF or HARD, so a switch back does not lose the figure. */
+  /** SOFT only. Kept while the mode is OFF (or, for rule 3, HARD), so a switch back does not lose the figure. */
   @ValidateIf((_, value) => value !== undefined)
   @IsInt({ message: PLACEMENT_WEIGHT_MESSAGE })
   @Min(PLACEMENT_WEIGHT_MIN, { message: PLACEMENT_WEIGHT_MESSAGE })
@@ -133,9 +133,12 @@ export class UpsertLunchSettingsDto {
 
   /**
    * Regel 2: at most this many different room groups and buildings in a day,
-   * for a class and for a teacher apart. SOFT or HARD needs at least one of
-   * the four limits (the service judges the row as it would be, and answers
-   * PLACEMENT_PLACES_NEEDS_A_LIMIT).
+   * for a class and for a teacher apart. SOFT needs at least one of the four
+   * limits (the service judges the row as it would be, and answers
+   * PLACEMENT_PLACES_NEEDS_A_LIMIT). HARD is refused with
+   * PLACEMENT_PLACES_HARD_NOT_OFFERED, on rule 1's terms above: it cost 2.8 to
+   * 3.6 times the first timetable (9 with one worker) and the objective phase
+   * with it is not measured.
    */
   @ValidateIf((_, value) => value !== undefined)
   @IsIn(PLACEMENT_RULE_MODES, { message: PLACEMENT_MODE_MESSAGE })

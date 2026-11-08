@@ -954,13 +954,16 @@ describe('AI engine wire contract', () => {
         expect(JSON.stringify(payload)).not.toMatch(/"s1"/);
       });
 
-      it('sends a HARD rule without a weight, whatever the school’s figure is', async () => {
+      it('never sends a HARD rule 1: a row that still holds one (the CHECK keeps it out) goes as the SOFT it is held at, with the row’s weight', async () => {
+        // LunchSettings_placementEdgeMode_off_or_soft_check and the API's refusal keep a hard rule 1 out of the
+        // table; this is the last line, so the engine never builds the cost that is the reason it is not offered.
         const payload = await buildPayload({}, [], [], configure({ placementEdgeMode: 'HARD', placementEdgeWeight: 900 }, {
           marked: [{ id: 's1', notFirstInDay: true, notLastInDay: true }],
         }));
         const edges = rulesOf(payload)['subjectEdges']!;
-        expect(edges['mode']).toBe('HARD');
-        expect(edges).not.toHaveProperty('weight');
+        expect(edges['mode']).toBe('SOFT');
+        expect(edges['weight']).toBe(900);
+        expect(JSON.stringify(payload)).not.toContain('"HARD"');
         expect((edges['subjects'] as Array<Record<string, unknown>>)[0]).toMatchObject({ notFirst: true, notLast: true });
       });
 
@@ -981,9 +984,9 @@ describe('AI engine wire contract', () => {
       });
 
       it('sends no key for a rule that is on while no subject is marked, and does not leave a subject unmarked on both ends in', async () => {
-        const unmarked = await buildPayload({}, [], [], configure({ placementEdgeMode: 'HARD' }, { marked: [] }));
+        const unmarked = await buildPayload({}, [], [], configure({ placementEdgeMode: 'SOFT' }, { marked: [] }));
         expect(Object.keys(unmarked).sort()).toEqual(PAYLOAD_FIELDS);
-        const neither = await buildPayload({}, [], [], configure({ placementEdgeMode: 'HARD' }, {
+        const neither = await buildPayload({}, [], [], configure({ placementEdgeMode: 'SOFT' }, {
           marked: [{ id: 's1', notFirstInDay: false, notLastInDay: false }],
         }));
         expect(Object.keys(neither).sort()).toEqual(PAYLOAD_FIELDS);
@@ -1032,18 +1035,20 @@ describe('AI engine wire contract', () => {
         for (const key of Object.keys(places)) expect(PLACE_LIMITS_FIELDS).toContain(key);
       });
 
-      it('sends all four limits to a HARD rule, and no weight', async () => {
+      it('sends all four limits to a SOFT rule, with its weight', async () => {
         const payload = await buildPayload({}, [], [], configure({
-          placementPlacesMode: 'HARD',
+          placementPlacesMode: 'SOFT',
+          placementPlacesWeight: 80,
           maxClassRoomsPerDay: 1,
           maxTeacherRoomsPerDay: 4,
           maxClassBuildingsPerDay: 1,
           maxTeacherBuildingsPerDay: 2,
         }));
         const places = rulesOf(payload)['places']!;
-        expect(Object.keys(places).sort()).toEqual(PLACE_LIMITS_FIELDS.filter((key) => key !== 'weight'));
+        expect(Object.keys(places).sort()).toEqual([...PLACE_LIMITS_FIELDS].sort());
         expect(places).toMatchObject({
-          mode: 'HARD',
+          mode: 'SOFT',
+          weight: 80,
           maxClassRooms: 1,
           maxTeacherRooms: 4,
           maxClassBuildings: 1,
@@ -1051,9 +1056,19 @@ describe('AI engine wire contract', () => {
         });
       });
 
+      it('never sends a HARD rule 2: a row that still holds one goes as the SOFT it is held at, with the row’s weight', async () => {
+        const payload = await buildPayload({}, [], [], configure({
+          placementPlacesMode: 'HARD',
+          placementPlacesWeight: 70,
+          maxClassRoomsPerDay: 2,
+        }));
+        expect(rulesOf(payload)['places']).toEqual({ mode: 'SOFT', weight: 70, maxClassRooms: 2 });
+        expect(JSON.stringify(payload)).not.toContain('"HARD"');
+      });
+
       it('sends a room’s building as a token, one per name, only when a building limit is set, and never the name', async () => {
         const rooms = [room('rm1', { building: 'Hus B' }), room('rm2', { building: 'Hus B' }), room('rm3', { building: 'Hus C' }), room('rm4')];
-        const payload = await buildPayload({}, [], [], configure({ placementPlacesMode: 'HARD', maxClassBuildingsPerDay: 1 }, { rooms }));
+        const payload = await buildPayload({}, [], [], configure({ placementPlacesMode: 'SOFT', maxClassBuildingsPerDay: 1 }, { rooms }));
         const sent = sentRooms(payload);
 
         expect(Object.keys(sent[0]!).sort()).toEqual(ROOM_FIELDS_WITH_BUILDING);
@@ -1083,7 +1098,7 @@ describe('AI engine wire contract', () => {
       });
 
       it('sends no rule that is on without a limit to hold (a row the database would not write)', async () => {
-        const payload = await buildPayload({}, [], [], configure({ placementPlacesMode: 'HARD' }));
+        const payload = await buildPayload({}, [], [], configure({ placementPlacesMode: 'SOFT' }));
         expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
       });
     });
@@ -1168,7 +1183,7 @@ describe('AI engine wire contract', () => {
 
     it('sends all three rules together under the key the engine declares', async () => {
       const payload = await buildPayload({}, [], [], configure(
-        { placementEdgeMode: 'HARD', placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 1, placementSharedMode: 'SOFT' },
+        { placementEdgeMode: 'SOFT', placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 1, placementSharedMode: 'SOFT' },
         { rooms: [room('rm1', { canBeShared: true })], marked: marks },
       ));
       expect(Object.keys(rulesOf(payload)).sort()).toEqual(PLACEMENT_RULE_FIELDS);

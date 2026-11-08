@@ -24,7 +24,17 @@
 -- Each rule has a MODE: OFF, SOFT or HARD. SOFT pays a weight for every
 -- breach, on the scale of the other wishes, and refuses no week; HARD forbids
 -- the breach, and a week that cannot keep it is refused by name before the
--- school waits for a timetable that cannot exist. THE DEFAULT IS OFF, for
+-- school waits for a timetable that cannot exist. ONLY RULE 3 IS OFFERED
+-- HARD. Rules 1 and 2 are OFF or SOFT until a hard one has been measured on a
+-- large school: a hard rule 1 cost 4.5 times the first timetable with eight
+-- workers (23 with one) and a hard rule 2 2.8 to 3.6 times (9 with one), the
+-- track of the hard sammanhängande undervisning that was dropped for its cost
+-- (#231), against a production limit of 60 s for Generera, and nothing
+-- measures the objective phase with a hard rule 1 or 2. A soft rule 2 held
+-- every limit in the measurement (0 days over), so the hard one buys a
+-- guarantee and a refusal by name, not a better timetable. The engine still
+-- builds all six; what is not offered is refused at the database (below), at
+-- the API and on the card. THE DEFAULT IS OFF, for
 -- every school and for the rows already there: a rule that moves lessons is
 -- the school's to ask for, as every effort switch before it (travel time,
 -- the pupils' idle time, teaching in a row), and a rule switched on by a
@@ -79,11 +89,25 @@
 --     single room group or building in a day, never a change; 0 would be a
 --     day in no room at all, which no school means. Null is no limit on that
 --     count, and the school may limit a class's rooms and nothing else.
---   * A rule 2 that is SOFT or HARD needs at least one limit
---     (LunchSettings_placementPlaces_needs_a_limit_check): a mode with no
---     number is a rule nothing can read, and the engine refuses a block that
---     limits nothing. The API says so in a sentence first (400,
+--   * A rule 2 that is SOFT needs at least one limit
+--     (LunchSettings_placementPlaces_needs_a_limit_check, written for "not
+--     OFF" so that it holds whatever mode is offered): a mode with no number
+--     is a rule nothing can read, and the engine refuses a block that limits
+--     nothing. The API says so in a sentence first (400,
 --     PLACEMENT_PLACES_NEEDS_A_LIMIT); the CHECK is for every other way in.
+--   * Rules 1 and 2 are OFF or SOFT, never HARD
+--     (LunchSettings_placementEdgeMode_off_or_soft_check and
+--     LunchSettings_placementPlacesMode_off_or_soft_check). The API refuses a
+--     request that names HARD for them (400, PLACEMENT_EDGE_HARD_NOT_OFFERED
+--     and PLACEMENT_PLACES_HARD_NOT_OFFERED), but the Skolregler row is also
+--     written by a school's administrator straight against PostgREST, and a
+--     stored HARD would go to the engine with the cost that is the reason it is
+--     not offered, and lock the card (every save would send it back and be
+--     refused). The database is where "not offered" holds for every way in. The
+--     enum keeps HARD: rule 3 is offered hard (a fire limit on a hall's
+--     capacity, which a soft rule would let be exceeded), and the type is the
+--     rules'. Offering a hard rule 1 or 2 later is dropping its CHECK, a
+--     migration of its own.
 --   * Rule 1 with no subject marked, and rule 3 with no room marked, are
 --     allowed and do nothing. That is the order a school works in: it turns
 --     the rule on, then marks. Refusing the mode until a mark exists would
@@ -219,7 +243,11 @@ ALTER TABLE "LunchSettings"
     ADD CONSTRAINT "LunchSettings_placementPlaces_needs_a_limit_check"
         CHECK ("placementPlacesMode" = 'OFF'
                OR num_nonnulls("maxClassRoomsPerDay", "maxTeacherRoomsPerDay",
-                               "maxClassBuildingsPerDay", "maxTeacherBuildingsPerDay") > 0);
+                               "maxClassBuildingsPerDay", "maxTeacherBuildingsPerDay") > 0),
+    ADD CONSTRAINT "LunchSettings_placementEdgeMode_off_or_soft_check"
+        CHECK ("placementEdgeMode" IN ('OFF', 'SOFT')),
+    ADD CONSTRAINT "LunchSettings_placementPlacesMode_off_or_soft_check"
+        CHECK ("placementPlacesMode" IN ('OFF', 'SOFT'));
 
 ALTER TABLE "Subjects"
     ADD COLUMN "notFirstInDay" BOOLEAN NOT NULL DEFAULT false,
@@ -229,15 +257,15 @@ ALTER TABLE "Rooms"
     ADD COLUMN "canBeShared" BOOLEAN NOT NULL DEFAULT false;
 
 COMMENT ON TYPE "PlacementRuleMode" IS
-  'Placeringsregler: how a rule is held. OFF sends the engine nothing (the week is generated as before), SOFT pays a weight for every breach and refuses nothing, HARD forbids the breach and a week that cannot keep it is refused by name.';
+  'Placeringsregler: how a rule is held. OFF sends the engine nothing (the week is generated as before), SOFT pays a weight for every breach and refuses nothing, HARD forbids the breach and a week that cannot keep it is refused by name. Only rule 3 (placementSharedMode) is offered HARD; rules 1 and 2 are OFF or SOFT, by CHECK, until a hard one has been measured.';
 COMMENT ON COLUMN "LunchSettings"."placementEdgeMode" IS
-  'Placeringsregel 1: a subject marked notFirstInDay / notLastInDay is kept off the first / last lesson of a class''s day. OFF until the school turns it on. Written by PLANERING.';
+  'Placeringsregel 1: a subject marked notFirstInDay / notLastInDay is kept off the first / last lesson of a class''s day. OFF or SOFT, never HARD (LunchSettings_placementEdgeMode_off_or_soft_check): a hard one has not been measured. OFF until the school turns it on. Written by PLANERING.';
 COMMENT ON COLUMN "LunchSettings"."placementEdgeWeight" IS
-  'SOFT only: what a lesson at an end it should not be at costs, 1..1000 on the scale of the other wishes (a free day 40, teaching in a row 250). Kept while the mode is OFF or HARD.';
+  'SOFT only: what a lesson at an end it should not be at costs, 1..1000 on the scale of the other wishes (a free day 40, teaching in a row 250). Kept while the mode is OFF.';
 COMMENT ON COLUMN "LunchSettings"."placementPlacesMode" IS
-  'Placeringsregel 2: a class and a teacher (apart) are in at most N different room groups and M different buildings in a day. SOFT or HARD only while at least one of the four limits is set. OFF until the school turns it on.';
+  'Placeringsregel 2: a class and a teacher (apart) are in at most N different room groups and M different buildings in a day. SOFT only while at least one of the four limits is set; never HARD (LunchSettings_placementPlacesMode_off_or_soft_check): a hard one has not been measured. OFF until the school turns it on.';
 COMMENT ON COLUMN "LunchSettings"."placementPlacesWeight" IS
-  'SOFT only: the cost of a place over a limit, 1..1000. Kept while the mode is OFF or HARD.';
+  'SOFT only: the cost of a place over a limit, 1..1000. Kept while the mode is OFF.';
 COMMENT ON COLUMN "LunchSettings"."maxClassRoomsPerDay" IS
   'Most different room groups a class is in during a day; 1..20, null = no limit; 1 is a single one. A room GROUP is the engine''s interchangeability class, not the concrete room: two equal classrooms are one place in the model.';
 COMMENT ON COLUMN "LunchSettings"."maxTeacherRoomsPerDay" IS
@@ -247,7 +275,7 @@ COMMENT ON COLUMN "LunchSettings"."maxClassBuildingsPerDay" IS
 COMMENT ON COLUMN "LunchSettings"."maxTeacherBuildingsPerDay" IS
   'Most different buildings a teacher is in during a day; 1..20, null = no limit; 1 is a single one.';
 COMMENT ON COLUMN "LunchSettings"."placementSharedMode" IS
-  'Placeringsregel 3: the pupils of the lessons in a room marked canBeShared, at one time, fit its capacity together. OFF until the school turns it on.';
+  'Placeringsregel 3: the pupils of the lessons in a room marked canBeShared, at one time, fit its capacity together. OFF, SOFT or HARD. OFF until the school turns it on.';
 COMMENT ON COLUMN "LunchSettings"."placementSharedWeight" IS
   'SOFT only: the cost per pupil over the capacity at the room''s worst moment of the week, 1..1000. Kept while the mode is OFF or HARD.';
 COMMENT ON COLUMN "Subjects"."notFirstInDay" IS

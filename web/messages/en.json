@@ -3032,7 +3032,7 @@
     "modeHint": {
       "OFF": "The rule is not used.",
       "SOFT": "A wish with a weight, which Generate weighs against the other wishes. Generate tries to keep the rule but never refuses because it did not manage.",
-      "HARD": "A requirement. If it cannot hold together with the rest of the rules, the timetable cannot be laid: Generate then refuses and prints the reason."
+      "HARD": "A requirement, which only Shared rooms can be for now. If it cannot hold together with the rest of the rules, the timetable cannot be laid: Generate then refuses and prints the reason."
     },
     "weight": "Weight",
     "weightHint": "1–1000. For comparison, a wished-for free day weighs 40 and teaching in a row weighs 250.",
@@ -3046,7 +3046,8 @@
     },
     "places": {
       "title": "Rooms and buildings per day",
-      "hint": "At most this many different buildings and rooms a day, for a class and for a teacher separately. 1 means a single one all day. Building is the room's own Building field under Rooms; rooms without a building count as the same building. Equal rooms of the same type, size and year levels count as one room. The rule counts how many different ones are visited, not in what order: a day that goes A–B–A counts as two buildings. A class is counted on its own group's lessons."
+      "hint": "At most this many different buildings and rooms a day, for a class and for a teacher separately. 1 means a single one all day. Building is the room's own Building field under Rooms; rooms without a building count as the same building. Equal rooms of the same type, size and year levels count as one room. The rule counts how many different ones are visited, not in what order: a day that goes A–B–A counts as two buildings. A class is counted on its own group's lessons.",
+      "hardHint": "Hard is not offered for this rule yet: a hard rule can make Generate take much longer, and it has not been measured on a large school. Soft kept the limits in the measurement. Choose Off or Soft."
     },
     "limit": {
       "classRoom": "The class's different rooms per day",
@@ -3060,7 +3061,8 @@
     "limitsMissing": "Set at least one limit, or the rule has nothing to hold. Choose Off if you do not want it.",
     "errors": {
       "PLACEMENT_EDGE_HARD_NOT_OFFERED": "The rule Not first or last in the day cannot be hard yet. Choose Off or Soft.",
-      "PLACEMENT_PLACES_NEEDS_A_LIMIT": "The rule Rooms and buildings per day needs at least one limit when it is Soft or Hard. Set a limit or choose Off."
+      "PLACEMENT_PLACES_NEEDS_A_LIMIT": "The rule Rooms and buildings per day needs at least one limit when it is Soft. Set a limit or choose Off.",
+      "PLACEMENT_PLACES_HARD_NOT_OFFERED": "The rule Rooms and buildings per day cannot be hard yet. Choose Off or Soft."
     },
     "shared": {
       "title": "Shared rooms",

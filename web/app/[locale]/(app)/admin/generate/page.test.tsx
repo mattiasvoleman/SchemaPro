@@ -753,7 +753,7 @@ describe("the school's rules the generator keeps", () => {
 
     it("lists the limits Salar och byggnader per dag holds to, a 1 among them and an empty one left out", () => {
       state.lunch = school({
-        placementPlacesMode: "HARD",
+        placementPlacesMode: "SOFT",
         maxClassRoomsPerDay: 2,
         maxTeacherRoomsPerDay: null,
         maxClassBuildingsPerDay: null,
@@ -762,7 +762,7 @@ describe("the school's rules the generator keeps", () => {
       render(<GeneratePage />);
 
       expect(
-        screen.getByText(line("places", "HARD", `250|${limit("classRoom", 2)}, ${limit("teacherBuilding", 1)}`)),
+        screen.getByText(line("places", "SOFT", `250|${limit("classRoom", 2)}, ${limit("teacherBuilding", 1)}`)),
       ).toBeInTheDocument();
     });
   });

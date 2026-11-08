@@ -30,13 +30,16 @@ vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
   useLocale: () => "sv",
   // A key with its values, so a count or a weight can be told from its key.
-  // `has` is true for the two codes the card renders from its catalogue
+  // `has` is true for the codes the card renders from its catalogue
   // (placementRules.errors), which then echo as their own key.
   useTranslations: () =>
     Object.assign(
       (key: string, values?: Record<string, unknown>) =>
         values ? `${key}(${Object.values(values).join("|")})` : key,
-      { has: (key: string) => ["PLACEMENT_EDGE_HARD_NOT_OFFERED", "PLACEMENT_PLACES_NEEDS_A_LIMIT"].includes(key) },
+      {
+        has: (key: string) =>
+          ["PLACEMENT_EDGE_HARD_NOT_OFFERED", "PLACEMENT_PLACES_HARD_NOT_OFFERED", "PLACEMENT_PLACES_NEEDS_A_LIMIT"].includes(key),
+      },
     ),
 }));
 
@@ -633,9 +636,9 @@ describe("LunchSettingsCard: Placeringsregler", () => {
     stored({
       placementEdgeMode: "SOFT",
       placementEdgeWeight: 400,
-      placementPlacesMode: "HARD",
+      placementPlacesMode: "SOFT",
       placementPlacesWeight: 300,
-      placementSharedMode: "SOFT",
+      placementSharedMode: "HARD",
       placementSharedWeight: 90,
       maxClassRoomsPerDay: 1,
       maxTeacherRoomsPerDay: 3,
@@ -648,15 +651,16 @@ describe("LunchSettingsCard: Placeringsregler", () => {
     expect(within(edge).getByRole("radio", { name: "mode.SOFT" })).toBeChecked();
     expect(within(edge).getByLabelText("weight")).toHaveValue(400);
     const places = await rule("places.title");
-    expect(within(places).getByRole("radio", { name: "mode.HARD" })).toBeChecked();
-    // Hård has no weight, though one is stored.
-    expect(within(places).queryByLabelText("weight")).toBeNull();
+    expect(within(places).getByRole("radio", { name: "mode.SOFT" })).toBeChecked();
+    expect(within(places).getByLabelText("weight")).toHaveValue(300);
     expect(within(places).getByLabelText("limit.classRoom")).toHaveValue(1);
     expect(within(places).getByLabelText("limit.teacherRoom")).toHaveValue(3);
     expect(within(places).getByLabelText("limit.classBuilding")).toHaveValue(null);
     expect(within(places).getByLabelText("limit.teacherBuilding")).toHaveValue(1);
     const shared = await rule("shared.title");
-    expect(within(shared).getByLabelText("weight")).toHaveValue(90);
+    expect(within(shared).getByRole("radio", { name: "mode.HARD" })).toBeChecked();
+    // Hård has no weight, though one is stored.
+    expect(within(shared).queryByLabelText("weight")).toBeNull();
     // Read, not changed: nothing to save.
     expect(saveButton()).toBeDisabled();
   });
@@ -681,42 +685,53 @@ describe("LunchSettingsCard: Placeringsregler", () => {
     expect(within(shared).queryByLabelText("weight")).toBeNull();
   });
 
-  it("offers rule 1 as Av and Mjuk only, and the other two rules as all three", async () => {
-    // A hard rule 1 cost 4.5 times the first timetable (BESLUT in the PR); the API refuses it too.
+  it("offers rules 1 and 2 as Av and Mjuk only, and rule 3 as all three", async () => {
+    // A hard rule 1 cost 4.5 times the first timetable and a hard rule 2 2.8 to 3.6 times (BESLUT 3 and 4 in the PR);
+    // the API and the database refuse them too.
     stored();
     render(<LunchSettingsCard />);
 
-    const edge = await rule("edge.title");
-    expect(within(edge).getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual(["OFF", "SOFT"]);
-    expect(within(edge).queryByRole("radio", { name: "mode.HARD" })).toBeNull();
-    expect(within(edge).getByText("edge.hardHint")).toBeInTheDocument();
-    expect(within(edge).getAllByRole("radio")[0]?.getAttribute("aria-describedby")).toBe(
+    for (const [title, hint] of [
+      ["edge.title", "edge.hardHint"],
+      ["places.title", "places.hardHint"],
+    ] as const) {
+      const group = await rule(title);
+      expect(within(group).getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual(["OFF", "SOFT"]);
+      expect(within(group).queryByRole("radio", { name: "mode.HARD" })).toBeNull();
+      expect(within(group).getByText(hint)).toBeInTheDocument();
+    }
+    expect((await rule("edge.title")).querySelector("input")?.getAttribute("aria-describedby")).toBe(
       "placement-edge-hint placement-edge-hard-hint",
     );
-    for (const title of ["places.title", "shared.title"] as const) {
-      const group = await rule(title);
-      expect(within(group).getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual(["OFF", "SOFT", "HARD"]);
-    }
+    expect((await rule("places.title")).querySelector("input")?.getAttribute("aria-describedby")).toBe(
+      "placement-places-hint placement-places-hard-hint",
+    );
+    const shared = await rule("shared.title");
+    expect(within(shared).getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual(["OFF", "SOFT", "HARD"]);
+    expect(within(shared).queryByText(/hardHint/)).toBeNull();
   });
 
-  it("says the gateway's refusal of a hard rule 1 in the reader's language, and any other refusal as the gateway wrote it", async () => {
+  it.each([
+    ["PLACEMENT_EDGE_HARD_NOT_OFFERED", "placementEdgeMode: ... OFF eller SOFT."],
+    ["PLACEMENT_PLACES_HARD_NOT_OFFERED", "placementPlacesMode: ... OFF eller SOFT."],
+  ])("says the gateway's refusal of a hard rule (%s) in the reader's language, and any other refusal as the gateway wrote it", async (code, sentence) => {
     // Not reachable from the card, which does not offer it: a tab, a script or
     // a row written before the refusal.
     stored();
     const user = userEvent.setup();
-    save.mockRejectedValueOnce(new ApiError(400, "placementEdgeMode: ... OFF eller SOFT.", "PLACEMENT_EDGE_HARD_NOT_OFFERED"));
+    save.mockRejectedValueOnce(new ApiError(400, sentence, code));
     save.mockRejectedValueOnce(new ApiError(400, "Något annat som gateway skrev", "SOMETHING_ELSE"));
     render(<LunchSettingsCard />);
 
     await waitFor(() => expect(field("seats").value).toBe("180"));
     fireEvent.change(field("seats"), { target: { value: "200" } });
     await user.click(saveButton());
-    expect(await screen.findByRole("alert")).toHaveTextContent("PLACEMENT_EDGE_HARD_NOT_OFFERED");
+    expect(await screen.findByRole("alert")).toHaveTextContent(code);
     expect(screen.getByRole("alert")).not.toHaveTextContent("OFF eller SOFT");
 
     await user.click(saveButton());
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Något annat som gateway skrev"));
-    expect(screen.getByRole("alert")).not.toHaveTextContent("PLACEMENT_EDGE_HARD_NOT_OFFERED");
+    expect(screen.getByRole("alert")).not.toHaveTextContent(code);
   });
 
   it("sends all ten keys with the numbers as numbers and empty limits as null", async () => {
@@ -728,7 +743,7 @@ describe("LunchSettingsCard: Placeringsregler", () => {
     await pick(user, edge, "SOFT");
     type(edge, "weight", "400");
     const places = await rule("places.title");
-    await pick(user, places, "HARD");
+    await pick(user, places, "SOFT");
     type(places, "limit.classRoom", "2");
     type(places, "limit.teacherBuilding", "1");
     await pick(user, await rule("shared.title"), "HARD");
@@ -738,7 +753,7 @@ describe("LunchSettingsCard: Placeringsregler", () => {
     expect(save.mock.calls[0]?.[0]).toMatchObject({
       placementEdgeMode: "SOFT",
       placementEdgeWeight: 400,
-      placementPlacesMode: "HARD",
+      placementPlacesMode: "SOFT",
       placementPlacesWeight: 250,
       placementSharedMode: "HARD",
       placementSharedWeight: 250,
@@ -800,6 +815,33 @@ describe("LunchSettingsCard: Placeringsregler", () => {
     expect(save.mock.calls[0]?.[0]).toMatchObject({ placementSharedMode: "HARD", placementSharedWeight: 250 });
   });
 
+  it.each([["edge.title"], ["places.title"]] as const)(
+    "does not let a weight typed wrong on %s and then hidden by Av block Spara: the rule that is off has no weight, and 250 goes",
+    async (title) => {
+      // Rules 1 and 2 are Av or Mjuk, so the weight is hidden by Av here (by Hård on rule 3, above); a limit stands
+      // so that rule 2 has what it needs while Mjuk.
+      stored({ maxClassRoomsPerDay: 2 });
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      const group = await rule(title);
+      await pick(user, group, "SOFT");
+      type(group, "weight", "5000");
+      expect(saveButton()).toBeDisabled();
+      await pick(user, group, "OFF");
+      expect(within(group).queryByLabelText("weight")).toBeNull();
+      expect(saveButton()).toBeEnabled();
+      fireEvent.change(field("seats"), { target: { value: "200" } });
+      await user.click(saveButton());
+
+      expect(save.mock.calls[0]?.[0]).toMatchObject(
+        title === "edge.title"
+          ? { placementEdgeMode: "OFF", placementEdgeWeight: 250 }
+          : { placementPlacesMode: "OFF", placementPlacesWeight: 250 },
+      );
+    },
+  );
+
   describe("weights", () => {
     it.each([["0"], ["1001"], ["2.5"], ["-3"], [""], ["1e2"]])(
       "refuse %j on the field while the rule is Mjuk, and keep Spara closed",
@@ -833,15 +875,15 @@ describe("LunchSettingsCard: Placeringsregler", () => {
   });
 
   describe("Salar och byggnader per dag", () => {
-    it.each([["SOFT"], ["HARD"]] as const)(
-      "is not saved as %s without at least one limit, and says so at the fields",
-      async (mode) => {
+    it(
+      "is not saved as Mjuk without at least one limit, and says so at the fields",
+      async () => {
         stored();
         const user = userEvent.setup();
         render(<LunchSettingsCard />);
 
         const group = await rule("places.title");
-        await pick(user, group, mode);
+        await pick(user, group, "SOFT");
 
         expect(within(group).getByText("limitsMissing")).toBeInTheDocument();
         for (const label of ["limit.classRoom", "limit.teacherRoom", "limit.classBuilding", "limit.teacherBuilding"]) {
@@ -865,7 +907,7 @@ describe("LunchSettingsCard: Placeringsregler", () => {
       render(<LunchSettingsCard />);
 
       const group = await rule("places.title");
-      await pick(user, group, "HARD");
+      await pick(user, group, "SOFT");
       expect(within(group).getByText("limitsMissing")).toBeInTheDocument();
       type(group, "limit.classBuilding", "1");
       expect(within(group).queryByText("limitsMissing")).toBeNull();
@@ -907,7 +949,7 @@ describe("LunchSettingsCard: Placeringsregler", () => {
       render(<LunchSettingsCard />);
 
       const group = await rule("places.title");
-      await pick(user, group, "HARD");
+      await pick(user, group, "SOFT");
       type(group, "limit.classRoom", "1");
       type(group, "limit.teacherRoom", "20");
       await user.click(saveButton());
@@ -928,7 +970,7 @@ describe("LunchSettingsCard: Placeringsregler", () => {
       expect(within(group).getByText("places.hint")).toBeInTheDocument();
       expect(within(group).getByText("limitsHint")).toBeInTheDocument();
       expect(within(group).getByRole("radio", { name: "mode.OFF" }).getAttribute("aria-describedby")).toBe(
-        "placement-places-hint",
+        "placement-places-hint placement-places-hard-hint",
       );
     });
   });
@@ -1006,7 +1048,7 @@ describe("LunchSettingsCard: Placeringsregler", () => {
   it("keeps the other keys in a save that only touches one rule", async () => {
     stored({
       generatorKeepsTravelTime: true,
-      placementEdgeMode: "HARD",
+      placementEdgeMode: "SOFT",
       placementPlacesMode: "SOFT",
       placementPlacesWeight: 120,
       maxClassRoomsPerDay: 2,
@@ -1019,7 +1061,7 @@ describe("LunchSettingsCard: Placeringsregler", () => {
 
     expect(save.mock.calls[0]?.[0]).toMatchObject({
       generatorKeepsTravelTime: true,
-      placementEdgeMode: "HARD",
+      placementEdgeMode: "SOFT",
       placementPlacesMode: "SOFT",
       placementPlacesWeight: 120,
       maxClassRoomsPerDay: 2,
@@ -1032,7 +1074,7 @@ describe("LunchSettingsCard: Placeringsregler", () => {
     const user = userEvent.setup();
     render(<LunchSettingsCard />);
 
-    await pick(user, await rule("places.title"), "HARD");
+    await pick(user, await rule("places.title"), "SOFT");
     await user.click(saveButton());
 
     expect(save).not.toHaveBeenCalled();

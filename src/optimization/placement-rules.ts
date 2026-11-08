@@ -1,4 +1,5 @@
 import type { PlacementRuleMode } from '@prisma/client';
+import { offeredMode, type PlacementRule } from '../common/placement-modes';
 import type {
   AnonymousPlacementRules,
   AnonymousSubjectEdge,
@@ -62,8 +63,14 @@ export const PLACEMENT_SETTINGS_SELECT = {
   placementSharedWeight: true,
 } as const;
 
-const modeOf = (mode: PlacementRuleMode | null | undefined): PlacementMode | null =>
-  mode === 'SOFT' || mode === 'HARD' ? mode : null;
+const modeOf = (rule: PlacementRule, mode: PlacementRuleMode | null | undefined): PlacementMode | null => {
+  // A HARD that rule 1 or 2 is not offered at (the CHECK keeps one out of the
+  // table) goes to the engine as the SOFT it is held at everywhere else, never
+  // as the hard rule that is the reason it is not offered. The weight is the
+  // row's, which a SOFT carries.
+  const held = offeredMode(rule, mode);
+  return held === 'SOFT' || held === 'HARD' ? held : null;
+};
 
 /** SOFT carries the school's weight; HARD has none to carry. */
 const weightOf = (mode: PlacementMode, weight: number | null | undefined): { weight?: number } =>
@@ -71,8 +78,9 @@ const weightOf = (mode: PlacementMode, weight: number | null | undefined): { wei
 
 /**
  * Which rules are on. Rule 2 is on only with a limit to hold: the database
- * says a SOFT or HARD rule has one (LunchSettings_placementPlaces_needs_a_limit_check),
+ * says a rule that is on has one (LunchSettings_placementPlaces_needs_a_limit_check),
  * so a row without is one nothing wrote, and the engine would refuse it.
+ * Rules 1 and 2 are never HARD here (src/common/placement-modes.ts).
  */
 export function placementModesOf(settings: PlacementSettings | null | undefined): {
   edge: PlacementMode | null;
@@ -86,9 +94,9 @@ export function placementModesOf(settings: PlacementSettings | null | undefined)
     settings?.maxTeacherBuildingsPerDay,
   ].some((limit) => limit !== null && limit !== undefined);
   return {
-    edge: modeOf(settings?.placementEdgeMode),
-    places: limited ? modeOf(settings?.placementPlacesMode) : null,
-    shared: modeOf(settings?.placementSharedMode),
+    edge: modeOf('edge', settings?.placementEdgeMode),
+    places: limited ? modeOf('places', settings?.placementPlacesMode) : null,
+    shared: modeOf('shared', settings?.placementSharedMode),
   };
 }
 

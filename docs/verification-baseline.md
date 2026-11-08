@@ -1571,8 +1571,8 @@ a test of their own, since the other cases require that something is priced.
 ### Placeringsregler: what three optional rules cost, and what they hold
 
 Three rules a school sets about where its lessons stand, each off until asked
-for and soft or hard as the school chooses, except rule 1, which is off or
-soft until it is measured hard (below) (`app/solver/placement.py`,
+for and soft or hard as the school chooses, except rules 1 and 2, which are
+off or soft until a hard one is measured (below) (`app/solver/placement.py`,
 `benchmarks/placement_rules.py`): subjects not first or last in the class's
 day, at most N different room groups and M different buildings a day, and the
 pupils together fitting a shared room. Measured on the högstadium school (450
@@ -1643,21 +1643,43 @@ and did not take them to zero.
   for Generera is 60 s at the floor. The API refuses `HARD` for rule 1 with a
   400 and the code `PLACEMENT_EDGE_HARD_NOT_OFFERED`, the Skolregler card
   offers Av and Mjuk, and the manual says so; the engine still builds it (a
-  request that carries `HARD` is solved as measured here) and the database's
-  CHECK still allows it, so offering it later is the card and the API only,
-  once it is measured on a quiet machine, with eight workers, in parallel
-  with main, through the objective phase as well. Rules 2 and 3 cost less
-  (2.8–3.6× and 1.9× with eight workers) and stay offered as hard.
-* *Different rooms and buildings (hard)* costs 2.8–3.6×. The model holds the
-  limit it states (0 party-days over, in every arm) and no more: counted as
-  changes between neighbouring lessons instead, 25 of the school's class-days
-  for room groups and 26–34 for buildings would be over, because A–B–A–B is
-  two places and three changes. That is why the rule says "different" and not
-  "changes". The exact count was priced (a literal per lesson, start step and
-  party) at several times the model and fell.
+  request that carries `HARD` is solved as measured here). The database
+  refuses it too (`LunchSettings_placementEdgeMode_off_or_soft_check`), so a
+  school's administrator cannot store it straight against PostgREST, and the
+  gateway reads a stored one as SOFT in any case. Offering it later is the
+  CHECK (a migration of its own), the card and the API, once it is measured
+  on a quiet machine, with eight workers, in parallel with main, through the
+  objective phase as well.
+* *Different rooms and buildings (hard)* costs 2.8–3.6× with eight workers
+  and 9× with one (6.59 deterministic seconds against 0.70), and the
+  rumsgräns arm grows the model by 50 % of its variables and 107 % of its
+  rows. The model holds the limit it states (0 party-days over, in every
+  arm) and no more: counted as changes between neighbouring lessons instead,
+  25 of the school's class-days for room groups and 26–34 for buildings
+  would be over, because A–B–A–B is two places and three changes. That is
+  why the rule says "different" and not "changes". The exact count was
+  priced (a literal per lesson, start step and party) at several times the
+  model and fell. **Hard is not offered for this rule either**, for four
+  reasons. (1) The ratio is at the lower edge of what dropped the hard
+  sammanhängande undervisning with eight workers (3.4–10.6×) and inside it
+  with one. (2) What dropped that rule was the full model, 0 of 423 solved;
+  here the hard arms are measured to the first timetable only, and only the
+  soft arms are measured through the objective phase. (3) At main's 8 s on a
+  quiet machine 2.8–3.6× is about 22–29 s for the first timetable, leaving
+  little of a 60 s limit (the floor in production) for the objective. (4) The
+  soft arms held every limit they were measured on (0 class-days and 0
+  teacher-days over in r1s and b1s), so a hard limit buys a guarantee and a
+  refusal by name and not a better timetable, which for rule 1 it did (the
+  soft arm left 3 opening and 2 closing lessons). The API refuses `HARD` for
+  rule 2 with a 400 and the code `PLACEMENT_PLACES_HARD_NOT_OFFERED`, the
+  database with `LunchSettings_placementPlacesMode_off_or_soft_check`, the
+  card offers Av and Mjuk, the manual says so, and the engine still builds
+  it.
 * *Shared rooms (hard)* is a relaxation of the exclusive room, 1.9× in the
   portfolio and cheaper on one worker; its cumulative has a variable
-  capacity in both modes so that an infeasible week can name the room.
+  capacity in both modes so that an infeasible week can name the room. It is
+  the one rule offered hard: the capacity is a physical limit (fire), which a
+  soft rule would let be exceeded.
 
 **Main's model is unchanged for a school that sets none.**
 `benchmarks/model_identity.py` compared main (`d497a93a`) and this branch on

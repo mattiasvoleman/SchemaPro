@@ -56,10 +56,20 @@ export const PLACEMENT_PLACES_NEEDS_A_LIMIT = 'PLACEMENT_PLACES_NEEDS_A_LIMIT';
  * workers (23 times with one) on the högstadium test school, the same track
  * as the hard sammanhängande undervisning that was dropped for its cost, and
  * the production time limit of Generera is 60 s at the floor. The engine
- * still builds it and the database's CHECK still allows it, so offering it is
- * this refusal, the card and the manual going together.
+ * still builds it; offering it is this refusal, the CHECK of the Skolregler
+ * (LunchSettings_placementEdgeMode_off_or_soft_check), the card and the manual
+ * going together (src/common/placement-modes.ts says which rules are offered).
  */
 export const PLACEMENT_EDGE_HARD_NOT_OFFERED = 'PLACEMENT_EDGE_HARD_NOT_OFFERED';
+
+/**
+ * The same for rule 2. A hard rule 2 cost 2.8 to 3.6 times the first
+ * timetable with eight workers and 9 times with one; only the first timetable
+ * is measured (the objective phase with it is not), a soft rule 2 kept every
+ * limit it was measured on, and 60 s is the production floor. The CHECK is
+ * LunchSettings_placementPlacesMode_off_or_soft_check.
+ */
+export const PLACEMENT_PLACES_HARD_NOT_OFFERED = 'PLACEMENT_PLACES_HARD_NOT_OFFERED';
 
 /** The CHECK that says the same in the database (a backstop for the way in that is not this service). */
 export const PLACEMENT_PLACES_NEEDS_A_LIMIT_CHECK = 'LunchSettings_placementPlaces_needs_a_limit_check';
@@ -101,9 +111,9 @@ export type StoredPlacesRule = { placementPlacesMode: PlacementRuleMode } & {
 };
 
 /**
- * Rule 2 that is SOFT or HARD needs at least one limit: a mode with no number
- * is a rule nothing can read, and the engine refuses a block that limits
- * nothing. Judged on the row AS IT WOULD BE: what the request names over what
+ * Rule 2 that is on (SOFT: HARD is not offered) needs at least one limit: a
+ * mode with no number is a rule nothing can read, and the engine refuses a
+ * block that limits nothing. Judged on the row AS IT WOULD BE: what the request names over what
  * is stored, so turning the rule on needs a limit set in the same request or
  * before it, and clearing the last limit of a rule that is on is refused.
  * Turning the rule OFF with every limit cleared is allowed.
@@ -136,10 +146,23 @@ export function edgeCannotBeHard(): BadRequestException {
   });
 }
 
+/**
+ * Rule 2 is OFF or SOFT until it has been measured hard; see
+ * {@link edgeCannotBeHard}, whose terms this has.
+ */
+export function placesCannotBeHard(): BadRequestException {
+  return new BadRequestException({
+    message:
+      'placementPlacesMode: regeln om olika salar och byggnader per dag kan inte vara hård ännu (HARD): ' +
+      'den är inte mätt på en stor skola och kan göra Generera mycket långsam. Använd OFF eller SOFT.',
+    code: PLACEMENT_PLACES_HARD_NOT_OFFERED,
+  });
+}
+
 export function placesNeedALimit(): BadRequestException {
   return new BadRequestException({
     message:
-      'placementPlacesMode: regeln om olika salar och byggnader per dag som mjuk eller hård behöver minst en gräns: ' +
+      'placementPlacesMode: regeln om olika salar och byggnader per dag som mjuk behöver minst en gräns: ' +
       'klassens eller lärarens olika salar eller byggnader per dag.',
     code: PLACEMENT_PLACES_NEEDS_A_LIMIT,
   });

@@ -47110,7 +47110,7 @@ BEGIN
     RAISE EXCEPTION 'placeringsregler: PlacementRuleMode has no comment';
   END IF;
 
-  -- The eight CHECKs, by name, validated, on the Skolregler: a name is what an error and a review point at.
+  -- The ten CHECKs, by name, validated, on the Skolregler: a name is what an error and a review point at.
   FOR col IN SELECT * FROM (VALUES
       ('LunchSettings_placementEdgeWeight_check'),
       ('LunchSettings_placementPlacesWeight_check'),
@@ -47119,7 +47119,9 @@ BEGIN
       ('LunchSettings_maxTeacherRoomsPerDay_check'),
       ('LunchSettings_maxClassBuildingsPerDay_check'),
       ('LunchSettings_maxTeacherBuildingsPerDay_check'),
-      ('LunchSettings_placementPlaces_needs_a_limit_check')
+      ('LunchSettings_placementPlaces_needs_a_limit_check'),
+      ('LunchSettings_placementEdgeMode_off_or_soft_check'),
+      ('LunchSettings_placementPlacesMode_off_or_soft_check')
     ) AS v(name) LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_constraint c
                     WHERE c.conname = col.name AND c.contype = 'c' AND c.convalidated
@@ -47127,6 +47129,22 @@ BEGIN
       RAISE EXCEPTION 'placeringsregler: the CHECK % is not on the Skolregler, or not validated', col.name;
     END IF;
   END LOOP;
+  -- Rules 1 and 2 are OFF or SOFT (a hard one is not offered until it is measured); rule 3 has no such CHECK and is
+  -- offered hard. The definitions say so: each names its own column and lets OFF and SOFT through, and nothing
+  -- else is written about the mode of rule 3.
+  FOREACH r IN ARRAY ARRAY['placementEdgeMode', 'placementPlacesMode'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+                    WHERE c.conname = format('LunchSettings_%s_off_or_soft_check', r) AND c.conrelid = '"LunchSettings"'::regclass
+                      AND pg_get_constraintdef(c.oid) LIKE '%' || r || '%'
+                      AND pg_get_constraintdef(c.oid) LIKE '%OFF%' AND pg_get_constraintdef(c.oid) LIKE '%SOFT%'
+                      AND pg_get_constraintdef(c.oid) NOT LIKE '%HARD%') THEN
+      RAISE EXCEPTION 'placeringsregler: the CHECK on % is not "OFF or SOFT"', r;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_constraint c
+              WHERE c.conrelid = '"LunchSettings"'::regclass AND c.contype = 'c' AND pg_get_constraintdef(c.oid) LIKE '%placementSharedMode%') THEN
+    RAISE EXCEPTION 'placeringsregler: a CHECK bounds the mode of rule 3, which is offered hard';
+  END IF;
   -- None on the other two tables: a mark is a boolean, and there is nothing to bound.
   IF (SELECT count(*) FROM pg_constraint c
        WHERE c.conrelid IN ('"Subjects"'::regclass, '"Rooms"'::regclass)
@@ -47225,19 +47243,19 @@ BEGIN
     FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
       EXECUTE format('SET LOCAL ROLE %I', via);
       UPDATE "LunchSettings" SET
-        "placementEdgeMode" = 'HARD', "placementEdgeWeight" = 400,
+        "placementEdgeMode" = 'SOFT', "placementEdgeWeight" = 400,
         "placementPlacesMode" = 'SOFT', "placementPlacesWeight" = 300,
         "maxClassRoomsPerDay" = 2, "maxTeacherRoomsPerDay" = 5,
         "maxClassBuildingsPerDay" = 1, "maxTeacherBuildingsPerDay" = 3,
-        "placementSharedMode" = 'SOFT', "placementSharedWeight" = 100
+        "placementSharedMode" = 'HARD', "placementSharedWeight" = 100
        WHERE "schoolId" = school;
       GET DIAGNOSTICS n = ROW_COUNT;
       IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 416: … % could not write the rules, as %', who, via; END IF;
       SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
-      IF v."placementEdgeMode" <> 'HARD' OR v."placementEdgeWeight" <> 400 OR v."placementPlacesMode" <> 'SOFT'
+      IF v."placementEdgeMode" <> 'SOFT' OR v."placementEdgeWeight" <> 400 OR v."placementPlacesMode" <> 'SOFT'
          OR v."placementPlacesWeight" <> 300 OR v."maxClassRoomsPerDay" <> 2 OR v."maxTeacherRoomsPerDay" <> 5
          OR v."maxClassBuildingsPerDay" <> 1 OR v."maxTeacherBuildingsPerDay" <> 3
-         OR v."placementSharedMode" <> 'SOFT' OR v."placementSharedWeight" <> 100 THEN
+         OR v."placementSharedMode" <> 'HARD' OR v."placementSharedWeight" <> 100 THEN
         RAISE EXCEPTION 'placeringsregler 416: … % read the rules back as %, as %', who, row_to_json(v), via;
       END IF;
       -- The gateway's own write: INSERT … ON CONFLICT ("schoolId") DO UPDATE, naming only what the body carried.
@@ -47255,9 +47273,9 @@ BEGIN
   -- The state the readers below find: every rule on, the limits set.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
   UPDATE "LunchSettings" SET
-    "placementEdgeMode" = 'HARD', "placementEdgeWeight" = 400, "placementPlacesMode" = 'SOFT', "placementPlacesWeight" = 300,
+    "placementEdgeMode" = 'SOFT', "placementEdgeWeight" = 400, "placementPlacesMode" = 'SOFT', "placementPlacesWeight" = 300,
     "maxClassRoomsPerDay" = 2, "maxTeacherRoomsPerDay" = 5, "maxClassBuildingsPerDay" = 1,
-    "maxTeacherBuildingsPerDay" = 3, "placementSharedMode" = 'SOFT', "placementSharedWeight" = 100
+    "maxTeacherBuildingsPerDay" = 3, "placementSharedMode" = 'HARD', "placementSharedWeight" = 100
    WHERE "schoolId" = school;
 
   -- The expedition and the läsare read the rules and are refused a change by the arm's WITH CHECK.
@@ -47266,8 +47284,8 @@ BEGIN
     FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
       EXECUTE format('SET LOCAL ROLE %I', via);
       SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
-      IF v."placementEdgeMode" IS DISTINCT FROM 'HARD' OR v."maxTeacherBuildingsPerDay" IS DISTINCT FROM 3
-         OR v."placementSharedMode" IS DISTINCT FROM 'SOFT' THEN
+      IF v."placementEdgeMode" IS DISTINCT FROM 'SOFT' OR v."maxTeacherBuildingsPerDay" IS DISTINCT FROM 3
+         OR v."placementSharedMode" IS DISTINCT FROM 'HARD' THEN
         RAISE EXCEPTION 'placeringsregler 416: … % does not read the rules, as %: %', who, via, row_to_json(v);
       END IF;
       BEGIN
@@ -47356,12 +47374,12 @@ BEGIN
     EXECUTE format('SET LOCAL ROLE %I', via);
     SELECT count(*) INTO n FROM "LunchSettings" WHERE "schoolId" = other;
     IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 416: the full administrator reads the other school''s rules, as %', via; END IF;
-    UPDATE "LunchSettings" SET "placementEdgeMode" = 'HARD', "placementPlacesMode" = 'OFF' WHERE "schoolId" = other;
+    UPDATE "LunchSettings" SET "placementEdgeMode" = 'SOFT', "placementPlacesMode" = 'OFF' WHERE "schoolId" = other;
     GET DIAGNOSTICS n = ROW_COUNT;
     IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 416: the full administrator changed the other school''s rules, as %', via; END IF;
     BEGIN
       INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementEdgeMode")
-      VALUES (other, '11:00', '13:00', 30, now(), 'HARD')
+      VALUES (other, '11:00', '13:00', 30, now(), 'SOFT')
       ON CONFLICT ("schoolId") DO UPDATE SET "placementEdgeMode" = EXCLUDED."placementEdgeMode";
       RAISE EXCEPTION 'placeringsregler 416: the full administrator wrote the other school''s rules by upsert, as %', via;
     EXCEPTION WHEN insufficient_privilege THEN NULL;
@@ -47387,17 +47405,18 @@ BEGIN
                               AND "maxClassRoomsPerDay" IS NULL)) THEN
     RAISE EXCEPTION 'placeringsregler 416: the other school''s own row does not read the defaults';
   END IF;
-  UPDATE "LunchSettings" SET "placementEdgeMode" = 'HARD' WHERE "schoolId" = school;
+  UPDATE "LunchSettings" SET "placementEdgeMode" = 'SOFT' WHERE "schoolId" = school;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 416: the other school''s teacher reached the matrix school''s rules'; END IF;
 END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 417: gränserna vid dörren. A weight is 1..1000, a limit 0..20 or
--- null, a rule 2 that is SOFT or HARD has a limit, a mode is one of the three,
--- and a row written without naming the columns reads the defaults. Each
--- refusal by its own SQLSTATE and, for a CHECK, its own name.
+-- Section 417: gränserna vid dörren. A weight is 1..1000, a limit 1..20 or
+-- null, a rule 2 that is SOFT has a limit, a mode is one of the three, rules 1
+-- and 2 are never HARD (only rule 3 is offered hard), and a row written without
+-- naming the columns reads the defaults. Each refusal by its own SQLSTATE and,
+-- for a CHECK, its own name.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -47428,6 +47447,8 @@ DECLARE
   school uuid := current_setting('app.test_rls417_school')::uuid;
   col text;
   val text;
+  via text;
+  msg text;
   n bigint;
   v record;
 BEGIN
@@ -47467,11 +47488,9 @@ BEGIN
     RAISE EXCEPTION 'placeringsregler 417: the Skolregler are not at their start for the cases below';
   END IF;
 
-  -- A rule 2 that is on has a limit. No limit at all is refused for SOFT and for HARD, by name.
-  FOREACH val IN ARRAY ARRAY['SOFT', 'HARD'] LOOP
-    PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET "placementPlacesMode" = %L WHERE "schoolId" = %L', val, school),
-                               '23514', 'rule 2 ' || val || ' with no limit', 'LunchSettings_placementPlaces_needs_a_limit_check');
-  END LOOP;
+  -- A rule 2 that is on has a limit. No limit at all is refused for SOFT, by name (HARD is refused whatever the limits are, below).
+  PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''SOFT'' WHERE "schoolId" = %L', school),
+                             '23514', 'rule 2 SOFT with no limit', 'LunchSettings_placementPlaces_needs_a_limit_check');
   -- One limit is enough, whichever it is, and it can be 1 (a single place a day); set in the same statement as the mode.
   FOREACH col IN ARRAY ARRAY['maxClassRoomsPerDay', 'maxTeacherRoomsPerDay', 'maxClassBuildingsPerDay', 'maxTeacherBuildingsPerDay'] LOOP
     EXECUTE format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''SOFT'', %I = 1 WHERE "schoolId" = %L', col, school);
@@ -47480,7 +47499,8 @@ BEGIN
     -- … and taking the last one away while it is on is refused; turning it off first is not.
     PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET %I = NULL WHERE "schoolId" = %L', col, school),
                                '23514', 'clearing the only limit of ' || col, 'LunchSettings_placementPlaces_needs_a_limit_check');
-    EXECUTE format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''HARD'' WHERE "schoolId" = %L', school);
+    EXECUTE format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''OFF'' WHERE "schoolId" = %L', school);
+    EXECUTE format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''SOFT'' WHERE "schoolId" = %L', school);
     EXECUTE format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''OFF'', %I = NULL WHERE "schoolId" = %L', col, school);
     GET DIAGNOSTICS n = ROW_COUNT;
     IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: rule 2 could not be turned off with its last limit cleared (%)', col; END IF;
@@ -47495,9 +47515,46 @@ BEGIN
   SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
   IF v."maxTeacherRoomsPerDay" IS DISTINCT FROM 6 THEN RAISE EXCEPTION 'placeringsregler 417: turning the rule off moved a limit'; END IF;
   -- Rule 1 and rule 3 have no such need: on with nothing marked is allowed and does nothing.
-  UPDATE "LunchSettings" SET "placementEdgeMode" = 'HARD', "placementSharedMode" = 'SOFT' WHERE "schoolId" = school;
+  UPDATE "LunchSettings" SET "placementEdgeMode" = 'SOFT', "placementSharedMode" = 'HARD' WHERE "schoolId" = school;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: rule 1 or rule 3 on with nothing marked was refused'; END IF;
+
+  -- Rules 1 and 2 are OFF or SOFT, never HARD: only rule 3 is offered hard (a hard rule 1 cost 4.5 times the first
+  -- timetable and a hard rule 2 2.8 to 3.6 times; the API refuses a request that names it, and this is every other
+  -- way in). The Skolregler row is also written by an administrator straight against PostgREST (`authenticated`),
+  -- and a stored HARD would go to the engine with that cost and lock the card, so the database refuses it, as the
+  -- API's role and as PostgREST's, by UPDATE: 23514 by the rule's own CHECK, whether or not a limit stands. The
+  -- statements are inline (no pg_temp function) because the role is switched under them.
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    FOREACH col IN ARRAY ARRAY['placementEdgeMode', 'placementPlacesMode'] LOOP
+      FOREACH val IN ARRAY ARRAY['UPDATE "LunchSettings" SET %I = ''HARD'' WHERE "schoolId" = %L',
+                                 'UPDATE "LunchSettings" SET %I = ''HARD'', "maxClassRoomsPerDay" = 2 WHERE "schoolId" = %L'] LOOP
+        BEGIN
+          EXECUTE format(val, col, school);
+          RAISE EXCEPTION 'placeringsregler 417: % = HARD was written by UPDATE, as %', col, via USING ERRCODE = 'P0001';
+        EXCEPTION WHEN check_violation THEN
+          GET STACKED DIAGNOSTICS msg = CONSTRAINT_NAME;
+          IF msg IS DISTINCT FROM format('LunchSettings_%s_off_or_soft_check', col) THEN
+            RAISE EXCEPTION 'placeringsregler 417: % = HARD was refused by "%", not by its own CHECK, as %', col, msg, via;
+          END IF;
+        END;
+      END LOOP;
+      -- OFF and SOFT go through, and the refusals changed nothing.
+      FOREACH val IN ARRAY ARRAY['OFF', 'SOFT'] LOOP
+        EXECUTE format('UPDATE "LunchSettings" SET %I = %L, "maxClassRoomsPerDay" = 2 WHERE "schoolId" = %L', col, val, school);
+        GET DIAGNOSTICS n = ROW_COUNT;
+        IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: % = % could not be written, as %', col, val, via; END IF;
+      END LOOP;
+    END LOOP;
+    -- Rule 3 is offered hard, and is not refused by either CHECK.
+    UPDATE "LunchSettings" SET "placementSharedMode" = 'HARD' WHERE "schoolId" = school;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: rule 3 HARD could not be written, as %', via; END IF;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  UPDATE "LunchSettings" SET "placementEdgeMode" = 'OFF', "placementPlacesMode" = 'OFF', "maxClassRoomsPerDay" = NULL,
+                             "placementSharedMode" = 'OFF' WHERE "schoolId" = school;
 
   -- A mode is one of the three, spelled as they are, and never null.
   FOREACH col IN ARRAY ARRAY['placementEdgeMode', 'placementPlacesMode', 'placementSharedMode'] LOOP
@@ -47523,16 +47580,38 @@ BEGIN
   END IF;
   -- And INSERTed with the values a school would choose, the same CHECKs hold at the door.
   DELETE FROM "LunchSettings" WHERE "schoolId" = school;
+  -- … and by INSERT: a HARD for rule 1 or rule 2 is refused by its own CHECK, with or without a limit, as the API's
+  -- role and as PostgREST's (the INSERT is the gateway's create half, and PostgREST's POST).
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    FOREACH col IN ARRAY ARRAY['placementEdgeMode', 'placementPlacesMode'] LOOP
+      FOREACH val IN ARRAY ARRAY['', ', "maxClassRoomsPerDay"'] LOOP
+        BEGIN
+          EXECUTE format($q$INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", %I%s)
+                            VALUES (%L, '11:00', '13:00', 30, now(), 'HARD'%s)$q$,
+                         col, val, school, CASE WHEN val = '' THEN '' ELSE ', 2' END);
+          RAISE EXCEPTION 'placeringsregler 417: an INSERT of % = HARD was accepted, as %', col, via USING ERRCODE = 'P0001';
+        EXCEPTION WHEN check_violation THEN
+          GET STACKED DIAGNOSTICS msg = CONSTRAINT_NAME;
+          IF msg IS DISTINCT FROM format('LunchSettings_%s_off_or_soft_check', col) THEN
+            RAISE EXCEPTION 'placeringsregler 417: an INSERT of % = HARD was refused by "%", not by its own CHECK, as %', col, msg, via;
+          END IF;
+        END;
+      END LOOP;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
   PERFORM pg_temp.g3_refuses(format($q$INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementPlacesMode")
-                                       VALUES (%L, '11:00', '13:00', 30, now(), 'HARD')$q$, school),
-                             '23514', 'an INSERT of rule 2 HARD without a limit', 'LunchSettings_placementPlaces_needs_a_limit_check');
+                                       VALUES (%L, '11:00', '13:00', 30, now(), 'SOFT')$q$, school),
+                             '23514', 'an INSERT of rule 2 SOFT without a limit', 'LunchSettings_placementPlaces_needs_a_limit_check');
   PERFORM pg_temp.g3_refuses(format($q$INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementSharedWeight")
                                        VALUES (%L, '11:00', '13:00', 30, now(), 1001)$q$, school),
                              '23514', 'an INSERT of a weight of 1001', 'LunchSettings_placementSharedWeight_check');
-  INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementPlacesMode", "maxTeacherBuildingsPerDay")
-  VALUES (school, '11:00', '13:00', 30, now(), 'HARD', 1);
-  IF NOT EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school AND "placementPlacesMode" = 'HARD' AND "maxTeacherBuildingsPerDay" = 1) THEN
-    RAISE EXCEPTION 'placeringsregler 417: an INSERT of rule 2 HARD with a limit of one did not read back';
+  INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementPlacesMode", "maxTeacherBuildingsPerDay", "placementSharedMode")
+  VALUES (school, '11:00', '13:00', 30, now(), 'SOFT', 1, 'HARD');
+  IF NOT EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school AND "placementPlacesMode" = 'SOFT' AND "maxTeacherBuildingsPerDay" = 1
+                    AND "placementSharedMode" = 'HARD') THEN
+    RAISE EXCEPTION 'placeringsregler 417: an INSERT of rule 2 SOFT with a limit of one, and of rule 3 HARD, did not read back';
   END IF;
 END $$;
 ROLLBACK;
@@ -47829,7 +47908,7 @@ BEGIN
   -- The Skolregler: a school that has set the rules, and the old API's upsert (the columns it knows, and the
   -- switches of the three releases before this one). The update half leaves the new columns.
   UPDATE "LunchSettings" SET
-    "placementEdgeMode" = 'SOFT', "placementEdgeWeight" = 111, "placementPlacesMode" = 'HARD', "placementPlacesWeight" = 222,
+    "placementEdgeMode" = 'SOFT', "placementEdgeWeight" = 111, "placementPlacesMode" = 'SOFT', "placementPlacesWeight" = 222,
     "maxClassRoomsPerDay" = 1, "maxTeacherRoomsPerDay" = 4, "maxClassBuildingsPerDay" = 2,
     "maxTeacherBuildingsPerDay" = 2, "placementSharedMode" = 'HARD', "placementSharedWeight" = 333
    WHERE "schoolId" = school;
@@ -47843,7 +47922,7 @@ BEGIN
     "generatorKeepsPupilGapsDown" = EXCLUDED."generatorKeepsPupilGapsDown",
     "generatorKeepsConsecutiveTeaching" = EXCLUDED."generatorKeepsConsecutiveTeaching", "updatedAt" = EXCLUDED."updatedAt";
   SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
-  IF v."lunchMinutes" <> 40 OR v."placementEdgeMode" <> 'SOFT' OR v."placementEdgeWeight" <> 111 OR v."placementPlacesMode" <> 'HARD'
+  IF v."lunchMinutes" <> 40 OR v."placementEdgeMode" <> 'SOFT' OR v."placementEdgeWeight" <> 111 OR v."placementPlacesMode" <> 'SOFT'
      OR v."placementPlacesWeight" <> 222 OR v."maxClassRoomsPerDay" <> 1 OR v."maxTeacherRoomsPerDay" <> 4
      OR v."maxClassBuildingsPerDay" <> 2 OR v."maxTeacherBuildingsPerDay" <> 2
      OR v."placementSharedMode" <> 'HARD' OR v."placementSharedWeight" <> 333 THEN
@@ -47851,7 +47930,7 @@ BEGIN
   END IF;
   -- … and its plain UPDATE of the old columns, which the form's other saves use.
   UPDATE "LunchSettings" SET "lunchMinutes" = 30, "updatedAt" = now() WHERE "schoolId" = school;
-  IF NOT EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school AND "lunchMinutes" = 30 AND "placementPlacesMode" = 'HARD' AND "maxTeacherRoomsPerDay" = 4) THEN
+  IF NOT EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school AND "lunchMinutes" = 30 AND "placementPlacesMode" = 'SOFT' AND "maxTeacherRoomsPerDay" = 4) THEN
     RAISE EXCEPTION 'placeringsregler 419: the old API''s UPDATE of the Skolregler moved a placement column';
   END IF;
   -- A row the old API writes fresh reads off.

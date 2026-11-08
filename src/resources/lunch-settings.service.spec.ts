@@ -402,13 +402,13 @@ describe('LunchSettingsService', () => {
 
     it('answers with the ten columns under exactly their names, from the stored row', async () => {
       tx.lunchSetting.findUnique.mockResolvedValue(
-        storedRow({ placementEdgeMode: 'HARD', placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 2, placementSharedWeight: 60 }),
+        storedRow({ placementEdgeMode: 'SOFT', placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 2, placementSharedMode: 'HARD', placementSharedWeight: 60 }),
       );
 
       const answer = await service.get(testUser());
 
       expect(answer).toMatchObject({
-        placementEdgeMode: 'HARD',
+        placementEdgeMode: 'SOFT',
         placementEdgeWeight: 250,
         placementPlacesMode: 'SOFT',
         placementPlacesWeight: 250,
@@ -416,7 +416,7 @@ describe('LunchSettingsService', () => {
         maxTeacherRoomsPerDay: null,
         maxClassBuildingsPerDay: null,
         maxTeacherBuildingsPerDay: null,
-        placementSharedMode: 'OFF',
+        placementSharedMode: 'HARD',
         placementSharedWeight: 60,
       });
     });
@@ -467,10 +467,10 @@ describe('LunchSettingsService', () => {
       ...overrides,
     });
 
-    it.each(['SOFT', 'HARD'] as const)('refuses turning rule 2 %s on with no limit anywhere: a 400 with a code, and nothing written', async (mode) => {
+    it('refuses turning rule 2 SOFT on with no limit anywhere: a 400 with a code, and nothing written', async () => {
       tx.lunchSetting.findUnique.mockResolvedValue(rule2({}));
 
-      const error = await refusal(service.upsert(dto({ placementPlacesMode: mode }), testUser()));
+      const error = await refusal(service.upsert(dto({ placementPlacesMode: 'SOFT' }), testUser()));
 
       expect(error).toBeInstanceOf(BadRequestException);
       expect(error!.getResponse()).toMatchObject({ code: 'PLACEMENT_PLACES_NEEDS_A_LIMIT', message: expect.stringContaining('placementPlacesMode') });
@@ -482,7 +482,7 @@ describe('LunchSettingsService', () => {
       tx.lunchSetting.upsert.mockResolvedValue(storedRow());
       const user = testUser();
 
-      await service.upsert(dto({ placementPlacesMode: 'HARD' }), user);
+      await service.upsert(dto({ placementPlacesMode: 'SOFT' }), user);
 
       expect(prisma.withRls).toHaveBeenCalledTimes(1);
       expect(tx.lunchSetting.findUnique).toHaveBeenCalledWith({
@@ -495,7 +495,7 @@ describe('LunchSettingsService', () => {
           maxTeacherBuildingsPerDay: true,
         },
       });
-      expect(sentOf().update).toMatchObject({ placementPlacesMode: 'HARD' });
+      expect(sentOf().update).toMatchObject({ placementPlacesMode: 'SOFT' });
     });
 
     it('turns rule 2 on with a limit set in the same request, on a school with no row yet', async () => {
@@ -508,7 +508,7 @@ describe('LunchSettingsService', () => {
     });
 
     it('refuses clearing the last limit of a rule that is on, and admits turning it off in the same request', async () => {
-      tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'HARD', maxClassRoomsPerDay: 2 }));
+      tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 2 }));
       tx.lunchSetting.upsert.mockResolvedValue(storedRow());
 
       expect(await refusal(service.upsert(dto({ maxClassRoomsPerDay: null }), testUser()))).toBeInstanceOf(BadRequestException);
@@ -535,15 +535,39 @@ describe('LunchSettingsService', () => {
       expect(tx.lunchSetting.upsert).not.toHaveBeenCalled();
     });
 
-    it('takes rule 1 as OFF and SOFT, and rules 2 and 3 as HARD: the refusal is rule 1\'s alone', async () => {
+    it('does not take rule 2 as HARD either, on the same terms: its own code, before anything is read or written, with or without a limit', async () => {
+      for (const body of [dto({ placementPlacesMode: 'HARD' }), dto({ placementPlacesMode: 'HARD', maxClassRoomsPerDay: 2 })]) {
+        const error = await refusal(service.upsert(body, testUser()));
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect(error!.getResponse()).toMatchObject({ code: 'PLACEMENT_PLACES_HARD_NOT_OFFERED', message: expect.stringContaining('placementPlacesMode') });
+      }
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.lunchSetting.findUnique).not.toHaveBeenCalled();
+      expect(tx.lunchSetting.upsert).not.toHaveBeenCalled();
+    });
+
+    it('takes rules 1 and 2 as OFF and SOFT and rule 3 as HARD: rule 3 is the one that is offered hard', async () => {
       tx.lunchSetting.upsert.mockResolvedValue(storedRow());
 
-      for (const placementEdgeMode of ['OFF', 'SOFT'] as const) {
-        await service.upsert(dto({ placementEdgeMode }), testUser());
+      for (const mode of ['OFF', 'SOFT'] as const) {
+        await service.upsert(dto({ placementEdgeMode: mode }), testUser());
+        await service.upsert(dto({ placementPlacesMode: mode, maxClassRoomsPerDay: 2 }), testUser());
       }
-      await service.upsert(dto({ placementPlacesMode: 'HARD', maxClassRoomsPerDay: 2, placementSharedMode: 'HARD' }), testUser());
+      await service.upsert(dto({ placementSharedMode: 'HARD' }), testUser());
 
-      expect(tx.lunchSetting.upsert).toHaveBeenCalledTimes(3);
+      expect(tx.lunchSetting.upsert).toHaveBeenCalledTimes(5);
+      expect(sentOf().update).toMatchObject({ placementSharedMode: 'HARD' });
+    });
+
+    it('answers a stored HARD of rule 1 or rule 2 as the SOFT it is held at, and rule 3 as stored (the CHECK keeps the first two out; this is the last line)', async () => {
+      tx.lunchSetting.findUnique.mockResolvedValue(
+        storedRow({ placementEdgeMode: 'HARD', placementPlacesMode: 'HARD', maxClassRoomsPerDay: 2, placementSharedMode: 'HARD' }),
+      );
+
+      const answer = await service.get(testUser());
+
+      expect(answer).toMatchObject({ placementEdgeMode: 'SOFT', placementPlacesMode: 'SOFT', placementSharedMode: 'HARD' });
     });
 
     describe('the create half of the upsert, which Postgres judges before it finds the row', () => {
@@ -565,12 +589,12 @@ describe('LunchSettingsService', () => {
       });
 
       it('lets what the request names win over what is stored, a null clearing the limit', async () => {
-        tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'HARD', maxClassRoomsPerDay: 2, maxTeacherRoomsPerDay: 3 }));
+        tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 2, maxTeacherRoomsPerDay: 3 }));
         tx.lunchSetting.upsert.mockResolvedValue(storedRow());
 
         await service.upsert(dto({ maxClassRoomsPerDay: null, maxTeacherRoomsPerDay: 5 }), testUser());
 
-        expect(sentOf().create).toMatchObject({ placementPlacesMode: 'HARD', maxClassRoomsPerDay: null, maxTeacherRoomsPerDay: 5 });
+        expect(sentOf().create).toMatchObject({ placementPlacesMode: 'SOFT', maxClassRoomsPerDay: null, maxTeacherRoomsPerDay: 5 });
       });
 
       it('adds nothing of the stored row to a request that says nothing about rule 2, or to a school with no row', async () => {

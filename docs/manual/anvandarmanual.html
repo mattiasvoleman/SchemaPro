@@ -4281,18 +4281,18 @@
     bland skolreglerna. Varje regel är <span class="ui">Av</span> tills skolan
     slår på den, och en skola som låter alla tre vara av får precis samma
     schema som förut. Varje regel kan vara <span class="ui">Mjuk</span>, och
-    <em>Salar och byggnader per dag</em> och <em>Delade salar</em> kan också
-    vara <span class="ui">Hård</span>; <em>Inte först eller sist på dagen</em>
-    är bara <span class="ui">Av</span> eller <span class="ui">Mjuk</span>
-    (se nedan). En mjuk regel är ett önskemål med en vikt
-    (1–1000, förval 250) som genereringen väger mot allt annat: den försöker
-    hålla regeln men vägrar aldrig för att den inte gick, och sätter du vikten
-    lågt vinner de andra önskemålen. En hård regel är ett krav: går den inte att
-    hålla tillsammans med resten av reglerna går veckan inte att lägga, och
-    genereringen vägrar och skriver ut vilken regel det är. Räknar genereringen
-    ut i förväg att regeln inte kan hållas, till exempel att en klass har högst
-    två lektioner per dag men ett ämne ska ligga mitt emellan två andra,
-    vägrar den direkt och säger det.
+    <em>Delade salar</em> kan också vara <span class="ui">Hård</span>;
+    <em>Inte först eller sist på dagen</em> och <em>Salar och byggnader per
+    dag</em> är bara <span class="ui">Av</span> eller
+    <span class="ui">Mjuk</span> (se nedan). En mjuk regel är ett önskemål med
+    en vikt (1–1000, förval 250) som genereringen väger mot allt annat: den
+    försöker hålla regeln men vägrar aldrig för att den inte gick, och sätter du
+    vikten lågt vinner de andra önskemålen. En hård regel är ett krav: går den
+    inte att hålla tillsammans med resten av reglerna går veckan inte att
+    lägga, och genereringen vägrar och skriver ut vilken regel det är. Räknar
+    genereringen ut i förväg att regeln inte kan hållas, till exempel att en
+    låst lektion har fler elever än salen den är låst i rymmer, vägrar den
+    direkt och säger det.
   </p>
   <p>
     <em>Inte först eller sist på dagen.</em> Markera under
@@ -4317,7 +4317,7 @@
     <span class="ui">Mjuk</span> med en hög vikt om ämnet verkligen ska hållas;
     regeln är då ett önskemål som genereringen försöker hålla, och som den
     aldrig vägrar schemat för. Hård erbjuds först när den är mätt på en stor
-    skola.
+    skola. Samma sak gäller <em>Salar och byggnader per dag</em> nedan.
   </p>
   <p>
     <em>Salar och byggnader per dag.</em> Högst så många <em>olika</em>
@@ -4331,6 +4331,19 @@
     resten kör du <span class="ui">Salsoptimering</span> efteråt (5.4). Klassen
     räknas på den grupps egna lektioner, inte på undervisningsgrupperna eleverna
     också går i.
+  </p>
+  <p>
+    Den här regeln kan inte heller vara <span class="ui">Hård</span> ännu.
+    Mätningen på högstadiets testskola visade att en hård regel behöver 2,8 till
+    3,6 gånger så lång tid för det första schemat med åtta arbetare (9 gånger
+    med en), att tiden för att därefter förbättra schemat med en hård regel inte
+    är mätt, och att den mjuka regeln höll alla gränser i mätningen (0 dagar
+    över) inom den tidsgräns som genereringen har att hålla. En hård gräns
+    skulle alltså ge en garanti och ett vägrat schema med namn, men inget
+    bättre schema. Välj
+    <span class="ui">Mjuk</span> och en gräns; ange alltid minst en gräns, annars
+    har regeln inget att hålla. Hård erbjuds först när den är mätt på en stor
+    skola.
   </p>
   <p>
     Regeln räknar hur många olika platser en klass eller lärare är på under
