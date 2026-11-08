@@ -58,9 +58,22 @@ exists without breaking it, and then breaks the least it can. The weights are
 the ORDER the rules give way in: the mildest first (the days apart, then the
 per-day cap, then a room, then a teacher's minutes, and last a day a part-timer
 does not have). They are not lexicographic — one extra post day is worth about
-ten lessons in the wrong room — because a strict ladder would ask a school to
+thirty lessons in the wrong room — because a strict ladder would ask a school to
 accept thirty small breaches before one larger one, which is not the order
 anybody would choose by hand.
+
+THE ORDER HOLDS FOR EVERY LESSON LENGTH. The cap is priced per five minutes and
+the others per unit, so a cap breached by one whole lesson costs more the longer
+the lesson, and a weight that puts the cap after a room for an hour lesson puts
+it BEFORE the room for a 40-minute one (4 per five minutes: 32 against 40; found
+by the review of #285). The weights below are therefore worked from the two
+ends of the lesson lengths the product allows (15 to 240 minutes), and
+tests/test_best_effort.py walks every length and keeps them worked:
+
+- the cap must cost more than a room for the SHORTEST lesson: 15 minutes is
+  three slots, 3 x 14 = 42 > 40 (13 gives 39 and breaks it);
+- a post's extra day must cost more than the cap for a whole teaching day: seven
+  hours is 84 slots, 84 x 14 = 1 176 < 1 200.
 
 THE REPORT IS COUNTED IN PYTHON ON THE TIMETABLE THAT CAME BACK, not read off
 the slack variables: the numbers a school reads are then facts about the
@@ -140,17 +153,21 @@ RELAXABLE_RULES: tuple[RelaxableRule, ...] = (
         "TEACHER_DAILY_CAP",
         "DEVIATION_TEACHER_DAILY_CAP",
         "five minutes of teaching over the teacher's cap for a day",
-        4,
+        14,
         "The school's own cap on a teacher's day; a longer day for one "
-        "teacher, named and measured, which the school can accept or fix.",
+        "teacher, named and measured, which the school can accept or fix. "
+        "14 per five minutes is the least that keeps a room ahead of it for a "
+        "lesson of 15 minutes (3 x 14 = 42 > 40), and so for every longer one.",
     ),
     RelaxableRule(
         "TEACHER_WORK_DAYS",
         "DEVIATION_TEACHER_WORK_DAYS",
         "teaching day over what the teacher's post allows",
-        500,
+        1200,
         "The most harmful of the five: a part-time post's days are in a "
-        "contract. It gives way last, and every breach is named.",
+        "contract. It gives way last, and every breach is named. 1 200 keeps "
+        "it above the cap for a whole teaching day of up to seven hours "
+        "(84 slots x 14 = 1 176).",
     ),
 )
 

@@ -1583,7 +1583,12 @@ fuzzed copies of it (`fuzz --seed 1..3`) whose caps and posts are drawn tighter.
 answer carries `deviations` (omitted unless the request carried the mode). Five of the
 school's own shaping rules turn from rows into priced slack, mildest first: a subject's
 days apart (10 a pair), its cap per day (20 a lesson), a locked room (40 a lesson), a
-teacher's cap per day (4 per five minutes) and a post's teaching days (500 a day). The
+teacher's cap per day (14 per five minutes) and a post's teaching days (1,200 a day;
+the cap was 4 and the day 500 when the figures below were taken, and the review of #285
+found that a cap breached by one lesson of 40 or 45 minutes then cost less than a room, so the
+two were worked again from the shortest lesson the product allows, 15 minutes: 3 x 14 = 42
+is over 40, and a seven-hour day of 84 slots is 1,176, under 1,200; the order is pinned for
+every lesson length in `tests/test_best_effort.py`). The
 prices are multiplied (`dominating_scale`) above the whole soft objective, so a rule is
 broken only when no timetable keeps it. Everything else (a teacher, class, pupil or room
 booked twice, the frame times, the walk between sites, lunch and night's rest,

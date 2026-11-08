@@ -30,7 +30,12 @@ from pydantic import ValidationError
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError
 from app.messages import MESSAGES, arguments_of, render
-from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse, ScheduledLesson
+from app.schemas.schedule import (
+    AnonymousRequirement,
+    OptimizeScheduleRequest,
+    OptimizeScheduleResponse,
+    ScheduledLesson,
+)
 from app.solver import relaxation
 from app.solver.relaxation import (
     HARD_RULES,
@@ -205,6 +210,41 @@ class TestTheList:
         values = [per_lesson[name] for name in names]
         assert values == sorted(values)
         assert len(set(values)) == len(values)
+
+    @staticmethod
+    def _lesson_lengths_the_product_allows() -> range:
+        # Read off the schema, not typed here: lowering the shortest lesson
+        # breaks this test and asks for the weights to be worked again.
+        metadata = AnonymousRequirement.model_fields["minutes_per_lesson"].metadata
+        shortest = next(item.ge for item in metadata if hasattr(item, "ge"))
+        longest = next(item.le for item in metadata if hasattr(item, "le"))
+        return range(shortest, longest + 1, 5)
+
+    def test_a_room_is_ahead_of_a_cap_breached_by_one_lesson_of_any_length(self) -> None:
+        # MEDEL-1 of the review of #285: at 4 per five minutes a 40-minute
+        # lesson over the cap cost 32, less than a room (40), against the
+        # screen's and the manual's "mildest first". Every length the product
+        # allows, 15 to 240 minutes.
+        cap_per_slot = WEIGHT["TEACHER_DAILY_CAP"]
+        for minutes in self._lesson_lengths_the_product_allows():
+            assert cap_per_slot * (minutes // 5) > WEIGHT["ROOM_LOCK"], minutes
+            assert cap_per_slot * (minutes // 5) > WEIGHT["SUBJECT_PER_DAY"], minutes
+
+    def test_a_post_s_day_is_ahead_of_a_cap_breached_for_a_whole_teaching_day(self) -> None:
+        # The other end: raising the cap's price must not put it after the
+        # contract's day. Seven hours of teaching, 84 slots, over the cap.
+        assert WEIGHT["TEACHER_DAILY_CAP"] * (7 * 60 // 5) < WEIGHT["TEACHER_WORK_DAYS"]
+        # The longest lesson there is, over the cap by all of it, is cheaper too.
+        longest = self._lesson_lengths_the_product_allows()[-1]
+        assert WEIGHT["TEACHER_DAILY_CAP"] * (longest // 5) < WEIGHT["TEACHER_WORK_DAYS"]
+
+    def test_the_cap_is_priced_the_same_per_minute_on_every_grid(self) -> None:
+        # The builders count the cap in slots; the price per minute is the
+        # weight's whatever the grid (SLOT_MINUTES divides 60).
+        for slot_minutes in (5, 10, 15, 20, 30):
+            relax = relaxation.Relax(slot_minutes)
+            per_slot = relax._cap_slot_weight  # noqa: SLF001
+            assert per_slot == WEIGHT["TEACHER_DAILY_CAP"] * slot_minutes // 5
 
     def test_every_rule_has_a_sentence_and_the_sentence_renders(self) -> None:
         for rule in RELAXABLE_RULES:
@@ -534,6 +574,48 @@ class TestTheOrder:
         )
         response = _solve(payload, days="1,2")
         assert _codes(response) == ["DEVIATION_TEACHER_DAILY_CAP"]
+
+    @staticmethod
+    def _lock_against(minutes: int, **requirement: object) -> OptimizeScheduleResponse:
+        # One teacher, one subject locked to room A, Monday and Tuesday, and
+        # room A closed on Tuesday: the last lesson goes either beside the
+        # others on Monday (what the Monday rule gives way) or on Tuesday in
+        # room B (the lock gives way). A cap is given as True and is then
+        # one lesson short of the Monday: (n - 1) lessons, so Monday is over it
+        # by one whole lesson. A cap is 30 minutes at the least (the schema),
+        # so lessons shorter than that are three, not two.
+        lessons = 3 if minutes < 30 else 2
+        cap = (lessons - 1) * minutes if requirement.pop("cap", False) else None
+        payload = _payload(
+            requirements=[_requirement(lessonsPerWeek=lessons, minutesPerLesson=minutes, **requirement)],
+            roomPreferences=[{"id": str(uuid4()), "subjectId": SUBJECT, "roomIds": [ROOM_A], "kind": "LOCK"}],
+            constraints=[{
+                "id": str(uuid4()), "resourceKind": "ROOM", "resourceId": ROOM_A, "dayOfWeek": 2,
+                "startTime": "08:00:00", "endTime": "12:00:00", "kind": "UNAVAILABLE",
+            }],
+        )
+        if cap is not None:
+            payload["teacherWorkRules"] = [{"id": RULE, "teacherId": TEACHER, "maxTeachingMinutesPerDay": cap}]
+        payload["rooms"] = [{"id": ROOM_A, "capacity": 30}, {"id": ROOM_B, "capacity": 30}]
+        return _solve(payload, days="1,2")
+
+    @pytest.mark.parametrize("minutes", [15, 20, 25, 30, 40, 45, 50, 60, 80, 90])
+    def test_a_room_lock_goes_before_a_teacher_s_cap_whatever_the_lesson_length(self, minutes: int) -> None:
+        # The review's case (MEDEL-1): at 40 and 45 minutes the cap used to
+        # give way first, against "mildest first". Now a lesson goes to the
+        # other room at every length from the shortest the product allows.
+        response = self._lock_against(minutes, cap=True)
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        assert _codes(response) == ["DEVIATION_ROOM_LOCK"], minutes
+        assert {lesson.day_of_week for lesson in response.lessons} == {1, 2}
+
+    @pytest.mark.parametrize("minutes", [15, 30, 40, 60])
+    def test_a_per_day_cap_goes_before_a_room_lock(self, minutes: int) -> None:
+        # The pair on the other side of the lock: "one a day" gives way (20)
+        # before the lock does (40), so both lessons stay in room A.
+        response = self._lock_against(minutes, maxLessonsPerDay=1)
+        assert _codes(response) == ["DEVIATION_SUBJECT_PER_DAY"], minutes
+        assert {str(lesson.room_id) for lesson in response.lessons} == {ROOM_A}
 
     def test_the_least_amount_is_chosen_within_one_rule(self) -> None:
         # 90-minute lessons under a 120-minute cap, three of them, two days:
