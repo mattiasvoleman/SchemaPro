@@ -319,6 +319,7 @@ describe("AppShell navigation", () => {
       "nav.reports",
       "nav.absenceWatch",
       "nav.reportingRate",
+      "nav.analysis",
       "nav.acknowledgements",
       "nav.classBook",
     ]);
