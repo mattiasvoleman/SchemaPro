@@ -12,7 +12,8 @@ import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
-import { loanBookingRefusal } from './loan-holds';
+import { decisionNotice, initialStatus } from './booking-decision';
+import { loanBookingRefusal, toLoanRows } from './loan-holds';
 import type {
   CreateRoomBookingDto,
   DecideRoomBookingDto,
@@ -92,10 +93,7 @@ export class RoomBookingsService {
       }
 
       // Special rooms need admin approval; admins booking directly skip it.
-      const status: RoomBookingStatus =
-        room.requiresApproval && user.role !== Role.SCHOOL_ADMIN
-          ? 'PENDING'
-          : 'APPROVED';
+      const status: RoomBookingStatus = initialStatus(room.requiresApproval, user.role);
 
       const booking = await tx.roomBooking
         .create({
@@ -209,25 +207,20 @@ export class RoomBookingsService {
         );
       }
 
-      const when = booking.startsAt.toISOString();
+      const notice = decisionNotice({
+        status: dto.status,
+        targetName: booking.room.name,
+        targetKey: 'roomName',
+        title: booking.title,
+        startsAt: booking.startsAt,
+        note: dto.note,
+      });
       await this.notifications.notifyUsers(tx, {
         schoolId: booking.schoolId,
         userIds: [booking.bookedById],
         type: 'ROOM_BOOKING_DECIDED',
-        meta: {
-          status: dto.status,
-          roomName: booking.room.name,
-          title: booking.title,
-          startsAt: when,
-          note: dto.note ?? null,
-        },
-        email: {
-          subject: `Room booking ${dto.status === 'APPROVED' ? 'approved' : 'rejected'} / Lokalbokning ${dto.status === 'APPROVED' ? 'godkänd' : 'avslagen'}`,
-          body:
-            `Your booking of ${booking.room.name} (${booking.title}) at ${when} was ${dto.status.toLowerCase()}.` +
-            (dto.note ? `\nNote: ${dto.note}` : '') +
-            `\n\nDin bokning av ${booking.room.name} (${booking.title}) ${when} ${dto.status === 'APPROVED' ? 'godkändes' : 'avslogs'}.`,
-        },
+        meta: notice.meta,
+        email: notice.email,
       });
 
       this.logger.log(`Room booking decided [booking=${id}, status=${dto.status}]`);
@@ -257,16 +250,7 @@ export class RoomBookingsService {
     if (loans.length === 0) return;
     const school = await tx.school.findUnique({ where: { id: schoolId }, select: { timezone: true } });
     const refusal = loanBookingRefusal(
-      loans.map((loan) => ({
-        status: loan.status,
-        roomId: loan.roomId,
-        localRoomId: loan.localRoomId,
-        dayOfWeek: loan.dayOfWeek,
-        startTime: loan.startTime.toISOString().slice(11, 16),
-        endTime: loan.endTime.toISOString().slice(11, 16),
-        startDate: loan.startDate.toISOString().slice(0, 10),
-        endDate: loan.endDate.toISOString().slice(0, 10),
-      })),
+      toLoanRows(loans),
       roomId,
       startsAt,
       endsAt,

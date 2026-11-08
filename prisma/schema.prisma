@@ -123,6 +123,8 @@ enum NotificationType {
   ACK_REQUESTED
   /// One reminder to a guardian who has not confirmed in the time the school chose; says only that a request waits (20270117090000).
   ACK_REMINDER
+  /// To the expedition after a publication: how many days of an external booking now stand in a room that has a lesson. Only a number; the list is on the page (20270131090000).
+  EXTERNAL_BOOKING_CLASH
 }
 
 /// A decision on an absent rastvakt's pass (20261210090000).
@@ -294,6 +296,11 @@ model School {
   integrationApiKeys      IntegrationApiKey[]
   signInMethod            SchoolSignInMethod?
   roomBookings            RoomBooking[]
+  /// Lokal: resurser och externa (20270131091000).
+  resourceTypes           ResourceType[]
+  resources               Resource[]
+  resourceBookings        ResourceBooking[]
+  externalBookings        ExternalBooking[]
   roomPreferences         RoomPreference[]
   teacherWorkRules        TeacherWorkRule[]
   lunchSetting            LunchSetting?
@@ -459,6 +466,9 @@ model User {
   notifications       Notification[]    @relation("NotificationRecipient")
   roomBookings        RoomBooking[]     @relation("RoomBookingBooker")
   decidedRoomBookings RoomBooking[]     @relation("RoomBookingDecider")
+  /// Lokal (20270131091000): bookings of a resource this person made, and decided.
+  resourceBookings        ResourceBooking[] @relation("ResourceBookingBooker")
+  decidedResourceBookings ResourceBooking[] @relation("ResourceBookingDecider")
   /// Salslån (20261217090000): loans this planner asked for, and decided.
   requestedRoomLoans  RoomLoan[]        @relation("RoomLoanRequester")
   decidedRoomLoans    RoomLoan[]        @relation("RoomLoanDecider")
@@ -595,6 +605,8 @@ model Room {
   calendarLessons         CalendarLesson[]
   availabilityConstraints AvailabilityConstraint[]
   roomBookings            RoomBooking[]
+  /// Series of external bookings of this room (20270131091000); RESTRICT, so a room that is let out is not deleted under its tenant.
+  externalBookings        ExternalBooking[]
   preferenceRooms         RoomPreferenceRoom[]
   /// Salslån (20261217090000): this room lent to another school of the
   /// huvudman, and the loans this room stands for at the borrower.
@@ -2925,6 +2937,11 @@ model RoomBooking {
   decidedById  String?           @db.Uuid
   decidedAt    DateTime?         @db.Timestamptz(6)
   decisionNote String?
+  /// The series of external bookings this is one day of (Lokal, 20270131091000);
+  /// null for every booking a member of staff made for themselves. The row is
+  /// the room being held, as any booking is: the title says "Extern bokning"
+  /// and nothing of the hirer, whose name and contact stay in ExternalBookings.
+  externalBookingId String?       @db.Uuid
   createdAt    DateTime          @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime          @updatedAt @db.Timestamptz(6)
 
@@ -2932,6 +2949,7 @@ model RoomBooking {
   room      Room   @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   bookedBy  User   @relation("RoomBookingBooker", fields: [bookedById, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   decidedBy User?  @relation("RoomBookingDecider", fields: [decidedById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  externalBooking ExternalBooking? @relation(fields: [externalBookingId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   // Not visible here, and load-bearing: an EXCLUDE constraint on
   // (roomId, tstzrange(startsAt, endsAt)), limited to PENDING and APPROVED
@@ -2943,7 +2961,160 @@ model RoomBooking {
   @@index([schoolId, status, createdAt])
   /// Removing a person finds the bookings they decided (20261220090000).
   @@index([decidedById])
+  /// A series finds its days (20270131091000).
+  @@index([externalBookingId, schoolId])
   @@map("RoomBookings")
+}
+
+// -----------------------------------------------------------------------------
+// Lokal: resurser och externa (K3, 20270131091000). Bookable things that are not
+// rooms, and the association that hires the sports hall on a Tuesday evening.
+// -----------------------------------------------------------------------------
+
+/// The kinds of bookable resource a school has named for itself: Surfplattor,
+/// Minibuss, Aulan. Rows, as RoomTypes are, so a kind is picked and not spelled.
+model ResourceType {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String   @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school    School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  resources Resource[]
+
+  @@unique([schoolId, name])
+  /// The target of the key from Resources (20270131091000).
+  @@unique([id, schoolId])
+  @@map("ResourceTypes")
+}
+
+/// Something a school lends out that is not a room and is not scheduled:
+/// equipment (30 tablets), a vehicle (the minibus), a space with no teaching
+/// (the aula). `quantity` is how many there are; a booking holds some of them.
+/// The key to Sites, ON DELETE SET NULL ("siteId"), lives in the migration.
+model Resource {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String   @db.Uuid
+  resourceTypeId   String   @db.Uuid
+  name             String
+  /// How many there are, 1..1000 (CHECK).
+  quantity         Int      @default(1)
+  siteId           String?  @db.Uuid
+  /// Where it is kept, in words: "Skåp 3 i B-huset" (0..120 characters, CHECK).
+  place            String?
+  /// Bookings by staff start PENDING until Drift decides, as a room's do.
+  requiresApproval Boolean  @default(false)
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school           School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  resourceType     ResourceType      @relation(fields: [resourceTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
+  bookings         ResourceBooking[]
+  externalBookings ExternalBooking[]
+
+  @@unique([schoolId, name])
+  @@unique([id, schoolId])
+  @@index([resourceTypeId, schoolId])
+  @@index([siteId, schoolId])
+  @@map("Resources")
+}
+
+/// A booking of some of a resource (20270131091000): the status, the decision
+/// and the notice are a room booking's. Two active bookings of one resource
+/// may not hold more than its quantity at the same minute: a BEFORE trigger
+/// takes the resource's advisory lock and counts (ResourceBookings_quantity_is_kept).
+model ResourceBooking {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId          String            @db.Uuid
+  resourceId        String            @db.Uuid
+  bookedById        String            @db.Uuid
+  title             String
+  /// How many it holds, 1..1000 (CHECK), at most the resource's quantity (trigger).
+  quantity          Int               @default(1)
+  startsAt          DateTime          @db.Timestamptz(6)
+  endsAt            DateTime          @db.Timestamptz(6)
+  status            RoomBookingStatus @default(APPROVED)
+  decidedById       String?           @db.Uuid
+  decidedAt         DateTime?         @db.Timestamptz(6)
+  decisionNote      String?
+  /// The series of external bookings this is one day of, or null.
+  externalBookingId String?           @db.Uuid
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime          @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school          School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  resource        Resource         @relation(fields: [resourceId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  bookedBy        User             @relation("ResourceBookingBooker", fields: [bookedById, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  decidedBy       User?            @relation("ResourceBookingDecider", fields: [decidedById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  externalBooking ExternalBooking? @relation(fields: [externalBookingId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([resourceId, startsAt])
+  @@index([schoolId, startsAt])
+  @@index([bookedById, schoolId])
+  @@index([decidedById, schoolId])
+  @@index([externalBookingId, schoolId])
+  @@index([schoolId, status, createdAt])
+  @@map("ResourceBookings")
+}
+
+/// A series of bookings by someone who is not a user: an association that hires
+/// the sports hall every Tuesday 18-20 for a term (20270131091000). Registered
+/// by staff, who write down the organisation, a contact person, a telephone
+/// number and an address: personal data about somebody who has no login, so the
+/// series is gallrad (EXTERNAL_BOOKINGS) with its days, is in the register
+/// extract, and is read by an administrator through the gateway alone.
+///
+/// The days are rows of RoomBookings or ResourceBookings (externalBookingId),
+/// so one constraint decides whether the room is free and every reader of
+/// bookings sees the hire. A day the expedition chose not to book because
+/// something else held it is in `skippedDates`. The key to Users
+/// (registeredById, schoolId), ON DELETE SET NULL (registeredById), lives in
+/// the migration; so does the CHECK that exactly one of roomId and resourceId is set.
+model ExternalBooking {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String    @db.Uuid
+  roomId           String?   @db.Uuid
+  resourceId       String?   @db.Uuid
+  /// How many of a resource the hirer holds; null for a room.
+  resourceQuantity Int?
+  organisation     String
+  contactName      String
+  contactPhone     String?
+  contactEmail     String?
+  /// What it is for ("Innebandy, damer"), 0..120 characters.
+  purpose          String?
+  /// For the expedition only: key handed out, invoice reference. 0..500.
+  note             String?
+  /// ISO weekdays 1-7, each once.
+  weekdays         Int[]     @db.SmallInt
+  /// 1 is every week, 2 every other week from the week of startDate; 1..4.
+  intervalWeeks    Int       @default(1) @db.SmallInt
+  startDate        DateTime  @db.Date
+  endDate          DateTime  @db.Date
+  /// The school's local clock.
+  startTime        DateTime  @db.Time(0)
+  endTime          DateTime  @db.Time(0)
+  skippedDates     DateTime[] @default([]) @db.Date
+  cancelledAt      DateTime? @db.Timestamptz(6)
+  registeredById   String?   @db.Uuid
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  school           School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  room             Room?             @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
+  resource         Resource?         @relation(fields: [resourceId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
+  roomBookings     RoomBooking[]
+  resourceBookings ResourceBooking[]
+
+  @@unique([id, schoolId])
+  /// The list and gallring's predicate.
+  @@index([schoolId, endDate])
+  @@index([roomId, schoolId])
+  @@index([resourceId, schoolId])
+  /// A person removed finds the series they registered.
+  @@index([registeredById, schoolId])
+  @@map("ExternalBookings")
 }
 
 // -----------------------------------------------------------------------------
@@ -4990,6 +5161,8 @@ enum RetentionDataType {
   CRISIS_DRILLS
   /// Krisläge, the real alarms (skarpa larm): kept as the school decides (20270113090000).
   CRISIS_ALARMS
+  /// Lokal, external bookings: a series with its hirer's contact and its days (20270131090000).
+  EXTERNAL_BOOKINGS
 }
 
 /// PURGE_AFTER `months`; KEEP (bevaras); UNDECIDED (back to ej beslutat).

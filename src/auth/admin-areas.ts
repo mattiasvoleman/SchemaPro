@@ -165,6 +165,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   RoomPreferences: only('PLANERING'),
   RoomTypes: only('PLANERING'),
   Rooms: only('PLANERING'),
+  // Lokal (20270131091000): the kinds of resource and the resources are grunddata, as the rooms.
+  ResourceTypes: only('PLANERING'),
+  Resources: only('PLANERING'),
   SchoolBreaks: only('PLANERING'),
   // Skolenheter: the school's units and their codes, grunddata.
   SchoolUnits: only('PLANERING'),
@@ -292,6 +295,11 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   CrisisPupils: just('DRIFT', 'insert'),
   CrisisReports: just('DRIFT', 'insert'),
   RoomBookings: only('DRIFT'),
+  // Lokal (20270131091000): a booking of a resource is Drift's as a room's is. A series of external
+  // bookings is registered and cancelled by Drift, never deleted by an administrator (gallring
+  // removes it with its days).
+  ResourceBookings: only('DRIFT'),
+  ExternalBookings: just('DRIFT', 'insert', 'update'),
   SubstituteAvailabilities: only('DRIFT'),
   SubstitutePoolMembers: only('DRIFT'),
   // Rastvakt i vardagen (20261210090000): the board's decisions on an
