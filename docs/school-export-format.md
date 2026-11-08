@@ -111,7 +111,7 @@ Källa: LeaveRequests.
 | `fran` | Första dagen (ÅÅÅÅ-MM-DD). |
 | `till` | Sista dagen (ÅÅÅÅ-MM-DD). |
 | `skal` | Skälet som ansökan gavs. Tomt om det nämner en person med skyddad identitet, och i ett registerutdrag om ansökan inte gäller personen utdraget är om. |
-| `status` | PENDING (väntar), APPROVED (beviljad) eller REJECTED (avslagen). |
+| `status` | PENDING (väntar), APPROVED (beviljad), REJECTED (avslagen) eller GUARDIAN_DECLINED (en vårdnadshavare som skolan bad om samtycke sa nej, och ansökan avslutades; ingen beslutsfattare). |
 | `beslut_av_id` | Id på den som beslutade. Tomt om personen är borttagen eller har skyddad identitet. |
 | `beslut_av_epost` | E-postadress till den som beslutade. |
 | `beslut_tid` | När beslutet fattades (UTC). |
@@ -120,6 +120,11 @@ Källa: LeaveRequests.
 | `hanvisad_av_id` | Id på mentorn som lämnade vidare till rektor. Tomt om ingen, eller skyddad identitet. |
 | `hanvisad_tid` | När ansökan lämnades vidare (UTC). |
 | `skapad` | När ansökan gjordes (UTC). |
+| `samtycke_kravdes` | true om skolan bad om varje vårdnadshavares samtycke när ansökan gjordes (skolans val Ledighetspolicy). Vem som samtyckt lagras som en egen uppgift per vårdnadshavare som ingen roll läser; här står bara att samtycke krävdes och, i status, om en vårdnadshavare sa nej. |
+| `kort_varsel` | true om ansökan kom närmare första dagen än skolans minsta antal dagar i förväg (skolans val Ledighetspolicy). |
+| `kontakt_namn` | Namn på den tillfälliga kontakten under ledigheten, en tredje parts uppgift som den som ansökte gav. Tomt om ingen gavs. Tomt också i ett registerutdrag om ansökan inte gäller personen utdraget är om, och om namnet är en person med skyddad identitet. |
+| `kontakt_telefon` | Kontaktens telefonnummer. Tomt på samma villkor som namnet. |
+| `kontakt_relation` | Kontaktens relation till eleven. Tomt på samma villkor som namnet. |
 
 ## `data/notiser.csv`: Notiser
 

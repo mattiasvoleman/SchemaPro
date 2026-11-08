@@ -890,7 +890,13 @@ BEGIN
       END IF;
     END LOOP;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-      EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON %I FROM "service_role"', tbl);
+      -- The platform's role keeps the read of the policy (no personal data) and nothing else. It reads no answer:
+      -- LeaveConsents is the owner's functions' alone, like LeaveRequestNotices.
+      IF tbl = 'LeaveConsents' THEN
+        EXECUTE format('REVOKE ALL ON %I FROM "service_role"', tbl);
+      ELSE
+        EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON %I FROM "service_role"', tbl);
+      END IF;
     END IF;
     -- PostgreSQL 17's MAINTAIN (REINDEX, CLUSTER, VACUUM, LOCK): the owner's alone.
     IF current_setting('server_version_num')::int >= 170000 THEN

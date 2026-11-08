@@ -180,11 +180,25 @@ describe('the data files', () => {
       const leave = {
         id: 'v1', student: PUPIL, studentEmail: 's@x', requester: OTHER, requesterEmail: 'g@x', start: '2026-11-02', end: '2026-11-03', reason: 'släkt', status: 'APPROVED',
         decider: null, deciderEmail: null, decidedAt: 'd', decisionNote: null, decidedAs: 'ADMIN', referrer: null, referredAt: null, created: 'c', at: 'x', hid: 1,
+        consentRequired: true, shortNotice: false, contactName: 'Farmor Gun', contactPhone: '070-1234567', contactRelation: 'Farmor',
       };
       const l = harness([[leave], [{ held: 0 }]], { markedOut: [MARKED] });
-      expect(await rowsOf(LEDIGHETER, l.env)).toEqual([['v1', PUPIL, 's@x', OTHER, 'g@x', '2026-11-02', '2026-11-03', 'släkt', 'APPROVED', '', '', 'd', '', 'ADMIN', '', '', 'c']]);
+      expect(await rowsOf(LEDIGHETER, l.env)).toEqual([['v1', PUPIL, 's@x', OTHER, 'g@x', '2026-11-02', '2026-11-03', 'släkt', 'APPROVED', '', '', 'd', '', 'ADMIN', '', '', 'c', 'true', 'false', 'Farmor Gun', '070-1234567', 'Farmor']]);
       expect(l.held).toEqual([['data/ledigheter.csv', 'blanked', 1], ['data/ledigheter.csv', 'rows', 0]]);
       expect(l.named).toContainEqual(['LEAVE_REQUESTS', [PUPIL]]);
+    });
+
+    it('asks the database for the contact as a third party\'s: hidden by the name, in an extract of somebody else and where it names a marked person', async () => {
+      const h = harness([[], [{ held: 0 }]], { markedOut: [MARKED] });
+      await rowsOf(LEDIGHETER, h.env);
+      const sql = textOf(h.calls[0]!);
+      // The three cells hide together, on the name, and are counted among the cells that were blanked.
+      for (const column of ['contactName', 'contactPhone', 'contactRelation']) {
+        expect(sql).toMatch(new RegExp(`CASE WHEN .*THEN NULL ELSE l."${column}" END AS "${column}"`, 's'));
+        expect(sql).toContain(`l."${column}" IS NOT NULL AND`);
+      }
+      expect(sql).toContain('l."consentRequired" AS "consentRequired"');
+      expect(sql).toContain('l."shortNotice" AS "shortNotice"');
     });
 
     it('widen a person\'s scope to the leave they asked for and decided', async () => {

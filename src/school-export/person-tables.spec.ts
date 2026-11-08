@@ -36,7 +36,7 @@ describe('the registerutdrag decides every table the removal inventory names', (
 
   it('names the reason of every table it leaves out, for the README', () => {
     const left = excludedTables();
-    expect(left.map((item) => item.table)).toEqual(['ExamSittings', 'IntegrationKeyWebhookSecrets', 'PublishedLessons', 'ReportingReminders', 'Ss12000SourceSecrets']);
+    expect(left.map((item) => item.table)).toEqual(['ExamSittings', 'IntegrationKeyWebhookSecrets', 'LeaveConsents', 'PublishedLessons', 'ReportingReminders', 'Ss12000SourceSecrets']);
     for (const item of left) expect(item.reason.endsWith('.')).toBe(true);
     expect(Object.keys(NOT_A_USER).every((key) => /^[A-Za-z0-9]+\.[A-Za-z]+$/.test(key))).toBe(true);
   });

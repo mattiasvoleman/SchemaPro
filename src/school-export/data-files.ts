@@ -522,6 +522,11 @@ interface LeaveRow {
   referrer: string | null;
   referredAt: string | null;
   created: string;
+  consentRequired: boolean;
+  shortNotice: boolean;
+  contactName: string | null;
+  contactPhone: string | null;
+  contactRelation: string | null;
   at: string;
   hid: number;
 }
@@ -539,7 +544,7 @@ export const LEDIGHETER: DataFile = {
     { name: 'fran', doc: 'Första dagen (ÅÅÅÅ-MM-DD).' },
     { name: 'till', doc: 'Sista dagen (ÅÅÅÅ-MM-DD).' },
     { name: 'skal', doc: 'Skälet som ansökan gavs. Tomt om det nämner en person med skyddad identitet, och i ett registerutdrag om ansökan inte gäller personen utdraget är om.' },
-    { name: 'status', doc: 'PENDING (väntar), APPROVED (beviljad) eller REJECTED (avslagen).' },
+    { name: 'status', doc: 'PENDING (väntar), APPROVED (beviljad), REJECTED (avslagen) eller GUARDIAN_DECLINED (en vårdnadshavare som skolan bad om samtycke sa nej, och ansökan avslutades; ingen beslutsfattare).' },
     { name: 'beslut_av_id', doc: 'Id på den som beslutade. Tomt om personen är borttagen eller har skyddad identitet.' },
     { name: 'beslut_av_epost', doc: 'E-postadress till den som beslutade.' },
     { name: 'beslut_tid', doc: 'När beslutet fattades (UTC).' },
@@ -548,6 +553,11 @@ export const LEDIGHETER: DataFile = {
     { name: 'hanvisad_av_id', doc: 'Id på mentorn som lämnade vidare till rektor. Tomt om ingen, eller skyddad identitet.' },
     { name: 'hanvisad_tid', doc: 'När ansökan lämnades vidare (UTC).' },
     { name: 'skapad', doc: 'När ansökan gjordes (UTC).' },
+    { name: 'samtycke_kravdes', doc: 'true om skolan bad om varje vårdnadshavares samtycke när ansökan gjordes (skolans val Ledighetspolicy). Vem som samtyckt lagras som en egen uppgift per vårdnadshavare som ingen roll läser; här står bara att samtycke krävdes och, i status, om en vårdnadshavare sa nej.' },
+    { name: 'kort_varsel', doc: 'true om ansökan kom närmare första dagen än skolans minsta antal dagar i förväg (skolans val Ledighetspolicy).' },
+    { name: 'kontakt_namn', doc: 'Namn på den tillfälliga kontakten under ledigheten, en tredje parts uppgift som den som ansökte gav. Tomt om ingen gavs. Tomt också i ett registerutdrag om ansökan inte gäller personen utdraget är om, och om namnet är en person med skyddad identitet.' },
+    { name: 'kontakt_telefon', doc: 'Kontaktens telefonnummer. Tomt på samma villkor som namnet.' },
+    { name: 'kontakt_relation', doc: 'Kontaktens relation till eleven. Tomt på samma villkor som namnet.' },
   ],
   async *rows(env) {
     const markedOut = [...env.markedOut];
@@ -558,6 +568,8 @@ export const LEDIGHETER: DataFile = {
     const referrerHidden = hides(env, Prisma.sql`l."referredById"`, about);
     const reasonHidden = textHides(env, Prisma.sql`l."reason"`, about);
     const noteHidden = textHides(env, Prisma.sql`l."decisionNote"`, about);
+    // The contact is a third party's: the name decides for all three, since a telephone number names its owner as well.
+    const contactHidden = textHides(env, Prisma.sql`l."contactName"`, about);
     let after: { at: string; id: string } | null = null;
     for (;;) {
       const batch: LeaveRow[] = await env.read((tx) =>
@@ -571,9 +583,14 @@ export const LEDIGHETER: DataFile = {
                  ${ISO(Prisma.sql`l."decidedAt"`)} AS "decidedAt", ${shown(noteHidden, Prisma.sql`l."decisionNote"`)} AS "decisionNote", l."decidedAs"::text AS "decidedAs",
                  ${shown(referrerHidden, Prisma.sql`l."referredById"`)}::text AS referrer,
                  ${ISO(Prisma.sql`l."referredAt"`)} AS "referredAt", ${ISO(Prisma.sql`l."createdAt"`)} AS created,
+                 l."consentRequired" AS "consentRequired", l."shortNotice" AS "shortNotice",
+                 ${shown(contactHidden, Prisma.sql`l."contactName"`)} AS "contactName",
+                 ${shown(contactHidden, Prisma.sql`l."contactPhone"`)} AS "contactPhone",
+                 ${shown(contactHidden, Prisma.sql`l."contactRelation"`)} AS "contactRelation",
                  to_char(l."createdAt", 'YYYY-MM-DD HH24:MI:SS.US+00') AS at,
                  (${cut(studentHidden, about)} + ${cut(requesterHidden, Prisma.sql`l."requestedById"`)} + ${cut(deciderHidden, Prisma.sql`l."decidedById"`)}
-                  + ${cut(referrerHidden, Prisma.sql`l."referredById"`)} + ${cut(reasonHidden, Prisma.sql`l."reason"`)} + ${cut(noteHidden, Prisma.sql`l."decisionNote"`)}) AS hid
+                  + ${cut(referrerHidden, Prisma.sql`l."referredById"`)} + ${cut(reasonHidden, Prisma.sql`l."reason"`)} + ${cut(noteHidden, Prisma.sql`l."decisionNote"`)}
+                  + ${cut(contactHidden, Prisma.sql`l."contactName"`)} + ${cut(contactHidden, Prisma.sql`l."contactPhone"`)} + ${cut(contactHidden, Prisma.sql`l."contactRelation"`)}) AS hid
             FROM "LeaveRequests" l JOIN "Users" st ON st."id" = l."studentId" JOIN "Users" rq ON rq."id" = l."requestedById"
             LEFT JOIN "Users" dc ON dc."id" = l."decidedById"
            WHERE l."schoolId" = ${env.schoolId}::uuid
@@ -591,6 +608,7 @@ export const LEDIGHETER: DataFile = {
           row.id, text(row.student), text(row.studentEmail), text(row.requester), text(row.requesterEmail), row.start, row.end, text(row.reason),
           row.status, text(row.decider), text(row.deciderEmail), text(row.decidedAt), text(row.decisionNote), text(row.decidedAs),
           text(row.referrer), text(row.referredAt), row.created,
+          String(row.consentRequired), String(row.shortNotice), text(row.contactName), text(row.contactPhone), text(row.contactRelation),
         ];
       }
       emptied(env, LEDIGHETER.path, batch);

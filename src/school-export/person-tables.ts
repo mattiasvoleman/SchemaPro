@@ -194,6 +194,12 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
     excluded:
       'En liggare över vilka lektioner en lärare påmints om. Ingen roll kan läsa tabellen (bara databasens påminnelsefunktion rör den), så en administratör kan inte lämna ut den; raderna följer med personen när hen tas bort.',
   },
+  // Ledighetspolicy (20270205091000): the answers of the guardians a school asked to consent to a leave request. No role can read the
+  // table (only the database's own functions touch it), so an administrator cannot hand it out.
+  LeaveConsents: {
+    excluded:
+      'Svaren från vårdnadshavare som skolan bad om samtycke till en ledighetsansökan. Ingen roll kan läsa tabellen (bara databasens samtyckesfunktioner rör den), så en administratör kan inte lämna ut den; att samtycke krävdes och om en vårdnadshavare sa nej står i ledigheter.csv, och raderna följer med personen när hen tas bort.',
+  },
   // Krisläge (20270113091000): who started and ended an alarm, the teacher on a call, the pupil on its list and the state they
   // were reported in, and the reports themselves. A person who is removed keeps their rows without them; the rows are theirs.
   CrisisAlarms: dump(['startedByUserId', 'endedByUserId']),
