@@ -680,6 +680,31 @@ export interface AiEngineScheduleRequest {
   search?: SearchOptions;
   /** Bästa möjliga schema; see RelaxationOptions. Never sent by Generera. */
   relaxation?: RelaxationOptions;
+  /**
+   * Förlagda poster: which of the fixed lessons are förläggningar, and their
+   * posts with nothing förlagt. See AnonymousPlacements. The KEY is sent only
+   * when a post of the week has one, so every other school sends the payload
+   * it always sent.
+   */
+  placements?: AnonymousPlacements;
+}
+
+/**
+ * Förlagda poster: the engine's Placements (schemas/schedule.py).
+ *
+ * A förläggning is sent as what it is to the week, a fixed lesson, and its
+ * post with that lesson taken off its demand; this says which fixed lessons
+ * they are and what their posts would be WITHOUT them — every lesson to place,
+ * the school's own grundschema locks still counted. The engine reads it only
+ * to explain a refused week (it solves the week once more with the
+ * förläggningar released, and names each when that lays it): the model it
+ * builds is the same with the key and without. An engine older than the key
+ * answers 422 to it, and the proxy then sends the same request without it —
+ * the förläggningar are laid either way, only not named.
+ */
+export interface AnonymousPlacements {
+  lessons: { fixedLessonId: string; requirementId: string }[];
+  requirements: AnonymousRequirement[];
 }
 
 /**
@@ -771,7 +796,11 @@ export type ConflictCategory =
   // or the shared room.
   | 'PLACEMENT_EDGE'
   | 'PLACEMENT_PLACES'
-  | 'SHARED_ROOM';
+  | 'SHARED_ROOM'
+  // Förlagda poster: a lesson the school placed on a timplanspost before
+  // Generera, named when the week cannot be laid around it (the engine's
+  // probe) or when it can no longer stand where it is (the pre-flight).
+  | 'PLACEMENT';
 
 export interface AiEngineConflictDetail {
   category: ConflictCategory;

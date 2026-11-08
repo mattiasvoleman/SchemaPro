@@ -92,6 +92,24 @@ export class RoomsService {
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     try {
       await this.prisma.withRls(user, async (tx) => {
+        // A room a förläggning names is the post's place, and the key to it is
+        // NO ACTION: said by name here, before the room lock's refusal, so the
+        // school knows which post to open rather than meeting a bare 409.
+        const placed = await tx.teachingRequirementPlacement.findMany({
+          where: { roomId: id },
+          select: { requirement: { select: { subject: { select: { name: true } }, studentGroup: { select: { name: true } } } } },
+          orderBy: { requirementId: 'asc' },
+        });
+        if (placed.length > 0) {
+          const posts = [
+            ...new Set(placed.map((row) => `${row.requirement.subject.name} ${row.requirement.studentGroup.name}`)),
+          ];
+          const shown = posts.slice(0, 5).join(', ');
+          throw new BadRequestException(
+            `Salen är förlagd för ${shown}${posts.length > 5 ? ` och ${posts.length - 5} till` : ''}. ` +
+              `Ta bort ${posts.length === 1 ? 'förläggningen' : 'förläggningarna'} först.`,
+          );
+        }
         const orphaned = await tx.roomPreference.findMany({
           where: { kind: 'LOCK', rooms: { some: { roomId: id } } },
           select: { subject: { select: { name: true } }, rooms: { select: { roomId: true } } },

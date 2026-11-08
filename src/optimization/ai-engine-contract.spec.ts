@@ -135,8 +135,22 @@ const PLACE_LIMITS_FIELDS = [
 ];
 const SHARED_ROOMS_FIELDS = ['mode', 'weight'];
 const PAYLOAD_FIELDS_WITH_PLACEMENT = [...PAYLOAD_FIELDS, 'placementRules'].sort();
+/**
+ * Förlagda poster: which fixed lessons are förläggningar and their posts
+ * released, sent only when a post of the week has one. The engine's
+ * `_field_names(Placements)` and `(PlacedLesson)`.
+ */
+const PLACEMENTS_FIELDS = ['lessons', 'requirements'];
+const PLACED_LESSON_FIELDS = ['fixedLessonId', 'requirementId'];
 /** Every key a payload can carry, the conditional ones included. */
-const PAYLOAD_FIELDS_ALL = [...PAYLOAD_FIELDS, 'teacherDayLimits', 'siteTravelTimes', 'pupilGaps', 'placementRules'].sort();
+const PAYLOAD_FIELDS_ALL = [
+  ...PAYLOAD_FIELDS,
+  'teacherDayLimits',
+  'siteTravelTimes',
+  'pupilGaps',
+  'placementRules',
+  'placements',
+].sort();
 /** The generator's room: the engine's `_field_names(AnonymousRoom)` with the walk on. */
 const ROOM_FIELDS = ['capacity', 'id', 'maxGradeLevel', 'minGradeLevel', 'type'];
 const ROOM_FIELDS_WITH_SITE = [...ROOM_FIELDS, 'siteId'].sort();

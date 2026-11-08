@@ -259,6 +259,8 @@ model School {
   studentGroups           StudentGroup[]
   teachingRequirements    TeachingRequirement[]
   teachingRequirementShares TeachingRequirementShare[]
+  /// Förlagda poster (20270207090000).
+  requirementPlacements     TeachingRequirementPlacement[]
   teachingBlocks          TeachingBlock[]
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
@@ -621,6 +623,10 @@ model Room {
   availabilityConstraints AvailabilityConstraint[]
   roomBookings            RoomBooking[]
   preferenceRooms         RoomPreferenceRoom[]
+  /// Förlagda poster: the lessons a timplanspost places in this room before
+  /// Generera. NO ACTION on delete: a room a förläggning names is refused
+  /// removal by name (rooms.service.ts) and, past that, by the key.
+  requirementPlacements   TeachingRequirementPlacement[]
   /// Salslån (20261217090000): this room lent to another school of the
   /// huvudman, and the loans this room stands for at the borrower.
   loansAsOwnerRoom        RoomLoan[]               @relation("RoomLoanRoom")
@@ -2309,6 +2315,9 @@ model TeachingRequirement {
   /// teacherId is its huvudlärare and takes every lesson no share takes, so a
   /// post with none is the post it always was. See TeachingRequirementShare.
   shares       TeachingRequirementShare[]
+  /// Förlagda poster: the lessons of this post the school placed before
+  /// Generera. See TeachingRequirementPlacement.
+  placements   TeachingRequirementPlacement[]
 
   /// `schoolId` leads the key so the slot a school occupies is its own. Without
   /// it one school's forged row took the (year, group, subject) slot of
@@ -2361,6 +2370,60 @@ model TeachingRequirementShare {
   @@index([teacherId])
   @@index([schoolId])
   @@map("TeachingRequirementShares")
+}
+
+/// Förlagda poster: one of a timplanspost's lessons that the school places
+/// before Generera, because it can go nowhere else — the swimming hall is
+/// booked Tuesdays 10:00, idrotten for 7A is there. A day, a start, one of the
+/// post's lengths, a room and the weeks it runs; the class, the subject and
+/// the teachers stay the post's, read at every Generera. See migration
+/// 20270207090000 and src/requirement-placements.
+///
+/// Generera sends each as a locked lesson (AnonymousFixedLesson), takes it off
+/// the post's demand the way a covering lock is taken off, and writes it into
+/// the grundschema as a locked lesson marked as Generera's own
+/// (MasterLesson.fromPlacement), which the next Generera writes again.
+/// It never gives way, in Bästa möjliga schema either.
+///
+/// The rows fit the post by trigger (SQLSTATE FP409 — TP409 is the decided
+/// timplan's —
+/// REQUIREMENT_PLACEMENTS_DO_NOT_FIT): every length is one of the post's, no
+/// more of a length than the post has lessons of it; on a post of odd or even
+/// weeks each row runs the post's weeks, and on an every-week post a row runs
+/// every week or, odd and even of one length in pairs, a lesson in two places;
+/// the post is in no parallel block and shares no lessons. Changing the post
+/// in a way the rows no longer fit is refused by the same trigger. Whether a
+/// row CLASHES (teacher, class, pupils, room, ramtid, lunch, reservations) is
+/// the gateway's judge (placement-judge.ts), at save and again at every
+/// Generera, since the week moves under a row between the two.
+model TeachingRequirementPlacement {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String           @db.Uuid
+  requirementId String           @db.Uuid
+  /// ISO weekday, 1..5 by CHECK: the engine's school week (SCHEDULE_DAYS).
+  dayOfWeek     Int
+  /// On the five-minute grid, and with `minutes` inside 08:00..18:00 — the
+  /// engine's day (src/common/solver-grid.ts) — by CHECK.
+  startTime     DateTime         @db.Time(0)
+  /// The lesson's length: one of the post's (by trigger), 15..240 on the
+  /// five-minute grid by CHECK.
+  minutes       Int
+  /// The room, which is the point: a förläggning without one is a lock the
+  /// engine would leave roomless. NO ACTION on delete (see Room).
+  roomId        String           @db.Uuid
+  recurrence    LessonRecurrence @default(ALL_WEEKS)
+  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
+
+  school        School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  requirement   TeachingRequirement @relation(fields: [requirementId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  room          Room                @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([id, schoolId])
+  @@index([requirementId])
+  @@index([roomId, schoolId])
+  @@index([schoolId])
+  @@map("TeachingRequirementPlacements")
 }
 
 /// Parallella block: rows of one läsår whose lessons are placed at the same
@@ -2463,6 +2526,17 @@ model MasterLesson {
   /// Defaults to false so a creation path that forgets to say is treated as
   /// handmade and survives. Only the optimizer sets it true.
   isGenerated Boolean  @default(false)
+  /// Förlagda poster: Generera wrote this lesson from a förläggning on its
+  /// timplanspost (TeachingRequirementPlacement), and wrote it locked. Locked,
+  /// so a swap, Optimera salar and the klasslärare's schedule leave it where
+  /// the school placed it; marked, so the next Generera replaces it from the
+  /// post's förläggningar as they then stand — PRESERVED_FROM_REGENERATION
+  /// keeps a locked lesson only when this is false. A flag and not a key to
+  /// the row: the timplan replaces a post's rows whole, and a förläggning
+  /// edited or removed then reaches the grundschema at the next Generera, the
+  /// lesson placed freely once nothing pins it. False on every other lesson,
+  /// and set by Generera alone.
+  fromPlacement Boolean @default(false)
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 

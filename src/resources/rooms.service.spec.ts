@@ -308,6 +308,58 @@ describe('RoomsService', () => {
       expect(tx.room.delete).toHaveBeenCalledWith({ where: { id: ROOM_ID } });
     });
 
+    describe('a room a förläggning names', () => {
+      const placed = (...posts: Array<[string, string]>) =>
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue(
+          posts.map(([subject, group]) => ({ requirement: { subject: { name: subject }, studentGroup: { name: group } } })),
+        );
+
+      it('is refused by the post\'s name, and nothing is deleted', async () => {
+        placed(['Idrott och hälsa', '7A']);
+
+        await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(
+          new BadRequestException('Salen är förlagd för Idrott och hälsa 7A. Ta bort förläggningen först.'),
+        );
+        expect(tx.teachingRequirementPlacement.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { roomId: ROOM_ID } }),
+        );
+        expect(tx.room.delete).not.toHaveBeenCalled();
+      });
+
+      it('names each post once, however many of its lessons stand in the room, and the first five', async () => {
+        placed(
+          ['Idrott och hälsa', '7A'],
+          ['Idrott och hälsa', '7A'],
+          ['Idrott och hälsa', '7B'],
+          ['Idrott och hälsa', '8A'],
+          ['Idrott och hälsa', '8B'],
+          ['Idrott och hälsa', '9A'],
+          ['Idrott och hälsa', '9B'],
+        );
+
+        await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(
+          new BadRequestException(
+            'Salen är förlagd för Idrott och hälsa 7A, Idrott och hälsa 7B, Idrott och hälsa 8A, Idrott och hälsa 8B, Idrott och hälsa 9A och 1 till. Ta bort förläggningarna först.',
+          ),
+        );
+      });
+
+      it('is said before the room lock\'s refusal, which is not asked', async () => {
+        placed(['Idrott och hälsa', '7A']);
+        givenRules([{ kind: 'LOCK', subject: 'Matematik', roomIds: [ROOM_ID] }]);
+
+        await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(/förlagd/);
+        expect(tx.roomPreference.findMany).not.toHaveBeenCalled();
+      });
+
+      it('deletes a room no förläggning names', async () => {
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue([]);
+        tx.room.delete.mockResolvedValue({ id: ROOM_ID });
+
+        await expect(service.remove(ROOM_ID, testUser())).resolves.toBeUndefined();
+      });
+    });
+
     it('refuses to delete the last room a lock names', async () => {
       /*
        * RoomPreferenceRooms cascades, so the rule would survive with an empty
