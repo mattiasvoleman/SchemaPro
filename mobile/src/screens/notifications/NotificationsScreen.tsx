@@ -13,7 +13,7 @@ import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
 import { fetchNotifications, markAllRead as markOwnRead } from '../../services/notifications';
 import { notificationText } from '../../services/notificationText';
-import { ackTarget } from '../../services/auth/appGate';
+import { ackTarget, leaveConsentTarget } from '../../services/auth/appGate';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { formatDateTime } from '../../i18n/format';
@@ -28,8 +28,11 @@ import type { NotificationRow } from '../../types';
  *
  * A guardian's row that asks them to confirm a message (ACK_REQUESTED, and its
  * reminder ACK_REMINDER, Kvittens) is a button: it opens the Meddelanden tab,
- * where the message is read and confirmed, as the push about it does. No other
- * row goes anywhere.
+ * where the message is read and confirmed, as the push about it does. So is a
+ * guardian's row about consent to a leave request (LEAVE_CONSENT_REQUESTED, its
+ * reminder LEAVE_CONSENT_REMINDER, and LEAVE_CONSENT_REFUSED, Ledighetspolicy):
+ * it opens the Ledighet tab, where the request is answered or its end is read.
+ * No other row goes anywhere.
  *
  * READ AGAIN WHEN THE TAB IS SEEN. A tab stays mounted once opened, and the
  * inbox changes without it: confirming a message in Meddelanden reads that
@@ -107,7 +110,8 @@ export function NotificationsScreen(): React.JSX.Element {
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
         renderItem={({ item }) => {
-          const target = ackTarget(role, item.type);
+          const ack = ackTarget(role, item.type);
+          const target = ack ?? leaveConsentTarget(role, item.type);
           const cardStyle = [styles.card, item.readAt === null && styles.cardUnread];
           const words = (
             <>
@@ -121,7 +125,7 @@ export function NotificationsScreen(): React.JSX.Element {
             <TouchableOpacity
               style={cardStyle}
               accessibilityRole="button"
-              accessibilityHint={t('acks.openHint')}
+              accessibilityHint={t(ack !== null ? 'acks.openHint' : 'leave.openHint')}
               onPress={() => router.push(target)}
             >
               {words}

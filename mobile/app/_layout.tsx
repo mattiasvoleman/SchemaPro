@@ -60,10 +60,13 @@ function AuthGate(): React.JSX.Element {
 // role has one — except a cover question (COVER_REQUESTED, and its end,
 // COVER_REQUEST_CLOSED), which opens a teacher's Vikarie tab where it is
 // answered, an alarm (CRISIS_ALARM, CRISIS_ENDED), which opens the Larm tab of
-// a teacher or an administrator, and a request to confirm a message
+// a teacher or an administrator, a request to confirm a message
 // (ACK_REQUESTED, and its reminder ACK_REMINDER), which opens a guardian's
-// Meddelanden tab where it is confirmed (tapTarget); the tap is then
-// forgotten, so no later sign-in replays it.
+// Meddelanden tab where it is confirmed, and a request for consent to a leave
+// request (LEAVE_CONSENT_REQUESTED, its reminder LEAVE_CONSENT_REMINDER, and
+// LEAVE_CONSENT_REFUSED, the end of one), which opens a guardian's Ledighet
+// tab where it is answered or read (tapTarget); the tap is then forgotten, so
+// no later sign-in replays it.
 //
 // An alarm push is also remembered for WHEN it was sent, whether it is tapped
 // or only shown (services/crisisOffline.ts): a phone with no coverage when the

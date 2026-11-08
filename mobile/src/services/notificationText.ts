@@ -16,7 +16,9 @@ import type { NotificationRow } from '../types';
  * The three cover-request types (Vikariefrågan) are worded from their meta in
  * the catalogue's own block, coverRequests.notice; the three of Krisläge in
  * crisis.notice. The two of Kvittens (a request to confirm a message, and its
- * one reminder) in acks.notice.
+ * one reminder) in acks.notice. The three of Ledighetspolicy (a request for a
+ * guardian's consent to a leave request, its one reminder, and the end of a
+ * request a guardian did not consent to) in notifications.text.leaveConsent*.
  */
 export function notificationText(entry: NotificationRow, t: Translate, locale: Locale): string {
   const meta = entry.meta ?? {};
@@ -213,6 +215,25 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
         return title ? t('acks.notice.requested', { title }) : t('acks.notice.requestedNoTitle');
       }
       return title ? t('acks.notice.reminder', { title }) : t('acks.notice.reminderNoTitle');
+    }
+    case 'LEAVE_CONSENT_REQUESTED':
+    case 'LEAVE_CONSENT_REMINDER':
+    case 'LEAVE_CONSENT_REFUSED': {
+      // Ledighetspolicy: the child and the days, which are behind the login as
+      // the inbox is (the push says only that a request waits or ended).
+      // NEVER who applied, and never who did not consent: separated
+      // guardians may hide from one another, and the meta carries neither.
+      // A missing name is "your child", and missing days leave the brackets
+      // out rather than print an empty "( – )".
+      const from = str('startDate');
+      const to = str('endDate');
+      const params = {
+        student: str('studentName').trim() || t('notifications.text.leaveConsentYourChild'),
+        range: from && to ? ` (${from} – ${to})` : '',
+      };
+      if (entry.type === 'LEAVE_CONSENT_REQUESTED') return t('notifications.text.leaveConsentRequested', params);
+      if (entry.type === 'LEAVE_CONSENT_REMINDER') return t('notifications.text.leaveConsentReminder', params);
+      return t('notifications.text.leaveConsentRefused', params);
     }
     default:
       return t('notifications.text.fallback');

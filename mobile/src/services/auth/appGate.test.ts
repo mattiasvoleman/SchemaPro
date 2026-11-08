@@ -1,4 +1,4 @@
-import { ackTarget, appRefusal, homeOf, tapTarget, tapTypeOf } from './appGate';
+import { ackTarget, appRefusal, homeOf, leaveConsentTarget, tapTarget, tapTypeOf } from './appGate';
 
 /**
  * Each app admits only its own roles, and tells everyone else which app is
@@ -109,6 +109,52 @@ describe('tapTarget and ackTarget (Kvittens)', () => {
     expect(ackTarget('GUARDIAN', null)).toBeNull();
     expect(ackTarget('TEACHER', 'ACK_REQUESTED')).toBeNull();
     expect(ackTarget(null, 'ACK_REQUESTED')).toBeNull();
+  });
+});
+
+/**
+ * Ledighetspolicy: a request for a guardian's consent to a leave request, its
+ * one reminder, and the end of a request a guardian did not consent to (to
+ * whoever applied) are read in the guardian's Ledighet tab, from a push and
+ * from the same notice in the Notiser tab.
+ */
+describe('tapTarget and leaveConsentTarget (Ledighetspolicy)', () => {
+  it.each([
+    ['GUARDIAN', 'LEAVE_CONSENT_REQUESTED', '/(guardian)/leave'],
+    ['GUARDIAN', 'LEAVE_CONSENT_REMINDER', '/(guardian)/leave'],
+    ['GUARDIAN', 'LEAVE_CONSENT_REFUSED', '/(guardian)/leave'],
+    // Only a guardian has the tab to answer in: another role's tap never leaves its own shell.
+    ['TEACHER', 'LEAVE_CONSENT_REQUESTED', '/(app)/notifications'],
+    ['SCHOOL_ADMIN', 'LEAVE_CONSENT_REFUSED', '/(app)/notifications'],
+    ['STUDENT', 'LEAVE_CONSENT_REMINDER', '/(student)/notifications'],
+    // The decision of a request is an inbox row, as it was, and so is the mentor's own LEAVE_REQUESTED.
+    ['GUARDIAN', 'LEAVE_DECIDED', '/(guardian)/notifications'],
+    ['TEACHER', 'LEAVE_REQUESTED', '/(app)/notifications'],
+    // Kvittens keeps its own tab.
+    ['GUARDIAN', 'ACK_REQUESTED', '/(guardian)/acknowledgements'],
+    // A push without a type, from a gateway that sent none, or a role not yet known.
+    ['GUARDIAN', null, '/(guardian)/notifications'],
+    [null, 'LEAVE_CONSENT_REQUESTED', '/(app)/notifications'],
+  ])('%s tapping %s opens %s', (role, type, target) => {
+    expect(tapTarget(role, type)).toBe(target);
+  });
+
+  it('names the Ledighet tab only for a guardian and the three notice types', () => {
+    for (const type of ['LEAVE_CONSENT_REQUESTED', 'LEAVE_CONSENT_REMINDER', 'LEAVE_CONSENT_REFUSED']) {
+      expect(leaveConsentTarget('GUARDIAN', type)).toBe('/(guardian)/leave');
+      expect(leaveConsentTarget('TEACHER', type)).toBeNull();
+      expect(leaveConsentTarget('SCHOOL_ADMIN', type)).toBeNull();
+      expect(leaveConsentTarget('STUDENT', type)).toBeNull();
+      expect(leaveConsentTarget(null, type)).toBeNull();
+    }
+    expect(leaveConsentTarget('GUARDIAN', 'LEAVE_DECIDED')).toBeNull();
+    expect(leaveConsentTarget('GUARDIAN', 'ACK_REQUESTED')).toBeNull();
+    expect(leaveConsentTarget('GUARDIAN', null)).toBeNull();
+  });
+
+  it('leaves Kvittens’ own target alone for the notices of Ledighetspolicy', () => {
+    expect(ackTarget('GUARDIAN', 'LEAVE_CONSENT_REQUESTED')).toBeNull();
+    expect(leaveConsentTarget('GUARDIAN', 'ACK_REQUESTED')).toBeNull();
   });
 });
 
