@@ -132,6 +132,67 @@ Once the access-token hook is on (§11.2), every sign-in and refresh reads
 on either starts with `SET lock_timeout = '1s';` and is rerun if it times
 out, so that it never makes every sign-in wait behind it (§11.2).
 
+### 2.1 A migration that stopped, and the index it can leave behind
+
+Prisma records a migration that stopped as failed, and the next
+`migrate deploy` refuses (P3009) until it is told what to do about it:
+`prisma migrate resolve --rolled-back <name>`, the name being in the message,
+and then `migrate deploy` again, which runs the file **from its first
+statement**. A file with a DO block runs as one transaction and leaves nothing
+behind. A file that builds an index with `CREATE INDEX CONCURRENTLY` cannot run
+in a transaction, so Prisma runs it one statement at a time, and a build that
+is cancelled (a statement timeout, `pg_cancel_backend`, a dropped connection)
+or that fails (a unique index over rows that are not unique) leaves its index in
+the catalogue **invalid**: not used by the planner, and holding its name. Whether
+writes still maintain it depends on where the build stopped. One that failed in
+its second phase (`indisready = true`) is kept up to date by every write; one
+that failed in the first, as a unique index over duplicates does, is not
+(`indisready = false`), so it is no index to rely on in either case, and the
+query in step 1 below shows both flags. The rerun then stops at the same
+statement with
+
+```
+ERROR: relation "<index>" already exists   (SQLSTATE 42P07)
+```
+
+which does not say that the index is invalid, or that the way on is to drop it.
+`IF NOT EXISTS` would not help: it sees the name, skips the statement, and the
+migration is recorded as applied with the index still invalid (tried). So the
+file does not use it, and the recovery is by hand, as the database's owner, on
+the direct connection:
+
+1. Find what a stopped build left. This reads the catalogue only:
+
+   ```sql
+   SELECT c.relname AS index, t.relname AS "table", i.indisvalid, i.indisready
+     FROM pg_index i
+     JOIN pg_class c ON c.oid = i.indexrelid
+     JOIN pg_class t ON t.oid = i.indrelid
+    WHERE NOT i.indisvalid AND c.relnamespace = 'public'::regnamespace
+    ORDER BY c.relname COLLATE "C";
+   ```
+
+   Nothing is invalid when no build was interrupted. An index in the result
+   that belongs to another migration than the one that stopped is somebody
+   else's to look at first.
+2. Drop each one the migration was building, without taking the table's writes
+   with it, and outside a transaction (`psql -c` is enough):
+   `DROP INDEX CONCURRENTLY "<index>";`
+3. Read the migration's other statements. The ones that ran before the
+   interrupted one run again, so each has to be safe to repeat (a `VALIDATE
+   CONSTRAINT` of a validated key is; a `CREATE` without `IF NOT EXISTS` of
+   something that exists is not and has to be undone first). A failed unique
+   build means rows to settle first: the error names the key that is not
+   unique.
+4. `prisma migrate resolve --rolled-back <name>`, then `prisma migrate
+   deploy`, then the query of step 1 again: no row.
+
+The files that build an index concurrently are found with `grep -l
+CONCURRENTLY prisma/migrations/*/migration.sql`. Each states its own recovery in
+its header (20270115090100 does: `DROP INDEX CONCURRENTLY
+"CalendarLessons_subjectId_schoolId_idx"` is its step 2, and its other
+statements, thirty-eight `VALIDATE CONSTRAINT`, are safe to repeat).
+
 ## 3. Create the API's least-privilege database role
 
 The API must **never** connect as `postgres` (the owner bypasses RLS). Create
@@ -1873,6 +1934,146 @@ Walk the full product loop once, in order:
   above. Count the notices first (`SELECT count(*) FROM "Notifications" WHERE
   "type"::text LIKE 'ACK\_%'`). What a rollback changes: nobody can ask or
   confirm, and the requests already made are gone.
+- **Ett läsårs lektioner tas bort först**: 20270120090000 adds the function
+  `app.academic_year_lessons_go_first()` (SECURITY DEFINER, `search_path`
+  pinned to `public, pg_temp`, EXECUTE revoked from PUBLIC and from `anon`,
+  `authenticated`, `service_role` and `app_authenticated`: a trigger needs none)
+  and the trigger `AcademicYears_a_lessons_go_first` (BEFORE DELETE, per row),
+  which deletes the lessons of the year's classes before the year goes. No
+  table, row, column, policy or grant is touched, and none of the SS12000
+  flow's functions is restated. Why: removing a year cascades into its lessons
+  by two routes, and which runs first is the order of the keys' triggers by
+  name (`RI_ConstraintTrigger_a_<oid>`); 20270115090000 moved the classes' key
+  to the end, so the master lessons' key runs first, the lessons lose their
+  master lesson before they go, and `app.ss12000_v_lessons()` files an
+  `AdhocActivity` tombstone for each (a year with two keyed lessons and one
+  ad hoc: 3, not 1). Nothing is lost: the consumers are sent ids they never
+  had. The service for removing a year did it right since #272 by deleting the
+  lessons itself, which is one way in, and judged by another policy (DRIFT) than
+  the year's (PLANERING): a profile with only the second would have deleted no
+  lesson and no error. The trigger is every way in (the service, SQL,
+  PostgREST) and every profile; the service no longer deletes the lessons
+  itself. **The trigger runs as the owner, like the cascade it comes before:**
+  the referential action deletes the same rows as the owner and passes row
+  security, row security is not forced on the tables, and the trigger fires only
+  for a year the caller's own DELETE policy let through (another school's
+  administrator and a teacher reach no row, so no trigger; RLS sections
+  386-387). It takes `AcademicYears` in SHARE ROW EXCLUSIVE, NOWAIT, in a loop
+  with a 30 s ceiling: reads and foreign-key checks go on, writes to the table
+  wait for the file (milliseconds), and if it is not free in 30 s it stops with
+  nothing changed (`prisma migrate resolve --rolled-back
+  20270120090000_ett_lasars_lektioner_tas_bort_forst_pa_varje_vag`, then deploy
+  again). **The migration goes in first, then the merge:** the API before it
+  deletes the lessons itself and the trigger then finds none; the API after it
+  leaves them to the trigger, and without the trigger a removal files the extra
+  tombstones until it is there. The file's checksum (sha256, what Prisma
+  records) is `aee367080f074e85ebb1ed43380670de25a24f1744d1f98ce286a7c6c839d108`.
+  **Before the migration**, as the owner, all of it read-only:
+  `SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL OR
+  rolled_back_at IS NOT NULL ORDER BY migration_name COLLATE "C"` returns no
+  row; `SELECT max(migration_name COLLATE "C") FROM _prisma_migrations WHERE
+  finished_at IS NOT NULL AND rolled_back_at IS NULL` is
+  `20270119090000_en_avsandare_har_en_andel_av_dygnet_och_en_paminnelse_vet_om_brevet_gick`
+  (#277's, the last one applied in production when this was written; any from
+  `20270118090000` on that is not this one passes); `prisma migrate status`
+  lists exactly this migration as pending; `SELECT to_regprocedure('app.academic_year_lessons_go_first()'),
+  (SELECT count(*) FROM pg_trigger WHERE tgrelid = '"AcademicYears"'::regclass
+  AND tgname = 'AcademicYears_a_lessons_go_first')` is NULL and 0; the BEFORE
+  DELETE triggers on the table are none (`SELECT tgname FROM pg_trigger WHERE
+  tgrelid = '"AcademicYears"'::regclass AND NOT tgisinternal AND tgtype & 10 =
+  10 ORDER BY tgname COLLATE "C"` returns no row); no session sits idle in a
+  transaction that holds `AcademicYears` (`SELECT pid, state, now() -
+  xact_start AS age, left(query, 70) FROM pg_stat_activity WHERE datname =
+  current_database() AND pid <> pg_backend_pid() AND xact_start < now() -
+  interval '3 seconds' ORDER BY age DESC`). **Information:** which of the two
+  keys the year's removal runs first in production, as the trigger names order
+  them (the database compares them as bytes, hence the collation):
+  `SELECT c.conrelid::regclass AS child, t.tgname FROM pg_trigger t JOIN
+  pg_constraint c ON c.oid = t.tgconstraint WHERE t.tgrelid =
+  '"AcademicYears"'::regclass AND t.tgisinternal AND t.tgtype & 8 = 8 AND
+  c.conrelid IN ('"StudentGroups"'::regclass, '"MasterLessons"'::regclass) ORDER
+  BY t.tgname COLLATE "C"`: with `"MasterLessons"` first a removal files the
+  extra tombstones today.
+  **After it, before the merge:** `SELECT t.tgtype, t.tgenabled, t.tgfoid::regproc
+  FROM pg_trigger t WHERE t.tgrelid = '"AcademicYears"'::regclass AND t.tgname =
+  'AcademicYears_a_lessons_go_first'` is `11` (BEFORE, DELETE, per row), `O`,
+  `app.academic_year_lessons_go_first`; `SELECT p.prosecdef, p.proconfig,
+  p.proowner = c.relowner AS owner_of_the_tables, (SELECT count(*) FROM
+  aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE a.grantee
+  <> p.proowner) AS other_grantees, md5(p.prosrc) FROM pg_proc p, pg_class c
+  WHERE p.oid = 'app.academic_year_lessons_go_first()'::regprocedure AND c.oid =
+  '"AcademicYears"'::regclass` is `true`, `{"search_path=public, pg_temp"}`,
+  `true`, `0`, `3dbf3391e7a8ec8649239b9a02054ebb`; `SELECT r,
+  has_function_privilege(r, 'app.academic_year_lessons_go_first()', 'EXECUTE')
+  FROM unnest(ARRAY['anon', 'authenticated', 'service_role',
+  'app_authenticated']) r ORDER BY r COLLATE "C"` is false four times;
+  `SELECT relname, relforcerowsecurity FROM pg_class WHERE oid IN
+  ('"AcademicYears"'::regclass, '"CalendarLessons"'::regclass,
+  '"StudentGroups"'::regclass) ORDER BY relname COLLATE "C"` is false three
+  times; and the flow's own functions are what they were,
+  `SELECT proname, md5(prosrc) FROM pg_proc WHERE pronamespace =
+  'app'::regnamespace AND proname IN ('ss12000_bury', 'ss12000_v_lessons',
+  'ss12000_year_is_emitted') ORDER BY proname COLLATE "C"` being
+  `91f0808502e6f703283c02ca1fe33c2b`, `31d7cd85b4db4a00995a4f5275f45253` and
+  `4fef216a7588f169db98a639de67193f` before and after (read on a database built
+  by the migrations). The behaviour is not tried against production (it would
+  delete): it is the adapter probe's `tk4` and RLS sections 385-387, on every
+  run of the Database job.
+  **Rolling back** is two steps, as the owner on the direct connection, and the
+  API goes back with them: the API before this release deletes a year's lessons
+  itself (it has since #272), so with the trigger gone it still files the right
+  tombstones; the API of this release leaves the lessons to the trigger, and
+  with the trigger gone and that API left in place a removal files the extra
+  tombstones again.
+  (1) Drop the two objects behind a lock guard. `DROP TRIGGER` takes ACCESS
+  EXCLUSIVE on `AcademicYears`, and a drop that waits for one open reader makes
+  every later read of the table, and every foreign-key check against it, queue
+  behind it (measured: a plain `SELECT count(*)` waited 5.2 s behind a bare
+  `DROP TRIGGER` that waited for one open reader). With the guard it gives up
+  after a second with `55P03`, drops nothing, and the reader that came meanwhile
+  waited 0.9 s; rerun it until it goes through (measured: 251 ms once the reader
+  was gone):
+
+  ```sql
+  BEGIN;
+  SET LOCAL lock_timeout = '1s';
+  DROP TRIGGER "AcademicYears_a_lessons_go_first" ON "AcademicYears";
+  DROP FUNCTION app.academic_year_lessons_go_first();
+  COMMIT;
+  ```
+
+  (2) Decide what Prisma is told, because the migration is still recorded as
+  applied after the drop, and `prisma migrate resolve --rolled-back` is not the
+  command for it: it refuses an applied migration (`P3012`, "not in a failed
+  state"; it is for one that stopped, as in the ceiling above and §2.1).
+  - To be able to bring the trigger back with `prisma migrate deploy`, delete
+    the record, deliberately, as the owner and after the drop, never before it
+    (the file creates the function and the trigger without `IF NOT EXISTS` and
+    stops at objects that are still there):
+    `DELETE FROM _prisma_migrations WHERE migration_name =
+    '20270120090000_ett_lasars_lektioner_tas_bort_forst_pa_varje_vag';` removes
+    one row; `prisma migrate status` then lists the migration as pending and
+    `migrate deploy` applies the file again from its first statement (tried:
+    the function with `md5(prosrc)` `3dbf3391e7a8ec8649239b9a02054ebb`, the
+    trigger `11`, `O`, and the checksum above come back). That is the way to
+    put the API of this release back.
+  - Or leave the record. Then the database stays rolled back: a later
+    `migrate deploy` says there is nothing to apply and does not recreate the
+    trigger (tried), so the API of this release must not be put back until the
+    file has been applied by hand (`psql -f`, as the owner).
+
+  What it changes: with the API before this release nothing; with the API of
+  this release left in place, removing a year goes back to the keys' order and
+  files the extra tombstones; nothing is lost either way.
+  **The composite keys' ON UPDATE:** the same release adds RLS section 388,
+  which fails the next composite key that holds a school and follows its parent
+  when the parent is updated (`ON UPDATE CASCADE`; make it `NO ACTION`, as
+  20270115090000 did for 38). 98 older ones are named in the section, and the
+  list only gets shorter. No migration changes any of them: moving a parent to
+  another school is not something any code path does, and the swap would take
+  ACCESS EXCLUSIVE on `Users`, `StudentGroups` and the other parents together.
+
+
 - **Checklistor** (instruktionsbevis and samtyckeslistor per klass): 20270129090000 adds the
   `RetentionDataType` value `CHECKLISTS` and nothing else (a value cannot be used in the transaction that adds
   it, so it is a file of its own, taking no lock). 20270129091000 adds the tables `InstructionTemplates`,
