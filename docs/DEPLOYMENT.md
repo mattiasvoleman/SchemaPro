@@ -302,6 +302,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `REPORTING_RATE_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Rapporteringsgrad's nightly job. A school's night starts at 06:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch; only the reminders and the weekly notice are, under `/admin/reporting-rate`). The night stores each teacher's held and reported lessons per day, tells the teachers of lessons that stood open past the school's limit (if the school turned that on) and, on Mondays, tells rektor and the full administrators the week's totals (likewise). **Off, this is the emergency brake:** nothing is counted, reminded or sent, the days already stored stay and the pages show them unchanged (they stop getting newer), and a teacher's list of open lessons, which reads the lessons live, still answers. A value that is neither `on` nor `off` is refused at start |
 | `ABSENCE_STATS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarostatistik's nightly job. A school's night starts at 07:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch). The night stores the sums of absence per class and month, and for the whole school, without a pupil's id, for the months of the last 62 days and up to three older months a night until the three läsår are filled in. **Off, this is the emergency brake:** no month is counted, the sums already stored stay and the pages show them unchanged; the doors that count a pupil's own months from the marks (`/admin/reports?tab=absence-stats`, `/teacher/absence-stats`) still answer. A value that is neither `on` nor `off` is refused at start |
 | `ACK_BACKGROUND` | `on` (default) or `off`: the quarter-hourly pass of Kvittens' reminders (`ack-reminders` in `JobRuns`). It reminds, once, each guardian who has not confirmed themself a request whose time the school chose has come, one request at a time and each in a transaction of its own; a school with kvittens off, or with no reminder time, has nothing for it to do. `off` stops every reminder in every school; the requests, the confirmations and the notices of a new request go on. The test setup turns it off. |
+| `MEAL_LETTER_BACKGROUND` | `on` (default) or `off`: the two-minute look of Måltidskollen's daily letter to the kitchen (`meal-letter` in `JobRuns`). It asks which schools have the letter on, an address and a cut-off that has passed today by no more than three hours, with a sitting today, takes each school's day once (`JobClaims`, claimed by one instance) and sends the letter through the delivery that is already there (`sendLetter`, one mail at the mail pace, so it needs `RESEND_API_KEY` like every mail). The letter is off for every school until its administrator turns it on under Drift › Måltidskollen, so `on` does nothing for a school that has not. `off` stops every letter in every school; the page, the file and the counts go on. The test setup turns it off. |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -2367,6 +2368,66 @@ Walk the full product loop once, in order:
   moves). The schema stays; dropping it is a migration of its own, and the seven
   readers go back to the bodies named above and `absence_stats_lessons` to D6's
   (`bece0015…`, its migration's text).
+- **Måltidskollen**: 20270123090000 adds one table, `KitchenSettings` (a row per
+  school: the cut-off for reported absence, whether the daily letter to the
+  kitchen is on, and the kitchen's address; three policies, SELECT, INSERT and
+  UPDATE to `app_authenticated`, nothing else, no MAINTAIN), and five
+  functions, all SECURITY DEFINER with a pinned `search_path` and `jit = off`:
+  `app.meal_counts` (the count, the owner's alone), `app.meal_counts_for_me`,
+  `app.meal_letter_last_for_me`, `app.meal_letter_schools` and `app.meal_letter`
+  (the four doors the API role may run). No existing table is touched and no
+  existing function replaced (gallring is unchanged), and no enum gains a value:
+  the letter is a mail to an address, not a notice to a user. The migration locks
+  `Schools` alone, `NOWAIT` in a 30-second loop (the key from the new table), and
+  can be rerun after a refusal. **Off for every school**: with no row the cut-off
+  is none, so no absence is taken off, and no letter goes. The counts read
+  `CalendarLunches` (the published schedule), active pupils by home class,
+  `AbsenceReports` that cover the whole sitting (first reported before the day's
+  cut-off in the school's own time), replacement lessons of an activity over the
+  sitting (shown, counted), and pedagogisk lunch duties with fixed slots; they
+  carry numbers and the names of classes, never a pupil, and are not recorded in
+  the read log. `GET /api/v1/meal-counts` answers at most 14 days from today and
+  refuses a day before today; `/csv` is the same days in windows-1252 with `;`.
+  **Release note** (in these words or others): *Rastra can now give the kitchen
+  the number of portions for each lunch sitting, from the published schedule, as
+  a page to print, a file for Excel and, if the school wants it, a letter every
+  school day at the time the kitchen places its order. Allergies and diets are
+  not stored in Rastra and are not included. Nothing is sent until the school has
+  turned the letter on under Drift › Måltidskollen.*
+  **Before the migration**, as the owner: no `KitchenSettings` table and no
+  `app.meal_%` function exist (`SELECT count(*) FROM pg_tables WHERE tablename =
+  'KitchenSettings'` and `SELECT count(*) FROM pg_proc WHERE proname LIKE
+  'meal\_%'` are both 0), `prisma migrate status` lists exactly this migration as
+  pending, and no session sits idle in a transaction that holds `Schools`
+  (`SELECT pid, state, now() - xact_start FROM pg_stat_activity WHERE state =
+  'idle in transaction'`).
+  **After it, before the merge:** `KitchenSettings` has row security on and
+  exactly three policies, all `TO app_authenticated`; `app_authenticated` holds
+  SELECT, INSERT and UPDATE on it and nothing else (`has_table_privilege(...,
+  'DELETE, TRUNCATE')` is false; no MAINTAIN), `anon` and `authenticated` nothing;
+  there are five `app.meal_%` functions, all definer with `search_path=public,
+  pg_temp` and `jit=off`, four executable by `app_authenticated` and none by
+  `anon`, `authenticated`, `service_role` or PUBLIC, and `app.meal_counts` by none
+  of them; `SELECT count(*) FROM "KitchenSettings"` is 0.
+  **After the merge:** `JobRuns` gets a row for `meal-letter` within two minutes
+  of the new instance serving, its counts `{"schools": 0}`; `GET
+  /api/v1/meal-counts?days=7` answers for every school, `staffModelled: false` for
+  one that has placed no pedagogisk lunch. In a test school: give a cut-off and
+  an address under Drift › Måltidskollen, turn the letter on a few minutes
+  before the cut-off, and read the log for `Meal letter [school=...` and, if it
+  was not taken, `Meal letter not sent`. A letter needs `RESEND_API_KEY`; without
+  it the claim stays open and is retried until three hours after the cut-off.
+  **#277** changes the delivery's mail (a timeout, a turn that throws, whether a
+  mail was taken). `sendLetter` calls `sendEmails` and reads a `false` answer as
+  "not taken" where #277 gives one, so it needs no edit when #277 is in.
+  **Rollback of the code** is a revert; the table and the functions stay and are
+  unread. Rollback of the data, only if nothing in it is wanted: `DROP FUNCTION
+  app.meal_letter(uuid, date), app.meal_letter_schools(timestamptz, integer),
+  app.meal_letter_last_for_me(), app.meal_counts_for_me(date, date),
+  app.meal_counts(uuid, date, date); DROP TABLE "KitchenSettings";` and `prisma
+  migrate resolve --rolled-back 20270123090000_koket_far_portionerna_per_sittning`.
+  What a rollback changes: the page answers 404, no letter goes, and the cut-offs
+  and addresses the schools entered are gone.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

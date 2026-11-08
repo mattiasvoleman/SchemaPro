@@ -320,6 +320,7 @@ describe("AppShell navigation", () => {
       "nav.absenceWatch",
       "nav.reportingRate",
       "nav.acknowledgements",
+      "nav.meals",
       "nav.classBook",
     ]);
 

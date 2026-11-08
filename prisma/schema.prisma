@@ -300,6 +300,7 @@ model School {
   roomPreferences         RoomPreference[]
   teacherWorkRules        TeacherWorkRule[]
   lunchSetting            LunchSetting?
+  kitchenSetting          KitchenSetting?
   staffingPolicy          StaffingPolicy?
   teacherEmployments      TeacherEmployment[]
   teacherQualifications   TeacherSubjectQualification[]
@@ -4188,6 +4189,27 @@ model LunchSetting {
   // already is one, and a second would only be a duplicate to maintain.
   @@unique([schoolId])
   @@map("LunchSettings")
+}
+
+/// Måltidskollen (20270123090000): the school's cut-off for reported absence,
+/// whether the daily letter to the kitchen is on, and the kitchen's address.
+/// One row per school; no row means no cut-off (no absence is taken off) and no
+/// letter. The address is the school's own, not a user. No personal data. The
+/// portions are counted by app.meal_counts from CalendarLunch, never stored.
+model KitchenSetting {
+  schoolId      String    @id @db.Uuid
+  /// The school's local time of day; null means none.
+  cutoffTime    DateTime? @db.Time(0)
+  /// Off by default. On needs a cut-off and an address (CHECK).
+  letterEnabled Boolean   @default(false)
+  /// One address (CHECK); null until the school gives one.
+  kitchenEmail  String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@map("KitchenSettings")
 }
 
 enum RoomRuleKind {
