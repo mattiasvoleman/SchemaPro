@@ -2982,6 +2982,22 @@
     ut via SS12000.
   </p>
 
+  <h4>Löne-id</h4>
+  <p>
+    <span class="ui">Löne-id</span> under <span class="ui">Anställning</span>
+    är anställningsnumret i lönesystemet, högst 30 tecken. Det står sist på
+    varje rad i löneunderlaget (6.21), och det är vad lönekontoret bokar en
+    person med skyddad identitet på, eftersom filen inte har personens namn.
+    Fyll i det för varje lärare som skolan betalar lön till. Det hör till
+    tjänsten och skyddas som den: bara rektor, en fullständig administratör och
+    den som har HR-läs ser det, bara den som beslutar ändrar det, en ändring
+    syns i <span class="ui">Historik</span> för den som läser HR-uppgifter, och
+    det följer med tjänsten när läsåret rullas vidare. Det lämnas aldrig ut via
+    SS12000 och står inte i <em>larare.csv</em>. En vikarie i poolen har ingen
+    tjänst och därför inget löne-id; i löneunderlaget står en sådan vikarie med
+    namn, eller med en kod om hen har skyddad identitet.
+  </p>
+
   <h4>En tjänst som ändras under läsåret</h4>
   <p>
     En tjänst kan ändras från ett datum, till exempel 80 % från 1 november
@@ -7586,12 +7602,13 @@
     <li><strong>Filen.</strong> <span class="ui">CSV för Excel</span> är Excels svenska format:
       windows-1252, semikolon, decimalkomma och radslut CRLF, utan BOM. <span class="ui">Excel</span> är en
       .xlsx där minuter och timmar är tal, så att de går att summera. Båda har samma kolumner: signatur,
-      löne-id, efternamn, förnamn, e-post, typ (personal eller vikariepool), tjänstgöringsgrad (den som gäller
+      efternamn, förnamn, e-post, typ (personal eller vikariepool), tjänstgöringsgrad (den som gäller
       periodens sista dag, så en tjänst som ändras från den 1 november är den nya i en novemberfil),
       skoldel, konto,
-      minuter för undervisning, uppdrag och vikariepass, totalt i timmar och periodens båda dagar. Löne-id är
-      lönesystemets eget id för anställningen. Rastra har det inte, så kolumnen är tom på varje rad; den finns
-      så att kolumnerna inte flyttar sig den dag den fylls i. Tecken som
+      minuter för undervisning, uppdrag och vikariepass, totalt i timmar, periodens båda dagar och sist
+      löne-id, anställningsnumret i lönesystemet som skolan skriver på tjänsten (4.3). Löne-id är tomt för den
+      som inte har något. Kolumnen står sist så att en import som ställts in på den första versionen av
+      filen hittar varje kolumn där den var. Tecken som
       windows-1252 inte rymmer (ett polskt ł) skrivs som närmaste bokstav i CSV-filen och räknas i en notis;
       Excel-filen behåller dem.</li>
     <li><strong>Vem ser vad.</strong> Nyckeltalen läser alla administratörer, utan tjänstgöringsgrad om du inte
@@ -7603,14 +7620,18 @@
       och tjänst, och att du hämtar en fil som nämner personer, skrivs i läsloggen.</li>
     <li><strong>Skyddad identitet.</strong> Löneunderlaget ska betala alla, så en person med skyddad
       identitet finns med i filen och i vyn, och en notis säger hur många. Personen står där med sin signatur
-      (tjänstens för läsåret), aldrig med namn eller e-post, och de raderna står sist, i signaturernas ordning.
-      Filen skickas ofta med e-post eller läggs i en delad mapp, så vem signaturen är stannar i Rastra: den som
-      betalar lönen får veta det av skolan. När du hämtar filen säger meddelandet hur många personer med
-      skyddad identitet den har. Har en sådan person ingen signatur (en vikarie i poolen har ingen tjänst och
-      därför ingen signatur) säger raden inget om vem det är. En varning säger hur många det gäller: ge en
-      lärare en signatur under Tjänstefördelning (4.3) innan filen skickas, och säg själv till lönekontoret
-      vilka övriga rader det är. Nyckeltalen och kostnaden nämner bara lärare vid id och namn som registret
-      redan visar för dig, och kostnadsfilen nämner ingen.</li>
+      (tjänstens för läsåret) och sitt löne-id, aldrig med namn eller e-post, och de raderna står sist.
+      Saknar personen löne-id står i stället en kod i den kolumnen, <em>SKYDDAD</em> och ett nummer, till
+      exempel SKYDDAD-3. Koden ges när personen markeras och är densamma i varje fil så länge markeringen
+      finns; den säger inget om namnet. En varning säger hur många som står med en kod. Vem en kod gäller
+      ser du under <span class="ui">Vem koderna gäller</span> under tabellen, och bara där: den står aldrig i
+      filen, eftersom filen ofta skickas med e-post eller läggs i en delad mapp. Säg det till lönekontoret, och
+      fyll i löne-id på lärarens tjänst (4.3) så behövs ingen kod nästa gång. En vikarie i poolen har ingen
+      tjänst och står alltid med sin kod. När du hämtar filen säger meddelandet hur många personer med skyddad
+      identitet den har och hur många av dem som står med en kod. Tänk på att signaturen ofta är personens
+      initialer och står i schemats filer; den som känner personalen kan alltså känna igen den. Nyckeltalen och
+      kostnaden nämner bara lärare vid id och namn som registret redan visar för dig, och kostnadsfilen nämner
+      ingen.</li>
   </ul>
   <p>
     Under fliken <span class="path">Skoldelar och satser</span> anger skolan det som inte går att räkna fram.

@@ -102,7 +102,7 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
   "components/analysis/payroll-panel.tsx": {
     files: "loneunderlag-<från>-<till>.csv (Excels svenska CSV, windows-1252) and .xlsx",
     rule: "HANDS_OVER",
-    why: "The gateway builds the file (POST /analysis/payroll-basis/export): payroll pays everyone, so a person with a protected identity is in it, by signature with no name or e-mail, and the order says how many (protectedInFile, in the toast). The page names that person by signature too, from the answer's protectedIdentity, though it reads the register. The web only hands the file over; HR data, so only readers of HR data are offered it.",
+    why: "The gateway builds the file (POST /analysis/payroll-basis/export): payroll pays everyone, so a person with a protected identity is in it, by signature and Löne-id (or SKYDDAD-<n> where there is no Löne-id) with no name or e-mail, and the order says how many (protectedInFile, and protectedWithoutPayrollNumber for the codes, in the toast). The page names that person the same way from the answer's protectedIdentity, though it reads the register, and says which person a code is in a key outside the table, on the screen alone. The web only hands the file over; HR data, so only readers of HR data are offered it.",
   },
   "components/analysis/cost-basis-panel.tsx": {
     files: "kostnad-per-elev-<läsår>.csv",

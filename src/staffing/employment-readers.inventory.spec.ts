@@ -198,7 +198,7 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   },
   'src/analysis/analysis.service.ts': {
     basis: 'PERIODS',
-    why: 'Analys och planering: the payroll basis reads each teacher’s tjänstgöringsgrad on the period’s last day (postOn), and the key figures on the school’s today inside the läsår, with the day in the answer',
+    why: 'Analys och planering: the payroll basis reads each teacher’s tjänstgöringsgrad on the period’s last day (postOn), and the Löne-id of the year’s posts (payrollNumber, which no period changes), for readers of HR data alone; the key figures on the school’s today inside the läsår, with the day in the answer',
   },
   'src/analysis/key-figures.ts': {
     basis: 'PERIODS',

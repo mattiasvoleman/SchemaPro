@@ -142,10 +142,11 @@ function payrollBasis(context: GatewayContext): PayrollBasis | Reply {
     to: context.query.get("to") ?? YEAR_END,
     parts: PARTS,
     people: [
-      { userId: TEACHERS.anna.id, kind: "STAFF", teachingMinutes: 1200, dutyMinutes: 120, substituteMinutes: 0, employmentPercent: 100, signature: "AN", protectedIdentity: false },
+      { userId: TEACHERS.anna.id, kind: "STAFF", teachingMinutes: 1200, dutyMinutes: 120, substituteMinutes: 0, employmentPercent: 100, signature: "AN", payrollNumber: null, protectedIdentity: false, pseudonym: null },
     ],
     lines: [{ userId: TEACHERS.anna.id, kind: "STAFF", schoolPartId: PARTS[1]!.id, account: "4030", teachingMinutes: 1200, dutyMinutes: 120, substituteMinutes: 0 }],
     protectedInAnswer: 0,
+    protectedWithoutPayrollNumber: 0,
     notices: [],
   };
 }
@@ -160,6 +161,7 @@ function payrollFile(context: GatewayContext): PayrollFile | Reply {
     contentBase64: "U2lnbmF0dXI=",
     notices: [],
     protectedInFile: 0,
+    protectedWithoutPayrollNumber: 0,
   };
 }
 

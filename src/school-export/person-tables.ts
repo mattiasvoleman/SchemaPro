@@ -113,6 +113,8 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   // Anyone.
   UserRoleChanges: dump(['userId', 'actorId']),
   PersonProtections: dump(['userId']),
+  // The person's code in the löneunderlag while marked (20270206091000): theirs, as the mark is.
+  PayrollPseudonyms: dump(['userId']),
   RoomBookings: dump(['bookedById', 'decidedById']),
   RoomLoans: dump(['decidedById', 'requestedById']),
   HuvudmanSchools: dump(['acceptedById']),

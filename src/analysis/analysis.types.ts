@@ -9,7 +9,8 @@
  * people is the payroll file, which is built here (payroll-files.ts) because
  * it must be Excel's Swedish CSV (windows-1252) and an .xlsx, which the web
  * cannot write. It names everyone in it but a person with a protected
- * identity, who stands by signature alone (PayrollPerson.protectedIdentity).
+ * identity, who stands by signature and Löne-id, or a code where the person
+ * has no Löne-id (PayrollPerson.protectedIdentity, .pseudonym).
  */
 
 /**
@@ -64,10 +65,10 @@ export type AnalysisNoticeCode =
   | 'ANALYSIS_LEFT_IN_PERIOD'
   /** Uppdrag with no teaching to follow are on a line of their own: no skoldel, no konto. */
   | 'ANALYSIS_DUTIES_UNALLOCATED'
-  /** People with a protected identity are in the file, as payroll pays everyone: by signature, with no name and no e-mail. */
+  /** People with a protected identity are in the file, as payroll pays everyone: by signature and Löne-id, with no name and no e-mail. */
   | 'ANALYSIS_PROTECTED_IN_FILE'
-  /** Of those, people with no signature: their rows say nothing of who they are, so the school must tell payroll, or give them one. */
-  | 'ANALYSIS_PROTECTED_WITHOUT_SIGNATURE'
+  /** Of those, people with no Löne-id: they stand by their code (SKYDDAD-<n>), which the page resolves for the reader alone. */
+  | 'ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER'
   /** Characters windows-1252 cannot hold were replaced in the CSV (the Excel file keeps them). */
   | 'ANALYSIS_CHARACTERS_REPLACED';
 
@@ -240,13 +241,21 @@ export interface PayrollPerson {
   employmentPercent: number | null;
   /** Lärarsignatur: the post's in the läsår, null without a post or a signature (a vikarie of the pool has none). */
   signature: string | null;
+  /** Löne-id: the payroll system's number on the post in the läsår (20270206090000), null where none is written. HR data. */
+  payrollNumber: string | null;
   /**
    * The school has marked the person as having a protected identity. The file and the page
-   * then name them by `signature` alone, never by name or e-mail: payroll pays everyone, and
-   * which signature is whom stays in Rastra. Said per person, to the readers of HR data the
+   * then name them by `signature` and Löne-id, never by name or e-mail: payroll pays everyone,
+   * and which row is whom stays in Rastra. Said per person, to the readers of HR data the
    * answer is for, so that the page need not read the school's marks to leave the name out.
    */
   protectedIdentity: boolean;
+  /**
+   * A marked person with no Löne-id: the code the file writes in the Löne-id column,
+   * SKYDDAD-<number> (PayrollPseudonyms, 20270206091000), the same in every file. Null for
+   * everyone else. The page shows which person a code is to its reader, on the screen alone.
+   */
+  pseudonym: string | null;
 }
 
 export interface PayrollBasisResponse {
@@ -256,8 +265,10 @@ export interface PayrollBasisResponse {
   parts: SchoolPartView[];
   people: PayrollPerson[];
   lines: PayrollLine[];
-  /** People with a protected identity who are in the answer, as payroll pays everyone (by signature: protectedIdentity). */
+  /** People with a protected identity who are in the answer, as payroll pays everyone (by signature and Löne-id: protectedIdentity). */
   protectedInAnswer: number;
+  /** Of those, the people with no Löne-id, who stand by their code (pseudonym). */
+  protectedWithoutPayrollNumber: number;
   notices: AnalysisNotice[];
 }
 
@@ -270,4 +281,6 @@ export interface PayrollFileResponse {
   contentBase64: string;
   notices: AnalysisNotice[];
   protectedInFile: number;
+  /** Of those, the people with no Löne-id, who stand by their code. */
+  protectedWithoutPayrollNumber: number;
 }

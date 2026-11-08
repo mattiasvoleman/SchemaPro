@@ -39,9 +39,10 @@ import { byGrade } from './school-part-rules';
  * file says so (ANALYSIS_DUTIES_UNALLOCATED). (BESLUT.)
  *
  * A person appears when they have any time. The tjänstgöringsgrad, the
- * signature and whether the school has marked the person as having a protected
- * identity are the caller's to say (employmentPercentOf, signatureOf,
- * protectedOf), and names are the file's to add: this module knows ids and
+ * signature, the Löne-id, whether the school has marked the person as having a
+ * protected identity and a marked person's code are the caller's to say
+ * (employmentPercentOf, signatureOf, payrollNumberOf, protectedOf,
+ * pseudonymOf), and names are the file's to add: this module knows ids and
  * minutes.
  *
  * PURE.
@@ -66,8 +67,12 @@ export interface PayrollInput {
   employmentPercentOf(userId: string): number | null;
   /** The post's lärarsignatur, or null. */
   signatureOf(userId: string): string | null;
+  /** The post's Löne-id, or null. */
+  payrollNumberOf(userId: string): string | null;
   /** The school has marked the person as having a protected identity. */
   protectedOf(userId: string): boolean;
+  /** A marked person's code where they have no Löne-id, else null. */
+  pseudonymOf(userId: string): string | null;
 }
 
 export interface PayrollResult {
@@ -188,7 +193,9 @@ export function buildPayroll(input: PayrollInput): PayrollResult {
       substituteMinutes: substitute,
       employmentPercent: input.employmentPercentOf(userId),
       signature: input.signatureOf(userId),
+      payrollNumber: input.payrollNumberOf(userId),
       protectedIdentity: input.protectedOf(userId),
+      pseudonym: input.pseudonymOf(userId),
     });
   }
   return { people, lines, dutiesUnallocated: unallocated };

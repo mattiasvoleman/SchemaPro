@@ -153,6 +153,7 @@ describe("EmploymentCard", () => {
       teachingTargetMinutesPerWeek: null,
       signature: "ANN",
       note: null,
+      payrollNumber: null,
       employmentForm: null,
       firstTeacherPercent: null,
       lecturerPercent: null,
@@ -160,6 +161,25 @@ describe("EmploymentCard", () => {
       maxConsecutiveTeachingMinutes: null,
       consecutiveBreakMinutes: null,
     });
+  });
+
+  it("sends Löne-id trimmed, and says it on the summary to a reader of HR data alone", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    type("employmentPercent", "80");
+    type("payrollNumber", " 4711-01 ");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ payrollNumber: "4711-01" }));
+
+    const shown = renderCard({ employment: { ...employment, payrollNumber: "4711-01" } });
+    expect(within(shown.container).getByText("employmentSummaryPayrollNumber(4711-01)")).toBeInTheDocument();
+    shown.unmount();
+    // A reader without HR-läs is handed null and hrHidden: nothing is said, not even that there is one.
+    const hidden = renderCard({
+      employment: { ...employment, employmentPercent: null, reductionPercent: null, note: null, payrollNumber: null, hrHidden: true },
+    });
+    expect(within(hidden.container).queryByText(/employmentSummaryPayrollNumber/)).toBeNull();
   });
 
   it("reads the undervisningsdagar back, and says nothing for a post without a limit", () => {

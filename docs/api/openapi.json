@@ -33363,6 +33363,12 @@
             "nullable": true,
             "maxLength": 500
           },
+          "payrollNumber": {
+            "type": "string",
+            "nullable": true,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$",
+            "maxLength": 30
+          },
           "employmentForm": {
             "type": "string",
             "nullable": true,

@@ -128,7 +128,8 @@
  *
  * ANALYS OCH PLANERING (20270130090000) IS DECIDED HERE TOO, apart from its file: its views (GET /api/v1/analysis/key-figures, .../cost-basis and
  * .../payroll-basis) answer the screen in JSON with ids and numbers and no name, and no path of them is a file. The payroll's answer says per person
- * the post's signature and whether the person is marked, so that the page names a marked person by signature as the file does. The key figures name a teacher by id and no
+ * the post's signature and Löne-id, whether the person is marked and a marked person's code, so that the page names a marked person as the file does
+ * and resolves a code for its reader on the screen alone. The key figures name a teacher by id and no
  * pupil, a protected teacher included (staff read the school's teachers directly, and the figures are the load report's, which has always named them); the
  * cost basis is aggregates; the huvudman's reader is given the school's figures and no teacher's row. The cost basis as a file is the web's, a CSV of
  * årskurser and kronor with no person, and NAMES_NOBODY there. A route of Analys och planering that ever answers a file naming people belongs in the
@@ -208,11 +209,13 @@ export const PEOPLE_ROUTES: Readonly<Record<string, PeopleRoute>> = {
     rule: 'KEEPS_AND_SAYS',
     why:
       'Löneunderlaget (Analys och planering): payroll pays everyone, so every person with time in the period is in the file, a person with a protected identity too, ' +
-      'and protectedInFile says how many. A person is named by signature, name and e-mail; a marked person by the post\'s signature alone, with the Löne-id, name and ' +
-      'e-mail columns empty and the rows after the named, by signature: the file travels by e-mail and shared folders, and which signature is whom stays in Rastra (the ' +
-      'name is not read for them at all). Rastra holds no payroll id, so Löne-id is empty on every row; a marked person with no signature is a row of figures alone, and ' +
-      'ANALYSIS_PROTECTED_WITHOUT_SIGNATURE says how many. With tjänstgöringsgrad: HR data, so only rektor, a full administrator or a reader with HR-läs ' +
-      'is given it (HR_NOT_YOURS before anything is read), never the huvudman\'s reader. Recorded in the läslogg (EMPLOYMENT and PEOPLE) before the answer leaves.',
+      'and protectedInFile says how many. A person is named by signature, name, e-mail and Löne-id (the payroll system\'s number on the post, 20270206090000, ' +
+      'in the last column, empty where none is written). A marked person by the post\'s signature and Löne-id alone, the name and e-mail columns empty and the ' +
+      'name not read at all, the rows after the named; one with no Löne-id (a vikarie of the pool has no post) stands by a code of their own, SKYDDAD-<n> ' +
+      '(PayrollPseudonyms, 20270206091000, written by the mark), the same in every file, and protectedWithoutPayrollNumber says how many. Which code is whom ' +
+      'the page shows its reader on the screen alone: the file travels by e-mail and shared folders. With tjänstgöringsgrad: HR data, so only rektor, a full ' +
+      'administrator or a reader with HR-läs is given it (HR_NOT_YOURS before anything is read), never the huvudman\'s reader. Recorded in the läslogg ' +
+      '(EMPLOYMENT and PEOPLE) before the answer leaves.',
   },
   'POST /api/v1/schedule-exchange/export': {
     rule: 'NAMES_STAFF',

@@ -92,6 +92,8 @@ export interface SourceEmployment {
    */
   maxConsecutiveTeachingMinutes?: number | null;
   consecutiveBreakMinutes?: number | null;
+  /** Löne-id, 20270206090000: the post's own; absent or null: none written. */
+  payrollNumber?: string | null;
   /** The post's periods (20261022120000), by Från; [] for a post the same all year. */
   periods: SourcePeriod[];
 }
@@ -175,6 +177,7 @@ export interface StaffingWrites {
     /** The limit on teaching in a row: both, or neither. */
     maxConsecutiveTeachingMinutes?: number;
     consecutiveBreakMinutes?: number;
+    payrollNumber?: string;
   }[];
   duties: {
     sourceDutyId: string;
@@ -441,6 +444,8 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
             consecutiveBreakMinutes: employment.consecutiveBreakMinutes,
           }
         : {}),
+      // Löne-id (20270206090000): the anställning's, so it goes on with the post.
+      ...(employment.payrollNumber ? { payrollNumber: employment.payrollNumber } : {}),
     });
     preview.employments.carried++;
     employmentOf.set(employment.userId, 'CARRIED');

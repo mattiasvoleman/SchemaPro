@@ -253,6 +253,8 @@ model School {
   teacherMarksTowards     SharedTeacherMark[] @relation("SharedTeacherMarkWithSchool")
   /// Skyddad identitet (20270107090000): the school's marks of its protected people, and who set or removed them.
   personProtections       PersonProtection[] @relation("PersonProtectionSchool")
+  /// The löneunderlag's codes for the school's marked persons (20270206091000).
+  payrollPseudonyms       PayrollPseudonym[] @relation("PayrollPseudonymSchool")
   personProtectionEvents  PersonProtectionEvent[] @relation("PersonProtectionEventSchool")
   schoolExports           SchoolExport[]
   schoolExportChunks      SchoolExportChunk[]
@@ -484,6 +486,8 @@ model User {
   /// Skyddad identitet (20270107090000): a row per source (the sync's, an
   /// administrator's). Admin-only; never select it into a read others see.
   protections         PersonProtection[] @relation("PersonProtectionUser")
+  /// The person's code in the löneunderlag while marked (20270206091000): at most one row.
+  payrollPseudonyms   PayrollPseudonym[] @relation("PayrollPseudonymUser")
   /// Membership of the substitute pool (20261012110000): at most one row, a
   /// list for the composite key's sake as workRules. readActiveStaffIds
   /// filters on it.
@@ -750,6 +754,27 @@ enum PersonProtectionSource {
 /// (src/users/person-protections.ts). Goes with the person, and at
 /// gallring's pseudonymisation; who set and removed it is in
 /// PersonProtectionEvent.
+/// Skyddad identitet i löneunderlaget (20270206091000): a marked person's code,
+/// written as SKYDDAD-<number> in the payroll file's Löne-id column where the
+/// person has no Löne-id. Written when the person is marked and removed with
+/// the person's last mark, by the trigger PersonProtections_payroll_pseudonym
+/// alone (the API's role reads, and has no grant to write). The number is an
+/// identity column, drawn once from one sequence for all schools and never
+/// reused, so a code is the same in every file and says nothing of the name.
+/// Every administrator of the school reads, as they read the marks.
+model PayrollPseudonym {
+  schoolId  String   @db.Uuid
+  userId    String   @db.Uuid
+  number    Int      @unique @default(autoincrement())
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  school School @relation("PayrollPseudonymSchool", fields: [schoolId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user   User   @relation("PayrollPseudonymUser", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([schoolId, userId])
+  @@map("PayrollPseudonyms")
+}
+
 model PersonProtection {
   userId   String                 @db.Uuid
   schoolId String                 @db.Uuid
@@ -3678,6 +3703,13 @@ model TeacherEmployment {
   signature                    String?
   /// At most 500 characters.
   note                         String?
+  /// Löne-id (20270206090000): the payroll system's own number for the
+  /// anställning, which the school writes on the post and the löneunderlag's
+  /// Löne-id column carries. 1..30 characters, trimmed, no control character
+  /// (CHECK TeacherEmployments_payrollNumber_check); NULL where none is
+  /// written. HR data: hideHr hands it to an administrator without HR-läs as
+  /// null. Written by those who decide, like the rest of the post.
+  payrollNumber                String?
   /// A value no integration and no other person ever gets — only the
   /// teacher's own direct read of their own post reaches it, which tells
   /// them nothing they do not know — and which with the post's id and a day

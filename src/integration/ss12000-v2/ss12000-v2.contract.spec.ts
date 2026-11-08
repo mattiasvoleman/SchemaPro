@@ -240,7 +240,7 @@ describe('privacy, as properties of the output', () => {
     for (const reason of ['Tandläkare', 'Approved leave', 'SICK', 'APPOINTMENT']) expect(text).not.toContain(reason);
     const keys = allKeys(bodies);
     for (const key of [
-      'note', 'cancelCause', 'reductionPercent', 'teachingTargetMinutesPerWeek', 'dutyPercent', 'hoursPerYear', 'civicNo',
+      'note', 'cancelCause', 'reductionPercent', 'teachingTargetMinutesPerWeek', 'dutyPercent', 'hoursPerYear', 'civicNo', 'payrollNumber',
       'eduPersonPrincipalNames', 'phoneNumbers', 'relationType', 'minutesPlanned', 'comment',
       'absenceReason', 'reporter', 'registeredBy', 'otherAttendanceMinutes',
     ]) {

@@ -3,7 +3,7 @@
  * (src/analysis/analysis.types.ts is the other copy). Ids only, never a name:
  * the page names people from the register it already reads, all but a person
  * the payroll's answer says is marked (PayrollPerson.protectedIdentity), whom it
- * names by signature.
+ * names by signature and Löne-id, or by the code where there is no Löne-id.
  */
 
 export const COST_CATEGORIES = ["TEACHER", "UNQUALIFIED_TEACHER", "SUBSTITUTE"] as const;
@@ -36,7 +36,7 @@ export type AnalysisNoticeCode =
   | "ANALYSIS_LEFT_IN_PERIOD"
   | "ANALYSIS_DUTIES_UNALLOCATED"
   | "ANALYSIS_PROTECTED_IN_FILE"
-  | "ANALYSIS_PROTECTED_WITHOUT_SIGNATURE"
+  | "ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER"
   | "ANALYSIS_CHARACTERS_REPLACED";
 
 export interface AnalysisNotice {
@@ -152,8 +152,12 @@ export interface PayrollPerson {
   employmentPercent: number | null;
   /** The post's lärarsignatur in the läsår, or null. */
   signature: string | null;
-  /** Marked as having a protected identity: named by signature alone, on the page as in the file. */
+  /** Löne-id on the post (20270206090000), or null. */
+  payrollNumber: string | null;
+  /** Marked as having a protected identity: named by signature and Löne-id, never by name, on the page as in the file. */
   protectedIdentity: boolean;
+  /** A marked person with no Löne-id: the file's code, SKYDDAD-<n>, which the page resolves for its reader alone. */
+  pseudonym: string | null;
 }
 
 export interface PayrollBasis {
@@ -164,6 +168,7 @@ export interface PayrollBasis {
   people: PayrollPerson[];
   lines: PayrollLine[];
   protectedInAnswer: number;
+  protectedWithoutPayrollNumber: number;
   notices: AnalysisNotice[];
 }
 
@@ -175,6 +180,7 @@ export interface PayrollFile {
   contentBase64: string;
   notices: AnalysisNotice[];
   protectedInFile: number;
+  protectedWithoutPayrollNumber: number;
 }
 
 /** The input of a skoldel. */

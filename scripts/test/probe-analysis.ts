@@ -30,10 +30,13 @@
  *   (lf)  a vikarie who left: the cover over by the stamp stands, the cover after it does not;
  *   (lg)  made active again: the trigger clears the stamp and she is booked as if she had never
  *         left, the gap included (the earlier leave is not kept);
- *   (lh)  Bo marked as having a protected identity (PersonProtections, by hand): the answer says
- *         his signature and the mark and no name; both files have his row by signature (BO) and
- *         every figure, with Löne-id, name and e-mail empty, and nothing of his name or address
- *         anywhere; Anna is named as before; protectedInFile is 1. The mark is removed after.
+ *   (lh)  Bo marked as having a protected identity (PersonProtections, by hand): the mark's
+ *         trigger gives him a code (PayrollPseudonyms, 20270206091000). The answer says his
+ *         signature, the mark and the code and no name; both files have his row by signature (BO)
+ *         and every figure, name and e-mail empty, and SKYDDAD-<his number> in the last column,
+ *         Löne-id; nothing of his name or address anywhere; Anna is named as before, with the
+ *         Löne-id written on her post (20270206090000); protectedInFile is 1. Then his post gets a
+ *         Löne-id and the code gives way to it. The mark is removed after, and the code with it.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
@@ -249,39 +252,56 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
     assert.deepEqual(answer.notices.find((n) => n.code === 'ANALYSIS_LEFT_IN_PERIOD')?.params, { people: 1 }, 'only Dan has left');
   });
 
-  await check('(lh) a marked teacher is in the answer and both files by signature, with no name and no e-mail', async () => {
+  await check('(lh) a marked teacher is in the answer and both files by signature and code, with no name and no e-mail', async () => {
     await lesson('2026-10-20', '10:00', '11:00', bo.id);
+    await owner.query(`UPDATE "TeacherEmployments" SET "payrollNumber" = '4711' WHERE "userId" = $1`, [anna.id]);
     await owner.query(`INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES ($1, $2, 'MANUAL')`, [bo.id, s]);
     try {
       const email = (await one<{ email: string }>(`SELECT email FROM "Users" WHERE id = $1`, [bo.id])).email;
+      const number = (await one<{ number: number }>(`SELECT number FROM "PayrollPseudonyms" WHERE "userId" = $1`, [bo.id])).number;
+      const code = `SKYDDAD-${number}`;
       const answer = await payroll('2026-10-12', '2026-10-23');
       const bo_ = totalsOf(answer, bo.id)!;
-      assert.deepEqual([bo_.signature, bo_.protectedIdentity], ['BO', true]);
-      assert.equal(totalsOf(answer, anna.id)!.protectedIdentity, false);
-      assert.equal(answer.protectedInAnswer, 1);
+      assert.deepEqual([bo_.signature, bo_.protectedIdentity, bo_.payrollNumber, bo_.pseudonym], ['BO', true, null, code]);
+      assert.deepEqual([totalsOf(answer, anna.id)!.protectedIdentity, totalsOf(answer, anna.id)!.payrollNumber], [false, '4711']);
+      assert.deepEqual([answer.protectedInAnswer, answer.protectedWithoutPayrollNumber], [1, 1]);
       assert.ok(!JSON.stringify(answer).includes(email), 'the answer names him');
 
       const request = { academicYearId: year, from: '2026-10-12', to: '2026-10-23' };
       const csv = await analysis.payrollFile({ ...request, format: 'CSV' }, asAdmin);
       const lines = new TextDecoder('windows-1252').decode(Buffer.from(csv.contentBase64, 'base64')).split('\r\n').filter(Boolean);
-      assert.equal(lines[0]!.split(';').slice(0, 5).join(';'), 'Signatur;Löne-id;Efternamn;Förnamn;E-post');
+      assert.equal(lines[0]!.split(';').slice(0, 4).join(';') + ';' + lines[0]!.split(';').at(-1), 'Signatur;Efternamn;Förnamn;E-post;Löne-id');
       const row = lines.find((line) => line.startsWith('BO;'));
       assert.ok(row, 'his row is not in the CSV');
-      assert.equal(row!.split(';').slice(0, 6).join(';'), 'BO;;;;;Personal');
-      assert.equal(row!.split(';')[9], String(bo_.teachingMinutes));
-      assert.ok(!lines.join('\n').includes(email) && !lines.some((line) => line.split(';')[3] === 'Bo'), 'the CSV names him');
-      assert.ok(lines.some((line) => line.startsWith('AN;;Analys;Anna;anna-')), 'Anna is not named as before');
-      assert.equal(csv.protectedInFile, 1);
+      assert.equal(row!.split(';').slice(0, 5).join(';'), 'BO;;;;Personal');
+      assert.equal(row!.split(';')[8], String(bo_.teachingMinutes));
+      assert.equal(row!.split(';').at(-1), code);
+      assert.ok(!lines.join('\n').includes(email) && !lines.some((line) => line.split(';')[2] === 'Bo'), 'the CSV names him');
+      const annaRow = lines.find((line) => line.startsWith('AN;Analys;Anna;anna-'));
+      assert.ok(annaRow, 'Anna is not named as before');
+      assert.equal(annaRow!.split(';').at(-1), '4711');
+      assert.deepEqual([csv.protectedInFile, csv.protectedWithoutPayrollNumber], [1, 1]);
 
       const xlsx = await analysis.payrollFile({ ...request, format: 'XLSX' }, asAdmin);
       const sheet = readXlsx(Buffer.from(xlsx.contentBase64, 'base64')).rows;
-      assert.deepEqual(sheet.find((cells) => cells[0] === 'BO')!.slice(0, 6), ['BO', '', '', '', '', 'Personal']);
-      assert.ok(!JSON.stringify(sheet).includes(email) && !sheet.some((cells) => cells[3] === 'Bo'), 'the workbook names him');
-      assert.deepEqual(sheet.find((cells) => cells[0] === 'AN')!.slice(2, 4), ['Analys', 'Anna']);
+      const boCells = sheet.find((cells) => cells[0] === 'BO')!;
+      assert.deepEqual([...boCells.slice(0, 5), boCells.at(-1)], ['BO', '', '', '', 'Personal', code]);
+      assert.ok(!JSON.stringify(sheet).includes(email) && !sheet.some((cells) => cells[2] === 'Bo'), 'the workbook names him');
+      assert.deepEqual(sheet.find((cells) => cells[0] === 'AN')!.slice(1, 3), ['Analys', 'Anna']);
       assert.equal(xlsx.protectedInFile, 1);
+
+      // A Löne-id on his post: the file books him on it, and the code is not written.
+      await owner.query(`UPDATE "TeacherEmployments" SET "payrollNumber" = '8800' WHERE "userId" = $1`, [bo.id]);
+      const later = await analysis.payrollFile({ ...request, format: 'CSV' }, asAdmin);
+      const laterRow = new TextDecoder('windows-1252').decode(Buffer.from(later.contentBase64, 'base64')).split('\r\n').find((line) => line.startsWith('BO;'));
+      assert.equal(laterRow!.split(';').at(-1), '8800');
+      assert.deepEqual([later.protectedInFile, later.protectedWithoutPayrollNumber], [1, 0]);
     } finally {
       await owner.query(`DELETE FROM "PersonProtections" WHERE "userId" = $1`, [bo.id]);
+      await owner.query(`UPDATE "TeacherEmployments" SET "payrollNumber" = NULL WHERE "userId" IN ($1, $2)`, [anna.id, bo.id]);
     }
+    const left = await one<{ n: number }>(`SELECT count(*)::int AS n FROM "PayrollPseudonyms" WHERE "userId" = $1`, [bo.id]);
+    assert.equal(left.n, 0, 'the code outlived the mark');
   });
 }
 
