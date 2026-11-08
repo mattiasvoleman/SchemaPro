@@ -29,7 +29,13 @@ export function candidatesHref(year: AcademicYear | null): string {
 export interface CandidatesSectionProps {
   year: AcademicYear | null;
   /** useScheduleCandidates(year), read by the page: the Generera button waits on it too. */
-  overview: { data?: CandidatesOverview; isLoading: boolean; isError: boolean };
+  overview: {
+    data?: CandidatesOverview;
+    isLoading: boolean;
+    isError: boolean;
+    /** Reads the runs again: the mode's button asks before it decides whether there is a set to replace. */
+    refetch?: () => Promise<{ data?: CandidatesOverview } | undefined>;
+  };
   /** The checklist above is met and answered: what Generera itself needs. */
   canStart: boolean;
   /** A Generera job of the year is running; the gateway refuses a start meanwhile (GENERATE_RUNNING). */
@@ -64,6 +70,9 @@ export function CandidatesSection({
   const statusId = useId();
   const bestEffortHintId = useId();
   const [confirmingReplace, setConfirmingReplace] = useState(false);
+  /** How many proposals the question names: the count at the moment it was asked, not whatever the cache says later. */
+  const [replaceCount, setReplaceCount] = useState(0);
+  const [checking, setChecking] = useState(false);
 
   const runDate = useMemo(
     () =>
@@ -82,7 +91,8 @@ export function CandidatesSection({
    * four would lose them to a button that says nothing of it. A run that
    * fails leaves them.
    */
-  const savedProposals = overview.data?.batch?.candidates.filter(isApplicable).length ?? 0;
+  const readyIn = (data: CandidatesOverview | undefined) => data?.batch?.candidates.filter(isApplicable).length ?? 0;
+  const savedProposals = readyIn(overview.data);
 
   const run = async () => {
     if (!year) return;
@@ -110,10 +120,36 @@ export function CandidatesSection({
     }
   };
   const startingBestEffort = start.isPending && start.variables?.mode === "BEST_EFFORT";
-  /** The mode's button: asks first when there are saved proposals to replace, starts at once when there are none. */
-  const askBestEffort = () => {
-    if (savedProposals > 0) setConfirmingReplace(true);
-    else void runBestEffort();
+  /**
+   * The mode's button: asks first when there are saved proposals to replace,
+   * starts at once when there are none. The runs are read AGAIN before it
+   * decides: the picture on screen can be older than the click (the query is
+   * fresh for 30 s, does not refetch on focus and polls only while a run is
+   * active), and another tab or administrator may have finished a run since,
+   * whose set this start would delete without a word (review of #285, round 2).
+   * A read that fails leaves the picture there is.
+   */
+  const askBestEffort = async () => {
+    setChecking(true);
+    try {
+      let saved = savedProposals;
+      if (overview.refetch) {
+        try {
+          const fresh = await overview.refetch();
+          if (fresh?.data) saved = readyIn(fresh.data);
+        } catch {
+          // The cached picture is the best there is.
+        }
+      }
+      if (saved > 0) {
+        setReplaceCount(saved);
+        setConfirmingReplace(true);
+      } else {
+        await runBestEffort();
+      }
+    } finally {
+      setChecking(false);
+    }
   };
   const startDisabled = !year || !canStart || generating || active || start.isPending;
 
@@ -212,7 +248,7 @@ export function CandidatesSection({
               data-writes="SCHEMALAGGNING"
               variant="outline"
               className="w-full sm:w-auto"
-              disabled={startDisabled}
+              disabled={startDisabled || checking}
               onClick={askBestEffort}
               aria-describedby={[reason ? reasonId : active ? statusId : null, bestEffortHintId]
                 .filter(Boolean)
@@ -263,7 +299,7 @@ export function CandidatesSection({
         open={confirmingReplace}
         onOpenChange={setConfirmingReplace}
         title={t("section.replaceBestEffortTitle")}
-        description={t("section.replaceBestEffortBody", { count: savedProposals })}
+        description={t("section.replaceBestEffortBody", { count: replaceCount })}
         confirmLabel={t("section.replaceBestEffortConfirm")}
         loading={startingBestEffort}
         onConfirm={async () => {

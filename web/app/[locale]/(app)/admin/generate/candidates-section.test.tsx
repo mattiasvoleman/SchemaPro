@@ -355,6 +355,98 @@ describe("the Schemaförslag section on /admin/generate", () => {
       });
     });
 
+    /*
+     * The picture on screen can be older than the click (fresh for 30 s, no
+     * refetch on focus, polled only while a run is active): another tab or
+     * administrator may have finished a run, whose set this start would delete
+     * unasked. The button reads the runs again and decides on the answer
+     * (review of #285, round 2, LÅG-R2-2).
+     */
+    describe("reads the runs again before it decides", () => {
+      const noneSaved = { data: overviewOf(null), isLoading: false, isError: false };
+      const savedTwo = { data: overviewOf(run(), [candidate(1), candidate(2)]), isLoading: false, isError: false };
+      const refetch = vi.fn();
+      beforeEach(() => refetch.mockReset());
+
+      it("asks when the fresh read finds a set the cached picture did not know of", async () => {
+        start.mutateAsync.mockResolvedValue({ runId: "run-9" });
+        refetch.mockResolvedValue({ data: overviewOf(run(), [candidate(1), candidate(2), candidate(3)]) });
+        renderSection({ bestEffort: true, overview: { ...noneSaved, refetch } });
+
+        await userEvent.setup().click(bestEffortButton());
+        expect(refetch).toHaveBeenCalledTimes(1);
+        expect(start.mutateAsync).not.toHaveBeenCalled();
+        // The question names what the fresh read found.
+        expect(within(screen.getByRole("dialog")).getByText("scheduleCandidates.section.replaceBestEffortBody(3)")).toBeInTheDocument();
+      });
+
+      it("starts at once when the set the cached picture showed is gone", async () => {
+        start.mutateAsync.mockResolvedValue({ runId: "run-9" });
+        refetch.mockResolvedValue({ data: overviewOf(null) });
+        renderSection({ bestEffort: true, overview: { ...savedTwo, refetch } });
+
+        await userEvent.setup().click(bestEffortButton());
+        expect(refetch).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(start.mutateAsync).toHaveBeenCalledWith({ academicYearId: "y-1", mode: "BEST_EFFORT", weights: WEIGHTS });
+      });
+
+      it("keeps the picture there is when the read fails", async () => {
+        // A plain function and not the spy: with a spy (also one wrapped in a plain function) vitest reported the
+        // rejected promise as the test's own failure although the component caught it; the cause was not looked into.
+        let reads = 0;
+        const failing = () => {
+          reads += 1;
+          return new Promise<never>((_, reject) => setTimeout(() => reject(new Error("offline")), 0));
+        };
+        renderSection({ bestEffort: true, overview: { ...savedTwo, refetch: failing } });
+
+        await userEvent.setup().click(bestEffortButton());
+        expect(reads).toBe(1);
+        expect(start.mutateAsync).not.toHaveBeenCalled();
+        expect(within(screen.getByRole("dialog")).getByText("scheduleCandidates.section.replaceBestEffortBody(2)")).toBeInTheDocument();
+      });
+
+      it.each([
+        ["the read answers nothing", () => refetch.mockResolvedValue(undefined)],
+        ["the read answers without data", () => refetch.mockResolvedValue({ data: undefined })],
+      ])("keeps the picture there is when %s", async (_, arrange) => {
+        arrange();
+        renderSection({ bestEffort: true, overview: { ...savedTwo, refetch } });
+
+        await userEvent.setup().click(bestEffortButton());
+        expect(refetch).toHaveBeenCalledTimes(1);
+        expect(start.mutateAsync).not.toHaveBeenCalled();
+        expect(within(screen.getByRole("dialog")).getByText("scheduleCandidates.section.replaceBestEffortBody(2)")).toBeInTheDocument();
+      });
+
+      it("holds the button while it reads, so a second click cannot start a second read", async () => {
+        let answer: (value: unknown) => void = () => {};
+        refetch.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+        renderSection({ bestEffort: true, overview: { ...noneSaved, refetch } });
+        const user = userEvent.setup();
+
+        await user.click(bestEffortButton());
+        expect(bestEffortButton()).toBeDisabled();
+        await user.click(bestEffortButton());
+        expect(refetch).toHaveBeenCalledTimes(1);
+
+        start.mutateAsync.mockResolvedValue({ runId: "run-9" });
+        answer({ data: overviewOf(null) });
+        await waitFor(() => expect(start.mutateAsync).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(bestEffortButton()).toBeEnabled());
+      });
+
+      it("does not read for the ordinary start, which does not ask", async () => {
+        start.mutateAsync.mockResolvedValue({ runId: "run-9" });
+        renderSection({ bestEffort: true, overview: { ...savedTwo, refetch } });
+
+        await userEvent.setup().click(startButton());
+        expect(refetch).not.toHaveBeenCalled();
+        expect(start.mutateAsync).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe("with no saved proposals to lose", () => {
       it.each([
         ["nothing saved at all", { data: overviewOf(null), isLoading: false, isError: false }],
