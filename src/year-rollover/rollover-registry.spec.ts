@@ -281,6 +281,8 @@ describe('the rollover registry', () => {
       'ClassTeacherAppointment',
       'ClassTeacherOpenTime',
       'ClassTeacherChange',
+      // Förlagda poster (20270207090000): a post's day, time and room belong to the year they were given against.
+      'TeachingRequirementPlacement',
     ];
     expect(
       createHash('sha256')
@@ -304,6 +306,9 @@ describe('the rollover registry', () => {
       expect.objectContaining({ model: 'Ss12000DutyLink', counted: false }),
       expect.objectContaining({ model: 'SupervisionShift', counted: false }),
       expect.objectContaining({ model: 'AbsenceStatsMonth', counted: false }),
+    ]);
+    expect(skipped.filter((entry) => entry.model === 'TeachingRequirementPlacement')).toEqual([
+      expect.objectContaining({ model: 'TeachingRequirementPlacement', counted: false }),
     ]);
     expect(skipped.filter((entry) => entry.model.startsWith('ClassTeacher'))).toEqual([
       expect.objectContaining({ model: 'ClassTeacherAppointment', counted: false }),

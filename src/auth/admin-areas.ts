@@ -196,6 +196,8 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   TeachingBlocks: only('PLANERING'),
   // Delade lektioner: which of a post's lessons another teacher takes, as the post.
   TeachingRequirementShares: only('PLANERING'),
+  // Förlagda poster: the day, time and room a school gave one of a post's lessons, as the post.
+  TeachingRequirementPlacements: only('PLANERING'),
   TeachingRequirements: only('PLANERING'),
 
   // Schemaläggning: the grundschema, its versions, and what Generera writes.
