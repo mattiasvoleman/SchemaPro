@@ -11,6 +11,7 @@ import type { CandidatesOverview } from "@/lib/candidates/types";
 import type { AcademicYear } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LoadError } from "@/components/ui/load-error";
 import { NativeSelect } from "@/components/ui/native-select";
 import { SectionCard } from "@/components/ui/section-card";
@@ -62,6 +63,7 @@ export function CandidatesSection({
   const reasonId = useId();
   const statusId = useId();
   const bestEffortHintId = useId();
+  const [confirmingReplace, setConfirmingReplace] = useState(false);
 
   const runDate = useMemo(
     () =>
@@ -72,6 +74,15 @@ export function CandidatesSection({
   const latest = overview.data?.latest ?? null;
   const active = isActiveRun(latest?.run.status);
   const hasBatch = Boolean(overview.data?.batch ?? latest);
+  /**
+   * The proposals a run of the mode would replace: the newest finished run's,
+   * the ones the page counts as ready. A run that succeeds deletes the year's
+   * other finished runs with their proposals (the gateway's removeFinished),
+   * and a candidate of the mode is ONE, so an admin who had compared two to
+   * four would lose them to a button that says nothing of it. A run that
+   * fails leaves them.
+   */
+  const savedProposals = overview.data?.batch?.candidates.filter(isApplicable).length ?? 0;
 
   const run = async () => {
     if (!year) return;
@@ -99,6 +110,11 @@ export function CandidatesSection({
     }
   };
   const startingBestEffort = start.isPending && start.variables?.mode === "BEST_EFFORT";
+  /** The mode's button: asks first when there are saved proposals to replace, starts at once when there are none. */
+  const askBestEffort = () => {
+    if (savedProposals > 0) setConfirmingReplace(true);
+    else void runBestEffort();
+  };
   const startDisabled = !year || !canStart || generating || active || start.isPending;
 
   /*
@@ -197,7 +213,7 @@ export function CandidatesSection({
               variant="outline"
               className="w-full sm:w-auto"
               disabled={startDisabled}
-              onClick={runBestEffort}
+              onClick={askBestEffort}
               aria-describedby={[reason ? reasonId : active ? statusId : null, bestEffortHintId]
                 .filter(Boolean)
                 .join(" ")}
@@ -242,6 +258,19 @@ export function CandidatesSection({
           {t("section.bestEffortHint")}
         </p>
       ) : null}
+      {/* The mode's button asks before it replaces the saved proposals; a portal, so it sits wherever. */}
+      <ConfirmDialog
+        open={confirmingReplace}
+        onOpenChange={setConfirmingReplace}
+        title={t("section.replaceBestEffortTitle")}
+        description={t("section.replaceBestEffortBody", { count: savedProposals })}
+        confirmLabel={t("section.replaceBestEffortConfirm")}
+        loading={startingBestEffort}
+        onConfirm={async () => {
+          await runBestEffort();
+          setConfirmingReplace(false);
+        }}
+      />
     </SectionCard>
   );
 }

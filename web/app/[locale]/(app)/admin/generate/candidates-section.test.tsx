@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
@@ -261,6 +261,116 @@ describe("the Schemaförslag section on /admin/generate", () => {
       await user.click(startButton());
       expect(start.mutateAsync).toHaveBeenLastCalledWith({ academicYearId: "y-1", count: 3, weights: WEIGHTS });
       expect(start.mutateAsync.mock.calls[1]![0]).not.toHaveProperty("mode");
+    });
+
+    /*
+     * A run of the mode that succeeds replaces the year's saved proposals (one
+     * candidate against two to four), so the button asks first when there are
+     * proposals to lose (review of #285, MEDEL-3).
+     */
+    describe("with a saved set of proposals", () => {
+      const savedSet = (candidates = [candidate(1), candidate(2), candidate(3, "TIMEOUT")]) => ({
+        data: overviewOf(run(), candidates),
+        isLoading: false,
+        isError: false,
+      });
+      const dialog = () => screen.queryByRole("dialog");
+
+      it("asks before it replaces them, says how many there are, and starts only when the admin confirms", async () => {
+        start.mutateAsync.mockResolvedValue({ runId: "run-9" });
+        renderSection({ bestEffort: true, overview: savedSet() });
+        const user = userEvent.setup();
+
+        await user.click(bestEffortButton());
+        // Nothing is sent, and the question says what is lost: the two that got a timetable, not the third.
+        expect(start.mutateAsync).not.toHaveBeenCalled();
+        expect(within(dialog()!).getByText("scheduleCandidates.section.replaceBestEffortTitle")).toBeInTheDocument();
+        expect(within(dialog()!).getByText("scheduleCandidates.section.replaceBestEffortBody(2)")).toBeInTheDocument();
+
+        // Saying no leaves everything as it was.
+        await user.click(within(dialog()!).getByRole("button", { name: "common.cancel" }));
+        expect(dialog()).toBeNull();
+        expect(start.mutateAsync).not.toHaveBeenCalled();
+        expect(toast.success).not.toHaveBeenCalled();
+
+        await user.click(bestEffortButton());
+        await user.click(within(dialog()!).getByRole("button", { name: "scheduleCandidates.section.replaceBestEffortConfirm" }));
+        expect(start.mutateAsync).toHaveBeenCalledTimes(1);
+        expect(start.mutateAsync).toHaveBeenCalledWith({ academicYearId: "y-1", mode: "BEST_EFFORT", weights: WEIGHTS });
+        expect(toast.success).toHaveBeenCalledWith("scheduleCandidates.section.startedBestEffort");
+        await waitFor(() => expect(dialog()).toBeNull());
+      });
+
+      it("asks also when the newest run failed but the set before it is still saved", async () => {
+        // A run that fails leaves the older set (the gateway deletes it only when a newer one succeeds).
+        const saved = overviewOf(run(), [candidate(1), candidate(2)]);
+        const failed = { run: run({ id: "run-2", status: "FAILED", errorCode: "ENGINE_TIMEOUT" }), candidates: [] };
+        renderSection({
+          bestEffort: true,
+          overview: { data: { ...saved, latest: failed } as unknown as CandidatesOverview, isLoading: false, isError: false },
+        });
+
+        await userEvent.setup().click(bestEffortButton());
+        expect(start.mutateAsync).not.toHaveBeenCalled();
+        expect(within(dialog()!).getByText("scheduleCandidates.section.replaceBestEffortBody(2)")).toBeInTheDocument();
+      });
+
+      it("keeps the dialog while the start is in flight and closes it when the start is answered", async () => {
+        let answer: (value: unknown) => void = () => {};
+        start.mutateAsync.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+        renderSection({ bestEffort: true, overview: savedSet() });
+        const user = userEvent.setup();
+
+        await user.click(bestEffortButton());
+        await user.click(within(dialog()!).getByRole("button", { name: "scheduleCandidates.section.replaceBestEffortConfirm" }));
+        expect(dialog()).not.toBeNull();
+        answer({ runId: "run-9" });
+        await waitFor(() => expect(dialog()).toBeNull());
+      });
+
+      it("holds both of the dialog's buttons while the start is in flight, as the page holds its own", async () => {
+        const overview = savedSet();
+        const view = renderSection({ bestEffort: true, overview });
+        await userEvent.setup().click(bestEffortButton());
+        expect(within(dialog()!).getByRole("button", { name: "common.cancel" })).toBeEnabled();
+
+        start.isPending = true;
+        start.variables = { mode: "BEST_EFFORT" };
+        view.rerender(
+          <CandidatesSection year={YEAR} overview={overview} canStart generating={false} weights={WEIGHTS} bestEffort />,
+        );
+        expect(within(dialog()!).getByRole("button", { name: "common.cancel" })).toBeDisabled();
+        expect(
+          within(dialog()!).getByRole("button", { name: "scheduleCandidates.section.replaceBestEffortConfirm" }),
+        ).toBeDisabled();
+      });
+
+      it("does not ask for the ordinary start, whose behaviour is as it was", async () => {
+        start.mutateAsync.mockResolvedValue({ runId: "run-9" });
+        renderSection({ bestEffort: true, overview: savedSet() });
+
+        await userEvent.setup().click(startButton());
+        expect(dialog()).toBeNull();
+        expect(start.mutateAsync).toHaveBeenCalledWith({ academicYearId: "y-1", count: 3, weights: WEIGHTS });
+      });
+    });
+
+    describe("with no saved proposals to lose", () => {
+      it.each([
+        ["nothing saved at all", { data: overviewOf(null), isLoading: false, isError: false }],
+        [
+          "a saved run in which no candidate got a timetable",
+          { data: overviewOf(run(), [candidate(1, "INFEASIBLE"), candidate(2, "TIMEOUT")]), isLoading: false, isError: false },
+        ],
+        ["the runs not read", { data: undefined, isLoading: false, isError: true }],
+      ])("starts at once, with no question: %s", async (_, overview) => {
+        start.mutateAsync.mockResolvedValue({ runId: "run-9" });
+        renderSection({ bestEffort: true, overview });
+
+        await userEvent.setup().click(bestEffortButton());
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(start.mutateAsync).toHaveBeenCalledWith({ academicYearId: "y-1", mode: "BEST_EFFORT", weights: WEIGHTS });
+      });
     });
 
     it("waits for what the ordinary start waits for, with the same reason beside it", () => {

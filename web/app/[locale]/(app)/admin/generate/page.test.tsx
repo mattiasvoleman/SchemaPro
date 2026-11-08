@@ -779,14 +779,17 @@ describe("Bästa möjliga schema", () => {
   });
 
   it.each([
-    ["INFEASIBLE", {}],
-    ["TIMEOUT", { solverStatus: "TIMEOUT", conflictSummaryCode: null }],
-  ])("points a refused run (%s) at the section that holds the mode, on this page", (_, overrides) => {
+    ["INFEASIBLE", {}, false],
+    ["TIMEOUT", { solverStatus: "TIMEOUT", conflictSummaryCode: null }, true],
+  ])("points a refused run (%s) at the section that holds the mode, on this page", (_, overrides, timedOut) => {
     state.lunch = school({ generatorBestEffort: true });
     state.job = refused(overrides);
     render(<GeneratePage />);
 
-    expect(screen.getByText(/generate\.bestEffortOffer(?!Link)/)).toBeInTheDocument();
+    expect(screen.getByText(/generate\.bestEffortOffer(?!Link|Timeout)/)).toBeInTheDocument();
+    // Only after a TIMEOUT, where nothing was proved: the offer says the mode
+    // can give way where a longer Generera would not have had to (review of #285, LÅG-1).
+    expect(screen.queryByText(/generate\.bestEffortOfferTimeout/) !== null).toBe(timedOut);
     // A plain anchor to the section: a locale link would leave the page.
     expect(offer()).toHaveAttribute("href", "#candidates");
     expect(document.getElementById("candidates")).not.toBeNull();

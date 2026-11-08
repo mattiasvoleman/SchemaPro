@@ -977,6 +977,8 @@ export default function GeneratePage() {
           {offersBestEffort ? (
             <p className="max-w-prose text-sm text-foreground">
               {t("bestEffortOffer")}{" "}
+              {/* After a TIMEOUT nothing was proved: the mode may give way where a longer Generera would not have had to. */}
+              {solverStatus === "TIMEOUT" ? <>{t("bestEffortOfferTimeout")}{" "}</> : null}
               {/* A plain anchor: the section is on this page, and a locale link would leave it. */}
               <a href="#candidates" className="font-medium underline underline-offset-4">
                 {t("bestEffortOfferLink")}
