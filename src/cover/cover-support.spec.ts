@@ -183,6 +183,8 @@ describe('cover support', () => {
       expect(day.closures.map((c) => [c.kind, c.label])).toEqual([['DUTY', 'Rastvakt']]);
       expect(day.preferredFree).toHaveLength(1);
       expect(day.bookings).toHaveLength(1);
+      // A day of an external hire (Lokal) holds a room and nobody's day: the read leaves those rows to the room.
+      expect(tx.roomBooking.findMany.mock.calls[0]![0].where).toMatchObject({ bookedById: { in: ['a'] }, externalBookingId: null, status: { in: ['PENDING', 'APPROVED'] } });
       expect(day.lunch?.minutes).toBe(30);
       expect(day.minDailyRestMinutes).toBe(660);
       expect(day.lessons).toEqual([]);
