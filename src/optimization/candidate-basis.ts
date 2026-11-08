@@ -42,8 +42,11 @@ import type {
  * needs the engine actually read are the right granularity.
  *
  * Left out: requestId (fresh per request), weights and search (they differ
- * between the candidates of one run by design), and a caller's body rules
- * (a candidate run has none; the school's stored rules are in `rules`).
+ * between the candidates of one run by design), `relaxation` (Bästa möjliga
+ * schema: the run's own question of the same week, not a fact about it; a
+ * candidate that asked it carries its answer in its own `deviations`), and a
+ * caller's body rules (a candidate run has none; the school's stored rules
+ * are in `rules`).
  */
 
 /** Bumped when what a part covers changes, so an old run reads as stale rather than equal. */
@@ -85,7 +88,7 @@ export const BASIS_PAYLOAD_FIELDS = [
  * sends the school's stored rules, which the basis reads), the weights and
  * the search, which differ between the candidates of one run by design.
  */
-export const BASIS_EXCLUDED_FIELDS = ['academicYearId', 'requestId', 'rules', 'search', 'weights'] as const;
+export const BASIS_EXCLUDED_FIELDS = ['academicYearId', 'relaxation', 'requestId', 'rules', 'search', 'weights'] as const;
 export type BasisPart = (typeof BASIS_PARTS)[number];
 export type BasisParts = Record<BasisPart, string>;
 

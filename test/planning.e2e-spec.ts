@@ -1472,6 +1472,47 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['lunchSetting']!['upsert']).not.toHaveBeenCalled();
     });
 
+    it('turns Bästa möjliga schema on and off, and keeps it through a save that does not name it', async () => {
+      // The school's switch for the mode in which its own shaping rules may
+      // give way: written on both arms when named, on neither when a Skolregler
+      // tab from before it saves the row (withdrawing the consent a colleague
+      // gave would strand every candidate with deviations on the page).
+      harness.tx['lunchSetting']!['upsert']!.mockResolvedValue({
+        id: TYPE_ID,
+        lunchStartTime: new Date('1970-01-01T10:45:00.000Z'),
+        lunchEndTime: new Date('1970-01-01T12:30:00.000Z'),
+        generatorBestEffort: true,
+      });
+      const body = { lunchEnabled: true, lunchStartTime: '10:45', lunchEndTime: '12:30', lunchMinutes: 30 };
+
+      const saved = await request(http())
+        .put('/api/v1/lunch-settings')
+        .set('x-test-user', admin())
+        .send({ ...body, generatorBestEffort: true })
+        .expect(200);
+      expect(saved.body).toMatchObject({ generatorBestEffort: true });
+      await request(http()).put('/api/v1/lunch-settings').set('x-test-user', admin()).send({ ...body, generatorBestEffort: false }).expect(200);
+      await request(http()).put('/api/v1/lunch-settings').set('x-test-user', admin()).send(body).expect(200);
+
+      const calls = harness.tx['lunchSetting']!['upsert']!.mock.calls.map(
+        (call: unknown[]) => call[0] as { create: Record<string, unknown>; update: Record<string, unknown> },
+      );
+      expect(calls.map((call) => call.update['generatorBestEffort'])).toEqual([true, false, undefined]);
+      expect(calls.map((call) => call.create['generatorBestEffort'])).toEqual([true, false, undefined]);
+      expect(calls[2]!.update).not.toHaveProperty('generatorBestEffort');
+    });
+
+    it('400s the Bästa möjliga schema switch sent as null or a string', async () => {
+      for (const value of [null, 'true', 1]) {
+        await request(http())
+          .put('/api/v1/lunch-settings')
+          .set('x-test-user', admin())
+          .send({ lunchEnabled: true, lunchStartTime: '10:45', lunchEndTime: '12:30', lunchMinutes: 30, generatorBestEffort: value })
+          .expect(400);
+      }
+      expect(harness.tx['lunchSetting']!['upsert']).not.toHaveBeenCalled();
+    });
+
     it('400s on a seat count sent as a string', async () => {
       // enableImplicitConversion is off, so "180" is not 180 anywhere.
       await request(http())

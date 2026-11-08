@@ -9,7 +9,9 @@ import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import { worseFor, type IdleComparison } from "@/lib/candidates/idle";
 import type { IdleInputs } from "@/lib/candidates/idle-run";
+import { acceptedDeviationsOf, deviationsOf, deviationsToAccept, ranBestEffort } from "@/lib/candidates/deviations";
 import {
+  BEST_EFFORT_VARIANT,
   changedPartsText,
   firstFailedKey,
   isActiveRun,
@@ -57,6 +59,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useScheduleCandidates, useStartCandidates } from "../use-schedule-candidates";
 import { ApplyDialog } from "./apply-dialog";
 import { ComparisonTable, type IdleState } from "./comparison-table";
+import { DeviationList } from "./deviation-list";
 import { MovedLessons } from "./moved-lessons";
 import {
   useApplyCandidate,
@@ -369,8 +372,15 @@ export default function CandidatesPage() {
   const confirmApply = async () => {
     if (!applying || !check) return;
     const candidate = applying;
+    // The digest of the avsteg the dialog showed and the admin ticked; a
+    // candidate without any sends none (acceptedDeviationsOf).
+    const accepted = acceptedDeviationsOf(candidate, check);
     try {
-      const result = await apply.mutateAsync({ candidateId: candidate.id, expectedMode: check.mode });
+      const result = await apply.mutateAsync({
+        candidateId: candidate.id,
+        expectedMode: check.mode,
+        ...(accepted !== null ? { acceptedDeviations: accepted } : {}),
+      });
       setApplying(null);
       toast.success(t("applied.toast", { ordinal: candidate.ordinal, count: result.lessonsCreated }), {
         description: (
@@ -551,7 +561,7 @@ export default function CandidatesPage() {
           {listed ? (
             <section aria-labelledby="candidates-conflicts" className="space-y-2">
               <h2 id="candidates-conflicts" className="font-semibold">
-                {t("failed.conflicts")}
+                {first?.variant === BEST_EFFORT_VARIANT ? t("failed.conflictsBestEffort") : t("failed.conflicts")}
               </h2>
               {summary !== "" ? <p>{summary}</p> : null}
               {conflicts.length > 0 ? (
@@ -698,6 +708,23 @@ export default function CandidatesPage() {
                     ) : null
                   }
                 >
+                  {ranBestEffort(selected) ? (
+                    <section aria-labelledby="review-deviations" className="space-y-2 pb-2">
+                      <h3 id="review-deviations" className="text-sm font-semibold">
+                        {t("review.deviationsTitle")}
+                      </h3>
+                      {deviationsOf(selected).length === 0 ? (
+                        // The mode ran and nothing gave way: said, but not marked as an avsteg.
+                        <p className="text-sm text-foreground">{t("review.deviationsNone")}</p>
+                      ) : (
+                        <>
+                          <p className="text-sm text-muted-foreground">{t("review.deviationsHint")}</p>
+                          <DeviationList deviations={deviationsOf(selected)} aria-labelledby="review-deviations" />
+                        </>
+                      )}
+                    </section>
+                  ) : null}
+
                   <section aria-labelledby="review-worse" className="space-y-2">
                     <h3 id="review-worse" className="text-sm font-semibold">
                       {t("worse.title")}
@@ -885,6 +912,7 @@ export default function CandidatesPage() {
         checking={checkQuery.fetchStatus !== "idle"}
         checkFailed={checkQuery.isError}
         onRetryCheck={() => void checkQuery.refetch()}
+        deviations={applying ? deviationsToAccept(applying, check) : []}
         onCloseAutoFocus={(event) => {
           // The opener is disabled whenever a reason is shown (a failed or
           // stale check): focus the reason, which says why.

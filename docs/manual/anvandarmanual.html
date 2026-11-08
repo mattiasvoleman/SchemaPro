@@ -4257,6 +4257,45 @@
     <span class="ui">Generatorn håller nere elevernas håltimmar</span> på
     samtidigt blir gränserna ofta inte hållna på standardtiden (4.4).
   </p>
+  <p id="basta-mojliga-schema">
+    <strong>Bästa möjliga schema.</strong> Går skolans egna regler inte ihop
+    vägrar Generera schema, och inget schema läggs. Slå på
+    <span class="ui">Bästa möjliga schema</span> bland skolreglerna och spara,
+    så får du under <span class="ui">Schemaförslag</span> (5.9) knappen
+    <span class="ui">Ta fram bästa möjliga</span>. Den lägger ett schema ändå,
+    så att så få regler som möjligt bryts, och listar varje regel som gav vika.
+    Det är avstängt tills skolan slår på det, och Generera schema och de vanliga
+    förslagen körs som förut.
+  </p>
+  <p>
+    Bara fem regler kan ge vika, de skolan själv har skrivit och som en
+    schemaläggare redan bryter för hand med en varning: lärarens tak för
+    undervisning per dag (arbetstidsregeln), hur många dagar i veckan en lärare
+    undervisar enligt tjänsten, ämnets fördelning över veckan (högst så många
+    lektioner per dag, och så många dagar emellan) och rumslås. De ger vika i
+    en bestämd ordning, lindrigast först: ämnets dagar emellan, ämnets tak per
+    dag, rumslås, lärarens tak för undervisning per dag och sist hur många dagar
+    tjänsten har. De ger vika bara när inget schema finns utan att bryta dem.
+    Allt annat gäller alltid, också i det här läget:
+  </p>
+  <ul>
+    <li>en lärare, klass, elev eller sal bokad två gånger,</li>
+    <li>lektioner utanför skolans ramtider,</li>
+    <li>restiden mellan skolor och platser,</li>
+    <li>lärarens lunch och nattvila, och en lärare som är markerad som inte tillgänglig,</li>
+    <li>lunch, matsal och raster,</li>
+    <li>rummets typ, antal platser och årskurser som en timplanspost kräver,</li>
+    <li>lektionernas längd och antalet lektioner per vecka,</li>
+    <li>parallella blocks gemensamma start, och gruppens eget tak per dag.</li>
+  </ul>
+  <div class="note">
+    <span class="label">Tjänstens dagar är en HR-uppgift</span>
+    <p>
+      Läsare utan HR-läs ser inte vilken lärares dagar i tjänsten som gav
+      vika, eller hur många dagar det gäller. De ser en mening om att någon
+      lärares gräns för dagar gav vika, utan lärare och utan siffror.
+    </p>
+  </div>
   <div class="note">
     <span class="label">Där generatorn räknar grövre än sidan</span>
     <p>
@@ -4866,7 +4905,9 @@
       giltighet som delar period med ett annat publicerat schema, skoldagar utan
       publicerat schema, en giltighet som börjar före i dag eller mitt i en
       vecka, lunch som inte är inställd, dagsändringar som försvinner,
-      halvklasser som har lektioner men inga placerade elever (3.4), och krockar
+      halvklasser som har lektioner men inga placerade elever (3.4), avsteg från
+      skolans regler i det senast tillämpade schemaförslaget när du godtagit
+      dem och inget publicerats sedan (5.9), och krockar
       med huvudmannens andra skolor: delade lärare och lånade eller utlånade
       salar (2.5). Varje
       kontroll visar upp till 20 av de lektioner eller dagar den gäller.
@@ -5110,6 +5151,51 @@
     generering pågår går Ta fram förslag inte att starta. Skälet står bredvid
     knappen. Är nästa läsår rullat men inte aktiverat väljer du läsår överst
     på sidan, som när du genererar (8.2).
+  </p>
+  <h4>Bästa möjliga schema</h4>
+  <p>
+    Har skolan slagit på <span class="ui">Bästa möjliga schema</span> bland
+    skolreglerna (5.1) finns en knapp till under rubriken
+    <span class="ui">Schemaförslag</span>: <span class="ui">Ta fram bästa
+    möjliga</span>. Den är till för veckan där Generera schema vägrade. Den tar
+    fram ett enda förslag, <em>Bästa möjliga</em>, med optimeringsprofilen på
+    sidan, och behöver inget tidigare genererat schema. Efter en vägran på
+    Generera schema pekar sidan på knappen, utom när vägran gäller
+    timplansposter utan lärare eller ett delvis låst parallellt block: de reglerna
+    ger aldrig vika, så knappen skulle få samma nej. Efter en körning som fick
+    slut på tid, utan att ha bevisat att reglerna inte går ihop, pekar sidan
+    också på knappen, men säger att ett schema med avsteg kan komma tillbaka
+    där en längre körning av Generera hade sluppit dem.
+  </p>
+  <p>
+    Har du redan en sparad omgång förslag frågar sidan innan körningen startar:
+    <span class="ui">Ersätta de sparade förslagen?</span>. Bästa möjliga är ett
+    enda förslag, och så snart det är klart ersätter det hela omgången; de
+    förslag du har nu går inte att få tillbaka. Frågan säger hur många förslag
+    med schema omgången har. Misslyckas körningen står omgången kvar. Finns ingen
+    sparad omgång med något förslag som har ett schema startar körningen direkt.
+    <span class="ui">Ta fram förslag</span> frågar inte, och ersätter omgången på
+    samma sätt som förut (se nedan).
+  </p>
+  <p>
+    Ett förslag där någon regel gav vika är märkt <span class="ui">Med avsteg</span>
+    med antalet, i tabellens kolumnrubrik, och tabellen har en rad
+    <span class="ui">Avsteg från reglerna</span>. Under
+    <span class="ui">Granska ett förslag</span> står varje avsteg som en mening
+    i en lista: vilken regel, vilken dag eller vilket ämne, hur mycket den
+    bröts, och vad regeln skulle behöva vara satt till, eller vilka lektioner
+    som skulle behöva flyttas, för att just det här schemat ska hålla den.
+    Siffran är inget löfte om att inget annat schema håller regeln. Gav inget
+    vika står det så, och förslaget märks inte som ett med avsteg.
+  </p>
+  <p>
+    <span class="ui">Tillämpa</span> på ett förslag med avsteg visar avstegen
+    igen i dialogen, och knapparna går inte att trycka förrän du kryssat i
+    <span class="ui">Jag godtar de här avstegen</span>. Ikryssningen gäller en
+    öppning av dialogen: stänger du den och öppnar den igen är rutan tom. Att du
+    godtagit avstegen sparas tillsammans med tillämpningen, och publiceringen
+    varnar för dem (5.6) tills schemat har publicerats. Ett förslag utan avsteg
+    tillämpas som förut, utan ikryssning.
   </p>
   <h4>Jämförelsen</h4>
   <p>

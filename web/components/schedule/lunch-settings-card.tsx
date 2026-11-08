@@ -28,6 +28,7 @@ interface LunchForm {
   generatorKeepsTravelTime: boolean;
   generatorKeepsPupilGapsDown: boolean;
   generatorKeepsConsecutiveTeaching: boolean;
+  generatorBestEffort: boolean;
 }
 
 const EMPTY_FORM: LunchForm = {
@@ -43,6 +44,8 @@ const EMPTY_FORM: LunchForm = {
   generatorKeepsPupilGapsDown: false,
   // Off until the school turns it on: Sammanhängande undervisning.
   generatorKeepsConsecutiveTeaching: false,
+  // Off until the school turns it on: Bästa möjliga schema.
+  generatorBestEffort: false,
 };
 
 /**
@@ -153,6 +156,8 @@ export function LunchSettingsCard() {
   const [apiKnowsPupilGaps, setApiKnowsPupilGaps] = useState(false);
   // And for the teachers' limit on teaching in a row, on the same terms.
   const [apiKnowsConsecutive, setApiKnowsConsecutive] = useState(false);
+  // And for Bästa möjliga schema.
+  const [apiKnowsBestEffort, setApiKnowsBestEffort] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -176,12 +181,14 @@ export function LunchSettingsCard() {
         generatorKeepsTravelTime: settings.generatorKeepsTravelTime ?? false,
         generatorKeepsPupilGapsDown: settings.generatorKeepsPupilGapsDown ?? false,
         generatorKeepsConsecutiveTeaching: settings.generatorKeepsConsecutiveTeaching ?? false,
+        generatorBestEffort: settings.generatorBestEffort ?? false,
       };
       setForm(filled);
       setBaseline(filled);
       setApiKnowsTravel(settings.generatorKeepsTravelTime !== undefined);
       setApiKnowsPupilGaps(settings.generatorKeepsPupilGapsDown !== undefined);
       setApiKnowsConsecutive(settings.generatorKeepsConsecutiveTeaching !== undefined);
+      setApiKnowsBestEffort(settings.generatorBestEffort !== undefined);
       return;
     }
     setForm({ ...EMPTY_FORM, ...legacyForm() });
@@ -219,6 +226,9 @@ export function LunchSettingsCard() {
           : {}),
         ...(apiKnowsConsecutive || sent.generatorKeepsConsecutiveTeaching
           ? { generatorKeepsConsecutiveTeaching: sent.generatorKeepsConsecutiveTeaching }
+          : {}),
+        ...(apiKnowsBestEffort || sent.generatorBestEffort
+          ? { generatorBestEffort: sent.generatorBestEffort }
           : {}),
       });
       setBaseline(sent);
@@ -388,6 +398,45 @@ export function LunchSettingsCard() {
               {t("consecutiveWithPupilGaps")}
             </Notice>
           ) : null}
+
+          {/* Bästa möjliga schema: whether Schemaförslag may lay a week with
+              some of the school's own rules broken, when no week keeps them all.
+              The two lists are the engine's (relaxation.py: RELAXABLE_RULES and
+              HARD_RULES), said here so that nobody turns it on believing a
+              double booking could be among them. */}
+          <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+            <div className="space-y-2">
+              <Label htmlFor="generator-best-effort">{t("bestEffort")}</Label>
+              <div id="generator-best-effort-hint" className="space-y-2 text-sm text-muted-foreground">
+                <p>{t("bestEffortHint")}</p>
+                <p className="font-medium text-foreground">{t("bestEffortNeverTitle")}</p>
+                <ul className="list-disc space-y-0.5 pl-5">
+                  <li>{t("bestEffortNeverOverlap")}</li>
+                  <li>{t("bestEffortNeverFrames")}</li>
+                  <li>{t("bestEffortNeverTravel")}</li>
+                  <li>{t("bestEffortNeverTeacher")}</li>
+                  <li>{t("bestEffortNeverMeals")}</li>
+                  <li>{t("bestEffortNeverRooms")}</li>
+                  <li>{t("bestEffortNeverLessons")}</li>
+                  <li>{t("bestEffortNeverGroups")}</li>
+                </ul>
+                <p className="font-medium text-foreground">{t("bestEffortMayTitle")}</p>
+                <ul className="list-disc space-y-0.5 pl-5">
+                  <li>{t("bestEffortMayCap")}</li>
+                  <li>{t("bestEffortMayDays")}</li>
+                  <li>{t("bestEffortMayDistribution")}</li>
+                  <li>{t("bestEffortMayRoomLock")}</li>
+                </ul>
+                <p>{t("bestEffortOrder")}</p>
+              </div>
+            </div>
+            <Switch
+              id="generator-best-effort"
+              aria-describedby="generator-best-effort-hint"
+              checked={form.generatorBestEffort}
+              onCheckedChange={(checked) => patch({ generatorBestEffort: checked })}
+            />
+          </div>
 
           {saveError !== null ? (
             <Notice tone="destructive" title={t("saveFailed")}>

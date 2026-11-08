@@ -59,6 +59,11 @@ export const TEACHER_WORK_DAYS_HIDDEN = 'TEACHER_WORK_DAYS_HIDDEN' as const;
 export const DAYS_BEARING_CODES: readonly string[] = [
   'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
   'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+  // Bästa möjliga schema: a part-timer's days gave way in a timetable that
+  // WAS placed. Its params carry the post's limit, `taught` and `needed` (the
+  // limit and the days used), so it is held to the rule of every sentence about
+  // a post's days; a deviation is stored in the hidden form (deviations.ts).
+  'DEVIATION_TEACHER_WORK_DAYS',
 ];
 
 const DAYS_BEARING = new Set<string | null | undefined>(DAYS_BEARING_CODES);
@@ -133,6 +138,20 @@ export const CONSECUTIVE_TEACHING_HIDDEN_MESSAGE =
  */
 export const WORK_DAYS_HIDDEN_MESSAGE =
   "A teacher's limit on how many days a week they teach is one of the reasons the timetable could not be made. " +
+  'The limit is shown to the principal, a full administrator and anyone with HR read access.';
+
+/**
+ * The English of the masked sentence about a post's days when the timetable
+ * WAS made: a deviation (Bästa möjliga schema, deviations.ts) that bore the
+ * days. Not WORK_DAYS_HIDDEN_MESSAGE, which says the limit is one of the
+ * reasons the timetable could not be made — a refusal's sentence, wrong for a
+ * timetable that exists. The code stays TEACHER_WORK_DAYS_HIDDEN, which the web
+ * says itself for a deviation (deviation-list.tsx); this is the fallback a
+ * screen shows without a translation, and it names no figure, no post and no
+ * teacher.
+ */
+export const DEVIATION_WORK_DAYS_HIDDEN_MESSAGE =
+  "A teacher's limit on how many days a week they teach gave way in this timetable. " +
   'The limit is shown to the principal, a full administrator and anyone with HR read access.';
 
 /** A sentence's params without the post's days: what is stored. */

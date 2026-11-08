@@ -48799,6 +48799,961 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- Section 410: skolans brytare för bästa möjliga schema
+-- (LunchSettings."generatorBestEffort", 20270125090000).
+--
+-- Bästa möjliga schema lets a candidate run place a week whose rules cannot
+-- all hold, with five of the school's own shaping rules turned into prices
+-- and listed for the school to accept (sections 411–414). The mode is the
+-- school's to ask for, so it has a switch in the Skolregler row, beside the
+-- three efforts of 20261209090000, 20261216090000 and 20261218090000. In the
+-- matrix school, whose Skolregler row the fixtures wrote without naming it:
+--
+--   * the column is boolean NOT NULL DEFAULT false with its comment, and each
+--     role holds on it exactly what it holds on a column of the same table
+--     that was there before: no GRANT moved, the row's arms are the whole of
+--     who reads and writes it;
+--   * the row written before the column reads false: OFF for every school
+--     until it says so, and a fresh row that names nothing reads false;
+--   * the full administrator and the rektor, who hold PLANERING, turn it on
+--     and off by UPDATE and by the upsert the gateway writes; an upsert that
+--     leaves the column out of its SET (a Skolregler tab from before the
+--     switch) leaves it as it was, on and off alike; NULL is refused by NOT
+--     NULL, and no other value exists;
+--   * it is a separate column: turning it on moves none of the other three
+--     switches and turning any of them on or off does not move it;
+--   * a profile without PLANERING, the expedition and the teacher read it and
+--     are refused a change (the arm's WITH CHECK, or no row for a teacher), as
+--     the API's role and as PostgREST's; a pupil and a guardian read no row of
+--     the Skolregler at all;
+--   * the same three are refused the first save of the row (an INSERT with the
+--     switch on) by the INSERT arm's WITH CHECK, as 42501 from row security
+--     before the school's key is reached;
+--   * another school's administrator reads no row of this school's Skolregler,
+--     an UPDATE of its switch reaches nothing and an INSERT in its name is
+--     refused by the INSERT arm's school check.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+
+-- 'sqlstate|constraint' of a statement's refusal, or 'none'.
+CREATE FUNCTION pg_temp.g2_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE st text; con text;
+BEGIN
+  EXECUTE statement;
+  RETURN 'none';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, con = CONSTRAINT_NAME;
+  RETURN st || '|' || coalesce(con, '');
+END $$;
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  col record;
+  r record;
+  got text;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PLANERING', true)
+     OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'best-effort switch: expected the matrix school''s full administrator, who writes PLANERING';
+  END IF;
+
+  -- The catalogue: type, nullability, default and comment.
+  SELECT a.attnotnull AS not_null, format_type(a.atttypid, a.atttypmod) AS type_name,
+         pg_get_expr(d.adbin, d.adrelid) AS default_value, col_description(a.attrelid, a.attnum) AS comment
+    INTO col
+    FROM pg_attribute a
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"LunchSettings"'::regclass AND a.attname = 'generatorBestEffort' AND NOT a.attisdropped;
+  IF col IS NULL OR NOT col.not_null OR col.type_name <> 'boolean' OR col.default_value IS DISTINCT FROM 'false'
+     OR col.comment IS NULL OR col.comment NOT LIKE 'Bästa möjliga schema (20270125090000):%' THEN
+    RAISE EXCEPTION 'best-effort switch: LunchSettings.generatorBestEffort is not boolean NOT NULL default false with its comment: %', row_to_json(col);
+  END IF;
+
+  -- Row-level arms only: every role holds on the new column what it holds on
+  -- a column that was there before.
+  FOR r IN
+    SELECT ro.rolname, p.privilege
+      FROM pg_roles ro
+      CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) AS p(privilege)
+     WHERE ro.rolname IN ('app_authenticated', 'authenticated', 'anon', 'service_role')
+  LOOP
+    IF has_column_privilege(r.rolname, '"LunchSettings"', 'generatorBestEffort', r.privilege)
+       IS DISTINCT FROM has_column_privilege(r.rolname, '"LunchSettings"', 'lunchMinutes', r.privilege) THEN
+      RAISE EXCEPTION 'best-effort switch: % holds % on generatorBestEffort as it does not on lunchMinutes', r.rolname, r.privilege;
+    END IF;
+  END LOOP;
+  IF NOT has_column_privilege('app_authenticated', '"LunchSettings"', 'generatorBestEffort', 'UPDATE') THEN
+    RAISE EXCEPTION 'best-effort switch: the API''s role cannot write the switch';
+  END IF;
+
+  -- Written by the fixtures before the column: off.
+  IF (SELECT "generatorBestEffort" FROM "LunchSettings" WHERE "schoolId" = school) IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'best-effort switch: the Skolregler row written before the switch does not read off';
+  END IF;
+
+  -- On, by UPDATE, and the other switches stay where they were.
+  UPDATE "LunchSettings" SET "generatorKeepsTravelTime" = false, "generatorKeepsPupilGapsDown" = false,
+                             "generatorKeepsConsecutiveTeaching" = false WHERE "schoolId" = school;
+  UPDATE "LunchSettings" SET "generatorBestEffort" = true WHERE "schoolId" = school;
+  IF NOT FOUND THEN RAISE EXCEPTION 'best-effort switch: the full administrator could not turn it on'; END IF;
+  IF NOT (SELECT "generatorBestEffort" AND NOT "generatorKeepsTravelTime" AND NOT "generatorKeepsPupilGapsDown"
+                 AND NOT "generatorKeepsConsecutiveTeaching" FROM "LunchSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'best-effort switch: turning it on moved another switch, or did not turn it on';
+  END IF;
+  -- … and the others do not move it.
+  UPDATE "LunchSettings" SET "generatorKeepsTravelTime" = true, "generatorKeepsPupilGapsDown" = true,
+                             "generatorKeepsConsecutiveTeaching" = true WHERE "schoolId" = school;
+  IF NOT (SELECT "generatorBestEffort" FROM "LunchSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'best-effort switch: turning the other switches on turned it off';
+  END IF;
+  UPDATE "LunchSettings" SET "generatorBestEffort" = false WHERE "schoolId" = school;
+  IF (SELECT "generatorBestEffort" OR NOT ("generatorKeepsTravelTime" AND "generatorKeepsPupilGapsDown" AND "generatorKeepsConsecutiveTeaching")
+        FROM "LunchSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'best-effort switch: turning it off moved another switch, or did not turn it off';
+  END IF;
+  UPDATE "LunchSettings" SET "generatorKeepsTravelTime" = false, "generatorKeepsPupilGapsDown" = false,
+                             "generatorKeepsConsecutiveTeaching" = false WHERE "schoolId" = school;
+
+  -- The gateway's own write: INSERT … ON CONFLICT ("schoolId") DO UPDATE, the
+  -- switch in its SET only when the form sent it.
+  INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "generatorBestEffort")
+  VALUES (school, '11:00', '13:00', 30, now(), true)
+  ON CONFLICT ("schoolId") DO UPDATE SET "generatorBestEffort" = EXCLUDED."generatorBestEffort";
+  IF NOT (SELECT "generatorBestEffort" FROM "LunchSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'best-effort switch: the upsert did not turn it on';
+  END IF;
+  -- A tab from before the switch: the upsert names the old columns and leaves it on.
+  INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt")
+  VALUES (school, '11:00', '13:00', 35, now())
+  ON CONFLICT ("schoolId") DO UPDATE SET "lunchStartTime" = EXCLUDED."lunchStartTime", "lunchEndTime" = EXCLUDED."lunchEndTime",
+    "lunchMinutes" = EXCLUDED."lunchMinutes", "updatedAt" = EXCLUDED."updatedAt";
+  IF NOT EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school AND "lunchMinutes" = 35 AND "generatorBestEffort") THEN
+    RAISE EXCEPTION 'best-effort switch: an upsert that names no switch took the consent back';
+  END IF;
+  -- … and off stays off under the same upsert.
+  UPDATE "LunchSettings" SET "generatorBestEffort" = false WHERE "schoolId" = school;
+  INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt")
+  VALUES (school, '11:00', '13:00', 40, now())
+  ON CONFLICT ("schoolId") DO UPDATE SET "lunchMinutes" = EXCLUDED."lunchMinutes", "updatedAt" = EXCLUDED."updatedAt";
+  IF NOT EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school AND "lunchMinutes" = 40 AND NOT "generatorBestEffort") THEN
+    RAISE EXCEPTION 'best-effort switch: an upsert that names no switch turned it on';
+  END IF;
+
+  -- NOT NULL, from both statements.
+  got := pg_temp.g2_refusal(format('UPDATE "LunchSettings" SET "generatorBestEffort" = NULL WHERE "schoolId" = %L', school));
+  IF got NOT LIKE '23502|%' THEN RAISE EXCEPTION 'best-effort switch: a NULL switch was not refused by NOT NULL: %', got; END IF;
+END $$;
+SELECT set_config('app.g2_410_school', app.current_school_id()::text, true);
+
+-- The rektor holds PLANERING too: on, and the full administrator off again.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000106')::text, true);
+DO $$
+BEGIN
+  IF NOT app.current_user_may('PLANERING', true) THEN RAISE EXCEPTION 'best-effort switch: the rektor does not write PLANERING'; END IF;
+  UPDATE "LunchSettings" SET "generatorBestEffort" = true WHERE "schoolId" = app.current_school_id();
+  IF NOT FOUND THEN RAISE EXCEPTION 'best-effort switch: the rektor could not turn it on'; END IF;
+END $$;
+
+-- The expedition (which holds DRIFT and not PLANERING), the läsare and the
+-- teacher read it on and are refused a change, as the API's role and as
+-- PostgREST's; a pupil and a guardian read no row.
+DO $$
+DECLARE
+  who text;
+  via text;
+  n bigint;
+  msg text;
+  school uuid := current_setting('app.g2_410_school')::uuid;
+BEGIN
+  FOREACH who IN ARRAY ARRAY[
+    '00000000-0000-4000-8000-000000000108',
+    '00000000-0000-4000-8000-000000000115',
+    '00000000-0000-4000-8000-000000000111'
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    IF app.current_user_may('PLANERING', true) THEN
+      RAISE EXCEPTION 'best-effort switch: % writes PLANERING, so the fixture no longer stands for a profile without it', who;
+    END IF;
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      IF current_user <> via THEN RAISE EXCEPTION 'best-effort switch: running as %, not %', current_user, via; END IF;
+      IF (SELECT "generatorBestEffort" FROM "LunchSettings" WHERE "schoolId" = school) IS DISTINCT FROM true THEN
+        RAISE EXCEPTION 'best-effort switch: % does not read the switch the rektor turned on, as %', who, via;
+      END IF;
+      BEGIN
+        UPDATE "LunchSettings" SET "generatorBestEffort" = false WHERE "schoolId" = school;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        IF n <> 0 THEN RAISE EXCEPTION 'best-effort switch: % turned it off without PLANERING, as %', who, via; END IF;
+        IF app.current_user_role() = 'SCHOOL_ADMIN' THEN
+          RAISE EXCEPTION 'best-effort switch: % (an administrator without PLANERING) was not refused, as %', who, via;
+        END IF;
+      EXCEPTION WHEN insufficient_privilege THEN
+        GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+        IF msg NOT LIKE '%row-level security%' THEN
+          RAISE EXCEPTION 'best-effort switch: % was refused by "%", not by row security, as %', who, msg, via;
+        END IF;
+        IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+          RAISE EXCEPTION 'best-effort switch: % (%) was refused where no row is theirs, as %', who, app.current_user_role(), via;
+        END IF;
+      END;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000112', '00000000-0000-4000-8000-000000000113'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    IF EXISTS (SELECT 1 FROM "LunchSettings") THEN RAISE EXCEPTION 'best-effort switch: % reads the Skolregler', who; END IF;
+  END LOOP;
+END $$;
+
+-- The first save of a school's Skolregler is an INSERT, and the same three are
+-- refused it with the switch on (the INSERT arm's WITH CHECK holds PLANERING,
+-- as the UPDATE arm's does). The row exists here, which is what makes the
+-- refusal readable: row security judges the proposed row BEFORE the unique key
+-- does, so a refusal is 42501 from row security, and an admitted statement
+-- would be 23505 on the school's key. (Review of #285, LÅG-7.)
+DO $$
+DECLARE
+  who text;
+  via text;
+  msg text;
+  school uuid := current_setting('app.g2_410_school')::uuid;
+  refused boolean;
+BEGIN
+  FOREACH who IN ARRAY ARRAY[
+    '00000000-0000-4000-8000-000000000108',
+    '00000000-0000-4000-8000-000000000115',
+    '00000000-0000-4000-8000-000000000111'
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      IF current_user <> via THEN RAISE EXCEPTION 'best-effort switch: running as %, not %', current_user, via; END IF;
+      refused := false;
+      BEGIN
+        INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "generatorBestEffort")
+        VALUES (school, '11:00', '13:00', 30, now(), true);
+      EXCEPTION
+        WHEN insufficient_privilege THEN
+          GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+          IF msg NOT LIKE '%row-level security%' THEN
+            RAISE EXCEPTION 'best-effort switch: the insert of % was refused by "%", not by row security, as %', who, msg, via;
+          END IF;
+          refused := true;
+        WHEN unique_violation THEN
+          RAISE EXCEPTION 'best-effort switch: % (without PLANERING) passed the insert arm and reached the school''s key, as %', who, via;
+      END;
+      IF NOT refused THEN
+        RAISE EXCEPTION 'best-effort switch: % wrote a Skolregler row with the switch on, as %', who, via;
+      END IF;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+END $$;
+
+-- Another school's administrator: no row, and an UPDATE reaches nothing.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.g2_410_school')::uuid;
+  n bigint;
+BEGIN
+  IF app.current_school_id() = school THEN RAISE EXCEPTION 'best-effort switch: the primary school''s administrator is in the matrix school'; END IF;
+  IF EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'best-effort switch: another school''s administrator reads this school''s Skolregler';
+  END IF;
+  UPDATE "LunchSettings" SET "generatorBestEffort" = false WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'best-effort switch: another school''s administrator reached this school''s switch'; END IF;
+  -- … nor writes a row in its name: the INSERT arm's school check refuses it (42501) before the key is reached (23505).
+  BEGIN
+    INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "generatorBestEffort")
+    VALUES (school, '11:00', '13:00', 30, now(), true);
+    RAISE EXCEPTION 'best-effort switch: another school''s administrator wrote this school''s Skolregler row';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+    WHEN unique_violation THEN
+      RAISE EXCEPTION 'best-effort switch: another school''s administrator passed the insert arm and reached this school''s key';
+  END;
+  -- Their own is theirs: off for a school that never said so.
+  IF EXISTS (SELECT 1 FROM "LunchSettings" WHERE "generatorBestEffort" AND "schoolId" = app.current_school_id()) THEN
+    RAISE EXCEPTION 'best-effort switch: the primary school reads the switch on before it chose';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 411: de rader som gav vika sitter på förslaget, och skrivs en gång
+-- (ScheduleCandidates."deviations", 20270125090000).
+--
+-- A candidate of the mode keeps what gave way in its timetable as a list of
+-- conflict-shaped entries. In the matrix school, as the full administrator:
+--
+--   * the column is nullable jsonb with no default and its comment; a
+--     candidate written without it reads NULL ("did not come from the mode"),
+--     and [] and a list are two other things the column keeps apart;
+--   * its CHECK exists, is validated, and refuses an object, a string, a
+--     number, a boolean and the JSON null, by the CHECK's own name, from an
+--     INSERT; NULL, [] and a list of entries pass, and the value reads back
+--     as written, a name with å, ä and ö among it;
+--   * a candidate is written once: no role holds UPDATE on the column or on
+--     any column of the table, and an UPDATE of it is refused for want of the
+--     privilege, not by an arm; the same columns' privileges as `notes`, the
+--     column beside it, for every role: the API's role reads and inserts,
+--     service_role reads, PostgREST's roles hold nothing;
+--   * a run takes its candidates and their lists with it when it is deleted.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+
+CREATE FUNCTION pg_temp.g2_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE st text; con text;
+BEGIN
+  EXECUTE statement;
+  RETURN 'none';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, con = CONSTRAINT_NAME;
+  RETURN st || '|' || coalesce(con, '');
+END $$;
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  run uuid;
+  cand uuid;
+  col record;
+  r record;
+  p text;
+  bad text;
+  got text;
+  entry constant text := '[{"category":"DEVIATION","code":"DEVIATION_SUBJECT_PER_DAY","params":{"requirement":"Matematik för 7Å","day":2,"over":1},"message":"Matematik för 7Å has 3 lessons on Tuesday","resourceNames":["Sal Ö1"]}]';
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('SCHEMALAGGNING', true)
+     OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'deviations column: expected the matrix school''s full administrator, who writes SCHEMALAGGNING';
+  END IF;
+
+  -- The catalogue.
+  SELECT a.attnotnull AS not_null, format_type(a.atttypid, a.atttypmod) AS type_name,
+         pg_get_expr(d.adbin, d.adrelid) AS default_value, col_description(a.attrelid, a.attnum) AS comment
+    INTO col
+    FROM pg_attribute a
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"ScheduleCandidates"'::regclass AND a.attname = 'deviations' AND NOT a.attisdropped;
+  IF col IS NULL OR col.not_null OR col.type_name <> 'jsonb' OR col.default_value IS NOT NULL
+     OR col.comment IS NULL OR col.comment NOT LIKE 'Bästa möjliga schema (20270125090000):%' THEN
+    RAISE EXCEPTION 'deviations column: ScheduleCandidates.deviations is not nullable jsonb with no default and its comment: %', row_to_json(col);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = '"ScheduleCandidates"'::regclass AND conname = 'ScheduleCandidates_deviations_is_a_list'
+                    AND contype = 'c' AND convalidated
+                    AND pg_get_constraintdef(oid) LIKE '%jsonb_typeof(deviations) = ''array''%') THEN
+    RAISE EXCEPTION 'deviations column: the validated CHECK ScheduleCandidates_deviations_is_a_list is missing or says something else';
+  END IF;
+
+  -- A candidate is written once: the privileges are the beside-column's.
+  FOR r IN
+    SELECT ro.rolname, q.privilege
+      FROM pg_roles ro
+      CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) AS q(privilege)
+     WHERE ro.rolname IN ('app_authenticated', 'authenticated', 'anon', 'service_role')
+  LOOP
+    IF has_column_privilege(r.rolname, '"ScheduleCandidates"', 'deviations', r.privilege)
+       IS DISTINCT FROM has_column_privilege(r.rolname, '"ScheduleCandidates"', 'notes', r.privilege) THEN
+      RAISE EXCEPTION 'deviations column: % holds % on deviations as it does not on notes', r.rolname, r.privilege;
+    END IF;
+  END LOOP;
+  IF NOT has_column_privilege('app_authenticated', '"ScheduleCandidates"', 'deviations', 'SELECT')
+     OR NOT has_column_privilege('app_authenticated', '"ScheduleCandidates"', 'deviations', 'INSERT')
+     OR NOT has_column_privilege('service_role', '"ScheduleCandidates"', 'deviations', 'SELECT') THEN
+    RAISE EXCEPTION 'deviations column: the API''s role cannot read and insert it, or service_role cannot read it';
+  END IF;
+  FOREACH p IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+    IF has_column_privilege(p, '"ScheduleCandidates"', 'deviations', 'UPDATE') OR has_any_column_privilege(p, '"ScheduleCandidates"', 'UPDATE') THEN
+      RAISE EXCEPTION 'deviations column: % may update a column of a candidate, which is written once', p;
+    END IF;
+  END LOOP;
+  IF has_column_privilege('authenticated', '"ScheduleCandidates"', 'deviations', 'SELECT')
+     OR has_column_privilege('anon', '"ScheduleCandidates"', 'deviations', 'SELECT') THEN
+    RAISE EXCEPTION 'deviations column: PostgREST''s role or anon reads the lists';
+  END IF;
+
+  -- A run with three candidates: written without the column, with [], with a list.
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress, "finishedAt")
+  VALUES (school, yr, 'SUCCEEDED', 3, 3, now()) RETURNING id INTO run;
+  INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus")
+  VALUES (run, school, 1, 'KEEP', 'OPTIMAL');
+  INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus", deviations)
+  VALUES (run, school, 2, 'BEST_EFFORT', 'OPTIMAL', '[]'::jsonb);
+  INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus", deviations)
+  VALUES (run, school, 3, 'BEST_EFFORT', 'FEASIBLE', entry::jsonb) RETURNING id INTO cand;
+  IF (SELECT deviations FROM "ScheduleCandidates" WHERE "runId" = run AND ordinal = 1) IS NOT NULL THEN
+    RAISE EXCEPTION 'deviations column: a candidate written without the column does not read NULL';
+  END IF;
+  IF (SELECT deviations FROM "ScheduleCandidates" WHERE "runId" = run AND ordinal = 2) IS DISTINCT FROM '[]'::jsonb THEN
+    RAISE EXCEPTION 'deviations column: the empty list did not read back as the empty list (it is not NULL: the mode ran and nothing gave way)';
+  END IF;
+  IF (SELECT deviations FROM "ScheduleCandidates" WHERE id = cand) IS DISTINCT FROM entry::jsonb THEN
+    RAISE EXCEPTION 'deviations column: the list did not read back as written';
+  END IF;
+  IF (SELECT deviations -> 0 -> 'params' ->> 'requirement' FROM "ScheduleCandidates" WHERE id = cand) IS DISTINCT FROM 'Matematik för 7Å' THEN
+    RAISE EXCEPTION 'deviations column: a name with å, ä and ö did not survive';
+  END IF;
+
+  -- The CHECK, by its own name, from the INSERT.
+  FOREACH bad IN ARRAY ARRAY['{}', '{"a":[]}', '"x"', '5', 'true', 'null'] LOOP
+    got := pg_temp.g2_refusal(format(
+      'INSERT INTO "ScheduleCandidates" ("runId","schoolId",ordinal,variant,"solverStatus",deviations) VALUES (%L,%L,4,''BEST_EFFORT'',''OPTIMAL'',%L::jsonb)',
+      run, school, bad));
+    IF got IS DISTINCT FROM '23514|ScheduleCandidates_deviations_is_a_list' THEN
+      RAISE EXCEPTION 'deviations column: the value % was stored, or refused by something else: %', bad, got;
+    END IF;
+  END LOOP;
+
+  -- Written once: an UPDATE of the column, of another column and of the list
+  -- of one that has none is refused for want of the privilege, whatever the row.
+  FOREACH bad IN ARRAY ARRAY[
+      format('UPDATE "ScheduleCandidates" SET deviations = ''[]'' WHERE id = %L', cand),
+      format('UPDATE "ScheduleCandidates" SET deviations = NULL WHERE id = %L', cand),
+      format('UPDATE "ScheduleCandidates" SET deviations = ''[]'' WHERE "runId" = %L AND ordinal = 1', run),
+      format('UPDATE "ScheduleCandidates" SET "errorCode" = NULL WHERE id = %L', cand)] LOOP
+    got := pg_temp.g2_refusal(bad);
+    IF got NOT LIKE '42501|%' THEN RAISE EXCEPTION 'deviations column: % was not refused for want of the privilege: %', bad, got; END IF;
+  END LOOP;
+  IF (SELECT deviations FROM "ScheduleCandidates" WHERE id = cand) IS DISTINCT FROM entry::jsonb THEN
+    RAISE EXCEPTION 'deviations column: a refused UPDATE changed the list';
+  END IF;
+
+  -- A run takes its candidates, and with them their lists.
+  DELETE FROM "ScheduleCandidateRuns" WHERE id = run;
+  IF EXISTS (SELECT 1 FROM "ScheduleCandidates" WHERE "runId" = run) THEN
+    RAISE EXCEPTION 'deviations column: a deleted run left its candidates';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 412: en annan skolas avstegslista är osynlig, och vem som läser och
+-- skriver den (ScheduleCandidates."deviations", 20270125090000).
+--
+-- A list of deviations names a requirement, a room and a weekday, and holds
+-- the Users id of a teacher whose cap gave way: it is the school's own, and
+-- row security is the whole of who reads it. Two schools each file a run with
+-- a candidate whose list carries a marker of its own, and every principal asks
+-- for both markers:
+--
+--   * an administrator of the matrix school (the full administrator, the
+--     rektor, the schemaläggare and the expedition, who read) finds its own
+--     marker once and the other school's never; the primary school's
+--     administrator the other way round;
+--   * a teacher, a pupil and a guardian find neither: not by the marker, not
+--     by counting the lists;
+--   * a school's candidate cannot be filed under another school's run, and its
+--     list is not reached by an UPDATE (no grant), a DELETE of another school
+--     (no row) or of the expedition (no row: it does not write schemaläggning);
+--   * the expedition and a teacher cannot file a list.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.g2_412_other', :'admin_auth_id', true);
+
+-- 'rows N' (and undone), 'refused' (row security), 'denied' (no grant), or the error.
+CREATE FUNCTION pg_temp.g2_try(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE n bigint; st text; msg text;
+BEGIN
+  EXECUTE statement;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RAISE EXCEPTION USING ERRCODE = 'ZM412', MESSAGE = n::text;
+EXCEPTION
+  WHEN SQLSTATE 'ZM412' THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+    RETURN 'rows ' || msg;
+  WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+    RETURN CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+  WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+    RETURN 'error ' || st || ' ' || msg;
+END $$;
+
+DO $$
+DECLARE
+  principals constant text[][] := ARRAY[
+    ['00000000-0000-4000-8000-000000000105', 'FULL', 'matrix writes'],
+    ['00000000-0000-4000-8000-000000000106', 'REKTOR', 'matrix writes'],
+    ['00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE', 'matrix writes'],
+    ['00000000-0000-4000-8000-000000000108', 'EXPEDITION', 'matrix reads'],
+    ['00000000-0000-4000-8000-000000000115', 'LASARE', 'matrix reads'],
+    ['00000000-0000-4000-8000-000000000111', 'TEACHER', 'matrix none'],
+    ['00000000-0000-4000-8000-000000000112', 'STUDENT', 'matrix none'],
+    ['00000000-0000-4000-8000-000000000113', 'GUARDIAN', 'matrix none']];
+  other_sub constant text := current_setting('app.g2_412_other');
+  a constant uuid := app.current_school_id();
+  a_run uuid;
+  a_cand uuid;
+  m uuid;
+  m_run uuid;
+  m_cand uuid;
+  yr uuid;
+  i int;
+  kind text;
+  who text;
+  n bigint;
+  got text;
+  wrong text[] := '{}';
+  marker_a constant text := 'g2-marker-primary';
+  marker_m constant text := 'g2-marker-matrix';
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('SCHEMALAGGNING', true) THEN
+    RAISE EXCEPTION 'deviations tenancy: the primary school''s administrator does not write schemaläggning';
+  END IF;
+  -- The primary school files its list.
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = a ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress, "finishedAt")
+  VALUES (a, yr, 'SUCCEEDED', 1, 1, now()) RETURNING id INTO a_run;
+  INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus", deviations)
+  VALUES (a_run, a, 1, 'BEST_EFFORT', 'OPTIMAL',
+          jsonb_build_array(jsonb_build_object('category', 'DEVIATION', 'code', 'DEVIATION_SUBJECT_PER_DAY',
+                                               'params', jsonb_build_object('requirement', marker_a), 'message', marker_a,
+                                               'resourceNames', jsonb_build_array())))
+  RETURNING id INTO a_cand;
+
+  -- The matrix school's full administrator files another.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', principals[1][1])::text, true);
+  m := app.current_school_id();
+  IF m IS NULL OR m = a OR (SELECT slug FROM "Schools" WHERE id = m) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'deviations tenancy: the full administrator is not in rls-roller-school; fixtures did not run';
+  END IF;
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = m ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress, "finishedAt")
+  VALUES (m, yr, 'SUCCEEDED', 1, 1, now()) RETURNING id INTO m_run;
+  INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus", deviations)
+  VALUES (m_run, m, 1, 'BEST_EFFORT', 'OPTIMAL',
+          jsonb_build_array(jsonb_build_object('category', 'DEVIATION', 'code', 'DEVIATION_ROOM_LOCK',
+                                               'params', jsonb_build_object('requirement', marker_m), 'message', marker_m,
+                                               'resourceNames', jsonb_build_array(), 'subjectIds', jsonb_build_array(app.current_user_id()))))
+  RETURNING id INTO m_cand;
+
+  -- The matrix school's principals.
+  FOR i IN 1 .. array_length(principals, 1) LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', principals[i][1])::text, true);
+    kind := principals[i][3];
+    who := format('%s (%s)', principals[i][2], right(principals[i][1], 3));
+    IF app.current_school_id() IS DISTINCT FROM m THEN
+      RAISE EXCEPTION 'deviations tenancy: % resolved in school %, expected the matrix school', who, app.current_school_id();
+    END IF;
+    SELECT count(*) INTO n FROM "ScheduleCandidates" WHERE deviations::text LIKE '%' || marker_m || '%';
+    IF n IS DISTINCT FROM (CASE WHEN kind IN ('matrix writes', 'matrix reads') THEN 1 ELSE 0 END) THEN
+      wrong := wrong || format('%s finds the matrix list %s times', who, n);
+    END IF;
+    SELECT count(*) INTO n FROM "ScheduleCandidates" WHERE deviations::text LIKE '%' || marker_a || '%';
+    IF n <> 0 THEN wrong := wrong || format('%s finds the primary school''s list %s times', who, n); END IF;
+    SELECT count(*) INTO n FROM "ScheduleCandidates" WHERE "schoolId" <> m;
+    IF n <> 0 THEN wrong := wrong || format('%s reads %s candidates of another school', who, n); END IF;
+    IF kind = 'matrix none' THEN
+      SELECT count(*) INTO n FROM "ScheduleCandidates" WHERE deviations IS NOT NULL;
+      IF n <> 0 THEN wrong := wrong || format('%s counts %s lists', who, n); END IF;
+    END IF;
+
+    -- Filing a list: the writers do, the others are refused by the INSERT arm.
+    got := pg_temp.g2_try(format(
+      'INSERT INTO "ScheduleCandidates" ("runId","schoolId",ordinal,variant,"solverStatus",deviations) VALUES (%L,%L,2,''BEST_EFFORT'',''OPTIMAL'',''[]'')',
+      m_run, m));
+    IF got IS DISTINCT FROM (CASE WHEN kind = 'matrix writes' THEN 'rows 1' ELSE 'refused' END) THEN
+      wrong := wrong || format('%s filing a list: %s', who, got);
+    END IF;
+    -- An UPDATE of the list, whoever asks: no grant.
+    got := pg_temp.g2_try(format('UPDATE "ScheduleCandidates" SET deviations = ''[]'' WHERE id = %L', m_cand));
+    IF got IS DISTINCT FROM 'denied' THEN wrong := wrong || format('%s updating a list: %s', who, got); END IF;
+    -- A DELETE reaches the row only for a writer.
+    got := pg_temp.g2_try(format('DELETE FROM "ScheduleCandidates" WHERE id = %L', m_cand));
+    IF got IS DISTINCT FROM (CASE WHEN kind = 'matrix writes' THEN 'rows 1' ELSE 'rows 0' END) THEN
+      wrong := wrong || format('%s deleting the list: %s', who, got);
+    END IF;
+  END LOOP;
+
+  -- The primary school's administrator: its own list, and none of the matrix school's.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', other_sub)::text, true);
+  SELECT count(*) INTO n FROM "ScheduleCandidates" WHERE deviations::text LIKE '%' || marker_a || '%';
+  IF n <> 1 THEN wrong := wrong || format('the primary school''s administrator finds its own list %s times', n); END IF;
+  SELECT count(*) INTO n FROM "ScheduleCandidates" WHERE deviations::text LIKE '%' || marker_m || '%';
+  IF n <> 0 THEN wrong := wrong || format('the primary school''s administrator finds the matrix list %s times', n); END IF;
+  SELECT count(*) INTO n FROM "ScheduleCandidates" WHERE "schoolId" <> a;
+  IF n <> 0 THEN wrong := wrong || format('the primary school''s administrator reads %s candidates of another school', n); END IF;
+  got := pg_temp.g2_try(format('UPDATE "ScheduleCandidates" SET deviations = ''[]'' WHERE id = %L', m_cand));
+  IF got IS DISTINCT FROM 'denied' THEN wrong := wrong || format('the primary school''s administrator updating the matrix list: %s', got); END IF;
+  got := pg_temp.g2_try(format('DELETE FROM "ScheduleCandidates" WHERE id = %L', m_cand));
+  IF got IS DISTINCT FROM 'rows 0' THEN wrong := wrong || format('the primary school''s administrator deleting the matrix list: %s', got); END IF;
+  -- A candidate filed under another school's run: refused, whichever school it says it is of.
+  got := pg_temp.g2_try(format(
+    'INSERT INTO "ScheduleCandidates" ("runId","schoolId",ordinal,variant,"solverStatus",deviations) VALUES (%L,%L,3,''BEST_EFFORT'',''OPTIMAL'',''[]'')',
+    m_run, m));
+  IF got IS DISTINCT FROM 'refused' THEN wrong := wrong || format('the primary school''s administrator filing a list in the matrix school: %s', got); END IF;
+  got := pg_temp.g2_try(format(
+    'INSERT INTO "ScheduleCandidates" ("runId","schoolId",ordinal,variant,"solverStatus",deviations) VALUES (%L,%L,3,''BEST_EFFORT'',''OPTIMAL'',''[]'')',
+    m_run, a));
+  IF got NOT LIKE 'error 23503%' THEN wrong := wrong || format('a list under another school''s run, filed as one''s own: %s', got); END IF;
+
+  IF array_length(wrong, 1) > 0 THEN
+    RAISE EXCEPTION 'deviations tenancy: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 413: publiceringens val för bästa möjliga schema
+-- (PublicationSettings."gateDeviations", 20270125090000).
+--
+-- The publish check PUB_DEVIATIONS (a timetable applied from a candidate whose
+-- rules gave way, that no publication has followed) follows one policy
+-- column, WARN until the school chooses, as every gate column before it. In
+-- the matrix school, whose settings row the fixtures wrote naming nothing:
+--
+--   * the column is "PublishGateMode" NOT NULL DEFAULT 'WARN' with its comment,
+--     the enum is still WARN and REFUSE, and each role holds on the column what
+--     it holds on a gate column that was there before;
+--   * the row written before it reads WARN, and so does every row of the
+--     school: no school chose anything by migrating;
+--   * a principal who writes PUBLICERING sets it REFUSE and WARN, by UPDATE and
+--     by the upsert the gateway writes, which leaves it as it was when the
+--     body names no gate; REFUSE moves no other gate column and no other gate
+--     moves it; NULL and any other value are refused;
+--   * a principal without PUBLICERING reads it and is refused a change;
+--   * another school's administrator reads no row and an UPDATE reaches none.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+
+CREATE FUNCTION pg_temp.g2_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE st text; con text;
+BEGIN
+  EXECUTE statement;
+  RETURN 'none';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, con = CONSTRAINT_NAME;
+  RETURN st || '|' || coalesce(con, '');
+END $$;
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  col record;
+  r record;
+  got text;
+  who text;
+  n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PUBLICERING', true)
+     OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'gate deviations: expected the matrix school''s full administrator, who writes PUBLICERING';
+  END IF;
+
+  SELECT a.attnotnull AS not_null, format_type(a.atttypid, a.atttypmod) AS type_name,
+         pg_get_expr(d.adbin, d.adrelid) AS default_value, col_description(a.attrelid, a.attnum) AS comment
+    INTO col
+    FROM pg_attribute a
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"PublicationSettings"'::regclass AND a.attname = 'gateDeviations' AND NOT a.attisdropped;
+  IF col IS NULL OR NOT col.not_null OR col.type_name <> '"PublishGateMode"'
+     OR col.default_value IS DISTINCT FROM '''WARN''::"PublishGateMode"'
+     OR col.comment IS NULL OR col.comment NOT LIKE 'Bästa möjliga schema (20270125090000):%' THEN
+    RAISE EXCEPTION 'gate deviations: PublicationSettings.gateDeviations is not "PublishGateMode" NOT NULL default WARN with its comment: %', row_to_json(col);
+  END IF;
+  IF (SELECT array_agg(e::text ORDER BY e::text COLLATE "C") FROM unnest(enum_range(NULL::"PublishGateMode")) e) IS DISTINCT FROM ARRAY['REFUSE', 'WARN'] THEN
+    RAISE EXCEPTION 'gate deviations: PublishGateMode is no longer WARN and REFUSE: %', enum_range(NULL::"PublishGateMode");
+  END IF;
+
+  FOR r IN
+    SELECT ro.rolname, p.privilege
+      FROM pg_roles ro
+      CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) AS p(privilege)
+     WHERE ro.rolname IN ('app_authenticated', 'authenticated', 'anon', 'service_role')
+  LOOP
+    IF has_column_privilege(r.rolname, '"PublicationSettings"', 'gateDeviations', r.privilege)
+       IS DISTINCT FROM has_column_privilege(r.rolname, '"PublicationSettings"', 'gateOtherSchool', r.privilege) THEN
+      RAISE EXCEPTION 'gate deviations: % holds % on gateDeviations as it does not on gateOtherSchool', r.rolname, r.privilege;
+    END IF;
+  END LOOP;
+
+  -- Every row the school can see reads WARN: nobody chose by migrating.
+  IF NOT EXISTS (SELECT 1 FROM "PublicationSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'gate deviations: the matrix school has no settings row; fixtures did not run';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "PublicationSettings" WHERE "gateDeviations" <> 'WARN') THEN
+    RAISE EXCEPTION 'gate deviations: a settings row reads a policy nobody chose';
+  END IF;
+
+  -- REFUSE, by UPDATE; no other gate moves; and no other gate moves it.
+  UPDATE "PublicationSettings" SET "gateOtherSchool" = 'WARN', "gateClashes" = 'WARN' WHERE "schoolId" = school;
+  UPDATE "PublicationSettings" SET "gateDeviations" = 'REFUSE' WHERE "schoolId" = school;
+  IF NOT FOUND THEN RAISE EXCEPTION 'gate deviations: the full administrator could not set it'; END IF;
+  IF NOT (SELECT "gateDeviations" = 'REFUSE' AND "gateOtherSchool" = 'WARN' AND "gateClashes" = 'WARN'
+            FROM "PublicationSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'gate deviations: REFUSE moved another gate, or was not set';
+  END IF;
+  UPDATE "PublicationSettings" SET "gateOtherSchool" = 'REFUSE', "gateClashes" = 'REFUSE' WHERE "schoolId" = school;
+  UPDATE "PublicationSettings" SET "gateDeviations" = 'WARN' WHERE "schoolId" = school;
+  IF NOT (SELECT "gateDeviations" = 'WARN' AND "gateOtherSchool" = 'REFUSE' AND "gateClashes" = 'REFUSE'
+            FROM "PublicationSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'gate deviations: WARN moved another gate, or was not set';
+  END IF;
+  UPDATE "PublicationSettings" SET "gateOtherSchool" = 'WARN', "gateClashes" = 'WARN' WHERE "schoolId" = school;
+
+  -- The gateway's write: INSERT … ON CONFLICT DO UPDATE with the gates the body named.
+  INSERT INTO "PublicationSettings" ("schoolId", "gateDeviations") VALUES (school, 'REFUSE')
+  ON CONFLICT ("schoolId") DO UPDATE SET "gateDeviations" = EXCLUDED."gateDeviations";
+  IF (SELECT "gateDeviations" FROM "PublicationSettings" WHERE "schoolId" = school) IS DISTINCT FROM 'REFUSE' THEN
+    RAISE EXCEPTION 'gate deviations: the upsert did not set REFUSE';
+  END IF;
+  -- A body that names another gate leaves this one where it was.
+  INSERT INTO "PublicationSettings" ("schoolId", "gateClashes") VALUES (school, 'REFUSE')
+  ON CONFLICT ("schoolId") DO UPDATE SET "gateClashes" = EXCLUDED."gateClashes";
+  IF NOT (SELECT "gateDeviations" = 'REFUSE' AND "gateClashes" = 'REFUSE' FROM "PublicationSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'gate deviations: an upsert that names another gate moved this one';
+  END IF;
+
+  got := pg_temp.g2_refusal(format('UPDATE "PublicationSettings" SET "gateDeviations" = NULL WHERE "schoolId" = %L', school));
+  IF got NOT LIKE '23502|%' THEN RAISE EXCEPTION 'gate deviations: NULL was not refused by NOT NULL: %', got; END IF;
+  got := pg_temp.g2_refusal(format('UPDATE "PublicationSettings" SET "gateDeviations" = ''IGNORE'' WHERE "schoolId" = %L', school));
+  IF got NOT LIKE '22P02|%' THEN RAISE EXCEPTION 'gate deviations: a value outside the enum was not refused: %', got; END IF;
+  -- Back to what the school chose: nothing.
+  UPDATE "PublicationSettings" SET "gateDeviations" = 'WARN', "gateClashes" = 'WARN' WHERE "schoolId" = school;
+END $$;
+SELECT set_config('app.g2_413_school', app.current_school_id()::text, true);
+
+-- Who writes it follows PUBLICERING, as the rest of the row does.
+DO $$
+DECLARE
+  who text;
+  n bigint;
+  msg text;
+  school uuid := current_setting('app.g2_413_school')::uuid;
+  writes boolean;
+  saw_writer boolean := false;
+  saw_reader boolean := false;
+BEGIN
+  FOREACH who IN ARRAY ARRAY[
+    '00000000-0000-4000-8000-000000000106', '00000000-0000-4000-8000-000000000107', '00000000-0000-4000-8000-000000000108',
+    '00000000-0000-4000-8000-000000000109', '00000000-0000-4000-8000-000000000110', '00000000-0000-4000-8000-000000000115'
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    IF app.current_user_role() <> 'SCHOOL_ADMIN' OR app.current_school_id() <> school THEN
+      RAISE EXCEPTION 'gate deviations: % is not an administrator of the matrix school', who;
+    END IF;
+    writes := app.current_user_may('PUBLICERING', true);
+    IF (SELECT "gateDeviations" FROM "PublicationSettings" WHERE "schoolId" = school) IS DISTINCT FROM 'WARN' THEN
+      RAISE EXCEPTION 'gate deviations: % does not read the row as it stands', who;
+    END IF;
+    BEGIN
+      UPDATE "PublicationSettings" SET "gateDeviations" = 'REFUSE' WHERE "schoolId" = school;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF NOT writes THEN RAISE EXCEPTION 'gate deviations: % set it without PUBLICERING', who; END IF;
+      IF n <> 1 THEN RAISE EXCEPTION 'gate deviations: % with PUBLICERING reached % rows', who, n; END IF;
+      saw_writer := true;
+      UPDATE "PublicationSettings" SET "gateDeviations" = 'WARN' WHERE "schoolId" = school;
+    EXCEPTION WHEN insufficient_privilege THEN
+      GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+      IF writes THEN RAISE EXCEPTION 'gate deviations: % with PUBLICERING was refused: %', who, msg; END IF;
+      IF msg NOT LIKE '%row-level security%' THEN RAISE EXCEPTION 'gate deviations: % was refused by "%", not by row security', who, msg; END IF;
+      saw_reader := true;
+    END;
+  END LOOP;
+  IF NOT saw_writer OR NOT saw_reader THEN
+    RAISE EXCEPTION 'gate deviations: the principals no longer cover both a writer (%) and a reader (%) of PUBLICERING', saw_writer, saw_reader;
+  END IF;
+  -- A teacher reads no settings row of the publish gates at all.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+  IF EXISTS (SELECT 1 FROM "PublicationSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'gate deviations: a teacher reads the publication settings';
+  END IF;
+END $$;
+
+-- Another school's administrator.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.g2_413_school')::uuid;
+  n bigint;
+BEGIN
+  IF app.current_school_id() = school THEN RAISE EXCEPTION 'gate deviations: the primary school''s administrator is in the matrix school'; END IF;
+  IF EXISTS (SELECT 1 FROM "PublicationSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'gate deviations: another school''s administrator reads this school''s settings';
+  END IF;
+  UPDATE "PublicationSettings" SET "gateDeviations" = 'REFUSE' WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'gate deviations: another school''s administrator reached this school''s policy'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 414: ingen rättighet och ingen policy flyttades, och godtagandet
+-- ligger i tillämpningens REGENERATE-post (20270125090000).
+--
+-- The migration adds three columns and nothing else. The arms of the three
+-- tables are the ones they were, the API's role holds what it held (a candidate
+-- is still written once), service_role reads and does nothing else, and PUBLIC
+-- holds nothing on the columns; MAINTAIN is counted where the version has it.
+--
+-- The acceptance is not a table. The apply writes it in the REGENERATE entry of
+-- ScheduleChangeLogs it writes anyway, in "after": the accepted list, its
+-- digest and the moment, and no Users id (the entry's own actorId is who). The
+-- publish check looks for the year's newest entry of the two kinds that
+-- replace the draft whole; here that read is made as the gate makes it, in the
+-- matrix school, and
+--
+--   * an entry whose "after" carries a list and its digest is read back as
+--     written, and is the newest of its year when it is the last written;
+--   * a RESTORE written after it is the newer entry, so the check finds the
+--     timetable replaced;
+--   * the log is append-only to the administrators (no UPDATE arm: an UPDATE
+--     reaches no row, and a DELETE has no arm either), and another school's
+--     administrator reads no entry of it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+
+CREATE FUNCTION pg_temp.g2_try(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE n bigint; st text; msg text;
+BEGIN
+  EXECUTE statement;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RAISE EXCEPTION USING ERRCODE = 'ZM414', MESSAGE = n::text;
+EXCEPTION
+  WHEN SQLSTATE 'ZM414' THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+    RETURN 'rows ' || msg;
+  WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+    RETURN CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+  WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+    RETURN 'error ' || st || ' ' || msg;
+END $$;
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  t text;
+  got text[];
+  want text[];
+  priv text;
+  role_name text;
+  expected text[];
+  have text[];
+  maintain constant text[] := CASE WHEN current_setting('server_version_num')::int >= 170000 THEN ARRAY['MAINTAIN'] ELSE '{}' END;
+  entry_id uuid;
+  newest record;
+  digest constant text := repeat('ab', 32);
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' OR NOT app.current_user_may('SCHEMALAGGNING', true) THEN
+    RAISE EXCEPTION 'deviations log: expected the matrix school''s full administrator';
+  END IF;
+
+  -- The arms, by name: no policy was added to or taken from the three tables or the log.
+  FOR t, want IN SELECT * FROM (VALUES
+      ('LunchSettings', ARRAY['lunch_settings_admin_delete', 'lunch_settings_admin_insert', 'lunch_settings_admin_select',
+                              'lunch_settings_admin_update', 'lunch_settings_staff_select']),
+      ('PublicationSettings', ARRAY['publication_settings_admin_delete', 'publication_settings_admin_insert',
+                                    'publication_settings_admin_select', 'publication_settings_admin_update']),
+      ('ScheduleCandidates', ARRAY['schedule_candidates_admin_delete', 'schedule_candidates_admin_insert', 'schedule_candidates_admin_select']),
+      ('ScheduleChangeLogs', ARRAY['schedule_change_logs_admin_insert', 'schedule_change_logs_admin_select'])
+    ) AS v(t, want)
+  LOOP
+    SELECT array_agg(policyname::text ORDER BY policyname COLLATE "C") INTO got
+      FROM pg_policies WHERE schemaname = 'public' AND tablename = t;
+    IF got IS DISTINCT FROM want THEN RAISE EXCEPTION 'deviations log: the arms of % are %, expected %', t, got, want; END IF;
+  END LOOP;
+
+  -- The API's role and service_role hold what they held; anon holds nothing.
+  FOR t, role_name, expected IN SELECT * FROM (VALUES
+      ('LunchSettings', 'app_authenticated', ARRAY['DELETE', 'INSERT', 'SELECT', 'UPDATE']),
+      ('LunchSettings', 'service_role', ARRAY['SELECT']),
+      ('PublicationSettings', 'app_authenticated', ARRAY['DELETE', 'INSERT', 'SELECT', 'UPDATE']),
+      ('PublicationSettings', 'service_role', ARRAY['SELECT']),
+      ('ScheduleCandidates', 'app_authenticated', ARRAY['DELETE', 'INSERT', 'SELECT']),
+      ('ScheduleCandidates', 'service_role', ARRAY['SELECT'])
+    ) AS v(t, role_name, expected)
+  LOOP
+    have := '{}';
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] || maintain LOOP
+      IF has_table_privilege(role_name, format('%I', t), priv) THEN have := have || priv; END IF;
+    END LOOP;
+    IF (SELECT array_agg(x ORDER BY x COLLATE "C") FROM unnest(have) x) IS DISTINCT FROM expected THEN
+      RAISE EXCEPTION 'deviations log: % holds % on %, expected %', role_name, have, t, expected;
+    END IF;
+  END LOOP;
+  FOREACH t IN ARRAY ARRAY['LunchSettings', 'PublicationSettings', 'ScheduleCandidates'] LOOP
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] || maintain LOOP
+      IF has_table_privilege('anon', format('%I', t), priv) THEN
+        RAISE EXCEPTION 'deviations log: anon holds % on %', priv, t;
+      END IF;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_attribute att, aclexplode(att.attacl) a
+                WHERE att.attrelid = format('%I', t)::regclass AND att.attacl IS NOT NULL AND a.grantee = 0) THEN
+      RAISE EXCEPTION 'deviations log: PUBLIC holds a privilege on a column of %', t;
+    END IF;
+  END LOOP;
+
+  -- The log: the apply's entry, as the gate reads it.
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "ScheduleChangeLogs" ("schoolId", "academicYearId", "actorId", action, after)
+  VALUES (school, yr, app.current_user_id(), 'REGENERATE',
+          jsonb_build_object('source', 'CANDIDATE', 'ordinal', 1, 'variant', 'BEST_EFFORT', 'solverStatus', 'OPTIMAL',
+                             'deviations', jsonb_build_array(jsonb_build_object('category', 'DEVIATION', 'code', 'DEVIATION_ROOM_LOCK',
+                                'params', jsonb_build_object('requirement', 'Matematik för 7B', 'lessons', 2, 'of', 3),
+                                'message', 'm', 'resourceNames', jsonb_build_array('Sal 1'))),
+                             'deviationsDigest', digest, 'acceptedAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')))
+  RETURNING id INTO entry_id;
+  SELECT action, "createdAt", after INTO newest FROM "ScheduleChangeLogs"
+   WHERE "academicYearId" = yr AND action IN ('REGENERATE', 'RESTORE') ORDER BY "createdAt" DESC, id DESC LIMIT 1;
+  IF newest.action <> 'REGENERATE' OR newest.after ->> 'source' <> 'CANDIDATE'
+     OR jsonb_typeof(newest.after -> 'deviations') <> 'array' OR jsonb_array_length(newest.after -> 'deviations') <> 1
+     OR newest.after ->> 'deviationsDigest' <> digest THEN
+    RAISE EXCEPTION 'deviations log: the gate''s read does not find the entry just written: %', newest;
+  END IF;
+  IF newest.after::text ~* '"subjectIds"' THEN
+    RAISE EXCEPTION 'deviations log: the accepted list in the test carries a person id, which the apply never writes';
+  END IF;
+  -- A RESTORE after it is the newest entry of the two kinds.
+  INSERT INTO "ScheduleChangeLogs" ("schoolId", "academicYearId", "actorId", action, after, "createdAt")
+  VALUES (school, yr, app.current_user_id(), 'RESTORE', jsonb_build_object('versionId', gen_random_uuid()), now() + interval '1 second');
+  SELECT action INTO newest FROM "ScheduleChangeLogs"
+   WHERE "academicYearId" = yr AND action IN ('REGENERATE', 'RESTORE') ORDER BY "createdAt" DESC, id DESC LIMIT 1;
+  IF newest.action <> 'RESTORE' THEN RAISE EXCEPTION 'deviations log: a RESTORE after the entry is not the newest'; END IF;
+
+  -- Append-only to the administrators: an UPDATE reaches no row, a DELETE has no arm.
+  IF pg_temp.g2_try(format('UPDATE "ScheduleChangeLogs" SET after = NULL WHERE id = %L', entry_id)) IS DISTINCT FROM 'rows 0' THEN
+    RAISE EXCEPTION 'deviations log: an administrator changed the entry: %', pg_temp.g2_try(format('UPDATE "ScheduleChangeLogs" SET after = NULL WHERE id = %L', entry_id));
+  END IF;
+  IF pg_temp.g2_try(format('DELETE FROM "ScheduleChangeLogs" WHERE id = %L', entry_id)) NOT IN ('rows 0', 'denied') THEN
+    RAISE EXCEPTION 'deviations log: an administrator deleted the entry';
+  END IF;
+  PERFORM set_config('app.g2_414_entry', entry_id::text, true);
+END $$;
+
+-- Another school's administrator reads no entry of it.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "ScheduleChangeLogs" WHERE id = current_setting('app.g2_414_entry')::uuid) THEN
+    RAISE EXCEPTION 'deviations log: another school''s administrator reads the entry';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "ScheduleChangeLogs" WHERE after ->> 'deviationsDigest' = repeat('ab', 32)) THEN
+    RAISE EXCEPTION 'deviations log: another school''s administrator finds the entry by its digest';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Klasslärarens schema (G5, 20270128090000), sections 425-429: a teacher is
 -- appointed klasslärare of one class, edits that class's lessons inside the
 -- frame the schemaläggare keeps, and what they change waits as a draft until it

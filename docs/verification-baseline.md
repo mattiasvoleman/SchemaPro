@@ -1568,6 +1568,106 @@ write question asked as a read) killed by the new rows of RLS section 288. The t
 that must never be priced (locks exactly Y apart, an odd and an even week's lessons) have
 a test of their own, since the other cases require that something is priced.
 
+### Bästa möjliga schema: a week the rules refuse gets a timetable, and the strict model is untouched
+
+Measured on 2026-11-07 on branch claude/g2-basta-mojliga-schema-ecbec0 (main d497a93a
+below it) with `benchmarks/best_effort.py` and `benchmarks/model_identity.py`, on the
+shared Mac at load 50-190, so **no wall-clock figure below is a measurement**: every
+pair is ONE worker, seed 0, limited in deterministic time (`max_deterministic_time`),
+the strict and the relaxed run in two processes at the same moment. Three weeks: the
+högstadium week (`hogstadium.py`, 450 pupils, 423 lessons), the same with one teacher's
+cap and a post's days set so the week cannot hold them ("impossible"), and three
+fuzzed copies of it (`fuzz --seed 1..3`) whose caps and posts are drawn tighter.
+
+**What is new in the engine.** `relaxation: {mode: BEST_EFFORT}` on the request; the
+answer carries `deviations` (omitted unless the request carried the mode). Five of the
+school's own shaping rules turn from rows into priced slack, mildest first: a subject's
+days apart (10 a pair), its cap per day (20 a lesson), a locked room (40 a lesson), a
+teacher's cap per day (14 per five minutes) and a post's teaching days (1,200 a day;
+the cap was 4 and the day 500 when the figures below were taken, and the review of #285
+found that a cap breached by one lesson of 40 or 45 minutes then cost less than a room, so the
+two were worked again from the shortest lesson the product allows, 15 minutes: 3 x 14 = 42
+is over 40, and a seven-hour day of 84 slots is 1,176, under 1,200; the order is pinned for
+every lesson length in `tests/test_best_effort.py`). The
+prices are multiplied (`dominating_scale`) above the whole soft objective, so a rule is
+broken only when no timetable keeps it. Everything else (a teacher, class, pupil or room
+booked twice, the frame times, the walk between sites, lunch and night's rest,
+unavailability, a requirement's own room type, capacity and years, lesson lengths,
+a block's shared start) is hard in both modes. A week the hard rules alone cannot
+hold is refused with the strict words, because the prechecks, the proof and its
+explanation and the timeout probes all run on `strip(request)`.
+
+**The strict model is variable for variable what it was** (`model_identity.py`, the base
+tree being `git archive d497a93a`): 14 benchmark payloads and 1,746 recorded from every
+request the test suite builds a model for, 15,714 builds, `PYTHONHASHSEED=0`, each
+build reduced to a sha256 of its serialised proto. Every `validate`, `estimate`, `full`,
+`feasible`, `explain`, `diagnosis`, `placeable` and `response` build is identical.
+The `solve` kind (every model `solve()` hands the guard) differed on five payloads, all
+of them solves that end in a timeout or in an explanation of an infeasible week, and
+all five were taken to be the host's load: the five were hashed again on the base tree
+twice and on the head once, and the three infeasible ones came out identical on all
+three runs (43, 14 and 14 models, one digest each), while the two timeouts differ
+between the two runs of the BASE tree itself. The 14 benchmark payloads are identical
+in every build.
+
+**Model size and time to the first solution** (`first`, satisfaction model, deterministic
+seconds):
+
+| week | strict | relaxed (`variables`, `constraints`) |
+|---|---|---|
+| högstadium | OPTIMAL 20.07 | FEASIBLE 2.74; 7,372 vs 7,354 variables (+18), 17,958 vs 17,958; full model 10,382 vs 10,364, 27,354 vs 27,354 |
+| impossible | INFEASIBLE (proved at 0.01) | FEASIBLE 3.63; +18 variables |
+| fuzz 1 / 2 / 3 | REFUSED `TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK` in 0.02-0.11 s | FEASIBLE 40.12 / 12.60 / 7.42 |
+
+The slack costs 18 variables on the högstadium week (0.24 %) and no constraint: a
+priced rule is the same row with a slack term in it. The relaxed model finds its first
+timetable sooner than the strict one on the week the strict one can solve (2.74 against
+20.07), and finds one at all on the four weeks the strict one refuses or proves empty.
+
+**Quality of the whole solve** (`solve`, 40 deterministic seconds, one worker):
+
+| week | strict | relaxed |
+|---|---|---|
+| högstadium | 423/423, nothing gave way, teachers' idle 8,430 min, 2 wishes kept | 423/423, **5 deviations** (153 units), idle 10,020, 1 wish |
+| impossible | INFEASIBLE (`CONFLICT_CORE_SUMMARY`) | 423/423, 4 deviations (94), idle 8,820, 1 |
+| fuzz 1 | REFUSED (`TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK`) | 423/423, 18 deviations (731), idle 10,920, 1 |
+| fuzz 2 | REFUSED (same) | 423/423, 17 deviations (701), idle 9,720, 2 |
+
+("Units" add minutes, days, lessons and pairs as the report counts them, and only compare
+two runs of one kind.) **The honest reading of the first row:** on a week the strict
+solver places cleanly inside the same budget, the relaxed solve at 40 deterministic
+seconds on one worker did NOT find that clean timetable and answered with five
+deviations; its first solution came at 2.74, the search then spent the rest improving a
+priced timetable and did not reach the one that keeps every rule. The mode is meant for
+the week Generera has refused (a button under a refused run, and a switch that is off
+until the school turns it on), where the strict side has nothing to offer, and a school
+whose week Generera places gets nothing from it; but a week that is only HARD for the
+strict solver can come back from the mode with deviations a longer search would not
+have had. The report says what each deviation would have needed (`needed`), not that no
+other timetable keeps the rule. Whether more budget removes the five is the
+measurement below; production runs eight workers at 60 s or more.
+
+**Checks that the report is the strict model's own judgement.** `test_best_effort.py`
+draws 30 random weeks and asks, for each, whether the strict model accepts the relaxed
+timetable's times: it does exactly when `deviations` is empty
+(`TestTheReportAgreesWithTheStrictModel`). A fuzzed week the strict mode refuses
+carries no `deviations` when the hard rules alone refuse it. Of the ten entries on the
+hard list the mode has a test of its own for a class or a teacher booked twice, the frame
+times, a teacher marked unavailable and the night's rest, and one for a week that is over
+on the list AND over on a hard rule; the walk between sites, a requirement's room type,
+capacity and years, lunch and the rasts, lesson lengths, a block's shared start and the
+group's own daily cap are held by the same `strip(request)` path and by the strict model's
+tests, not by a test of their own in the mode.
+
+**The web bundle**, built and measured on the base (d497a93a) and the branch with
+`scripts/bench/bundle-size.mjs` patched to print three decimals: 78 routes in both, the
+shared runtime 128.597 of 130 KB in both, the heaviest route `/admin/requirements` at
+190.006 KB in both (the gate rounds to 0.1 KB, so it passes 6 bytes above its 190 KB;
+G2 does not touch it). Five routes moved, 2 KB in all: `/admin/constraints` +983 B
+(181.973 to 182.933, the Skolregler card), `/admin/generate/candidates` +720 B (178.233 to
+178.936), `/admin/generate` +315 B, `/admin/schemavisaren` +24 B and `/admin/publishing`
++20 B. No route and no menu row was added.
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the

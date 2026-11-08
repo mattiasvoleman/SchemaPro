@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   HttpException,
   Injectable,
@@ -26,8 +27,18 @@ import { hideConsecutiveNotes, unkeptConsecutiveWishes } from './consecutive-wis
 import { clockMinutes, timetableWith, unkeptFreeDayWishes, type TimedLesson } from './free-day-wishes';
 import { candidateMetricsOf, lessonCountOf, metricsViewOf, runUnplacedOf, type CandidateMetrics, type CandidateMetricsView, type RunUnplaced } from './candidate-metrics';
 import {
+  acceptedDeviationsOf,
+  deviationCountOf,
+  deviationsDigestOf,
+  deviationsViewOf,
+  deviationTeachersOf,
+  storedDeviationsOf,
+} from './deviations';
+import {
+  BEST_EFFORT_VARIANT,
   callTimeoutMs,
   DEFAULT_CANDIDATE_COUNT,
+  isBestEffort,
   leaseSecondsFor,
   refreshWeights,
   searchFor,
@@ -60,6 +71,7 @@ import {
   calendarSweepWhere,
   draftMastersWhere,
   engineMayStillBeSolving,
+  ENGINE_LACKS_BEST_EFFORT,
   OptimizationProxyService,
   previousLessonsFrom,
   regenerationSweepDay,
@@ -131,6 +143,11 @@ export const REFRESH_GONE = 'REFRESH_GONE';
 export const CANDIDATE_GONE = 'CANDIDATE_GONE';
 export const PUBLISH_MODE_CHANGED = 'PUBLISH_MODE_CHANGED';
 export const SCHEDULE_CANDIDATE_NOT_APPLICABLE = 'SCHEDULE_CANDIDATE_NOT_APPLICABLE';
+// Bästa möjliga schema: the school has not turned the mode on (or has turned it off since), and a candidate whose
+// rules gave way is applied only when the administrator has accepted exactly the list the page showed.
+export const BEST_EFFORT_NOT_ENABLED = 'BEST_EFFORT_NOT_ENABLED';
+export const BEST_EFFORT_NO_REFRESH = 'BEST_EFFORT_NO_REFRESH';
+export const SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED = 'SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED';
 
 // How a run ends when it does not succeed (ScheduleCandidateRuns.errorCode).
 export const CANDIDATE_RUN_CANCELLED = 'CANDIDATE_RUN_CANCELLED';
@@ -202,6 +219,21 @@ export interface CandidateView {
    * before 20261127090000; empty when every wish is kept.
    */
   notes: ConflictView[] | null;
+  /**
+   * Bästa möjliga schema: the rules that gave way in the candidate's timetable
+   * (deviations.ts), each as a sentence with the teacher a cap is about named
+   * beside it for whoever may see a name, and a part-timer's days in the
+   * hidden form for every reader. Null when the candidate did not come from
+   * the mode (every candidate of an ordinary run, and one with no timetable);
+   * empty when the mode ran and nothing gave way.
+   */
+  deviations: ConflictView[] | null;
+  /**
+   * What an administrator accepts to apply a candidate with deviations: the
+   * digest the apply asks for (`acceptedDeviations`). Null when there is
+   * nothing to accept, which is also when the apply asks for none.
+   */
+  deviationsDigest: string | null;
 }
 
 export interface CandidateBatchView {
@@ -231,6 +263,14 @@ export interface CandidateCheck {
   mode: PublishMode;
   futureCalendarLessons: number;
   coverAssignments: number;
+  /**
+   * The deviations of the run's candidate that has any, as the page would
+   * show them at the apply, and their digest. Null for a run of ordinary
+   * candidates, and for the mode's run when nothing gave way. A run of the
+   * mode has one candidate, so there is never more than one list to say.
+   */
+  deviations: ConflictView[] | null;
+  deviationsDigest: string | null;
 }
 
 /** One stored lesson as the compare page reads it: the MasterLesson shape, resolved from the requirement now. */
@@ -262,6 +302,8 @@ export interface PlannedCandidate {
   seed: number | null;
   /** A refresh's hints, the old candidate's lessons. Null: the draft's own, as Generera's. */
   previous: CandidateLesson[] | null;
+  /** Bästa möjliga schema: the call asks the engine to let the school's shaping rules give way. Absent: it does not. */
+  bestEffort?: true;
 }
 
 /** What the task was started with. */
@@ -601,6 +643,7 @@ const RUN_SELECT = {
       metrics: true,
       conflicts: true,
       notes: true,
+      deviations: true,
     },
   },
 } satisfies Prisma.ScheduleCandidateRunSelect;
@@ -725,7 +768,12 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    *   - 404 REFRESH_GONE for a refresh of a run that is gone or not SUCCEEDED;
    *   - 409 CANDIDATES_NEED_A_DRAFT when the year has no lesson a
    *     regeneration would replace — "moved" would have nothing to count
-   *     against, and Generera is the first step;
+   *     against, and Generera is the first step. NOT for Bästa möjliga
+   *     schema (`mode`), which is for the week where Generera placed
+   *     nothing: it asks for no draft and takes the one it finds;
+   *   - 409 BEST_EFFORT_NOT_ENABLED when the mode is asked for (or a batch of
+   *     it is refreshed) and the school's switch is off, and 400
+   *     BEST_EFFORT_NO_REFRESH for `mode` together with `refreshOf`;
    *   - 409 GENERATE_RUNNING beside a Generera job of the year;
    *   - 409 CANDIDATES_RUNNING beside an active run of the year (and on the
    *     partial unique index, for two starts that pass the check at once);
@@ -739,6 +787,17 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
   async start(dto: StartCandidatesDto, user: AuthenticatedUser): Promise<{ runId: string }> {
     const schoolId = requireSchoolId(user);
     const { academicYearId } = dto;
+    // A refresh keeps the mode of the batch it refreshes (refreshPlan reads it
+    // off the old candidate), so a request that names both says two things and
+    // is refused before anything is read. `count` is not read with the mode:
+    // the run has one candidate, and a client that sends its default count
+    // beside the mode is not wrong.
+    if (dto.mode === 'BEST_EFFORT' && dto.refreshOf) {
+      throw new BadRequestException({
+        message: 'Bästa möjliga schema kan inte kombineras med en uppdatering: uppdatera förslaget utan att ange läge.',
+        code: BEST_EFFORT_NO_REFRESH,
+      });
+    }
     await this.sweepBeforeStart();
     const settings = this.searchSettings();
     const runsMax = this.settings().runsMax;
@@ -747,9 +806,17 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
       await rostersOfYear(tx, user, academicYearId);
       const planned = dto.refreshOf
         ? await this.refreshPlan(tx, dto.refreshOf, academicYearId)
-        : { weights: plainWeights(dto.weights), candidates: this.freshPlan(dto.count, plainWeights(dto.weights)) };
+        : dto.mode === 'BEST_EFFORT'
+          ? { weights: plainWeights(dto.weights), candidates: this.bestEffortPlan(plainWeights(dto.weights)) }
+          : { weights: plainWeights(dto.weights), candidates: this.freshPlan(dto.count, plainWeights(dto.weights)) };
 
-      const drafts = await tx.masterLesson.count({ where: draftMastersWhere(academicYearId) });
+      // The school's own switch, for a fresh run of the mode and for the
+      // refresh of a batch of it alike: a school that turned it off has said
+      // no to a timetable in which its rules give way, however the run began.
+      const asksBestEffort = planned.candidates.some((candidate) => candidate.bestEffort === true);
+      if (asksBestEffort && !(await this.bestEffortOn(tx, schoolId))) throw bestEffortNotEnabled();
+
+      const drafts = asksBestEffort ? 1 : await tx.masterLesson.count({ where: draftMastersWhere(academicYearId) });
       if (drafts === 0) {
         throw new ConflictException({
           message: 'Generera ett första schema, sedan kan du ta fram förslag utifrån det.',
@@ -808,7 +875,9 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
     });
 
     this.launch({ runId, schoolId, academicYearId, candidates, settings }, user);
-    this.logger.log(`Candidate run started [runId=${runId}, candidates=${candidates.length}, refresh=${dto.refreshOf ? 'yes' : 'no'}]`);
+    this.logger.log(
+      `Candidate run started [runId=${runId}, candidates=${candidates.length}, refresh=${dto.refreshOf ? 'yes' : 'no'}, mode=${candidates.some((candidate) => candidate.bestEffort) ? 'BEST_EFFORT' : 'ordinary'}]`,
+    );
     return { runId };
   }
 
@@ -831,6 +900,31 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
       seed: variant.seed,
       previous: null,
     }));
+  }
+
+  /**
+   * Bästa möjliga schema: the run's one candidate. The school's weights as the
+   * request gave them (the run's base, with no override of the variant's), no
+   * seed, no hints but the draft's own — and the flag that sends the engine
+   * `relaxation`. See BEST_EFFORT_VARIANT.
+   */
+  private bestEffortPlan(base: ObjectiveWeights | null): PlannedCandidate[] {
+    return [
+      {
+        ordinal: BEST_EFFORT_VARIANT.ordinal,
+        variant: BEST_EFFORT_VARIANT.code,
+        weights: weightsFor(base, BEST_EFFORT_VARIANT),
+        seed: BEST_EFFORT_VARIANT.seed,
+        previous: null,
+        bestEffort: true,
+      },
+    ];
+  }
+
+  /** The school's Skolregler switch for Bästa möjliga schema; false for a school with no row. */
+  private async bestEffortOn(tx: PrismaClient, schoolId: string): Promise<boolean> {
+    const row = await tx.lunchSetting.findUnique({ where: { schoolId }, select: { generatorBestEffort: true } });
+    return row?.generatorBestEffort === true;
   }
 
   /**
@@ -867,6 +961,9 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
           weights: refreshWeights(plainWeights(candidate.weights)),
           seed: candidate.seed ?? null,
           previous: lessons,
+          // A batch of the mode is refreshed in the mode: solved strictly it
+          // would meet the very week that needed the mode and find nothing.
+          ...(isBestEffort(candidate.variant) ? { bestEffort: true as const } : {}),
         },
       ];
     });
@@ -988,6 +1085,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
             weights: candidate.weights,
             search: searchFor(call, plan.settings),
             ...(candidate.previous ? { previousLessons: previousLessonsFrom(prepared, candidate.previous) } : {}),
+            ...(candidate.bestEffort ? { bestEffort: true } : {}),
             timeoutMs,
           });
         } catch (error) {
@@ -1022,8 +1120,25 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
                 ...unkeptFreeDayWishes(prepared.freeDayWishes, left),
                 ...unkeptConsecutiveWishes(prepared.consecutiveWishes, left),
               ]);
+        // What gave way, for a timetable the mode placed. A candidate of the
+        // mode without its list cannot say that nothing gave way, and stored
+        // as clean it would be applied without the school accepting what the
+        // engine broke: the proxy never returns one, and this stops one that
+        // somehow did.
+        if (candidate.bestEffort && APPLICABLE.has(status) && !Array.isArray(solution.deviations)) {
+          await this.fail(runId, user, {
+            code: ENGINE_LACKS_BEST_EFFORT,
+            message: 'The engine placed a timetable in the mode without saying what gave way.',
+            params: null,
+          });
+          return;
+        }
+        const deviations =
+          candidate.bestEffort && APPLICABLE.has(status) && solution.deviations
+            ? storedDeviationsOf(solution.deviations)
+            : null;
         const firstFailed = index === 0 && (status === 'INFEASIBLE' || status === 'TIMEOUT');
-        const outcome = await this.store(plan, user, candidate, solution, status, { metrics, notes }, firstFailed);
+        const outcome = await this.store(plan, user, candidate, solution, status, { metrics, notes, deviations }, firstFailed);
         if (outcome !== 'stored') return;
         if (metrics) applicable.push({ ordinal: candidate.ordinal, lessons: solution.lessons, metrics });
       }
@@ -1111,7 +1226,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
     candidate: PlannedCandidate,
     solution: CandidateSolution,
     status: string,
-    measured: { metrics: CandidateMetrics | null; notes: AiEngineConflictDetail[] | null },
+    measured: { metrics: CandidateMetrics | null; notes: AiEngineConflictDetail[] | null; deviations: StoredConflict[] | null },
     firstFailed: boolean,
   ): Promise<'stored' | 'finished' | 'stopped'> {
     const applicable = APPLICABLE.has(status);
@@ -1138,6 +1253,10 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
           // As the job row keeps its notes: the teacher's Users id beside each,
           // for the read that names them, and never a name.
           notes: jsonOrDbNull(measured.notes?.map(storedOf) ?? null),
+          // The rules that gave way (deviations.ts), stored as the engine's
+          // list: [] says the mode ran and nothing gave way, null that the
+          // candidate is not the mode's.
+          deviations: jsonOrDbNull(measured.deviations),
           errorCode: applicable || status === 'REJECTED' ? null : summary.code,
           // The summary's values, without which its sentence cannot be said
           // (a first candidate that ran out of time has a summary and no list).
@@ -1260,7 +1379,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    * days (access-log.ts, NOT RECORDED).
    */
   async overview(academicYearId: string, user: AuthenticatedUser, now: Date = new Date()): Promise<CandidatesOverview> {
-    const { latest, batch, names } = await this.prisma.withRls(user, async (tx) => {
+    const { latest, batch, names, deviationNames } = await this.prisma.withRls(user, async (tx) => {
       const order = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
       // A run a discard removed is not shown, whatever is left of its row.
       const newest = await tx.scheduleCandidateRun.findFirst({
@@ -1277,26 +1396,54 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
               select: RUN_SELECT,
             });
       const noted = new Set<string>();
+      // The teachers whose cap gave way (deviations.ts): read with the rest,
+      // and named only if the person is not marked (below).
+      const capped = new Set<string>();
       for (const run of [newest, succeeded]) {
         if (!run) continue;
         for (const id of notedTeachersOf(run.draftNotes)) noted.add(id);
         for (const candidate of run.candidates) {
           for (const id of notedTeachersOf(candidate.notes)) noted.add(id);
           for (const id of travelTeachersOf(candidate.conflicts)) noted.add(id);
+          for (const id of deviationTeachersOf(candidate.deviations)) {
+            noted.add(id);
+            capped.add(id);
+          }
         }
       }
       const people =
         noted.size === 0
           ? []
           : await tx.user.findMany({ where: { id: { in: [...noted] } }, select: { id: true, firstName: true, lastName: true } });
-      return { latest: newest, batch: succeeded, names: namesOf(people) };
+      const named = namesOf(people);
+      return { latest: newest, batch: succeeded, names: named, deviationNames: await this.unmarkedNames(tx, named, capped) };
     });
     return {
-      latest: latest ? batchViewOf(latest, now, names) : null,
-      batch: batch ? batchViewOf(batch, now, names) : null,
+      latest: latest ? batchViewOf(latest, now, names, deviationNames) : null,
+      batch: batch ? batchViewOf(batch, now, names, deviationNames) : null,
       unplaced: batch ? unplacedViewOf(batch.unplaced) : null,
       draftNotes: batch ? measuredNotesOf(batch.draftNotes, names) : null,
     };
+  }
+
+  /**
+   * The names a deviation may carry: the school's names for `teachers`, less
+   * anyone with a protected identity. A marked person is named in no list
+   * outside the register (src/users/person-protections.ts), and a candidate
+   * page is a list; the deviation then says what it says of every teacher
+   * whose name is not known, with the row's id where a name would be. One more
+   * read, only when a cap gave way for somebody.
+   */
+  private async unmarkedNames(
+    tx: PrismaClient,
+    names: ReadonlyMap<string, string>,
+    teachers: ReadonlySet<string>,
+  ): Promise<ReadonlyMap<string, string>> {
+    if (teachers.size === 0) return names;
+    const marked = await tx.personProtection.findMany({ where: { userId: { in: [...teachers] } }, select: { userId: true } });
+    if (marked.length === 0) return names;
+    const hidden = new Set(marked.map((row) => row.userId));
+    return new Map([...names].filter(([id]) => !hidden.has(id)));
   }
 
   /**
@@ -1371,18 +1518,38 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
       async (tx) => {
         const run = await tx.scheduleCandidateRun.findUnique({
           where: { id: runId },
-          select: { academicYearId: true, basis: true, basisParts: true, discardedAt: true },
+          select: {
+            academicYearId: true,
+            basis: true,
+            basisParts: true,
+            discardedAt: true,
+            candidates: { orderBy: { ordinal: 'asc' }, select: { id: true, solverStatus: true, deviations: true } },
+          },
         });
         if (!run || run.discardedAt) throw candidateGone();
         const mode = await publishModeOf(tx, schoolId);
+        // What the apply dialog must show and the administrator accept: the
+        // list of the run's candidate whose rules gave way, if it has one.
+        const deviating = (run.candidates ?? []).find(
+          (candidate) => APPLICABLE.has(candidate.solverStatus) && deviationCountOf(candidate.deviations) > 0,
+        );
+        const accepting = await this.acceptingOf(tx, deviating);
         const prepared = await this.proxy.prepareSchedule(tx, run.academicYearId, user);
         if (!prepared.ready) {
-          return { stale: true, changed: [], refusalCode: prepared.refusalCode, mode, futureCalendarLessons: 0, coverAssignments: 0 };
+          return {
+            stale: true,
+            changed: [],
+            refusalCode: prepared.refusalCode,
+            mode,
+            futureCalendarLessons: 0,
+            coverAssignments: 0,
+            ...accepting,
+          };
         }
         const stale = run.basis !== prepared.basis;
         const changed = stale ? changedParts(run.basisParts, prepared.basisParts) : [];
         if (mode === 'DRAFT') {
-          return { stale, changed, refusalCode: null, mode, futureCalendarLessons: 0, coverAssignments: 0 };
+          return { stale, changed, refusalCode: null, mode, futureCalendarLessons: 0, coverAssignments: 0, ...accepting };
         }
         // The write's day as well as its clause, the school's today: the
         // dialog counts what the apply takes, and not yesterday's lessons for
@@ -1397,10 +1564,32 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
           futureCalendarLessons === 0
             ? 0
             : await tx.calendarLessonTeacher.count({ where: { role: 'SUBSTITUTE', calendarLesson: { is: swept } } });
-        return { stale, changed, refusalCode: null, mode, futureCalendarLessons, coverAssignments };
+        return { stale, changed, refusalCode: null, mode, futureCalendarLessons, coverAssignments, ...accepting };
       },
       { timeoutMs: PREPARE_TIMEOUT_MS },
     );
+  }
+
+  /**
+   * The check's two fields for the run's candidate with deviations: the list
+   * as the page shows it (the teacher a cap is about named, unless marked) and
+   * the digest the apply will ask for. Both null when there is none.
+   */
+  private async acceptingOf(
+    tx: PrismaClient,
+    candidate: { id: string; deviations: unknown } | undefined,
+  ): Promise<{ deviations: ConflictView[] | null; deviationsDigest: string | null }> {
+    if (!candidate) return { deviations: null, deviationsDigest: null };
+    const teachers = new Set(deviationTeachersOf(candidate.deviations));
+    const people =
+      teachers.size === 0
+        ? []
+        : await tx.user.findMany({ where: { id: { in: [...teachers] } }, select: { id: true, firstName: true, lastName: true } });
+    const names = await this.unmarkedNames(tx, namesOf(people), teachers);
+    return {
+      deviations: deviationsViewOf(candidate.deviations, names),
+      deviationsDigest: deviationsDigestOf(candidate.id, candidate.deviations),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -1434,8 +1623,22 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    *
    * A deadlock, a key the write met, or a lock wait past 5 s anywhere after
    * step 2 is 409 SCHEDULE_CANDIDATE_BUSY: nothing was written.
+   *
+   * BÄSTA MÖJLIGA SCHEMA adds one step between 4's first check and its write: a
+   * candidate with at least one deviation is applied only if the school's
+   * switch is still on (409 BEST_EFFORT_NOT_ENABLED) and `acceptedDeviations`
+   * is the digest of exactly the list stored on the row (409
+   * SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED, with the count). Nothing is
+   * written before it, and the accepted list, its digest and the moment go in
+   * the REGENERATE entry (deviations.ts). A candidate with none takes no
+   * digest, and one that is sent is not read.
    */
-  async apply(candidateId: string, expectedMode: PublishMode, user: AuthenticatedUser): Promise<CandidateApplyOutcome> {
+  async apply(
+    candidateId: string,
+    expectedMode: PublishMode,
+    user: AuthenticatedUser,
+    acceptedDeviations?: string,
+  ): Promise<CandidateApplyOutcome> {
     const schoolId = requireSchoolId(user);
     let outcome: { lessonsCreated: number; versionId: string; mode: PublishMode; runId: string };
     try {
@@ -1453,6 +1656,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
               lessons: true,
               lunches: true,
               metrics: true,
+              deviations: true,
               run: { select: { academicYearId: true } },
             },
           });
@@ -1481,6 +1685,16 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
               code: SCHEDULE_CANDIDATE_NOT_APPLICABLE,
             });
           }
+          // The school accepts what gave way before anything is written. The
+          // digest is recomputed from the row this write is about to use, so a
+          // value copied from another candidate, from an older read, or from a
+          // row since changed by hand, is not the one.
+          const deviationCount = deviationCountOf(candidate.deviations);
+          const digest = deviationsDigestOf(candidate.id, candidate.deviations);
+          if (deviationCount > 0) {
+            if (!(await this.bestEffortOn(tx, schoolId))) throw bestEffortNotEnabled();
+            if (digest === null || acceptedDeviations !== digest) throw deviationsNotAccepted(deviationCount);
+          }
           if (await this.generateRunning(tx, academicYearId)) throw generateRunning();
           await tx.scheduleCandidateRun.updateMany({
             where: { academicYearId, status: { in: ['PENDING', 'RUNNING'] }, createdAt: { gt: run.createdAt } },
@@ -1508,6 +1722,19 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
               ordinal: candidate.ordinal,
               variant: candidate.variant,
               metrics: (metricsBlobOf(candidate.metrics) ?? null) as Prisma.InputJsonValue | null,
+              // The acceptance, kept in the entry the apply writes anyway: the
+              // list the administrator accepted, WITHOUT the teacher ids of the
+              // candidate's copy (acceptedDeviationsOf), its digest, and when.
+              // Who is the entry's own actorId. A mode that ran and found
+              // nothing to accept leaves its empty list and no acceptance.
+              ...(Array.isArray(candidate.deviations)
+                ? {
+                    deviations: acceptedDeviationsOf(candidate.deviations) as unknown as Prisma.InputJsonValue,
+                    ...(deviationCount > 0 && digest !== null
+                      ? { deviationsDigest: digest, acceptedAt: new Date().toISOString() }
+                      : {}),
+                  }
+                : {}),
             },
           });
 
@@ -1666,6 +1893,21 @@ function candidatesBusy(): ConflictException {
   });
 }
 
+function bestEffortNotEnabled(): ConflictException {
+  return new ConflictException({
+    message: 'Skolan har inte slagit på bästa möjliga schema. Slå på det under Skolregler först.',
+    code: BEST_EFFORT_NOT_ENABLED,
+  });
+}
+
+function deviationsNotAccepted(count: number): ConflictException {
+  return new ConflictException({
+    message: 'Förslaget har avsteg från skolans regler som inte är godtagna. Läs avstegen och godta dem för att tillämpa förslaget.',
+    code: SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED,
+    params: { count },
+  });
+}
+
 function candidateGone(): NotFoundException {
   return new NotFoundException({
     message: 'Förslaget finns inte längre.',
@@ -1711,7 +1953,12 @@ function measuredNotesOf(stored: unknown, names: ReadonlyMap<string, string>): C
   return Array.isArray(stored) ? notesViewOf(stored, names) : null;
 }
 
-function batchViewOf(row: RunRow, now: Date, names: ReadonlyMap<string, string>): CandidateBatchView {
+function batchViewOf(
+  row: RunRow,
+  now: Date,
+  names: ReadonlyMap<string, string>,
+  deviationNames: ReadonlyMap<string, string> = names,
+): CandidateBatchView {
   return {
     run: runViewOf(row, now),
     candidates: row.candidates.map((candidate) => {
@@ -1728,6 +1975,8 @@ function batchViewOf(row: RunRow, now: Date, names: ReadonlyMap<string, string>)
         metrics: applicable ? metricsViewOf(candidate.metrics) : null,
         conflicts: conflictsViewOf(candidate.conflicts, names),
         notes: applicable ? measuredNotesOf(candidate.notes, names) : null,
+        deviations: applicable ? deviationsViewOf(candidate.deviations, deviationNames) : null,
+        deviationsDigest: applicable ? deviationsDigestOf(candidate.id, candidate.deviations) : null,
       };
     }),
   };

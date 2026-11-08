@@ -97,6 +97,9 @@ export class LunchSettingsService {
       ...(dto.generatorKeepsConsecutiveTeaching !== undefined
         ? { generatorKeepsConsecutiveTeaching: dto.generatorKeepsConsecutiveTeaching }
         : {}),
+      // Bästa möjliga schema: the school's switch, and an older tab's PUT
+      // that names none must not take back what a colleague turned on.
+      ...(dto.generatorBestEffort !== undefined ? { generatorBestEffort: dto.generatorBestEffort } : {}),
     };
 
     try {

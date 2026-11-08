@@ -504,6 +504,18 @@ export default function GeneratePage() {
     solverStatus === "INFEASIBLE" &&
     job?.conflictSummaryCode === "BLOCK_PARTLY_LOCKED_SUMMARY";
   /**
+   * Bästa möjliga schema (Skolregler) is for the week this run could not lay:
+   * a row pointing at "Ta fram bästa möjliga" under Schemaförslag, on this
+   * page. Not for the gateway's own two refusals above: an unstaffed post and
+   * a half-locked block are rules the mode keeps too, so it would be refused
+   * for the same reason and the row would send the admin to a second "no".
+   */
+  const offersBestEffort =
+    lunchSettings?.generatorBestEffort === true &&
+    noScheduleProduced &&
+    !refusedUnstaffed &&
+    !refusedPartlyLocked;
+  /**
    * The wishes a laid week could not keep (Lärarens dag): a teacher's free
    * day the generator gave up for the rest of the week. Not conflicts — the
    * run succeeded — so they get a heading of their own under the result. A
@@ -870,6 +882,9 @@ export default function GeneratePage() {
               {lunchSettings?.generatorKeepsConsecutiveTeaching ? (
                 <li className="text-muted-foreground">{t("ruleConsecutive")}</li>
               ) : null}
+              {lunchSettings?.generatorBestEffort ? (
+                <li className="text-muted-foreground">{t("ruleBestEffort")}</li>
+              ) : null}
             </ul>
           )}
         </SectionCard>
@@ -881,6 +896,7 @@ export default function GeneratePage() {
         canStart={canRun}
         generating={generating}
         weights={weights}
+        bestEffort={lunchSettings?.generatorBestEffort === true}
       />
 
       {job && (job.status === "SUCCEEDED" || job.status === "FAILED") ? (
@@ -956,6 +972,18 @@ export default function GeneratePage() {
             <p className="max-w-prose text-sm text-muted-foreground">{t("infeasibleHint")}</p>
           ) : solverStatus === "TIMEOUT" ? (
             <p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>
+          ) : null}
+
+          {offersBestEffort ? (
+            <p className="max-w-prose text-sm text-foreground">
+              {t("bestEffortOffer")}{" "}
+              {/* After a TIMEOUT nothing was proved: the mode may give way where a longer Generera would not have had to. */}
+              {solverStatus === "TIMEOUT" ? <>{t("bestEffortOfferTimeout")}{" "}</> : null}
+              {/* A plain anchor: the section is on this page, and a locale link would leave it. */}
+              <a href="#candidates" className="font-medium underline underline-offset-4">
+                {t("bestEffortOfferLink")}
+              </a>
+            </p>
           ) : null}
 
           {job.conflicts.length > 0 ? (
