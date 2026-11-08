@@ -22,6 +22,8 @@
  *       the sheet for paper (and counted), which a teacher, who cannot read the marks, prints too
  *   ci  races: two guardians confirm at once (ten rounds, one answer each), a list closed under writers (no answer
  *       after the close), the same tick twice at once (one proof)
+ *   cj  a withdrawal staff write while a request is open is not undone by the request's last confirmation (the
+ *       pupil stays withdrawn and the guardian's confirmation is not lost); asking again grants it
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -438,6 +440,29 @@ export async function checklistorChecks(owner: Client, api: PrismaService, marke
     ]);
     assert.equal(both.reduce((sum, r) => sum + r.written, 0), 1);
     assert.equal(await count(`SELECT count(*) AS n FROM "InstructionProofs" WHERE "templateId" = $1 AND "studentId" = $2 AND "instructedOn" = $3::date AND "voidedAt" IS NULL`, [template, p1.id, day]), 1);
+  });
+
+  await check('cj: a withdrawal written while a request is open is not undone by its last confirmation; asking again grants it (granskning #288)', async () => {
+    const photo = (await consents.createList({ classId: cl1, title: 'Fotografering mellan', body: 'Jag samtycker.' }, asT2)).id;
+    const first = await consents.ask(photo, { studentIds: [p1.id] }, asT2);
+    assert.deepEqual([first.pupils, first.guardians], [1, 2]);
+    // g1 says yes in the app, rings the school and takes the consent back (the mentor writes it down), and then g2 says yes to the request that is still open.
+    await ack.confirm(first.requestId, asG(g1));
+    await consents.record(photo, { studentIds: [p1.id], kind: 'WITHDRAWN', givenBy: 'Vårdnadshavare 1', note: 'Ringde.' }, asT2);
+    await ack.confirm(first.requestId, asG(g2));
+    const read = async () => (await consents.detail(photo, asT2)).rows.find((r) => r.name.startsWith('p1'))!;
+    assert.equal((await read()).state, 'WITHDRAWN', 'the last confirmation of the older request undid the withdrawal');
+    assert.equal(await count(`SELECT count(*) AS n FROM "ConsentEntries" WHERE "listId" = $1 AND source = 'KVITTENS'`, [photo]), 0, 'a Kvittens answer was written over the withdrawal');
+    assert.equal(await count(`SELECT count(*) AS n FROM "AckReceipts" WHERE "requestId" = $1 AND "ackedAt" IS NOT NULL`, [first.requestId]), 2, "a guardian's confirmation was lost with the withdrawal");
+    // The school asks again: a request made after the withdrawal, confirmed by both, grants it again, and the history keeps all.
+    const again = await consents.ask(photo, { studentIds: [p1.id] }, asT2);
+    assert.equal((await read()).state, 'ASKED');
+    await ack.confirm(again.requestId, asG(g1));
+    assert.equal((await read()).state, 'ASKED', 'one of two guardians was enough');
+    await ack.confirm(again.requestId, asG(g2));
+    const row = await read();
+    assert.equal(row.state, 'GRANTED');
+    assert.deepEqual(row.history.map((entry) => entry.kind), ['GRANTED', 'WITHDRAWN']);
   });
 
   await sweepChecklistorSchool(owner, marker);

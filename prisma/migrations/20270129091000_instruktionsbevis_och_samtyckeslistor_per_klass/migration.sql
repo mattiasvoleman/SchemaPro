@@ -44,7 +44,10 @@
 -- får inte försvinna med den. En vårdnadshavare vars vårdnad upphört håller inte upp
 -- ALL (F4:s regel, app.ack_status_raw); en bekräftelse som bara är "klar" för att den
 -- andra vårdnadshavarens koppling tagits bort skrivs inte in: det är en bekräftelse
--- som ingen gjorde.
+-- som ingen gjorde. Och en återkallelse eller ett nej som personal skrivit efter att
+-- förfrågan gjordes (WITHDRAWN, DECLINED) upphävs inte av den sista bekräftelsen av
+-- den förfrågan: "alla har någon gång bekräftat" är inte "alla samtycker nu". Eleven
+-- står som återkallad tills skolan frågar om, med en ny förfrågan.
 --
 -- ## Vem som får vad
 --
@@ -601,6 +604,11 @@ CREATE TRIGGER "ConsentAsks_guard"
 -- from KVITTENS dated the school's day. Nothing for a request that belongs to no list, which is
 -- every request but a consent's. The unique index on (list, pupil, request) makes a second run
 -- harmless. The entries' own guard drops the answer for a closed list or a pupil who has left.
+-- And nothing for a pupil whose list holds a WITHDRAWN or a DECLINED written after the request was made:
+-- "met" says that everyone has at some time confirmed, not that everyone consents now, and the latest
+-- answer is what counts (consent-state.ts). A guardian who takes the consent back by telephone, and a
+-- second guardian who then taps the still open request, leave the pupil withdrawn; only a request made
+-- after the withdrawal (the school asking again) can grant it again.
 CREATE FUNCTION app.consent_from_kvittens() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
@@ -627,6 +635,12 @@ BEGIN
     JOIN "Schools" sc ON sc."id" = n."schoolId"
    WHERE o."ackedAt" IS NULL AND n."ackedAt" IS NOT NULL
      AND EXISTS (SELECT 1 FROM app.ack_status_raw(ARRAY[n."requestId"]) s WHERE s.student_id = n."studentId" AND s.met)
+     -- An answer staff wrote after the request was made, a withdrawal or a no, is not undone by the request's last confirmation.
+     -- Read after the lock above, in a statement of its own, so a withdrawal that has committed is seen.
+     AND NOT EXISTS (SELECT 1 FROM "ConsentEntries" e
+                      WHERE e."listId" = a."listId" AND e."schoolId" = a."schoolId" AND e."studentId" = n."studentId"
+                        AND e."kind" IN ('WITHDRAWN', 'DECLINED')
+                        AND e."recordedAt" > (SELECT k."createdAt" FROM "AckRequests" k WHERE k."id" = n."requestId" AND k."schoolId" = n."schoolId"))
   ON CONFLICT DO NOTHING;
   RETURN NULL;
 END
@@ -1187,7 +1201,7 @@ COMMENT ON FUNCTION app.checklist_void_proof(uuid, text) IS
 COMMENT ON FUNCTION app.checklist_close_list(uuid) IS
   'Checklistor: ends a consent list (its maker, or an administrator under Drift); nothing is written to it afterwards; idempotent; CL403, CL404.';
 COMMENT ON FUNCTION app.consent_from_kvittens() IS
-  'Checklistor: when the last guardian a Kvittens request asked has confirmed, and the request belongs to a consent list, writes the pupil''s GRANTED answer from KVITTENS.';
+  'Checklistor: when the last guardian a Kvittens request asked has confirmed, and the request belongs to a consent list, writes the pupil''s GRANTED answer from KVITTENS, unless staff wrote a WITHDRAWN or a DECLINED after the request was made.';
 COMMENT ON FUNCTION app.instruction_proofs_stamp() IS
   'Checklistor: the caller, the clock and the instructor of a proof; refuses a retired template, a non-pupil, a future date and an instructor who is not staff.';
 COMMENT ON FUNCTION app.consent_entries_stamp() IS

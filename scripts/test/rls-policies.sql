@@ -47807,6 +47807,101 @@ BEGIN
 END $$;
 ROLLBACK;
 
+-- 432, the bridge and an answer written in between (granskning #288, MEDEL-2). "Met" says that everyone asked has at some time
+-- confirmed, not that everyone consents now: a guardian who takes the consent back by telephone, written down by the school, and a
+-- second guardian who then taps the request that is still open, leave the pupil withdrawn. The latest answer is what counts
+-- (consent-state.ts), and the last confirmation of an older request would have been the latest. Only a request made after the
+-- withdrawal (the school asking again) grants it again.
+BEGIN;
+SELECT pg_temp.cl_as('full');
+DO $$
+DECLARE
+  school uuid;
+  lst uuid;
+  lst2 uuid;
+  req uuid;
+  req2 uuid;
+  req3 uuid;
+  today date;
+  n integer;
+BEGIN
+  PERFORM pg_temp.cl_load();
+  school := pg_temp.clf('school');
+  today := (clock_timestamp() AT TIME ZONE 'Europe/Stockholm')::date;
+  UPDATE "AckSettings" SET enabled = true;
+  IF NOT FOUND THEN INSERT INTO "AckSettings" ("schoolId", enabled) VALUES (school, true); END IF;
+
+  -- g1 confirms, the school writes down that g1 takes the consent back, g3 (p3's only guardian) confirms, g2 confirms: WITHDRAWN stays
+  -- the latest answer for p1. The withdrawal is about p1 only: p2 (g1 only, confirmed before it) and p3 (g3 only, confirmed after it, on
+  -- the same list) are granted.
+  lst := gen_random_uuid();
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst, school, pg_temp.clf('c7a'), 'Fotografering', 'Jag samtycker.');
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req, school, 'Samtycke: Fotografering', 'Jag samtycker.', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES
+    (req, school, pg_temp.clf('p1'), pg_temp.clf('g1')), (req, school, pg_temp.clf('p1'), pg_temp.clf('g2')), (req, school, pg_temp.clf('p2'), pg_temp.clf('g1')),
+    (req, school, pg_temp.clf('p3'), pg_temp.clf('g3'));
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, school, lst);
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM app.ack_confirm(req);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 between: after g1 only p2 is met', pg_temp.cl_answer_pupils(lst), 'p2');
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", "givenBy", note)
+  VALUES (school, lst, pg_temp.clf('p1'), 'WITHDRAWN', today, 'Vårdnadshavare 1', 'Ringde: vill inte att barnet fotograferas.');
+  PERFORM pg_temp.cl_as('g3');
+  PERFORM app.ack_confirm(req);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 between: p3 is met after the withdrawal of p1, on the same list', pg_temp.cl_answer_pupils(lst), 'p1,p2,p3');
+  PERFORM pg_temp.cl_as('g2');
+  PERFORM app.ack_confirm(req);
+  PERFORM pg_temp.cl_as('full');
+  IF (SELECT "ackedAt" FROM "AckReceipts" WHERE "requestId" = req AND "guardianId" = pg_temp.clf('g2')) IS NULL THEN
+    RAISE EXCEPTION 'checklistor 432: the second guardian''s confirmation was lost with the withdrawal';
+  END IF;
+  PERFORM pg_temp.cl_expect('432 between: p1 is withdrawn and nothing was written over it',
+    (SELECT string_agg(kind::text || '/' || source::text, ',' ORDER BY "recordedAt", id) FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1')), 'WITHDRAWN/REGISTERED');
+  PERFORM pg_temp.cl_expect('432 between: the latest answer for p1 is the withdrawal',
+    (SELECT kind::text FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1') ORDER BY "recordedAt" DESC, id DESC LIMIT 1), 'WITHDRAWN');
+  PERFORM pg_temp.cl_expect('432 between: the withdrawal of p1 does not touch p2 or p3',
+    (SELECT string_agg(substr(u.email, 4, 2) || ':' || e.kind::text || '/' || e.source::text, ',' ORDER BY u.email) FROM "ConsentEntries" e JOIN "Users" u ON u.id = e."studentId" WHERE e."listId" = lst AND e."studentId" <> pg_temp.clf('p1')),
+    'p2:GRANTED/KVITTENS,p3:GRANTED/KVITTENS');
+
+  -- A no (DECLINED) written after the request is kept in the same way.
+  lst2 := gen_random_uuid();
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst2, school, pg_temp.clf('c7a'), 'Publicering', 'Jag samtycker.');
+  req2 := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req2, school, 'Samtycke: Publicering', 'Jag samtycker.', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req2, school, pg_temp.clf('p1'), pg_temp.clf('g1')), (req2, school, pg_temp.clf('p1'), pg_temp.clf('g2'));
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req2, school, lst2);
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM app.ack_confirm(req2);
+  PERFORM pg_temp.cl_as('full');
+  INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", note) VALUES (school, lst2, pg_temp.clf('p1'), 'DECLINED', today, 'Pappan sa nej på telefon.');
+  PERFORM pg_temp.cl_as('g2');
+  PERFORM app.ack_confirm(req2);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 between: a no written after the request stays the latest answer',
+    (SELECT string_agg(kind::text || '/' || source::text, ',' ORDER BY "recordedAt", id) FROM "ConsentEntries" WHERE "listId" = lst2 AND "studentId" = pg_temp.clf('p1')), 'DECLINED/REGISTERED');
+
+  -- The school asks again: a request made after the withdrawal, confirmed by both, grants it again, and the history keeps all three.
+  req3 := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule, "createdAt") VALUES (req3, school, 'Samtycke: Fotografering (igen)', 'Jag samtycker.', 'ALL', clock_timestamp());
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req3, school, pg_temp.clf('p1'), pg_temp.clf('g1')), (req3, school, pg_temp.clf('p1'), pg_temp.clf('g2'));
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req3, school, lst);
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM app.ack_confirm(req3);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 between: one of two has confirmed the new request', (SELECT kind::text FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1') ORDER BY "recordedAt" DESC, id DESC LIMIT 1), 'WITHDRAWN');
+  PERFORM pg_temp.cl_as('g2');
+  PERFORM app.ack_confirm(req3);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 between: asked again after the withdrawal, both say yes: granted',
+    (SELECT string_agg(kind::text || '/' || source::text, ',' ORDER BY "recordedAt", id) FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1')), 'WITHDRAWN/REGISTERED,GRANTED/KVITTENS');
+  SELECT count(*) INTO n FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1') AND "ackRequestId" = req3;
+  IF n <> 1 THEN RAISE EXCEPTION 'checklistor 432: the new request wrote % answers, not one', n; END IF;
+END $$;
+ROLLBACK;
+
 -- ---------------------------------------------------------------------------
 -- Section 433: the catalogue. The arms, who holds a privilege, which function the API's role may run, the keys, the
 -- Kvittens trigger and the gallring branch. The rows are 430-432's.

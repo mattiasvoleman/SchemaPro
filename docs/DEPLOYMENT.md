@@ -2117,7 +2117,10 @@ Walk the full product loop once, in order:
     confirmed it, a trigger writes the pupil's answer (source `KVITTENS`). Two guardians who confirm at the same
     moment are serialised by a lock of the trigger's own, per request, so the answer is written once, by whichever
     is last. A confirmation that is only "met" because the other guardian's custody ended is *not* written as a
-    consent: nobody said yes after it. An answer is only ever added: a consent taken back is another answer,
+    consent: nobody said yes after it. Nor does the last confirmation undo what staff wrote after the request was
+    made: a `WITHDRAWN` or a `DECLINED` newer than the request stays the latest answer (the trigger writes nothing
+    for that pupil), and the pupil is granted again only by a request made after it, the school asking again
+    (granskning #288, MEDEL-2). An answer is only ever added: a consent taken back is another answer,
     `WITHDRAWN`, and the list shows it at once; what a pupil's consent is now is the latest answer
     (`src/checklists/consent-state.ts`), or "frågad i appen" while a request made after it waits for a guardian.
     The guardians' own withdrawal in the app is not built (a follow-up): until then staff write it down.

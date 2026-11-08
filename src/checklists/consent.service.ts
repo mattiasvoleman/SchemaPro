@@ -98,7 +98,9 @@ const PERSON = {
  * HOW A CONSENT IS GIVEN. Staff write it down from a paper, a call or a meeting (who and when are the database's),
  * or ask the guardians in the app and on the web through Kvittens (F4) with the rule ALL, which is the only
  * confirmation there is: when the last guardian a request asked has confirmed, a trigger writes the pupil's answer
- * (source KVITTENS). A consent is taken back with another answer, WITHDRAWN, and the list shows it at once.
+ * (source KVITTENS), unless staff have written a WITHDRAWN or a DECLINED since the request was made: the last confirmation
+ * of an older request does not undo it, and only a request made after it (asking again) grants it again. A consent is taken
+ * back with another answer, WITHDRAWN, and the list shows it at once.
  *
  * WHAT A CONSENT IS NOW is consent-state.ts's one definition: the latest answer, or ASKED while a request made after
  * it waits for a guardian. Nothing stores "who has consented".
