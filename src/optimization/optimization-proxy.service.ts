@@ -91,7 +91,8 @@ import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
 import { enterGrundschemaWrite, isLockTimeout, type PublishMode } from '../publication/publish-mode';
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import { recordRead, type AccessChannel } from '../access-log/access-log';
-import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
+import { DEVIATION_WORK_DAYS_HIDDEN_MESSAGE, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
+import { DEVIATION_TEACHER_DAILY_CAP } from './deviations';
 import {
   dateColumnDay,
   timeColumnMinutes,
@@ -103,8 +104,17 @@ import { unkeptConsecutiveWishes, type ConsecutiveWish } from './consecutive-wis
 import { TRAVEL_TEACHERS_CODE } from './stored-conflicts';
 import { holdMessage, readOtherSchoolHolds, HOLD_CODES, type OtherSchoolHold } from './other-school-holds';
 import { pupilGapsOf } from './pupil-cohorts';
+import {
+  MAX_EDGE_SUBJECTS,
+  PLACEMENT_SETTINGS_SELECT,
+  limitsBuildings,
+  placementModesOf,
+  placementRulesOf,
+  roomPlacementOf,
+} from './placement-rules';
 import type {
   AiEngineConflictAnalysis,
+  AiEngineConflictDetail,
   AiEngineLesson,
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
@@ -125,6 +135,7 @@ import type {
   AnonymousSiteTravelTime,
   AnonymousTeacherWorkRule,
   AnonymousPupilGaps,
+  AnonymousPlacementRules,
   ConstraintKind,
   DayOfWeek,
   ObjectiveWeights,
@@ -246,6 +257,15 @@ export interface AnonMaps {
    * which no answer carries.
    */
   dayLimitTeacherIds?: Map<string, string>;
+  /**
+   * The work rule's real id -> its teacher's Users id, for the rules that set a
+   * cap on a day's teaching. Never reversed into text and never sent: it is how
+   * a deviation of the cap (DEVIATION_TEACHER_DAILY_CAP, deviations.ts) says
+   * WHOSE cap gave way, as a server-only `subjectIds` the page names when it
+   * reads, where a refusal about the same rule can only name the rule. Optional
+   * like `blockAnonMap`: a route that sends no work rules has none to name.
+   */
+  workRuleTeacherIds?: Map<string, string>;
   /**
    * Restid i generatorn: a teacher's anonymous id -> their Users id, for the
    * one sentence that names teachers (TEACHER_TRAVEL_CANNOT_BE_KEPT). Turned
@@ -439,7 +459,7 @@ export interface DraftLesson extends DraftContent {
 }
 
 /** The payload a fetch builds, before a request adds its weights, rules and search. */
-export type PreparedPayload = Omit<AiEngineScheduleRequest, 'weights' | 'rules' | 'search'>;
+export type PreparedPayload = Omit<AiEngineScheduleRequest, 'weights' | 'rules' | 'search' | 'relaxation'>;
 
 /**
  * What computeScheduledCoverage needs to say what a timetable leaves
@@ -551,6 +571,12 @@ export interface SolveCandidateOptions {
   previousLessons?: readonly AnonymousPreviousLesson[];
   /** This call's whole wait for the engine, overriding AI_ENGINE_TIMEOUT_MS. */
   timeoutMs: number;
+  /**
+   * Bästa möjliga schema: ask the engine to place the week with the school's
+   * five shaping rules priced instead of hard (`relaxation`), and bring back
+   * what gave way. Absent: the request is today's byte for byte.
+   */
+  bestEffort?: boolean;
 }
 
 export interface CandidateSolution {
@@ -562,6 +588,14 @@ export interface CandidateSolution {
   conflicts: AiEngineConflictAnalysis | null;
   /** The answer did not carry exactly the demand sent: the guard persist applies refused it. */
   rejected?: true;
+  /**
+   * Bästa möjliga schema: what gave way, realised (ids turned back into names,
+   * a cap's teacher in `subjectIds`). A list, EMPTY WHEN NOTHING GAVE WAY, only
+   * on a timetable the mode placed; null for a call that did not ask for the
+   * mode and for an answer with no timetable (a refusal names a hard rule
+   * under `conflicts`). Absent reads as null.
+   */
+  deviations?: AiEngineConflictDetail[] | null;
 }
 
 export interface CandidateApplyInput {
@@ -639,7 +673,7 @@ export function engineMayStillBeSolving(error: unknown): boolean {
   if (status !== HttpStatus.SERVICE_UNAVAILABLE && status !== HttpStatus.GATEWAY_TIMEOUT) return false;
   const body = error.getResponse();
   const shape = typeof body === 'object' && body !== null ? (body as { message?: unknown; code?: unknown }) : { message: body };
-  if (shape.code === ENGINE_LACKS_CANDIDATES) return false;
+  if (shape.code === ENGINE_LACKS_CANDIDATES || shape.code === ENGINE_LACKS_BEST_EFFORT) return false;
   return shape.message !== ENGINE_UNREACHABLE && shape.message !== ENGINE_UNAVAILABLE;
 }
 
@@ -998,10 +1032,11 @@ function isForeignKeyViolation(error: unknown): boolean {
 }
 
 /**
- * The engine's validation refusal of exactly `search` as an unknown field:
- * {details: {errors: [{type: 'extra_forbidden', loc: ['body', 'search']}]}}.
+ * The engine's validation refusal of exactly one top-level field as an
+ * unknown one: {details: {errors: [{type: 'extra_forbidden', loc: ['body',
+ * <field>]}]}}. `search` and `relaxation` are the two an older engine meets.
  */
-function refusesSearch(body: { details?: { errors?: unknown } | null } | null): boolean {
+function refusesField(body: { details?: { errors?: unknown } | null } | null, field: string): boolean {
   const errors = body?.details?.errors;
   return (
     Array.isArray(errors) &&
@@ -1012,7 +1047,7 @@ function refusesSearch(body: { details?: { errors?: unknown } | null } | null): 
         Array.isArray(loc) &&
         loc.length === 2 &&
         loc[0] === 'body' &&
-        loc[1] === 'search'
+        loc[1] === field
       );
     })
   );
@@ -1029,6 +1064,26 @@ function sortedIds(ids: readonly string[]): string[] {
 
 /** The engine refuses a request carrying `search` — it is older than the field. */
 export const ENGINE_LACKS_CANDIDATES = 'ENGINE_LACKS_CANDIDATES';
+
+/**
+ * The engine refuses a request carrying `relaxation` — it is older than Bästa
+ * möjliga schema, which the engine and the API reach production together but
+ * not in the same second. Said as what it is, so a run asked for the mode
+ * fails with a sentence a school can wait out, and never as a refusal of the
+ * week: nothing was placed or proven.
+ */
+export const ENGINE_LACKS_BEST_EFFORT = 'ENGINE_LACKS_BEST_EFFORT';
+
+function engineLacksBestEffort(): HttpException {
+  return new HttpException(
+    {
+      message:
+        'Schemamotorn är äldre än API:t och kan inte ta fram bästa möjliga schema ännu. Försök igen om några minuter.',
+      code: ENGINE_LACKS_BEST_EFFORT,
+    },
+    HttpStatus.SERVICE_UNAVAILABLE,
+  );
+}
 
 /**
  * The most groupConflicts pairs the engine takes in one request
@@ -1279,6 +1334,7 @@ export class OptimizationProxyService {
       blockAnonMap: data.blockAnonMap,
       dayLimitAnonMap: data.dayLimitAnonMap,
       dayLimitTeacherIds: data.dayLimitTeacherIds,
+      workRuleTeacherIds: data.workRuleTeacherIds,
       // Only when the walk was sent: no other sentence names a teacher.
       travelTeacherIds:
         data.siteTravelTimes.length > 0 ? reversed(data.teacherAnonMap) : new Map<string, string>(),
@@ -1411,6 +1467,9 @@ export class OptimizationProxyService {
       ...(data.siteTravelTimes.length > 0 ? { siteTravelTimes: data.siteTravelTimes } : {}),
       // Elevernas håltimmar: only when the school turned it on and has pupils.
       ...(data.pupilGaps ? { pupilGaps: data.pupilGaps } : {}),
+      // Placeringsregler: only when the school turned a rule on and it has
+      // something to apply to; the rooms and locks then carry their part.
+      ...(data.placementRules ? { placementRules: data.placementRules } : {}),
     };
 
     // Over the payload turned back to real ids — the teacher's and the
@@ -1431,6 +1490,7 @@ export class OptimizationProxyService {
           data.blockAnonMap,
           data.dayLimitAnonMap,
           data.siteAnonMap,
+          data.buildingAnonMap,
           data.fixedIdByLesson,
         ],
         storedRules: data.storedRules,
@@ -1562,11 +1622,21 @@ export class OptimizationProxyService {
       ...(options.weights ? { weights: options.weights } : {}),
       ...(storedRules ? { rules: storedRules } : {}),
       ...(options.search ? { search: options.search } : {}),
+      // Only when the school asked for the mode: every other call is the
+      // request it always was, and an older engine is never sent the field.
+      ...(options.bestEffort ? { relaxation: { mode: 'BEST_EFFORT' as const } } : {}),
     };
     // Nothing left to place: the same shortcut Generera takes, and the same
     // answer — no lessons, and no sittings to replace the stored ones with.
+    // The mode ran, trivially, and nothing gave way.
     if (payload.requirements.length === 0) {
-      return { status: 'FEASIBLE', lessons: [], lunches: null, conflicts: null };
+      return {
+        status: 'FEASIBLE',
+        lessons: [],
+        lunches: null,
+        conflicts: null,
+        ...(options.bestEffort ? { deviations: [] } : {}),
+      };
     }
 
     const response = await this.callAiEngine<AiEngineScheduleResponse>(
@@ -1578,6 +1648,15 @@ export class OptimizationProxyService {
     const conflicts = this.realiseConflicts(response.conflicts, anonMaps);
     if (response.status === 'INFEASIBLE' || response.status === 'TIMEOUT') {
       return { status: response.status, lessons: [], lunches: null, conflicts };
+    }
+    // A timetable the mode placed ALWAYS carries its list, empty when nothing
+    // gave way. An answer to a request for the mode without one cannot say
+    // that nothing gave way, and storing it as a clean timetable would let a
+    // candidate that broke a rule be applied without the school accepting it:
+    // it is an engine that does not do what was asked, said as the older one.
+    if (options.bestEffort && !Array.isArray(response.deviations)) {
+      this.logger.error(`AI engine answered a best-effort request without a list of deviations [academicYearId=${prepared.academicYearId}].`);
+      throw engineLacksBestEffort();
     }
 
     const resolved = mirrorLessons(
@@ -1609,6 +1688,7 @@ export class OptimizationProxyService {
       })),
       lunches: this.realiseLunches(response, anonMaps.groupAnonMap),
       conflicts,
+      ...(options.bestEffort ? { deviations: this.realiseDeviations(response.deviations ?? [], anonMaps) } : {}),
     };
   }
 
@@ -1701,27 +1781,15 @@ export class OptimizationProxyService {
   }
 
   /**
-   * The engine's refusal with its ids turned back and its classes named.
+   * Every anonymous id of the payload, back to the real one.
    *
-   * Ids inside the text go back to real ones through deanonymise, and a
-   * group's real id goes one step further, to the name the school gave it:
-   * "student group 4A", not a uuid in either id space. The ids in
-   * resourceIds are mapped back the same way and, for groups, ALSO returned
-   * as resourceNames. The lunch stage's lines say "the classes named here"
-   * and carry the classes only in that field — which, until this, no layer
-   * mapped back and no screen showed, so a school read "0 class(es)" one
-   * week and "the classes named here" with nobody named the next.
+   * EVERY id space, not only the groups'. `resourceIds` is mixed: the lunch
+   * lines put classes in it, and the reservation line puts whatever the
+   * reservation is about — a teacher, a room or a class. Reversing the
+   * group map alone left a teacher's anonymous uuid in the response and
+   * silently gave that detail fewer names than ids.
    */
-  private realiseConflicts(
-    conflicts: AiEngineConflictAnalysis | null | undefined,
-    maps: AnonMaps,
-  ): AiEngineConflictAnalysis | null {
-    if (!conflicts) return null;
-    // EVERY id space, not only the groups'. `resourceIds` is mixed: the lunch
-    // lines put classes in it, and the reservation line puts whatever the
-    // reservation is about — a teacher, a room or a class. Reversing the
-    // group map alone left a teacher's anonymous uuid in the response and
-    // silently gave that detail fewer names than ids.
+  private realIdsByAnon(maps: AnonMaps): Map<string, string> {
     const realByAnon = new Map<string, string>();
     for (const map of [
       maps.groupAnonMap,
@@ -1743,6 +1811,86 @@ export class OptimizationProxyService {
     ]) {
       for (const [realId, anonId] of map) realByAnon.set(anonId, realId);
     }
+    return realByAnon;
+  }
+
+  /**
+   * Bästa möjliga schema: the engine's `deviations` with their ids turned back
+   * and their names put beside them, ready for deviations.ts to store.
+   *
+   * A deviation is a conflict in shape, and is realised as the refusals are —
+   * `{requirement}` becomes the name the Timplan page gives the cell, a room
+   * the school's name for it, `rule` and `limit` the real id of the row —
+   * with two differences. A cap that gave way names its teacher in
+   * `subjectIds` (the work rule's Users id, from workRuleTeacherIds), for the
+   * page to name when it reads, and no person's name is written here. And a
+   * sentence about a part-timer's days (isDaysBearing) leaves in its hidden
+   * form WHOLE: the refusals strip `days` only, but a deviation's `taught`
+   * and `over` say the limit too, so nothing of it is kept, not even the
+   * post.
+   */
+  private realiseDeviations(details: readonly AiEngineConflictDetail[], maps: AnonMaps): AiEngineConflictDetail[] {
+    const realByAnon = this.realIdsByAnon(maps);
+    const real = (anonId: string): string => realByAnon.get(anonId) ?? anonId;
+    return details.map((detail): AiEngineConflictDetail => {
+      if (isDaysBearing(detail.code)) {
+        return {
+          ...detail,
+          params: {},
+          message: DEVIATION_WORK_DAYS_HIDDEN_MESSAGE,
+          requirementIds: [],
+          roomIds: [],
+          constraintIds: [],
+          resourceIds: [],
+          resourceNames: [],
+          subjectIds: [],
+        };
+      }
+      const resourceIds = detail.resourceIds.map(real);
+      const roomIds = detail.roomIds.map(real);
+      const teachers =
+        detail.code === DEVIATION_TEACHER_DAILY_CAP
+          ? resourceIds.flatMap((id) => {
+              const teacher = maps.workRuleTeacherIds?.get(id);
+              return teacher === undefined ? [] : [teacher];
+            })
+          : [];
+      return {
+        ...detail,
+        message: this.named(detail.message, maps),
+        params: this.namedParams(detail.params ?? {}, maps),
+        requirementIds: detail.requirementIds.map(real),
+        roomIds,
+        constraintIds: [],
+        resourceIds,
+        // The rooms the lessons ended up in, by the school's name for each.
+        resourceNames: roomIds.flatMap((id) => {
+          const name = maps.nameById.get(id);
+          return name === undefined ? [] : [name];
+        }),
+        subjectIds: teachers,
+      };
+    });
+  }
+
+  /**
+   * The engine's refusal with its ids turned back and its classes named.
+   *
+   * Ids inside the text go back to real ones through deanonymise, and a
+   * group's real id goes one step further, to the name the school gave it:
+   * "student group 4A", not a uuid in either id space. The ids in
+   * resourceIds are mapped back the same way and, for groups, ALSO returned
+   * as resourceNames. The lunch stage's lines say "the classes named here"
+   * and carry the classes only in that field — which, until this, no layer
+   * mapped back and no screen showed, so a school read "0 class(es)" one
+   * week and "the classes named here" with nobody named the next.
+   */
+  private realiseConflicts(
+    conflicts: AiEngineConflictAnalysis | null | undefined,
+    maps: AnonMaps,
+  ): AiEngineConflictAnalysis | null {
+    if (!conflicts) return null;
+    const realByAnon = this.realIdsByAnon(maps);
     const teacherOfPost = maps.dayLimitTeacherIds ?? new Map<string, string>();
     // A summary that echoes a year does so in the läsår's own numbering too,
     // like the lines under it (yearGrades).
@@ -2042,6 +2190,10 @@ export class OptimizationProxyService {
     siteTravelTimes: AnonymousSiteTravelTime[];
     /** Elevernas håltimmar: the pupils' cohorts, null unless the school turned it on. */
     pupilGaps: AnonymousPupilGaps | null;
+    /** Placeringsregler: the rules the school turned on, undefined while none is on or has anything to apply to. */
+    placementRules: AnonymousPlacementRules | undefined;
+    /** The buildings the rooms name, real name -> token; empty unless a building limit was sent. Nothing in an answer names one. */
+    buildingAnonMap: Map<string, string>;
     /** A lock's payload id by its own: the cohorts name locks by it. */
     fixedIdByLesson: Map<string, string>;
     /** The sites the walks and the rooms name. Nothing in an answer names one. */
@@ -2068,6 +2220,8 @@ export class OptimizationProxyService {
     dayLimitAnonMap: Map<string, string>;
     /** The post → its teacher, for whom a days sentence is about. Never sent. */
     dayLimitTeacherIds: Map<string, string>;
+    /** The work rule that caps a day → its teacher, for whom a deviation of the cap is about. Never sent. */
+    workRuleTeacherIds: Map<string, string>;
     /** Real group id → the school's name for it, for realiseConflicts. */
     nameById: Map<string, string>;
     /** Parallella block: the block a refusal names, back to the real one. */
@@ -2139,6 +2293,8 @@ export class OptimizationProxyService {
     // reason, and a second one beside it for whose post it is: see the read.
     const dayLimitAnonMap = new Map<string, string>();
     const dayLimitTeacherIds = new Map<string, string>();
+    // Bästa möjliga schema: whose cap a deviation of it is about (kept, never sent).
+    const workRuleTeacherIds = new Map<string, string>();
     const soleTeachers = new Map<string, string | null>();
 
     const anonId = (map: Map<string, string>, realId: string): string => {
@@ -2968,6 +3124,11 @@ export class OptimizationProxyService {
         maxGradeLevel: true,
         // Restid i generatorn: sent only when the walk is on, below.
         siteId: true,
+        // Placeringsregler: the building (a token, only when a school limits
+        // buildings a day holds) and the shared mark (only while rule 3 is on),
+        // both below.
+        building: true,
+        canBeShared: true,
         // Same reason as the subject's name above: for the way back, never
         // for the engine.
         name: true,
@@ -3002,6 +3163,7 @@ export class OptimizationProxyService {
         generatorKeepsTravelTime: true,
         generatorKeepsPupilGapsDown: true,
         generatorKeepsConsecutiveTeaching: true,
+        ...PLACEMENT_SETTINGS_SELECT,
       },
     });
     const storedRules: ScheduleRules | null = !lunchSettings
@@ -3068,6 +3230,18 @@ export class OptimizationProxyService {
     }));
 
 
+    /*
+     * Placeringsregler: which rules are on, and what each room says of them.
+     * The building of a room is an opaque token (one per distinct name, per
+     * request; the school's own words never leave) and is sent only by a
+     * school that limits the buildings a day holds, and only on a room that has one:
+     * no building is itself a value, the main house, told by the key's
+     * absence. A room is `shareable` only while rule 3 is on, when the room is
+     * marked and has a capacity. All off, nothing is added to any room.
+     */
+    const placementModes = placementModesOf(lunchSettings);
+    const buildingAnonMap = new Map<string, string>();
+    const roomsOn = { buildings: limitsBuildings(lunchSettings), shared: placementModes.shared !== null };
     const rooms: AnonymousRoom[] = rawRooms.map((r) => ({
       id: anonId(roomAnonMap, r.id),
       capacity: r.capacity,
@@ -3077,7 +3251,13 @@ export class OptimizationProxyService {
       ...(siteTravelTimes.length > 0 && r.siteId !== null
         ? { siteId: anonId(siteAnonMap, r.siteId) }
         : {}),
+      ...roomPlacementOf(r, roomsOn, (building) => anonId(buildingAnonMap, building)),
     }));
+    const shareableRoomIds = new Set(
+      rawRooms
+        .filter((r) => roomPlacementOf(r, { buildings: false, shared: roomsOn.shared }, () => '').shareable === true)
+        .map((r) => r.id),
+    );
 
     const roomPreferences: AnonymousRoomPreference[] = rawPreferences.map((p) => {
       // Only rooms the payload actually carries: one no longer scheduled points
@@ -3377,6 +3557,8 @@ export class OptimizationProxyService {
           );
           return [];
         }
+        // A rule that caps a day: the teacher a deviation of the cap is about.
+        if (rule.maxTeachingMinutesPerDay !== null) workRuleTeacherIds.set(rule.id, rule.userId);
         return [
           {
             id: anonId(workRuleAnonMap, rule.id),
@@ -3606,6 +3788,57 @@ export class OptimizationProxyService {
         })
       : null;
 
+    /*
+     * Placeringsregler. Rule 1 names the subjects the school marked, by the
+     * payload's own subject ids: a subject no sent requirement carries is no
+     * rule (the engine would meet an id it has no lesson for), so only marks
+     * on subjects of the week are read, and only while rule 1 is on. Rule 3
+     * reads the locks too: a lock in a shareable room takes SEATS and not the
+     * room, so it says how many pupils sit it, each counted once whatever
+     * groups and named pupils it holds (roomNeedsOf, the count the room
+     * eligibility uses for a requirement). Rule 2 reads nothing more.
+     */
+    const subjectsSent = new Set(requirements.map((requirement) => requirement.subjectId));
+    const markedSubjects =
+      placementModes.edge !== null
+        ? await tx.subject.findMany({
+            where: { schoolId, OR: [{ notFirstInDay: true }, { notLastInDay: true }] },
+            select: { id: true, notFirstInDay: true, notLastInDay: true },
+            orderBy: { id: 'asc' },
+          })
+        : [];
+    const placementRules = placementRulesOf({
+      settings: lunchSettings,
+      markedSubjects,
+      subjectId: (realId) => {
+        const id = subjectAnonMap.get(realId);
+        return id !== undefined && subjectsSent.has(id) ? id : undefined;
+      },
+      anyShareableRoom: shareableRoomIds.size > 0,
+    });
+    if (markedSubjects.length > MAX_EDGE_SUBJECTS) {
+      this.logger.warn(
+        `${markedSubjects.length} subjects are marked for the first/last-lesson rule; the engine takes ${MAX_EDGE_SUBJECTS}, the rest are left out [academicYearId=${academicYearId}].`,
+      );
+    }
+    const fixedLessonsSent: AnonymousFixedLesson[] =
+      placementRules?.sharedRooms !== undefined
+        ? fixedLessons.map((fixed, index) => {
+            const lesson = preservedLessons[index]!;
+            if (lesson.roomId === null || !shareableRoomIds.has(lesson.roomId)) return fixed;
+            const { studentGroupSize } = roomNeedsOf(
+              rosters,
+              {
+                groupIds: [lesson.studentGroupId, ...lesson.extraGroups.map((entry) => entry.studentGroupId)],
+                studentIds: (lesson.participants ?? []).map((entry) => entry.studentId),
+              },
+              { requiredRoomTypeId: null },
+              numbering,
+            );
+            return { ...fixed, studentCount: Math.min(1000, studentGroupSize) };
+          })
+        : fixedLessons;
+
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
     // reached the payload (no requirement and no fixed lesson references them)
@@ -3651,12 +3884,14 @@ export class OptimizationProxyService {
       roomPreferences,
       teacherWorkRules,
       teacherDayLimits,
-      fixedLessons,
+      fixedLessons: fixedLessonsSent,
       groups,
       previousLessons,
       groupConflicts,
       siteTravelTimes,
       pupilGaps,
+      placementRules,
+      buildingAnonMap,
       fixedIdByLesson,
       siteAnonMap,
       roomAnonMap,
@@ -3668,6 +3903,7 @@ export class OptimizationProxyService {
       workRuleAnonMap,
       dayLimitAnonMap,
       dayLimitTeacherIds,
+      workRuleTeacherIds,
       otherSchoolHolds,
       nameById,
       blockAnonMap,
@@ -3800,6 +4036,7 @@ export class OptimizationProxyService {
   ): Promise<TResponse> {
     const url = `${this.aiConfig.baseUrl}${path}`;
     const carriesSearch = (payload as { search?: unknown }).search !== undefined;
+    const carriesRelaxation = (payload as { relaxation?: unknown }).relaxation !== undefined;
 
     try {
       const response = await firstValueFrom(
@@ -3900,7 +4137,7 @@ export class OptimizationProxyService {
                  * carried `search`, and only that exact refusal: any other
                  * 422 is this gateway's mistake and keeps its own sentence.
                  */
-                if (error.response.status === 422 && carriesSearch && refusesSearch(body)) {
+                if (error.response.status === 422 && carriesSearch && refusesField(body, 'search')) {
                   throw new HttpException(
                     {
                       message:
@@ -3909,6 +4146,15 @@ export class OptimizationProxyService {
                     },
                     HttpStatus.SERVICE_UNAVAILABLE,
                   );
+                }
+                /*
+                 * The same for an engine older than `relaxation` (Bästa möjliga
+                 * schema). A request that carries it carries `search` too, so an
+                 * engine that predates only the newer field is told apart by the
+                 * field the 422 names.
+                 */
+                if (error.response.status === 422 && carriesRelaxation && refusesField(body, 'relaxation')) {
+                  throw engineLacksBestEffort();
                 }
                 const readable =
                   error.response.status < 500 && typeof body?.message === 'string';

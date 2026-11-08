@@ -998,6 +998,10 @@ describe('StudentGroupsService', () => {
         PublicTimetableHidden: 1,
         StudentEnrollments: 25,
         TeacherDuties: 1,
+        // Klasslärarens schema (20270128090000): the three tables are one line, 1 + 2 + 3.
+        ClassTeacherAppointments: 1,
+        ClassTeacherOpenTimes: 2,
+        ClassTeacherChanges: 3,
         // A class's consent list (Checklistor) loses the class and keeps its answers.
         ConsentLists: 2,
       };
@@ -1101,6 +1105,7 @@ describe('StudentGroupsService', () => {
             lessonMoves: 0,
             enrolments: 25,
             mentorDuties: 1,
+            classTeacher: 6,
             consentLists: 2,
             fromSource: 1,
           },

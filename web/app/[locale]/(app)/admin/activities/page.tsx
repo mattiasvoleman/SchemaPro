@@ -48,7 +48,14 @@ export default function ActivitiesPage() {
         title={t("title")}
         subtitle={t("subtitle")}
         intro={t("intro")}
-        actions={<YearSelect value={yearId} onValueChange={setYearId} label={t("yearLabel")} />}
+        actions={
+          <>
+            <YearSelect value={yearId} onValueChange={setYearId} label={t("yearLabel")} />
+            <Button variant="outline" asChild>
+              <Link href="/admin/activities/exams">{t("examsLink")}</Link>
+            </Button>
+          </>
+        }
       />
       {isLoading ? (
         <div aria-busy="true">

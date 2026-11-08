@@ -133,6 +133,14 @@ export interface Subject {
    */
   maxLessonsPerDay?: number | null;
   minDaysBetween?: number | null;
+  /**
+   * Placeringsregler, regel 1: the subject may not be a class's first / last
+   * lesson of the day. A marking only; it does nothing until the school turns
+   * the rule on (LunchSettings.placementEdgeMode). Optional because only
+   * useSubjects names the columns, and an API from before the rule sends none.
+   */
+  notFirstInDay?: boolean;
+  notLastInDay?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +228,13 @@ export interface Room {
    * travel is counted to or from the room.
    */
   siteId: string | null;
+  /**
+   * Placeringsregler, regel 3: the room may hold several groups at once, as
+   * long as their pupils together fit its capacity. A marking only; it does
+   * nothing until the school turns the rule on
+   * (LunchSettings.placementSharedMode). Optional for a row read before it.
+   */
+  canBeShared?: boolean;
 }
 
 export type RoomBookingStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
@@ -585,7 +600,42 @@ export interface LunchSettings {
    * Vikarietavlan keep the limit whatever this says.
    */
   generatorKeepsConsecutiveTeaching?: boolean;
+  /**
+   * Bästa möjliga schema: Schemaförslag may lay a week with some of the
+   * school's own rules broken when no week keeps them all, and says which gave
+   * way (a candidate's `deviations`). The list that may give way is short
+   * (a teacher's daily cap and days, the subject distribution, a room lock);
+   * a double booking, the frame times and the walk between sites never do
+   * (optimization-engine/app/solver/relaxation.py). Off by default; optional
+   * for an API from before the switch, read as off.
+   */
+  generatorBestEffort?: boolean;
+  /**
+   * Placeringsregler. Three rules, each Av / Mjuk / Hård (OFF is the default
+   * and sends the generator nothing). A weight, 1..1000, counts only while the
+   * rule is SOFT; it is kept while the rule is off so a school does not lose
+   * it by switching. All optional: an API from before the rules sends none,
+   * which reads as the rule it then is, off.
+   */
+  placementEdgeMode?: PlacementRuleMode;
+  placementEdgeWeight?: number;
+  placementPlacesMode?: PlacementRuleMode;
+  placementPlacesWeight?: number;
+  placementSharedMode?: PlacementRuleMode;
+  placementSharedWeight?: number;
+  /**
+   * Regel 2, the most DIFFERENT rooms and the most different buildings a day
+   * for a class and for a teacher: 1..20, 1 meaning a single one all day, null
+   * no limit. How many are visited, not in what order: A–B–A is two.
+   */
+  maxClassRoomsPerDay?: number | null;
+  maxTeacherRoomsPerDay?: number | null;
+  maxClassBuildingsPerDay?: number | null;
+  maxTeacherBuildingsPerDay?: number | null;
 }
+
+/** Av, Mjuk (a wish with a weight) or Hård (a requirement). */
+export type PlacementRuleMode = "OFF" | "SOFT" | "HARD";
 
 export type LessonRecurrence = "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
 

@@ -145,6 +145,7 @@ import { sweepTioarigSchool, tioarigChecks } from './probe-tioarig';
 import { lessonLogChecks, sweepLessonLogSchool } from './probe-lesson-log';
 import { scheduleActivityChecks, sweepScheduleActivitySchool } from './probe-schemabrytande';
 import { scheduleActivityPublicationChecks, sweepScheduleActivityPublicationSchools } from './probe-schemabrytande-publication';
+import { examChecks, sweepExamSchool } from './probe-prov';
 import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
 import { coverRequestsChecks, sweepCoverRequestsSchool } from './probe-cover-requests';
 import { krislageChecks, sweepKrislageSchool } from './probe-krislage';
@@ -152,6 +153,7 @@ import { kvittensChecks, sweepKvittensSchool } from './probe-kvittens';
 import { lessonMoveChecks, sweepLessonMovesSchool } from './probe-lesson-moves';
 import { checklistorChecks, sweepChecklistorSchool } from './probe-checklistor';
 import { skolansDagChecks, sweepSkolansDagSchool } from './probe-skolans-dag';
+import { klasslarareChecks, sweepKlasslarareSchool } from './probe-klasslarare';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
 import { sweepTenantKeySchools, tenantKeyChecks } from './probe-tenant-keys';
@@ -5391,6 +5393,100 @@ async function runChecks(
     }
   });
 
+  // ---- (pl) Placeringsregler: a partial PUT of the Skolregler, through the real service and adapter
+  await check('(pl) a PUT that names rule 2\'s mode and no limit keeps the limit stored, off or on; the 400s with the code are still the 400s (the only limit cleared while on, a first row that is on with none, rule 1 or rule 2 asked to be HARD, which the database would refuse too); a PUT without the rules keeps them all', async () => {
+    const lunch = new LunchSettingsService(api);
+    const before = await owner.query('SELECT * FROM "LunchSettings" WHERE "schoolId" = $1', [fixture.schoolId]);
+    const base = { lunchEnabled: false, lunchStartTime: '11:00', lunchEndTime: '13:00', lunchMinutes: 30 };
+    const stored = async () =>
+      (
+        await owner.query<Record<string, unknown>>(
+          `SELECT "placementEdgeMode", "placementEdgeWeight", "placementPlacesMode", "placementPlacesWeight",
+                  "maxClassRoomsPerDay", "maxTeacherRoomsPerDay", "maxClassBuildingsPerDay", "maxTeacherBuildingsPerDay",
+                  "placementSharedMode"
+             FROM "LunchSettings" WHERE "schoolId" = $1`,
+          [fixture.schoolId],
+        )
+      ).rows[0];
+    const refused = async (body: Parameters<LunchSettingsService['upsert']>[0]) => {
+      try {
+        await lunch.upsert(body, fixture.admin);
+      } catch (error) {
+        return error as { status?: number; getResponse?: () => unknown };
+      }
+      return assert.fail('the PUT was accepted');
+    };
+    try {
+      // A school with no row: the first save turns rule 2 on and names no limit.
+      await owner.query('DELETE FROM "LunchSettings" WHERE "schoolId" = $1', [fixture.schoolId]);
+      const first = await refused({ ...base, placementPlacesMode: 'SOFT' });
+      assert.equal(first.status, 400);
+      assert.equal((first.getResponse?.() as { code?: string }).code, 'PLACEMENT_PLACES_NEEDS_A_LIMIT');
+      assert.equal(await stored(), undefined, 'a refused first save left a row');
+
+      // A limit stored while the rule is off (the DTO and the migration allow it), and rule 1 beside it.
+      await lunch.upsert(
+        { ...base, placementPlacesMode: 'OFF', maxClassRoomsPerDay: 2, placementEdgeMode: 'SOFT', placementEdgeWeight: 400 },
+        fixture.admin,
+      );
+      // The mode alone, off -> soft: the contract says absent keeps, and the
+      // create half of the upsert is judged by the CHECK before the conflict.
+      await lunch.upsert({ ...base, placementPlacesMode: 'SOFT' }, fixture.admin);
+      const soft = await stored();
+      assert.deepEqual(
+        { mode: soft?.placementPlacesMode, limit: soft?.maxClassRoomsPerDay },
+        { mode: 'SOFT', limit: 2 },
+        'the mode alone turned the rule on and lost or refused the limit',
+      );
+      // Soft -> hard, the mode alone: rule 2 is not offered hard, so its own 400, and the row as it was.
+      const placesHard = await refused({ ...base, placementPlacesMode: 'HARD' });
+      assert.equal(placesHard.status, 400);
+      assert.equal((placesHard.getResponse?.() as { code?: string }).code, 'PLACEMENT_PLACES_HARD_NOT_OFFERED');
+      const hard = await stored();
+      assert.deepEqual({ mode: hard?.placementPlacesMode, limit: hard?.maxClassRoomsPerDay }, { mode: 'SOFT', limit: 2 });
+      // A limit named while the mode is absent keeps the mode and the other limits.
+      await lunch.upsert({ ...base, maxTeacherBuildingsPerDay: 3 }, fixture.admin);
+      const more = await stored();
+      assert.deepEqual(
+        { mode: more?.placementPlacesMode, classRooms: more?.maxClassRoomsPerDay, teacherBuildings: more?.maxTeacherBuildingsPerDay },
+        { mode: 'SOFT', classRooms: 2, teacherBuildings: 3 },
+      );
+
+      // Still refused: clearing the only limit of a rule that is on (the service says it before the write).
+      await lunch.upsert({ ...base, maxTeacherBuildingsPerDay: null }, fixture.admin);
+      const cleared = await refused({ ...base, maxClassRoomsPerDay: null });
+      assert.equal(cleared.status, 400);
+      assert.equal((cleared.getResponse?.() as { code?: string }).code, 'PLACEMENT_PLACES_NEEDS_A_LIMIT');
+      assert.equal((await stored())?.maxClassRoomsPerDay, 2, 'a refused PUT cleared the limit');
+
+      // Rule 1 is not offered as HARD either: its own 400, and the row as it was. Rule 3 is, and goes through.
+      const edgeHard = await refused({ ...base, placementEdgeMode: 'HARD' });
+      assert.equal(edgeHard.status, 400);
+      assert.equal((edgeHard.getResponse?.() as { code?: string }).code, 'PLACEMENT_EDGE_HARD_NOT_OFFERED');
+      assert.equal((await stored())?.placementEdgeMode, 'SOFT', 'a refused PUT changed rule 1');
+      await lunch.upsert({ ...base, placementSharedMode: 'HARD' }, fixture.admin);
+      assert.equal((await stored())?.placementSharedMode, 'HARD');
+
+      // Off with every limit cleared in one request is allowed; a PUT without the rules then keeps what it holds.
+      await lunch.upsert({ ...base, placementPlacesMode: 'OFF', maxClassRoomsPerDay: null }, fixture.admin);
+      await lunch.upsert(base, fixture.admin);
+      const kept = await stored();
+      assert.equal(kept?.placementPlacesMode, 'OFF');
+      assert.equal(kept?.maxClassRoomsPerDay, null);
+      assert.equal(kept?.placementEdgeMode, 'SOFT', 'a PUT without the rules turned rule 1 off');
+      assert.equal(kept?.placementEdgeWeight, 400, 'a PUT without the rules reset the weight');
+    } finally {
+      await owner.query('DELETE FROM "LunchSettings" WHERE "schoolId" = $1', [fixture.schoolId]);
+      for (const row of before.rows) {
+        const columns = Object.keys(row);
+        await owner.query(
+          `INSERT INTO "LunchSettings" (${columns.map((c) => `"${c}"`).join(', ')}) VALUES (${columns.map((_c, i) => `$${i + 1}`).join(', ')})`,
+          columns.map((c) => (row as Record<string, unknown>)[c]),
+        );
+      }
+    }
+  });
+
   await check('(z) the active year\'s hot paths send Postgres exactly f5ff8da\'s statements, the PATCH one fewer: the roster basis rides on reads they already make', async () => {
     // A school of its own, swept whole: an active year with 7A and 8A at the
     // same hour (no shared pupil or teacher), a published lesson, behörighet,
@@ -5947,6 +6043,7 @@ async function runChecks(
   await lessonLogChecks(owner, api, MARKER, check);
   await scheduleActivityChecks(owner, api, MARKER, check);
   await scheduleActivityPublicationChecks(owner, api, MARKER, check);
+  await examChecks(owner, api, MARKER, check);
   await rastvaktChecks(owner, api, MARKER, check);
   await tenantKeyChecks(owner, api, MARKER, check);
   await coverRequestsChecks(owner, api, MARKER, check);
@@ -5955,6 +6052,7 @@ async function runChecks(
   await lessonMoveChecks(owner, api, MARKER, check);
   await checklistorChecks(owner, api, MARKER, check);
   await skolansDagChecks(owner, api, MARKER, check);
+  await klasslarareChecks(owner, api, MARKER, check);
   await elevlistanChecks(owner, api, MARKER, check);
   await massvalChecks(owner, api, MARKER, check);
 }
@@ -6448,6 +6546,7 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepLessonLogSchool(owner, MARKER);
   await sweepScheduleActivitySchool(owner, MARKER);
   await sweepScheduleActivityPublicationSchools(owner, MARKER);
+  await sweepExamSchool(owner, MARKER);
   await sweepRastvaktSchool(owner, MARKER);
   // The tenant keys' two schools, likewise.
   await sweepTenantKeySchools(owner, MARKER);
@@ -6462,6 +6561,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepChecklistorSchool(owner, MARKER);
   // Skolans dag's school, likewise.
   await sweepSkolansDagSchool(owner, MARKER);
+  // Klasslärarens schema's school, likewise.
+  await sweepKlasslarareSchool(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
   await sweepElevlistanSchool(owner, MARKER);
   // Massåtgärder's school, likewise.

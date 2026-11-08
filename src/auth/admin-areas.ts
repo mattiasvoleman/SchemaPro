@@ -210,6 +210,13 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ScheduleCandidates: just('SCHEMALAGGNING', 'insert', 'delete'),
   ScheduleChangeLogs: just('SCHEMALAGGNING', 'insert'),
   ScheduleVersions: only('SCHEMALAGGNING'),
+  // Klasslärarens schema (20270128090000): the appointment and the open times are the schemaläggare's
+  // to make; the school's option to let a klasslärare publish is Publicering's, and a draft is written
+  // by the klasslärare alone, so an administrator only publishes it (the status) or discards it.
+  ClassTeacherAppointments: only('SCHEMALAGGNING'),
+  ClassTeacherOpenTimes: only('SCHEMALAGGNING'),
+  ClassTeacherSettings: just('PUBLICERING', 'insert', 'update'),
+  ClassTeacherChanges: just('PUBLICERING', 'update', 'delete'),
 
   // Publicering: what is published, to whom, and Schemavisaren.
   PublicTimetableLinks: only('PUBLICERING'),
@@ -259,6 +266,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ReportingDigests: readOnly,
   ReportingSettings: just('DRIFT', 'insert', 'update'),
   TeacherReportingDays: readOnly,
+  // Måltidskollen (20270123090000): the cut-off, the letter's switch and the kitchen's address are
+  // Drift's, as the attendance and the leave the counts rest on. The settings are never deleted:
+  // the letter is turned off. The counts are not stored: app.meal_counts reads them.
+  KitchenSettings: just('DRIFT', 'insert', 'update'),
   AttendanceRecords: only('DRIFT'),
   CalendarLessonGroups: only('DRIFT'),
   CalendarLessonStudents: only('DRIFT'),
@@ -273,6 +284,13 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ScheduleActivities: only('DRIFT'),
   ScheduleActivityLessons: only('DRIFT'),
   ScheduleActivityTeachers: only('DRIFT'),
+  // Provplanering (20270127090000): an exam becomes an activity, so Drift's.
+  ExamGroups: only('DRIFT'),
+  ExamInvigilators: only('DRIFT'),
+  ExamPlanSettings: only('DRIFT'),
+  ExamRooms: only('DRIFT'),
+  ExamSittings: only('DRIFT'),
+  Exams: only('DRIFT'),
   CoverSettings: only('DRIFT'),
   LeaveRequests: only('DRIFT'),
   // Lektionslogg (20261203090000): rektor removes a log that should not

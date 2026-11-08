@@ -4,6 +4,8 @@ import { absenceWatchRoutes } from "./gateway-absence-watch";
 import { ackRoutes } from "./gateway-ack";
 import { checklistsRoutes } from "./gateway-checklists";
 import { candidateRoutes } from "./gateway-candidates";
+import { classTeacherRoutes } from "./gateway-class-teacher";
+import { classTeachersRoutes } from "./gateway-class-teachers";
 import { coverRoutes } from "./gateway-cover";
 import { crisisRoutes } from "./gateway-crisis";
 import { familyRoutes } from "./gateway-family";
@@ -11,6 +13,7 @@ import { huvudmanRoutes } from "./gateway-huvudman";
 import { leaveRoutes } from "./gateway-leave";
 import { lessonLogRoutes } from "./gateway-lesson-logs";
 import { lessonMoveRoutes } from "./gateway-lesson-moves";
+import { mealRoutes } from "./gateway-meals";
 import { miscRoutes } from "./gateway-misc";
 import { publicRoutes } from "./gateway-public";
 import { readRoutes } from "./gateway-reads";
@@ -49,6 +52,9 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-reporting-rate.ts", routes: reportingRateRoutes },
   { file: "gateway-school-day.ts", routes: schoolDayRoutes },
   { file: "gateway-ack.ts", routes: ackRoutes },
+  { file: "gateway-meals.ts", routes: mealRoutes },
+  { file: "gateway-class-teacher.ts", routes: classTeacherRoutes },
+  { file: "gateway-class-teachers.ts", routes: classTeachersRoutes },
   { file: "gateway-checklists.ts", routes: checklistsRoutes },
 ];
 

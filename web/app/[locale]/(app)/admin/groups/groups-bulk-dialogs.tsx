@@ -158,6 +158,7 @@ export function describeGroupRemoval(
         "availabilityConstraints",
         "timplanCredits",
         "publicLinks",
+        "classTeacher",
       ]),
       ...(GROUP_BELOW_PARENTS.some((key) => consequences[key] > 0) ? [t("groupConsequences.below", {})] : []),
     ],

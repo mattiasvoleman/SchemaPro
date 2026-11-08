@@ -54,6 +54,7 @@ export interface GroupRemovalConsequences {
   publicLinks: number;
   enrolments: number;
   mentorDuties: number;
+  classTeacher: number;
   consentLists: number;
   fromSource: number;
 }

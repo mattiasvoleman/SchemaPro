@@ -161,7 +161,17 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   ConsentEntries: aboutPupil(dump(['studentId', 'recordedById']), 'studentId', ['kind', 'givenOn', 'givenBy', 'note']),
   ConsentLists: dump(['createdById']),
   SharedTeacherMarks: dump(['teacherId']),
+  // Klasslärarens schema (20270128090000): whom a class was given to and who gave it, and the drafts a klasslärare wrote
+  // or published (their words are the dates and hours they asked for, and a note of at most 200 characters).
+  ClassTeacherAppointments: dump(['userId', 'appointedByUserId']),
+  ClassTeacherChanges: dump(['authorId', 'publishedByUserId']),
   ScheduleActivityTeachers: dump(['teacherId']),
+  // Provplanering (20270127090000): the watch a teacher keeps at an exam (room and exam in the row's keys).
+  ExamInvigilators: dump(['teacherId']),
+  ExamSittings: {
+    excluded:
+      'En sal ett prov skrivs i, med antalet skrivande och bokningen som håller salen. Ingen person står på raden; vakterna i salen är ExamInvigilators, som registerutdraget lämnar ut efter lärarens nyckel.',
+  },
 
   // What the person decided, published or wrote.
   PublicTimetableLinks: dump(['targetTeacherId', 'targetStudentId', 'createdByUserId']),
@@ -170,6 +180,7 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   TimetablePublications: dump(['publishedByUserId']),
   CancellationBatches: dump(['createdByUserId', 'reversedByUserId']),
   ScheduleActivities: dump(['createdByUserId', 'removedByUserId']),
+  Exams: dump(['createdByUserId']),
   RetentionDecisions: dump(['decidedById']),
   LeaveDelegationDecisions: dump(['decidedById']),
   AttendanceSharingDecisions: dump(['decidedById']),

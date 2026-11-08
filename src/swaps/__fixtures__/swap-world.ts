@@ -166,8 +166,21 @@ export function rowOf(lesson: SwapLesson) {
   };
 }
 
+/**
+ * Delade salar (Placeringsregel 3, G3): the Skolregler's setting for the rule and the rooms the school marked with
+ * their seats. Absent is the school every school is until it turns the rule on: no Skolregler row, no shared room.
+ */
+export interface SharedRoomsWorld {
+  mode: 'SOFT' | 'HARD';
+  seats: ReadonlyMap<string, number>;
+}
+
 /** A transaction that answers the clash rule's reads from the world, as the database would. */
-export function fakeTx(world: World, lessons: () => SwapLesson[] = () => world.data.lessons) {
+export function fakeTx(
+  world: World,
+  lessons: () => SwapLesson[] = () => world.data.lessons,
+  shared: SharedRoomsWorld | null = null,
+) {
   const inList = (clause: unknown): string[] | null => (clause as { in?: string[] } | undefined)?.in ?? null;
   const pupils = [...world.pupilsOf.entries()].flatMap(([classId, ids]) => ids.map((id) => ({ id, studentGroupId: classId })));
   const groups = world.data.groups.map((group) => ({ ...group, academicYearId: YEAR }));
@@ -214,6 +227,16 @@ export function fakeTx(world: World, lessons: () => SwapLesson[] = () => world.d
       count: jest.fn(async () => 0),
     },
     studentGroupMember: { findMany: jest.fn(async () => []) },
+    // The Skolregler row and the marked rooms the clash rule asks for when two lessons stand in one room.
+    lunchSetting: {
+      findFirst: jest.fn(async () => (shared ? { placementSharedMode: shared.mode } : null)),
+      findUnique: jest.fn(async () => (shared ? { placementSharedMode: shared.mode } : null)),
+    },
+    room: {
+      findMany: jest.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.flatMap((id) => (shared?.seats.has(id) ? [{ id, canBeShared: true, capacity: shared.seats.get(id)! }] : [])),
+      ),
+    },
     // The published calendar has no future lesson of the world's, and the school publishes directly.
     calendarLesson: { findMany: jest.fn(async (_args: unknown) => [] as Array<{ masterLessonId: string | null; date: Date }>) },
     $queryRaw: jest.fn(async () => [{ mode: 'DIRECT' }]),

@@ -253,6 +253,7 @@ Run it with:
 | `API_KEY` | the generated `AI_ENGINE_API_KEY` |
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
 | `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
+| `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits 90 s for it. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
 network reachable only by the API if your host supports it.
@@ -302,6 +303,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `REPORTING_RATE_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Rapporteringsgrad's nightly job. A school's night starts at 06:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch; only the reminders and the weekly notice are, under `/admin/reporting-rate`). The night stores each teacher's held and reported lessons per day, tells the teachers of lessons that stood open past the school's limit (if the school turned that on) and, on Mondays, tells rektor and the full administrators the week's totals (likewise). **Off, this is the emergency brake:** nothing is counted, reminded or sent, the days already stored stay and the pages show them unchanged (they stop getting newer), and a teacher's list of open lessons, which reads the lessons live, still answers. A value that is neither `on` nor `off` is refused at start |
 | `ABSENCE_STATS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarostatistik's nightly job. A school's night starts at 07:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch). The night stores the sums of absence per class and month, and for the whole school, without a pupil's id, for the months of the last 62 days and up to three older months a night until the three läsår are filled in. **Off, this is the emergency brake:** no month is counted, the sums already stored stay and the pages show them unchanged; the doors that count a pupil's own months from the marks (`/admin/reports?tab=absence-stats`, `/teacher/absence-stats`) still answer. A value that is neither `on` nor `off` is refused at start |
 | `ACK_BACKGROUND` | `on` (default) or `off`: the quarter-hourly pass of Kvittens' reminders (`ack-reminders` in `JobRuns`). It reminds, once, each guardian who has not confirmed themself a request whose time the school chose has come, one request at a time and each in a transaction of its own; a school with kvittens off, or with no reminder time, has nothing for it to do. `off` stops every reminder in every school; the requests, the confirmations and the notices of a new request go on. The test setup turns it off. |
+| `MEAL_LETTER_BACKGROUND` | `on` (default) or `off`: the two-minute look of Måltidskollen's daily letter to the kitchen (`meal-letter` in `JobRuns`). It asks which schools have the letter on, an address and a cut-off that has passed today by no more than three hours, with a sitting today, takes each school's day once (`JobClaims`, claimed by one instance) and sends the letter through the delivery that is already there (`sendLetter`, one mail at the mail pace, so it needs `RESEND_API_KEY` like every mail). The letter is off for every school until its administrator turns it on under Drift › Måltidskollen, so `on` does nothing for a school that has not. `off` stops every letter in every school; the page, the file and the counts go on. The test setup turns it off. |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -2173,6 +2175,7 @@ Walk the full product loop once, in order:
   data, only if nothing in it is wanted: `DROP TABLE "AbsenceStatsMonths"; DROP FUNCTION
   app.absence_stats_min_group(), …` (the fifteen, by name); the gallring functions were
   never touched.
+
 - **Elevens lektion för dagen** (D7): 20270122090000 adds the
   `NotificationType` value `LESSON_PUPIL_MOVED` and nothing else (a value
   cannot be used in the transaction that adds it, so it is a file of its own,
@@ -2367,6 +2370,316 @@ Walk the full product loop once, in order:
   moves). The schema stays; dropping it is a migration of its own, and the seven
   readers go back to the bodies named above and `absence_stats_lessons` to D6's
   (`bece0015…`, its migration's text).
+- **Måltidskollen**: 20270123090000 adds one table, `KitchenSettings` (a row per
+  school: the cut-off for reported absence, whether the daily letter to the
+  kitchen is on, and the kitchen's address; three policies, SELECT, INSERT and
+  UPDATE to `app_authenticated`, nothing else, no MAINTAIN), and five
+  functions, all SECURITY DEFINER with a pinned `search_path` and `jit = off`:
+  `app.meal_counts` (the count, the owner's alone), `app.meal_counts_for_me`,
+  `app.meal_letter_last_for_me`, `app.meal_letter_schools` and `app.meal_letter`
+  (the four doors the API role may run). No existing table is touched and no
+  existing function replaced (gallring is unchanged), and no enum gains a value:
+  the letter is a mail to an address, not a notice to a user. The migration locks
+  `Schools` alone, `NOWAIT` in a 30-second loop (the key from the new table), and
+  can be rerun after a refusal. **Off for every school**: with no row the cut-off
+  is none, so no absence is taken off, and no letter goes. The counts read
+  `CalendarLunches` (the published schedule), active pupils by home class,
+  `AbsenceReports` that cover the whole sitting (first reported before the day's
+  cut-off in the school's own time), replacement lessons of an activity over the
+  sitting (shown, counted), and pedagogisk lunch duties with fixed slots; they
+  carry numbers and the names of classes, never a pupil, and are not recorded in
+  the read log. `GET /api/v1/meal-counts` answers at most 14 days from today and
+  refuses a day before today; `/csv` is the same days in windows-1252 with `;`.
+  **Release note** (in these words or others): *Rastra can now give the kitchen
+  the number of portions for each lunch sitting, from the published schedule, as
+  a page to print, a file for Excel and, if the school wants it, a letter every
+  school day at the time the kitchen places its order. Allergies and diets are
+  not stored in Rastra and are not included. Nothing is sent until the school has
+  turned the letter on under Drift › Måltidskollen.*
+  **Before the migration**, as the owner: no `KitchenSettings` table and no
+  `app.meal_%` function exist (`SELECT count(*) FROM pg_tables WHERE tablename =
+  'KitchenSettings'` and `SELECT count(*) FROM pg_proc WHERE proname LIKE
+  'meal\_%'` are both 0), `prisma migrate status` lists exactly this migration as
+  pending, and no session sits idle in a transaction that holds `Schools`
+  (`SELECT pid, state, now() - xact_start FROM pg_stat_activity WHERE state =
+  'idle in transaction'`).
+  **After it, before the merge:** `KitchenSettings` has row security on and
+  exactly three policies, all `TO app_authenticated`; `app_authenticated` holds
+  SELECT, INSERT and UPDATE on it and nothing else (`has_table_privilege(...,
+  'DELETE, TRUNCATE')` is false; no MAINTAIN), `anon` and `authenticated` nothing;
+  there are five `app.meal_%` functions, all definer with `search_path=public,
+  pg_temp` and `jit=off`, four executable by `app_authenticated` and none by
+  `anon`, `authenticated`, `service_role` or PUBLIC, and `app.meal_counts` by none
+  of them; `SELECT count(*) FROM "KitchenSettings"` is 0.
+  **After the merge:** `JobRuns` gets a row for `meal-letter` within two minutes
+  of the new instance serving, its counts `{"schools": 0}`; `GET
+  /api/v1/meal-counts?days=7` answers for every school, `staffModelled: false` for
+  one that has placed no pedagogisk lunch. In a test school: give a cut-off and
+  an address under Drift › Måltidskollen, turn the letter on a few minutes
+  before the cut-off, and read the log for `Meal letter [school=...` and, if it
+  was not taken, `Meal letter not sent`. A letter needs `RESEND_API_KEY`; without
+  it the claim stays open and is retried until three hours after the cut-off.
+  **#277** changes the delivery's mail (a timeout, a turn that throws, whether a
+  mail was taken). `sendLetter` calls `sendEmails` and reads a `false` answer as
+  "not taken" where #277 gives one, so it needs no edit when #277 is in.
+  **Rollback of the code** is a revert; the table and the functions stay and are
+  unread. Rollback of the data, only if nothing in it is wanted: `DROP FUNCTION
+  app.meal_letter(uuid, date), app.meal_letter_schools(timestamptz, integer),
+  app.meal_letter_last_for_me(), app.meal_counts_for_me(date, date),
+  app.meal_counts(uuid, date, date); DROP TABLE "KitchenSettings";` and `prisma
+  migrate resolve --rolled-back 20270123090000_koket_far_portionerna_per_sittning`.
+  What a rollback changes: the page answers 404, no letter goes, and the cut-offs
+  and addresses the schools entered are gone.
+
+- **Bästa möjliga schema**: 20270125090000 adds three columns and nothing else:
+  `LunchSettings."generatorBestEffort"` (boolean, NOT NULL, default false: the
+  Skolregler switch), `ScheduleCandidates."deviations"` (jsonb, nullable, a
+  list or NULL by the CHECK `ScheduleCandidates_deviations_is_a_list`) and
+  `PublicationSettings."gateDeviations"` (`PublishGateMode`, NOT NULL, default
+  WARN: the policy of the new publish check `PUB_DEVIATIONS`). **It is off for
+  every school until that school turns it on**; the migration turns nothing on
+  and changes no row, so every Skolregler row reads off, every candidate reads
+  null (it did not come from the mode) and every settings row reads WARN. With
+  the switch on, an administrator who plans can ask a schemaförslag run for
+  *one* candidate (`mode: 'BEST_EFFORT'`) that the engine places even when the
+  school's own shaping rules cannot all hold: a teacher's cap of minutes a day,
+  a part-timer's days, a subject's cap per day and its days apart, and a
+  subject's locked rooms may give way, and the candidate lists which did and by
+  how much. Everything else stays hard (a double booking, a lesson outside the
+  frame times, the walk between sites, a teacher's lunch and rest, a teacher
+  marked unavailable, a requirement's own room type, lunch, lesson lengths, a
+  block's shared start, the group's daily cap): the list is the engine's
+  (`optimization-engine/app/solver/relaxation.py`), not a setting. **The apply
+  of a candidate with deviations needs the administrator to accept exactly that
+  list** (`acceptedDeviations`, the candidate's digest): without it the apply is
+  409 `SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED` and writes nothing, and with
+  the school's switch turned off again it is 409 `BEST_EFFORT_NOT_ENABLED`
+  whatever the digest. **The acceptance is kept in the REGENERATE entry of
+  `ScheduleChangeLogs`** (`after`: the accepted list, its digest and the moment;
+  who accepted is the entry's own `actorId`), not in a table of its own, so the
+  registerutdrag, the removal inventory, the school export and `people-files`
+  have nothing new to classify; the accepted list in `after` carries no Users id
+  and no name, because no person-removal reaches that JSON by column. The
+  candidate's own copy keeps a cap's teacher as a Users id in `subjectIds`,
+  server-only and named when the page reads it, as a free-day note does (and
+  not at all for a person with a protected identity); **a sentence about a
+  part-timer's days is stored in the hidden form for every reader** (the code
+  `TEACHER_WORK_DAYS_HIDDEN`, no figure, no post, no teacher, its own English
+  and not the refusal's "one of the reasons the timetable could not be made"),
+  as every sentence about a post's days is: the figure is HR data and the
+  candidate page has no HR path. "Uppdatera förslagen" on a batch of the mode
+  keeps the mode (the request names `refreshOf` alone) and is refused 409
+  `BEST_EFFORT_NOT_ENABLED` if the school has switched it off since; a refusal
+  of a hard rule by the mode's one candidate ends the run
+  `CANDIDATES_FIRST_FAILED`, as for any first candidate. The new publish check
+  `PUB_DEVIATIONS` reminds the publisher of the accepted list until a
+  publication follows the apply (WARN, or REFUSE if the school sets
+  `gateDeviations`). It takes ACCESS EXCLUSIVE on `LunchSettings`,
+  `PublicationSettings` and `ScheduleCandidates`, NOWAIT and together in a loop
+  (the generator reads the first at the start of every run, a publish reads the
+  second, the Schemaförslag page polls the third every two seconds while a run
+  goes); a refusal gives back whatever it got and tries again 50 ms later, and
+  if the three are not free at once in 30 s it stops with nothing changed —
+  `prisma migrate resolve --rolled-back
+  20270125090000_ett_schemaforslag_kan_saga_vilka_av_skolans_regler_som_gav_vika`,
+  then deploy again. Before: the three columns absent from
+  `information_schema.columns`. After: the three present, and `SELECT count(*)
+  FROM "LunchSettings" WHERE "generatorBestEffort"`, `SELECT count(*) FROM
+  "ScheduleCandidates" WHERE "deviations" IS NOT NULL` and `SELECT count(*) FROM
+  "PublicationSettings" WHERE "gateDeviations" <> 'WARN'` all 0. No grant and no
+  policy moves (RLS sections 410–414 hold it). The API before the release names
+  only the old columns, so it keeps working between the migration and the
+  deploy: its Skolregler upsert does not name the switch (a save leaves it as it
+  was), a candidate it stores has null deviations, and its settings read leaves
+  the policy at its default. **Deploy order and the engine:** the engine ships
+  with the API from the same merge, additive (`relaxation` is optional in the
+  request and `deviations` appears in the answer only when it was asked for), and
+  the API sends `relaxation` only for a run the school asked the mode for, so
+  nothing changes for a school that has not turned the switch on. In the few
+  minutes an API can meet an engine from before the release, a run of the mode
+  fails as 503 `ENGINE_LACKS_BEST_EFFORT` ("try again in a few minutes") and
+  never as a refusal of the week. **Rolling it back:** the engine before this
+  release refuses the field (its request models are `extra="forbid"`: 422), so
+  an engine rolled back alone fails the mode's runs of any school that turned
+  the switch on; roll the API back first, or with the engine (the API before
+  the release never sends it). If the API must stay, turn the switch off for
+  every school before the engine goes back (`UPDATE "LunchSettings" SET
+  "generatorBestEffort" = false WHERE "generatorBestEffort";`, as the owner), and
+  tell the schools it was. **Do not roll the API back while a candidate with
+  deviations is on the page**: an API from before the release does not know the
+  column and would apply it without the school accepting what gave way. The
+  candidates are swept after a week; a school that has not used the mode has
+  none. The columns can stay through a rollback.
+
+- **Placeringsregler**: 20270126090000 adds the enum `PlacementRuleMode`
+  (`OFF`, `SOFT`, `HARD`) and thirteen columns, all with a default and none
+  with a rewrite: on `LunchSettings` (the Skolregler row) the mode and the
+  weight of each of three rules (`placementEdgeMode`/`placementEdgeWeight`,
+  `placementPlacesMode`/`placementPlacesWeight`,
+  `placementSharedMode`/`placementSharedWeight`: OFF, 250) and the four limits
+  of the second (`maxClassRoomsPerDay`, `maxTeacherRoomsPerDay`,
+  `maxClassBuildingsPerDay`, `maxTeacherBuildingsPerDay`: null);
+  on `Subjects` `notFirstInDay` and `notLastInDay`, and on `Rooms`
+  `canBeShared` (false). Ten CHECKs, each named `LunchSettings_…_check`: a
+  weight is 1 to 1000, a limit 1 to 20 or null (rule 2 is "at most N different room groups and buildings a day", 1 being a single one, not a count of changes), and rule 2 that is on
+  has at least one limit (`…_placementPlaces_needs_a_limit_check`; the API
+  says so first, a 400 with the code `PLACEMENT_PLACES_NEEDS_A_LIMIT`).
+  **Only rule 3 (Delade salar) is offered HARD**: rules 1 and 2 are OFF or
+  SOFT until a hard one is measured (a hard rule 1 cost 4.5 times the first
+  timetable, a hard rule 2 2.8 to 3.6 times with eight workers, 9 with one,
+  against a production limit of 60 s at the floor). The two last CHECKs say
+  so (`LunchSettings_placementEdgeMode_off_or_soft_check` and
+  `LunchSettings_placementPlacesMode_off_or_soft_check`), because the
+  Skolregler row is also written by a school's administrator straight against
+  PostgREST and a stored HARD would go to the engine and lock the card; the
+  API refuses a request that names HARD for them (400, the codes
+  `PLACEMENT_EDGE_HARD_NOT_OFFERED` and `PLACEMENT_PLACES_HARD_NOT_OFFERED`),
+  the gateway reads a stored one as SOFT in any case, and the engine still
+  builds all six. Offering a hard rule 1 or 2 later is dropping its CHECK, a
+  migration of its own, with the card and the API. No new
+  table, so no arm, no GRANT and nothing in the role matrix moves (RLS
+  sections 415 to 419 hold it, role by role, as the API's role and as
+  PostgREST's). **All three rules are OFF for every school until that school
+  turns them on**: the migration turns nothing on and changes no row, and an
+  OFF rule sends the engine nothing, so the payload, the model and the answer
+  are the ones a school without the rules gets, byte for byte. The migration
+  takes ACCESS EXCLUSIVE on `LunchSettings`, `Subjects` and `Rooms`, NOWAIT
+  and together in a loop (20270125090000, Bästa möjliga schema, takes
+  `LunchSettings` the same way and runs first; the two never wait for each
+  other) (the generator reads all three, in no fixed order, at
+  the start of every run), so it never waits while it holds one; if the three
+  are not free at once in 30 s it stops with nothing changed (`prisma migrate
+  resolve --rolled-back
+  20270126090000_tre_placeringsregler_som_ar_avstangda_tills_skolan_slar_pa_dem`,
+  then deploy again). The API before the release names none of the columns: its
+  upsert of the Skolregler, its creates and updates of subjects and rooms and
+  the CSV import leave them as they are or read the defaults (RLS section
+  419). **The order is the migration, then the merge (API and engine from one
+  merge), then the web**: a web ahead of the API sends fields the old API
+  refuses (400). The engine's new fields are optional and are sent only for a
+  school with a rule on, which none has until it turns one on after the
+  deploy. The SS12000 providers emit nothing new (a mark moves no `meta.modified`).
+  **Rolling back:** the columns can stay, nothing before the release reads
+  them. The engine before the release refuses `placementRules`, a room's
+  `building` or `shareable` and a lock's `studentCount` (its request models
+  are `extra="forbid"`: 422), so once a school has a rule on, an engine rolled
+  back alone fails that school's Generera and schemaförslag. Roll the API back
+  first, or with the engine; if the API must stay, switch the rules off for
+  every school before the engine goes back (`UPDATE "LunchSettings" SET
+  "placementEdgeMode" = 'OFF', "placementPlacesMode" = 'OFF',
+  "placementSharedMode" = 'OFF' WHERE "placementEdgeMode" <> 'OFF' OR
+  "placementPlacesMode" <> 'OFF' OR "placementSharedMode" <> 'OFF';`, as the
+  owner) and tell the schools it was. Which schools have a rule on: `SELECT
+  "schoolId", "placementEdgeMode", "placementPlacesMode",
+  "placementSharedMode" FROM "LunchSettings" WHERE "placementEdgeMode" <> 'OFF'
+  OR "placementPlacesMode" <> 'OFF' OR "placementSharedMode" <> 'OFF';`.
+  Before the migration the thirteen columns are absent from
+  `information_schema.columns`; after it `SELECT count(*) FROM "LunchSettings"
+  WHERE "placementEdgeMode" <> 'OFF' OR "placementPlacesMode" <> 'OFF' OR
+  "placementSharedMode" <> 'OFF'`, `SELECT count(*) FROM "Subjects" WHERE
+  "notFirstInDay" OR "notLastInDay"` and `SELECT count(*) FROM "Rooms" WHERE
+  "canBeShared"` are all 0, and so is `SELECT count(*) FROM "LunchSettings"
+  WHERE "placementEdgeMode" = 'HARD' OR "placementPlacesMode" = 'HARD'` (the
+  two CHECKs keep it so).
+- **Klasslärarens schema**: 20270128090000 adds the enums
+  `ClassTeacherChangeKind` and `ClassTeacherChangeStatus`, the tables
+  `ClassTeacherAppointments`, `ClassTeacherSettings`, `ClassTeacherOpenTimes`
+  and `ClassTeacherChanges` (nineteen policies, all `TO app_authenticated`), and
+  twenty-one `app.class_teacher_*` / `app.is_class_teacher` functions, every one
+  SECURITY DEFINER with a pinned `search_path`: ten the API role may run, nine
+  that take the school as an argument and that nobody may run (the entry points
+  call them as the owner), and two triggers' guards nobody may call. No existing row is touched, no existing
+  table gains a column, nothing reaches the engine, and `gallring_due`,
+  `gallring_purge` and `gallring_pseudonymise` are not restated (their
+  `md5(prosrc)` are the same before and after). The new keys take `Schools`,
+  `AcademicYears`, `StudentGroups`, `Users`, `Rooms`, `MasterLessons` and
+  `CalendarLessons` in SHARE ROW EXCLUSIVE, NOWAIT, all at once, in a loop with
+  a 30 s ceiling: reads and foreign-key checks go on, writes to those tables
+  wait for the file (milliseconds, the new tables are empty), and if the locks
+  are not free in 30 s it stops with nothing changed (`prisma migrate resolve
+  --rolled-back 20270128090000_en_klasslarare_utses_och_andrar_sin_klass_inom_ramen`,
+  then deploy again). The API before the release knows none of the objects, so
+  it keeps working between the migration and the deploy. **The migration goes
+  in first, then the merge.**
+  **Before the migration**, as the owner: `SHOW server_version` is 17.x;
+  `prisma migrate status` lists exactly this migration as pending; the file's
+  checksum (sha256, what Prisma records) is `177bc639b8de0e1bf01feb4684dd015bafe4bda1a49694ab5637821090dceefa`;
+  `SELECT to_regclass('"ClassTeacherChanges"')` is NULL; no session sits idle in
+  a transaction that holds one of the seven tables above (the query of the
+  Vikariefrågan entry).
+  **After it, before the merge:** `SELECT count(*) FROM pg_policies WHERE
+  tablename LIKE 'ClassTeacher%'` is 19 and `SELECT count(*) FROM pg_proc WHERE
+  pronamespace = 'app'::regnamespace AND (proname LIKE 'class\_teacher\_%' OR
+  proname = 'is_class_teacher')` is 21; the four tables have row security on;
+  `app_authenticated` holds SELECT, INSERT, UPDATE and DELETE on appointments,
+  open times and changes, SELECT, INSERT and UPDATE on the settings, no
+  MAINTAIN; `anon` and `authenticated` nothing; `has_function_privilege('anon',
+  'app.class_teacher_actor(uuid)', 'EXECUTE')`, the same for `authenticated` and
+  `service_role`, are false; every table is empty.
+  **What it is.** A teacher is appointed klasslärare of one class by an
+  administrator who writes Schemaläggning (`/admin/class-teachers`); a mentor is
+  not one. The klasslärare then moves, cancels or changes the room of one
+  date's lesson, moves or splits a lesson of the class's grundschema, and sees
+  the clashes live, inside a **frame**: the hours the schemaläggare has opened
+  (none until some are), never a lesson with another teacher, a block, a half
+  class, a replacing group, a shared post, a teacher shared with another school
+  or a room lent to or from one, and nothing already past (by the instant: today
+  at an hour that has passed is past), covered or with a register, and nothing of
+  a läsår that has ended (`YEAR_ENDED`; a date to move a lesson to must lie in
+  the class's läsår). The frame is one statement in the database
+  (`app.class_teacher_frame`), asked by row security on every write and by the
+  gateway first, which names the reason. **What a klasslärare writes is a
+  draft** in a table of its own; nothing reaches the timetable until it is
+  published, by the schemaläggare (area Publicering) or, when the school has
+  switched `selfPublish` on (off until someone does), by the klasslärare for
+  their own class. Publication runs the editor's own services
+  (`MasterLessonsService.update/create`, `CalendarLessonsService.cancel/
+  changeRoom`), as the administrator who made the appointment
+  (`app.class_teacher_actor`, only to the klasslärare of the class, the way
+  Vikariefrågan places a yes as the sender); an appointment whose administrator
+  is removed, deactivated or no longer writes Schemaläggning, Drift and
+  Publicering **lapses** (409 `CLASS_TEACHER_APPOINTER_GONE`) until another
+  administrator makes it again. Two people at once never overwrite each other:
+  a draft carries a hash of the lesson it was written against and a revision,
+  and a clash is a 409 that says what changed. **A change is held to the rules
+  the editor holds a placement to and to no rules of its own**: the clash rule
+  (`MasterLessonsService.findConflicts`) for the template, and for one date the
+  same rule held against that date's lessons, and G1's board rules (the stage's
+  ramtid, the class's meal, a closure on årskurser: `src/swaps/board-rules.ts`)
+  for both. **Publishing is claimed**: of two who publish the same draft at once
+  one carries it out (the other is told it is gone). **A change of the template
+  in a school that publishes at once** moves the future dated lessons and removes
+  the ones that would land in the past or past the template's end; the klasslärare
+  is told how many (and how many carry a lesson log) before it is published, and a
+  lesson that was moved, or given another room, for its date is met as a clash
+  until the date has passed or it is put back, since the change would put it on
+  a third day or in the template's room again. **A DRAFT school** (publishMode
+  DRAFT) hides its grundschema from teachers; the klasslärare reads their own
+  class's through `app.class_teacher_master_lessons`, and the check and the
+  preview name a clash with the rest of the draft by its kind alone ("the room is
+  taken"), never whose lesson or when. A published template change lands in the
+  school's draft like any other grundschema edit, for the schemaläggare's ordinary
+  publication.
+  **Rollover:** appointments do not carry into the next läsår (a new läsår has
+  new classes); the administrator appoints again. An appointment on a läsår that
+  has ended is no longer offered (`GET /api/v1/class-teacher/mine`) and every
+  change of its classes is refused by the database (`YEAR_ENDED`).
+  **After the merge:** `GET /api/v1/class-teachers/settings` answers
+  `{"selfPublish": false}`; as a teacher with no appointment `GET
+  /api/v1/class-teacher/mine` answers `{"classes": [], "selfPublish": false}`.
+  In a test school: appoint a teacher to a class, open Monday 08:00-12:00 for
+  every class, and as the teacher cancel a lesson of that class for next
+  Monday; it shows under Utkast for the schemaläggare, and publishing it
+  cancels the lesson and tells the class. Read the log for `A class teacher
+  change was carried out but could not be marked published`.
+  **Rolling back the API** leaves four tables and the functions nobody reads;
+  the routes answer 404. To remove them (only if the feature is abandoned):
+  `DROP TABLE "ClassTeacherChanges", "ClassTeacherOpenTimes",
+  "ClassTeacherSettings", "ClassTeacherAppointments"; DROP TYPE
+  "ClassTeacherChangeKind", "ClassTeacherChangeStatus";` then drop the functions
+  (`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.proname LIKE
+  'class\_teacher\_%' OR p.proname = 'is_class_teacher'`) and `prisma migrate
+  resolve --rolled-back 20270128090000_en_klasslarare_utses_och_andrar_sin_klass_inom_ramen`.
 
 - **Checklistor** (instruktionsbevis and samtyckeslistor per klass): 20270129090000 adds the
   `RetentionDataType` value `CHECKLISTS` and nothing else (a value cannot be used in the transaction that adds

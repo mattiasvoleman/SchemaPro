@@ -643,7 +643,7 @@ export default function TimetablePage() {
   );
 
   /** Groups sharing students — the manual-edit twin of the engine's pairs, halves included. */
-  const groupConflictMap = useMemo(
+  const pupilRelation = useMemo(
     () => buildGroupConflictMap(studentGroupOf, memberships ?? [], groups),
     [studentGroupOf, memberships, groups],
   );
@@ -657,7 +657,7 @@ export default function TimetablePage() {
   /**
    * The same pupils, counted rather than merely paired.
    *
-   * Deliberately not built on groupConflictMap above: that is a BOOLEAN "these
+   * Deliberately not built on pupilRelation above: that is a BOOLEAN "these
    * two groups share at least one pupil", which cannot tell a two-pupil choir
    * from a fourteen-pupil maths half and never reads a lesson's individually
    * named studentIds at all. Both indexes are wanted — one answers "may these
@@ -666,6 +666,28 @@ export default function TimetablePage() {
   const rosterIndex = useMemo(
     () => buildRosterIndex(studentGroupOf, memberships, groups),
     [studentGroupOf, memberships, groups],
+  );
+
+  /*
+   * Delade salar: two classes in a hall the school lets be shared are no ROOM
+   * clash while their pupils fit its seats. The check is fetched on demand,
+   * only once Skolregler hold the rule on, so a school that never does pays no
+   * byte for it (lib/shared-rooms-board.ts); until it has arrived every room is
+   * exclusive, the safe reading. The relation it lays on is the one above.
+   */
+  const sharedMode = lunchSettings?.placementSharedMode;
+  const sharing = sharedMode === "SOFT" || sharedMode === "HARD";
+  const [withSharing, setWithSharing] = useState<
+    typeof import("@/lib/shared-rooms-board").withSharedRooms | null
+  >(null);
+  useEffect(() => {
+    if (sharing) {
+      import("@/lib/shared-rooms-board").then((board) => setWithSharing(() => board.withSharedRooms), () => {});
+    }
+  }, [sharing]);
+  const groupConflictMap = useMemo(
+    () => (withSharing ? withSharing(pupilRelation, rooms ?? [], sharedMode, rosterIndex) : pupilRelation),
+    [withSharing, pupilRelation, rooms, sharedMode, rosterIndex],
   );
 
   const subjectById = useMemo(

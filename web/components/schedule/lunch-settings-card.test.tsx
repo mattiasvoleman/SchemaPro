@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import { LunchSettingsCard, toInputTime } from "./lunch-settings-card";
 
 const save = vi.hoisted(() => vi.fn());
@@ -10,9 +11,17 @@ const settings = vi.hoisted(() => ({
   isError: false,
 }));
 
+// The subjects the card counts markings on (Inte först eller sist på dagen).
+const subjects = vi.hoisted(() => ({ data: [] as unknown[], isSuccess: true }));
+
 vi.mock("@/lib/queries", () => ({
   useLunchSettings: () => settings,
   useSaveLunchSettings: () => ({ mutateAsync: save, isPending: false }),
+  useSubjects: () => subjects,
+}));
+
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -20,7 +29,18 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
   useLocale: () => "sv",
-  useTranslations: () => (key: string) => key,
+  // A key with its values, so a count or a weight can be told from its key.
+  // `has` is true for the codes the card renders from its catalogue
+  // (placementRules.errors), which then echo as their own key.
+  useTranslations: () =>
+    Object.assign(
+      (key: string, values?: Record<string, unknown>) =>
+        values ? `${key}(${Object.values(values).join("|")})` : key,
+      {
+        has: (key: string) =>
+          ["PLACEMENT_EDGE_HARD_NOT_OFFERED", "PLACEMENT_PLACES_HARD_NOT_OFFERED", "PLACEMENT_PLACES_NEEDS_A_LIMIT"].includes(key),
+      },
+    ),
 }));
 
 const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
@@ -31,6 +51,8 @@ describe("LunchSettingsCard", () => {
     settings.data = null;
     settings.isSuccess = true;
     settings.isError = false;
+    subjects.data = [];
+    subjects.isSuccess = true;
     window.localStorage.clear();
   });
 
@@ -372,6 +394,104 @@ describe("LunchSettingsCard", () => {
     });
   });
 
+  describe("Bästa möjliga schema", () => {
+    // The mode that lets Schemaförslag lay a week with some of the school's own
+    // rules broken. Off until the school turns it on, beside the others and on
+    // the same terms, and its own key on the save.
+    const off = { generatorKeepsTravelTime: false, generatorKeepsPupilGapsDown: false, generatorKeepsConsecutiveTeaching: false };
+
+    it("is off for a school that never turned it on, and for an API that sends no such field", async () => {
+      saved({ ...off, generatorBestEffort: false });
+      const { unmount } = render(<LunchSettingsCard />);
+      expect((await screen.findByRole("switch", { name: "bestEffort" })).getAttribute("aria-checked")).toBe("false");
+      unmount();
+
+      saved(off);
+      render(<LunchSettingsCard />);
+      expect((await screen.findByRole("switch", { name: "bestEffort" })).getAttribute("aria-checked")).toBe("false");
+    });
+
+    it("reads on when the school turned it on, and offers nothing to save for a reading", async () => {
+      saved({ ...off, generatorBestEffort: true });
+      render(<LunchSettingsCard />);
+
+      const best = await screen.findByRole("switch", { name: "bestEffort" });
+      await waitFor(() => expect(best.getAttribute("aria-checked")).toBe("true"));
+      expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it("sends both ways it is turned, and leaves the other switches as they were", async () => {
+      saved({ ...off, generatorKeepsTravelTime: true, generatorBestEffort: false });
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      const best = await screen.findByRole("switch", { name: "bestEffort" });
+      await user.click(best);
+      await user.click(screen.getByRole("button", { name: "save" }));
+      expect(save.mock.calls[0]?.[0]).toMatchObject({
+        generatorBestEffort: true,
+        generatorKeepsTravelTime: true,
+        generatorKeepsPupilGapsDown: false,
+        generatorKeepsConsecutiveTeaching: false,
+      });
+
+      await user.click(best);
+      await user.click(screen.getByRole("button", { name: "save" }));
+      expect(save.mock.calls[1]?.[0]).toMatchObject({ generatorBestEffort: false });
+    });
+
+    it("leaves the switch out of a save to an API that predates it", async () => {
+      // That API refuses a key it does not know (forbidNonWhitelisted).
+      saved(off);
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      expect((await screen.findByRole("switch", { name: "bestEffort" })).getAttribute("aria-checked")).toBe("false");
+      await waitFor(() => expect(field("seats").value).toBe("180"));
+      fireEvent.change(field("seats"), { target: { value: "200" } });
+      await user.click(screen.getByRole("button", { name: "save" }));
+
+      expect(save.mock.calls[0]?.[0]).not.toHaveProperty("generatorBestEffort");
+    });
+
+    it("says what the mode never gives way on and what it can, as two lists the switch is described by", async () => {
+      // The reader is told, where the mode is chosen, that a double booking,
+      // the frame times and the travel time are not among the rules that give
+      // way (relaxation.py HARD_RULES): as lists, not one run of text.
+      saved({ ...off, generatorBestEffort: false });
+      render(<LunchSettingsCard />);
+
+      const best = await screen.findByRole("switch", { name: "bestEffort" });
+      const hint = document.getElementById(best.getAttribute("aria-describedby") ?? "")!;
+      expect(hint).not.toBeNull();
+      expect(hint.textContent).toContain("bestEffortHint");
+
+      const [never, may] = within(hint).getAllByRole("list");
+      expect(within(never!).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+        "bestEffortNeverOverlap",
+        "bestEffortNeverFrames",
+        "bestEffortNeverTravel",
+        "bestEffortNeverTeacher",
+        "bestEffortNeverMeals",
+        "bestEffortNeverRooms",
+        "bestEffortNeverLessons",
+        "bestEffortNeverShared",
+        "bestEffortNeverGroups",
+      ]);
+      expect(within(may!).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+        "bestEffortMayCap",
+        "bestEffortMayDays",
+        "bestEffortMayDistribution",
+        "bestEffortMayRoomLock",
+      ]);
+      // Each list is introduced by its own sentence, in the order they are read.
+      const text = hint.textContent ?? "";
+      expect(text.indexOf("bestEffortNeverTitle")).toBeLessThan(text.indexOf("bestEffortNeverOverlap"));
+      expect(text.indexOf("bestEffortMayTitle")).toBeGreaterThan(text.indexOf("bestEffortNeverGroups"));
+      expect(text.indexOf("bestEffortMayTitle")).toBeLessThan(text.indexOf("bestEffortMayCap"));
+    });
+  });
+
   it("sends the seat count as a number once one is typed", async () => {
     const user = userEvent.setup();
     render(<LunchSettingsCard />);
@@ -534,6 +654,548 @@ describe("LunchSettingsCard", () => {
   });
 });
 
+describe("LunchSettingsCard: Placeringsregler", () => {
+  /*
+   * Three rules, each Av / Mjuk / Hård, a weight only while a rule is Mjuk,
+   * and ten keys that reach the API together or not at all.
+   */
+  beforeEach(() => {
+    vi.clearAllMocks();
+    settings.data = null;
+    settings.isSuccess = true;
+    settings.isError = false;
+    subjects.data = [];
+    subjects.isSuccess = true;
+  });
+
+  const stored = (overrides: Record<string, unknown> = {}) => {
+    settings.data = {
+      id: "ls-1",
+      lunchEnabled: true,
+      lunchStartTime: "11:00",
+      lunchEndTime: "13:00",
+      lunchMinutes: 30,
+      diningSeats: 180,
+      maxLessonsPerDayPerGroup: 7,
+      generatorKeepsTravelTime: false,
+      generatorKeepsPupilGapsDown: false,
+      generatorKeepsConsecutiveTeaching: false,
+      placementEdgeMode: "OFF",
+      placementEdgeWeight: 250,
+      placementPlacesMode: "OFF",
+      placementPlacesWeight: 250,
+      placementSharedMode: "OFF",
+      placementSharedWeight: 250,
+      maxClassRoomsPerDay: null,
+      maxTeacherRoomsPerDay: null,
+      maxClassBuildingsPerDay: null,
+      maxTeacherBuildingsPerDay: null,
+      ...overrides,
+    };
+  };
+
+  /** The row an API from before the rules sends: none of their fields. */
+  const predating = () => {
+    settings.data = {
+      id: "ls-1",
+      lunchEnabled: true,
+      lunchStartTime: "11:00",
+      lunchEndTime: "13:00",
+      lunchMinutes: 30,
+      diningSeats: 180,
+      maxLessonsPerDayPerGroup: 7,
+    };
+  };
+
+  const rule = (title: "edge.title" | "places.title" | "shared.title") =>
+    screen.findByRole("group", { name: title });
+  const pick = async (
+    user: ReturnType<typeof userEvent.setup>,
+    group: HTMLElement,
+    mode: "OFF" | "SOFT" | "HARD",
+  ) => user.click(within(group).getByRole("radio", { name: `mode.${mode}` }));
+  const type = (group: HTMLElement, label: string, value: string) =>
+    fireEvent.change(within(group).getByLabelText(label), { target: { value } });
+  const saveButton = () => screen.getByRole("button", { name: "save" });
+
+  it("starts every rule on Av with no weight asked for, for a school that never set one", async () => {
+    predating();
+    render(<LunchSettingsCard />);
+
+    for (const title of ["edge.title", "places.title", "shared.title"] as const) {
+      const group = await rule(title);
+      expect(within(group).getByRole("radio", { name: "mode.OFF" })).toBeChecked();
+      expect(within(group).queryByLabelText("weight")).toBeNull();
+    }
+    expect(screen.getByLabelText("limit.classRoom")).toHaveValue(null);
+  });
+
+  it("fills modes, weights and limits from the school's rules, a null limit as an empty box", async () => {
+    stored({
+      placementEdgeMode: "SOFT",
+      placementEdgeWeight: 400,
+      placementPlacesMode: "SOFT",
+      placementPlacesWeight: 300,
+      placementSharedMode: "HARD",
+      placementSharedWeight: 90,
+      maxClassRoomsPerDay: 1,
+      maxTeacherRoomsPerDay: 3,
+      maxClassBuildingsPerDay: null,
+      maxTeacherBuildingsPerDay: 1,
+    });
+    render(<LunchSettingsCard />);
+
+    const edge = await rule("edge.title");
+    expect(within(edge).getByRole("radio", { name: "mode.SOFT" })).toBeChecked();
+    expect(within(edge).getByLabelText("weight")).toHaveValue(400);
+    const places = await rule("places.title");
+    expect(within(places).getByRole("radio", { name: "mode.SOFT" })).toBeChecked();
+    expect(within(places).getByLabelText("weight")).toHaveValue(300);
+    expect(within(places).getByLabelText("limit.classRoom")).toHaveValue(1);
+    expect(within(places).getByLabelText("limit.teacherRoom")).toHaveValue(3);
+    expect(within(places).getByLabelText("limit.classBuilding")).toHaveValue(null);
+    expect(within(places).getByLabelText("limit.teacherBuilding")).toHaveValue(1);
+    const shared = await rule("shared.title");
+    expect(within(shared).getByRole("radio", { name: "mode.HARD" })).toBeChecked();
+    // Hård has no weight, though one is stored.
+    expect(within(shared).queryByLabelText("weight")).toBeNull();
+    // Read, not changed: nothing to save.
+    expect(saveButton()).toBeDisabled();
+  });
+
+  it("asks for a weight only while the rule is Mjuk", async () => {
+    stored();
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    const edge = await rule("edge.title");
+    expect(within(edge).queryByLabelText("weight")).toBeNull();
+    await pick(user, edge, "SOFT");
+    expect(within(edge).getByLabelText("weight")).toHaveValue(250);
+    expect(within(edge).getByText("weightHint")).toBeInTheDocument();
+    await pick(user, edge, "OFF");
+    expect(within(edge).queryByLabelText("weight")).toBeNull();
+    // Hård has none: shown on rule 3, which is offered hard.
+    const shared = await rule("shared.title");
+    await pick(user, shared, "SOFT");
+    expect(within(shared).getByLabelText("weight")).toBeInTheDocument();
+    await pick(user, shared, "HARD");
+    expect(within(shared).queryByLabelText("weight")).toBeNull();
+  });
+
+  it("offers rules 1 and 2 as Av and Mjuk only, and rule 3 as all three", async () => {
+    // A hard rule 1 cost 4.5 times the first timetable and a hard rule 2 2.8 to 3.6 times (BESLUT 3 and 4 in the PR);
+    // the API and the database refuse them too.
+    stored();
+    render(<LunchSettingsCard />);
+
+    for (const [title, hint] of [
+      ["edge.title", "edge.hardHint"],
+      ["places.title", "places.hardHint"],
+    ] as const) {
+      const group = await rule(title);
+      expect(within(group).getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual(["OFF", "SOFT"]);
+      expect(within(group).queryByRole("radio", { name: "mode.HARD" })).toBeNull();
+      expect(within(group).getByText(hint)).toBeInTheDocument();
+    }
+    expect((await rule("edge.title")).querySelector("input")?.getAttribute("aria-describedby")).toBe(
+      "placement-edge-hint placement-edge-hard-hint",
+    );
+    expect((await rule("places.title")).querySelector("input")?.getAttribute("aria-describedby")).toBe(
+      "placement-places-hint placement-places-hard-hint",
+    );
+    const shared = await rule("shared.title");
+    expect(within(shared).getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual(["OFF", "SOFT", "HARD"]);
+    expect(within(shared).queryByText(/hardHint/)).toBeNull();
+  });
+
+  it.each([
+    ["PLACEMENT_EDGE_HARD_NOT_OFFERED", "placementEdgeMode: ... OFF eller SOFT."],
+    ["PLACEMENT_PLACES_HARD_NOT_OFFERED", "placementPlacesMode: ... OFF eller SOFT."],
+  ])("says the gateway's refusal of a hard rule (%s) in the reader's language, and any other refusal as the gateway wrote it", async (code, sentence) => {
+    // Not reachable from the card, which does not offer it: a tab, a script or
+    // a row written before the refusal.
+    stored();
+    const user = userEvent.setup();
+    save.mockRejectedValueOnce(new ApiError(400, sentence, code));
+    save.mockRejectedValueOnce(new ApiError(400, "Något annat som gateway skrev", "SOMETHING_ELSE"));
+    render(<LunchSettingsCard />);
+
+    await waitFor(() => expect(field("seats").value).toBe("180"));
+    fireEvent.change(field("seats"), { target: { value: "200" } });
+    await user.click(saveButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(code);
+    expect(screen.getByRole("alert")).not.toHaveTextContent("OFF eller SOFT");
+
+    await user.click(saveButton());
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Något annat som gateway skrev"));
+    expect(screen.getByRole("alert")).not.toHaveTextContent(code);
+  });
+
+  it("sends all ten keys with the numbers as numbers and empty limits as null", async () => {
+    stored();
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    const edge = await rule("edge.title");
+    await pick(user, edge, "SOFT");
+    type(edge, "weight", "400");
+    const places = await rule("places.title");
+    await pick(user, places, "SOFT");
+    type(places, "limit.classRoom", "2");
+    type(places, "limit.teacherBuilding", "1");
+    await pick(user, await rule("shared.title"), "HARD");
+    await user.click(saveButton());
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      placementEdgeMode: "SOFT",
+      placementEdgeWeight: 400,
+      placementPlacesMode: "SOFT",
+      placementPlacesWeight: 250,
+      placementSharedMode: "HARD",
+      placementSharedWeight: 250,
+      maxClassRoomsPerDay: 2,
+      maxTeacherRoomsPerDay: null,
+      maxClassBuildingsPerDay: null,
+      // "1" is a single one all day, a real limit, and not the same as empty.
+      maxTeacherBuildingsPerDay: 1,
+    });
+  });
+
+  it("keeps a stored weight through a rule that is off, and sends the default for one never typed", async () => {
+    stored({ placementEdgeWeight: 400, placementPlacesWeight: 250 });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    await waitFor(() => expect(field("seats").value).toBe("180"));
+    fireEvent.change(field("seats"), { target: { value: "200" } });
+    await user.click(saveButton());
+
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      placementEdgeMode: "OFF",
+      placementEdgeWeight: 400,
+      placementPlacesWeight: 250,
+    });
+  });
+
+  it("sends 250 for a weight left unusable on a rule that is then switched off", async () => {
+    stored();
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    const edge = await rule("edge.title");
+    await pick(user, edge, "SOFT");
+    type(edge, "weight", "");
+    expect(saveButton()).toBeDisabled();
+    await pick(user, edge, "OFF");
+    fireEvent.change(field("seats"), { target: { value: "200" } });
+    await user.click(saveButton());
+
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ placementEdgeMode: "OFF", placementEdgeWeight: 250 });
+  });
+
+  it("does not let a weight typed wrong and then hidden by Hård block Spara: Hård has no weight, and 250 goes", async () => {
+    // A weight counts only while the rule is Mjuk; a field nobody can see must not hold the button shut.
+    stored();
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    const group = await rule("shared.title");
+    await pick(user, group, "SOFT");
+    type(group, "weight", "5000");
+    expect(saveButton()).toBeDisabled();
+    await pick(user, group, "HARD");
+    expect(within(group).queryByLabelText("weight")).toBeNull();
+    expect(saveButton()).toBeEnabled();
+    await user.click(saveButton());
+
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ placementSharedMode: "HARD", placementSharedWeight: 250 });
+  });
+
+  it.each([["edge.title"], ["places.title"]] as const)(
+    "does not let a weight typed wrong on %s and then hidden by Av block Spara: the rule that is off has no weight, and 250 goes",
+    async (title) => {
+      // Rules 1 and 2 are Av or Mjuk, so the weight is hidden by Av here (by Hård on rule 3, above); a limit stands
+      // so that rule 2 has what it needs while Mjuk.
+      stored({ maxClassRoomsPerDay: 2 });
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      const group = await rule(title);
+      await pick(user, group, "SOFT");
+      type(group, "weight", "5000");
+      expect(saveButton()).toBeDisabled();
+      await pick(user, group, "OFF");
+      expect(within(group).queryByLabelText("weight")).toBeNull();
+      expect(saveButton()).toBeEnabled();
+      fireEvent.change(field("seats"), { target: { value: "200" } });
+      await user.click(saveButton());
+
+      expect(save.mock.calls[0]?.[0]).toMatchObject(
+        title === "edge.title"
+          ? { placementEdgeMode: "OFF", placementEdgeWeight: 250 }
+          : { placementPlacesMode: "OFF", placementPlacesWeight: 250 },
+      );
+    },
+  );
+
+  describe("weights", () => {
+    it.each([["0"], ["1001"], ["2.5"], ["-3"], [""], ["1e2"]])(
+      "refuse %j on the field while the rule is Mjuk, and keep Spara closed",
+      async (typed) => {
+        stored();
+        const user = userEvent.setup();
+        render(<LunchSettingsCard />);
+
+        const group = await rule("shared.title");
+        await pick(user, group, "SOFT");
+        type(group, "weight", typed);
+
+        expect(within(group).getByText("weightInvalid")).toBeInTheDocument();
+        expect(within(group).getByLabelText("weight")).toHaveAttribute("aria-invalid", "true");
+        expect(saveButton()).toBeDisabled();
+      },
+    );
+
+    it.each([["1"], ["1000"], ["40"]])("take %j", async (typed) => {
+      stored();
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      const group = await rule("shared.title");
+      await pick(user, group, "SOFT");
+      type(group, "weight", typed);
+      await user.click(saveButton());
+
+      expect(save.mock.calls[0]?.[0]).toMatchObject({ placementSharedMode: "SOFT", placementSharedWeight: Number(typed) });
+    });
+  });
+
+  describe("Salar och byggnader per dag", () => {
+    it(
+      "is not saved as Mjuk without at least one limit, and says so at the fields",
+      async () => {
+        stored();
+        const user = userEvent.setup();
+        render(<LunchSettingsCard />);
+
+        const group = await rule("places.title");
+        await pick(user, group, "SOFT");
+
+        expect(within(group).getByText("limitsMissing")).toBeInTheDocument();
+        for (const label of ["limit.classRoom", "limit.teacherRoom", "limit.classBuilding", "limit.teacherBuilding"]) {
+          const input = within(group).getByLabelText(label);
+          expect(input).toHaveAttribute("aria-invalid", "true");
+          expect(input.getAttribute("aria-describedby")).toContain("placement-limits-error");
+        }
+        expect(saveButton()).toBeDisabled();
+
+        // One limit is enough, and the error goes with the need for it.
+        type(group, "limit.teacherRoom", "1");
+        expect(within(group).queryByText("limitsMissing")).toBeNull();
+        expect(within(group).getByLabelText("limit.classRoom")).not.toHaveAttribute("aria-invalid");
+        expect(saveButton()).toBeEnabled();
+      },
+    );
+
+    it("asks for no limit while the rule is Av, and 1 counts as a limit", async () => {
+      stored();
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      const group = await rule("places.title");
+      await pick(user, group, "SOFT");
+      expect(within(group).getByText("limitsMissing")).toBeInTheDocument();
+      type(group, "limit.classBuilding", "1");
+      expect(within(group).queryByText("limitsMissing")).toBeNull();
+      type(group, "limit.classBuilding", "");
+      await pick(user, group, "OFF");
+      expect(within(group).queryByText("limitsMissing")).toBeNull();
+    });
+
+    it.each([["21"], ["0"], ["-1"], ["1.5"], ["1e1"]])(
+      "refuses %j in a limit, on that field, even while the rule is Av",
+      async (typed) => {
+        stored();
+        render(<LunchSettingsCard />);
+
+        const group = await rule("places.title");
+        type(group, "limit.teacherRoom", typed);
+
+        expect(within(group).getByText("limitInvalid")).toBeInTheDocument();
+        expect(within(group).getByLabelText("limit.teacherRoom")).toHaveAttribute("aria-invalid", "true");
+        expect(within(group).getByLabelText("limit.classRoom")).not.toHaveAttribute("aria-invalid");
+        expect(saveButton()).toBeDisabled();
+      },
+    );
+
+    it("stops the arrows of a limit box at 1 and 20, the range the API takes", async () => {
+      stored();
+      render(<LunchSettingsCard />);
+
+      const group = await rule("places.title");
+      for (const label of ["limit.classRoom", "limit.teacherRoom", "limit.classBuilding", "limit.teacherBuilding"]) {
+        expect(within(group).getByLabelText(label)).toHaveAttribute("min", "1");
+        expect(within(group).getByLabelText(label)).toHaveAttribute("max", "20");
+      }
+    });
+
+    it("takes 1 and 20 at the two ends of the range", async () => {
+      stored();
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      const group = await rule("places.title");
+      await pick(user, group, "SOFT");
+      type(group, "limit.classRoom", "1");
+      type(group, "limit.teacherRoom", "20");
+      await user.click(saveButton());
+
+      expect(save.mock.calls[0]?.[0]).toMatchObject({
+        maxClassRoomsPerDay: 1,
+        maxTeacherRoomsPerDay: 20,
+      });
+    });
+
+    it("explains what is counted: buildings, room groups and the number visited", async () => {
+      stored();
+      render(<LunchSettingsCard />);
+
+      // The sentence itself is the copy's (placement-rules-fields.test.tsx
+      // reads it in both languages); here it is linked to the rule.
+      const group = await rule("places.title");
+      expect(within(group).getByText("places.hint")).toBeInTheDocument();
+      expect(within(group).getByText("limitsHint")).toBeInTheDocument();
+      expect(within(group).getByRole("radio", { name: "mode.OFF" }).getAttribute("aria-describedby")).toBe(
+        "placement-places-hint placement-places-hard-hint",
+      );
+    });
+  });
+
+  describe("Inte först eller sist på dagen", () => {
+    it("says how many subjects carry a marking, and points at the subjects", async () => {
+      stored();
+      subjects.data = [
+        { id: "s-1", name: "Idrott", notFirstInDay: true, notLastInDay: false },
+        { id: "s-2", name: "Matematik", notFirstInDay: false, notLastInDay: true },
+        { id: "s-3", name: "Svenska", notFirstInDay: true, notLastInDay: true },
+        { id: "s-4", name: "Bild" },
+      ];
+      render(<LunchSettingsCard />);
+
+      const group = await rule("edge.title");
+      // Three subjects, not four boxes.
+      expect(within(group).getByText(/edge\.count\(3\)/)).toBeInTheDocument();
+      expect(within(group).getByRole("link", { name: "edge.link" })).toHaveAttribute("href", "/admin/subjects");
+    });
+
+    it("says none are marked yet, and says nothing about the count while the subjects load", async () => {
+      stored();
+      const { unmount } = render(<LunchSettingsCard />);
+      expect(await screen.findByText(/edge\.count\(0\)/)).toBeInTheDocument();
+      unmount();
+
+      subjects.isSuccess = false;
+      render(<LunchSettingsCard />);
+      const group = await rule("edge.title");
+      expect(within(group).queryByText(/edge\.count/)).toBeNull();
+      expect(within(group).getByRole("link", { name: "edge.link" })).toBeInTheDocument();
+    });
+  });
+
+  describe("an API from before the rules", () => {
+    it("is not sent their keys by a save that does not touch them", async () => {
+      // forbidNonWhitelisted: a web out before the API would otherwise refuse
+      // every lunch save with a 400.
+      predating();
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      await waitFor(() => expect(field("seats").value).toBe("180"));
+      fireEvent.change(field("seats"), { target: { value: "200" } });
+      await user.click(saveButton());
+
+      const sent = save.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(Object.keys(sent).filter((key) => /^placement|sPerDay$/.test(key))).toEqual([]);
+    });
+
+    it("is sent all ten once an admin turns a rule on", async () => {
+      predating();
+      const user = userEvent.setup();
+      render(<LunchSettingsCard />);
+
+      await pick(user, await rule("shared.title"), "HARD");
+      await user.click(saveButton());
+
+      expect(save.mock.calls[0]?.[0]).toMatchObject({
+        placementEdgeMode: "OFF",
+        placementEdgeWeight: 250,
+        placementPlacesMode: "OFF",
+        placementPlacesWeight: 250,
+        placementSharedMode: "HARD",
+        placementSharedWeight: 250,
+        maxClassRoomsPerDay: null,
+        maxTeacherRoomsPerDay: null,
+        maxClassBuildingsPerDay: null,
+        maxTeacherBuildingsPerDay: null,
+      });
+    });
+  });
+
+  it("sends Bästa möjliga schema's switch (G2) and the placement keys together, each from its own side", async () => {
+    stored({ generatorBestEffort: false, placementPlacesMode: "SOFT", maxClassRoomsPerDay: 2 });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    await user.click(await screen.findByRole("switch", { name: "bestEffort" }));
+    await pick(user, await rule("shared.title"), "HARD");
+    await user.click(saveButton());
+
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      generatorBestEffort: true,
+      placementSharedMode: "HARD",
+      placementPlacesMode: "SOFT",
+      maxClassRoomsPerDay: 2,
+    });
+  });
+
+  it("keeps the other keys in a save that only touches one rule", async () => {
+    stored({
+      generatorKeepsTravelTime: true,
+      placementEdgeMode: "SOFT",
+      placementPlacesMode: "SOFT",
+      placementPlacesWeight: 120,
+      maxClassRoomsPerDay: 2,
+    });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    await pick(user, await rule("shared.title"), "SOFT");
+    await user.click(saveButton());
+
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      generatorKeepsTravelTime: true,
+      placementEdgeMode: "SOFT",
+      placementPlacesMode: "SOFT",
+      placementPlacesWeight: 120,
+      maxClassRoomsPerDay: 2,
+      placementSharedMode: "SOFT",
+    });
+  });
+
+  it("sends nothing while the form is refused", async () => {
+    stored();
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    await pick(user, await rule("places.title"), "SOFT");
+    await user.click(saveButton());
+
+    expect(save).not.toHaveBeenCalled();
+  });
+});
+
 describe("LunchSettingsCard under Läsbehörighet", () => {
   // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] and
   // takes the pointer from [data-writes-inert~="PLANERING"] for a profile
@@ -542,6 +1204,27 @@ describe("LunchSettingsCard under Läsbehörighet", () => {
     settings.data = null;
     settings.isSuccess = true;
     settings.isError = false;
+    subjects.data = [];
+    subjects.isSuccess = true;
+  });
+
+  it("keeps the weight of a Mjuk placement rule inert as well", async () => {
+    settings.data = {
+      id: "ls-1",
+      lunchEnabled: true,
+      lunchStartTime: "11:00",
+      lunchEndTime: "13:00",
+      lunchMinutes: 30,
+      diningSeats: 180,
+      maxLessonsPerDayPerGroup: 7,
+      placementSharedMode: "SOFT",
+      placementSharedWeight: 90,
+    };
+    render(<LunchSettingsCard />);
+
+    const weight = await screen.findByLabelText("weight");
+    expect(weight.closest("[data-writes-inert]")).toHaveAttribute("data-writes-inert", "PLANERING");
+    expect(weight.closest("[data-writes]")).toBeNull();
   });
 
   it("keeps the rules readable but inert, and hides Spara", async () => {
@@ -554,6 +1237,9 @@ describe("LunchSettingsCard under Läsbehörighet", () => {
       screen.getByRole("switch", { name: "enabled" }),
       screen.getByRole("switch", { name: "travel" }),
       screen.getByRole("switch", { name: "pupilGaps" }),
+      // Placeringsregler: the choice, a weight (shown while Mjuk) and a limit.
+      screen.getAllByRole("radio", { name: "mode.HARD" })[0]!,
+      screen.getByLabelText("limit.classRoom"),
     ]) {
       expect(control.closest("[data-writes-inert]")).toHaveAttribute("data-writes-inert", "PLANERING");
       expect(control.closest("[data-writes]")).toBeNull();

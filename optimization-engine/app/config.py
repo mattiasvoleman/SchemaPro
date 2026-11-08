@@ -74,6 +74,16 @@ class Settings(BaseSettings):
     staff_solver_max_time_seconds: float = Field(
         default=10.0, alias="STAFF_SOLVER_MAX_TIME_SECONDS",
     )
+    # The exam planner's budget (POST /api/v1/plan-exams), its own for the room
+    # budget's reason: a provvecka is planned behind a button with someone
+    # watching the spinner, and leaving every exam unplaced is a valid answer
+    # from the first instant, so a short budget only ever means fewer exams
+    # placed or a clumsier plan, never a refusal. Twenty seconds, because a
+    # week of 20-30 exams is a bigger problem than a room proposal; a request
+    # can ask for less (search.maxTimeSeconds) and never for more.
+    exam_solver_max_time_seconds: float = Field(
+        default=20.0, alias="EXAM_SOLVER_MAX_TIME_SECONDS",
+    )
 
     schedule_day_start_minutes: int = Field(default=480, alias="SCHEDULE_DAY_START_MINUTES")
     schedule_day_end_minutes: int = Field(default=1080, alias="SCHEDULE_DAY_END_MINUTES")
@@ -211,6 +221,32 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Placeringsregler (G3): what a SOFT rule pays when the school's request
+    # carries no weight of its own (the gateway always sends one, 250 unless the
+    # school changed it). Per lesson at an end of the class's day it should not
+    # be at (subject edges), per place beyond the limit a party stands in on a
+    # day (place limits), per pupil above a shared room's capacity at its
+    # worst moment of the week (shared rooms). The same scale and the same
+    # reasoning as sammanhängande undervisning's: a rule the school wrote down
+    # outweighs a taste (spread 3, a room wish 5, a free day 40), and the
+    # search needs the gradient to find it in the time it has. Measured on the
+    # högstadium school: docs/verification-baseline.md.
+    weight_subject_edge: int = Field(
+        default=250,
+        alias="WEIGHT_SUBJECT_EDGE",
+        description="Penalty per lesson of a flagged subject at an end of the class's day.",
+    )
+    weight_place_limit: int = Field(
+        default=250,
+        alias="WEIGHT_PLACE_LIMIT",
+        description="Penalty per room group or building a class or teacher stands in beyond their daily limit of different ones.",
+    )
+    weight_shared_room: int = Field(
+        default=250,
+        alias="WEIGHT_SHARED_ROOM",
+        description="Penalty per pupil above a shared room's capacity at its busiest moment of the week.",
+    )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def allowed_origins(self) -> list[str]:
@@ -225,6 +261,7 @@ class Settings(BaseSettings):
         "solver_max_time_seconds",
         "room_solver_max_time_seconds",
         "staff_solver_max_time_seconds",
+        "exam_solver_max_time_seconds",
     )
     @classmethod
     def validate_positive_timeout(cls, value: float) -> float:

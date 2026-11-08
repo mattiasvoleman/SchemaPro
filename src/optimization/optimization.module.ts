@@ -39,5 +39,7 @@ import { ScheduleCandidatesService } from './schedule-candidates.service';
     // CANDIDATES_BACKGROUND is on; the runner is @Optional, as GallringJob's.
     ScheduleCandidatesService,
   ],
+  // Provplanering (src/exams) asks the engine through the same call.
+  exports: [OptimizationProxyService],
 })
 export class OptimizationModule {}

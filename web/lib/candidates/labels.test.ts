@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import {
+  BEST_EFFORT_VARIANT,
   changedPartsText,
   FIRST_FAILED_KEYS,
   firstFailedKey,
@@ -89,6 +90,8 @@ describe("why a run ended without a batch", () => {
 
   it("says this feature's own codes in its own words", () => {
     expect(runErrorText(t, engine({}), run("ENGINE_LACKS_CANDIDATES"))).toBe("runErrors.ENGINE_LACKS_CANDIDATES");
+    // An engine older than Bästa möjliga schema (503 from the gateway): its own sentence, not the generic one.
+    expect(runErrorText(t, engine({}), run("ENGINE_LACKS_BEST_EFFORT"))).toBe("runErrors.ENGINE_LACKS_BEST_EFFORT");
     // The engine's 5xx: without the key, the gateway's English reached a Swedish school.
     expect(runErrorText(t, engine({}), run("CANDIDATE_ENGINE_FAILED", "The AI engine returned an error."))).toBe(
       "runErrors.CANDIDATE_ENGINE_FAILED",
@@ -135,6 +138,8 @@ describe("every refusal of the routes has a sentence (design §3, §4)", () => {
     "SCHEDULE_CANDIDATE_BUSY",
     "SCHEDULE_CANDIDATE_NOT_APPLICABLE",
     "SCHEDULE_CANDIDATE_STALE",
+    "BEST_EFFORT_NOT_ENABLED",
+    "SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED",
   ])("%s", (code) => {
     expect(requestErrorKey({ status: 409, code }, "apply")).toBe(`errors.${code}`);
   });
@@ -155,6 +160,24 @@ describe("every refusal of the routes has a sentence (design §3, §4)", () => {
     expect(staleParts({ changed: "draft, rooms" })).toEqual(["draft", "rooms"]);
     expect(staleParts({})).toEqual([]);
     expect(staleParts(undefined)).toEqual([]);
+  });
+});
+
+describe("Bästa möjliga schema", () => {
+  it("names the one candidate of the mode by its code, and keeps its safety version's Swedish name", () => {
+    expect(BEST_EFFORT_VARIANT).toBe("BEST_EFFORT");
+    expect(variantLabel(t, { variant: "BEST_EFFORT", ordinal: 1 })).toBe("variant.BEST_EFFORT");
+    expect(safetyVersionName({ variant: "BEST_EFFORT", ordinal: 1 })).toBe("Före schemaförslag 1 – Bästa möjliga");
+  });
+
+  it("says a failed or timed-out candidate of the mode in words that do not mention other candidates", () => {
+    expect(firstFailedKey({ solverStatus: "INFEASIBLE", variant: "BEST_EFFORT" }, true)).toBe("runErrors.BEST_EFFORT_FAILED");
+    expect(firstFailedKey({ solverStatus: "INFEASIBLE", variant: "BEST_EFFORT" }, false)).toBe(
+      "runErrors.BEST_EFFORT_FAILED_UNNAMED",
+    );
+    expect(firstFailedKey({ solverStatus: "TIMEOUT", variant: "BEST_EFFORT" }, false)).toBe("runErrors.BEST_EFFORT_TIMEOUT");
+    // A batch's first candidate keeps its sentences.
+    expect(firstFailedKey({ solverStatus: "INFEASIBLE", variant: "KEEP" }, true)).toBe("runErrors.CANDIDATES_FIRST_FAILED");
   });
 });
 

@@ -68,6 +68,9 @@
         - link "Grundschema":
           - /url: /sv/admin/timetable
       - listitem:
+        - link "Klasslärare":
+          - /url: /sv/admin/class-teachers
+      - listitem:
         - link "Luckor och håltimmar":
           - /url: /sv/admin/gaps
       - listitem:
@@ -123,6 +126,9 @@
       - listitem:
         - link "Kvittens":
           - /url: /sv/admin/acknowledgements
+      - listitem:
+        - link "Måltidskollen":
+          - /url: /sv/admin/meals
       - listitem:
         - link "Checklistor":
           - /url: /sv/admin/checklists

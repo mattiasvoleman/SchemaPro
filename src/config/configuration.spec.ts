@@ -80,6 +80,8 @@ describe('loadConfiguration', () => {
       crisis: { background: true },
       // Unset: the nightly absence watch ticks (and watches no school until its administrator turns it on).
       absenceWatch: { background: true },
+      // Unset: the kitchen letter ticks (and sends only for a school that turned it on).
+      mealLetter: { background: true },
       // Unset: the nightly reporting rate ticks (it counts every school; only the reminders and the weekly notice are switches).
       reportingRate: { background: true },
       absenceStats: { background: true },
@@ -126,6 +128,12 @@ describe('loadConfiguration', () => {
     expect(loadConfiguration(env({ ABSENCE_WATCH_BACKGROUND: 'off' })).absenceWatch.background).toBe(false);
     expect(loadConfiguration(env({ ABSENCE_WATCH_BACKGROUND: 'on' })).absenceWatch.background).toBe(true);
     expect(loadConfiguration(env({})).absenceWatch.background).toBe(true);
+  });
+
+  it('turns the kitchen letter tick off only for MEAL_LETTER_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ MEAL_LETTER_BACKGROUND: 'off' })).mealLetter.background).toBe(false);
+    expect(loadConfiguration(env({ MEAL_LETTER_BACKGROUND: 'on' })).mealLetter.background).toBe(true);
+    expect(loadConfiguration(env({})).mealLetter.background).toBe(true);
   });
 
   it('turns the kvittens reminder pass off only for ACK_BACKGROUND=off', () => {
