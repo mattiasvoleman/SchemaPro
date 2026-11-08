@@ -222,6 +222,8 @@ describe("AppShell navigation", () => {
     // Lektionslogg's klassbok, every teacher's.
     expect(link("nav.classBook")).toHaveAttribute("href", "/teacher/klassbok");
     expect(link("nav.roomBooking")).toHaveAttribute("href", "/teacher/rooms");
+    // Boka resurs: tablets, a minibus, the hall, in the menu always.
+    expect(link("nav.myResources")).toHaveAttribute("href", "/teacher/resources");
     expect(link("nav.myStaffing")).toHaveAttribute("href", "/teacher/tjanst");
     expect(link("nav.myCover")).toHaveAttribute("href", "/teacher/franvaro");
     // Larm (Krisläge): the groups to tick off when the school starts an alarm.
@@ -298,6 +300,8 @@ describe("AppShell navigation", () => {
       "nav.rasts",
       "nav.supervision",
       "nav.lunchServings",
+      // Resurser: the kinds and the resources, Planering's.
+      "nav.resources",
     ]);
     expect(group("nav.scheduling")).toEqual([
       "nav.generate",
@@ -320,6 +324,9 @@ describe("AppShell navigation", () => {
       "nav.activities",
       "nav.leaveRequests",
       "nav.roomBookings",
+      // Externa bokningar and Utnyttjande: beside the bookings they add days to and count.
+      "nav.externalBookings",
+      "nav.utilisation",
       "nav.reports",
       "nav.absenceWatch",
       "nav.reportingRate",

@@ -33,7 +33,7 @@ import { Input } from "@/components/ui/input";
 import { LoadError } from "@/components/ui/load-error";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
-import { Textarea } from "@/components/ui/textarea";
+import { ContactFields } from "./contact-fields";
 import { DayTable } from "./day-table";
 
 /*
@@ -91,9 +91,11 @@ function NewBookingForm({ onClose }: { onClose: () => void }) {
   const contact = contactErrors(form);
   const showRule = tried !== "none";
   const showContact = tried === "all";
-  const ruleError = (field: keyof typeof rule) => (showRule && rule[field] ? t(`errors.${rule[field]}`, { max: LIMITS.seriesDays }) : undefined);
-  const contactError = (field: keyof typeof contact) =>
-    showContact && contact[field] ? t(`errors.${contact[field]}`, { max: field === "note" ? LIMITS.note : LIMITS.organisation }) : undefined;
+  // Numbers are passed as text, so that a limit of 1 000 is not set in the language's own grouping.
+  const ruleError = (field: keyof typeof rule) =>
+    showRule && rule[field]
+      ? t(`errors.${rule[field]}`, { max: String(field === "quantity" ? LIMITS.quantity : LIMITS.seriesDays) })
+      : undefined;
   const current = preview && preview.key === ruleKey(form) ? preview.data : null;
   const busy = actions.preview.isPending || actions.create.isPending;
   const roomList = rooms.data ?? [];
@@ -279,10 +281,15 @@ function NewBookingForm({ onClose }: { onClose: () => void }) {
         </label>
         <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
           <FormField id="ext-start-date" label={t("startDate")} error={ruleError("startDate")}>
-            <DateField value={form.startDate} onChange={(value) => set({ startDate: value })} />
+            <DateField label={t("startDate")} value={form.startDate} onChange={(value) => set({ startDate: value })} />
           </FormField>
           <FormField id="ext-end-date" label={t("endDate")} error={ruleError("endDate")}>
-            <DateField value={form.endDate} min={form.startDate || undefined} onChange={(value) => set({ endDate: value })} />
+            <DateField
+              label={t("endDate")}
+              value={form.endDate}
+              min={form.startDate || undefined}
+              onChange={(value) => set({ endDate: value })}
+            />
           </FormField>
           <FormField id="ext-start-time" label={t("startTime")} error={ruleError("startTime")}>
             <Input type="time" className="tabular-nums" value={form.startTime} onChange={(event) => set({ startTime: event.target.value })} />
@@ -296,48 +303,7 @@ function NewBookingForm({ onClose }: { onClose: () => void }) {
       <fieldset className="space-y-3">
         <legend className="text-sm font-semibold">{t("sectionWho")}</legend>
         <p className="text-xs text-muted-foreground">{t("contactHint")}</p>
-        <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-          <FormField id="ext-organisation" label={t("organisation")} error={contactError("organisation")}>
-            <Input
-              value={form.organisation}
-              maxLength={LIMITS.organisation}
-              autoComplete="off"
-              onChange={(event) => set({ organisation: event.target.value })}
-            />
-          </FormField>
-          <FormField id="ext-contact-name" label={t("contactName")} error={contactError("contactName")}>
-            <Input
-              value={form.contactName}
-              maxLength={LIMITS.contactName}
-              autoComplete="off"
-              onChange={(event) => set({ contactName: event.target.value })}
-            />
-          </FormField>
-          <FormField id="ext-phone" label={t("phone")} error={contactError("contactPhone")}>
-            <Input
-              type="tel"
-              value={form.contactPhone}
-              maxLength={LIMITS.contactPhone}
-              autoComplete="off"
-              onChange={(event) => set({ contactPhone: event.target.value })}
-            />
-          </FormField>
-          <FormField id="ext-email" label={t("email")} error={contactError("contactEmail")}>
-            <Input
-              type="email"
-              value={form.contactEmail}
-              maxLength={LIMITS.contactEmail}
-              autoComplete="off"
-              onChange={(event) => set({ contactEmail: event.target.value })}
-            />
-          </FormField>
-        </div>
-        <FormField id="ext-purpose" label={t("purpose")} optional error={contactError("purpose")}>
-          <Input value={form.purpose} maxLength={LIMITS.purpose} onChange={(event) => set({ purpose: event.target.value })} />
-        </FormField>
-        <FormField id="ext-note" label={t("note")} optional error={contactError("note")}>
-          <Textarea rows={2} value={form.note} maxLength={LIMITS.note} onChange={(event) => set({ note: event.target.value })} />
-        </FormField>
+        <ContactFields form={form} errors={contact} show={showContact} idPrefix="ext" onChange={(patch) => set(patch)} />
       </fieldset>
 
       <div className="space-y-3 rounded-md border p-3">
@@ -386,11 +352,21 @@ function NewBookingForm({ onClose }: { onClose: () => void }) {
 
       {refused ? (
         <Notice tone="destructive" role="alert" title={t("refusedTitle")}>
-          {refused.days === null
-            ? t("refusedUnknown")
-            : refused.days.length === 0
-              ? t("refusedGone")
-              : t("refusedBody", { count: refused.days.length })}
+          <p>
+            {refused.days === null
+              ? t("refusedUnknown")
+              : refused.days.length === 0
+                ? t("refusedGone")
+                : t("refusedBody", { count: refused.days.length })}
+          </p>
+          {refused.days !== null && refused.days.length > 0 ? (
+            <div role="region" aria-label={t("refusedDays")} tabIndex={0} className="mt-2 max-h-64 overflow-y-auto rounded-md bg-card">
+              <DayTable
+                caption={t("refusedDays")}
+                days={refused.days.map((day) => ({ key: day.date, date: day.date, conflicts: day.conflicts }))}
+              />
+            </div>
+          ) : null}
         </Notice>
       ) : null}
 

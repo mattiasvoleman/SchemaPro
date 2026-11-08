@@ -4,7 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import { TableCard } from "@/components/ui/table-card";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { dayState, dayText, type DayState, type ExternalConflict } from "@/lib/local";
+import { conflictLabel, dayState, dayText, type DayState, type ExternalConflict } from "@/lib/local";
 
 const STATE_VARIANT: Record<DayState, "destructive" | "warning" | "success"> = {
   BLOCK: "destructive",
@@ -80,14 +80,21 @@ export function DayTable({
                   <span className="text-muted-foreground">—</span>
                 ) : (
                   <ul className="space-y-0.5">
-                    {day.conflicts.map((conflict, index) => (
-                      <li key={index}>
-                        <span className="text-muted-foreground">{t(`conflictKind.${conflict.kind}`)}:</span> {conflict.label}
-                        {conflict.severity === "WARN" ? (
-                          <span className="text-muted-foreground"> ({t("warning")})</span>
-                        ) : null}
-                      </li>
-                    ))}
+                    {day.conflicts.map((conflict, index) => {
+                      const label = conflictLabel(conflict, t);
+                      return (
+                        <li key={index}>
+                          <span className="text-muted-foreground">
+                            {t(`conflictKind.${conflict.kind}`)}
+                            {label === "" ? "" : ":"}
+                          </span>
+                          {label === "" ? "" : ` ${label}`}
+                          {conflict.severity === "WARN" ? (
+                            <span className="text-muted-foreground"> ({t("warning")})</span>
+                          ) : null}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </TableCell>

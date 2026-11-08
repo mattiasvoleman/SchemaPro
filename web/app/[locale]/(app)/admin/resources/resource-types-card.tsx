@@ -123,7 +123,7 @@ export function ResourceTypesCard() {
                     {
                       label: tCommon("delete"),
                       icon: Trash2,
-                      ariaLabel: tCommon("deleteNamed", { name: type.name }),
+                      ariaLabel: t("deleteTypeNamed", { name: type.name }),
                       onSelect: () => askDelete(type),
                     },
                   ]}

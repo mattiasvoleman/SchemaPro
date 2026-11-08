@@ -298,6 +298,8 @@ export const LIMITS = {
   decisionNote: 500,
   /** A series ends at most this many days after it starts. */
   seriesDays: 400,
+  /** A utilisation report covers at most this many days (src/local/utilisation.service.ts). */
+  reportDays: 400,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -420,9 +422,37 @@ export function blockedDays(preview: ExternalPreviewResponse): ExternalOccurrenc
   return preview.occurrences.filter((day) => dayState(day.conflicts) === "BLOCK");
 }
 
-/** The conflicts' labels as one line: "Matematik 7A, Rumsbokning". */
-export function conflictLine(conflicts: readonly ExternalConflict[]): string {
-  return conflicts.map((conflict) => conflict.label).join(", ");
+/** The codes the gateway sends as the label of a LOAN conflict (src/local/external-conflicts.ts). */
+export const LOAN_CODES: readonly string[] = ["ROOM_LENT", "ROOM_BORROWED_OUTSIDE_LOAN"];
+
+/** How many of a resource are held, as the gateway writes it: "28 av 30". */
+const HELD_LABEL = /^(\d+) av (\d+)$/;
+
+/**
+ * What a conflict's label says in the reader's language. The label is data
+ * (a lesson's name, a booking's title, a ramtid, a closure's reason, an
+ * activity's name) and is shown as it is; the two that are not names are
+ * turned into a sentence: the loan's code, and the count of a resource that is
+ * used up, which the gateway writes with a Swedish "av".
+ */
+export function conflictLabel(conflict: ExternalConflict, t: Translate): string {
+  if (conflict.kind === "LOAN" && LOAN_CODES.includes(conflict.label)) return t(`loanCode.${conflict.label}`);
+  if (conflict.kind === "BOOKING") {
+    const held = HELD_LABEL.exec(conflict.label);
+    if (held) return t("heldOf", { held: Number(held[1]), total: Number(held[2]) });
+  }
+  return conflict.label;
+}
+
+/** The conflicts as one line: "Lektion: Matematik 7A, Bokning: Körövning". */
+export function conflictLine(conflicts: readonly ExternalConflict[], t: Translate): string {
+  return conflicts
+    .map((conflict) => {
+      const label = conflictLabel(conflict, t);
+      const kind = t(`conflictKind.${conflict.kind}`);
+      return label === "" ? kind : `${kind}: ${label}`;
+    })
+    .join(", ");
 }
 
 // ---------------------------------------------------------------------------
@@ -447,6 +477,13 @@ export function dayText(day: string, locale: string): string {
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(`${day}T00:00:00Z`));
+}
+
+/** "2 feb. 2027": the school's day an instant falls on (a series' registration, its cancellation). */
+export function instantDayText(instant: string, locale: string): string {
+  const at = new Date(instant);
+  if (Number.isNaN(at.getTime())) return instant;
+  return new Intl.DateTimeFormat(localeTag(locale), { day: "numeric", month: "short", year: "numeric", timeZone: SCHOOL_ZONE }).format(at);
 }
 
 /** "18:00–20:00": two instants as clocks in the school's zone. */
@@ -670,6 +707,16 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type ContactField = "organisation" | "contactName" | "contactPhone" | "contactEmail" | "purpose" | "note";
 
+/** The longest each field of who a series is for may be. */
+export const CONTACT_MAX: Record<ContactField, number> = {
+  organisation: LIMITS.organisation,
+  contactName: LIMITS.contactName,
+  contactPhone: LIMITS.contactPhone,
+  contactEmail: LIMITS.contactEmail,
+  purpose: LIMITS.purpose,
+  note: LIMITS.note,
+};
+
 /** What is wrong with who the series is for. At least one of the telephone number and the address is needed (the table's CHECK). */
 export function contactErrors(form: ExternalContactForm): Errors<ContactField> {
   const errors: Errors<ContactField> = {};
@@ -773,7 +820,11 @@ export function utilisationErrors(params: UtilisationParams): Errors<Utilisation
   const errors: Errors<UtilisationField> = {};
   if (!isIsoDay(params.from)) errors.from = "date";
   if (!isIsoDay(params.to)) errors.to = "date";
-  if (!errors.from && !errors.to && daysBetween(params.from, params.to) < 0) errors.to = "dateOrder";
+  if (!errors.from && !errors.to) {
+    const span = daysBetween(params.from, params.to);
+    if (span < 0) errors.to = "dateOrder";
+    else if (span + 1 > LIMITS.reportDays) errors.to = "span";
+  }
   if (!isClock(params.openFrom)) errors.openFrom = "clock";
   if (!isClock(params.openTo)) errors.openTo = "clock";
   if (!errors.openFrom && !errors.openTo && clockMinutes(params.openTo) <= clockMinutes(params.openFrom)) {

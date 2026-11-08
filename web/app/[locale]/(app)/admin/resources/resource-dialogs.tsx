@@ -144,8 +144,9 @@ function ResourceFormBody({
   const siteList = sites.data?.sites ?? [];
   // The row's own skolområde stays a choice even if the list of sites could not be read.
   const knownSite = siteList.some((site) => site.id === form.siteId);
-  const error = (field: keyof typeof errors) =>
-    tried && errors[field] ? t(`errors.${errors[field]}`, { max: field === "place" ? LIMITS.place : LIMITS.resourceName }) : undefined;
+  // The ceiling each field's sentence names: a quantity's is not a name's.
+  const maxOf = { name: LIMITS.resourceName, resourceTypeId: LIMITS.resourceName, quantity: LIMITS.quantity, place: LIMITS.place };
+  const error = (field: keyof typeof errors) => (tried && errors[field] ? t(`errors.${errors[field]}`, { max: maxOf[field] }) : undefined);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
