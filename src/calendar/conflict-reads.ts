@@ -63,6 +63,22 @@ export class ConflictReads {
   /** group id -> the active pupils who are members of it. */
   private readonly members = new Map<string, Array<{ studentId: string; studentGroupId: string }>>();
 
+  /**
+   * The year's placed lessons of one weekday, less the excluded ids: the
+   * `sameDay` read of the clash rule, as a method so that a reader which
+   * already holds the whole year (the swap search, src/swaps) answers it from
+   * memory, in the same shape and without a statement. Memoised by the whole of
+   * its arguments here, as every read of a file is.
+   */
+  dayLessons<T>(
+    academicYearId: string,
+    dayOfWeek: number,
+    excludeIds: readonly string[],
+    load: () => Promise<T>,
+  ): Promise<T> {
+    return this.once(`sameDay|${academicYearId}|${dayOfWeek}|${[...excludeIds].sort().join(',')}`, load);
+  }
+
   /** A read answered once for the arguments that make its key. */
   once<T>(key: string, load: () => Promise<T>): Promise<T> {
     let answer = this.memo.get(key) as Promise<T> | undefined;

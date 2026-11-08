@@ -197,6 +197,15 @@ jobs:
         run: npx playwright test --project=smoke
         working-directory: web
 
+      # The menus are server data and not in the bundle the budget above
+      # counts; they are in every full page load's document instead. This
+      # holds the gzipped HTML of /sv/admin and /sv/teacher (against the e2e
+      # stub) under a ceiling, and prints the figures: with the list reporter,
+      # because the github one prints nothing of a passing test.
+      - name: Document size budget
+        run: npx playwright test --project=document-size --reporter=list
+        working-directory: web
+
       # §2: ≤0.1% pixel variance. Baselines are committed and must match the
       # Linux renderer — regenerate them in a Linux container, not on macOS.
       - name: Visual regression
@@ -351,6 +360,20 @@ jobs:
           DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-schedule-exchange.ts
+
+      # Byten och flyttar (round 9, G1): a small högstadium with parallel
+      # blocks cut across its classes, laid by the fixture, asked for swaps and
+      # chains as a scheduler under row security. Every proposal is checked by
+      # a rule of the probe's own over the stored rows, inside the frame and
+      # outside the closed hours; a block card goes whole; an applied proposal
+      # takes a version, logs each lesson and is undone; a stale, parted or
+      # locked proposal and a teacher's principal write nothing. It drops its
+      # school.
+      - name: Swaps probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-swaps.ts
 
       # Hela skolans data (K5, 20270114090000): two schools, each with people,
       # lessons, attendance, absence, leave and notices, and an export ordered

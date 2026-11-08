@@ -84,6 +84,10 @@ describe("/admin/dataskydd", () => {
     // Vikariefrågan: what is purged and what stays, and that an open question never goes.
     const requests = within(row("Vikarieförfrågningar"));
     expect(requests.getByText(/vem som tillfrågades och svarade/)).toBeInTheDocument();
+    // The decision on attendance is taken here, so it is said here that the month sums of Frånvarostatistik (no pupil in
+    // them, five or more behind each) are kept for three läsår whatever is decided: they are not purged with the marks.
+    const attendance = within(row("Närvaro"));
+    expect(attendance.getByText(/Månadssummor av frånvaro per klass och för skolan, utan enskilda elever och med minst fem elever bakom varje siffra, sparas i tre läsår oavsett detta beslut/)).toBeInTheDocument();
     expect(requests.getByText(/En fråga som står öppen gallras aldrig/)).toBeInTheDocument();
     expect(requests.getByText(/Vikariebesluten och vikariepassen finns kvar/)).toBeInTheDocument();
     expect(screen.getByText("Ingen gallring har körts än.")).toBeInTheDocument();

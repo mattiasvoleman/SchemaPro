@@ -187,4 +187,6 @@ export interface FreeView {
 
 export interface SchoolDaySettingsView {
   teacherView: TeacherView;
+  /** Whether a guardian is told of a pupil's move to a parallel lesson (Elevens lektion för dagen); off until the school says so. */
+  guardianNoticeOnMove: boolean;
 }

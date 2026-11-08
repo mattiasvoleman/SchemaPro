@@ -286,6 +286,8 @@ export class ProviderWorld {
     { schoolId: W.school, calendarLessonId: W.l1, studentId: W.p2 },
   ];
   readonly pendingRemovals: Row[] = [];
+  /** LessonPupilMoves (Elevens lektion för dagen): pupils moved off a lesson for the day. None in the world itself. */
+  readonly lessonMoves: Row[] = [];
   /** AttendanceRecords: every note is the planted absence text, which never leaves. */
   readonly attendance: Row[] = [
     this.record(W.attPresent, W.l1, W.p1, 'PRESENT'),
@@ -368,6 +370,9 @@ export class ProviderWorld {
       this.lessons.push(this.lesson(lesson.id, null, lesson.subjectId, lesson.groupIds[0]!, null, start, 'SCHEDULED'));
       for (const groupId of lesson.groupIds.slice(1)) this.lessonGroups.push({ schoolId: W.school, calendarLessonId: lesson.id, studentGroupId: groupId });
       for (const studentId of lesson.named) this.lessonStudents.push({ schoolId: W.school, calendarLessonId: lesson.id, studentId });
+      for (const studentId of (lesson as { movedOff?: string[] }).movedOff ?? []) {
+        this.lessonMoves.push({ schoolId: W.school, fromLessonId: lesson.id, studentId });
+      }
     });
   }
 
@@ -543,6 +548,7 @@ export class ProviderWorld {
       calendarLessonTeacher: table(this.lessonTeachers),
       calendarLessonGroup: table(this.lessonGroups),
       calendarLessonStudent: table(this.lessonStudents),
+      lessonPupilMove: table(this.lessonMoves),
       publicationPendingRemoval: table(this.pendingRemovals),
       ss12000EntityVersion: table(this.versions),
       ss12000Tombstone: table(this.tombstones),

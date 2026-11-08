@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { BookOpen, Printer, Trash2 } from "lucide-react";
+import { ArrowLeftRight, BookOpen, Printer, Trash2 } from "lucide-react";
 import { usePathname, useRouter } from "@/i18n/navigation";
 import { ApiError } from "@/lib/api";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/lib/lesson-log";
 import { useClassBook, useRemoveLessonLog } from "@/lib/lesson-log-queries";
 import { useActiveYear, useGroups } from "@/lib/queries";
+import { toDateString } from "@/lib/utils";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,14 @@ import { FormField } from "@/components/ui/form-field";
 import { LoadError } from "@/components/ui/load-error";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
+
+/*
+ * Elevens lektion för dagen: a mentor who does not teach a lesson moves a mentee from here. The dialog is
+ * fetched on the first click (React.lazy, not next/dynamic, whose loader costs 1.4 KB of its own).
+ */
+const MovePupilDialog = lazy(() =>
+  import("@/components/lesson-moves/move-pupil-dialog").then((module) => ({ default: module.MovePupilDialog })),
+);
 
 /*
  * KLASSBOKEN: one class's lessons over a period, each with what it was about
@@ -61,6 +70,8 @@ export function ClassBookPage({ audience, initialGroupId, initialFrom, initialTo
   const router = useRouter();
   const pathname = usePathname();
   const [groupId, setGroupId] = useState<string | null>(initialGroupId);
+  // The lesson whose pupil is being moved (Elevens lektion för dagen); null when no dialog is open.
+  const [movingLesson, setMovingLesson] = useState<string | null>(null);
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(initialTo);
 
@@ -195,7 +206,7 @@ export function ClassBookPage({ audience, initialGroupId, initialFrom, initialTo
                 </h3>
                 <ul className="divide-y rounded-md border">
                   {day.lessons.map((lesson) => (
-                    <BookRow key={lesson.id} lesson={lesson} admin={audience === "admin"} />
+                    <BookRow key={lesson.id} lesson={lesson} admin={audience === "admin"} onMove={() => setMovingLesson(lesson.id)} />
                   ))}
                 </ul>
               </section>
@@ -204,12 +215,26 @@ export function ClassBookPage({ audience, initialGroupId, initialFrom, initialTo
           <p className="text-xs text-muted-foreground">{t("footnote")}</p>
         </article>
       )}
+      {movingLesson ? (
+        <Suspense fallback={null}>
+          <MovePupilDialog
+            lessonId={movingLesson}
+            open
+            onOpenChange={(open) => {
+              if (!open) setMovingLesson(null);
+            }}
+          />
+        </Suspense>
+      ) : null}
     </Page>
   );
 }
 
-function BookRow({ lesson, admin }: { lesson: ClassBookLesson; admin: boolean }) {
+function BookRow({ lesson, admin, onMove }: { lesson: ClassBookLesson; admin: boolean; onMove: () => void }) {
   const t = useTranslations("classBook");
+  const tMove = useTranslations("lessonMoves");
+  // A move is made for today or later, on a lesson that is held.
+  const movable = lesson.status === "SCHEDULED" && lesson.date.slice(0, 10) >= toDateString(new Date());
   const [confirming, setConfirming] = useState(false);
   const remove = useRemoveLessonLog();
   const teachers = lesson.teachers
@@ -242,6 +267,20 @@ function BookRow({ lesson, admin }: { lesson: ClassBookLesson; admin: boolean })
           </p>
         ) : null}
         {!written ? <p className="text-muted-foreground print:hidden">{t("nothingWritten")}</p> : null}
+        {movable ? (
+          <div className="print:hidden">
+            <Button
+              variant="outline"
+              size="sm"
+              data-writes="DRIFT"
+              aria-label={`${tMove("action")}: ${lesson.subject} ${lesson.start}`}
+              onClick={onMove}
+            >
+              <ArrowLeftRight aria-hidden="true" />
+              {tMove("action")}
+            </Button>
+          </div>
+        ) : null}
         {admin && written ? (
           <div className="print:hidden">
             <Button

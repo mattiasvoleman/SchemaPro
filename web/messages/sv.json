@@ -1842,6 +1842,75 @@
     "stale": "Schemat har ändrats sedan förslaget räknades fram. Beräkna ett nytt förslag.",
     "undoStale": "Schemat har ändrats sedan optimeringen, så den går inte att ångra härifrån. Återställ versionen ”Före salsoptimering” under Versioner."
   },
+  "swaps": {
+    "title": "Byten och flyttar",
+    "body": "Lektioner som kan byta tid med den här utan att något dubbelbokas, och kedjor om tre där varje lektion tar nästa lektions tid. Varje förslag har prövats mot samma regler som en handflytt, och du ser vad det kostar innan något ändras. Lektionerna som byter tid står kvar som genererade, så nästa Generera kan flytta dem igen: lås dem om de ska ligga kvar.",
+    "computing": "Söker byten…",
+    "failed": "Förslagen kunde inte hämtas.",
+    "retry": "Försök igen",
+    "closeAction": "Stäng",
+    "parked": "Lektionen ligger på Parkering och har ingen tid att byta. Lägg tillbaka den i schemat först.",
+    "notPlaced": "Lektionen ligger inte i grundschemat och kan inte bytas.",
+    "lockedPicked": "Lektionen är låst. Du får flytta den, men generatorn lämnar den som den är tills du låst upp den.",
+    "withParallel": "Den här lektionen ligger parallellt med {count, plural, =1 {1 annan lektion} other {# andra lektioner}}. De flyttas alltid tillsammans.",
+    "none": "Inga byten eller kedjor går att göra utan att något dubbelbokas eller bryter en regel. Lås upp en lektion eller frigör en tid och sök igen.",
+    "found": "{count, plural, =1 {1 förslag} other {# förslag}}, de bästa först",
+    "truncated": "Sökningen avbröts när tiden var ute, så fler förslag kan finnas. Förslagen ovan är prövade.",
+    "swap": "Byte",
+    "chain": "Kedja om tre",
+    "picked": "Vald",
+    "locked": "Låst",
+    "moveLine": "{from} → {to}",
+    "unnamedTeacher": "okänd lärare",
+    "follows": "Följer med",
+    "followsBecause": "{lesson} ({reason})",
+    "parallel": {
+      "BLOCK": "i samma block",
+      "SAME_TIMES": "block på samma tider",
+      "HALF": "andra halvan av klassen",
+      "REPLACING": "ersättande grupp"
+    },
+    "otherSchools": "Andra skolor",
+    "external": {
+      "SHARED_TEACHER": "{teacher} är på {schools} {when}. Lektionen ligger kvar utanför den tiden.",
+      "ROOM_LENT": "{room} är utlånad till {schools} {when}. Lektionen ligger kvar utanför den tiden.",
+      "ROOM_BORROWED": "{room} lånas från {schools} och är bara tillgänglig inom lånetiderna, inte {when}."
+    },
+    "hardTitle": "Hårda regler som hålls",
+    "notChecked": "Förslagen prövar inte korridortiden i ramtiderna och inte restiden mellan skolområden.",
+    "hard": {
+      "CLASH": "ingen dubbelbokning av lärare, sal eller elever, och inga stängda tider",
+      "FRAME": "ramtiderna",
+      "LUNCH": "klassernas lunch",
+      "GRADE_RULE": "veckoregler för årskurser",
+      "OTHER_SCHOOL": "de andra skolornas lektioner och utlånade salar"
+    },
+    "softTitle": "Vad det kostar i de mjuka reglerna",
+    "soft": {
+      "PUPIL_GAPS": "Elevernas håltimmar",
+      "TEACHER_GAPS": "Lärarnas håltimmar",
+      "DISTRIBUTION": "Ämnesfördelning",
+      "TEACHER_DAY": "Lärarens dag",
+      "MOVED_LESSONS": "Lektioner som flyttas"
+    },
+    "minutes": "{count} min",
+    "breaches": "{count, plural, =0 {inga brott} =1 {1 brott} other {# brott}}",
+    "lessons": "{count, plural, =1 {1 lektion} other {# lektioner}}",
+    "apply": "Tillämpa",
+    "applied": "{count, plural, =1 {1 lektion bytte tid.} other {# lektioner bytte tid.}} Schemat som det var före sparades som en version.",
+    "calendarUpdated": "{count, plural, =1 {1 publicerad lektion i kalendern följde med.} other {# publicerade lektioner i kalendern följde med.}}",
+    "calendarRemoved": "{count, plural, =1 {1 publicerad lektion i kalendern togs bort, med sin vikarie, lektionslogg och läxa.} other {# publicerade lektioner i kalendern togs bort, med sina vikarier, lektionsloggar och läxor.}}",
+    "removesCalendar": "{count, plural, =1 {Tar bort 1 publicerad lektion ur kalendern} other {Tar bort # publicerade lektioner ur kalendern}}: de skulle hamna före nu eller utanför lektionens veckor. Vikarie, lektionslogg och läxa på dem försvinner med dem, och Ångra lägger inte tillbaka dem.",
+    "undo": "Ångra",
+    "undone": "Bytet är ångrat. Lektionerna står på sina gamla tider i grundschemat.",
+    "undoneCalendar": "{count, plural, =1 {1 publicerad lektion i kalendern flyttades tillbaka.} other {# publicerade lektioner i kalendern flyttades tillbaka.}}",
+    "undoneNotRestored": "{count, plural, =1 {1 kalenderlektion som togs bort kommer inte tillbaka av sig själv. Publicera igen så skapas en ny, men utan vikarie, lektionslogg och läxa.} other {# kalenderlektioner som togs bort kommer inte tillbaka av sig själva. Publicera igen så skapas nya, men utan vikarier, lektionsloggar och läxor.}}",
+    "stale": "Schemat har ändrats sedan förslagen räknades fram. Förslagen hämtas på nytt.",
+    "splitsParallel": "Bytet skulle dela upp lektioner som ligger parallellt, så inget ändrades. Förslagen hämtas på nytt.",
+    "lockedPartner": "Bytet skulle flytta en låst lektion, så inget ändrades. Förslagen hämtas på nytt.",
+    "undoStale": "Schemat har ändrats sedan bytet, så det går inte att ångra härifrån. Återställ versionen ”Före byte” under Versioner.",
+    "openButton": "Föreslå byten"
+  },
   "dayPlanner": {
     "title": "Dagsplanering",
     "subtitle": "Ställ in lektioner och tilldela vikarier för en specifik dag",
@@ -2018,6 +2087,7 @@
       "attendance": "Närvaro",
       "staffing": "Tjänstefördelning",
       "cover": "Vikarietimmar",
+      "absenceStats": "Frånvarostatistik",
       "title": "Rapporter",
       "subtitle": "Närvaro, tjänstefördelning och vikarietimmar för en period"
     },
@@ -2344,6 +2414,7 @@
       "ACK_REQUESTED": "Skolan ber dig bekräfta: {title}",
       "ACK_REMINDER": "Påminnelse: skolan väntar på din bekräftelse av {title}"
     },
+    "lessonPupilMoved": "En elevs lektion {when} är nu {subject}.",
     "lessonReportReminder": "{count, plural, one {# ny lektion hölls} other {# nya lektioner hölls}} för minst {limitDays, plural, one {# dag} other {# dagar}} sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Se Min rapportering.",
     "reportingRateDigest": "Rapporteringsgrad {from} – {to}: {reported, number} av {held, plural, one {# hållen lektion} other {# hållna lektioner}} hade ett sparat register. Se Rapporteringsgrad.",
     "cover": {
@@ -6106,6 +6177,7 @@
       "COVER_REQUEST_ACCEPTED": "Kollegor som tackat ja till min förfrågan",
       "ABSENCE_WATCH_DIGEST": "Frånvarosammanställning",
       "ACK_REQUESTED": "Meddelanden från skolan som du ska bekräfta",
+      "LESSON_PUPIL_MOVED": "Elever som byter lektion för en dag",
       "ACK_REMINDER": "Påminnelse om ett meddelande som väntar på din bekräftelse",
       "LESSON_REPORT_REMINDER": "Påminnelser om öppna lektioner",
       "REPORTING_RATE_DIGEST": "Veckobesked om rapporteringsgrad",
@@ -6127,7 +6199,7 @@
     "kind": {
       "ATTENDANCE": {
         "name": "Närvaro",
-        "body": "Närvaroregistreringar för lektioner före gränsdagen."
+        "body": "Närvaroregistreringar för lektioner före gränsdagen. Månadssummor av frånvaro per klass och för skolan, utan enskilda elever och med minst fem elever bakom varje siffra, sparas i tre läsår oavsett detta beslut."
       },
       "ABSENCE_REPORTS": {
         "name": "Frånvaroanmälningar",
@@ -7217,6 +7289,7 @@
       "mentorDuties": "{count, plural, one {# mentorsuppdrag} other {# mentorsuppdrag}} tappar klassen",
       "sharedLessons": "{count, plural, one {# lektion} other {# lektioner}} i grundschemat och kalendern som delas med andra grupper tappar gruppen",
       "lessonLogs": "{count, plural, one {# lektionslogg} other {# lektionsloggar}} på de lektionerna",
+      "lessonMoves": "{count, plural, one {# flytt av en elev till en parallell lektion} other {# flyttar av elever till parallella lektioner}} för en dag på de lektionerna",
       "lunchSittings": "{count, plural, one {# lunch} other {# luncher}} i grundschemat",
       "calendarBreaks": "{count, plural, one {# rast eller lunch} other {# raster och luncher}} i kalendern",
       "availabilityConstraints": "{count, plural, one {# tillgänglighetsregel} other {# tillgänglighetsregler}}",
@@ -8585,6 +8658,260 @@
           "SUBSTITUTE": "Hållna vikariepass, i klocktimmar."
         }
       }
+    }
+  },
+  "lessonMoves": {
+    "action": "Flytta elev",
+    "title": "Flytta en elev till en parallell lektion",
+    "description": "Eleven flyttas för den här lektionens dag. Schemat i övrigt är som det var, och flytten går att ångra.",
+    "pupil": "Elev",
+    "pupilPlaceholder": "Välj en elev",
+    "noPupils": "Det finns ingen elev på lektionen som du får flytta.",
+    "pupilsFailed": "Eleverna kunde inte läsas in.",
+    "pupilsFailedHint": "Försök igen om en stund.",
+    "arrived": "flyttad hit",
+    "candidates": "Lektioner som överlappar {subject} {start}–{end}",
+    "noCandidates": "Ingen annan lektion överlappar den här i tid.",
+    "candidatesFailed": "Lektionerna kunde inte läsas in.",
+    "candidatesFailedHint": "Försök igen om en stund.",
+    "headcount": "{count, plural, one {# elev} other {# elever}}",
+    "capacity": "salen rymmer {count}",
+    "confirm": "Flytta",
+    "moved": "Eleven är flyttad.",
+    "undone": "Flytten är ångrad.",
+    "undo": "Ångra",
+    "sectionTitle": "Flyttade elever",
+    "sectionDescription": "Elever som är flyttade till eller från den här lektionen för dagen. De räknas på lektionen de går på, inte som frånvarande på den här.",
+    "departure": "Flyttad till {subject} ({className}, {start}–{end})",
+    "arrival": "Kommer från {subject} ({className}, {start}–{end})",
+    "movedBy": "flyttad av {name}",
+    "warning": {
+      "TARGET_ROOM_OVER_CAPACITY": "Salen rymmer {capacity} men får {headcount}"
+    },
+    "refusal": {
+      "LESSON_MOVE_NOT_PARALLEL": "Överlappar inte i tid",
+      "LESSON_MOVE_LESSON_OVER": "Lektionen eleven går från är slut",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {Lektionen eleven går från hålls inte} other {Är inställd}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "Är ersatt av en schemabrytande aktivitet",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "Eleven går redan på den här lektionen",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "Eleven har en annan lektion samtidigt"
+    },
+    "errors": {
+      "LESSON_MOVE_NOT_ALLOWED": "Du får inte flytta den här eleven. Det får en administratör med Drift, en lärare på någon av lektionerna och elevens mentor.",
+      "LESSON_MOVE_NOT_FOUND": "Flytten finns inte längre.",
+      "LESSON_MOVE_LESSON_NOT_FOUND": "Lektionen finns inte.",
+      "LESSON_MOVE_NOT_PARALLEL": "Lektionerna överlappar inte i tid, så eleven kan inte flyttas dit.",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {Lektionen eleven går från hålls inte.} other {Lektionen eleven ska flyttas till är inställd.}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "{side, select, FROM {Lektionen eleven går från är ersatt av en schemabrytande aktivitet.} other {Lektionen eleven ska flyttas till är ersatt av en schemabrytande aktivitet.}}",
+      "LESSON_MOVE_IN_THE_PAST": "En flytt görs för i dag eller senare.",
+      "LESSON_MOVE_LESSON_OVER": "Lektionen är slut. Ingen ny flytt görs ur en avslutad lektion. En flytt som redan gjorts kan samma dag ångras av en administratör med Drift eller en lärare på lektionen eleven flyttades från, och flyttas vidare av en administratör med Drift eller en lärare på lektionen eleven står på. Be någon av dem.",
+      "LESSON_MOVE_PUPIL_NOT_ON_LESSON": "Eleven går inte på lektionen.",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "Eleven går redan på den lektionen.",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "Eleven skulle få två lektioner samtidigt.",
+      "LESSON_MOVE_HAS_ATTENDANCE": "Eleven har redan en närvaromarkering på lektionen de flyttats till. Ta bort markeringen först.",
+      "LESSON_MOVE_EXISTS": "Eleven är redan flyttad från lektionen.",
+      "LESSON_MOVE_CHANGED": "Flytten ändrades just nu. Försök igen.",
+      "LESSON_MOVE_NOT_A_PUPIL": "Eleven finns inte."
+    },
+    "settings": {
+      "title": "Notis när en elev byter lektion",
+      "description": "Lärarna på de två lektionerna får alltid en notis. Här väljer skolan om vårdnadshavaren också får en när barnet flyttas till en parallell lektion för en dag.",
+      "guardianNotice": "Berätta för vårdnadshavaren när ett barn byter lektion för en dag",
+      "hint": "Notisen säger att ett barns lektion har ändrats och när, aldrig vem som flyttade barnet. Av som förval.",
+      "saved": "Valet är sparat.",
+      "loadFailed": "Valet kunde inte läsas in.",
+      "loadFailedHint": "Försök igen om en stund."
+    }
+  },
+  "absenceStats": {
+    "title": "Frånvarostatistik över tid",
+    "teacherSubtitle": "Frånvaron i klasserna där du är mentor, månad för månad över tre läsår",
+    "backToWatch": "Till Frånvarobevakning",
+    "link": "Frånvarostatistik över tid",
+    "intro": "Giltig och ogiltig frånvaro i procent av de registrerade minuterna, månad för månad över tre läsår: för skolan, för varje klass och för varje elev. Rapporteringsgraden står bredvid, eftersom en månad där få lektioner har ett sparat register säger mindre än siffran ger sken av. Räkningen görs varje natt för dagarna fram till och med i går, och ingen siffra visas för en grupp med färre än {min} elever.",
+    "percent": "{percent} %",
+    "minutes": "{count} min",
+    "retry": "Försök igen",
+    "loadFailedHint": "Inga siffror visas och inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "period": {
+      "label": "Period",
+      "YEAR": "Läsåret hittills",
+      "PREVIOUS": "Föregående läsår",
+      "LAST_90": "Senaste 90 dagarna",
+      "ALL": "Alla tre läsåren",
+      "range": "Perioden är {from} – {to}"
+    },
+    "school": {
+      "title": "Skolan månad för månad",
+      "description": "Alla klasser tillsammans. Under en siffra står samma månad året före, när den finns.",
+      "caption": "Skolans frånvaro per månad",
+      "loadFailed": "Skolans frånvaro kunde inte hämtas",
+      "emptyTitle": "Ingen frånvaro att visa än",
+      "emptyBody": "Siffrorna räknas varje natt för dagarna fram till och med i går. De första kommer när en lektion har fått sina markeringar sparade."
+    },
+    "series": {
+      "column": {
+        "month": "Månad",
+        "pupils": "Elever med markering",
+        "valid": "Giltig frånvaro",
+        "invalid": "Ogiltig frånvaro",
+        "late": "Sena ankomster",
+        "reporting": "Rapporteringsgrad"
+      },
+      "year": "Läsår {name}",
+      "going": "Hittills, till och med {date}",
+      "classNames": "Klass: {names}",
+      "pupilsOf": "{registered} av {pupils}",
+      "figure": "{minutes} · {percent}",
+      "previous": "Förra året: {value}",
+      "previousNone": "Förra året: ingen siffra",
+      "noFigure": "Ingen siffra: färre än {min} elever har markeringar",
+      "noLessons": "Inga hållna lektioner",
+      "reportedOf": "{reported} av {held} lektioner",
+      "empty": "Ingen månad har räknats än. Siffrorna räknas varje natt för dagarna fram till och med i går."
+    },
+    "chart": {
+      "label": "Diagram över giltig och ogiltig frånvaro per månad. Samma siffror står i tabellen under.",
+      "axis": "Andel av de registrerade minuterna",
+      "invalid": "Ogiltig frånvaro",
+      "valid": "Giltig frånvaro",
+      "previous": "Samma månad året före",
+      "going": "Månad som pågår",
+      "none": "Ingen siffra"
+    },
+    "classes": {
+      "title": "Klasser",
+      "description": "Summan av klassens månader under perioden. Välj en klass för dess månader, mönster och elever.",
+      "mentorDescription": "Klasserna där du är mentor, summerade över perioden. Välj en klass för dess månader, mönster och elever.",
+      "caption": "Frånvaro per klass",
+      "column": {
+        "class": "Klass",
+        "open": "Visa klassen"
+      },
+      "monthsCounted": "{count, plural, =0 {ingen månad med siffra} one {# månad med siffra} other {# månader med siffra}}",
+      "open": "Visa",
+      "openNamed": "Visa klass {name}",
+      "empty": {
+        "admin": {
+          "title": "Inga klasser att visa",
+          "body": "Klasser med elever och sparade markeringar visas här."
+        },
+        "mentor": {
+          "title": "Du är inte mentor för någon klass",
+          "body": "Här visas klasserna där du har uppdraget mentorskap."
+        }
+      },
+      "loadFailed": "Klasserna kunde inte hämtas"
+    },
+    "class": {
+      "title": "Klass {name}",
+      "loadFailed": "Klassens månader och mönster kunde inte hämtas",
+      "series": {
+        "title": "Klassen månad för månad",
+        "description": "Klassen och dess föregångare, om klassen har bytt namn eller årskurs. Under en siffra står samma månad året före, när den finns.",
+        "caption": "Frånvaro per månad i klass {name}"
+      },
+      "patterns": {
+        "title": "Mönster",
+        "description": "På vilka veckodagar, vilka pass och i vilka ämnen frånvaron faller under perioden, som andel av de registrerade minuterna."
+      }
+    },
+    "patterns": {
+      "suppressedTitle": "Mönster visas inte",
+      "suppressedBody": "Färre än {min} elever har markeringar under perioden. Ett mönster skulle då peka ut enskilda elever.",
+      "empty": "Inga markeringar under perioden.",
+      "groupSize": "Mönstret bygger på {count, plural, one {# elev} other {# elever}} med markeringar.",
+      "recorded": "{minutes} registrerade",
+      "caption": {
+        "weekdays": "Frånvaro per veckodag",
+        "slots": "Frånvaro per pass",
+        "subjects": "Frånvaro per ämne"
+      },
+      "column": {
+        "weekdays": "Veckodag",
+        "slots": "Pass (starttid)",
+        "subjects": "Ämne",
+        "valid": "Giltig",
+        "invalid": "Ogiltig",
+        "total": "Sammanlagt"
+      }
+    },
+    "pupils": {
+      "title": "Elever",
+      "description": "Varje elevs frånvaro under perioden, som underlag för utvecklingssamtal. Att öppna listan och elevkorten registreras i läsloggen.",
+      "caption": "Elevernas frånvaro i klassen",
+      "column": {
+        "pupil": "Elev",
+        "card": "Elevkort"
+      },
+      "noRegistration": "Ingen registrering i perioden",
+      "open": "Elevkort",
+      "openNamed": "Visa elevkort för {name}",
+      "heldOut": "{count, plural, one {# elev med skyddad identitet visas inte i listan.} other {# elever med skyddad identitet visas inte i listan.}}",
+      "empty": {
+        "title": "Inga elever att visa",
+        "body": "Klassen har inga elever på listan under perioden."
+      },
+      "loadFailed": "Eleverna kunde inte hämtas"
+    },
+    "reader": {
+      "title": "Elever visas inte för huvudmannens läsare",
+      "body": "Huvudmannens läsare ser skolans och klassernas summor, aldrig en enskild elev. Elevlistan och elevkorten är därför dolda."
+    },
+    "card": {
+      "back": "Till klass {name}",
+      "backList": "Till elevlistan",
+      "class": "Klass {name}",
+      "noClass": "Ingen klass",
+      "period": "Mönstren gäller {from} – {to}",
+      "print": "Skriv ut",
+      "protectedTitle": "Eleven har skyddad identitet",
+      "protectedBody": "Kortet visas för dig här, men det skrivs aldrig ut. Utskrift görs inte för en elev med skyddad identitet.",
+      "printProtected": "Utskrift görs inte för en elev med skyddad identitet",
+      "printProtectedBody": "Ingenting har skrivits ut.",
+      "printFailed": "Det gick inte att kontrollera skyddad identitet",
+      "printFailedHint": "Ingenting har skrivits ut. Försök igen om en stund.",
+      "printUseButton": "Elevkortet skrivs ut med knappen Skriv ut på kortet, inte med webbläsarens utskrift.",
+      "basisTitle": "Vad siffrorna bygger på",
+      "marksFrom": "Markeringar finns kvar från {from} till {to}. Närvaron före {from} har gallrats eller rapporterades aldrig; de månaderna visas som ”Ingen registrering”, inte som ingen frånvaro.",
+      "noMarks": "Det finns inga markeringar kvar för eleven. Närvaron har gallrats eller rapporterades aldrig, och ingen månad har en siffra.",
+      "readNote": "Att öppna elevkortet registreras i läsloggen.",
+      "noRegistration": "Ingen registrering",
+      "recorded": "Registrerade minuter",
+      "months": {
+        "title": "Månad för månad",
+        "description": "Eleven mot klassen: klassens giltiga och ogiltiga frånvaro och klassens rapporteringsgrad står bredvid. Under en siffra står samma månad året före, när den finns.",
+        "caption": "Frånvaro per månad för {name}"
+      },
+      "column": {
+        "class": "Klassen",
+        "classReporting": "Klassens rapporteringsgrad"
+      },
+      "lessons": "{count, plural, one {# lektion} other {# lektioner}} med markering",
+      "previousNone": "Förra året: ingen registrering",
+      "classFigures": "Giltig {valid} · ogiltig {invalid}",
+      "classNoFigure": "Ingen siffra för klassen",
+      "noClassSeries": "Eleven går inte i någon klass, så det finns ingen klass att jämföra med.",
+      "patterns": {
+        "title": "Mönster för eleven",
+        "description": "På vilka veckodagar, vilka pass och i vilka ämnen elevens frånvaro faller under perioden."
+      },
+      "loadFailed": "Elevkortet kunde inte hämtas"
+    },
+    "sheet": {
+      "title": "Frånvaro över tid",
+      "printed": "Utskrivet {date}",
+      "monthsLabel": "Månader",
+      "patternsLabel": "Mönster",
+      "patterns": "Mönster, {from} – {to}",
+      "column": {
+        "valid": "Giltig %",
+        "invalid": "Ogiltig %",
+        "class": "Klass %",
+        "reporting": "Rapp. %"
+      },
+      "legend": "Giltig och ogiltig är elevens andel av de registrerade minuterna. Klass är klassens giltiga och ogiltiga frånvaro tillsammans, Rapp. klassens rapporteringsgrad. ”–” betyder att siffra saknas: ingen registrering för eleven, eller för få elever i klassen.",
+      "footer": "Uppgifter om en enskild elev, som underlag för utvecklingssamtal. Förvara och kassera utskriften enligt skolans rutiner."
     }
   }
 }

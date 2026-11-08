@@ -192,6 +192,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'POST',
     why: 'a hand edit counts the year’s posts with a day limit (a _count in a read it already makes) and reads the days of those it warns about; a period never states them',
   },
+  'src/swaps/swap-snapshot.ts': {
+    basis: 'POST',
+    why: 'Byten och flyttar reads the days and the limit for teaching in a row of the posts of the teachers who teach a placed lesson, to count the breaches a swap makes or mends; no figure of the post (percent, reduction, target) and no period',
+  },
   'src/analysis/analysis.service.ts': {
     basis: 'PERIODS',
     why: 'Analys och planering: the payroll basis reads each teacher’s tjänstgöringsgrad on the period’s last day (postOn), and the key figures on the school’s today inside the läsår, with the day in the answer',
@@ -317,6 +321,10 @@ const DAYS_READERS: Record<string, { use: DaysUse; why: string }> = {
   'src/calendar/master-lessons.service.ts': {
     use: 'WORDS',
     why: 'the hand edit’s TEACHER_WEEK_TOO_MANY_DAYS and TEACHER_CONSECUTIVE_TOO_LONG warnings: the figures with readsHr, the *_HIDDEN code otherwise',
+  },
+  'src/swaps/swap-snapshot.ts': {
+    use: 'WORDS',
+    why: 'Byten och flyttar judges with the days and the limit for every reader alike and answers a COUNT of breaches per proposal: no figure, no teacher named, no weekday (swap-soft.ts); the read of the posts is a row in the läslogg (EMPLOYMENT)',
   },
   'src/cover/cover-context.ts': {
     use: 'WORDS',

@@ -33,9 +33,14 @@ const P = 'fe000000-0000-4000-8000-000000000260';
 /**
  * Where the reader is answered otherwise, and why. Each is a route of the
  * person's own, which the reader, who has no row at the school, does not
- * have; none is a school's data the läsare reads and the reader does not.
+ * have; none is a school's data the läsare reads and the reader does not,
+ * but for the two routes that name a pupil in Frånvarostatistik (20270121090000):
+ * the huvudman's reader reads the sums of the school and its classes and never
+ * a pupil, by decision.
  */
 const DIFFERS: Readonly<Record<string, string>> = {
+  'GET /api/v1/absence-stats/classes/:classId/pupils': "a class's pupils by name: the läsare, who has a row of their own, reads them; the huvudman's reader reads the sums only (ABSENCE_STATS_NO_PUPILS_FOR_THE_READER)",
+  'GET /api/v1/absence-stats/pupils/:studentId': "one pupil's card: the läsare reads it; the huvudman's reader never reads a pupil (ABSENCE_STATS_NO_PUPILS_FOR_THE_READER)",
   'GET /api/v1/me/schools': "the login's own list: the läsare's own rows; the reader's the huvudman's schools, with the huvudman",
   'GET /api/v1/huvudman': "the login's own memberships: the reader is a member of H, the läsare of no huvudman",
   'GET /api/v1/analysis/key-figures':
@@ -137,6 +142,8 @@ maybe("Huvudman: every GET a läsare reaches, as the huvudman's reader (a real d
     const requirement = await first('TeachingRequirements');
     // A class of that läsår: a class of another one is no class there, and 404 for both principals is "alike".
     const classGroup = await first('StudentGroups', `kind = 'CLASS' AND "academicYearId" = '${year}'`);
+    named['classId'] = classGroup;
+    named['studentId'] = pupil;
     // The query each route needs, where it needs one.
     const needs: Readonly<Record<string, string>> = {
       '/api/v1/family/schedule': `?studentId=${pupil}&week=${from}`,

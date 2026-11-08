@@ -3,10 +3,11 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps, MouseEvent, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
+import { navForRole } from "./role-nav";
 import { closedPages, readOnlyPages, type AdminProfile } from "@/lib/admin-areas";
 import { closedMenuStyle, closedPagesFor, readOnlyNoticesFor, readOnlyStyle } from "@/components/admin/area-refusal";
 import { ClosedPageGate, ProfileProvider } from "@/components/profile-context";
-import type { Profile } from "@/lib/types";
+import type { Profile, UserRole } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Boundary mocks. The four header widgets (locale switcher, theme toggle,
@@ -75,10 +76,12 @@ vi.mock("next-intl", () => ({
     values ? `${namespace}.${key}(${Object.values(values).join("|")})` : `${namespace}.${key}`,
 }));
 
+// The menu is the (app) layout's to hand in, built by the same navForRole.
 function renderShell(overrides: Partial<ComponentProps<typeof AppShell>> = {}) {
   return render(
     <AppShell
       role="SCHOOL_ADMIN"
+      sections={navForRole(overrides.role ?? "SCHOOL_ADMIN")}
       userName="Alma Berg"
       email="alma@example.com"
       schoolName="Norra Real"
@@ -90,6 +93,15 @@ function renderShell(overrides: Partial<ComponentProps<typeof AppShell>> = {}) {
 }
 
 const link = (name: string) => screen.getByRole("link", { name });
+/**
+ * How many rows the layout hands the shell for a role. The tests count the
+ * links against this and not against a number: a row added to a role's file
+ * (components/layout/*-nav.ts) must not need a test edited, and two branches
+ * that each add one would otherwise merge into a green diff and a red main.
+ * What the count still guards is the shell: every row in `sections` becomes
+ * a link, none is filtered, merged or dropped on the way.
+ */
+const rowsOf = (role: UserRole) => navForRole(role).flatMap((section) => section.items).length;
 /** The sidebar's own links, without the skip link that precedes it. */
 const navLinks = () => within(screen.getByRole("navigation", { name: "nav.label" })).getAllByRole("link");
 
@@ -231,8 +243,7 @@ describe("AppShell navigation", () => {
     expect(screen.queryByRole("link", { name: "nav.leaveRequests" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
     // Counted inside the nav: the skip link is a link too, and not an entry.
-    expect(navLinks()).toHaveLength(13);
-
+    expect(navLinks()).toHaveLength(rowsOf("TEACHER"));
   });
 
   it("student gets schedule and attendance links", () => {
@@ -242,7 +253,7 @@ describe("AppShell navigation", () => {
     expect(link("nav.mySchedule")).toHaveAttribute("href", "/student");
     expect(link("nav.myAttendance")).toHaveAttribute("href", "/student/attendance");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
-    expect(navLinks()).toHaveLength(3);
+    expect(navLinks()).toHaveLength(rowsOf("STUDENT"));
   });
 
   it("guardian gets the my-children link, the absence watch, the acknowledgements and the calendar feed", () => {
@@ -255,7 +266,7 @@ describe("AppShell navigation", () => {
     // Kvittens: the messages the school asks the guardian to confirm, in the menu always.
     expect(link("nav.acknowledgements")).toHaveAttribute("href", "/guardian/acknowledgements");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
-    expect(navLinks()).toHaveLength(4);
+    expect(navLinks()).toHaveLength(rowsOf("GUARDIAN"));
   });
 
   it("groups the admin menu by the manual's four phases, Dataskydd and Integrationer last and unlabelled", () => {
@@ -308,7 +319,6 @@ describe("AppShell navigation", () => {
       "nav.reports",
       "nav.absenceWatch",
       "nav.reportingRate",
-      "nav.analysis",
       "nav.acknowledgements",
       "nav.classBook",
     ]);
@@ -323,7 +333,7 @@ describe("AppShell navigation", () => {
     expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
     expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(41);
+    expect(all).toHaveLength(rowsOf("SCHOOL_ADMIN"));
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {
@@ -569,7 +579,13 @@ const shellFor = (profile: AdminProfile, body = "page body") => {
   menuStyles.push(style);
   return render(
     <ProfileProvider profile={{ adminProfile: profile } as Profile} school={null} closed={closedFor(profile)}>
-      <AppShell role="SCHOOL_ADMIN" userName="Alma Berg" email="alma@example.com" schoolName="Norra Real">
+      <AppShell
+        role="SCHOOL_ADMIN"
+        sections={navForRole("SCHOOL_ADMIN")}
+        userName="Alma Berg"
+        email="alma@example.com"
+        schoolName="Norra Real"
+      >
         <ClosedPageGate>
           <p>{body}</p>
         </ClosedPageGate>
@@ -673,7 +689,13 @@ describe("AppShell for a läsare (Läsbehörighet)", () => {
     menuStyles.push(style);
     return render(
       <ProfileProvider profile={{ adminProfile: "LASARE" } as Profile} school={null} closed={closedFor("LASARE")}>
-        <AppShell role="SCHOOL_ADMIN" userName="Lisa Läsare" email="lisa@example.com" schoolName="Norra Real">
+        <AppShell
+          role="SCHOOL_ADMIN"
+          sections={navForRole("SCHOOL_ADMIN")}
+          userName="Lisa Läsare"
+          email="lisa@example.com"
+          schoolName="Norra Real"
+        >
           <ClosedPageGate>
             {readOnlyNoticesFor(pages, "LASARE")}
             <button type="button" data-writes="SCHEMALAGGNING">
