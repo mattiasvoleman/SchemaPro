@@ -58,6 +58,7 @@ import { SharingModule } from '../../src/sharing/sharing.module';
 import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
 import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module';
+import { MealCountsModule } from '../../src/meal-counts/meal-counts.module';
 import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.module';
 import { AbsenceStatsModule } from '../../src/absence-stats/absence-stats.module';
 import { AckModule } from '../../src/ack/ack.module';
@@ -193,6 +194,7 @@ export const FEATURE_MODULES = [
   SchoolExportModule,
   // Frånvarobevakning's job is @Optional on the runner too, and the setup turns it off.
   AbsenceWatchModule,
+  MealCountsModule,
   // Rapporteringsgrad's job is @Optional on the runner too, and the setup turns it off.
   ReportingRateModule,
   // Frånvarostatistik's job likewise.

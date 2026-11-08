@@ -232,7 +232,8 @@
     "schemavisaren": "Schemavisaren",
     "schoolDay": "Skolans dag",
     "classSchedule": "Klassens schema",
-    "classTeachers": "Klasslärare"
+    "classTeachers": "Klasslärare",
+    "meals": "Måltidskollen"
   },
   "dashboard": {
     "title": "Översikt",
@@ -8726,6 +8727,108 @@
       "legend": "Giltig och ogiltig är elevens andel av de registrerade minuterna. Klass är klassens giltiga och ogiltiga frånvaro tillsammans, Rapp. klassens rapporteringsgrad. ”–” betyder att siffra saknas: ingen registrering för eleven, eller för få elever i klassen.",
       "footer": "Uppgifter om en enskild elev, som underlag för utvecklingssamtal. Förvara och kassera utskriften enligt skolans rutiner."
     }
+  },
+  "meals": {
+    "title": "Måltidskollen",
+    "subtitle": "Portioner per lunchsittning, för köket.",
+    "intro": "Antalen räknas från det publicerade schemat: eleverna i klasserna som äter i sittningen, minus anmäld frånvaro som kommit före brytpunkten, plus personal som äter med. De gäller från i dag, eftersom klasslistorna är dagens.",
+    "view": {
+      "label": "Vy",
+      "day": "Dagen",
+      "week": "Veckan framåt"
+    },
+    "day": {
+      "pick": "Dag",
+      "previous": "Föregående dag",
+      "next": "Nästa dag",
+      "today": "I dag"
+    },
+    "actions": {
+      "print": "Skriv ut",
+      "csv": "Hämta fil för Excel",
+      "csvFailed": "Filen kunde inte hämtas. Försök igen om en stund."
+    },
+    "print": {
+      "dayTitle": "Portioner {date}",
+      "weekTitle": "Portioner {from} – {to}",
+      "school": "Rastra Måltidskollen"
+    },
+    "kpi": {
+      "portions": "Portioner",
+      "pupils": "Elever",
+      "absent": "Frånvaro, avdragen",
+      "staff": "Personal",
+      "after": "Anmäld efter brytpunkten",
+      "notIncluded": "Ingår inte",
+      "afterDetail": "Visas, dras inte av"
+    },
+    "table": {
+      "captionDay": "Portioner per sittning {date}",
+      "captionWeek": "Portioner per dag, veckan framåt",
+      "column": {
+        "sitting": "Sittning",
+        "sittings": "Sittningar",
+        "classes": "Klasser",
+        "date": "Dag",
+        "pupils": "Elever",
+        "absent": "Frånvaro före brytpunkten",
+        "staff": "Personal",
+        "portions": "Portioner",
+        "after": "Efter brytpunkten"
+      },
+      "activity": "aktivitet",
+      "activityTitle": "Klassen har en schemabrytande aktivitet över sittningen och räknas med.",
+      "total": "Totalt",
+      "none": "Ingen sittning",
+      "open": "Visa dagen",
+      "openFor": "Visa {date}",
+      "notIncluded": "–"
+    },
+    "empty": {
+      "title": "Ingen lunch i det publicerade schemat den här dagen",
+      "body": "Det gäller helger, lov och dagar som schemat inte är publicerat för. Lunchen publiceras med schemat."
+    },
+    "emptyWeek": {
+      "title": "Ingen lunch i det publicerade schemat den närmaste veckan",
+      "body": "Publicera schemat, eller välj en annan dag under Dagen."
+    },
+    "notes": {
+      "title": "Så här räknas det",
+      "cutoff": "Frånvaro som anmälts före klockan {time} den dagen är avdragen. Frånvaro som anmäls senare dras inte av utan visas för sig, så att du ser vad som ändrats sedan beställningen.",
+      "noCutoff": "Ingen brytpunkt är satt, så ingen frånvaro dras av. Ange en brytpunkt under Brytpunkt och brev.",
+      "partial": "Bara frånvaro som täcker hela sittningen dras av: en elev som är borta en del av den äter.",
+      "staff": "Personal räknas enligt den pedagogiska lunch med fast tid som är lagd under Tjänstefördelning.",
+      "noStaff": "Personal ingår inte: ingen pedagogisk lunch med fast tid är lagd under Tjänstefördelning.",
+      "activity": "Klasser med en schemabrytande aktivitet över sittningen räknas med, eftersom aktiviteten inte säger om klassen äter i skolan.",
+      "diet": "Allergier och kostval ingår inte. De lagras inte i Rastra."
+    },
+    "settings": {
+      "title": "Brytpunkt och brev till köket",
+      "description": "Brytpunkten är den tid på dagen då köket lägger sin beställning. Brevet går varje skoldag vid brytpunkten till köksadressen, genom Rastras vanliga utskick.",
+      "cutoffLabel": "Brytpunkt",
+      "cutoffHint": "Skolans tid, TT:MM. Utan brytpunkt dras ingen frånvaro av.",
+      "emailLabel": "Köksadress",
+      "emailHint": "En adress. Den är skolans, inte en användare, och används bara för brevet.",
+      "letterLabel": "Skicka ett brev till köket varje skoldag",
+      "letterOn": "Brevet går klockan {time} varje dag som har en sittning.",
+      "letterOff": "Brevet är av. Det går inget brev förrän du slår på det.",
+      "letterNeeds": "Ange en brytpunkt och en köksadress för att slå på brevet.",
+      "privacy": "Brevet och filen innehåller bara antal och klassernas namn, aldrig en elevs namn.",
+      "lastLetter": "Senaste brev: {date}",
+      "noLetterYet": "Inget brev har gått ännu.",
+      "save": "Spara",
+      "saved": "Inställningarna är sparade.",
+      "problem": {
+        "cutoff": "Brytpunkten ska vara en tid TT:MM.",
+        "email": "Köksadressen ska vara en e-postadress, bara en.",
+        "letter": "Brevet kan bara vara på när brytpunkt och köksadress är angivna."
+      },
+      "loadFailed": "Inställningarna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
+    },
+    "loadFailed": "Portionerna kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "retry": "Försök igen"
   },
   "classTeacher": {
     "title": "Klassens schema",
