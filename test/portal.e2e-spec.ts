@@ -309,6 +309,11 @@ describe('Portal and platform surfaces (e2e)', () => {
           .send({ studentId: STUDENT_ID, startDate: dateOnly(60), endDate: dateOnly(61), reason: 'Familjeresa', ...extra });
       await filed({ contactPhone: 'ring mig' }).expect(400);
       await filed({ contactPhone: '123' }).expect(400);
+      // Counted as the database counts it, after the trim: blanks round two digits are not a telephone number (a 500 from
+      // the table's CHECK before the review of #292, LÅG-2), and neither is a string with no digit.
+      await filed({ contactName: 'Gun', contactPhone: '  12  ', contactRelation: 'Farmor' }).expect(400);
+      await filed({ contactName: 'Gun', contactPhone: '+++++', contactRelation: 'Farmor' }).expect(400);
+      await filed({ contactName: 'Gun', contactPhone: '(-) (-)', contactRelation: 'Farmor' }).expect(400);
       await filed({ contactName: 'n'.repeat(101), contactPhone: '070-1234567', contactRelation: 'Farmor' }).expect(400);
       await filed({ contactName: 'Gun', contactPhone: '070-1234567', contactRelation: 'r'.repeat(61) }).expect(400);
       await filed({ contactName: 5 }).expect(400);
@@ -320,6 +325,11 @@ describe('Portal and platform surfaces (e2e)', () => {
       Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
       await filed({ contactName: '', contactPhone: '', contactRelation: '' }).expect(201);
       await filed({ contactName: 'Farmor Gun', contactPhone: '+46 70 123 45 67', contactRelation: 'Farmor' }).expect(201);
+      // ... and blanks round a good value are the form's, not the database's: the service is given the trimmed text.
+      await filed({ contactName: '  Farmor Gun ', contactPhone: '  070-1234567  ', contactRelation: ' Farmor ' }).expect(201);
+      expect(harness.tx['leaveRequest']!['create']).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ contactName: 'Farmor Gun', contactPhone: '070-1234567', contactRelation: 'Farmor' }) }),
+      );
     });
 
     it('shows the leave policy to every role and lets only an administrator who decides record it, all of it', async () => {

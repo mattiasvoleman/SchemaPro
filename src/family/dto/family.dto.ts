@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsIn,
@@ -66,7 +67,10 @@ export const LEAVE_REQUEST_MAX_DAYS = 366;
 /** The contact's limits are LeaveRequests_a_contact_is_short's (20270205091000). */
 export const LEAVE_CONTACT_NAME_MAX = 100;
 export const LEAVE_CONTACT_RELATION_MAX = 60;
-const LEAVE_CONTACT_PHONE = /^[0-9+()\s-]{5,30}$/;
+/** A telephone number: 5 to 30 of digits, spaces, + ( ) and -, at least one of them a digit (measured after the trim below). */
+const LEAVE_CONTACT_PHONE = /^(?=.*\d)[0-9+()\s-]{5,30}$/;
+/** A form sends blanks round a value and an empty string for none; the database trims too, so the count is of what it will hold. */
+const trimmed = ({ value }: { value: unknown }): unknown => (typeof value === 'string' ? value.trim() : value);
 
 /** A guardian requests leave (ledighetsansökan) for a child, or a pupil for themselves. */
 export class CreateLeaveRequestDto {
@@ -91,15 +95,18 @@ export class CreateLeaveRequestDto {
    * is the school's policy (GET /api/v1/leave-policy); the database refuses a filing that
    * breaks it and drops a contact the school has not asked for.
    */
+  @Transform(trimmed)
   @ValidateIf((dto: CreateLeaveRequestDto) => dto.contactName != null && dto.contactName !== '')
   @IsString()
   @MaxLength(LEAVE_CONTACT_NAME_MAX)
   contactName?: string;
 
+  @Transform(trimmed)
   @ValidateIf((dto: CreateLeaveRequestDto) => dto.contactPhone != null && dto.contactPhone !== '')
-  @Matches(LEAVE_CONTACT_PHONE, { message: 'contactPhone must be a telephone number of 5 to 30 digits, spaces, + ( ) or -.' })
+  @Matches(LEAVE_CONTACT_PHONE, { message: 'contactPhone must be a telephone number of 5 to 30 digits, spaces, + ( ) or -, with at least one digit.' })
   contactPhone?: string;
 
+  @Transform(trimmed)
   @ValidateIf((dto: CreateLeaveRequestDto) => dto.contactRelation != null && dto.contactRelation !== '')
   @IsString()
   @MaxLength(LEAVE_CONTACT_RELATION_MAX)
