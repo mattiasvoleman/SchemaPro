@@ -49055,6 +49055,23 @@ BEGIN
   SELECT count(*) INTO n FROM "SchoolParts";
   IF n <> 2 THEN RAISE EXCEPTION 'k1 436: this school reads % skoldelar, not its own two', n; END IF;
 
+  -- The update arm's school filter, on its own. A statement with a WHERE reads a column, so the select arm's school
+  -- filter applies to it and hides a hole in the update arm's: these three have no WHERE and no column in their SET,
+  -- so only the update arm stands between the full administrator and the other school's skoldel (which exists).
+  -- Mutants: the USING without the school (the first touches the other school's row too and the second moves it
+  -- here) and the WITH CHECK without the school (the third moves this school's two into the other).
+  UPDATE "SchoolParts" SET "updatedAt" = now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'k1 436: an update with no where touched % skoldelar, not this school''s two', n; END IF;
+  UPDATE "SchoolParts" SET "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'k1 436: an update to this school with no where touched % skoldelar, not this school''s two', n; END IF;
+  PERFORM pg_temp.k1_refuses(format($q$UPDATE "SchoolParts" SET "schoolId" = %L$q$, other), '42501', 'full moving every skoldel it can reach into another school');
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "SchoolParts";
+  IF n <> 1 THEN RAISE EXCEPTION 'k1 436: the other school reads % skoldelar after the full administrator''s updates, not its own one', n; END IF;
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+
   -- Those who decide remove one.
   DELETE FROM "SchoolParts" WHERE id = part;
   GET DIAGNOSTICS n = ROW_COUNT;
@@ -49169,6 +49186,21 @@ BEGIN
   PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
   SELECT count(*) INTO n FROM "StaffCostRates";
   IF n <> 2 THEN RAISE EXCEPTION 'k1 437: this school reads % rates, not its own two', n; END IF;
+
+  -- The update arm's school filter, on its own (section 436 says why): no WHERE and no column in the SET, with the
+  -- other school's rate there to be taken or to be given the full administrator's.
+  UPDATE "StaffCostRates" SET "updatedAt" = now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'k1 437: an update with no where touched % rates, not this school''s two', n; END IF;
+  UPDATE "StaffCostRates" SET "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'k1 437: an update to this school with no where touched % rates, not this school''s two', n; END IF;
+  PERFORM pg_temp.k1_refuses(format($q$UPDATE "StaffCostRates" SET "schoolId" = %L$q$, other), '42501', 'full moving every rate it can reach into another school');
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "StaffCostRates";
+  IF n <> 1 THEN RAISE EXCEPTION 'k1 437: the other school reads % rates after the full administrator''s updates, not its own one', n; END IF;
+  PERFORM pg_temp.k1_as('00000000-0000-4000-8000-e50000000001');
+
   DELETE FROM "StaffCostRates" WHERE "schoolId" = school AND category = 'SUBSTITUTE';
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 1 THEN RAISE EXCEPTION 'k1 437: the full administrator could not remove a rate'; END IF;
