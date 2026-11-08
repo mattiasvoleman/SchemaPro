@@ -361,6 +361,20 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-schedule-exchange.ts
 
+      # Byten och flyttar (round 9, G1): a small högstadium with parallel
+      # blocks cut across its classes, laid by the fixture, asked for swaps and
+      # chains as a scheduler under row security. Every proposal is checked by
+      # a rule of the probe's own over the stored rows, inside the frame and
+      # outside the closed hours; a block card goes whole; an applied proposal
+      # takes a version, logs each lesson and is undone; a stale, parted or
+      # locked proposal and a teacher's principal write nothing. It drops its
+      # school.
+      - name: Swaps probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-swaps.ts
+
       # Hela skolans data (K5, 20270114090000): two schools, each with people,
       # lessons, attendance, absence, leave and notices, and an export ordered
       # at one of them, built by the job as the ordering administrator, stored

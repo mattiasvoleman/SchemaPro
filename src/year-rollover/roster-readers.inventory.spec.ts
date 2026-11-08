@@ -450,6 +450,11 @@ describe('the roster-reader inventory', () => {
       // years for the frames, the raster and the lunch. The export reads the
       // lessons only and so asks for no basis.
       //
+      // Byten och flyttar (G1): the suggestion reads the year's pupils through
+      // its basis for the clash rule, the pupils' håltimmar and the frames'
+      // grade spans, and the apply asks the clash rule again under its row
+      // locks, so a year two steps ahead is refused there as a hand edit is.
+      //
       // Klasslärarens schema holds a draft to the clash rule of a hand edit
       // (MasterLessonsService.findConflicts) whenever the page asks for its
       // verdict, and the editor's own services carry it out: the teacher's
@@ -499,6 +504,8 @@ describe('the roster-reader inventory', () => {
         'StaffingLoadController.load',
         'StaffingLoadController.suggestTeachers',
         'StaffingLoadController.unstaffed',
+        'SwapsController.apply',
+        'SwapsController.suggest',
         'TeachingBlocksController.update',
         'TeachingRequirementsController.create',
         'TeachingRequirementsController.splitByTerm',

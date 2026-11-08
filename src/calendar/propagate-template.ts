@@ -1,7 +1,7 @@
 import type { LessonRecurrence, Prisma, PrismaClient } from '@prisma/client';
 import { zonedTimeToUtc } from '../common/utils/time';
 import { substituteNotedLessons } from '../lesson-log/substitute-noted';
-import { runsOn } from './lesson-recurrence';
+import { runsOn, type RecurrenceWindow } from './lesson-recurrence';
 import {
   coversTime,
   isoWeekday,
@@ -176,6 +176,59 @@ export function reconcilableLessons(
 const toHHMM = (time: Date): string =>
   `${time.getUTCHours().toString().padStart(2, '0')}:${time.getUTCMinutes().toString().padStart(2, '0')}`;
 
+/**
+ * Whether a row can stand where a template change would carry it. When it
+ * cannot, it is removed instead of moved — and that is the one rule by which
+ * a lesson of the published calendar is lost to a change of the template, in
+ * 'update' and in 'publish' alike (wouldRemoveOnUpdate asks it too, so that a
+ * change can say beforehand how many rows it will take).
+ *
+ * NEVER INTO THE PAST, judged by the instant and not the day. A Thursday
+ * lesson moved to Monday on a Thursday would carry this week's row back to
+ * Monday; a 13:00 lesson moved to 08:00 at ten o'clock would carry today's row
+ * back three hours. Either way the row would stand SCHEDULED with its teacher
+ * at a time already lived: a lesson the calendar says was held and nobody
+ * held. The timplan's genomförd tid counts exactly such rows, and every other
+ * reader takes a past row as what happened. A slot that has already begun
+ * cannot be held as scheduled either. The row is stale instead — the week's
+ * lesson is gone from the time it was at, as it is from the template — and
+ * removed with the others.
+ *
+ * THEN THE TEMPLATE'S OWN RULE. The date the row would land on is the one that
+ * has to survive it — a weekday move can carry a half-term lesson past its end
+ * date, and a parity change empties every other week.
+ */
+export function standsAt(startsAt: Date, newDate: Date, after: RecurrenceWindow, now: Date): boolean {
+  if (startsAt <= now) return false;
+  return runsOn(after, newDate);
+}
+
+/**
+ * How many of a template's reconcilable rows ('update', the DIRECT school's
+ * edit) a change to `after` would remove instead of move: the answer that
+ * propagateTemplateChange's `removed` gives afterwards, asked of the rows
+ * before anything is written. `rows` are what reconcilableLessons selects for
+ * the template (future, SCHEDULED, no attendance), by date.
+ */
+export function wouldRemoveOnUpdate(
+  rows: ReadonlyArray<{ date: Date }>,
+  before: Pick<TemplateBefore, 'dayOfWeek'>,
+  after: Pick<TemplateAfter, 'dayOfWeek' | 'startTime' | 'endTime'> & RecurrenceWindow,
+  timezone: string,
+  now: Date,
+): number {
+  const dayShift = after.dayOfWeek - before.dayOfWeek;
+  const startHHMM = toHHMM(after.startTime);
+  let removed = 0;
+  for (const row of rows) {
+    const newDate = new Date(row.date);
+    newDate.setUTCDate(newDate.getUTCDate() + dayShift);
+    const startsAt = zonedTimeToUtc(newDate.toISOString().slice(0, 10), startHHMM, timezone);
+    if (!standsAt(startsAt, newDate, after, now)) removed += 1;
+  }
+  return removed;
+}
+
 export async function propagateTemplateChange(
   tx: PrismaClient,
   before: TemplateBefore,
@@ -264,26 +317,10 @@ export async function propagateTemplateChange(
     const startsAt = zonedTimeToUtc(dateString, startHHMM, timezone);
     const endsAt = zonedTimeToUtc(dateString, endHHMM, timezone);
 
-    // Never into the past, judged by the instant and not the day. A
-    // Thursday lesson moved to Monday on a Thursday would carry this week's
-    // row back to Monday; a 13:00 lesson moved to 08:00 at ten o'clock
-    // would carry today's row back three hours. Either way the row would
-    // stand SCHEDULED with its teacher at a time already lived: a lesson
-    // the calendar says was held and nobody held. The timplan's genomförd
-    // tid counts exactly such rows, and every other reader takes a past
-    // row as what happened. A slot that has already begun cannot be held
-    // as scheduled either. The row is stale instead — the week's lesson is
-    // gone from the time it was at, as it is from the template — and
-    // removed with the others below.
-    if (startsAt <= now) {
-      markStale(calendarLesson);
-      continue;
-    }
-
-    // The date the row would land on is the one that has to survive the
-    // template's own rule — a weekday move can carry a half-term lesson
-    // past its end date, and a parity change empties every other week.
-    if (!runsOn(after, newDate)) {
+    // Where the row would land is asked of standsAt, which says why a row
+    // that cannot stand there is removed instead of moved (never into the
+    // past; the template's own rule on that date).
+    if (!standsAt(startsAt, newDate, after, now)) {
       markStale(calendarLesson);
       continue;
     }
