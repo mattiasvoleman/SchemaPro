@@ -94,6 +94,7 @@
       <li><span>6.18 Måltidskollen: portioner för köket</span><span class="dots"></span><span class="pg" data-pg="s618"></span></li>
       <li><span>6.19 Klasslärarens schema</span><span class="dots"></span><span class="pg" data-pg="s619"></span></li>
       <li><span>6.20 Checklistor: instruktionsbevis och samtyckeslistor</span><span class="dots"></span><span class="pg" data-pg="s620"></span></li>
+      <li><span>6.21 Analys och planering</span><span class="dots"></span><span class="pg" data-pg="s621"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -7454,10 +7455,6 @@
     </p>
   </div>
 
-</section>
-
-<!-- ============================ 7 ============================ -->
-<section class="chapter" id="ch7">
   <h3 id="s620"><span class="num">6.20</span>Checklistor: instruktionsbevis och samtyckeslistor</h3>
   <p>
     <strong>Checklistor</strong> ersätter pappren och kalkylbladen som lärare och mentorer för över
@@ -7538,6 +7535,106 @@
     Förfrågningarna i appen gallras med skolans val för <em>Notiser</em>, men samtycket de gav finns kvar på listan.
   </p>
 
+  <h3 id="s621"><span class="num">6.21</span>Analys och planering</h3>
+  <p>
+    <span class="path">Drift › Analys och planering</span> samlar tre underlag som skolan annars
+    räknar för hand: <strong>nyckeltal</strong> per lärare och skola, <strong>kostnad per elev</strong>
+    och <strong>löneunderlag</strong> med konton. Inget av dem lagras. Varje gång du öppnar en flik
+    räknas siffrorna fram ur tjänstefördelningen (4.3), rostern, timplanen och de lektioner som hållits,
+    med samma tid och belastning som Tjänstefördelning redan visar, så att en siffra här aldrig
+    avviker från den där. Läsåret väljer du överst.
+  </p>
+  <ul>
+    <li><strong>Nyckeltal.</strong> För skolan: antalet elever, <em>lärartätheten</em> (heltidstjänster
+      undervisning per 100 elever, där undervisningen delas med skolans riktmärke; saknas riktmärket står det,
+      och antalet lärare per 100 elever visas ändå), <em>behöriga lärares andel av undervisningen</em> (av
+      klocktimmarna, och bara om skolan har registrerat behörigheter) och undervisningens timmar. För varje
+      lärare: undervisning i timmar per vecka enligt tjänstefördelningen och, om ett schema är lagt, enligt
+      schemat; hur stor del av målet det är; antalet elever läraren undervisar; andelen av tiden som en
+      behörighet täcker; och <em>tjänstgöringsgrad</em>. Tabellen går att sortera på varje kolumn.
+      <em>Elever per lärare</em> är de olika elever som läraren har på sina poster, en elev som finns på två
+      poster räknad en gång; en elev som en ersättande grupp (till exempel SvA) tagit av klassens lektion
+      räknas inte på klassens post.</li>
+    <li><strong>Tjänstgöringsgraden</strong> är HR-uppgift (2.2). Utan HR-läs är kolumnen borta, och så
+      är lärartätheten efter tjänstgöringsgrad. Lärartätheten ovan räknas av undervisningen och finns
+      för alla.</li>
+    <li><strong>Kostnad per elev.</strong> Varje posts timmar delas lika på postens elever, var och en i sin
+      årskurs, och gångras med skolans <em>timkostnad</em> för kategorin. Tabellen visar per skoldel och
+      årskurs eleverna, timmarna per kategori, lärartiden per elev, kostnaden och kostnaden per elev,
+      och hela skolan sist. Vikariernas hållna pass räknas från läsårets start till i går, i klocktimmar. Uppdrag och rastvakt ingår inte: de har ingen elev att delas på
+      och finns i löneunderlaget. <span class="ui">Ladda ner CSV</span> ger tabellen som fil; den nämner
+      ingen person.</li>
+    <li><strong>Okänd kostnad är inte noll.</strong> Har en kategori timmar men skolan ingen timkostnad för
+      den står kostnaden som <em>Okänd</em> med skälet, och en notis säger vilken sats som saknas. Ett
+      belopp som tyst lämnade vikarien utanför skulle se billigare ut än det var.</li>
+    <li><strong>Löneunderlag.</strong> Välj en period (lönemånaden, högst 93 dagar, inom läsåret) och
+      <span class="ui">Visa underlag</span>. Underlaget räknas först då. Det ger för varje person och skoldel
+      <em>undervisning</em> (hållna lektioner i klocktimmar), <em>vikariepass</em> (timexportens egna rader,
+      samma som under Rapporter, 6.9) och <em>uppdrag</em> (uppdragen i tjänstefördelningen, dag för dag över
+      periodens undervisningsdagar; en lov som stänger hela skolan räknas bort). Ett uppdrag hör inte till
+      någon årskurs och delas därför mellan personens skoldelar efter deras övriga tid. Har en person varken
+      undervisning eller vikariepass i perioden ligger uppdragen på en rad utan skoldel och konto, som skolan
+      bokar för hand, och en notis säger hur många det gäller.</li>
+    <li><strong>Den som har slutat.</strong> En person räknas till och med den dag hen avaktiverades och inte
+      längre. Hållna lektioner räknas om de var slut när hen avaktiverades (en lektion klockan 14 samma dag som
+      hen avaktiverades klockan 12 räknas inte), vikariepass på samma sätt, och uppdrag, mentorskap och
+      rastvakt räknas till dagen före. En person som slutade före perioden finns inte med, och en notis säger
+      hur många som har slutat. Dagen är den då avaktiveringen gjordes i Rastra, inte den då personen slutade:
+      avaktivera i tid. Aktiveras personen igen räknas hen som om hen aldrig slutat, också för tiden
+      däremellan; Rastra minns bara den senaste avaktiveringen. Lektioner som ligger kvar på den som slutat
+      efter sin sista dag ska flyttas till den som tar dem.</li>
+    <li><strong>Filen.</strong> <span class="ui">CSV för Excel</span> är Excels svenska format:
+      windows-1252, semikolon, decimalkomma och radslut CRLF, utan BOM. <span class="ui">Excel</span> är en
+      .xlsx där minuter och timmar är tal, så att de går att summera. Båda har samma kolumner: signatur,
+      efternamn, förnamn, e-post, typ (personal eller vikariepool), tjänstgöringsgrad (den som gäller
+      periodens sista dag, så en tjänst som ändras från den 1 november är den nya i en novemberfil),
+      skoldel, konto,
+      minuter för undervisning, uppdrag och vikariepass, totalt i timmar och periodens båda dagar. Tecken som
+      windows-1252 inte rymmer (ett polskt ł) skrivs som närmaste bokstav i CSV-filen och räknas i en notis;
+      Excel-filen behåller dem.</li>
+    <li><strong>Vem ser vad.</strong> Nyckeltalen läser alla administratörer, utan tjänstgöringsgrad om du inte
+      läser HR-uppgifter. Kostnadsunderlaget är skolans ekonomi och hämtas av rektor, fullständig
+      administratör, den som har HR-läs och huvudmannens läsare. Löneunderlaget är HR-uppgifter och hämtas av
+      rektor, fullständig administratör och den som har HR-läs, aldrig av huvudmannens läsare. Huvudmannens
+      läsare får skolans nyckeltal och kostnadsunderlaget som summor, men ingen lärares rad. En lärare har ingen
+      av dem: lärarens egen belastning står där den alltid stått, under Min tjänst. Att du läser en lärares tid
+      och tjänst, och att du hämtar en fil som nämner personer, skrivs i läsloggen.</li>
+    <li><strong>Skyddad identitet.</strong> Löneunderlaget ska betala alla, så en person med skyddad
+      identitet finns med i filen och i vyn, och en notis säger hur många. Nyckeltalen och kostnaden nämner
+      bara lärare vid id och namn som registret redan visar för dig, och kostnadsfilen nämner ingen.</li>
+  </ul>
+  <p>
+    Under fliken <span class="path">Skoldelar och satser</span> anger skolan det som inte går att räkna fram.
+    Bara rektor och fullständig administratör ändrar; alla andra administratörer läser.
+  </p>
+  <ul>
+    <li><strong>Skoldelar.</strong> En skoldel är ett kostnadsställe med ett namn, ett <em>konto</em> och de
+      årskurser den rymmer (F–3, 4–6, 7–9 …). Två skoldelar delar aldrig årskurs, så en klass hör till
+      högst en; försöker du ger Rastra besked om vilken skoldel som redan har årskursen. Årskurserna anges
+      som i den nioåriga skolan, också för ett läsår med tioårig numrering, där åk 8 räknas som 7. Har skolan
+      inga skoldelar visas underlaget per årskurs, och en årskurs ingen skoldel rymmer visas på en egen rad.
+      En undervisningsgrupp med elever från flera årskurser räknas till den skoldel som flest av dess elever
+      hör till.</li>
+    <li><strong>Timkostnad per personalkategori.</strong> Kostnaden för en timme, i kronor, för
+      <em>behörig lärare</em> (och alla lärare om skolan inte registrerat några behörigheter),
+      <em>lärare utan behörighet</em> (en post där ingen registrerad behörighet täcker läraren) och
+      <em>vikarie</em>. Det är skolans egen siffra för kategorin. Inga individuella löner lagras någonstans i
+      Rastra, och kategorin sparas inte på någon person: den räknas fram när underlaget görs.</li>
+  </ul>
+  <div class="note">
+    <span class="label">Det här är ett underlag, inte en lönekörning</span>
+    <p>
+      Siffrorna är timmar och en timkostnad skolan själv angett. De ersätter inte lönesystemets egen
+      beräkning av lön, semester eller sjukavdrag. Kontrollera fördelningen på skoldelar och uppdrag mot
+      skolans egna avtal innan filen läses in, och kom ihåg att en lektion som lästs in som hållen först då
+      räknas som undervisning: för en period som pågår är underlaget så färskt som lektionsloggen.
+    </p>
+  </div>
+
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="chapter" id="ch7">
   <h2><span class="num">7</span>Integrationer</h2>
   <p class="lede">Koppla Rastra Schema till skolans övriga system, och bestäm hur länge uppgifterna sparas.</p>
 

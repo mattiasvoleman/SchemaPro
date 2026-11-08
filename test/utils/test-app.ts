@@ -67,6 +67,7 @@ import { ChecklistsModule } from '../../src/checklists/checklists.module';
 import { SchoolDayModule } from '../../src/school-day/school-day.module';
 import { ExamsModule } from '../../src/exams/exams.module';
 import { ClassTeacherModule } from '../../src/class-teacher/class-teacher.module';
+import { AnalysisModule } from '../../src/analysis/analysis.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { SchoolExportModule } from '../../src/school-export/school-export.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
@@ -208,6 +209,7 @@ export const FEATURE_MODULES = [
   SchoolDayModule,
   ExamsModule,
   ClassTeacherModule,
+  AnalysisModule,
   SignInModule,
   HuvudmanModule,
   AccessLogModule,

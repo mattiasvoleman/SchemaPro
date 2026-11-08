@@ -406,6 +406,21 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-maltidskollen.ts
 
+      # Analys och planering (K1, 20270130090000): the löneunderlag of a
+      # person who has left, through the real AnalysisService, statement E and
+      # the vikarie export on the API's role. A teacher deactivated mid-period
+      # is booked on the lessons over by the stamp (D6's rule) and on the
+      # uppdrag to the day before, not on the ten days the lessons still
+      # carrying her would give; a period wholly after gives no line and no
+      # file row, and a notice; a lesson later the same day is not hers; a
+      # vikarie's cover after the stamp is not his; a person made active again
+      # is booked as if they had never left. It removes the school it made.
+      - name: Analysis and planning probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-analysis.ts
+
       # Huvudman (20261212090000): every GET a school administrator reaches,
       # through the real gateway and this database, as the roller school's
       # own läsare and as the huvudman's reader with that school chosen. Each

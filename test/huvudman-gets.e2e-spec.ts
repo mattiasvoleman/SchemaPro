@@ -44,6 +44,10 @@ const DIFFERS: Readonly<Record<string, string>> = {
   'GET /api/v1/me/schools': "the login's own list: the läsare's own rows; the reader's the huvudman's schools, with the huvudman",
   'GET /api/v1/huvudman': "the login's own memberships: the reader is a member of H, the läsare of no huvudman",
   'GET /api/v1/acknowledgements/usage': "the person's own share (mine): the läsare has a row at the school and so a share on paper, the reader has none (mine is null); the school and the senders are alike",
+  'GET /api/v1/analysis/key-figures':
+    "Analys och planering: the reader is handed the school's figures and no teacher's row (aggregateOnly, teachers null); the läsare, a school's own administrator, reads the rows, without tjänstgöringsgrad",
+  'GET /api/v1/analysis/cost-basis':
+    "Analys och planering: the cost basis is the school's economy and the reader is given its aggregates; the läsare, with no HR-läs, is refused (ANALYSIS_COST_NOT_YOURS)",
 };
 
 type Shape = string | { [key: string]: Shape } | [Shape | null, number];

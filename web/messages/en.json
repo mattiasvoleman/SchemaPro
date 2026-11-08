@@ -234,7 +234,8 @@
     "schoolDay": "School day",
     "classSchedule": "Class schedule",
     "classTeachers": "Class teachers",
-    "meals": "Meal counts"
+    "meals": "Meal counts",
+    "analysis": "Analysis and planning"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -8640,6 +8641,196 @@
       "saved": "The choice is saved",
       "loadFailed": "The choice could not be loaded",
       "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment."
+    }
+  },
+  "analysis": {
+    "title": "Analysis and planning",
+    "subtitle": "Key figures, cost per pupil and the payroll basis.",
+    "intro": "Everything is counted when you open a tab, from the staffing, the rosters, the timplan and the lessons that were held. No individual salary is stored: a cost is hours times the hourly cost per staff category that the school states.",
+    "tabs": {
+      "label": "View",
+      "keyFigures": "Key figures",
+      "cost": "Cost per pupil",
+      "payroll": "Payroll basis",
+      "settings": "School parts and rates"
+    },
+    "years": {
+      "loadFailed": "The school years could not be loaded",
+      "noneTitle": "The school has no school year yet",
+      "noneBody": "The analysis is counted per school year. Add one under Get started."
+    },
+    "loadFailedHint": "Try again in a moment. What you see here has not changed.",
+    "retry": "Try again",
+    "rateLimited": "That is too fast",
+    "rateLimitedHint": "The page counts the school's figures every time, so it can be read a few times a minute. Wait a minute.",
+    "unknownPerson": "Unknown person",
+    "percent": "{percent}%",
+    "category": {
+      "TEACHER": "Qualified teacher",
+      "UNQUALIFIED_TEACHER": "Teacher without qualification",
+      "SUBSTITUTE": "Substitute"
+    },
+    "notice": {
+      "ANALYSIS_PUPILS_FROM_ENROLLMENT": "The pupils are read from the class history, as the classes were that school year.",
+      "ANALYSIS_GRADES_WITHOUT_PART": "Grade {grades} belongs to no school part. Add or widen a school part under School parts and rates.",
+      "ANALYSIS_NO_SCHOOL_PARTS": "The school has no school parts yet, so the basis is shown per grade. Add school parts under School parts and rates.",
+      "ANALYSIS_RATE_MISSING": "The school has no hourly cost for {category}. The cost of those hours is unknown, not zero. State it under School parts and rates.",
+      "ANALYSIS_NO_FULL_TIME": "The school has no teaching benchmark, so teacher density in full-time posts cannot be stated. The benchmark is set under Staffing.",
+      "ANALYSIS_QUALIFICATIONS_NOT_RECORDED": "No qualifications are recorded, so nobody is judged. All hours then count as qualified teacher, and the qualified share is shown once qualifications are recorded.",
+      "ANALYSIS_ROWS_WITHOUT_PUPILS": "{rows} timplan rows have no pupils on their roster, for instance a group before its pupils are placed. Their time counts in the group's own grade.",
+      "ANALYSIS_PERIOD_CLAMPED": "The period is cut to the school year: {from} – {to}.",
+      "ANALYSIS_NOTHING_PUBLISHED": "No schedule is published, so no teaching has been held and no hours can be stated.",
+      "ANALYSIS_COVER_TO_CHECK": "{lessons} held cover lessons are left out, because the substitute was absent over the lesson themself. They are checked under Reports, Substitute hours.",
+      "ANALYSIS_LEFT_IN_PERIOD": "{people} people left before the end of the period. Their time is counted up to the day they were deactivated (lessons over by then, duties to the day before), and anyone who left before the period is not in it.",
+      "ANALYSIS_DUTIES_UNALLOCATED": "{people} people have duties but no teaching or cover in the period. Their duties are on a line with no school part and no account, for the school to book by hand.",
+      "ANALYSIS_PROTECTED_IN_FILE": "{people} people with a protected identity are in the basis, because payroll pays everyone.",
+      "ANALYSIS_CHARACTERS_REPLACED": "{characters} characters that windows-1252 cannot hold were replaced in the CSV file. The Excel file keeps them."
+    },
+    "keyFigures": {
+      "loadFailed": "The key figures could not be loaded",
+      "aggregateOnly": "You are reading the school's key figures. The huvudman's reader is not shown individual teachers' figures.",
+      "kpi": {
+        "pupils": "Pupils",
+        "pupilsPerTeacher": "{count} pupils per teacher",
+        "density": "Teacher density",
+        "densityFallback": "Benchmark missing",
+        "densityDetail": "Full-time posts per 100 pupils. By head: {head} teachers per 100 pupils ({teachers} teachers).",
+        "qualified": "Qualified teachers' share",
+        "qualifiedFallback": "No qualifications recorded",
+        "qualifiedDetail": "{covered} of {all} teaching hours a week",
+        "teaching": "Teaching",
+        "hours": "{hours} h/year",
+        "perWeek": "{hours} h a week",
+        "unstaffed": "{hours} h a week have no teacher"
+      },
+      "employmentDensity": "By employment degree: {fte} full-time posts, {per100} per 100 pupils.",
+      "employmentOn": "The employment degree is the one in force on {date}. A post that changes during the school year has another degree before and after.",
+      "noTarget": "No target",
+      "teachers": {
+        "title": "Teachers",
+        "description": "Teaching according to the staffing, in hours a week, and the number of pupils.",
+        "emptyTitle": "No teachers with teaching",
+        "emptyBody": "Their key figures appear here once timplan rows have a teacher.",
+        "sortedBy": "Sorted by {column}, {direction, select, asc {ascending} other {descending}}.",
+        "caption": "Key figures per teacher"
+      },
+      "column": {
+        "teacher": "Teacher",
+        "teaching": "Teaching (h/week)",
+        "scheduled": "According to the schedule (h/week)",
+        "load": "Of target",
+        "pupils": "Pupils",
+        "qualified": "Qualified share",
+        "employment": "Employment degree"
+      },
+      "compare": {
+        "label": "Compare with the schedule",
+        "hint": "Adds the column According to the schedule: each teacher's teaching in the laid grundschema. It is counted only when you turn it on.",
+        "reading": "Counting the schedule's teaching …"
+      }
+    },
+    "cost": {
+      "notYoursTitle": "The cost is the school's economy",
+      "notYoursBody": "The cost basis is read by the rektor, a full administrator, anyone with HR access and the huvudman's reader.",
+      "loadFailed": "The cost basis could not be loaded",
+      "aggregateOnly": "You are reading the cost basis as sums per school part and grade. No teachers and no pupils are named.",
+      "basis": "Teaching time according to the staffing times the school's hourly cost: {rates}.",
+      "noRates": "no hourly cost is stated yet",
+      "substitutesOver": "Held cover lessons are counted from {from} to {to}.",
+      "noSubstitutes": "No held cover lessons are counted.",
+      "title": "Cost per pupil",
+      "description": "Each row's hours are shared equally by the row's pupils, each in their own grade. Duties are not included; they are in the payroll basis.",
+      "download": "Download CSV",
+      "caption": "Cost basis per school part and grade",
+      "column": {
+        "where": "School part and grade",
+        "pupils": "Pupils",
+        "hours": "{category} (h)",
+        "perPupil": "Teacher time per pupil (h)",
+        "cost": "Cost",
+        "costPerPupil": "Cost per pupil"
+      },
+      "partDetail": "account {account}, grades {span}",
+      "grade": "Grade {grade}",
+      "noPart": "No school part",
+      "noGrade": "no grade",
+      "whole": "The whole school",
+      "unknown": "Unknown",
+      "unknownCost": "The school has no hourly cost for one of the categories that have hours here.",
+      "noPupils": "No pupils in the grade."
+    },
+    "payroll": {
+      "periodTitle": "Period",
+      "periodDescription": "The payroll month, or at most 93 days. The basis is counted for the period when you show it.",
+      "from": "From",
+      "to": "To",
+      "show": "Show basis",
+      "noPeriodTitle": "Choose a period",
+      "noPeriodBody": "The payroll basis is counted one period at a time and shown only when you ask for it.",
+      "notYoursTitle": "The payroll basis is HR data",
+      "notYoursBody": "The payroll basis holds each person's time and employment degree. It is read by the rektor, a full administrator or anyone with HR access.",
+      "loadFailed": "The payroll basis could not be loaded",
+      "title": "Payroll basis {from} – {to}",
+      "description": "{people} people with time in the period, per school part. Teaching is held lessons, cover the hour export's, and duties are shared across the person's school parts.",
+      "csv": "CSV for Excel",
+      "xlsx": "Excel",
+      "downloaded": "{file} was downloaded.",
+      "emptyTitle": "No time in the period",
+      "emptyBody": "No teaching, no duties and no cover were found in the period.",
+      "caption": "Payroll basis per person and school part",
+      "column": {
+        "person": "Person",
+        "part": "School part",
+        "account": "Account",
+        "teaching": "Teaching (h)",
+        "duty": "Duties (h)",
+        "substitute": "Cover (h)",
+        "total": "Total (h)"
+      },
+      "pool": "substitute pool",
+      "noPart": "Not allocated"
+    },
+    "settings": {
+      "deciders": "School parts and hourly costs are changed by the rektor and a full administrator. You can read them.",
+      "parts": {
+        "title": "School parts",
+        "description": "A school part is a cost centre with an account and the grades it holds, for example F–3, 4–6 and 7–9. Two school parts never share a grade, so a class belongs to at most one.",
+        "loadFailed": "The school parts could not be loaded",
+        "empty": "The school has no school parts yet.",
+        "caption": "The school's school parts",
+        "name": "Name",
+        "account": "Account",
+        "accountHint": "The account or cost centre that payroll is booked on.",
+        "grades": "Grades",
+        "actions": "Actions",
+        "remove": "Remove the school part {name}",
+        "add": "Add a school part",
+        "edit": "Change the school part",
+        "from": "First grade",
+        "to": "Last grade",
+        "preschool": "F (preschool class)",
+        "addButton": "Add",
+        "saved": "The school part was saved.",
+        "removed": "The school part was removed.",
+        "confirmTitle": "Remove the school part {name}?",
+        "confirmBody": "The cost basis and the payroll basis then show its grades without a school part. No salary or person changes."
+      },
+      "rates": {
+        "title": "Hourly cost per staff category",
+        "description": "The cost of an hour in each category, in kronor. It is the school's own figure for the category and nobody's salary: no individual salaries are stored.",
+        "loadFailed": "The hourly costs could not be loaded",
+        "invalid": "Enter kronor per hour, 0 to 100,000, at most two decimals.",
+        "saved": "The hourly cost for {category} was saved.",
+        "removed": "The hourly cost for {category} was removed.",
+        "unset": "Not stated",
+        "unit": "SEK/h",
+        "remove": "Remove",
+        "hint": {
+          "TEACHER": "Teaching by a teacher whom a qualification covers, and every teacher if the school has recorded no qualifications.",
+          "UNQUALIFIED_TEACHER": "Teaching by a teacher whom no recorded qualification covers.",
+          "SUBSTITUTE": "Held cover lessons, in clock hours."
+        }
+      }
     }
   },
   "lessonMoves": {

@@ -51,6 +51,7 @@ import { ClassTeacherModule } from './class-teacher/class-teacher.module';
 import { ChecklistsModule } from './checklists/checklists.module';
 import { SchoolDayModule } from './school-day/school-day.module';
 import { ExamsModule } from './exams/exams.module';
+import { AnalysisModule } from './analysis/analysis.module';
 import { GallringModule } from './gallring/gallring.module';
 import { SchoolExportModule } from './school-export/school-export.module';
 import { AccessLogModule } from './access-log/access-log.module';
@@ -168,6 +169,7 @@ import type { ThrottleConfig } from './config/configuration';
     SchoolDayModule,
     ExamsModule,
     ClassTeacherModule,
+    AnalysisModule,
     AccessLogModule,
     OpenApiModule,
     SchoolUnitsModule,

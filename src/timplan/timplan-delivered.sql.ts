@@ -111,12 +111,20 @@ export interface DeliveredWindow {
  *             moved off and a school with no move has the rows it always had;
  *             every other statement, the default included, is without the
  *             column and byte for byte what it was.
+ *   endedBy   an instant: only lessons that ENDED at or before it (Analys och
+ *             planering, the löneunderlag of a person who has left: a lesson
+ *             counts to its teacher only if the teacher had not left when it
+ *             was over, `endsAt <= deactivatedAt`, D6's rule). A condition on
+ *             which rows are asked about, like `range`, and no part of the
+ *             classification; absent, the statement is without it and byte for
+ *             byte what it was.
  */
 export interface DeliveredOptions {
   subjects?: 'timplan' | 'all';
   audience?: 'full' | 'groups' | 'none';
   range?: { from: string; to: string };
   movedOff?: boolean;
+  endedBy?: Date;
 }
 
 /** The classification, as a CTE body; see the header. */
@@ -143,6 +151,9 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
            ARRAY(SELECT m."studentId" FROM "LessonPupilMoves" m
                   WHERE m."fromLessonId" = cl."id" AND m."schoolId" = cl."schoolId" ORDER BY 1) AS "movedOffIds"`
       : Prisma.empty;
+  // Only the lessons over by an instant (see DeliveredOptions): nothing is added when it is not asked for.
+  const endedBy = options.endedBy ? Prisma.sql`
+       AND cl."endsAt" <= ${options.endedBy}::timestamptz` : Prisma.empty;
   // Rule 5, or every subject. The default spells the line P3 wrote.
   const counted = options.subjects === 'all' ? Prisma.sql`AND TRUE` : Prisma.sql`AND s."countsTowardTimplan"`;
   // Asked only of a CANCELLED row, past or ahead: one test, written once.
@@ -181,7 +192,7 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
       JOIN "Subjects" s ON s."id" = cl."subjectId"
      WHERE g."academicYearId" = ${academicYearId}::uuid
        ${counted}
-       AND cl."date" BETWEEN ${from}::date AND ${to}::date
+       AND cl."date" BETWEEN ${from}::date AND ${to}::date${endedBy}
   `;
 }
 
@@ -371,14 +382,20 @@ export function datesStatement(window: DeliveredWindow, dates: string[]): Prisma
  * `own` narrows T and C to one teacher (a TEACHER's own row) and drops G. The
  * teacher test of the CASE stays its correlated EXISTS; the rows here are
  * found by the (calendarLessonId, teacherId) unique index.
+ *
+ * `endedBy` (an instant) narrows the lessons asked about to those over by it
+ * (DeliveredOptions): the löneunderlag asks for a person who has left with
+ * `own` = the person and `endedBy` = the moment they were deactivated. Absent,
+ * the statement is byte for byte what it was.
  */
 export function staffingCreditStatement(
   window: DeliveredWindow,
   range: { from: string; to: string },
   own: string | null,
   published: PublishedKey | null = null,
+  endedBy: Date | null = null,
 ): Prisma.Sql {
-  const lessons = deliveredLessons(window, { subjects: 'all', audience: 'groups', range });
+  const lessons = deliveredLessons(window, { subjects: 'all', audience: 'groups', range, ...(endedBy === null ? {} : { endedBy }) });
   const ownTeacher = own === null ? Prisma.empty : Prisma.sql`WHERE t."teacherId" = ${own}::uuid`;
   const ownSlot = own === null ? Prisma.empty : Prisma.sql`AND s."person" = ${own}::uuid`;
   const groups =

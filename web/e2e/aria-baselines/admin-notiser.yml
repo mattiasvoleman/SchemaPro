@@ -124,6 +124,9 @@
         - link "Rapporteringsgrad":
           - /url: /sv/admin/reporting-rate
       - listitem:
+        - link "Analys och planering":
+          - /url: /sv/admin/analysis
+      - listitem:
         - link "Kvittens":
           - /url: /sv/admin/acknowledgements
       - listitem:
