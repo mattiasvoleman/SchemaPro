@@ -105,7 +105,12 @@ export class ResourcesService {
   async update(id: string, dto: UpdateResourceDto, user: AuthenticatedUser): Promise<ResourceResponse> {
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        if (dto.quantity !== undefined) await this.assertQuantityHolds(tx, id, dto.quantity);
+        if (dto.quantity !== undefined) {
+          // The booking trigger judges a booking against the quantity under this lock (one per resource); without it a
+          // booking written while the quantity is cut would be counted against the old quantity after the cut.
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`ResourceBookings:${id}`}, 0))`;
+          await this.assertQuantityHolds(tx, id, dto.quantity);
+        }
         const row = await tx.resource.update({
           where: { id },
           data: {

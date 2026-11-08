@@ -7,6 +7,7 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { rawSql } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import { ResourcesService } from './resources.service';
 
@@ -287,6 +288,27 @@ describe('ResourcesService', () => {
         tx.resource.update.mockResolvedValue(row({ quantity: 1 }));
 
         await expect(service.update(TABLETS, { quantity: 1 }, testUser())).resolves.toEqual(answer({ quantity: 1 }));
+      });
+
+      it('takes the resource’s advisory lock, the one the booking trigger takes, before it reads the bookings', async () => {
+        tx.resource.update.mockResolvedValue(row({ quantity: 20 }));
+
+        await service.update(TABLETS, { quantity: 20 }, testUser());
+
+        expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+        const call = tx.$executeRaw.mock.calls[0]!;
+        expect(rawSql(call)).toContain('pg_advisory_xact_lock(hashtextextended(');
+        expect(call.slice(1)).toEqual([`ResourceBookings:${TABLETS}`]);
+        expect(tx.$executeRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx.resourceBooking.findMany.mock.invocationCallOrder[0]!);
+        expect(tx.resourceBooking.findMany.mock.invocationCallOrder[0]!).toBeLessThan(tx.resource.update.mock.invocationCallOrder[0]!);
+      });
+
+      it('takes no lock when the quantity is not what changes', async () => {
+        tx.resource.update.mockResolvedValue(row());
+
+        await service.update(TABLETS, { place: 'Skåp 4' }, testUser());
+
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
       });
 
       it('counts a booking that is running now, since it holds until it ends', async () => {
