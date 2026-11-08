@@ -97,6 +97,11 @@ function yearScopedModels(dmmfModels: readonly DmmfModel[] = models): Set<string
 }
 
 describe('the rollover registry', () => {
+  it("carries a post's Löne-id when it has one, as the signature goes on (20270206090000)", () => {
+    const post = ROLLOVER_REGISTRY['TeacherEmployment'] as Extract<Disposition, { columns: object }>;
+    expect(post.columns['payrollNumber']).toBe('COPY_UNLESS_DEFAULT');
+  });
+
   it('finds the year-scoped tables it is meant to find (the parser still parses)', () => {
     const set = yearScopedModels();
     // One of each source, so a schema reformat that blinds the parser fails here

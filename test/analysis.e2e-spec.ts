@@ -122,7 +122,7 @@ describe('/api/v1/analysis (e2e)', () => {
     it('hands over the payroll file as JSON with the bytes in base64, named by its period', async () => {
       const csv = await send('post', '/payroll-basis/export', asUser({}), { academicYearId: YEAR, from: '2026-11-01', to: '2026-11-30', format: 'CSV' }).expect(201);
       expect(csv.body).toMatchObject({ filename: 'loneunderlag-2026-11-01-2026-11-30.csv', contentType: 'text/csv; charset=windows-1252', protectedInFile: 0 });
-      expect(Buffer.from(csv.body.contentBase64, 'base64').toString('latin1')).toMatch(/^Signatur;Efternamn/);
+      expect(Buffer.from(csv.body.contentBase64, 'base64').toString('latin1')).toMatch(/^Signatur;Efternamn;Förnamn;E-post;[^\r]*;Från;Till;Löne-id\r\n/);
       const xlsx = await send('post', '/payroll-basis/export', asUser({}), { academicYearId: YEAR, from: '2026-11-01', to: '2026-11-30', format: 'XLSX' }).expect(201);
       expect(Buffer.from(xlsx.body.contentBase64, 'base64').subarray(0, 2).toString('latin1')).toBe('PK');
     });

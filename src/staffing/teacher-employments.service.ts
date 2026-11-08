@@ -129,8 +129,8 @@ export function toEmploymentResponse(
 
 /**
  * The post's columns a PUT that leaves them out keeps (employmentData):
- * SCB's three (20261111090000), deltid in days (20261123090000) and the limit
- * on teaching in a row (20261218090000).
+ * SCB's three (20261111090000), deltid in days (20261123090000), the limit
+ * on teaching in a row (20261218090000) and Löne-id (20270206090000).
  */
 const KEPT_WHEN_ABSENT = [
   'employmentForm',
@@ -139,6 +139,7 @@ const KEPT_WHEN_ABSENT = [
   'maxTeachingDaysPerWeek',
   'maxConsecutiveTeachingMinutes',
   'consecutiveBreakMinutes',
+  'payrollNumber',
 ] as const;
 
 /** Every read of a post includes its periods, by Från. */
@@ -429,6 +430,7 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
   maxTeachingDaysPerWeek?: number | null;
   maxConsecutiveTeachingMinutes?: number | null;
   consecutiveBreakMinutes?: number | null;
+  payrollNumber?: string | null;
 } {
   const reductionPercent = dto.reductionPercent ?? 0;
   if (reductionPercent > dto.employmentPercent) {
@@ -470,6 +472,8 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
       ? { maxConsecutiveTeachingMinutes: dto.maxConsecutiveTeachingMinutes }
       : {}),
     ...(dto.consecutiveBreakMinutes !== undefined ? { consecutiveBreakMinutes: dto.consecutiveBreakMinutes } : {}),
+    // Löne-id (20270206090000), the same way and for the same reason; blank is null, as the DTO makes it.
+    ...(dto.payrollNumber !== undefined ? { payrollNumber: dto.payrollNumber?.trim() || null } : {}),
   };
 }
 

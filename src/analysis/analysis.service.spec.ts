@@ -8,6 +8,7 @@ import { readLoadInput } from '../staffing/load-input';
 import { readPlannedInput } from '../timplan/timplan-coverage.service';
 import { readPublishedSpans } from '../timplan/timplan-delivered.sql';
 import { buildTeacherLoadReport } from '../staffing/teacher-load';
+import { readXlsx } from '../schedule-exchange/xlsx';
 import { ANALYSIS_COST_NOT_YOURS, ANALYSIS_RANGE, AnalysisService } from './analysis.service';
 import { ANNA, BO, CY, MA, groups, pupils, schoolInput } from './__fixtures__/school';
 
@@ -336,12 +337,23 @@ describe('AnalysisService', () => {
         credit({ kind: 'G', personId: null, role: null, minutes: 77 }),
         credit({ bucket: 'CANCELLED_MANUAL', minutes: 55 }),
       ]);
-      tx.user.findMany.mockResolvedValue([
+      // The register as a database answers it: the rows asked for and no others, and nobody inactive.
+      const register = [
         { id: ANNA, firstName: 'Anna', lastName: 'Åkesson', email: 'anna@example.invalid' },
         { id: BO, firstName: 'Bo', lastName: 'Berg', email: 'bo@example.invalid' },
         { id: CY, firstName: 'Cy', lastName: 'Ceder', email: 'cy@example.invalid' },
-      ]);
+      ];
+      tx.user.findMany.mockImplementation(async (args?: { where?: { id?: { in?: string[] }; isActive?: boolean } }) =>
+        args?.where?.isActive === false ? [] : register.filter((person) => args?.where?.id?.in?.includes(person.id) ?? true),
+      );
       tx.substitutePoolMember.findMany.mockResolvedValue([{ userId: 'pool-1' }]);
+      // The codes the marks wrote (PayrollPseudonyms, 20270206091000). No Löne-id is written unless a test says so.
+      tx.payrollPseudonym.findMany.mockResolvedValue([
+        { userId: BO, number: 7 },
+        { userId: CY, number: 12 },
+        { userId: 'pool-1', number: 9 },
+        { userId: 'pool-2', number: 4 },
+      ]);
       cover.hours.mockResolvedValue(
         hours({ rows: [coverRow({ userId: 'pool-1', minutes: 45 }), coverRow({ lessonId: 'l2', userId: BO, minutes: 45, studentGroupId: 'g8a' })] }),
       );
@@ -415,9 +427,57 @@ describe('AnalysisService', () => {
       expect(result.protectedInAnswer).toBe(1);
       expect(result.people.some((person) => person.userId === BO)).toBe(true);
       expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_IN_FILE', params: { people: 1 } });
+      // He has no Löne-id: he stands by his code, and the answer says how many do.
+      expect(result.protectedWithoutPayrollNumber).toBe(1);
+      expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER', params: { people: 1 } });
       const reads = recordedReads(tx);
       expect(reads.map((read) => read.kind)).toEqual(['EMPLOYMENT', 'PEOPLE']);
       expect(reads[0]!.ids.sort()).toEqual([ANNA, BO, CY, 'pool-1'].sort());
+    });
+
+    it("says per person the post's signature and Löne-id, whether the school has marked them and a marked person's code, and no name", async () => {
+      tx.personProtection.findMany.mockResolvedValue([{ userId: BO }, { userId: CY }]);
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        { userId: ANNA, payrollNumber: '4711' },
+        { userId: CY, payrollNumber: '8800' },
+      ]);
+      const result = await service.payrollBasis(query, rektor());
+      expect(result.people.map((person) => [person.userId, person.signature, person.payrollNumber, person.protectedIdentity, person.pseudonym])).toEqual([
+        [ANNA, 'ANN', '4711', false, null],
+        // Marked without a Löne-id: the code. Marked with one: booked on the number, and no code is handed.
+        [BO, 'BOO', null, true, 'SKYDDAD-7'],
+        [CY, 'CYY', '8800', true, null],
+        // Not marked: no code, though a vikarie of the pool has no Löne-id either.
+        ['pool-1', null, null, false, null],
+      ]);
+      expect(result.protectedWithoutPayrollNumber).toBe(1);
+      expect(JSON.stringify(result)).not.toMatch(/Berg|Åkesson|Ceder|example\.invalid/);
+      // The screen's answer reads no name at all.
+      expect(tx.user.findMany.mock.calls.every(([args]) => (args as { where: { isActive?: boolean } }).where.isActive === false)).toBe(true);
+      // The year's Löne-id in one read, the codes in another.
+      expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
+        where: { schoolId: expect.any(String), academicYearId: YEAR_ID, payrollNumber: { not: null } },
+        select: { userId: true, payrollNumber: true },
+      });
+      expect(tx.payrollPseudonym.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.payrollPseudonym.findMany).toHaveBeenCalledWith({ where: { schoolId: expect.any(String) }, select: { userId: true, number: true } });
+    });
+
+    it('asks for no code when nobody is marked', async () => {
+      const result = await service.payrollBasis(query, rektor());
+      expect(tx.payrollPseudonym.findMany).not.toHaveBeenCalled();
+      expect(result.people.every((person) => person.pseudonym === null)).toBe(true);
+      expect(result.protectedWithoutPayrollNumber).toBe(0);
+    });
+
+    it('says how many marked people have no Löne-id and stand by their code', async () => {
+      tx.personProtection.findMany.mockResolvedValue([{ userId: 'pool-1' }, { userId: BO }]);
+      tx.teacherEmployment.findMany.mockResolvedValue([{ userId: BO, payrollNumber: '8800' }]);
+      const result = await service.payrollBasis(query, rektor());
+      expect(result.protectedInAnswer).toBe(2);
+      expect(result.protectedWithoutPayrollNumber).toBe(1);
+      expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_IN_FILE', params: { people: 2 } });
+      expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER', params: { people: 1 } });
     });
 
     it('says what is missing: nothing published, covers to check, uppdrag on no skoldel', async () => {
@@ -587,13 +647,25 @@ describe('AnalysisService', () => {
         expect(result.contentType).toBe('text/csv; charset=windows-1252');
         const text = new TextDecoder('windows-1252').decode(Buffer.from(result.contentBase64, 'base64'));
         const lines = text.split('\r\n').filter(Boolean);
-        expect(lines[0]).toBe('Signatur;Efternamn;Förnamn;E-post;Typ;Tjänstgöringsgrad (%);Skoldel;Konto;Undervisning (min);Uppdrag (min);Vikariepass (min);Totalt (tim);Från;Till');
+        expect(lines[0]).toBe(
+          'Signatur;Efternamn;Förnamn;E-post;Typ;Tjänstgöringsgrad (%);Skoldel;Konto;Undervisning (min);Uppdrag (min);Vikariepass (min);Totalt (tim);Från;Till;Löne-id',
+        );
         // Åkesson sorts after Berg and Ceder in Swedish; the vikarie pool member has no name row and sorts first.
         expect(lines.slice(1).map((line) => line.split(';')[1])).toEqual(['', 'Berg', 'Ceder', 'Åkesson']);
-        expect(lines.find((line) => line.startsWith('ANN;'))).toBe('ANN;Åkesson;Anna;anna@example.invalid;Personal;100;Högstadiet;4030;720;0;0;12,00;2026-11-02;2026-11-27');
+        expect(lines.find((line) => line.startsWith('ANN;'))).toBe('ANN;Åkesson;Anna;anna@example.invalid;Personal;100;Högstadiet;4030;720;0;0;12,00;2026-11-02;2026-11-27;');
+        expect(lines.find((line) => line.startsWith('BOO;'))).toBe('BOO;Berg;Bo;bo@example.invalid;Personal;50;Högstadiet;4030;0;0;45;0,75;2026-11-02;2026-11-27;');
         expect(lines.find((line) => line.includes('Vikariepool'))).toContain(';Vikariepool;;');
         expect(result.protectedInFile).toBe(0);
+        expect(result.protectedWithoutPayrollNumber).toBe(0);
         expect(result.notices.map((notice) => notice.code)).not.toContain('ANALYSIS_CHARACTERS_REPLACED');
+      });
+
+      it('fills Löne-id for everyone the school has written one for, the unmarked too', async () => {
+        tx.teacherEmployment.findMany.mockResolvedValue([{ userId: ANNA, payrollNumber: '4711' }]);
+        const result = await service.payrollFile({ ...query, format: 'CSV' }, rektor());
+        const lines = new TextDecoder('windows-1252').decode(Buffer.from(result.contentBase64, 'base64')).split('\r\n').filter(Boolean);
+        expect(lines.find((line) => line.startsWith('ANN;'))).toBe('ANN;Åkesson;Anna;anna@example.invalid;Personal;100;Högstadiet;4030;720;0;0;12,00;2026-11-02;2026-11-27;4711');
+        expect(lines.find((line) => line.startsWith('CYY;'))!.endsWith(';')).toBe(true);
       });
 
       it('says how many people with a protected identity are in the file, by name and not by count alone', async () => {
@@ -601,8 +673,141 @@ describe('AnalysisService', () => {
         const result = await service.payrollFile({ ...query, format: 'CSV' }, rektor());
         expect(result.protectedInFile).toBe(1);
         expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_IN_FILE', params: { people: 1 } });
-        // Payroll pays everyone: the person is in the file.
-        expect(new TextDecoder('windows-1252').decode(Buffer.from(result.contentBase64, 'base64'))).toContain('bo@example.invalid');
+      });
+
+      describe('a person with a protected identity', () => {
+        const csvOf = async (marks: string[], format: 'CSV' = 'CSV') => {
+          tx.personProtection.findMany.mockResolvedValue(marks.map((userId) => ({ userId })));
+          const result = await service.payrollFile({ ...query, format }, rektor());
+          return { result, lines: new TextDecoder('windows-1252').decode(Buffer.from(result.contentBase64, 'base64')).split('\r\n').filter(Boolean) };
+        };
+
+        it('is in the CSV by signature and Löne-id and every figure, with no name and no e-mail, and the others stand as before', async () => {
+          tx.teacherEmployment.findMany.mockResolvedValue([
+            { userId: BO, payrollNumber: '8800' },
+            { userId: ANNA, payrollNumber: '4711' },
+          ]);
+          const { result, lines } = await csvOf([BO]);
+          // Payroll pays everyone: his row is there, with the post's signature and his Löne-id, no name and no e-mail.
+          expect(lines.find((line) => line.startsWith('BOO;'))).toBe('BOO;;;;Personal;50;Högstadiet;4030;0;0;45;0,75;2026-11-02;2026-11-27;8800');
+          expect(lines.join('\n')).not.toMatch(/Berg|\bBo\b|bo@example\.invalid|SKYDDAD/);
+          // Everyone else is named as before, with a Löne-id where one is written.
+          expect(lines.find((line) => line.startsWith('ANN;'))).toBe('ANN;Åkesson;Anna;anna@example.invalid;Personal;100;Högstadiet;4030;720;0;0;12,00;2026-11-02;2026-11-27;4711');
+          expect(lines.find((line) => line.startsWith('CYY;'))).toContain('CYY;Ceder;Cy;cy@example.invalid;Personal;80;');
+          expect(result.protectedInFile).toBe(1);
+          expect(result.protectedWithoutPayrollNumber).toBe(0);
+          expect(result.notices.map((notice) => notice.code)).not.toContain('ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER');
+          // His name is not even read: the names are asked for the unmarked alone.
+          const asked = tx.user.findMany.mock.calls.map(([args]) => args as { where: { id?: { in?: string[] } } }).find((args) => args.where.id?.in !== undefined && !('isActive' in args.where));
+          expect([...asked!.where.id!.in!].sort()).toEqual([ANNA, CY, 'pool-1'].sort());
+        });
+
+        it('stands by his code where he has no Löne-id, the same code in the CSV and the workbook, and the file says so', async () => {
+          const { result, lines } = await csvOf([BO]);
+          expect(lines.find((line) => line.startsWith('BOO;'))).toBe('BOO;;;;Personal;50;Högstadiet;4030;0;0;45;0,75;2026-11-02;2026-11-27;SKYDDAD-7');
+          expect(result.protectedWithoutPayrollNumber).toBe(1);
+          expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER', params: { people: 1 } });
+          const xlsx = await service.payrollFile({ ...query, format: 'XLSX' }, rektor());
+          expect(readXlsx(Buffer.from(xlsx.contentBase64, 'base64')).rows.find((cells) => cells[0] === 'BOO')!.at(-1)).toBe('SKYDDAD-7');
+          expect(xlsx.protectedWithoutPayrollNumber).toBe(1);
+        });
+
+        it('is in the workbook the same way', async () => {
+          tx.teacherEmployment.findMany.mockResolvedValue([{ userId: BO, payrollNumber: '8800' }]);
+          tx.personProtection.findMany.mockResolvedValue([{ userId: BO }]);
+          const result = await service.payrollFile({ ...query, format: 'XLSX' }, rektor());
+          const read = readXlsx(Buffer.from(result.contentBase64, 'base64'));
+          expect(read.rows.find((cells) => cells[0] === 'BOO')).toEqual(['BOO', '', '', '', 'Personal', '50', 'Högstadiet', '4030', '0', '0', '45', '0.75', '2026-11-02', '2026-11-27', '8800']);
+          expect(read.rows.find((cells) => cells[0] === 'ANN')!.slice(0, 4)).toEqual(['ANN', 'Åkesson', 'Anna', 'anna@example.invalid']);
+          expect(JSON.stringify(read.rows)).not.toMatch(/Berg|bo@example\.invalid/);
+          expect(result.protectedInFile).toBe(1);
+        });
+
+        it('stands after the named, the marked in the order of their signatures', async () => {
+          const input = schoolInput();
+          // Cy's signature sorts before Bo's although his id sorts after: the signature decides.
+          input.employments = input.employments.map((post) => (post.userId === CY ? { ...post, signature: 'ACY' } : post));
+          (readLoadInput as jest.Mock).mockResolvedValue({ year: { startDate: '2026-08-17', endDate: '2027-06-11' }, input });
+          const { result, lines } = await csvOf([BO, CY]);
+          expect(lines.slice(1).map((line) => line.split(';').slice(0, 2))).toEqual([
+            ['', ''],
+            ['ANN', 'Åkesson'],
+            ['ACY', ''],
+            ['BOO', ''],
+          ]);
+          expect(result.protectedInFile).toBe(2);
+        });
+
+        describe('two vikarier of the pool, both marked, with no post and so no signature and no Löne-id', () => {
+          beforeEach(() => {
+            tx.schoolPart.findMany.mockResolvedValue([
+              { id: 'seven', name: 'Sjuan', account: '4007', gradeFrom: 7, gradeTo: 7 },
+              { id: 'eight', name: 'Åttan', account: '4008', gradeFrom: 8, gradeTo: 9 },
+            ]);
+            tx.substitutePoolMember.findMany.mockResolvedValue([{ userId: 'pool-1' }, { userId: 'pool-2' }]);
+            // The same two passes each, one in each skoldel: nothing in the figures tells them apart.
+            cover.hours.mockResolvedValue(
+              hours({
+                rows: [
+                  coverRow({ lessonId: 'a1', userId: 'pool-1', minutes: 60, studentGroupId: 'g7a' }),
+                  coverRow({ lessonId: 'a2', userId: 'pool-1', minutes: 60, studentGroupId: 'g8a' }),
+                  coverRow({ lessonId: 'b1', userId: 'pool-2', minutes: 60, studentGroupId: 'g7a' }),
+                  coverRow({ lessonId: 'b2', userId: 'pool-2', minutes: 60, studentGroupId: 'g8a' }),
+                ],
+              }),
+            );
+          });
+          const marked = (lines: string[]) =>
+            lines.filter((line) => line.includes('Vikariepool')).map((line) => [line.split(';')[6], line.split(';').at(-1)]);
+
+          it('stand by codes of their own, so that no two rows of figures are one and the same', async () => {
+            const { result, lines } = await csvOf(['pool-1', 'pool-2']);
+            // pool-2's code (4) sorts before pool-1's (9); each person's rows together, in skoldel order.
+            expect(marked(lines)).toEqual([
+              ['Sjuan', 'SKYDDAD-4'],
+              ['Åttan', 'SKYDDAD-4'],
+              ['Sjuan', 'SKYDDAD-9'],
+              ['Åttan', 'SKYDDAD-9'],
+            ]);
+            expect(result.protectedWithoutPayrollNumber).toBe(2);
+          });
+
+          it('stand in the order of their codes as numbers, SKYDDAD-9 before SKYDDAD-10, as the page orders them', async () => {
+            tx.payrollPseudonym.findMany.mockResolvedValue([
+              { userId: 'pool-1', number: 10 },
+              { userId: 'pool-2', number: 9 },
+            ]);
+            const { lines } = await csvOf(['pool-1', 'pool-2']);
+            expect(marked(lines).map(([, code]) => code)).toEqual(['SKYDDAD-9', 'SKYDDAD-9', 'SKYDDAD-10', 'SKYDDAD-10']);
+          });
+
+          it("keep each person's rows together where two of them share every key (no code), and the file says they have none", async () => {
+            // A marked person with no code is the fault the mark's trigger exists to prevent: said on its own.
+            tx.payrollPseudonym.findMany.mockResolvedValue([]);
+            const { result, lines } = await csvOf(['pool-1', 'pool-2']);
+            const rows = lines.filter((line) => line.includes('Vikariepool'));
+            expect(rows.map((line) => line.split(';')[6])).toEqual(['Sjuan', 'Åttan', 'Sjuan', 'Åttan']);
+            expect(rows.every((line) => line.endsWith(';'))).toBe(true);
+            expect(result.protectedInFile).toBe(2);
+            expect(result.protectedWithoutPayrollNumber).toBe(0);
+            expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_WITHOUT_ID', params: { people: 2 } });
+            expect(result.notices.map((notice) => notice.code)).not.toContain('ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER');
+          });
+
+          it('say one of them stands by a code and the other has none, each in its own notice', async () => {
+            tx.payrollPseudonym.findMany.mockResolvedValue([{ userId: 'pool-1', number: 9 }]);
+            const { result } = await csvOf(['pool-1', 'pool-2']);
+            expect(result.protectedWithoutPayrollNumber).toBe(1);
+            expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER', params: { people: 1 } });
+            expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_WITHOUT_ID', params: { people: 1 } });
+          });
+        });
+
+        it('is never asked a name for when everyone in the file is marked', async () => {
+          tx.user.findMany.mockClear();
+          await csvOf([ANNA, BO, CY, 'pool-1']);
+          expect(tx.user.findMany.mock.calls.every(([args]) => (args as { where: { isActive?: boolean } }).where.isActive === false)).toBe(true);
+        });
       });
 
       it('says how many characters 1252 could not hold', async () => {
@@ -623,7 +828,7 @@ describe('AnalysisService', () => {
         tx.user.findMany.mockResolvedValue([]);
         const result = await service.payrollFile({ ...query, format: 'CSV' }, rektor());
         const text = new TextDecoder('windows-1252').decode(Buffer.from(result.contentBase64, 'base64'));
-        expect(text).toContain(';;;;Vikariepool;');
+        expect(text).toContain('\r\n;;;;Vikariepool;');
       });
     });
   });

@@ -210,6 +210,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('ClassTeacherAppointments', ['userId', 'schoolId'], 'CASCADE', others),
   // Skyddad identitet (20270107090000): the mark goes with the person, counted like any other row.
   key('PersonProtections', ['userId', 'schoolId'], 'CASCADE', others),
+  // Skyddad identitet i löneunderlaget (20270206091000): the marked person's code goes with them, as their mark does.
+  key('PayrollPseudonyms', ['userId', 'schoolId'], 'CASCADE', others),
   // Rapporteringsgrad (20270112090100): a teacher's held and reported lessons per day, counted like any
   // other row a person holds. The ledger of the lessons they were reminded of is read by no role at all
   // (only app.reporting_remind touches it, and the API role holds no grant on it), so a dry run under an

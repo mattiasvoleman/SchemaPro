@@ -838,6 +838,13 @@ export interface TeacherEmployment {
   /** Lärarsignatur, 1..8 characters, unique per school and year where set. */
   signature: string | null;
   note: string | null;
+  /**
+   * Löne-id (20270206090000): the payroll system's own number for the
+   * anställning, which the löneunderlag's Löne-id column carries. HR data:
+   * null, with hrHidden, for a reader without HR-läs. Absent from a gateway
+   * before it.
+   */
+  payrollNumber?: string | null;
   /** True when the gateway left tjänst % and nedsättning out for this reader. */
   hrHidden?: true;
   /**

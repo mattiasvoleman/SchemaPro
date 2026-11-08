@@ -59,6 +59,10 @@ export const EMPLOYMENT_FIELDS = [
   'maxConsecutiveTeachingMinutes',
   'consecutiveBreakMinutes',
   'signature',
+  // Löne-id (20270206090000), beside the signature: the post's other name in
+  // another system. HR data, left out whole by hideHrChanges for a reader
+  // without HR-läs.
+  'payrollNumber',
   'noteChanged',
 ] as const;
 

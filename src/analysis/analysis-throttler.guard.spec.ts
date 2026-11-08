@@ -16,7 +16,7 @@ describe('AnalysisThrottlerGuard', () => {
       }),
     }) as unknown as ExecutionContext;
 
-  it('keeps the limits DEPLOYMENT.md §16.3 states: 20 a minute for a login and route, 600 for an address', () => {
+  it('keeps the limits DEPLOYMENT.md §16.4 states: 20 a minute for a login and route, 600 for an address', () => {
     expect(PER_LOGIN).toEqual({ limit: 20, ttl: 60_000 });
     expect(PER_ADDRESS).toEqual({ limit: 600, ttl: 60_000 });
   });

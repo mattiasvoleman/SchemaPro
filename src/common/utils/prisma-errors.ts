@@ -596,6 +596,9 @@ const NAMED_CHECKS: Record<string, string> = {
     'consecutiveBreakMinutes: pausen som avslutar en följd är 5 till 120 minuter, i femminuterssteg.',
   TeacherEmployments_consecutive_is_a_pair_check:
     'maxConsecutiveTeachingMinutes: gränsen för undervisning i följd och pausen anges tillsammans, eller ingen av dem.',
+  // Löne-id (20270206090000): the DTO trims and makes blank null; this is a writer that went around it.
+  TeacherEmployments_payrollNumber_check:
+    'payrollNumber: Löne-id är 1 till 30 tecken, utan mellanslag först eller sist och utan radbrytningar.',
   TeacherWorkRules_maxTeachingMinutesPerDay_check:
     'maxTeachingMinutesPerDay: dagstaket är 30 till 720 minuter, i femminuterssteg.',
   TeacherWorkRules_preferredFreeDayOfWeek_check:
