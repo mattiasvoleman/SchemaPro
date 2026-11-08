@@ -4522,3 +4522,87 @@ and no job, notice or setting is added.
   notice. The Excel file keeps every character.
 - Rolling back the API past this release leaves two unused tables. Nothing
   else reads them.
+
+## 17. Leave policy ("Ledighetspolicy", K4)
+
+A school chooses how it receives a leave request from a family: every guardian's consent, the fewest days ahead, and a
+temporary contact during the leave. **All three are off for every school** until an administrator who decides records
+them under `/admin/leave` (Ledighetsansökningar; no row in `LeavePolicies` is all off), so deploying changes nothing a school sees.
+
+### 17.1 Deploy order
+
+- **Migrations first, then the merge.** 20270205090000 adds the `NotificationType` values `LEAVE_CONSENT_REQUESTED`,
+  `LEAVE_CONSENT_REMINDER` and `LEAVE_CONSENT_REFUSED` and the `LeaveRequestStatus` value `GUARDIAN_DECLINED` and nothing
+  else (a value cannot be used in the transaction that adds it; it takes no lock). 20270205091000 adds the tables
+  `LeavePolicies` and `LeaveConsents`, the enums `LeaveShortNotice` and `LeaveContactMode`, five columns on `LeaveRequests`
+  (`consentRequired`, `shortNotice` and the three of the contact; the defaults are constants, so adding them rewrites no row),
+  three CHECKs (added `NOT VALID` and validated at once), four triggers (`LeaveRequests_policy` before an insert,
+  `LeaveRequests_ask_guardians` after it, `LeaveRequests_gate` before an update, and the policy's stamp), seven functions
+  the API role runs and four the owner's alone, and `CREATE OR REPLACE` of `app.leave_request_refer`,
+  `app.leave_tell_mentors` and `app.leave_request_facts` (each is the body of 20261023091000 or 20261101090000 plus one
+  condition: a request that needs consent and lacks it is not the mentor's) and `ALTER POLICY` of the two mentor arms. No
+  existing row is touched. The file takes `Schools` and `Users` in SHARE ROW EXCLUSIVE and `LeaveRequests` in ACCESS
+  EXCLUSIVE, NOWAIT, together in a loop; if the three are not free at once in 30 s it stops with nothing changed
+  (`prisma migrate resolve --rolled-back 20270205091000_skolan_valjer_hur_en_ledighetsansokan_tas_emot`, then deploy
+  again). The API before the release reads `LeaveRequests` with explicit columns and writes the new ones as their defaults,
+  so it keeps working between the migration and the deploy.
+- **`gallring_due`, `gallring_purge` and `gallring_pseudonymise` are not touched.** A request is deleted whole by gallring
+  (LEAVE_REQUESTS, on its last day), and its `LeaveConsents` go with it by the key; the contact is columns of the request.
+  The md5 of the bodies stays `166943b0d5d22801fe9a1be96a722d95` (due), `2390088f88e967fda35af6d56e63d3f9` (purge) and
+  `6f18f62fc354bde849aa2e8b01eeceda` (pseudonymise), read on Postgres 16 and 17 alike.
+- **`LEAVE_CONSENT_BACKGROUND`** (`on` by default): the quarter-hourly pass `leave-consent` in `JobRuns`, see the table of
+  variables. `off` stops every reminder and the mentors' catch-up for a custody that ended; a guardian's answer, and the
+  mentor's notice that answer sends, go on.
+- **Rolling back the API** leaves the tables and functions unread. A request a guardian's no ended has the status
+  `GUARDIAN_DECLINED`, which the previous Prisma client cannot read (a model read of the row throws `Value
+  'GUARDIAN_DECLINED' not found in enum`). Before a revert, as the owner: `ALTER TABLE "LeaveRequests" DISABLE TRIGGER
+  "LeaveRequests_gate"; UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'GUARDIAN_DECLINED'; ALTER TABLE
+  "LeaveRequests" ENABLE TRIGGER "LeaveRequests_gate";` (the CHECK allows REJECTED with no decider). A school that never
+  recorded a policy has no such row.
+
+### 17.2 What is decided (for a conversation with the school)
+
+- *Consent is every guardian with active custody when the request was filed*, apart from whoever filed it (to apply is to
+  consent). A guardian linked later is not asked. A pupil who files for themselves, and an administrator who files for a
+  family that rang, ask every guardian. **Active custody is Kvittens' rule** (`app.ack_receipt_open`: a link and both
+  persons active): a guardian whose custody ended holds nothing up and cannot answer (409), and a yes given before stands.
+- *"Has its consent" is never stored.* `app.leave_consent_met_raw` is the one definition (nobody who can still answer
+  waits, and nobody said no), so a custody that ends clears a request in that moment and two answers at once have no
+  count to write wrong. Only a no is stored, as the request's end (`GUARDIAN_DECLINED`), in the transaction of the no.
+- *An answer is final.* The same answer again is no news; the other answer is a 409. A no ends the request: nobody
+  decides it, the mentor never hears of it, and whoever applied is told, without a name, that a guardian did not consent.
+  There is no withdrawal by the family in this release (follow-up): a request that waits for a guardian who never answers
+  waits until the school removes that guardian's link, which is the school's decision about custody, not this feature's.
+- *The administrator sees a request that waits, with the counts (asked, consented, waiting), never who, and cannot
+  decide it* (409 `LEAVE_AWAITING_CONSENT`, and the trigger `LeaveRequests_gate` on every other path). The mentor neither
+  reads it nor hears of it until it has its consent: the last yes tells the mentor in its own transaction, the job's pass
+  tells the mentor of a request a custody that ended cleared.
+- *A guardian never sees what another answered.* No role has any privilege on `LeaveConsents`; the functions answer a
+  guardian their own part only. The notice to the other guardian and the notice of a no say neither who applied nor who
+  refused, since separated guardians may hide from one another; the e-mail and the push name no child, no date and no reason.
+- *One reminder*, two days after the request, to each guardian who has not answered and can still answer, while the
+  request waits and the leave is not over. It is not a school setting (follow-up if a school wants another time).
+- *The minimum is counted in calendar days* from the school's own day to the first day, and holds for guardians and
+  pupils; an administrator is let through and the request is flagged, as a request is when the school chose FLAG. Both
+  the gateway (`GET /api/v1/leave-policy`, the form's code) and the trigger (every other path, PostgREST included) ask the
+  same function.
+- *The contact is a third party's data*, three columns on the request: read by whoever reads the request (the family that
+  wrote it, the administrator, the mentor who decides), by no other teacher (no other teacher reads any leave request),
+  never in a notice, a mail or a push. A mentor who does not decide a request (the school delegates nothing, or the leave
+  is longer than the limit) does not read the request either, so does not read its contact. A school that turns the
+  contact off drops one given by an older form. It goes with the request in gallring, is in `ledigheter.csv` and the
+  registerutdrag on the reason's terms (emptied in an extract about somebody else and where the name is a marked person),
+  and is counted with the request in the removal's dialog.
+- *The export format stays version 1*: five columns were appended to `ledigheter.csv`, which a reader by column name does
+  not notice.
+
+### 17.3 Operations
+
+- Requests that wait for a guardian more than a week: `SELECT r."schoolId", count(*) FROM "LeaveRequests" r WHERE
+  r."consentRequired" AND r."status" = 'PENDING' AND r."createdAt" < now() - interval '7 days' AND NOT
+  app.leave_consent_met_raw(r."id", r."schoolId") GROUP BY 1` (as the owner).
+- The pass: `SELECT "day", "runs", "failures", "counts", "lastFinishedAt" FROM "JobRuns" WHERE "job" = 'leave-consent'
+  ORDER BY "day" DESC LIMIT 5`; a day with nothing due counts `{notices: 0, reminded: 0}`.
+- Release note (in these words or others): *A school can now choose how it receives a leave request: that every guardian
+  must consent before it goes to a decision, the fewest days ahead, and a temporary contact during the leave. All three are
+  off until the school's administrator turns them on under Ledighetsansökningar.*
