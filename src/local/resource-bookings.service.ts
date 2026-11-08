@@ -19,7 +19,7 @@ import type { ResourceBookingResponse, ResourceBookingResult } from './local-typ
 
 /**
  * The trigger that keeps two active bookings of one resource to its quantity
- * (migration 20270131091000). It raises SQLSTATE 23P01, which the pg driver
+ * (migration 20270204091000). It raises SQLSTATE 23P01, which the pg driver
  * adapter has no Prisma code for, so it arrives as an unknown-code error with
  * PostgreSQL's message, and the constraint's name in it is how it is recognised.
  */

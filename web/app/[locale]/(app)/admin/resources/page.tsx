@@ -7,7 +7,7 @@ import { ResourceTypesCard } from "./resource-types-card";
 import { ResourcesCard } from "./resources-card";
 
 /**
- * Resurser (20270131091000): what the school lends out that is not a lokal,
+ * Resurser (20270204091000): what the school lends out that is not a lokal,
  * the kinds it has named and the resources themselves. A teacher books them on
  * /teacher/resources, Drift decides the ones that need it on Lokalbokningar,
  * and an association can hire one by a series on Externa bokningar.

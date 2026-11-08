@@ -74,7 +74,7 @@
 -- ## Gallring
 --
 -- En extern bokning är personuppgifter om någon som inte är användare och har sin
--- egen gallringstyp, EXTERNAL_BOOKINGS (20270131090000): en serie gallras när den
+-- egen gallringstyp, EXTERNAL_BOOKINGS (20270204090000): en serie gallras när den
 -- slutat (slutdatum) eller avbokats för längre sedan än skolans tid, med sina dagar
 -- genom nyckeln. app.gallring_due och app.gallring_purge nedan är 20270117091000:s
 -- kroppar (de bär Kvittens, Krisläges, Rapporteringsgrads, Frånvarobevakningens,
@@ -108,7 +108,7 @@ BEGIN
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Schools, Users, Rooms, Sites and RoomBookings were not free at once in 30 s: nothing is changed. Prisma now holds this migration as failed, so run "prisma migrate resolve --rolled-back 20270131091000_en_forening_hyr_en_sal_och_skolan_lanar_ut_mer_an_salar" and then "prisma migrate deploy" again';
+        RAISE EXCEPTION 'Schools, Users, Rooms, Sites and RoomBookings were not free at once in 30 s: nothing is changed. Prisma now holds this migration as failed, so run "prisma migrate resolve --rolled-back 20270204091000_en_forening_hyr_en_sal_och_skolan_lanar_ut_mer_an_salar" and then "prisma migrate deploy" again';
       END IF;
       PERFORM pg_sleep(0.05);
     END;

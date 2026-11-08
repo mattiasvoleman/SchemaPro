@@ -123,7 +123,7 @@ enum NotificationType {
   ACK_REQUESTED
   /// One reminder to a guardian who has not confirmed in the time the school chose; says only that a request waits (20270117090000).
   ACK_REMINDER
-  /// To the expedition after a publication: how many days of an external booking now stand in a room that has a lesson. Only a number; the list is on the page (20270131090000).
+  /// To the expedition after a publication: how many days of an external booking now stand in a room that has a lesson. Only a number; the list is on the page (20270204090000).
   EXTERNAL_BOOKING_CLASH
 }
 
@@ -296,7 +296,7 @@ model School {
   integrationApiKeys      IntegrationApiKey[]
   signInMethod            SchoolSignInMethod?
   roomBookings            RoomBooking[]
-  /// Lokal: resurser och externa (20270131091000).
+  /// Lokal: resurser och externa (20270204091000).
   resourceTypes           ResourceType[]
   resources               Resource[]
   resourceBookings        ResourceBooking[]
@@ -466,7 +466,7 @@ model User {
   notifications       Notification[]    @relation("NotificationRecipient")
   roomBookings        RoomBooking[]     @relation("RoomBookingBooker")
   decidedRoomBookings RoomBooking[]     @relation("RoomBookingDecider")
-  /// Lokal (20270131091000): bookings of a resource this person made, and decided.
+  /// Lokal (20270204091000): bookings of a resource this person made, and decided.
   resourceBookings        ResourceBooking[] @relation("ResourceBookingBooker")
   decidedResourceBookings ResourceBooking[] @relation("ResourceBookingDecider")
   /// Salslån (20261217090000): loans this planner asked for, and decided.
@@ -605,7 +605,7 @@ model Room {
   calendarLessons         CalendarLesson[]
   availabilityConstraints AvailabilityConstraint[]
   roomBookings            RoomBooking[]
-  /// Series of external bookings of this room (20270131091000); RESTRICT, so a room that is let out is not deleted under its tenant.
+  /// Series of external bookings of this room (20270204091000); RESTRICT, so a room that is let out is not deleted under its tenant.
   externalBookings        ExternalBooking[]
   preferenceRooms         RoomPreferenceRoom[]
   /// Salslån (20261217090000): this room lent to another school of the
@@ -2937,7 +2937,7 @@ model RoomBooking {
   decidedById  String?           @db.Uuid
   decidedAt    DateTime?         @db.Timestamptz(6)
   decisionNote String?
-  /// The series of external bookings this is one day of (Lokal, 20270131091000);
+  /// The series of external bookings this is one day of (Lokal, 20270204091000);
   /// null for every booking a member of staff made for themselves. The row is
   /// the room being held, as any booking is: the title says "Extern bokning"
   /// and nothing of the hirer, whose name and contact stay in ExternalBookings.
@@ -2961,13 +2961,13 @@ model RoomBooking {
   @@index([schoolId, status, createdAt])
   /// Removing a person finds the bookings they decided (20261220090000).
   @@index([decidedById])
-  /// A series finds its days (20270131091000).
+  /// A series finds its days (20270204091000).
   @@index([externalBookingId, schoolId])
   @@map("RoomBookings")
 }
 
 // -----------------------------------------------------------------------------
-// Lokal: resurser och externa (K3, 20270131091000). Bookable things that are not
+// Lokal: resurser och externa (K3, 20270204091000). Bookable things that are not
 // rooms, and the association that hires the sports hall on a Tuesday evening.
 // -----------------------------------------------------------------------------
 
@@ -2984,7 +2984,7 @@ model ResourceType {
   resources Resource[]
 
   @@unique([schoolId, name])
-  /// The target of the key from Resources (20270131091000).
+  /// The target of the key from Resources (20270204091000).
   @@unique([id, schoolId])
   @@map("ResourceTypes")
 }
@@ -3020,7 +3020,7 @@ model Resource {
   @@map("Resources")
 }
 
-/// A booking of some of a resource (20270131091000): the status, the decision
+/// A booking of some of a resource (20270204091000): the status, the decision
 /// and the notice are a room booking's. Two active bookings of one resource
 /// may not hold more than its quantity at the same minute: a BEFORE trigger
 /// takes the resource's advisory lock and counts (ResourceBookings_quantity_is_kept).
@@ -3059,7 +3059,7 @@ model ResourceBooking {
 }
 
 /// A series of bookings by someone who is not a user: an association that hires
-/// the sports hall every Tuesday 18-20 for a term (20270131091000). Registered
+/// the sports hall every Tuesday 18-20 for a term (20270204091000). Registered
 /// by staff, who write down the organisation, a contact person, a telephone
 /// number and an address: personal data about somebody who has no login, so the
 /// series is gallrad (EXTERNAL_BOOKINGS) with its days, is in the register
@@ -5161,7 +5161,7 @@ enum RetentionDataType {
   CRISIS_DRILLS
   /// Krisläge, the real alarms (skarpa larm): kept as the school decides (20270113090000).
   CRISIS_ALARMS
-  /// Lokal, external bookings: a series with its hirer's contact and its days (20270131090000).
+  /// Lokal, external bookings: a series with its hirer's contact and its days (20270204090000).
   EXTERNAL_BOOKINGS
 }
 
