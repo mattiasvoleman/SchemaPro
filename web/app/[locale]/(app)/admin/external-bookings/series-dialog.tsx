@@ -23,6 +23,7 @@ import {
   type ExternalDayResponse,
 } from "@/lib/local";
 import { useExternalBooking, useExternalBookingActions } from "@/lib/local-queries";
+import { toDateString } from "@/lib/utils";
 import { ContactFields } from "./contact-fields";
 import { DayTable } from "./day-table";
 
@@ -57,7 +58,7 @@ export function SeriesDialog({
   );
 }
 
-type Asking = { kind: "series" } | { kind: "day"; day: ExternalDayResponse } | null;
+type Asking = { kind: "series" } | { kind: "remove" } | { kind: "day"; day: ExternalDayResponse } | null;
 
 function SeriesBody({ seriesId, onClose }: { seriesId: string | null; onClose: () => void }) {
   const t = useTranslations("adminExternalBookings");
@@ -96,6 +97,12 @@ function SeriesBody({ seriesId, onClose }: { seriesId: string | null; onClose: (
       if (asking.kind === "series") {
         await actions.cancelSeries.mutateAsync(detail.id);
         toast.success(t("detail.seriesCancelledToast"));
+      } else if (asking.kind === "remove") {
+        await actions.remove.mutateAsync(detail.id);
+        toast.success(t("detail.seriesRemovedToast"));
+        setConfirmOpen(false);
+        onClose();
+        return;
       } else {
         await actions.cancelDay.mutateAsync({ id: detail.id, dayId: asking.day.id });
         toast.success(t("detail.dayCancelledToast"));
@@ -112,10 +119,12 @@ function SeriesBody({ seriesId, onClose }: { seriesId: string | null; onClose: (
     setConfirmOpen(true);
   };
 
-  const pending = actions.cancelSeries.isPending || actions.cancelDay.isPending;
+  const pending = actions.cancelSeries.isPending || actions.cancelDay.isPending || actions.remove.isPending;
   const now = Date.now();
   const cancelled = detail?.cancelledAt != null;
   const canCancelSeries = detail !== undefined && !cancelled && detail.days.upcoming > 0;
+  // The gateway removes a series that is over or cancelled, and not one that runs (the hall would go free unasked).
+  const canRemoveSeries = detail !== undefined && (cancelled || detail.endDate < toDateString(new Date()));
 
   return (
     <>
@@ -216,6 +225,11 @@ function SeriesBody({ seriesId, onClose }: { seriesId: string | null; onClose: (
                   {t("detail.cancelSeries")}
                 </Button>
               ) : null}
+              {canRemoveSeries ? (
+                <Button data-writes="DRIFT" variant="outline" size="sm" disabled={pending} onClick={() => ask({ kind: "remove" })}>
+                  {t("detail.removeSeries")}
+                </Button>
+              ) : null}
             </div>
             {detail.days.skipped.length > 0 ? (
               <p className="text-sm">
@@ -271,10 +285,16 @@ function SeriesBody({ seriesId, onClose }: { seriesId: string | null; onClose: (
           title:
             asking?.kind === "day"
               ? t("detail.cancelDayTitle", { date: dayText(asking.day.date, locale) })
-              : t("detail.cancelSeriesTitle", { organisation: detail?.organisation ?? "" }),
+              : asking?.kind === "remove"
+                ? t("detail.removeSeriesTitle", { organisation: detail?.organisation ?? "" })
+                : t("detail.cancelSeriesTitle", { organisation: detail?.organisation ?? "" }),
           description:
-            asking?.kind === "day" ? t("detail.cancelDayBody") : t("detail.cancelSeriesBody", { count: detail?.days.upcoming ?? 0 }),
-          confirmLabel: asking?.kind === "day" ? t("detail.cancelDay") : t("detail.cancelSeries"),
+            asking?.kind === "day"
+              ? t("detail.cancelDayBody")
+              : asking?.kind === "remove"
+                ? t("detail.removeSeriesBody")
+                : t("detail.cancelSeriesBody", { count: detail?.days.upcoming ?? 0 }),
+          confirmLabel: asking?.kind === "day" ? t("detail.cancelDay") : asking?.kind === "remove" ? t("detail.removeSeries") : t("detail.cancelSeries"),
           loading: pending,
           onConfirm: () => void confirm(),
         }}

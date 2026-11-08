@@ -545,7 +545,9 @@ export class ExternalBookingsService {
 }
 
 function conflictsException(conflicts: Array<{ date: string; conflicts: ExternalConflict[] }>, message: string): ConflictException {
-  return new ConflictException({ message, code: EXTERNAL_BOOKING_CONFLICTS, conflicts });
+  // Problem JSON forwards `code` and flat `params` only, so the number of days that stand in the way is a param
+  // and the days themselves are what the preview answers (the web asks it again); `conflicts` is for the service's callers.
+  return new ConflictException({ message, code: EXTERNAL_BOOKING_CONFLICTS, params: { blocked: conflicts.length }, conflicts });
 }
 
 function isRoomHeld(error: unknown): boolean {

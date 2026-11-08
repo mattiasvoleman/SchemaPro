@@ -344,6 +344,17 @@ describe("external bookings", () => {
     expect(invalidated(spy)).toEqual(roots);
   });
 
+  it("removes a series by the id, escaped, and reads the lists again", async () => {
+    const { client, wrapper } = setup();
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useExternalBookingActions(), { wrapper });
+    await act(async () => {
+      await result.current.remove.mutateAsync("s/1");
+    });
+    expect(api.delete).toHaveBeenCalledWith("/api/v1/external-bookings/s%2F1");
+    expect(invalidated(spy)).toEqual(roots);
+  });
+
   it("cancels a series and a day by their own routes, with empty bodies", async () => {
     const { client, wrapper } = setup();
     const spy = vi.spyOn(client, "invalidateQueries");

@@ -10376,7 +10376,11 @@
       "cancelSeriesTitle": "Avboka serien för {organisation}?",
       "cancelSeriesBody": "{count, plural, one {Den kommande dagen avbokas.} other {De # kommande dagarna avbokas.}} Dagar som redan varit påverkas inte. Det går inte att ångra.",
       "dayCancelledToast": "Dagen är avbokad",
-      "seriesCancelledToast": "Serien är avbokad"
+      "seriesCancelledToast": "Serien är avbokad",
+      "seriesRemovedToast": "Serien är borttagen",
+      "removeSeries": "Ta bort serien",
+      "removeSeriesTitle": "Ta bort serien för {organisation}?",
+      "removeSeriesBody": "Serien och alla dess dagar tas bort för gott, med den hyrandes namn och kontaktuppgifter. Det går inte att ångra."
     },
     "errors": {
       "required": "Fyll i det här fältet.",

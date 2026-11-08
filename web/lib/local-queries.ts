@@ -272,7 +272,12 @@ export function useExternalBookingActions() {
       api.patch<unknown>(`/api/v1/external-bookings/${enc(id)}/days/${enc(dayId)}/cancel`, {}),
     onSettled: settled,
   });
-  return { preview, create, update, cancelSeries, cancelDay };
+  /** Removes a series that is over or cancelled, with its days; the gateway refuses one that is running. */
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete<void>(`/api/v1/external-bookings/${enc(id)}`),
+    onSettled: settled,
+  });
+  return { preview, create, update, cancelSeries, cancelDay, remove };
 }
 
 // ---- Utnyttjande

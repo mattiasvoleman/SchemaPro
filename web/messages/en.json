@@ -10376,7 +10376,11 @@
       "cancelSeriesTitle": "Cancel the series for {organisation}?",
       "cancelSeriesBody": "{count, plural, one {The upcoming day is cancelled.} other {The # upcoming days are cancelled.}} Days that have already passed are not affected. This cannot be undone.",
       "dayCancelledToast": "The day is cancelled",
-      "seriesCancelledToast": "The series is cancelled"
+      "seriesCancelledToast": "The series is cancelled",
+      "seriesRemovedToast": "The series is removed",
+      "removeSeries": "Remove the series",
+      "removeSeriesTitle": "Remove the series for {organisation}?",
+      "removeSeriesBody": "The series and all its days are removed for good, with the hirer's name and contact details. This cannot be undone."
     },
     "errors": {
       "required": "Fill in this field.",

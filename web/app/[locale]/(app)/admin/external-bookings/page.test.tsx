@@ -28,7 +28,7 @@ globalThis.ResizeObserver ??= class ResizeObserverStub {
  * DTOs take, and a refusal for clashing days (409 EXTERNAL_BOOKING_CONFLICTS) lists the days.
  */
 
-const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }));
+const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() }));
 vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/queries", () => ({
@@ -354,6 +354,40 @@ describe("Externa bokningar, one series", () => {
     expect(await dialog.findByText("Serien är avbokad")).toBeInTheDocument();
     expect(dialog.getByText(/Den avbokades 20 jan\. 2099/)).toBeInTheDocument();
     expect(dialog.queryByRole("button", { name: "Avboka serien" })).not.toBeInTheDocument();
+  });
+
+  it("removes a series that is cancelled, after the question, and closes the dialog", async () => {
+    state.detail = detail({ cancelledAt: "2099-01-20T09:00:00.000Z", days: { total: 18, upcoming: 0, cancelled: 18, skipped: [] }, occurrences: [day({ status: "CANCELLED" })] });
+    const user = userEvent.setup();
+    renderPage();
+    const dialog = within(await openSeries(user));
+    await user.click(await dialog.findByRole("button", { name: "Ta bort serien" }));
+    const confirm = await screen.findByRole("dialog", { name: "Ta bort serien för Idrottsföreningen?" });
+    expect(confirm).toHaveTextContent("tas bort för gott");
+    expect(api.delete).not.toHaveBeenCalled();
+    await user.click(within(confirm).getByRole("button", { name: "Ta bort serien" }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/v1/external-bookings/s-1"));
+    expect(toast.success).toHaveBeenCalledWith("Serien är borttagen");
+  });
+
+  it("offers no removal of a series that is running", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const dialog = within(await openSeries(user));
+    await dialog.findByRole("button", { name: "Avboka serien" });
+    expect(dialog.queryByRole("button", { name: "Ta bort serien" })).not.toBeInTheDocument();
+  });
+
+  it("says a refused removal as it came and keeps the dialog", async () => {
+    api.delete.mockRejectedValueOnce(new ApiError(409, "Serien pågår"));
+    state.detail = detail({ cancelledAt: "2099-01-20T09:00:00.000Z", days: { total: 18, upcoming: 0, cancelled: 18, skipped: [] }, occurrences: [day({ status: "CANCELLED" })] });
+    const user = userEvent.setup();
+    renderPage();
+    const dialog = within(await openSeries(user));
+    await user.click(await dialog.findByRole("button", { name: "Ta bort serien" }));
+    await user.click(within(await screen.findByRole("dialog", { name: /Ta bort serien för/ })).getByRole("button", { name: "Ta bort serien" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Serien pågår"));
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("lists the days left out at registration", async () => {
