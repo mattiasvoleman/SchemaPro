@@ -47826,6 +47826,11 @@ BEGIN
   PERFORM pg_temp.cl_as('full');
   PERFORM pg_temp.cl_expect('432 a confirmation never fails for a list''s sake, and a closed list takes none', (SELECT count(*)::text FROM "ConsentEntries" WHERE "listId" = lst2), '0');
   IF (SELECT "ackedAt" FROM "AckReceipts" WHERE "requestId" = req3) IS NULL THEN RAISE EXCEPTION 'checklistor 432: the guardian''s confirmation was lost with the closed list'; END IF;
+  -- A closed list takes no new link either (granskning #288, A3): the service refuses it with a code, and so does the database.
+  req3 := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req3, school, 'Samtycke: efter stängningen', 'Text', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req3, school, pg_temp.clf('p2'), pg_temp.clf('g1'));
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, req3, school, lst2), 'CL409', 'linking a request to a closed list');
 
   -- Custody that ended without a confirmation is not a consent: the guardian who stays confirms, the other's link goes, and
   -- the Kvittens status says met, but no answer is written, since nobody has said yes after it.
