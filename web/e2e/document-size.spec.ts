@@ -93,8 +93,8 @@ interface Measured {
  * where it was 1 536: a phase pays the room its text uses, and the next one finds what is left.
  */
 const PAGES: Measured[] = [
-  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_222 },
-  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_592 },
+  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_666 },
+  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_938 },
 ];
 
 const catalog = JSON.stringify(JSON.parse(readFileSync(join(__dirname, "..", "messages", "sv.json"), "utf8")));

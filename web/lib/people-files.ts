@@ -99,6 +99,16 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     rule: "KEEPS_AND_SAYS",
     why: "The payroll pays everyone in it; a vikarie left out goes unpaid.",
   },
+  "components/analysis/payroll-panel.tsx": {
+    files: "loneunderlag-<från>-<till>.csv (Excels svenska CSV, windows-1252) and .xlsx",
+    rule: "HANDS_OVER",
+    why: "The gateway builds the file (POST /analysis/payroll-basis/export): payroll pays everyone, so a person with a protected identity is in it and the order says how many (protectedInFile). The web only hands it over; HR data, so only readers of HR data are offered it.",
+  },
+  "components/analysis/cost-basis-panel.tsx": {
+    files: "kostnad-per-elev-<läsår>.csv",
+    rule: "NAMES_NOBODY",
+    why: "Skoldelar, årskurser, timmar and kronor: the aggregates of the cost basis, no teacher and no pupil.",
+  },
   "app/[locale]/(app)/admin/schedule-exchange/page.tsx": {
     files: "the timetable as CSV, Excel, Untis GPU and aSc XML",
     rule: "NAMES_STAFF",

@@ -46,6 +46,15 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/reporting-rate")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("opens Analys och planering to every administrator: it reads only, the gateway gives each profile what it may have, and the settings ask the profile themselves", () => {
+    expect(PAGE_GATES["/admin/analysis"]).toBeNull();
+    expect(gateOfPath("/sv/admin/analysis")).toBeNull();
+    for (const profile of ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION", "LASARE"] as const) {
+      expect(closedPages(profile).map((page) => page.path)).not.toContain("/admin/analysis");
+      expect(readOnlyPages(profile).map((page) => page.path)).not.toContain("/admin/analysis");
+    }
+  });
+
   it("gates Måltidskollen by Drift: every administrator reads the portions, those who write Drift change the cut-off and the letter", () => {
     expect(PAGE_GATES["/admin/meals"]).toBe("DRIFT");
     expect(gateOfPath("/sv/admin/meals")).toBe("DRIFT");

@@ -3569,6 +3569,21 @@ BEGIN
   INSERT INTO "SchoolDaySettings" ("schoolId", "teacherView") VALUES (m, 'ROOMS');
 END $$;
 
+-- The matrix school's skoldel and its cost of an hour (20270130090000), so the
+-- role matrix (section 116) has rows to probe. The school that sections
+-- 435-438 start from has none, and says so.
+DO $$
+DECLARE
+  m uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "SchoolParts" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  INSERT INTO "SchoolParts" ("schoolId", name, account, "gradeFrom", "gradeTo") VALUES (m, 'Högstadiet', '4030', 7, 9);
+  INSERT INTO "StaffCostRates" ("schoolId", category, "hourlyCost") VALUES (m, 'TEACHER', 420.00);
+END $$;
+
 -- Kvittens (20270117091000), sections 370-374: a school of its own, with its
 -- people planted once, as the owner. The requests themselves are the sections'.
 --

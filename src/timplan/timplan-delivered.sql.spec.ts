@@ -149,6 +149,41 @@ describe('staffingCreditStatement (statement E)', () => {
   });
 });
 
+/**
+ * Analys och planering asks statement E for a person who has left with `endedBy`: only the lessons over by the
+ * instant they were deactivated (D6's `endsAt <= deactivatedAt`). It is a condition on which rows are asked
+ * about and is in no statement unless asked for, so every pinned statement above is unchanged by it.
+ */
+describe('endedBy (a person who has left)', () => {
+  const range = { from: '2026-09-07', to: '2026-09-18' };
+  const left = new Date('2026-09-15T10:00:00.000Z');
+
+  it('is absent from every statement that is not asked, so the default is byte for byte what it was', () => {
+    expect(hash(staffingCreditStatement(WINDOW, range, null, null, null))).toBe(hash(staffingCreditStatement(WINDOW, range, null)));
+    expect(hash(deliveredLessons(WINDOW, { subjects: 'all', audience: 'groups', range, endedBy: undefined }))).toBe(
+      hash(deliveredLessons(WINDOW, { subjects: 'all', audience: 'groups', range })),
+    );
+    for (const statement of [deliveredLessons(WINDOW), audienceStatement(WINDOW), substituteHoursStatement(WINDOW, range), staffingCreditStatement(WINDOW, range, 'me')]) {
+      expect(statement.sql).not.toContain('"endsAt" <=');
+    }
+  });
+
+  it('adds the one condition on the lesson\'s end, with the instant as a value, and nothing else', () => {
+    const asked = staffingCreditStatement(WINDOW, range, 'me', null, left);
+    const plain = staffingCreditStatement(WINDOW, range, 'me');
+    expect(asked.sql).toContain('AND cl."endsAt" <= ?::timestamptz');
+    expect(asked.values).toContainEqual(left);
+    expect(asked.sql.replace(/\s+AND cl\."endsAt" <= \?::timestamptz/, '')).toBe(plain.sql);
+    expect(asked.values.filter((value) => value !== left)).toEqual(plain.values);
+  });
+
+  it('is asked of the classification\'s own rows, so a lesson a vikarie took is still displaced', () => {
+    const { sql } = staffingCreditStatement(WINDOW, range, 'me', null, left);
+    expect(sql).toContain(`THEN 'DISPLACED'`);
+    expect(sql.indexOf('"endsAt" <=')).toBeLessThan(sql.indexOf('JOIN "CalendarLessonTeachers" t'));
+  });
+});
+
 describe('the published key (Publicering), read in a DRAFT school by somebody who must not see the draft', () => {
   const key = { publicationId: '77777777-7777-4777-8777-777777777777' };
   const range = { from: '2026-09-07', to: '2026-09-18' };

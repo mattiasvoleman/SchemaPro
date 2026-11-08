@@ -374,6 +374,11 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   RetentionDecisions: just('DECIDES', 'insert'),
   TeacherEmploymentPeriods: only('DECIDES'),
   TeacherEmployments: only('DECIDES'),
+  // Analys och planering (20270130090000): the skoldelar a payroll is booked on
+  // and the cost of an hour in a personalkategori are the school's economy,
+  // decided like the tjänst % of a post. Every administrator reads both.
+  SchoolParts: only('DECIDES'),
+  StaffCostRates: only('DECIDES'),
 
   // Read by every administrator; written by a trigger or a job.
   GallringRuns: readOnly,

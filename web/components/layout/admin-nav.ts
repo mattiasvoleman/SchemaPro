@@ -167,6 +167,10 @@ export const ADMIN_NAV: NavGroup[] = [
       // register is saved, beside Frånvarobevakning, which counts the same
       // registers from the pupils' side. The reports' icon again.
       { labelKey: "reportingRate", href: "/admin/reporting-rate", icon: BarChart3 },
+      // Analys och planering: nyckeltal per lärare och skola, kostnad per elev and the
+      // löneunderlag, counted from the same tjänstefördelning and registers. The reports'
+      // icon again, already in the shell.
+      { labelKey: "analysis", href: "/admin/analysis", icon: BarChart3 },
       // Kvittens: staff ask guardians to confirm a message, and see who has.
       // The attendance icon (Ledighetsansökningar): a
       // confirmation is a tick against a name, like the register's.
