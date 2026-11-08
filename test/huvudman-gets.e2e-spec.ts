@@ -43,6 +43,7 @@ const DIFFERS: Readonly<Record<string, string>> = {
   'GET /api/v1/absence-stats/pupils/:studentId': "one pupil's card: the läsare reads it; the huvudman's reader never reads a pupil (ABSENCE_STATS_NO_PUPILS_FOR_THE_READER)",
   'GET /api/v1/me/schools': "the login's own list: the läsare's own rows; the reader's the huvudman's schools, with the huvudman",
   'GET /api/v1/huvudman': "the login's own memberships: the reader is a member of H, the läsare of no huvudman",
+  'GET /api/v1/acknowledgements/usage': "the person's own share (mine): the läsare has a row at the school and so a share on paper, the reader has none (mine is null); the school and the senders are alike",
   'GET /api/v1/analysis/key-figures':
     "Analys och planering: the reader is handed the school's figures and no teacher's row (aggregateOnly, teachers null); the läsare, a school's own administrator, reads the rows, without tjänstgöringsgrad",
   'GET /api/v1/analysis/cost-basis':

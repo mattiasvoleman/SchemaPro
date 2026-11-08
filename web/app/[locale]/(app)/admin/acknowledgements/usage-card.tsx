@@ -3,6 +3,7 @@
 import { useAckUsage } from "@/lib/ack-queries";
 import { limitState, usedShare, type AckUsageLine } from "@/lib/ack";
 import { useAckText } from "@/components/acknowledgements/use-ack-text";
+import { useReadOnly } from "@/components/profile-context";
 import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,8 +12,9 @@ import { TableCard } from "@/components/ui/table-card";
 
 /**
  * The day's use of Kvittens' limits, for the administrator: what the school has
- * used of its 20 000 receipts, what the reader has used of their own share, and
- * who has used most. A receipt is one guardian asked about one pupil; the day is
+ * used of its 20 000 receipts, what the reader has used of their own share (not
+ * shown to a login that cannot send: the huvudman's reader, who has no share, and
+ * a läsare, who has one on paper), and who has used most. A receipt is one guardian asked about one pupil; the day is
  * the last 24 hours. The numbers are the database's (app.ack_usage asks the same
  * function the limit does), so what is shown here is what refuses.
  *
@@ -24,6 +26,9 @@ import { TableCard } from "@/components/ui/table-card";
 export function UsageCard() {
   const { t } = useAckText();
   const usage = useAckUsage();
+  // A läsare (Läsbehörighet) has a person row, and so a share on paper, and cannot send; the huvudman's reader has neither
+  // (the gateway answers mine: null). Neither is shown "Din andel 0 av 8 000".
+  const readOnly = useReadOnly();
 
   const value = (line: AckUsageLine): string => t("usage.value", { used: line.used, limit: line.limit, percent: usedShare(line) });
 
@@ -52,7 +57,7 @@ export function UsageCard() {
   const body = (data: NonNullable<typeof usage.data>) => (
     <div className="space-y-5">
       {data.school ? block(t("usage.school"), data.school, t("usage.reached.school")) : null}
-      {block(t("usage.mine"), data.mine, t("usage.reached.mine"))}
+      {data.mine && !readOnly ? block(t("usage.mine"), data.mine, t("usage.reached.mine")) : null}
 
       {data.senders ? (
         <div className="space-y-2">

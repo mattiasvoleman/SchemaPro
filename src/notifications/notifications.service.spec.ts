@@ -504,6 +504,36 @@ describe('NotificationsService', () => {
         await flushDelivery();
         expect(fetchMock).not.toHaveBeenCalled();
       });
+
+      // The reminder pass marks a request as taken by its channels only when this listener says so (ack.service.ts),
+      // so a listener that is dropped on the way leaves every reminder reading "written" for good, and nothing else
+      // in the unit tests would notice: the pass's own spec hands it a mock.
+      describe('the listener', () => {
+        it('is told what the delivery said: true once the mail was taken, false when Resend refused it, and once each', async () => {
+          process.env.RESEND_API_KEY = 'resend-key';
+          jest.spyOn(loggerOf(delivery), 'warn').mockImplementation(() => undefined);
+          const told: boolean[] = [];
+
+          service.deliverCommitted([entry()], (delivered) => told.push(delivered));
+          expect(told).toEqual([]);
+          await flushDelivery();
+          expect(told).toEqual([true]);
+
+          fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
+          service.deliverCommitted([entry()], (delivered) => told.push(delivered));
+          await flushDelivery();
+          expect(told).toEqual([true, false]);
+        });
+
+        it('is told true at once when nothing in the batch leaves the inbox: no recipient, or no channel configured', () => {
+          const told: boolean[] = [];
+
+          service.deliverCommitted([entry({ recipients: [] })], (delivered) => told.push(delivered));
+          service.deliverCommitted([entry()], (delivered) => told.push(delivered));
+
+          expect(told).toEqual([true, true]);
+        });
+      });
     });
   });
 

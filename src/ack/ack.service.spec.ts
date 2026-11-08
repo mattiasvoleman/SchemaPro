@@ -215,6 +215,20 @@ describe('AckService', () => {
       await expect(service.create(dto, admin)).rejects.toBe(other);
     });
 
+    it('tells the sender over the day’s share that another administrator can send the request, in the text a log keeps', async () => {
+      // The web shows its own catalogue's text for the code; this one is what the gateway answers, for a log and for a
+      // client that shows the message. Without it the sentence was in no test (the web's test took the old text as a part).
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_enabled()': [{ enabled: true }] });
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      tx['guardianStudent']!['findMany']!.mockResolvedValue([{ studentId: 'p-1', guardianId: 'g-1' }]);
+      tx['ackRequest']!['createMany']!.mockRejectedValue(sqlState('KV427'));
+      const error = await service.create(dto, admin).catch((e: unknown) => e);
+      const message = (error as { response: { message: string } }).response.message;
+      expect(message).toContain('Inget har skickats.');
+      expect(message).toContain('Måste förfrågan gå ut nu kan en annan administratör skicka den, eftersom var och en har en egen andel.');
+    });
+
     it.each([
       ['ACK_TOO_MANY_REQUESTS', 'ACK_TOO_MANY_REQUESTS'],
       ['ACK_SENDER_DAY_LIMIT', 'ACK_SENDER_DAY_LIMIT'],
@@ -712,6 +726,23 @@ describe('AckService', () => {
         expect((tx.$executeRaw.mock.calls[0]![0] as { values: unknown[] }).values).toEqual(['r-1']);
       });
 
+      // The first listener alone cannot tell the request of its own from the first of the queue: both are r-1. Each
+      // listener marks the request it was made for, whichever one the pass reached it from and whatever order the
+      // delivery answers in (the e-mail lane and the alarm lane do not finish in the order they were queued).
+      it('marks each request by its own listener, in whatever order the delivery answers', async () => {
+        const { tx, notifications, service } = setup();
+        due(tx, ['r-1', 'r-2', 'r-3'], { 'r-1': [notice('n-1', 'g-1')], 'r-2': [notice('n-2', 'g-2')], 'r-3': [notice('n-3', 'g-3')] });
+        await service.remind();
+        expect(notifications.deliverCommitted).toHaveBeenCalledTimes(3);
+        tx.$executeRaw.mockClear();
+        const listeners = notifications.deliverCommitted.mock.calls.map((call) => call[1] as (delivered: boolean) => void);
+        for (const at of [2, 0, 1]) {
+          listeners[at]!(true);
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(tx.$executeRaw.mock.calls.map((call) => (call[0] as { values: unknown[] }).values[0])).toEqual(['r-3', 'r-1', 'r-2']);
+      });
+
       it('marks nothing, and says so without naming anyone, when a channel did not take the batch: the request stays WRITTEN', async () => {
         const { tx, settle, warn } = await passWithListener();
         await settle(false);
@@ -766,7 +797,9 @@ describe('AckService', () => {
     });
   });
   describe('usage', () => {
-    const answer = (...rows: Array<[string, string | null, number, number]>) => rows.map(([scope, author_name, used, cap]) => ({ scope, author_name, used, cap }));
+    /** The rows as the database answers them: the ME row carries the caller's person id, a SENDER row the sender's. */
+    const answer = (...rows: Array<[string, string | null, number, number]>) =>
+      rows.map(([scope, author_name, used, cap]) => ({ scope, author_id: scope === 'SCHOOL' ? null : scope === 'ME' ? 'person-1' : `sender-${author_name}`, author_name, used, cap }));
 
     it('gives an administrator the school, their own share and the largest senders, as the database counted them', async () => {
       const { tx, service } = setup();
@@ -777,7 +810,8 @@ describe('AckService', () => {
         senders: [{ name: 'Anna Rektor', used: 9000, limit: 8000 }, { name: 'Bo Mentor', used: 1500, limit: 2000 }],
       });
       const asked = tx.$queryRaw.mock.calls[0]![0] as { sql: string; values: unknown[] };
-      expect(asked.sql).toContain('app.ack_usage(');
+      // The column list is the contract: without author_id the gateway cannot tell a person's share from a reader's none.
+      expect(asked.sql.replace(/\s+/g, ' ')).toContain('SELECT scope, author_id, author_name, used, cap FROM app.ack_usage(');
       expect(asked.values).toEqual([5]);
     });
 
@@ -791,6 +825,29 @@ describe('AckService', () => {
       const { tx, service } = setup();
       raw(tx, { 'app.ack_usage': answer(['ME', null, 66, 2000]) });
       expect(await service.usage(teacher)).toEqual({ school: null, mine: { used: 66, limit: 2000 }, senders: null });
+    });
+
+    // The huvudman's reader and the school's läsare are staff who can read the usage and cannot send: the database gives
+    // them an ME row of nothing used, but with no person id, since there is no person. "Your share 0 of 8 000" would
+    // be a share they do not have; the answer has none (the card shows nothing of it).
+    it('gives a login with no person no share of its own: mine is null, the school and the senders as they are', async () => {
+      const { tx, service } = setup();
+      tx.$queryRaw.mockResolvedValue([
+        { scope: 'SCHOOL', author_id: null, author_name: null, used: 15, cap: 20000 },
+        { scope: 'ME', author_id: null, author_name: null, used: 0, cap: 8000 },
+        { scope: 'SENDER', author_id: 'sender-1', author_name: 'Anna Rektor', used: 15, cap: 8000 },
+      ]);
+      expect(await service.usage(admin)).toEqual({
+        school: { used: 15, limit: 20000 },
+        mine: null,
+        senders: [{ name: 'Anna Rektor', used: 15, limit: 8000 }],
+      });
+    });
+
+    it('gives a person their share even when nothing is used, and a share is never null for them', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_usage': answer(['ME', null, 0, 2000]) });
+      expect(await service.usage(teacher)).toEqual({ school: null, mine: { used: 0, limit: 2000 }, senders: null });
     });
 
     it('turns the database’s refusal of a person who is no staff into a 403, and lets another failure through', async () => {

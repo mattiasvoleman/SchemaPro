@@ -229,7 +229,7 @@ export class AckService {
           throw new HttpException(
             {
               code: ACK_SENDER_DAY_LIMIT,
-              message: 'Du har bett om kvittens från så många vårdnadshavare det senaste dygnet att den här förfrågan skulle gå över din andel av dagen. Inget har skickats. Välj färre elever eller försök igen senare.',
+              message: 'Du har bett om kvittens från så många vårdnadshavare det senaste dygnet att den här förfrågan skulle gå över din andel av dagen. Inget har skickats. Välj färre elever eller försök igen senare. Måste förfrågan gå ut nu kan en annan administratör skicka den, eftersom var och en har en egen andel.',
             },
             HttpStatus.TOO_MANY_REQUESTS,
           );
@@ -589,8 +589,8 @@ export class AckService {
     requireSchoolId(user);
     try {
       const rows = await this.prisma.withRls(user, (tx) =>
-        tx.$queryRaw<Array<{ scope: 'SCHOOL' | 'ME' | 'SENDER'; author_name: string | null; used: number; cap: number }>>(
-          Prisma.sql`SELECT scope, author_name, used, cap FROM app.ack_usage(${USAGE_SENDERS}::integer)`,
+        tx.$queryRaw<Array<{ scope: 'SCHOOL' | 'ME' | 'SENDER'; author_id: string | null; author_name: string | null; used: number; cap: number }>>(
+          Prisma.sql`SELECT scope, author_id, author_name, used, cap FROM app.ack_usage(${USAGE_SENDERS}::integer)`,
         ),
       );
       const line = (row: { used: number; cap: number }) => ({ used: Number(row.used), limit: Number(row.cap) });
@@ -598,7 +598,9 @@ export class AckService {
       const mine = rows.find((row) => row.scope === 'ME');
       return {
         school: school ? line(school) : null,
-        mine: mine ? line(mine) : { used: 0, limit: 0 },
+        // A login with no person (the huvudman's reader) is given an ME row of nothing used, but with no person id: it
+        // has no share and cannot send, so the answer has no share of its own to show (the database's word, not ours).
+        mine: mine?.author_id ? line(mine) : null,
         senders: school ? rows.filter((row) => row.scope === 'SENDER').map((row) => ({ name: row.author_name ?? '', ...line(row) })) : null,
       };
     } catch (error) {

@@ -54677,3 +54677,152 @@ BEGIN
   IF n <> 2 THEN RAISE EXCEPTION 'k1 439: the other school reads % rates, not its own two', n; END IF;
 END $$;
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Kvittens, after the independent review of #277 (20270202090000), sections 450 and 454. Their logic needs rows the
+-- API's role cannot make (a due request, a SENT reminder, an old receipt, a removed sender, a profile without Drift):
+-- that is 450o-453o in rls-owner-checks.sql.
+--
+--   450  the delivery's three doors (the list, the pass, the mark) and a login with no person row (the huvudman's
+--        reader): the guard is the first statement of each door, the same in all three, and no setting of the
+--        session's claims makes a door raise; the usage's own-share row carries the person's id, and the reader's none
+--   454  the column privileges: nobody holds one, on any of the three tables
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.kq_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'kvittens %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 450: the doors, for a login with no person row
+--
+-- As the API's role there is no due request to hand a door (the database stamps remindAt a day or more ahead and no
+-- role moves it: 450o plants one as the owner), so what a door DOES for a login is 450o's. What this section holds the
+-- guard to without one:
+--   * its text. The guard is the first statement of each of the three doors and the same in all of them: no claims and
+--     no lone subject setting, an empty string read as none. A door whose guard asks for a person row
+--     (app.current_user_id()), drops one of the two settings, joins them with AND, reads an empty string as a login,
+--     reads the setting without missing_ok or is gone is refused here by name. A refactor that moves the guard into a
+--     helper moves this check with it.
+--   * its behaviour under every setting a session can carry. A door raises for none of them (a pooled connection reads
+--     '' and not NULL; the old guard raised on a claims setting that is not JSON), answers a login nothing, and
+--     answers the delivery (no claims) without error.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  roller uuid;
+  n bigint;
+  seen text;
+  guard constant text := $g$IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RETURN; END IF;$g$;
+  door text;
+  src text;
+  shape text[];
+BEGIN
+  -- The guard, as the text of each door. Comments go, and every run of white space is one space.
+  FOREACH door IN ARRAY ARRAY['app.ack_remind_queue(integer)', 'app.ack_remind_request(uuid)', 'app.ack_reminder_mirrored(uuid)'] LOOP
+    src := btrim(regexp_replace(regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = door::regprocedure), '--[^\n]*', '', 'g'), '\s+', ' ', 'g'));
+    IF NOT starts_with(substring(src FROM 'BEGIN (.*)$'), guard) THEN
+      RAISE EXCEPTION 'kvittens 450: the first statement of % is not the delivery''s guard', door;
+    END IF;
+  END LOOP;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
+  roller := app.current_school_id();
+  -- The huvudman's reader at the roller school: claims, a school chosen, and no Users row there.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000260')::text, true);
+  PERFORM set_config('app.chosen_school_id', roller::text, true);
+  IF app.current_school_id() IS DISTINCT FROM roller OR app.current_user_id() IS NOT NULL OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'kvittens 450: P is not the reader at the roller school (school %, person %, role %)', app.current_school_id(), app.current_user_id(), app.current_user_role();
+  END IF;
+
+  -- The doors are the API's to run (the delivery runs them as that role), and a login runs them to no effect and no error.
+  SELECT count(*) INTO n FROM app.ack_remind_queue(1000);
+  PERFORM pg_temp.kq_expect('450 the reader is handed no list', n::text, '0');
+  SELECT count(*) INTO n FROM app.ack_remind_request(gen_random_uuid());
+  PERFORM pg_temp.kq_expect('450 the reader is handed no notice', n::text, '0');
+  PERFORM app.ack_reminder_mirrored(gen_random_uuid());
+
+  -- Every setting a session can carry (claims, then the lone subject setting). The first is the delivery's own: no
+  -- claims, an empty string after a login's transaction on a pooled connection. The others are logins of some kind, or
+  -- not JSON at all; none of them makes a door raise, and none is handed a thing.
+  FOREACH shape SLICE 1 IN ARRAY ARRAY[
+    ARRAY['', '', 'door'], ARRAY[' ', '', 'login'], ARRAY['{}', '', 'login'], ARRAY['null', '', 'login'],
+    ARRAY['{"role":"authenticated"}', '', 'login'], ARRAY['', 'fe000000-0000-4000-8000-000000000260', 'login'],
+    ARRAY['{"sub":"fe000000-0000-4000-8000-000000000260"}', 'fe000000-0000-4000-8000-000000000260', 'login']
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', shape[1], true);
+    PERFORM set_config('request.jwt.claim.sub', shape[2], true);
+    SELECT (SELECT count(*) FROM app.ack_remind_queue(1000)) + (SELECT count(*) FROM app.ack_remind_request(gen_random_uuid())) INTO n;
+    PERFORM app.ack_reminder_mirrored(gen_random_uuid());
+    IF shape[3] = 'login' AND n <> 0 THEN
+      RAISE EXCEPTION 'kvittens 450: a session with claims [%] and subject [%] was handed % rows', shape[1], shape[2], n;
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000260')::text, true);
+
+  -- The usage's own-share row names the person it is for. The reader has none: the gateway answers "no share" for a row
+  -- with no person (mine: null), and so shows the reader no "Din andel 0 av 8 000". A person's row names them, or the
+  -- gateway would show nobody a share.
+  SELECT string_agg(u.scope || ':' || (u.author_id IS NULL)::text, ',' ORDER BY u.n) INTO seen
+    FROM app.ack_usage() WITH ORDINALITY u(scope, author_id, author_name, used, cap, n) WHERE u.scope IN ('SCHOOL', 'ME');
+  PERFORM pg_temp.kq_expect('450 the reader''s own-share row has no person', seen, 'SCHOOL:true,ME:true');
+  PERFORM set_config('app.chosen_school_id', '', true);
+
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(1));
+  PERFORM pg_temp.kq_expect('450 an administrator''s own-share row names them, the school''s row no one',
+                            (SELECT string_agg(u.scope || ':' || coalesce((u.author_id = app.current_user_id())::text, 'none'), ',' ORDER BY u.n)
+                               FROM app.ack_usage() WITH ORDINALITY u(scope, author_id, author_name, used, cap, n) WHERE u.scope IN ('SCHOOL', 'ME')),
+                            'SCHOOL:none,ME:true');
+  PERFORM pg_temp.kv_as(pg_temp.kv_auth(6));
+  PERFORM pg_temp.kq_expect('450 a teacher''s own-share row names them',
+                            (SELECT string_agg(u.scope || ':' || (u.author_id = app.current_user_id())::text, ',' ORDER BY u.n)
+                               FROM app.ack_usage() WITH ORDINALITY u(scope, author_id, author_name, used, cap, n)),
+                            'ME:true');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 454: column privileges. Section 374 asks has_table_privilege, which is false for a role that holds a privilege
+-- on one column only (a GRANT UPDATE ("reminderMirroredAt") reads as "no UPDATE" there); has_any_column_privilege is
+-- true for a privilege on the table or on any column. Nobody writes the mark by the table, and no column of the three
+-- tables is granted to anyone the table is not.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl text;
+  r text;
+  priv text;
+  holds boolean;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY['AckSettings', 'AckRequests', 'AckReceipts'] LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      -- The four privileges that can be granted on a column. The same expectations as section 374's, for the table.
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+        holds := (r = 'app_authenticated' AND priv IN ('SELECT', 'INSERT')) OR (r = 'app_authenticated' AND priv = 'UPDATE' AND tbl = 'AckSettings')
+                 OR (r = 'service_role' AND priv = 'SELECT');
+        IF has_any_column_privilege(r, format('%I', tbl), priv) IS DISTINCT FROM holds THEN
+          RAISE EXCEPTION 'kvittens 454: % % % on a column of % (it should%)', r, CASE WHEN holds THEN 'lacks' ELSE 'holds' END, priv, tbl, CASE WHEN holds THEN '' ELSE ' not' END;
+        END IF;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  -- The mark itself, by name: no role updates it (the API's role may insert a request, and the check of 381 refuses the
+  -- column on one written that way).
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    IF has_column_privilege(r, '"AckRequests"', 'reminderMirroredAt', 'UPDATE') THEN
+      RAISE EXCEPTION 'kvittens 454: % may update reminderMirroredAt', r;
+    END IF;
+  END LOOP;
+END $$;
+ROLLBACK;

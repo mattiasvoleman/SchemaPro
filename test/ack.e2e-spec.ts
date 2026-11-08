@@ -181,20 +181,32 @@ describe('/api/v1/acknowledgements (e2e)', () => {
   describe('usage', () => {
     it('answers an administrator the school, their own share and the largest senders; a teacher only their own share; nobody else anything', async () => {
       harness.tx.$queryRaw.mockResolvedValue([
-        { scope: 'SCHOOL', author_name: null, used: 6, cap: 20000 },
-        { scope: 'ME', author_name: null, used: 0, cap: 8000 },
-        { scope: 'SENDER', author_name: 'Anna Rektor', used: 6, cap: 8000 },
+        { scope: 'SCHOOL', author_id: null, author_name: null, used: 6, cap: 20000 },
+        { scope: 'ME', author_id: 'admin-person', author_name: null, used: 0, cap: 8000 },
+        { scope: 'SENDER', author_id: 'anna-person', author_name: 'Anna Rektor', used: 6, cap: 8000 },
       ]);
       const res = await http().get('/api/v1/acknowledgements/usage').set('x-test-user', asUser({})).expect(200);
       expect(res.body).toEqual({ school: { used: 6, limit: 20000 }, mine: { used: 0, limit: 8000 }, senders: [{ name: 'Anna Rektor', used: 6, limit: 8000 }] });
 
-      harness.tx.$queryRaw.mockResolvedValue([{ scope: 'ME', author_name: null, used: 66, cap: 2000 }]);
+      harness.tx.$queryRaw.mockResolvedValue([{ scope: 'ME', author_id: 'teacher-person', author_name: null, used: 66, cap: 2000 }]);
       const teacher = await http().get('/api/v1/acknowledgements/usage').set('x-test-user', asUser({ role: 'TEACHER' as never })).expect(200);
       expect(teacher.body).toEqual({ school: null, mine: { used: 66, limit: 2000 }, senders: null });
 
       for (const role of ['GUARDIAN', 'STUDENT']) {
         await http().get('/api/v1/acknowledgements/usage').set('x-test-user', asUser({ role: role as never })).expect(403);
       }
+    });
+
+    // The huvudman's reader and the school's läsare read the page and cannot send; the database's own-share row for them has
+    // no person id, and the answer has no share of its own (mine: null) rather than "0 of 8 000".
+    it('answers a login with no person the school and the senders, and no share of its own', async () => {
+      harness.tx.$queryRaw.mockResolvedValue([
+        { scope: 'SCHOOL', author_id: null, author_name: null, used: 6, cap: 20000 },
+        { scope: 'ME', author_id: null, author_name: null, used: 0, cap: 8000 },
+        { scope: 'SENDER', author_id: 'anna-person', author_name: 'Anna Rektor', used: 6, cap: 8000 },
+      ]);
+      const res = await http().get('/api/v1/acknowledgements/usage').set('x-test-user', asUser({})).expect(200);
+      expect(res.body).toEqual({ school: { used: 6, limit: 20000 }, mine: null, senders: [{ name: 'Anna Rektor', used: 6, limit: 8000 }] });
     });
   });
 

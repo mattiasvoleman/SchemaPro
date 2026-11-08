@@ -738,7 +738,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
   await check('ko: a sender’s share of the day is a 429 of its own through the adapter, and the usage page reads the numbers', async () => {
     await service.updateSettings({ enabled: true }, asAdmin);
     const share = 2000;
-    const before = (await service.usage(asMentor1)).mine;
+    const before = (await service.usage(asMentor1)).mine!;
     assert.equal(before.limit, share, 'a teacher’s share is 2 000');
     // The owner (no login: not counted against) brings her to three short of her share, five hours ago, so the hour's limit is not in play.
     const bulk = await one<{ id: string }>(
@@ -748,7 +748,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
       `INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
        SELECT $1, $2, p.id, g.id FROM (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'STUDENT') p CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'GUARDIAN') g LIMIT $3`,
       [bulk.id, s, share - 3 - before.used]);
-    assert.equal((await service.usage(asMentor1)).mine.used, share - 3);
+    assert.equal((await service.usage(asMentor1)).mine!.used, share - 3);
 
     // P1 and P2 have three guardians between them (G1 and G2 for P1, G1 for P2): the 2 000th receipt is allowed, the next is not.
     const body = { body: 'B', rule: 'ANY' as const, studentIds: [p1.id, p2.id] };
@@ -773,10 +773,10 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     const admins = await service.usage(asAdmin);
     assert.equal(admins.school!.limit, 20000);
     assert.ok(admins.school!.used >= share, 'the school’s day is less than one teacher’s');
-    assert.equal(admins.mine.limit, 8000);
+    assert.equal(admins.mine!.limit, 8000);
     assert.deepEqual(admins.senders!.find((x) => x.name.startsWith('mentor1')), { name: 'mentor1 Probe', used: share, limit: share });
     assert.ok(admins.senders!.length <= 5);
-    assert.deepEqual((await service.usage(asLasare)).mine.limit, 8000, 'an administrator who only reads Drift reads the usage');
+    assert.deepEqual((await service.usage(asLasare)).mine!.limit, 8000, 'an administrator who only reads Drift reads the usage');
     await assert.rejects(() => service.usage(asG(g1)), ForbiddenException);
   });
 
