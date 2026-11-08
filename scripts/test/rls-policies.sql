@@ -47191,7 +47191,8 @@ BEGIN
   INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", "recordedById", "recordedAt", "voidedAt", "voidedById", "voidReason")
   VALUES (school, tpl, pg_temp.clf('p1'), current_date, pg_temp.clf('t1'), now() - interval '10 days', now(), pg_temp.clf('t1'), 'Fel');
   SELECT * INTO p FROM "InstructionProofs" WHERE "templateId" = tpl AND "studentId" = pg_temp.clf('p1');
-  IF p."recordedById" <> pg_temp.clf('full') OR p."instructorId" <> pg_temp.clf('full') THEN
+  -- IS DISTINCT FROM, since <> is NULL for a missing instructor and a missing recorder would pass (granskning #288, I8).
+  IF p."recordedById" IS DISTINCT FROM pg_temp.clf('full') OR p."instructorId" IS DISTINCT FROM pg_temp.clf('full') THEN
     RAISE EXCEPTION 'checklistor 430: a proof was written in another name: recorded by %, instructor %', p."recordedById", p."instructorId";
   END IF;
   IF p."recordedAt" < now() - interval '1 minute' THEN RAISE EXCEPTION 'checklistor 430: a proof was back-dated to %', p."recordedAt"; END IF;
@@ -47454,7 +47455,7 @@ BEGIN
       EXECUTE format($q$INSERT INTO "InstructionProofs" ("schoolId", "templateId", "studentId", "instructedOn", note) VALUES (%L, %L, %L, current_date - 7 - %s, %L)$q$,
                      school, tpl, pg_temp.clf(pupil), n, 'bock av ' || who);
       SELECT * INTO p FROM "InstructionProofs" WHERE "templateId" = tpl AND "studentId" = pg_temp.clf(pupil) AND note = 'bock av ' || who;
-      IF p."recordedById" <> pg_temp.clf(who) OR p."instructorId" <> pg_temp.clf(who) THEN
+      IF p."recordedById" IS DISTINCT FROM pg_temp.clf(who) OR p."instructorId" IS DISTINCT FROM pg_temp.clf(who) THEN
         RAISE EXCEPTION 'checklistor 431: % ticked % but the proof says recorded by % and instructor %', who, pupil, p."recordedById", p."instructorId";
       END IF;
     ELSE
@@ -47495,12 +47496,24 @@ BEGIN
       EXECUTE format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn", note) VALUES (%L, %L, %L, 'GRANTED', current_date - 1, %L)$q$,
                      school, lst, pg_temp.clf(pupil), 'svar av ' || who);
       SELECT * INTO p FROM "ConsentEntries" WHERE "listId" = lst AND note = 'svar av ' || who AND "studentId" = pg_temp.clf(pupil);
-      IF p."recordedById" <> pg_temp.clf(who) THEN RAISE EXCEPTION 'checklistor 431: % answered for % but the answer says recorded by %', who, pupil, p."recordedById"; END IF;
+      IF p."recordedById" IS DISTINCT FROM pg_temp.clf(who) THEN RAISE EXCEPTION 'checklistor 431: % answered for % but the answer says recorded by %', who, pupil, p."recordedById"; END IF;
     ELSE
       PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, "givenOn") VALUES (%L, %L, %L, 'GRANTED', current_date - 1)$q$, school, lst, pg_temp.clf(pupil)),
                                  '42501', who || ' answering for ' || pupil);
     END IF;
   END LOOP;
+
+  -- The provenance of an answer is the database's, not the writer's (granskning #288, P17): staff write REGISTERED answers with no request.
+  -- A mentor cannot write an answer that looks like the guardian's confirmation in the app (source KVITTENS, naming a request, which the
+  -- trigger lets by since it is the trigger's own kind), nor name a request on an answer they write. Both halves of the arm are tried.
+  PERFORM pg_temp.cl_as('t2');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, source, "givenOn", "ackRequestId") VALUES (%L, %L, %L, 'GRANTED', 'KVITTENS', current_date, %L)$q$, school, lst, pg_temp.clf('p1'), gen_random_uuid()),
+                             '42501', 'a mentor writing an answer that looks like the guardian''s confirmation in the app');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, source, "givenOn", "ackRequestId") VALUES (%L, %L, %L, 'GRANTED', 'REGISTERED', current_date, %L)$q$, school, lst, pg_temp.clf('p1'), gen_random_uuid()),
+                             '42501', 'a mentor naming a request on an answer they write');
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentEntries" ("schoolId", "listId", "studentId", kind, source, "givenOn", "ackRequestId") VALUES (%L, %L, %L, 'GRANTED', 'KVITTENS', current_date, %L)$q$, school, lst, pg_temp.clf('p1'), gen_random_uuid()),
+                             '42501', 'an administrator writing an answer that looks like the guardian''s confirmation in the app');
 
   -- Lists: a teacher makes one for a class they have a mentee in; an administrator by Drift for any class.
   FOR who, pupil, want IN SELECT * FROM (VALUES
@@ -47551,6 +47564,21 @@ BEGIN
   INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, school, lst);
   PERFORM pg_temp.cl_as('lasare');
   PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, gen_random_uuid(), school, lst), 'CL422', 'the läsare linking a request that is nobody''s (the guard answers first)');
+  -- The läsare reads everything and writes nothing (granskning #288, P20): a request that is real, of the rule ALL and unanswered, which the guard
+  -- lets by, is still not theirs to link to a list, since its confirmations would then be consents.
+  PERFORM pg_temp.cl_as('full');
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req, school, 'Läsarens försök', 'Text', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req, school, pg_temp.clf('p1'), pg_temp.clf('g1'));
+  PERFORM pg_temp.cl_as('lasare');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, req, school, lst), '42501', 'the läsare linking a real, unanswered request of the rule ALL');
+  -- A teacher links their own request to a list of a class they have a mentee in, and to no other (P22): t4 reads the list of 7A through the pupils
+  -- they teach and wrote the request, so the class is the only thing that refuses; t4 mentors nobody.
+  PERFORM pg_temp.cl_as('t4');
+  req := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req, school, 'Samtycke: t4', 'Text', 'ALL');
+  PERFORM pg_temp.cl_expect('431 t4 reads the list they try to link', (SELECT count(*)::text FROM "ConsentLists" WHERE id = lst), '1');
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (%L, %L, %L)$q$, req, school, lst), '42501', 'a teacher linking their own request to a list of a class they have no mentee in');
 
   -- The other school sees none of this and writes nothing here.
   PERFORM pg_temp.cl_as('annan-admin');
