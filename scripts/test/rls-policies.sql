@@ -2905,7 +2905,9 @@ END $$;
 -- nightly claims that only the app.job_* functions touch, with no grant
 -- (section 80); `ReportingReminders` (20270112090100) holds the ledger of the
 -- lessons a teacher was reminded of, which only app.reporting_remind touches,
--- likewise with no grant (section 347). A new table cannot be added
+-- likewise with no grant (section 347); `AbsenceStatsMonths` (20270121090000)
+-- holds the sums of absence per class and month, which only the app.absence_stats_*
+-- functions read or write, with no grant (sections 390-393). A new table cannot be added
 -- without either satisfying the rule or changing it on purpose.
 --
 -- The floor guards the query itself: a catalog filter that quietly stopped
@@ -2943,7 +2945,7 @@ BEGIN
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
     AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets', 'IntegrationKeyWebhookSecrets',
-                          'JobRuns', 'JobClaims', 'LeaveRequestNotices', 'ReportingReminders')
+                          'JobRuns', 'JobClaims', 'LeaveRequestNotices', 'ReportingReminders', 'AbsenceStatsMonths')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -31225,7 +31227,7 @@ ROLLBACK;
 -- jobs (gallring, the job runner, push receipts, the candidates' sweep,
 -- SS12000 housekeeping and delivery, the absence watch's count and
 -- digest, Frånvarobevakning, Rapporteringsgrad's count, reminders and
--- weekly notice, and Kvittens' reminder of one request) ask for no principal and no route
+-- weekly notice, Frånvarostatistik's month and trim, and Kvittens' reminder of one request) ask for no principal and no route
 -- calls them: the reader gets nothing through them that an empty session
 -- would not. They are named rather than inferred from the writes, since
 -- which of them write depends on the arguments a call happens to get; a
@@ -31257,6 +31259,7 @@ DECLARE
   writes_by_design constant text[] := ARRAY['app.personal_data_read'];
   job_functions constant text[] := ARRAY[
     'app.ack_remind_request',
+    'app.absence_stats_month', 'app.absence_stats_trim',
     'app.absence_watch_digest', 'app.absence_watch_evaluate',
     'app.gallring_begin', 'app.gallring_claim_person', 'app.gallring_departed_due', 'app.gallring_finish',
     'app.gallring_pseudonymise', 'app.gallring_purge',
@@ -47016,3 +47019,456 @@ BEGIN
 END $$;
 ROLLBACK;
 
+-- ---------------------------------------------------------------------------
+-- Frånvarostatistik över tid (D6, 20270121090000), sections 390-394.
+--
+-- The fixtures' school rls-franvarostatistik-school has three läsår, a cohort
+-- that follows its class (FS6A -> FS7A -> FS8A), a second class (FS8B), a tiny
+-- one (FS8C, three pupils), three Septembers of lessons and marks and a
+-- pupil the school has marked as having a protected identity (see the
+-- fixtures). The months are counted by the same function the nightly job
+-- calls, in 391o and 392o on the owner's side; here the API's role reads them.
+--
+--   390  who reads what: every door, every kind of caller, the same call
+--        for each; the table itself is nobody's
+--   391  the figures the doors answer, month by month, class by class, pupil by
+--        pupil: what the fixtures' marks come to
+--   392  the protected identity and the smallest group: a marked pupil in no
+--        list and in no mentor's reach, in the sums; a class of fewer than five
+--        in no row and no pattern
+--   393  the catalogue: who may run which function, and that none of them
+--        runs for the others
+--   394  the mentor is the mentor of Frånvarobevakningen: the pupils and the
+--        classes a mentor reaches are the ones the watch hands them
+--
+-- Logins (…d6 + 0000 + n): 01 full, 02 rektor, 03 expedition, 05 läsare, 06
+-- mentor of FS8A, 07 mentor of FS8B, 08 a teacher with no class, 0011..0019 the
+-- pupils p1..p9 (p9 is marked), 41 p1's guardian, 51 the other school's
+-- administrator; and the huvudman's planner (…d60000000061) who reads the school.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Section 390: who reads what. Every door, every kind of caller (the full
+-- administrator, the läsare, the huvudman's planner as the läsare, the mentor of
+-- one class, the mentor of another, a teacher with no class, a pupil, a guardian,
+-- nobody, the other school's administrator), the same call for each, and the
+-- table itself nobody's.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.d6_as(p_sub text, p_school text, p_q text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n integer;
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN p_sub IS NULL THEN '' ELSE json_build_object('sub', p_sub, 'role', 'authenticated')::text END, true);
+  PERFORM set_config('app.chosen_school_id', coalesce(p_school, ''), true);
+  BEGIN
+    IF p_q ~* '^\s*(INSERT|UPDATE|DELETE)' THEN
+      EXECUTE p_q;
+      RETURN 'ok';
+    END IF;
+    EXECUTE 'SELECT count(*) FROM (' || p_q || ') x' INTO n;
+    RETURN 'ok:' || n;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN 'err:' || SQLSTATE;
+  END;
+END $$;
+
+CREATE FUNCTION pg_temp.d6_text(p_sub text, p_school text, p_q text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  t text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN p_sub IS NULL THEN '' ELSE json_build_object('sub', p_sub, 'role', 'authenticated')::text END, true);
+  PERFORM set_config('app.chosen_school_id', coalesce(p_school, ''), true);
+  EXECUTE 'SELECT coalesce(string_agg(t, '' | '' ORDER BY t), '''') FROM (' || p_q || ') x(t)' INTO t;
+  RETURN t;
+END $$;
+
+BEGIN;
+DO $$
+DECLARE
+  full_sub  constant text := '00000000-0000-4000-8000-d60000000001';
+  rektor    constant text := '00000000-0000-4000-8000-d60000000002';
+  expedit   constant text := '00000000-0000-4000-8000-d60000000003';
+  lasare    constant text := '00000000-0000-4000-8000-d60000000005';
+  m1        constant text := '00000000-0000-4000-8000-d60000000006';
+  m2        constant text := '00000000-0000-4000-8000-d60000000007';
+  t3        constant text := '00000000-0000-4000-8000-d60000000008';
+  pupil1    constant text := '00000000-0000-4000-8000-d60000000011';
+  guardian  constant text := '00000000-0000-4000-8000-d60000000041';
+  other     constant text := '00000000-0000-4000-8000-d60000000051';
+  planner   constant text := '00000000-0000-4000-8000-d60000000061';
+  school uuid;
+  c8a uuid; c8b uuid; c8c uuid;
+  p1 uuid; p9 uuid; p11 uuid;
+  r record;
+  got text;
+  wrong text[] := '{}';
+  n int := 0;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', full_sub)::text, true);
+  school := app.current_school_id();
+  SELECT id INTO c8a FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8A';
+  SELECT id INTO c8b FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8B';
+  SELECT id INTO c8c FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8C';
+  SELECT id INTO p1 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p1@example.invalid';
+  SELECT id INTO p9 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p9@example.invalid';
+  SELECT id INTO p11 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p11@example.invalid';
+  IF school IS NULL OR c8a IS NULL OR c8b IS NULL OR c8c IS NULL OR p1 IS NULL OR p9 IS NULL OR p11 IS NULL THEN
+    RAISE EXCEPTION 'frånvarostatistik 390: the fixtures did not run (school %, classes %/%/%, pupils %/%/%)', school, c8a, c8b, c8c, p1, p9, p11;
+  END IF;
+
+  FOR r IN
+    SELECT * FROM (VALUES
+      -- who, the school named, the call, what comes back: ok:<rows> or err:<SQLSTATE>
+      -- The window: an administrator or a teacher, nobody else.
+      ('390a full: window',        full_sub, NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      ('390a lasare: window',      lasare,   NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      ('390a mentor: window',      m1,       NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      ('390a teacher: window',     t3,       NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      ('390a pupil: window',       pupil1,   NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'err:AS403'),
+      ('390a guardian: window',    guardian, NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'err:AS403'),
+      ('390a nobody: window',      NULL,     NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'err:AS403'),
+      ('390a reader: window',      planner,  school::text, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      -- The school's months: every administrator profile, the reader too; no teacher.
+      ('390b full: school',        full_sub, NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b rektor: school',      rektor,   NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b expedition: school',  expedit,  NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b lasare: school',      lasare,   NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b reader: school',      planner,  school::text, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b mentor: school',      m1,       NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b teacher: school',     t3,       NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b pupil: school',       pupil1,   NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b guardian: school',    guardian, NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b nobody: school',      NULL,     NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b other school: school', other,   NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:0'),
+      -- A class: an administrator any, the reader too, a mentor their own (and its predecessors), nobody else.
+      ('390c full: 8A',            full_sub, NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'ok:3'),
+      ('390c reader: 8A',          planner,  school::text, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'ok:3'),
+      ('390c mentor A: 8A',        m1,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'ok:3'),
+      ('390c mentor A: 8B',        m1,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8b), 'err:AS403'),
+      ('390c mentor B: 8B',        m2,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8b), 'ok:2'),
+      ('390c mentor B: 8A',        m2,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'err:AS403'),
+      ('390c teacher: 8A',         t3,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'err:AS403'),
+      ('390c pupil: 8A',           pupil1,   NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'err:AS403'),
+      ('390c other school: 8A',    other,    NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'err:AS404'),
+      ('390c full: no such class', full_sub, NULL, $q$SELECT * FROM app.absence_stats_series('00000000-0000-4000-8000-00000000dead')$q$, 'err:AS404'),
+      ('390c full: the tiny class has no row', full_sub, NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8c), 'ok:0'),
+      -- The classes of a period: an administrator all with a row, a mentor their own and the predecessors.
+      ('390d full: classes',       full_sub, NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:4'),
+      ('390d reader: classes',     planner,  school::text, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:4'),
+      ('390d mentor A: classes',   m1,       NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:3'),
+      ('390d mentor B: classes',   m2,       NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:1'),
+      ('390d teacher: classes',    t3,       NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:0'),
+      ('390d pupil: classes',      pupil1,   NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'err:AS403'),
+      ('390d full: a period backwards', full_sub, NULL, $q$SELECT * FROM app.absence_stats_classes('2026-12-31', '2026-01-01')$q$, 'err:AS400'),
+      ('390d full: a period of four years', full_sub, NULL, $q$SELECT * FROM app.absence_stats_classes('2022-01-01', '2026-12-31')$q$, 'err:AS400'),
+      -- The pupils of a class: an administrator with an own id, the class's mentor; never the reader.
+      ('390e full: pupils of 8A',  full_sub, NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:9'),
+      ('390e lasare: pupils of 8A', lasare,  NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:9'),
+      ('390e reader: pupils of 8A', planner, school::text, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'err:AS403'),
+      ('390e mentor A: pupils of 8A', m1,    NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:8'),
+      ('390e mentor A: pupils of 8B', m1,    NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8b), 'err:AS403'),
+      ('390e teacher: pupils of 8A', t3,     NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'err:AS403'),
+      ('390e guardian: pupils of 8A', guardian, NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'err:AS403'),
+      ('390e other school: pupils of 8A', other, NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'err:AS404'),
+      -- One pupil: an administrator with an own id, the pupil's mentor; never the reader, another class's mentor or the pupil.
+      ('390f full: p1',            full_sub, NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'ok:1'),
+      ('390f expedition: p1',      expedit,  NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'ok:1'),
+      ('390f reader: p1',          planner,  school::text, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f mentor A: p1',        m1,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'ok:1'),
+      ('390f mentor B: p1',        m2,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f mentor B: p11',       m2,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p11), 'ok:1'),
+      ('390f mentor A: p11',       m1,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p11), 'err:AS403'),
+      ('390f teacher: p1',         t3,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f the pupil: p1',       pupil1,   NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f guardian: p1',        guardian, NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f other school: p1',    other,    NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS404'),
+      ('390f full: no such pupil', full_sub, NULL, $q$SELECT * FROM app.absence_stats_pupil_head('00000000-0000-4000-8000-00000000dead')$q$, 'err:AS404'),
+      ('390f full: a teacher is no pupil', full_sub, NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'fs-m1@example.invalid')), 'err:AS404'),
+      ('390g full: p1 months',     full_sub, NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, p1), 'ok:3'),
+      ('390g mentor A: p1 months', m1,       NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, p1), 'ok:3'),
+      ('390g reader: p1 months',   planner,  school::text, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, p1), 'err:AS403'),
+      ('390g mentor B: p1 months', m2,       NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, p1), 'err:AS403'),
+      ('390g full: a pupil’s period backwards', full_sub, NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2026-11-06', '2024-08-01')$q$, p1), 'err:AS400'),
+      -- The patterns: a class's for an administrator (the reader too) and the class's mentor, a pupil's as the pupil's card.
+      ('390h full: 8A patterns',   full_sub, NULL, format($q$SELECT * FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:11'),
+      ('390h reader: 8A patterns', planner,  school::text, format($q$SELECT * FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:11'),
+      ('390h mentor A: 8A patterns', m1,     NULL, format($q$SELECT * FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:11'),
+      ('390h mentor A: 8B patterns', m1,     NULL, format($q$SELECT * FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8b), 'err:AS403'),
+      ('390h full: p1 patterns',   full_sub, NULL, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06')$q$, p1), 'ok:11'),
+      ('390h mentor A: p1 patterns', m1,     NULL, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06')$q$, p1), 'ok:11'),
+      ('390h reader: p1 patterns', planner,  school::text, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06')$q$, p1), 'err:AS403'),
+      ('390h mentor B: p1 patterns', m2,     NULL, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06')$q$, p1), 'err:AS403'),
+      ('390h full: a class and a pupil', full_sub, NULL, format($q$SELECT * FROM app.absence_stats_patterns(%L, %L, '2026-08-01', '2026-10-31')$q$, c8a, p1), 'err:AS400'),
+      ('390h full: neither',       full_sub, NULL, $q$SELECT * FROM app.absence_stats_patterns(NULL, NULL, '2026-08-01', '2026-10-31')$q$, 'err:AS400'),
+      -- The table: nobody's.
+      ('390i full: the table',     full_sub, NULL, $q$SELECT * FROM "AbsenceStatsMonths"$q$, 'err:42501'),
+      ('390i mentor: the table',   m1,       NULL, $q$SELECT * FROM "AbsenceStatsMonths"$q$, 'err:42501'),
+      ('390i reader: the table',   planner,  school::text, $q$SELECT * FROM "AbsenceStatsMonths"$q$, 'err:42501'),
+      ('390i full: write the table', full_sub, NULL, $q$INSERT INTO "AbsenceStatsMonths" ("schoolId", month, "throughDay", pupils, "pupilsRegistered", "lessonsHeld", "lessonsReported") SELECT id, '2020-01-01', '2020-01-31', 9, 0, 0, 0 FROM "Schools"$q$, 'err:42501')
+    ) v(label, sub, named, q, expected)
+  LOOP
+    got := pg_temp.d6_as(r.sub, r.named, r.q);
+    n := n + 1;
+    IF got IS DISTINCT FROM r.expected THEN
+      wrong := wrong || format('%s: %s, expected %s', r.label, got, r.expected);
+    END IF;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION E'frånvarostatistik 390: % of % calls were not what they should be:\n%', cardinality(wrong), n, array_to_string(wrong, E'\n');
+  END IF;
+  RAISE NOTICE 'frånvarostatistik 390: % calls, all as expected', n;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 391: what the doors answer. The fixtures' marks, counted by hand
+-- (see the fixtures): each month of the school, each class and each pupil.
+--
+-- FS8A, September 2026: 22 weekdays of three lessons, one cancelled (the 10th
+-- at 08:00: counted for nothing, though every pupil was marked absent on it)
+-- and one day nobody was marked (the 24th), so 65 lessons held and 62 with a
+-- register; nine pupils, p4 without a mark on the 21 lessons of 10:00:
+-- 62 * 9 - 21 = 537 marks of 50 minutes = 26 850. p2 excused for six lessons
+-- (300), p1 absent four Mondays at 08:00 and p9 on the 2nd for three lessons
+-- (350), p3 late four Fridays (4 marks, 60 minutes).
+-- FS8B: 66 lessons, 63 with a register, six pupils: 63 * 6 * 50 = 18 900,
+-- p11 absent five Tuesdays at 09:00 (250). FS8C (three pupils): 63 * 3 * 50 = 9 450
+-- and in no class row, but in the school's 26 850 + 18 900 + 9 450 = 55 200.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  full_sub constant text := '00000000-0000-4000-8000-d60000000001';
+  school uuid;
+  c8a uuid; c8b uuid;
+  p1 uuid; p3 uuid;
+  wrong text[] := '{}';
+  r record;
+  got text;
+  fig constant text := $f$coalesce(recorded_minutes::text, '-') || '/' || coalesce(valid_minutes::text, '-') || '/' || coalesce(absent_minutes::text, '-') || '/' || coalesce(late_minutes::text, '-') || '/' || coalesce(late_count::text, '-')$f$;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', full_sub)::text, true);
+  school := app.current_school_id();
+  SELECT id INTO c8a FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8A';
+  SELECT id INTO c8b FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8B';
+  SELECT id INTO p1 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p1@example.invalid';
+  SELECT id INTO p3 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p3@example.invalid';
+
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('391a the school''s months, as: month pupils/registered recorded/valid/absent/late/lateCount held/reported',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || pupils || '/' || pupils_registered || ' ' || %s || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_series()$q$, fig),
+       '2024-09 9/9 28350/0/200/60/4 63/63 | 2025-09 9/9 29700/0/200/60/4 66/66 | 2026-08 18/3 -/-/-/-/- 15/15 | 2026-09 18/18 55200/300/600/60/4 197/188'),
+      ('391b FS8A and the classes before it, a cohort',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || class_name || ' ' || pupils || '/' || pupils_registered || ' ' || %s || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_series(%L)$q$, fig, c8a),
+       '2024-09 FS6A 9/9 28350/0/200/60/4 63/63 | 2025-09 FS7A 9/9 29700/0/200/60/4 66/66 | 2026-09 FS8A 9/9 26850/300/350/60/4 65/62'),
+      ('391c FS8B: August with three of six marked has no minutes, only the lessons',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || class_name || ' ' || pupils || '/' || pupils_registered || ' ' || %s || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_series(%L)$q$, fig, c8b),
+       '2026-08 FS8B 6/3 -/-/-/-/- 15/15 | 2026-09 FS8B 6/6 18900/0/250/0/0 66/63'),
+      ('391d the classes of the läsår so far, the months with a figure counted',
+       $q$SELECT class_name || ' ' || year_name || ' ' || months_counted || ' ' || pupils || '/' || pupils_registered || ' ' || recorded_minutes || '/' || valid_minutes || '/' || absent_minutes || '/' || late_minutes || '/' || late_count || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_classes('2026-08-01', '2026-10-31')$q$,
+       'FS8A FS 26/27 1 9/9 26850/300/350/60/4 65/62 | FS8B FS 26/27 1 6/6 18900/0/250/0/0 81/78'),
+      ('391e a period inside one month is the whole month',
+       $q$SELECT class_name || ' ' || recorded_minutes FROM app.absence_stats_classes('2026-09-15', '2026-09-16')$q$,
+       'FS8A 26850 | FS8B 18900'),
+      ('391f a period of two years back reaches the cohort’s three classes',
+       $q$SELECT class_name || ' ' || year_name || ' ' || months_counted FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$,
+       'FS6A FS 24/25 1 | FS7A FS 25/26 1 | FS8A FS 26/27 1 | FS8B FS 26/27 1'),
+      ('391g p1: three months, one absent lesson a week, from the marks that are left',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || %s || ' ' || lessons FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, fig, p1),
+       '2024-09 3150/0/200/0/0 63 | 2025-09 3300/0/200/0/0 66 | 2026-09 3100/0/200/0/0 62'),
+      ('391h p3: late on the Fridays, 15 minutes each, 50-minute lessons',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || %s FROM app.absence_stats_pupil(%L, '2026-09-01', '2026-09-30')$q$, fig, p3),
+       '2026-09 3100/0/0/60/4'),
+      ('391i p1’s patterns over three Septembers: the weekday, the pass and the subject of each year’s absent lesson (200 minutes each); the minutes are p1’s marks: 20 or 21 lessons of 50 minutes at each pass',
+       format($q$SELECT dimension || ' ' || CASE WHEN dimension = 'SUBJECT' THEN label ELSE key END || ' ' || recorded_minutes || '/' || absent_minutes FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06') WHERE absent_minutes > 0$q$, p1),
+       'SLOT 08:00 3150/200 | SLOT 09:00 3200/200 | SLOT 10:00 3200/200 | SUBJECT Idrott 3200/200 | SUBJECT Matematik 3150/200 | SUBJECT Svenska 3200/200 | WEEKDAY 1 2100/200 | WEEKDAY 3 1950/200 | WEEKDAY 4 1600/200'),
+      ('391j FS8A’s patterns over the läsår: the Mondays are p1’s, the Wednesday p9’s (the marked pupil is in the sums), p2 is excused on a Thursday and a Friday, the Fridays are p3’s',
+       format($q$SELECT dimension || ' ' || key || ' ' || recorded_minutes || '/' || valid_minutes || '/' || absent_minutes || '/' || late_minutes || '/' || late_count FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31') WHERE dimension = 'WEEKDAY'$q$, c8a),
+       'WEEKDAY 1 5200/0/200/0/0 | WEEKDAY 2 6500/0/0/0/0 | WEEKDAY 3 6500/0/150/0/0 | WEEKDAY 4 3450/150/0/0/0 | WEEKDAY 5 5200/150/0/60/4'),
+      ('391k FS8A’s patterns over the three läsår are the cohort’s: FS6A, FS7A and FS8A, 28 350 + 29 700 + 26 850 recorded minutes, and none of FS8B’s',
+       format($q$SELECT sum(recorded_minutes)::text FROM app.absence_stats_patterns(%L, NULL, '2024-08-01', '2026-11-06') WHERE dimension = 'WEEKDAY'$q$, c8a),
+       '84900')
+    ) v(label, q, expected)
+  LOOP
+    got := pg_temp.d6_text(full_sub, NULL, r.q);
+    IF got IS DISTINCT FROM r.expected THEN
+      wrong := wrong || format(E'%s:\n   got      %s\n   expected %s', r.label, got, r.expected);
+    END IF;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION E'frånvarostatistik 391: %', array_to_string(wrong, E'\n');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 392: the protected identity and the smallest group.
+--
+-- A pupil the school has marked is in no list that names pupils: an
+-- administrator's list of a class has an empty row in the marked pupil's
+-- place (no id, no name, no figure), a mentor's has nothing, and a mentor
+-- cannot open the pupil. The class's sums count them (the school's
+-- 55 200 = 26 850 + 18 900 + 9 450 holds p9's absence). A class of fewer than
+-- five pupils has no month stored and no pattern: three pupils in FS8C, six
+-- in FS8B of whom three were marked in August.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  full_sub constant text := '00000000-0000-4000-8000-d60000000001';
+  m1 constant text := '00000000-0000-4000-8000-d60000000006';
+  planner constant text := '00000000-0000-4000-8000-d60000000061';
+  school uuid;
+  c8a uuid; c8c uuid;
+  p9 uuid;
+  got text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', full_sub)::text, true);
+  school := app.current_school_id();
+  SELECT id INTO c8a FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8A';
+  SELECT id INTO c8c FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8C';
+  SELECT id INTO p9 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p9@example.invalid';
+
+  -- The administrator's list: eight named, one in the marked pupil's place with nothing in it.
+  got := pg_temp.d6_text(full_sub, NULL, format($q$SELECT coalesce(first_name, '-') || ' ' || coalesce(last_name, '-') || ' ' || coalesce(student_id::text, '-') || ' ' || is_protected || ' ' || coalesce(recorded_minutes::text, '-') || coalesce(absent_minutes::text, '-') FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31') WHERE is_protected OR student_id IS NULL OR first_name IS NULL$q$, c8a));
+  IF got IS DISTINCT FROM '- - - true --' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: the marked pupil is in an administrator''s list as [%]', got;
+  END IF;
+  IF pg_temp.d6_text(full_sub, NULL, format($q$SELECT student_id::text FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31') WHERE student_id = %L$q$, c8a, p9)) <> '' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: the marked pupil''s id is in an administrator''s list';
+  END IF;
+  -- The mentor's: nothing in the place, and the name nowhere in what the door answers.
+  got := pg_temp.d6_text(m1, NULL, format($q$SELECT row_to_json(x)::text FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31') x$q$, c8a));
+  IF got LIKE '%Statistik09%' OR got LIKE '%' || p9::text || '%' OR got LIKE '%"is_protected":true%' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a mentor''s list of the class holds the marked pupil: %', got;
+  END IF;
+  IF pg_temp.d6_as(m1, NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a)) <> 'ok:8' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a mentor''s list of the class has a row too many or too few';
+  END IF;
+  -- Nor can the mentor open the pupil, in any of the three doors that name one.
+  IF pg_temp.d6_as(m1, NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p9)) <> 'err:AS403'
+     OR pg_temp.d6_as(m1, NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2026-08-01', '2026-10-31')$q$, p9)) <> 'err:AS403'
+     OR pg_temp.d6_as(m1, NULL, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2026-08-01', '2026-10-31')$q$, p9)) <> 'err:AS403' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a mentor opened the marked pupil';
+  END IF;
+  -- An administrator opens the pupil, and is told that the pupil is marked (the web prints nothing for them).
+  IF pg_temp.d6_text(full_sub, NULL, format($q$SELECT first_name || ' ' || is_protected FROM app.absence_stats_pupil_head(%L)$q$, p9)) <> 'Elev true' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: an administrator does not get the marked pupil, marked';
+  END IF;
+  -- The sums count the pupil: FS8A's 350 absent minutes are p1's four Mondays and p9's three lessons.
+  IF pg_temp.d6_text(full_sub, NULL, format($q$SELECT absent_minutes::text FROM app.absence_stats_series(%L) WHERE month = '2026-09-01'$q$, c8a)) <> '350' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: the class''s sum leaves out the marked pupil';
+  END IF;
+
+  -- The smallest group. FS8C has no month in any table of sums, and a pattern of it is one row that says so.
+  IF pg_temp.d6_as(full_sub, NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8c)) <> 'ok:0' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a class of three has a month';
+  END IF;
+  IF pg_temp.d6_text(full_sub, NULL, $q$SELECT class_name FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$) LIKE '%FS8C%' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a class of three is in the table of classes';
+  END IF;
+  FOREACH got IN ARRAY ARRAY[full_sub, planner] LOOP
+    IF pg_temp.d6_text(got, CASE WHEN got = planner THEN school::text END,
+         format($q$SELECT dimension || '/' || group_size || '/' || suppressed || '/' || coalesce(recorded_minutes::text, '-') || coalesce(absent_minutes::text, '-') FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8c))
+       <> 'ALL/3/true/--' THEN
+      RAISE EXCEPTION 'frånvarostatistik 392: the patterns of a class of three are not one row that says so (caller %)', got;
+    END IF;
+  END LOOP;
+  -- A pupil's own patterns have no group, so they are not held back.
+  IF pg_temp.d6_text(full_sub, NULL, format($q$SELECT DISTINCT suppressed::text FROM app.absence_stats_patterns(NULL, %L, '2026-08-01', '2026-10-31')$q$, p9)) <> 'false' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a pupil’s patterns are held back as a group''s';
+  END IF;
+  -- August 2026: FS8B has six pupils and three marked, so its month has the lessons and no minute; the school's, with 18 pupils, has the same three marked and no minute either.
+  IF pg_temp.d6_text(full_sub, NULL, $q$SELECT class_name || ' ' || pupils || '/' || pupils_registered || ' ' || coalesce(recorded_minutes::text, '-') || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_series((SELECT id FROM "StudentGroups" WHERE name = 'FS8B')) WHERE month = '2026-08-01'$q$)
+     <> 'FS8B 6/3 - 15/15' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: August''s month of FS8B';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 393: the catalogue. Who may run which function, and what the table
+-- gives anybody.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  names constant text[] := ARRAY['absence_stats_min_group', 'absence_stats_window_first', 'absence_stats_window', 'absence_stats_plan',
+    'absence_stats_lessons', 'absence_stats_month', 'absence_stats_trim', 'absence_stats_pupil_access', 'absence_stats_class_access', 'absence_stats_series',
+    'absence_stats_classes', 'absence_stats_class_pupils', 'absence_stats_pupil_head', 'absence_stats_pupil', 'absence_stats_patterns'];
+  api constant text[] := ARRAY['absence_stats_window', 'absence_stats_plan', 'absence_stats_month', 'absence_stats_trim', 'absence_stats_series',
+    'absence_stats_classes', 'absence_stats_class_pupils', 'absence_stats_pupil_head', 'absence_stats_pupil', 'absence_stats_patterns'];
+  writers constant text[] := ARRAY['absence_stats_month', 'absence_stats_trim'];
+  f record;
+  wrong text[] := '{}';
+  found int;
+  role_name text;
+  priv text;
+BEGIN
+  SELECT count(*) INTO found FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE 'absence\_stats\_%';
+  IF found <> cardinality(names) THEN
+    RAISE EXCEPTION 'frånvarostatistik 393: % functions called absence_stats_*, not the % this section knows', found, cardinality(names);
+  END IF;
+  FOR f IN SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'app' AND p.proname = ANY (names) ORDER BY p.proname
+  LOOP
+    -- Two are not definers: the group size (no secret, reads nothing) and the lessons (D2's function with one line
+    -- changed, which is inlined into the definer that calls it and so has no path of its own: every name in it is
+    -- schema-qualified, and the owner's section 392o holds it to D2's text). The lessons are still the owner's alone.
+    IF f.proname NOT IN ('absence_stats_min_group', 'absence_stats_lessons') AND NOT f.prosecdef THEN
+      wrong := wrong || format('%s is not SECURITY DEFINER', f.proname);
+    END IF;
+    IF f.proname NOT IN ('absence_stats_min_group', 'absence_stats_lessons') AND NOT EXISTS (SELECT 1 FROM unnest(f.proconfig) c WHERE c LIKE 'search_path=%') THEN
+      wrong := wrong || format('%s has no search_path', f.proname);
+    END IF;
+    IF f.proname = 'absence_stats_lessons' AND (f.prosecdef OR f.proconfig IS NOT NULL OR f.provolatile <> 's') THEN
+      wrong := wrong || format('%s is not a plain STABLE function that can be inlined', f.proname);
+    END IF;
+    IF (f.proname = ANY (writers)) <> (f.provolatile = 'v') THEN
+      wrong := wrong || format('%s is %s: only %s write', f.proname, f.provolatile, writers);
+    END IF;
+    IF (f.proname = ANY (api)) <> has_function_privilege('app_authenticated', f.oid, 'EXECUTE') THEN
+      wrong := wrong || format('%s: the API role %s run it', f.proname, CASE WHEN f.proname = ANY (api) THEN 'cannot' ELSE 'can' END);
+    END IF;
+    FOREACH role_name IN ARRAY ARRAY['authenticated', 'anon', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) AND has_function_privilege(role_name, f.oid, 'EXECUTE') THEN
+        wrong := wrong || format('%s: %s can run it', f.proname, role_name);
+      END IF;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_proc p2, aclexplode(coalesce(p2.proacl, acldefault('f', p2.proowner))) a WHERE p2.oid = f.oid AND a.grantee = 0) THEN
+      wrong := wrong || format('%s: PUBLIC can run it', f.proname);
+    END IF;
+  END LOOP;
+
+  -- The table: row security on, no policy at all, no privilege for anybody (the owner's alone).
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"AbsenceStatsMonths"'::regclass) THEN
+    wrong := wrong || 'AbsenceStatsMonths has no row security';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'AbsenceStatsMonths') THEN
+    wrong := wrong || 'AbsenceStatsMonths has a policy';
+  END IF;
+  FOREACH role_name IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon'] LOOP
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) AND has_table_privilege(role_name, '"AbsenceStatsMonths"', priv) THEN
+        wrong := wrong || format('%s holds %s on AbsenceStatsMonths', role_name, priv);
+      END IF;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) AND has_any_column_privilege(role_name, '"AbsenceStatsMonths"', 'SELECT') THEN
+      wrong := wrong || format('%s reads a column of AbsenceStatsMonths', role_name);
+    END IF;
+  END LOOP;
+  IF current_setting('server_version_num')::int >= 170000 AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
+    IF has_table_privilege('app_authenticated', '"AbsenceStatsMonths"', 'MAINTAIN') THEN
+      wrong := wrong || 'app_authenticated holds MAINTAIN on AbsenceStatsMonths';
+    END IF;
+  END IF;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION E'frånvarostatistik 393:\n%', array_to_string(wrong, E'\n');
+  END IF;
+END $$;
+ROLLBACK;

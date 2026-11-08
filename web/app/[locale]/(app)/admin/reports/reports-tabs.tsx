@@ -30,6 +30,15 @@ const CoverHoursReport = lazy(() =>
   import("./cover-hours-report").then((module) => ({ default: module.CoverHoursReport })),
 );
 
+/**
+ * Frånvarostatistik, lazy for the same reason: a rektor's or a mentor's read of
+ * absence over time is not what an administrator opens Rapporter for every
+ * day, and the chart, the patterns and the pupil's card are code of its own.
+ */
+const AbsenceStatsReport = lazy(() =>
+  import("./absence-stats-report").then((module) => ({ default: module.AbsenceStatsReport })),
+);
+
 /** What a lazy tab shows while its chunk arrives: the page-level skeleton. */
 const tabLoading = (
   <div aria-busy="true">
@@ -38,7 +47,7 @@ const tabLoading = (
 );
 
 /**
- * The three reports under one page. The tab is remembered in the URL
+ * The four reports under one page. The tab is remembered in the URL
  * (`?tab=staffing`), written with history.replaceState so switching neither
  * navigates nor adds a history entry; page.tsx reads it back on a reload.
  *
@@ -66,10 +75,11 @@ export function ReportsTabs({ initialTab }: { initialTab: ReportTab }) {
     <Page>
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
       <Tabs value={tab} onValueChange={choose} className="space-y-4">
-        <TabsList aria-label={t("label")}>
+        <TabsList aria-label={t("label")} className="h-auto flex-wrap justify-start">
           <TabsTrigger value="attendance">{t("attendance")}</TabsTrigger>
           <TabsTrigger value="staffing">{t("staffing")}</TabsTrigger>
           <TabsTrigger value="cover">{t("cover")}</TabsTrigger>
+          <TabsTrigger value="absence-stats">{t("absenceStats")}</TabsTrigger>
         </TabsList>
         <TabsContent value="attendance" className="mt-0">
           <AttendanceReport />
@@ -82,6 +92,11 @@ export function ReportsTabs({ initialTab }: { initialTab: ReportTab }) {
         <TabsContent value="cover" className="mt-0">
           <Suspense fallback={tabLoading}>
             <CoverHoursReport />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="absence-stats" className="mt-0">
+          <Suspense fallback={tabLoading}>
+            <AbsenceStatsReport />
           </Suspense>
         </TabsContent>
       </Tabs>

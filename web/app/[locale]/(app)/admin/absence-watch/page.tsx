@@ -5,8 +5,10 @@ import { useAbsenceWatchOverview } from "@/lib/absence-watch-queries";
 import { FindingsSection } from "@/components/absence-watch/findings-section";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import { Button } from "@/components/ui/button";
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Link } from "@/i18n/navigation";
 import { LimitsCard } from "./limits-card";
 import { SettingsCard } from "./settings-card";
 
@@ -25,14 +27,26 @@ import { SettingsCard } from "./settings-card";
  * none. The findings are read from their own route (the overview failing does
  * not take them away) and are the same list a mentor and a guardian read for
  * their own pupils.
+ *
+ * A link leads on to Frånvarostatistik över tid, the fourth tab of
+ * /admin/reports: the same absence month by month, with the rapporteringsgrad.
  */
 export default function AbsenceWatchPage() {
   const t = useTranslations("absenceWatch");
+  const tStats = useTranslations("absenceStats");
   const overview = useAbsenceWatchOverview();
 
   return (
     <Page>
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+      <PageHeader
+        title={t("title")}
+        subtitle={t("subtitle")}
+        actions={
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/admin/reports?tab=absence-stats">{tStats("link")}</Link>
+          </Button>
+        }
+      />
       {overview.isLoading ? (
         <div aria-busy="true">
           <Skeleton className="h-64 w-full" />
