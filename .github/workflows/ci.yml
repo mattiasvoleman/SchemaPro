@@ -421,6 +421,21 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-analysis.ts
 
+      # Lokal (K3, 20270204091000): resources that are not rooms and the associations that hire a
+      # room after school, through the real services on the API's role. A resource booked past
+      # its quantity answers 409 by name (the trigger's refusal as the adapter delivers it), a
+      # series is previewed against lessons, bookings, the ramtid and a closure and registered
+      # with or without the days that clash, its days are bookings of the room a teacher cannot
+      # book over, two registrations at once end in one 409, a lesson that lands in a booked room
+      # is listed and told to the expedition and not to the läsare, the report and its CSV, and
+      # forty rooms with a term of Tuesdays each against 24 000 lessons registered in under 2 s
+      # (read against the empty transaction's cost where the runner is busy). It removes its school.
+      - name: Lokal probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-lokal.ts
+
       # Huvudman (20261212090000): every GET a school administrator reaches,
       # through the real gateway and this database, as the roller school's
       # own läsare and as the huvudman's reader with that school chosen. Each

@@ -6,15 +6,15 @@ import { requireSchoolId, requireUserId } from '../common/utils/request-context'
 import { parseDateString, parseTimeString, toWallClock, todayInZone } from '../common/utils/time';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { markedIds } from '../users/person-protections';
-import { loanBookingRefusal, toLoanRows } from '../room-bookings/loan-holds';
+import { loanBookingRefusal } from '../room-bookings/loan-holds';
 import type { CreateExternalBookingDto, ExternalBookingRuleDto, UpdateExternalBookingDto } from './dto/external-booking.dto';
 import { clashRows, toClashResponse } from './external-clashes';
+import { readResourceFacts, readRoomFacts, readStatics } from './external-facts';
 import {
   isBlocked,
   resourceDayConflicts,
   roomDayConflicts,
   type DayToCheck,
-  type HeldSpan,
   type ResourceFacts,
   type RoomFacts,
   type SchoolFacts,
@@ -31,7 +31,7 @@ import type {
   ExternalPreviewResponse,
 } from './local-types';
 import { isQuantityExhausted } from './resource-bookings.service';
-import { minutesOfClock, wholeSchoolHolidays, type FrameLike } from './school-time';
+import { minutesOfClock, wholeSchoolHolidays } from './school-time';
 
 /** The title of every day of a series, in the room's calendar: the hirer is not named there. */
 export const EXTERNAL_DAY_TITLE = 'Extern bokning';
@@ -147,13 +147,23 @@ export class ExternalBookingsService {
       throw new BadRequestException('A series is at most 400 days.');
     }
     if (dto.endTime <= dto.startTime) throw new BadRequestException('endTime must be after startTime.');
+    if (dto.target === 'ROOM' && (!dto.roomId || dto.resourceId)) throw new BadRequestException('A room series names a room and no resource.');
+    if (dto.target === 'RESOURCE' && (!dto.resourceId || dto.roomId)) throw new BadRequestException('A resource series names a resource and no room.');
 
-    const school = await tx.school.findFirst({ select: { timezone: true } });
-    const timeZone = school?.timezone ?? 'Europe/Stockholm';
+    // The school, its ramtider and lov, the room or resource and the room's loans: one statement.
+    const statics = await readStatics(tx, { roomId: dto.target === 'ROOM' ? (dto.roomId as string) : null, resourceId: dto.target === 'RESOURCE' ? (dto.resourceId as string) : null }, dto.startDate, dto.endDate);
+    const timeZone = statics.timeZone;
     const today = todayInZone(timeZone).toISOString().slice(0, 10);
     if (dto.startDate < today) throw new BadRequestException('A series cannot start in the past.');
 
-    const target = await this.targetOf(tx, dto);
+    let target: Target;
+    if (dto.target === 'ROOM') {
+      if (!statics.room) throw new BadRequestException('Room not found.');
+      target = { kind: 'ROOM', id: statics.room.id, name: statics.room.name, years: statics.room.years, quantity: 1 };
+    } else {
+      if (!statics.resource) throw new BadRequestException('Resource not found.');
+      target = { kind: 'RESOURCE', id: statics.resource.id, name: statics.resource.name, years: { min: null, max: null }, quantity: statics.resource.quantity };
+    }
     const wanted = dto.target === 'RESOURCE' ? (dto.resourceQuantity ?? 1) : 1;
     if (dto.target === 'RESOURCE' && wanted > target.quantity) {
       throw new BadRequestException(`Det finns bara ${target.quantity} av resursen.`);
@@ -161,33 +171,26 @@ export class ExternalBookingsService {
     const days = expandRule(rule, timeZone);
     if (days.length === 0) throw new BadRequestException('Regeln ger inga dagar.');
 
-    const from = days[0].startsAt;
-    const to = days[days.length - 1].endsAt;
-    const framesRows = await tx.frameTime.findMany({
-      select: { minGradeLevel: true, maxGradeLevel: true, dayOfWeek: true, startTime: true, endTime: true },
-    });
-    const frames: FrameLike[] = framesRows.map((frame) => ({
-      minGradeLevel: frame.minGradeLevel,
-      maxGradeLevel: frame.maxGradeLevel,
-      dayOfWeek: frame.dayOfWeek,
-      start: minutesOfClock(toWallClock(frame.startTime)),
-      end: minutesOfClock(toWallClock(frame.endTime)),
-    }));
-    const breaks = await tx.schoolBreak.findMany({
-      where: { startDate: { lte: parseDateString(dto.endDate) }, endDate: { gte: parseDateString(dto.startDate) } },
-      select: { kind: true, startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
-    });
     const schoolFacts: SchoolFacts = {
-      frames,
-      holidays: wholeSchoolHolidays(
-        breaks.map((entry) => ({ ...entry, startDate: day(entry.startDate), endDate: day(entry.endDate) })),
-        dto.startDate,
-        dto.endDate,
-      ),
+      frames: statics.frames,
+      holidays: wholeSchoolHolidays(statics.breaks, dto.startDate, dto.endDate),
       years: target.years,
     };
-
-    const check = target.kind === 'ROOM' ? await this.roomChecker(tx, target, from, to, timeZone, dto) : await this.resourceChecker(tx, target, from, to, wanted);
+    // What holds the room or the resource at the days of the series, and nowhere else: one statement.
+    let check: (day: DayToCheck, school: SchoolFacts) => ExternalConflict[];
+    if (target.kind === 'ROOM') {
+      const found = await readRoomFacts(tx, target.id, days, dto.startDate, dto.endDate);
+      const facts: RoomFacts = {
+        ...found,
+        ...(statics.loans.length > 0
+          ? { loan: (startsAt: Date, endsAt: Date) => loanBookingRefusal(statics.loans, target.id, startsAt, endsAt, timeZone) }
+          : {}),
+      };
+      check = (toCheck, school) => roomDayConflicts(toCheck, facts, school);
+    } else {
+      const facts: ResourceFacts = { quantity: target.quantity, wanted, bookings: await readResourceFacts(tx, target.id, days) };
+      check = (toCheck, school) => resourceDayConflicts(toCheck, facts, school);
+    }
     const startMinute = minutesOfClock(dto.startTime);
     const endMinute = minutesOfClock(dto.endTime);
     return {
@@ -195,106 +198,12 @@ export class ExternalBookingsService {
       wanted,
       rule,
       timeZone,
-      framesMissing: frames.length === 0,
-      days: days.map((planned) => {
-        const toCheck: DayToCheck = {
-          date: planned.date,
-          weekday: isoWeekdayOf(planned.date),
-          startsAt: planned.startsAt,
-          endsAt: planned.endsAt,
-          startMinute,
-          endMinute,
-        };
-        return { ...planned, conflicts: check(toCheck, schoolFacts) };
-      }),
-    };
-  }
-
-  private async targetOf(tx: Tx, dto: ExternalBookingRuleDto): Promise<Target> {
-    if (dto.target === 'ROOM') {
-      if (!dto.roomId || dto.resourceId) throw new BadRequestException('A room series names a room and no resource.');
-      const room = await tx.room.findUnique({ where: { id: dto.roomId }, select: { id: true, name: true, minGradeLevel: true, maxGradeLevel: true } });
-      if (!room) throw new BadRequestException('Room not found.');
-      return { kind: 'ROOM', id: room.id, name: room.name, years: { min: room.minGradeLevel, max: room.maxGradeLevel }, quantity: 1 };
-    }
-    if (!dto.resourceId || dto.roomId) throw new BadRequestException('A resource series names a resource and no room.');
-    const resource = await tx.resource.findUnique({ where: { id: dto.resourceId }, select: { id: true, name: true, quantity: true } });
-    if (!resource) throw new BadRequestException('Resource not found.');
-    return { kind: 'RESOURCE', id: resource.id, name: resource.name, years: { min: null, max: null }, quantity: resource.quantity };
-  }
-
-  /** What holds a room over the series' whole span, read once; each day is then judged in memory. */
-  private async roomChecker(
-    tx: Tx,
-    target: Target,
-    from: Date,
-    to: Date,
-    timeZone: string,
-    dto: ExternalBookingRuleDto,
-  ): Promise<(day: DayToCheck, school: SchoolFacts) => ExternalConflict[]> {
-    const overlap = { startsAt: { lt: to }, endsAt: { gt: from } };
-    const lessons = await tx.calendarLesson.findMany({
-      where: { roomId: target.id, status: { in: ['SCHEDULED', 'COMPLETED'] }, ...overlap },
-      select: { startsAt: true, endsAt: true, subject: { select: { name: true } }, studentGroup: { select: { name: true } } },
-    });
-    const bookings = await tx.roomBooking.findMany({
-      where: { roomId: target.id, status: { in: ['PENDING', 'APPROVED'] }, ...overlap },
-      select: { startsAt: true, endsAt: true, title: true },
-    });
-    const closures = await tx.availabilityConstraint.findMany({
-      where: {
-        resourceType: 'ROOM',
-        roomId: target.id,
-        type: 'UNAVAILABLE',
-        OR: [{ date: null }, { date: { gte: parseDateString(dto.startDate), lte: parseDateString(dto.endDate) } }],
-      },
-      select: { date: true, dayOfWeek: true, startTime: true, endTime: true, reason: true },
-    });
-    const activityLessons = await tx.calendarLesson.findMany({
-      where: { status: 'SCHEDULED', activityLinks: { some: { activity: { removedAt: null } } }, ...overlap },
-      select: { startsAt: true, endsAt: true, activityLinks: { select: { activity: { select: { batch: { select: { name: true } } } } }, take: 1 } },
-    });
-    const loans = await tx.roomLoan.findMany({
-      where: { OR: [{ roomId: target.id }, { localRoomId: target.id }] },
-      select: { status: true, roomId: true, localRoomId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
-    });
-    const loanRows = toLoanRows(loans);
-
-    const held = (rows: Array<{ startsAt: Date; endsAt: Date }>, label: (row: never) => string): HeldSpan[] =>
-      rows.map((row) => ({ start: row.startsAt.getTime(), end: row.endsAt.getTime(), label: label(row as never) }));
-    const facts: RoomFacts = {
-      lessons: held(lessons, (row: (typeof lessons)[number]) => `${row.subject.name} ${row.studentGroup.name}`.trim()),
-      bookings: held(bookings, (row: (typeof bookings)[number]) => row.title),
-      closures: closures.map((closure) => ({
-        date: closure.date ? day(closure.date) : null,
-        dayOfWeek: closure.dayOfWeek,
-        start: minutesOfClock(toWallClock(closure.startTime)),
-        end: minutesOfClock(toWallClock(closure.endTime)),
-        reason: closure.reason ?? '',
+      framesMissing: statics.frames.length === 0,
+      days: days.map((planned) => ({
+        ...planned,
+        conflicts: check({ date: planned.date, weekday: isoWeekdayOf(planned.date), startsAt: planned.startsAt, endsAt: planned.endsAt, startMinute, endMinute }, schoolFacts),
       })),
-      activities: held(activityLessons, (row: (typeof activityLessons)[number]) => row.activityLinks[0]?.activity.batch.name ?? ''),
-      ...(loanRows.length > 0 ? { loan: (startsAt: Date, endsAt: Date) => loanBookingRefusal(loanRows, target.id, startsAt, endsAt, timeZone) } : {}),
     };
-    return (toCheck, school) => roomDayConflicts(toCheck, facts, school);
-  }
-
-  private async resourceChecker(
-    tx: Tx,
-    target: Target,
-    from: Date,
-    to: Date,
-    wanted: number,
-  ): Promise<(day: DayToCheck, school: SchoolFacts) => ExternalConflict[]> {
-    const bookings = await tx.resourceBooking.findMany({
-      where: { resourceId: target.id, status: { in: ['PENDING', 'APPROVED'] }, startsAt: { lt: to }, endsAt: { gt: from } },
-      select: { startsAt: true, endsAt: true, quantity: true },
-    });
-    const facts: ResourceFacts = {
-      quantity: target.quantity,
-      wanted,
-      bookings: bookings.map((booking) => ({ start: booking.startsAt.getTime(), end: booking.endsAt.getTime(), quantity: booking.quantity })),
-    };
-    return (toCheck, school) => resourceDayConflicts(toCheck, facts, school);
   }
 
   // ---------------------------------------------------------------------

@@ -55100,10 +55100,13 @@ BEGIN
   UPDATE "ExternalBookings" SET note = 'Nyckel hos vaktmästaren' WHERE id = series;
   PERFORM pg_temp.k3_denied(format($q$INSERT INTO "ResourceTypes" ("schoolId", name) VALUES (%L, 'Expeditionens')$q$, school), 'the expedition writing a kind');
   PERFORM pg_temp.k3_denied(format($q$UPDATE "Resources" SET quantity = 99 WHERE id = %L$q$, res), 'the expedition changing a quantity');
+  PERFORM pg_temp.k3_denied(format($q$INSERT INTO "Resources" ("schoolId", "resourceTypeId", name) VALUES (%L, %L, 'Expeditionens')$q$, school, rtype), 'the expedition writing a resource');
+  PERFORM pg_temp.k3_denied(format($q$DELETE FROM "Resources" WHERE id = %L$q$, res), 'the expedition deleting a resource');
   -- Schemaläggare and rektor write both: Planering and Drift.
   FOREACH who IN ARRAY ARRAY[2, 3] LOOP
     PERFORM pg_temp.k3_as(pg_temp.k3_auth(who));
     INSERT INTO "ResourceTypes" ("schoolId", name) VALUES (school, 'Av ' || who);
+    INSERT INTO "Resources" ("schoolId", "resourceTypeId", name) VALUES (school, rtype, 'Av ' || who);
     UPDATE "Resources" SET quantity = 30 WHERE id = res;
     PERFORM pg_temp.k3_series(jsonb_build_object('organisation', 'Av ' || who));
   END LOOP;
