@@ -93,6 +93,31 @@ describe('the registerutdrag decides every table the removal inventory names', (
   });
 });
 
+describe('the registerutdrag of a member of staff who booked or registered for Lokal', () => {
+  const HIRER_COLUMNS = ['organisation', 'contactName', 'contactPhone', 'contactEmail', 'purpose', 'note'];
+
+  it('dumps the series by the person who registered it, and hides the hirer: somebody who is not the person asked for', () => {
+    expect(SUBJECT_ACCESS['ExternalBookings']).toMatchObject({ dump: { columns: ['registeredById'], thirdParty: HIRER_COLUMNS } });
+    expect(SUBJECT_ACCESS['ExternalBookings']).not.toHaveProperty('dump.pupil');
+  });
+
+  it('is the only table with a third party in it', () => {
+    expect(tableFiles().filter((file) => file.dump.thirdParty).map((file) => file.table)).toEqual(['ExternalBookings']);
+  });
+
+  it('dumps what the person booked and decided of a resource, as of a room', () => {
+    expect(SUBJECT_ACCESS['ResourceBookings']).toMatchObject({ dump: { columns: ['bookedById', 'decidedById'] } });
+    expect(SUBJECT_ACCESS['ResourceBookings']).toEqual(
+      expect.objectContaining({ dump: expect.objectContaining({ kind: (SUBJECT_ACCESS['RoomBookings'] as { dump: { kind: string } }).dump.kind }) }),
+    );
+    expect(SUBJECT_ACCESS['ResourceBookings']).not.toHaveProperty('dump.thirdParty');
+  });
+
+  it('gives the series a file of its own under data/person', () => {
+    expect(tableFiles().find((file) => file.table === 'ExternalBookings')?.path).toBe('data/person/externalbookings.csv');
+  });
+});
+
 describe('a cell of a dumped row', () => {
   const MARKED = '11111111-1111-4111-8111-111111111111';
   const STRANGER = '33333333-3333-4333-8333-333333333333';

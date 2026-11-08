@@ -273,6 +273,7 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
       const lines = rows.map((row) =>
         csvLine(
           columns.map((column) => {
+            if (table.dump.thirdParty?.includes(column)) return row[column] === null || row[column] === undefined ? '' : '(dold)';
             const made = cellOf(column, row[column], rules);
             if (made.held) emptied += 1;
             return made.text;

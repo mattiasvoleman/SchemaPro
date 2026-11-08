@@ -58,7 +58,9 @@ import type { Persona } from "./stub/sessions";
  * bytes (Måltidskollen's, with Lunchsittningar's icon: 92 B, measured in CI
  * 2026-11-08, on top of 12 946; Checklistor's, with Kvittens' icon: 145 B for the
  * administrator and 109 B for the teacher, measured in CI 2026-11-08 on top of
- * main's 13 457 and 9 836); ten admin rows with ten icons that no row had
+ * main's 13 457 and 9 836); Lokal's three admin rows, one teacher row and the
+ * notice text of the clash: 594 B for the administrator and 687 B for the teacher,
+ * measured in CI 2026-11-08 on top of main's 13 666 and 9 938; ten admin rows with ten icons that no row had
  * cost 1 995 B, 459 B over this room (measured, 2026-11-07), and the next
  * phase's one or two rows are well inside it.
  */
@@ -93,8 +95,8 @@ interface Measured {
  * where it was 1 536: a phase pays the room its text uses, and the next one finds what is left.
  */
 const PAGES: Measured[] = [
-  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_666 },
-  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_938 },
+  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 14_260 },
+  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 10_625 },
 ];
 
 const catalog = JSON.stringify(JSON.parse(readFileSync(join(__dirname, "..", "messages", "sv.json"), "utf8")));
