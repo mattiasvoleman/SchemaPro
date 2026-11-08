@@ -329,7 +329,7 @@ export function ChangeFormView({
               }}
             />
           ) : live ? (
-            live.state === "OK" ? (
+            live.state === "OK" && !live.removes?.lessons ? (
               <VerdictView verdict={{ tone: "ok", headline: t("preview.ok"), lines: [] }} />
             ) : (
               <VerdictView verdict={verdictText(live, ctx)} />

@@ -326,6 +326,18 @@ describe("a move, typed", () => {
     expect(previews()).toEqual([]);
   });
 
+  it("says in the live check what publishing would take out of the calendar, in a warning and not in the green of 'can be published'", async () => {
+    await openMove();
+    state.preview = () => ({ state: "OK", removes: { lessons: 2, withLog: 1 } });
+    fireEvent.change(screen.getByLabelText("Nytt datum"), { target: { value: "2026-11-05" } });
+    const region = screen.getByTestId("preview-region");
+    expect(await within(region).findByText("Kan publiceras, men tar bort lektioner ur kalendern", undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(within(region).getByText(/2 kommande lektioner tas bort/)).toBeInTheDocument();
+    expect(within(region).getByText(/1 av dem har lektionslogg/)).toBeInTheDocument();
+    expect(region.querySelector('[data-tone="warning"]')).not.toBeNull();
+    expect(within(region).queryByText("Kan publiceras")).not.toBeInTheDocument();
+  });
+
   it("asks what the change would clash with once it stands still, and says the clashes by what clashes", async () => {
     await openMove();
     state.preview = () => ({
@@ -721,6 +733,27 @@ describe("the list of drafts", () => {
       { state: "CONFLICT", conflicts: [{ kind: "TEACHER", other: { className: "3B", subjectName: "Svenska", day: 3, start: "10:00", end: "11:00" } }, { kind: "BREAK" }] },
       ["Utkastet krockar i schemat", "Läraren har en annan lektion då: 3B, Svenska, Onsdag 10:00–11:00", "Tiden ligger i en rast eller ett lov"],
     ],
+    [
+      "breaks the board's rules, which name no lesson",
+      { state: "CONFLICT", conflicts: [{ kind: "FRAME" }, { kind: "LUNCH" }, { kind: "GRADE_RULE" }] },
+      ["Utkastet krockar i schemat", "Tiden ligger utanför stadiets ramtid", "Tiden ligger på klassens lunch", "Tiden är stängd för klassens årskurs"],
+    ],
+    [
+      "would move a lesson already moved for a date",
+      { state: "CONFLICT", conflicts: [{ kind: "EXCEPTION", other: { className: "3B", subjectName: "Matematik", date: "2026-11-10", start: "13:00", end: "14:00" } }] },
+      [/Lektionen är redan flyttad för ett datum, och ändringen skulle lägga om den: 3B, Matematik, tis 10 nov\. 13:00–14:00/],
+    ],
+    [
+      "can be published but takes lessons out of the calendar",
+      { state: "OK", removes: { lessons: 3, withLog: 0 } },
+      ["Kan publiceras, men tar bort lektioner ur kalendern", /3 kommande lektioner tas bort/],
+    ],
+    [
+      "takes a lesson with a log out of the calendar, and says the log goes",
+      { state: "OK", removes: { lessons: 1, withLog: 1 } },
+      ["Kan publiceras, men tar bort lektioner ur kalendern", /1 kommande lektion tas bort/, /1 av dem har lektionslogg, läxa eller vikarieanteckning, som försvinner med lektionen/],
+    ],
+    ["can be published when nothing is removed", { state: "OK", removes: { lessons: 0, withLog: 0 } }, ["Kan publiceras"]],
   ];
 
   it.each(verdicts)("tells a draft that %s", async (_name, verdict, texts) => {

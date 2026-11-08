@@ -8802,6 +8802,9 @@
     },
     "verdict": {
       "OK": "Can be published",
+      "OKRemoves": "Can be published, but removes lessons from the calendar",
+      "removes": "{lessons, plural, one {# upcoming lesson is removed} other {# upcoming lessons are removed}}: they would land at a time that has already begun, or after the template's end date.",
+      "removesLog": "{withLog, plural, one {# of them has a lesson log, homework or a note to a substitute, which goes with the lesson.} other {# of them have a lesson log, homework or a note to a substitute, which go with the lessons.}}",
       "REFUSED": "Cannot be published",
       "STALE": "The lesson has changed since the draft was written",
       "staleChanged": "What changed: {fields}.",
@@ -8817,7 +8820,11 @@
         "GROUP": "The class has another lesson then",
         "AVAILABILITY": "The teacher, room or class is not available then",
         "BREAK": "The time falls in a break or a holiday",
-        "BOOKING": "The room is booked then"
+        "BOOKING": "The room is booked then",
+        "FRAME": "The time falls outside the stage's school day",
+        "LUNCH": "The time falls on the class's lunch",
+        "GRADE_RULE": "The time is closed to the class's year group",
+        "EXCEPTION": "The lesson has already been moved for a date, and the change would move it again"
       },
       "with": "{kind}: {lesson}, {when}"
     },
@@ -8862,6 +8869,7 @@
       "NOT_A_REGULAR_LESSON": "The lesson is not a regular lesson from the class’s timetable.",
       "NOT_SCHEDULED": "The lesson is already cancelled or held.",
       "PAST": "The time has already started or passed.",
+      "YEAR_ENDED": "The school year is over. The class timetable of that year is no longer changed.",
       "COVERED": "The lesson has a substitute and is handled by the cover board.",
       "HAS_ATTENDANCE": "Attendance has already been registered for the lesson.",
       "PENDING_TEMPLATE_CHANGE": "A change to the class’s template is waiting for this lesson. Publish or discard it first.",

@@ -101,7 +101,7 @@ describe("the state of a lesson", () => {
   });
 
   it("knows the reasons it can say", () => {
-    expect(FRAME_REASONS).toHaveLength(26);
+    expect(FRAME_REASONS).toHaveLength(27);
     expect(isFrameReason("TIME_CLOSED")).toBe(true);
     expect(isFrameReason("A_NEW_ONE")).toBe(false);
     expect(isFrameReason(undefined)).toBe(false);

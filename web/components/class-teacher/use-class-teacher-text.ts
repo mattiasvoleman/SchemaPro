@@ -158,7 +158,17 @@ export function useClassTeacherText() {
   const verdict = (value: Verdict, ctx: TextContext): VerdictText => {
     switch (value.state) {
       case "OK":
-        return { tone: "ok", headline: t("verdict.OK"), lines: [] };
+        // Publishing may take lessons out of the published calendar (and the logs on them): said before, as the swap dialog says it.
+        return value.removes && value.removes.lessons > 0
+          ? {
+              tone: "warning",
+              headline: t("verdict.OKRemoves"),
+              lines: [
+                t("verdict.removes", { lessons: value.removes.lessons }),
+                ...(value.removes.withLog > 0 ? [t("verdict.removesLog", { withLog: value.removes.withLog })] : []),
+              ],
+            }
+          : { tone: "ok", headline: t("verdict.OK"), lines: [] };
       case "REFUSED":
         return { tone: "destructive", headline: t("verdict.REFUSED"), lines: [reason(value.reason)] };
       case "STALE":

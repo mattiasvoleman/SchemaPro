@@ -37,6 +37,7 @@ export const FRAME_REASONS = [
   "NOT_A_REGULAR_LESSON",
   "NOT_SCHEDULED",
   "PAST",
+  "YEAR_ENDED",
   "COVERED",
   "HAS_ATTENDANCE",
   "PENDING_TEMPLATE_CHANGE",
@@ -108,7 +109,7 @@ export interface FieldChange {
   now: unknown;
 }
 
-export const CONFLICT_KINDS = ["TEACHER", "ROOM", "GROUP", "AVAILABILITY", "BREAK", "BOOKING"] as const;
+export const CONFLICT_KINDS = ["TEACHER", "ROOM", "GROUP", "AVAILABILITY", "BREAK", "BOOKING", "FRAME", "LUNCH", "GRADE_RULE", "EXCEPTION"] as const;
 export type ConflictKind = (typeof CONFLICT_KINDS)[number];
 
 /** A clash, named by what clashes and with which lesson, never by a person. */
@@ -117,8 +118,16 @@ export interface ConflictView {
   other?: { className: string; subjectName: string; day?: number; date?: string; start: string; end: string };
 }
 
+/** What publishing a change of the template takes out of the published calendar (src/class-teacher/class-teacher.types.ts RemovalView). */
+export interface RemovalView {
+  /** Future dated lessons of the template that the change removes. */
+  lessons: number;
+  /** Of those, the ones a teacher has written a log, a homework or a note to a vikarie on. */
+  withLog: number;
+}
+
 export type Verdict =
-  | { state: "OK" }
+  | { state: "OK"; removes?: RemovalView }
   | { state: "REFUSED"; reason: FrameReason }
   | { state: "STALE"; changed: FieldChange[] }
   | { state: "GONE" }

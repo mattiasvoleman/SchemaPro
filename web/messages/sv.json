@@ -8802,6 +8802,9 @@
     },
     "verdict": {
       "OK": "Kan publiceras",
+      "OKRemoves": "Kan publiceras, men tar bort lektioner ur kalendern",
+      "removes": "{lessons, plural, one {# kommande lektion tas bort} other {# kommande lektioner tas bort}}: de skulle hamna på en tid som redan har börjat eller efter mallens slutdatum.",
+      "removesLog": "{withLog, plural, one {# av dem har lektionslogg, läxa eller vikarieanteckning, som försvinner med lektionen.} other {# av dem har lektionslogg, läxa eller vikarieanteckning, som försvinner med lektionerna.}}",
       "REFUSED": "Kan inte publiceras",
       "STALE": "Lektionen har ändrats sedan utkastet skrevs",
       "staleChanged": "Det som ändrats: {fields}.",
@@ -8817,7 +8820,11 @@
         "GROUP": "Klassen har en annan lektion då",
         "AVAILABILITY": "Läraren, salen eller klassen är inte tillgänglig då",
         "BREAK": "Tiden ligger i en rast eller ett lov",
-        "BOOKING": "Salen är bokad då"
+        "BOOKING": "Salen är bokad då",
+        "FRAME": "Tiden ligger utanför stadiets ramtid",
+        "LUNCH": "Tiden ligger på klassens lunch",
+        "GRADE_RULE": "Tiden är stängd för klassens årskurs",
+        "EXCEPTION": "Lektionen är redan flyttad för ett datum, och ändringen skulle lägga om den"
       },
       "with": "{kind}: {lesson}, {when}"
     },
@@ -8862,6 +8869,7 @@
       "NOT_A_REGULAR_LESSON": "Lektionen är inte en vanlig lektion ur klassens schema.",
       "NOT_SCHEDULED": "Lektionen är redan inställd eller genomförd.",
       "PAST": "Tiden har redan börjat eller passerat.",
+      "YEAR_ENDED": "Läsåret är slut. Klassens schema från det läsåret ändras inte längre.",
       "COVERED": "Lektionen har en vikarie och hanteras av vikarietavlan.",
       "HAS_ATTENDANCE": "Närvaro är redan registrerad på lektionen.",
       "PENDING_TEMPLATE_CHANGE": "En ändring av klassens mall väntar för den här lektionen. Publicera eller släng den först.",
