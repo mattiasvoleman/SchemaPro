@@ -372,6 +372,12 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     "Reporting rate 2 Nov – 8 Nov: the week's summary for the school is in Rastra timetable on the web.",
   ],
   [
+    'EXTERNAL_BOOKING_CLASH, that days clash and nothing of the hirer or the room',
+    row('EXTERNAL_BOOKING_CLASH', { days: 3 }),
+    'Externa bokningar krockar med lektioner. Se Externa bokningar i Rastra Schema på webben.',
+    'External bookings clash with lessons. See External bookings in Rastra timetable on the web.',
+  ],
+  [
     'ACK_REQUESTED, the title of the message (behind the login), not the text, the sender or the child',
     row('ACK_REQUESTED', { requestId: 'r-1', title: 'Utflykten är på torsdag' }),
     'Skolan ber dig bekräfta: Utflykten är på torsdag',
@@ -391,9 +397,9 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all twenty-seven types the gateway writes', () => {
+  it('covers all twenty-eight types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(27);
+    expect(types.size).toBe(28);
   });
 
   it.each([

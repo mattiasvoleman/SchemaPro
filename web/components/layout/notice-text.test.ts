@@ -64,6 +64,30 @@ describe("the notice of a pupil moved to a parallel lesson for a day (Elevens le
   });
 });
 
+describe("the expedition's notice of days that clash with a lesson (Lokal)", () => {
+  // The hirer is not a user and a notice goes on as e-mail and push: if a newer gateway puts a name or a room in the meta, the
+  // sentence still must not say it.
+  const meta = { days: 3, organisation: "Hjo innebandy", contactName: "Kim Kontakt", roomName: "Idrottshallen" };
+
+  it("says how many days clash, in both languages, with the plural right", () => {
+    expect(say("sv", row("EXTERNAL_BOOKING_CLASH", meta))).toBe("3 dagar av externa bokningar står nu i en sal som har en lektion. Se Externa bokningar.");
+    expect(say("en", row("EXTERNAL_BOOKING_CLASH", meta))).toBe("3 days of external bookings now stand in a room that has a lesson. See External bookings.");
+    expect(say("sv", row("EXTERNAL_BOOKING_CLASH", { days: 1 }))).toContain("1 dag av externa bokningar");
+    expect(say("en", row("EXTERNAL_BOOKING_CLASH", { days: 1 }))).toContain("1 day of external bookings");
+  });
+
+  it("never says the hirer, the contact or the room", () => {
+    for (const text of [say("sv", row("EXTERNAL_BOOKING_CLASH", meta)), say("en", row("EXTERNAL_BOOKING_CLASH", meta))]) {
+      expect(text).not.toMatch(/Hjo|Kim|Kontakt|Idrottshallen/);
+    }
+  });
+
+  it("leads to the list of external bookings, and says nothing of a number it was not given", () => {
+    expect(noticeHref(row("EXTERNAL_BOOKING_CLASH", meta))).toBe("/admin/external-bookings");
+    expect(say("sv", row("EXTERNAL_BOOKING_CLASH", null))).toContain("0 dagar");
+  });
+});
+
 describe("the guardian's notice of a message to confirm (Kvittens)", () => {
   const title = "Utflykten på torsdag";
   // A pupil's name and the text of the message are not in a notice's meta; if a newer gateway puts them there, the sentence still must not say them.
