@@ -1380,6 +1380,45 @@ BEGIN
   VALUES (activity, lesson, grp, '2030-09-09', m);
 END $$;
 
+-- The matrix school's Provplanering (20270127090000, sections 420–424): the
+-- school's settings, a skrivsal (its room Roller 1), an exam in the class with its sitting in that
+-- room and an invigilator, so section 116 has a row of each of the six tables
+-- to probe. Planted on their own and only when missing, like the activity
+-- above.
+DO $$
+DECLARE
+  m uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-roller-school');
+  yr uuid;
+  subj uuid;
+  grp uuid;
+  teacher uuid;
+  room uuid;
+  exam uuid;
+BEGIN
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "Exams" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = m AND "isActive";
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = m AND code = 'RLSR';
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = m AND name = 'Roller 7A';
+  SELECT id INTO teacher FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111';
+  IF yr IS NULL OR subj IS NULL OR grp IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'fixtures: the matrix school lacks what its exam hangs on';
+  END IF;
+  -- One of the school's two rooms: section 278 counts exactly two offered to the school that borrows from it.
+  SELECT id INTO room FROM "Rooms" WHERE "schoolId" = m AND name = 'Roller 1';
+  IF room IS NULL THEN
+    RAISE EXCEPTION 'fixtures: the matrix school lacks its room Roller 1';
+  END IF;
+  INSERT INTO "ExamPlanSettings" ("schoolId") VALUES (m);
+  INSERT INTO "ExamRooms" ("roomId", "schoolId", seats) VALUES (room, m, 40);
+  INSERT INTO "Exams" ("schoolId", "academicYearId", "subjectId", name, "lengthMinutes", writers, "windowKind", "windowFrom", "windowTo")
+  VALUES (m, yr, subj, 'Roller prov', 60, 28, 'WEEK', '2030-10-07', '2030-10-11') RETURNING id INTO exam;
+  INSERT INTO "ExamGroups" ("examId", "studentGroupId", "schoolId") VALUES (exam, grp, m);
+  INSERT INTO "ExamSittings" ("examId", "roomId", "schoolId", writers) VALUES (exam, room, m, 28);
+  INSERT INTO "ExamInvigilators" ("examId", "roomId", "teacherId", "schoolId") VALUES (exam, room, teacher, m);
+END $$;
+
 -- SS12000-närvaro (sections 155–159, 20261114090000). Two schools with a
 -- lesson, two pupils' attendance and absences and integration keys: one that
 -- has not decided (its admin decides inside the sections' transactions) and

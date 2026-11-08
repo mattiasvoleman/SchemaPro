@@ -715,6 +715,57 @@ describe("the school's rules the generator keeps", () => {
     render(<GeneratePage />);
     expect(screen.queryByText("generate.ruleConsecutive")).toBeNull();
   });
+
+  describe("Placeringsregler", () => {
+    // The echo translator prints a key with its values in the order the page
+    // passes them: the weight, then the limits Salar och byggnader per dag holds to.
+    const line = (rule: "edge" | "places" | "shared", mode: "SOFT" | "HARD", values: string) =>
+      `placementRules.summary.${rule}.${mode}(${values})`;
+    const limit = (name: string, count: number) => `placementRules.summary.limit.${name}(${count})`;
+    const none = /placementRules\.summary\.(edge|places|shared)\./;
+
+    it("says nothing while every rule is off, or for an API that predates them", () => {
+      state.lunch = school({ placementEdgeMode: "OFF", placementPlacesMode: "OFF", placementSharedMode: "OFF" });
+      const { unmount } = render(<GeneratePage />);
+      expect(screen.queryByText(none)).toBeNull();
+      unmount();
+
+      state.lunch = school({});
+      render(<GeneratePage />);
+      expect(screen.queryByText(none)).toBeNull();
+    });
+
+    it("names each rule that is on, a Mjuk one with its weight, read-only", () => {
+      state.lunch = school({
+        placementEdgeMode: "SOFT",
+        placementEdgeWeight: 300,
+        placementSharedMode: "HARD",
+        placementSharedWeight: 400,
+      });
+      render(<GeneratePage />);
+
+      expect(screen.getByText(line("edge", "SOFT", "300|–"))).toBeInTheDocument();
+      expect(screen.getByText(line("shared", "HARD", "400|–"))).toBeInTheDocument();
+      expect(screen.queryByText(new RegExp(`summary\\.places`))).toBeNull();
+      // Lines of text, not controls: the rules are edited under Skolregler.
+      expect(screen.queryByRole("radio", { name: /mode\./ })).toBeNull();
+    });
+
+    it("lists the limits Salar och byggnader per dag holds to, a 1 among them and an empty one left out", () => {
+      state.lunch = school({
+        placementPlacesMode: "SOFT",
+        maxClassRoomsPerDay: 2,
+        maxTeacherRoomsPerDay: null,
+        maxClassBuildingsPerDay: null,
+        maxTeacherBuildingsPerDay: 1,
+      });
+      render(<GeneratePage />);
+
+      expect(
+        screen.getByText(line("places", "SOFT", `250|${limit("classRoom", 2)}, ${limit("teacherBuilding", 1)}`)),
+      ).toBeInTheDocument();
+    });
+  });
 });
 
 /*

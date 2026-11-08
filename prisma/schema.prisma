@@ -593,6 +593,14 @@ model Room {
   /// "Special" rooms (labs, gyms, auditoria) whose self-service bookings need
   /// admin approval before they're confirmed. Ordinary rooms auto-approve.
   requiresApproval Boolean  @default(false)
+  /// Placeringsregler (20270126090000), rule 3: the room may hold several
+  /// lessons at the same time as long as their pupils fit its capacity
+  /// together. False is exclusive, which every room has always been and is
+  /// until a school says otherwise: nothing else says a room can take two
+  /// groups at once. Read only while the school's Skolregler hold the rule on
+  /// (LunchSetting.placementSharedMode), and a room without a capacity has no
+  /// limit to share under, so it stays exclusive whatever this says.
+  canBeShared      Boolean  @default(false)
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime @updatedAt @db.Timestamptz(6)
 
@@ -894,6 +902,13 @@ model Subject {
   /// See migration 20261019090000.
   maxLessonsPerDay   Int?
   minDaysBetween     Int?
+  /// Placeringsregler (20270126090000), rule 1: the subject is not placed as
+  /// the first / the last lesson of a class's day. Both false is no rule, which
+  /// is every subject until a school marks one. Read only while the school's
+  /// Skolregler hold the rule on (LunchSetting.placementEdgeMode), so a mark
+  /// made before the rule is switched on changes nothing.
+  notFirstInDay      Boolean  @default(false)
+  notLastInDay       Boolean  @default(false)
   createdAt          DateTime @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
@@ -1706,6 +1721,8 @@ model ScheduleActivity {
   batch    CancellationBatch          @relation(fields: [batchId, schoolId], references: [id, schoolId], onDelete: Cascade)
   teachers ScheduleActivityTeacher[]
   lessons  ScheduleActivityLesson[]
+  /// The exam this activity carries, if it does (Provplanering, 20270127090000).
+  exams    Exam[]
 
   @@unique([id, schoolId])
   @@unique([batchId])
@@ -1751,6 +1768,137 @@ model ScheduleActivityLesson {
   @@index([studentGroupId, schoolId])
   @@index([schoolId])
   @@map("ScheduleActivityLessons")
+}
+
+/// Provplanering (20270127090000): the school's decisions about exams. One row
+/// per school; the engine is off until the school turns it on (enabled).
+model ExamPlanSettings {
+  schoolId              String   @id @db.Uuid
+  enabled               Boolean  @default(false)
+  /// At most this many exams a class writes on one day, and in one week (CHECKs).
+  maxPerClassPerDay     Int      @default(1)
+  maxPerClassPerWeek    Int      @default(3)
+  /// A room with x writers has max(1, ceil(x / this)) invigilators (CHECK 1..200).
+  writersPerInvigilator Int      @default(30)
+  /// Minutes before a room or an invigilator can start the next exam (CHECK 0..120).
+  turnoverMinutes       Int      @default(10)
+  /// The subject the replacement lessons of an exam are held in: one that does not count toward the timplan.
+  replacementSubjectId  String?  @db.Uuid
+  updatedAt             DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([replacementSubjectId, schoolId])
+  @@map("ExamPlanSettings")
+}
+
+/// A room the school lets exams be written in, and how many seats an exam has
+/// there (which may be fewer than the room's capacity). A row is the mark.
+model ExamRoom {
+  roomId    String   @id @db.Uuid
+  schoolId  String   @db.Uuid
+  seats     Int
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([schoolId])
+  @@map("ExamRooms")
+}
+
+/// A prov (20270127090000). The window is what the school asked for (WEEK: any
+/// span of at most 31 days, with optional daily bounds; FIXED: a date and a
+/// start, a nationellt prov). Planned means activityId is set: the plan itself
+/// (day, time) is the activity's avbokning, and the rooms and invigilators are
+/// ExamSittings and ExamInvigilators.
+model Exam {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String    @db.Uuid
+  academicYearId  String    @db.Uuid
+  /// The subject the exam is in: it counts toward the timplan and is credited the exam's minutes.
+  subjectId       String    @db.Uuid
+  name            String
+  lengthMinutes   Int
+  writers         Int
+  /// WEEK or FIXED (CHECK).
+  windowKind      String
+  windowFrom      DateTime  @db.Date
+  windowTo        DateTime  @db.Date
+  /// FIXED only.
+  fixedStart      DateTime? @db.Time(6)
+  /// WEEK only: the earliest start and the latest end of the exam on any day of the window.
+  earliestStart   DateTime? @db.Time(6)
+  latestEnd       DateTime? @db.Time(6)
+  /// Set while the exam is planned: the schemabrytande aktivitet that carries it.
+  activityId      String?   @db.Uuid
+  /// Why the last run could not place it (a code of the engine's or the gateway's), with its figures.
+  lastReason      String?
+  lastReasonParams Json?
+  lastPlannedAt   DateTime? @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  createdByUserId String?   @db.Uuid
+
+  activity  ScheduleActivity?  @relation(fields: [activityId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  groups    ExamGroup[]
+  sittings  ExamSitting[]
+
+  @@unique([id, schoolId])
+  @@index([schoolId])
+  @@index([academicYearId, schoolId, windowFrom])
+  @@index([subjectId, schoolId])
+  @@index([activityId, schoolId])
+  @@index([createdByUserId, schoolId])
+  @@map("Exams")
+}
+
+/// The classes and groups an exam is for. studentGroupId is no foreign key
+/// (the ScheduleActivities precedent): a class deleted from the year is
+/// dropped from the exam when it is read.
+model ExamGroup {
+  examId         String @db.Uuid
+  studentGroupId String @db.Uuid
+  schoolId       String @db.Uuid
+
+  exam Exam @relation(fields: [examId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([examId, studentGroupId])
+  @@index([studentGroupId, schoolId])
+  @@index([schoolId])
+  @@map("ExamGroups")
+}
+
+/// A room an exam is written in, with how many write there, and the booking
+/// that holds the room.
+model ExamSitting {
+  examId    String  @db.Uuid
+  roomId    String  @db.Uuid
+  schoolId  String  @db.Uuid
+  writers   Int
+  bookingId String? @db.Uuid
+
+  exam          Exam               @relation(fields: [examId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  invigilators  ExamInvigilator[]
+
+  @@id([examId, roomId])
+  @@unique([examId, roomId, schoolId])
+  @@index([roomId, schoolId])
+  @@index([bookingId, schoolId])
+  @@index([schoolId])
+  @@map("ExamSittings")
+}
+
+/// A teacher who keeps watch in a room at an exam. Personnel only; never a
+/// teacher with a protected identity (the planner leaves them out of the pool).
+model ExamInvigilator {
+  examId    String @db.Uuid
+  roomId    String @db.Uuid
+  teacherId String @db.Uuid
+  schoolId  String @db.Uuid
+
+  sitting ExamSitting @relation(fields: [examId, roomId, schoolId], references: [examId, roomId, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([examId, roomId, teacherId])
+  @@unique([examId, teacherId])
+  @@index([teacherId, schoolId])
+  @@index([schoolId])
+  @@map("ExamInvigilators")
 }
 
 /// A shared, revocable link to the public viewer (20261011120000). Only the
@@ -3013,6 +3161,8 @@ model RoomBooking {
   // (roomId, tstzrange(startsAt, endsAt)), limited to PENDING and APPROVED
   // rows, is what stops two people holding one room at one hour. Prisma cannot
   // express it — see migration 20260822131500_a_room_is_booked_once.
+  /// The target of ExamSittings.bookingId (20270127090000).
+  @@unique([id, schoolId])
   @@index([schoolId, startsAt])
   @@index([roomId, startsAt])
   @@index([bookedById, startsAt])
@@ -4158,36 +4308,36 @@ model SchoolBreak {
 /// and leaving the other half in one browser would keep that bug alive for the
 /// half that stayed behind.
 model LunchSetting {
-  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId                 String   @db.Uuid
-  lunchEnabled             Boolean  @default(false)
-  lunchStartTime           DateTime @db.Time(0)
-  lunchEndTime             DateTime @db.Time(0)
-  lunchMinutes             Int
+  id                                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId                          String            @db.Uuid
+  lunchEnabled                      Boolean           @default(false)
+  lunchStartTime                    DateTime          @db.Time(0)
+  lunchEndTime                      DateTime          @db.Time(0)
+  lunchMinutes                      Int
   /// Seats in the dining hall. Null means the school has no seat limit worth
   /// modelling — the solver then places lunch exactly as it did before.
-  diningSeats              Int?
-  maxLessonsPerDayPerGroup Int?
+  diningSeats                       Int?
+  maxLessonsPerDayPerGroup          Int?
   /// Restid i generatorn: whether the generator keeps the walk between the
   /// school's skolområden (Sites, SiteTravelTimes) for teachers and pupils.
   /// Off by default, and off sends the engine neither a site nor a walk, so
   /// the week is generated exactly as before the rule existed. Not a lunch
   /// rule either; it is in this row for the reason maxLessonsPerDayPerGroup
   /// is: it sits in the same form, Skolregler.
-  generatorKeepsTravelTime Boolean  @default(false)
+  generatorKeepsTravelTime          Boolean           @default(false)
   /// Elevernas håltimmar: whether the generator keeps the pupils' idle time
   /// between their lessons down, counted per set of pupils booked alike as
   /// the håltimmesrapport counts it. Off by default, and off sends the engine
   /// no cohort, so the week is generated exactly as before. In this row for
   /// the reason the travel switch is: it sits in the same form, Skolregler.
-  generatorKeepsPupilGapsDown Boolean @default(false)
+  generatorKeepsPupilGapsDown       Boolean           @default(false)
   /// Sammanhängande undervisning (20261218090000): the generator tries to keep
   /// each teacher's stretches of teaching within their post's limit
   /// (TeacherEmployments.maxConsecutiveTeachingMinutes). Off: nothing is sent, and
   /// the week is generated exactly as before. A wish and not a guarantee, so the
   /// switch is the school's: it moves lessons of every teacher who has the
   /// rule. In this row for the reason the others are: the same form.
-  generatorKeepsConsecutiveTeaching Boolean @default(false)
+  generatorKeepsConsecutiveTeaching Boolean           @default(false)
   /// Bästa möjliga schema (20270125090000): whether an administrator who plans
   /// may ask for a timetable in which the school's own shaping rules (a
   /// teacher's cap per day, a part-timer's days, a subject's per-day cap and
@@ -4197,9 +4347,39 @@ model LunchSetting {
   /// and a migration must not turn it on. Off, the run is refused
   /// (BEST_EFFORT_NOT_ENABLED) and nothing is sent to the engine that was not
   /// sent before. In this row for the reason the others are: the same form.
-  generatorBestEffort      Boolean  @default(false)
-  createdAt                DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt                DateTime @updatedAt @db.Timestamptz(6)
+  generatorBestEffort               Boolean           @default(false)
+  /// Placeringsregler (20270126090000), three rules about where a lesson is
+  /// placed, each OFF until the school turns it on (OFF sends the engine
+  /// nothing, and the week is generated exactly as before), SOFT (a weight,
+  /// on the scale of the other wishes) or HARD (a week that cannot keep it is
+  /// refused by name). Only rule 3 is offered HARD: rules 1 and 2 are OFF or
+  /// SOFT by CHECK (…_off_or_soft_check) until a hard one is measured. In this
+  /// row for the reason the switches above are: they sit in the same form,
+  /// Skolregler.
+  ///
+  /// Rule 1: a subject marked "not first" or "not last" (Subject.notFirstInDay,
+  /// notLastInDay) is kept off the first or last lesson of a class's day.
+  placementEdgeMode                 PlacementRuleMode @default(OFF)
+  /// SOFT only: 1..1000 (LunchSettings_placementEdgeWeight_check). Kept when
+  /// the mode is OFF, so switching back does not lose the figure.
+  placementEdgeWeight               Int               @default(250)
+  /// Rule 2: a class and a teacher (apart) are in at most this many DIFFERENT
+  /// room groups and different buildings in a day. 1 is a single one, never a
+  /// change; the same room twice is one. The mode is SOFT only while at least
+  /// one of the four limits is set (LunchSettings_placementPlaces_needs_a_limit_check).
+  placementPlacesMode               PlacementRuleMode @default(OFF)
+  placementPlacesWeight             Int               @default(250)
+  /// 1..20, null = no limit (LunchSettings_max…PerDay_check).
+  maxClassRoomsPerDay               Int?
+  maxTeacherRoomsPerDay             Int?
+  maxClassBuildingsPerDay           Int?
+  maxTeacherBuildingsPerDay         Int?
+  /// Rule 3: the pupils of the lessons in a shared room (Room.canBeShared) at
+  /// one time fit its capacity together.
+  placementSharedMode               PlacementRuleMode @default(OFF)
+  placementSharedWeight             Int               @default(250)
+  createdAt                         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt                         DateTime          @updatedAt @db.Timestamptz(6)
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
@@ -4228,6 +4408,18 @@ model KitchenSetting {
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
   @@map("KitchenSettings")
+}
+
+/// Placeringsregler: how a placement rule is held. OFF is the school without
+/// the rule (nothing is sent to the engine); SOFT pays a weight for every
+/// breach and refuses nothing; HARD forbids the breach, and a week that cannot
+/// keep it is refused by name. The type is the three rules', but only rule 3
+/// (placementSharedMode) is offered HARD: a CHECK keeps rules 1 and 2 at OFF or
+/// SOFT until a hard one has been measured.
+enum PlacementRuleMode {
+  OFF
+  SOFT
+  HARD
 }
 
 enum RoomRuleKind {

@@ -786,6 +786,31 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason: 'The replacement lessons an activity of the old year wrote.',
   },
   /**
+   * Provplanering (20270127090000): an exam is of its year, and what it laid
+   * (an activity, bookings, invigilators) dated that year's days. The school's
+   * decisions (ExamPlanSettings) and the rooms it lets exams be written in
+   * (ExamRooms) are the school's, not a year's, and stay where they are.
+   */
+  Exam: {
+    kind: 'SKIPPED',
+    reason: 'An exam asked for and laid dates of the old year; the new year has its own exams.',
+  },
+  ExamGroup: {
+    kind: 'FOLLOWS',
+    parent: 'Exam',
+    reason: 'The classes and groups an exam of the old year was for.',
+  },
+  ExamSitting: {
+    kind: 'FOLLOWS',
+    parent: 'Exam',
+    reason: 'The rooms an exam of the old year was written in.',
+  },
+  ExamInvigilator: {
+    kind: 'FOLLOWS',
+    parent: 'ExamSitting',
+    reason: 'The teachers who kept watch at an exam of the old year.',
+  },
+  /**
    * The public viewer (20261011120000): a share link names a class or a
    * year's index of classes, so it is the old year's; the new year's classes
    * are shared again, by links of their own.

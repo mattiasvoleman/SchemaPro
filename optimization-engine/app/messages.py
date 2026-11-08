@@ -934,6 +934,64 @@ MESSAGES: dict[str, str] = {
         "{time})."
     ),
 
+    # ---- Placeringsregler (G3) -------------------------------------------
+    # The school's own placement rules, named when the week cannot keep one.
+    # `requirement` and `room` are ids the gateway realises into names, as in
+    # every sentence above; no sentence names a person (a teacher's limit is
+    # named by the rule, not the teacher).
+    "SUBJECT_EDGE_CANNOT_BE_KEPT": (
+        "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} "
+        "other {from closing}} a class's day, and the week cannot hold that for every lesson of "
+        "it. Give the class lessons of other subjects to {edge, select, FIRST {start} other "
+        "{end}} the day with, allow the subject at the {edge, select, FIRST {start} other "
+        "{end}} of the day, or turn the rule to Soft under School rules."
+    ),
+    "PLACES_CANNOT_BE_KEPT": (
+        "The school rules allow {party, select, class {a class} other {a teacher}} at most "
+        "{limit, plural, one {# {kind, select, room {kind of room} other {building}}} other "
+        "{# {kind, select, room {kinds of room} other {buildings}}}} a day, and the week cannot "
+        "keep that for everyone. Raise the limit, turn the rule to Soft under School rules, or "
+        "let the lessons use {kind, select, room {fewer kinds of room} other {fewer buildings}}."
+    ),
+    "SHARED_ROOM_CANNOT_BE_KEPT": (
+        "{room} is shared by several groups at once, and the week cannot place its lessons so "
+        "that their pupils together fit its seats at every moment. Move a lesson out of the room, "
+        "raise its capacity, take the shared mark off the room, or turn the rule to Soft under "
+        "School rules."
+    ),
+    "PLACEMENT_EDGE_DAY_TOO_SHORT": (
+        "{requirement} cannot be placed: the school rules keep it {edges, select, both {neither "
+        "first nor last} first {from being first} other {from being last}} in a class's day, "
+        "which takes at least {needed} lessons that day, and the class has at most {maxPerDay} a "
+        "day. Allow more lessons a day, or relax the rule for the subject."
+    ),
+    "PLACEMENT_EDGE_NO_OTHER_LESSON": (
+        "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} "
+        "other {from closing}} a class's day, but every lesson the class has is of subjects that "
+        "rule applies to, so one of them would have to {edge, select, FIRST {open} other "
+        "{close}} it. Give the class a lesson of another subject, or relax the rule."
+    ),
+    "PLACEMENT_PLACES_FORCED": (
+        "{party, select, class {A class} other {A teacher}} has lessons that can only be in "
+        "{places, plural, one {# {kind, select, room {kind of room} other {building}}} other "
+        "{# {kind, select, room {kinds of room} other {buildings}}}}, but the school rules allow "
+        "at most {limit, plural, one {# {kind, select, room {kind of room} other {building}}} "
+        "other {# {kind, select, room {kinds of room} other {buildings}}}} in a day, which takes "
+        "{days, plural, one {# day} other {# days}} and the week has "
+        "{open, plural, one {# day} other {# days}}. Raise the limit or let the lessons use "
+        "other rooms."
+    ),
+    "SHARED_ROOM_LOCK_OVER_CAPACITY": (
+        "A locked lesson in {room} has {pupils, plural, one {# pupil} other {# pupils}}, and the "
+        "room seats {capacity}. Move the lesson, raise the room's capacity, or turn the rule off "
+        "or to Soft under School rules."
+    ),
+    "SHARED_ROOM_LOCKS_OVER_CAPACITY": (
+        "Locked lessons in {room} put {pupils, plural, one {# pupil} other {# pupils}} in it at "
+        "once, and the room seats {capacity}. Move one of the lessons, raise the room's capacity, "
+        "or turn the rule off or to Soft under School rules."
+    ),
+
     # ---- The timeout probe ----------------------------------------------
     "PROBE_NOTHING_HELPED": (
         "No timetable was found within {budget} s, and none of the {rules, plural, "
@@ -1020,6 +1078,19 @@ MESSAGES: dict[str, str] = {
     "PROBE_SOLVED_WITHOUT_DISTRIBUTION": (
         "With the subjects' distribution rules dropped — at most a number of lessons a day, "
         "no consecutive days — a timetable was found in {seconds} s."
+    ),
+    # Placeringsregler: a rule the school made HARD, dropped for the probe.
+    "PROBE_SOLVED_WITHOUT_SUBJECT_EDGES": (
+        "Without the rule that keeps subjects from opening or closing a class's day, a "
+        "timetable was found in {seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_PLACE_LIMITS": (
+        "Without the limits on different rooms and buildings a day, a timetable was found in "
+        "{seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_SHARED_ROOMS": (
+        "Without the rule that the pupils in a shared room fit its seats, a timetable was found "
+        "in {seconds} s."
     ),
     "PROBE_SOLVED_WITHOUT_BLOCKS": (
         "With the blocks dropped, so that the lessons of a block could take different times, a "
@@ -1356,5 +1427,57 @@ MESSAGES: dict[str, str] = {
         "{variables} model variables against a limit of {limit}. Keep the entries that are "
         "settled as they are, or record qualifications so that fewer teachers are candidates "
         "for each entry, and try again."
+    ),
+
+    # ---- The exam planner (POST /api/v1/plan-exams) ------------------------
+    # Sent by THIS engine, from app/solver/exam_solver.py. None of them names a
+    # person, a subject or a class: the class reasons carry the class as an
+    # opaque `classId` in their params (not used by the English), which the
+    # gateway maps back so the page can name it. Each is judged on the final
+    # plan: the exam was tried at every one of its times against the exams
+    # already placed, and this is the rule that stopped the most of them.
+    "EXAM_NO_SLOT": (
+        "The exam has no time it can be held at. Widen its window or give it a date."
+    ),
+    "EXAM_NO_ROOM_SEATS": (
+        "{writers, plural, one {# pupil writes} other {# pupils write}} the exam, but the "
+        "exam rooms that are free for it seat at most {seats}, even with no other exam in "
+        "them. Mark more rooms as exam rooms, or split the exam."
+    ),
+    "EXAM_NO_INVIGILATORS": (
+        "{needed, plural, one {# invigilator is} other {# invigilators are}} needed, but at "
+        "most {free} {free, plural, one {teacher is} other {teachers are}} free at the "
+        "exam's best time, even with no other exam to watch. Add teachers to the pool or "
+        "free some of theirs."
+    ),
+    "EXAM_CLASS_DAY_CAP": (
+        "The class already has {limit, plural, one {# exam} other {# exams}} a day, which is "
+        "its limit, on every day the exam could be held."
+    ),
+    "EXAM_CLASS_WEEK_CAP": (
+        "The class already has {limit, plural, one {# exam} other {# exams}} a week, which is "
+        "its limit, in every week the exam could be held."
+    ),
+    "EXAM_CLASS_CLASH": (
+        "Another exam for the same class takes every time the exam could be held."
+    ),
+    "EXAM_ROOMS_TAKEN": (
+        "Other exams in the plan hold the exam rooms at every time the exam could be held: "
+        "{writers, plural, one {# pupil writes} other {# pupils write}} it, and at best "
+        "{seats} seats are free."
+    ),
+    "EXAM_INVIGILATORS_TAKEN": (
+        "Other exams in the plan hold the teachers at every time the exam could be held: "
+        "{needed, plural, one {# invigilator is} other {# invigilators are}} needed, and at "
+        "best {free} {free, plural, one {teacher is} other {teachers are}} free."
+    ),
+    "EXAM_NOT_REACHED": (
+        "The search ended before it found a place for the exam, although there is a time "
+        "nothing else in the plan stops. Plan again, with more time if you can."
+    ),
+    "EXAM_MODEL_TOO_LARGE": (
+        "There are too many possible combinations of exam, room and invigilator to weigh in "
+        "one go: about {variables} model variables against a limit of {limit}. Fewer exams, "
+        "fewer candidate times per exam or a smaller pool of teachers bring it down."
     ),
 }

@@ -158,6 +158,12 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   ClassTeacherAppointments: dump(['userId', 'appointedByUserId']),
   ClassTeacherChanges: dump(['authorId', 'publishedByUserId']),
   ScheduleActivityTeachers: dump(['teacherId']),
+  // Provplanering (20270127090000): the watch a teacher keeps at an exam (room and exam in the row's keys).
+  ExamInvigilators: dump(['teacherId']),
+  ExamSittings: {
+    excluded:
+      'En sal ett prov skrivs i, med antalet skrivande och bokningen som håller salen. Ingen person står på raden; vakterna i salen är ExamInvigilators, som registerutdraget lämnar ut efter lärarens nyckel.',
+  },
 
   // What the person decided, published or wrote.
   PublicTimetableLinks: dump(['targetTeacherId', 'targetStudentId', 'createdByUserId']),
@@ -166,6 +172,7 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   TimetablePublications: dump(['publishedByUserId']),
   CancellationBatches: dump(['createdByUserId', 'reversedByUserId']),
   ScheduleActivities: dump(['createdByUserId', 'removedByUserId']),
+  Exams: dump(['createdByUserId']),
   RetentionDecisions: dump(['decidedById']),
   LeaveDelegationDecisions: dump(['decidedById']),
   AttendanceSharingDecisions: dump(['decidedById']),

@@ -88,6 +88,46 @@ describe('the clash rule over the snapshot is the clash rule over the database',
     expect(asked).toBeGreaterThan(100);
   });
 
+  it('lets a room the school shares hold two lessons at once, and answers so on both paths (G3 beside G1)', async () => {
+    // The clash rule is findConflicts, so a search honours Delade salar through the reads it already caches:
+    // the Skolregler's setting and the marked rooms are asked once, not once per candidate. With the rule on and
+    // every room marked roomy enough, no candidate clashes over a room, where with it off some do.
+    const world = makeWorld({ seed: 3 });
+    const seats = new Map(world.data.lessons.flatMap((lesson) => (lesson.roomId ? [[lesson.roomId, 1000] as const] : [])));
+    const off = fakeTx(world);
+    const on = fakeTx(world, undefined, { mode: 'SOFT', seats });
+    const onDatabase = fakeTx(world, undefined, { mode: 'SOFT', seats });
+    const { masterLessons } = service(world, off);
+    const reads = new SwapReads(world.data.lessons);
+    await reads.warm(on as never, world.data);
+    let offRoomClashes = 0;
+    let onRoomClashes = 0;
+    for (const lesson of world.data.lessons.filter((_, index) => index % 5 === 0)) {
+      for (let day = 1; day <= 5; day++) {
+        for (let start = 480; start <= 780; start += 60) {
+          const args = (tx: unknown) =>
+            [
+              tx as never,
+              world.data.basis,
+              { id: lesson.id, academicYearId: YEAR, studentGroupId: lesson.studentGroupId, subjectId: lesson.subjectId },
+              { dayOfWeek: day, startMinutes: start, endMinutes: start + 60, teacherId: lesson.teacherId, roomId: lesson.roomId, extraGroupIds: [] as string[], studentIds: [] as string[] },
+            ] as const;
+          const withoutRule = await masterLessons.findConflicts(...args(off), {});
+          const fromDatabase = await masterLessons.findConflicts(...args(onDatabase), {});
+          const fromSnapshot = await masterLessons.findConflicts(...args(on), { reads });
+          expect(fromSnapshot).toEqual(fromDatabase);
+          offRoomClashes += withoutRule.filter((conflict) => conflict.kind === 'ROOM').length;
+          onRoomClashes += fromSnapshot.filter((conflict) => conflict.kind === 'ROOM').length;
+        }
+      }
+    }
+    expect(offRoomClashes).toBeGreaterThan(0);
+    expect(onRoomClashes).toBeLessThan(offRoomClashes);
+    // The snapshot path asks once for the school, whatever the number of candidates (the database path asks every time).
+    expect(on.lunchSetting.findFirst).toHaveBeenCalledTimes(1);
+    expect(onDatabase.lunchSetting.findFirst.mock.calls.length).toBeGreaterThan(1);
+  });
+
   it('answers a moved set as the database path does, the movers left out of where they stood', async () => {
     const world = makeWorld({ seed: 5 });
     const tx = fakeTx(world);

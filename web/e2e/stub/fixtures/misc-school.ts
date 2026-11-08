@@ -57,6 +57,20 @@ export const LUNCH_SETTINGS: LunchSettings = {
   // Bästa möjliga schema, the same way: the switch checked with its two lists,
   // the generate page's line for it and, in Schemaförslag, the second button.
   generatorBestEffort: true,
+  // Placeringsregler, one of each kind, so the sweep meets Mjuk with its
+  // weight, Mjuk with limits (1 is a single one all day, an empty box none),
+  // Hård (only Delade salar is offered hard) and the Generera page's line for
+  // each.
+  placementEdgeMode: "SOFT",
+  placementEdgeWeight: 250,
+  placementPlacesMode: "SOFT",
+  placementPlacesWeight: 250,
+  placementSharedMode: "HARD",
+  placementSharedWeight: 400,
+  maxClassRoomsPerDay: 2,
+  maxTeacherRoomsPerDay: null,
+  maxClassBuildingsPerDay: 1,
+  maxTeacherBuildingsPerDay: null,
 };
 
 // --- Generation ----------------------------------------------------------------
@@ -169,6 +183,36 @@ const YEAR_JOBS: OptimizationJob[] = [
     errorNames: [],
     createdAt: ago(11, "08:40"),
     finishedAt: ago(11, "08:40"),
+  },
+  // Refused on a Placeringsregler rule (Inte först eller sist på dagen) set to
+  // Hård: a conflict category and a sentence the page has to name.
+  {
+    id: uid(KIND.misc, 9014),
+    status: "SUCCEEDED",
+    solverStatus: "INFEASIBLE",
+    lessonsGenerated: 0,
+    conflictSummary:
+      "No timetable satisfies every rule. Start with the causes below: together they make the week impossible.",
+    conflictSummaryCode: "CONFLICT_CORE_SUMMARY",
+    conflictSummaryParams: {},
+    conflictSummaryNames: [],
+    conflicts: [
+      {
+        category: "PLACEMENT_EDGE",
+        message:
+          "Idrott och hälsa: the school rules keep this subject from opening a class's day, and the week cannot hold that for every lesson of it. Give the class lessons of other subjects to start the day with, allow the subject at the start of the day, or turn the rule to Soft under School rules.",
+        code: "SUBJECT_EDGE_CANNOT_BE_KEPT",
+        params: { requirement: "Idrott och hälsa", edge: "FIRST" },
+        resourceNames: ["Idrott och hälsa"],
+      },
+    ],
+    notes: [],
+    error: null,
+    errorCode: null,
+    errorParams: null,
+    errorNames: [],
+    createdAt: ago(12, "14:05"),
+    finishedAt: ago(12, "14:05"),
   },
 ];
 

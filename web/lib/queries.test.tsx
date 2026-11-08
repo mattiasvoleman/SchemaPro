@@ -198,9 +198,10 @@ describe("useSubjects", () => {
       // The two timplan columns, the factor and the ämnesfördelning are part
       // of the row the subjects form writes back; missing here, the dialog
       // would clear a mapping, reset a factor to 1, or drop a rule on every
-      // save.
+      // save. So are the two Placeringsregler boxes (not first / not last in
+      // the day): missing here, the dialog would open unticked and clear them.
       [
-        "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween",
+        "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween, notFirstInDay, notLastInDay",
       ],
     ]);
     // Paged reads sort by a tie-break column as well; see selectAll.
@@ -2277,6 +2278,18 @@ describe("Swedish ordering across the remaining lists", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const columns = String(argsFor("Rooms", "select")[0]?.[0]).split(", ");
     expect(columns).toEqual(expect.arrayContaining(["building", "floor"]));
+  });
+
+  it("fetches canBeShared, which the room dialog writes back (Delade salar)", async () => {
+    // Left out of the select, the dialog would open on an unticked box for
+    // every shared room and the next save would clear the marking.
+    stubTable("Rooms", ok([]));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useRooms(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const columns = String(argsFor("Rooms", "select")[0]?.[0]).split(", ");
+    expect(columns).toContain("canBeShared");
   });
 
   it("orders room types even though the API already sorted them", async () => {

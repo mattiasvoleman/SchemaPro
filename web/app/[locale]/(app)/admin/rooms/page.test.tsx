@@ -202,6 +202,82 @@ describe("Läsbehörighet: the controls that write are marked with planering", (
   });
 });
 
+describe("Placeringsregler: Kan delas av flera grupper samtidigt", () => {
+  const shared = () => screen.getByRole("checkbox", { name: "room.canBeShared" });
+
+  it("offers an unticked box with its explanation, and sends nothing for a new room", async () => {
+    const user = userEvent.setup();
+    render(<RoomsPage />);
+    await user.click(screen.getAllByRole("button", { name: "addRoom" })[0]!);
+
+    expect(shared()).not.toBeChecked();
+    expect(shared()).toHaveAccessibleDescription("room.hint");
+
+    await user.type(screen.getByLabelText("name"), "Sal 10");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    // False is what the column holds; the key is left out so the save still
+    // works against an API from before the rule (it refuses unknown keys).
+    expect(createMock.mock.calls[0]![0]).not.toHaveProperty("canBeShared");
+  });
+
+  it("sends true once ticked, with a capacity to share within", async () => {
+    const user = userEvent.setup();
+    render(<RoomsPage />);
+    await user.click(screen.getAllByRole("button", { name: "addRoom" })[0]!);
+
+    await user.type(screen.getByLabelText("name"), "Idrottshallen");
+    await user.type(screen.getByLabelText("capacity"), "60");
+    await user.click(shared());
+    expect(screen.queryByText("room.needsCapacity")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ name: "Idrottshallen", capacity: 60, canBeShared: true }));
+  });
+
+  it("says a shared room needs a capacity, without refusing the save", async () => {
+    const user = userEvent.setup();
+    render(<RoomsPage />);
+    await user.click(screen.getAllByRole("button", { name: "addRoom" })[0]!);
+
+    await user.type(screen.getByLabelText("name"), "Aulan");
+    await user.click(shared());
+
+    const warning = screen.getByText("room.needsCapacity");
+    expect(shared().getAttribute("aria-describedby")).toContain(warning.id);
+    // The capacity is the room's own business and may follow; the rule says so
+    // in the Generera refusal. The box is a marking, not a gate.
+    expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
+
+    await user.type(screen.getByLabelText("capacity"), "40");
+    expect(screen.queryByText("room.needsCapacity")).toBeNull();
+  });
+
+  it("opens on the stored marking and sends false once it is cleared", async () => {
+    state.rooms = [{ ...room("r-1", "Sal 1", "Hus A", 2), canBeShared: true }];
+    const user = userEvent.setup();
+    render(<RoomsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Sal 1)" }));
+
+    expect(shared()).toBeChecked();
+    await user.click(shared());
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ id: "r-1", canBeShared: false }));
+  });
+
+  it("saves an unrelated edit of a shared room without touching the marking", async () => {
+    state.rooms = [{ ...room("r-1", "Sal 1", "Hus A", 2), canBeShared: true }];
+    const user = userEvent.setup();
+    render(<RoomsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Sal 1)" }));
+    await user.type(screen.getByLabelText("name"), "!");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(updateMock.mock.calls[0]![0]).not.toHaveProperty("canBeShared");
+  });
+});
+
 describe("the Skolområde field (Skolområden och restid)", () => {
   const SITES = [
     { id: "site-n", name: "Norra", roomCount: 1 },

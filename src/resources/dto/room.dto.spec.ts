@@ -33,3 +33,26 @@ describe.each([
     ]);
   });
 });
+
+describe.each([
+  ['CreateRoomDto', CreateRoomDto, { name: 'Sal 1' }],
+  ['UpdateRoomDto', UpdateRoomDto, {}],
+] as const)('%s canBeShared (Placeringsregler, regel 3)', (_name, cls, base) => {
+  it('accepts true, false and an absence', async () => {
+    await expect(failing(cls, { ...base, canBeShared: true })).resolves.toEqual([]);
+    await expect(failing(cls, { ...base, canBeShared: false })).resolves.toEqual([]);
+    await expect(failing(cls, { ...base })).resolves.toEqual([]);
+  });
+
+  it('refuses null and a string, which a NOT NULL mark with a default has no meaning for', async () => {
+    await expect(failing(cls, { ...base, canBeShared: null })).resolves.toEqual(['canBeShared']);
+    await expect(failing(cls, { ...base, canBeShared: 'true' })).resolves.toEqual(['canBeShared']);
+    await expect(failing(cls, { ...base, canBeShared: 0 })).resolves.toEqual(['canBeShared']);
+  });
+
+  it('names the field in Swedish', async () => {
+    const errors = await validate(plainToInstance(cls, { ...base, canBeShared: 'ja' }));
+    expect(Object.values(errors[0]!.constraints ?? {})[0]).toMatch(/^canBeShared: /);
+  });
+});
+

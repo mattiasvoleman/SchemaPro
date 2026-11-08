@@ -4286,8 +4286,15 @@
     <li>lunch, matsal och raster,</li>
     <li>rummets typ, antal platser och årskurser som en timplanspost kräver,</li>
     <li>lektionernas längd och antalet lektioner per vecka,</li>
+    <li>elevantalet i en delad sal mot salens kapacitet, när regeln
+      <span class="ui">Delade salar</span> är satt till Hård (5.1),</li>
     <li>parallella blocks gemensamma start, och gruppens eget tak per dag.</li>
   </ul>
+  <p>
+    De andra två placeringsreglerna (5.1) kan bara vara Av eller Mjuka, och en
+    mjuk placeringsregel är ett önskemål som betalas som förut också i det här
+    läget: den räknas inte som ett avsteg och står inte i listan.
+  </p>
   <div class="note">
     <span class="label">Tjänstens dagar är en HR-uppgift</span>
     <p>
@@ -4317,6 +4324,104 @@
       från sidans. Siffran på sidan räknas alltid efter sidans regler.
     </p>
   </div>
+  <p>
+    <strong>Placeringsregler.</strong> Tre regler om var lektionerna hamnar på
+    dagen och i vilka salar sätts under <span class="ui">Placeringsregler</span>
+    bland skolreglerna. Varje regel är <span class="ui">Av</span> tills skolan
+    slår på den, och en skola som låter alla tre vara av får precis samma
+    schema som förut. Varje regel kan vara <span class="ui">Mjuk</span>, och
+    <em>Delade salar</em> kan också vara <span class="ui">Hård</span>;
+    <em>Inte först eller sist på dagen</em> och <em>Salar och byggnader per
+    dag</em> är bara <span class="ui">Av</span> eller
+    <span class="ui">Mjuk</span> (se nedan). En mjuk regel är ett önskemål med
+    en vikt (1–1000, förval 250) som genereringen väger mot allt annat: den
+    försöker hålla regeln men vägrar aldrig för att den inte gick, och sätter du
+    vikten lågt vinner de andra önskemålen. En hård regel är ett krav: går den
+    inte att hålla tillsammans med resten av reglerna går veckan inte att
+    lägga, och genereringen vägrar och skriver ut vilken regel det är. Räknar
+    genereringen ut i förväg att regeln inte kan hållas, till exempel att en
+    låst lektion har fler elever än salen den är låst i rymmer, vägrar den
+    direkt och säger det.
+  </p>
+  <p>
+    <em>Inte först eller sist på dagen.</em> Markera under
+    <span class="ui">Ämnen</span> vilka ämnen som inte ska vara klassens första
+    lektion på dagen, inte den sista, eller varken eller: idrott är det vanliga
+    exemplet. Klassens dag är alla lektioner som klassens elever sitter, alltså
+    klassens egna, undervisningsgruppernas och halvornas, och de lektioner ni
+    har låst. En lektion ligger först när ingen sådan lektion börjar tidigare
+    samma dag och sist när ingen slutar senare; en lektion som börjar samtidigt
+    med en annan är först bredvid den. Går ett ämne udda eller jämna veckor
+    gäller regeln i varje vecka lektionen går. En grupp som bara några av
+    klassens elever sitter räknas som en lektion före eller efter, så för de
+    övriga eleverna kan ämnet ändå komma först; när en språkvalsgrupp täcker
+    hela årskursen blir det rätt.
+  </p>
+  <p>
+    Den här regeln kan ännu inte vara <span class="ui">Hård</span>: valet finns
+    inte bland skolreglerna. Mätningen på högstadiets testskola visade att en
+    hård regel gör att genereringen behöver flera gånger så lång tid för sitt
+    första schema (4,5 gånger med åtta arbetare), och en generering som tar så
+    mycket längre tid riskerar att inte bli klar inom tidsgränsen. Välj
+    <span class="ui">Mjuk</span> med en hög vikt om ämnet verkligen ska hållas;
+    regeln är då ett önskemål som genereringen försöker hålla, och som den
+    aldrig vägrar schemat för. Hård erbjuds först när den är mätt på en stor
+    skola. Samma sak gäller <em>Salar och byggnader per dag</em> nedan.
+  </p>
+  <p>
+    <em>Salar och byggnader per dag.</em> Högst så många <em>olika</em>
+    salsgrupper och byggnader per dag, för en klass och för en lärare var för
+    sig. Lämnar du en gräns tom gäller ingen gräns, och 1 betyder en enda hela
+    dagen. Byggnad är salens uppgift <span class="ui">Byggnad</span> under
+    <span class="ui">Salar</span>; salar utan byggnad räknas som samma byggnad.
+    Skolområdet och dess restid är en egen regel. Lika salar av samma typ,
+    storlek och årskurser räknas som en sal, och genereringen låter en klass
+    eller lärare behålla sin sal i gruppen när den är ledig. Vill du jämna ut
+    resten kör du <span class="ui">Salsoptimering</span> efteråt (5.4). Klassen
+    räknas på den grupps egna lektioner, inte på undervisningsgrupperna eleverna
+    också går i.
+  </p>
+  <p>
+    Den här regeln kan inte heller vara <span class="ui">Hård</span> ännu.
+    Mätningen på högstadiets testskola visade att en hård regel behöver 2,8 till
+    3,6 gånger så lång tid för det första schemat med åtta arbetare (9 gånger
+    med en), att tiden för att därefter förbättra schemat med en hård regel inte
+    är mätt, och att den mjuka regeln höll alla gränser i mätningen (0 dagar
+    över) inom den tidsgräns som genereringen har att hålla. En hård gräns
+    skulle alltså ge en garanti och ett vägrat schema med namn, men inget
+    bättre schema. Välj
+    <span class="ui">Mjuk</span> och en gräns; ange alltid minst en gräns, annars
+    har regeln inget att hålla. Hård erbjuds först när den är mätt på en stor
+    skola.
+  </p>
+  <p>
+    Regeln räknar hur många olika platser en klass eller lärare är på under
+    dagen, inte byten mellan två grannlektioner. En dag som går A–B–A är två
+    byggnader, och A–B–A–B är det också, fast det är tre byten. Det är en
+    medveten avgränsning: att räkna byten kräver lektionernas ordning och gör
+    modellen flera gånger större. Mätningen på högstadiets testskola visar
+    skillnaden, och 1 är den gräns som inte kan bytas ut mot något annat.
+  </p>
+  <p>
+    <em>Delade salar.</em> En sal som ni markerar <span class="ui">Kan delas av
+    flera grupper samtidigt</span> under <span class="ui">Salar</span> får ha
+    flera lektioner samtidigt, så länge elevernas antal tillsammans ryms i salens
+    kapacitet. Salen måste ha en kapacitet. Hård: antalet i salen överstiger
+    aldrig kapaciteten. Mjuk: kapaciteten får överskridas, och vikten betalas per
+    elev över kapaciteten vid salens värsta ögonblick under veckan. Låsta
+    lektioner i en delad sal tar sina elevers platser, inte hela salen, och
+    en låst lektion som är större än salen vägras vid hård regel. Kontrollerna
+    bredvid genereringen räknar likadant: två lektioner i samma sal samtidigt är
+    ingen salkrock när deras elever tillsammans ryms i salens kapacitet. Det
+    gäller handredigeringen och importen, kontrollen före publicering, de röda
+    markeringarna på schemat och de dagsvisa ändringarna av sal. Mjuk och hård
+    regel läses likadant där, eftersom en kapacitet ni skrivit in är en gräns ni
+    vill få veta när den överskrids. Är elevantalet i en av lektionerna okänt,
+    till exempel för att klassen ännu inte har någon klasslista, är det kvar som
+    en krock, och en rumsbokning håller alltid hela salen. Lärare, klass och
+    delade elever krockar som förut. Alla andra salar, och alla salar när regeln
+    är <span class="ui">Av</span>, har en lektion åt gången, som förut.
+  </p>
   <p>
     <strong>Optimeringsprofilen</strong> är mjuka önskemål. De kan väga mot
     varandra: ju högre värde, desto viktigare. Motorn hittar den bästa
@@ -5918,6 +6023,78 @@
     inställd lektion tillsammans med en klass som aktiviteten inte gäller, och
     deras vårdnadshavare, får beskedet att lektionerna är inställda, utan att det
     sägs att något ersätter dem: ingen ersättningslektion finns för dem.
+  </p>
+
+  <h4>Prov och skrivsalar</h4>
+  <p>
+    Ett prov som skolan lägger blir en aktivitet. Proven läggs in på sidan
+    <span class="path">Prov och skrivsalar</span>, som du når med länken överst
+    på <span class="path">Drift › Aktiviteter</span>. Sidan har fyra delar, i den
+    ordning du använder dem.
+  </p>
+  <ul>
+    <li><strong>Inställningar.</strong> <span class="ui">Provplanering på</span>
+      är <strong>avslaget från början</strong>. Är det avslaget kan skolan ändå
+      lägga in prov och märka skrivsalar, men <span class="ui">Planera</span>
+      nekas, och sidan säger det. Här anger du också hur många prov en klass
+      högst får ha per dag och per vecka, hur många skrivande en vakt tar
+      (en sal får en vakt per så många, avrundat uppåt, och minst en),
+      omställningen i minuter som en sal och en vakt behöver mellan två prov,
+      och <strong>ämnet för ersättningslektionerna</strong>. Det ska vara ett
+      ämne som inte räknas mot timplanen, till exempel <em>Prov</em>; ett som
+      räknas vägras, eftersom provets minuter då skulle räknas två gånger.</li>
+    <li><strong>Skrivsalar.</strong> Markera de salar som får användas till prov
+      och ange hur många som kan skriva i dem. Antalet kan inte vara större än
+      salens kapacitet, och är oftast mindre eftersom ett prov kräver mer plats än
+      en lektion.
+      <span class="ui">Ta bort</span> tar bort markeringen. Sidan räknar bara med
+      salar som är markerade.</li>
+    <li><strong>Prov.</strong> Ange provets namn, ämne (ett som räknas mot
+      timplanen), klasser eller grupper, längd, antal skrivande och önskad tid.
+      Tiden är antingen ett <em>önskat fönster</em>, upp till 31 dagar, med en
+      tidigaste start och ett senaste slut som du kan lämna tomma, eller en
+      <em>fast tid</em>, ett datum och en starttid, till exempel ett nationellt
+      prov. Ett prov som är <strong>lagt</strong> kan varken ändras eller tas
+      bort: välj <span class="ui">Ta bort planeringen</span> först, så sätts
+      lektionerna tillbaka, i sina salar, och provet blir olagt. Har en annan
+      lektion eller bokning hunnit ta salen säger sidan hur många lektioner som
+      inte kunde sättas tillbaka; de står kvar som inställda.</li>
+    <li><strong>Planera.</strong> <span class="ui">Planera de olagda proven</span>
+      ber planeraren om ett förslag. Markerar du några prov i listan planeras
+      bara de. Det kan ta upp till en minut, och <strong>förslaget lägger
+      ingenting</strong>: du läser det först.</li>
+  </ul>
+  <p>
+    Förslaget visas som en tabell för varje dag: prov, tid, salarna med klassernas
+    namn och antal skrivande, vakterna i namn och hur många minuters undervisning
+    provet stör. Alla förslag är förvalda; ta bort bocken på dem du inte vill ha.
+    Under tabellerna står de prov som <strong>inte gick att lägga</strong>, var och ett
+    med sitt skäl i klartext, till exempel att salarna inte rymmer så många skrivande,
+    att ingen lärare är ledig, eller att klassen redan har sitt tak för dagen.
+    Åtgärda det som står, till exempel genom att markera fler salar eller vidga
+    fönstret, och planera om. Provet står kvar som <em>Ej lagt</em> i listan med det
+    senaste skälet.
+  </p>
+  <p>
+    <strong>Taken och vakterna.</strong> Planeraren håller taken per klass och
+    dag och per vecka, ger aldrig en klass två prov samtidigt, och tar bara
+    lärare som är lediga den tiden. Vakterna fördelas så att det blir jämnt över
+    läsåret: <strong>vakträknaren</strong> visar hur många vaktpass och minuter
+    varje lärare redan har i år, vad förslaget lägger till och vad det blir efteråt,
+    med den som vakar mest överst. En lärare med skyddad identitet tas inte som
+    vakt och står inte på någon lista.
+  </p>
+  <p>
+    <strong>Använd valda.</strong> Provet läggs som en aktivitet med en
+    ersättningslektion per klass. Den bär närvaron, ligger i den sal där flest ur
+    klassen skriver, och vakterna i salen är de ansvariga lärarna. Lärare och elever
+    ser den i kalendern med sal och vakter. Provets minuter räknas som
+    undervisningstid i provets ämne, och salarna bokas. Du väljer själv om eleverna,
+    vårdnadshavarna och lärarna ska få en notis; den är förvald. Systemet
+    kontrollerar allt på nytt för varje prov, så ett prov som ändrats sedan
+    förslaget, eller en sal eller lärare som blivit upptagen, läggs inte. Det
+    provet nämns i resultatet med skälet, och de andra läggs ändå. Planera sedan
+    om det som blev kvar.
   </p>
 
   <h3 id="s66"><span class="num">6.6</span>Närvaro</h3>

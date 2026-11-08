@@ -20217,6 +20217,12 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('CrisisPupils', '{DRIFT}', '{}', '{}', '{}'),
   ('CrisisReports', '{DRIFT}', '{}', '{}', '{}'),
   ('CrisisSettings', '{DECIDES}', '{DECIDES}', '{}', '{}'),
+  ('ExamGroups', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('ExamInvigilators', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('ExamPlanSettings', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('ExamRooms', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('ExamSittings', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('Exams', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('FrameTimes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('GallringRuns', '{}', '{}', '{}', '{}'),
   ('GuardianStudentHistory', '{}', '{}', '{}', '{}'),
@@ -39073,13 +39079,16 @@ BEGIN
                         AND a.attname = 'studentGroupId'));
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: a key points at the class or sits on its column: %', bad; END IF;
 
-  -- Nothing else points at these tables but their own children.
+  -- Nothing else points at these tables but their own children, and the exam
+  -- an activity may carry (Provplanering, 20270127090000; section 420 holds
+  -- that key's ON DELETE and ON UPDATE).
   SELECT string_agg(c.conname, ', ') INTO bad
     FROM pg_constraint c
    WHERE c.contype = 'f'
      AND c.confrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
                          'public."ScheduleActivityLessons"'::regclass)
-     AND c.conname NOT IN ('ScheduleActivityTeachers_activityId_schoolId_fkey', 'ScheduleActivityLessons_activityId_schoolId_fkey');
+     AND c.conname NOT IN ('ScheduleActivityTeachers_activityId_schoolId_fkey', 'ScheduleActivityLessons_activityId_schoolId_fkey',
+                           'Exams_activityId_schoolId_fkey');
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'sa310: keys that point at an activity table: %', bad; END IF;
 END $$;
 
@@ -49750,6 +49759,1802 @@ BEGIN
   IF EXISTS (SELECT 1 FROM "ScheduleChangeLogs" WHERE after ->> 'deviationsDigest' = repeat('ab', 32)) THEN
     RAISE EXCEPTION 'deviations log: another school''s administrator finds the entry by its digest';
   END IF;
+END $$;
+ROLLBACK;
+-- ---------------------------------------------------------------------------
+-- Sections 415-419: Placeringsregler (G3, 20270126090000). Three rules about
+-- where a lesson is placed, each OFF until the school turns it on: a subject
+-- not first / not last in a class's day (Subjects."notFirstInDay",
+-- "notLastInDay"), at most N different room groups and M different buildings a day
+-- (LunchSettings."maxClassRoomsPerDay" and three more), and the pupils
+-- of a shared room together fitting its capacity (Rooms."canBeShared"). The
+-- mode and the weight of each rule are LunchSettings columns
+-- ("placementEdgeMode", "placementEdgeWeight" and four more).
+--
+-- No new table, so no new arm and no GRANT: what these sections hold is that
+-- the new columns are written and read exactly as their tables' other
+-- columns are, role by role, and what the migration added.
+--
+--   415  the catalogue: the type, the thirteen columns with their defaults,
+--        the eight CHECKs by name, the comments, and that no privilege moved;
+--   416  the Skolregler row: who writes the ten columns and who reads them,
+--        as the API's role and as PostgREST's, and no other school's;
+--   417  the CHECKs at the door: weights 1..1000, limits 0..20 or null, a rule
+--        2 that is on needs a limit, a mode that is none of the three, and the
+--        defaults of a row written without naming them;
+--   418  the marks on Subjects and Rooms: who writes and who reads, NOT NULL,
+--        no other school's row, and no SS12000 version moved by a mark;
+--   419  the API from before the migration: its statements name the old
+--        columns only and leave the new ones as they were.
+--
+-- The matrix school (rls-roller-school) has one administrator of each
+-- profile: ...0105 full, ...0106 rektor, ...0107 schemaläggare, ...0108
+-- expedition, ...0109 schemaläggare with HR-läs, ...0110 expedition with
+-- HR-läs, ...0115 and ...0116 läsare; ...0111 a teacher, ...0112 and ...0114
+-- pupils, ...0113 a guardian. Rooms, Subjects and the Skolregler are the
+-- PLANERING area's: full, rektor and schemaläggare write them, the
+-- expedition and the läsare do not. Another school: rls-fixture-school
+-- (:school_b), whose teacher is ...0001. The fixtures plant a Skolregler row
+-- for the matrix school only, so for the other school's rules the sections
+-- hold what holds with or without a row of its own: nothing of the matrix
+-- school's is read from there, and nothing is made for it from here.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Section 415: katalogen och standardvärdena (20270126090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  col record;
+  got record;
+  priv text;
+  tbl text;
+  r text;
+  wanted text[];
+BEGIN
+  -- The type, and its order: OFF < SOFT < HARD is the order a school tightens a rule in.
+  IF (SELECT string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder)
+        FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = 'PlacementRuleMode')
+     IS DISTINCT FROM 'OFF,SOFT,HARD' THEN
+    RAISE EXCEPTION 'placeringsregler: PlacementRuleMode is not OFF, SOFT, HARD';
+  END IF;
+
+  -- The thirteen columns: type, nullability and default. A rule is OFF, a weight 250, a limit none, a mark false.
+  FOR col IN SELECT * FROM (VALUES
+      ('LunchSettings', 'placementEdgeMode',               '"PlacementRuleMode"', true,  '''OFF''::"PlacementRuleMode"'),
+      ('LunchSettings', 'placementEdgeWeight',             'integer',             true,  '250'),
+      ('LunchSettings', 'placementPlacesMode',            '"PlacementRuleMode"', true,  '''OFF''::"PlacementRuleMode"'),
+      ('LunchSettings', 'placementPlacesWeight',          'integer',             true,  '250'),
+      ('LunchSettings', 'maxClassRoomsPerDay',       'integer',             false, NULL),
+      ('LunchSettings', 'maxTeacherRoomsPerDay',     'integer',             false, NULL),
+      ('LunchSettings', 'maxClassBuildingsPerDay',   'integer',             false, NULL),
+      ('LunchSettings', 'maxTeacherBuildingsPerDay', 'integer',             false, NULL),
+      ('LunchSettings', 'placementSharedMode',             '"PlacementRuleMode"', true,  '''OFF''::"PlacementRuleMode"'),
+      ('LunchSettings', 'placementSharedWeight',           'integer',             true,  '250'),
+      ('Subjects',      'notFirstInDay',                   'boolean',             true,  'false'),
+      ('Subjects',      'notLastInDay',                    'boolean',             true,  'false'),
+      ('Rooms',         'canBeShared',                     'boolean',             true,  'false')
+    ) AS v(tbl, name, typ, nn, dflt) LOOP
+    SELECT format_type(a.atttypid, a.atttypmod) AS typ, a.attnotnull AS nn, pg_get_expr(d.adbin, d.adrelid) AS dflt, a.attnum AS num
+      INTO got
+      FROM pg_attribute a
+      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+     WHERE a.attrelid = format('%I', col.tbl)::regclass AND a.attname = col.name AND NOT a.attisdropped;
+    IF got.typ IS NULL THEN RAISE EXCEPTION 'placeringsregler: %.% does not exist', col.tbl, col.name; END IF;
+    IF got.typ IS DISTINCT FROM col.typ OR got.nn IS DISTINCT FROM col.nn OR got.dflt IS DISTINCT FROM col.dflt THEN
+      RAISE EXCEPTION 'placeringsregler: %.% is % (not null %, default %), not % (not null %, default %)',
+        col.tbl, col.name, got.typ, got.nn, got.dflt, col.typ, col.nn, col.dflt;
+    END IF;
+    IF coalesce(col_description(format('%I', col.tbl)::regclass, got.num), '') = '' THEN
+      RAISE EXCEPTION 'placeringsregler: %.% has no comment', col.tbl, col.name;
+    END IF;
+  END LOOP;
+  IF coalesce(obj_description('"PlacementRuleMode"'::regtype, 'pg_type'), '') = '' THEN
+    RAISE EXCEPTION 'placeringsregler: PlacementRuleMode has no comment';
+  END IF;
+
+  -- The ten CHECKs, by name, validated, on the Skolregler: a name is what an error and a review point at.
+  FOR col IN SELECT * FROM (VALUES
+      ('LunchSettings_placementEdgeWeight_check'),
+      ('LunchSettings_placementPlacesWeight_check'),
+      ('LunchSettings_placementSharedWeight_check'),
+      ('LunchSettings_maxClassRoomsPerDay_check'),
+      ('LunchSettings_maxTeacherRoomsPerDay_check'),
+      ('LunchSettings_maxClassBuildingsPerDay_check'),
+      ('LunchSettings_maxTeacherBuildingsPerDay_check'),
+      ('LunchSettings_placementPlaces_needs_a_limit_check'),
+      ('LunchSettings_placementEdgeMode_off_or_soft_check'),
+      ('LunchSettings_placementPlacesMode_off_or_soft_check')
+    ) AS v(name) LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+                    WHERE c.conname = col.name AND c.contype = 'c' AND c.convalidated
+                      AND c.conrelid = '"LunchSettings"'::regclass) THEN
+      RAISE EXCEPTION 'placeringsregler: the CHECK % is not on the Skolregler, or not validated', col.name;
+    END IF;
+  END LOOP;
+  -- Rules 1 and 2 are OFF or SOFT (a hard one is not offered until it is measured); rule 3 has no such CHECK and is
+  -- offered hard. The definitions say so: each names its own column and lets OFF and SOFT through, and nothing
+  -- else is written about the mode of rule 3.
+  FOREACH r IN ARRAY ARRAY['placementEdgeMode', 'placementPlacesMode'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+                    WHERE c.conname = format('LunchSettings_%s_off_or_soft_check', r) AND c.conrelid = '"LunchSettings"'::regclass
+                      AND pg_get_constraintdef(c.oid) LIKE '%' || r || '%'
+                      AND pg_get_constraintdef(c.oid) LIKE '%OFF%' AND pg_get_constraintdef(c.oid) LIKE '%SOFT%'
+                      AND pg_get_constraintdef(c.oid) NOT LIKE '%HARD%') THEN
+      RAISE EXCEPTION 'placeringsregler: the CHECK on % is not "OFF or SOFT"', r;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_constraint c
+              WHERE c.conrelid = '"LunchSettings"'::regclass AND c.contype = 'c' AND pg_get_constraintdef(c.oid) LIKE '%placementSharedMode%') THEN
+    RAISE EXCEPTION 'placeringsregler: a CHECK bounds the mode of rule 3, which is offered hard';
+  END IF;
+  -- None on the other two tables: a mark is a boolean, and there is nothing to bound.
+  IF (SELECT count(*) FROM pg_constraint c
+       WHERE c.conrelid IN ('"Subjects"'::regclass, '"Rooms"'::regclass)
+         AND c.contype = 'c' AND c.conname ~ 'notFirstInDay|notLastInDay|canBeShared') <> 0 THEN
+    RAISE EXCEPTION 'placeringsregler: a CHECK on a mark that cannot be anything but true or false';
+  END IF;
+
+  -- No privilege moved. The API's role writes the three tables as it did; nobody holds what no API role was
+  -- given; MAINTAIN is counted where the version has it. anon holds nothing on a table or a column of it.
+  FOREACH tbl IN ARRAY ARRAY['"LunchSettings"', '"Subjects"', '"Rooms"'] LOOP
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+      IF NOT has_table_privilege('app_authenticated', tbl, priv) THEN
+        RAISE EXCEPTION 'placeringsregler: app_authenticated lost % on %', priv, tbl;
+      END IF;
+    END LOOP;
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN CONTINUE; END IF;
+      FOREACH priv IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        IF has_table_privilege(r, tbl, priv) THEN
+          RAISE EXCEPTION 'placeringsregler: % holds % on %', r, priv, tbl;
+        END IF;
+      END LOOP;
+      IF current_setting('server_version_num')::int >= 170000 AND has_table_privilege(r, tbl, 'MAINTAIN') THEN
+        RAISE EXCEPTION 'placeringsregler: % holds MAINTAIN on %', r, tbl;
+      END IF;
+    END LOOP;
+    IF has_any_column_privilege('anon', tbl, 'SELECT') OR has_any_column_privilege('anon', tbl, 'INSERT')
+       OR has_any_column_privilege('anon', tbl, 'UPDATE') THEN
+      RAISE EXCEPTION 'placeringsregler: anon holds a privilege on a column of %', tbl;
+    END IF;
+  END LOOP;
+  -- service_role reads (its SELECT is on every table) and writes none of the new columns.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    FOREACH priv IN ARRAY ARRAY['INSERT', 'UPDATE'] LOOP
+      IF has_column_privilege('service_role', '"Rooms"', 'canBeShared', priv)
+         OR has_column_privilege('service_role', '"Subjects"', 'notFirstInDay', priv)
+         OR has_column_privilege('service_role', '"LunchSettings"', 'placementEdgeMode', priv) THEN
+        RAISE EXCEPTION 'placeringsregler: service_role may % a new column', priv;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- The arms the columns are held by are the tables' own (no arm was added for them): the five on the
+  -- Skolregler, and on Rooms and Subjects the members' read and the administrators' four.
+  wanted := ARRAY['lunch_settings_admin_delete', 'lunch_settings_admin_insert', 'lunch_settings_admin_select',
+                  'lunch_settings_admin_update', 'lunch_settings_staff_select'];
+  IF (SELECT count(*) FROM pg_policies WHERE tablename = 'LunchSettings' AND policyname = ANY (wanted)) <> 5 THEN
+    RAISE EXCEPTION 'placeringsregler: the Skolregler lost one of its arms';
+  END IF;
+  FOREACH tbl IN ARRAY ARRAY['rooms', 'subjects'] LOOP
+    IF (SELECT count(*) FROM pg_policies
+         WHERE tablename = CASE tbl WHEN 'rooms' THEN 'Rooms' ELSE 'Subjects' END
+           AND policyname = ANY (ARRAY[tbl || '_admin_delete', tbl || '_admin_insert', tbl || '_admin_select',
+                                       tbl || '_admin_update', tbl || '_member_select'])) <> 5 THEN
+      RAISE EXCEPTION 'placeringsregler: % lost one of its arms', tbl;
+    END IF;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 416: Skolregler — vem som skriver de tio kolumnerna och vem som läser
+-- dem. The rows' arms are the table's (section 289 holds them for the switches
+-- before these): those who write PLANERING (full, rektor, schemaläggare) write,
+-- by UPDATE and by the upsert the gateway sends; the expedition and the läsare
+-- read and are refused by the arm's WITH CHECK (42501, row-level security); a
+-- teacher reads and an UPDATE reaches no row; a pupil and a guardian read no
+-- row at all. Each as the API's role and as PostgREST's. Another school's row
+-- is not reached by anyone here, and not made for it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls416_other', :'school_b', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+SELECT set_config('request.headers', '', true);
+SELECT set_config('app.test_rls416_school', app.current_school_id()::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls416_school')::uuid;
+  who text;
+  via text;
+  n bigint;
+  msg text;
+  v record;
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'placeringsregler 416: expected the matrix school''s full administrator';
+  END IF;
+  IF (SELECT count(*) FROM "LunchSettings" WHERE "schoolId" = school) <> 1 THEN
+    RAISE EXCEPTION 'placeringsregler 416: the matrix school has no Skolregler row to write';
+  END IF;
+
+  -- Those who write PLANERING write all ten columns and read them back.
+  FOREACH who IN ARRAY ARRAY['105', '106', '107', '109'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000' || who)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      UPDATE "LunchSettings" SET
+        "placementEdgeMode" = 'SOFT', "placementEdgeWeight" = 400,
+        "placementPlacesMode" = 'SOFT', "placementPlacesWeight" = 300,
+        "maxClassRoomsPerDay" = 2, "maxTeacherRoomsPerDay" = 5,
+        "maxClassBuildingsPerDay" = 1, "maxTeacherBuildingsPerDay" = 3,
+        "placementSharedMode" = 'HARD', "placementSharedWeight" = 100
+       WHERE "schoolId" = school;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 416: … % could not write the rules, as %', who, via; END IF;
+      SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
+      IF v."placementEdgeMode" <> 'SOFT' OR v."placementEdgeWeight" <> 400 OR v."placementPlacesMode" <> 'SOFT'
+         OR v."placementPlacesWeight" <> 300 OR v."maxClassRoomsPerDay" <> 2 OR v."maxTeacherRoomsPerDay" <> 5
+         OR v."maxClassBuildingsPerDay" <> 1 OR v."maxTeacherBuildingsPerDay" <> 3
+         OR v."placementSharedMode" <> 'HARD' OR v."placementSharedWeight" <> 100 THEN
+        RAISE EXCEPTION 'placeringsregler 416: … % read the rules back as %, as %', who, row_to_json(v), via;
+      END IF;
+      -- The gateway's own write: INSERT … ON CONFLICT ("schoolId") DO UPDATE, naming only what the body carried.
+      INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementEdgeMode", "placementEdgeWeight")
+      VALUES (school, '11:00', '13:00', 30, now(), 'OFF', 250)
+      ON CONFLICT ("schoolId") DO UPDATE SET "placementEdgeMode" = EXCLUDED."placementEdgeMode", "placementEdgeWeight" = EXCLUDED."placementEdgeWeight";
+      SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
+      IF v."placementEdgeMode" <> 'OFF' OR v."placementEdgeWeight" <> 250 OR v."placementPlacesMode" <> 'SOFT'
+         OR v."maxTeacherRoomsPerDay" <> 5 OR v."placementSharedWeight" <> 100 THEN
+        RAISE EXCEPTION 'placeringsregler 416: the upsert of … % moved a column it did not name, or not the ones it did: %', who, row_to_json(v);
+      END IF;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  -- The state the readers below find: every rule on, the limits set.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  UPDATE "LunchSettings" SET
+    "placementEdgeMode" = 'SOFT', "placementEdgeWeight" = 400, "placementPlacesMode" = 'SOFT', "placementPlacesWeight" = 300,
+    "maxClassRoomsPerDay" = 2, "maxTeacherRoomsPerDay" = 5, "maxClassBuildingsPerDay" = 1,
+    "maxTeacherBuildingsPerDay" = 3, "placementSharedMode" = 'HARD', "placementSharedWeight" = 100
+   WHERE "schoolId" = school;
+
+  -- The expedition and the läsare read the rules and are refused a change by the arm's WITH CHECK.
+  FOREACH who IN ARRAY ARRAY['108', '110', '115', '116'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000' || who)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
+      IF v."placementEdgeMode" IS DISTINCT FROM 'SOFT' OR v."maxTeacherBuildingsPerDay" IS DISTINCT FROM 3
+         OR v."placementSharedMode" IS DISTINCT FROM 'HARD' THEN
+        RAISE EXCEPTION 'placeringsregler 416: … % does not read the rules, as %: %', who, via, row_to_json(v);
+      END IF;
+      BEGIN
+        UPDATE "LunchSettings" SET "placementEdgeMode" = 'OFF' WHERE "schoolId" = school;
+        RAISE EXCEPTION 'placeringsregler 416: … % (without PLANERING) changed a rule, as %', who, via;
+      EXCEPTION WHEN insufficient_privilege THEN
+        GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+        IF msg NOT LIKE '%row-level security%' THEN
+          RAISE EXCEPTION 'placeringsregler 416: … % was refused by "%", not by row security, as %', who, msg, via;
+        END IF;
+      END;
+      BEGIN
+        INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "maxClassRoomsPerDay")
+        VALUES (school, '11:00', '13:00', 30, now(), 9)
+        ON CONFLICT ("schoolId") DO UPDATE SET "maxClassRoomsPerDay" = EXCLUDED."maxClassRoomsPerDay";
+        RAISE EXCEPTION 'placeringsregler 416: the upsert of … % (without PLANERING) was not refused, as %', who, via;
+      EXCEPTION WHEN insufficient_privilege THEN NULL;
+      END;
+      -- A plain INSERT meets the insert arm alone: the unique key would answer 23505 for a row the arm let through.
+      BEGIN
+        INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt")
+        VALUES (school, '11:00', '13:00', 30, now());
+        RAISE EXCEPTION 'placeringsregler 416: an insert by … % (without PLANERING) was not refused, as %', who, via;
+      EXCEPTION
+        WHEN insufficient_privilege THEN NULL;
+        WHEN unique_violation THEN
+          RAISE EXCEPTION 'placeringsregler 416: the insert arm let … % (without PLANERING) through to the key, as %', who, via;
+      END;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+
+  -- A teacher reads them (the staff arm) and an UPDATE reaches no row; a pupil and a guardian read no row and
+  -- reach none. Nobody of these makes the row.
+  FOREACH who IN ARRAY ARRAY['111', '112', '114', '113'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000' || who)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      SELECT count(*) INTO n FROM "LunchSettings";
+      IF who = '111' THEN
+        IF n <> 1 OR (SELECT "placementPlacesMode" FROM "LunchSettings") IS DISTINCT FROM 'SOFT'
+           OR (SELECT "maxClassBuildingsPerDay" FROM "LunchSettings") IS DISTINCT FROM 1 THEN
+          RAISE EXCEPTION 'placeringsregler 416: the teacher does not read the rules (% rows), as %', n, via;
+        END IF;
+      ELSIF n <> 0 THEN
+        RAISE EXCEPTION 'placeringsregler 416: … % reads % row(s) of the Skolregler, as %', who, n, via;
+      END IF;
+      UPDATE "LunchSettings" SET "placementEdgeMode" = 'OFF' WHERE "schoolId" = school;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 416: … % changed a rule, as %', who, via; END IF;
+      BEGIN
+        INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementSharedMode")
+        VALUES (school, '11:00', '13:00', 30, now(), 'OFF')
+        ON CONFLICT ("schoolId") DO UPDATE SET "placementSharedMode" = EXCLUDED."placementSharedMode";
+        RAISE EXCEPTION 'placeringsregler 416: the upsert of … % was not refused, as %', who, via;
+      EXCEPTION WHEN insufficient_privilege THEN NULL;
+      END;
+      BEGIN
+        INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt")
+        VALUES (school, '11:00', '13:00', 30, now());
+        RAISE EXCEPTION 'placeringsregler 416: an insert by … % was not refused, as %', who, via;
+      EXCEPTION
+        WHEN insufficient_privilege THEN NULL;
+        WHEN unique_violation THEN
+          RAISE EXCEPTION 'placeringsregler 416: the insert arm let … % through to the key, as %', who, via;
+      END;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+END $$;
+
+-- The other school: the matrix school's full administrator reaches none of its rules and makes none for it; its
+-- teacher reads none of the matrix school's, and its own row (if it has one) with the defaults.
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls416_school')::uuid;
+  other uuid := current_setting('app.test_rls416_other')::uuid;
+  via text;
+  n bigint;
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS NULL OR other IS NULL THEN
+    RAISE EXCEPTION 'placeringsregler 416: the schools are not there';
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    SELECT count(*) INTO n FROM "LunchSettings" WHERE "schoolId" = other;
+    IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 416: the full administrator reads the other school''s rules, as %', via; END IF;
+    UPDATE "LunchSettings" SET "placementEdgeMode" = 'SOFT', "placementPlacesMode" = 'OFF' WHERE "schoolId" = other;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 416: the full administrator changed the other school''s rules, as %', via; END IF;
+    BEGIN
+      INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementEdgeMode")
+      VALUES (other, '11:00', '13:00', 30, now(), 'SOFT')
+      ON CONFLICT ("schoolId") DO UPDATE SET "placementEdgeMode" = EXCLUDED."placementEdgeMode";
+      RAISE EXCEPTION 'placeringsregler 416: the full administrator wrote the other school''s rules by upsert, as %', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    -- Moving the school's own row to the other school is refused by the same arm.
+    BEGIN
+      UPDATE "LunchSettings" SET "schoolId" = other WHERE "schoolId" = school;
+      RAISE EXCEPTION 'placeringsregler 416: the full administrator moved the rules to the other school, as %', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000001')::text, true);
+  IF app.current_school_id() IS DISTINCT FROM other THEN
+    RAISE EXCEPTION 'placeringsregler 416: the fixture teacher is not at rls-fixture-school';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" <> other) THEN
+    RAISE EXCEPTION 'placeringsregler 416: the other school''s teacher reads the matrix school''s rules';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "LunchSettings" WHERE NOT ("placementEdgeMode" = 'OFF' AND "placementPlacesMode" = 'OFF'
+                              AND "placementSharedMode" = 'OFF' AND "placementEdgeWeight" = 250
+                              AND "maxClassRoomsPerDay" IS NULL)) THEN
+    RAISE EXCEPTION 'placeringsregler 416: the other school''s own row does not read the defaults';
+  END IF;
+  UPDATE "LunchSettings" SET "placementEdgeMode" = 'SOFT' WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 416: the other school''s teacher reached the matrix school''s rules'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 417: gränserna vid dörren. A weight is 1..1000, a limit 1..20 or
+-- null, a rule 2 that is SOFT has a limit, a mode is one of the three, rules 1
+-- and 2 are never HARD (only rule 3 is offered hard), and a row written without
+-- naming the columns reads the defaults. Each refusal by its own SQLSTATE and,
+-- for a CHECK, its own name.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.g3_refuses(stmt text, expected text, what text, named text DEFAULT NULL) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE
+  got text := 'none';
+  cname text;
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+    GET STACKED DIAGNOSTICS cname = CONSTRAINT_NAME;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'placeringsregler: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+  IF named IS NOT NULL AND cname IS DISTINCT FROM named THEN
+    RAISE EXCEPTION 'placeringsregler: % was refused by the CHECK "%", not "%"', what, cname, named USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+SELECT set_config('request.headers', '', true);
+SELECT set_config('app.test_rls417_school', app.current_school_id()::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls417_school')::uuid;
+  col text;
+  val text;
+  via text;
+  msg text;
+  n bigint;
+  v record;
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'placeringsregler 417: expected the matrix school''s full administrator';
+  END IF;
+
+  -- The three weights: 1 and 1000 are allowed, 0, 1001 and a negative figure are not, and a weight is never null.
+  FOREACH col IN ARRAY ARRAY['placementEdgeWeight', 'placementPlacesWeight', 'placementSharedWeight'] LOOP
+    FOREACH val IN ARRAY ARRAY['1', '1000', '250'] LOOP
+      EXECUTE format('UPDATE "LunchSettings" SET %I = %s WHERE "schoolId" = %L', col, val, school);
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: % = % could not be written', col, val; END IF;
+    END LOOP;
+    FOREACH val IN ARRAY ARRAY['0', '1001', '-5', '100000'] LOOP
+      PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET %I = %s WHERE "schoolId" = %L', col, val, school),
+                                 '23514', format('%s = %s', col, val), format('LunchSettings_%s_check', col));
+    END LOOP;
+    PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET %I = NULL WHERE "schoolId" = %L', col, school), '23502', col || ' = null');
+  END LOOP;
+
+  -- The four limits: 1 (a single place a day) and 20 are allowed, and null (no limit); 0, -1 and 21 are not.
+  FOREACH col IN ARRAY ARRAY['maxClassRoomsPerDay', 'maxTeacherRoomsPerDay', 'maxClassBuildingsPerDay', 'maxTeacherBuildingsPerDay'] LOOP
+    FOREACH val IN ARRAY ARRAY['1', '2', '20', 'NULL'] LOOP
+      EXECUTE format('UPDATE "LunchSettings" SET %I = %s WHERE "schoolId" = %L', col, val, school);
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: % = % could not be written', col, val; END IF;
+    END LOOP;
+    FOREACH val IN ARRAY ARRAY['0', '-1', '21', '1000'] LOOP
+      PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET %I = %s WHERE "schoolId" = %L', col, val, school),
+                                 '23514', format('%s = %s', col, val), format('LunchSettings_%s_check', col));
+    END LOOP;
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school AND "maxClassRoomsPerDay" IS NULL
+                    AND "maxTeacherRoomsPerDay" IS NULL AND "maxClassBuildingsPerDay" IS NULL
+                    AND "maxTeacherBuildingsPerDay" IS NULL AND "placementPlacesMode" = 'OFF') THEN
+    RAISE EXCEPTION 'placeringsregler 417: the Skolregler are not at their start for the cases below';
+  END IF;
+
+  -- A rule 2 that is on has a limit. No limit at all is refused for SOFT, by name (HARD is refused whatever the limits are, below).
+  PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''SOFT'' WHERE "schoolId" = %L', school),
+                             '23514', 'rule 2 SOFT with no limit', 'LunchSettings_placementPlaces_needs_a_limit_check');
+  -- One limit is enough, whichever it is, and it can be 1 (a single place a day); set in the same statement as the mode.
+  FOREACH col IN ARRAY ARRAY['maxClassRoomsPerDay', 'maxTeacherRoomsPerDay', 'maxClassBuildingsPerDay', 'maxTeacherBuildingsPerDay'] LOOP
+    EXECUTE format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''SOFT'', %I = 1 WHERE "schoolId" = %L', col, school);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: rule 2 SOFT with only % = 1 was refused', col; END IF;
+    -- … and taking the last one away while it is on is refused; turning it off first is not.
+    PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET %I = NULL WHERE "schoolId" = %L', col, school),
+                               '23514', 'clearing the only limit of ' || col, 'LunchSettings_placementPlaces_needs_a_limit_check');
+    EXECUTE format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''OFF'' WHERE "schoolId" = %L', school);
+    EXECUTE format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''SOFT'' WHERE "schoolId" = %L', school);
+    EXECUTE format('UPDATE "LunchSettings" SET "placementPlacesMode" = ''OFF'', %I = NULL WHERE "schoolId" = %L', col, school);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: rule 2 could not be turned off with its last limit cleared (%)', col; END IF;
+  END LOOP;
+  -- Two limits: clearing one leaves the rule on.
+  UPDATE "LunchSettings" SET "placementPlacesMode" = 'SOFT', "maxClassRoomsPerDay" = 3, "maxTeacherRoomsPerDay" = 6 WHERE "schoolId" = school;
+  UPDATE "LunchSettings" SET "maxClassRoomsPerDay" = NULL WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: one of two limits could not be cleared'; END IF;
+  -- Off keeps its limits: a school that switches the rule off and on again does not lose its figures.
+  UPDATE "LunchSettings" SET "placementPlacesMode" = 'OFF' WHERE "schoolId" = school;
+  SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
+  IF v."maxTeacherRoomsPerDay" IS DISTINCT FROM 6 THEN RAISE EXCEPTION 'placeringsregler 417: turning the rule off moved a limit'; END IF;
+  -- Rule 1 and rule 3 have no such need: on with nothing marked is allowed and does nothing.
+  UPDATE "LunchSettings" SET "placementEdgeMode" = 'SOFT', "placementSharedMode" = 'HARD' WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: rule 1 or rule 3 on with nothing marked was refused'; END IF;
+
+  -- Rules 1 and 2 are OFF or SOFT, never HARD: only rule 3 is offered hard (a hard rule 1 cost 4.5 times the first
+  -- timetable and a hard rule 2 2.8 to 3.6 times; the API refuses a request that names it, and this is every other
+  -- way in). The Skolregler row is also written by an administrator straight against PostgREST (`authenticated`),
+  -- and a stored HARD would go to the engine with that cost and lock the card, so the database refuses it, as the
+  -- API's role and as PostgREST's, by UPDATE: 23514 by the rule's own CHECK, whether or not a limit stands. The
+  -- statements are inline (no pg_temp function) because the role is switched under them.
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    FOREACH col IN ARRAY ARRAY['placementEdgeMode', 'placementPlacesMode'] LOOP
+      FOREACH val IN ARRAY ARRAY['UPDATE "LunchSettings" SET %I = ''HARD'' WHERE "schoolId" = %L',
+                                 'UPDATE "LunchSettings" SET %I = ''HARD'', "maxClassRoomsPerDay" = 2 WHERE "schoolId" = %L'] LOOP
+        BEGIN
+          EXECUTE format(val, col, school);
+          RAISE EXCEPTION 'placeringsregler 417: % = HARD was written by UPDATE, as %', col, via USING ERRCODE = 'P0001';
+        EXCEPTION WHEN check_violation THEN
+          GET STACKED DIAGNOSTICS msg = CONSTRAINT_NAME;
+          IF msg IS DISTINCT FROM format('LunchSettings_%s_off_or_soft_check', col) THEN
+            RAISE EXCEPTION 'placeringsregler 417: % = HARD was refused by "%", not by its own CHECK, as %', col, msg, via;
+          END IF;
+        END;
+      END LOOP;
+      -- OFF and SOFT go through, and the refusals changed nothing.
+      FOREACH val IN ARRAY ARRAY['OFF', 'SOFT'] LOOP
+        EXECUTE format('UPDATE "LunchSettings" SET %I = %L, "maxClassRoomsPerDay" = 2 WHERE "schoolId" = %L', col, val, school);
+        GET DIAGNOSTICS n = ROW_COUNT;
+        IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: % = % could not be written, as %', col, val, via; END IF;
+      END LOOP;
+    END LOOP;
+    -- Rule 3 is offered hard, and is not refused by either CHECK.
+    UPDATE "LunchSettings" SET "placementSharedMode" = 'HARD' WHERE "schoolId" = school;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: rule 3 HARD could not be written, as %', via; END IF;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  UPDATE "LunchSettings" SET "placementEdgeMode" = 'OFF', "placementPlacesMode" = 'OFF', "maxClassRoomsPerDay" = NULL,
+                             "placementSharedMode" = 'OFF' WHERE "schoolId" = school;
+
+  -- A mode is one of the three, spelled as they are, and never null.
+  FOREACH col IN ARRAY ARRAY['placementEdgeMode', 'placementPlacesMode', 'placementSharedMode'] LOOP
+    FOREACH val IN ARRAY ARRAY['MEDIUM', 'off', 'Soft', ''] LOOP
+      PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET %I = %L WHERE "schoolId" = %L', col, val, school),
+                                 '22P02', format('%s = %L', col, val));
+    END LOOP;
+    PERFORM pg_temp.g3_refuses(format('UPDATE "LunchSettings" SET %I = NULL WHERE "schoolId" = %L', col, school), '23502', col || ' = null');
+  END LOOP;
+
+  -- A row written without naming the columns reads the defaults: the first save of a school, and the API before.
+  DELETE FROM "LunchSettings" WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'placeringsregler 417: the Skolregler row could not be removed for the next case'; END IF;
+  INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt")
+  VALUES (school, '11:00', '13:00', 30, now());
+  SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
+  IF v."placementEdgeMode" <> 'OFF' OR v."placementPlacesMode" <> 'OFF' OR v."placementSharedMode" <> 'OFF'
+     OR v."placementEdgeWeight" <> 250 OR v."placementPlacesWeight" <> 250 OR v."placementSharedWeight" <> 250
+     OR v."maxClassRoomsPerDay" IS NOT NULL OR v."maxTeacherRoomsPerDay" IS NOT NULL
+     OR v."maxClassBuildingsPerDay" IS NOT NULL OR v."maxTeacherBuildingsPerDay" IS NOT NULL THEN
+    RAISE EXCEPTION 'placeringsregler 417: a fresh Skolregler row does not read the defaults: %', row_to_json(v);
+  END IF;
+  -- And INSERTed with the values a school would choose, the same CHECKs hold at the door.
+  DELETE FROM "LunchSettings" WHERE "schoolId" = school;
+  -- … and by INSERT: a HARD for rule 1 or rule 2 is refused by its own CHECK, with or without a limit, as the API's
+  -- role and as PostgREST's (the INSERT is the gateway's create half, and PostgREST's POST).
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    FOREACH col IN ARRAY ARRAY['placementEdgeMode', 'placementPlacesMode'] LOOP
+      FOREACH val IN ARRAY ARRAY['', ', "maxClassRoomsPerDay"'] LOOP
+        BEGIN
+          EXECUTE format($q$INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", %I%s)
+                            VALUES (%L, '11:00', '13:00', 30, now(), 'HARD'%s)$q$,
+                         col, val, school, CASE WHEN val = '' THEN '' ELSE ', 2' END);
+          RAISE EXCEPTION 'placeringsregler 417: an INSERT of % = HARD was accepted, as %', col, via USING ERRCODE = 'P0001';
+        EXCEPTION WHEN check_violation THEN
+          GET STACKED DIAGNOSTICS msg = CONSTRAINT_NAME;
+          IF msg IS DISTINCT FROM format('LunchSettings_%s_off_or_soft_check', col) THEN
+            RAISE EXCEPTION 'placeringsregler 417: an INSERT of % = HARD was refused by "%", not by its own CHECK, as %', col, msg, via;
+          END IF;
+        END;
+      END LOOP;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  PERFORM pg_temp.g3_refuses(format($q$INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementPlacesMode")
+                                       VALUES (%L, '11:00', '13:00', 30, now(), 'SOFT')$q$, school),
+                             '23514', 'an INSERT of rule 2 SOFT without a limit', 'LunchSettings_placementPlaces_needs_a_limit_check');
+  PERFORM pg_temp.g3_refuses(format($q$INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementSharedWeight")
+                                       VALUES (%L, '11:00', '13:00', 30, now(), 1001)$q$, school),
+                             '23514', 'an INSERT of a weight of 1001', 'LunchSettings_placementSharedWeight_check');
+  INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "placementPlacesMode", "maxTeacherBuildingsPerDay", "placementSharedMode")
+  VALUES (school, '11:00', '13:00', 30, now(), 'SOFT', 1, 'HARD');
+  IF NOT EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school AND "placementPlacesMode" = 'SOFT' AND "maxTeacherBuildingsPerDay" = 1
+                    AND "placementSharedMode" = 'HARD') THEN
+    RAISE EXCEPTION 'placeringsregler 417: an INSERT of rule 2 SOFT with a limit of one, and of rule 3 HARD, did not read back';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 418: märkena på ämnen och salar. A subject is marked not first / not
+-- last in a class's day and a room can be shared by several groups; both are
+-- the PLANERING area's to write, as every column of the two tables is, and
+-- every member of the school reads them, as it reads a room's capacity and a
+-- subject's name. The marks are NOT NULL; another school's rooms and subjects
+-- are not reached; and no SS12000 version moves for a mark (the providers emit
+-- nothing of it: app.ss12000_v_rooms bumps for name and capacity,
+-- app.ss12000_v_subjects for name and national code).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls418_other', :'school_b', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+SELECT set_config('request.headers', '', true);
+SELECT set_config('app.test_rls418_school', app.current_school_id()::text, true);
+SELECT set_config('app.test_rls418_subject', (SELECT id::text FROM "Subjects" WHERE code = 'RLSR'), true);
+SELECT set_config('app.test_rls418_room', (SELECT id::text FROM "Rooms" WHERE name = 'Roller 1'), true);
+-- The SS12000 versions as the school's service principal reads them, BEFORE the section's first mark: a provider
+-- that bumped for a mark would by then have set the version to this transaction's own xid, and a "before" read
+-- taken after it could not tell that from a version that stood still (only the control, with the wrong message,
+-- would have caught it).
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls418_school'), true);
+SELECT set_config('app.test_rls418_room_xid',
+  coalesce((SELECT "xid"::text FROM "Ss12000EntityVersions" WHERE resource = 'Room' AND "entityId" = current_setting('app.test_rls418_room')::uuid), ''), true);
+SELECT set_config('app.test_rls418_subject_xid',
+  coalesce((SELECT "xid"::text FROM "Ss12000EntityVersions" WHERE resource = 'Syllabus' AND "entityId" = current_setting('app.test_rls418_subject')::uuid), ''), true);
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls418_school')::uuid;
+  other uuid := current_setting('app.test_rls418_other')::uuid;
+  subj uuid := current_setting('app.test_rls418_subject')::uuid;
+  room uuid := current_setting('app.test_rls418_room')::uuid;
+  who text;
+  via text;
+  n bigint;
+  msg text;
+  made uuid;
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' OR subj IS NULL OR room IS NULL THEN
+    RAISE EXCEPTION 'placeringsregler 418: expected the matrix school''s subject and room';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "Subjects" WHERE id = subj AND ("notFirstInDay" OR "notLastInDay"))
+     OR EXISTS (SELECT 1 FROM "Rooms" WHERE id = room AND "canBeShared") THEN
+    RAISE EXCEPTION 'placeringsregler 418: a subject or a room planted without the marks is marked';
+  END IF;
+
+  -- Those who write PLANERING mark a subject and a room, and make new ones marked; each as both roles.
+  FOREACH who IN ARRAY ARRAY['105', '106', '107', '109'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000' || who)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      UPDATE "Subjects" SET "notFirstInDay" = true, "notLastInDay" = false WHERE id = subj;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 1 OR NOT EXISTS (SELECT 1 FROM "Subjects" WHERE id = subj AND "notFirstInDay" AND NOT "notLastInDay") THEN
+        RAISE EXCEPTION 'placeringsregler 418: … % could not mark a subject not first, as %', who, via;
+      END IF;
+      UPDATE "Subjects" SET "notFirstInDay" = false, "notLastInDay" = true WHERE id = subj;
+      IF NOT EXISTS (SELECT 1 FROM "Subjects" WHERE id = subj AND NOT "notFirstInDay" AND "notLastInDay") THEN
+        RAISE EXCEPTION 'placeringsregler 418: … % could not mark a subject not last, as %', who, via;
+      END IF;
+      UPDATE "Rooms" SET "canBeShared" = true WHERE id = room;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 1 OR NOT EXISTS (SELECT 1 FROM "Rooms" WHERE id = room AND "canBeShared") THEN
+        RAISE EXCEPTION 'placeringsregler 418: … % could not mark a room shared, as %', who, via;
+      END IF;
+      UPDATE "Rooms" SET "canBeShared" = false WHERE id = room;
+      INSERT INTO "Subjects" ("schoolId", name, code, "notFirstInDay", "notLastInDay", "updatedAt")
+      VALUES (school, 'g3 Idrott ' || who || via, 'G3' || left(md5(who || via), 8), true, true, now()) RETURNING id INTO made;
+      IF NOT EXISTS (SELECT 1 FROM "Subjects" WHERE id = made AND "notFirstInDay" AND "notLastInDay") THEN
+        RAISE EXCEPTION 'placeringsregler 418: … % made a subject whose marks did not come back, as %', who, via;
+      END IF;
+      INSERT INTO "Rooms" ("schoolId", name, capacity, "canBeShared", "updatedAt")
+      VALUES (school, 'g3 Aula ' || who || via, 120, true, now()) RETURNING id INTO made;
+      IF NOT EXISTS (SELECT 1 FROM "Rooms" WHERE id = made AND "canBeShared" AND capacity = 120) THEN
+        RAISE EXCEPTION 'placeringsregler 418: … % made a room whose mark did not come back, as %', who, via;
+      END IF;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+
+  -- The marks the readers below find.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  UPDATE "Subjects" SET "notFirstInDay" = true, "notLastInDay" = true WHERE id = subj;
+  UPDATE "Rooms" SET "canBeShared" = true WHERE id = room;
+
+  -- The expedition and the läsare read the marks and are refused a change and a new row (42501, row security).
+  FOREACH who IN ARRAY ARRAY['108', '110', '115', '116'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000' || who)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      IF NOT EXISTS (SELECT 1 FROM "Subjects" WHERE id = subj AND "notFirstInDay" AND "notLastInDay")
+         OR NOT EXISTS (SELECT 1 FROM "Rooms" WHERE id = room AND "canBeShared") THEN
+        RAISE EXCEPTION 'placeringsregler 418: … % does not read the marks, as %', who, via;
+      END IF;
+      BEGIN
+        UPDATE "Subjects" SET "notFirstInDay" = false WHERE id = subj;
+        RAISE EXCEPTION 'placeringsregler 418: … % (without PLANERING) changed a subject''s mark, as %', who, via;
+      EXCEPTION WHEN insufficient_privilege THEN
+        GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+        IF msg NOT LIKE '%row-level security%' THEN
+          RAISE EXCEPTION 'placeringsregler 418: … % was refused by "%", not by row security, as %', who, msg, via;
+        END IF;
+      END;
+      BEGIN
+        UPDATE "Rooms" SET "canBeShared" = false WHERE id = room;
+        RAISE EXCEPTION 'placeringsregler 418: … % (without PLANERING) changed a room''s mark, as %', who, via;
+      EXCEPTION WHEN insufficient_privilege THEN NULL;
+      END;
+      BEGIN
+        INSERT INTO "Rooms" ("schoolId", name, "canBeShared", "updatedAt") VALUES (school, 'g3 ' || who || via, true, now());
+        RAISE EXCEPTION 'placeringsregler 418: … % (without PLANERING) made a shared room, as %', who, via;
+      EXCEPTION WHEN insufficient_privilege THEN NULL;
+      END;
+      BEGIN
+        INSERT INTO "Subjects" ("schoolId", name, code, "notLastInDay", "updatedAt") VALUES (school, 'g3 ' || who || via, 'G3X', true, now());
+        RAISE EXCEPTION 'placeringsregler 418: … % (without PLANERING) made a marked subject, as %', who, via;
+      EXCEPTION WHEN insufficient_privilege THEN NULL;
+      END;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+
+  -- A teacher, a pupil and a guardian read the marks (a member reads the school's rooms and subjects) and change none:
+  -- an UPDATE reaches no row, a new row is refused.
+  FOREACH who IN ARRAY ARRAY['111', '112', '114', '113'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000' || who)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      IF NOT EXISTS (SELECT 1 FROM "Subjects" WHERE id = subj AND "notFirstInDay" AND "notLastInDay")
+         OR NOT EXISTS (SELECT 1 FROM "Rooms" WHERE id = room AND "canBeShared") THEN
+        RAISE EXCEPTION 'placeringsregler 418: … % does not read the marks, as %', who, via;
+      END IF;
+      UPDATE "Subjects" SET "notFirstInDay" = false WHERE id = subj;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 418: … % changed a subject''s mark, as %', who, via; END IF;
+      UPDATE "Rooms" SET "canBeShared" = false WHERE id = room;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 418: … % changed a room''s mark, as %', who, via; END IF;
+      BEGIN
+        INSERT INTO "Rooms" ("schoolId", name, "canBeShared", "updatedAt") VALUES (school, 'g3 ' || who || via, true, now());
+        RAISE EXCEPTION 'placeringsregler 418: … % made a shared room, as %', who, via;
+      EXCEPTION WHEN insufficient_privilege THEN NULL;
+      END;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+
+  -- A mark is true or false: never null, on an UPDATE or an INSERT.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  BEGIN
+    UPDATE "Subjects" SET "notFirstInDay" = NULL WHERE id = subj;
+    RAISE EXCEPTION 'placeringsregler 418: a subject''s mark was set to null';
+  EXCEPTION WHEN not_null_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Subjects" SET "notLastInDay" = NULL WHERE id = subj;
+    RAISE EXCEPTION 'placeringsregler 418: a subject''s mark was set to null';
+  EXCEPTION WHEN not_null_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Rooms" SET "canBeShared" = NULL WHERE id = room;
+    RAISE EXCEPTION 'placeringsregler 418: a room''s mark was set to null';
+  EXCEPTION WHEN not_null_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "Rooms" ("schoolId", name, "canBeShared", "updatedAt") VALUES (school, 'g3 null', NULL, now());
+    RAISE EXCEPTION 'placeringsregler 418: a room was made with a null mark';
+  EXCEPTION WHEN not_null_violation THEN NULL;
+  END;
+  -- Written without naming them, a subject and a room are unmarked.
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'g3 omarkerat', 'G3U', now()) RETURNING id INTO made;
+  IF NOT EXISTS (SELECT 1 FROM "Subjects" WHERE id = made AND NOT "notFirstInDay" AND NOT "notLastInDay") THEN
+    RAISE EXCEPTION 'placeringsregler 418: a subject written without the marks is marked';
+  END IF;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'g3 omarkerat', now()) RETURNING id INTO made;
+  IF EXISTS (SELECT 1 FROM "Rooms" WHERE id = made AND "canBeShared") THEN
+    RAISE EXCEPTION 'placeringsregler 418: a room written without the mark is shared';
+  END IF;
+
+  -- The other school: the matrix school's full administrator reaches none of its rooms and subjects and makes none
+  -- for it; its teacher reads its own, unmarked, and none of the matrix school's.
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    SELECT count(*) INTO n FROM (SELECT 1 FROM "Rooms" WHERE "schoolId" = other UNION ALL SELECT 1 FROM "Subjects" WHERE "schoolId" = other) x;
+    IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 418: the full administrator reads the other school''s rooms or subjects, as %', via; END IF;
+    UPDATE "Rooms" SET "canBeShared" = true WHERE "schoolId" = other;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 418: the full administrator marked the other school''s room, as %', via; END IF;
+    UPDATE "Subjects" SET "notFirstInDay" = true WHERE "schoolId" = other;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 418: the full administrator marked the other school''s subject, as %', via; END IF;
+    BEGIN
+      INSERT INTO "Rooms" ("schoolId", name, "canBeShared", "updatedAt") VALUES (other, 'g3 främmande', true, now());
+      RAISE EXCEPTION 'placeringsregler 418: the full administrator made a shared room at the other school, as %', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      INSERT INTO "Subjects" ("schoolId", name, code, "notFirstInDay", "updatedAt") VALUES (other, 'g3 främmande', 'G3F', true, now());
+      RAISE EXCEPTION 'placeringsregler 418: the full administrator made a marked subject at the other school, as %', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000001')::text, true);
+  IF app.current_school_id() IS DISTINCT FROM other THEN RAISE EXCEPTION 'placeringsregler 418: the fixture teacher is not at rls-fixture-school'; END IF;
+  IF EXISTS (SELECT 1 FROM "Rooms" WHERE "schoolId" <> other) OR EXISTS (SELECT 1 FROM "Subjects" WHERE "schoolId" <> other)
+     OR NOT EXISTS (SELECT 1 FROM "Rooms" WHERE "schoolId" = other)
+     OR NOT EXISTS (SELECT 1 FROM "Subjects" WHERE "schoolId" = other)
+     OR EXISTS (SELECT 1 FROM "Rooms" WHERE "canBeShared") OR EXISTS (SELECT 1 FROM "Subjects" WHERE "notFirstInDay" OR "notLastInDay") THEN
+    RAISE EXCEPTION 'placeringsregler 418: the other school''s teacher does not read its own unmarked rooms and subjects, and only those';
+  END IF;
+  UPDATE "Rooms" SET "canBeShared" = true WHERE id = room;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 418: the other school''s teacher reached the matrix school''s room'; END IF;
+END $$;
+
+-- No SS12000 version moves for a mark. The version was read above, before this section marked anything; here the
+-- full administrator sets the marks once more and it is read again; the control is what the providers do emit.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+UPDATE "Rooms" SET "canBeShared" = NOT "canBeShared" WHERE id = current_setting('app.test_rls418_room')::uuid;
+UPDATE "Subjects" SET "notFirstInDay" = NOT "notFirstInDay", "notLastInDay" = NOT "notLastInDay" WHERE id = current_setting('app.test_rls418_subject')::uuid;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls418_school'), true);
+DO $$
+DECLARE
+  room_xid text;
+  subject_xid text;
+BEGIN
+  IF current_setting('app.test_rls418_room_xid') = '' OR current_setting('app.test_rls418_subject_xid') = '' THEN
+    RAISE EXCEPTION 'placeringsregler 418: the fixture''s room or subject has no SS12000 version to compare';
+  END IF;
+  SELECT "xid"::text INTO room_xid FROM "Ss12000EntityVersions" WHERE resource = 'Room' AND "entityId" = current_setting('app.test_rls418_room')::uuid;
+  SELECT "xid"::text INTO subject_xid FROM "Ss12000EntityVersions" WHERE resource = 'Syllabus' AND "entityId" = current_setting('app.test_rls418_subject')::uuid;
+  IF room_xid IS DISTINCT FROM current_setting('app.test_rls418_room_xid') THEN
+    RAISE EXCEPTION 'placeringsregler 418: a room''s mark moved its SS12000 version';
+  END IF;
+  IF subject_xid IS DISTINCT FROM current_setting('app.test_rls418_subject_xid') THEN
+    RAISE EXCEPTION 'placeringsregler 418: a subject''s marks moved its SS12000 version';
+  END IF;
+END $$;
+-- The control: what the providers emit does move them.
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+UPDATE "Rooms" SET capacity = coalesce(capacity, 0) + 1 WHERE id = current_setting('app.test_rls418_room')::uuid;
+UPDATE "Subjects" SET name = name || ' (ny)' WHERE id = current_setting('app.test_rls418_subject')::uuid;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls418_school'), true);
+DO $$
+BEGIN
+  IF (SELECT "xid"::text FROM "Ss12000EntityVersions" WHERE resource = 'Room' AND "entityId" = current_setting('app.test_rls418_room')::uuid)
+     IS NOT DISTINCT FROM current_setting('app.test_rls418_room_xid') THEN
+    RAISE EXCEPTION 'placeringsregler 418: the control (a room''s capacity) did not move its SS12000 version';
+  END IF;
+  IF (SELECT "xid"::text FROM "Ss12000EntityVersions" WHERE resource = 'Syllabus' AND "entityId" = current_setting('app.test_rls418_subject')::uuid)
+     IS NOT DISTINCT FROM current_setting('app.test_rls418_subject_xid') THEN
+    RAISE EXCEPTION 'placeringsregler 418: the control (a subject''s name) did not move its SS12000 version';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 419: API:t från före migreringen. Production migrates beside the API
+-- that serves, so the statements it sends meet the new columns. They were read
+-- off origin/main when the migration was written (src/resources/
+-- lunch-settings.service.ts, subjects.service.ts, rooms.service.ts and
+-- src/import/import.service.ts) and are run here as the full administrator,
+-- against rows that hold the new columns. Each leaves them as they were; a row
+-- it writes fresh reads the defaults.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+SELECT set_config('request.headers', '', true);
+SELECT set_config('app.test_rls419_school', app.current_school_id()::text, true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls419_school')::uuid;
+  subj uuid;
+  room uuid;
+  v record;
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'placeringsregler 419: expected the matrix school''s full administrator';
+  END IF;
+
+  -- The Skolregler: a school that has set the rules, and the old API's upsert (the columns it knows, and the
+  -- switches of the three releases before this one). The update half leaves the new columns.
+  UPDATE "LunchSettings" SET
+    "placementEdgeMode" = 'SOFT', "placementEdgeWeight" = 111, "placementPlacesMode" = 'SOFT', "placementPlacesWeight" = 222,
+    "maxClassRoomsPerDay" = 1, "maxTeacherRoomsPerDay" = 4, "maxClassBuildingsPerDay" = 2,
+    "maxTeacherBuildingsPerDay" = 2, "placementSharedMode" = 'HARD', "placementSharedWeight" = 333
+   WHERE "schoolId" = school;
+  INSERT INTO "LunchSettings"
+    ("schoolId", "lunchEnabled", "lunchStartTime", "lunchEndTime", "lunchMinutes", "diningSeats", "maxLessonsPerDayPerGroup",
+     "generatorKeepsTravelTime", "generatorKeepsPupilGapsDown", "generatorKeepsConsecutiveTeaching", "updatedAt")
+  VALUES (school, true, '11:00', '13:00', 40, 80, 6, true, false, true, now())
+  ON CONFLICT ("schoolId") DO UPDATE SET "lunchEnabled" = EXCLUDED."lunchEnabled", "lunchStartTime" = EXCLUDED."lunchStartTime",
+    "lunchEndTime" = EXCLUDED."lunchEndTime", "lunchMinutes" = EXCLUDED."lunchMinutes", "diningSeats" = EXCLUDED."diningSeats",
+    "maxLessonsPerDayPerGroup" = EXCLUDED."maxLessonsPerDayPerGroup", "generatorKeepsTravelTime" = EXCLUDED."generatorKeepsTravelTime",
+    "generatorKeepsPupilGapsDown" = EXCLUDED."generatorKeepsPupilGapsDown",
+    "generatorKeepsConsecutiveTeaching" = EXCLUDED."generatorKeepsConsecutiveTeaching", "updatedAt" = EXCLUDED."updatedAt";
+  SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
+  IF v."lunchMinutes" <> 40 OR v."placementEdgeMode" <> 'SOFT' OR v."placementEdgeWeight" <> 111 OR v."placementPlacesMode" <> 'SOFT'
+     OR v."placementPlacesWeight" <> 222 OR v."maxClassRoomsPerDay" <> 1 OR v."maxTeacherRoomsPerDay" <> 4
+     OR v."maxClassBuildingsPerDay" <> 2 OR v."maxTeacherBuildingsPerDay" <> 2
+     OR v."placementSharedMode" <> 'HARD' OR v."placementSharedWeight" <> 333 THEN
+    RAISE EXCEPTION 'placeringsregler 419: the old API''s upsert of the Skolregler moved a placement column: %', row_to_json(v);
+  END IF;
+  -- … and its plain UPDATE of the old columns, which the form's other saves use.
+  UPDATE "LunchSettings" SET "lunchMinutes" = 30, "updatedAt" = now() WHERE "schoolId" = school;
+  IF NOT EXISTS (SELECT 1 FROM "LunchSettings" WHERE "schoolId" = school AND "lunchMinutes" = 30 AND "placementPlacesMode" = 'SOFT' AND "maxTeacherRoomsPerDay" = 4) THEN
+    RAISE EXCEPTION 'placeringsregler 419: the old API''s UPDATE of the Skolregler moved a placement column';
+  END IF;
+  -- A row the old API writes fresh reads off.
+  DELETE FROM "LunchSettings" WHERE "schoolId" = school;
+  INSERT INTO "LunchSettings" ("schoolId", "lunchEnabled", "lunchStartTime", "lunchEndTime", "lunchMinutes", "diningSeats", "maxLessonsPerDayPerGroup", "updatedAt")
+  VALUES (school, true, '11:00', '13:00', 40, 80, 6, now());
+  SELECT * INTO v FROM "LunchSettings" WHERE "schoolId" = school;
+  IF v."placementEdgeMode" <> 'OFF' OR v."placementPlacesMode" <> 'OFF' OR v."placementSharedMode" <> 'OFF'
+     OR v."placementEdgeWeight" <> 250 OR v."maxClassRoomsPerDay" IS NOT NULL THEN
+    RAISE EXCEPTION 'placeringsregler 419: a Skolregler row the old API writes fresh does not read off: %', row_to_json(v);
+  END IF;
+
+  -- A subject: the old API's create (the fields of its body, and the timplan flag and Faktor) leaves it unmarked; its
+  -- update names the fields of its body and leaves a mark. The import's create is the same statement.
+  INSERT INTO "Subjects" ("schoolId", name, code, color, "requiredRoomTypeId", "nationalCode", "countsTowardTimplan", "loadFactor",
+                          "maxLessonsPerDay", "minDaysBetween", "updatedAt")
+  VALUES (school, 'g3 Gammalt ämne', 'G3OLD', '#336699', NULL, NULL, true, 1, 2, 3, now()) RETURNING id INTO subj;
+  IF NOT EXISTS (SELECT 1 FROM "Subjects" WHERE id = subj AND NOT "notFirstInDay" AND NOT "notLastInDay") THEN
+    RAISE EXCEPTION 'placeringsregler 419: a subject the old API creates is marked';
+  END IF;
+  UPDATE "Subjects" SET "notFirstInDay" = true, "notLastInDay" = true WHERE id = subj;
+  UPDATE "Subjects" SET name = 'g3 Gammalt ämne 2', code = 'G3OLD2', color = '#112233', "requiredRoomTypeId" = NULL, "nationalCode" = NULL,
+                        "countsTowardTimplan" = false, "loadFactor" = 1.5, "maxLessonsPerDay" = 1, "minDaysBetween" = 2, "updatedAt" = now()
+   WHERE id = subj;
+  IF NOT EXISTS (SELECT 1 FROM "Subjects" WHERE id = subj AND "notFirstInDay" AND "notLastInDay" AND name = 'g3 Gammalt ämne 2') THEN
+    RAISE EXCEPTION 'placeringsregler 419: the old API''s update of a subject moved a mark';
+  END IF;
+
+  -- A room: the same, with its building, floor and site.
+  INSERT INTO "Rooms" ("schoolId", name, code, capacity, "minGradeLevel", "maxGradeLevel", building, floor, "siteId", "roomTypeId", "requiresApproval", "updatedAt")
+  VALUES (school, 'g3 Gammal sal', 'G3', 30, 7, 9, 'Hus B', 2, NULL, NULL, false, now()) RETURNING id INTO room;
+  IF EXISTS (SELECT 1 FROM "Rooms" WHERE id = room AND "canBeShared") THEN
+    RAISE EXCEPTION 'placeringsregler 419: a room the old API creates is shared';
+  END IF;
+  UPDATE "Rooms" SET "canBeShared" = true WHERE id = room;
+  UPDATE "Rooms" SET name = 'g3 Gammal sal 2', code = 'G32', capacity = 28, "minGradeLevel" = 7, "maxGradeLevel" = 9, building = 'Hus C', floor = 1,
+                     "siteId" = NULL, "roomTypeId" = NULL, "requiresApproval" = true, "updatedAt" = now()
+   WHERE id = room;
+  IF NOT EXISTS (SELECT 1 FROM "Rooms" WHERE id = room AND "canBeShared" AND capacity = 28 AND building = 'Hus C') THEN
+    RAISE EXCEPTION 'placeringsregler 419: the old API''s update of a room moved the mark';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Provplanering (G4, 20270127090000), sections 420-424: ett prov läggs med
+-- skrivsalar och vakter.
+--
+-- Sex tabeller (ExamPlanSettings, ExamRooms, Exams, ExamGroups, ExamSittings,
+-- ExamInvigilators) med fyra policyer var: administratörer läser, och området
+-- DRIFT skriver. Ingen arm för lärare, elev eller vårdnadshavare: de läser
+-- provet som en ersättningslektion i kalendern.
+--   420  the catalogue as the migration wrote it: the arms, the grants, the
+--        keys, the CHECKs and the unique indexes;
+--   421  who reads and who writes: the eight administrators, a teacher, a
+--        pupil and a guardian, PostgREST's roles, and no principal;
+--   422  the school boundary: another school's administrator reads none of it,
+--        writes none of it, and cannot point a row across the boundary;
+--   423  the constraints at work and the life of a row: the CHECKs, the unique
+--        indexes, and what each key does when its target goes;
+--   424  nothing else moved: the bookings' exclusion constraint still holds a
+--        room once, an exam's booking holds the room against another, and the
+--        activity tables keep their four arms.
+-- ---------------------------------------------------------------------------
+
+-- A statement tried as the session's principal: what it meets, in one word.
+CREATE FUNCTION pg_temp.g4_try(stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE n bigint; msg text; st text;
+BEGIN
+  EXECUTE stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN CASE WHEN n = 0 THEN 'none' WHEN n = 1 THEN 'admitted' ELSE n || ' rows' END;
+EXCEPTION
+  WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+    RETURN CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+  WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+    RETURN 'error ' || st || ' ' || left(msg, 160);
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 420: provplaneringen i katalogen som migreringen skrev den.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tables constant regclass[] := ARRAY['public."ExamPlanSettings"', 'public."ExamRooms"', 'public."Exams"', 'public."ExamGroups"',
+                                       'public."ExamSittings"', 'public."ExamInvigilators"']::regclass[];
+  api oid := (SELECT oid FROM pg_roles WHERE rolname = 'app_authenticated');
+  bad text;
+BEGIN
+  IF api IS NULL THEN RAISE EXCEPTION 'ex420: the API''s role does not exist, so nothing below says anything'; END IF;
+
+  SELECT string_agg(c.relname, ', ') INTO bad FROM pg_class c WHERE c.oid = ANY (tables) AND NOT c.relrowsecurity;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex420: row security is off on %', bad; END IF;
+
+  -- Exactly four arms a table, with these commands: no more, no fewer.
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname COLLATE "C") INTO bad FROM pg_policy WHERE polrelid = ANY (tables);
+  IF bad IS DISTINCT FROM
+       'exam_groups_admin_delete:d,exam_groups_admin_insert:a,exam_groups_admin_select:r,exam_groups_admin_update:w,'
+       'exam_invigilators_admin_delete:d,exam_invigilators_admin_insert:a,exam_invigilators_admin_select:r,exam_invigilators_admin_update:w,'
+       'exam_plan_settings_admin_delete:d,exam_plan_settings_admin_insert:a,exam_plan_settings_admin_select:r,exam_plan_settings_admin_update:w,'
+       'exam_rooms_admin_delete:d,exam_rooms_admin_insert:a,exam_rooms_admin_select:r,exam_rooms_admin_update:w,'
+       'exam_sittings_admin_delete:d,exam_sittings_admin_insert:a,exam_sittings_admin_select:r,exam_sittings_admin_update:w,'
+       'exams_admin_delete:d,exams_admin_insert:a,exams_admin_select:r,exams_admin_update:w' THEN
+    RAISE EXCEPTION 'ex420: policies are %', bad;
+  END IF;
+
+  -- Every arm is the API's role's alone and permissive: a TO public arm would admit a row on a GUC.
+  SELECT string_agg(p.polname, ', ') INTO bad FROM pg_policy p WHERE p.polrelid = ANY (tables) AND (p.polroles <> ARRAY[api] OR NOT p.polpermissive);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex420: arms that are not the API role''s permissive ones: %', bad; END IF;
+
+  -- What each arm asks. A read asks the school and an administrator, never a teacher and never the area;
+  -- a write asks the school, SCHOOL_ADMIN and DRIFT as a write (the update arm''s USING never asks the area, so a row lock keeps working).
+  SELECT string_agg(format('%s.%s', tablename, policyname), ', ') INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public' AND tablename IN ('ExamPlanSettings', 'ExamRooms', 'Exams', 'ExamGroups', 'ExamSittings', 'ExamInvigilators')
+     AND NOT CASE
+       WHEN policyname LIKE '%\_admin\_select' THEN
+         qual LIKE '%current_school_id%' AND qual LIKE '%= ''SCHOOL_ADMIN''%' AND qual NOT LIKE '%TEACHER%'
+         AND qual NOT LIKE '%STUDENT%' AND qual NOT LIKE '%GUARDIAN%' AND qual NOT LIKE '%current_user_may%' AND with_check IS NULL
+       WHEN policyname LIKE '%\_admin\_insert' THEN
+         qual IS NULL AND with_check LIKE '%current_school_id%' AND with_check LIKE '%= ''SCHOOL_ADMIN''%'
+         AND with_check ~ 'current_user_may\(''DRIFT''::"AdminArea", true\)'
+       WHEN policyname LIKE '%\_admin\_update' THEN
+         qual LIKE '%current_school_id%' AND qual LIKE '%= ''SCHOOL_ADMIN''%' AND qual NOT LIKE '%current_user_may%'
+         AND with_check LIKE '%current_school_id%' AND with_check LIKE '%= ''SCHOOL_ADMIN''%'
+         AND with_check ~ 'current_user_may\(''DRIFT''::"AdminArea", true\)'
+       WHEN policyname LIKE '%\_admin\_delete' THEN
+         with_check IS NULL AND qual LIKE '%current_school_id%' AND qual LIKE '%= ''SCHOOL_ADMIN''%'
+         AND qual ~ 'current_user_may\(''DRIFT''::"AdminArea", true\)'
+       ELSE false END;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex420: arms that ask something else than the migration wrote: %', bad; END IF;
+END $$;
+
+-- The grants, role by role and privilege by privilege; MAINTAIN is the owner's alone; PUBLIC holds nothing.
+DO $$
+DECLARE
+  tables constant text[] := ARRAY['public."ExamPlanSettings"', 'public."ExamRooms"', 'public."Exams"', 'public."ExamGroups"',
+                                  'public."ExamSittings"', 'public."ExamInvigilators"'];
+  tbl text;
+  r text;
+  priv text;
+  wanted boolean;
+  wrong text[] := '{}';
+  grantees text;
+BEGIN
+  FOREACH tbl IN ARRAY tables LOOP
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+        IF r = 'app_authenticated' THEN RAISE EXCEPTION 'ex420: the API''s role does not exist'; END IF;
+        CONTINUE;
+      END IF;
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        wanted := (r = 'app_authenticated' AND priv IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')) OR (r = 'service_role' AND priv = 'SELECT');
+        IF has_table_privilege(r, tbl, priv) IS DISTINCT FROM wanted THEN wrong := wrong || format('%s %s on %s: %s', r, priv, tbl, NOT wanted); END IF;
+      END LOOP;
+      IF current_setting('server_version_num')::int >= 170000 AND has_table_privilege(r, tbl, 'MAINTAIN') THEN
+        wrong := wrong || format('%s MAINTAIN on %s', r, tbl);
+      END IF;
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+        wanted := (r = 'app_authenticated' AND priv IN ('SELECT', 'INSERT', 'UPDATE')) OR (r = 'service_role' AND priv = 'SELECT');
+        IF has_any_column_privilege(r, tbl, priv) IS DISTINCT FROM wanted THEN wrong := wrong || format('%s holds a column %s of %s: %s', r, priv, tbl, NOT wanted); END IF;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN RAISE EXCEPTION 'ex420: grants: %', array_to_string(wrong, '; '); END IF;
+  SELECT string_agg(DISTINCT coalesce(ro.rolname, 'PUBLIC'), ', ' ORDER BY coalesce(ro.rolname, 'PUBLIC')) INTO grantees
+    FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a LEFT JOIN pg_roles ro ON ro.oid = a.grantee
+   WHERE c.oid = ANY (tables::regclass[]) AND a.grantee <> c.relowner;
+  IF grantees IS DISTINCT FROM 'app_authenticated, service_role' THEN RAISE EXCEPTION 'ex420: the ACLs name % beside the owner', grantees; END IF;
+END $$;
+
+-- The foreign keys: columns, targets, ON DELETE and ON UPDATE (a CASCADE, a SET NULL naming one column, or NO ACTION).
+-- Every key to a school-owned table is the composite (id, schoolId); no key points at StudentGroups, and none sits on studentGroupId.
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  WITH actual AS (
+    SELECT (SELECT relname FROM pg_class WHERE oid = c.conrelid) AS tbl, c.conname,
+           (SELECT relname FROM pg_class WHERE oid = c.confrelid) AS ref,
+           (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) AS cols,
+           (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum) AS refcols,
+           c.confdeltype::text AS del, c.confupdtype::text AS upd,
+           (SELECT string_agg(a.attname::text, ',' ORDER BY a.attnum) FROM pg_attribute a
+             WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.confdelsetcols)) AS setcols
+      FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid IN ('public."ExamPlanSettings"'::regclass, 'public."ExamRooms"'::regclass, 'public."Exams"'::regclass,
+                                                'public."ExamGroups"'::regclass, 'public."ExamSittings"'::regclass, 'public."ExamInvigilators"'::regclass)
+  ), expected(tbl, conname, ref, cols, refcols, del, upd, setcols) AS (VALUES
+    ('ExamPlanSettings', 'ExamPlanSettings_schoolId_fkey', 'Schools', 'schoolId', 'id', 'c', 'c', NULL),
+    ('ExamPlanSettings', 'ExamPlanSettings_replacementSubjectId_schoolId_fkey', 'Subjects', 'replacementSubjectId,schoolId', 'id,schoolId', 'n', 'a', 'replacementSubjectId'),
+    ('ExamRooms', 'ExamRooms_roomId_schoolId_fkey', 'Rooms', 'roomId,schoolId', 'id,schoolId', 'c', 'a', NULL),
+    ('Exams', 'Exams_schoolId_fkey', 'Schools', 'schoolId', 'id', 'c', 'c', NULL),
+    ('Exams', 'Exams_academicYearId_schoolId_fkey', 'AcademicYears', 'academicYearId,schoolId', 'id,schoolId', 'c', 'a', NULL),
+    ('Exams', 'Exams_subjectId_schoolId_fkey', 'Subjects', 'subjectId,schoolId', 'id,schoolId', 'c', 'a', NULL),
+    ('Exams', 'Exams_activityId_schoolId_fkey', 'ScheduleActivities', 'activityId,schoolId', 'id,schoolId', 'n', 'a', 'activityId'),
+    ('Exams', 'Exams_createdByUserId_schoolId_fkey', 'Users', 'createdByUserId,schoolId', 'id,schoolId', 'n', 'a', 'createdByUserId'),
+    ('ExamGroups', 'ExamGroups_examId_schoolId_fkey', 'Exams', 'examId,schoolId', 'id,schoolId', 'c', 'a', NULL),
+    ('ExamSittings', 'ExamSittings_examId_schoolId_fkey', 'Exams', 'examId,schoolId', 'id,schoolId', 'c', 'a', NULL),
+    ('ExamSittings', 'ExamSittings_roomId_schoolId_fkey', 'Rooms', 'roomId,schoolId', 'id,schoolId', 'c', 'a', NULL),
+    ('ExamSittings', 'ExamSittings_bookingId_schoolId_fkey', 'RoomBookings', 'bookingId,schoolId', 'id,schoolId', 'n', 'a', 'bookingId'),
+    ('ExamInvigilators', 'ExamInvigilators_examId_roomId_schoolId_fkey', 'ExamSittings', 'examId,roomId,schoolId', 'examId,roomId,schoolId', 'c', 'a', NULL),
+    ('ExamInvigilators', 'ExamInvigilators_teacherId_schoolId_fkey', 'Users', 'teacherId,schoolId', 'id,schoolId', 'c', 'a', NULL))
+  SELECT string_agg(format('%s: %s', coalesce(a.conname, e.conname),
+                           CASE WHEN a.conname IS NULL THEN 'missing'
+                                WHEN e.conname IS NULL THEN 'not expected'
+                                ELSE format('%s(%s) -> %s(%s) ON DELETE %s%s ON UPDATE %s, expected %s(%s) -> %s(%s) ON DELETE %s%s ON UPDATE %s',
+                                            a.tbl, a.cols, a.ref, a.refcols, a.del, coalesce(' (' || a.setcols || ')', ''), a.upd,
+                                            e.tbl, e.cols, e.ref, e.refcols, e.del, coalesce(' (' || e.setcols || ')', ''), e.upd) END), '; ')
+    INTO bad
+    FROM actual a FULL JOIN expected e ON e.conname = a.conname
+   WHERE (a.tbl, a.ref, a.cols, a.refcols, a.del, a.upd, a.setcols) IS DISTINCT FROM (e.tbl, e.ref, e.cols, e.refcols, e.del, e.upd, e.setcols);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex420: foreign keys: %', bad; END IF;
+
+  SELECT string_agg(c.conname, ', ') INTO bad
+    FROM pg_constraint c
+   WHERE c.contype = 'f'
+     AND c.conrelid IN ('public."ExamGroups"'::regclass, 'public."Exams"'::regclass, 'public."ExamSittings"'::regclass)
+     AND (c.confrelid = 'public."StudentGroups"'::regclass
+          OR EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey) AND a.attname = 'studentGroupId'));
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex420: a key points at the class or sits on its column: %', bad; END IF;
+
+  -- Nothing but the exam tables points at them.
+  SELECT string_agg(c.conname, ', ') INTO bad
+    FROM pg_constraint c
+   WHERE c.contype = 'f'
+     AND c.confrelid IN ('public."Exams"'::regclass, 'public."ExamSittings"'::regclass, 'public."ExamRooms"'::regclass, 'public."ExamPlanSettings"'::regclass,
+                         'public."ExamGroups"'::regclass, 'public."ExamInvigilators"'::regclass)
+     AND c.conname NOT IN ('ExamGroups_examId_schoolId_fkey', 'ExamSittings_examId_schoolId_fkey', 'ExamInvigilators_examId_roomId_schoolId_fkey');
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex420: keys that point at an exam table: %', bad; END IF;
+END $$;
+
+-- The CHECKs by name (their behaviour is section 423's), every constraint validated and none deferrable; the primary keys and
+-- every unique index, exactly.
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  SELECT string_agg(e.conname, ', ') INTO bad
+    FROM (VALUES ('ExamPlanSettings_per_day_is_sane'), ('ExamPlanSettings_per_week_is_sane'), ('ExamPlanSettings_week_holds_a_day'),
+                 ('ExamPlanSettings_ratio_is_sane'), ('ExamPlanSettings_turnover_is_sane'), ('ExamRooms_seats_are_sane'),
+                 ('Exams_name_is_sane'), ('Exams_length_is_sane'), ('Exams_writers_are_sane'), ('Exams_window_kind'),
+                 ('Exams_window_is_in_order'), ('Exams_fixed_is_a_date_and_a_start'), ('Exams_bounds_are_in_order'),
+                 ('Exams_reason_is_a_code'), ('ExamSittings_writers_are_sane')) e(conname)
+    LEFT JOIN pg_constraint c ON c.conname = e.conname AND c.contype = 'c'
+   WHERE c.oid IS NULL;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex420: CHECKs missing: %', bad; END IF;
+  SELECT string_agg(conname, ', ') INTO bad FROM pg_constraint
+   WHERE conrelid IN ('public."ExamPlanSettings"'::regclass, 'public."ExamRooms"'::regclass, 'public."Exams"'::regclass,
+                      'public."ExamGroups"'::regclass, 'public."ExamSittings"'::regclass, 'public."ExamInvigilators"'::regclass)
+     AND (NOT convalidated OR condeferrable);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex420: constraints that are NOT VALID or deferrable: %', bad; END IF;
+
+  WITH actual AS (
+    SELECT (SELECT relname FROM pg_class WHERE oid = i.indrelid) AS tbl, ic.relname AS idx, i.indisprimary AS pk,
+           (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum) AS cols,
+           pg_get_expr(i.indpred, i.indrelid) AS pred
+      FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
+     WHERE i.indisunique AND i.indrelid IN ('public."ExamPlanSettings"'::regclass, 'public."ExamRooms"'::regclass, 'public."Exams"'::regclass,
+                                            'public."ExamGroups"'::regclass, 'public."ExamSittings"'::regclass, 'public."ExamInvigilators"'::regclass)
+  ), expected(tbl, idx, pk, cols, pred) AS (VALUES
+    ('ExamPlanSettings', 'ExamPlanSettings_pkey', true, 'schoolId', NULL),
+    ('ExamRooms', 'ExamRooms_pkey', true, 'roomId', NULL),
+    ('Exams', 'Exams_pkey', true, 'id', NULL),
+    ('Exams', 'Exams_id_schoolId_key', false, 'id,schoolId', NULL),
+    ('Exams', 'Exams_activityId_key', false, 'activityId', '("activityId" IS NOT NULL)'),
+    ('ExamGroups', 'ExamGroups_pkey', true, 'examId,studentGroupId', NULL),
+    ('ExamSittings', 'ExamSittings_pkey', true, 'examId,roomId', NULL),
+    ('ExamSittings', 'ExamSittings_examId_roomId_schoolId_key', false, 'examId,roomId,schoolId', NULL),
+    ('ExamInvigilators', 'ExamInvigilators_pkey', true, 'examId,roomId,teacherId', NULL),
+    ('ExamInvigilators', 'ExamInvigilators_examId_teacherId_key', false, 'examId,teacherId', NULL))
+  SELECT string_agg(format('%s: %s', coalesce(a.idx, e.idx), CASE WHEN a.idx IS NULL THEN 'missing' WHEN e.idx IS NULL THEN 'not expected'
+                                                                  ELSE format('%s(%s) WHERE %s', a.tbl, a.cols, a.pred) END), '; ')
+    INTO bad
+    FROM actual a FULL JOIN expected e ON e.idx = a.idx
+   WHERE (a.tbl, a.pk, a.cols, a.pred) IS DISTINCT FROM (e.tbl, e.pk, e.cols, e.pred);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex420: unique indexes: %', bad; END IF;
+
+  -- The key RoomBookings gained for the sitting's booking.
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'RoomBookings' AND indexname = 'RoomBookings_id_schoolId_key') THEN
+    RAISE EXCEPTION 'ex420: RoomBookings has no unique key on (id, schoolId)';
+  END IF;
+
+  -- The planner is off until the school turns it on, and a new school's caps are one a day and three a week.
+  SELECT string_agg(a.attname || '=' || coalesce(pg_get_expr(d.adbin, d.adrelid), 'none'), ', ' ORDER BY a.attname) INTO bad
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = 'public."ExamPlanSettings"'::regclass AND a.attname IN ('enabled', 'maxPerClassPerDay', 'maxPerClassPerWeek', 'writersPerInvigilator', 'turnoverMinutes');
+  IF bad IS DISTINCT FROM 'enabled=false, maxPerClassPerDay=1, maxPerClassPerWeek=3, turnoverMinutes=10, writersPerInvigilator=30' THEN
+    RAISE EXCEPTION 'ex420: the settings'' defaults are %', bad;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 421: vem som läser och skriver provplaneringen.
+--
+-- In the matrix school, whose administrators the fixtures give one of each
+-- profile (with and without HR-läs): the full administrator, the rektor, the
+-- two schemaläggare and the two expeditioner write Drift, and the two läsare
+-- do not. Each is held to the profile's own answer, and to the brief's.
+--   * a profile that writes DRIFT reads all six tables, inserts an exam and a
+--     group, updates and deletes (one row every time); a läsare reads the
+--     same rows, is refused every INSERT and UPDATE by the arm's WITH CHECK,
+--     and a DELETE finds no row;
+--   * a teacher, a pupil and a guardian read no row of the six, are refused
+--     every INSERT, and their UPDATE and DELETE reach no row;
+--   * PostgREST's roles hold no grant; with no principal, and with the GUCs of
+--     the service and sync paths set, the API's role reads none of it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid;
+  subj uuid;
+  grp uuid;
+  exam uuid;
+  who text;
+  spares jsonb := '{}';
+  spare uuid;
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' OR NOT app.current_user_may('DRIFT', true) THEN
+    RAISE EXCEPTION 'ex421: expected the matrix school''s full administrator';
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = school AND code = 'RLSR';
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller 7A';
+  SELECT id INTO exam FROM "Exams" WHERE "schoolId" = school AND name = 'Roller prov';
+  IF y IS NULL OR subj IS NULL OR grp IS NULL OR exam IS NULL THEN
+    RAISE EXCEPTION 'ex421: the matrix school lacks its year, subject, class or exam; fixtures did not run';
+  END IF;
+  -- A spare exam for each principal's INSERT to be judged by the arm and nothing else.
+  FOREACH who IN ARRAY ARRAY['105', '106', '107', '108', '109', '110', '115', '116', '111', '112', '113'] LOOP
+    spares := spares || jsonb_build_object(who, 'ex421 ' || who);
+  END LOOP;
+  PERFORM set_config('app.test_rls421_ids', jsonb_build_object('school', school, 'year', y, 'subject', subj, 'group', grp, 'exam', exam, 'spares', spares)::text, true);
+END $$;
+
+DO $$
+DECLARE
+  principals constant text[][] := ARRAY[
+    ['00000000-0000-4000-8000-000000000105', 'FULL'], ['00000000-0000-4000-8000-000000000106', 'REKTOR'],
+    ['00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE'], ['00000000-0000-4000-8000-000000000108', 'EXPEDITION'],
+    ['00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE'], ['00000000-0000-4000-8000-000000000110', 'EXPEDITION'],
+    ['00000000-0000-4000-8000-000000000115', 'LASARE'], ['00000000-0000-4000-8000-000000000116', 'LASARE'],
+    ['00000000-0000-4000-8000-000000000111', 'TEACHER'], ['00000000-0000-4000-8000-000000000112', 'STUDENT'],
+    ['00000000-0000-4000-8000-000000000113', 'GUARDIAN']];
+  ids jsonb := current_setting('app.test_rls421_ids')::jsonb;
+  school uuid := (ids ->> 'school')::uuid;
+  y uuid := (ids ->> 'year')::uuid;
+  subj uuid := (ids ->> 'subject')::uuid;
+  grp uuid := (ids ->> 'group')::uuid;
+  exam uuid := (ids ->> 'exam')::uuid;
+  i integer;
+  who text;
+  role text;
+  writes boolean;
+  seen bigint;
+  outcome text;
+  expected text[];
+  labels constant text[] := ARRAY['INSERT exam', 'INSERT group', 'INSERT room mark', 'INSERT sitting', 'UPDATE exam', 'UPDATE group',
+                                  'DELETE sitting', 'DELETE room mark', 'DELETE group', 'DELETE exam'];
+  hall uuid;
+  stmts text[];
+  step integer;
+  wrong text[] := '{}';
+BEGIN
+  FOR i IN 1 .. array_length(principals, 1) LOOP
+    who := right(principals[i][1], 3);
+    role := principals[i][2];
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', principals[i][1])::text, true);
+    IF app.current_school_id() IS DISTINCT FROM school THEN
+      RAISE EXCEPTION 'ex421: % resolved in %, not the matrix school', principals[i][1], app.current_school_id();
+    END IF;
+    writes := role IN ('FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION');
+    IF role IN ('FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION', 'LASARE')
+       AND (app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_user_may('DRIFT', true) IS DISTINCT FROM writes) THEN
+      RAISE EXCEPTION 'ex421: % (%) writes DRIFT: %', principals[i][1], role, app.current_user_may('DRIFT', true);
+    END IF;
+
+    SELECT (SELECT count(*) FROM "Exams") + (SELECT count(*) FROM "ExamGroups") + (SELECT count(*) FROM "ExamSittings")
+         + (SELECT count(*) FROM "ExamInvigilators") + (SELECT count(*) FROM "ExamRooms") + (SELECT count(*) FROM "ExamPlanSettings") INTO seen;
+    IF role IN ('TEACHER', 'STUDENT', 'GUARDIAN') THEN
+      IF seen <> 0 THEN wrong := wrong || format('%s reads %s rows', role, seen); END IF;
+    ELSIF seen <> 6 THEN
+      wrong := wrong || format('%s (%s) reads %s rows of the six tables, expected the fixtures'' six', role, who, seen);
+    END IF;
+
+    SELECT id INTO hall FROM "Rooms" WHERE "schoolId" = school AND name = 'Roller hall';
+    stmts := ARRAY[
+      format($q$INSERT INTO "Exams" ("schoolId", "academicYearId", "subjectId", name, "lengthMinutes", writers, "windowKind", "windowFrom", "windowTo")
+                VALUES (%L, %L, %L, %L, 60, 20, 'WEEK', '2030-10-07', '2030-10-11')$q$, school, y, subj, 'ex421 ' || who),
+      format($q$INSERT INTO "ExamGroups" ("examId", "studentGroupId", "schoolId") VALUES (%L, %L, %L)$q$, exam, gen_random_uuid(), school),
+      format($q$INSERT INTO "ExamRooms" ("roomId", "schoolId", seats) VALUES (%L, %L, 20)$q$, hall, school),
+      format($q$INSERT INTO "ExamSittings" ("examId", "roomId", "schoolId", writers) VALUES (%L, %L, %L, 5)$q$, exam, hall, school),
+      format($q$UPDATE "Exams" SET name = %L WHERE id = %L$q$, 'ex421 ändrad ' || who, exam),
+      format($q$UPDATE "ExamGroups" SET "studentGroupId" = "studentGroupId" WHERE "examId" = %L AND "studentGroupId" = %L$q$, exam, grp),
+      format($q$DELETE FROM "ExamSittings" WHERE "examId" = %L AND "roomId" = %L$q$, exam, hall),
+      format($q$DELETE FROM "ExamRooms" WHERE "roomId" = %L$q$, hall),
+      format($q$DELETE FROM "ExamGroups" WHERE "examId" = %L AND "studentGroupId" <> %L$q$, exam, grp),
+      format($q$DELETE FROM "Exams" WHERE name = %L$q$, 'ex421 ' || who)];
+    IF writes THEN
+      expected := ARRAY['admitted', 'admitted', 'admitted', 'admitted', 'admitted', 'admitted', 'admitted', 'admitted', 'admitted', 'admitted'];
+    ELSIF role = 'LASARE' THEN
+      expected := ARRAY['refused', 'refused', 'refused', 'refused', 'refused', 'refused', 'none', 'none', 'none', 'none'];
+    ELSE
+      expected := ARRAY['refused', 'refused', 'refused', 'refused', 'none', 'none', 'none', 'none', 'none', 'none'];
+    END IF;
+    FOR step IN 1 .. 10 LOOP
+      outcome := pg_temp.g4_try(stmts[step]);
+      IF outcome IS DISTINCT FROM expected[step] THEN
+        wrong := wrong || format('%s (%s) met %s on %s, expected %s', role, who, outcome, labels[step], expected[step]);
+      END IF;
+    END LOOP;
+    -- A statement that was admitted is undone for the next principal: the INSERT's exam goes with the DELETE above, the group with the exam.
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN RAISE EXCEPTION 'ex421: %', array_to_string(wrong, '; '); END IF;
+END $$;
+
+-- PostgREST's roles hold no grant, whoever's token they carry; with no principal at all, and with the service and sync paths'
+-- GUCs set, the API's role reads none of it.
+DO $$
+DECLARE
+  school uuid := (current_setting('app.test_rls421_ids')::jsonb ->> 'school')::uuid;
+  sub text;
+  via text;
+  tbl text;
+  msg text;
+  outcome text;
+  wrong text[] := '{}';
+BEGIN
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000111'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      FOREACH tbl IN ARRAY ARRAY['Exams', 'ExamGroups', 'ExamSittings', 'ExamInvigilators', 'ExamRooms', 'ExamPlanSettings'] LOOP
+        outcome := NULL;
+        BEGIN
+          EXECUTE format('SELECT count(*) FROM %I', tbl);
+          outcome := 'ran';
+        EXCEPTION WHEN insufficient_privilege THEN
+          GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+          outcome := CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+        END;
+        IF outcome <> 'denied' THEN wrong := wrong || format('%s read %s: %s', via, tbl, outcome); END IF;
+      END LOOP;
+      EXECUTE 'SET LOCAL ROLE app_authenticated';
+    END LOOP;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN RAISE EXCEPTION 'ex421: %', array_to_string(wrong, '; '); END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', school::text, true);
+  PERFORM set_config('app.sync_school_id', school::text, true);
+  PERFORM set_config('app.service_key_lookup', 'on', true);
+  IF app.current_user_id() IS NOT NULL THEN RAISE EXCEPTION 'ex421: expected no principal'; END IF;
+  IF (SELECT count(*) FROM "Exams") + (SELECT count(*) FROM "ExamRooms") + (SELECT count(*) FROM "ExamPlanSettings") <> 0 THEN
+    RAISE EXCEPTION 'ex421: rows read with no principal';
+  END IF;
+  IF pg_temp.g4_try(format($q$INSERT INTO "ExamRooms" ("roomId", "schoolId", seats) VALUES (gen_random_uuid(), %L, 10)$q$, school)) <> 'refused' THEN
+    RAISE EXCEPTION 'ex421: a row was written with no principal';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 422: provplaneringen och skolgränsen.
+--
+-- Two schools, each with an exam of its own (a room it is written in, an
+-- invigilator, a skrivsal mark and the school's settings), planted by its own
+-- administrator. Then, for the administrator of either school against the
+-- other's rows:
+--   * the other school's rows are not read, and an UPDATE or a DELETE of them
+--     reaches no row;
+--   * a row written with the other school's schoolId is refused by the arm's
+--     WITH CHECK (insufficient_privilege, "row-level security");
+--   * a row of the administrator's own school cannot point across the
+--     boundary: the composite keys (id, schoolId) refuse a subject, a year, an
+--     exam, a room or a teacher of the other school (foreign_key_violation),
+--     with the same statements admitted when they name the administrator's own
+--     school's rows, so the refusal is the key's.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls422_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  admins constant text[] := ARRAY['00000000-0000-4000-8000-000000000006', current_setting('app.test_rls422_admin_a')];
+  sub text;
+  school uuid;
+  side text;
+  y uuid;
+  grp uuid;
+  teacher uuid;
+  subj uuid;
+  room uuid;
+  spare uuid;
+  exam uuid;
+  sides jsonb := '{}';
+BEGIN
+  FOREACH sub IN ARRAY admins LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    school := app.current_school_id();
+    IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('DRIFT', true) THEN
+      RAISE EXCEPTION 'ex422: % is not an administrator who writes DRIFT', sub;
+    END IF;
+    side := CASE WHEN (SELECT slug FROM "Schools" WHERE id = school) = 'rls-fixture-school' THEN 'b' ELSE 'a' END;
+    SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, "startDate" LIMIT 1;
+    SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y ORDER BY id LIMIT 1;
+    SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+    IF y IS NULL OR grp IS NULL OR teacher IS NULL THEN
+      RAISE EXCEPTION 'ex422: school % lacks a year, a class or a teacher to plant on; fixtures did not run', side;
+    END IF;
+    INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'ex422 ämne ' || side, 'EX422' || upper(side), now()) RETURNING id INTO subj;
+    INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'ex422 sal ' || side, now()) RETURNING id INTO room;
+    -- A room that is no skrivsal, for the statement that names another school's.
+    INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'ex422 reserv ' || side, now()) RETURNING id INTO spare;
+    INSERT INTO "ExamPlanSettings" ("schoolId") SELECT school WHERE NOT EXISTS (SELECT 1 FROM "ExamPlanSettings");
+    INSERT INTO "ExamRooms" ("roomId", "schoolId", seats) VALUES (room, school, 30);
+    INSERT INTO "Exams" ("schoolId", "academicYearId", "subjectId", name, "lengthMinutes", writers, "windowKind", "windowFrom", "windowTo")
+    VALUES (school, y, subj, 'ex422 ' || side, 60, 20, 'WEEK', '2030-10-07', '2030-10-11') RETURNING id INTO exam;
+    INSERT INTO "ExamGroups" ("examId", "studentGroupId", "schoolId") VALUES (exam, grp, school);
+    INSERT INTO "ExamSittings" ("examId", "roomId", "schoolId", writers) VALUES (exam, room, school, 20);
+    INSERT INTO "ExamInvigilators" ("examId", "roomId", "teacherId", "schoolId") VALUES (exam, room, teacher, school);
+    sides := sides || jsonb_build_object(side, jsonb_build_object('school', school, 'year', y, 'group', grp, 'teacher', teacher,
+      'subject', subj, 'room', room, 'spare', spare, 'exam', exam, 'admin', sub));
+  END LOOP;
+  IF (sides -> 'a' ->> 'school') = (sides -> 'b' ->> 'school') THEN RAISE EXCEPTION 'ex422: both administrators are in the same school'; END IF;
+  PERFORM set_config('app.test_rls422_sides', sides::text, true);
+END $$;
+
+DO $$
+DECLARE
+  sides jsonb := current_setting('app.test_rls422_sides')::jsonb;
+  mine_key text;
+  m jsonb;
+  o jsonb;
+  tbl text;
+  outcome text;
+  seen bigint;
+  wrong text[] := '{}';
+  step integer;
+  stmt text;
+  expected text;
+  differs boolean;
+  labels constant text[] := ARRAY['UPDATE exam', 'DELETE exam', 'UPDATE sitting', 'DELETE invigilator', 'DELETE room mark', 'DELETE settings',
+                                  'INSERT exam in the other school', 'INSERT room mark in the other school',
+                                  'exam on the other school''s subject', 'exam in the other school''s year', 'group on the other school''s exam',
+                                  'sitting in the other school''s room', 'invigilator who is the other school''s teacher',
+                                  'room mark on the other school''s room', 'settings naming the other school''s subject',
+                                  'control: exam on its own subject and year', 'control: settings naming its own subject'];
+  expecteds constant text[] := ARRAY['none', 'none', 'none', 'none', 'none', 'none', 'refused', 'refused',
+                                     'error 23503', 'error 23503', 'error 23503', 'error 23503', 'error 23503', 'error 23503', 'error 23503',
+                                     'admitted', 'admitted'];
+BEGIN
+  FOREACH mine_key IN ARRAY ARRAY['a', 'b'] LOOP
+    m := sides -> mine_key;
+    o := sides -> CASE mine_key WHEN 'a' THEN 'b' ELSE 'a' END;
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', m ->> 'admin')::text, true);
+    IF app.current_school_id() IS DISTINCT FROM (m ->> 'school')::uuid THEN
+      RAISE EXCEPTION 'ex422: the administrator of school % resolved in %', mine_key, app.current_school_id();
+    END IF;
+    -- None of the other school's rows is read, in any of the six tables.
+    FOREACH tbl IN ARRAY ARRAY['Exams', 'ExamGroups', 'ExamSittings', 'ExamInvigilators', 'ExamRooms', 'ExamPlanSettings'] LOOP
+      EXECUTE format('SELECT count(*) FROM %I WHERE "schoolId" = %L', tbl, o ->> 'school') INTO seen;
+      IF seen <> 0 THEN wrong := wrong || format('school %s reads %s rows of %s in the other school', mine_key, seen, tbl); END IF;
+      EXECUTE format('SELECT count(*) FROM %I WHERE "schoolId" = %L', tbl, m ->> 'school') INTO seen;
+      IF seen < 1 THEN wrong := wrong || format('school %s reads none of its own %s', mine_key, tbl); END IF;
+    END LOOP;
+
+    FOR step IN 1 .. 17 LOOP
+      stmt := CASE step
+        WHEN 1 THEN format($q$UPDATE "Exams" SET name = 'ex422 ändrad' WHERE id = %L$q$, o ->> 'exam')
+        WHEN 2 THEN format($q$DELETE FROM "Exams" WHERE id = %L$q$, o ->> 'exam')
+        WHEN 3 THEN format($q$UPDATE "ExamSittings" SET writers = 21 WHERE "examId" = %L$q$, o ->> 'exam')
+        WHEN 4 THEN format($q$DELETE FROM "ExamInvigilators" WHERE "examId" = %L$q$, o ->> 'exam')
+        WHEN 5 THEN format($q$DELETE FROM "ExamRooms" WHERE "roomId" = %L$q$, o ->> 'room')
+        WHEN 6 THEN format($q$DELETE FROM "ExamPlanSettings" WHERE "schoolId" = %L$q$, o ->> 'school')
+        WHEN 7 THEN format($q$INSERT INTO "Exams" ("schoolId", "academicYearId", "subjectId", name, "lengthMinutes", writers, "windowKind", "windowFrom", "windowTo")
+                              VALUES (%L, %L, %L, 'ex422 över gränsen', 60, 20, 'WEEK', '2030-10-07', '2030-10-11')$q$, o ->> 'school', o ->> 'year', o ->> 'subject')
+        WHEN 8 THEN format($q$INSERT INTO "ExamRooms" ("roomId", "schoolId", seats) VALUES (%L, %L, 10)$q$, gen_random_uuid(), o ->> 'school')
+        WHEN 9 THEN format($q$INSERT INTO "Exams" ("schoolId", "academicYearId", "subjectId", name, "lengthMinutes", writers, "windowKind", "windowFrom", "windowTo")
+                              VALUES (%L, %L, %L, 'ex422 ämne', 60, 20, 'WEEK', '2030-10-07', '2030-10-11')$q$, m ->> 'school', m ->> 'year', o ->> 'subject')
+        WHEN 10 THEN format($q$INSERT INTO "Exams" ("schoolId", "academicYearId", "subjectId", name, "lengthMinutes", writers, "windowKind", "windowFrom", "windowTo")
+                               VALUES (%L, %L, %L, 'ex422 år', 60, 20, 'WEEK', '2030-10-07', '2030-10-11')$q$, m ->> 'school', o ->> 'year', m ->> 'subject')
+        WHEN 11 THEN format($q$INSERT INTO "ExamGroups" ("examId", "studentGroupId", "schoolId") VALUES (%L, %L, %L)$q$, o ->> 'exam', gen_random_uuid(), m ->> 'school')
+        WHEN 12 THEN format($q$INSERT INTO "ExamSittings" ("examId", "roomId", "schoolId", writers) VALUES (%L, %L, %L, 5)$q$, m ->> 'exam', o ->> 'room', m ->> 'school')
+        WHEN 13 THEN format($q$INSERT INTO "ExamInvigilators" ("examId", "roomId", "teacherId", "schoolId") VALUES (%L, %L, %L, %L)$q$,
+                            m ->> 'exam', m ->> 'room', o ->> 'teacher', m ->> 'school')
+        WHEN 14 THEN format($q$INSERT INTO "ExamRooms" ("roomId", "schoolId", seats) VALUES (%L, %L, 10)$q$, o ->> 'spare', m ->> 'school')
+        WHEN 15 THEN format($q$UPDATE "ExamPlanSettings" SET "replacementSubjectId" = %L WHERE "schoolId" = %L$q$, o ->> 'subject', m ->> 'school')
+        WHEN 16 THEN format($q$INSERT INTO "Exams" ("schoolId", "academicYearId", "subjectId", name, "lengthMinutes", writers, "windowKind", "windowFrom", "windowTo")
+                               VALUES (%L, %L, %L, 'ex422 egen', 60, 20, 'WEEK', '2030-10-07', '2030-10-11')$q$, m ->> 'school', m ->> 'year', m ->> 'subject')
+        ELSE format($q$UPDATE "ExamPlanSettings" SET "replacementSubjectId" = %L WHERE "schoolId" = %L$q$, m ->> 'subject', m ->> 'school')
+      END;
+      outcome := pg_temp.g4_try(stmt);
+      expected := expecteds[step];
+      differs := CASE WHEN expected LIKE 'error %' THEN outcome NOT LIKE expected || ' %' ELSE outcome IS DISTINCT FROM expected END;
+      IF differs THEN
+        wrong := wrong || format('school %s: %s met %s, expected %s', mine_key, labels[step], outcome, expected);
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN RAISE EXCEPTION 'ex422: %', array_to_string(wrong, '; '); END IF;
+
+  -- The other school's rows are untouched by all of it.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sides -> 'a' ->> 'admin')::text, true);
+  IF (SELECT name FROM "Exams" WHERE id = (sides -> 'a' ->> 'exam')::uuid) IS DISTINCT FROM 'ex422 a' THEN
+    RAISE EXCEPTION 'ex422: an exam was changed from the other school';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 423: villkoren vid arbete och en rads liv.
+--
+-- In the matrix school as its full administrator:
+--   * each CHECK refuses what it is there to refuse, by its name (a length of
+--     4 or 481 minutes, no writers or 2001, a blank name, a kind that is
+--     neither WEEK nor FIXED, a window longer than 31 days or backwards, a
+--     fixed exam that is not one date and a start or that has daily bounds, a
+--     week with a fixed start, bounds out of order, a reason without its time
+--     or whose figures are not an object; a cap of 0 or 11 a day, a week
+--     holding fewer than a day, a ratio of 0 or 201, a turnover under 0 or over
+--     120; seats and writers below 1), and admits the shapes it allows;
+--   * a room is marked once, an exam has one invigilator once (in one room), an
+--     invigilator needs the sitting in that room, and an activity carries one
+--     exam;
+--   * what goes with what goes: an exam takes its groups, sittings and
+--     invigilators; a teacher takes their watch and leaves the sitting; a room
+--     takes its mark and its sittings; a subject takes its exams and empties
+--     the settings' choice; an activity that goes leaves the exam unlaid; a
+--     booking that goes leaves the sitting without it; the person who made an
+--     exam leaves it.
+-- ---------------------------------------------------------------------------
+
+-- An INSERT of a valid week exam with some columns replaced: the text of the statement, to hand to pg_temp.g4_try.
+CREATE FUNCTION pg_temp.g4_exam(school uuid, year uuid, subject uuid, over jsonb) RETURNS text LANGUAGE sql AS $$
+  SELECT format('INSERT INTO "Exams" (%s) VALUES (%s)', string_agg(format('%I', key), ', '), string_agg(format('%L', value), ', '))
+    FROM jsonb_each_text(jsonb_build_object('schoolId', school, 'academicYearId', year, 'subjectId', subject, 'name', 'ex423',
+                                            'lengthMinutes', 60, 'writers', 20, 'windowKind', 'WEEK',
+                                            'windowFrom', '2030-10-07', 'windowTo', '2030-10-11') || over)
+$$;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid;
+  subj uuid;
+  grp uuid;
+  t1 uuid;
+  room uuid;
+  outcome text;
+  wrong text[] := '{}';
+  c record;
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'ex423: expected the matrix school''s full administrator';
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = school AND code = 'RLSR';
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller 7A';
+  SELECT id INTO t1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111';
+  SELECT id INTO room FROM "Rooms" WHERE "schoolId" = school AND name = 'Roller 1';
+  IF y IS NULL OR subj IS NULL OR grp IS NULL OR t1 IS NULL OR room IS NULL THEN RAISE EXCEPTION 'ex423: the matrix school lacks what the cases hang on'; END IF;
+
+  -- The exam's CHECKs, each by its name; the cases that end in '' are admitted.
+  FOR c IN SELECT * FROM (VALUES
+    ('length 4', '{"lengthMinutes": 4}'::jsonb, 'Exams_length_is_sane'),
+    ('length 481', '{"lengthMinutes": 481}', 'Exams_length_is_sane'),
+    ('no writers', '{"writers": 0}', 'Exams_writers_are_sane'),
+    ('2001 writers', '{"writers": 2001}', 'Exams_writers_are_sane'),
+    ('blank name', '{"name": "   "}', 'Exams_name_is_sane'),
+    -- Two CHECKs refuse it (the kind's own and the shape's); Postgres names the first in name order.
+    ('a kind that is neither', '{"windowKind": "DAILY"}', 'Exams_fixed_is_a_date_and_a_start'),
+    ('backwards', '{"windowTo": "2030-10-01"}', 'Exams_window_is_in_order'),
+    ('32 days', '{"windowTo": "2030-11-07"}', 'Exams_window_is_in_order'),
+    ('31 days', '{"windowTo": "2030-11-06"}', ''),
+    ('fixed without a start', '{"windowKind": "FIXED", "windowTo": "2030-10-07"}', 'Exams_fixed_is_a_date_and_a_start'),
+    ('fixed over two dates', '{"windowKind": "FIXED", "fixedStart": "08:20"}', 'Exams_fixed_is_a_date_and_a_start'),
+    ('fixed with bounds', '{"windowKind": "FIXED", "windowTo": "2030-10-07", "fixedStart": "08:20", "earliestStart": "08:00"}', 'Exams_fixed_is_a_date_and_a_start'),
+    ('a fixed exam', '{"windowKind": "FIXED", "windowTo": "2030-10-07", "fixedStart": "08:20"}', ''),
+    ('a week with a start', '{"fixedStart": "08:20"}', 'Exams_fixed_is_a_date_and_a_start'),
+    ('bounds out of order', '{"earliestStart": "12:00", "latestEnd": "09:00"}', 'Exams_bounds_are_in_order'),
+    ('bounds in order', '{"earliestStart": "08:00", "latestEnd": "15:00"}', ''),
+    ('a reason without its time', '{"lastReason": "EXAM_NO_SLOT"}', 'Exams_reason_is_a_code'),
+    ('figures that are no object', '{"lastReason": "EXAM_NO_SLOT", "lastPlannedAt": "now", "lastReasonParams": "[1]"}', 'Exams_reason_is_a_code'),
+    ('a time without a reason', '{"lastPlannedAt": "now"}', 'Exams_reason_is_a_code'),
+    ('a reason', '{"lastReason": "EXAM_NO_SLOT", "lastPlannedAt": "now", "lastReasonParams": "{\"n\": 2}"}', '')
+  ) v(label, over, constraint_name) LOOP
+    outcome := pg_temp.g4_try(pg_temp.g4_exam(school, y, subj, c.over));
+    IF c.constraint_name = '' THEN
+      IF outcome <> 'admitted' THEN wrong := wrong || format('%s met %s, expected it admitted', c.label, outcome); END IF;
+    ELSIF outcome NOT LIKE 'error 23514%"' || c.constraint_name || '"%' THEN
+      wrong := wrong || format('%s met %s, expected %s', c.label, outcome, c.constraint_name);
+    END IF;
+  END LOOP;
+
+  -- The settings', the skrivsal's and the sitting's.
+  FOR c IN SELECT * FROM (VALUES
+    ('a cap of 0 a day', 'UPDATE "ExamPlanSettings" SET "maxPerClassPerDay" = 0', 'ExamPlanSettings_per_day_is_sane'),
+    ('a cap of 11 a day', 'UPDATE "ExamPlanSettings" SET "maxPerClassPerDay" = 11, "maxPerClassPerWeek" = 30', 'ExamPlanSettings_per_day_is_sane'),
+    ('31 a week', 'UPDATE "ExamPlanSettings" SET "maxPerClassPerWeek" = 31', 'ExamPlanSettings_per_week_is_sane'),
+    ('a week holding fewer than a day', 'UPDATE "ExamPlanSettings" SET "maxPerClassPerDay" = 3, "maxPerClassPerWeek" = 2', 'ExamPlanSettings_week_holds_a_day'),
+    ('a ratio of 0', 'UPDATE "ExamPlanSettings" SET "writersPerInvigilator" = 0', 'ExamPlanSettings_ratio_is_sane'),
+    ('a ratio of 201', 'UPDATE "ExamPlanSettings" SET "writersPerInvigilator" = 201', 'ExamPlanSettings_ratio_is_sane'),
+    ('a turnover of -1', 'UPDATE "ExamPlanSettings" SET "turnoverMinutes" = -1', 'ExamPlanSettings_turnover_is_sane'),
+    ('a turnover of 121', 'UPDATE "ExamPlanSettings" SET "turnoverMinutes" = 121', 'ExamPlanSettings_turnover_is_sane'),
+    ('settings turned on with a week of 3 and a day of 3', 'UPDATE "ExamPlanSettings" SET enabled = true, "maxPerClassPerDay" = 3, "maxPerClassPerWeek" = 3, "writersPerInvigilator" = 200, "turnoverMinutes" = 0', ''),
+    ('no seats', 'UPDATE "ExamRooms" SET seats = 0', 'ExamRooms_seats_are_sane'),
+    ('2001 seats', 'UPDATE "ExamRooms" SET seats = 2001', 'ExamRooms_seats_are_sane'),
+    ('a sitting of no writers', 'UPDATE "ExamSittings" SET writers = 0', 'ExamSittings_writers_are_sane')
+  ) v(label, stmt, constraint_name) LOOP
+    outcome := pg_temp.g4_try(c.stmt);
+    IF c.constraint_name = '' THEN
+      IF outcome <> 'admitted' THEN wrong := wrong || format('%s met %s, expected it admitted', c.label, outcome); END IF;
+    ELSIF outcome NOT LIKE 'error 23514%"' || c.constraint_name || '"%' THEN
+      wrong := wrong || format('%s met %s, expected %s', c.label, outcome, c.constraint_name);
+    END IF;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN RAISE EXCEPTION 'ex423: %', array_to_string(wrong, '; '); END IF;
+END $$;
+ROLLBACK;
+
+-- 423, the unique keys and the life of a row. A fresh exam of its own with a sitting and an invigilator, so that what a key
+-- does is read off rows nothing else holds.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid;
+  subj uuid;
+  subj2 uuid;
+  grp uuid;
+  t1 uuid;
+  t2 uuid;
+  creator uuid;
+  room uuid;
+  room2 uuid;
+  exam uuid;
+  exam2 uuid;
+  batch uuid;
+  batch2 uuid;
+  act uuid;
+  booking uuid;
+  outcome text;
+  wrong text[] := '{}';
+  n bigint;
+BEGIN
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller 7A';
+  SELECT id INTO t1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111';
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'ex423 ämne', 'EX423', now()) RETURNING id INTO subj;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'ex423 ersättning', 'EX423B', now()) RETURNING id INTO subj2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'ex423-lararen@example.invalid', 'Ex', 'Tre', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id INTO t2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'ex423-skaparen@example.invalid', 'Ex', 'Skapare', 'SCHOOL_ADMIN', gen_random_uuid(), true, now()) RETURNING id INTO creator;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'ex423 sal 1', now()) RETURNING id INTO room;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'ex423 sal 2', now()) RETURNING id INTO room2;
+  INSERT INTO "ExamRooms" ("roomId", "schoolId", seats) VALUES (room, school, 30), (room2, school, 30);
+  INSERT INTO "Exams" ("schoolId", "academicYearId", "subjectId", name, "lengthMinutes", writers, "windowKind", "windowFrom", "windowTo", "createdByUserId")
+  VALUES (school, y, subj, 'ex423 prov', 60, 40, 'WEEK', '2030-10-07', '2030-10-11', creator) RETURNING id INTO exam;
+  INSERT INTO "Exams" ("schoolId", "academicYearId", "subjectId", name, "lengthMinutes", writers, "windowKind", "windowFrom", "windowTo")
+  VALUES (school, y, subj, 'ex423 prov 2', 60, 10, 'WEEK', '2030-10-07', '2030-10-11') RETURNING id INTO exam2;
+  INSERT INTO "ExamGroups" ("examId", "studentGroupId", "schoolId") VALUES (exam, grp, school);
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (school, room, creator, 'ex423 bokning', '2030-10-08 08:00+00', '2030-10-08 09:00+00', 'APPROVED', now()) RETURNING id INTO booking;
+  INSERT INTO "ExamSittings" ("examId", "roomId", "schoolId", writers, "bookingId") VALUES (exam, room, school, 30, booking);
+  INSERT INTO "ExamSittings" ("examId", "roomId", "schoolId", writers) VALUES (exam, room2, school, 10);
+  INSERT INTO "ExamInvigilators" ("examId", "roomId", "teacherId", "schoolId") VALUES (exam, room, t2, school);
+
+  -- The unique keys.
+  outcome := pg_temp.g4_try(format($q$INSERT INTO "ExamRooms" ("roomId", "schoolId", seats) VALUES (%L, %L, 5)$q$, room, school));
+  IF outcome NOT LIKE 'error 23505%ExamRooms_pkey%' THEN wrong := wrong || 'a room is marked twice: ' || outcome; END IF;
+  outcome := pg_temp.g4_try(format($q$INSERT INTO "ExamInvigilators" ("examId", "roomId", "teacherId", "schoolId") VALUES (%L, %L, %L, %L)$q$, exam, room2, t2, school));
+  IF outcome NOT LIKE 'error 23505%ExamInvigilators_examId_teacherId_key%' THEN wrong := wrong || 'a teacher keeps watch in two rooms: ' || outcome; END IF;
+  outcome := pg_temp.g4_try(format($q$INSERT INTO "ExamInvigilators" ("examId", "roomId", "teacherId", "schoolId") VALUES (%L, %L, %L, %L)$q$, exam2, room, t1, school));
+  IF outcome NOT LIKE 'error 23503%ExamInvigilators_examId_roomId_schoolId_fkey%' THEN wrong := wrong || 'an invigilator in a room with no sitting: ' || outcome; END IF;
+  outcome := pg_temp.g4_try(format($q$INSERT INTO "ExamSittings" ("examId", "roomId", "schoolId", writers) VALUES (%L, %L, %L, 5)$q$, exam, room, school));
+  IF outcome NOT LIKE 'error 23505%ExamSittings_pkey%' THEN wrong := wrong || 'a room twice at one exam: ' || outcome; END IF;
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (school, y, 'ex423 a', 'EVENT', '2030-10-08', '2030-10-08', 'SCHOOL') RETURNING id INTO batch;
+  INSERT INTO "ScheduleActivities" ("schoolId", "academicYearId", "batchId", "replacementSubjectId", "scopeGroupIds")
+  VALUES (school, y, batch, subj2, ARRAY[grp]) RETURNING id INTO act;
+  UPDATE "Exams" SET "activityId" = act WHERE id = exam;
+  outcome := pg_temp.g4_try(format($q$UPDATE "Exams" SET "activityId" = %L WHERE id = %L$q$, act, exam2));
+  IF outcome NOT LIKE 'error 23505%Exams_activityId_key%' THEN wrong := wrong || 'two exams on one activity: ' || outcome; END IF;
+
+  -- The life of a row. A booking that goes leaves the sitting without it.
+  DELETE FROM "RoomBookings" WHERE id = booking;
+  IF (SELECT "bookingId" FROM "ExamSittings" WHERE "examId" = exam AND "roomId" = room) IS NOT NULL THEN wrong := wrong || 'a sitting kept a booking that was deleted'; END IF;
+  -- The person who made the exam goes; the exam stays.
+  DELETE FROM "Users" WHERE id = creator;
+  IF (SELECT "createdByUserId" FROM "Exams" WHERE id = exam) IS NOT NULL OR NOT EXISTS (SELECT 1 FROM "Exams" WHERE id = exam) THEN wrong := wrong || 'the creator''s deletion did not leave the exam'; END IF;
+  -- The activity goes; the exam is no longer laid and stays.
+  DELETE FROM "ScheduleActivities" WHERE id = act;
+  IF (SELECT "activityId" FROM "Exams" WHERE id = exam) IS NOT NULL OR NOT EXISTS (SELECT 1 FROM "Exams" WHERE id = exam) THEN wrong := wrong || 'the activity''s deletion did not leave the exam unlaid'; END IF;
+  -- A teacher goes with their watch; the sitting stays.
+  DELETE FROM "Users" WHERE id = t2;
+  SELECT count(*) INTO n FROM "ExamInvigilators" WHERE "examId" = exam;
+  IF n <> 0 OR (SELECT count(*) FROM "ExamSittings" WHERE "examId" = exam) <> 2 THEN wrong := wrong || 'a deleted teacher did not take their watch and only it'; END IF;
+  -- A room goes with its mark and its sittings.
+  DELETE FROM "Rooms" WHERE id = room2;
+  IF EXISTS (SELECT 1 FROM "ExamRooms" WHERE "roomId" = room2) OR EXISTS (SELECT 1 FROM "ExamSittings" WHERE "roomId" = room2) THEN wrong := wrong || 'a deleted room kept its mark or its sitting'; END IF;
+  -- A subject that is the settings' choice goes: the choice is emptied. A subject that is an exam's goes with the exam.
+  UPDATE "ExamPlanSettings" SET "replacementSubjectId" = subj2;
+  DELETE FROM "ScheduleActivities" WHERE "replacementSubjectId" = subj2;
+  DELETE FROM "Subjects" WHERE id = subj2;
+  IF (SELECT "replacementSubjectId" FROM "ExamPlanSettings") IS NOT NULL THEN wrong := wrong || 'a deleted subject stayed the settings'' choice'; END IF;
+  DELETE FROM "Subjects" WHERE id = subj;
+  IF EXISTS (SELECT 1 FROM "Exams" WHERE id IN (exam, exam2)) OR EXISTS (SELECT 1 FROM "ExamGroups" WHERE "examId" = exam)
+     OR EXISTS (SELECT 1 FROM "ExamSittings" WHERE "examId" = exam) THEN
+    wrong := wrong || 'a deleted subject left its exams, their groups or their sittings';
+  END IF;
+  IF cardinality(wrong) > 0 THEN RAISE EXCEPTION 'ex423: %', array_to_string(wrong, '; '); END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 424: ingenting annat rörde sig.
+--
+-- The bookings' exclusion constraint still holds a room once, and an exam's
+-- booking holds it against another (a second APPROVED booking over the same
+-- hour is 23P01, a cancelled one frees the room again); the activity's tables
+-- keep their four arms each; and the exam tables hold no row of their own with
+-- a person's name in it: the only person column is the invigilator's id.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  admin uuid := app.current_user_id();
+  room uuid;
+  first_booking uuid;
+  outcome text;
+  bad text;
+BEGIN
+  SELECT id INTO room FROM "Rooms" WHERE "schoolId" = school AND name = 'Roller 1';
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (school, room, admin, 'Prov: ex424', '2030-10-08 08:00+00', '2030-10-08 09:00+00', 'APPROVED', now()) RETURNING id INTO first_booking;
+  outcome := pg_temp.g4_try(format($q$INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", status, "updatedAt")
+                                      VALUES (%L, %L, %L, 'en annan', '2030-10-08 08:30+00', '2030-10-08 09:30+00', 'APPROVED', now())$q$, school, room, admin));
+  IF outcome NOT LIKE 'error 23P01%RoomBookings_room_is_held_once%' THEN
+    RAISE EXCEPTION 'ex424: a second booking over an exam''s hour met %', outcome;
+  END IF;
+  UPDATE "RoomBookings" SET status = 'CANCELLED' WHERE id = first_booking;
+  outcome := pg_temp.g4_try(format($q$INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", status, "updatedAt")
+                                      VALUES (%L, %L, %L, 'efter', '2030-10-08 08:30+00', '2030-10-08 09:30+00', 'APPROVED', now())$q$, school, room, admin));
+  IF outcome <> 'admitted' THEN RAISE EXCEPTION 'ex424: a booking over a cancelled exam booking met %', outcome; END IF;
+
+  -- The activity tables keep exactly their four arms each.
+  SELECT string_agg(c.relname || '=' || n, ', ' ORDER BY c.relname) INTO bad
+    FROM (SELECT polrelid, count(*) n FROM pg_policy WHERE polrelid IN ('public."ScheduleActivities"'::regclass, 'public."ScheduleActivityTeachers"'::regclass,
+                                                                       'public."ScheduleActivityLessons"'::regclass) GROUP BY polrelid) p
+    JOIN pg_class c ON c.oid = p.polrelid WHERE p.n <> 4;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex424: the activity tables'' arms moved: %', bad; END IF;
+
+  -- No column of the exam tables holds a person's name, address or number: the only person column is the invigilator's id.
+  SELECT string_agg(c.relname || '.' || a.attname, ', ') INTO bad
+    FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+   WHERE a.attrelid IN ('public."ExamPlanSettings"'::regclass, 'public."ExamRooms"'::regclass, 'public."Exams"'::regclass, 'public."ExamGroups"'::regclass,
+                        'public."ExamSittings"'::regclass, 'public."ExamInvigilators"'::regclass)
+     AND a.attnum > 0 AND NOT a.attisdropped
+     AND a.attname ~* '(name$|mail|phone|number|personnummer|ssn)' AND a.attname <> 'name';
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ex424: columns that look like a person''s: %', bad; END IF;
 END $$;
 ROLLBACK;
 

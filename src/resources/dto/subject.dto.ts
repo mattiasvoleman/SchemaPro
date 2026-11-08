@@ -63,6 +63,19 @@ export const MAX_LESSONS_PER_DAY_MESSAGE =
 export const MIN_DAYS_BETWEEN_MESSAGE =
   `minDaysBetween: dagar mellan lektionsdagarna anges som ett heltal ${MIN_DAYS_BETWEEN_MIN}–${MIN_DAYS_BETWEEN_MAX} (2 betyder inte dagar i följd), eller null för ingen regel.`;
 
+/**
+ * Placeringsregler (20270126090000), regel 1: the subject is not the first /
+ * the last lesson of a class's day. Both columns are NOT NULL with a default
+ * of false (no rule), so null has no "cleared" meaning and is refused by name
+ * for countsTowardTimplan's reason; absent leaves the mark as it is. Read by
+ * the generator only while the school's Skolregler hold the rule on
+ * (placementEdgeMode), so a mark made before the rule is on changes nothing.
+ */
+export const NOT_FIRST_IN_DAY_MESSAGE =
+  'notFirstInDay: om ämnet inte ska ligga som första lektion på klassens dag anges med true eller false.';
+export const NOT_LAST_IN_DAY_MESSAGE =
+  'notLastInDay: om ämnet inte ska ligga som sista lektion på klassens dag anges med true eller false.';
+
 export class CreateSubjectDto {
   @IsString()
   @IsNotEmpty()
@@ -117,6 +130,16 @@ export class CreateSubjectDto {
   @Min(MIN_DAYS_BETWEEN_MIN, { message: MIN_DAYS_BETWEEN_MESSAGE })
   @Max(MIN_DAYS_BETWEEN_MAX, { message: MIN_DAYS_BETWEEN_MESSAGE })
   minDaysBetween?: number | null;
+
+  /** Not the first lesson of a class's day (regel 1). Absent means false. */
+  @ValidateIf((dto: CreateSubjectDto) => dto.notFirstInDay !== undefined)
+  @IsBoolean({ message: NOT_FIRST_IN_DAY_MESSAGE })
+  notFirstInDay?: boolean;
+
+  /** Not the last lesson of a class's day (regel 1). Absent means false. */
+  @ValidateIf((dto: CreateSubjectDto) => dto.notLastInDay !== undefined)
+  @IsBoolean({ message: NOT_LAST_IN_DAY_MESSAGE })
+  notLastInDay?: boolean;
 }
 
 export class UpdateSubjectDto {
@@ -169,4 +192,14 @@ export class UpdateSubjectDto {
   @Min(MIN_DAYS_BETWEEN_MIN, { message: MIN_DAYS_BETWEEN_MESSAGE })
   @Max(MIN_DAYS_BETWEEN_MAX, { message: MIN_DAYS_BETWEEN_MESSAGE })
   minDaysBetween?: number | null;
+
+  /** Absent leaves the mark as it is. */
+  @ValidateIf((dto: UpdateSubjectDto) => dto.notFirstInDay !== undefined)
+  @IsBoolean({ message: NOT_FIRST_IN_DAY_MESSAGE })
+  notFirstInDay?: boolean;
+
+  /** Absent leaves the mark as it is. */
+  @ValidateIf((dto: UpdateSubjectDto) => dto.notLastInDay !== undefined)
+  @IsBoolean({ message: NOT_LAST_IN_DAY_MESSAGE })
+  notLastInDay?: boolean;
 }
