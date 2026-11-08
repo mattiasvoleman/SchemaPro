@@ -52,7 +52,12 @@
  *         on the version read), and an exam being laid cannot be changed or
  *         removed until the apply has finished (the row is locked);
  *   pv-m  a day the calendar does not have, and seats a room cannot hold, are
- *         refused with a code and not by the database.
+ *         refused with a code and not by the database;
+ *   pv-n  a pupil moved to a parallel lesson (Elevens lektion för dagen) in an
+ *         exam week: the move falls with the lesson the exam cancels (as it
+ *         does for any activity) and taking the plan away does not bring it
+ *         back, and a move into the exam's replacement lesson goes with that
+ *         lesson when the plan is taken away, without the removal failing.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -69,6 +74,7 @@ import type { PlanExamsRequest, PlanExamsResponse } from '../../src/exams/interf
 import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import type { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
+import { LessonMovesService } from '../../src/lesson-moves/lesson-moves.service';
 import { ScheduleActivitiesService } from '../../src/publication/schedule-activities.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 import { deliveredLessons } from '../../src/timplan/timplan-delivered.sql';
@@ -176,9 +182,9 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
     const cecilia = await person('TEACHER', 'Cecilia');
     const dag = await person('TEACHER', 'Dag');
     const hemlig = await person('TEACHER', 'Hemlig');
-    await person('STUDENT', 'Ella', k7a);
+    const ella = await person('STUDENT', 'Ella', k7a);
     await person('STUDENT', 'Emil', k7a);
-    await person('STUDENT', 'Frans', k7b);
+    const frans = await person('STUDENT', 'Frans', k7b);
     await owner.query(`INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES ($1, $2, 'MANUAL')`, [hemlig.userId, s]);
 
     const room = async (name: string) => (await one<{ id: string }>(`INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES ($1, $2, now()) RETURNING id`, [s, name])).id;
@@ -707,6 +713,47 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ExamRooms" WHERE "roomId" = $1`, [sal2])).n, 0);
       await exams.markRoom(sal2, 20, admin);
       await exams.unmarkRoom(sal2, admin);
+    });
+
+    await check('(pv-n) a pupil moved to a parallel lesson in an exam week: the move falls with the cancelled lesson and stays gone, and a move into the replacement lesson goes with it', async () => {
+      const thursday = (await one<{ d: string }>(`SELECT ($1::date + 3)::text AS d`, [monday])).d;
+      const seven = await lesson(thursday, '13:00', '14:00', svenska, k7a, [anna], sal1);
+      await template(seven, thursday, '13:00', '14:00', svenska, k7a, anna, sal1);
+      const parallel = await lesson(thursday, '13:00', '14:00', svenska, k7b, [cecilia]);
+      const moves = new LessonMovesService(api, realtime, notifications);
+      const movesOf = async (pupil: AuthenticatedUser) =>
+        (await all<{ fromLessonId: string; toLessonId: string }>(`SELECT "fromLessonId", "toLessonId" FROM "LessonPupilMoves" WHERE "studentId" = $1`, [pupil.userId])).map((row) => [row.fromLessonId, row.toLessonId]);
+      const exam = await exams.create({ ...description({ name: 'Flyttad elev', windowFrom: thursday, windowTo: thursday }), academicYearId: year.id } as never, admin);
+
+      // 1. Ella of 7A is moved to 7B's lesson, then the exam cancels her class's lesson: the move falls with it (D7's trigger, as for any activity).
+      const first = await moves.move(ella.userId!, seven, parallel, admin);
+      assert.equal(first.moved, true);
+      assert.deepEqual(await movesOf(ella), [[seven, parallel]]);
+      const laid = await planner.apply({ academicYearId: year.id, items: [placement(exam, thursday, '13:00', sal1, 25, [bo])], notify: false }, admin);
+      assert.equal(laid.applied, 1, JSON.stringify(laid));
+      assert.equal((await lessonState(seven)).status, 'CANCELLED');
+      assert.deepEqual(await movesOf(ella), []);
+      // Taking the plan away puts the lesson back and does not put the move back: the pupil is on their own lesson, as the move's own rule says.
+      const undone = await planner.unplan(exam.id, admin);
+      assert.deepEqual(undone, { removed: true, skippedRoomTaken: [] });
+      assert.deepEqual(await lessonState(seven), { status: 'SCHEDULED', cause: null, roomId: sal1 });
+      assert.deepEqual(await movesOf(ella), []);
+
+      // 2. Laid again; Frans of 7B is moved into the exam's replacement lesson, and the plan is taken away: the lesson goes, and the move and the arrival with it.
+      const again = (await exams.list(year.id, admin)).find((x) => x.id === exam.id)!;
+      const second = await planner.apply({ academicYearId: year.id, items: [placement(again, thursday, '13:00', sal1, 25, [bo])], notify: false }, admin);
+      assert.equal(second.applied, 1, JSON.stringify(second));
+      const replacement = (await one<{ id: string }>(`SELECT sal."calendarLessonId" AS id FROM "ScheduleActivityLessons" sal WHERE sal."activityId" = $1`, [second.outcomes[0].activityId])).id;
+      // The replacement lesson is a held lesson that overlaps the parallel one, so D7 lets a pupil be moved to it.
+      assert.equal((await moves.move(frans.userId!, parallel, replacement, admin)).moved, true);
+      assert.deepEqual(await movesOf(frans), [[parallel, replacement]]);
+      const undoneAgain = await planner.unplan(exam.id, admin);
+      assert.equal(undoneAgain.removed, true);
+      assert.deepEqual(await lessonState(seven), { status: 'SCHEDULED', cause: null, roomId: sal1 });
+      assert.deepEqual(await movesOf(frans), []);
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessonStudents" WHERE "studentId" = $1 AND "calendarLessonId" = $2`, [frans.userId, replacement])).n, 0);
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE id = $1`, [replacement])).n, 0);
+      await exams.remove(exam.id, admin);
     });
   } finally {
     await sweepExamSchool(owner, marker);
