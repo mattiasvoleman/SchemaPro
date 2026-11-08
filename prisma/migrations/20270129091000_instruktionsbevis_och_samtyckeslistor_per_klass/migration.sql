@@ -86,9 +86,10 @@
 -- men namnet är borta. En skola som vill kunna visa vem som fick instruktion väljer
 -- därför minst lika lång tid för båda.
 --
--- app.gallring_due och app.gallring_purge nedan är 20270117091000:s kroppar (som bär
--- Kvittens, Krisläges, Rapporteringsgrads, Frånvarobevakningens, Vikariefrågans och
--- Skyddad identitets grenar) med en gren märkt "checklistor"; en senare release som
+-- app.gallring_due och app.gallring_purge nedan är kropparna som Elevens lektion för dagen
+-- (D7, 20270122091000) lämnade (som bär Kvittens, Krisläges, Rapporteringsgrads,
+-- Frånvarobevakningens, Vikariefrågans, Skyddad identitets och elevflyttarnas
+-- LessonPupilMoves grenar) med en gren märkt "checklistor"; en senare release som
 -- skriver om funktionerna igen måste bära varje gren. app.gallring_pseudonymise är orörd.
 --
 -- ## Vid sidan av det API som körs
@@ -892,11 +893,14 @@ END
 $$;
 
 -- ---------------------------------------------------------------------------
--- Gallring: CHECKLISTS. Both bodies are 20270117091000's (prod md5 before: due
--- f884a3c7…, purge 21746d39…) plus the branches marked "checklistor", so none of
--- Kvittens', Krisläges, Rapporteringsgrads, Frånvarobevakningens, Vikariefrågans or
--- Skyddad identitets is lost. A later release that restates the functions again must
--- carry every branch (RLS sections 350, 374 and 430 fail on a branch that is gone).
+-- Gallring: CHECKLISTS. Both bodies are the ones 20270122091000 (Elevens lektion för dagen,
+-- D7) left (prod md5 before: due a7b1da58…, purge b23e04ae…) plus the branches marked
+-- "checklistor", so none of Kvittens', Krisläges, Rapporteringsgrads, Frånvarobevakningens,
+-- Vikariefrågans, Skyddad identitets or the pupil moves' LessonPupilMoves is lost (an earlier
+-- version of this file was built on 20270117091000's bodies and would have dropped that last
+-- one: the order of the stamps puts this file after D7's). A later release that restates the
+-- functions again must carry every branch (RLS sections 350, 374, 397 and 433 fail on a
+-- branch that is gone).
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION app.gallring_due(p_school uuid, p_type "RetentionDataType", p_before date, p_today date)
@@ -924,6 +928,12 @@ LANGUAGE sql STABLE AS $$
   SELECT 'ReportingReminders', r."id"
     FROM school, "public"."ReportingReminders" r
    WHERE p_type = 'ATTENDANCE' AND r."schoolId" = school."id" AND r."lessonDate" < p_before
+  UNION ALL
+  -- elevens lektion: a move goes with the register of the day it took a pupil out of
+  SELECT 'LessonPupilMoves', mv."id"
+    FROM school, "public"."LessonPupilMoves" mv
+    JOIN "public"."CalendarLessons" l ON l."id" = mv."fromLessonId" AND l."schoolId" = mv."schoolId"
+   WHERE p_type = 'ATTENDANCE' AND mv."schoolId" = school."id" AND l."date" < p_before
   UNION ALL
   SELECT 'AbsenceReports', r."id"
     FROM school, "public"."AbsenceReports" r
@@ -1067,6 +1077,14 @@ BEGIN
         DELETE FROM "ReportingReminders" WHERE "id" IN (
           SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
            WHERE d."tbl" = 'ReportingReminders' LIMIT budget - n);
+        GET DIAGNOSTICS step = ROW_COUNT;
+        n := n + step;
+      END IF;
+      -- elevens lektion
+      IF n < budget THEN
+        DELETE FROM "LessonPupilMoves" WHERE "id" IN (
+          SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
+           WHERE d."tbl" = 'LessonPupilMoves' LIMIT budget - n);
         GET DIAGNOSTICS step = ROW_COUNT;
         n := n + step;
       END IF;

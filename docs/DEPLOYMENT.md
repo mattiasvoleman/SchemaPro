@@ -2383,10 +2383,15 @@ Walk the full product loop once, in order:
   migrate resolve --rolled-back 20270129091000_instruktionsbevis_och_samtyckeslistor_per_klass`, then deploy
   again). The API before the release knows none of the objects and never asks for the new kind, so it keeps
   working between the migration and the deploy; the migrations go in first, then the merge. The gallring
-  functions are built on `main`'s: the md5 of the bodies is `f884a3c77b5234c3d77ae6b77d17f0e7` (due) and
-  `21746d3990375d467cdeec6294308363` (purge) before, and `4a19f6157229b4349e0b303336cf8d3e` and
-  `beccf856e4f5ab21c13ab3f377afce3f` after; the difference is the one branch marked `checklistor` in each
-  (three tables in `due`, three deletes in `purge`). `gallring_pseudonymise`
+  functions are built on the bodies Elevens lektion för dagen (D7, 20270122091000) left, which are `main`'s and
+  production's before this release: the md5 of the bodies is `a7b1da5813d0acf54b1474ad6f96c9c3` (due) and
+  `b23e04aec610ebbf1795b832d5054273` (purge) before, and `166943b0d5d22801fe9a1be96a722d95` and
+  `2390088f88e967fda35af6d56e63d3f9` after; the difference is the one branch marked `checklistor` in each
+  (three tables in `due`, three deletes in `purge`), and D7's `LessonPupilMoves` branch is carried in both. (An
+  earlier version of this migration was built on 20270117091000's bodies, `f884a3c7…` and `21746d39…`, and
+  would have dropped D7's branch without a git conflict, since the stamp puts this file after D7's; the review
+  of #288 found it, `src/gallring/gallring-branches.spec.ts` now fails on any phase that does, and RLS 433 checks the
+  branch in the database. **Check `md5(prosrc)` before this migration: it must be D7's.**) `gallring_pseudonymise`
   (`6f18f62fc354bde849aa2e8b01eeceda`) is not touched, on purpose (see the decision below).
   **Nothing changes for a school until someone uses it**: the pages are `/admin/checklists` and
   `/teacher/checklists`, and asking the guardians in the app needs Kvittens (F4) to be on for the school.

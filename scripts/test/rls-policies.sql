@@ -49394,10 +49394,13 @@ BEGIN
   END LOOP;
 
   -- Gallring: the pupil's proofs and answers and the empty lists go with the school's choice for CHECKLISTS, and every
-  -- earlier branch is still carried. The pseudonymisation leaves them (a pupil who has left is pseudonymised on the
+  -- earlier branch is still carried, LessonPupilMoves (Elevens lektion för dagen, 20270122091000) among them: this
+  -- migration's bodies are built on that phase's, and were once built on the ones before it, which dropped the branch
+  -- without a git conflict (granskning #288, HÖG-1; src/gallring/gallring-branches.spec.ts says the same of every phase
+  -- from the migrations alone). The pseudonymisation leaves them (a pupil who has left is pseudonymised on the
   -- school's choice for DEPARTED_PEOPLE; the proof stays as long as CHECKLISTS says).
   FOREACH want IN ARRAY ARRAY['AckRequests', 'CoverRequests', 'CoverConfirmations', 'CrisisAlarms', 'PersonProtectionEvents', 'TeacherReportingDays',
-                              'ReportingReminders', 'AbsenceWatchFindings', 'GuardianStudentHistory', 'InstructionProofs', 'ConsentEntries', 'ConsentLists'] LOOP
+                              'ReportingReminders', 'AbsenceWatchFindings', 'GuardianStudentHistory', 'LessonPupilMoves', 'InstructionProofs', 'ConsentEntries', 'ConsentLists'] LOOP
     IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure) NOT LIKE '%''' || want || '''%' THEN
       RAISE EXCEPTION 'checklistor 433: gallring_due lost the branch of %', want;
     END IF;
