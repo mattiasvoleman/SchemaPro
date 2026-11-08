@@ -47045,8 +47045,12 @@ ROLLBACK;
 --     are refused a change (the arm's WITH CHECK, or no row for a teacher), as
 --     the API's role and as PostgREST's; a pupil and a guardian read no row of
 --     the Skolregler at all;
---   * another school's administrator reads no row of this school's Skolregler
---     and an UPDATE of its switch reaches nothing.
+--   * the same three are refused the first save of the row (an INSERT with the
+--     switch on) by the INSERT arm's WITH CHECK, as 42501 from row security
+--     before the school's key is reached;
+--   * another school's administrator reads no row of this school's Skolregler,
+--     an UPDATE of its switch reaches nothing and an INSERT in its name is
+--     refused by the INSERT arm's school check.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -47223,6 +47227,51 @@ BEGIN
   END LOOP;
 END $$;
 
+-- The first save of a school's Skolregler is an INSERT, and the same three are
+-- refused it with the switch on (the INSERT arm's WITH CHECK holds PLANERING,
+-- as the UPDATE arm's does). The row exists here, which is what makes the
+-- refusal readable: row security judges the proposed row BEFORE the unique key
+-- does, so a refusal is 42501 from row security, and an admitted statement
+-- would be 23505 on the school's key. (Review of #285, LÅG-7.)
+DO $$
+DECLARE
+  who text;
+  via text;
+  msg text;
+  school uuid := current_setting('app.g2_410_school')::uuid;
+  refused boolean;
+BEGIN
+  FOREACH who IN ARRAY ARRAY[
+    '00000000-0000-4000-8000-000000000108',
+    '00000000-0000-4000-8000-000000000115',
+    '00000000-0000-4000-8000-000000000111'
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      IF current_user <> via THEN RAISE EXCEPTION 'best-effort switch: running as %, not %', current_user, via; END IF;
+      refused := false;
+      BEGIN
+        INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "generatorBestEffort")
+        VALUES (school, '11:00', '13:00', 30, now(), true);
+      EXCEPTION
+        WHEN insufficient_privilege THEN
+          GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+          IF msg NOT LIKE '%row-level security%' THEN
+            RAISE EXCEPTION 'best-effort switch: the insert of % was refused by "%", not by row security, as %', who, msg, via;
+          END IF;
+          refused := true;
+        WHEN unique_violation THEN
+          RAISE EXCEPTION 'best-effort switch: % (without PLANERING) passed the insert arm and reached the school''s key, as %', who, via;
+      END;
+      IF NOT refused THEN
+        RAISE EXCEPTION 'best-effort switch: % wrote a Skolregler row with the switch on, as %', who, via;
+      END IF;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+END $$;
+
 -- Another school's administrator: no row, and an UPDATE reaches nothing.
 SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
 DO $$
@@ -47237,6 +47286,16 @@ BEGIN
   UPDATE "LunchSettings" SET "generatorBestEffort" = false WHERE "schoolId" = school;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'best-effort switch: another school''s administrator reached this school''s switch'; END IF;
+  -- … nor writes a row in its name: the INSERT arm's school check refuses it (42501) before the key is reached (23505).
+  BEGIN
+    INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "generatorBestEffort")
+    VALUES (school, '11:00', '13:00', 30, now(), true);
+    RAISE EXCEPTION 'best-effort switch: another school''s administrator wrote this school''s Skolregler row';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+    WHEN unique_violation THEN
+      RAISE EXCEPTION 'best-effort switch: another school''s administrator passed the insert arm and reached this school''s key';
+  END;
   -- Their own is theirs: off for a school that never said so.
   IF EXISTS (SELECT 1 FROM "LunchSettings" WHERE "generatorBestEffort" AND "schoolId" = app.current_school_id()) THEN
     RAISE EXCEPTION 'best-effort switch: the primary school reads the switch on before it chose';
