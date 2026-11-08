@@ -4280,8 +4280,11 @@
     dagen och i vilka salar sätts under <span class="ui">Placeringsregler</span>
     bland skolreglerna. Varje regel är <span class="ui">Av</span> tills skolan
     slår på den, och en skola som låter alla tre vara av får precis samma
-    schema som förut. Varje regel kan vara <span class="ui">Mjuk</span> eller
-    <span class="ui">Hård</span>. En mjuk regel är ett önskemål med en vikt
+    schema som förut. Varje regel kan vara <span class="ui">Mjuk</span>, och
+    <em>Salar och byggnader per dag</em> och <em>Delade salar</em> kan också
+    vara <span class="ui">Hård</span>; <em>Inte först eller sist på dagen</em>
+    är bara <span class="ui">Av</span> eller <span class="ui">Mjuk</span>
+    (se nedan). En mjuk regel är ett önskemål med en vikt
     (1–1000, förval 250) som genereringen väger mot allt annat: den försöker
     hålla regeln men vägrar aldrig för att den inte gick, och sätter du vikten
     lågt vinner de andra önskemålen. En hård regel är ett krav: går den inte att
@@ -4306,12 +4309,23 @@
     hela årskursen blir det rätt.
   </p>
   <p>
+    Den här regeln kan ännu inte vara <span class="ui">Hård</span>: valet finns
+    inte bland skolreglerna. Mätningen på högstadiets testskola visade att en
+    hård regel gör att genereringen behöver flera gånger så lång tid för sitt
+    första schema (4,5 gånger med åtta arbetare), och en generering som tar så
+    mycket längre tid riskerar att inte bli klar inom tidsgränsen. Välj
+    <span class="ui">Mjuk</span> med en hög vikt om ämnet verkligen ska hållas;
+    regeln är då ett önskemål som genereringen försöker hålla, och som den
+    aldrig vägrar schemat för. Hård erbjuds först när den är mätt på en stor
+    skola.
+  </p>
+  <p>
     <em>Salar och byggnader per dag.</em> Högst så många <em>olika</em>
     salsgrupper och byggnader per dag, för en klass och för en lärare var för
     sig. Lämnar du en gräns tom gäller ingen gräns, och 1 betyder en enda hela
     dagen. Byggnad är salens uppgift <span class="ui">Byggnad</span> under
-    <span class="ui">Salar</span>; salar utan byggnad räknas som en byggnad för
-    sig. Skolområdet och dess restid är en egen regel. Lika salar av samma typ,
+    <span class="ui">Salar</span>; salar utan byggnad räknas som samma byggnad.
+    Skolområdet och dess restid är en egen regel. Lika salar av samma typ,
     storlek och årskurser räknas som en sal, och genereringen låter en klass
     eller lärare behålla sin sal i gruppen när den är ledig. Vill du jämna ut
     resten kör du <span class="ui">Salsoptimering</span> efteråt (5.4). Klassen
@@ -4334,10 +4348,17 @@
     aldrig kapaciteten. Mjuk: kapaciteten får överskridas, och vikten betalas per
     elev över kapaciteten vid salens värsta ögonblick under veckan. Låsta
     lektioner i en delad sal tar sina elevers platser, inte hela salen, och
-    en låst lektion som är större än salen vägras vid hård regel. Bara genereringen
-    känner till delningen: skärmen med krockar visar två lektioner i samma sal
-    samtidigt som en krock, också när de ryms. Alla andra salar har en lektion
-    åt gången, som förut.
+    en låst lektion som är större än salen vägras vid hård regel. Kontrollerna
+    bredvid genereringen räknar likadant: två lektioner i samma sal samtidigt är
+    ingen salkrock när deras elever tillsammans ryms i salens kapacitet. Det
+    gäller handredigeringen och importen, kontrollen före publicering, de röda
+    markeringarna på schemat och de dagsvisa ändringarna av sal. Mjuk och hård
+    regel läses likadant där, eftersom en kapacitet ni skrivit in är en gräns ni
+    vill få veta när den överskrids. Är elevantalet i en av lektionerna okänt,
+    till exempel för att klassen ännu inte har någon klasslista, är det kvar som
+    en krock, och en rumsbokning håller alltid hela salen. Lärare, klass och
+    delade elever krockar som förut. Alla andra salar, och alla salar när regeln
+    är <span class="ui">Av</span>, har en lektion åt gången, som förut.
   </p>
   <p>
     <strong>Optimeringsprofilen</strong> är mjuka önskemål. De kan väga mot

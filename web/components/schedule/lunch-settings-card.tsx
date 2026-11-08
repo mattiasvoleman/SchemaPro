@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { ApiError } from "@/lib/api";
+import { engineMessage } from "@/lib/engine-message";
 import { useLunchSettings, useSaveLunchSettings, useSubjects } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
@@ -190,6 +192,8 @@ const FORM_KEYS = Object.keys(EMPTY_FORM) as (keyof LunchForm)[];
 export function LunchSettingsCard() {
   const t = useTranslations("lunch");
   const tCommon = useTranslations("common");
+  // The gateway's refusals of the placement rules, in the reader's language.
+  const tErrors = useTranslations("placementRules.errors");
   const { data: settings, isSuccess, isError } = useLunchSettings();
   const save = useSaveLunchSettings();
   // Only to say how many subjects carry a box for Inte först eller sist på
@@ -338,7 +342,16 @@ export function LunchSettingsCard() {
       // did not save, and the sentence has to stay next to them until the
       // admin has read it — with what still applies, which a toast has no
       // room to say.
-      setSaveError(error instanceof Error ? error.message : tCommon("error"));
+      setSaveError(
+        error instanceof ApiError
+          ? // A code the web has a sentence for is said in the reader's language
+            // (a rule 1 that is Hård, or a rule 2 with no limit, from a tab or a
+            // client that did not stop it first); any other shows the gateway's.
+            engineMessage(tErrors, { code: error.code ?? null, message: error.message })
+          : error instanceof Error
+            ? error.message
+            : tCommon("error"),
+      );
     }
   };
 

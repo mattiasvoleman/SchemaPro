@@ -47548,6 +47548,18 @@ SELECT set_config('request.headers', '', true);
 SELECT set_config('app.test_rls418_school', app.current_school_id()::text, true);
 SELECT set_config('app.test_rls418_subject', (SELECT id::text FROM "Subjects" WHERE code = 'RLSR'), true);
 SELECT set_config('app.test_rls418_room', (SELECT id::text FROM "Rooms" WHERE name = 'Roller 1'), true);
+-- The SS12000 versions as the school's service principal reads them, BEFORE the section's first mark: a provider
+-- that bumped for a mark would by then have set the version to this transaction's own xid, and a "before" read
+-- taken after it could not tell that from a version that stood still (only the control, with the wrong message,
+-- would have caught it).
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls418_school'), true);
+SELECT set_config('app.test_rls418_room_xid',
+  coalesce((SELECT "xid"::text FROM "Ss12000EntityVersions" WHERE resource = 'Room' AND "entityId" = current_setting('app.test_rls418_room')::uuid), ''), true);
+SELECT set_config('app.test_rls418_subject_xid',
+  coalesce((SELECT "xid"::text FROM "Ss12000EntityVersions" WHERE resource = 'Syllabus' AND "entityId" = current_setting('app.test_rls418_subject')::uuid), ''), true);
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
 DO $$
 DECLARE
   school uuid := current_setting('app.test_rls418_school')::uuid;
@@ -47738,15 +47750,8 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'placeringsregler 418: the other school''s teacher reached the matrix school''s room'; END IF;
 END $$;
 
--- No SS12000 version moves for a mark. The version as the school's service principal reads it, before and after
--- the full administrator sets the marks in this transaction; the control is what the providers do emit.
-SELECT set_config('request.jwt.claims', '', true);
-SELECT set_config('app.service_school_id', current_setting('app.test_rls418_school'), true);
-SELECT set_config('app.test_rls418_room_xid',
-  coalesce((SELECT "xid"::text FROM "Ss12000EntityVersions" WHERE resource = 'Room' AND "entityId" = current_setting('app.test_rls418_room')::uuid), ''), true);
-SELECT set_config('app.test_rls418_subject_xid',
-  coalesce((SELECT "xid"::text FROM "Ss12000EntityVersions" WHERE resource = 'Syllabus' AND "entityId" = current_setting('app.test_rls418_subject')::uuid), ''), true);
-SELECT set_config('app.service_school_id', '', true);
+-- No SS12000 version moves for a mark. The version was read above, before this section marked anything; here the
+-- full administrator sets the marks once more and it is read again; the control is what the providers do emit.
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
 UPDATE "Rooms" SET "canBeShared" = NOT "canBeShared" WHERE id = current_setting('app.test_rls418_room')::uuid;
 UPDATE "Subjects" SET "notFirstInDay" = NOT "notFirstInDay", "notLastInDay" = NOT "notLastInDay" WHERE id = current_setting('app.test_rls418_subject')::uuid;

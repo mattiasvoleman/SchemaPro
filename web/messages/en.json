@@ -2971,6 +2971,7 @@
     "edge": {
       "title": "Not first or last in the day",
       "hint": "Some subjects should not be a class's first or last lesson of the day. Which ones is marked on the subject itself, under Subjects. A class's day is all the lessons its pupils attend, teaching groups and halves included.",
+      "hardHint": "Hard is not offered for this rule yet: a hard rule can make Generate take much longer, and it has not been measured on a large school. Choose Off or Soft.",
       "count": "{count, plural, =0 {No subject is marked yet.} one {# subject is marked.} other {# subjects are marked.}}",
       "link": "Mark subjects"
     },
@@ -2988,6 +2989,10 @@
     "limitsHint": "Leave empty for no limit. 1 means a single one. At most 20.",
     "limitInvalid": "Enter a whole number from 1 to 20, or leave it empty.",
     "limitsMissing": "Set at least one limit, or the rule has nothing to hold. Choose Off if you do not want it.",
+    "errors": {
+      "PLACEMENT_EDGE_HARD_NOT_OFFERED": "The rule Not first or last in the day cannot be hard yet. Choose Off or Soft.",
+      "PLACEMENT_PLACES_NEEDS_A_LIMIT": "The rule Rooms and buildings per day needs at least one limit when it is Soft or Hard. Set a limit or choose Off."
+    },
     "shared": {
       "title": "Shared rooms",
       "hint": "Applies only to rooms marked Can be shared under Rooms. Hard: the number of pupils in the room at once always fits the room's capacity. Soft: the capacity may be exceeded, at a weight per pupil over it.",

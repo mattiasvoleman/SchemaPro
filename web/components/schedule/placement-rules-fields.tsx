@@ -35,13 +35,22 @@ export interface PlacementErrors {
   edgeWeight: boolean;
   placesWeight: boolean;
   sharedWeight: boolean;
-  /** Per limit: typed, but not a whole number in 0..20. */
+  /** Per limit: typed, but not a whole number in 1..20. */
   limits: Record<LimitField, boolean>;
   /** The rule is on and not one limit is set, so it has nothing to hold. */
   noLimit: boolean;
 }
 
 const MODES: PlacementRuleMode[] = ["OFF", "SOFT", "HARD"];
+
+/**
+ * Rule 1 is Av or Mjuk until it has been measured hard on a large school: a
+ * hard one cost 4.5 times the first timetable with eight workers, the same
+ * track as the hard sammanhängande undervisning that was dropped for its
+ * cost. The API refuses HARD for it (PLACEMENT_EDGE_HARD_NOT_OFFERED) and the
+ * engine still builds it; this is the card's half.
+ */
+const EDGE_MODES: PlacementRuleMode[] = ["OFF", "SOFT"];
 
 /**
  * One choice of three, drawn as buttons that read as a row: native radios, so
@@ -51,17 +60,20 @@ function ModeChoice({
   name,
   value,
   describedBy,
+  modes = MODES,
   onChange,
 }: {
   name: string;
   value: PlacementRuleMode;
   describedBy: string;
+  /** The choices offered; all three unless a rule is offered in fewer. */
+  modes?: PlacementRuleMode[];
   onChange: (mode: PlacementRuleMode) => void;
 }) {
   const t = useTranslations("placementRules");
   return (
     <div className="flex flex-wrap gap-1.5">
-      {MODES.map((mode) => (
+      {modes.map((mode) => (
         <label key={mode} className="relative">
           <input
             type="radio"
@@ -147,10 +159,14 @@ export function PlacementRulesFields({
         <p id="placement-edge-hint" className="text-sm text-muted-foreground">
           {t("edge.hint")}
         </p>
+        <p id="placement-edge-hard-hint" className="text-sm text-muted-foreground">
+          {t("edge.hardHint")}
+        </p>
         <ModeChoice
           name="placement-edge-mode"
           value={values.placementEdgeMode}
-          describedBy="placement-edge-hint"
+          describedBy="placement-edge-hint placement-edge-hard-hint"
+          modes={EDGE_MODES}
           onChange={(mode) => onChange({ placementEdgeMode: mode })}
         />
         {values.placementEdgeMode === "SOFT"
@@ -189,7 +205,7 @@ export function PlacementRulesFields({
               >
                 <Input
                   type="number"
-                  min={0}
+                  min={1}
                   max={20}
                   step={1}
                   placeholder={t("limitPlaceholder")}

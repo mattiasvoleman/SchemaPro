@@ -1571,7 +1571,8 @@ a test of their own, since the other cases require that something is priced.
 ### Placeringsregler: what three optional rules cost, and what they hold
 
 Three rules a school sets about where its lessons stand, each off until asked
-for and soft or hard as the school chooses (`app/solver/placement.py`,
+for and soft or hard as the school chooses, except rule 1, which is off or
+soft until it is measured hard (below) (`app/solver/placement.py`,
 `benchmarks/placement_rules.py`): subjects not first or last in the class's
 day, at most N different room groups and M different buildings a day, and the
 pupils together fitting a shared room. Measured on the högstadium school (450
@@ -1634,8 +1635,19 @@ and did not take them to zero.
   lessons of 18 classes, in two halls. A min/max encoding of the day's first
   start and last end (patch kept in the session notes) was measured as the
   alternative and was worse (38.5 deterministic seconds on one worker against
-  the pair encoding's 16.0), so the pairs stay. The settings say that a hard
-  rule can make Generera refuse and recommend a soft one.
+  the pair encoding's 16.0), so the pairs stay. **Hard is therefore not
+  offered for this rule.** 4.5× the first timetable is, if the ratio holds for
+  the wall clock, about 36 s against main's 8 s on a quiet machine: the
+  interval (27–85 s against 8 s, and 0 of 423 full models) in which the hard
+  sammanhängande undervisning was dropped (PR #231), and production's limit
+  for Generera is 60 s at the floor. The API refuses `HARD` for rule 1 with a
+  400 and the code `PLACEMENT_EDGE_HARD_NOT_OFFERED`, the Skolregler card
+  offers Av and Mjuk, and the manual says so; the engine still builds it (a
+  request that carries `HARD` is solved as measured here) and the database's
+  CHECK still allows it, so offering it later is the card and the API only,
+  once it is measured on a quiet machine, with eight workers, in parallel
+  with main, through the objective phase as well. Rules 2 and 3 cost less
+  (2.8–3.6× and 1.9× with eight workers) and stay offered as hard.
 * *Different rooms and buildings (hard)* costs 2.8–3.6×. The model holds the
   limit it states (0 party-days over, in every arm) and no more: counted as
   changes between neighbouring lessons instead, 25 of the school's class-days

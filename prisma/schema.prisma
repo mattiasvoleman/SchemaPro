@@ -597,7 +597,7 @@ model Room {
   updatedAt        DateTime @updatedAt @db.Timestamptz(6)
 
   school                  School                   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  roomType                RoomType?            @relation(fields: [roomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
+  roomType                RoomType?                @relation(fields: [roomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
   site                    Site?                    @relation(fields: [siteId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
@@ -905,7 +905,7 @@ model Subject {
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
   school               School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  requiredRoomType     RoomType?           @relation(fields: [requiredRoomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
+  requiredRoomType     RoomType?             @relation(fields: [requiredRoomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
   nationalSubject      NationalSubject?      @relation(fields: [nationalCode], references: [code], onDelete: Restrict)
   teachingRequirements TeachingRequirement[]
   masterLessons        MasterLesson[]
@@ -4097,36 +4097,36 @@ model SchoolBreak {
 /// and leaving the other half in one browser would keep that bug alive for the
 /// half that stayed behind.
 model LunchSetting {
-  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId                 String   @db.Uuid
-  lunchEnabled             Boolean  @default(false)
-  lunchStartTime           DateTime @db.Time(0)
-  lunchEndTime             DateTime @db.Time(0)
-  lunchMinutes             Int
+  id                                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId                          String            @db.Uuid
+  lunchEnabled                      Boolean           @default(false)
+  lunchStartTime                    DateTime          @db.Time(0)
+  lunchEndTime                      DateTime          @db.Time(0)
+  lunchMinutes                      Int
   /// Seats in the dining hall. Null means the school has no seat limit worth
   /// modelling — the solver then places lunch exactly as it did before.
-  diningSeats              Int?
-  maxLessonsPerDayPerGroup Int?
+  diningSeats                       Int?
+  maxLessonsPerDayPerGroup          Int?
   /// Restid i generatorn: whether the generator keeps the walk between the
   /// school's skolområden (Sites, SiteTravelTimes) for teachers and pupils.
   /// Off by default, and off sends the engine neither a site nor a walk, so
   /// the week is generated exactly as before the rule existed. Not a lunch
   /// rule either; it is in this row for the reason maxLessonsPerDayPerGroup
   /// is: it sits in the same form, Skolregler.
-  generatorKeepsTravelTime Boolean  @default(false)
+  generatorKeepsTravelTime          Boolean           @default(false)
   /// Elevernas håltimmar: whether the generator keeps the pupils' idle time
   /// between their lessons down, counted per set of pupils booked alike as
   /// the håltimmesrapport counts it. Off by default, and off sends the engine
   /// no cohort, so the week is generated exactly as before. In this row for
   /// the reason the travel switch is: it sits in the same form, Skolregler.
-  generatorKeepsPupilGapsDown Boolean @default(false)
+  generatorKeepsPupilGapsDown       Boolean           @default(false)
   /// Sammanhängande undervisning (20261218090000): the generator tries to keep
   /// each teacher's stretches of teaching within their post's limit
   /// (TeacherEmployments.maxConsecutiveTeachingMinutes). Off: nothing is sent, and
   /// the week is generated exactly as before. A wish and not a guarantee, so the
   /// switch is the school's: it moves lessons of every teacher who has the
   /// rule. In this row for the reason the others are: the same form.
-  generatorKeepsConsecutiveTeaching Boolean @default(false)
+  generatorKeepsConsecutiveTeaching Boolean           @default(false)
   /// Placeringsregler (20270126090000), three rules about where a lesson is
   /// placed, each OFF until the school turns it on (OFF sends the engine
   /// nothing, and the week is generated exactly as before), SOFT (a weight,
@@ -4136,27 +4136,27 @@ model LunchSetting {
   ///
   /// Rule 1: a subject marked "not first" or "not last" (Subject.notFirstInDay,
   /// notLastInDay) is kept off the first or last lesson of a class's day.
-  placementEdgeMode        PlacementRuleMode @default(OFF)
+  placementEdgeMode                 PlacementRuleMode @default(OFF)
   /// SOFT only: 1..1000 (LunchSettings_placementEdgeWeight_check). Kept when
   /// the mode is OFF or HARD, so switching back does not lose the figure.
-  placementEdgeWeight      Int      @default(250)
+  placementEdgeWeight               Int               @default(250)
   /// Rule 2: a class and a teacher (apart) are in at most this many DIFFERENT
   /// room groups and different buildings in a day. 1 is a single one, never a
   /// change; the same room twice is one. The mode is SOFT or HARD only while at
   /// least one of the four limits is set (LunchSettings_placementPlaces_needs_a_limit_check).
-  placementPlacesMode       PlacementRuleMode @default(OFF)
-  placementPlacesWeight     Int      @default(250)
+  placementPlacesMode               PlacementRuleMode @default(OFF)
+  placementPlacesWeight             Int               @default(250)
   /// 1..20, null = no limit (LunchSettings_max…PerDay_check).
-  maxClassRoomsPerDay       Int?
-  maxTeacherRoomsPerDay     Int?
-  maxClassBuildingsPerDay   Int?
-  maxTeacherBuildingsPerDay Int?
+  maxClassRoomsPerDay               Int?
+  maxTeacherRoomsPerDay             Int?
+  maxClassBuildingsPerDay           Int?
+  maxTeacherBuildingsPerDay         Int?
   /// Rule 3: the pupils of the lessons in a shared room (Room.canBeShared) at
   /// one time fit its capacity together.
-  placementSharedMode      PlacementRuleMode @default(OFF)
-  placementSharedWeight    Int      @default(250)
-  createdAt                DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt                DateTime @updatedAt @db.Timestamptz(6)
+  placementSharedMode               PlacementRuleMode @default(OFF)
+  placementSharedWeight             Int               @default(250)
+  createdAt                         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt                         DateTime          @updatedAt @db.Timestamptz(6)
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 

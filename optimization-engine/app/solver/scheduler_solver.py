@@ -13556,9 +13556,9 @@ class SchedulerSolver:
         """Rule 2: the places a party's lessons are forced into must fit the days it has.
 
         A lesson is FORCED into a place when every room it may use is in that
-        place. A party with F different forced places and a limit of N changes
-        a day (N + 1 places) needs at least ceil(F / (N + 1)) days, and the
-        week has the days it has (PLACEMENT_CHANGES_FORCED_PLACES). A teacher
+        place. A party with F different forced places and a limit of N
+        different places a day needs at least ceil(F / N) days, and the week
+        has the days it has (PLACEMENT_PLACES_FORCED). A teacher
         is counted on the lessons they are on every one of, a class on the
         lessons filed under its pupil key; a locked lesson in a room is forced
         into that room's place.

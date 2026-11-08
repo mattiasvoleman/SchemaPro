@@ -2,9 +2,11 @@ import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   PLACE_LIMIT_FIELDS,
+  PLACEMENT_EDGE_HARD_NOT_OFFERED,
   PLACEMENT_PLACES_NEEDS_A_LIMIT,
   PLACEMENT_FIELDS,
   assertPlacesHaveALimit,
+  edgeCannotBeHard,
   placesNeedALimit,
   isPlacesNeedALimitCheck,
   placementDataOf,
@@ -112,6 +114,18 @@ describe('placesNeedALimit', () => {
     const error = placesNeedALimit();
     expect(error.getStatus()).toBe(400);
     expect(error.getResponse()).toMatchObject({ code: 'PLACEMENT_PLACES_NEEDS_A_LIMIT' });
+  });
+});
+
+describe('edgeCannotBeHard', () => {
+  it('is a 400 with its own code, naming the field and the way out, whose sentence the web gives in both languages', () => {
+    const error = edgeCannotBeHard();
+    expect(error.getStatus()).toBe(400);
+    expect(error.getResponse()).toMatchObject({
+      code: PLACEMENT_EDGE_HARD_NOT_OFFERED,
+      message: expect.stringMatching(/^placementEdgeMode: .*OFF eller SOFT\.$/),
+    });
+    expect(PLACEMENT_EDGE_HARD_NOT_OFFERED).toBe('PLACEMENT_EDGE_HARD_NOT_OFFERED');
   });
 });
 

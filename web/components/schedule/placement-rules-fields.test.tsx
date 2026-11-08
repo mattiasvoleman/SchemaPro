@@ -90,6 +90,20 @@ describe("Placeringsregler in Swedish", () => {
     expect(section).toHaveTextContent("Generera försöker hålla regeln men vägrar aldrig");
   });
 
+  it("offers Inte först eller sist på dagen as Av and Mjuk, and says why not Hård", () => {
+    inLocale("sv", fields());
+
+    const group = screen.getByRole("group", { name: "Inte först eller sist på dagen" });
+    expect(within(group).getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual(["OFF", "SOFT"]);
+    expect(group).toHaveTextContent("Hård finns inte för den här regeln ännu");
+    expect(group).toHaveTextContent("inte mätt på en stor skola");
+    expect(group).toHaveTextContent("Välj Av eller Mjuk.");
+    // The other two keep all three.
+    for (const name of ["Salar och byggnader per dag", "Delade salar"]) {
+      expect(within(screen.getByRole("group", { name })).getAllByRole("radio")).toHaveLength(3);
+    }
+  });
+
   it("states what Salar och byggnader per dag counts: the building field, room groups and how many are visited", () => {
     inLocale("sv", fields());
 
@@ -168,6 +182,16 @@ describe("Placeringsregler in Swedish", () => {
 });
 
 describe("Placeringsregler in English", () => {
+  it("offers Not first or last in the day as Off and Soft, and says why not Hard", () => {
+    inLocale("en", fields());
+
+    const group = screen.getByRole("group", { name: "Not first or last in the day" });
+    expect(within(group).getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual(["OFF", "SOFT"]);
+    expect(group).toHaveTextContent("Hard is not offered for this rule yet");
+    expect(group).toHaveTextContent("it has not been measured on a large school");
+    expect(group).toHaveTextContent("Choose Off or Soft.");
+  });
+
   it("says it all in English too", () => {
     inLocale(
       "en",
@@ -209,6 +233,9 @@ describe("the messages the subject form, the room form and the Generera page rea
     ["room.canBeShared"],
     ["room.hint"],
     ["room.needsCapacity"],
+    ["edge.hardHint"],
+    ["errors.PLACEMENT_EDGE_HARD_NOT_OFFERED"],
+    ["errors.PLACEMENT_PLACES_NEEDS_A_LIMIT"],
     ["summary.edge.SOFT", { weight: 250 }],
     ["summary.edge.HARD"],
     ["summary.places.SOFT", { weight: 250, limits: "x" }],

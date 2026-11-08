@@ -112,7 +112,10 @@ export class UpsertLunchSettingsDto {
    * not last in a class's day (Subject.notFirstInDay, notLastInDay) is kept
    * off the first / the last lesson of the day. OFF until the school turns it
    * on; SOFT pays `placementEdgeWeight` per lesson at an end it should not be
-   * at, HARD forbids it. Every field of the three rules is optional on
+   * at. HARD (forbids it) is refused with PLACEMENT_EDGE_HARD_NOT_OFFERED
+   * until a hard rule 1 has been measured on a large school (it cost 4.5 times
+   * the first timetable): the engine and the database know it, the API does
+   * not take it. Every field of the three rules is optional on
    * exactly the switches' terms above: absent leaves the stored value as it
    * is, and null is refused with the 400 that names the field (the columns are
    * NOT NULL), except a limit, where null clears it.

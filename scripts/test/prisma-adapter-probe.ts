@@ -5389,7 +5389,7 @@ async function runChecks(
   });
 
   // ---- (pl) Placeringsregler: a partial PUT of the Skolregler, through the real service and adapter
-  await check('(pl) a PUT that names rule 2\'s mode and no limit keeps the limit stored, off or on; the 400s with the code are still the 400s (the only limit cleared while on, a first row that is on with none); a PUT without the rules keeps them all', async () => {
+  await check('(pl) a PUT that names rule 2\'s mode and no limit keeps the limit stored, off or on; the 400s with the code are still the 400s (the only limit cleared while on, a first row that is on with none, rule 1 asked to be HARD); a PUT without the rules keeps them all', async () => {
     const lunch = new LunchSettingsService(api);
     const before = await owner.query('SELECT * FROM "LunchSettings" WHERE "schoolId" = $1', [fixture.schoolId]);
     const base = { lunchEnabled: false, lunchStartTime: '11:00', lunchEndTime: '13:00', lunchMinutes: 30 };
@@ -5451,6 +5451,12 @@ async function runChecks(
       assert.equal(cleared.status, 400);
       assert.equal((cleared.getResponse?.() as { code?: string }).code, 'PLACEMENT_PLACES_NEEDS_A_LIMIT');
       assert.equal((await stored())?.maxClassRoomsPerDay, 2, 'a refused PUT cleared the limit');
+
+      // Rule 1 is not offered as HARD until it is measured: its own 400, and the row as it was.
+      const edgeHard = await refused({ ...base, placementEdgeMode: 'HARD' });
+      assert.equal(edgeHard.status, 400);
+      assert.equal((edgeHard.getResponse?.() as { code?: string }).code, 'PLACEMENT_EDGE_HARD_NOT_OFFERED');
+      assert.equal((await stored())?.placementEdgeMode, 'SOFT', 'a refused PUT changed rule 1');
 
       // Off with every limit cleared in one request is allowed; a PUT without the rules then keeps what it holds.
       await lunch.upsert({ ...base, placementPlacesMode: 'OFF', maxClassRoomsPerDay: null }, fixture.admin);

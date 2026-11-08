@@ -424,10 +424,10 @@ describe('LunchSettingsService', () => {
     it('writes the columns a request names, on both arms of the upsert, and only those', async () => {
       tx.lunchSetting.upsert.mockResolvedValue(storedRow());
 
-      await service.upsert(dto({ placementEdgeMode: 'HARD', placementEdgeWeight: 400, placementSharedMode: 'SOFT', placementSharedWeight: 60 }), testUser());
+      await service.upsert(dto({ placementEdgeMode: 'SOFT', placementEdgeWeight: 400, placementSharedMode: 'SOFT', placementSharedWeight: 60 }), testUser());
 
       for (const arm of [sentOf().create, sentOf().update]) {
-        expect(arm).toMatchObject({ placementEdgeMode: 'HARD', placementEdgeWeight: 400, placementSharedMode: 'SOFT', placementSharedWeight: 60 });
+        expect(arm).toMatchObject({ placementEdgeMode: 'SOFT', placementEdgeWeight: 400, placementSharedMode: 'SOFT', placementSharedWeight: 60 });
         expect(arm).not.toHaveProperty('placementPlacesMode');
         expect(arm).not.toHaveProperty('maxClassRoomsPerDay');
       }
@@ -521,9 +521,29 @@ describe('LunchSettingsService', () => {
     it('lets rule 1 and rule 3 be turned on with nothing marked: they do nothing until a subject or a room is', async () => {
       tx.lunchSetting.upsert.mockResolvedValue(storedRow());
 
-      await service.upsert(dto({ placementEdgeMode: 'HARD', placementSharedMode: 'HARD' }), testUser());
+      await service.upsert(dto({ placementEdgeMode: 'SOFT', placementSharedMode: 'HARD' }), testUser());
 
-      expect(sentOf().update).toMatchObject({ placementEdgeMode: 'HARD', placementSharedMode: 'HARD' });
+      expect(sentOf().update).toMatchObject({ placementEdgeMode: 'SOFT', placementSharedMode: 'HARD' });
+    });
+
+    it('does not take rule 1 as HARD until it is measured: a 400 with its own code, before anything is read or written', async () => {
+      const error = await refusal(service.upsert(dto({ placementEdgeMode: 'HARD' }), testUser()));
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error!.getResponse()).toMatchObject({ code: 'PLACEMENT_EDGE_HARD_NOT_OFFERED', message: expect.stringContaining('placementEdgeMode') });
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.lunchSetting.upsert).not.toHaveBeenCalled();
+    });
+
+    it('takes rule 1 as OFF and SOFT, and rules 2 and 3 as HARD: the refusal is rule 1\'s alone', async () => {
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      for (const placementEdgeMode of ['OFF', 'SOFT'] as const) {
+        await service.upsert(dto({ placementEdgeMode }), testUser());
+      }
+      await service.upsert(dto({ placementPlacesMode: 'HARD', maxClassRoomsPerDay: 2, placementSharedMode: 'HARD' }), testUser());
+
+      expect(tx.lunchSetting.upsert).toHaveBeenCalledTimes(3);
     });
 
     describe('the create half of the upsert, which Postgres judges before it finds the row', () => {

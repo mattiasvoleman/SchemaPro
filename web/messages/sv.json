@@ -2971,6 +2971,7 @@
     "edge": {
       "title": "Inte först eller sist på dagen",
       "hint": "Vissa ämnen ska inte vara klassens första eller sista lektion på dagen. Vilka det gäller markeras på själva ämnet, under Ämnen. Klassens dag är alla lektioner som klassens elever sitter, även i undervisningsgrupper och halvor.",
+      "hardHint": "Hård finns inte för den här regeln ännu: en hård regel kan göra att Generera tar mycket längre tid, och den är inte mätt på en stor skola. Välj Av eller Mjuk.",
       "count": "{count, plural, =0 {Inget ämne är markerat än.} one {# ämne är markerat.} other {# ämnen är markerade.}}",
       "link": "Markera ämnen"
     },
@@ -2988,6 +2989,10 @@
     "limitsHint": "Lämna tomt för ingen gräns. 1 betyder en enda. Högst 20.",
     "limitInvalid": "Ange ett heltal mellan 1 och 20, eller lämna tomt.",
     "limitsMissing": "Ange minst en gräns, annars har regeln inget att hålla. Välj Av om du inte vill ha den.",
+    "errors": {
+      "PLACEMENT_EDGE_HARD_NOT_OFFERED": "Regeln Inte först eller sist på dagen kan inte vara hård ännu. Välj Av eller Mjuk.",
+      "PLACEMENT_PLACES_NEEDS_A_LIMIT": "Regeln Salar och byggnader per dag behöver minst en gräns när den är Mjuk eller Hård. Ange en gräns eller välj Av."
+    },
     "shared": {
       "title": "Delade salar",
       "hint": "Gäller bara salar som markerats Kan delas under Salar. Hård: elevantalet i salen samtidigt ryms alltid i salens kapacitet. Mjuk: kapaciteten får överskridas, till en vikt per elev över kapaciteten.",

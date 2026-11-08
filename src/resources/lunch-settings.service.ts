@@ -40,6 +40,7 @@ import { parseTimeString } from '../common/utils/time';
 import type { UpsertLunchSettingsDto } from './dto/lunch-settings.dto';
 import {
   assertPlacesHaveALimit,
+  edgeCannotBeHard,
   placesNeedALimit,
   isPlacesNeedALimitCheck,
   placementDataOf,
@@ -87,6 +88,9 @@ export class LunchSettingsService {
   ): Promise<LunchSettingsResponse> {
     const schoolId = requireSchoolId(user);
     this.assertFitsTheSolverGrid(dto);
+    // Rule 1 is offered as OFF or SOFT until it is measured hard (BESLUT in
+    // the PR of Placeringsregler); the engine and the CHECK still know HARD.
+    if (dto.placementEdgeMode === 'HARD') throw edgeCannotBeHard();
 
     const data = {
       lunchEnabled: dto.lunchEnabled,

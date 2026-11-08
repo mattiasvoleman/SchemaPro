@@ -2085,7 +2085,11 @@ Walk the full product loop once, in order:
   `canBeShared` (false). Eight CHECKs, each named `LunchSettings_…_check`: a
   weight is 1 to 1000, a limit 1 to 20 or null (rule 2 is "at most N different room groups and buildings a day", 1 being a single one, not a count of changes), and rule 2 in SOFT or HARD
   has at least one limit (`…_placementPlaces_needs_a_limit_check`; the API
-  says so first, a 400 with the code `PLACEMENT_PLACES_NEEDS_A_LIMIT`). No new
+  says so first, a 400 with the code `PLACEMENT_PLACES_NEEDS_A_LIMIT`). The
+  CHECKs allow `placementEdgeMode = 'HARD'`, and the API does not: rule 1 is
+  offered as OFF or SOFT until it is measured hard, a request that names
+  `HARD` for it is a 400 with the code `PLACEMENT_EDGE_HARD_NOT_OFFERED`, and
+  the engine still builds it. No new
   table, so no arm, no GRANT and nothing in the role matrix moves (RLS
   sections 415 to 419 hold it, role by role, as the API's role and as
   PostgREST's). **All three rules are OFF for every school until that school

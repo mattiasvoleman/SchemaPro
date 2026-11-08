@@ -1,11 +1,13 @@
 """Placeringsregler: three rules a school sets about where its lessons may stand.
 
-Each rule is the school's, off until it asks, and soft or hard as it chooses:
+Each rule is the school's, off until it asks, and soft or hard as it chooses
+(the engine builds all six; the gateway offers rule 1 only off or soft until a
+hard one has been measured, 4.5 times the first timetable with eight workers):
 
     1. NOT FIRST OR LAST IN THE DAY, per subject, on the class's day
        (`add_subject_edges`): idrott never opens or closes 7A's day.
-    2. AT MOST N ROOM CHANGES AND M BUILDING CHANGES A DAY, for a class and for
-       a teacher (`add_place_limits`).
+    2. AT MOST N DIFFERENT ROOMS AND M DIFFERENT BUILDINGS A DAY, for a class
+       and for a teacher (`add_place_limits`): places visited, not changes.
     3. THE PUPILS TOGETHER FIT A SHARED ROOM (`shared_capacity`, used by
        room_allocator.add_room_allocation): a room the school has marked
        shareable holds several lessons at once while their pupils sum to its

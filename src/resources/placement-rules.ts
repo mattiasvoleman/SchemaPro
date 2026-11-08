@@ -50,6 +50,17 @@ export type PlacementInput = { [K in ModeField]?: PlacementRuleMode } & { [K in 
 /** The problem `code` of a rule 2 that is on without a single limit. */
 export const PLACEMENT_PLACES_NEEDS_A_LIMIT = 'PLACEMENT_PLACES_NEEDS_A_LIMIT';
 
+/**
+ * The problem `code` of rule 1 asked to be HARD. Not offered until it is
+ * measured: a hard rule 1 cost 4.5 times the first timetable with eight
+ * workers (23 times with one) on the högstadium test school, the same track
+ * as the hard sammanhängande undervisning that was dropped for its cost, and
+ * the production time limit of Generera is 60 s at the floor. The engine
+ * still builds it and the database's CHECK still allows it, so offering it is
+ * this refusal, the card and the manual going together.
+ */
+export const PLACEMENT_EDGE_HARD_NOT_OFFERED = 'PLACEMENT_EDGE_HARD_NOT_OFFERED';
+
 /** The CHECK that says the same in the database (a backstop for the way in that is not this service). */
 export const PLACEMENT_PLACES_NEEDS_A_LIMIT_CHECK = 'LunchSettings_placementPlaces_needs_a_limit_check';
 
@@ -109,11 +120,27 @@ export function assertPlacesHaveALimit(dto: PlacementInput, stored: StoredPlaces
   if (!hasALimit) throw placesNeedALimit();
 }
 
+/**
+ * Rule 1 is OFF or SOFT until it has been measured hard. Stateless: a request
+ * that names HARD is refused, whatever the row holds, so a school never gets
+ * into a state the card cannot draw. Swedish, as the rest of this form's
+ * refusals: the card shows the sentence under the same code in both languages
+ * (placementRules.errors).
+ */
+export function edgeCannotBeHard(): BadRequestException {
+  return new BadRequestException({
+    message:
+      'placementEdgeMode: regeln om första och sista lektionen på dagen kan inte vara hård ännu (HARD): ' +
+      'den är inte mätt på en stor skola och kan göra Generera mycket långsam. Använd OFF eller SOFT.',
+    code: PLACEMENT_EDGE_HARD_NOT_OFFERED,
+  });
+}
+
 export function placesNeedALimit(): BadRequestException {
   return new BadRequestException({
     message:
-      'placementPlacesMode: regeln om byten av sal och byggnad som mjuk eller hård behöver minst en gräns: ' +
-      'klassens eller lärarens salbyten eller byggnadsbyten per dag.',
+      'placementPlacesMode: regeln om olika salar och byggnader per dag som mjuk eller hård behöver minst en gräns: ' +
+      'klassens eller lärarens olika salar eller byggnader per dag.',
     code: PLACEMENT_PLACES_NEEDS_A_LIMIT,
   });
 }
