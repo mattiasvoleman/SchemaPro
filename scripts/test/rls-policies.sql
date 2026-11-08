@@ -2912,8 +2912,11 @@ END $$;
 -- lessons a teacher was reminded of, which only app.reporting_remind touches,
 -- likewise with no grant (section 347); `AbsenceStatsMonths` (20270121090000)
 -- holds the sums of absence per class and month, which only the app.absence_stats_*
--- functions read or write, with no grant (sections 390-393). A new table cannot be added
--- without either satisfying the rule or changing it on purpose.
+-- functions read or write, with no grant (sections 390-393); `LeaveConsents`
+-- (20270205091000) holds the answers of the guardians a school asked to consent to a leave
+-- request, which only the app.leave_consent_* functions read or write, with no grant
+-- (sections 445-449), so that a guardian never sees another's answer. A new table cannot be
+-- added without either satisfying the rule or changing it on purpose.
 --
 -- The floor guards the query itself: a catalog filter that quietly stopped
 -- matching would otherwise pass as a clean run, which is how a previous
@@ -2950,7 +2953,7 @@ BEGIN
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
     AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets', 'IntegrationKeyWebhookSecrets',
-                          'JobRuns', 'JobClaims', 'LeaveRequestNotices', 'ReportingReminders', 'AbsenceStatsMonths')
+                          'JobRuns', 'JobClaims', 'LeaveRequestNotices', 'ReportingReminders', 'AbsenceStatsMonths', 'LeaveConsents')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -18396,13 +18399,15 @@ BEGIN
     END IF;
   END LOOP;
   IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'app' AND p.proname LIKE 'leave\_%' AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')) <> 6 THEN
-    RAISE EXCEPTION 'functions: the API runs a leave function beyond its six';
+       WHERE n.nspname = 'app' AND p.proname LIKE 'leave\_%' AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')) <> 13 THEN
+    -- Six of the mentor's delegation, and seven of Ledighetspolicyn (20270205091000): the policy, the
+    -- filing check, the policies' question about consent, its facts, the filing's notices, the answer and the job's pass.
+    RAISE EXCEPTION 'functions: the API runs a leave function beyond its thirteen';
   END IF;
   IF (SELECT string_agg(conname || (CASE WHEN convalidated THEN '' ELSE ' (not valid)' END), ',' ORDER BY conname) FROM pg_constraint
        WHERE conrelid = '"LeaveRequests"'::regclass AND contype = 'c')
-     IS DISTINCT FROM 'LeaveRequests_a_referral_has_a_time,LeaveRequests_a_role_decided,LeaveRequests_a_year_at_most' THEN
-    RAISE EXCEPTION 'check: the CHECKs on LeaveRequests are not the three, validated';
+     IS DISTINCT FROM 'LeaveRequests_a_contact_is_short,LeaveRequests_a_contact_is_whole,LeaveRequests_a_referral_has_a_time,LeaveRequests_a_role_decided,LeaveRequests_a_stopped_request_has_no_decider,LeaveRequests_a_year_at_most' THEN
+    RAISE EXCEPTION 'check: the CHECKs on LeaveRequests are not the six, validated';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"LeaveRequests"'::regclass AND tgname = 'LeaveRequests_request_is_fixed' AND tgenabled = 'O') THEN
     RAISE EXCEPTION 'trigger: LeaveRequests_request_is_fixed is not in place';
@@ -20238,6 +20243,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('IntegrationApiKeys', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
   ('KitchenSettings', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('LeaveDelegationDecisions', '{DECIDES}', '{}', '{}', '{}'),
+  ('LeavePolicies', '{DECIDES}', '{DECIDES}', '{}', '{}'),
   ('LeaveRequests', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('LessonLogs', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('LessonPupilMoves', '{}', '{}', '{}', '{}'),

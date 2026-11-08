@@ -4646,6 +4646,21 @@ BEGIN
   INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, m, lst);
 END $$;
 
+-- The matrix school's row for Ledighetspolicyn (20270205091000), so the role matrix
+-- (section 116) has a row of LeavePolicies to copy. All three choices are off, as a school
+-- with no row has them: the matrix school's other tests file leave requests, and a policy
+-- that asked for consent or a minimum would change what they meet. Written once, by the owner.
+DO $$
+DECLARE
+  m uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "LeavePolicies" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  INSERT INTO "LeavePolicies" ("schoolId") VALUES (m);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
