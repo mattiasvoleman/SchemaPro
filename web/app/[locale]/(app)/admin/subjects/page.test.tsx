@@ -547,6 +547,87 @@ describe("ämnesfördelning", () => {
   });
 });
 
+describe("Placeringsregler: Inte första och Inte sista lektionen på dagen", () => {
+  const notFirst = () => screen.getByRole("checkbox", { name: "subject.notFirst" });
+  const notLast = () => screen.getByRole("checkbox", { name: "subject.notLast" });
+
+  it("offers two unticked boxes with their explanation, and sends neither for a new subject", async () => {
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await openCreate(user);
+
+    expect(notFirst()).not.toBeChecked();
+    expect(notLast()).not.toBeChecked();
+    // The sentence that says the rule is switched on under Skolregler is the
+    // boxes' description, so a screen reader reads it with them.
+    expect(screen.getByText("subject.hint")).toHaveAttribute("id", "subject-placement-hint");
+    expect(notFirst()).toHaveAccessibleDescription("subject.hint");
+    expect(notLast()).toHaveAccessibleDescription("subject.hint");
+
+    await user.type(screen.getByLabelText("name"), "Idrott");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    // False is what the column holds; leaving the keys out keeps the save
+    // working against an API from before the rule (it refuses unknown keys).
+    const sent = createMock.mock.calls[0]![0];
+    expect(sent).not.toHaveProperty("notFirstInDay");
+    expect(sent).not.toHaveProperty("notLastInDay");
+  });
+
+  it("sends true for the box that is ticked, and only that one", async () => {
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await openCreate(user);
+
+    await user.type(screen.getByLabelText("name"), "Idrott");
+    await user.click(notLast());
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ name: "Idrott", notLastInDay: true }));
+    expect(createMock.mock.calls[0]![0]).not.toHaveProperty("notFirstInDay");
+  });
+
+  it("opens on the stored markings and sends false for one that is cleared", async () => {
+    state.subjects = [{ ...subject("s-1", "Idrott", "IDH"), notFirstInDay: true, notLastInDay: true }];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Idrott)" }));
+
+    expect(notFirst()).toBeChecked();
+    expect(notLast()).toBeChecked();
+
+    await user.click(notFirst());
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ id: "s-1", notFirstInDay: false }));
+    expect(updateMock.mock.calls[0]![0]).not.toHaveProperty("notLastInDay");
+  });
+
+  it("saves an unrelated edit of a marked subject without touching the markings", async () => {
+    state.subjects = [{ ...subject("s-1", "Idrott", "IDH"), notFirstInDay: true }];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Idrott)" }));
+    await user.type(screen.getByLabelText("name"), "!");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(updateMock.mock.calls[0]![0]).not.toHaveProperty("notFirstInDay");
+    expect(updateMock.mock.calls[0]![0]).not.toHaveProperty("notLastInDay");
+  });
+
+  it("starts a new subject unticked again after editing a marked one", async () => {
+    state.subjects = [{ ...subject("s-1", "Idrott", "IDH"), notFirstInDay: true }];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Idrott)" }));
+    expect(notFirst()).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+
+    await openCreate(user);
+    expect(notFirst()).not.toBeChecked();
+  });
+});
+
 describe("Läsbehörighet: the controls that write are marked with planering", () => {
   // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
   // profile that does not write it; the subjects controller's @Area.

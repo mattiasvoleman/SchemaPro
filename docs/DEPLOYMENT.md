@@ -2510,6 +2510,76 @@ Walk the full product loop once, in order:
   candidates are swept after a week; a school that has not used the mode has
   none. The columns can stay through a rollback.
 
+- **Placeringsregler**: 20270126090000 adds the enum `PlacementRuleMode`
+  (`OFF`, `SOFT`, `HARD`) and thirteen columns, all with a default and none
+  with a rewrite: on `LunchSettings` (the Skolregler row) the mode and the
+  weight of each of three rules (`placementEdgeMode`/`placementEdgeWeight`,
+  `placementPlacesMode`/`placementPlacesWeight`,
+  `placementSharedMode`/`placementSharedWeight`: OFF, 250) and the four limits
+  of the second (`maxClassRoomsPerDay`, `maxTeacherRoomsPerDay`,
+  `maxClassBuildingsPerDay`, `maxTeacherBuildingsPerDay`: null);
+  on `Subjects` `notFirstInDay` and `notLastInDay`, and on `Rooms`
+  `canBeShared` (false). Ten CHECKs, each named `LunchSettings_…_check`: a
+  weight is 1 to 1000, a limit 1 to 20 or null (rule 2 is "at most N different room groups and buildings a day", 1 being a single one, not a count of changes), and rule 2 that is on
+  has at least one limit (`…_placementPlaces_needs_a_limit_check`; the API
+  says so first, a 400 with the code `PLACEMENT_PLACES_NEEDS_A_LIMIT`).
+  **Only rule 3 (Delade salar) is offered HARD**: rules 1 and 2 are OFF or
+  SOFT until a hard one is measured (a hard rule 1 cost 4.5 times the first
+  timetable, a hard rule 2 2.8 to 3.6 times with eight workers, 9 with one,
+  against a production limit of 60 s at the floor). The two last CHECKs say
+  so (`LunchSettings_placementEdgeMode_off_or_soft_check` and
+  `LunchSettings_placementPlacesMode_off_or_soft_check`), because the
+  Skolregler row is also written by a school's administrator straight against
+  PostgREST and a stored HARD would go to the engine and lock the card; the
+  API refuses a request that names HARD for them (400, the codes
+  `PLACEMENT_EDGE_HARD_NOT_OFFERED` and `PLACEMENT_PLACES_HARD_NOT_OFFERED`),
+  the gateway reads a stored one as SOFT in any case, and the engine still
+  builds all six. Offering a hard rule 1 or 2 later is dropping its CHECK, a
+  migration of its own, with the card and the API. No new
+  table, so no arm, no GRANT and nothing in the role matrix moves (RLS
+  sections 415 to 419 hold it, role by role, as the API's role and as
+  PostgREST's). **All three rules are OFF for every school until that school
+  turns them on**: the migration turns nothing on and changes no row, and an
+  OFF rule sends the engine nothing, so the payload, the model and the answer
+  are the ones a school without the rules gets, byte for byte. The migration
+  takes ACCESS EXCLUSIVE on `LunchSettings`, `Subjects` and `Rooms`, NOWAIT
+  and together in a loop (20270125090000, Bästa möjliga schema, takes
+  `LunchSettings` the same way and runs first; the two never wait for each
+  other) (the generator reads all three, in no fixed order, at
+  the start of every run), so it never waits while it holds one; if the three
+  are not free at once in 30 s it stops with nothing changed (`prisma migrate
+  resolve --rolled-back
+  20270126090000_tre_placeringsregler_som_ar_avstangda_tills_skolan_slar_pa_dem`,
+  then deploy again). The API before the release names none of the columns: its
+  upsert of the Skolregler, its creates and updates of subjects and rooms and
+  the CSV import leave them as they are or read the defaults (RLS section
+  419). **The order is the migration, then the merge (API and engine from one
+  merge), then the web**: a web ahead of the API sends fields the old API
+  refuses (400). The engine's new fields are optional and are sent only for a
+  school with a rule on, which none has until it turns one on after the
+  deploy. The SS12000 providers emit nothing new (a mark moves no `meta.modified`).
+  **Rolling back:** the columns can stay, nothing before the release reads
+  them. The engine before the release refuses `placementRules`, a room's
+  `building` or `shareable` and a lock's `studentCount` (its request models
+  are `extra="forbid"`: 422), so once a school has a rule on, an engine rolled
+  back alone fails that school's Generera and schemaförslag. Roll the API back
+  first, or with the engine; if the API must stay, switch the rules off for
+  every school before the engine goes back (`UPDATE "LunchSettings" SET
+  "placementEdgeMode" = 'OFF', "placementPlacesMode" = 'OFF',
+  "placementSharedMode" = 'OFF' WHERE "placementEdgeMode" <> 'OFF' OR
+  "placementPlacesMode" <> 'OFF' OR "placementSharedMode" <> 'OFF';`, as the
+  owner) and tell the schools it was. Which schools have a rule on: `SELECT
+  "schoolId", "placementEdgeMode", "placementPlacesMode",
+  "placementSharedMode" FROM "LunchSettings" WHERE "placementEdgeMode" <> 'OFF'
+  OR "placementPlacesMode" <> 'OFF' OR "placementSharedMode" <> 'OFF';`.
+  Before the migration the thirteen columns are absent from
+  `information_schema.columns`; after it `SELECT count(*) FROM "LunchSettings"
+  WHERE "placementEdgeMode" <> 'OFF' OR "placementPlacesMode" <> 'OFF' OR
+  "placementSharedMode" <> 'OFF'`, `SELECT count(*) FROM "Subjects" WHERE
+  "notFirstInDay" OR "notLastInDay"` and `SELECT count(*) FROM "Rooms" WHERE
+  "canBeShared"` are all 0, and so is `SELECT count(*) FROM "LunchSettings"
+  WHERE "placementEdgeMode" = 'HARD' OR "placementPlacesMode" = 'HARD'` (the
+  two CHECKs keep it so).
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

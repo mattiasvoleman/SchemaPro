@@ -26,7 +26,13 @@ was tried against the same three questions before it went in:
 NEVER, IN EITHER MODE (HARD_RULES): a teacher, class, pupil or room booked
 twice; a lesson outside the school's frame times; the walk between two sites.
 They are what makes a timetable a timetable and not a wish list; no price, however
-high, makes "Anna in two rooms at once" something a school can accept. The
+high, makes "Anna in two rooms at once" something a school can accept. A school's
+HARD placement rule is one of them too: of Placeringsregler only rule 3, the
+pupils of a shared room within its capacity, can be HARD (rules 1 and 2 are OFF
+or SOFT, by CHECK, until a hard one is measured), a physical limit and not a
+taste, so it is not on the list below and `strip()` leaves it in. A SOFT
+placement rule is a price in the soft objective in both modes and is counted
+nowhere here: it is not a deviation, and the mode neither prices nor drops it. The
 teacher's own lunch and night's rest are hard too: they are the working-time
 law's, not the school's taste, and the same goes for a teacher marked
 unavailable (another employer, a leave): unavailable is a fact and not a wish.
@@ -182,6 +188,7 @@ HARD_RULES: tuple[str, ...] = (
     "A requirement's own room type, capacity and years",
     "Lunch, the dining hall and the rasts",
     "Lesson lengths and lessons per week",
+    "The pupils of a shared room within its capacity, when the school holds Delade salar HARD (Placeringsregler, rule 3)",
     "A parallel block's shared start",
     "The group's own daily cap (maxLessonsPerDayPerGroup)",
 )

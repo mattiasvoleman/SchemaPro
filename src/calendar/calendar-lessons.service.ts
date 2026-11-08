@@ -37,6 +37,7 @@ import { readSiteMap, travelBreaches } from '../common/site-travel';
 import { coverEmail, coverMeta, withdrawnEmail, withdrawnMeta, type NoticeLesson } from '../cover/cover-notices';
 import { substituteNotedLessons } from '../lesson-log/substitute-noted';
 import { scopeOf } from './lesson-roster';
+import { sharedRoomTakes } from './shared-room-day';
 import { lessonEmail, type LessonNoticeType } from './lesson-notices';
 import type {
   AssignSubstituteDto,
@@ -753,7 +754,13 @@ export class CalendarLessonsService {
           },
           select: { id: true },
         });
-        if (clash) {
+        // A lesson already there is no clash when the room is a shared one
+        // (Delade salar) that holds both classes' pupils; asked only now that
+        // one was found, so a free room costs nothing more.
+        if (
+          clash &&
+          !(await sharedRoomTakes(tx, lesson.schoolId, id, dto.roomId, lesson.startsAt, lesson.endsAt))
+        ) {
           throw new ConflictException(
             'That room is already booked by another lesson at this time.',
           );

@@ -47,10 +47,13 @@ import { requirementName } from '../optimization/optimization-proxy.service';
 import { BLOCK_SPLIT, blockMoveOf, readLessonBlock, sameSlot, type BlockSlot } from './block-lessons';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { groupsOfPupils, halfPairs, type GroupHalf } from '../common/class-halves';
+import { crowdedWith } from '../common/shared-rooms';
+import { readSharedMode, readSharedSeats } from '../common/shared-rooms.reader';
 import {
   keptByOf,
   keysShare,
   leavesLesson,
+  lessonPupils,
   pupilKeysOf,
   replacedPupils,
   replacedSubjectOf,
@@ -2470,6 +2473,55 @@ export class MasterLessonsService {
     const halvesPair = (a: string, b: string): boolean =>
       halfPairKeys.has(a < b ? `${a}:${b}` : `${b}:${a}`);
 
+    /**
+     * Delade salar (Placeringsregel 3, common/shared-rooms.ts): the lessons in
+     * the candidate's room that the room cannot hold together with it, by id.
+     * Null is a room that holds one lesson at a time, which is every room until
+     * the school marks one, gives it a capacity and turns the rule on: every
+     * lesson standing in it at the same time then clashes, as before.
+     *
+     * Asked of the candidate and ALL the lessons in the room beside it at once,
+     * never pair by pair, because two classes can fit a hall that three do not.
+     * Read only when a lesson is already in the room at the same hour, so a
+     * save that clashes with no room asks the database nothing more.
+     */
+    const roomMates = candidate.roomId
+      ? clashing.filter(
+          (other) =>
+            other.roomId === candidate.roomId &&
+            toMinutes(other.startTime) < candidate.endMinutes &&
+            candidate.startMinutes < toMinutes(other.endTime),
+        )
+      : [];
+    let roomCrowded: ReadonlySet<string> | null = null;
+    if (candidate.roomId && roomMates.length > 0) {
+      const seats = await this.seatsOfRoom(tx, lesson.academicYearId, candidate.roomId, reads);
+      if (seats !== null) {
+        const pupilsOfLesson = (groups: Iterable<string>, subjectId: string, named: Iterable<string>): Set<string> =>
+          new Set(lessonPupils({ ...scopeOf(groups, subjectId), named: [...named] }, membersOf, replacingOf).on);
+        const crowded = crowdedWith(
+          seats,
+          {
+            start: candidate.startMinutes,
+            end: candidate.endMinutes,
+            recurrence: candidateWeeks.recurrence,
+            pupils: pupilsOfLesson(candidateGroups, lesson.subjectId, candidateStudents),
+          },
+          roomMates.map((other) => ({
+            start: toMinutes(other.startTime),
+            end: toMinutes(other.endTime),
+            recurrence: other.recurrence,
+            pupils: pupilsOfLesson(
+              groupsAttending(other),
+              other.subjectId,
+              other.participants.map((entry) => entry.studentId),
+            ),
+          })),
+        );
+        roomCrowded = new Set([...crowded].map((index) => roomMates[index]!.id));
+      }
+    }
+
     for (const other of clashing) {
       /**
        * The EXACT half-open test the check has always used, and the ONLY test
@@ -2528,7 +2580,12 @@ export class MasterLessonsService {
           masterLessonId: other.id,
         });
       }
-      if (shareTheClock && candidate.roomId && other.roomId === candidate.roomId) {
+      if (
+        shareTheClock &&
+        candidate.roomId &&
+        other.roomId === candidate.roomId &&
+        (roomCrowded === null || roomCrowded.has(other.id))
+      ) {
         conflicts.push({
           kind: 'ROOM',
           message: `Room is already booked for ${other.subject.name} in this slot.`,
@@ -2710,6 +2767,28 @@ export class MasterLessonsService {
     }
 
     return conflicts;
+  }
+
+  /**
+   * The seats a room can be shared under, or null when it is exclusive
+   * (common/shared-rooms.ts): the school's Skolregler hold the rule off (the
+   * default), the room is not marked shareable, or it has no capacity. An
+   * import answers both reads once for the whole file (`reads`).
+   */
+  private async seatsOfRoom(
+    tx: PrismaClient,
+    academicYearId: string,
+    roomId: string,
+    reads: ConflictReads | null,
+  ): Promise<number | null> {
+    const mode = reads
+      ? await reads.once(`sharedMode|${academicYearId}`, () => readSharedMode(tx, { academicYearId }))
+      : await readSharedMode(tx, { academicYearId });
+    if (mode === 'OFF') return null;
+    const seats = reads
+      ? await reads.once(`sharedSeats|${academicYearId}|${roomId}`, () => readSharedSeats(tx, mode, [roomId]))
+      : await readSharedSeats(tx, mode, [roomId]);
+    return seats.get(roomId) ?? null;
   }
 
   /**

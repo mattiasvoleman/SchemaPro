@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TimetablePage from "./page";
@@ -47,6 +47,8 @@ const state = vi.hoisted(() => ({
   /** GROUPS and PEOPLE unless a row adds to them; null between tests. */
   groups: null as unknown[] | null,
   people: null as unknown[] | null,
+  /** ROOMS unless a row brings its own; null between tests. */
+  rooms: null as unknown[] | null,
 }));
 
 /*
@@ -146,7 +148,7 @@ vi.mock("@/lib/queries", () => ({
   },
   useGroups: () => ({ data: state.groups ?? GROUPS }),
   usePeople: () => ({ data: state.people ?? PEOPLE }),
-  useRooms: () => ({ data: ROOMS }),
+  useRooms: () => ({ data: state.rooms ?? ROOMS }),
   useSubjects: () => ({ data: SUBJECTS }),
   useRequirements: (yearId: string | null) => {
     state.askedFor.requirements = yearId;
@@ -561,6 +563,7 @@ beforeEach(() => {
   state.requirements = [];
   state.groups = null;
   state.people = null;
+  state.rooms = null;
   planning.successor = null;
   planning.rosters = null;
 });
@@ -2387,6 +2390,87 @@ describe("the room optimisation", () => {
 
     const list = await screen.findByRole("list", { name: "roomOptimization.mostImproved" });
     expect(list).toHaveTextContent("Nils Berg");
+  });
+});
+
+/*
+ * Delade salar (Placeringsregel 3). Two lessons stand in the hall on Monday at
+ * 08:00 with a teacher each: Matematik for g-ma1 (Alva, Bo, Eva) and Slöjd for
+ * g-ma2 (Cim, Dag), five pupils in all. Whether the board draws them as a
+ * double booking is the school's rule, the room's mark and its capacity. The
+ * check is fetched on demand once the rule is on, so each test lets it arrive
+ * before it reads the board.
+ */
+describe("a room the school lets several groups use at once", () => {
+  const hall = (overrides: Record<string, unknown> = {}) => ({
+    id: "r-hall",
+    name: "Hallen",
+    capacity: 5,
+    canBeShared: true,
+    ...overrides,
+  });
+  const arrange = (mode: string | undefined, room: Record<string, unknown> = hall()) => {
+    state.rooms = [room];
+    state.lunchSettings = { id: "ls-1", lunchEnabled: false, placementSharedMode: mode };
+    state.lessons = [
+      lesson("l-hall-ma", "s-ma", "g-ma1", "08:00", { roomId: "r-hall" }),
+      lesson("l-hall-sl", "s-sl", "g-ma2", "08:00", { roomId: "r-hall", teacherId: "t-2" }),
+    ];
+  };
+  const ringed = (subject: string) =>
+    screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes(subject))
+      ?.className.includes("ring-destructive") ?? false;
+  /** The page has had the time to fetch the check and lay it on the board. */
+  const arrived = () =>
+    act(async () => {
+      await import("@/lib/shared-rooms-board");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+  it("draws no clash while the pupils together fit the hall", async () => {
+    arrange("HARD");
+    render(<TimetablePage />);
+    await arrived();
+    await waitFor(() => expect(ringed("Matematik")).toBe(false));
+    expect(ringed("Slöjd")).toBe(false);
+  });
+
+  it("draws the clash when they do not, and when the hall has no capacity to share under", async () => {
+    arrange("SOFT", hall({ capacity: 4 }));
+    render(<TimetablePage />);
+    await arrived();
+    expect(ringed("Matematik")).toBe(true);
+    expect(ringed("Slöjd")).toBe(true);
+    cleanup();
+    arrange("SOFT", hall({ capacity: null }));
+    render(<TimetablePage />);
+    await arrived();
+    expect(ringed("Matematik")).toBe(true);
+  });
+
+  it("draws the clash as before with the rule off, never written, or the hall not marked", async () => {
+    for (const [mode, room] of [
+      ["OFF", hall()],
+      [undefined, hall()],
+      ["HARD", hall({ canBeShared: false })],
+    ] as const) {
+      cleanup();
+      arrange(mode, { ...room });
+      render(<TimetablePage />);
+      await arrived();
+      expect(ringed("Matematik")).toBe(true);
+      expect(ringed("Slöjd")).toBe(true);
+    }
+  });
+
+  it("draws the clash while the class lists are still on their way: no seat is promised on a guess", async () => {
+    arrange("HARD");
+    state.memberships = undefined;
+    render(<TimetablePage />);
+    await arrived();
+    expect(ringed("Matematik")).toBe(true);
   });
 });
 

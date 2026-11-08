@@ -211,6 +211,32 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Placeringsregler (G3): what a SOFT rule pays when the school's request
+    # carries no weight of its own (the gateway always sends one, 250 unless the
+    # school changed it). Per lesson at an end of the class's day it should not
+    # be at (subject edges), per place beyond the limit a party stands in on a
+    # day (place limits), per pupil above a shared room's capacity at its
+    # worst moment of the week (shared rooms). The same scale and the same
+    # reasoning as sammanhängande undervisning's: a rule the school wrote down
+    # outweighs a taste (spread 3, a room wish 5, a free day 40), and the
+    # search needs the gradient to find it in the time it has. Measured on the
+    # högstadium school: docs/verification-baseline.md.
+    weight_subject_edge: int = Field(
+        default=250,
+        alias="WEIGHT_SUBJECT_EDGE",
+        description="Penalty per lesson of a flagged subject at an end of the class's day.",
+    )
+    weight_place_limit: int = Field(
+        default=250,
+        alias="WEIGHT_PLACE_LIMIT",
+        description="Penalty per room group or building a class or teacher stands in beyond their daily limit of different ones.",
+    )
+    weight_shared_room: int = Field(
+        default=250,
+        alias="WEIGHT_SHARED_ROOM",
+        description="Penalty per pupil above a shared room's capacity at its busiest moment of the week.",
+    )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def allowed_origins(self) -> list[str]:

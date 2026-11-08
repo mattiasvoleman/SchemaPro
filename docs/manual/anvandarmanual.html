@@ -4285,8 +4285,15 @@
     <li>lunch, matsal och raster,</li>
     <li>rummets typ, antal platser och årskurser som en timplanspost kräver,</li>
     <li>lektionernas längd och antalet lektioner per vecka,</li>
+    <li>elevantalet i en delad sal mot salens kapacitet, när regeln
+      <span class="ui">Delade salar</span> är satt till Hård (5.1),</li>
     <li>parallella blocks gemensamma start, och gruppens eget tak per dag.</li>
   </ul>
+  <p>
+    De andra två placeringsreglerna (5.1) kan bara vara Av eller Mjuka, och en
+    mjuk placeringsregel är ett önskemål som betalas som förut också i det här
+    läget: den räknas inte som ett avsteg och står inte i listan.
+  </p>
   <div class="note">
     <span class="label">Tjänstens dagar är en HR-uppgift</span>
     <p>
@@ -4316,6 +4323,104 @@
       från sidans. Siffran på sidan räknas alltid efter sidans regler.
     </p>
   </div>
+  <p>
+    <strong>Placeringsregler.</strong> Tre regler om var lektionerna hamnar på
+    dagen och i vilka salar sätts under <span class="ui">Placeringsregler</span>
+    bland skolreglerna. Varje regel är <span class="ui">Av</span> tills skolan
+    slår på den, och en skola som låter alla tre vara av får precis samma
+    schema som förut. Varje regel kan vara <span class="ui">Mjuk</span>, och
+    <em>Delade salar</em> kan också vara <span class="ui">Hård</span>;
+    <em>Inte först eller sist på dagen</em> och <em>Salar och byggnader per
+    dag</em> är bara <span class="ui">Av</span> eller
+    <span class="ui">Mjuk</span> (se nedan). En mjuk regel är ett önskemål med
+    en vikt (1–1000, förval 250) som genereringen väger mot allt annat: den
+    försöker hålla regeln men vägrar aldrig för att den inte gick, och sätter du
+    vikten lågt vinner de andra önskemålen. En hård regel är ett krav: går den
+    inte att hålla tillsammans med resten av reglerna går veckan inte att
+    lägga, och genereringen vägrar och skriver ut vilken regel det är. Räknar
+    genereringen ut i förväg att regeln inte kan hållas, till exempel att en
+    låst lektion har fler elever än salen den är låst i rymmer, vägrar den
+    direkt och säger det.
+  </p>
+  <p>
+    <em>Inte först eller sist på dagen.</em> Markera under
+    <span class="ui">Ämnen</span> vilka ämnen som inte ska vara klassens första
+    lektion på dagen, inte den sista, eller varken eller: idrott är det vanliga
+    exemplet. Klassens dag är alla lektioner som klassens elever sitter, alltså
+    klassens egna, undervisningsgruppernas och halvornas, och de lektioner ni
+    har låst. En lektion ligger först när ingen sådan lektion börjar tidigare
+    samma dag och sist när ingen slutar senare; en lektion som börjar samtidigt
+    med en annan är först bredvid den. Går ett ämne udda eller jämna veckor
+    gäller regeln i varje vecka lektionen går. En grupp som bara några av
+    klassens elever sitter räknas som en lektion före eller efter, så för de
+    övriga eleverna kan ämnet ändå komma först; när en språkvalsgrupp täcker
+    hela årskursen blir det rätt.
+  </p>
+  <p>
+    Den här regeln kan ännu inte vara <span class="ui">Hård</span>: valet finns
+    inte bland skolreglerna. Mätningen på högstadiets testskola visade att en
+    hård regel gör att genereringen behöver flera gånger så lång tid för sitt
+    första schema (4,5 gånger med åtta arbetare), och en generering som tar så
+    mycket längre tid riskerar att inte bli klar inom tidsgränsen. Välj
+    <span class="ui">Mjuk</span> med en hög vikt om ämnet verkligen ska hållas;
+    regeln är då ett önskemål som genereringen försöker hålla, och som den
+    aldrig vägrar schemat för. Hård erbjuds först när den är mätt på en stor
+    skola. Samma sak gäller <em>Salar och byggnader per dag</em> nedan.
+  </p>
+  <p>
+    <em>Salar och byggnader per dag.</em> Högst så många <em>olika</em>
+    salsgrupper och byggnader per dag, för en klass och för en lärare var för
+    sig. Lämnar du en gräns tom gäller ingen gräns, och 1 betyder en enda hela
+    dagen. Byggnad är salens uppgift <span class="ui">Byggnad</span> under
+    <span class="ui">Salar</span>; salar utan byggnad räknas som samma byggnad.
+    Skolområdet och dess restid är en egen regel. Lika salar av samma typ,
+    storlek och årskurser räknas som en sal, och genereringen låter en klass
+    eller lärare behålla sin sal i gruppen när den är ledig. Vill du jämna ut
+    resten kör du <span class="ui">Salsoptimering</span> efteråt (5.4). Klassen
+    räknas på den grupps egna lektioner, inte på undervisningsgrupperna eleverna
+    också går i.
+  </p>
+  <p>
+    Den här regeln kan inte heller vara <span class="ui">Hård</span> ännu.
+    Mätningen på högstadiets testskola visade att en hård regel behöver 2,8 till
+    3,6 gånger så lång tid för det första schemat med åtta arbetare (9 gånger
+    med en), att tiden för att därefter förbättra schemat med en hård regel inte
+    är mätt, och att den mjuka regeln höll alla gränser i mätningen (0 dagar
+    över) inom den tidsgräns som genereringen har att hålla. En hård gräns
+    skulle alltså ge en garanti och ett vägrat schema med namn, men inget
+    bättre schema. Välj
+    <span class="ui">Mjuk</span> och en gräns; ange alltid minst en gräns, annars
+    har regeln inget att hålla. Hård erbjuds först när den är mätt på en stor
+    skola.
+  </p>
+  <p>
+    Regeln räknar hur många olika platser en klass eller lärare är på under
+    dagen, inte byten mellan två grannlektioner. En dag som går A–B–A är två
+    byggnader, och A–B–A–B är det också, fast det är tre byten. Det är en
+    medveten avgränsning: att räkna byten kräver lektionernas ordning och gör
+    modellen flera gånger större. Mätningen på högstadiets testskola visar
+    skillnaden, och 1 är den gräns som inte kan bytas ut mot något annat.
+  </p>
+  <p>
+    <em>Delade salar.</em> En sal som ni markerar <span class="ui">Kan delas av
+    flera grupper samtidigt</span> under <span class="ui">Salar</span> får ha
+    flera lektioner samtidigt, så länge elevernas antal tillsammans ryms i salens
+    kapacitet. Salen måste ha en kapacitet. Hård: antalet i salen överstiger
+    aldrig kapaciteten. Mjuk: kapaciteten får överskridas, och vikten betalas per
+    elev över kapaciteten vid salens värsta ögonblick under veckan. Låsta
+    lektioner i en delad sal tar sina elevers platser, inte hela salen, och
+    en låst lektion som är större än salen vägras vid hård regel. Kontrollerna
+    bredvid genereringen räknar likadant: två lektioner i samma sal samtidigt är
+    ingen salkrock när deras elever tillsammans ryms i salens kapacitet. Det
+    gäller handredigeringen och importen, kontrollen före publicering, de röda
+    markeringarna på schemat och de dagsvisa ändringarna av sal. Mjuk och hård
+    regel läses likadant där, eftersom en kapacitet ni skrivit in är en gräns ni
+    vill få veta när den överskrids. Är elevantalet i en av lektionerna okänt,
+    till exempel för att klassen ännu inte har någon klasslista, är det kvar som
+    en krock, och en rumsbokning håller alltid hela salen. Lärare, klass och
+    delade elever krockar som förut. Alla andra salar, och alla salar när regeln
+    är <span class="ui">Av</span>, har en lektion åt gången, som förut.
+  </p>
   <p>
     <strong>Optimeringsprofilen</strong> är mjuka önskemål. De kan väga mot
     varandra: ju högre värde, desto viktigare. Motorn hittar den bästa

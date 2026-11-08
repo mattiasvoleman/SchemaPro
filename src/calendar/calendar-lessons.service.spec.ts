@@ -1447,6 +1447,109 @@ describe('CalendarLessonsService', () => {
       expect(tx.calendarLesson.update).not.toHaveBeenCalled();
     });
 
+    describe('a shared room (Delade salar)', () => {
+      // The lesson (GROUP_ID, two pupils) moves into NEW_ROOM_ID, where another
+      // class (two pupils) already stands at the same hour.
+      const OTHER_ID = 'other-lesson';
+      const OTHER_GROUP = '99999999-9999-4999-8999-999999999991';
+      const arrangeShared = (
+        mode: 'OFF' | 'SOFT' | 'HARD' | null,
+        room: { canBeShared: boolean; capacity: number | null } | null,
+        pupils: Array<{ id: string; studentGroupId: string }> = [
+          { id: 'a1', studentGroupId: GROUP_ID },
+          { id: 'a2', studentGroupId: GROUP_ID },
+          { id: 'b1', studentGroupId: OTHER_GROUP },
+          { id: 'b2', studentGroupId: OTHER_GROUP },
+        ],
+      ) => {
+        arrangeMove();
+        tx.calendarLesson.findFirst.mockResolvedValue({ id: OTHER_ID });
+        tx.lunchSetting.findUnique.mockResolvedValue(mode === null ? null : { placementSharedMode: mode });
+        tx.room.findMany.mockImplementation((query: Query = {}) =>
+          Promise.resolve(room !== null && query.where?.canBeShared ? [{ id: NEW_ROOM_ID, ...room }] : []),
+        );
+        const lessonRow = (id: string, studentGroupId: string) => ({
+          id,
+          startsAt: STARTS_AT,
+          endsAt: ENDS_AT,
+          subjectId: SUBJECT_ID,
+          studentGroupId,
+          extraGroups: [],
+        });
+        tx.calendarLesson.findMany.mockResolvedValue([lessonRow(LESSON_ID, GROUP_ID), lessonRow(OTHER_ID, OTHER_GROUP)]);
+        tx.user.findMany.mockImplementation((query: Query = {}) =>
+          Promise.resolve(pupils.filter((pupil) => query.where?.studentGroupId?.in?.includes(pupil.studentGroupId))),
+        );
+      };
+      const REFUSED = 'That room is already booked by another lesson at this time.';
+
+      it('moves the lesson into a room that holds both classes’ pupils', async () => {
+        arrangeShared('HARD', { canBeShared: true, capacity: 4 });
+
+        await expect(service.changeRoom(LESSON_ID, { roomId: NEW_ROOM_ID }, testUser())).resolves.toEqual({
+          id: LESSON_ID,
+          status: 'SCHEDULED',
+          note: null,
+        });
+        expect(tx.lunchSetting.findUnique).toHaveBeenCalledWith({
+          where: { schoolId: SCHOOL_ID },
+          select: { placementSharedMode: true },
+        });
+        // The lesson itself and the others in the room over its hours, in one read.
+        expect(tx.calendarLesson.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              OR: [
+                { id: LESSON_ID },
+                {
+                  id: { not: LESSON_ID },
+                  status: 'SCHEDULED',
+                  roomId: NEW_ROOM_ID,
+                  startsAt: { lt: ENDS_AT },
+                  endsAt: { gt: STARTS_AT },
+                },
+              ],
+            },
+          }),
+        );
+      });
+
+      it('refuses it when their pupils together do not fit', async () => {
+        arrangeShared('SOFT', { canBeShared: true, capacity: 3 });
+
+        await expect(service.changeRoom(LESSON_ID, { roomId: NEW_ROOM_ID }, testUser())).rejects.toThrow(REFUSED);
+        expect(tx.calendarLesson.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses it as before for a room not marked, without a capacity, or with the rule off or never written', async () => {
+        for (const [mode, room] of [
+          ['HARD', null],
+          ['HARD', { canBeShared: true, capacity: null }],
+          ['OFF', { canBeShared: true, capacity: 100 }],
+          [null, { canBeShared: true, capacity: 100 }],
+        ] as const) {
+          arrangeShared(mode, room);
+          await expect(service.changeRoom(LESSON_ID, { roomId: NEW_ROOM_ID }, testUser())).rejects.toThrow(REFUSED);
+        }
+        expect(tx.calendarLesson.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses it while the pupils of a class are unknown: no seat is promised on a guess', async () => {
+        arrangeShared('HARD', { canBeShared: true, capacity: 100 }, [{ id: 'a1', studentGroupId: GROUP_ID }]);
+
+        await expect(service.changeRoom(LESSON_ID, { roomId: NEW_ROOM_ID }, testUser())).rejects.toThrow(REFUSED);
+      });
+
+      it('still refuses a room an approved booking holds, whatever the seats', async () => {
+        arrangeShared('HARD', { canBeShared: true, capacity: 100 });
+        tx.roomBooking.findFirst.mockResolvedValue({ id: 'approved-booking' });
+
+        await expect(service.changeRoom(LESSON_ID, { roomId: NEW_ROOM_ID }, testUser())).rejects.toThrow(
+          'That room is reserved by an approved booking at this time.',
+        );
+      });
+    });
+
     it('rejects a room reserved by an approved self-service booking', async () => {
       arrangeMove();
       tx.roomBooking.findFirst.mockResolvedValue({ id: 'approved-booking' });

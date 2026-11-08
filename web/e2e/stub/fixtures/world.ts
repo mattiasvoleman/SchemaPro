@@ -157,7 +157,8 @@ export const ROOMS = {
   r101: room(1, "Sal 101", "101", 30, 1),
   r102: room(2, "Sal 102", "102", 30, 1),
   r201: room(3, "Sal 201", "201", 28, 1, { floor: 2 }),
-  gym: room(4, "Idrottshallen", "IH", 60, 2, { building: "Hus B", floor: 0 }),
+  // Shared by several groups at once (Placeringsregler, Delade salar).
+  gym: room(4, "Idrottshallen", "IH", 60, 2, { building: "Hus B", floor: 0, canBeShared: true }),
   lab: room(5, "NO-salen", "NO1", 28, 3, { floor: 2 }),
   art: room(6, "Bildsalen", "BL", 24, 4, { requiresApproval: true }),
 };
@@ -188,11 +189,16 @@ const subject = (
 
 export const SUBJECTS = {
   sv: subject(1, "Svenska", "SV", "#2563eb", "SV_SVA"),
-  ma: subject(2, "Matematik", "MA", "#dc2626", "MA", { maxLessonsPerDay: 1 }),
+  // Kept off the last lesson of a class's day (Placeringsregler).
+  ma: subject(2, "Matematik", "MA", "#dc2626", "MA", { maxLessonsPerDay: 1, notLastInDay: true }),
   en: subject(3, "Engelska", "EN", "#16a34a", "EN"),
   no: subject(4, "Biologi", "BI", "#0d9488", "BI", { requiredRoomTypeId: uid(KIND.roomType, 3) }),
   so: subject(5, "Historia", "HI", "#9333ea", "HI"),
-  idh: subject(6, "Idrott och hälsa", "IDH", "#ea580c", "IDH", { requiredRoomTypeId: uid(KIND.roomType, 2) }),
+  idh: subject(6, "Idrott och hälsa", "IDH", "#ea580c", "IDH", {
+    requiredRoomTypeId: uid(KIND.roomType, 2),
+    // Kept off the first lesson of a class's day (Placeringsregler).
+    notFirstInDay: true,
+  }),
   bl: subject(7, "Bild", "BL", "#db2777", "BL", { requiredRoomTypeId: uid(KIND.roomType, 4) }),
   m2: subject(8, "Moderna språk", "M2", "#ca8a04", "M2"),
   mentor: subject(9, "Mentorstid", "MEN", "#64748b", null, { countsTowardTimplan: false }),

@@ -3028,6 +3028,86 @@
   "grades": {
     "grade": "{grade, plural, =0 {Reception} other {Year #}}"
   },
+  "placementRules": {
+    "title": "Placement rules",
+    "intro": "Three rules for where lessons land in the day and in which rooms. They apply when Generate lays the timetable, and all three are off until the school turns them on. Each rule can be:",
+    "mode": {
+      "OFF": "Off",
+      "SOFT": "Soft",
+      "HARD": "Hard"
+    },
+    "modeHint": {
+      "OFF": "The rule is not used.",
+      "SOFT": "A wish with a weight, which Generate weighs against the other wishes. Generate tries to keep the rule but never refuses because it did not manage.",
+      "HARD": "A requirement, which only Shared rooms can be for now. If it cannot hold together with the rest of the rules, the timetable cannot be laid: Generate then refuses and prints the reason."
+    },
+    "weight": "Weight",
+    "weightHint": "1–1000. For comparison, a wished-for free day weighs 40 and teaching in a row weighs 250.",
+    "weightInvalid": "Enter a whole number from 1 to 1000.",
+    "edge": {
+      "title": "Not first or last in the day",
+      "hint": "Some subjects should not be a class's first or last lesson of the day. Which ones is marked on the subject itself, under Subjects. A class's day is all the lessons its pupils attend, teaching groups and halves included.",
+      "hardHint": "Hard is not offered for this rule yet: a hard rule can make Generate take much longer, and it has not been measured on a large school. Choose Off or Soft.",
+      "count": "{count, plural, =0 {No subject is marked yet.} one {# subject is marked.} other {# subjects are marked.}}",
+      "link": "Mark subjects"
+    },
+    "places": {
+      "title": "Rooms and buildings per day",
+      "hint": "At most this many different buildings and rooms a day, for a class and for a teacher separately. 1 means a single one all day. Building is the room's own Building field under Rooms; rooms without a building count as the same building. Equal rooms of the same type, size and year levels count as one room. The rule counts how many different ones are visited, not in what order: a day that goes A–B–A counts as two buildings. A class is counted on its own group's lessons.",
+      "hardHint": "Hard is not offered for this rule yet: a hard rule can make Generate take much longer, and it has not been measured on a large school. Soft kept the limits in the measurement. Choose Off or Soft."
+    },
+    "limit": {
+      "classRoom": "The class's different rooms per day",
+      "teacherRoom": "The teacher's different rooms per day",
+      "classBuilding": "The class's different buildings per day",
+      "teacherBuilding": "The teacher's different buildings per day"
+    },
+    "limitPlaceholder": "No limit",
+    "limitsHint": "Leave empty for no limit. 1 means a single one. At most 20.",
+    "limitInvalid": "Enter a whole number from 1 to 20, or leave it empty.",
+    "limitsMissing": "Set at least one limit, or the rule has nothing to hold. Choose Off if you do not want it.",
+    "errors": {
+      "PLACEMENT_EDGE_HARD_NOT_OFFERED": "The rule Not first or last in the day cannot be hard yet. Choose Off or Soft.",
+      "PLACEMENT_PLACES_NEEDS_A_LIMIT": "The rule Rooms and buildings per day needs at least one limit when it is Soft. Set a limit or choose Off.",
+      "PLACEMENT_PLACES_HARD_NOT_OFFERED": "The rule Rooms and buildings per day cannot be hard yet. Choose Off or Soft."
+    },
+    "shared": {
+      "title": "Shared rooms",
+      "hint": "Applies only to rooms marked Can be shared under Rooms. Hard: the number of pupils in the room at once always fits the room's capacity. Soft: the capacity may be exceeded, at a weight per pupil over it.",
+      "weightHint": "1–1000 per pupil over capacity, counted at the room's worst moment. For comparison, a wished-for free day weighs 40 and teaching in a row weighs 250."
+    },
+    "subject": {
+      "legend": "Placement in the day",
+      "hint": "Applies to the class's day, that is all the lessons its pupils attend, teaching groups and halves included. The rules are turned on under School rules, Placement rules; until then the boxes change nothing.",
+      "notFirst": "Not the first lesson of the day",
+      "notLast": "Not the last lesson of the day"
+    },
+    "room": {
+      "canBeShared": "Can be shared by several groups at once",
+      "hint": "The room can have several groups at once, as long as their pupils together fit the room's capacity. Needs the room to have a capacity. Applies only when the Shared rooms rule is on under School rules, Placement rules; otherwise the room holds one group at a time as before.",
+      "needsCapacity": "The room has no capacity set and so is not shared: it holds one group at a time until you set a capacity above."
+    },
+    "summary": {
+      "edge": {
+        "SOFT": "Not first or last in the day: soft, weight {weight}",
+        "HARD": "Not first or last in the day: hard"
+      },
+      "places": {
+        "SOFT": "Rooms and buildings per day: soft, weight {weight} ({limits})",
+        "HARD": "Rooms and buildings per day: hard ({limits})"
+      },
+      "shared": {
+        "SOFT": "Shared rooms: soft, weight {weight}",
+        "HARD": "Shared rooms: hard"
+      },
+      "limit": {
+        "classRoom": "class rooms {count}",
+        "teacherRoom": "teacher rooms {count}",
+        "classBuilding": "class buildings {count}",
+        "teacherBuilding": "teacher buildings {count}"
+      }
+    }
+  },
   "lunch": {
     "title": "Lunch and dining hall",
     "hint": "The solver keeps a lunch break free for every class and staggers the sittings so the dining hall is never over-filled.",
@@ -3070,6 +3150,7 @@
     "bestEffortNeverMeals": "Lunch, the dining hall and the breaks.",
     "bestEffortNeverRooms": "The room type, capacity and school years that a curriculum entry requires.",
     "bestEffortNeverLessons": "Lesson lengths and the number of lessons per week.",
+    "bestEffortNeverShared": "The pupils in a shared room against its capacity, when Shared rooms is set to Hard.",
     "bestEffortNeverGroups": "A parallel block's shared start, and a group's own cap per day (Max lessons per day above).",
     "bestEffortMayTitle": "Can give way, and is then listed as a deviation:",
     "bestEffortMayCap": "A teacher's cap on teaching per day (the working-time rule).",
@@ -3090,7 +3171,10 @@
     "TEACHER_OVERLAP": "Teacher clash",
     "TIMEOUT_PROBE": "Rule that does not fit (measured, not proved)",
     "SUBJECT_DISTRIBUTION": "Subject distribution",
-    "TEACHING_BLOCK": "Parallel blocks"
+    "TEACHING_BLOCK": "Parallel blocks",
+    "PLACEMENT_EDGE": "First and last lesson",
+    "PLACEMENT_PLACES": "Rooms and buildings per day",
+    "SHARED_ROOM": "Shared rooms"
   },
   "gaps": {
     "title": "Gaps and idle time",
@@ -4499,6 +4583,14 @@
     "BLOCK_SAME_TIMES_TEACHERS": "{block} takes the times of {other}, and has more teachers that {other} does not than the entries of {other} have room for beside their own. Give the entries of {block} the teachers of {other}, or take a co-teacher off {other}.",
     "BLOCK_SPLIT": "{block} is split: this lesson has left the rest of the block and now counts as placed by hand. Unless every lesson of the block is locked, the next generation refuses the block as partly locked. Move it back with the block, or lock all of the block's lessons.",
     "TRAVEL_TIME_SHORT": "{party, select, TEACHER {{name}} other {The pupils in {name}}} cannot make it from {from} to {to}: {gap} min between the lessons, and the walk takes {minutes} min ({other} {time}).",
+    "SUBJECT_EDGE_CANNOT_BE_KEPT": "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} other {from closing}} a class's day, and the week cannot hold that for every lesson of it. Give the class lessons of other subjects to {edge, select, FIRST {start} other {end}} the day with, allow the subject at the {edge, select, FIRST {start} other {end}} of the day, or turn the rule to Soft under School rules.",
+    "PLACES_CANNOT_BE_KEPT": "The school rules allow {party, select, class {a class} other {a teacher}} at most {limit, plural, one {# {kind, select, room {kind of room} other {building}}} other {# {kind, select, room {kinds of room} other {buildings}}}} a day, and the week cannot keep that for everyone. Raise the limit, turn the rule to Soft under School rules, or let the lessons use {kind, select, room {fewer kinds of room} other {fewer buildings}}.",
+    "SHARED_ROOM_CANNOT_BE_KEPT": "{room} is shared by several groups at once, and the week cannot place its lessons so that their pupils together fit its seats at every moment. Move a lesson out of the room, raise its capacity, take the shared mark off the room, or turn the rule to Soft under School rules.",
+    "PLACEMENT_EDGE_DAY_TOO_SHORT": "{requirement} cannot be placed: the school rules keep it {edges, select, both {neither first nor last} first {from being first} other {from being last}} in a class's day, which takes at least {needed} lessons that day, and the class has at most {maxPerDay} a day. Allow more lessons a day, or relax the rule for the subject.",
+    "PLACEMENT_EDGE_NO_OTHER_LESSON": "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} other {from closing}} a class's day, but every lesson the class has is of subjects that rule applies to, so one of them would have to {edge, select, FIRST {open} other {close}} it. Give the class a lesson of another subject, or relax the rule.",
+    "PLACEMENT_PLACES_FORCED": "{party, select, class {A class} other {A teacher}} has lessons that can only be in {places, plural, one {# {kind, select, room {kind of room} other {building}}} other {# {kind, select, room {kinds of room} other {buildings}}}}, but the school rules allow at most {limit, plural, one {# {kind, select, room {kind of room} other {building}}} other {# {kind, select, room {kinds of room} other {buildings}}}} in a day, which takes {days, plural, one {# day} other {# days}} and the week has {open, plural, one {# day} other {# days}}. Raise the limit or let the lessons use other rooms.",
+    "SHARED_ROOM_LOCK_OVER_CAPACITY": "A locked lesson in {room} has {pupils, plural, one {# pupil} other {# pupils}}, and the room seats {capacity}. Move the lesson, raise the room's capacity, or turn the rule off or to Soft under School rules.",
+    "SHARED_ROOM_LOCKS_OVER_CAPACITY": "Locked lessons in {room} put {pupils, plural, one {# pupil} other {# pupils}} in it at once, and the room seats {capacity}. Move one of the lessons, raise the room's capacity, or turn the rule off or to Soft under School rules.",
     "TEACHER_LUNCH_WINDOW_TOO_NARROW": "The teacher working-time rule {rule} guarantees a {minutes}-minute lunch inside {windowStart}-{windowEnd}, and that window holds {remaining, plural, one {# minute} other {# minutes}} of the school day. Widen the window, shorten the lunch, or move it inside the hours the school teaches in.",
     "TEACHER_LUNCH_LEAVES_NO_START": "{causes, select, locked {Locked lessons} closed {Reservations on the teacher} locked_closed {Locked lessons and reservations on the teacher} other {These rules}} leave the teacher working-time rule {rule} no {minutes}-minute lunch inside {windowStart}-{windowEnd} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}. Move a locked lesson, shorten the reservation, or widen the window.",
     "TEACHER_REST_LONGER_THAN_THE_NIGHT": "The teacher working-time rule {rule} asks for {restMinutes} minutes between the last lesson of one day and the first of the next, and the longest night this week can give is {nightMinutes} minutes: the teacher's {lessons, plural, one {# lesson} other {# lessons}} cannot all be placed on days that are not next to each other. Shorten the rest, lengthen the school day, or give this teacher fewer lessons.",
@@ -4519,6 +4611,9 @@
     "TEACHER_WEEK_TOO_MANY_DAYS": "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} now teaches on {days} days a week, more than the {max} their post allows.",
     "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN": "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} now teaches on more days a week than their post allows. The days are shown to the principal, a full administrator and anyone with HR read access.",
     "PROBE_SOLVED_WITHOUT_TRAVEL": "With the travel time between the school's sites dropped, a timetable was found in {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_PLACE_LIMITS": "Without the limits on different rooms and buildings a day, a timetable was found in {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_SHARED_ROOMS": "Without the rule that the pupils in a shared room fit its seats, a timetable was found in {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_SUBJECT_EDGES": "Without the rule that keeps subjects from opening or closing a class's day, a timetable was found in {seconds} s.",
     "PROBE_TRAVEL_UNMEASURED": "The travel time between the school's sites is turned on. Searching without it for {seconds} s did not find a timetable either, so whether it is the difference was not measured. A run with it turned off under School rules shows that.",
     "TRAVEL_PROBE_SUMMARY": "No timetable satisfies every rule, and the solver could not name which of them collide. With the travel time between the school's sites dropped a timetable was found in {seconds} s, so it is the travel time below that makes the week impossible.",
     "PUPILS_TRAVEL_CANNOT_BE_KEPT": "The school rules ask the generator to keep the travel time between the school's sites for pupils with lessons on two sites on one day, after their time to change, rounded up to whole start steps of {stepMinutes} min. {measured, select, 1 {That travel time is what makes the week impossible: without it, a timetable exists that keeps every other rule, and in it the pupils of the groups named here have less time than the travel time between two lessons on different sites.} 2 {That travel time makes the week impossible on its own: even with the other rules set aside, the lessons of the groups named here cannot be placed so that it fits. The week has other causes too: it stays impossible without the travel time.} other {That travel time is one of the rules that cannot all hold at once for the groups named here; whether it alone is the difference could not be measured.}} Let these groups' lessons use rooms on one site, shorten the travel time under Rooms, Sites, or turn it off under School rules.",
