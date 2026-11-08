@@ -60,13 +60,13 @@ describe('LeaveService', () => {
   let service: LeaveService;
   let tx: TxMock;
   let prisma: PrismaMock;
-  let notifications: { notifyUsers: jest.Mock; deliver: jest.Mock };
+  let notifications: { notifyUsers: jest.Mock; deliver: jest.Mock; deliverCommitted: jest.Mock };
 
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(NOW);
     tx = createTxMock();
     prisma = createPrismaMock(tx);
-    notifications = { notifyUsers: jest.fn().mockResolvedValue(1), deliver: jest.fn() };
+    notifications = { notifyUsers: jest.fn().mockResolvedValue(1), deliver: jest.fn(), deliverCommitted: jest.fn() };
     service = new LeaveService(prisma as unknown as PrismaService, notifications as unknown as NotificationsService);
   });
 
@@ -1115,7 +1115,11 @@ describe('LeaveService', () => {
       const call = rawCall(tx.$queryRaw as jest.Mock);
       expect(call.sql).toContain('app.leave_consent_pass(');
       expect(call.values).toEqual([50]);
-      expect(notifications.deliver.mock.calls.map(([, entry]) => entry.type).sort()).toEqual(['LEAVE_CONSENT_REMINDER', 'LEAVE_REQUESTED']);
+      // After the commit, through the entries a transaction with no outbox is handed over as: the door has none to wait for.
+      expect(notifications.deliver).not.toHaveBeenCalled();
+      expect(notifications.deliverCommitted).toHaveBeenCalledTimes(1);
+      const [entries] = notifications.deliverCommitted.mock.calls[0];
+      expect(entries.map((entry: { type: string }) => entry.type).sort()).toEqual(['LEAVE_CONSENT_REMINDER', 'LEAVE_REQUESTED']);
     });
 
     it('does nothing when nothing is due', async () => {
@@ -1123,6 +1127,7 @@ describe('LeaveService', () => {
 
       await expect(service.consentPass()).resolves.toEqual({ notices: 0, reminded: 0 });
       expect(notifications.deliver).not.toHaveBeenCalled();
+      expect(notifications.deliverCommitted).toHaveBeenCalledWith([]);
     });
   });
 

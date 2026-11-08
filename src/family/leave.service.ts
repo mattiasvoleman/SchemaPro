@@ -25,7 +25,7 @@ import {
   type RecordLeavePolicyDto,
 } from './dto/family.dto';
 import { assertMayActForStudent, schoolIdOf } from './family-access';
-import { deliverConsentNotices, deliverLeaveNotices, tellNewMentors, type ConsentNoticeRow, type LeaveNoticeRow } from './leave-notices';
+import { consentNoticeEntries, deliverConsentNotices, deliverLeaveNotices, tellNewMentors, type ConsentNoticeRow, type LeaveNoticeRow } from './leave-notices';
 import { readSchoolDayBasis, schoolDaysOf } from './school-days';
 
 /** What every absence an approved leave writes says (decisions of 20261015090000 and 20261023091000). */
@@ -729,11 +729,10 @@ export class LeaveService {
   async consentPass(limit = 200): Promise<{ notices: number; reminded: number }> {
     const rows = await this.prisma.withDeliveryService((tx) =>
       tx.$queryRaw<ConsentNoticeRow[]>`
-        SELECT "notificationId", "userId", "email", "type", "meta", "schoolId" FROM app.leave_consent_pass(${limit}::integer)`.then((found) => {
-        deliverConsentNotices(this.notifications, tx, found);
-        return found;
-      }),
+        SELECT "notificationId", "userId", "email", "type", "meta", "schoolId" FROM app.leave_consent_pass(${limit}::integer)`,
     );
+    // The delivery door's transaction has no outbox to wait for: what it wrote is handed over once it has committed.
+    this.notifications.deliverCommitted(consentNoticeEntries(rows));
     return { notices: rows.length, reminded: rows.filter((row) => row.type === 'LEAVE_CONSENT_REMINDER').length };
   }
 
