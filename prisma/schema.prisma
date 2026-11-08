@@ -6149,3 +6149,133 @@ model SchoolDaySettings {
 
   @@map("SchoolDaySettings")
 }
+
+// -----------------------------------------------------------------------------
+// Klasslärarens schema (20270128090000)
+//
+// A klasslärare is appointed to a class for a läsår, edits that class's lessons
+// inside the frame the schemaläggare keeps, and what they change waits as a
+// draft of its own until it is published. The models carry scalar columns only:
+// every key is composite (x, schoolId) in the migration, which is where the
+// rules are, and the rows are read by the gateway with the people and lessons
+// they name looked up beside them.
+// -----------------------------------------------------------------------------
+
+/// What a klasslärare's change is.
+enum ClassTeacherChangeKind {
+  /// One lesson on one date goes to another time, another day of that week or another room.
+  OCCASION_MOVE
+  /// One lesson on one date is cancelled.
+  OCCASION_CANCEL
+  /// One lesson on one date is held in another room.
+  OCCASION_ROOM
+  /// A lesson of the class's grundschema changes day, time or room.
+  TEMPLATE_MOVE
+  /// A long lesson of the class's grundschema becomes two, one of them elsewhere.
+  TEMPLATE_SPLIT
+}
+
+enum ClassTeacherChangeStatus {
+  /// Waiting: the schemaläggare's to publish, or the klasslärare's when the school allows it.
+  DRAFT
+  /// Carried into the timetable. Kept as the record of what the klasslärare asked for.
+  PUBLISHED
+}
+
+/// The appointment: this teacher is klasslärare for this class in this läsår.
+/// Made by an administrator who writes Schemaläggning, and the only way a
+/// teacher gets the right (a mentor is not one). The administrator who made it
+/// is the one the klasslärare's checks and publication run as (the database
+/// names them: app.class_teacher_actor); an appointment whose administrator is
+/// gone or no longer writes Schemaläggning lapses until another administrator
+/// makes it again.
+model ClassTeacherAppointment {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId          String   @db.Uuid
+  academicYearId    String   @db.Uuid
+  studentGroupId    String   @db.Uuid
+  userId            String   @db.Uuid
+  /// The administrator the appointment runs as. Cleared when that person is removed.
+  appointedByUserId String?  @db.Uuid
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([studentGroupId, userId])
+  @@index([userId, schoolId])
+  @@index([schoolId, academicYearId, studentGroupId])
+  @@index([appointedByUserId, schoolId])
+  @@map("ClassTeacherAppointments")
+}
+
+/// One row per school; no row means every default (a klasslärare publishes nothing).
+model ClassTeacherSettings {
+  schoolId    String   @id @db.Uuid
+  /// A klasslärare publishes their own class's changes, inside the frame.
+  selfPublish Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("ClassTeacherSettings")
+}
+
+/// A weekly span of the school day that is open to a class's klasslärare: a
+/// lesson is theirs to change only inside one, and only to another time inside
+/// one. studentGroupId null is every class of the läsår. No row, no open time.
+model ClassTeacherOpenTime {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  academicYearId String   @db.Uuid
+  studentGroupId String?  @db.Uuid
+  /// ISO weekday 1..5.
+  dayOfWeek      Int      @db.SmallInt
+  startTime      DateTime @db.Time(0)
+  endTime        DateTime @db.Time(0)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([schoolId, academicYearId, dayOfWeek])
+  @@index([studentGroupId, academicYearId, schoolId])
+  @@map("ClassTeacherOpenTimes")
+}
+
+/// A klasslärare's change, waiting. See the migration for what each kind
+/// carries, what keeps a draft inside the frame, and what rev and baseVersion
+/// are for.
+model ClassTeacherChange {
+  id               String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String                   @db.Uuid
+  academicYearId   String                   @db.Uuid
+  studentGroupId   String                   @db.Uuid
+  authorId         String?                  @db.Uuid
+  kind             ClassTeacherChangeKind
+  status           ClassTeacherChangeStatus @default(DRAFT)
+  masterLessonId   String?                  @db.Uuid
+  calendarLessonId String?                  @db.Uuid
+  /// The occasion's own date (the lesson's), kept so the draft reads when the lesson is gone.
+  date             DateTime?                @db.Date
+  targetDate       DateTime?                @db.Date
+  targetDayOfWeek  Int?                     @db.SmallInt
+  targetStart      DateTime?                @db.Time(0)
+  targetEnd        DateTime?                @db.Time(0)
+  targetRoomId     String?                  @db.Uuid
+  /// TEMPLATE_SPLIT: where the first part now ends.
+  keepEnd          DateTime?                @db.Time(0)
+  note             String?
+  /// What the lesson looked like to the klasslärare who drafted this (a hash), and the same as data.
+  baseVersion      String
+  baseSnapshot     Json
+  /// Counted up by every change of the row; a writer states the one it read.
+  rev              Int                      @default(1)
+  publishedAt      DateTime?                @db.Timestamptz(6)
+  publishedByUserId String?                 @db.Uuid
+  createdAt        DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([schoolId, studentGroupId, status])
+  @@index([authorId, schoolId])
+  @@index([publishedByUserId, schoolId])
+  @@index([masterLessonId, schoolId])
+  @@index([calendarLessonId, schoolId])
+  @@index([targetRoomId, schoolId])
+  @@index([academicYearId, schoolId])
+  @@map("ClassTeacherChanges")
+}

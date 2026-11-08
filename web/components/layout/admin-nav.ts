@@ -110,6 +110,9 @@ export const ADMIN_NAV: NavGroup[] = [
     items: [
       { labelKey: "generate", href: "/admin/generate", icon: Sparkles },
       { labelKey: "timetable", href: "/admin/timetable", icon: CalendarDays },
+      // Klasslärarens schema (G5): who is klasslärare of which class, the hours open to them and the
+      // drafts that wait. Beside the grid whose lessons they change. The groups' icon (Personer).
+      { labelKey: "classTeachers", href: "/admin/class-teachers", icon: Users },
       // Next to the grid it is used against: finslipning starts once a base
       // schedule exists, and every answer there is read off this one.
       { labelKey: "gaps", href: "/admin/gaps", icon: CalendarSearch },

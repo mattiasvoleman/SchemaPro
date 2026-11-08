@@ -8,6 +8,9 @@
           - link "Mitt schema":
             - /url: /sv/teacher
         - listitem:
+          - link "Klassens schema":
+            - /url: /sv/teacher/klass-schema
+        - listitem:
           - link "Larm":
             - /url: /sv/teacher/crisis
         - listitem:

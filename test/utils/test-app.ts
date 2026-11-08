@@ -65,6 +65,7 @@ import { AckModule } from '../../src/ack/ack.module';
 import { LessonMovesModule } from '../../src/lesson-moves/lesson-moves.module';
 import { SchoolDayModule } from '../../src/school-day/school-day.module';
 import { ExamsModule } from '../../src/exams/exams.module';
+import { ClassTeacherModule } from '../../src/class-teacher/class-teacher.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { SchoolExportModule } from '../../src/school-export/school-export.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
@@ -204,6 +205,7 @@ export const FEATURE_MODULES = [
   LessonMovesModule,
   SchoolDayModule,
   ExamsModule,
+  ClassTeacherModule,
   SignInModule,
   HuvudmanModule,
   AccessLogModule,

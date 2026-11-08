@@ -652,6 +652,27 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason: 'A candidate belongs to its run, which is not carried.',
   },
   /**
+   * Klasslärarens schema (20270128090000). An appointment names a teacher for
+   * ONE class of ONE läsår, in the name of the administrator who made it, and
+   * next year's classes are other rows: the new year's appointments are made
+   * again, by someone who then answers for them. The open hours are the
+   * schemaläggare's decision about the old year's raster, and the drafts are
+   * changes to the old year's lessons that were never published.
+   */
+  ClassTeacherAppointment: {
+    kind: 'SKIPPED',
+    reason:
+      'A klasslärare is appointed for one class of one läsår, by the administrator the work then runs as; next year has other classes and is appointed again.',
+  },
+  ClassTeacherOpenTime: {
+    kind: 'SKIPPED',
+    reason: 'The hours open to klasslärare are the schemaläggare’s decision about the old year’s schedule and are opened again for the new one.',
+  },
+  ClassTeacherChange: {
+    kind: 'SKIPPED',
+    reason: 'Drafts of changes to the old year’s lessons; a draft that was never published stays with the year it was written for.',
+  },
+  /**
    * Not carried, and not counted in the preview. A credit is the school's
    * decision about ONE date of the old year ("the friluftsdag 25 September
    * counts as 300 min idrott"); next year's friluftsdagar fall on other dates

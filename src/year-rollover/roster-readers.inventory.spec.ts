@@ -455,6 +455,13 @@ describe('the roster-reader inventory', () => {
       // grade spans, and the apply asks the clash rule again under its row
       // locks, so a year two steps ahead is refused there as a hand edit is.
       //
+      // Klasslärarens schema holds a draft to the clash rule of a hand edit
+      // (MasterLessonsService.findConflicts) whenever the page asks for its
+      // verdict, and the editor's own services carry it out: the teacher's
+      // check, preview and publish and the administrators' list of drafts and
+      // publish of a class read pupils through the year's basis, so a year two
+      // steps ahead answers R6's 409 there as the hand edit does.
+      //
       // Schemaförslag reaches a basis where Generera does: its start asks
       // rostersOfYear as POST jobs does, and its check and apply rebuild
       // Generera's fetch (prepareSchedule), so a year two steps ahead answers
@@ -463,6 +470,11 @@ describe('the roster-reader inventory', () => {
         'CalendarController.publish',
         'CalendarLessonsController.assignSubstitute',
         'CalendarLessonsController.suggestSubstitutes',
+        'ClassTeacherAdminController.drafts',
+        'ClassTeacherAdminController.publish',
+        'ClassTeacherController.check',
+        'ClassTeacherController.preview',
+        'ClassTeacherController.publish',
         'CoverController.apply',
         'CoverController.bulk',
         'CoverController.candidates',

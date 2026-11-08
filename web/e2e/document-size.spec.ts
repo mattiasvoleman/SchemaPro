@@ -81,9 +81,18 @@ interface Measured {
   measured: number;
 }
 
+/*
+ * How the figures were last set (Klasslärarens schema, which added one row to each menu): main's own
+ * (admin 13 038, teacher 9 452, after Måltidskollen) plus what the row costs, 39 B in the administrator's
+ * menu and 31 B in the teacher's (AppShell rendered with the real menu and the real catalog, gzipped with
+ * and without the row), which is 13 077 and 9 483. The build then showed 13 261 and 9 664: 184 and 181 B
+ * over, of which the rows are 39 and 31 and the rest the phase's own messages, which move the gzip of the
+ * document beside the catalog's. The ceiling is not raised for that rest, so the room is 1 352 and 1 355 B
+ * where it was 1 536: a phase pays the room its text uses, and the next one finds what is left.
+ */
 const PAGES: Measured[] = [
-  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_038 },
-  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_452 },
+  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_077 },
+  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_483 },
 ];
 
 const catalog = JSON.stringify(JSON.parse(readFileSync(join(__dirname, "..", "messages", "sv.json"), "utf8")));

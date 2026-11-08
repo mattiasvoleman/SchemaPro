@@ -87,7 +87,8 @@ export type GroupKeyKind =
   | 'homePupils'
   | 'successors'
   | 'mentorDuties'
-  | 'enrolments';
+  | 'enrolments'
+  | 'classTeacher';
 
 /** Every key to StudentGroups. Each is counted, but the class's monthly sums, which no administrator reads row by row. */
 export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
@@ -115,6 +116,10 @@ export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
   key('StudentGroups', ['predecessorId', 'schoolId'], 'SET NULL', { counted: 'successors' }),
   key('TeacherDuties', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'mentorDuties' }),
   key('StudentEnrollments', ['studentGroupId', 'academicYearId', 'schoolId'], 'SET NULL', { counted: 'enrolments' }),
+  // Klasslärarens schema (20270128090000): the class's klasslärare, the hours open to them and their drafts go with the class.
+  key('ClassTeacherAppointments', ['studentGroupId', 'academicYearId', 'schoolId'], 'CASCADE', { counted: 'classTeacher' }),
+  key('ClassTeacherOpenTimes', ['studentGroupId', 'academicYearId', 'schoolId'], 'CASCADE', { counted: 'classTeacher' }),
+  key('ClassTeacherChanges', ['studentGroupId', 'academicYearId', 'schoolId'], 'CASCADE', { counted: 'classTeacher' }),
 ];
 
 /** The consequences a pupil delete counts by key (StudentRemovalConsequences adds the rest). */
@@ -192,6 +197,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('AckReceipts', ['guardianId', 'schoolId'], 'CASCADE', others),
   key('AckReceipts', ['studentId', 'schoolId'], 'CASCADE', others),
   key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),
+  // Klasslärarens schema (20270128090000): a teacher's appointment goes with them.
+  key('ClassTeacherAppointments', ['userId', 'schoolId'], 'CASCADE', others),
   // Skyddad identitet (20270107090000): the mark goes with the person, counted like any other row.
   key('PersonProtections', ['userId', 'schoolId'], 'CASCADE', others),
   // Rapporteringsgrad (20270112090100): a teacher's held and reported lessons per day, counted like any
@@ -236,6 +243,10 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('TeachingRequirementShares', ['teacherId', 'schoolId'], 'SET NULL', kept),
   key('SupervisionCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
   key('AckRequests', ['authorId', 'schoolId'], 'SET NULL', kept),
+  // Klasslärarens schema (20270128090000): who appointed, who wrote a draft and who published it; the rows stay without them.
+  key('ClassTeacherAppointments', ['appointedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('ClassTeacherChanges', ['authorId', 'schoolId'], 'SET NULL', kept),
+  key('ClassTeacherChanges', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['requestedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['acceptedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CrisisAlarms', ['startedByUserId', 'schoolId'], 'SET NULL', kept),
@@ -320,6 +331,13 @@ export const GROUP_BELOW: readonly BelowKey<GroupBelowKind>[] = [
   below('CalendarLessons', 'CoverConfirmations', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'CrisisCalls', ['calendarLessonId', 'schoolId'], 'SET NULL', {
     unlinked: 'a group on the list of an alarm that was going keeps its names and loses its lesson (Krisläge)',
+  }),
+  // Klasslärarens schema (20270128090000): a draft that names a lesson of the group keeps its words without it; the draft is counted by its own key to the group.
+  below('CalendarLessons', 'ClassTeacherChanges', ['calendarLessonId', 'schoolId'], 'SET NULL', {
+    unlinked: 'a klasslärare’s draft for a date keeps its words without the lesson, and goes by its own key to the class (classTeacher)',
+  }),
+  below('MasterLessons', 'ClassTeacherChanges', ['masterLessonId', 'schoolId'], 'SET NULL', {
+    unlinked: 'a klasslärare’s draft for a template lesson keeps its words without the lesson, and goes by its own key to the class (classTeacher)',
   }),
   below('MasterLessons', 'MasterLessonGroups', ['masterLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('MasterLessons', 'MasterLessonStudents', ['masterLessonId', 'schoolId'], 'CASCADE', onTheLessons),

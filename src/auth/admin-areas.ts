@@ -210,6 +210,13 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ScheduleCandidates: just('SCHEMALAGGNING', 'insert', 'delete'),
   ScheduleChangeLogs: just('SCHEMALAGGNING', 'insert'),
   ScheduleVersions: only('SCHEMALAGGNING'),
+  // Klasslärarens schema (20270128090000): the appointment and the open times are the schemaläggare's
+  // to make; the school's option to let a klasslärare publish is Publicering's, and a draft is written
+  // by the klasslärare alone, so an administrator only publishes it (the status) or discards it.
+  ClassTeacherAppointments: only('SCHEMALAGGNING'),
+  ClassTeacherOpenTimes: only('SCHEMALAGGNING'),
+  ClassTeacherSettings: just('PUBLICERING', 'insert', 'update'),
+  ClassTeacherChanges: just('PUBLICERING', 'update', 'delete'),
 
   // Publicering: what is published, to whom, and Schemavisaren.
   PublicTimetableLinks: only('PUBLICERING'),

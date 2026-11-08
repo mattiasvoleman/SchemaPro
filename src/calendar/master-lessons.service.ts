@@ -2212,6 +2212,17 @@ export class MasterLessonsService {
       excludeIds?: readonly string[];
       alongside?: readonly DayLesson[];
       /**
+       * The candidate is held against THESE lessons and not against the
+       * template's lessons of its weekday: the dated lessons of one date, for
+       * a klasslärare's exception (class-teacher/dated-conflicts.ts). The rule
+       * is the same, every arm of it (pupils through the rosters, the buffers,
+       * replacing groups, participants, the weekly unavailability); only the
+       * lessons it is held against differ. A date's lesson that was cancelled
+       * or moved for the date stands nowhere, though its template says it
+       * does. Absent for every other caller.
+       */
+      against?: readonly DayLesson[];
+      /**
        * An import's cache of the school's facts (conflict-reads.ts): the same
        * reads, answered once for the whole file. Absent for a hand edit.
        */
@@ -2271,7 +2282,9 @@ export class MasterLessonsService {
         participants: { select: { studentId: true } },
       },
     });
-    const sameDay = reads
+    const sameDay = options.against
+      ? []
+      : reads
       ? await reads.dayLessons(
           lesson.academicYearId,
           candidate.dayOfWeek,
@@ -2296,10 +2309,12 @@ export class MasterLessonsService {
      * or late for — and otherwise one query that finds nothing at the vast
      * majority of schools. See pupilBuffersOf.
      */
-    const others: DayLesson[] = [
-      ...sameDay,
-      ...(options.alongside ?? []).filter((other) => other.id !== lesson.id),
-    ];
+    const others: DayLesson[] = options.against
+      ? [...options.against]
+      : [
+          ...sameDay,
+          ...(options.alongside ?? []).filter((other) => other.id !== lesson.id),
+        ];
     const buffers =
       others.length === 0
         ? new Map<string, PupilBuffer>()

@@ -153,6 +153,10 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   AckReceipts: dump(['guardianId', 'studentId'], 'GUARDIANS'),
   AckRequests: dump(['authorId']),
   SharedTeacherMarks: dump(['teacherId']),
+  // Klasslärarens schema (20270128090000): whom a class was given to and who gave it, and the drafts a klasslärare wrote
+  // or published (their words are the dates and hours they asked for, and a note of at most 200 characters).
+  ClassTeacherAppointments: dump(['userId', 'appointedByUserId']),
+  ClassTeacherChanges: dump(['authorId', 'publishedByUserId']),
   ScheduleActivityTeachers: dump(['teacherId']),
   // Provplanering (20270127090000): the watch a teacher keeps at an exam (room and exam in the row's keys).
   ExamInvigilators: dump(['teacherId']),

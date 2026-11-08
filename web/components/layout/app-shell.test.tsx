@@ -300,6 +300,8 @@ describe("AppShell navigation", () => {
     expect(group("nav.scheduling")).toEqual([
       "nav.generate",
       "nav.timetable",
+      // Klasslärarens schema: beside the grid whose lessons they change.
+      "nav.classTeachers",
       "nav.gaps",
       "nav.publishing",
       "nav.schemavisaren",
@@ -616,7 +618,10 @@ describe("AppShell navigation by administrator profile", () => {
     // A group with nothing left in it goes with its pages (both hidden by
     // the layout's style rule, so out of the accessibility tree too).
     for (const group of screen.getAllByText("nav.planning")) expect(group).not.toBeVisible();
-    for (const group of screen.getAllByText("nav.scheduling")) expect(group).not.toBeVisible();
+    // Scheduling keeps one page, Klasslärare, which every administrator opens (PAGE_GATES: null) and which offers each
+    // control to the profile that writes its area; the expedition reads who is klasslärare of which class there.
+    expect(hrefs()).toContain("/admin/class-teachers");
+    expect(screen.getAllByText("nav.scheduling")[0]).toBeVisible();
     expect(screen.getAllByText("nav.operations")[0]).toBeVisible();
   });
 
