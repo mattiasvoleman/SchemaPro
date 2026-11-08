@@ -868,9 +868,6 @@ async function main(): Promise<void> {
         assert.ok(!text.includes(waiting.id) && !text.includes(markedAsked.id), 'the answer of another guardian is in an extract that is not theirs');
       }
       assert.equal(csvLines((await extractZip(a.admins.FULL, a.teacher, false)).files.get('data/samtycken.csv')).length, 1, "a teacher's extract has the header and no answer");
-      // A related guardian comes with the pupil\'s extract, with their own answer and the pupil whole.
-      const withGuardians = await extractZip(a.admins.FULL, pupilE.id, true);
-      assert.ok(csvLines(withGuardians.files.get('data/samtycken.csv')).join('\n').includes(guardianE.id) === false, 'the pupil\'s guardian E asked nothing');
 
       // The school\'s file: every answer but the one about the protected pupil, the marked guardian\'s id and address blanked and counted.
       await owner.schoolExport.deleteMany({ where: { schoolId: a.schoolId, id: { not: first.id } } });
@@ -891,6 +888,19 @@ async function main(): Promise<void> {
       assert.equal(none[0]!.n, 0, "another school's administrator reads none of A's answers");
       const planner = await api.withRls(a.admins.SCHEMALAGGARE, (tx) => tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM app.leave_consents_export(NULL, NULL, 100, NULL, NULL, NULL)`);
       assert.equal(planner[0]!.n, 0, 'an administrator who does not decide reads none');
+
+      // The review of #292 round two, LÅG-1: the persons who come along with an extract do not bring their answers. Pupil E's own guardian
+      // (E4) has said no to the pupil's leave; a no that one guardian gave is not for the other, who might be in the same archive.
+      await row(leaveE.id, guardianE.id, false);
+      const withGuardians = await extractZip(a.admins.FULL, pupilE.id, true);
+      assert.ok(csvLines(withGuardians.files.get('data/personer.csv')).join('\n').includes(guardianE.id), "the pupil's guardian comes with the pupil's extract");
+      assert.equal(csvLines(withGuardians.files.get('data/samtycken.csv')).length, 1, "the pupil's extract with the guardians has the header and none of the guardians' answers");
+      assert.ok(!withGuardians.files.get('data/samtycken.csv')!.toString('utf8').includes(guardianE.id), "the guardian's id is not in the pupil's samtycken.csv");
+      // The guardian's own extract, with the child along, holds their answer and not the child's id.
+      const guardianWithChild = await extractZip(a.admins.FULL, guardianE.id, true);
+      const guardianLines = csvLines(guardianWithChild.files.get('data/samtycken.csv'));
+      assert.equal(guardianLines.length - 1, 1, "the guardian's extract with the child holds the guardian's one answer");
+      assert.equal(guardianLines[1]!.split(';')[4], 'false');
     });
 
     await check('(k-j) only those who decide ask for one, and only about their own school', async () => {

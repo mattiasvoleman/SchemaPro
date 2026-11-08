@@ -4664,8 +4664,11 @@ them under `/admin/leave` (Ledighetsansökningar; no row in `LeavePolicies` is a
   `data/samtycken.csv` (the request, the guardian, the pupil on the terms of the other files, the answer, when they answered,
   when the one reminder was written, when they were asked). No role reads the table, so the file asks
   `app.leave_consents_export`, which gives an administrator who decides the school's own rows, the persons the scope names, and
-  not the requests about a protected pupil. A guardian's extract holds their own answers and no other guardian's; a teacher's
-  and a pupil's hold none (the guardians are not among the persons asked for).
+  not the requests about a protected pupil. A guardian's extract holds their own answers and no other guardian's, also when the persons who
+  come along with an extract are asked for (a pupil's extract with the guardians holds none of the guardians' answers, a guardian's
+  with the children holds their own); a teacher's and a pupil's hold none. The school's export, on the other hand, holds every
+  answer, so the administrator who orders it, or who hands out a school's export, sees each guardian's individual answer and
+  address: the counts-only view is the page under Ledighetsansökningar, not the archive.
 - *The export format stays version 1*: five columns were appended to `ledigheter.csv` and a file was added, which a reader by
   column name does not notice.
 

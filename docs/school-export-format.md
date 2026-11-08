@@ -133,7 +133,7 @@ Källa: LeaveConsents.
 | Kolumn | Innehåll |
 |---|---|
 | `ansokan_id` | Ansökans id (ledigheter.csv). |
-| `vardnadshavare_id` | Id på vårdnadshavaren som frågades (personer.csv). Tomt om personen har skyddad identitet. |
+| `vardnadshavare_id` | Id på vårdnadshavaren som frågades (personer.csv). Tomt om personen har skyddad identitet. I ett registerutdrag står bara svaren från personen utdraget gäller, också när närstående följer med. |
 | `vardnadshavare_epost` | Vårdnadshavarens e-postadress. |
 | `elev_id` | Id på eleven ansökan gäller. Tomt i ett registerutdrag om ansökan inte gäller personen utdraget är om. En ansökan om en elev med skyddad identitet finns inte i filen. |
 | `svar` | true om vårdnadshavaren samtyckte, false om hen inte gjorde det (och ansökan avslutades), tomt om hen inte har svarat. |

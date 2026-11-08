@@ -56,6 +56,12 @@ import { idForms, SPACING_SQL } from './free-text';
 export interface DataScope {
   /** The persons the file is about, or null for the whole school. */
   ids: readonly string[] | null;
+  /**
+   * The person a registerutdrag is about, the first of `ids` (the others are the persons that come with it). The one file
+   * that holds data about a related person which the person asked for must not be handed: the guardians' answers of
+   * samtycken.csv are the guardian's own, so they follow the subject and not the people who come along.
+   */
+  subject?: string;
 }
 
 export interface DataEnv {
@@ -654,7 +660,9 @@ interface ConsentRow {
  * reads the table, so the rows come from app.leave_consents_export, which gives an administrator who decides the school's own
  * rows, limited to the persons the scope names (the guardians), and without the requests about a marked pupil. The pupil is
  * named only where the scope is about the pupil; in the guardian's own extract the request is an id and nothing else of the
- * child's. The answer of one guardian is never in another's: a scope names the guardians whose rows it is.
+ * child's. The answer of one guardian is never in another's: the file gives the rows of the person the extract is about and of
+ * nobody who comes along with it, so a pupil's extract with their guardians holds none of the guardians' answers (a no that
+ * one guardian gave is not for the other, who is in the same archive) and a guardian's with their children holds their own.
  */
 export const SAMTYCKEN: DataFile = {
   path: 'data/samtycken.csv',
@@ -662,7 +670,7 @@ export const SAMTYCKEN: DataFile = {
   source: 'LeaveConsents',
   columns: [
     { name: 'ansokan_id', doc: 'Ansökans id (ledigheter.csv).' },
-    { name: 'vardnadshavare_id', doc: 'Id på vårdnadshavaren som frågades (personer.csv). Tomt om personen har skyddad identitet.' },
+    { name: 'vardnadshavare_id', doc: 'Id på vårdnadshavaren som frågades (personer.csv). Tomt om personen har skyddad identitet. I ett registerutdrag står bara svaren från personen utdraget gäller, också när närstående följer med.' },
     { name: 'vardnadshavare_epost', doc: 'Vårdnadshavarens e-postadress.' },
     { name: 'elev_id', doc: 'Id på eleven ansökan gäller. Tomt i ett registerutdrag om ansökan inte gäller personen utdraget är om. En ansökan om en elev med skyddad identitet finns inte i filen.' },
     { name: 'svar', doc: 'true om vårdnadshavaren samtyckte, false om hen inte gjorde det (och ansökan avslutades), tomt om hen inte har svarat.' },
@@ -672,7 +680,8 @@ export const SAMTYCKEN: DataFile = {
   ],
   async *rows(env) {
     const markedOut = [...env.markedOut];
-    const guardians = env.scope.ids === null ? null : [...env.scope.ids];
+    const subject = env.scope.ids === null ? undefined : (env.scope.subject ?? env.scope.ids[0]);
+    const guardians = env.scope.ids === null ? null : subject === undefined ? [] : [subject];
     const about = Prisma.sql`c."studentId"`;
     const guardianHidden = hides(env, Prisma.sql`c."guardianId"`);
     const studentHidden = hides(env, about, about);

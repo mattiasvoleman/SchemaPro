@@ -111,7 +111,7 @@ export class SubjectAccessService {
       schoolName: head.school,
       now: new Date(),
       kind: 'person',
-      scope: { ids },
+      scope: { ids, subject: personId },
       marked,
       exempt: [personId],
       // The person asked for is not looked for in free text: a note about them is theirs.

@@ -296,6 +296,27 @@ describe('the data files', () => {
       expect(valuesOf(h.calls[0]!)).toEqual(expect.arrayContaining([[OTHER], [MARKED]]));
     });
 
+    it('asks only for the person the extract is about, not for the persons who come along with it (a no is not handed on to the other guardian)', async () => {
+      const along = '00000000-0000-4000-8000-0000000000aa';
+      // The function's first argument is the guardians asked for; the persons of the scope also stand in the rules that hide a cell,
+      // which is why the whole list of values is not searched. The page size follows the markedOut list, then three null keys.
+      const guardiansAskedFor = (call: Prisma.Sql): unknown => {
+        const values = valuesOf(call);
+        return values[values.indexOf(5000) - 2];
+      };
+      const h = harness([[]], { scope: { ids: [OTHER, along], subject: OTHER } });
+      await rowsOf(SAMTYCKEN, h.env);
+      expect(guardiansAskedFor(h.calls[0]!)).toEqual([OTHER]);
+      // A scope without the subject named is read as the extract's shape is: the person asked for first.
+      const first = harness([[]], { scope: { ids: [OTHER, along] } });
+      await rowsOf(SAMTYCKEN, first.env);
+      expect(guardiansAskedFor(first.calls[0]!)).toEqual([OTHER]);
+      // The whole school's file names no one.
+      const school = harness([[]]);
+      await rowsOf(SAMTYCKEN, school.env);
+      expect(guardiansAskedFor(school.calls[0]!)).toBeNull();
+    });
+
     it('asks for the whole school with no persons named when the scope is the school\'s', async () => {
       const h = harness([[]]);
       await rowsOf(SAMTYCKEN, h.env);
