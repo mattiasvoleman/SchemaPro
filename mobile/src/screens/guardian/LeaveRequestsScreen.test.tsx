@@ -569,6 +569,21 @@ describe('a request in the list', () => {
       expect(buttonsLabelled(tree, AGREE)).toHaveLength(0);
     });
 
+    it('says nothing of waiting or of consent on a request the school has decided, whatever the gateway answers for its guardians', async () => {
+      read([
+        leave('l1', { status: 'REJECTED', consent: consent('WAITING', 'WAITING') }),
+        leave('l2', { status: 'REJECTED', consent: consent('WAITING', 'NOT_ASKED') }),
+        leave('l3', { status: 'APPROVED', consent: consent('GIVEN', 'NOT_ASKED') }),
+      ]);
+      tree = await render();
+      expect(hasText(tree, sv('leave.status.REJECTED'))).toBe(true);
+      expect(texts(tree).filter((w) => w === 'Väntar på vårdnadshavarnas samtycke')).toHaveLength(0);
+      expect(texts(tree).filter((w) => w === 'Alla vårdnadshavare har samtyckt')).toHaveLength(0);
+      // Nor can the guardian answer a request that is decided.
+      expect(buttonsLabelled(tree, AGREE)).toHaveLength(0);
+      expect(buttonsLabelled(tree, DECLINE)).toHaveLength(0);
+    });
+
     it('says that every guardian has consented when they have, and nothing of it when the school did not ask', async () => {
       read([leave('l1', { consent: consent('GIVEN', 'NOT_ASKED') }), leave('l2', { consent: consent('NOT_REQUIRED', 'NOT_ASKED', false) })]);
       tree = await render();

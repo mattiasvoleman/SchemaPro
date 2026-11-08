@@ -481,9 +481,11 @@ function LeaveRow({
   // The guardian's own question: only while the request still waits, whatever else the row says.
   const asked = consent?.mine === 'WAITING' && leave.status === 'PENDING';
   const ended = leave.status === 'GUARDIAN_DECLINED' || consent?.state === 'REFUSED';
-  // Where the request stands, for everyone but the guardian who is being asked or whose custody ended.
+  // Where the request stands, for everyone but the guardian who is being asked or whose custody ended, and only while it waits:
+  // a request the school has decided is no longer waiting for anyone (the gateway still answers WAITING for a rejected one whose
+  // guardians never answered), as on the web.
   const standing =
-    consent?.required !== true || asked || consent.mine === 'ENDED' || ended
+    consent?.required !== true || leave.status !== 'PENDING' || asked || consent.mine === 'ENDED' || ended
       ? null
       : consent.state === 'WAITING'
         ? 'leave.consent.waiting'
