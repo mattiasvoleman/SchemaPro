@@ -3,6 +3,7 @@ import {
   PAYROLL_CONTENT_TYPE,
   PAYROLL_HEADERS,
   payrollFileName,
+  payrollPseudonym,
   payrollTable,
   renderPayrollCsv,
   renderPayrollXlsx,
@@ -21,6 +22,7 @@ const row = (overrides: Partial<PayrollFileRow> = {}): PayrollFileRow => ({
   teachingMinutes: 450,
   dutyMinutes: 60,
   substituteMinutes: 45,
+  payrollId: '4711-01',
   ...overrides,
 });
 
@@ -30,8 +32,21 @@ describe('payrollTable', () => {
   it('has the header the file promises and a row per line, hours to two decimals and the period on every row', () => {
     const table = payrollTable([row(), row({ partName: 'Ej fördelat', account: '', employmentPercent: null, teachingMinutes: 0, dutyMinutes: 100, substituteMinutes: 0 })], '2026-11-02', '2026-11-27');
     expect(table[0]).toEqual([...PAYROLL_HEADERS]);
-    expect(table[1]).toEqual(['ÅKE', 'Ångström', 'Östen', 'osten@example.invalid', 'Personal', '87.5', 'Högstadiet', '4030', '450', '60', '45', '9.25', '2026-11-02', '2026-11-27']);
-    expect(table[2]).toEqual(['ÅKE', 'Ångström', 'Östen', 'osten@example.invalid', 'Personal', '', 'Ej fördelat', '', '0', '100', '0', '1.67', '2026-11-02', '2026-11-27']);
+    expect(table[1]).toEqual(['ÅKE', 'Ångström', 'Östen', 'osten@example.invalid', 'Personal', '87.5', 'Högstadiet', '4030', '450', '60', '45', '9.25', '2026-11-02', '2026-11-27', '4711-01']);
+    expect(table[2]).toEqual(['ÅKE', 'Ångström', 'Östen', 'osten@example.invalid', 'Personal', '', 'Ej fördelat', '', '0', '100', '0', '1.67', '2026-11-02', '2026-11-27', '4711-01']);
+  });
+
+  it('has the columns of the first file where they were, and Löne-id last: an import set up on #280 finds every column', () => {
+    expect(PAYROLL_HEADERS).toEqual([
+      'Signatur', 'Efternamn', 'Förnamn', 'E-post', 'Typ', 'Tjänstgöringsgrad (%)', 'Skoldel', 'Konto',
+      'Undervisning (min)', 'Uppdrag (min)', 'Vikariepass (min)', 'Totalt (tim)', 'Från', 'Till', 'Löne-id',
+    ]);
+    expect(payrollTable([row(), row({ payrollId: '' })], 'a', 'b').slice(1).map((cells) => cells.at(-1))).toEqual(['4711-01', '']);
+  });
+
+  it('writes a marked person\'s code as SKYDDAD and the number', () => {
+    expect(payrollPseudonym(3)).toBe('SKYDDAD-3');
+    expect(payrollPseudonym(1043)).toBe('SKYDDAD-1043');
   });
 
   it('keeps up to three decimals of a tjänstgöringsgrad and no trailing zeros', () => {
@@ -59,7 +74,7 @@ describe('renderPayrollCsv: Excel\'s Swedish CSV', () => {
     expect(lines).toHaveLength(3);
     expect(lines[2]).toBe('');
     expect(lines[0]!.split(';')).toEqual([...PAYROLL_HEADERS]);
-    expect(lines[1]).toBe('ÅKE;Ångström;Östen;osten@example.invalid;Personal;87,5;Högstadiet;4030;450;60;45;9,25;2026-11-02;2026-11-27');
+    expect(lines[1]).toBe('ÅKE;Ångström;Östen;osten@example.invalid;Personal;87,5;Högstadiet;4030;450;60;45;9,25;2026-11-02;2026-11-27;4711-01');
   });
 
   it('quotes a field that holds a semicolon, a quote or a line break, and guards a formula', () => {
@@ -75,6 +90,25 @@ describe('renderPayrollCsv: Excel\'s Swedish CSV', () => {
     const odd = renderPayrollCsv(payrollTable([row({ lastName: 'Łukasz', firstName: '中' })], 'a', 'b'));
     expect(odd.replaced).toBe(2);
     expect(decode(odd.bytes)).toContain('Lukasz;?;');
+  });
+});
+
+describe('a person with a protected identity: the signature and the Löne-id, or the code, and nothing else of who they are', () => {
+  // What the service hands the writer for a marked person: the names and the e-mail are never read.
+  const marked = row({ signature: 'XY', lastName: '', firstName: '', email: '', payrollId: '8800' });
+  const coded = row({ signature: '', lastName: '', firstName: '', email: '', payrollId: payrollPseudonym(3), kindLabel: 'Vikariepool', employmentPercent: null });
+  const table = payrollTable([row(), marked, coded], '2026-11-02', '2026-11-27');
+
+  it('writes the CSV rows with the signature and the number or the code, empty name and e-mail columns, and every figure', () => {
+    const lines = decode(renderPayrollCsv(table).bytes).split('\r\n');
+    expect(lines[2]).toBe('XY;;;;Personal;87,5;Högstadiet;4030;450;60;45;9,25;2026-11-02;2026-11-27;8800');
+    expect(lines[3]).toBe(';;;;Vikariepool;;Högstadiet;4030;450;60;45;9,25;2026-11-02;2026-11-27;SKYDDAD-3');
+  });
+
+  it('writes the same rows in the workbook', () => {
+    const read = readXlsx(renderPayrollXlsx(table));
+    expect(read.rows[2]).toEqual(['XY', '', '', '', 'Personal', '87.5', 'Högstadiet', '4030', '450', '60', '45', '9.25', '2026-11-02', '2026-11-27', '8800']);
+    expect(read.rows[3]).toEqual(['', '', '', '', 'Vikariepool', '', 'Högstadiet', '4030', '450', '60', '45', '9.25', '2026-11-02', '2026-11-27', 'SKYDDAD-3']);
   });
 });
 

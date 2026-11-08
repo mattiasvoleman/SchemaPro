@@ -122,6 +122,7 @@ describe("employmentDraftToBody", () => {
       teachingTargetMinutesPerWeek: null,
       signature: null,
       note: null,
+      payrollNumber: null,
       employmentForm: null,
       firstTeacherPercent: null,
       lecturerPercent: null,
@@ -139,6 +140,7 @@ describe("employmentDraftToBody", () => {
           teachingTargetMinutesPerWeek: "0",
           signature: " ANN ",
           note: " mentor 7B ",
+          payrollNumber: " 4711-01 ",
           contractKind: "SEMESTER",
         }),
       ),
@@ -149,6 +151,7 @@ describe("employmentDraftToBody", () => {
       teachingTargetMinutesPerWeek: 0,
       signature: "ANN",
       note: "mentor 7B",
+      payrollNumber: "4711-01",
       employmentForm: null,
       firstTeacherPercent: null,
       lecturerPercent: null,
@@ -169,6 +172,7 @@ describe("employmentDraftToBody", () => {
       teachingTargetMinutesPerWeek: 900,
       signature: "ANN",
       note: null,
+      payrollNumber: "8800",
       employmentForm: "VISSTID" as const,
       firstTeacherPercent: 10,
       lecturerPercent: null,
@@ -183,6 +187,7 @@ describe("employmentDraftToBody", () => {
       teachingTargetMinutesPerWeek: 900,
       signature: "ANN",
       note: null,
+      payrollNumber: "8800",
       employmentForm: "VISSTID",
       firstTeacherPercent: 10,
       lecturerPercent: null,
@@ -191,6 +196,17 @@ describe("employmentDraftToBody", () => {
       consecutiveBreakMinutes: 15,
     });
     expect(employmentToDraft(null)).toBe(EMPTY_EMPLOYMENT_DRAFT);
+    // A gateway before Löne-id (20270206090000) has no such key: the draft holds none, and the body names a null.
+    const { payrollNumber: _absent, ...older } = row;
+    expect(employmentToDraft(older).payrollNumber).toBe("");
+  });
+
+  it("holds Löne-id to the table's CHECK: 30 characters, no control character, and a blank is none", () => {
+    expect(validateEmploymentDraft(draft({ payrollNumber: "x".repeat(30) }))).toBeNull();
+    expect(validateEmploymentDraft(draft({ payrollNumber: ` ${"x".repeat(30)} ` }))).toBeNull();
+    expect(validateEmploymentDraft(draft({ payrollNumber: "x".repeat(31) }))).toEqual({ reason: "payrollNumberTooLong", max: 30 });
+    expect(validateEmploymentDraft(draft({ payrollNumber: "47\n11" }))).toEqual({ reason: "payrollNumberControl" });
+    expect(employmentDraftToBody(draft({ payrollNumber: "   " })).payrollNumber).toBeNull();
   });
 });
 

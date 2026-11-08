@@ -2984,6 +2984,22 @@
     ut via SS12000.
   </p>
 
+  <h4>Löne-id</h4>
+  <p>
+    <span class="ui">Löne-id</span> under <span class="ui">Anställning</span>
+    är anställningsnumret i lönesystemet, högst 30 tecken. Det står sist på
+    varje rad i löneunderlaget (6.21), och det är vad lönekontoret bokar en
+    person med skyddad identitet på, eftersom filen inte har personens namn.
+    Fyll i det för varje lärare som skolan betalar lön till. Det hör till
+    tjänsten och skyddas som den: bara rektor, en fullständig administratör och
+    den som har HR-läs ser det, bara den som beslutar ändrar det, en ändring
+    syns i <span class="ui">Historik</span> för den som läser HR-uppgifter, och
+    det följer med tjänsten när läsåret rullas vidare. Det lämnas aldrig ut via
+    SS12000 och står inte i <em>larare.csv</em>. En vikarie i poolen har ingen
+    tjänst och därför inget löne-id; i löneunderlaget står en sådan vikarie med
+    namn, eller med en kod om hen har skyddad identitet.
+  </p>
+
   <h4>En tjänst som ändras under läsåret</h4>
   <p>
     En tjänst kan ändras från ett datum, till exempel 80 % från 1 november
@@ -7592,7 +7608,10 @@
       efternamn, förnamn, e-post, typ (personal eller vikariepool), tjänstgöringsgrad (den som gäller
       periodens sista dag, så en tjänst som ändras från den 1 november är den nya i en novemberfil),
       skoldel, konto,
-      minuter för undervisning, uppdrag och vikariepass, totalt i timmar och periodens båda dagar. Tecken som
+      minuter för undervisning, uppdrag och vikariepass, totalt i timmar, periodens båda dagar och sist
+      löne-id, anställningsnumret i lönesystemet som skolan skriver på tjänsten (4.3). Löne-id är tomt för den
+      som inte har något. Kolumnen står sist så att en import som ställts in på den första versionen av
+      filen hittar varje kolumn där den var. Tecken som
       windows-1252 inte rymmer (ett polskt ł) skrivs som närmaste bokstav i CSV-filen och räknas i en notis;
       Excel-filen behåller dem.</li>
     <li><strong>Vem ser vad.</strong> Nyckeltalen läser alla administratörer, utan tjänstgöringsgrad om du inte
@@ -7603,8 +7622,21 @@
       av dem: lärarens egen belastning står där den alltid stått, under Min tjänst. Att du läser en lärares tid
       och tjänst, och att du hämtar en fil som nämner personer, skrivs i läsloggen.</li>
     <li><strong>Skyddad identitet.</strong> Löneunderlaget ska betala alla, så en person med skyddad
-      identitet finns med i filen och i vyn, och en notis säger hur många. Nyckeltalen och kostnaden nämner
-      bara lärare vid id och namn som registret redan visar för dig, och kostnadsfilen nämner ingen.</li>
+      identitet finns med i filen och i vyn, och en notis säger hur många. Personen står där med sin signatur
+      (tjänstens för läsåret) och sitt löne-id, aldrig med namn eller e-post, och de raderna står sist.
+      Saknar personen löne-id står i stället en kod i den kolumnen, <em>SKYDDAD</em> och ett nummer, till
+      exempel SKYDDAD-3. Koden ges när personen markeras och är densamma i varje fil så länge markeringen
+      finns; den säger inget om namnet. En varning säger hur många som står med en kod. Vem en kod gäller
+      ser du under <span class="ui">Vem koderna gäller</span> under tabellen, och bara där: den står aldrig i
+      filen, eftersom filen ofta skickas med e-post eller läggs i en delad mapp. Säg det till lönekontoret, och
+      fyll i löne-id på lärarens tjänst (4.3) så behövs ingen kod nästa gång. En vikarie i poolen har ingen
+      tjänst och står alltid med sin kod. Skulle en markerad person sakna både löne-id och kod säger en egen
+      varning det: fyll i löne-id, eller ta bort markeringen och sätt den igen så får personen en kod. När du
+      hämtar filen säger meddelandet hur många personer med skyddad identitet den har och hur många av dem
+      som står med en kod. Tänk på att signaturen ofta är personens
+      initialer och står i schemats filer; den som känner personalen kan alltså känna igen den. Nyckeltalen och
+      kostnaden nämner bara lärare vid id och namn som registret redan visar för dig, och kostnadsfilen nämner
+      ingen.</li>
   </ul>
   <p>
     Under fliken <span class="path">Skoldelar och satser</span> anger skolan det som inte går att räkna fram.
@@ -8478,7 +8510,7 @@
       <tr><td class="k">Krisläge: övningar</td><td>Övningar som avslutades före gränsdagen, med grupperna, lärarna, eleverna och varje markering.</td><td>—</td></tr>
       <tr><td class="k">Krisläge: skarpa larm</td><td>Skarpa larm som avslutades före gränsdagen, med allt som hör till dem. Ett larm som pågår gallras aldrig.</td><td>—</td></tr>
       <tr><td class="k">Checklistor</td><td>Instruktionsbevis och svar på samtyckeslistor för elever som avaktiverades före gränsdagen, och samtyckeslistor som är äldre än gränsdagen och tomma. En elev som går kvar på skolan har aldrig något som gallras.</td><td>Mallarna. Bevisen kan behövas för arbetsmiljöansvaret efter att eleven slutat: välj minst lika lång tid som för Slutade personer, annars finns beviset kvar men utan namn.</td></tr>
-      <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort, utom när en annan skola fortfarande använder den (2.3); då är det bara den här skolans uppgift om personen som pseudonymiseras. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur och anteckning tas bort från personens tjänster.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur och anteckning; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
+      <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort, utom när en annan skola fortfarande använder den (2.3); då är det bara den här skolans uppgift om personen som pseudonymiseras. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur, anteckning och löne-id tas bort från personens tjänster, och löne-id också ur tjänsternas tidigare versioner. En markering om skyddad identitet tas bort, och med den personens kod i löneunderlaget.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur, anteckning och löne-id; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
     </tbody>
   </table>
 

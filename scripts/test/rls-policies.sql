@@ -20259,6 +20259,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('MasterLessons', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
   ('Notifications', '{DRIFT}', '{}', '{}', '{}'),
   ('OptimizationJobs', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('PayrollPseudonyms', '{}', '{}', '{}', '{}'),
   ('PersonProtectionEvents', '{}', '{}', '{}', '{}'),
   ('PersonProtections', '{PERSONAL}', '{PERSONAL}', '{DECIDES}', '{}'),
   ('PersonalDataAccess', '{}', '{}', '{}', '{DECIDES}'),
@@ -40680,10 +40681,11 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- The history is written by its trigger, on every write of a mark.
+  -- The history is written by its trigger, on every write of a mark; and the mark writes the person's
+  -- code in the löneunderlag (PersonProtections_payroll_pseudonym, 20270206091000; section 462).
   SELECT string_agg(tgname, ',' ORDER BY tgname) INTO v FROM pg_trigger
    WHERE tgrelid IN ('public."PersonProtections"'::regclass, 'public."PersonProtectionEvents"'::regclass) AND NOT tgisinternal;
-  IF v IS DISTINCT FROM 'PersonProtectionEvents_no_truncate,PersonProtectionEvents_written_by_trigger,PersonProtections_events,PersonProtections_ss12000_versions' THEN
+  IF v IS DISTINCT FROM 'PersonProtectionEvents_no_truncate,PersonProtectionEvents_written_by_trigger,PersonProtections_events,PersonProtections_payroll_pseudonym,PersonProtections_ss12000_versions' THEN
     RAISE EXCEPTION 'skyddad 340: the triggers are %', v;
   END IF;
 
@@ -56359,5 +56361,843 @@ BEGIN
   IF (SELECT count(*) FROM pg_enum e WHERE e.enumtypid = '"LeaveRequestStatus"'::regtype AND e.enumlabel = 'GUARDIAN_DECLINED') <> 1 THEN
     RAISE EXCEPTION 'ledighetspolicy 449: the status GUARDIAN_DECLINED is not there';
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Löne-id och skyddad identitet i löneunderlaget (K1, 20270206090000 and
+-- 20270206091000). Sections 460-464. The suite runs as the API's role and can
+-- not act as the tables' owner, so every write here is one a login makes: the
+-- school's full administrator writes the post and marks a person, the sync
+-- principal sets the register's mark, the night pseudonymises. The people are
+-- the fixtures': the skyddad school (…e5…01 full, 02 rektor, 03 expedition, 04
+-- schemaläggare, 05 läsare, 06 and 07 teachers, 11 and 12 pupils, 21 and 22
+-- guardians, 31 the other school's full), the roller school's two
+-- administrators with HR-läs (…0109 schemaläggare, …0110 expedition) and the
+-- gallring school's full administrator (…0081). The helpers are pg_temp.lid_*.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Section 460: Löne-id på tjänsten i katalogen (20270206090000). The column
+-- is text, may be NULL, has no default and no grant of its own, carries its
+-- comment and its CHECK (1..30 characters, no space at either end, no control
+-- character), and the post's policies are the six the post had: the migration
+-- adds no arm. The CHECK refuses each value it should, one by one, and admits
+-- NULL, a number with a hyphen, one of 30 characters and one of 30 multi-byte
+-- characters (a count of characters, not of bytes). Each value is written by
+-- the school's full administrator, whom the post's update arm admits.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.lid_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  col pg_attribute;
+  def text;
+  v text;
+  r text;
+  priv text;
+  n bigint;
+  school uuid;
+  post uuid;
+  val text;
+BEGIN
+  SELECT * INTO col FROM pg_attribute a
+   WHERE a.attrelid = 'public."TeacherEmployments"'::regclass AND a.attname = 'payrollNumber' AND NOT a.attisdropped;
+  IF NOT FOUND THEN RAISE EXCEPTION 'lid 460: TeacherEmployments has no payrollNumber'; END IF;
+  IF format_type(col.atttypid, col.atttypmod) <> 'text' THEN
+    RAISE EXCEPTION 'lid 460: payrollNumber is %, not text', format_type(col.atttypid, col.atttypmod);
+  END IF;
+  IF col.attnotnull THEN RAISE EXCEPTION 'lid 460: payrollNumber is NOT NULL; a post without a number is the rule'; END IF;
+  IF col.atthasdef OR col.attgenerated <> '' OR col.attidentity <> '' THEN
+    RAISE EXCEPTION 'lid 460: payrollNumber has a default, a generation or an identity; a school writes it or it is NULL';
+  END IF;
+  IF col.attacl IS NOT NULL THEN
+    RAISE EXCEPTION 'lid 460: payrollNumber has a grant of its own: %', col.attacl;
+  END IF;
+  v := col_description('public."TeacherEmployments"'::regclass, col.attnum);
+  IF v IS NULL OR v NOT LIKE 'Löne-id: %' OR v NOT LIKE '%HR data%' THEN
+    RAISE EXCEPTION 'lid 460: payrollNumber''s comment is %', v;
+  END IF;
+
+  -- The CHECK, by name and by its definition.
+  SELECT count(*) INTO n FROM pg_constraint c
+   WHERE c.conrelid = 'public."TeacherEmployments"'::regclass AND c.conname = 'TeacherEmployments_payrollNumber_check' AND c.contype = 'c' AND c.convalidated;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 460: the payrollNumber CHECK is not there, or not validated (% found)', n; END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conname = 'TeacherEmployments_payrollNumber_check';
+  IF def IS DISTINCT FROM $d$CHECK ((("payrollNumber" IS NULL) OR (((char_length("payrollNumber") >= 1) AND (char_length("payrollNumber") <= 30)) AND ("payrollNumber" = btrim("payrollNumber")) AND ("payrollNumber" !~ '[[:cntrl:]]'::text))))$d$ THEN
+    RAISE EXCEPTION 'lid 460: the payrollNumber CHECK is %', def;
+  END IF;
+
+  -- The post's arms are the six it had, for the roles it had them for.
+  SELECT string_agg(policyname || ':' || cmd || ':' || roles::text, ',' ORDER BY policyname COLLATE "C") INTO def
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeacherEmployments';
+  IF def IS DISTINCT FROM 'teacher_employments_admin_delete:DELETE:{app_authenticated},teacher_employments_admin_insert:INSERT:{app_authenticated},teacher_employments_admin_select:SELECT:{app_authenticated},teacher_employments_admin_update:UPDATE:{app_authenticated},teacher_employments_service_select:SELECT:{app_authenticated},teacher_employments_teacher_own_select:SELECT:{authenticated}' THEN
+    RAISE EXCEPTION 'lid 460: the arms of TeacherEmployments are %', def;
+  END IF;
+  -- Writing a post is the deciders' still: the update's check and the insert's ask for current_user_decides().
+  IF (SELECT with_check FROM pg_policies WHERE tablename = 'TeacherEmployments' AND policyname = 'teacher_employments_admin_update') NOT LIKE '%current_user_decides()%'
+     OR (SELECT with_check FROM pg_policies WHERE tablename = 'TeacherEmployments' AND policyname = 'teacher_employments_admin_insert') NOT LIKE '%current_user_decides()%' THEN
+    RAISE EXCEPTION 'lid 460: a post is written by others than those who decide';
+  END IF;
+
+  -- No grant of the column alone, to anyone: a role holds the privilege on the column exactly when it holds it on the table.
+  IF NOT has_table_privilege('app_authenticated', 'public."TeacherEmployments"', 'UPDATE')
+     OR NOT has_table_privilege('app_authenticated', 'public."TeacherEmployments"', 'SELECT') THEN
+    RAISE EXCEPTION 'lid 460: the API''s role no longer reads and updates the post';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+      IF has_column_privilege(r, 'public."TeacherEmployments"', 'payrollNumber', priv) IS DISTINCT FROM has_table_privilege(r, 'public."TeacherEmployments"', priv) THEN
+        RAISE EXCEPTION 'lid 460: % holds % on payrollNumber alone (a grant of the column, not of the post)', r, priv;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  -- The CHECK, written by the school's full administrator. A post of the skyddad school starts with no number.
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  IF school IS NULL OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-skyddad-school' THEN
+    RAISE EXCEPTION 'lid 460: the full administrator is not in rls-skyddad-school; fixtures did not run';
+  END IF;
+  SELECT id INTO post FROM "TeacherEmployments" WHERE "schoolId" = school AND signature = 'SKY';
+  IF post IS NULL THEN RAISE EXCEPTION 'lid 460: the fixtures lack the skyddad school''s post SKY'; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "schoolId" = school AND "payrollNumber" IS NOT NULL;
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 460: % posts of the skyddad school start with a number', n; END IF;
+
+  -- Refused, each on its own: empty, a space at either end, only a space, 31 characters (also 31 multi-byte ones), a line
+  -- break or a tab inside, a line break last (btrim leaves it, so only the control clause refuses it).
+  FOREACH val IN ARRAY ARRAY['', ' ', ' 4711', '4711 ', repeat('9', 31), repeat('å', 31),
+                             'a' || chr(10) || 'b', 'a' || chr(9) || 'b', '4711' || chr(10)] LOOP
+    BEGIN
+      UPDATE "TeacherEmployments" SET "payrollNumber" = val WHERE id = post;
+      RAISE EXCEPTION 'lid 460: the CHECK admitted the value %', format('%L', val);
+    EXCEPTION WHEN check_violation THEN
+      NULL;
+    END;
+  END LOOP;
+  SELECT "payrollNumber" INTO v FROM "TeacherEmployments" WHERE id = post;
+  IF v IS NOT NULL THEN RAISE EXCEPTION 'lid 460: a refused value left % on the post', v; END IF;
+
+  -- Admitted, each on its own and read back: a number with a hyphen, one character, 30 characters, 30 multi-byte ones, and
+  -- NULL again (the number taken off).
+  FOREACH val IN ARRAY ARRAY['4711-01', 'A', repeat('9', 30), repeat('å', 30), 'E 17/3'] LOOP
+    UPDATE "TeacherEmployments" SET "payrollNumber" = val WHERE id = post;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'lid 460: the full administrator could not write the value %', format('%L', val); END IF;
+    SELECT "payrollNumber" INTO v FROM "TeacherEmployments" WHERE id = post;
+    IF v IS DISTINCT FROM val THEN RAISE EXCEPTION 'lid 460: wrote % and read %', format('%L', val), format('%L', v); END IF;
+  END LOOP;
+  UPDATE "TeacherEmployments" SET "payrollNumber" = NULL WHERE id = post;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  SELECT "payrollNumber" INTO v FROM "TeacherEmployments" WHERE id = post;
+  IF n <> 1 OR v IS NOT NULL THEN RAISE EXCEPTION 'lid 460: the number could not be taken off the post (% rows, now %)', n, v; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 461: vem som skriver Löne-id på tjänsten (20270206090000). The post
+-- is written by those who decide, as it always was: full and rektor change the
+-- number; the expedition, the schemaläggare and the läsare, with or without
+-- HR-läs, reach the row through the update arm's USING and are refused by its
+-- check (an error, 42501, and the number is unchanged); a teacher, a pupil and
+-- a guardian reach no row (the update changes nothing); the other school's
+-- administrator reaches none either, and an update with no WHERE touches only
+-- its own school's posts. The post's versions take the number.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.lid_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'lid: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.lid_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  roller uuid;
+  post uuid;
+  roller_post uuid;
+  who text;
+  n bigint;
+  v text;
+BEGIN
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  IF school IS NULL OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-skyddad-school' THEN
+    RAISE EXCEPTION 'lid 461: the full administrator is not in rls-skyddad-school; fixtures did not run';
+  END IF;
+  SELECT id INTO post FROM "TeacherEmployments" WHERE "schoolId" = school AND signature = 'SKY';
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  SELECT id INTO roller_post FROM "TeacherEmployments" WHERE "schoolId" = roller AND signature = 'RL';
+  IF post IS NULL OR other IS NULL OR roller IS NULL OR roller_post IS NULL OR (SELECT slug FROM "Schools" WHERE id = roller) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'lid 461: the fixtures lack the skyddad school''s post, the other school or the roller school''s post';
+  END IF;
+  IF school IN (other, roller) OR other = roller THEN RAISE EXCEPTION 'lid 461: the three schools are not three'; END IF;
+
+  -- Those who decide write the number, each in their own school, and read it back.
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e50000000001');
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'F-1' WHERE id = post;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 461: the full administrator could not write the number'; END IF;
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e50000000002');
+  SELECT "payrollNumber" INTO v FROM "TeacherEmployments" WHERE id = post;
+  IF v IS DISTINCT FROM 'F-1' THEN RAISE EXCEPTION 'lid 461: the rektor reads the number as %', v; END IF;
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'R-2' WHERE id = post;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 461: the rektor could not change the number'; END IF;
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-000000000105');
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'RF-3' WHERE id = roller_post;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 461: the roller school''s full administrator could not write the number'; END IF;
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-000000000106');
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'RR-4' WHERE id = roller_post;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 461: the roller school''s rektor could not change the number'; END IF;
+
+  -- The post's versions take the number, as they take every column: the rektor's change is the latest, before F-1, after R-2.
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e50000000001');
+  SELECT (l.before ->> 'payrollNumber') || '>' || (l.after ->> 'payrollNumber') INTO v
+    FROM "TeacherEmploymentLogs" l WHERE l."entityId" = post AND l.entity = 'EMPLOYMENT' AND l.action = 'UPDATE' ORDER BY l.version DESC LIMIT 1;
+  IF v IS DISTINCT FROM 'F-1>R-2' THEN RAISE EXCEPTION 'lid 461: the post''s latest version says % of the number, not F-1>R-2', v; END IF;
+
+  -- The expedition, the schemaläggare and the läsare read the number (the row, not the gateway's HR-läs) and are refused the
+  -- write: the arm lets them reach the row and its check refuses the new one.
+  FOREACH who IN ARRAY ARRAY['03', '04', '05'] LOOP
+    PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT "payrollNumber" INTO v FROM "TeacherEmployments" WHERE id = post;
+    IF v IS DISTINCT FROM 'R-2' THEN RAISE EXCEPTION 'lid 461: administrator …% reads the number as %', who, v; END IF;
+    PERFORM pg_temp.lid_refuses(format($q$UPDATE "TeacherEmployments" SET "payrollNumber" = 'X-9' WHERE id = %L$q$, post), '42501', format('administrator …%s writing the number', who));
+    PERFORM pg_temp.lid_refuses(format($q$UPDATE "TeacherEmployments" SET "payrollNumber" = NULL WHERE id = %L$q$, post), '42501', format('administrator …%s taking the number off', who));
+  END LOOP;
+  -- With HR-läs: the schemaläggare and the expedition of the roller school. HR-läs is a reading right (the gateway hands the
+  -- column to them) and decides nothing.
+  FOREACH who IN ARRAY ARRAY['09', '10'] LOOP
+    PERFORM pg_temp.lid_as('00000000-0000-4000-8000-0000000001' || who);
+    SELECT u."hrRead"::text INTO v FROM "Users" u WHERE u.id = app.current_user_id();
+    IF v IS DISTINCT FROM 'true' OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_user_decides() THEN
+      RAISE EXCEPTION 'lid 461: …01% is not an administrator with HR-läs who does not decide (hrRead %)', who, v;
+    END IF;
+    SELECT "payrollNumber" INTO v FROM "TeacherEmployments" WHERE id = roller_post;
+    IF v IS DISTINCT FROM 'RR-4' THEN RAISE EXCEPTION 'lid 461: …01% reads the number as %', who, v; END IF;
+    PERFORM pg_temp.lid_refuses(format($q$UPDATE "TeacherEmployments" SET "payrollNumber" = 'X-9' WHERE id = %L$q$, roller_post), '42501', format('administrator …01%s with HR-läs writing the number', who));
+    PERFORM pg_temp.lid_refuses(format($q$UPDATE "TeacherEmployments" SET "payrollNumber" = NULL WHERE id = %L$q$, roller_post), '42501', format('administrator …01%s with HR-läs taking the number off', who));
+  END LOOP;
+
+  -- A teacher (the post's own too), a pupil, a guardian: the update finds no row.
+  FOREACH who IN ARRAY ARRAY['06', '07', '11', '12', '21', '22'] LOOP
+    PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e500000000' || who);
+    UPDATE "TeacherEmployments" SET "payrollNumber" = 'X-9' WHERE id = post;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'lid 461: % …% changed the number', app.current_user_role(), who; END IF;
+    UPDATE "TeacherEmployments" SET "payrollNumber" = NULL;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'lid 461: % …% changed % posts', app.current_user_role(), who, n; END IF;
+  END LOOP;
+
+  -- The other school's administrator, and the roller school's: not this school's post. An update with no WHERE reaches the
+  -- administrator's own school's posts (the skyddad annan has none; the roller school has one) and no other's.
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "TeacherEmployments";
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 461: the other school''s administrator reads % posts, none being its own', n; END IF;
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'X-9' WHERE id IN (post, roller_post);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 461: the other school''s administrator changed % numbers of other schools'' posts', n; END IF;
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'X-9';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 461: an update with no where by the other school''s administrator changed % posts', n; END IF;
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-000000000105');
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'X-9' WHERE id = post;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 461: the roller school''s full administrator changed the skyddad school''s number'; END IF;
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'RA-5';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 461: an update with no where by the roller school''s full administrator changed % posts, not its one', n; END IF;
+  -- Nobody moved a post into another school with a number on it, and nothing leaked across.
+  PERFORM pg_temp.lid_refuses(format($q$UPDATE "TeacherEmployments" SET "schoolId" = %L, "payrollNumber" = 'X-9' WHERE id = %L$q$, other, roller_post), '42501', 'the roller school''s full administrator moving its post to another school');
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-e50000000001');
+  SELECT "payrollNumber" INTO v FROM "TeacherEmployments" WHERE id = post;
+  IF v IS DISTINCT FROM 'R-2' THEN RAISE EXCEPTION 'lid 461: the skyddad school''s post says % after the others'' attempts, not R-2', v; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "payrollNumber" = 'X-9';
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 461: % posts read X-9', n; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "payrollNumber" IS NOT NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 461: the skyddad school reads % numbers, not its one', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 462: skyddade personers koder i katalogen (20270206091000). The
+-- table with its four columns, the number an identity that is drawn and never
+-- cycles, the keys (the school's and the person's, cascading, and the person's
+-- composite so a code names a person of its own school), row security with
+-- the one arm and no other, the API's role holding select and nothing else,
+-- nothing for a PostgREST role, no write for service_role, PG 17's MAINTAIN
+-- the owner's alone, and the sequence the trigger's alone. The trigger that
+-- writes the codes is on the marks, after insert and delete, per row, and its
+-- function runs as the owner with a pinned search_path and is nobody's to call.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  def text;
+  v text;
+  r text;
+  priv text;
+  n bigint;
+  seq text := pg_get_serial_sequence('"PayrollPseudonyms"', 'number');
+  fn regprocedure := 'app.payroll_pseudonym_follows_the_mark()'::regprocedure;
+  c record;
+BEGIN
+  SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum) INTO v
+    FROM pg_attribute a WHERE a.attrelid = 'public."PayrollPseudonyms"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  IF v IS DISTINCT FROM 'schoolId:uuid,userId:uuid,number:integer,createdAt:timestamp(6) with time zone' THEN
+    RAISE EXCEPTION 'lid 462: PayrollPseudonyms has the columns %', v;
+  END IF;
+  -- Every column is NOT NULL: a code, and whose it is (the school's key and the person's).
+  IF EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public."PayrollPseudonyms"'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND NOT a.attnotnull) THEN
+    RAISE EXCEPTION 'lid 462: a column of PayrollPseudonyms may be NULL';
+  END IF;
+  -- Only the number is drawn (an identity, ALWAYS: no writer chooses it), and only createdAt has a default.
+  SELECT string_agg(a.attname || ':' || a.attidentity::text, ',' ORDER BY a.attnum) INTO v
+    FROM pg_attribute a WHERE a.attrelid = 'public."PayrollPseudonyms"'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attidentity <> '';
+  IF v IS DISTINCT FROM 'number:a' THEN RAISE EXCEPTION 'lid 462: the identity columns are %, not number:a (ALWAYS)', v; END IF;
+  SELECT string_agg(a.attname || '=' || pg_get_expr(d.adbin, d.adrelid), ',' ORDER BY a.attnum) INTO v
+    FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum WHERE d.adrelid = 'public."PayrollPseudonyms"'::regclass;
+  IF v IS DISTINCT FROM 'createdAt=now()' THEN RAISE EXCEPTION 'lid 462: the defaults are %', v; END IF;
+  -- The sequence: the identity's own, an integer counting up by one that does not cycle (a code is never reused).
+  IF seq IS DISTINCT FROM 'public."PayrollPseudonyms_number_seq"' THEN RAISE EXCEPTION 'lid 462: the number''s sequence is %', seq; END IF;
+  SELECT s.seqtypid::regtype::text || ':' || s.seqincrement || ':' || s.seqcycle::text INTO v FROM pg_sequence s WHERE s.seqrelid = seq::regclass;
+  IF v IS DISTINCT FROM 'integer:1:false' THEN RAISE EXCEPTION 'lid 462: the number''s sequence is %, not integer:1:false', v; END IF;
+
+  -- Keys: the primary key, the number's unique key, the two foreign keys; no CHECK, no exclusion.
+  SELECT string_agg(c2.conname || ':' || c2.contype::text, ',' ORDER BY c2.conname COLLATE "C") INTO v
+    FROM pg_constraint c2 WHERE c2.conrelid = 'public."PayrollPseudonyms"'::regclass;
+  IF v IS DISTINCT FROM 'PayrollPseudonyms_number_key:u,PayrollPseudonyms_pkey:p,PayrollPseudonyms_schoolId_fkey:f,PayrollPseudonyms_userId_schoolId_fkey:f' THEN
+    RAISE EXCEPTION 'lid 462: PayrollPseudonyms has the constraints %', v;
+  END IF;
+  SELECT pg_get_constraintdef(c2.oid) INTO def FROM pg_constraint c2 WHERE c2.conname = 'PayrollPseudonyms_pkey';
+  IF def IS DISTINCT FROM 'PRIMARY KEY ("schoolId", "userId")' THEN RAISE EXCEPTION 'lid 462: the primary key is %', def; END IF;
+  SELECT pg_get_constraintdef(c2.oid) INTO def FROM pg_constraint c2 WHERE c2.conname = 'PayrollPseudonyms_number_key';
+  IF def IS DISTINCT FROM 'UNIQUE (number)' THEN RAISE EXCEPTION 'lid 462: the number''s unique key is %', def; END IF;
+  SELECT count(*) INTO n FROM pg_constraint c2 WHERE c2.conrelid = 'public."PayrollPseudonyms"'::regclass AND c2.contype = 'f';
+  IF n <> 2 THEN RAISE EXCEPTION 'lid 462: PayrollPseudonyms has % foreign keys, not two', n; END IF;
+  FOR c IN SELECT c2.conname, c2.confrelid::regclass::text AS target, c2.confdeltype, c2.confupdtype, c2.confmatchtype, c2.condeferrable,
+                  pg_get_constraintdef(c2.oid) AS cdef
+             FROM pg_constraint c2 WHERE c2.conrelid = 'public."PayrollPseudonyms"'::regclass AND c2.contype = 'f' ORDER BY c2.conname COLLATE "C"
+  LOOP
+    -- Cascading with the school and the person; the ids never rewritten (ON UPDATE NO ACTION), no deferral, a plain match.
+    IF c.confdeltype <> 'c' OR c.confupdtype <> 'a' OR c.confmatchtype <> 's' OR c.condeferrable THEN
+      RAISE EXCEPTION 'lid 462: % is on delete %, on update %, match %, deferrable %', c.conname, c.confdeltype, c.confupdtype, c.confmatchtype, c.condeferrable;
+    END IF;
+    IF c.conname = 'PayrollPseudonyms_schoolId_fkey' AND (c.target <> '"Schools"' OR c.cdef <> 'FOREIGN KEY ("schoolId") REFERENCES "Schools"(id) ON DELETE CASCADE') THEN
+      RAISE EXCEPTION 'lid 462: the school''s key is %', c.cdef;
+    END IF;
+    IF c.conname = 'PayrollPseudonyms_userId_schoolId_fkey' AND (c.target <> '"Users"' OR c.cdef <> 'FOREIGN KEY ("userId", "schoolId") REFERENCES "Users"(id, "schoolId") ON DELETE CASCADE') THEN
+      RAISE EXCEPTION 'lid 462: the person''s key is %, not the composite (userId, schoolId) -> Users(id, schoolId)', c.cdef;
+    END IF;
+  END LOOP;
+
+  -- Row security and its one arm: every administrator of the school reads.
+  IF (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."PayrollPseudonyms"'::regclass) IS NOT TRUE THEN
+    RAISE EXCEPTION 'lid 462: row security is off on PayrollPseudonyms';
+  END IF;
+  SELECT string_agg(policyname || ':' || cmd || ':' || roles::text || ':' || permissive, ',' ORDER BY policyname COLLATE "C") INTO v
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'PayrollPseudonyms';
+  IF v IS DISTINCT FROM 'payroll_pseudonyms_admin_select:SELECT:{app_authenticated}:PERMISSIVE' THEN
+    RAISE EXCEPTION 'lid 462: the arms of PayrollPseudonyms are %', v;
+  END IF;
+  SELECT coalesce(qual, '') || ' | ' || coalesce(with_check, '') INTO def FROM pg_policies WHERE tablename = 'PayrollPseudonyms';
+  IF def NOT LIKE '%"schoolId" = %current_school_id()%' OR def NOT LIKE '%''SCHOOL_ADMIN''::"UserRole"%' OR def LIKE '% OR %' OR def LIKE '%NOT %'
+     OR def LIKE '%TEACHER%' OR def LIKE '%STUDENT%' OR def LIKE '%GUARDIAN%' OR def LIKE '%current_user_decides%' OR def LIKE '%sync%' THEN
+    RAISE EXCEPTION 'lid 462: the arm is not the school''s administrators'' alone: %', def;
+  END IF;
+
+  -- Privileges: whom the table's ACL names, and what each holds.
+  SELECT string_agg(g.who, ',' ORDER BY g.who COLLATE "C") INTO v
+    FROM (SELECT DISTINCT CASE WHEN x.grantee = 0 THEN 'PUBLIC' WHEN x.grantee = c2.relowner THEN 'OWNER' ELSE pg_get_userbyid(x.grantee) END AS who
+            FROM pg_class c2, aclexplode(c2.relacl) x WHERE c2.oid = 'public."PayrollPseudonyms"'::regclass) g;
+  IF v IS DISTINCT FROM 'OWNER,app_authenticated,service_role' THEN RAISE EXCEPTION 'lid 462: the table''s grantees are %, not the owner, the API''s role and service_role', v; END IF;
+  IF EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public."PayrollPseudonyms"'::regclass AND a.attnum > 0 AND a.attacl IS NOT NULL) THEN
+    RAISE EXCEPTION 'lid 462: a column of PayrollPseudonyms has a grant of its own';
+  END IF;
+  IF NOT has_table_privilege('app_authenticated', 'public."PayrollPseudonyms"', 'SELECT') THEN
+    RAISE EXCEPTION 'lid 462: the API''s role cannot read PayrollPseudonyms';
+  END IF;
+  FOREACH priv IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+    IF has_table_privilege('app_authenticated', 'public."PayrollPseudonyms"', priv) THEN
+      RAISE EXCEPTION 'lid 462: the API''s role holds % on PayrollPseudonyms', priv;
+    END IF;
+  END LOOP;
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    -- A privilege on any column counts too (has_table_privilege is false for a role that holds it on a column alone).
+    FOREACH priv IN ARRAY ARRAY['INSERT', 'UPDATE', 'REFERENCES'] LOOP
+      IF has_any_column_privilege(r, 'public."PayrollPseudonyms"', priv) THEN
+        RAISE EXCEPTION 'lid 462: % holds % on a column of PayrollPseudonyms', r, priv;
+      END IF;
+    END LOOP;
+    IF r IN ('anon', 'authenticated') THEN
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        IF has_table_privilege(r, 'public."PayrollPseudonyms"', priv) OR has_any_column_privilege(r, 'public."PayrollPseudonyms"', 'SELECT') THEN
+          RAISE EXCEPTION 'lid 462: PostgREST''s role % holds % on PayrollPseudonyms', r, priv;
+        END IF;
+      END LOOP;
+    END IF;
+    IF r = 'service_role' THEN
+      FOREACH priv IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        IF has_table_privilege(r, 'public."PayrollPseudonyms"', priv) THEN
+          RAISE EXCEPTION 'lid 462: service_role holds % on PayrollPseudonyms', priv;
+        END IF;
+      END LOOP;
+    END IF;
+  END LOOP;
+  -- PG 17's MAINTAIN is the owner's alone: no grantee but the owner holds it, for any role.
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+        EXECUTE format('SELECT has_table_privilege(%L, %L, %L)', r, 'public."PayrollPseudonyms"', 'MAINTAIN') INTO v;
+        IF v::boolean THEN RAISE EXCEPTION 'lid 462: % holds MAINTAIN on PayrollPseudonyms', r; END IF;
+      END IF;
+    END LOOP;
+    EXECUTE $q$SELECT count(*) FROM pg_class c2, aclexplode(c2.relacl) x
+                 WHERE c2.oid = 'public."PayrollPseudonyms"'::regclass AND x.privilege_type = 'MAINTAIN' AND x.grantee <> c2.relowner$q$ INTO n;
+    IF n <> 0 THEN RAISE EXCEPTION 'lid 462: % grantees but the owner hold MAINTAIN on PayrollPseudonyms', n; END IF;
+  END IF;
+
+  -- The sequence is the trigger's (the owner's): no role moves it, and nobody but the owner is named in its ACL.
+  SELECT string_agg(g.who, ',' ORDER BY g.who COLLATE "C") INTO v
+    FROM (SELECT DISTINCT CASE WHEN x.grantee = 0 THEN 'PUBLIC' WHEN x.grantee = c2.relowner THEN 'OWNER' ELSE pg_get_userbyid(x.grantee) END AS who
+            FROM pg_class c2, aclexplode(coalesce(c2.relacl, acldefault('S', c2.relowner))) x WHERE c2.oid = seq::regclass) g;
+  IF v IS DISTINCT FROM 'OWNER' THEN RAISE EXCEPTION 'lid 462: the number''s sequence has the grantees %, not the owner alone', v; END IF;
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH priv IN ARRAY ARRAY['USAGE', 'SELECT', 'UPDATE'] LOOP
+      IF has_sequence_privilege(r, seq, priv) THEN RAISE EXCEPTION 'lid 462: % holds % on the number''s sequence', r, priv; END IF;
+    END LOOP;
+  END LOOP;
+
+  -- The trigger on the marks: after insert and delete, per row, enabled, and not on update.
+  SELECT count(*) INTO n FROM pg_trigger t
+   WHERE t.tgrelid = 'public."PersonProtections"'::regclass AND NOT t.tgisinternal AND t.tgname = 'PersonProtections_payroll_pseudonym';
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 462: PersonProtections has % triggers named PersonProtections_payroll_pseudonym', n; END IF;
+  SELECT pg_get_triggerdef(t.oid) || ' / ' || t.tgenabled::text INTO def FROM pg_trigger t
+   WHERE t.tgrelid = 'public."PersonProtections"'::regclass AND t.tgname = 'PersonProtections_payroll_pseudonym';
+  IF def IS DISTINCT FROM 'CREATE TRIGGER "PersonProtections_payroll_pseudonym" AFTER INSERT OR DELETE ON public."PersonProtections" FOR EACH ROW EXECUTE FUNCTION app.payroll_pseudonym_follows_the_mark() / O' THEN
+    RAISE EXCEPTION 'lid 462: the trigger is %', def;
+  END IF;
+  -- Nothing writes the table but that trigger: no trigger of its own on it either.
+  SELECT count(*) INTO n FROM pg_trigger t WHERE t.tgrelid = 'public."PayrollPseudonyms"'::regclass AND NOT t.tgisinternal;
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 462: PayrollPseudonyms has % triggers of its own', n; END IF;
+
+  -- Its function: the owner's (as the table's, which row security does not bind), SECURITY DEFINER, a pinned search_path, a
+  -- trigger function, and nobody's to call (the ACL names the owner alone, PUBLIC not).
+  SELECT p.prosecdef::text || ':' || coalesce(array_to_string(p.proconfig, ','), '-') || ':' || p.prorettype::regtype::text
+         || ':' || (p.proowner = (SELECT relowner FROM pg_class WHERE oid = 'public."PayrollPseudonyms"'::regclass))::text INTO v
+    FROM pg_proc p WHERE p.oid = fn;
+  IF v IS DISTINCT FROM 'true:search_path=public, pg_temp:trigger:true' THEN
+    RAISE EXCEPTION 'lid 462: the trigger function is (definer, config, returns, the table''s owner) %', v;
+  END IF;
+  IF has_function_privilege('public', fn, 'EXECUTE') THEN RAISE EXCEPTION 'lid 462: PUBLIC may execute the trigger function'; END IF;
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'lid 462: % may execute the trigger function', r;
+    END IF;
+  END LOOP;
+  SELECT count(*) INTO n FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = fn AND x.grantee <> p.proowner;
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 462: the trigger function has % grantees but its owner', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 463: markeringen ger personen en kod, och tar den med sig bort
+-- (20270206091000). A mark by hand gives the person one code; the register's
+-- mark beside it keeps the same; a code stays while the person has a mark
+-- from either source and goes with the last; a mark set again gives a new,
+-- higher number (never reused); another person and another school get codes of
+-- their own, from the one sequence; a person removed takes the code with them,
+-- and so does a school's key (the person's cascade). The marks the fixtures
+-- planted were given theirs by the trigger. Every administrator profile of
+-- the school reads the school's codes and nobody else's; a teacher (a marked
+-- one too), a pupil, a guardian and the sync principal read none; nobody writes
+-- one, the full administrator included (42501); PostgREST's role is refused.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.lid_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'lid: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.lid_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- The sync principal: no login, the school's sync id.
+CREATE FUNCTION pg_temp.lid_sync(school uuid) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', '', true);
+  SELECT set_config('app.sync_school_id', school::text, true);
+$f$;
+CREATE FUNCTION pg_temp.lid_login(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('app.sync_school_id', '', true);
+  SELECT pg_temp.lid_as(auth);
+$f$;
+-- The person's codes as the current login reads them: '' for none, else the numbers.
+CREATE FUNCTION pg_temp.lid_codes(uid uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(string_agg(number::text, ',' ORDER BY number), '') FROM "PayrollPseudonyms" WHERE "userId" = uid;
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  p4 uuid;
+  t2 uuid;
+  extra uuid;
+  extra_other uuid;
+  c1 integer;
+  c2 integer;
+  c3 integer;
+  c_t2 integer;
+  c_other integer;
+  c_extra integer;
+  who text;
+  n bigint;
+  v text;
+BEGIN
+  PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  IF school IS NULL OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-skyddad-school' THEN
+    RAISE EXCEPTION 'lid 463: the full administrator is not in rls-skyddad-school; fixtures did not run';
+  END IF;
+  SELECT id INTO p4 FROM "Users" WHERE "schoolId" = school AND email = 'sk-p4@example.invalid';
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND email = 'sk-t2@example.invalid';
+  PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  IF p4 IS NULL OR t2 IS NULL OR other IS NULL THEN RAISE EXCEPTION 'lid 463: the fixtures lack P4, T2 or the other school'; END IF;
+
+  -- The marks the fixtures planted (T1, P1, P3, G2; the other school's pupil) were given a code each, one per person, positive.
+  PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "PayrollPseudonyms";
+  IF n <> 4 THEN RAISE EXCEPTION 'lid 463: the school has % codes, not one for each of its four marked persons', n; END IF;
+  IF EXISTS (SELECT 1 FROM "PayrollPseudonyms" c WHERE c."schoolId" <> school OR c.number < 1) THEN
+    RAISE EXCEPTION 'lid 463: a code of another school or a number below 1 is read';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "PersonProtections" p WHERE NOT EXISTS (SELECT 1 FROM "PayrollPseudonyms" c WHERE c."userId" = p."userId" AND c."schoolId" = p."schoolId"))
+     OR EXISTS (SELECT 1 FROM "PayrollPseudonyms" c WHERE NOT EXISTS (SELECT 1 FROM "PersonProtections" p WHERE c."userId" = p."userId" AND c."schoolId" = p."schoolId")) THEN
+    RAISE EXCEPTION 'lid 463: the codes and the marked persons are not the same set';
+  END IF;
+  IF pg_temp.lid_codes(p4) <> '' THEN RAISE EXCEPTION 'lid 463: P4, unmarked, has a code'; END IF;
+
+  -- A mark by hand: one code, a positive number.
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p4, school, 'MANUAL');
+  SELECT count(*), min(number) INTO n, c1 FROM "PayrollPseudonyms" WHERE "userId" = p4 AND "schoolId" = school;
+  IF n <> 1 OR c1 IS NULL OR c1 < 1 THEN RAISE EXCEPTION 'lid 463: a mark by hand gave % codes (number %), not one', n, c1; END IF;
+  SELECT count(*) INTO n FROM "PayrollPseudonyms";
+  IF n <> 5 THEN RAISE EXCEPTION 'lid 463: the school has % codes after one mark, not five', n; END IF;
+
+  -- The register's mark beside it (the sync's): still one code, the same number.
+  PERFORM pg_temp.lid_sync(school);
+  BEGIN
+    INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p4, school, 'SS12000');
+  EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'lid 463: the register''s mark beside the mark by hand was refused (%): a second source row of a person must keep the first code', SQLERRM;
+  END;
+  PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "PersonProtections" WHERE "userId" = p4;
+  IF n <> 2 THEN RAISE EXCEPTION 'lid 463: P4 holds % marks, not the two sources''', n; END IF;
+  IF pg_temp.lid_codes(p4) IS DISTINCT FROM c1::text THEN
+    RAISE EXCEPTION 'lid 463: the register''s mark beside the mark by hand left the codes %, not just %', pg_temp.lid_codes(p4), c1;
+  END IF;
+
+  -- One source goes: the code stays, the same. Then the other: it goes with the last.
+  DELETE FROM "PersonProtections" WHERE "userId" = p4 AND source = 'MANUAL';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 463: the mark by hand was not removed'; END IF;
+  IF pg_temp.lid_codes(p4) IS DISTINCT FROM c1::text THEN
+    RAISE EXCEPTION 'lid 463: removing the mark by hand, with the register''s still there, left the codes %, not %', pg_temp.lid_codes(p4), c1;
+  END IF;
+  DELETE FROM "PersonProtections" WHERE "userId" = p4 AND source = 'SS12000';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 463: the register''s mark was not removed'; END IF;
+  IF pg_temp.lid_codes(p4) <> '' THEN RAISE EXCEPTION 'lid 463: the last mark was removed and the codes are %', pg_temp.lid_codes(p4); END IF;
+  SELECT count(*) INTO n FROM "PayrollPseudonyms";
+  IF n <> 4 THEN RAISE EXCEPTION 'lid 463: the school has % codes after the last mark went, not four', n; END IF;
+
+  -- The mark set again: a new code, higher than the first (the number is drawn, never reused).
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p4, school, 'MANUAL');
+  SELECT min(number) INTO c2 FROM "PayrollPseudonyms" WHERE "userId" = p4;
+  IF c2 IS NULL OR c2 <= c1 THEN RAISE EXCEPTION 'lid 463: a mark set again gave the number %, after %', c2, c1; END IF;
+
+  -- The other order: the register's source removed first (by a decider), the one by hand last.
+  PERFORM pg_temp.lid_sync(school);
+  BEGIN
+    INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p4, school, 'SS12000');
+  EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'lid 463: the register''s mark beside the mark set again was refused (%): a second source row of a person must keep the first code', SQLERRM;
+  END;
+  PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e50000000001');
+  DELETE FROM "PersonProtections" WHERE "userId" = p4 AND source = 'SS12000';
+  IF pg_temp.lid_codes(p4) IS DISTINCT FROM c2::text THEN
+    RAISE EXCEPTION 'lid 463: removing the register''s mark, with the one by hand still there, left the codes %, not %', pg_temp.lid_codes(p4), c2;
+  END IF;
+  DELETE FROM "PersonProtections" WHERE "userId" = p4;
+  IF pg_temp.lid_codes(p4) <> '' THEN RAISE EXCEPTION 'lid 463: the last mark was removed and the codes are %', pg_temp.lid_codes(p4); END IF;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (p4, school, 'MANUAL');
+  SELECT min(number) INTO c3 FROM "PayrollPseudonyms" WHERE "userId" = p4;
+  IF c3 IS NULL OR c3 <= c2 THEN RAISE EXCEPTION 'lid 463: a third mark gave the number %, after %', c3, c2; END IF;
+
+  -- Another person, a code of their own, higher still.
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (t2, school, 'MANUAL');
+  SELECT min(number) INTO c_t2 FROM "PayrollPseudonyms" WHERE "userId" = t2;
+  IF c_t2 IS NULL OR c_t2 <= c3 THEN RAISE EXCEPTION 'lid 463: another person''s code is %, after %', c_t2, c3; END IF;
+
+  -- A person removed takes the code with them (the person's key cascades), and the mark.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'lid-new@example.invalid', 'Löne', 'Ny', 'STUDENT', gen_random_uuid(), true, now()) RETURNING id INTO extra;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (extra, school, 'MANUAL');
+  SELECT min(number) INTO c_extra FROM "PayrollPseudonyms" WHERE "userId" = extra;
+  IF c_extra IS NULL OR c_extra <= c_t2 THEN RAISE EXCEPTION 'lid 463: a new person''s code is %, after %', c_extra, c_t2; END IF;
+  DELETE FROM "Users" WHERE id = extra;
+  IF pg_temp.lid_codes(extra) <> '' THEN RAISE EXCEPTION 'lid 463: a person removed left the code %', pg_temp.lid_codes(extra); END IF;
+  SELECT count(*) INTO n FROM "PayrollPseudonyms" WHERE "userId" = extra;
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 463: a person removed left % codes', n; END IF;
+
+  -- The other school: its own pupil's mark had a code from the start; a person it marks gets one from the same sequence, and
+  -- nobody reads the codes of the other's school.
+  PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "PayrollPseudonyms";
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 463: the other school reads % codes, not its pupil''s one', n; END IF;
+  IF EXISTS (SELECT 1 FROM "PayrollPseudonyms" WHERE "schoolId" = school) THEN RAISE EXCEPTION 'lid 463: the other school reads this school''s codes'; END IF;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (other, 'lid-annan@example.invalid', 'Löne', 'Annan', 'STUDENT', gen_random_uuid(), true, now()) RETURNING id INTO extra_other;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (extra_other, other, 'MANUAL');
+  SELECT count(*), min(number) INTO n, c_other FROM "PayrollPseudonyms" WHERE "userId" = extra_other AND "schoolId" = other;
+  IF n <> 1 OR c_other IS NULL OR c_other <= c_extra THEN
+    RAISE EXCEPTION 'lid 463: the other school''s mark gave % codes (number %), not one after %', n, c_other, c_extra;
+  END IF;
+  SELECT count(*) INTO n FROM "PayrollPseudonyms";
+  IF n <> 2 THEN RAISE EXCEPTION 'lid 463: the other school reads % codes, not its two', n; END IF;
+  IF (SELECT count(DISTINCT number) FROM "PayrollPseudonyms") <> 2 THEN RAISE EXCEPTION 'lid 463: the other school''s codes share a number'; END IF;
+  -- Its person removed takes the code too.
+  DELETE FROM "Users" WHERE id = extra_other;
+  SELECT count(*) INTO n FROM "PayrollPseudonyms";
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 463: the other school''s person removed left % codes, not its pupil''s one', n; END IF;
+
+  -- This school again: P4 and T2 have a code each now, and no other school's code is read.
+  PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "PayrollPseudonyms";
+  IF n <> 6 THEN RAISE EXCEPTION 'lid 463: the school has % codes, not its four, P4''s and T2''s', n; END IF;
+  IF EXISTS (SELECT 1 FROM "PayrollPseudonyms" WHERE "schoolId" <> school) THEN RAISE EXCEPTION 'lid 463: this school reads the other''s codes'; END IF;
+
+  -- Every administrator profile reads the school's six; the sync principal, a teacher (T1 is marked), a pupil and a guardian
+  -- (G2 is marked) read none.
+  FOREACH who IN ARRAY ARRAY['01', '02', '03', '04', '05'] LOOP
+    PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e500000000' || who);
+    IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'lid 463: …%: expected an administrator', who; END IF;
+    SELECT count(*) INTO n FROM "PayrollPseudonyms";
+    IF n <> 6 THEN RAISE EXCEPTION 'lid 463: administrator …% reads % codes, not the school''s six', who, n; END IF;
+  END LOOP;
+  FOREACH who IN ARRAY ARRAY['06', '07', '11', '12', '21', '22'] LOOP
+    PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e500000000' || who);
+    IF app.current_user_role() IS NULL OR app.current_user_role() = 'SCHOOL_ADMIN' THEN
+      RAISE EXCEPTION 'lid 463: …% did not resolve as a teacher, pupil or guardian', who;
+    END IF;
+    SELECT count(*) INTO n FROM "PayrollPseudonyms";
+    IF n <> 0 THEN RAISE EXCEPTION 'lid 463: % …% reads % codes', app.current_user_role(), who, n; END IF;
+  END LOOP;
+  PERFORM pg_temp.lid_sync(school);
+  SELECT count(*) INTO n FROM "PayrollPseudonyms";
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 463: the sync principal reads % codes', n; END IF;
+  SELECT count(*) INTO n FROM "PersonProtections";
+  IF n < 1 THEN RAISE EXCEPTION 'lid 463: the sync principal reads no marks; the test of its codes proves nothing'; END IF;
+
+  -- Nobody writes a code: the privilege is missing (42501), whatever the row. The full administrator, a teacher, the sync.
+  FOREACH who IN ARRAY ARRAY['01', '06'] LOOP
+    PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e500000000' || who);
+    PERFORM pg_temp.lid_refuses(format($q$INSERT INTO "PayrollPseudonyms" ("schoolId", "userId") SELECT %L, id FROM "Users" WHERE email = 'sk-p2@example.invalid'$q$, school),
+                                '42501', format('…%s writing a code', who));
+    PERFORM pg_temp.lid_refuses(format($q$UPDATE "PayrollPseudonyms" SET "createdAt" = now() WHERE "schoolId" = %L$q$, school), '42501', format('…%s changing a code', who));
+    PERFORM pg_temp.lid_refuses(format($q$DELETE FROM "PayrollPseudonyms" WHERE "schoolId" = %L$q$, school), '42501', format('…%s removing a code', who));
+    PERFORM pg_temp.lid_refuses('TRUNCATE "PayrollPseudonyms"', '42501', format('…%s truncating the codes', who));
+  END LOOP;
+  PERFORM pg_temp.lid_sync(school);
+  PERFORM pg_temp.lid_refuses(format($q$INSERT INTO "PayrollPseudonyms" ("schoolId", "userId") SELECT %L, id FROM "Users" WHERE email = 'sk-p2@example.invalid'$q$, school),
+                              '42501', 'the sync writing a code');
+  PERFORM pg_temp.lid_login('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "PayrollPseudonyms";
+  IF n <> 6 THEN RAISE EXCEPTION 'lid 463: the school has % codes after the refused writes, not six', n; END IF;
+  PERFORM set_config('app.test_lid463_school', school::text, true);
+END $$;
+
+-- PostgREST's role, as the full administrator: no grant at all.
+SELECT pg_temp.lid_as('00000000-0000-4000-8000-e50000000001');
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.lid_refuses('SELECT count(*) FROM "PayrollPseudonyms"', '42501', 'PostgREST''s read of the codes');
+  PERFORM pg_temp.lid_refuses(format($q$INSERT INTO "PayrollPseudonyms" ("schoolId", "userId") SELECT %L, id FROM "Users" LIMIT 1$q$, current_setting('app.test_lid463_school')),
+                              '42501', 'PostgREST''s write of a code');
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 464: gallring och Löne-id (20270206090000, 20270206091000). A
+-- pseudonym's posts lose their anställningsnummer with their signature and
+-- note, the versions of those posts lose the number too, and a pseudonym's
+-- mark and code go with the person. app.gallring_pseudonymise is
+-- 20270206091000's body: the post's UPDATE names payrollNumber, the versions'
+-- UPDATE is there, the DELETE of the marks is still there (md5, from the
+-- migration's own text); the log's append-only guard carries the one change
+-- gallring may make. Then the night itself, on the gallring school's departed
+-- teacher (marked, with a number on the post): the post stays, with no number,
+-- signature or note; no version of it carries the number; the mark and the
+-- code are gone; the teacher the SCB holds, named beside them and not due,
+-- keeps number, versions, mark and code.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.lid_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  src text;
+  school uuid;
+  gone uuid;
+  held uuid;
+  gone_post uuid;
+  held_post uuid;
+  n bigint;
+BEGIN
+  SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = 'app.gallring_pseudonymise(uuid, uuid[])'::regprocedure;
+  IF src NOT LIKE '%UPDATE "TeacherEmployments" SET "signature" = NULL, "note" = NULL, "payrollNumber" = NULL%' THEN
+    RAISE EXCEPTION 'lid 464: pseudonymisation does not clear the post''s payrollNumber with its signature and note';
+  END IF;
+  IF src NOT LIKE '%DELETE FROM "PersonProtections"%' THEN
+    RAISE EXCEPTION 'lid 464: pseudonymisation leaves the mark (and so the code)';
+  END IF;
+  IF src NOT LIKE '%UPDATE "TeacherEmploymentLogs" SET%jsonb_set("before", ''{payrollNumber}'', ''null''::jsonb)%' THEN
+    RAISE EXCEPTION 'lid 464: pseudonymisation leaves the payroll number in the versions of the post';
+  END IF;
+  IF md5(src) IS DISTINCT FROM '1f2b20ccf7e10b66c90664c235162a43' THEN
+    RAISE EXCEPTION 'lid 464: app.gallring_pseudonymise is not 20270206091000''s body (md5 %); a release that restates it must carry the lines marked "skyddad identitet" and "Löne-id"', md5(src);
+  END IF;
+  SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = 'app.teacher_employment_logs_append_only()'::regprocedure;
+  IF src NOT LIKE '%IF TG_OP = ''UPDATE'' AND app.gallring_in_progress(OLD."schoolId")%'
+     OR src NOT LIKE '%(to_jsonb(NEW) - ''before'' - ''after'') = (to_jsonb(OLD) - ''before'' - ''after'')%'
+     OR src NOT LIKE '%TEACHER_EMPLOYMENT_LOG_IS_APPEND_ONLY%' THEN
+    RAISE EXCEPTION 'lid 464: the log''s guard is not 20270206091000''s: gallring''s one change, and nothing else';
+  END IF;
+  IF md5(src) IS DISTINCT FROM '966928393a3e3d3fe411b82166ae7e41' THEN
+    RAISE EXCEPTION 'lid 464: app.teacher_employment_logs_append_only is not 20270206091000''s body (md5 %); a release that restates it must carry the lines marked "Löne-id"', md5(src);
+  END IF;
+
+  -- The night, on the gallring school's departed teacher (GAL, 2019/20) and the teacher the SCB holds (HÖL).
+  PERFORM pg_temp.lid_as('00000000-0000-4000-8000-000000000081');
+  school := app.current_school_id();
+  IF school IS NULL OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-gallring-school' THEN
+    RAISE EXCEPTION 'lid 464: the administrator is not in rls-gallring-school; fixtures did not run';
+  END IF;
+  SELECT id INTO gone FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000087';
+  SELECT id INTO held FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000088';
+  SELECT id INTO gone_post FROM "TeacherEmployments" WHERE "userId" = gone;
+  SELECT id INTO held_post FROM "TeacherEmployments" WHERE "userId" = held;
+  IF gone IS NULL OR held IS NULL OR gone_post IS NULL OR held_post IS NULL THEN
+    RAISE EXCEPTION 'lid 464: the fixtures lack the departed teacher, the teacher the SCB holds or their posts';
+  END IF;
+  IF (SELECT signature FROM "TeacherEmployments" WHERE id = gone_post) IS DISTINCT FROM 'GAL'
+     OR (SELECT note FROM "TeacherEmployments" WHERE id = gone_post) IS NULL THEN
+    RAISE EXCEPTION 'lid 464: the departed teacher''s post lacks its signature or note; the clearing would prove nothing';
+  END IF;
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'GONE-1' WHERE id = gone_post;
+  UPDATE "TeacherEmployments" SET "payrollNumber" = 'HELD-1' WHERE id = held_post;
+  INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (gone, school, 'MANUAL'), (held, school, 'MANUAL');
+  SELECT count(*) INTO n FROM "PayrollPseudonyms" WHERE "userId" IN (gone, held);
+  IF n <> 2 THEN RAISE EXCEPTION 'lid 464: the two marks gave % codes, not two', n; END IF;
+  -- The number is in the versions the two writes made, so the night has something to clear.
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = gone AND entity = 'EMPLOYMENT' AND "after" ->> 'payrollNumber' = 'GONE-1';
+  IF n < 1 THEN RAISE EXCEPTION 'lid 464: no version of the departed teacher''s post carries the number; the clearing would prove nothing'; END IF;
+  PERFORM set_config('app.test_lid464_school', school::text, true);
+  PERFORM set_config('app.test_lid464_gone', gone::text, true);
+  PERFORM set_config('app.test_lid464_held', held::text, true);
+END $$;
+
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_lid464_school')::uuid, clock_timestamp());
+  n integer;
+BEGIN
+  -- Both named; only the departed teacher is due (the SCB's hold is not).
+  n := app.gallring_pseudonymise(run, ARRAY[current_setting('app.test_lid464_gone')::uuid, current_setting('app.test_lid464_held')::uuid]);
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 464: the night pseudonymised % people, not the departed teacher alone', n; END IF;
+END $$;
+
+SELECT pg_temp.lid_as('00000000-0000-4000-8000-000000000081');
+DO $$
+DECLARE
+  gone uuid := current_setting('app.test_lid464_gone')::uuid;
+  held uuid := current_setting('app.test_lid464_held')::uuid;
+  e "TeacherEmployments";
+  n bigint;
+  v text;
+BEGIN
+  IF (SELECT "pseudonymisedAt" FROM "Users" WHERE id = gone) IS NULL THEN RAISE EXCEPTION 'lid 464: the departed teacher is not a pseudonym'; END IF;
+  IF (SELECT "pseudonymisedAt" FROM "Users" WHERE id = held) IS NOT NULL THEN RAISE EXCEPTION 'lid 464: the teacher the SCB holds was pseudonymised'; END IF;
+  SELECT * INTO e FROM "TeacherEmployments" WHERE "userId" = gone;
+  IF NOT FOUND THEN RAISE EXCEPTION 'lid 464: the pseudonym''s post went; it stays for the history'; END IF;
+  IF e."payrollNumber" IS NOT NULL THEN RAISE EXCEPTION 'lid 464: the pseudonym''s post kept its payrollNumber %', e."payrollNumber"; END IF;
+  IF e.signature IS NOT NULL OR e.note IS NOT NULL THEN RAISE EXCEPTION 'lid 464: the pseudonym''s post kept its signature or note'; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = gone AND entity = 'EMPLOYMENT'
+     AND (coalesce("before" -> 'payrollNumber', 'null'::jsonb) <> 'null'::jsonb OR coalesce("after" -> 'payrollNumber', 'null'::jsonb) <> 'null'::jsonb);
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 464: % versions of the pseudonym''s post kept the payroll number', n; END IF;
+  -- Only the number moved: the versions are as many as before, with their signature (the manual says they keep it).
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "userId" = gone AND entity = 'EMPLOYMENT' AND "after" ->> 'signature' = 'GAL';
+  IF n < 1 THEN RAISE EXCEPTION 'lid 464: the versions of the pseudonym''s post lost more than the number'; END IF;
+  SELECT count(*) INTO n FROM "PersonProtections" WHERE "userId" = gone;
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 464: the pseudonym kept % marks', n; END IF;
+  SELECT count(*) INTO n FROM "PayrollPseudonyms" WHERE "userId" = gone;
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 464: the pseudonym kept % codes; a code beside a pseudonymised row ties it to the person the payroll office knows', n; END IF;
+  -- The teacher not due: untouched, number, mark and code.
+  SELECT "payrollNumber" INTO v FROM "TeacherEmployments" WHERE "userId" = held;
+  IF v IS DISTINCT FROM 'HELD-1' THEN RAISE EXCEPTION 'lid 464: the number of a teacher not due is %, not HELD-1', v; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "userId" = held AND entity = 'EMPLOYMENT' AND "after" ->> 'payrollNumber' = 'HELD-1';
+  IF n < 1 THEN RAISE EXCEPTION 'lid 464: the versions of a teacher not due lost the number'; END IF;
+  SELECT count(*) INTO n FROM "PersonProtections" WHERE "userId" = held;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 464: the mark of a teacher not due went'; END IF;
+  SELECT count(*) INTO n FROM "PayrollPseudonyms" WHERE "userId" = held;
+  IF n <> 1 THEN RAISE EXCEPTION 'lid 464: the code of a teacher not due went'; END IF;
 END $$;
 ROLLBACK;

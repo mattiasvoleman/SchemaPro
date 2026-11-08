@@ -20,6 +20,19 @@ import { encodeWindows1252 } from './windows-1252';
  * columns into commas. The header and the order of the columns are the file's
  * contract with whoever imports it.
  *
+ * WHO A ROW IS. A person is named by signature, name, e-mail and Löne-id (the
+ * payroll system's own number for the anställning, written on the post,
+ * 20270206090000; empty where the school has written none). A person with a
+ * protected identity is named by signature and Löne-id alone, with the name
+ * and the e-mail columns empty (the caller never reads them:
+ * analysis.service.ts), and where they have no Löne-id by their code there
+ * instead, SKYDDAD-<number> (PayrollPseudonyms, 20270206091000), the same in
+ * every file. The file travels (e-mail, a shared folder), and which code is
+ * whom stays in Rastra.
+ *
+ * Löne-id is the LAST column: the file of the first release (#280) had none,
+ * and an import set up on it finds every column where it was.
+ *
  * PURE.
  */
 
@@ -38,6 +51,7 @@ export const PAYROLL_HEADERS = [
   'Totalt (tim)',
   'Från',
   'Till',
+  'Löne-id',
 ] as const;
 
 /** Columns (0-based) holding numbers, and how they are formatted in the workbook. */
@@ -49,8 +63,14 @@ export const PAYROLL_NUMBER_COLUMNS: Readonly<Record<number, 'integer' | 'decima
   11: 'decimal',
 };
 
+/** A marked person's code in the Löne-id column, from their PayrollPseudonyms number. */
+export function payrollPseudonym(number: number): string {
+  return `SKYDDAD-${number}`;
+}
+
 export interface PayrollFileRow {
   signature: string;
+  /** Empty for a person with a protected identity, as are firstName and email. */
   lastName: string;
   firstName: string;
   email: string;
@@ -62,6 +82,8 @@ export interface PayrollFileRow {
   teachingMinutes: number;
   dutyMinutes: number;
   substituteMinutes: number;
+  /** Löne-id: the post's number, a marked person's code where they have none, or ''. */
+  payrollId: string;
 }
 
 /** The table, header first. Hours are minutes over 60 to two decimals; a percentage keeps up to three. */
@@ -83,6 +105,7 @@ export function payrollTable(rows: readonly PayrollFileRow[], from: string, to: 
       ((row.teachingMinutes + row.dutyMinutes + row.substituteMinutes) / 60).toFixed(2),
       from,
       to,
+      row.payrollId,
     ]),
   ];
 }
@@ -111,7 +134,7 @@ export function renderPayrollCsv(table: readonly string[][]): { bytes: Buffer; r
 export function renderPayrollXlsx(table: readonly string[][]): Buffer {
   return writeXlsx(
     table.map((row) => [...row]),
-    { sheetName: 'Löneunderlag', numberColumns: PAYROLL_NUMBER_COLUMNS, widths: [10, 18, 16, 28, 12, 12, 18, 10, 12, 12, 12, 11, 12, 12] },
+    { sheetName: 'Löneunderlag', numberColumns: PAYROLL_NUMBER_COLUMNS, widths: [10, 18, 16, 28, 12, 12, 18, 10, 12, 12, 12, 11, 12, 12, 14] },
   );
 }
 

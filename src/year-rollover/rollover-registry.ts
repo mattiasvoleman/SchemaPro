@@ -572,6 +572,12 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       // states it either.
       maxConsecutiveTeachingMinutes: 'COPY_UNLESS_DEFAULT',
       consecutiveBreakMinutes: 'COPY_UNLESS_DEFAULT',
+      // Löne-id (20270206090000): the payroll system's number belongs to the
+      // anställning, which goes on into the next year like the signature. Null
+      // on a post the school has written none for, and then not named in the
+      // write (the planHash stays). Unlike the signature it is unique nowhere,
+      // so no other post can hold it already.
+      payrollNumber: 'COPY_UNLESS_DEFAULT',
       ...timestamps,
     },
   },

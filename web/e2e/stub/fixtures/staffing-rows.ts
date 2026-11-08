@@ -62,6 +62,7 @@ const employment = (
   teachingTargetMinutesPerWeek: null,
   signature,
   note: null,
+  payrollNumber: null,
   // SCB's three (20261111090000): not said unless a post below says them.
   employmentForm: null,
   firstTeacherPercent: null,

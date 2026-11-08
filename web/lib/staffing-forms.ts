@@ -36,6 +36,8 @@ import type {
 export const PERCENT_DECIMALS = 3;
 export const TARGET_MINUTES_MAX = 2400;
 export const SIGNATURE_MAX = 8;
+/** Löne-id, the table's CHECK TeacherEmployments_payrollNumber_check (20270206090000). */
+export const PAYROLL_NUMBER_MAX = 30;
 export const NOTE_MAX = 500;
 /**
  * Undervisningsdagar per vecka, deltid in days (migration 20261123090000):
@@ -66,6 +68,8 @@ export interface EmploymentDraft {
   teachingTargetMinutesPerWeek: string;
   signature: string;
   note: string;
+  /** Löne-id, "" for none (20270206090000). */
+  payrollNumber: string;
   /** "" = not said; SCB's AnstForm T or V (20261111090000). */
   employmentForm: TeacherEmploymentForm | "";
   /** Whole per cent of the post, "" for none: SCB's ForsteLarare and Lektor. */
@@ -85,6 +89,7 @@ export const EMPTY_EMPLOYMENT_DRAFT: EmploymentDraft = {
   teachingTargetMinutesPerWeek: "",
   signature: "",
   note: "",
+  payrollNumber: "",
   employmentForm: "",
   firstTeacherPercent: "",
   lecturerPercent: "",
@@ -104,6 +109,7 @@ export interface EmploymentBody {
   teachingTargetMinutesPerWeek: number | null;
   signature: string | null;
   note: string | null;
+  payrollNumber: string | null;
   employmentForm: TeacherEmploymentForm | null;
   firstTeacherPercent: number | null;
   lecturerPercent: number | null;
@@ -120,6 +126,8 @@ export type EmploymentProblem =
   | { reason: "targetOutOfRange"; max: number }
   | { reason: "signatureTooLong"; max: number }
   | { reason: "noteTooLong"; max: number }
+  | { reason: "payrollNumberTooLong"; max: number }
+  | { reason: "payrollNumberControl" }
   | { reason: "firstTeacherOutOfRange" }
   | { reason: "lecturerOutOfRange" }
   | { reason: "careerAbovePost"; first: number; lecturer: number }
@@ -190,6 +198,13 @@ export function validateEmploymentDraft(draft: EmploymentDraft): EmploymentProbl
   }
   if (draft.note.trim().length > NOTE_MAX) {
     return { reason: "noteTooLong", max: NOTE_MAX };
+  }
+  if (draft.payrollNumber.trim().length > PAYROLL_NUMBER_MAX) {
+    return { reason: "payrollNumberTooLong", max: PAYROLL_NUMBER_MAX };
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(draft.payrollNumber.trim())) {
+    return { reason: "payrollNumberControl" };
   }
 
   // The karriärtjänst shares: whole per cent 1–100, together at most the
@@ -269,6 +284,7 @@ function careerShare(value: string): number | null | undefined {
 export function employmentDraftToBody(draft: EmploymentDraft): EmploymentBody {
   const signature = draft.signature.trim();
   const note = draft.note.trim();
+  const payrollNumber = draft.payrollNumber.trim();
   return {
     employmentPercent: parseDecimal(draft.employmentPercent, PERCENT_DECIMALS) ?? 0,
     reductionPercent:
@@ -282,6 +298,8 @@ export function employmentDraftToBody(draft: EmploymentDraft): EmploymentBody {
         : wholeNumber(draft.teachingTargetMinutesPerWeek),
     signature: signature === "" ? null : signature,
     note: note === "" ? null : note,
+    // Always named, like the days: a key a body leaves out is kept, so only a named null clears it.
+    payrollNumber: payrollNumber === "" ? null : payrollNumber,
     employmentForm: draft.employmentForm === "" ? null : draft.employmentForm,
     firstTeacherPercent: careerShare(draft.firstTeacherPercent) ?? null,
     lecturerPercent: careerShare(draft.lecturerPercent) ?? null,
@@ -307,6 +325,8 @@ export function employmentToDraft(row: TeacherEmployment | null | undefined): Em
       row.teachingTargetMinutesPerWeek === null ? "" : String(row.teachingTargetMinutesPerWeek),
     signature: row.signature ?? "",
     note: row.note ?? "",
+    // Absent from a gateway before 20270206090000, and null for none.
+    payrollNumber: row.payrollNumber ?? "",
     employmentForm: row.employmentForm ?? "",
     firstTeacherPercent: row.firstTeacherPercent == null ? "" : String(row.firstTeacherPercent),
     lecturerPercent: row.lecturerPercent == null ? "" : String(row.lecturerPercent),
