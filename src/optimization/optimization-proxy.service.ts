@@ -3,7 +3,6 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
-  Optional,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -27,6 +26,7 @@ import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../c
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
 import { coverLockedLessons, coverLockedSharedLessons, lockCoversDemand } from './locked-coverage';
 import { PRESERVED_FROM_REGENERATION } from './preserved-lessons';
+import { requirementName } from '../common/requirement-name';
 import {
   placedLessonRowsOf,
   placedLessonWritesOf,
@@ -275,15 +275,9 @@ export interface AnonMaps {
   lessonAnonMap?: Map<string, string>;
 }
 
-/**
- * A timplanspost by the name the Timplan page gives its cell
- * (`requirements.cellLabel`, "{subject} för {group}"), or the subject alone
- * when the group has none. One function for every refusal that names a row,
- * the engine's and the staffing pre-flight's alike.
- */
-export function requirementName(subject: string, group: string | undefined | null): string {
-  return group ? `${subject} för ${group}` : subject;
-}
+// requirementName lives in common/requirement-name.ts (see there why), and is
+// re-exported for the callers that have always imported it from here.
+export { requirementName };
 
 /*
  * ---------------------------------------------------------------------------
@@ -1158,12 +1152,18 @@ export class OptimizationProxyService {
     private readonly configService: ConfigService,
     /**
      * Förlagda poster: the hand edit's clash rule, which a förläggning is
-     * judged by at every Generera (placement-judge.ts). Optional for the
-     * callers that build this service by hand for a route that never meets a
-     * förläggning (the room and staffing proposals, the specs); a fetch that
-     * finds one without it is refused loudly rather than sent unjudged.
+     * judged by at every Generera (placement-judge.ts). REQUIRED of Nest, so
+     * no @Optional(): a graph that cannot give it fails at boot, where a
+     * missing one used to be injected as nothing and failed the first Generera
+     * of a school with a förläggning with a 500 (review of #293, HÖG-1, an
+     * import cycle that decorated this parameter with `undefined`; see
+     * common/requirement-name.ts and optimization-module.di.spec.ts). Optional
+     * in the signature only for the callers that build this service by hand
+     * for a route that never meets a förläggning (the room and staffing
+     * proposals, the specs, the probes); a fetch that finds one without it is
+     * refused loudly rather than sent unjudged.
      */
-    @Optional() private readonly masters?: MasterLessonsService,
+    private readonly masters?: MasterLessonsService,
   ) {
     this.aiConfig = this.configService.getOrThrow<AiEngineConfig>('aiEngine');
   }

@@ -43,7 +43,7 @@ import {
   hasDistributionRule,
   type DistributionWarning,
 } from '../common/subject-distribution';
-import { requirementName } from '../optimization/optimization-proxy.service';
+import { requirementName } from '../common/requirement-name';
 import { BLOCK_SPLIT, blockMoveOf, readLessonBlock, sameSlot, type BlockSlot } from './block-lessons';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { groupsOfPupils, halfPairs, type GroupHalf } from '../common/class-halves';
