@@ -6127,7 +6127,7 @@
     "kind": {
       "ATTENDANCE": {
         "name": "Attendance",
-        "body": "Attendance records of lessons before the cutoff date."
+        "body": "Attendance records of lessons before the cutoff date. Monthly absence sums per class and for the school, with no individual pupils and at least five pupils behind every figure, are kept for three school years whatever you decide here."
       },
       "ABSENCE_REPORTS": {
         "name": "Absence reports",

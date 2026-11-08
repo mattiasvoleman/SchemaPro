@@ -42,6 +42,9 @@ export const ABSENCE_STATS_NO_SUCH_PUPIL = 'ABSENCE_STATS_NO_SUCH_PUPIL';
 export const ABSENCE_STATS_NO_SUCH_CLASS = 'ABSENCE_STATS_NO_SUCH_CLASS';
 export const ABSENCE_STATS_BAD_PERIOD = 'ABSENCE_STATS_BAD_PERIOD';
 
+/** The code of a read the database gave up on (statement_timeout, 57014) or that ran out of its transaction's time: a 503 saying to try again. */
+export const ABSENCE_STATS_TOO_SLOW = 'ABSENCE_STATS_TOO_SLOW';
+
 /** The minutes of each kind, as the database adds them. */
 export interface RawFigures {
   /** Minutes with a mark that is not UNKNOWN, on a lesson that was held. */

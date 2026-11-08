@@ -1,11 +1,13 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { outOfTime } from '../common/bulk';
 import {
   ABSENCE_STATS_BAD_PERIOD,
   ABSENCE_STATS_NO_PUPILS_FOR_THE_READER,
   ABSENCE_STATS_NO_SUCH_CLASS,
   ABSENCE_STATS_NO_SUCH_PUPIL,
   ABSENCE_STATS_NOT_YOURS,
+  ABSENCE_STATS_TOO_SLOW,
 } from './absence-stats';
 
 /**
@@ -21,6 +23,7 @@ const SENTENCES: Record<string, string> = {
   [ABSENCE_STATS_NO_SUCH_PUPIL]: 'Eleven finns inte på skolan.',
   [ABSENCE_STATS_NO_SUCH_CLASS]: 'Klassen finns inte på skolan.',
   [ABSENCE_STATS_BAD_PERIOD]: 'Perioden är fel: från före till, högst 1 200 dagar.',
+  [ABSENCE_STATS_TOO_SLOW]: 'Statistiken tog för lång tid att räkna fram just nu. Försök igen om en stund; kortare period går fortare.',
 };
 
 interface DriverCause {
@@ -32,9 +35,16 @@ function causeOf(error: Prisma.PrismaClientKnownRequestError): DriverCause | und
   return (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)?.driverAdapterError?.cause;
 }
 
-/** The AS refusal an error is, as an HTTP exception; null for anything else. */
+/**
+ * The AS refusal an error is, as an HTTP exception, or the 503 of a read that ran out of time (the statement the
+ * database cancelled at statement_timeout, 57014, or the transaction's own time, P2028); null for anything else.
+ * A big school's bad minute is not the caller's fault and not a 500 without a word: the web says "try again".
+ */
 export function absenceStatsRefusal(error: unknown): Error | null {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  if (outOfTime(error) === 'ran out') {
+    return new ServiceUnavailableException({ message: SENTENCES[ABSENCE_STATS_TOO_SLOW], code: ABSENCE_STATS_TOO_SLOW });
+  }
   const cause = causeOf(error);
   const original = typeof cause?.originalCode === 'string' ? cause.originalCode : null;
   const text = typeof cause?.originalMessage === 'string' ? cause.originalMessage : error.message;

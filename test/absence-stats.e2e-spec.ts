@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
@@ -7,6 +8,14 @@ const PUPIL = '55555555-5555-4555-8555-555555555555';
 
 const statement = (call: unknown[]) => call[0] as { strings: string[]; values: unknown[] };
 const text = (call: unknown[]) => statement(call).strings.join('?');
+
+/** What the driver adapter hands over for a raw call the database refused: the SQLSTATE under meta.driverAdapterError.cause. */
+const refusal = (originalCode: string, originalMessage: string) =>
+  new Prisma.PrismaClientKnownRequestError('Raw query failed.', {
+    code: 'P2010',
+    clientVersion: Prisma.prismaVersion.client,
+    meta: { driverAdapterError: { cause: { originalCode, originalMessage } } },
+  });
 
 const WINDOW = { first_month: '2024-08-01', today: '2026-11-07', year_name: '2026/27', year_start: '2026-08-01', year_end: '2027-07-31' };
 
@@ -80,15 +89,21 @@ describe('/api/v1/absence-stats (e2e)', () => {
     it('turns the database’s refusal of a teacher into a 403 that says why', async () => {
       harness.tx.$queryRaw.mockImplementation(async (query: { strings?: string[] }) => {
         if ((query.strings ?? []).join('?').includes('app.absence_stats_window(')) return [WINDOW];
-        throw Object.assign(new Error('refused'), {
-          name: 'PrismaClientKnownRequestError',
-          code: 'P2010',
-          meta: { driverAdapterError: { cause: { originalCode: 'AS403', originalMessage: 'ABSENCE_STATS_NOT_YOURS' } } },
-        });
+        throw refusal('AS403', 'ABSENCE_STATS_NOT_YOURS');
       });
-      const response = await http().get(`/api/v1/absence-stats/pupils/${PUPIL}`).set('x-test-user', asUser({ role: 'TEACHER' as never })).expect(500);
-      // The stand-in error is not a Prisma one: it is the unhandled kind. The mapping itself is in absence-stats-errors.spec.ts.
-      expect(response.body.status ?? 500).toBe(500);
+      const response = await http().get(`/api/v1/absence-stats/pupils/${PUPIL}`).set('x-test-user', asUser({ role: 'TEACHER' as never })).expect(403);
+      expect(response.body.code).toBe('ABSENCE_STATS_NOT_YOURS');
+      expect(response.body.detail).toMatch(/mentorns för sina egna elever/);
+    });
+
+    it('turns a read the database gave up on into a 503 with a code the web can say calmly, not a 500 without one', async () => {
+      harness.tx.$queryRaw.mockImplementation(async (query: { strings?: string[] }) => {
+        if ((query.strings ?? []).join('?').includes('app.absence_stats_window(')) return [WINDOW];
+        throw refusal('57014', 'canceling statement due to statement timeout');
+      });
+      const response = await http().get(`/api/v1/absence-stats/classes/${CLASS}/pupils`).set('x-test-user', asUser({ role: 'SCHOOL_ADMIN' as never })).expect(503);
+      expect(response.body.code).toBe('ABSENCE_STATS_TOO_SLOW');
+      expect(response.body.detail).toMatch(/Försök igen/);
     });
   });
 

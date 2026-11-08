@@ -6127,7 +6127,7 @@
     "kind": {
       "ATTENDANCE": {
         "name": "Närvaro",
-        "body": "Närvaroregistreringar för lektioner före gränsdagen."
+        "body": "Närvaroregistreringar för lektioner före gränsdagen. Månadssummor av frånvaro per klass och för skolan, utan enskilda elever och med minst fem elever bakom varje siffra, sparas i tre läsår oavsett detta beslut."
       },
       "ABSENCE_REPORTS": {
         "name": "Frånvaroanmälningar",

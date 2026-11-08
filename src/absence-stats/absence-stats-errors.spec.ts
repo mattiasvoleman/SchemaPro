@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { absenceStatsRefusal, noPupilsForTheReader, noSuchPupil, refusing } from './absence-stats-errors';
 
@@ -46,6 +46,27 @@ describe('absenceStatsRefusal', () => {
       clientVersion: Prisma.prismaVersion.client,
     });
     expect(absenceStatsRefusal(error)).toBeInstanceOf(NotFoundException);
+  });
+
+  it('turns a statement the database cancelled at statement_timeout (57014) into a 503 that says to try again', () => {
+    const error = absenceStatsRefusal(refusal('57014', 'canceling statement due to statement timeout'));
+    expect(error).toBeInstanceOf(ServiceUnavailableException);
+    expect(body(error).code).toBe('ABSENCE_STATS_TOO_SLOW');
+    expect(body(error).message).toMatch(/Försök igen/);
+  });
+
+  it('does the same for a transaction that ran out of its own time (P2028), but not for one that never started', () => {
+    const expired = new Prisma.PrismaClientKnownRequestError('Transaction API error: Transaction already closed: A query cannot be executed on an expired transaction.', {
+      code: 'P2028',
+      clientVersion: Prisma.prismaVersion.client,
+    });
+    expect(absenceStatsRefusal(expired)).toBeInstanceOf(ServiceUnavailableException);
+    const never = new Prisma.PrismaClientKnownRequestError('Transaction API error: Unable to start a transaction in the given time.', {
+      code: 'P2028',
+      clientVersion: Prisma.prismaVersion.client,
+    });
+    // A full pool is not a slow read: it stays what it was.
+    expect(absenceStatsRefusal(never)).toBeNull();
   });
 
   it('leaves every other error alone: another SQLSTATE, another code, a plain error', () => {
