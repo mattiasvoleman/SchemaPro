@@ -2090,6 +2090,7 @@
       "attendance": "Attendance",
       "staffing": "Staffing",
       "cover": "Cover hours",
+      "absenceStats": "Absence statistics",
       "title": "Reports",
       "subtitle": "Attendance, staffing and cover hours for a period"
     },
@@ -6223,7 +6224,7 @@
     "kind": {
       "ATTENDANCE": {
         "name": "Attendance",
-        "body": "Attendance records of lessons before the cutoff date."
+        "body": "Attendance records of lessons before the cutoff date. Monthly absence sums per class and for the school, with no individual pupils and at least five pupils behind every figure, are kept for three school years whatever you decide here."
       },
       "ABSENCE_REPORTS": {
         "name": "Absence reports",
@@ -8519,6 +8520,197 @@
       "saved": "The choice is saved",
       "loadFailed": "The choice could not be loaded",
       "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment."
+    }
+  },
+  "absenceStats": {
+    "title": "Absence statistics over time",
+    "teacherSubtitle": "Absence in the classes you are mentor for, month by month over three school years",
+    "backToWatch": "To Absence watch",
+    "link": "Absence statistics over time",
+    "intro": "Excused and unexcused absence as a percentage of the registered minutes, month by month over three school years: for the school, for each class and for each pupil. The reporting rate stands beside it, because a month in which few lessons have a saved register says less than its figure suggests. The count runs every night for the days up to and including yesterday, and no figure is shown for a group of fewer than {min} pupils.",
+    "percent": "{percent}%",
+    "minutes": "{count} min",
+    "retry": "Try again",
+    "loadFailedHint": "No figures are shown and nothing has changed. Try again, or reload the page in a moment.",
+    "period": {
+      "label": "Period",
+      "YEAR": "School year so far",
+      "PREVIOUS": "Previous school year",
+      "LAST_90": "Last 90 days",
+      "ALL": "All three school years",
+      "range": "The period is {from} – {to}"
+    },
+    "school": {
+      "title": "The school, month by month",
+      "description": "All classes together. Under a figure is the same month a year before, when there is one.",
+      "caption": "The school's absence per month",
+      "loadFailed": "The school's absence could not be loaded",
+      "emptyTitle": "No absence to show yet",
+      "emptyBody": "The figures are counted every night for the days up to and including yesterday. The first ones come when a lesson has its marks saved."
+    },
+    "series": {
+      "column": {
+        "month": "Month",
+        "pupils": "Pupils with a mark",
+        "valid": "Excused absence",
+        "invalid": "Unexcused absence",
+        "late": "Late arrivals",
+        "reporting": "Reporting rate"
+      },
+      "year": "School year {name}",
+      "going": "So far, through {date}",
+      "classNames": "Class: {names}",
+      "pupilsOf": "{registered} of {pupils}",
+      "figure": "{minutes} · {percent}",
+      "previous": "Last year: {value}",
+      "previousNone": "Last year: no figure",
+      "noFigure": "No figure: fewer than {min} pupils have marks",
+      "noLessons": "No lessons held",
+      "reportedOf": "{reported} of {held} lessons",
+      "empty": "No month has been counted yet. The figures are counted every night for the days up to and including yesterday."
+    },
+    "chart": {
+      "label": "Chart of excused and unexcused absence per month. The same figures are in the table below.",
+      "axis": "Share of the registered minutes",
+      "invalid": "Unexcused absence",
+      "valid": "Excused absence",
+      "previous": "The same month a year before",
+      "going": "Month in progress",
+      "none": "No figure"
+    },
+    "classes": {
+      "title": "Classes",
+      "description": "The sum of the class's months over the period. Choose a class for its months, patterns and pupils.",
+      "mentorDescription": "The classes you are mentor for, summed over the period. Choose a class for its months, patterns and pupils.",
+      "caption": "Absence per class",
+      "column": {
+        "class": "Class",
+        "open": "Show the class"
+      },
+      "monthsCounted": "{count, plural, =0 {no month with a figure} one {# month with a figure} other {# months with a figure}}",
+      "open": "Show",
+      "openNamed": "Show class {name}",
+      "empty": {
+        "admin": {
+          "title": "No classes to show",
+          "body": "Classes with pupils and saved marks are shown here."
+        },
+        "mentor": {
+          "title": "You are not the mentor of any class",
+          "body": "The classes where you have the assignment mentorship are shown here."
+        }
+      },
+      "loadFailed": "The classes could not be loaded"
+    },
+    "class": {
+      "title": "Class {name}",
+      "loadFailed": "The class's months and patterns could not be loaded",
+      "series": {
+        "title": "The class, month by month",
+        "description": "The class and its predecessors, if the class has changed name or year. Under a figure is the same month a year before, when there is one.",
+        "caption": "Absence per month in class {name}"
+      },
+      "patterns": {
+        "title": "Patterns",
+        "description": "On which weekdays, in which lesson slots and in which subjects absence falls over the period, as a share of the registered minutes."
+      }
+    },
+    "patterns": {
+      "suppressedTitle": "Patterns are not shown",
+      "suppressedBody": "Fewer than {min} pupils have marks in the period. A pattern would then point out individual pupils.",
+      "empty": "No marks in the period.",
+      "groupSize": "The pattern rests on {count, plural, one {# pupil} other {# pupils}} with marks.",
+      "recorded": "{minutes} registered",
+      "caption": {
+        "weekdays": "Absence per weekday",
+        "slots": "Absence per lesson slot",
+        "subjects": "Absence per subject"
+      },
+      "column": {
+        "weekdays": "Weekday",
+        "slots": "Lesson slot (start time)",
+        "subjects": "Subject",
+        "valid": "Excused",
+        "invalid": "Unexcused",
+        "total": "Together"
+      }
+    },
+    "pupils": {
+      "title": "Pupils",
+      "description": "Each pupil's absence over the period, as a basis for development talks. Opening the list and the pupil cards is recorded in the access log.",
+      "caption": "The pupils' absence in the class",
+      "column": {
+        "pupil": "Pupil",
+        "card": "Pupil card"
+      },
+      "noRegistration": "No registration in the period",
+      "open": "Pupil card",
+      "openNamed": "Show the pupil card for {name}",
+      "heldOut": "{count, plural, one {# pupil with a protected identity is not shown in the list.} other {# pupils with a protected identity are not shown in the list.}}",
+      "empty": {
+        "title": "No pupils to show",
+        "body": "The class has no pupils on its list in the period."
+      },
+      "loadFailed": "The pupils could not be loaded"
+    },
+    "reader": {
+      "title": "Pupils are not shown to the huvudman's reader",
+      "body": "The huvudman's reader sees the sums of the school and its classes, never an individual pupil. The pupil list and the pupil cards are therefore hidden."
+    },
+    "card": {
+      "back": "To class {name}",
+      "backList": "To the pupil list",
+      "class": "Class {name}",
+      "noClass": "No class",
+      "period": "The patterns cover {from} – {to}",
+      "print": "Print",
+      "protectedTitle": "The pupil has a protected identity",
+      "protectedBody": "The card is shown to you here, but it is never printed. Nothing is printed for a pupil with a protected identity.",
+      "printProtected": "Nothing is printed for a pupil with a protected identity",
+      "printProtectedBody": "Nothing has been printed.",
+      "printFailed": "Protected identity could not be checked",
+      "printFailedHint": "Nothing has been printed. Try again in a moment.",
+      "printUseButton": "The pupil card is printed with the Print button on the card, not with the browser's print.",
+      "basisTitle": "What the figures rest on",
+      "marksFrom": "Marks are kept from {from} to {to}. Attendance before {from} has been purged or was never reported; those months show as “No registration”, not as no absence.",
+      "noMarks": "No marks are left for the pupil. Attendance has been purged or was never reported, and no month has a figure.",
+      "readNote": "Opening the pupil card is recorded in the access log.",
+      "noRegistration": "No registration",
+      "recorded": "Registered minutes",
+      "months": {
+        "title": "Month by month",
+        "description": "The pupil against the class: the class's excused and unexcused absence and its reporting rate stand beside it. Under a figure is the same month a year before, when there is one.",
+        "caption": "Absence per month for {name}"
+      },
+      "column": {
+        "class": "The class",
+        "classReporting": "The class's reporting rate"
+      },
+      "lessons": "{count, plural, one {# lesson} other {# lessons}} with a mark",
+      "previousNone": "Last year: no registration",
+      "classFigures": "Excused {valid} · unexcused {invalid}",
+      "classNoFigure": "No figure for the class",
+      "noClassSeries": "The pupil is not in a class, so there is no class to compare with.",
+      "patterns": {
+        "title": "The pupil's patterns",
+        "description": "On which weekdays, in which lesson slots and in which subjects the pupil's absence falls over the period."
+      },
+      "loadFailed": "The pupil card could not be loaded"
+    },
+    "sheet": {
+      "title": "Absence over time",
+      "printed": "Printed {date}",
+      "monthsLabel": "Months",
+      "patternsLabel": "Patterns",
+      "patterns": "Patterns, {from} – {to}",
+      "column": {
+        "valid": "Excused %",
+        "invalid": "Unexcused %",
+        "class": "Class %",
+        "reporting": "Rep. %"
+      },
+      "legend": "Excused and unexcused are the pupil's share of the registered minutes. Class is the class's excused and unexcused absence together, Rep. the class's reporting rate. “–” means a figure is missing: no registration for the pupil, or too few pupils in the class.",
+      "footer": "Information about an individual pupil, as a basis for a development talk. Keep and dispose of the printout according to the school's routines."
     }
   }
 }

@@ -244,7 +244,9 @@ describe('the rollover registry', () => {
     // working material, never a starting point), a lesson's log and its
     // note to the substitute (Lektionslogg, 20261203090000, which stay with
     // the old year's lessons), and the rastvaktsschema (20261207090000, the
-    // old year's passes; the areas are the school's).
+    // old year's passes; the areas are the school's), and the sums of a
+    // class's months (Frånvarostatistik, 20270121090000, which stay with the
+    // old year's classes).
     const skipped = skippedModels();
     const added = [
       'TeacherDutySlot',
@@ -270,13 +272,14 @@ describe('the rollover registry', () => {
       'LessonLog',
       'LessonSubstituteNote',
       'SupervisionShift',
+      'AbsenceStatsMonth',
     ];
     expect(
       createHash('sha256')
         .update(JSON.stringify(skipped.filter((entry) => !added.includes(entry.model))))
         .digest('hex'),
     ).toBe('15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113');
-    expect(skipped.slice(-15)).toEqual([
+    expect(skipped.slice(-16)).toEqual([
       expect.objectContaining({ model: 'TimplanStatementPublication', counted: false }),
       expect.objectContaining({ model: 'TimplanStatement', counted: false }),
       expect.objectContaining({ model: 'TimetablePublication', counted: false }),
@@ -292,6 +295,7 @@ describe('the rollover registry', () => {
       expect.objectContaining({ model: 'PublicationPendingRemoval', counted: false }),
       expect.objectContaining({ model: 'Ss12000DutyLink', counted: false }),
       expect.objectContaining({ model: 'SupervisionShift', counted: false }),
+      expect.objectContaining({ model: 'AbsenceStatsMonth', counted: false }),
     ]);
     expect(skippedModels({ carryStaffing: false })).toEqual(skippedModels());
     // fa4a3d6's tables, and the parallel blocks (20261024090000), whose rows

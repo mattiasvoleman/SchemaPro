@@ -79,6 +79,11 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     rule: "HOLDS_OUT",
     why: "Names teachers beside their lessons and no pupil: a teacher the school has marked as having a protected identity is shown as 'Skyddad identitet' in the row and in every lesson, and the sheet says how many were left out. The marks are read at the click, and a read that fails prints nothing.",
   },
+  "components/absence-stats/pupil-print.ts": {
+    files: "a pupil's frånvarostatistik printed (Skriv ut on the elevkort, which is also how a PDF is made): one A4 for the development talk",
+    rule: "HOLDS_OUT",
+    why: "Names one pupil and the pupil's absence: a pupil the school has marked as having a protected identity is never printed, and the card says so. An administrator's marks are read at the click and a read that fails prints nothing; the card of a pupil the gateway flags (isProtected) has no button, and a mentor, who may not read the marks, is never handed a marked pupil.",
+  },
   "app/[locale]/(app)/admin/reports/staffing-report.tsx": {
     files: "tjanstefordelning-….csv (samverkan), scb-pedagogisk-personal-….txt and .csv",
     rule: "KEEPS_AND_SAYS",

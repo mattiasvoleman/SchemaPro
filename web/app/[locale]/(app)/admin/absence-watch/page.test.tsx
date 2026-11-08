@@ -238,6 +238,12 @@ describe("Frånvarobevakning, the administrator's page", () => {
     expect(rows[1]).toHaveTextContent("5 skoldagar i följd med all frånvaro");
   });
 
+  it("leads on to the absence statistics over time, the tab of Rapporter", async () => {
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "Frånvarobevakning" });
+    expect(screen.getByRole("link", { name: "Frånvarostatistik över tid" })).toHaveAttribute("href", expect.stringContaining("/admin/reports?tab=absence-stats"));
+  });
+
   it("speaks English too", async () => {
     renderPage("en");
     expect(await screen.findByRole("switch", { name: "Absence watch" })).toBeInTheDocument();
