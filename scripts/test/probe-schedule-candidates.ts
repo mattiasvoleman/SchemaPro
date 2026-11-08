@@ -53,6 +53,9 @@
  *         check lists them until a publication follows;
  *   sc-k  no stored row, change-log entry, response or engine request names a
  *         pupil;
+ *   sc-p  the same scan again after sc-o, whose successful run took the rest of
+ *         the year's runs with it: its own candidate, run and REGENERATE entry
+ *         are read too;
  *   sc-l  a run interrupted by a restart while its call is out frees its year
  *         at once but keeps its place under CANDIDATE_RUNS_MAX until that
  *         call could have ended (engineBusyUntil), and its task writes
@@ -1650,6 +1653,47 @@ export async function scheduleCandidateChecks(
       );
     });
 
+    // The scan of sc-k and sc-p: no stored candidate, run or REGENERATE entry, and no response or engine request the probe
+    // saw, names a pupil. Returns how many documents it read and how many of them were stored rows.
+    const scanForPupils = async (floor: { standing: number; logs: number }): Promise<{ documents: number; stored: number }> => {
+      const standing = await all<{ doc: string }>(
+        `SELECT to_jsonb(c)::text AS doc FROM "ScheduleCandidates" c WHERE c."schoolId" = $1
+         UNION ALL SELECT to_jsonb(r)::text FROM "ScheduleCandidateRuns" r WHERE r."schoolId" = $1`,
+        [s],
+      );
+      assert.ok(standing.length >= floor.standing, `nothing left to scan: ${standing.length} stored rows, the floor is ${floor.standing}`);
+      const logs = await all<{ doc: string }>(
+        `SELECT after::text AS doc FROM "ScheduleChangeLogs" WHERE "academicYearId" = $1 AND action = 'REGENERATE' AND after ->> 'source' = 'CANDIDATE'`,
+        [year],
+      );
+      assert.ok(logs.length >= floor.logs, `${logs.length} REGENERATE entries, the floor is ${floor.logs}`);
+      const documents: Array<[string, string]> = [
+        ...standing.map((row): [string, string] => ['a stored row', row.doc]),
+        ...seenRows.map((row): [string, string] => ['a row read during the probe', JSON.stringify(row)]),
+        ...logs.map((row): [string, string] => ['a REGENERATE entry', row.doc]),
+        ...responses.map((row): [string, string] => ['a response', JSON.stringify(row)]),
+        ...engine.calls.map((call): [string, string] => ['an engine request', JSON.stringify(call.body)]),
+      ];
+      // The scan would find one: the participant lesson's pupil is in the version snapshots, by design.
+      const snapshot = await one<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "ScheduleVersions" WHERE "academicYearId" = $1 AND lessons::text LIKE '%' || $2 || '%'`,
+        [year, pupils[0]!.id],
+      );
+      assert.ok(snapshot.n > 0, 'the control found no pupil where one is: the scan proves nothing');
+      for (const [what, doc] of documents) {
+        for (const id of pupilIds) assert.ok(!doc.includes(id), `${what} names a pupil: ${doc.slice(0, 200)}`);
+        assert.ok(!/studentIds|participants/.test(doc), `${what} carries a pupil list: ${doc.slice(0, 200)}`);
+      }
+      return { documents: documents.length, stored: standing.length };
+    };
+
+    // Before sc-o on purpose: a run that succeeds deletes the finished runs of its year (removeFinished), so what
+    // sc-a to sc-n stored (a run and its candidates) stands only until the next run succeeds, and sc-o's does.
+    await check('(sc-k) no stored candidate, run, REGENERATE entry, response or engine request names a pupil', async () => {
+      const read = await scanForPupils({ standing: 3, logs: 4 });
+      console.log(`     sc-k: scanned ${read.documents} documents (${read.stored} stored rows) for ${pupilIds.length} pupils`);
+    });
+
     await check('(sc-o) Bästa möjliga schema: refused while the switch is off; one candidate that stores what gave way; an apply that needs the digest, writes nothing without it, and keeps the acceptance in the REGENERATE entry; the publish check lists it until a publication follows', async () => {
       const lunchBefore = await all<{ id: string }>(`SELECT id FROM "LunchSettings" WHERE "schoolId" = $1`, [s]);
       const ruleBefore = await all<{ id: string }>(`SELECT id FROM "TeacherWorkRules" WHERE "userId" = $1`, [t1.id]);
@@ -1798,36 +1842,15 @@ export async function scheduleCandidateChecks(
       console.log(`     sc-o: one candidate, ${deviations!.length} rules gave way, accepted by digest ${String(view.deviationsDigest).slice(0, 12)}…`);
     });
 
-    await check('(sc-k) no stored candidate, run, REGENERATE entry, response or engine request names a pupil', async () => {
-      const standing = await all<{ doc: string }>(
-        `SELECT to_jsonb(c)::text AS doc FROM "ScheduleCandidates" c WHERE c."schoolId" = $1
-         UNION ALL SELECT to_jsonb(r)::text FROM "ScheduleCandidateRuns" r WHERE r."schoolId" = $1`,
-        [s],
-      );
-      assert.ok(standing.length >= 3, 'nothing left to scan');
-      const logs = await all<{ doc: string }>(
-        `SELECT after::text AS doc FROM "ScheduleChangeLogs" WHERE "academicYearId" = $1 AND action = 'REGENERATE' AND after ->> 'source' = 'CANDIDATE'`,
+    await check('(sc-p) the same scan once the mode’s run has superseded the rest of its year’s: its candidate, run, REGENERATE entry, overview and engine request name no pupil either', async () => {
+      // One run and its one candidate stand (the floor is those two), and the entry the apply wrote is among the ones read.
+      const acceptance = await one<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "ScheduleChangeLogs" WHERE "academicYearId" = $1 AND action = 'REGENERATE' AND after ->> 'variant' = 'BEST_EFFORT'`,
         [year],
       );
-      assert.ok(logs.length >= 4);
-      const documents: Array<[string, string]> = [
-        ...standing.map((row): [string, string] => ['a stored row', row.doc]),
-        ...seenRows.map((row): [string, string] => ['a row read during the probe', JSON.stringify(row)]),
-        ...logs.map((row): [string, string] => ['a REGENERATE entry', row.doc]),
-        ...responses.map((row): [string, string] => ['a response', JSON.stringify(row)]),
-        ...engine.calls.map((call): [string, string] => ['an engine request', JSON.stringify(call.body)]),
-      ];
-      // The scan would find one: the participant lesson's pupil is in the version snapshots, by design.
-      const snapshot = await one<{ n: number }>(
-        `SELECT count(*)::int AS n FROM "ScheduleVersions" WHERE "academicYearId" = $1 AND lessons::text LIKE '%' || $2 || '%'`,
-        [year, pupils[0]!.id],
-      );
-      assert.ok(snapshot.n > 0, 'the control found no pupil where one is: the scan proves nothing');
-      for (const [what, doc] of documents) {
-        for (const id of pupilIds) assert.ok(!doc.includes(id), `${what} names a pupil: ${doc.slice(0, 200)}`);
-        assert.ok(!/studentIds|participants/.test(doc), `${what} carries a pupil list: ${doc.slice(0, 200)}`);
-      }
-      console.log(`     sc-k: scanned ${documents.length} documents for ${pupilIds.length} pupils`);
+      assert.equal(acceptance.n, 1, 'the scan has no Bästa möjliga entry to read');
+      const read = await scanForPupils({ standing: 2, logs: 4 });
+      console.log(`     sc-p: scanned ${read.documents} documents (${read.stored} stored rows) for ${pupilIds.length} pupils`);
     });
   } finally {
     for (const release of pendingReleases) release();
