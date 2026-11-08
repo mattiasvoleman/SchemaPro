@@ -140,6 +140,23 @@ describe('ClassTeacherService.mine', () => {
     const { service } = setup({ selfPublish: null });
     expect((await service.mine(teacher)).selfPublish).toBe(false);
   });
+
+  it('lists only the classes of a läsår that has not ended on the school’s clock, since the frame refuses every change of the others', async () => {
+    jest.useFakeTimers({ now: new Date('2027-03-24T23:30:00.000Z') });
+    try {
+      const { service, tx } = setup();
+      tx['classTeacherAppointment']!['findMany']!.mockResolvedValue([{ studentGroupId: 'class-1' }, { studentGroupId: 'class-0' }]);
+      tx['studentGroup']!['findMany']!.mockResolvedValue([]);
+      await service.mine(teacher);
+      // 00:30 on the 25th in Stockholm: the school's today is the 25th, not UTC's 24th, and a year that ended on the 24th is over.
+      expect(tx['studentGroup']!['findMany']!.mock.calls[0]![0].where).toEqual({
+        id: { in: ['class-1', 'class-0'] },
+        academicYear: { endDate: { gte: day('2027-03-25') } },
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 describe('ClassTeacherService.actorOf', () => {
@@ -498,7 +515,8 @@ describe('ClassTeacherService.check, preview and publish', () => {
     const result = await service.preview('class-1', { kind: 'OCCASION_MOVE', calendarLessonId: 'lesson-1', targetDate: '2027-03-23', targetStart: '10:00', targetEnd: '11:00' }, teacher);
     expect(result).toEqual({ verdict: { state: 'CONFLICT', conflicts: [{ kind: 'GROUP' }] } });
     const [, draft, options] = engine.evaluate.mock.calls[0]!;
-    expect(options).toEqual({ creating: true });
+    // For a klasslärare: a school that publishes through a draft shows its draft grundschema to no teacher.
+    expect(options).toEqual({ creating: true, forTeacher: true });
     expect(draft).toMatchObject({
       authorId: 'teacher-1',
       kind: 'OCCASION_MOVE',
@@ -537,7 +555,7 @@ describe('ClassTeacherService.check, preview and publish', () => {
     const on = setup({ selfPublish: true });
     on.engine.publishClass.mockResolvedValue([{ id: 'change-1', outcome: 'PUBLISHED' }]);
     expect(await on.service.publish('class-1', { changeIds: ['change-1'] }, teacher)).toEqual({ outcomes: [{ id: 'change-1', outcome: 'PUBLISHED' }] });
-    expect(on.engine.publishClass).toHaveBeenCalledWith(expect.objectContaining({ userId: 'admin-9', role: 'SCHOOL_ADMIN' }), 'class-1', ['change-1']);
+    expect(on.engine.publishClass).toHaveBeenCalledWith(expect.objectContaining({ userId: 'admin-9', role: 'SCHOOL_ADMIN' }), 'class-1', ['change-1'], { forTeacher: true });
   });
 
   it('is told, not surprised, by a claimed error the database raises in the publication', async () => {

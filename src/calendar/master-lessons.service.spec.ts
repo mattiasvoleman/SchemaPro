@@ -2372,6 +2372,86 @@ describe('MasterLessonsService', () => {
   // update
   // -------------------------------------------------------------------
 
+  /*
+   * `against`: the candidate is held against the lessons it is given and not
+   * against the template's lessons of its weekday. A klasslärare's exception
+   * for one date (class-teacher/dated-conflicts.ts) is judged by the whole
+   * clash rule this way, with the date's lessons: one that was cancelled or
+   * moved for the date is not there, though its template says it is.
+   */
+  describe('findConflicts, held against the lessons of one date', () => {
+    const basis = { kind: 'CURRENT' } as never;
+    const identity = { id: null, academicYearId: YEAR_ID, studentGroupId: GROUP_ID, subjectId: SUBJECT_ID };
+    const candidate = (over: Record<string, unknown> = {}) => ({
+      dayOfWeek: 2,
+      startMinutes: 600,
+      endMinutes: 660,
+      teacherId: TEACHER_ID,
+      roomId: ROOM_ID,
+      ...over,
+    });
+    const given = (over: Record<string, unknown> = {}) => ({
+      ...otherLesson(),
+      recurrence: 'ALL_WEEKS' as const,
+      startDate: null as Date | null,
+      endDate: null as Date | null,
+      ...over,
+    });
+    const kinds = (found: Array<{ kind: string }>) => found.map((one) => one.kind).sort();
+
+    it('reads no template lesson of the weekday, and finds nothing where it is given nothing', async () => {
+      sameDay([otherLesson({ studentGroupId: GROUP_ID, startTime: t('10:00'), endTime: t('11:00') })]);
+      expect(await service.findConflicts(tx as never, basis, identity, candidate(), { against: [] })).toEqual([]);
+      expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
+    });
+
+    it('is the template’s own rule without it: the weekday’s lessons are read and held against', async () => {
+      sameDay([otherLesson({ studentGroupId: GROUP_ID, startTime: t('10:00'), endTime: t('11:00') })]);
+      expect(kinds(await service.findConflicts(tx as never, basis, identity, candidate(), {}))).toEqual(['GROUP']);
+      expect(tx.masterLesson.findMany).toHaveBeenCalled();
+    });
+
+    it('finds the teacher, the room and the class of a lesson it is given, and names that lesson', async () => {
+      const found = await service.findConflicts(tx as never, basis, identity, candidate(), {
+        against: [given({ id: 'cl-1', teacherId: TEACHER_ID, roomId: ROOM_ID, studentGroupId: GROUP_ID })],
+      });
+      expect(kinds(found)).toEqual(['GROUP', 'ROOM', 'TEACHER']);
+      expect(found.every((one) => (one as { masterLessonId?: string }).masterLessonId === 'cl-1')).toBe(true);
+    });
+
+    it('finds a lesson of a teaching group that holds the class’s pupils, which no comparison of ids does', async () => {
+      arrangePupils(
+        [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+        [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
+      );
+      const found = await service.findConflicts(tx as never, basis, identity, candidate({ teacherId: null, roomId: null }), {
+        against: [given({ studentGroupId: TEACHING_GROUP_ID })],
+      });
+      expect(kinds(found)).toEqual(['GROUP']);
+    });
+
+    it('finds a lesson whose pupils are still changing for the lesson before it, by the buffer', async () => {
+      arrangeBuffers([{ studentGroupId: GROUP_ID, subjectId: OTHER_SUBJECT_ID, minutesAfter: 20 }]);
+      // 09:00-10:00 with twenty minutes of shower after it, against a candidate at 10:00.
+      const touching = given({ studentGroupId: GROUP_ID, startTime: t('09:00'), endTime: t('10:00') });
+      const found = await service.findConflicts(tx as never, basis, identity, candidate({ teacherId: null, roomId: null }), { against: [touching] });
+      expect(kinds(found)).toEqual(['GROUP']);
+      expect(found[0]!.message).toContain('ombyte eller dusch');
+    });
+
+    it('does not hold a lesson of the template to the date when the date’s lessons do not include it', async () => {
+      // The template has a lesson at this hour with this class; on this date it was cancelled, so it is not given.
+      sameDay([otherLesson({ studentGroupId: GROUP_ID, startTime: t('10:00'), endTime: t('11:00') })]);
+      expect(await service.findConflicts(tx as never, basis, identity, candidate(), { against: [] })).toEqual([]);
+    });
+
+    it('still asks the weekly unavailability of the teacher, the room and the class', async () => {
+      tx.availabilityConstraint.findMany.mockResolvedValue([{ resourceType: 'ROOM', startTime: t('10:30'), endTime: t('12:00') }]);
+      const found = await service.findConflicts(tx as never, basis, identity, candidate(), { against: [] });
+      expect(kinds(found)).toEqual(['AVAILABILITY']);
+    });
+  });
+
   describe('update', () => {
     /**
      * LESSON_SELECT + the school join the update path selects, with its

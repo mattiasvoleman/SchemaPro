@@ -129,8 +129,13 @@ export class ClassTeacherService {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
       const appointments = await tx.classTeacherAppointment.findMany({ where: { userId: me }, select: { studentGroupId: true } });
+      // A läsår that has ended is history: the frame refuses every change of its classes (YEAR_ENDED), so they are not offered.
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: await schoolTimezone(tx, schoolId) });
       const groups = await tx.studentGroup.findMany({
-        where: { id: { in: appointments.map((row) => row.studentGroupId) } },
+        where: {
+          id: { in: appointments.map((row) => row.studentGroupId) },
+          academicYear: { endDate: { gte: new Date(`${today}T00:00:00.000Z`) } },
+        },
         select: { id: true, name: true, academicYearId: true },
         orderBy: { name: 'asc' },
       });
@@ -433,7 +438,7 @@ export class ClassTeacherService {
       return await this.prisma.withRls(actor, async (tx) => {
         const drafts = await tx.classTeacherChange.findMany({ where: { studentGroupId: classId, status: 'DRAFT' }, orderBy: { createdAt: 'asc' } });
         const out: Array<{ change: ChangeView; verdict: Verdict }> = [];
-        for (const draft of drafts) out.push({ change: toChangeView(draft), verdict: await this.engine.evaluate(tx, draft) });
+        for (const draft of drafts) out.push({ change: toChangeView(draft), verdict: await this.engine.evaluate(tx, draft, { forTeacher: true }) });
         return out;
       });
     } catch (error) {
@@ -481,7 +486,7 @@ export class ClassTeacherService {
           createdAt: now,
           updatedAt: now,
         } as ChangeRow;
-        return this.engine.evaluate(tx, draft, { creating: true });
+        return this.engine.evaluate(tx, draft, { creating: true, forTeacher: true });
       });
       return { verdict };
     } catch (error) {
@@ -505,7 +510,7 @@ export class ClassTeacherService {
         });
       }
       const actor = await this.actorOf(user, classId);
-      return { outcomes: await this.engine.publishClass(actor, classId, dto.changeIds) };
+      return { outcomes: await this.engine.publishClass(actor, classId, dto.changeIds, { forTeacher: true }) };
     } catch (error) {
       return rethrowClassTeacherError(error);
     }

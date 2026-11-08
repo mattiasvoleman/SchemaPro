@@ -24,6 +24,7 @@ export const FRAME_REASONS = [
   'NOT_A_REGULAR_LESSON',
   'NOT_SCHEDULED',
   'PAST',
+  'YEAR_ENDED',
   'COVERED',
   'HAS_ATTENDANCE',
   'PENDING_TEMPLATE_CHANGE',
@@ -55,6 +56,7 @@ export const FRAME_MESSAGES: Readonly<Record<FrameReason, string>> = {
   NOT_A_REGULAR_LESSON: 'Lektionen är inte en vanlig lektion ur klassens schema.',
   NOT_SCHEDULED: 'Lektionen är redan inställd eller genomförd.',
   PAST: 'Tiden har redan börjat eller passerat.',
+  YEAR_ENDED: 'Läsåret är slut. Klassens schema från det läsåret ändras inte längre.',
   COVERED: 'Lektionen har en vikarie och hanteras av vikarietavlan.',
   HAS_ATTENDANCE: 'Närvaro är redan registrerad på lektionen.',
   PENDING_TEMPLATE_CHANGE: 'En ändring av klassens mall väntar för den här lektionen. Publicera eller släng den först.',
@@ -102,14 +104,38 @@ export interface FieldChange {
   now: unknown;
 }
 
-/** A clash, named by what clashes and with which lesson, never by a person. */
+/**
+ * A clash, named by what clashes and with which lesson, never by a person.
+ *
+ * The first six are the clash rule's and a date's own (a lov, an approved
+ * booking). FRAME, LUNCH and GRADE_RULE are the board's hard rules, the ones
+ * G1's swap search holds a landing to (src/swaps/board-rules.ts): the stage's
+ * ramtid, the class's meal, a closure on whole årskurser; they name no lesson.
+ * EXCEPTION is a published change of one date that a change of the template
+ * would carry to a third day (see ClassTeacherEngine.exceptionsOf); `other` is
+ * that date's lesson.
+ */
 export interface ConflictView {
-  kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY' | 'BREAK' | 'BOOKING';
+  kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY' | 'BREAK' | 'BOOKING' | 'FRAME' | 'LUNCH' | 'GRADE_RULE' | 'EXCEPTION';
   other?: { className: string; subjectName: string; day?: number; date?: string; start: string; end: string };
 }
 
+/**
+ * What publishing a change of the template takes out of the published
+ * calendar: a lesson that the change would carry to a time that has begun, or
+ * past the template's own end, is removed and not moved
+ * (propagateTemplateChange), with the lesson log and the homework on it.
+ * Said before the change is published, as the swap dialog says it.
+ */
+export interface RemovalView {
+  /** Future dated lessons of the template that the change removes. */
+  lessons: number;
+  /** Of those, the ones a teacher has written a log, a homework or a note to a vikarie on. */
+  withLog: number;
+}
+
 export type Verdict =
-  | { state: 'OK' }
+  | { state: 'OK'; removes?: RemovalView }
   | { state: 'REFUSED'; reason: FrameReason }
   | { state: 'STALE'; changed: FieldChange[] }
   | { state: 'GONE' }

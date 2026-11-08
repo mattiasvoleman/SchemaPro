@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
@@ -25,6 +26,8 @@ export class ChangeTargetDto {
   /** OCCASION_MOVE: the date it moves to (YYYY-MM-DD). */
   @IsOptional()
   @Matches(DATE, { message: 'targetDate must be YYYY-MM-DD.' })
+  // A shape that is not a date ("2027-02-30", "2027-13-01") passes the pattern and fails the database or the calendar with a 500.
+  @IsISO8601({ strict: true }, { message: 'targetDate must be a date that exists.' })
   targetDate?: string;
 
   /** TEMPLATE_*: the weekday (1 = Monday ... 5 = Friday) the lesson, or the second part of it, goes to. */
@@ -109,6 +112,7 @@ export class WeekQueryDto {
   /** Any date in the week wanted (YYYY-MM-DD). Absent: this week, on the school's clock. */
   @IsOptional()
   @Matches(DATE, { message: 'from must be YYYY-MM-DD.' })
+  @IsISO8601({ strict: true }, { message: 'from must be a date that exists.' })
   from?: string;
 }
 

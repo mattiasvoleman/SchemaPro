@@ -38,13 +38,22 @@
  *   kl-h  a clash found at publication stops the draft and leaves the lesson;
  *   kl-i  an appointment whose administrator is deactivated, or has become the
  *         expedition, lapses with a code, and mends;
- *   kl-j  two writers of the same lesson at once: one draft, one 409.
+ *   kl-j  two writers of the same lesson at once: one draft, one 409;
+ *   kl-k  through the API's role, only the class's drafts;
+ *   kl-l  two who publish the same split at once carry it out once, six rounds;
+ *   kl-m  a date's lesson moved: a change after the check is met under the lock, the row lock and the school's
+ *         publication lock are waited for;
+ *   kl-n  the board's rules (ramtid, the class's meal, a closure on årskurser) for the template and for a date,
+ *         and a date held to the pupils of a teaching group and to the ombyte before and after;
+ *   kl-o  a change of the template says what it takes out of the calendar, meets a lesson moved for its date, and
+ *         shows a draft school's grundschema to nobody who may not read it;
+ *   kl-p  a läsår that has ended, a date outside the läsår, the klasslärare's words added to the lesson's note.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
-import type { Client } from 'pg';
+import { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { CalendarLessonsService } from '../../src/calendar/calendar-lessons.service';
@@ -307,7 +316,8 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
       `SELECT status, "publishedByUserId", "publishedAt", rev FROM "ClassTeacherChanges" WHERE id = $1`,
       [made.id],
     );
-    assert.deepEqual([record.status, record.publishedByUserId, record.publishedAt !== null, record.rev], ['PUBLISHED', sara.userId, true, 2]);
+    // Revision 1 as written, 2 as claimed by the publication, 3 as published.
+    assert.deepEqual([record.status, record.publishedByUserId, record.publishedAt !== null, record.rev], ['PUBLISHED', sara.userId, true, 3]);
     // A published draft is a record: nobody discards it.
     assert.equal((await refusedWith(() => adminService.discard(made.id, sara))).status, 404);
     await owner.query(`UPDATE "CalendarLessons" SET "roomId" = $2 WHERE id = $1`, [lThu, sal1]);
@@ -424,6 +434,312 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
     assert.deepEqual(larsRows, []);
     const removed = await api.withRls(lars, (tx) => tx.classTeacherChange.deleteMany({}));
     assert.equal(removed.count, 0);
+  });
+
+  // ------------------------------------------------------------------------------------------------------------
+  // What the review of the first version found (PR 286). Each check is the scenario that was shown, run again.
+  // ------------------------------------------------------------------------------------------------------------
+  const idrott = await subject('Idrott', 'KLID');
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  /** A second connection as the owner, for a lock held beside the services. */
+  const holder = async () => {
+    const connection = new Client((owner as unknown as { connectionParameters: object }).connectionParameters);
+    await connection.connect();
+    return connection;
+  };
+  const verdictOf = async (body: Parameters<typeof teacherService.preview>[1]) => (await teacherService.preview(g4a, body, karin)).verdict;
+  const kindsOf = (verdict: { state: string }) => ((verdict as { conflicts?: Array<{ kind: string }> }).conflicts ?? []).map((one) => one.kind);
+
+  await check('(kl-l) two who publish the same split at once carry it out once: one PUBLISHED, the other GONE, two lessons and not three, in six rounds', async () => {
+    for (let round = 1; round <= 6; round++) {
+      const lesson = await master(svenska, g4a, sal1, karin, 1, '10:00', '11:00');
+      const made = await teacherService.create(
+        g4a,
+        { kind: 'TEMPLATE_SPLIT', masterLessonId: lesson, baseVersion: (await template(lesson)).version, targetDayOfWeek: 1, targetStart: '10:30', targetEnd: '11:00', keepEnd: '10:30' },
+        karin,
+      );
+      const both = await Promise.allSettled([adminService.publish(g4a, [made.id], sara), adminService.publish(g4a, [made.id], sara)]);
+      const outcomes = both.map((one) => (one.status === 'fulfilled' ? one.value.outcomes[0]!.outcome : `ERROR ${String((one as PromiseRejectedResult).reason)}`));
+      assert.deepEqual([...outcomes].sort(), ['GONE', 'PUBLISHED'], `round ${round}: ${outcomes.join(', ')}`);
+      const parts = await all<{ s: string; e: string }>(
+        `SELECT "startTime"::text AS s, "endTime"::text AS e FROM "MasterLessons" WHERE "studentGroupId" = $1 AND "subjectId" = $2 AND "dayOfWeek" = 1 AND "startTime" >= '10:00' ORDER BY "startTime"`,
+        [g4a, svenska],
+      );
+      assert.deepEqual(parts.map((part) => [part.s, part.e]), [['10:00:00', '10:30:00'], ['10:30:00', '11:00:00']], `round ${round}: the lesson is split once`);
+      const record = await one<{ status: string; rev: number }>(`SELECT status, rev FROM "ClassTeacherChanges" WHERE id = $1`, [made.id]);
+      assert.deepEqual([record.status, record.rev], ['PUBLISHED', 3], `round ${round}: claimed once, published once`);
+      await owner.query(`DELETE FROM "MasterLessons" WHERE "studentGroupId" = $1 AND "subjectId" = $2 AND "dayOfWeek" = 1 AND "startTime" >= '10:00'`, [g4a, svenska]);
+      await owner.query(`DELETE FROM "ClassTeacherChanges" WHERE id = $1`, [made.id]);
+    }
+  });
+
+  await check('(kl-m) a date’s lesson moved: a change after the check is met under the lock, the lesson’s row lock and the school’s publication lock are waited for', async () => {
+    const wednesday = await plus(monday, 2);
+    const lessonMaster = await master(matte, g4a, sal1, karin, 3, '11:30', '12:00');
+    const lesson = await dated(lessonMaster, matte, g4a, sal1, karin, wednesday, '11:30', '12:00');
+    const made = await teacherService.create(
+      g4a,
+      { kind: 'OCCASION_MOVE', calendarLessonId: lesson, baseVersion: (await occasion(lesson, wednesday)).version, targetDate: thursday, targetStart: '11:00', targetEnd: '11:30' },
+      karin,
+    );
+    const row = (await api.withRls(sara, (tx) => tx.classTeacherChange.findUnique({ where: { id: made.id } })))!;
+    const move = () => (engine as unknown as { moveOccasion: (actor: AuthenticatedUser, change: unknown) => Promise<void> }).moveOccasion(sara, row);
+    const untouched = async () => {
+      const now = await one<{ date: string }>(`SELECT date::text FROM "CalendarLessons" WHERE id = $1`, [lesson]);
+      assert.equal(now.date, wednesday, 'the lesson stayed where it was');
+    };
+
+    // The check judged it; then somebody changed the room, which is the lesson's version. The writer reads the lesson again.
+    await owner.query(`UPDATE "CalendarLessons" SET "roomId" = $2 WHERE id = $1`, [lesson, sal2]);
+    const changed = await refusedWith(move);
+    assert.deepEqual([changed.status, String(changed.response.message)], [409, 'The lesson has changed.']);
+    await untouched();
+    await owner.query(`UPDATE "CalendarLessons" SET "roomId" = $2 WHERE id = $1`, [lesson, sal1]);
+
+    // Another transaction holds the lesson's row: the writer waits for it, and meets the version it leaves.
+    const writer = await holder();
+    try {
+      await writer.query('BEGIN');
+      await writer.query(`SELECT id FROM "CalendarLessons" WHERE id = $1 FOR UPDATE`, [lesson]);
+      let settled = false;
+      const waiting = refusedWith(move).finally(() => {
+        settled = true;
+      });
+      await sleep(1500);
+      assert.equal(settled, false, 'the writer waits for the lesson’s row lock');
+      await writer.query(`UPDATE "CalendarLessons" SET "roomId" = $2 WHERE id = $1`, [lesson, sal2]);
+      await writer.query('COMMIT');
+      const after = await waiting;
+      assert.equal(after.response.message, 'The lesson has changed.', 'and, the lock got, reads the lesson as the other left it');
+      await untouched();
+    } finally {
+      await writer.query('ROLLBACK').catch(() => undefined);
+      await writer.end();
+    }
+    await owner.query(`UPDATE "CalendarLessons" SET "roomId" = $2 WHERE id = $1`, [lesson, sal1]);
+
+    // The school's publication holds the grundschema exclusively: the writer waits for it and answers 409 after five seconds.
+    const publication = await holder();
+    try {
+      await publication.query('BEGIN');
+      await publication.query(`SELECT pg_advisory_xact_lock(hashtext('publication'), hashtext($1::uuid::text))`, [s]);
+      const started = Date.now();
+      const busy = await refusedWith(move);
+      assert.deepEqual([busy.status, busy.response.code], [409, 'PUBLISH_IN_PROGRESS']);
+      assert.ok(Date.now() - started >= 4000, 'it waited for the publication');
+      await untouched();
+    } finally {
+      await publication.query('ROLLBACK').catch(() => undefined);
+      await publication.end();
+    }
+
+    // Nothing in the way: it goes, and the draft is the record of it once published.
+    const done = await adminService.publish(g4a, [made.id], sara);
+    assert.deepEqual(done.outcomes, [{ id: made.id, outcome: 'PUBLISHED' }]);
+    assert.equal((await one<{ date: string }>(`SELECT date::text FROM "CalendarLessons" WHERE id = $1`, [lesson])).date, thursday);
+  });
+
+  await check('(kl-n) the board’s rules hold a lesson of the template and of a date, and a date is held to the pupils of a teaching group and to the ombyte', async () => {
+    const tuesdayDate = tuesday;
+    await owner.query(
+      `INSERT INTO "ClassTeacherOpenTimes" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime") SELECT $1, $2, $3, d, '07:00', '18:00' FROM generate_series(1, 4) d`,
+      [s, year, g4a],
+    );
+    await owner.query(`INSERT INTO "FrameTimes" ("schoolId", "minGradeLevel", "maxGradeLevel", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES ($1, 1, 6, NULL, '08:00', '15:00', now())`, [s]);
+    // The class's weekly meal is Tuesday 09:00-09:30; the one laid for the date is 11:30-12:00 (and replaces it that day).
+    await owner.query(`INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES ($1, $2, $3, 2, '09:00', '09:30', now())`, [s, year, g4a]);
+    await owner.query(
+      `INSERT INTO "CalendarLunches" ("schoolId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+       VALUES ($1, $2, $3::date, ($3::date + time '11:30') AT TIME ZONE 'Europe/Stockholm', ($3::date + time '12:00') AT TIME ZONE 'Europe/Stockholm', now())`,
+      [s, g4a, tuesdayDate],
+    );
+    await owner.query(
+      `INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", type, "dayOfWeek", "startTime", "endTime", "minGradeLevel", "maxGradeLevel", "updatedAt")
+       VALUES ($1, 'GRADE_LEVEL', 'UNAVAILABLE', 4, '13:00', '14:00', 1, 6, now())`,
+      [s],
+    );
+    const lesson = await master(matte, g4a, sal1, karin, 1, '12:00', '13:00');
+    const lessonDated = await dated(lesson, matte, g4a, sal1, karin, monday, '12:00', '13:00');
+    const move = (day: number, from: string, to: string) => verdictOf({ kind: 'TEMPLATE_MOVE', masterLessonId: lesson, targetDayOfWeek: day, targetStart: from, targetEnd: to });
+    const moveDate = (date: string, from: string, to: string) => verdictOf({ kind: 'OCCASION_MOVE', calendarLessonId: lessonDated, targetDate: date, targetStart: from, targetEnd: to });
+
+    // The template: after the stage's day, on the class's meal, and in an hour closed to its year.
+    assert.deepEqual(kindsOf(await move(2, '15:30', '16:30')), ['FRAME']);
+    assert.deepEqual(kindsOf(await move(2, '09:00', '09:30')), ['LUNCH']);
+    assert.deepEqual(kindsOf(await move(4, '13:00', '13:30')), ['GRADE_RULE']);
+    assert.deepEqual(await move(2, '12:00', '13:00'), { state: 'OK' });
+    // A date: the same three, and the date's own meal in place of the week's.
+    assert.deepEqual(kindsOf(await moveDate(tuesdayDate, '15:30', '16:30')), ['FRAME']);
+    assert.deepEqual(kindsOf(await moveDate(tuesdayDate, '11:30', '12:00')), ['LUNCH']);
+    assert.deepEqual(await moveDate(tuesdayDate, '09:00', '09:30'), { state: 'OK' });
+    assert.deepEqual(kindsOf(await moveDate(thursday, '13:00', '13:30')), ['GRADE_RULE']);
+    assert.deepEqual(await moveDate(thursday, '12:00', '13:00'), { state: 'OK' });
+    // A rule the school has not written holds nothing: the ramtid taken away, the template may go there.
+    await owner.query(`DELETE FROM "FrameTimes" WHERE "schoolId" = $1`, [s]);
+    assert.deepEqual(await move(2, '15:30', '16:30'), { state: 'OK' });
+
+    // A teaching group that holds two of the class's pupils has a lesson on the Tuesday at noon, with another teacher.
+    const mix = (
+      await one<{ id: string }>(`INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES ($1, $2, '4mix', 'TEACHING_GROUP', 4, now()) RETURNING id`, [s, year])
+    ).id;
+    for (const label of ['elev1', 'elev2']) {
+      const pupil = (
+        await one<{ id: string }>(
+          `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "studentGroupId", "authId", "isActive", "updatedAt")
+           VALUES ($1, $2, $3, 'Probe', 'STUDENT', $4, $5, true, now()) RETURNING id`,
+          [s, `${marker}-kl-${label}@example.invalid`, label, g4a, randomUUID()],
+        )
+      ).id;
+      await owner.query(`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)`, [s, mix, pupil]);
+    }
+    const mixMaster = await master(idrott, mix, sal3, lars, 2, '12:00', '13:00');
+    await dated(mixMaster, idrott, mix, sal3, lars, tuesdayDate, '12:00', '13:00');
+    // The week's rule has always seen it; the date's rule now sees it too: no room, teacher or class in common, only pupils.
+    const week = await move(2, '12:00', '13:00');
+    assert.deepEqual(kindsOf(week), ['GROUP'], JSON.stringify(week));
+    const onDate = await moveDate(tuesdayDate, '12:00', '13:00');
+    assert.deepEqual(kindsOf(onDate), ['GROUP'], JSON.stringify(onDate));
+    assert.deepEqual(
+      (onDate as { conflicts: Array<{ other?: { className: string; subjectName: string; date?: string } }> }).conflicts[0]!.other,
+      { className: '4mix', subjectName: 'Idrott', date: tuesdayDate, start: '12:00', end: '13:00' },
+    );
+    assert.equal(JSON.stringify(onDate).includes(lars.userId!), false, 'nobody is named');
+
+    // Ombyte and dusch: a gym lesson of 4A on the Monday morning with twenty minutes of shower after it.
+    await owner.query(`INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "studentGroupId", "subjectId", "minutesAfter", "updatedAt") VALUES ($1, $2, $3, $4, 20, now())`, [s, year, g4a, idrott]);
+    const gym = await master(idrott, g4a, sal3, karin, 1, '10:00', '11:00');
+    await dated(gym, idrott, g4a, sal3, karin, monday, '10:00', '11:00');
+    assert.deepEqual(kindsOf(await move(1, '11:00', '12:00')), ['GROUP']);
+    assert.deepEqual(kindsOf(await moveDate(monday, '11:00', '12:00')), ['GROUP']);
+    assert.deepEqual(await moveDate(monday, '11:20', '12:20'), { state: 'OK' });
+
+    for (const sql of [
+      `DELETE FROM "TeachingRequirements" WHERE "schoolId" = $1`,
+      `DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1`,
+      `DELETE FROM "CalendarLunches" WHERE "schoolId" = $1`,
+      `DELETE FROM "LunchSittings" WHERE "schoolId" = $1`,
+      `DELETE FROM "ClassTeacherOpenTimes" WHERE "schoolId" = $1 AND "studentGroupId" IS NOT NULL`,
+      `DELETE FROM "CalendarLessons" WHERE "schoolId" = $1 AND "masterLessonId" = ANY ($2::uuid[])`,
+      `DELETE FROM "MasterLessons" WHERE "schoolId" = $1 AND id = ANY ($2::uuid[])`,
+    ]) {
+      await owner.query(sql, sql.includes('$2') ? [s, [lesson, mixMaster, gym]] : [s]);
+    }
+    await owner.query(`DELETE FROM "StudentGroupMembers" WHERE "studentGroupId" = $1`, [mix]);
+    await owner.query(`DELETE FROM "StudentGroups" WHERE id = $1`, [mix]);
+    await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND role = 'STUDENT'`, [s]);
+  });
+
+  await check('(kl-o) a change of the template says what it takes out of the calendar, meets a lesson moved for its date, and a draft school’s grundschema is shown to nobody who may not read it', async () => {
+    const ending = await master(svenska, g4a, sal1, karin, 1, '10:00', '11:00');
+    await owner.query(`UPDATE "MasterLessons" SET "endDate" = $2::date WHERE id = $1`, [ending, await plus(monday, 7)]);
+    const first = await dated(ending, svenska, g4a, sal1, karin, monday, '10:00', '11:00');
+    const second = await dated(ending, svenska, g4a, sal1, karin, await plus(monday, 7), '10:00', '11:00');
+    await owner.query(`INSERT INTO "LessonLogs" ("schoolId", "calendarLessonId", homework, "updatedAt") VALUES ($1, $2, 'Läs kapitel 4', now())`, [s, second]);
+    const to = (day: number) => ({ kind: 'TEMPLATE_MOVE' as const, masterLessonId: ending, targetDayOfWeek: day, targetStart: '10:00', targetEnd: '11:00' });
+
+    // A day later is Tuesday the 2nd week after: past the template's own end. One lesson goes, with the homework on it.
+    assert.deepEqual(await verdictOf(to(2)), { state: 'OK', removes: { lessons: 1, withLog: 1 } });
+    // The same day, and a split, take nothing.
+    assert.deepEqual(await verdictOf({ ...to(1), targetStart: '10:00', targetEnd: '11:00' }), { state: 'OK' });
+
+    // The first Monday was moved for its date to the Tuesday (a published exception). A change of the template would carry it
+    // to a third day, so it is met as a clash and the lesson stays where it is.
+    await owner.query(
+      `UPDATE "CalendarLessons" SET date = $2::date, "startsAt" = ($2::date + time '13:00') AT TIME ZONE 'Europe/Stockholm', "endsAt" = ($2::date + time '14:00') AT TIME ZONE 'Europe/Stockholm' WHERE id = $1`,
+      [first, tuesday],
+    );
+    const meets = await verdictOf(to(4));
+    assert.deepEqual(kindsOf(meets), ['EXCEPTION']);
+    assert.deepEqual((meets as { conflicts: Array<{ other?: unknown }> }).conflicts[0]!.other, { className: '4A', subjectName: 'Svenska', date: tuesday, start: '13:00', end: '14:00' });
+    const made = await teacherService.create(g4a, { ...to(4), baseVersion: (await template(ending)).version }, karin);
+    const refused = (await adminService.publish(g4a, [made.id], sara)).outcomes;
+    assert.equal(refused[0]!.outcome, 'CONFLICT');
+    const stays = await one<{ date: string; dow: number }>(`SELECT date::text, extract(isodow FROM date)::int AS dow FROM "CalendarLessons" WHERE id = $1`, [first]);
+    assert.deepEqual([stays.date, stays.dow], [tuesday, 2], 'the exception stands on its own day, not on a third');
+    assert.equal((await one<{ dayOfWeek: number }>(`SELECT "dayOfWeek" FROM "MasterLessons" WHERE id = $1`, [ending])).dayOfWeek, 1);
+    // Once the date has passed it is history, and no longer in the way.
+    await owner.query(`UPDATE "CalendarLessons" SET date = current_date - 30, "startsAt" = now() - interval '30 days', "endsAt" = now() - interval '30 days' + interval '1 hour' WHERE id = $1`, [first]);
+    assert.equal(kindsOf(await verdictOf(to(4))).includes('EXCEPTION'), false);
+    await teacherService.discard(g4a, made.id, 1, karin);
+
+    // A school that publishes through a draft hides its grundschema from teachers; the klasslärare's own check must not show it.
+    await owner.query(`INSERT INTO "PublicationSettings" ("schoolId", "publishMode", "updatedAt") VALUES ($1, 'DRAFT', now()) ON CONFLICT ("schoolId") DO UPDATE SET "publishMode" = 'DRAFT'`, [s]);
+    try {
+      assert.equal(await api.withRls(lars, (tx) => tx.masterLesson.count()), 0, 'a teacher reads no grundschema in a draft school');
+      // 4B's Tuesday 10:00-10:30 in Sal 2 is Lars's: Karin asks for the room at that hour, and is told the room is taken, not whose lesson.
+      const body = { kind: 'TEMPLATE_MOVE' as const, masterLessonId: ending, targetDayOfWeek: 2, targetStart: '10:00', targetEnd: '10:30', targetRoomId: sal2 };
+      const hidden = await teacherService.preview(g4a, body, karin);
+      assert.ok(kindsOf(hidden.verdict).includes('ROOM'));
+      assert.equal(JSON.stringify(hidden).includes('4B'), false, 'no other class is named');
+      assert.equal(JSON.stringify(hidden).includes('Matematik'), false, 'no other subject is named');
+      assert.equal((hidden.verdict as { conflicts: Array<{ other?: unknown }> }).conflicts.every((one) => one.other === undefined), true);
+      // The administrator reads the same draft in full.
+      const draft = await teacherService.create(g4a, { ...body, baseVersion: (await template(ending)).version }, karin);
+      const full = (await adminService.drafts(g4a, sara)).find((row) => row.change.id === draft.id)!;
+      assert.ok(JSON.stringify(full.verdict).includes('4B'), 'the administrator sees what the draft clashes with');
+      // The klasslärare's live check, too: what a draft of the grundschema clashes with is the room, not the lesson. (A date's draft
+      // of the same class may name the calendar's lesson, which the teacher reads; another draft's verdict is not this one's.)
+      const checked = (await teacherService.check(g4a, karin)).find((row) => row.change.id === draft.id)!;
+      assert.equal(JSON.stringify(checked.verdict).includes('4B'), false, `the live check shows no other class: ${JSON.stringify(checked.verdict)}`);
+      assert.ok(kindsOf(checked.verdict).includes('ROOM'));
+      await teacherService.discard(g4a, draft.id, 1, karin);
+    } finally {
+      await owner.query(`UPDATE "PublicationSettings" SET "publishMode" = 'DIRECT' WHERE "schoolId" = $1`, [s]);
+    }
+    await owner.query(`DELETE FROM "CalendarLessons" WHERE id = ANY ($1::uuid[])`, [[first, second]]);
+    await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [ending]);
+  });
+
+  await check('(kl-p) a läsår that has ended is history, a date outside the läsår is no school day, and the klasslärare’s words are added to the lesson’s note', async () => {
+    const oldYear = (
+      await one<{ id: string }>(
+        `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+         VALUES ($1, 'probe klasslärare förra året', current_date - 400, current_date - 40, false, 'NIOARIG', now()) RETURNING id`,
+        [s],
+      )
+    ).id;
+    const g3a = (await one<{ id: string }>(`INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES ($1, $2, '3A', 'CLASS', 3, now()) RETURNING id`, [s, oldYear])).id;
+    const oldMaster = (
+      await one<{ id: string }>(
+        `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, 1, '08:30', '09:30', now()) RETURNING id`,
+        [s, oldYear, matte, g3a, karin.userId, sal1],
+      )
+    ).id;
+    await owner.query(`INSERT INTO "ClassTeacherOpenTimes" ("schoolId", "academicYearId", "dayOfWeek", "startTime", "endTime") VALUES ($1, $2, 1, '08:00', '12:00')`, [s, oldYear]);
+    await owner.query(`INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId", "appointedByUserId") VALUES ($1, $2, $3, $4, $5)`, [s, oldYear, g3a, karin.userId, sara.userId]);
+
+    // Offered no more, and every change of its grundschema refused by name, also by the database.
+    assert.deepEqual((await teacherService.mine(karin)).classes.map((row) => row.name), ['4A']);
+    const lessons = (await weekOf(karin, g3a)).template;
+    assert.deepEqual(lessons.map((row) => [row.id, row.refusal]), [[oldMaster, 'YEAR_ENDED']]);
+    const ended = await refusedWith(() =>
+      teacherService.create(g3a, { kind: 'TEMPLATE_MOVE', masterLessonId: oldMaster, baseVersion: lessons[0]!.version, targetDayOfWeek: 1, targetStart: '10:00', targetEnd: '11:00' }, karin),
+    );
+    assert.deepEqual([ended.status, ended.response.code, (ended.response.params as { reason: string }).reason], [403, 'CLASS_TEACHER_OUTSIDE_FRAME', 'YEAR_ENDED']);
+    assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ClassTeacherChanges" WHERE "studentGroupId" = $1`, [g3a])).n, 0);
+
+    // A date outside the läsår of the class: the Monday after its last day, inside the hours that are open.
+    const afterYear = (await one<{ d: string }>(`SELECT (current_date + 450 + ((8 - extract(isodow FROM current_date + 450)::int) % 7) + 7)::text AS d`)).d;
+    const lessonMaster = await master(matte, g4a, sal1, karin, 3, '09:00', '09:30');
+    const lesson = await dated(lessonMaster, matte, g4a, sal1, karin, await plus(monday, 2), '09:00', '09:30');
+    const wednesday = await plus(monday, 2);
+    const version = (await occasion(lesson, wednesday)).version;
+    const tooLate = await refusedWith(() =>
+      teacherService.create(g4a, { kind: 'OCCASION_MOVE', calendarLessonId: lesson, baseVersion: version, targetDate: afterYear, targetStart: '09:00', targetEnd: '09:30' }, karin),
+    );
+    assert.deepEqual([tooLate.response.code, (tooLate.response.params as { reason: string }).reason], ['CLASS_TEACHER_OUTSIDE_FRAME', 'TARGET_CLOSED']);
+
+    // The lesson's own note and the klasslärare's: both, not the one in place of the other.
+    await owner.query(`UPDATE "CalendarLessons" SET note = 'Ta med gympakläder' WHERE id = $1`, [lesson]);
+    const moved = await teacherService.create(
+      g4a,
+      { kind: 'OCCASION_MOVE', calendarLessonId: lesson, baseVersion: (await occasion(lesson, wednesday)).version, targetDate: thursday, targetStart: '08:00', targetEnd: '08:30', note: 'Flyttad pga besök' },
+      karin,
+    );
+    assert.deepEqual((await adminService.publish(g4a, [moved.id], sara)).outcomes, [{ id: moved.id, outcome: 'PUBLISHED' }]);
+    const after = await one<{ date: string; note: string }>(`SELECT date::text, note FROM "CalendarLessons" WHERE id = $1`, [lesson]);
+    assert.deepEqual([after.date, after.note], [thursday, 'Ta med gympakläder · Flyttad pga besök']);
   });
 
 }

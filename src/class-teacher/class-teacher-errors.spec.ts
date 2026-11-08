@@ -61,6 +61,23 @@ describe('rethrowClassTeacherError', () => {
     expect((answer('42501') as ForbiddenException).getResponse()).toMatchObject({ code: CODES.OUTSIDE_FRAME });
   });
 
+  it('answers a deadlock or a serialization failure of the draft layer as a write conflict to try again, not as an unknown error', () => {
+    // A trigger or a cascade that the database aborted (40P01) or could not serialize (40001): nothing was written.
+    for (const state of ['40P01', '40001']) {
+      const thrown = (() => {
+        try {
+          rethrowClassTeacherError(sqlError(state));
+        } catch (error) {
+          return error as ConflictException;
+        }
+        return null;
+      })();
+      expect(thrown).toBeInstanceOf(ConflictException);
+      expect((thrown!.getResponse() as { code: string }).code).toBe('WRITE_CONFLICT');
+    }
+    expect(() => rethrowClassTeacherError(new Prisma.PrismaClientKnownRequestError('conflict', { code: 'P2034', clientVersion: 'test' }))).toThrow(ConflictException);
+  });
+
   it('rethrows what it does not know, and a lock timeout is a busy publication', () => {
     const odd = new Error('boom');
     expect(() => rethrowClassTeacherError(odd)).toThrow(odd);

@@ -4,16 +4,21 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { MasterLessonsService, type DayLesson } from '../calendar/master-lessons.service';
 import { CalendarLessonsService } from '../calendar/calendar-lessons.service';
+import { reconcilableLessons, wouldRemoveOnUpdate } from '../calendar/propagate-template';
+import { isoWeekday } from '../calendar/publish-days';
+import { substituteNotedLessons } from '../lesson-log/substitute-noted';
+import type { GradeNumbering } from '../common/grade-numbering';
+import { boardCodeOf, readBoardFacts } from '../swaps/board-rules';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
-import { enterGrundschemaWrite } from '../publication/publish-mode';
+import { enterGrundschemaWrite, publishModeOf, type PublishMode } from '../publication/publish-mode';
 import { lockLessons } from '../cover/cover-decisions';
 import { schoolTimezone } from '../cover/cover-context';
 import { scopeOf } from '../calendar/lesson-roster';
 import { parseDateString, toWallClock, zonedTimeToUtc } from '../common/utils/time';
 import { requireSchoolId } from '../common/utils/request-context';
-import { datedConflicts } from './dated-conflicts';
+import { datedConflicts, localMinutes, type DatedContext } from './dated-conflicts';
 import {
   isOccasionKind,
   type ChangeKind,
@@ -22,6 +27,7 @@ import {
   type FieldChange,
   type FrameReason,
   type PublishOutcome,
+  type RemovalView,
   type Verdict,
 } from './class-teacher.types';
 
@@ -31,6 +37,11 @@ export type ChangeRow = ClassTeacherChange;
 const minutesOf = (time: Date): number => Number(toWallClock(time).slice(0, 2)) * 60 + Number(toWallClock(time).slice(3));
 const dayString = (date: Date | null): string | null => (date ? date.toISOString().slice(0, 10) : null);
 const clockString = (time: Date | null): string | null => (time ? toWallClock(time) : null);
+/** HH:MM on the school's clock of an instant. */
+const clockOfInstant = (instant: Date, timezone: string): string => {
+  const minutes = localMinutes(instant, timezone);
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+};
 
 export function toChangeView(row: ChangeRow): ChangeView {
   return {
@@ -129,22 +140,49 @@ export async function lessonState(
   return { version: row.version, snapshot: row.snapshot };
 }
 
+/** What a verdict is asked for. */
+export interface EvaluateOptions {
+  /** A NEW draft, not yet written: a change waiting on the other layer stops it. */
+  creating?: boolean;
+  /**
+   * The verdict goes to a klasslärare and not to an administrator. In a school
+   * that publishes through a draft the grundschema is hidden from teachers
+   * (20261011100000), so a clash with it is named by its kind alone: "the room
+   * is taken", never whose lesson or when.
+   */
+  forTeacher?: boolean;
+}
+
 /**
  * A klasslärare's drafts, judged and carried out.
  *
- * ONE CHECK. A draft is judged by the questions the schemaläggare's editor
- * asks of a placement: MasterLessonsService.findConflicts for the grundschema,
- * and datedConflicts (the same four questions) for a date. Nothing here is a
- * second set of rules. The frame is the database's (app.class_teacher_frame),
- * asked again at every check and every publication, since the schemaläggare may
- * close an hour or give a lesson another teacher after a draft was written.
+ * ONE CHECK. A draft is judged by the rules the schemaläggare's editor holds a
+ * placement to, and by no rules of its own: the clash rule
+ * (MasterLessonsService.findConflicts) for the grundschema and, held against
+ * the date's lessons, for one date (dated-conflicts.ts); the board's three
+ * hard rules, ramtid, the class's meal and a closure on årskurser, as G1's swap
+ * search holds a landing to them (swaps/board-rules.ts), for both layers. The
+ * frame is the database's (app.class_teacher_frame), asked again at every check
+ * and every publication, since the schemaläggare may close an hour or give a
+ * lesson another teacher after a draft was written.
+ *
+ * WHAT PUBLISHING A CHANGE OF THE TEMPLATE DOES TO THE CALENDAR is said before
+ * it is done. In a school that publishes at once, MasterLessonsService.update
+ * moves the future dated lessons with the template and removes the ones that
+ * would land in the past or past the template's own end
+ * (propagateTemplateChange; wouldRemoveOnUpdate counts them, as the swap dialog
+ * does). It also rewrites the day and the time of a lesson that was moved for
+ * one date, which would put it on a third day: a change of the template meets
+ * such a lesson as a clash (EXCEPTION), and waits until the date has passed.
  *
  * ONE WRITER. A published draft is carried out by the services the editor and
  * the day operations use (MasterLessonsService.update and create,
  * CalendarLessonsService.cancel and changeRoom), as the administrator the
  * appointment runs as, so every lock, notice and log they have is kept. The one
  * write with no service of its own, a lesson moved for one date, is below and
- * judged by datedConflicts inside its own transaction.
+ * judged by datedConflicts inside its own transaction. A draft is CLAIMED before
+ * it is carried out (see publishOne), so that two who publish it at once carry
+ * it out once.
  */
 @Injectable()
 export class ClassTeacherEngine {
@@ -163,7 +201,7 @@ export class ClassTeacherEngine {
    * transaction. A draft already written is not stopped by the neighbour on
    * the other layer that it was written beside; a new one is.
    */
-  async evaluate(tx: PrismaClient, change: ChangeRow, options: { creating?: boolean } = {}): Promise<Verdict> {
+  async evaluate(tx: PrismaClient, change: ChangeRow, options: EvaluateOptions = {}): Promise<Verdict> {
     const layerIsDated = isOccasionKind(change.kind);
     const lessonId = layerIsDated ? change.calendarLessonId : change.masterLessonId;
     if (!lessonId) return { state: 'GONE' };
@@ -178,13 +216,30 @@ export class ClassTeacherEngine {
       return { state: 'STALE', changed: diffSnapshots(change.baseSnapshot, now.snapshot) };
     }
 
-    const conflicts = layerIsDated ? await this.occasionConflicts(tx, change) : await this.templateConflicts(tx, change);
-    return conflicts.length > 0 ? { state: 'CONFLICT', conflicts } : { state: 'OK' };
+    const mode = await publishModeOf(tx, change.schoolId);
+    const conflicts = layerIsDated ? await this.occasionConflicts(tx, change) : await this.templateConflicts(tx, change, mode);
+    if (conflicts.length > 0) {
+      // The clashes with a draft grundschema are named by kind alone to a teacher (a clash with the calendar is the calendar's, which they read).
+      const hidden = options.forTeacher === true && mode === 'DRAFT' && !layerIsDated;
+      return { state: 'CONFLICT', conflicts: hidden ? conflicts.map(({ kind }) => ({ kind })) : conflicts };
+    }
+    const removes = layerIsDated || mode === 'DRAFT' ? null : await this.removalOf(tx, change);
+    return removes ? { state: 'OK', removes } : { state: 'OK' };
   }
 
   // ---------------------------------------------------------------------
   // The conflicts
   // ---------------------------------------------------------------------
+
+  /** What the clash rule and the board read a year through: its pupils (the roster basis) and the way its årskurser are numbered. */
+  private async datedContext(tx: PrismaClient, academicYearId: string): Promise<DatedContext> {
+    const year = await tx.academicYear.findUnique({ where: { id: academicYearId }, select: { gradeNumbering: true } });
+    return {
+      masters: this.masters,
+      basis: await rostersOfYear(tx, { role: 'SCHOOL_ADMIN' }, academicYearId),
+      gradeNumbering: (year?.gradeNumbering ?? 'NIOARIG') as GradeNumbering,
+    };
+  }
 
   private async occasionConflicts(tx: PrismaClient, change: ChangeRow): Promise<ConflictView[]> {
     if (change.kind === 'OCCASION_CANCEL' || !change.calendarLessonId) return [];
@@ -196,10 +251,12 @@ export class ClassTeacherEngine {
         startsAt: true,
         endsAt: true,
         roomId: true,
+        subjectId: true,
         studentGroupId: true,
         studentGroup: { select: { academicYearId: true } },
         teachers: { select: { teacherId: true } },
         extraGroups: { select: { studentGroupId: true } },
+        participants: { select: { studentId: true } },
       },
     });
     if (!lesson) return [];
@@ -214,9 +271,11 @@ export class ClassTeacherEngine {
       endsAt = zonedTimeToUtc(date, toWallClock(change.targetEnd), timezone);
     }
     if (change.targetRoomId) roomId = change.targetRoomId;
-    return datedConflicts(tx, {
+    return datedConflicts(tx, await this.datedContext(tx, lesson.studentGroup.academicYearId), {
       lessonId: lesson.id,
       academicYearId: lesson.studentGroup.academicYearId,
+      schoolId: change.schoolId,
+      subjectId: lesson.subjectId,
       date,
       startsAt,
       endsAt,
@@ -224,18 +283,19 @@ export class ClassTeacherEngine {
       studentGroupId: lesson.studentGroupId,
       teacherIds: lesson.teachers.map((row) => row.teacherId),
       extraGroupIds: lesson.extraGroups.map((row) => row.studentGroupId),
+      participantIds: lesson.participants.map((row) => row.studentId),
       timezone,
     });
   }
 
-  private async templateConflicts(tx: PrismaClient, change: ChangeRow): Promise<ConflictView[]> {
+  private async templateConflicts(tx: PrismaClient, change: ChangeRow, mode: PublishMode): Promise<ConflictView[]> {
     if (!change.masterLessonId || change.targetDayOfWeek === null || !change.targetStart || !change.targetEnd) return [];
     const lesson = await tx.masterLesson.findUnique({
       where: { id: change.masterLessonId },
       include: { extraGroups: { select: { studentGroupId: true } }, participants: { select: { studentId: true } }, subject: { select: { name: true } } },
     });
     if (!lesson) return [];
-    const basis = await rostersOfYear(tx, { role: 'SCHOOL_ADMIN' }, lesson.academicYearId);
+    const context = await this.datedContext(tx, lesson.academicYearId);
     const split = change.kind === 'TEMPLATE_SPLIT';
     const candidate = {
       dayOfWeek: change.targetDayOfWeek,
@@ -257,7 +317,7 @@ export class ClassTeacherEngine {
       split && change.keepEnd && change.targetDayOfWeek === lesson.dayOfWeek
         ? [{ ...lesson, endTime: change.keepEnd, extraGroups: [], participants: [] }]
         : [];
-    const hits = await this.masters.findConflicts(tx, basis, identity, candidate, split ? { excludeIds: [lesson.id], alongside: shortened } : {});
+    const hits = await this.masters.findConflicts(tx, context.basis, identity, candidate, split ? { excludeIds: [lesson.id], alongside: shortened } : {});
     const others = await tx.masterLesson.findMany({
       where: { id: { in: hits.map((hit) => hit.masterLessonId).filter((id): id is string => Boolean(id)) } },
       select: { id: true, dayOfWeek: true, startTime: true, endTime: true, subject: { select: { name: true } }, studentGroup: { select: { name: true } } },
@@ -273,7 +333,96 @@ export class ClassTeacherEngine {
           : {}),
       });
     }
+
+    // The board's hard rules, as G1's swap search holds a landing to them: the new slot of the lesson (of a split, the second part).
+    const groups = [lesson.studentGroupId, ...lesson.extraGroups.map((row) => row.studentGroupId)];
+    const facts = await readBoardFacts(tx, {
+      academicYearId: lesson.academicYearId,
+      schoolId: lesson.schoolId,
+      gradeNumbering: context.gradeNumbering,
+      basis: context.basis,
+      groupIds: groups,
+      weekday: change.targetDayOfWeek,
+    });
+    const board = boardCodeOf(facts, groups, { dayOfWeek: change.targetDayOfWeek, startMinutes: candidate.startMinutes, endMinutes: candidate.endMinutes });
+    if (board !== null) views.push({ kind: board });
+
+    if (mode === 'DIRECT') views.push(...(await this.exceptionsOf(tx, lesson)));
     return views;
+  }
+
+  /**
+   * The future dated lessons of a template that were moved for their date (to
+   * another day or another hour than the template's). A change of the template
+   * in a school that publishes at once rewrites the day (by the template's
+   * shift from where the lesson stands now) and the hour of every such lesson
+   * (propagateTemplateChange, 'update'), which carries a lesson moved from a
+   * Monday to a Tuesday to a third day. Named by the date's lesson, so that the
+   * klasslärare sees which date is in the way; the first five.
+   */
+  private async exceptionsOf(
+    tx: PrismaClient,
+    lesson: { id: string; schoolId: string; dayOfWeek: number; startTime: Date; endTime: Date; subject: { name: string }; studentGroupId: string },
+  ): Promise<ConflictView[]> {
+    const timezone = await schoolTimezone(tx, lesson.schoolId);
+    const rows = await tx.calendarLesson.findMany({
+      where: reconcilableLessons(lesson.id),
+      select: { date: true, startsAt: true, endsAt: true, studentGroup: { select: { name: true } } },
+      orderBy: { startsAt: 'asc' },
+    });
+    const start = minutesOf(lesson.startTime);
+    const end = minutesOf(lesson.endTime);
+    return rows
+      .filter((row) => {
+        const day = dayString(row.date)!;
+        return isoWeekday(day) !== lesson.dayOfWeek || localMinutes(row.startsAt, timezone) !== start || localMinutes(row.endsAt, timezone) !== end;
+      })
+      .slice(0, 5)
+      .map((row) => ({
+        kind: 'EXCEPTION' as const,
+        other: {
+          className: row.studentGroup.name,
+          subjectName: lesson.subject.name,
+          date: dayString(row.date)!,
+          start: clockOfInstant(row.startsAt, timezone),
+          end: clockOfInstant(row.endsAt, timezone),
+        },
+      }));
+  }
+
+  /**
+   * How many of the template's future dated lessons publishing the change
+   * removes (and how many of those carry a log, a homework or a note to a
+   * vikarie): propagateTemplateChange's own removal decision (standsAt) asked
+   * of the rows it would reconcile, before anything is written. Only a move
+   * carries lessons to another day; a split leaves the first part where it is.
+   */
+  private async removalOf(tx: PrismaClient, change: ChangeRow): Promise<RemovalView | null> {
+    if (change.kind !== 'TEMPLATE_MOVE' || !change.masterLessonId || change.targetDayOfWeek === null || !change.targetStart || !change.targetEnd) return null;
+    const lesson = await tx.masterLesson.findUnique({
+      where: { id: change.masterLessonId },
+      select: { dayOfWeek: true, recurrence: true, startDate: true, endDate: true },
+    });
+    if (!lesson) return null;
+    const rows = await tx.calendarLesson.findMany({
+      where: reconcilableLessons(change.masterLessonId),
+      select: { id: true, date: true, _count: { select: { lessonLogs: true } } },
+    });
+    if (rows.length === 0) return null;
+    const timezone = await schoolTimezone(tx, change.schoolId);
+    const now = new Date();
+    const after = {
+      dayOfWeek: change.targetDayOfWeek,
+      startTime: change.targetStart,
+      endTime: change.targetEnd,
+      recurrence: lesson.recurrence,
+      startDate: lesson.startDate,
+      endDate: lesson.endDate,
+    };
+    const removed = rows.filter((row) => wouldRemoveOnUpdate([row], { dayOfWeek: lesson.dayOfWeek }, after, timezone, now) === 1);
+    if (removed.length === 0) return null;
+    const noted = await substituteNotedLessons(tx, removed.map((row) => row.id));
+    return { lessons: removed.length, withLog: removed.filter((row) => row._count.lessonLogs > 0 || noted.has(row.id)).length };
   }
 
   // ---------------------------------------------------------------------
@@ -281,13 +430,26 @@ export class ClassTeacherEngine {
   // ---------------------------------------------------------------------
 
   /**
-   * Judges a draft and, if it passes, writes it through the editor's own
-   * services as `actor`, then marks it published. Each draft is its own
+   * Judges a draft and, if it passes, CLAIMS it, writes it through the editor's
+   * own services as `actor`, then marks it published. Each draft is its own
    * transaction: what one does not stop another that does not need it, and a
    * draft that fails is left a draft with the reason.
+   *
+   * THE CLAIM. Two who publish the same draft at once (the klasslärare and the
+   * schemaläggare, two tabs, two administrators) both judge it before either
+   * has written, and a split written twice is two identical lessons for the
+   * same teacher and class: nothing in the database refuses that, only the
+   * clash rule, which neither asks again in time. The claim is a
+   * compare-and-set on the draft's revision: an update of the draft that no
+   * field of it shows, which the draft's guard counts up like any other
+   * change, in a transaction of its own that commits before anything is
+   * written. Of two claimants the database lets one count the revision up; the
+   * other finds it moved and carries out nothing (GONE). A draft whose
+   * carrying out fails is left a draft at the claimed revision, so the next
+   * publication reads it again.
    */
-  async publishOne(actor: AuthenticatedUser, change: ChangeRow): Promise<PublishOutcome> {
-    const verdict = await this.prisma.withRls(actor, (tx) => this.evaluate(tx, change));
+  async publishOne(actor: AuthenticatedUser, change: ChangeRow, options: Pick<EvaluateOptions, 'forTeacher'> = {}): Promise<PublishOutcome> {
+    const verdict = await this.prisma.withRls(actor, (tx) => this.evaluate(tx, change, options));
     switch (verdict.state) {
       case 'GONE':
         return { id: change.id, outcome: 'GONE' };
@@ -300,12 +462,21 @@ export class ClassTeacherEngine {
       case 'OK':
         break;
     }
+    const claimed = await this.prisma.withRls(actor, async (tx) => {
+      const taken = await tx.classTeacherChange.updateMany({
+        where: { id: change.id, rev: change.rev, status: 'DRAFT' },
+        data: { updatedAt: new Date() },
+      });
+      if (taken.count !== 1) return null;
+      return tx.classTeacherChange.findUnique({ where: { id: change.id } });
+    });
+    if (!claimed) return { id: change.id, outcome: 'GONE' };
     try {
-      await this.carryOut(actor, change);
+      await this.carryOut(actor, claimed);
     } catch (error) {
       if (error instanceof ConflictException) {
         // The editor's own check found a clash this one did not (a write in between): named by asking again.
-        const again = await this.prisma.withRls(actor, (tx) => this.evaluate(tx, change)).catch(() => null);
+        const again = await this.prisma.withRls(actor, (tx) => this.evaluate(tx, claimed, options)).catch(() => null);
         return { id: change.id, outcome: 'CONFLICT', conflicts: again?.state === 'CONFLICT' ? again.conflicts : [] };
       }
       if (error instanceof HttpException) {
@@ -315,7 +486,7 @@ export class ClassTeacherEngine {
       throw error;
     }
     const marked = await this.prisma.withRls(actor, (tx) =>
-      tx.classTeacherChange.updateMany({ where: { id: change.id, rev: change.rev, status: 'DRAFT' }, data: { status: 'PUBLISHED' } }),
+      tx.classTeacherChange.updateMany({ where: { id: change.id, rev: claimed.rev, status: 'DRAFT' }, data: { status: 'PUBLISHED' } }),
     );
     if (marked.count === 0) this.logger.warn(`A class teacher change was carried out but could not be marked published [change=${change.id}]`);
     return { id: change.id, outcome: 'PUBLISHED' };
@@ -323,11 +494,19 @@ export class ClassTeacherEngine {
 
   /**
    * Publishes a class's waiting drafts (or the ones named), as `actor`. A
-   * clash that goes away when another draft has been carried out (two lessons
-   * swapping hours) is met by asking again after a pass that published
-   * something; nothing is retried that no draft made room for.
+   * clash that goes away when another draft has been carried out first (a
+   * lesson moved into the hour a second lesson leaves) is met by asking again
+   * after a pass that published something; nothing is retried that no draft
+   * made room for. Two lessons that exchange hours are not met: each one's
+   * target is the other's hour, neither comes first, and both stay drafts with
+   * the clash (the schemaläggare's swap, G1, moves them together).
    */
-  async publishClass(actor: AuthenticatedUser, studentGroupId: string, only?: readonly string[]): Promise<PublishOutcome[]> {
+  async publishClass(
+    actor: AuthenticatedUser,
+    studentGroupId: string,
+    only?: readonly string[],
+    options: Pick<EvaluateOptions, 'forTeacher'> = {},
+  ): Promise<PublishOutcome[]> {
     const waiting = await this.prisma.withRls(actor, (tx) =>
       tx.classTeacherChange.findMany({
         where: { studentGroupId, status: 'DRAFT', ...(only ? { id: { in: [...only] } } : {}) },
@@ -346,7 +525,7 @@ export class ClassTeacherEngine {
           outcomes.set(change.id, { id: change.id, outcome: 'GONE' });
           continue;
         }
-        const outcome = await this.publishOne(actor, fresh);
+        const outcome = await this.publishOne(actor, fresh, options);
         outcomes.set(change.id, outcome);
         if (outcome.outcome === 'PUBLISHED') published += 1;
         else if (outcome.outcome === 'CONFLICT' || outcome.outcome === 'STALE') retry.push(fresh);
@@ -441,6 +620,8 @@ export class ClassTeacherEngine {
           status: true,
           date: true,
           startsAt: true,
+          note: true,
+          roomId: true,
           subjectId: true,
           studentGroupId: true,
           studentGroup: { select: { academicYearId: true } },
@@ -456,10 +637,12 @@ export class ClassTeacherEngine {
       const timezone = await schoolTimezone(tx, schoolId);
       const startsAt = zonedTimeToUtc(targetDate, toWallClock(change.targetStart!), timezone);
       const endsAt = zonedTimeToUtc(targetDate, toWallClock(change.targetEnd!), timezone);
-      const roomId = change.targetRoomId ?? (await tx.calendarLesson.findUnique({ where: { id: lesson.id }, select: { roomId: true } }))?.roomId ?? null;
-      const clashes = await datedConflicts(tx, {
+      const roomId = change.targetRoomId ?? lesson.roomId;
+      const clashes = await datedConflicts(tx, await this.datedContext(tx, lesson.studentGroup.academicYearId), {
         lessonId: lesson.id,
         academicYearId: lesson.studentGroup.academicYearId,
+        schoolId,
+        subjectId: lesson.subjectId,
         date: targetDate,
         startsAt,
         endsAt,
@@ -467,12 +650,14 @@ export class ClassTeacherEngine {
         studentGroupId: lesson.studentGroupId,
         teacherIds: lesson.teachers.map((row) => row.teacherId),
         extraGroupIds: lesson.extraGroups.map((row) => row.studentGroupId),
+        participantIds: lesson.participants.map((row) => row.studentId),
         timezone,
       });
       if (clashes.length > 0) throw new ConflictException('The new time is taken.');
       await tx.calendarLesson.update({
         where: { id: lesson.id },
-        data: { date: parseDateString(targetDate), startsAt, endsAt, roomId, ...(change.note ? { note: change.note } : {}) },
+        // The klasslärare's words are added to the lesson's own note ("Ta med gympakläder · Flyttad pga besök"), not put in their place.
+        data: { date: parseDateString(targetDate), startsAt, endsAt, roomId, ...(change.note ? { note: lesson.note ? `${lesson.note} · ${change.note}` : change.note } : {}) },
       });
       await this.realtime.notifyLessonChanged(tx, lesson.id);
       const recipients = await this.notifications.recipientsForLessons(tx, [scopeOf(lesson)]);
