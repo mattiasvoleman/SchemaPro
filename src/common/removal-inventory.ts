@@ -89,7 +89,7 @@ export type GroupKeyKind =
   | 'mentorDuties'
   | 'enrolments';
 
-/** Every key to StudentGroups. Each is counted: an administrator reads them all. */
+/** Every key to StudentGroups. Each is counted, but the class's monthly sums, which no administrator reads row by row. */
 export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
   key('StudentGroups', ['halfOfId', 'schoolId'], 'CASCADE', { counted: 'halves' }),
   key('TeachingRequirements', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'requirements' }),
@@ -107,6 +107,11 @@ export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
   // Counted with the group's links: both are the viewer's rows about the group (a mark that hides it from Schemavisaren, 20270118090000).
   key('PublicTimetableHidden', ['targetGroupId', 'schoolId'], 'CASCADE', { counted: 'publicLinks' }),
   key('Users', ['studentGroupId'], 'SET NULL', { counted: 'homePupils' }),
+  // The class's monthly sums (20270121090000): written by the nightly count and read through the statistics' doors only, with no policy
+  // for an administrator to count them by, and no pupil in a row. They go with the class.
+  key('AbsenceStatsMonths', ['studentGroupId', 'schoolId'], 'CASCADE', {
+    uncounted: 'the sums of a class’s months, with no pupil in a row, read only through the statistics’ doors (RLS 390): they go with the class',
+  }),
   key('StudentGroups', ['predecessorId', 'schoolId'], 'SET NULL', { counted: 'successors' }),
   key('TeacherDuties', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'mentorDuties' }),
   key('StudentEnrollments', ['studentGroupId', 'academicYearId', 'schoolId'], 'SET NULL', { counted: 'enrolments' }),

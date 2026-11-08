@@ -9,6 +9,7 @@ Element.prototype.hasPointerCapture ??= () => false;
 vi.mock("./attendance-report", () => ({ AttendanceReport: () => <p>attendance-report</p> }));
 vi.mock("./staffing-report", () => ({ StaffingReport: () => <p>staffing-report</p> }));
 vi.mock("./cover-hours-report", () => ({ CoverHoursReport: () => <p>cover-hours-report</p> }));
+vi.mock("./absence-stats-report", () => ({ AbsenceStatsReport: () => <p>absence-stats-report</p> }));
 vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
@@ -49,6 +50,24 @@ describe("the reports tabs", () => {
     expect(window.location.search).toBe("?tab=cover");
   });
 
+  it("keeps Frånvarostatistik in the URL, and loads it only when chosen", async () => {
+    const user = userEvent.setup();
+    render(<ReportsTabs initialTab="attendance" />);
+    expect(screen.queryByText("absence-stats-report")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "absenceStats" }));
+    expect(await screen.findByText("absence-stats-report")).toBeInTheDocument();
+    expect(window.location.search).toBe("?tab=absence-stats");
+    expect(screen.getByRole("tabpanel", { name: "absenceStats" })).toHaveTextContent("absence-stats-report");
+    await user.click(screen.getByRole("tab", { name: "attendance" }));
+    expect(window.location.search).toBe("");
+  });
+
+  it("opens on Frånvarostatistik when the URL names it", async () => {
+    render(<ReportsTabs initialTab="absence-stats" />);
+    expect(await screen.findByText("absence-stats-report")).toBeInTheDocument();
+    expect(screen.queryByText("attendance-report")).not.toBeInTheDocument();
+  });
+
   it("names the page once, above the tabs, and puts each report in a tabpanel named by its tab", async () => {
     const user = userEvent.setup();
     render(<ReportsTabs initialTab="attendance" />);
@@ -62,7 +81,8 @@ describe("the reports tabs", () => {
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
-  it("reads ?tab= as one of the three tabs, anything else as Närvaro", () => {
+  it("reads ?tab= as one of the four tabs, anything else as Närvaro", () => {
+    expect(reportTabOf("absence-stats")).toBe("absence-stats");
     expect(reportTabOf("cover")).toBe("cover");
     expect(reportTabOf("staffing")).toBe("staffing");
     expect(reportTabOf("vikarie")).toBe("attendance");
