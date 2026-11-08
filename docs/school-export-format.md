@@ -126,6 +126,21 @@ Källa: LeaveRequests.
 | `kontakt_telefon` | Kontaktens telefonnummer. Tomt på samma villkor som namnet. |
 | `kontakt_relation` | Kontaktens relation till eleven. Tomt på samma villkor som namnet. |
 
+## `data/samtycken.csv`: Vårdnadshavarnas svar på förfrågan om samtycke till ledighet
+
+Källa: LeaveConsents.
+
+| Kolumn | Innehåll |
+|---|---|
+| `ansokan_id` | Ansökans id (ledigheter.csv). |
+| `vardnadshavare_id` | Id på vårdnadshavaren som frågades (personer.csv). Tomt om personen har skyddad identitet. |
+| `vardnadshavare_epost` | Vårdnadshavarens e-postadress. |
+| `elev_id` | Id på eleven ansökan gäller. Tomt i ett registerutdrag om ansökan inte gäller personen utdraget är om. En ansökan om en elev med skyddad identitet finns inte i filen. |
+| `svar` | true om vårdnadshavaren samtyckte, false om hen inte gjorde det (och ansökan avslutades), tomt om hen inte har svarat. |
+| `svarade` | När vårdnadshavaren svarade (UTC), tomt om hen inte har svarat. |
+| `paminnd` | När den enda påminnelsen skrevs (UTC), tomt om ingen skrevs. |
+| `fragad` | När vårdnadshavaren frågades, det vill säga när ansökan gjordes (UTC). |
+
 ## `data/notiser.csv`: Notiser
 
 Källa: Notifications.

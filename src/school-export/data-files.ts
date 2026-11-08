@@ -630,6 +630,85 @@ export const LEDIGHETER: DataFile = {
 };
 
 // ---------------------------------------------------------------------------
+// samtycken.csv
+// ---------------------------------------------------------------------------
+
+interface ConsentRow {
+  request: string;
+  guardian: string | null;
+  guardianEmail: string | null;
+  student: string | null;
+  consented: boolean | null;
+  answeredAt: string | null;
+  remindedAt: string | null;
+  created: string;
+  /** The page's key, which the file never shows: the guardian's own id, also where the file blanks it. */
+  guardianKey: string;
+  at: string;
+  hid: number;
+}
+
+/**
+ * The guardians a school asked to consent to a leave request, and what they answered (Ledighetspolicy, 20270205091000). A
+ * guardian's answer, and when, is data about the guardian: it is in their registerutdrag and in the school's file. No role
+ * reads the table, so the rows come from app.leave_consents_export, which gives an administrator who decides the school's own
+ * rows, limited to the persons the scope names (the guardians), and without the requests about a marked pupil. The pupil is
+ * named only where the scope is about the pupil; in the guardian's own extract the request is an id and nothing else of the
+ * child's. The answer of one guardian is never in another's: a scope names the guardians whose rows it is.
+ */
+export const SAMTYCKEN: DataFile = {
+  path: 'data/samtycken.csv',
+  title: 'Vårdnadshavarnas svar på förfrågan om samtycke till ledighet',
+  source: 'LeaveConsents',
+  columns: [
+    { name: 'ansokan_id', doc: 'Ansökans id (ledigheter.csv).' },
+    { name: 'vardnadshavare_id', doc: 'Id på vårdnadshavaren som frågades (personer.csv). Tomt om personen har skyddad identitet.' },
+    { name: 'vardnadshavare_epost', doc: 'Vårdnadshavarens e-postadress.' },
+    { name: 'elev_id', doc: 'Id på eleven ansökan gäller. Tomt i ett registerutdrag om ansökan inte gäller personen utdraget är om. En ansökan om en elev med skyddad identitet finns inte i filen.' },
+    { name: 'svar', doc: 'true om vårdnadshavaren samtyckte, false om hen inte gjorde det (och ansökan avslutades), tomt om hen inte har svarat.' },
+    { name: 'svarade', doc: 'När vårdnadshavaren svarade (UTC), tomt om hen inte har svarat.' },
+    { name: 'paminnd', doc: 'När den enda påminnelsen skrevs (UTC), tomt om ingen skrevs.' },
+    { name: 'fragad', doc: 'När vårdnadshavaren frågades, det vill säga när ansökan gjordes (UTC).' },
+  ],
+  async *rows(env) {
+    const markedOut = [...env.markedOut];
+    const guardians = env.scope.ids === null ? null : [...env.scope.ids];
+    const about = Prisma.sql`c."studentId"`;
+    const guardianHidden = hides(env, Prisma.sql`c."guardianId"`);
+    const studentHidden = hides(env, about, about);
+    let after: { at: string; request: string; guardian: string } | null = null;
+    for (;;) {
+      const batch: ConsentRow[] = await env.read((tx) =>
+        tx.$queryRaw<ConsentRow[]>(Prisma.sql`
+          SELECT c."leaveRequestId"::text AS request, ${shown(guardianHidden, Prisma.sql`c."guardianId"`)}::text AS guardian,
+                 ${shown(guardianHidden, Prisma.sql`c."guardianEmail"`)} AS "guardianEmail",
+                 ${shown(studentHidden, about)}::text AS student, c."consented" AS consented,
+                 ${ISO(Prisma.sql`c."answeredAt"`)} AS "answeredAt", ${ISO(Prisma.sql`c."remindedAt"`)} AS "remindedAt", ${ISO(Prisma.sql`c."createdAt"`)} AS created,
+                 c."guardianId"::text AS "guardianKey", to_char(c."createdAt", 'YYYY-MM-DD HH24:MI:SS.US+00') AS at,
+                 (${cut(guardianHidden, Prisma.sql`c."guardianId"`)} + ${cut(studentHidden, about)}) AS hid
+            FROM app.leave_consents_export(
+                   ${guardians}::uuid[], ${markedOut}::uuid[], ${BATCH}::integer,
+                   ${after === null ? null : after.at}::timestamptz, ${after === null ? null : after.request}::uuid, ${after === null ? null : after.guardian}::uuid) c`),
+      );
+      if (batch.length === 0) break;
+      env.named('GUARDIANS', batch.map((row) => row.guardian));
+      env.named('LEAVE_REQUESTS', batch.map((row) => row.student));
+      for (const row of batch) {
+        yield [
+          row.request, text(row.guardian), text(row.guardianEmail), text(row.student), row.consented === null ? '' : String(row.consented),
+          text(row.answeredAt), text(row.remindedAt), row.created,
+        ];
+      }
+      emptied(env, SAMTYCKEN.path, batch);
+      const last = batch[batch.length - 1]!;
+      after = { at: last.at, request: last.request, guardian: last.guardianKey };
+      await env.checkpoint();
+      if (batch.length < BATCH) break;
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 // notiser.csv
 // ---------------------------------------------------------------------------
 
@@ -809,4 +888,4 @@ export const LASLOGG: DataFile = {
 };
 
 /** The data files, in the order the zip holds them. */
-export const DATA_FILES: readonly DataFile[] = [PERSONER, KOPPLINGAR, NARVARO, FRANVARO, LEDIGHETER, NOTISER, LASLOGG];
+export const DATA_FILES: readonly DataFile[] = [PERSONER, KOPPLINGAR, NARVARO, FRANVARO, LEDIGHETER, SAMTYCKEN, NOTISER, LASLOGG];

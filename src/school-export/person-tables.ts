@@ -5,7 +5,7 @@ import { idForms, normalize, type TermIndex } from './free-text';
 
 /**
  * Registerutdrag (GDPR art. 15): every table that holds a row about a person,
- * and what the extract does with it. The whole-school export's seven data
+ * and what the extract does with it. The whole-school export's eight data
  * files cover what a school holds in bulk; the rest of what Rastra keeps about
  * a person is in tables a school never exports, and an extract that said "all
  * your data" and left them out would say what is not true.
@@ -23,7 +23,7 @@ import { idForms, normalize, type TermIndex } from './free-text';
  *   - DUMPED: the rows where a person column is one of the persons asked for,
  *     every column, as the table has them (data/person/<table>.csv). A
  *     column that holds a token, a secret or a hash is written "(dold)".
- *   - COVERED by one of the seven data files, which say it better (ids
+ *   - COVERED by one of the eight data files, which say it better (ids
  *     resolved to addresses, the lesson's date and subject).
  *   - ACCOUNT: the person's own notice settings, devices and calendar feeds,
  *     which no administrator can read (no arm of row-level security), so an
@@ -88,11 +88,14 @@ const away = (columns: readonly string[], through?: PersonDump['through']) => du
  * catalogue has it.
  */
 export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
-  // The seven data files.
+  // The eight data files.
   AttendanceRecords: { covered: 'data/narvaro.csv (the pupil\'s marks; the marks a teacher recorded are the pupils\' data, not the teacher\'s)' },
   GuardianStudents: { covered: 'data/kopplingar.csv' },
   AbsenceReports: { covered: 'data/franvaroanmalningar.csv' },
   LeaveRequests: { covered: 'data/ledigheter.csv' },
+  // The answers of the guardians a school asked to consent to a leave request (20270205091000): no role reads the table, so
+  // the file asks the database's own function for an administrator who decides (app.leave_consents_export).
+  LeaveConsents: { covered: 'data/samtycken.csv (the guardian\'s own answers: whether they consented, and when)' },
   Notifications: { covered: 'data/notiser.csv' },
   PersonalDataAccess: { covered: 'data/laslogg.csv (who read about the person, and what the person read)' },
 
@@ -193,12 +196,6 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   ReportingReminders: {
     excluded:
       'En liggare över vilka lektioner en lärare påmints om. Ingen roll kan läsa tabellen (bara databasens påminnelsefunktion rör den), så en administratör kan inte lämna ut den; raderna följer med personen när hen tas bort.',
-  },
-  // Ledighetspolicy (20270205091000): the answers of the guardians a school asked to consent to a leave request. No role can read the
-  // table (only the database's own functions touch it), so an administrator cannot hand it out.
-  LeaveConsents: {
-    excluded:
-      'Svaren från vårdnadshavare som skolan bad om samtycke till en ledighetsansökan. Ingen roll kan läsa tabellen (bara databasens samtyckesfunktioner rör den), så en administratör kan inte lämna ut den; att samtycke krävdes och om en vårdnadshavare sa nej står i ledigheter.csv, och raderna följer med personen när hen tas bort.',
   },
   // Krisläge (20270113091000): who started and ended an alarm, the teacher on a call, the pupil on its list and the state they
   // were reported in, and the reports themselves. A person who is removed keeps their rows without them; the rows are theirs.
