@@ -87,6 +87,9 @@
         - text: Beslut om lokalbokning
         - switch "Beslut om lokalbokning"
       - listitem:
+        - text: Elever som byter lektion för en dag
+        - switch "Elever som byter lektion för en dag" [checked]
+      - listitem:
         - text: Frånvarosammanställning
         - switch "Frånvarosammanställning" [checked]
       - listitem:

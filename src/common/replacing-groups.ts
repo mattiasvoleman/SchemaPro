@@ -214,6 +214,12 @@ export function replacedPupils(
 /** A lesson as lessonPupils reads it: replacedPupils' scope and the pupils named on it. */
 export interface LessonPupilsInput extends ReplacedScope {
   named: readonly string[];
+  /**
+   * The pupils moved off the lesson for the day (Elevens lektion för dagen): a pupil of its groups or a named
+   * one whom a teacher, a mentor or an administrator sent to a parallel lesson. They are `off`, whichever way
+   * they reached the lesson: the move is the later word, a named row of theirs included.
+   */
+  movedOff?: readonly string[];
 }
 
 /** Who sits in a lesson (`on`) and whom THE RULE takes off it (`off`), each sorted. */
@@ -243,6 +249,9 @@ export function lessonPupils(
   const roster = new Set<string>(lesson.named);
   for (const groupId of lesson.groupIds) for (const pupil of membersOf.get(groupId) ?? []) roster.add(pupil);
   const off = replacedPupils(roster, lesson, new Set(lesson.named), bySubject, membersOf, yearOf);
+  // Moved off for the day: out of `on` and into `off`, as SS12000's participates false and the counts read them.
+  // One who is not on the lesson at all is nobody's to take off.
+  for (const pupil of lesson.movedOff ?? []) if (roster.has(pupil)) off.add(pupil);
   return { on: [...roster].filter((pupil) => !off.has(pupil)).sort(), off: [...off].sort() };
 }
 

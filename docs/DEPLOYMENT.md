@@ -300,6 +300,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `SCHOOL_EXPORT_BACKGROUND` | `on` (default) or `off`: the 30-second job of the whole-school export (`/admin/dataskydd`). It takes the oldest order, if any, builds the zip as the administrator who ordered it (their login and school under row-level security) and stores it in pieces in `SchoolExportChunks`; a file is fetchable for three days and then deleted. With no order a pass is one expiry check and one claim. Needs migration `20270114090000`: run it before the API that has this job |
 | `ABSENCE_WATCH_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarobevakning's nightly count. A school's night starts at 05:00 its local time, once a night, and only for a school whose administrator has turned the bevakning on (`/admin/absence-watch`; off for every school until then). The night counts the pupils over the school's limits as of yesterday and, on the first day after a whole week or month, writes the digest of each group that has a limit. Off, nothing is counted or sent and the findings already made stay |
 | `REPORTING_RATE_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Rapporteringsgrad's nightly job. A school's night starts at 06:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch; only the reminders and the weekly notice are, under `/admin/reporting-rate`). The night stores each teacher's held and reported lessons per day, tells the teachers of lessons that stood open past the school's limit (if the school turned that on) and, on Mondays, tells rektor and the full administrators the week's totals (likewise). **Off, this is the emergency brake:** nothing is counted, reminded or sent, the days already stored stay and the pages show them unchanged (they stop getting newer), and a teacher's list of open lessons, which reads the lessons live, still answers. A value that is neither `on` nor `off` is refused at start |
+| `ABSENCE_STATS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarostatistik's nightly job. A school's night starts at 07:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch). The night stores the sums of absence per class and month, and for the whole school, without a pupil's id, for the months of the last 62 days and up to three older months a night until the three läsår are filled in. **Off, this is the emergency brake:** no month is counted, the sums already stored stay and the pages show them unchanged; the doors that count a pupil's own months from the marks (`/admin/reports?tab=absence-stats`, `/teacher/absence-stats`) still answer. A value that is neither `on` nor `off` is refused at start |
 | `ACK_BACKGROUND` | `on` (default) or `off`: the quarter-hourly pass of Kvittens' reminders (`ack-reminders` in `JobRuns`). It reminds, once, each guardian who has not confirmed themself a request whose time the school chose has come, one request at a time and each in a transaction of its own; a school with kvittens off, or with no reminder time, has nothing for it to do. `off` stops every reminder in every school; the requests, the confirmations and the notices of a new request go on. The test setup turns it off. |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
@@ -2073,6 +2074,299 @@ Walk the full product loop once, in order:
   another school is not something any code path does, and the swap would take
   ACCESS EXCLUSIVE on `Users`, `StudentGroups` and the other parents together.
 
+- **Frånvarostatistik över tid**: 20270121090000 adds the table
+  `AbsenceStatsMonths` (the sums of absence per class and month, and per school
+  and month, with no column that names a person and no key to `Users`) and
+  fifteen `app.absence_stats_*` functions (all SECURITY DEFINER with a pinned
+  `search_path` but `app.absence_stats_min_group()`, which reads nothing, and
+  `app.absence_stats_lessons()`, see (9)). The
+  table has row security and **no policy and no grant**: only the functions read or
+  write it, so a PostgREST call and the API's own role are refused (42501); the
+  functions' EXECUTE is the API role's for the ten the gateway and the job call,
+  and nobody's for the rest (five: the group size, the window's first month, the
+  two access checks and the lessons). No existing row is touched, no existing table gains a
+  column, and `app.gallring_due` and `app.gallring_purge` are **not** rewritten
+  (their md5 stay what the previous migration left them: due `f884a3c7…`, purge
+  `21746d39…`, pseudonymise `6f18f62f…` in production). The new keys take `Schools`
+  and `StudentGroups` in SHARE ROW EXCLUSIVE, NOWAIT, together in a loop: reads and
+  foreign-key checks go on, writes to the two wait for the file, and if both are not
+  free at once in 30 s it stops with nothing changed (`prisma migrate resolve
+  --rolled-back 20270121090000_franvaron_over_tre_lasar_lagras_per_klass_och_manad_aldrig_per_elev`,
+  then deploy again). The API before the release knows none of the objects, so it keeps
+  working between the migration and the deploy. The migration goes in first, then the
+  merge.
+  **What is on after the deploy.** The nightly job counts for every school with a
+  lesson in the last 90 days (`app.reporting_schools()`), from 07:00 its local time:
+  the months of the last 62 days, and three older months a night, newest first, until
+  the three latest läsår are in (about a week; a school with fewer läsår is done sooner).
+  One month of a school of 2 000 pupils is a few seconds (`scripts/bench/absence-stats.sql`
+  measures it), each in a transaction of its own that asks for 9 s. Nothing is switched
+  on per school: the sums hold no pupil. The pages read them: the "Frånvarostatistik"
+  tab of `/admin/reports` for every administrator profile, `/teacher/absence-stats` for a
+  mentor, the sums of the school and the classes (never a pupil) for the huvudman's
+  reader.
+  **Decisions, written in the migration's header and in the PR:** (1) *What is
+  stored.* Sums per class and month and per school and month, never a row per pupil. A
+  pupil's own months, a class's pupils and every pattern are counted from the marks that are
+  left, when asked; they go with the marks when attendance is purged. (2) *The smallest
+  group is five.* A class with fewer than five pupils has no stored month; a month in which
+  fewer than five pupils have a registered mark stores no minute (only the lessons and the
+  reporting rate, which are the teachers'); a class of fewer than five pupils with a mark in
+  the period has no pattern. The number is `app.absence_stats_min_group()`, the CHECKs
+  `AbsenceStatsMonths_a_group_has_five_pupils` and `…_a_figure_has_five_pupils_behind_it`,
+  and `MIN_GROUP` in `src/absence-stats/absence-stats.ts`; a jest spec holds the four to one
+  number. (3) *The sums outlive the attendance.* They are not purged with it (that is
+  what reaches three läsår when attendance is kept for less); the job removes the months
+  before the third latest läsår, and they go with their school or class. **A school that
+  has decided to purge attendance after a month still has three läsår of sums.** Say so in
+  the release note. (4) *A month whose marks may be gone is not counted again:* once the
+  school has ever chosen PURGE_AFTER for attendance, no month before the shortest period it
+  ever chose is recounted (a later KEEP does not give the marks back), the same guard as
+  Rapporteringsgrad's. (5) *Who reads what:* administrators of every profile (as the
+  attendance report), a mentor their own pupils and classes by the mentor definition of
+  Frånvarobevakningen as of today, the huvudman's reader the sums only. (6) *Protected
+  identity:* a marked pupil is in no list and in no mentor's reach; the sums count them; the
+  print is the web's and holds them out. (7) *Reads are logged:* a class's pupils and a
+  pupil's card are recorded as ATTENDANCE and PEOPLE; the sums are not. (8) *No gender
+  split:* the model has no such field and none is added. (9) *The lessons of a month
+  are Rapporteringsgradens, but not of the teachers who work now.* `app.absence_stats_lessons`
+  is `app.reporting_lessons` (20270112090100) with one line changed: D2 asks whether the
+  teacher is active **now** (`Users."isActive"`), the history asks whether she had not left
+  when the lesson was over (`"deactivatedAt" IS NULL OR "endsAt" <= "deactivatedAt"`).
+  Without it a month, once stored, lost every lesson of a teacher who has since left and
+  was never counted again (the plan asks only for months without a row). The two are
+  one definition in two texts, and a jest spec (`absence-stats-definition.spec.ts`) and
+  the owner's section 392o fail if they differ in anything but that line, so whoever
+  rewrites `app.reporting_lessons` next (Elevens lektion för dagen, 20270122, adds a
+  condition about a pupil moved off a lesson) must restate `app.absence_stats_lessons` with it, in
+  the same migration, after its md5 guard (the body's md5 is in the PR). (10) *A class's
+  pupils are the class's own, and add up to the class:* `app.absence_stats_class_pupils` lists the
+  pupils enrolled in **the class itself** some day of the period (never those who only sat in
+  a predecessor and went to another class or left: their mentor is somebody else, and the
+  class's mentor cannot open their card), and counts a listed pupil's marks for the days she
+  was in the class or a predecessor (the segment of `StudentEnrollments` that covers the
+  lesson's date, as the class's months and patterns count them), not every mark of the
+  period; her own card shows all of them. For a period inside the class the pupils' sums are
+  the class's month; for a period that reaches back into a predecessor they are less than
+  the cohort's sum in the series, by the pupils who did not come along.
+  **Release note** (in these words or others): *From the first night after this release
+  Rastra counts, every night, the school's and each class's absence by month for the last
+  three läsår, without recording any individual pupil, and shows it with the reporting rate
+  beside it. Sums over fewer than five pupils are never kept or shown. Administrators see
+  the school, the classes and every pupil's own months (counted from the registrations that
+  are still stored); a mentor sees their own pupils and classes; the huvudman's reader sees
+  the sums. The sums are kept for three läsår also where attendance is purged earlier.*
+  **Before the migration**, as the owner: `SELECT count(*) FROM pg_proc WHERE proname LIKE
+  'absence\_stats\_%'` and `SELECT count(*) FROM pg_tables WHERE tablename =
+  'AbsenceStatsMonths'` are both 0; `prisma migrate status` lists exactly this migration as
+  pending; no session sits idle in a transaction that holds `Schools` or `StudentGroups`
+  (`SELECT pid, state, now() - xact_start FROM pg_stat_activity WHERE xact_start IS NOT NULL
+  AND state <> 'active'`). **After it:** the 15 functions exist, the table has
+  row security and `SELECT count(*) FROM pg_policies WHERE tablename = 'AbsenceStatsMonths'`
+  is 0; `SELECT has_table_privilege('app_authenticated', '"AbsenceStatsMonths"', 'SELECT')`
+  is false (and, on Postgres 17, `MAINTAIN` too); the gallring functions' `md5(prosrc)` are
+  what they were before. **The morning after the first night** (07:00 local, every school):
+  `SELECT count(*), min(month), max(month) FROM "AbsenceStatsMonths" WHERE "schoolId" = ...`
+  has the months of the last 62 days and three more; after a week, the school's earliest
+  läsår; no row has `pupils` under 5; `JobRuns` has `absence-stats` with `failed` 0.
+  **Rollback of the code** is a revert; the table stays and is unread. Rollback of the
+  data, only if nothing in it is wanted: `DROP TABLE "AbsenceStatsMonths"; DROP FUNCTION
+  app.absence_stats_min_group(), …` (the fifteen, by name); the gallring functions were
+  never touched.
+- **Elevens lektion för dagen** (D7): 20270122090000 adds the
+  `NotificationType` value `LESSON_PUPIL_MOVED` and nothing else (a value
+  cannot be used in the transaction that adds it, so it is a file of its own,
+  taking no lock). 20270122091000 adds the table `LessonPupilMoves`, the column
+  `CalendarLessonStudents."moveId"` (nullable, key to the move, `ON DELETE
+  CASCADE`) and `SchoolDaySettings."guardianNoticeOnMove"` (`false`), twelve
+  `app.lesson_pupil_*` / `app.lesson_move_*` functions, five triggers, five
+  read arms on the table and the restated bodies of seven readers and of D6's
+  `absence_stats_lessons` (below). It
+  takes `Schools`, `Users` and `CalendarLessons` in SHARE ROW EXCLUSIVE and
+  `CalendarLessonStudents` and `SchoolDaySettings` in ACCESS EXCLUSIVE, all
+  together, NOWAIT, in a retry loop of 30 s (a register save or a cancellation
+  writes `Users` and `CalendarLessons` in one transaction, so no order of locks
+  is safe). If the loop gives up after 30 s it has changed nothing, but Prisma
+  has written an unfinished attempt to `_prisma_migrations`, and the next
+  `migrate deploy` answers **P3009** until `prisma migrate resolve --rolled-back
+  20270122091000_en_elev_byter_till_en_parallell_lektion_for_en_dag` has been
+  run (the lock loop's own error message says so); only then run it again.
+  Deploy order: **migrate first**, then merge (the old API knows none of the
+  new columns and writes none of them; it does not read a move either, but there
+  is none before the new API runs).
+  **What a move is.** A teacher of one of the lessons, the pupil's mentor that
+  day, or an administrator with Drift moves one pupil from a lesson to a lesson
+  that overlaps it in time, for that date, and can take it back. The pupil's
+  arrival is a named pupil on the target (a row in `CalendarLessonStudents`
+  carrying `moveId`), so every reader that already reads named pupils sees the
+  pupil there; the departure is read where a replacing group's "off" is read.
+  The pupil's mark on the lesson they left is set to `UNKNOWN` (which the
+  absence watch, the minute statistics and the SS12000 attendance leave out) and
+  kept in `displacedMark`; Ångra puts it back if nobody has written one since.
+  A mark on the lesson they were moved to stops Ångra and a move on (409
+  `LESSON_MOVE_HAS_ATTENDANCE`). The table has no write arm: it is written only
+  by `app.lesson_pupil_move` and `app.lesson_pupil_move_undo` (definer, the API
+  role's), which lock the lessons in id order (`FOR NO KEY UPDATE`) before
+  anything else; a register save takes the lesson's row `FOR SHARE` through
+  `app.lesson_pupil_register_lock`, so a save and a move meet in one order. (The
+  lock is a function of its own because a teacher has no UPDATE policy on
+  `CalendarLessons` and a row lock under row security runs that policy: taken
+  from the gateway it locked nothing for a teacher. The adapter probe, check
+  `lm-f`, found it.) A move falls with either lesson when it is cancelled,
+  replaced by an activity or moved so that they no longer overlap
+  (`CalendarLessons_pupil_moves_lapse`, only when time or status changes), and
+  with either pupil or lesson when one is deleted. The state codes of the
+  refusals are `LM403`–`LM416`, answered as coded 403/404/409
+  (`LESSON_MOVE_*`; `LM416` is `LESSON_MOVE_LESSON_OVER`, below). Nothing
+  touches `MasterLessons`.
+  The delivered time's audience statement (`audienceStatement`, the timplan)
+  gains one column, `movedOffIds`, behind an option only it asks for; every
+  other statement of P3 is byte for byte what it was (pinned in
+  `timplan-delivered.sql.spec.ts`).
+  **The seven readers** restated, each weighed against its previous body before
+  it is replaced (the migration stops otherwise): `current_student_replaced_lesson_ids`
+  (was 20261211090000, md5 `40ec1dad4dc5024dfbad454679c742e9`),
+  `calendar_feed_pupil_lessons` (20270118090000, `edec662e41a36cca8086484a5de74895`),
+  `timetable_pupil_days` (`16164f62372b5886f55743657fac1d46`),
+  `timetable_week_days` (`d871d3d16dbd336b80ea677ac23abded`),
+  `reporting_lessons` (20270112090100, `d6a074eea241802f4e7bbd980e4f29ea`),
+  `gallring_due` (20270117091000, `f884a3c77b5234c3d77ae6b77d17f0e7`) and
+  `gallring_purge` (`21746d3990375d467cdeec6294308363`). The gallring pair gain
+  one branch, `LessonPupilMoves` under ATTENDANCE (a move goes when its source
+  lesson's date is older than the school's limit); a later release that rewrites
+  them must carry it. **New md5 (to check after the migration):**
+  `calendar_feed_pupil_lessons` `57bc5d8b0a656a4d9f0cf3ceecd9d247`,
+  `current_student_replaced_lesson_ids` `51f95a8e3c19c2a4e958c3bb5ad18fee`,
+  `gallring_due` `a7b1da5813d0acf54b1474ad6f96c9c3`, `gallring_purge`
+  `b23e04aec610ebbf1795b832d5054273`, `reporting_lessons`
+  `a263885deea0dd2f172362d0ed374167`, `timetable_pupil_days`
+  `0a4b0e9f21ce6625edc3edf6e7b7b4e1`, `timetable_week_days`
+  `c05f78b5c1392ca7218d8780d85a253a`. **D6's `absence_stats_lessons`**
+  (Frånvarostatistik över tid, 20270121090000, which must be run first: the
+  migration weighs it and stops otherwise) is D2's `reporting_lessons` but for the
+  line about the teacher, and a month D6 has stored must say what the reporting
+  rate says for the same month, so it gets the same condition (a pupil moved
+  off a lesson is not on its list): md5 `bece0015a55c5a41f4824c2e6550e85d`
+  before, **`265b9b21353ecd7e441397f99e565643`** after; it stays `LANGUAGE sql
+  STABLE`, not definer, with no `SET` and no grant (D6's tests
+  `absence-stats-definition.spec.ts` and section 392o hold it to being
+  `reporting_lessons` but for that line, and fail the build without the patch).
+  `absence_stats_month` (`38e6f66e73a8b1463403a873a9b9ebb4`) is untouched.
+  Read the readers with `SELECT p.proname, md5(p.prosrc) FROM pg_proc p JOIN pg_namespace n
+  ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname IN
+  ('current_student_replaced_lesson_ids', 'calendar_feed_pupil_lessons',
+  'timetable_pupil_days', 'timetable_week_days', 'reporting_lessons',
+  'gallring_due', 'gallring_purge') ORDER BY p.proname COLLATE "C"` (prod
+  sorts en_US, so compare the md5 per name, not the order). The migrations'
+  sha256: 20270122090000 `7beae1596b32c59ab6201ec7748823afb66f5240f8cab580b323bcfd1d1e8e01`,
+  20270122091000 `a80b82488d3b910a32c0aea5c115371af397a8a3e72ae665658f36d095191b97`
+  (the second changes if the file is edited after this was written: check
+  `shasum -a 256` of the merged file). The two doors' md5 (`prosrc`) and the
+  new function the reviews of #281 added before the migration was run:
+  `lesson_pupil_move` `8b2bc446f5550bde8cba9123c82bba42`,
+  `lesson_pupil_move_undo` `8d4a88be4e23e9f4191b969b488ed7b0` and
+  `lesson_move_may_correct` `43ae32c8ef504e8f4bd35b96330a6745`.
+  **What is decided, for a conversation with the school (BESLUT):** a move is for
+  today or later (a past day's register is not edited this way). **A lesson
+  that has ended** (409 `LESSON_MOVE_LESSON_OVER`, `LM416`): the day is not the
+  hour, the register of a finished lesson is its teachers', and a move writes
+  the pupil's mark on the lesson it leaves, so (1) **no new move** is made off
+  a lesson that has ended, for anybody; (2) **Ångra and a move back** after the
+  source's end, the same day, are for an administrator with Drift and for a
+  teacher on **the source** (the one whose mark is put back, with its author
+  and time), and for nobody else: the teacher of the target alone, the
+  pupil's mentor, a pupil or a guardian get `LM416` or `LM403`; (3) **a move
+  on** from the lesson the pupil was moved to writes nothing on the first
+  source (its mark row is untouched, the displaced mark is carried to the new
+  move), so the first source's end does not matter; the rule is asked of the
+  lesson the pupil is taken out of: once that one has ended too, only an
+  administrator with Drift and a teacher on it may move the pupil on (a lesson
+  a pupil is moved into that has already ended is not refused: the target is
+  the target teacher's affair, as before). Ångra never takes away a mark on
+  the target: a mark of the pupil there (anything but Okänd) refuses Ångra, a
+  move back and a move on (409 `LESSON_MOVE_HAS_ATTENDANCE`, `LM415`) for
+  everybody, the administrator and the source teacher too, and the mark
+  stands. After midnight (`LM414`) a move can no longer be undone or moved on at
+  all: the register of the source lists the moved pupil as moved away and saves
+  nothing for them, so a mistake found the next day is corrected in SQL by whoever
+  runs the database (the rollback statement below puts the marks back); no free-text
+  reason is stored (a note about a child would be a record nobody asked for);
+  the teachers of both lessons are always told (the one who moved the pupil
+  excepted), **the guardian only if the school says so** (Drift › Skolans dag,
+  off by default; the push and the e-mail say that a pupil's lesson has changed
+  and when, never who and never the pupil); Ångra and a move on are refused
+  once the pupil has a mark on the lesson they were moved to; a lesson that is
+  cancelled or replaced takes its moves with it and the set-aside mark is not
+  put back (the pupil may have gone there); a lesson whose pupils all come from
+  a class list still counts as held in the reporting rate when every pupil has
+  been moved off (only a lesson of named pupils is handled). **Known limits:**
+  a pupil's own direct read of a moved-in lesson does not show the teacher's
+  name until the teacher's rows reach the pupil (the gateway's week does); the
+  app has no screen for moving (a notice and the type, and the realtime
+  broadcast keeps the register current); a lesson that is deleted (a
+  republication that removes a base lesson) takes the moves on it with it, as a
+  cancellation does, and a mark that was set aside on the source stays
+  `UNKNOWN` (the set-aside copy goes with the move, and nobody is told: a
+  deletion is not a cancellation); the register is where it is corrected; a
+  move that gallring removes
+  (the source's date older than the school's attendance limit) takes the
+  arrival with it, so the delivered time (`movedOffIds`) and the rosters of a
+  lesson older than that limit read it as if the pupil had never been moved:
+  the delivered time of a year older than the attendance limit is not stable.
+  **Measure** (`scripts/bench/lesson-moves.ts`: two schools of 60 classes of 25
+  pupils and six lessons a day, one with 120 pupils moved to a parallel lesson;
+  medians of 21 adjacent pairs on a shared Mac, so load moves both alike): the
+  whole day's rosters as an administrator read them 194 ms without moves and
+  124 ms with (the difference is the host's, the moved pupils are fewer on the
+  lessons they left); a register opening 51 and 53 ms; a pupil's own lessons
+  11.6 and 12.6 ms; the calendar feed for fifty pupils 372 and 291 ms; a
+  guardian's week of a moved child 122 and 143 ms (the child's moves are one
+  more indexed read, the lesson they went to has its own teachers and room).
+  The statements the feature adds execute in 0.02 ms each on the database
+  (`EXPLAIN ANALYZE`, best of 21). No hot table gained a policy arm.
+  **Release note** (in these words or others): *A teacher, a mentor or an
+  administrator can now move one pupil to a parallel lesson for a day, from the
+  register, the klassbok or the lesson list, and take it back. The pupil is
+  counted where they are: in the register of the lesson they went to, not as
+  absent from the one they left; the pupil's and the guardian's schedule and
+  calendar follow. A guardian is told only if the school chooses so under Drift
+  › Skolans dag.*
+  **Before the migrations**, as the owner: no `LessonPupilMoves` table and no
+  `app.lesson_pupil_%` function exist, `prisma migrate status` lists exactly
+  the two new migrations as pending, no session sits idle in a transaction that
+  holds `Users`, `Schools` or `CalendarLessons`, the seven readers carry
+  the md5 above, D6's 20270121090000 is applied and `absence_stats_lessons`
+  carries `bece0015a55c5a41f4824c2e6550e85d`, and `_prisma_migrations` has no unfinished row (an earlier
+  attempt that gave up leaves one: P3009). **After them, before the merge:** `LessonPupilMoves` has row
+  security on with five policies, all `TO app_authenticated`, and
+  `app_authenticated` holds SELECT and nothing else (`SELECT
+  has_table_privilege('app_authenticated', 'public."LessonPupilMoves"', 'INSERT,
+  UPDATE, DELETE, TRUNCATE')` is false; no MAINTAIN on 17); `anon`,
+  `authenticated` and `service_role` hold nothing that writes; four of the
+  twelve functions are executable by `app_authenticated`
+  (`lesson_pupil_move`, `lesson_pupil_move_undo`, `lesson_move_is_mentor`,
+  `lesson_pupil_register_lock`) and none by `anon`, `authenticated` or
+  `service_role`; `SELECT count(*) FROM "LessonPupilMoves"` is 0; the enum has
+  the value; no invalid index and no lock wait. **After the merge:** in a test
+  school with a teacher, a mentor and two parallel lessons: move a pupil, see
+  them in the target's register and in the guardian's week, save the source's
+  register, take the move back, and read the log for `Pupil moved` and for a
+  `LESSON_MOVE_*` that is not a 4xx.
+  **Rolling back the API** leaves the table and the functions unread, but a
+  move that stands makes the old code count the pupil on both lessons (the
+  arrival is a named pupil it reads, the departure it does not know). Before a
+  revert, put the marks back and take the moves away in one transaction:
+  `BEGIN; UPDATE "AttendanceRecords" a SET "status" =
+  (m."displacedMark" ->> 'status')::"AttendanceStatus", "note" =
+  m."displacedMark" ->> 'note', "recordedAt" = (m."displacedMark" ->>
+  'recordedAt')::timestamptz, "recordedById" = (m."displacedMark" ->>
+  'recordedById')::uuid, "updatedAt" = now() FROM "LessonPupilMoves" m
+  WHERE m."displacedMark" IS NOT NULL AND a."calendarLessonId" =
+  m."fromLessonId" AND a."studentId" = m."studentId" AND a."status" =
+  'UNKNOWN'; DELETE FROM "LessonPupilMoves"; COMMIT;` (the arrivals go with the
+  moves). The schema stays; dropping it is a migration of its own, and the seven
+  readers go back to the bodies named above and `absence_stats_lessons` to D6's
+  (`bece0015…`, its migration's text).
 
 - **Checklistor** (instruktionsbevis and samtyckeslistor per klass): 20270129090000 adds the
   `RetentionDataType` value `CHECKLISTS` and nothing else (a value cannot be used in the transaction that adds

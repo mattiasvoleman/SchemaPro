@@ -152,6 +152,7 @@ export function describeGroupRemoval(
         "calendarLessons",
         "attendanceMarks",
         "lessonLogs",
+        "lessonMoves",
         "lunchSittings",
         "calendarBreaks",
         "availabilityConstraints",

@@ -90,7 +90,10 @@ export function useSchoolDaySettings() {
 export function useSchoolDayActions() {
   const queryClient = useQueryClient();
   const updateSettings = useMutation({
-    mutationFn: (teacherView: TeacherView) => api.put<SchoolDaySettings>(`${BASE}/settings`, { teacherView }),
+    // The view alone, or with the school's choice about telling a guardian of a pupil's move (Elevens lektion
+    // för dagen): the gateway leaves a choice that is not sent as it is.
+    mutationFn: (change: TeacherView | { teacherView: TeacherView; guardianNoticeOnMove?: boolean }) =>
+      api.put<SchoolDaySettings>(`${BASE}/settings`, typeof change === "string" ? { teacherView: change } : change),
     // The answer is the whole decision: the card shows what was saved.
     onSuccess: (saved) => queryClient.setQueryData(SCHOOL_DAY_KEYS.settings, saved),
     // A refused save says what is on screen may be stale.

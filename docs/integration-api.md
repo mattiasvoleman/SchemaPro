@@ -54,7 +54,11 @@ lesson, a pupil of a replacing group that is on the lesson, and a member of
 the lesson's own teaching group (not a half) stays. The field is absent when
 nobody is excluded, so a school with no replacing group gets the payload it
 always got. Only active pupils are excluded, as only active members are
-listed. Every caller of v1's activities and events gets `excludedStudentIds`
+listed. A pupil moved to a parallel lesson for one day (*Elevens lektion för
+dagen*, `LessonPupilMoves`) is excluded from the event they left the same way,
+a pupil named on it included, and is a named pupil (`studentIds`) of the event
+they went to; the move is dated, so only events carry it, never activities.
+Every caller of v1's activities and events gets `excludedStudentIds`
 (v1 has one read scope, `ss12000.v1`, which reads `/groups` and its
 memberships as well). v1 lists a group's home-class members only
 (`groupType: Klass`), as it always has. A teaching group's members, SvA7's
@@ -530,7 +534,18 @@ outside its groups is `{student, participates: true}`. A member of its
 groups whom a replacing group takes off it is `{student, participates: false}`:
 SvA7 replaces Svenska, so each event of 7A's svenska lists 7A's SvA7 pupils as
 not participating (*Ersättande grupper*, by the rule in
-`src/common/replacing-groups.ts` `lessonPupils`). S1 has no exception on
+`src/common/replacing-groups.ts` `lessonPupils`). A pupil moved to a
+parallel lesson for one day (*Elevens lektion för dagen*) is the same thing seen
+from both lessons: `{student, participates: false}` on the event they left, whether
+they are a member of its groups or were named on it, and `{student, participates: true}`
+on the event they went to, as for any pupil named outside its groups. Both events
+change `meta.modified` when the move is made and when it is undone, in one call
+(the version rows are taken in `entityId` order, so a move one way and a move the
+other do not wait for each other), and a move falls with either lesson (cancelled,
+replaced by an activity, moved so that the two no longer overlap). The pupil's
+attendance mark on the event they left is set aside (`UNKNOWN`, which is not
+reported), and is put back if the move is undone; the mark on the event they went to
+is theirs as any mark. S1 has no exception on
 `Activity`, so the event is where this is said. `participates: false` is
 sent to every key that may read the event. A key with `calendarEvents.read`
 alone thereby learns something it could not list before: the pseudonymous

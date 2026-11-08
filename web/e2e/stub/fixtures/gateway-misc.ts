@@ -124,6 +124,7 @@ export const miscRoutes: GatewayRoute[] = [
         calendarLessons: 30 * ids.length,
         attendanceMarks: 0,
         lessonLogs: 0,
+        lessonMoves: 0,
         availabilityConstraints: 0,
         lunchSittings: 0,
         calendarBreaks: 0,

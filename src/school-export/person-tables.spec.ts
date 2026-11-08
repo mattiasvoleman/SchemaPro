@@ -140,8 +140,9 @@ describe('the rows of a table that is about a pupil', () => {
   const OTHER = '22222222-2222-4222-8222-222222222222';
   const TEACHER = '33333333-3333-4333-8333-333333333333';
 
-  it('are the crisis tables, where a teacher marks a pupil found, and the two tables of Checklistor, where a teacher ticks a pupil and a mentor writes what a guardian decided, and the pupil is one of the columns the dump reads', () => {
-    expect(files.map((file) => file.table)).toEqual(['ConsentEntries', 'CrisisPupils', 'CrisisReports', 'InstructionProofs']);
+  it('are the crisis tables, where a teacher marks a pupil found, the two tables of Checklistor, where a teacher ticks a pupil and a mentor writes what a guardian decided, and the moves of a pupil to a parallel lesson, and the pupil is one of the columns the dump reads', () => {
+    // A table added here has to be said to be about a pupil on purpose: this list fails when one is, and when one is left out.
+    expect(files.map((file) => file.table).sort()).toEqual(['ConsentEntries', 'CrisisPupils', 'CrisisReports', 'InstructionProofs', 'LessonPupilMoves']);
     for (const file of files) expect(file.dump.columns).toContain(file.dump.pupil!.column);
   });
 
@@ -169,6 +170,26 @@ describe('the rows of a table that is about a pupil', () => {
     expect(emptyPupilPart(answers, [pupils[1]!], new Set([OTHER]))).toBe(0);
     expect(pupils[0]).toEqual(proof());
     expect(pupils[1]).toEqual(answer());
+  });
+
+  it('hold back, in the extract of the member of staff who moved a pupil, the pupil, the two lessons and the mark the move displaced', () => {
+    const moves = files.find((file) => file.table === 'LessonPupilMoves')!;
+    expect(moves.dump.columns).toEqual(['studentId', 'movedById']);
+    expect(moves.dump.pupil).toEqual({ column: 'studentId', hides: ['displacedMark', 'fromLessonId', 'toLessonId'] });
+    const rows = [
+      {
+        id: 'm1', studentId: OTHER, fromLessonId: 'l1', toLessonId: 'l2', movedById: TEACHER,
+        displacedMark: { status: 'EXCUSED', note: 'Anmäld av mamma: kontroll på BUP', recordedById: '44444444-4444-4444-8444-444444444444' },
+        createdAt: '2026-11-05T09:00:00Z',
+      },
+    ];
+    expect(emptyPupilPart(moves, rows, new Set([TEACHER]))).toBe(4);
+    expect(rows[0]).toEqual({ id: 'm1', studentId: null, fromLessonId: null, toLessonId: null, movedById: TEACHER, displacedMark: null, createdAt: '2026-11-05T09:00:00Z' });
+    // The pupil's own extract keeps all of it.
+    const own = [{ id: 'm2', studentId: PUPIL, fromLessonId: 'l1', toLessonId: 'l2', movedById: TEACHER, displacedMark: { note: 'sjuk' }, createdAt: 'x' }];
+    expect(emptyPupilPart(moves, own, new Set([PUPIL]))).toBe(0);
+    expect(own[0]!.displacedMark).toEqual({ note: 'sjuk' });
+    expect(own[0]!.studentId).toBe(PUPIL);
   });
 
   it("lose the pupil and the pupil's state when the pupil is not asked for, and keep the act and everything for a pupil that is", () => {

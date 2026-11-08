@@ -39,6 +39,21 @@
  * one to be written belongs in the list below, by name, as HOLDS_OUT, before
  * it ships.
  *
+ * FRÅNVAROSTATISTIK (20270121090000) IS DECIDED HERE TOO, though no route of it
+ * is listed: GET /api/v1/absence-stats/... answer the screen in JSON, and no
+ * path of them is a file or a feed. The school's and the classes' months are
+ * sums and name nobody (a class of fewer than five pupils has no month at
+ * all). Two routes name pupils: a class's pupils (…/classes/:id/pupils) and a
+ * pupil's card (…/pupils/:id), for an administrator and the pupil's or the
+ * class's mentor, never for the huvudman's reader. A pupil the school has
+ * marked is in no list: an administrator's list has an empty row in the
+ * pupil's place and says how many were left out, a mentor's list has nothing
+ * and no count (it would point at the pupil), and a mentor cannot open the
+ * pupil's card; an administrator can, from the register, and is told that the
+ * pupil is marked. The sums count the pupil: a sum names nobody. The card on
+ * paper is the web's (web/lib/people-files.ts), and there the rule is
+ * HOLDS_OUT: nothing is printed for a marked pupil. A route of Frånvarostatistik
+ * that ever answers a file belongs in the list below, by name, before it ships.
  * CHECKLISTOR (20270129091000) IS DECIDED HERE TOO. The templates, the proofs, the consent lists and a pupil's card
  * (GET /api/v1/checklists/...) answer the screen in JSON, and no path of them is a file or a feed. They name pupils,
  * a marked pupil among them, because the staff member who ticks or writes has the pupil in their register already (a
@@ -69,6 +84,23 @@
  * administrator's alone, and there the rule is HOLDS_OUT: a marked teacher is
  * not named and is counted. A route of Skolans dag that ever answers a file
  * belongs in the list below, by name, before it ships.
+ *
+ * ELEVENS LEKTION FÖR DAGEN (20270122091000) IS DECIDED HERE TOO, though no
+ * route of it is listed: GET /api/v1/lesson-moves/lessons/:id (a lesson's
+ * moves) and .../pupils and .../candidates answer the screen in JSON, and no
+ * path of them is a file or a feed. They name pupils on purpose, a marked one too: the
+ * register already names the pupil to the teacher who moves them, the list of
+ * a lesson's moves is that register's own list, and a pupil nobody could pick
+ * is a pupil who stays on a lesson they have left. The mover is named to the
+ * administrators and to the mover, and not to a colleague on the lesson when
+ * the mover is marked (the same list Skolans dag leaves a marked teacher out
+ * with). No notice, push or e-mail names the pupil, the class or the mover; the
+ * row carries the pupil's id and the two lessons, and the web and the app word
+ * it from the subjects and the time. No calendar feed names a pupil. The
+ * registerutdrag of the mover holds back the pupil, the lessons and the mark
+ * the move set aside (person-tables.ts); the pupil's own extract has all of it.
+ * A route of the moves that ever answers a file belongs in the list below, by
+ * name, before it ships.
  *
  * Why the database cannot hold this instead: an export is built in the
  * gateway or the browser from ordinary reads under RLS, and nothing in the
