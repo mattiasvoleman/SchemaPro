@@ -53,7 +53,8 @@ interface World {
   resourceFacts: Array<Record<string, unknown>>;
   counts: Array<Record<string, unknown>>;
   clashes: Array<Record<string, unknown>>;
-  late: Array<{ startsAt: Date; endsAt: Date; lesson: string }>;
+  late: Array<{ startsAt: Date; endsAt: Date; subjectId: string | null; studentGroupId: string | null }>;
+  lateNames: Array<{ kind: 'S' | 'G'; id: string; name: string }>;
 }
 
 const freshWorld = (): World => ({
@@ -63,6 +64,7 @@ const freshWorld = (): World => ({
   counts: [],
   clashes: [],
   late: [],
+  lateNames: [],
 });
 
 const noFacts = { date: null, dow: null, smin: null, emin: null };
@@ -111,6 +113,7 @@ describe('ExternalBookingsService', () => {
       const sql = rawSql(call);
       if (sql.includes('AS "timezone"')) return Promise.resolve([world.statics]);
       if (sql.includes('late lessons')) return Promise.resolve(world.late);
+      if (sql.includes('late lesson names')) return Promise.resolve(world.lateNames);
       if (sql.includes(`'LESSON' AS "kind"`)) return Promise.resolve(world.facts);
       if (sql.includes('SELECT DISTINCT b."id"')) return Promise.resolve(world.resourceFacts);
       if (sql.includes('count(*)::int AS "total"')) return Promise.resolve(world.counts);
@@ -506,10 +509,15 @@ describe('ExternalBookingsService', () => {
     });
 
     describe('a lesson that landed while the days were written', () => {
-      const lateLesson = { startsAt: new Date('2027-02-09T17:00:00.000Z'), endsAt: new Date('2027-02-09T19:00:00.000Z'), lesson: 'Idrott 7A' };
+      const lateLesson = { startsAt: new Date('2027-02-09T17:00:00.000Z'), endsAt: new Date('2027-02-09T19:00:00.000Z'), subjectId: 'sub-1', studentGroupId: 'grp-1' };
+      const names = [
+        { kind: 'S' as const, id: 'sub-1', name: 'Idrott' },
+        { kind: 'G' as const, id: 'grp-1', name: '7A' },
+      ];
 
       it('is found after the writes and refuses the series, naming the day and the lesson', async () => {
         world.late = [lateLesson];
+        world.lateNames = names;
 
         const error = await create().catch((e: unknown) => e);
 
@@ -523,7 +531,7 @@ describe('ExternalBookingsService', () => {
         // Asked for after the days were written, and no more than a handful.
         const at = tx.$queryRaw.mock.calls.findIndex((call) => rawSql(call).includes('late lessons'));
         expect(tx.roomBooking.createMany.mock.invocationCallOrder[0]!).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[at]!);
-        expect(tx.$queryRaw.mock.calls[at]!.slice(1)).toEqual([expect.any(Array), expect.any(Array), ROOM_ID, 5]);
+        expect(tx.$queryRaw.mock.calls[at]!.slice(1)).toEqual([expect.any(Array), expect.any(Array), ROOM_ID, 5, 5]);
       });
 
       it('is asked for with the room and the days that were written, and no others', async () => {

@@ -429,7 +429,7 @@ jobs:
       # book over, two registrations at once end in one 409, a lesson that lands in a booked room
       # is listed and told to the expedition and not to the läsare, the report and its CSV, and
       # forty rooms with a term of Tuesdays each against 24 000 lessons registered in under 2 s
-      # (read against the empty transaction's cost where the runner is busy). It removes its school.
+      # (or, on a slower runner, ten reads of a room's lessons a series, a read measured first on the same runner). It removes its school.
       - name: Lokal probe
         env:
           DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4

@@ -113,8 +113,11 @@ export async function readRoomFacts(
     SELECT 'LESSON' AS "kind", l."startsAt", l."endsAt", btrim(coalesce(sub."name", '') || ' ' || coalesce(g."name", '')) AS "label",
            NULL::text AS "date", NULL::int AS "dow", NULL::int AS "smin", NULL::int AS "emin"
       FROM occ
-      JOIN "CalendarLessons" l ON l."roomId" = ${roomId}::uuid AND l."startsAt" >= occ.s - interval '2 days' AND l."startsAt" < occ.e AND l."endsAt" > occ.s
-       AND l."status" IN ('SCHEDULED', 'COMPLETED')
+      CROSS JOIN LATERAL (
+        SELECT x."startsAt", x."endsAt", x."subjectId", x."studentGroupId", x."schoolId" FROM "CalendarLessons" x
+         WHERE x."roomId" = ${roomId}::uuid AND x."startsAt" >= occ.s - interval '2 days' AND x."startsAt" < occ.e AND x."endsAt" > occ.s
+           AND x."status" IN ('SCHEDULED', 'COMPLETED')
+         LIMIT 1000) l
       LEFT JOIN "Subjects" sub ON sub."id" = l."subjectId" AND sub."schoolId" = l."schoolId"
       LEFT JOIN "StudentGroups" g ON g."id" = l."studentGroupId" AND g."schoolId" = l."schoolId"
     UNION ALL
@@ -185,14 +188,31 @@ export async function readLateLessons(
 ): Promise<LateLesson[]> {
   const starts = spans.map((span) => span.startsAt.toISOString());
   const ends = spans.map((span) => span.endsAt.toISOString());
-  return tx.$queryRaw<LateLesson[]>`
+  // One probe of the room's index for each day (a LIMIT keeps the planner from folding the subquery back into a join
+  // that reads every lesson of the room and tests it against every day), and nothing but the lessons' own columns:
+  // what they are called is asked for only if there is one to name.
+  const found = await tx.$queryRaw<Array<{ startsAt: Date; endsAt: Date; subjectId: string | null; studentGroupId: string | null }>>`
     /* late lessons */
-    WITH occ AS (SELECT t.s, t.e FROM unnest(${starts}::timestamptz[], ${ends}::timestamptz[]) AS t(s, e))
-    SELECT l."startsAt", l."endsAt", btrim(coalesce(sub."name", '') || ' ' || coalesce(g."name", '')) AS "lesson"
-      FROM occ
-      JOIN "CalendarLessons" l ON l."roomId" = ${roomId}::uuid AND l."startsAt" >= occ.s - interval '2 days' AND l."startsAt" < occ.e AND l."endsAt" > occ.s
-       AND l."status" IN ('SCHEDULED', 'COMPLETED')
-      LEFT JOIN "Subjects" sub ON sub."id" = l."subjectId" AND sub."schoolId" = l."schoolId"
-      LEFT JOIN "StudentGroups" g ON g."id" = l."studentGroupId" AND g."schoolId" = l."schoolId"
+    SELECT l."startsAt", l."endsAt", l."subjectId", l."studentGroupId"
+      FROM unnest(${starts}::timestamptz[], ${ends}::timestamptz[]) AS t(s, e)
+     CROSS JOIN LATERAL (
+       SELECT x."startsAt", x."endsAt", x."subjectId", x."studentGroupId" FROM "CalendarLessons" x
+        WHERE x."roomId" = ${roomId}::uuid AND x."startsAt" >= t.s - interval '2 days' AND x."startsAt" < t.e AND x."endsAt" > t.s
+          AND x."status" IN ('SCHEDULED', 'COMPLETED')
+        LIMIT ${limit}) l
      LIMIT ${limit}`;
+  if (found.length === 0) return [];
+  const subjectIds = [...new Set(found.map((row) => row.subjectId).filter((id): id is string => id !== null))];
+  const groupIds = [...new Set(found.map((row) => row.studentGroupId).filter((id): id is string => id !== null))];
+  const names = await tx.$queryRaw<Array<{ kind: 'S' | 'G'; id: string; name: string }>>`
+    /* late lesson names */
+    SELECT 'S' AS "kind", "id", "name" FROM "Subjects" WHERE "id" = ANY(${subjectIds}::uuid[])
+    UNION ALL
+    SELECT 'G', "id", "name" FROM "StudentGroups" WHERE "id" = ANY(${groupIds}::uuid[])`;
+  const nameOf = (kind: 'S' | 'G', id: string | null) => names.find((row) => row.kind === kind && row.id === id)?.name ?? '';
+  return found.map((row) => ({
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    lesson: `${nameOf('S', row.subjectId)} ${nameOf('G', row.studentGroupId)}`.trim(),
+  }));
 }

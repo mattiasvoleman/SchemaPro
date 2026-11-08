@@ -191,34 +191,62 @@ describe('the facts a series is checked against', () => {
       { startsAt: new Date('2027-02-02T17:00:00.000Z'), endsAt: new Date('2027-02-02T19:00:00.000Z') },
       { startsAt: new Date('2027-02-09T17:00:00.000Z'), endsAt: new Date('2027-02-09T19:00:00.000Z') },
     ];
+    const SUBJECT_ID = '66666666-6666-4666-8666-666666666661';
+    const GROUP_ID = '77777777-7777-4777-8777-777777777771';
+    const found = { startsAt: new Date('2027-02-09T16:30:00.000Z'), endsAt: new Date('2027-02-09T17:30:00.000Z'), subjectId: SUBJECT_ID, studentGroupId: GROUP_ID };
 
-    it('answers the lessons the statement found, as they came', async () => {
-      const found = [{ startsAt: new Date('2027-02-09T16:30:00.000Z'), endsAt: new Date('2027-02-09T17:30:00.000Z'), lesson: 'Idrott 7A' }];
-      tx.$queryRaw.mockResolvedValue(found);
-
-      await expect(readLateLessons(client(), ROOM_ID, spans, 5)).resolves.toEqual(found);
-    });
-
-    it('hands the days as arrays of instants, then the room and the limit, in one statement', async () => {
+    it('asks for nothing more when no lesson landed: one statement, and an empty answer', async () => {
       tx.$queryRaw.mockResolvedValue([]);
 
-      await readLateLessons(client(), ROOM_ID, spans, 5);
+      await expect(readLateLessons(client(), ROOM_ID, spans, 5)).resolves.toEqual([]);
 
       expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
-      const call = tx.$queryRaw.mock.calls[0]!;
-      expect(call.slice(1)).toEqual([['2027-02-02T17:00:00.000Z', '2027-02-09T17:00:00.000Z'], ['2027-02-02T19:00:00.000Z', '2027-02-09T19:00:00.000Z'], ROOM_ID, 5]);
     });
 
-    it('looks only at lessons that hold the room, and only near the days', async () => {
+    it('hands the days as arrays of instants, then the room and the limit, to a probe of the room’s index for each day', async () => {
       tx.$queryRaw.mockResolvedValue([]);
 
       await readLateLessons(client(), ROOM_ID, spans, 5);
 
-      const sql = rawSql(tx.$queryRaw.mock.calls[0]!);
+      const call = tx.$queryRaw.mock.calls[0]!;
+      expect(call.slice(1)).toEqual([['2027-02-02T17:00:00.000Z', '2027-02-09T17:00:00.000Z'], ['2027-02-02T19:00:00.000Z', '2027-02-09T19:00:00.000Z'], ROOM_ID, 5, 5]);
+      const sql = rawSql(call);
+      expect(sql).toContain('late lessons');
+      expect(sql).toContain('CROSS JOIN LATERAL');
       expect(sql).toContain('"CalendarLessons"');
       expect(sql).toContain(`IN ('SCHEDULED', 'COMPLETED')`);
       expect(sql).toContain(`interval '2 days'`);
       expect(sql).not.toContain('"RoomBookings"');
+    });
+
+    it('names a lesson that landed by its subject and its group, asked for in a second statement', async () => {
+      tx.$queryRaw.mockResolvedValueOnce([found]).mockResolvedValueOnce([
+        { kind: 'S', id: SUBJECT_ID, name: 'Idrott' },
+        { kind: 'G', id: GROUP_ID, name: '7A' },
+      ]);
+
+      await expect(readLateLessons(client(), ROOM_ID, spans, 5)).resolves.toEqual([{ startsAt: found.startsAt, endsAt: found.endsAt, lesson: 'Idrott 7A' }]);
+
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+      expect(tx.$queryRaw.mock.calls[1]!.slice(1)).toEqual([[SUBJECT_ID], [GROUP_ID]]);
+    });
+
+    it('names what it can: a lesson with no subject, or a name the second statement did not find, has the rest', async () => {
+      tx.$queryRaw
+        .mockResolvedValueOnce([
+          { ...found, subjectId: null },
+          { ...found, studentGroupId: null },
+          { ...found, subjectId: null, studentGroupId: null },
+        ])
+        .mockResolvedValueOnce([
+          { kind: 'S', id: SUBJECT_ID, name: 'Idrott' },
+          { kind: 'G', id: GROUP_ID, name: '7A' },
+        ]);
+
+      const lessons = await readLateLessons(client(), ROOM_ID, spans, 5);
+
+      expect(lessons.map((lesson) => lesson.lesson)).toEqual(['7A', 'Idrott', '']);
+      expect(tx.$queryRaw.mock.calls[1]!.slice(1)).toEqual([[SUBJECT_ID], [GROUP_ID]]);
     });
   });
 
