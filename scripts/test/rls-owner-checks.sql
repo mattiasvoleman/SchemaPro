@@ -5092,6 +5092,7 @@ DO $$
 DECLARE
   school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
   req uuid;
+  other uuid;
 BEGIN
   IF school IS NULL THEN RAISE EXCEPTION 'ledighetspolicy 445o: the fixtures did not run'; END IF;
   PERFORM set_config('request.jwt.claims', '', true);
@@ -5110,11 +5111,15 @@ BEGIN
   -- The gate holds for the owner too: a stop needs a guardian's no, and a decision needs the consent.
   req := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 10, true);
   PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'GUARDIAN_DECLINED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV416', 'a stop with no no');
-  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV412', 'a decision before the consent');
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV412', 'an approval before the consent');
+  -- A rejection grants nothing and is not held back (the review of #292, MEDEL-1).
+  other := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 11, true);
+  UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAt" = now() WHERE id = other;
+  IF (SELECT status FROM "LeaveRequests" WHERE id = other) <> 'REJECTED' THEN RAISE EXCEPTION 'ledighetspolicy 445o: a request that waits for consent could not be rejected'; END IF;
   UPDATE "LeaveConsents" SET consented = false, "answeredAt" = now() WHERE "leaveRequestId" = req;
   IF NOT FOUND THEN RAISE EXCEPTION 'ledighetspolicy 445o: the trigger asked nobody for a request that needs consent'; END IF;
   -- A no is not a yes: the consent is not there, and the stop is now allowed.
-  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV412', 'a decision after a no');
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV412', 'an approval after a no');
   UPDATE "LeaveRequests" SET status = 'GUARDIAN_DECLINED', "decidedAt" = now() WHERE id = req;
   IF app.leave_consent_met_raw(req, school) THEN RAISE EXCEPTION 'ledighetspolicy 445o: a request a guardian refused has its consent'; END IF;
 END $$;
@@ -5130,6 +5135,7 @@ DECLARE
   past uuid;
   answered uuid;
   gone uuid;
+  rejected uuid;
   held uuid;
   clear uuid;
   rows_ text;
@@ -5145,6 +5151,17 @@ BEGIN
   -- A custody that has ended: the guardian of P3 is no longer linked, so nobody can be reminded.
   gone := pg_temp.k4o_request('kv-p3', 'kv-full', interval '3 days', 13, true);
   DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.k4o_user('kv-g3') AND "studentId" = pg_temp.k4o_user('kv-p3');
+  -- A request rektor rejected while it waited is not reminded: the wait is over.
+  rejected := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '3 days', 16, true);
+  UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAt" = now() WHERE id = rejected;
+  -- The pass is the delivery door's, which sets no claims. A login of any kind is not it, also one with no person row (the
+  -- huvudman's reader, a municipal administrator): the guard asks the claims, not the person (the review of #292, LÅG-1).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid())::text, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass answered a login with no person row'; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', gen_random_uuid()::text, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass answered a login set the older way'; END IF;
+  PERFORM set_config('request.jwt.claim.sub', '', true);
 
   IF (SELECT count(*) FROM "LeaveConsents" WHERE "leaveRequestId" IN (due, early, past, answered, gone)) <> 5 THEN
     RAISE EXCEPTION 'ledighetspolicy 448o: the trigger did not ask the guardians of the five requests';

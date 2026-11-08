@@ -18399,10 +18399,11 @@ BEGIN
     END IF;
   END LOOP;
   IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'app' AND p.proname LIKE 'leave\_%' AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')) <> 13 THEN
-    -- Six of the mentor's delegation, and seven of Ledighetspolicyn (20270205091000): the policy, the
-    -- filing check, the policies' question about consent, its facts, the filing's notices, the answer and the job's pass.
-    RAISE EXCEPTION 'functions: the API runs a leave function beyond its thirteen';
+       WHERE n.nspname = 'app' AND p.proname LIKE 'leave\_%' AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')) <> 14 THEN
+    -- Six of the mentor's delegation, and eight of Ledighetspolicyn (20270205091000): the policy, the
+    -- filing check, the policies' question about consent, its facts, the filing's notices, the answer, the job's pass and
+    -- the guardians' answers for the export.
+    RAISE EXCEPTION 'functions: the API runs a leave function beyond its fourteen';
   END IF;
   IF (SELECT string_agg(conname || (CASE WHEN convalidated THEN '' ELSE ' (not valid)' END), ',' ORDER BY conname) FROM pg_constraint
        WHERE conrelid = '"LeaveRequests"'::regclass AND contype = 'c')
@@ -54975,6 +54976,9 @@ BEGIN
   UPDATE "LeavePolicies" SET "minDaysAhead" = 1;
   UPDATE "LeavePolicies" SET "minDaysAhead" = NULL;
   PERFORM pg_temp.k4_denied('DELETE FROM "LeavePolicies"', 'removing the policy');
+  -- The time of the last change is the database's, whatever the statement says.
+  UPDATE "LeavePolicies" SET "requireAllGuardians" = false, "updatedAt" = now() - interval '3 days';
+  IF (SELECT "updatedAt" FROM "LeavePolicies") IS DISTINCT FROM now() THEN RAISE EXCEPTION 'ledighetspolicy 445: a writer chose when the policy was last changed'; END IF;
 
   -- The administrator who does not decide reads it and cannot change it; the one who reads, likewise;
   -- nobody else reads the row, and the school's guardians and teachers ask the function instead.
@@ -55080,6 +55084,34 @@ BEGIN
   PERFORM pg_temp.k4_refuses(format($q$INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "contactName")
     VALUES (%L, %L, %L, current_date + 30, current_date + 30, 'Resa', 'Farmor')$q$, school, pg_temp.k4f('p1'), pg_temp.k4f('full')), 'LV415', 'a part of a contact from the administrator');
 
+  -- What was filed is its own, column by column (the review of #292, LÅG-4): each of the three is held by the trigger, not by a CHECK.
+  PERFORM pg_temp.k4_as(21);
+  req := gen_random_uuid();
+  PERFORM pg_temp.k4_as(1);
+  UPDATE "LeavePolicies" SET "contact" = 'OPTIONAL';
+  PERFORM pg_temp.k4_as(21);
+  INSERT INTO "LeaveRequests" (id, "schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "contactName", "contactPhone", "contactRelation")
+  VALUES (req, school, pg_temp.k4f('p1'), app.current_user_id(), app.school_today() + 6, app.school_today() + 6, 'Resa', 'Farmor Gun', '070-1234567', 'Farmor');
+  PERFORM pg_temp.k4_as(1);
+  PERFORM pg_temp.k4_refuses(format($q$UPDATE "LeaveRequests" SET "contactName" = 'Någon annan' WHERE id = %L$q$, req), 'LV409', 'changing the name of a filed contact');
+  PERFORM pg_temp.k4_refuses(format($q$UPDATE "LeaveRequests" SET "contactPhone" = '0709999999' WHERE id = %L$q$, req), 'LV409', 'changing the telephone of a filed contact');
+  PERFORM pg_temp.k4_refuses(format($q$UPDATE "LeaveRequests" SET "contactRelation" = 'Granne' WHERE id = %L$q$, req), 'LV409', 'changing the relation of a filed contact');
+  UPDATE "LeavePolicies" SET "contact" = 'REQUIRED';
+
+  -- Several things broken at once: the form says the first, in an order that does not move (too late, then a part of a contact, then none).
+  UPDATE "LeavePolicies" SET "minDaysAhead" = 7, "shortNotice" = 'REFUSE';
+  PERFORM pg_temp.k4_as(21);
+  SELECT * INTO late FROM app.leave_filing_check(app.school_today() + 2, NULL, NULL, NULL);
+  PERFORM pg_temp.k4_expect('445 too late and no contact: too late first', late.code, 'LEAVE_REQUEST_TOO_LATE');
+  SELECT * INTO late FROM app.leave_filing_check(app.school_today() + 2, 'Farmor', NULL, NULL);
+  PERFORM pg_temp.k4_expect('445 too late and a part of a contact: too late first', late.code, 'LEAVE_REQUEST_TOO_LATE');
+  SELECT * INTO late FROM app.leave_filing_check(app.school_today() + 10, 'Farmor', NULL, NULL);
+  PERFORM pg_temp.k4_expect('445 in time and a part of a contact', late.code, 'LEAVE_CONTACT_INCOMPLETE');
+  SELECT * INTO late FROM app.leave_filing_check(app.school_today() + 10, NULL, NULL, NULL);
+  PERFORM pg_temp.k4_expect('445 in time and no contact', late.code, 'LEAVE_CONTACT_REQUIRED');
+  PERFORM pg_temp.k4_as(1);
+  UPDATE "LeavePolicies" SET "minDaysAhead" = NULL;
+
   -- Off: dropped again, however it is given.
   UPDATE "LeavePolicies" SET "contact" = 'OFF';
   PERFORM pg_temp.k4_as(21);
@@ -55123,6 +55155,7 @@ DECLARE
   req3 uuid;
   req4 uuid;
   req5 uuid;
+  stuck uuid;
   q record;
   n integer;
   txt text;
@@ -55160,8 +55193,22 @@ BEGIN
   -- THE GATE. Nobody decides before the consent is there, by any route, and nothing but a guardian's no stops a request.
   PERFORM pg_temp.k4_refuses(format($q$UPDATE "LeaveRequests" SET "status" = 'APPROVED', "decidedById" = %L, "decidedAs" = 'ADMIN', "decidedAt" = now() WHERE id = %L$q$, pg_temp.k4f('full'), req),
                              'LV412', 'approving a request that waits for consent');
-  PERFORM pg_temp.k4_refuses(format($q$UPDATE "LeaveRequests" SET "status" = 'REJECTED', "decidedById" = %L, "decidedAs" = 'ADMIN', "decidedAt" = now() WHERE id = %L$q$, pg_temp.k4f('full'), req),
-                             'LV412', 'rejecting a request that waits for consent');
+  -- A rejection grants nothing and is not held back (the review of #292, MEDEL-1): a guardian who never answers cannot keep a
+  -- request waiting for ever, and the policy cannot be switched off for it, since the requirement is stamped on the request.
+  PERFORM pg_temp.k4_as(21);
+  stuck := pg_temp.k4_file('p1', 11, 1);
+  PERFORM pg_temp.k4_as(1);
+  PERFORM pg_temp.k4_expect('446 a request that waits', pg_temp.k4_consent(stuck), 'WAITING NOT_ASKED 1/0/1');
+  UPDATE "LeaveRequests" SET "status" = 'REJECTED', "decidedById" = pg_temp.k4f('full'), "decidedAs" = 'ADMIN', "decidedAt" = now(), "decisionNote" = 'Vi nådde inte alla' WHERE id = stuck;
+  IF (SELECT status FROM "LeaveRequests" WHERE id = stuck) <> 'REJECTED' THEN RAISE EXCEPTION 'ledighetspolicy 446: a request that waits for consent could not be rejected'; END IF;
+  -- ... and a guardian who answers later finds it ended; the consent they would have given was to a request that is decided,
+  -- and the request for it is no longer work to do.
+  PERFORM pg_temp.k4_as(22);
+  IF (SELECT count(*) FROM "Notifications" WHERE type = 'LEAVE_CONSENT_REQUESTED' AND meta ->> 'leaveRequestId' = stuck::text AND "readAt" IS NULL) <> 0 THEN
+    RAISE EXCEPTION 'ledighetspolicy 446: a request rektor rejected still waits unread for G2';
+  END IF;
+  PERFORM pg_temp.k4_refuses(format($q$SELECT count(*) FROM app.leave_consent_answer(%L, true)$q$, stuck), 'LV409', 'answering a request rektor rejected');
+  PERFORM pg_temp.k4_as(1);
   PERFORM pg_temp.k4_refuses(format($q$UPDATE "LeaveRequests" SET "status" = 'GUARDIAN_DECLINED', "decidedAt" = now() WHERE id = %L$q$, req),
                              'LV416', 'stopping a request without a guardian''s no');
   -- A note on it is no decision.
@@ -55367,6 +55414,39 @@ BEGIN
   PERFORM pg_temp.k4_expect('446 the mentor of a request that waits', pg_temp.k4_consent(req), 'unseen');
   PERFORM pg_temp.k4_as(33);
   PERFORM pg_temp.k4_expect('446 another school''s guardian', pg_temp.k4_consent(req), 'unseen');
+  -- The question of another school's request is answered as one that does not exist (the arms ask it of requests that are not
+  -- theirs, so it must not tell them apart: the review of #292, LÅG-4).
+  PERFORM pg_temp.k4_as(33);
+  PERFORM pg_temp.k4_expect('446 consent of a request in another school', app.leave_consent_met(req)::text, app.leave_consent_met(gen_random_uuid())::text);
+  PERFORM pg_temp.k4_as(21);
+  PERFORM pg_temp.k4_expect('446 consent of a request that waits, in the school', app.leave_consent_met(req)::text, 'false');
+  -- The guardians' answers for the export: an administrator who decides gets the school's own rows, the rows asked for, and
+  -- the pupils that are not left out; nobody else gets any.
+  PERFORM pg_temp.k4_as(1);
+  IF (SELECT count(*) FROM app.leave_consents_export(NULL, NULL, 100, NULL, NULL, NULL) e WHERE e."leaveRequestId" = req) <> 1 THEN
+    RAISE EXCEPTION 'ledighetspolicy 446: the administrator who decides does not get the answers asked of one request';
+  END IF;
+  IF (SELECT e."guardianEmail" FROM app.leave_consents_export(NULL, NULL, 100, NULL, NULL, NULL) e WHERE e."leaveRequestId" = req) <> 'kv-g2@example.invalid' THEN
+    RAISE EXCEPTION 'ledighetspolicy 446: the export does not give the address of the guardian asked';
+  END IF;
+  IF (SELECT count(*) FROM app.leave_consents_export(ARRAY[pg_temp.k4f('g2')], NULL, 100, NULL, NULL, NULL) e WHERE e."leaveRequestId" = req) <> 1
+     OR (SELECT count(*) FROM app.leave_consents_export(ARRAY[pg_temp.k4f('g3')], NULL, 100, NULL, NULL, NULL)) <> 0 THEN
+    RAISE EXCEPTION 'ledighetspolicy 446: the export does not keep to the guardians it is asked for';
+  END IF;
+  IF (SELECT count(*) FROM app.leave_consents_export(NULL, ARRAY[pg_temp.k4f('p1')], 100, NULL, NULL, NULL) e WHERE e."leaveRequestId" = req) <> 0 THEN
+    RAISE EXCEPTION 'ledighetspolicy 446: the export gives the answers about a pupil it is told to leave out';
+  END IF;
+  IF (SELECT count(*) FROM app.leave_consents_export(NULL, NULL, 0, NULL, NULL, NULL)) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 446: the export gives rows for a limit of none'; END IF;
+  -- Paged by the key: the page after the only row is empty.
+  IF (SELECT count(*) FROM app.leave_consents_export(NULL, NULL, 100, now() + interval '1 day', req, pg_temp.k4f('g2'))) <> 0 THEN
+    RAISE EXCEPTION 'ledighetspolicy 446: the export does not go on from the key it is given';
+  END IF;
+  FOR n IN SELECT unnest(ARRAY[3, 5, 6, 21, 22, 11, 31, 33]) LOOP
+    PERFORM pg_temp.k4_as(n);
+    IF (SELECT count(*) FROM app.leave_consents_export(NULL, NULL, 100, NULL, NULL, NULL)) <> 0 THEN
+      RAISE EXCEPTION 'ledighetspolicy 446: login % is given the guardians'' answers for the export', n;
+    END IF;
+  END LOOP;
   -- The wrong callers.
   PERFORM pg_temp.k4_as(6);
   PERFORM pg_temp.k4_refuses(format($q$SELECT count(*) FROM app.leave_consent_answer(%L, true)$q$, req), 'LV403', 'a teacher answering');
@@ -55450,6 +55530,8 @@ BEGIN
   IF app.leave_request_refer(req) THEN RAISE EXCEPTION 'ledighetspolicy 447: the mentor passed on a request that waits for consent'; END IF;
   PERFORM pg_temp.k4_denied(format($q$UPDATE "LeaveRequests" SET "status" = 'APPROVED', "decidedById" = %L, "decidedAs" = 'MENTOR', "decidedAt" = now() WHERE id = %L$q$, pg_temp.k4f('m1'), req),
                             'the mentor''s decision on a request that waits for consent');
+  PERFORM pg_temp.k4_denied(format($q$UPDATE "LeaveRequests" SET "status" = 'REJECTED', "decidedById" = %L, "decidedAs" = 'MENTOR', "decidedAt" = now() WHERE id = %L$q$, pg_temp.k4f('m1'), req),
+                            'the mentor''s rejection of a request that waits for consent (it is not theirs to read: only rektor rejects it)');
   -- The administrator sees it, with who would decide it, and the catch-up tells nobody.
   PERFORM pg_temp.k4_as(1);
   SELECT * INTO q FROM app.leave_request_facts(ARRAY[req]);
@@ -55587,7 +55669,7 @@ BEGIN
   -- The seven functions of the API: the owner's definer, a pinned search_path, the API role's alone.
   FOREACH fn IN ARRAY ARRAY['app.leave_policy()', 'app.leave_filing_check(date, text, text, text)', 'app.leave_consent_met(uuid)',
                             'app.leave_consent_facts(uuid[])', 'app.leave_consent_notices(uuid)', 'app.leave_consent_answer(uuid, boolean)',
-                            'app.leave_consent_pass(integer)'] LOOP
+                            'app.leave_consent_pass(integer)', 'app.leave_consents_export(uuid[], uuid[], integer, timestamptz, uuid, uuid)'] LOOP
     IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'ledighetspolicy 449: % is not SECURITY DEFINER', fn; END IF;
     IF NOT coalesce((SELECT 'search_path="public", "pg_temp"' = ANY (proconfig) OR 'search_path=public, pg_temp' = ANY (proconfig)
                        FROM pg_proc WHERE oid = fn::regprocedure), false) THEN

@@ -319,10 +319,10 @@ export async function ledighetspolicyChecks(owner: Client, api: PrismaService, m
     // A list of the family says it, and the administrator's counts it.
     const forAdmin = (await view(asAdmin, made.id))!;
     assert.deepEqual([forAdmin.status, forAdmin.consent.state, forAdmin.decides], ['GUARDIAN_DECLINED', 'REFUSED', null]);
-    // The model route to a decision that races the consent is read back as LV412 too.
+    // The model route to an approval that races the consent is read back as LV412 too.
     const waiting = await file(asG(g1), p1);
     await assert.rejects(
-      () => api.withRls(asAdmin, (tx) => tx.leaveRequest.updateMany({ where: { id: waiting.id }, data: { status: 'REJECTED' } })),
+      () => api.withRls(asAdmin, (tx) => tx.leaveRequest.updateMany({ where: { id: waiting.id }, data: { status: 'APPROVED' } })),
       (error: unknown) => leaveSqlStateOf(error) === 'LV412',
     );
     await reset();
@@ -395,7 +395,7 @@ export async function ledighetspolicyChecks(owner: Client, api: PrismaService, m
       const racing = await file(asG(g1), p1);
       const [answer, decision] = await Promise.allSettled([
         service.answerConsent(racing.id, { consent: round % 2 === 0 }, asG(g2)),
-        service.decideLeaveRequest(racing.id, { status: 'REJECTED' } as never, asAdmin),
+        service.decideLeaveRequest(racing.id, { status: 'APPROVED' } as never, asAdmin),
       ]);
       assert.equal(answer.status, 'fulfilled', `round ${round}: the answer failed: ${JSON.stringify(answer)}`);
       const row = await one<{ status: string; consented: boolean | null }>(
@@ -406,15 +406,39 @@ export async function ledighetspolicyChecks(owner: Client, api: PrismaService, m
           assert.equal(codeOf(decision.reason), 'LEAVE_AWAITING_CONSENT', `round ${round}: ${String(decision.reason)}`);
           assert.equal(row.status, 'PENDING');
         } else {
-          assert.equal(row.status, 'REJECTED');
-          assert.equal(row.consented, true, `round ${round}: decided without the consent`);
+          assert.equal(row.status, 'APPROVED');
+          assert.equal(row.consented, true, `round ${round}: approved without the consent`);
         }
       } else {
         // A no: the request ended, and a decision that came after it found it ended (or lost before the no).
         assert.equal(row.status === 'GUARDIAN_DECLINED' || (decision.status === 'rejected' && codeOf(decision.reason) === 'LEAVE_AWAITING_CONSENT'), true, `round ${round}: ${row.status} ${JSON.stringify(decision)}`);
-        assert.notEqual(row.status, 'REJECTED', `round ${round}: a request the guardian refused was decided`);
+        assert.notEqual(row.status, 'APPROVED', `round ${round}: a request the guardian refused was approved`);
       }
     }
+    await reset();
+  });
+
+  await check('mj: rektor can reject a request that waits for a guardian who never answers; it ends the wait and the late answer is a 409', async () => {
+    await policy({ requireAllGuardians: true });
+    const made = await file(asG(g1), p1);
+    // Approving is held back; rejecting is not (the review of #292, MEDEL-1), and the policy switched off does not undo the stamp.
+    await assert.rejects(() => service.decideLeaveRequest(made.id, { status: 'APPROVED' } as never, asAdmin), (error: unknown) => codeOf(error) === 'LEAVE_AWAITING_CONSENT');
+    await policy({ requireAllGuardians: false });
+    await assert.rejects(() => service.decideLeaveRequest(made.id, { status: 'APPROVED' } as never, asAdmin), (error: unknown) => codeOf(error) === 'LEAVE_AWAITING_CONSENT');
+    const mark = delivered.length;
+    const decided = await service.decideLeaveRequest(made.id, { status: 'REJECTED', note: 'Vi nådde inte alla vårdnadshavare' } as never, asAdmin);
+    assert.deepEqual([decided.status, decided.decidedAs, decided.absenceDays], ['REJECTED', 'ADMIN', 0]);
+    // The one who applied is told it was rejected, as for any rejection; no absence is written.
+    assert.deepEqual((await lastDelivered(mark)).map((entry) => entry.type), ['LEAVE_DECIDED']);
+    assert.equal(await count(`SELECT count(*) AS n FROM "AbsenceReports" WHERE "studentId" = $1 AND "grantedLeave"`, [p1.id]), 0);
+    // The guardian who was asked finds it ended, and the request for it is no longer unread work.
+    await assert.rejects(() => service.answerConsent(made.id, { consent: true }, asG(g2)), (error: unknown) => codeOf(error) === 'LEAVE_CONSENT_REQUEST_ENDED');
+    assert.equal(await count(`SELECT count(*) AS n FROM "Notifications" WHERE "userId" = $1 AND type = 'LEAVE_CONSENT_REQUESTED' AND "readAt" IS NULL AND meta ->> 'leaveRequestId' = $2`, [g2.id, made.id]), 0);
+    // The pass reminds nobody about it, however old.
+    await owner.query(`UPDATE "LeaveConsents" SET "remindedAt" = NULL WHERE "leaveRequestId" = $1`, [made.id]);
+    assert.deepEqual(await service.consentPass(), { notices: 0, reminded: 0 });
+    // The mentor never read it.
+    assert.equal(await view(asMentor1, made.id), undefined);
     await reset();
   });
 

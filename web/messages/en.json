@@ -2414,7 +2414,7 @@
     "listRektor": "Waiting for the principal",
     "listMentor": "With the pupil's mentor",
     "filterGUARDIAN_DECLINED": "Ended by a guardian",
-    "awaitingConsent": "The request is waiting for the guardians’ consent and cannot be decided yet. The list is up to date.",
+    "awaitingConsent": "The request is waiting for the guardians’ consent and cannot be approved yet. The list is up to date.",
     "delegationEdit": "Change delegation",
     "delegationFailed": "The delegation could not be loaded",
     "delegationFailedHint": "The requests below are shown anyway. No delegation has changed.",
@@ -6700,7 +6700,7 @@
     "shortNotice": "Came late: the request came closer to the first day than the school has set",
     "contact": "Contact during the leave: {name} ({relation}), {phone}",
     "consentCount": "{given} of {asked} guardians have consented",
-    "consentBlocked": "Cannot be decided yet: the request is waiting for the guardians’ consent.",
+    "consentBlocked": "Cannot be approved yet: the request is waiting for the guardians’ consent. You can reject it.",
     "guardianDeclined": "Ended: a guardian did not consent. Nobody decides it."
   },
   "teacherLeave": {

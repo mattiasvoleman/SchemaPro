@@ -281,7 +281,7 @@ describe("Ledighetsansökningar under the school's policy (Ledighetspolicy)", ()
     expect(within(list()).getByText("Kontakt under ledigheten: Maria Ek (Mormor), 070-123 45 67")).toBeInTheDocument();
   });
 
-  it("says how many guardians have consented and never who, and turns the decision off with the reason beside it", async () => {
+  it("says how many guardians have consented and never who, and turns the approval off with the reason beside it, leaving the rejection on", async () => {
     const user = userEvent.setup();
     state.inbox = { data: [request({ consent: WAITING, requestedBy: "Gun Berg" })], isLoading: false, isError: false };
     renderPage();
@@ -290,8 +290,9 @@ describe("Ledighetsansökningar under the school's policy (Ledighetspolicy)", ()
     const approve = within(row).getByRole("button", { name: /^Bevilja Ada Berg/ });
     const reject = within(row).getByRole("button", { name: /^Avslå Ada Berg/ });
     expect(approve).toBeDisabled();
-    expect(reject).toBeDisabled();
-    const reason = "Kan inte beslutas ännu: ansökan väntar på vårdnadshavarnas samtycke.";
+    // A guardian who never answers cannot hold a request for ever: rektor can still reject it, with a note.
+    expect(reject).toBeEnabled();
+    const reason = "Kan inte beviljas ännu: ansökan väntar på vårdnadshavarnas samtycke. Du kan avslå den.";
     expect(within(row).getByText(reason)).toBeInTheDocument();
     expect(approve).toHaveAccessibleDescription(reason);
     await user.click(approve);
@@ -307,7 +308,7 @@ describe("Ledighetsansökningar under the school's policy (Ledighetspolicy)", ()
     const row = within(list()).getByText(/^Ada Berg/).closest("li")!;
     expect(within(row).getByText("3 av 3 vårdnadshavare har samtyckt")).toBeInTheDocument();
     expect(within(row).getByRole("button", { name: /^Bevilja Ada Berg/ })).toBeEnabled();
-    expect(within(row).queryByText(/Kan inte beslutas ännu/)).not.toBeInTheDocument();
+    expect(within(row).queryByText(/Kan inte beviljas ännu/)).not.toBeInTheDocument();
   });
 
   it("keeps the other requests decidable while one waits for consent", () => {
@@ -327,7 +328,7 @@ describe("Ledighetsansökningar under the school's policy (Ledighetspolicy)", ()
     renderPage();
     await user.click(screen.getByRole("button", { name: /^Bevilja Ada Berg/ }));
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("Ansökan väntar på vårdnadshavarnas samtycke och kan inte beslutas ännu. Listan är uppdaterad."),
+      expect(toast.error).toHaveBeenCalledWith("Ansökan väntar på vårdnadshavarnas samtycke och kan inte beviljas ännu. Listan är uppdaterad."),
     );
   });
 

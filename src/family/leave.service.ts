@@ -416,9 +416,10 @@ export class LeaveService {
       });
       if (!request) throw await this.missing(tx, id, asMentor);
       if (request.status !== 'PENDING') throw alreadyDecided();
-      // The school asked every guardian to consent: a request goes to a decision when they have
-      // (a custody that ended holds nobody up). The database refuses a decision before it (LV412).
-      if (request.consentRequired) {
+      // The school asked every guardian to consent: a request is granted when they have (a custody that ended holds
+      // nobody up). The database refuses an approval before it (LV412). A rejection grants nothing and is not held back,
+      // so a guardian who never answers cannot keep a request waiting for ever (the review of #292, MEDEL-1).
+      if (request.consentRequired && dto.status === 'APPROVED') {
         const [consent] = await tx.$queryRaw<Array<{ met: boolean }>>`SELECT app.leave_consent_met(${id}::uuid) AS "met"`;
         if (!consent?.met) throw awaitingConsent();
       }

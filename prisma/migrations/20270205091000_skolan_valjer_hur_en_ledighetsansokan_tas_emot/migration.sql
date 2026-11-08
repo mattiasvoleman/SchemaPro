@@ -55,17 +55,21 @@
 --
 -- ## Vad som hålls tillbaka tills samtycket är klart
 --
---   * Beslutet. Triggern LeaveRequests_gate vägrar (LV412) att en ansökan med
---     consentRequired går från PENDING till APPROVED eller REJECTED innan samtycket
---     är klart, på varje väg: administratörens, mentorns och en rad som någon
---     försöker skriva direkt. Den vägrar också att något utom svaret gör en
+--   * Beviljandet. Triggern LeaveRequests_gate vägrar (LV412) att en ansökan med
+--     consentRequired går från PENDING till APPROVED innan samtycket är klart,
+--     på varje väg: administratörens, mentorns och en rad som någon försöker
+--     skriva direkt. Ett AVSLAG hålls inte tillbaka (granskningen av #292, MEDEL-1):
+--     det beviljar ingenting, och utan det kunde en vårdnadshavare som aldrig svarar
+--     hålla en ansökan i väntan för alltid (valet kan inte slås av i efterhand, för
+--     consentRequired är stämplat på ansökan). Rektor, eller en administratör som
+--     beslutar, avslår med en kommentar; mentorn ser inte ansökan och avslår inte. Den vägrar också att något utom svaret gör en
 --     ansökan GUARDIAN_DECLINED, och att en sådan ansökan lämnar det läget.
 --   * Mentorn. Armarna leave_requests_mentor_select och _update, app.leave_request_refer,
 --     app.leave_tell_mentors och app.leave_request_facts släpper bara fram en
 --     ansökan vars samtycke är klart. Mentorn får inte LEAVE_REQUESTED förrän då: den
 --     som lämnar sista samtycket, och jobbet app.leave_consent_pass för en
 --     vårdnad som upphört, skriver den. Administratören ser en ansökan som väntar
---     men kan inte besluta den.
+--     men kan inte bevilja den.
 --
 -- ## Den tillfälliga kontakten
 --
@@ -302,10 +306,6 @@ LANGUAGE sql STABLE AS $$
   )
 $$;
 
-REVOKE ALL ON FUNCTION app.leave_policy_of(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.leave_today(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.leave_filing_refusal(uuid, text, date, text, text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION app.leave_consent_met_raw(uuid, uuid) FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
 -- The triggers
@@ -391,7 +391,7 @@ CREATE TRIGGER "LeaveRequests_ask_guardians"
 -- BEFORE UPDATE: what the consent holds back, and what a request keeps once filed.
 --   * A stopped request (GUARDIAN_DECLINED) stays stopped, and only a guardian's no
 --     stops one: the status needs a refusal in LeaveConsents.
---   * A request that needs consent is not decided (APPROVED, REJECTED) before it has it.
+--   * A request that needs consent is not APPROVED before it has it. (A rejection holds nothing back: it grants nothing.)
 --   * The consent requirement, the notice flag and the contact are as filed.
 CREATE FUNCTION app.leave_requests_gate() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
@@ -416,10 +416,19 @@ BEGIN
         USING ERRCODE = 'LV416';
     END IF;
   END IF;
-  IF OLD."status" = 'PENDING' AND NEW."status" IN ('APPROVED', 'REJECTED') AND OLD."consentRequired"
+  IF OLD."status" = 'PENDING' AND NEW."status" = 'APPROVED' AND OLD."consentRequired"
      AND NOT app.leave_consent_met_raw(OLD."id", OLD."schoolId") THEN
     RAISE EXCEPTION 'LEAVE_AWAITING_CONSENT: ansökan väntar på vårdnadshavarnas samtycke'
       USING ERRCODE = 'LV412';
+  END IF;
+  -- A request rektor rejects while it waits for consent is decided: the guardians' unanswered requests for it are no longer work
+  -- to do. Found by the guardians asked (their own notices, by the index on the person), not by scanning the school's.
+  IF OLD."status" = 'PENDING' AND NEW."status" = 'REJECTED' AND OLD."consentRequired" THEN
+    UPDATE "Notifications" nt SET "readAt" = now()
+     WHERE nt."userId" IN (SELECT c."guardianId" FROM "LeaveConsents" c WHERE c."leaveRequestId" = OLD."id" AND c."schoolId" = OLD."schoolId")
+       AND nt."schoolId" = OLD."schoolId" AND nt."readAt" IS NULL
+       AND nt."type" IN ('LEAVE_CONSENT_REQUESTED', 'LEAVE_CONSENT_REMINDER')
+       AND nt."meta" ->> 'leaveRequestId' = OLD."id"::text;
   END IF;
   RETURN NEW;
 END
@@ -626,14 +635,18 @@ $$;
 -- LEAVE_REQUESTED notices to the mentors of a request that became clear because a custody
 -- ended (a yes tells them in its own transaction). At most p_limit reminders. Answers the
 -- notices with the addresses for the delivery after the commit. The owner's: nothing for a
--- logged-in caller, and the delivery door, which sets no claims, is what tells them apart.
+-- login of any kind (claims set, a person or not), and the delivery door, which sets none, is what tells them apart.
 CREATE FUNCTION app.leave_consent_pass(p_limit integer DEFAULT 200)
 RETURNS TABLE ("notificationId" uuid, "userId" uuid, "email" text, "type" text, "meta" jsonb, "schoolId" uuid)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   school uuid;
 BEGIN
-  IF app.current_user_id() IS NOT NULL THEN
+  -- Leveransens dörr sätter inga claims; varje inloggning gör det, också en som inte är en person (huvudmannens
+  -- läsare, en kommunadministratör). Vakten frågar efter det dörren är, ingen inloggning alls (som Kvittens tre
+  -- dörrar sedan 20270202090000): tom sträng räknas som ingenting, för en poolad anslutning läser inställningarna som ''.
+  IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL
+     OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN
     RETURN;
   END IF;
   RETURN QUERY
@@ -684,6 +697,31 @@ BEGIN
        ORDER BY t."userId";
   END LOOP;
 END
+$$;
+
+-- The guardians' answers, for the one place they leave the database: data/samtycken.csv of the school's
+-- export and of a registerutdrag (granskningen av #292, MEDEL-3). A guardian's answer, and when, is data about
+-- the guardian, so the school hands it out; but no role reads the table, so the export asks this. Only an
+-- administrator who decides gets rows (the export is ordered by, and the extract handed out by, those who
+-- decide), only the caller's own school's, and only the rows the caller names: p_guardians limits them to those
+-- persons' own answers (NULL: the school's all), p_leave_out removes the requests about the persons the export
+-- holds out (pupils with a protected identity), and the keyset pages them in the order of the key. Nothing else
+-- of the request comes with a row but the pupil it is about and the guardian's address, which the file shows on the
+-- terms of the other data files.
+CREATE FUNCTION app.leave_consents_export(p_guardians uuid[], p_leave_out uuid[], p_limit integer, p_after_at timestamptz, p_after_request uuid, p_after_guardian uuid)
+RETURNS TABLE ("leaveRequestId" uuid, "guardianId" uuid, "guardianEmail" text, "studentId" uuid, "consented" boolean, "answeredAt" timestamptz, "remindedAt" timestamptz, "createdAt" timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT c."leaveRequestId", c."guardianId", g."email", r."studentId", c."consented", c."answeredAt", c."remindedAt", c."createdAt"
+    FROM "LeaveConsents" c
+    JOIN "LeaveRequests" r ON r."id" = c."leaveRequestId" AND r."schoolId" = c."schoolId"
+    JOIN "Users" g ON g."id" = c."guardianId" AND g."schoolId" = c."schoolId"
+   WHERE app.current_user_role() = 'SCHOOL_ADMIN' AND app.current_user_decides()
+     AND c."schoolId" = app.current_school_id()
+     AND (p_guardians IS NULL OR c."guardianId" = ANY (p_guardians))
+     AND NOT (r."studentId" = ANY (coalesce(p_leave_out, '{}'::uuid[])))
+     AND (p_after_at IS NULL OR (c."createdAt", c."leaveRequestId", c."guardianId") > (p_after_at, p_after_request, p_after_guardian))
+   ORDER BY c."createdAt", c."leaveRequestId", c."guardianId"
+   LIMIT greatest(p_limit, 0)
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -931,7 +969,9 @@ COMMENT ON FUNCTION app.leave_consent_notices(uuid) IS
 COMMENT ON FUNCTION app.leave_consent_answer(uuid, boolean) IS
   'A guardian''s final answer to a request for consent; a no ends the request and tells whoever applied, the last yes tells the mentors. LV403 not a guardian, LV404 not asked, LV409 request ended, LV410 custody ended, LV411 answered the other way.';
 COMMENT ON FUNCTION app.leave_consent_pass(integer) IS
-  'The job''s pass: one reminder to each guardian who has not answered after two days, and the mentors'' notices for a request a custody that ended made clear; the notices with the addresses; nothing for a logged-in caller.';
+  'The job''s pass: one reminder to each guardian who has not answered after two days, and the mentors'' notices for a request a custody that ended made clear; the notices with the addresses; nothing for any login.';
+COMMENT ON FUNCTION app.leave_consents_export(uuid[], uuid[], integer, timestamptz, uuid, uuid) IS
+  'The guardians'' answers for data/samtycken.csv of the school''s export and of a registerutdrag: an administrator who decides, the school''s own, the rows asked for; the table itself is read by no role.';
 COMMENT ON FUNCTION app.leave_filing_refusal(uuid, text, date, text, text, text) IS
   'Whether a filing meets the school''s policy: the first code it breaks, or no row. Guardians and pupils are held to the minimum and the contact; an administrator is not.';
 COMMENT ON FUNCTION app.leave_consent_met_raw(uuid, uuid) IS
@@ -943,6 +983,10 @@ DECLARE
   r text;
 BEGIN
   FOREACH fn IN ARRAY ARRAY[
+    'app.leave_policy_of(uuid)',
+    'app.leave_today(uuid)',
+    'app.leave_filing_refusal(uuid, text, date, text, text, text)',
+    'app.leave_consent_met_raw(uuid, uuid)',
     'app.leave_policies_stamp()',
     'app.leave_requests_policy()',
     'app.leave_requests_ask_guardians()',
@@ -953,7 +997,8 @@ BEGIN
     'app.leave_consent_facts(uuid[])',
     'app.leave_consent_notices(uuid)',
     'app.leave_consent_answer(uuid, boolean)',
-    'app.leave_consent_pass(integer)'
+    'app.leave_consent_pass(integer)',
+    'app.leave_consents_export(uuid[], uuid[], integer, timestamptz, uuid, uuid)'
   ] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', fn);
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
@@ -975,7 +1020,8 @@ BEGIN
       'app.leave_consent_facts(uuid[])',
       'app.leave_consent_notices(uuid)',
       'app.leave_consent_answer(uuid, boolean)',
-      'app.leave_consent_pass(integer)'
+      'app.leave_consent_pass(integer)',
+      'app.leave_consents_export(uuid[], uuid[], integer, timestamptz, uuid, uuid)'
     ] LOOP
       EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO "app_authenticated"', fn);
     END LOOP;

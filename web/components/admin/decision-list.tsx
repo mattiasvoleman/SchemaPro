@@ -50,7 +50,7 @@ export interface DecisionRequest {
   details: React.ReactNode[];
   /** Still waiting for a decision: the row offers the note, Godkänn and Avslå. */
   open: boolean;
-  /** Why an open row cannot be decided yet: its buttons are off and this is said beside them. */
+  /** Why an open row cannot be approved yet: Godkänn is off and this is said beside it. A rejection grants nothing and stays on. */
   blocked?: string;
   /** The decided state's Badge (lib/status-variants.ts), for a request that is not open. */
   status: { label: string; variant: StatusVariant };
@@ -112,8 +112,10 @@ export function DecisionList({
         {requests.map((request) => {
           const busy = deciding === request.id;
           const blocked = request.blocked !== undefined;
-          // A blocked row waits for something else, not for its own decision: no spinner, but nothing to press.
-          const off = busy || blocked;
+          // A blocked row waits for something else before it can be granted, not for its own decision: no spinner, and
+          // nothing to approve; the rejection stays, so a request that waits for good can still be answered.
+          const off = busy;
+          const approveOff = busy || blocked;
           const noteId = `${id}-note-${request.id}`;
           const blockedId = `${id}-blocked-${request.id}`;
           return (
@@ -159,7 +161,7 @@ export function DecisionList({
                       aria-label={named(labels.approve, request)}
                       aria-describedby={blocked ? blockedId : undefined}
                       onClick={() => void onDecide(request.id, "APPROVED", noteOf(request.id))}
-                      disabled={off}
+                      disabled={approveOff}
                     >
                       {busy ? <Loader2 className="animate-spin" /> : <Check />}
                       {labels.approve}
@@ -169,7 +171,6 @@ export function DecisionList({
                       size="sm"
                       variant="outline"
                       aria-label={named(labels.reject, request)}
-                      aria-describedby={blocked ? blockedId : undefined}
                       onClick={() => setRejecting(request)}
                       disabled={off}
                     >
@@ -183,7 +184,7 @@ export function DecisionList({
                         aria-label={named(extra.label, request)}
                         aria-describedby={blocked ? blockedId : undefined}
                         onClick={() => setActing(request)}
-                        disabled={off}
+                        disabled={approveOff}
                       >
                         <Forward />
                         {extra.label}

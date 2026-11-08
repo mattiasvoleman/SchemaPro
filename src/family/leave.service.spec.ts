@@ -305,6 +305,27 @@ describe('LeaveService', () => {
         expect(JSON.stringify(entry)).not.toMatch(/Ella|2027|Familjeresa/);
       });
 
+      it.each([
+        ['LV414', 'LEAVE_CONTACT_REQUIRED'],
+        ['LV415', 'LEAVE_CONTACT_INCOMPLETE'],
+      ])('answers the trigger\'s %s, from a policy that changed between the check and the write, as the 400 %s', async (state, code) => {
+        arrange();
+        tx.leaveRequest.create.mockRejectedValue(Object.assign(new Error('trigger'), { meta: { driverAdapterError: { cause: { originalCode: state } } } }));
+
+        const error = await service.createLeaveRequest(leaveDto() as never, guardianUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getResponse()).toMatchObject({ code });
+      });
+
+      it('lets any other failure of the write through unchanged', async () => {
+        arrange();
+        const failure = new Error('connection reset');
+        tx.leaveRequest.create.mockRejectedValue(failure);
+
+        await expect(service.createLeaveRequest(leaveDto() as never, guardianUser())).rejects.toBe(failure);
+      });
+
       it('answers a race with the policy, which the trigger refuses, as the same 400', async () => {
         arrange();
         tx.leaveRequest.create.mockRejectedValue(Object.assign(new Error('LEAVE_REQUEST_TOO_LATE'), { meta: { driverAdapterError: { cause: { originalCode: 'LV413', detail: 'days=7' } } } }));
@@ -404,11 +425,11 @@ describe('LeaveService', () => {
           Promise.resolve(strings.join('?').includes('app.leave_consent_met(') ? [{ met }] : []),
         );
 
-      it('decides a request that needs consent once the database says it has it', async () => {
+      it('approves a request that needs consent once the database says it has it', async () => {
         arrangePending({ consentRequired: true });
         tx.$queryRaw = raw(true);
 
-        await expect(service.decideLeaveRequest(REQUEST_ID, { status: 'REJECTED' }, testUser())).resolves.toMatchObject({ status: 'REJECTED' });
+        await expect(service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser())).resolves.toMatchObject({ status: 'APPROVED' });
 
         const call = rawCall(tx.$queryRaw as jest.Mock);
         expect(call.sql).toContain('app.leave_consent_met(');
@@ -427,11 +448,25 @@ describe('LeaveService', () => {
         expect(tx.absenceReport.createMany).not.toHaveBeenCalled();
       });
 
+      it('rejects a request that still waits for consent without asking the database whether it has it: a rejection grants nothing', async () => {
+        arrangePending({ consentRequired: true });
+        tx.$queryRaw = raw(false);
+
+        await expect(service.decideLeaveRequest(REQUEST_ID, { status: 'REJECTED', note: 'Vi har inte nått alla vårdnadshavare' } as never, testUser())).resolves.toMatchObject({
+          status: 'REJECTED',
+          absenceDays: 0,
+        });
+
+        expect(rawCalls().filter((sql) => sql.includes('app.leave_consent_met('))).toEqual([]);
+        expect(tx.leaveRequest.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: REQUEST_ID, status: 'PENDING' } }));
+        expect(tx.absenceReport.createMany).not.toHaveBeenCalled();
+      });
+
       it('asks nothing of a request the school did not ask consent for', async () => {
         arrangePending({ consentRequired: false });
         tx.$queryRaw = raw(false);
 
-        await service.decideLeaveRequest(REQUEST_ID, { status: 'REJECTED' }, testUser());
+        await service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser());
 
         expect(rawCalls().filter((sql) => sql.includes('app.leave_consent_met('))).toEqual([]);
       });
@@ -443,6 +478,25 @@ describe('LeaveService', () => {
 
         expect(error).toBeInstanceOf(ConflictException);
         expect((error as ConflictException).getResponse()).toMatchObject({ code: LEAVE_REQUEST_DECIDED });
+      });
+
+      it('answers the trigger\'s LV409, a request a guardian\'s no ended between the read and the write, as already decided', async () => {
+        arrangePending({ consentRequired: true });
+        tx.$queryRaw = raw(true);
+        tx.leaveRequest.updateMany.mockRejectedValue(Object.assign(new Error('LEAVE_REQUEST_STOPPED'), { meta: { driverAdapterError: { cause: { originalCode: 'LV409' } } } }));
+
+        const error = await service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: LEAVE_REQUEST_DECIDED });
+      });
+
+      it('lets any other failure of a decision through unchanged', async () => {
+        arrangePending();
+        const failure = new Error('connection reset');
+        tx.leaveRequest.updateMany.mockRejectedValue(failure);
+
+        await expect(service.decideLeaveRequest(REQUEST_ID, { status: 'REJECTED' }, testUser())).rejects.toBe(failure);
       });
 
       it('answers the database’s refusal of a decision that raced the last answer with the same 409', async () => {

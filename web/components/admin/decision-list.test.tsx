@@ -94,7 +94,7 @@ describe("DecisionList", () => {
     expect(screen.getByRole("button", { name: "Godkänn Musiksalen" })).toBeEnabled();
   });
 
-  it("turns a blocked request's buttons off and says why beside them, without a spinner and without touching the others", async () => {
+  it("turns a blocked request's approval off and says why beside it, and leaves the rejection on, without a spinner and without touching the others", async () => {
     const user = userEvent.setup();
     const onDecide = renderList({
       requests: [{ ...request("r-1", "Sal 12"), blocked: "Väntar på samtycke" }, request("r-2", "Musiksalen")],
@@ -102,11 +102,12 @@ describe("DecisionList", () => {
     const approve = screen.getByRole("button", { name: "Godkänn Sal 12" });
     const reject = screen.getByRole("button", { name: "Avslå Sal 12" });
     expect(approve).toBeDisabled();
-    expect(reject).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: /Sal 12/ })).toBeDisabled();
-    // The reason is the buttons' description, so a screen reader hears it with them.
+    // A rejection grants nothing, so a request that waits for good can still be answered, with a note.
+    expect(reject).toBeEnabled();
+    expect(screen.getByRole("textbox", { name: /Sal 12/ })).toBeEnabled();
+    // The reason is the approval's description, so a screen reader hears it with the button it explains.
     expect(approve).toHaveAccessibleDescription("Väntar på samtycke");
-    expect(reject).toHaveAccessibleDescription("Väntar på samtycke");
+    expect(reject).not.toHaveAccessibleDescription();
     expect(approve.querySelector(".animate-spin")).toBeNull();
     await user.click(approve);
     expect(onDecide).not.toHaveBeenCalled();

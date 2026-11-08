@@ -2414,7 +2414,7 @@
     "listRektor": "Väntar på rektor",
     "listMentor": "Hos elevens mentor",
     "filterGUARDIAN_DECLINED": "Avslutade av vårdnadshavare",
-    "awaitingConsent": "Ansökan väntar på vårdnadshavarnas samtycke och kan inte beslutas ännu. Listan är uppdaterad.",
+    "awaitingConsent": "Ansökan väntar på vårdnadshavarnas samtycke och kan inte beviljas ännu. Listan är uppdaterad.",
     "delegationEdit": "Ändra delegering",
     "delegationFailed": "Delegeringen kunde inte hämtas",
     "delegationFailedHint": "Ansökningarna nedan visas ändå. Ingen delegering är ändrad.",
@@ -6700,7 +6700,7 @@
     "shortNotice": "Kom sent: ansökan kom närmare första dagen än skolan har bestämt",
     "contact": "Kontakt under ledigheten: {name} ({relation}), {phone}",
     "consentCount": "{given} av {asked} vårdnadshavare har samtyckt",
-    "consentBlocked": "Kan inte beslutas ännu: ansökan väntar på vårdnadshavarnas samtycke.",
+    "consentBlocked": "Kan inte beviljas ännu: ansökan väntar på vårdnadshavarnas samtycke. Du kan avslå den.",
     "guardianDeclined": "Avslutad: en vårdnadshavare samtyckte inte. Ingen beslutar den."
   },
   "teacherLeave": {
