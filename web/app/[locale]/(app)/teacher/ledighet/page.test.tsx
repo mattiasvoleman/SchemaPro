@@ -12,6 +12,10 @@ import TeacherLeavePage from "./page";
  * requests theirs to decide with the facts they decide on, a co-mentor who
  * may decide first, and Bevilja, Avslå and Skicka till rektor. A school that
  * delegates nothing says so instead of an empty list.
+ *
+ * Ledighetspolicy (K4): the mentor reads only requests whose guardians' consent is
+ * complete, so there is nothing to wait for here; they read the family's
+ * contact, which they may need to reach, and the flag for a request that came late.
  */
 
 const decide = vi.hoisted(() => vi.fn());
@@ -64,6 +68,9 @@ const REQUEST = {
     { id: "t-anna", name: "Anna Mentor" },
     { id: "t-bertil", name: "Bertil Mentor" },
   ],
+  shortNotice: false,
+  contact: null as { name: string; phone: string; relation: string } | null,
+  consent: { required: false, state: "NOT_REQUIRED", mine: "NOT_ASKED", asked: null, given: null, waiting: null },
   year: { name: "2026/27", startDate: "2026-08-17", endDate: "2027-06-11", approvedDays: 0, approvedRequests: 0, pendingRequests: 0 },
 };
 
@@ -225,5 +232,61 @@ describe("Ledighet, the mentor's inbox", () => {
     renderPage();
     expect(screen.getAllByText("2 skoldagar · Beslutad av mentorn Anna Mentor")).toHaveLength(2);
     expect(screen.queryByText(/läsåret 2026\/27|Läsåret 2026\/27/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Ledighet under the school's policy (Ledighetspolicy)", () => {
+  it("adds nothing to a request that carries nothing", () => {
+    renderPage();
+    const row = screen.getByText("Resa till mormor").closest("li")!;
+    expect(row).not.toHaveTextContent(/Kom sent|Kontakt under ledigheten|vårdnadshavare har samtyckt/);
+  });
+
+  it("shows the family's contact with the request, as name, relation and phone", () => {
+    state.inbox = { data: [{ ...REQUEST, contact: { name: "Maria Ek", phone: "070-123 45 67", relation: "Mormor" } }], isLoading: false, isError: false };
+    renderPage();
+    expect(screen.getByText("Kontakt under ledigheten: Maria Ek (Mormor), 070-123 45 67")).toBeInTheDocument();
+  });
+
+  it("flags a request that came later than the school's minimum", () => {
+    state.inbox = { data: [{ ...REQUEST, shortNotice: true }], isLoading: false, isError: false };
+    renderPage();
+    expect(screen.getByText("Kom sent: ansökan kom närmare första dagen än skolan har bestämt")).toBeInTheDocument();
+  });
+
+  it("decides a request whose guardians have all consented, with the count said and no name", async () => {
+    decide.mockResolvedValue({ absenceDays: 2 });
+    const user = userEvent.setup();
+    state.inbox = {
+      data: [{ ...REQUEST, consent: { required: true, state: "GIVEN", mine: "NOT_ASKED", asked: 2, given: 2, waiting: 0 } }],
+      isLoading: false,
+      isError: false,
+    };
+    renderPage();
+    const row = screen.getByText("Resa till mormor").closest("li")!;
+    expect(within(row).getByText("2 av 2 vårdnadshavare har samtyckt")).toBeInTheDocument();
+    await user.click(within(row).getByRole("button", { name: /^Bevilja Ella Elev/ }));
+    await waitFor(() => expect(decide).toHaveBeenCalled());
+  });
+
+  it("shows the contact and the flag on the mentor's own decided request too", () => {
+    state.inbox = {
+      data: [
+        {
+          ...REQUEST,
+          status: "APPROVED",
+          decides: null,
+          decidedAs: "MENTOR",
+          decidedByName: "Anna Mentor",
+          shortNotice: true,
+          contact: { name: "Maria Ek", phone: "070-123 45 67", relation: "Mormor" },
+        },
+      ],
+      isLoading: false,
+      isError: false,
+    };
+    renderPage();
+    expect(screen.getByText("Kom sent: ansökan kom närmare första dagen än skolan har bestämt")).toBeInTheDocument();
+    expect(screen.getByText("Kontakt under ledigheten: Maria Ek (Mormor), 070-123 45 67")).toBeInTheDocument();
   });
 });

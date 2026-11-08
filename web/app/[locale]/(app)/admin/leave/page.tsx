@@ -6,8 +6,10 @@ import { toast } from "sonner";
 import { ClipboardCheck, Pencil } from "lucide-react";
 import { leaveActionError } from "@/lib/leave-errors";
 import { useLeaveDelegation, useLeaveInbox, useLeaveInboxActions } from "@/lib/leave-queries";
+import { useLeavePolicy } from "@/lib/leave-policy-queries";
 import { DecisionList, type Decision } from "@/components/admin/decision-list";
 import { DelegationNotice } from "@/components/leave/delegation-notice";
+import { LeavePolicyCard } from "@/components/leave/leave-policy-card";
 import { useLeaveRows } from "@/components/leave/leave-rows";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -26,7 +28,7 @@ const DelegationDialog = lazy(() =>
   import("@/components/leave/delegation-dialog").then((module) => ({ default: module.DelegationDialog })),
 );
 
-type Filter = "PENDING" | "APPROVED" | "REJECTED";
+type Filter = "PENDING" | "APPROVED" | "REJECTED" | "GUARDIAN_DECLINED";
 
 /**
  * Ledighetsansökningar: rektor's inbox, through the gateway
@@ -37,6 +39,11 @@ type Filter = "PENDING" | "APPROVED" | "REJECTED";
  * mentor, or every request when nothing is delegated) and the ones that wait
  * for the pupil's mentor. Rektor may decide those too; the first decision
  * wins. Every row says its skoldagar and the pupil's leave so far this läsår.
+ *
+ * Ledighetspolicy (K4): below the lists, the school's three choices for how it
+ * receives a request (LeavePolicyCard). A request that waits for a guardian's
+ * consent is listed but cannot be decided, and one a guardian's no ended has
+ * a tab of its own, offered while the school asks for consent.
  */
 export default function LeaveRequestsPage() {
   const t = useTranslations("adminLeave");
@@ -46,6 +53,7 @@ export default function LeaveRequestsPage() {
   const [filter, setFilter] = useState<Filter>("PENDING");
   const inbox = useLeaveInbox(filter);
   const delegation = useLeaveDelegation();
+  const policy = useLeavePolicy();
   const actions = useLeaveInboxActions();
   const [editOpen, setEditOpen] = useState(false);
   const [editUsed, setEditUsed] = useState(false);
@@ -64,7 +72,13 @@ export default function LeaveRequestsPage() {
       const result = await actions.decide.mutateAsync({ id, status, note });
       toast.success(status === "APPROVED" ? t("approved", { count: result.absenceDays }) : t("rejected"));
     } catch (error) {
-      toast.error(leaveActionError(error, "admin", { alreadyDecided: tInbox("alreadyDecided"), fallback: tCommon("error") }));
+      toast.error(
+        leaveActionError(error, "admin", {
+          alreadyDecided: tInbox("alreadyDecided"),
+          fallback: tCommon("error"),
+          awaitingConsent: t("awaitingConsent"),
+        }),
+      );
     }
   };
 
@@ -131,6 +145,9 @@ export default function LeaveRequestsPage() {
             <TabsTrigger value="PENDING">{tGuardian("statusPENDING")}</TabsTrigger>
             <TabsTrigger value="APPROVED">{tGuardian("statusAPPROVED")}</TabsTrigger>
             <TabsTrigger value="REJECTED">{tGuardian("statusREJECTED")}</TabsTrigger>
+            {policy.data?.requireAllGuardians || filter === "GUARDIAN_DECLINED" ? (
+              <TabsTrigger value="GUARDIAN_DECLINED">{t("filterGUARDIAN_DECLINED")}</TabsTrigger>
+            ) : null}
           </TabsList>
         </Tabs>
       </FilterBar>
@@ -159,6 +176,8 @@ export default function LeaveRequestsPage() {
       ) : (
         list("leave-requests", t("listTitle", { status: filter }), requests)
       )}
+
+      <LeavePolicyCard decides={decides} />
 
       {editUsed ? (
         <DialogLoadBoundary

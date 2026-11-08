@@ -20,6 +20,11 @@
  * and buttons are then hidden from a profile that does not write it
  * (components/admin/area-refusal.tsx readOnlyStyle), and the row reads as
  * the request alone.
+ *
+ * A row may be `blocked` with the reason (a leave request that still waits
+ * for a guardian's consent, Ledighetspolicy): its buttons are off and the
+ * reason is said under them, linked to each, rather than the buttons
+ * vanishing or a 409 being the way the decider learns it.
  */
 
 import { useState } from "react";
@@ -45,6 +50,8 @@ export interface DecisionRequest {
   details: React.ReactNode[];
   /** Still waiting for a decision: the row offers the note, Godkänn and Avslå. */
   open: boolean;
+  /** Why an open row cannot be decided yet: its buttons are off and this is said beside them. */
+  blocked?: string;
   /** The decided state's Badge (lib/status-variants.ts), for a request that is not open. */
   status: { label: string; variant: StatusVariant };
 }
@@ -104,7 +111,11 @@ export function DecisionList({
       <ul className="divide-y rounded-md border">
         {requests.map((request) => {
           const busy = deciding === request.id;
+          const blocked = request.blocked !== undefined;
+          // A blocked row waits for something else, not for its own decision: no spinner, but nothing to press.
+          const off = busy || blocked;
           const noteId = `${id}-note-${request.id}`;
+          const blockedId = `${id}-blocked-${request.id}`;
           return (
             <li
               key={request.id}
@@ -133,16 +144,22 @@ export function DecisionList({
                     <Input
                       className="h-8"
                       value={notes[request.id] ?? ""}
-                      disabled={busy}
+                      disabled={off}
                       onChange={(event) => setNotes((current) => ({ ...current, [request.id]: event.target.value }))}
                     />
                   </FormField>
+                  {blocked ? (
+                    <p id={blockedId} className="text-xs text-muted-foreground">
+                      {request.blocked}
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap gap-2 sm:justify-end">
                     <Button
                       size="sm"
                       aria-label={named(labels.approve, request)}
+                      aria-describedby={blocked ? blockedId : undefined}
                       onClick={() => void onDecide(request.id, "APPROVED", noteOf(request.id))}
-                      disabled={busy}
+                      disabled={off}
                     >
                       {busy ? <Loader2 className="animate-spin" /> : <Check />}
                       {labels.approve}
@@ -152,8 +169,9 @@ export function DecisionList({
                       size="sm"
                       variant="outline"
                       aria-label={named(labels.reject, request)}
+                      aria-describedby={blocked ? blockedId : undefined}
                       onClick={() => setRejecting(request)}
-                      disabled={busy}
+                      disabled={off}
                     >
                       <X />
                       {labels.reject}
@@ -163,8 +181,9 @@ export function DecisionList({
                         size="sm"
                         variant="ghost"
                         aria-label={named(extra.label, request)}
+                        aria-describedby={blocked ? blockedId : undefined}
                         onClick={() => setActing(request)}
-                        disabled={busy}
+                        disabled={off}
                       >
                         <Forward />
                         {extra.label}

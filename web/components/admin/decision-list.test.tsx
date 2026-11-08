@@ -93,4 +93,26 @@ describe("DecisionList", () => {
     expect(screen.getByRole("button", { name: "Avslå Sal 12" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Godkänn Musiksalen" })).toBeEnabled();
   });
+
+  it("turns a blocked request's buttons off and says why beside them, without a spinner and without touching the others", async () => {
+    const user = userEvent.setup();
+    const onDecide = renderList({
+      requests: [{ ...request("r-1", "Sal 12"), blocked: "Väntar på samtycke" }, request("r-2", "Musiksalen")],
+    });
+    const approve = screen.getByRole("button", { name: "Godkänn Sal 12" });
+    const reject = screen.getByRole("button", { name: "Avslå Sal 12" });
+    expect(approve).toBeDisabled();
+    expect(reject).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: /Sal 12/ })).toBeDisabled();
+    // The reason is the buttons' description, so a screen reader hears it with them.
+    expect(approve).toHaveAccessibleDescription("Väntar på samtycke");
+    expect(reject).toHaveAccessibleDescription("Väntar på samtycke");
+    expect(approve.querySelector(".animate-spin")).toBeNull();
+    await user.click(approve);
+    expect(onDecide).not.toHaveBeenCalled();
+
+    const other = screen.getByRole("button", { name: "Godkänn Musiksalen" });
+    expect(other).toBeEnabled();
+    expect(other).not.toHaveAccessibleDescription();
+  });
 });

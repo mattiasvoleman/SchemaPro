@@ -73,5 +73,14 @@
       - listitem:
         - text: Påminnelse om ett meddelande som väntar på din bekräftelse
         - switch "Påminnelse om ett meddelande som väntar på din bekräftelse" [checked]
+      - listitem:
+        - text: Ledighetsansökningar som du ska samtycka till
+        - switch "Ledighetsansökningar som du ska samtycka till" [checked]
+      - listitem:
+        - text: Påminnelse om en ledighetsansökan som väntar på ditt samtycke
+        - switch "Påminnelse om en ledighetsansökan som väntar på ditt samtycke" [checked]
+      - listitem:
+        - text: Besked om att en ledighetsansökan har avslutats
+        - switch "Besked om att en ledighetsansökan har avslutats" [checked]
 - region "Meddelanden alt+T"
 - alert
