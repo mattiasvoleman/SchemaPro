@@ -5119,11 +5119,20 @@ class SchedulerSolver:
         if scoped is not self._settings:
             return SchedulerSolver(scoped).solve(request)
         entered = time.monotonic()
-        response = (
-            self._solve_best_effort(request, entered)
-            if request.relaxation is not None
-            else self._solve_strict(request, entered)
-        )
+        try:
+            response = (
+                self._solve_best_effort(request, entered)
+                if request.relaxation is not None
+                else self._solve_strict(request, entered)
+            )
+        except InvalidScheduleInputError as refusal:
+            # FÖRLAGDA POSTER, AND THE REFUSALS BEFORE THE MODEL: "locked
+            # lessons leave 7A no lunch break" about locks the school never
+            # made by hand is the same question (review of #293, MEDEL-3).
+            named = self._refusal_with_placements_named(request, refusal, entered)
+            if named is None:
+                raise
+            return named
         # FÖRLAGDA POSTER: a refusal of a week the school pinned lessons in is
         # asked once more with the pins released (_placements_verdict). Only a
         # request carrying `placements` is; every other answer leaves here as
@@ -9940,6 +9949,52 @@ class SchedulerSolver:
         return response.model_copy(update={
             "conflicts": verdict.model_copy(update={"conflicts": [*verdict.conflicts, *kept]}),
         })
+
+    def _refusal_with_placements_named(
+        self,
+        request: OptimizeScheduleRequest,
+        refusal: InvalidScheduleInputError,
+        entered: float,
+    ) -> OptimizeScheduleResponse | None:
+        """A refusal of the payload, as a named refusal of the week when the förläggningar are why.
+
+        The engine refuses some weeks before any model by raising
+        (InvalidScheduleInputError: "locked lessons leave 7A no 30-minute lunch
+        break on Monday", a room lock the week cannot hold, a shared room the
+        locks overfill), and those reach the school as the sentence alone. A
+        förläggning is a lock to every one of those checks, so a week the
+        school's förläggningar make impossible was refused about "locked
+        lessons" the school never locked (review of #293, MEDEL-3).
+
+        The same question is asked as of an INFEASIBLE answer: the week with
+        the förläggningar released (_placements_verdict). A timetable found
+        means they are why, and the answer is the refusal of the week, INFEASIBLE
+        with each förläggning named and the original sentence kept beneath them,
+        code and params as raised. Otherwise — no `placements`, a refusal with
+        no code (a bug of ours, for a log), probes off, the released week
+        refused too — None, and the caller raises the refusal as it was.
+        """
+        if request.placements is None or not refusal.code:
+            return None
+        deadline = (
+            entered
+            + self._settings.solver_max_time_seconds
+            + self._settings.solver_probe_seconds
+        )
+        verdict = self._placements_verdict(request, seconds_left=deadline - time.monotonic())
+        if verdict is None:
+            return None
+        cause = ConflictDetail(
+            category="PLACEMENT",
+            code=refusal.code,
+            params=dict(refusal.params),
+        )
+        return OptimizeScheduleResponse(
+            request_id=request.request_id,
+            status="INFEASIBLE",
+            lessons=[],
+            conflicts=verdict.model_copy(update={"conflicts": [*verdict.conflicts, cause]}),
+        )
 
     def _placements_verdict(
         self, request: OptimizeScheduleRequest, *, seconds_left: float | None = None,

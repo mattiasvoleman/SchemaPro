@@ -31,6 +31,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.exceptions import InvalidScheduleInputError
 from app.schemas.schedule import OptimizeScheduleRequest
 from app.solver.placements import release_placements
 from app.solver.relaxation import HARD_RULES
@@ -337,3 +338,104 @@ class TestTheTimeoutProbe:
         request = _request(_payload(placements=False))
         codes = [code for code, _ in SchedulerSolver(_settings())._timeout_relaxations(request)]
         assert "PROBE_SOLVED_WITH_PLACEMENTS_RELEASED" not in codes
+
+
+class TestTheRefusalBeforeTheModel:
+    """A payload refused before any model names the förläggningar too (MEDEL-3 of #293).
+
+    08:00-14:00 with a lunch of 30 minutes between 11:00 and 13:00. 7A's idrott
+    is förlagd on Monday 11:00 and 12:00, both of its lessons: the lunch window
+    has no half hour left, and the engine refuses the payload before it builds
+    a model. Released, idrott goes elsewhere and lunch fits.
+    """
+
+    LUNCH = {"lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30}
+
+    def _payload(self, *, placements: bool = True) -> dict[str, object]:
+        second = str(uuid4())
+        payload: dict[str, object] = {
+            "requestId": str(uuid4()),
+            "academicYearId": str(uuid4()),
+            "requirements": [_requirement(MATTE, TOVE, 1)],
+            "groups": [{"id": CLASS_7A, "lunchHeadcount": 25}],
+            "rooms": [{"id": HALL, "capacity": 30}, {"id": ROOM, "capacity": 30}],
+            "rules": self.LUNCH,
+            "fixedLessons": [
+                _placed_idrott(1, "11:00:00", "12:00:00"),
+                {**_placed_idrott(1, "12:00:00", "13:00:00"), "id": second},
+            ],
+        }
+        if placements:
+            payload["placements"] = {
+                "lessons": [
+                    {"fixedLessonId": PLACED, "requirementId": IDROTT},
+                    {"fixedLessonId": second, "requirementId": IDROTT},
+                ],
+                "requirements": [_requirement(IDROTT, ULF, 2)],
+            }
+        return payload
+
+    @staticmethod
+    def _settings() -> Settings:
+        return Settings(  # type: ignore[arg-type]
+            SOLVER_MAX_TIME_SECONDS=10.0, SOLVER_PROBE_SECONDS=10.0, SCHEDULE_DAY_END_MINUTES=840,
+        )
+
+    def test_without_the_field_the_payload_is_refused_as_it_always_was(self) -> None:
+        with pytest.raises(InvalidScheduleInputError) as refused:
+            SchedulerSolver(self._settings()).solve(_request(self._payload(placements=False)))
+        assert refused.value.code == "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK"
+
+    def test_with_it_the_week_is_refused_with_each_förläggning_named_and_the_sentence_kept(self) -> None:
+        response = SchedulerSolver(self._settings()).solve(_request(self._payload()))
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts is not None
+        assert response.conflicts.summary_code == "PLACEMENTS_PROBE_SUMMARY"
+        codes = [line.code for line in response.conflicts.conflicts]
+        assert codes == ["PLACED_LESSON_IN_THE_WAY", "PLACED_LESSON_IN_THE_WAY", "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK"]
+        cause = response.conflicts.conflicts[-1]
+        assert cause.category == "PLACEMENT"
+        assert cause.params["group"] == CLASS_7A
+        assert "lunch break" in cause.message
+
+    def test_a_refusal_releasing_does_not_lift_is_raised_as_it_was(self) -> None:
+        # A lock the school made by hand over Tuesday's whole lunch window: it
+        # is no förläggning, releasing them leaves it, and the payload is
+        # refused about Tuesday as it always was, with nothing named.
+        payload = self._payload()
+        payload["fixedLessons"].append({  # type: ignore[union-attr]
+            "id": str(uuid4()), "teacherId": SARA, "studentGroupId": CLASS_7A, "roomId": ROOM,
+            "dayOfWeek": 2, "startTime": "11:00:00", "endTime": "13:00:00",
+        })
+        with pytest.raises(InvalidScheduleInputError) as refused:
+            SchedulerSolver(self._settings()).solve(_request(payload))
+        assert refused.value.code == "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK"
+
+
+class TestBästaMöjligaSchemaAsksItsHardRules:
+    """The released week of a best-effort refusal is the HARD rules' (relaxation.strip).
+
+    Matte may have one lesson a day (a rule that gives way in the mode), Tove
+    teaches only on Mondays, and idrott is förlagd Monday 08:00. Strictly the
+    released week cannot hold the cap either, so nothing is named; in the mode
+    the cap gives way, the released week has a timetable, and the förläggning
+    is what the hard rules cannot be laid around.
+    """
+
+    def _payload(self, **extra: object) -> dict[str, object]:
+        payload = _payload(**extra)
+        payload["requirements"] = [_requirement(MATTE, TOVE, 2, maxLessonsPerDay=1)]
+        return payload
+
+    def test_strictly_the_released_week_is_refused_too_and_nothing_is_named(self) -> None:
+        # Strictly the cap refuses the payload before any model, released or
+        # not, and the refusal is raised as it always was.
+        with pytest.raises(InvalidScheduleInputError) as refused:
+            _solve(self._payload())
+        assert refused.value.code == "SUBJECT_DISTRIBUTION_WEEK_TOO_SHORT"
+
+    def test_in_the_mode_the_förläggning_is_named(self) -> None:
+        response = _solve(self._payload(relaxation={"mode": "BEST_EFFORT"}))
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts is not None
+        assert response.conflicts.summary_code == "PLACEMENTS_PROBE_SUMMARY"
