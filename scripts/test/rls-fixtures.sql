@@ -4033,6 +4033,77 @@ BEGIN
   SELECT cl."schoolId", cl.id, k1, 'LEAD' FROM "CalendarLessons" cl WHERE cl."schoolId" = s1 AND cl.date = current_date - 1;
 END $$;
 
+-- The same school's rooms in every state a room loan can be in (section 428, app.class_teacher_room_is_lent_in):
+-- one asked for and not decided, one that was approved and then revoked (it has ended), one approved whose last
+-- day has gone by, and one this school borrows from the other (the borrower's side of the same function). The
+-- hall of the block above is the approved one, lent out. Planted apart from that block, and once, so that a
+-- database that already holds the school gets them too. A loan is written by the owner here: no role holds a
+-- policy that inserts one.
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  adm_full uuid;
+  other_admin uuid;
+  rp uuid; re uuid; ru uuid; rl uuid;
+  o_u uuid; o_b uuid;
+BEGIN
+  SELECT id INTO s1 FROM "Schools" WHERE slug = 'rls-klasslarare-school';
+  SELECT id INTO s2 FROM "Schools" WHERE slug = 'rls-klasslarare-annan';
+  IF s1 IS NULL OR s2 IS NULL OR EXISTS (SELECT 1 FROM "Rooms" WHERE "schoolId" = s1 AND name = 'KL Sal P (förfrågad)') THEN
+    RETURN;
+  END IF;
+  SELECT id INTO adm_full FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-a50000000001';
+  SELECT id INTO other_admin FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-a50000000031';
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s1, 'KL Sal P (förfrågad)', now()) RETURNING id INTO rp;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s1, 'KL Sal E (återkallad)', now()) RETURNING id INTO re;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s1, 'KL Sal U (utgången)', now()) RETURNING id INTO ru;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s1, 'KL Sal L (inlånad)', now()) RETURNING id INTO rl;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s2, 'KL Annan sal U', now()) RETURNING id INTO o_u;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s2, 'KL Annan sal B', now()) RETURNING id INTO o_b;
+  -- Asked for, not decided: the room is spoken for.
+  INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomName", "dayOfWeek", "startTime", "endTime",
+                           "startDate", "endDate", status, note, "requestedById")
+  VALUES (s1, rp, s2, 'Hallen P', 2, '10:00', '11:00', current_date, current_date + 100, 'PENDING', 'Förfrågan', other_admin);
+  -- Approved and then revoked: it has ended, and the room is the school's again.
+  INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomName", "dayOfWeek", "startTime", "endTime",
+                           "startDate", "endDate", status, note, "requestedById", "decidedById", "decidedAt", "endedAt")
+  VALUES (s1, re, s2, 'Hallen E', 2, '10:00', '11:00', current_date - 30, current_date + 100, 'REVOKED', 'Återkallad', other_admin, adm_full,
+          now() - interval '20 days', now() - interval '1 day');
+  -- Approved, and its last day was ten days ago.
+  INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime",
+                           "startDate", "endDate", status, note, "requestedById", "decidedById", "decidedAt")
+  VALUES (s1, ru, s2, o_u, 2, '10:00', '11:00', current_date - 120, current_date - 10, 'APPROVED', 'Utgången', other_admin, adm_full,
+          now() - interval '110 days');
+  -- Approved, and lent TO this school: its own room stands for the other school's.
+  INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime",
+                           "startDate", "endDate", status, note, "requestedById", "decidedById", "decidedAt")
+  VALUES (s2, o_b, s1, rl, 3, '10:00', '11:00', current_date - 10, current_date + 200, 'APPROVED', 'Inlånad', adm_full, other_admin, now());
+END $$;
+
+-- The other school's lessons (section 428): a template lesson and a dated one for its class, so that the klasslärare's
+-- frame can be asked about a lesson of another school and answer that it is not there. Planted apart and once, as above.
+DO $$
+DECLARE
+  s2 uuid;
+  y2 uuid;
+  c9 uuid;
+  sub uuid;
+  m uuid;
+BEGIN
+  SELECT id INTO s2 FROM "Schools" WHERE slug = 'rls-klasslarare-annan';
+  IF s2 IS NULL OR EXISTS (SELECT 1 FROM "Subjects" WHERE "schoolId" = s2 AND code = 'KLXX') THEN
+    RETURN;
+  END IF;
+  SELECT g.id, g."academicYearId" INTO c9, y2 FROM "StudentGroups" g WHERE g."schoolId" = s2 AND g.name = 'KL9A';
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s2, 'KL Annan ämne', 'KLXX', now()) RETURNING id INTO sub;
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "isParked", "updatedAt")
+  VALUES (s2, y2, sub, c9, 2, '08:30', '09:30', false, now()) RETURNING id INTO m;
+  INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (s2, m, sub, c9, current_date + 20, ((current_date + 20) + '08:30'::time) AT TIME ZONE 'Europe/Stockholm',
+          ((current_date + 20) + '09:30'::time) AT TIME ZONE 'Europe/Stockholm', now());
+END $$;
+
 -- The matrix school's rows for Klasslärarens schema (20270128090000), so the role matrix (section 116)
 -- has a row of each table to probe: its teacher is klasslärare of its class, one span is open, the
 -- school's option is set, and a draft waits to cancel a lesson of the class. Written by the owner, once.

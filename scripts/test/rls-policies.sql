@@ -47650,7 +47650,7 @@ BEGIN
   END LOOP;
 
   -- The functions: definers with a fixed search_path. The ten the API calls (the policies, the gateway) run by its role
-  -- alone; the eight that take a school as an argument and the two guards by nobody: a school named by a caller would be
+  -- alone; the nine that take a school as an argument and the two guards by nobody: a school named by a caller would be
   -- a school read across the boundary, and a definer calling a definer is judged by the owner's right.
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
    WHERE s.nspname = 'app' AND p.proname IN ('class_teacher_master_snapshot', 'class_teacher_master_version', 'class_teacher_calendar_snapshot',
@@ -47664,16 +47664,17 @@ BEGIN
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
    WHERE s.nspname = 'app' AND p.proname IN ('class_teacher_appointment_guard', 'class_teacher_change_guard',
          'class_teacher_master_snapshot_in', 'class_teacher_calendar_snapshot_in', 'class_teacher_slot_open_in', 'class_teacher_room_is_lent_in',
-         'class_teacher_room_refusal_in', 'class_teacher_master_refusal_in', 'class_teacher_master_state_in', 'class_teacher_calendar_refusal_in')
+         'class_teacher_room_refusal_in', 'class_teacher_master_refusal_in', 'class_teacher_master_state_in', 'class_teacher_calendar_refusal_in',
+         'class_teacher_year_ended_in')
      AND p.prosecdef AND p.proconfig::text LIKE '%search_path=%public%pg_temp%'
      AND NOT has_function_privilege('app_authenticated', p.oid, 'EXECUTE') AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE')
      AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
      AND (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') OR NOT has_function_privilege('service_role', p.oid, 'EXECUTE'));
-  IF n <> 10 THEN RAISE EXCEPTION 'klasslärare 425: % of the 10 internal functions and guards are definers nobody may call', n; END IF;
+  IF n <> 11 THEN RAISE EXCEPTION 'klasslärare 425: % of the 11 internal functions and guards are definers nobody may call', n; END IF;
   -- And no function of the family is left out of both lists.
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
    WHERE s.nspname = 'app' AND (p.proname LIKE 'class\_teacher\_%' OR p.proname = 'is_class_teacher');
-  IF n <> 20 THEN RAISE EXCEPTION 'klasslärare 425: the family has % functions, not the 20 listed', n; END IF;
+  IF n <> 21 THEN RAISE EXCEPTION 'klasslärare 425: the family has % functions, not the 21 listed', n; END IF;
 END $$;
 ROLLBACK;
 
@@ -47758,6 +47759,19 @@ BEGIN
                              'CT400', 'a teaching group');
   PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId") VALUES (%L, %L, %L, %L)$q$, school, y, cb, sched),
                              'CT400', 'an administrator as klasslärare');
+  -- An active teacher: one who has left is no klasslärare, whatever role the row still has.
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "Users" SET "isActive" = false WHERE id = t3;
+  PERFORM pg_temp.g5_as('0004');
+  PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId") VALUES (%L, %L, %L, %L)$q$, school, y, cb, t3),
+                             'CT400', 'a teacher who is no longer active');
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "Users" SET "isActive" = true WHERE id = t3;
+  -- The guard names a half by its link as well as by its kind, but the database never lets a class have one: a half is
+  -- a teaching group of a class (HC409), so the guard's test of the link is never the only thing between a half and
+  -- an appointment. This pins the rule that makes it so; the day it goes, the guard's own test is all that is left.
+  PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "halfOfId", "updatedAt") VALUES (%L, %L, 'KL4A-klass', 4, 'CLASS', %L, now())$q$, school, y, ca),
+                             'HC409', 'a half of a class that is itself a class');
   -- The class of another school: the guard does not find it in this one (and the key would not either).
   PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId") VALUES (%L, %L, %L, %L)$q$, school, y, ca_other, t3),
                              'CT400', 'a class of another school');
@@ -47901,6 +47915,13 @@ CREATE FUNCTION pg_temp.g5_master(cls uuid) RETURNS text LANGUAGE sql AS $f$
     FROM app.class_teacher_master_lessons(cls) o
     JOIN "Subjects" s ON s.id = o."subjectId"
 $f$;
+-- How many of the class's lessons the two overviews call YEAR_ENDED, of how many they list: the template's, then the
+-- dated lessons of [p_from, p_to].
+CREATE FUNCTION pg_temp.g5_ended(cls uuid, p_from date, p_to date) RETURNS text LANGUAGE sql AS $f$
+  SELECT (SELECT format('%s/%s', count(*) FILTER (WHERE o.refusal = 'YEAR_ENDED'), count(*)) FROM app.class_teacher_master_lessons(cls) o)
+         || ' ' ||
+         (SELECT format('%s/%s', count(*) FILTER (WHERE o.refusal = 'YEAR_ENDED'), count(*)) FROM app.class_teacher_calendar_states(cls, p_from, p_to) o)
+$f$;
 DO $$
 DECLARE
   school uuid;
@@ -47911,6 +47932,11 @@ DECLARE
   t3 uuid; k1 uuid; p1 uuid;
   mon date;
   n bigint;
+  y uuid; y_old uuid;
+  y_start date; y_end date;
+  tz0 text; z text;
+  today_s date; local_today date; utc_today date;
+  k2 uuid; ha uuid; lesson2 uuid; absence uuid;
 BEGIN
   PERFORM pg_temp.g5_as('0001');
   school := app.current_school_id();
@@ -47923,7 +47949,9 @@ BEGIN
   SELECT id INTO cd FROM "StudentGroups" WHERE "schoolId" = school AND name = 'KL4D';
   SELECT id INTO t3 FROM "Users" WHERE "schoolId" = school AND email = 'kl-t3@example.invalid';
   SELECT id INTO k1 FROM "Users" WHERE "schoolId" = school AND email = 'kl-k1@example.invalid';
+  SELECT id INTO k2 FROM "Users" WHERE "schoolId" = school AND email = 'kl-k2@example.invalid';
   SELECT id INTO p1 FROM "Users" WHERE "schoolId" = school AND email = 'kl-p1@example.invalid';
+  SELECT id INTO ha FROM "StudentGroups" WHERE "schoolId" = school AND name = 'KL4A-h1';
 
   -- THE TEMPLATE. K1's class: one lesson in four is theirs.
   PERFORM pg_temp.g5_as('0006');
@@ -47931,10 +47959,43 @@ BEGIN
   IF v IS DISTINCT FROM '1 08:30 KLMA OK; 1 09:45 KLSV REPLACING_GROUP; 1 11:00 KLID SHARED_POST; 2 09:00 KLMU OTHER_TEACHER; 2 10:00 KLSL HALF_CLASS; 2 11:00 KLNO HALF_CLASS; 3 09:00 KLEN JOINT_LESSON; 3 10:00 KLMA PARKED; 3 11:00 KLNO HALF_CLASS; 4 09:00 KLSL BLOCK; 4 10:00 KLMA SHARED_ROOM; 4 11:00 KLEN OK; 5 08:30 KLMA TIME_CLOSED' THEN
     RAISE EXCEPTION 'klasslärare 427: KL4A reads as %', v;
   END IF;
+  -- A co-teacher who is someone else makes the lesson a shared one, though K1 is its teacher (K1 as their own co-teacher
+  -- is no one else); and so does a pupil named on the template lesson, which is the whole class's and names none.
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "MasterLessons" SET "coTeacherId" = t3 WHERE "studentGroupId" = ca AND "dayOfWeek" = 1 AND "startTime" = '08:30';
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_master(ca);
+  IF v NOT LIKE '1 08:30 KLMA OTHER_TEACHER; %' THEN RAISE EXCEPTION 'klasslärare 427: a lesson with T3 as co-teacher reads as %', v; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "MasterLessons" SET "coTeacherId" = k1 WHERE "studentGroupId" = ca AND "dayOfWeek" = 1 AND "startTime" = '08:30';
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_master(ca);
+  IF v NOT LIKE '1 08:30 KLMA OK; %' THEN RAISE EXCEPTION 'klasslärare 427: a lesson with K1 as their own co-teacher reads as %', v; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "MasterLessons" SET "coTeacherId" = NULL WHERE "studentGroupId" = ca AND "dayOfWeek" = 1 AND "startTime" = '08:30';
+  INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId")
+  SELECT school, m.id, p1 FROM "MasterLessons" m WHERE m."studentGroupId" = ca AND m."dayOfWeek" = 1 AND m."startTime" = '08:30';
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_master(ca);
+  IF v NOT LIKE '1 08:30 KLMA JOINT_LESSON; %' THEN RAISE EXCEPTION 'klasslärare 427: a template lesson with a pupil of its own reads as %', v; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  DELETE FROM "MasterLessonStudents" WHERE "schoolId" = school;
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_master(ca);
+  IF v NOT LIKE '1 08:30 KLMA OK; %' THEN RAISE EXCEPTION 'klasslärare 427: the template lesson does not mend: %', v; END IF;
   -- K2's class: their own lessons, Friday open to KL4B alone, and the joint lesson that is KL4A's.
   PERFORM pg_temp.g5_as('0007');
   v := pg_temp.g5_master(cb);
   IF v IS DISTINCT FROM '1 08:30 KLMA OK; 3 09:00 KLEN OTHER_CLASS; 5 08:30 KLMA OK' THEN RAISE EXCEPTION 'klasslärare 427: KL4B reads as %', v; END IF;
+  -- Svenska is taken out of by the pupils of KL4A's replacing group, not by the group's name: KL4B's own svenska is K2's.
+  PERFORM pg_temp.g5_as('0001');
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "isParked", "updatedAt")
+  SELECT school, g."academicYearId", s.id, cb, k2, 2, '09:00', '10:00', false, now() FROM "StudentGroups" g, "Subjects" s WHERE g.id = cb AND s."schoolId" = school AND s.code = 'KLSV';
+  PERFORM pg_temp.g5_as('0007');
+  v := pg_temp.g5_master(cb);
+  IF v IS DISTINCT FROM '1 08:30 KLMA OK; 2 09:00 KLSV OK; 3 09:00 KLEN OTHER_CLASS; 5 08:30 KLMA OK' THEN RAISE EXCEPTION 'klasslärare 427: KL4B with a svenska of its own reads as %', v; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  DELETE FROM "MasterLessons" WHERE "studentGroupId" = cb AND "dayOfWeek" = 2;
   -- K2 asks for a class that is not theirs: nothing, not the lessons and not a refusal to read.
   v := pg_temp.g5_master(ca);
   IF v <> '' THEN RAISE EXCEPTION 'klasslärare 427: K2 reads KL4A''s grundschema: %', v; END IF;
@@ -47989,6 +48050,76 @@ BEGIN
   SELECT count(*) INTO n FROM app.class_teacher_calendar_states(ca, current_date - 2, current_date + 40);
   IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 427: T3 reads % of KL4A''s dated lessons', n; END IF;
 
+  -- The days asked for are the days answered: the lessons of [from, to] and no others. KL4A has three lessons on its
+  -- Monday and three on its Thursday three days later.
+  SELECT min(cl.date) INTO mon FROM "CalendarLessons" cl WHERE cl."studentGroupId" = ca AND cl.date > current_date AND extract(isodow FROM cl.date) = 1;
+  PERFORM pg_temp.g5_as('0006');
+  SELECT count(*) INTO n FROM app.class_teacher_calendar_states(ca, mon, mon);
+  IF n <> 3 THEN RAISE EXCEPTION 'klasslärare 427: a Monday of KL4A is % lessons, not 3', n; END IF;
+  SELECT count(*) INTO n FROM app.class_teacher_calendar_states(ca, mon + 1, mon + 2);
+  IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 427: the two days between the Monday and the Thursday are % lessons, not 0', n; END IF;
+  SELECT count(*) INTO n FROM app.class_teacher_calendar_states(ca, mon + 3, mon + 3);
+  IF n <> 3 THEN RAISE EXCEPTION 'klasslärare 427: a Thursday of KL4A is % lessons, not 3', n; END IF;
+  SELECT count(*) INTO n FROM app.class_teacher_calendar_states(ca, mon, mon + 3);
+  IF n <> 6 THEN RAISE EXCEPTION 'klasslärare 427: the Monday and the Thursday are % lessons, not 6', n; END IF;
+
+  -- A LÅSÅR THAT HAS ENDED IS HISTORY. Its grundschema and its dated lessons are what statistics read, and the overviews
+  -- say so for every lesson of the class: YEAR_ENDED, before anything else they would have said. The last day of the
+  -- year is a day of the year; the next day is not; a year that has not begun is not over; and which day it is, is the
+  -- school's to say (its zone), not UTC's.
+  SELECT ay.id, ay."startDate", ay."endDate", sc."timezone" INTO y, y_start, y_end, tz0
+    FROM "StudentGroups" g JOIN "AcademicYears" ay ON ay.id = g."academicYearId" JOIN "Schools" sc ON sc.id = g."schoolId" WHERE g.id = ca;
+  today_s := (now() AT TIME ZONE tz0)::date;
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_ended(ca, mon, mon + 3);
+  IF v <> '0/13 0/6' THEN RAISE EXCEPTION 'klasslärare 427: a year under way has % lessons ended (template, dated)', v; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "endDate" = today_s WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_ended(ca, mon, mon + 3);
+  IF v <> '0/13 0/6' THEN RAISE EXCEPTION 'klasslärare 427: a year whose last day is today has % lessons ended (template, dated)', v; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "endDate" = today_s - 1 WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_ended(ca, mon, mon + 3);
+  IF v <> '13/13 6/6' THEN RAISE EXCEPTION 'klasslärare 427: a year that ended yesterday has % lessons ended (template, dated)', v; END IF;
+  -- The year is the class's, not the klasslärare's: KL4B is in the same year, and K2 reads it as over too.
+  PERFORM pg_temp.g5_as('0007');
+  v := pg_temp.g5_master(cb);
+  IF v NOT LIKE '1 08:30 KLMA YEAR_ENDED; %' THEN RAISE EXCEPTION 'klasslärare 427: KL4B in a year that has ended reads as %', v; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "startDate" = today_s + 30, "endDate" = today_s + 400 WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_ended(ca, mon, mon + 3);
+  IF v <> '0/13 0/6' THEN RAISE EXCEPTION 'klasslärare 427: a year that has not begun has % lessons ended (template, dated)', v; END IF;
+  -- The school's zone. Pacific/Kiritimati (UTC+14) or Pacific/Pago_Pago (UTC-11), whichever keeps another date than UTC
+  -- just now (at every hour of the day one of them does): where the school is, a year whose last day is "today" is under
+  -- way and one whose last day is "yesterday" is over, though UTC would call one of the two the other.
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "startDate" = y_start, "endDate" = y_end WHERE id = y;
+  SELECT n.name INTO z FROM pg_timezone_names n
+   WHERE n.name IN ('Pacific/Kiritimati', 'Pacific/Pago_Pago') AND (now() AT TIME ZONE n.name)::date <> (now() AT TIME ZONE 'UTC')::date
+   ORDER BY n.name LIMIT 1;
+  IF z IS NULL THEN RAISE EXCEPTION 'klasslärare 427: no zone of the two keeps another date than UTC just now'; END IF;
+  UPDATE "Schools" SET "timezone" = z WHERE id = school;
+  local_today := (now() AT TIME ZONE z)::date;
+  utc_today := (now() AT TIME ZONE 'UTC')::date;
+  UPDATE "AcademicYears" SET "endDate" = local_today WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_ended(ca, mon, mon + 3);
+  IF v <> '0/13 0/6' THEN RAISE EXCEPTION 'klasslärare 427: in % (UTC is on % and the school on %) a year whose last day is the school''s today has % lessons ended', z, utc_today, local_today, v; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "endDate" = local_today - 1 WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_ended(ca, mon, mon + 3);
+  IF v <> '13/13 6/6' THEN RAISE EXCEPTION 'klasslärare 427: in % (UTC is on % and the school on %) a year whose last day was the school''s yesterday has % lessons ended', z, utc_today, local_today, v; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "Schools" SET "timezone" = tz0 WHERE id = school;
+  UPDATE "AcademicYears" SET "startDate" = y_start, "endDate" = y_end WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  v := pg_temp.g5_ended(ca, mon, mon + 3);
+  IF v <> '0/13 0/6' THEN RAISE EXCEPTION 'klasslärare 427: the year does not mend: % lessons ended', v; END IF;
+
   -- One rule at a time, changed by the administrator and read back by the klasslärare.
   PERFORM pg_temp.g5_as('0001');
   SELECT cl.id, cl.date INTO lesson, mon FROM "CalendarLessons" cl JOIN "Subjects" s ON s.id = cl."subjectId"
@@ -48001,6 +48132,26 @@ BEGIN
   END IF;
   PERFORM pg_temp.g5_as('0001');
   DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = lesson AND role = 'SUBSTITUTE';
+  -- A cover decision for the lesson (the absence of its teacher), though no vikarie stands on it.
+  SELECT cl.id INTO lesson2 FROM "CalendarLessons" cl JOIN "Subjects" s ON s.id = cl."subjectId"
+   WHERE cl."studentGroupId" = ca AND s."code" = 'KLEN' AND cl.date > current_date;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "updatedAt") VALUES (school, k1, now(), now() + interval '30 days', now()) RETURNING id INTO absence;
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision) VALUES (school, absence, lesson2, k1, 'CANCELLED');
+  PERFORM pg_temp.g5_as('0006');
+  IF (SELECT refusal FROM app.class_teacher_calendar_states(ca, mon + 3, mon + 3) WHERE "calendarLessonId" = lesson2) IS DISTINCT FROM 'COVERED' THEN
+    RAISE EXCEPTION 'klasslärare 427: a lesson with a cover decision is not COVERED';
+  END IF;
+  -- The half of the class has a lesson on the date: the class's week lists it and says whose it is.
+  PERFORM pg_temp.g5_as('0001');
+  INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT m."schoolId", m.id, m."subjectId", m."studentGroupId", m."roomId", mon + 1, ((mon + 1) + m."startTime") AT TIME ZONE 'Europe/Stockholm', ((mon + 1) + m."endTime") AT TIME ZONE 'Europe/Stockholm', now()
+    FROM "MasterLessons" m WHERE m."studentGroupId" = ha AND m."dayOfWeek" = 2;
+  PERFORM pg_temp.g5_as('0006');
+  IF (SELECT string_agg(coalesce(o.refusal, 'OK'), ',') FROM app.class_teacher_calendar_states(ca, mon + 1, mon + 1) o) IS DISTINCT FROM 'HALF_CLASS' THEN
+    RAISE EXCEPTION 'klasslärare 427: a dated lesson of the half of KL4A is not HALF_CLASS in KL4A''s week';
+  END IF;
+  PERFORM pg_temp.g5_as('0001');
+  DELETE FROM "CalendarLessons" WHERE "studentGroupId" = ha;
   -- Another teacher on it, and K1 not.
   UPDATE "CalendarLessonTeachers" SET "teacherId" = t3 WHERE "calendarLessonId" = lesson;
   PERFORM pg_temp.g5_as('0006');
@@ -48009,6 +48160,22 @@ BEGIN
   END IF;
   PERFORM pg_temp.g5_as('0001');
   UPDATE "CalendarLessonTeachers" SET "teacherId" = k1 WHERE "calendarLessonId" = lesson;
+  -- A colleague beside K1 on the day (not a vikarie): the lesson is no longer theirs alone.
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, lesson, t3, 'ASSISTANT');
+  PERFORM pg_temp.g5_as('0006');
+  IF (SELECT refusal FROM app.class_teacher_calendar_states(ca, mon, mon) WHERE "calendarLessonId" = lesson) IS DISTINCT FROM 'OTHER_TEACHER' THEN
+    RAISE EXCEPTION 'klasslärare 427: a lesson with a colleague beside K1 is not OTHER_TEACHER';
+  END IF;
+  PERFORM pg_temp.g5_as('0001');
+  DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = lesson AND role = 'ASSISTANT';
+  -- A lesson nobody teaches on the day is no one's to change either.
+  DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = lesson;
+  PERFORM pg_temp.g5_as('0006');
+  IF (SELECT refusal FROM app.class_teacher_calendar_states(ca, mon, mon) WHERE "calendarLessonId" = lesson) IS DISTINCT FROM 'OTHER_TEACHER' THEN
+    RAISE EXCEPTION 'klasslärare 427: a lesson with no teacher on the day is not OTHER_TEACHER';
+  END IF;
+  PERFORM pg_temp.g5_as('0001');
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, lesson, k1, 'LEAD');
   -- A register taken.
   INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (school, lesson, p1, 'PRESENT', now());
   PERFORM pg_temp.g5_as('0006');
@@ -48025,6 +48192,14 @@ BEGIN
   END IF;
   PERFORM pg_temp.g5_as('0001');
   DELETE FROM "CalendarLessonStudents" WHERE "calendarLessonId" = lesson;
+  -- A class joined to the date is as joint as a pupil.
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (school, lesson, cb);
+  PERFORM pg_temp.g5_as('0006');
+  IF (SELECT refusal FROM app.class_teacher_calendar_states(ca, mon, mon) WHERE "calendarLessonId" = lesson) IS DISTINCT FROM 'JOINT_LESSON' THEN
+    RAISE EXCEPTION 'klasslärare 427: a lesson with another class joined to the date is not JOINT_LESSON';
+  END IF;
+  PERFORM pg_temp.g5_as('0001');
+  DELETE FROM "CalendarLessonGroups" WHERE "calendarLessonId" = lesson;
   -- Cancelled already.
   UPDATE "CalendarLessons" SET status = 'CANCELLED' WHERE id = lesson;
   PERFORM pg_temp.g5_as('0006');
@@ -48048,6 +48223,17 @@ BEGIN
   IF (SELECT refusal FROM app.class_teacher_calendar_states(ca, mon + 4, mon + 4) WHERE "calendarLessonId" = lesson) IS DISTINCT FROM 'TIME_CLOSED' THEN
     RAISE EXCEPTION 'klasslärare 427: a lesson in an hour that is not open is not TIME_CLOSED';
   END IF;
+  -- The hours opened for another läsår open nothing of this one, though they are the school's, the class's weekday and
+  -- the lesson's hour.
+  PERFORM pg_temp.g5_as('0001');
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'Klasslärare gammalt', current_date - 700, current_date - 400, false, now()) RETURNING id INTO y_old;
+  PERFORM pg_temp.g5_as('0004');
+  INSERT INTO "ClassTeacherOpenTimes" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime") VALUES (school, y_old, NULL, 5, '08:00', '12:00');
+  PERFORM pg_temp.g5_as('0006');
+  IF (SELECT refusal FROM app.class_teacher_calendar_states(ca, mon + 4, mon + 4) WHERE "calendarLessonId" = lesson) IS DISTINCT FROM 'TIME_CLOSED' THEN
+    RAISE EXCEPTION 'klasslärare 427: the open hours of another läsår open a lesson of this one';
+  END IF;
   -- Open it for KL4A, and it is theirs.
   PERFORM pg_temp.g5_as('0004');
   INSERT INTO "ClassTeacherOpenTimes" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime")
@@ -48055,6 +48241,13 @@ BEGIN
   PERFORM pg_temp.g5_as('0006');
   IF (SELECT refusal FROM app.class_teacher_calendar_states(ca, mon + 4, mon + 4) WHERE "calendarLessonId" = lesson) IS NOT NULL THEN
     RAISE EXCEPTION 'klasslärare 427: a lesson in an hour opened to the class is still refused';
+  END IF;
+  -- A span that ends where the lesson ends holds it: the edge is inside.
+  PERFORM pg_temp.g5_as('0004');
+  UPDATE "ClassTeacherOpenTimes" SET "endTime" = '09:30' WHERE "studentGroupId" = ca AND "dayOfWeek" = 5;
+  PERFORM pg_temp.g5_as('0006');
+  IF (SELECT refusal FROM app.class_teacher_calendar_states(ca, mon + 4, mon + 4) WHERE "calendarLessonId" = lesson) IS NOT NULL THEN
+    RAISE EXCEPTION 'klasslärare 427: a span that ends exactly where the lesson ends does not hold it';
   END IF;
   -- The open span must hold the whole lesson: 08:00-09:00 does not hold 08:30-09:30.
   PERFORM pg_temp.g5_as('0004');
@@ -48113,6 +48306,24 @@ CREATE FUNCTION pg_temp.g5_ml(p_cls uuid, p_code text, p_dow integer, p_st time)
   SELECT m.id FROM "MasterLessons" m JOIN "Subjects" s ON s.id = m."subjectId"
    WHERE m."studentGroupId" = p_cls AND s."code" = p_code AND m."dayOfWeek" = p_dow AND m."startTime" = p_st
 $f$;
+-- What the frame says of moving a dated lesson to a day and an hour, asked for p_teacher as the gateway asks it
+-- ('OK' for NULL, the frame's answer when the change is the klasslärare's to make). Half an hour long unless said.
+CREATE FUNCTION pg_temp.g5_move(p_teacher uuid, p_class uuid, p_lesson uuid, p_date date, p_start time, p_end time DEFAULT NULL) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(app.class_teacher_frame(p_teacher, p_class, 'OCCASION_MOVE', NULL, p_lesson, p_date, NULL, p_start,
+                                          coalesce(p_end, p_start + interval '30 minutes'), NULL, NULL, true), 'OK')
+$f$;
+-- What the frame says of cancelling a dated lesson ...
+CREATE FUNCTION pg_temp.g5_cancel(p_teacher uuid, p_class uuid, p_lesson uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(app.class_teacher_frame(p_teacher, p_class, 'OCCASION_CANCEL', NULL, p_lesson, NULL, NULL, NULL, NULL, NULL, NULL, true), 'OK')
+$f$;
+-- ... and of moving a template lesson to Tuesday 10:00-10:30.
+CREATE FUNCTION pg_temp.g5_tmove(p_teacher uuid, p_class uuid, p_master uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(app.class_teacher_frame(p_teacher, p_class, 'TEMPLATE_MOVE', p_master, NULL, NULL, 2, '10:00', '10:30', NULL, NULL, true), 'OK')
+$f$;
+-- What a room is, to the klasslärare who would put a lesson in it.
+CREATE FUNCTION pg_temp.g5_room(p_room uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(app.class_teacher_room_refusal(p_room), 'FREE')
+$f$;
 DO $$
 DECLARE
   school uuid;
@@ -48128,6 +48339,12 @@ DECLARE
   rev integer;
   stmt text;
   base text;
+  w text;
+  k1 uuid;
+  rp uuid; re uuid; ru uuid; rl uuid; rx uuid; xl uuid; xm uuid;
+  d1 uuid; t1 uuid;
+  y_start date; y_end date; today_s date;
+  tzs text; now_local timestamp; clock_ok boolean;
 BEGIN
   PERFORM pg_temp.g5_as('0001');
   school := app.current_school_id();
@@ -48152,13 +48369,24 @@ BEGIN
   SELECT id INTO r2 FROM "Rooms" WHERE "schoolId" = school AND name = 'KL Sal 2';
   SELECT id INTO r3 FROM "Rooms" WHERE "schoolId" = school AND name LIKE 'KL Aula%';
   SELECT id INTO r4 FROM "Rooms" WHERE "schoolId" = school AND name LIKE 'KL Hall%';
+  SELECT id INTO rp FROM "Rooms" WHERE "schoolId" = school AND name LIKE 'KL Sal P%';
+  SELECT id INTO re FROM "Rooms" WHERE "schoolId" = school AND name LIKE 'KL Sal E%';
+  SELECT id INTO ru FROM "Rooms" WHERE "schoolId" = school AND name LIKE 'KL Sal U%';
+  SELECT id INTO rl FROM "Rooms" WHERE "schoolId" = school AND name LIKE 'KL Sal L%';
+  SELECT id INTO k1 FROM "Users" WHERE "schoolId" = school AND email = 'kl-k1@example.invalid';
+  PERFORM pg_temp.g5_as('0031');
+  SELECT id INTO rx FROM "Rooms" WHERE name = 'KL Annan sal B';
+  SELECT cl.id INTO xl FROM "CalendarLessons" cl JOIN "Subjects" s ON s.id = cl."subjectId" WHERE s.code = 'KLXX';
+  SELECT m.id INTO xm FROM "MasterLessons" m JOIN "Subjects" s ON s.id = m."subjectId" WHERE s.code = 'KLXX';
+  PERFORM pg_temp.g5_as('0001');
   SELECT date INTO d_mon FROM "CalendarLessons" WHERE id = l_ma;
   SELECT date INTO d_thu FROM "CalendarLessons" WHERE id = l_en;
   d_tue := d_mon + 1;
   d_fri := d_mon + 4;
   d_sat := d_mon + 5;
   IF l_ma IS NULL OR l_sv IS NULL OR l_id IS NULL OR l_en IS NULL OR l_sl IS NULL OR l_ro IS NULL OR l_k2 IS NULL OR l_past IS NULL
-     OR m_ma IS NULL OR m_sv IS NULL OR m_mu IS NULL OR m_en IS NULL OR r2 IS NULL OR r3 IS NULL OR r4 IS NULL THEN
+     OR m_ma IS NULL OR m_sv IS NULL OR m_mu IS NULL OR m_en IS NULL OR r2 IS NULL OR r3 IS NULL OR r4 IS NULL
+     OR rp IS NULL OR re IS NULL OR ru IS NULL OR rl IS NULL OR rx IS NULL OR xl IS NULL OR xm IS NULL OR k1 IS NULL THEN
     RAISE EXCEPTION 'klasslärare 428: the fixtures lack a lesson or a room';
   END IF;
 
@@ -48179,6 +48407,10 @@ BEGIN
   IF (SELECT "baseSnapshot" -> 'teachers' ->> 0 FROM "ClassTeacherChanges" WHERE id = c) NOT LIKE '%:LEAD' THEN
     RAISE EXCEPTION 'klasslärare 428: the snapshot of the lesson does not name its LEAD';
   END IF;
+  -- With a change waiting on the dated layer of Monday's matte, the template lesson it comes from is closed to a second
+  -- one on the other layer, and the overview of the template says so.
+  w := (SELECT o.refusal FROM app.class_teacher_master_lessons(ca) o WHERE o.id = m_ma);
+  IF w IS DISTINCT FROM 'PENDING_OCCASION_CHANGE' THEN RAISE EXCEPTION 'klasslärare 428: the template lesson of a date with a draft waiting reads as %', w; END IF;
 
   -- One draft waits per lesson: a second, of any kind, meets the index.
   PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "targetRoomId", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_ROOM', %L, %L, %L, '{}')$q$, school, y, ca, l_ma, r2, base),
@@ -48191,6 +48423,17 @@ BEGIN
                              'CT409', 'a draft against a version that is not one');
   PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_CANCEL', %L, %L, '{}')$q$, school, y, ca, gen_random_uuid(), base),
                              'CT404', 'a draft for a lesson that is not there');
+  -- SHAPE: an exception names the dated lesson and no template lesson; a change of the template names the template
+  -- lesson and no dated one.
+  PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "masterLessonId", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_CANCEL', %L, %L, %L, '{}')$q$, school, y, ca, l_en, m_en, app.class_teacher_calendar_version(l_en)),
+                             'CT400', 'an exception that also names a template lesson');
+  PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "masterLessonId", "calendarLessonId", "targetDayOfWeek", "targetStart", "targetEnd", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'TEMPLATE_MOVE', %L, %L, 2, '10:00', '10:30', %L, '{}')$q$, school, y, ca, m_en, l_en, app.class_teacher_master_version(m_en)),
+                             'CT400', 'a template change that also names a dated lesson');
+  -- A lesson of another school is not there: not "another class's", which would tell that it exists.
+  PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_CANCEL', %L, 'x', '{}')$q$, school, y, ca, xl),
+                             'CT404', 'a draft for a dated lesson of another school');
+  w := concat_ws(' ', pg_temp.g5_cancel(k1, ca, xl), coalesce(app.class_teacher_frame(k1, ca, 'TEMPLATE_MOVE', xm, NULL, NULL, 2, '10:00', '10:30', NULL, NULL, true), 'OK'));
+  IF w IS DISTINCT FROM 'LESSON_GONE LESSON_GONE' THEN RAISE EXCEPTION 'klasslärare 428: the frame answers a lesson of another school (dated, template) with %', w; END IF;
 
   -- THE FRAME, kind by kind. Every statement below is refused by row security alone.
   stmt := $q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_CANCEL', %L, %L, '{}')$q$;
@@ -48228,6 +48471,19 @@ BEGIN
   PERFORM pg_temp.g5_refuses(format(stmt, school, y, ca, l_en, r4, v), '42501', 'a lent room');
   PERFORM pg_temp.g5_refuses(format(stmt, school, y, ca, l_en, r3, v), '42501', 'a room that needs approval');
   PERFORM pg_temp.g5_refuses(format(stmt, school, y, ca, l_en, NULL, v), 'CT400', 'a room change that names no room');
+  -- A room is lent when a loan is asked for or approved, has not ended and has not run out, whichever school lends and
+  -- whichever borrows. Asked as the klasslärare asks it: the school's own free room (sal 2), the hall lent out (r4),
+  -- a room the other school has asked for (rp), one whose loan was revoked (re), one whose loan ran out ten days ago
+  -- (ru), one the other school lends to this (rl), the one that needs approval, a room of the other school, no room.
+  w := concat_ws(' ', pg_temp.g5_room(r2), pg_temp.g5_room(r4), pg_temp.g5_room(rp), pg_temp.g5_room(re), pg_temp.g5_room(ru),
+                      pg_temp.g5_room(rl), pg_temp.g5_room(r3), pg_temp.g5_room(rx), pg_temp.g5_room(gen_random_uuid()));
+  IF w IS DISTINCT FROM 'FREE SHARED_ROOM SHARED_ROOM FREE FREE SHARED_ROOM ROOM_NEEDS_APPROVAL ROOM_NOT_FOUND ROOM_NOT_FOUND' THEN
+    RAISE EXCEPTION 'klasslärare 428: the rooms (sal 2, hall, asked for, revoked, ran out, borrowed, approval, another school''s, none) read as %', w;
+  END IF;
+  PERFORM pg_temp.g5_refuses(format(stmt, school, y, ca, l_en, rp, v), '42501', 'a room another school has asked for');
+  PERFORM pg_temp.g5_refuses(format(stmt, school, y, ca, l_en, rl, v), '42501', 'a room lent to this school');
+  PERFORM pg_temp.g5_accepts(format(stmt, school, y, ca, l_en, re, v), 'a room whose loan was revoked');
+  PERFORM pg_temp.g5_accepts(format(stmt, school, y, ca, l_en, ru, v), 'a room whose loan ran out');
 
   -- THE TEMPLATE. A move to an open hour; a split into two; not Svenska, not a lesson with another teacher.
   v := app.class_teacher_master_version(m_ma);
@@ -48260,6 +48516,13 @@ BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'klasslärare 428: K1 could not discard their own draft'; END IF;
   INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "masterLessonId", "targetDayOfWeek", "targetStart", "targetEnd", "baseVersion", "baseSnapshot")
   VALUES (school, y, ca, 'TEMPLATE_MOVE', m_ma, 2, '10:00', '11:00', v, '{}') RETURNING id INTO c;
+  -- The database writes what the template lesson looked like, whatever the writer states (so that a draft gone stale
+  -- can show what has changed), as it does for a dated lesson.
+  w := (SELECT format('%s %s %s', t."baseSnapshot" ->> 'dayOfWeek', t."baseSnapshot" ->> 'startTime', t."baseSnapshot" -> 'extraGroups') FROM "ClassTeacherChanges" t WHERE t.id = c);
+  IF w IS DISTINCT FROM '1 08:30 []' THEN RAISE EXCEPTION 'klasslärare 428: the snapshot of a template draft reads as %', w; END IF;
+  -- And the dated lessons of that template lesson are closed to a change of their own, as the week says.
+  w := (SELECT o.refusal FROM app.class_teacher_calendar_states(ca, d_mon, d_mon) o WHERE o."calendarLessonId" = l_ma);
+  IF w IS DISTINCT FROM 'PENDING_TEMPLATE_CHANGE' THEN RAISE EXCEPTION 'klasslärare 428: a date of a template lesson with a draft waiting reads as %', w; END IF;
   PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_CANCEL', %L, %L, '{}')$q$, school, y, ca, l_ma, base),
                              '42501', 'an occasion draft for a lesson whose template waits');
   PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "masterLessonId", "targetDayOfWeek", "targetStart", "targetEnd", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'TEMPLATE_MOVE', %L, 3, '10:00', '11:00', %L, '{}')$q$, school, y, ca, m_ma, v),
@@ -48270,9 +48533,121 @@ BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'klasslärare 428: K1 could not edit their own draft'; END IF;
   SELECT t.rev INTO rev FROM "ClassTeacherChanges" t WHERE t.id = c;
   IF rev <> 2 THEN RAISE EXCEPTION 'klasslärare 428: an edited draft is at revision %, not 2', rev; END IF;
+  -- Two drafts beside each other, as two klasslärare at once leave them (each was asked while the other was not yet
+  -- there; the lesson is parted from its template for the moment the second is written). Only a NEW draft meets its
+  -- neighbour: each of the two may be edited, or the two would wait for each other for ever.
+  INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "baseVersion", "baseSnapshot")
+  VALUES (school, y, ca, 'OCCASION_CANCEL', l_en, app.class_teacher_calendar_version(l_en), '{}') RETURNING id INTO d1;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "CalendarLessons" SET "masterLessonId" = NULL WHERE id = l_en;
+  PERFORM pg_temp.g5_as('0006');
+  INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "masterLessonId", "targetDayOfWeek", "targetStart", "targetEnd", "baseVersion", "baseSnapshot")
+  VALUES (school, y, ca, 'TEMPLATE_MOVE', m_en, 2, '10:00', '10:30', app.class_teacher_master_version(m_en), '{}') RETURNING id INTO t1;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "CalendarLessons" SET "masterLessonId" = m_en WHERE id = l_en;
+  PERFORM pg_temp.g5_as('0006');
+  UPDATE "ClassTeacherChanges" SET note = 'mallen' WHERE id = t1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'klasslärare 428: K1 could not edit a template draft that has a dated one beside it'; END IF;
+  UPDATE "ClassTeacherChanges" SET note = 'datumet' WHERE id = d1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'klasslärare 428: K1 could not edit a dated draft that has a template one beside it'; END IF;
+  -- What a dated draft is about is fixed too: another lesson of the class, or the same lesson in another class of the
+  -- same klasslärare, is a new draft. (K1 is made klasslärare of KL4B for a moment.)
+  PERFORM pg_temp.g5_refuses(format($q$UPDATE "ClassTeacherChanges" SET "calendarLessonId" = %L WHERE id = %L$q$, l_ma, d1), 'CT400', 'pointing a dated draft at another lesson');
+  PERFORM pg_temp.g5_as('0004');
+  INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId") VALUES (school, y, cb, k1);
+  PERFORM pg_temp.g5_as('0006');
+  PERFORM pg_temp.g5_refuses(format($q$UPDATE "ClassTeacherChanges" SET "studentGroupId" = %L WHERE id = %L$q$, cb, d1), 'CT400', 'moving a draft to another class of the same klasslärare');
+  PERFORM pg_temp.g5_as('0004');
+  DELETE FROM "ClassTeacherAppointments" WHERE "studentGroupId" = cb AND "userId" = k1;
+  PERFORM pg_temp.g5_as('0006');
+  DELETE FROM "ClassTeacherChanges" WHERE id IN (d1, t1);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'klasslärare 428: K1 could not discard the two drafts'; END IF;
   -- Edits that would take it outside the frame meet it: another day that is closed, another hour.
   PERFORM pg_temp.g5_refuses(format($q$UPDATE "ClassTeacherChanges" SET "targetDayOfWeek" = 5 WHERE id = %L$q$, c), '42501', 'an edit into a day that is not open');
   PERFORM pg_temp.g5_refuses(format($q$UPDATE "ClassTeacherChanges" SET "targetEnd" = '12:30' WHERE id = %L$q$, c), '42501', 'an edit to an hour past the open span');
+
+  -- THE CLOCK. A move to a time that has gone by is PAST, by the instant: today at a clock that has passed is the past,
+  -- today at a clock that has not is not, and the school's zone says what the clock reads. The frame's now() is this
+  -- transaction's, as ours is, so the edge can be hit to the microsecond. (Not in the hours either side of a change
+  -- between summer and winter time, when a clock on the wall may be twice or never.)
+  SELECT sc."timezone" INTO tzs FROM "Schools" sc WHERE sc.id = school;
+  now_local := now() AT TIME ZONE tzs;
+  IF now_local - (now() AT TIME ZONE 'UTC') < interval '45 minutes' THEN
+    RAISE EXCEPTION 'klasslärare 428: the school (%) is not east of UTC, which the clock tests need', tzs;
+  END IF;
+  clock_ok := (now_local AT TIME ZONE tzs) = now()
+          AND ((now_local - interval '2 hours') AT TIME ZONE tzs) = now() - interval '2 hours'
+          AND ((now_local + interval '2 hours') AT TIME ZONE tzs) = now() + interval '2 hours';
+  IF clock_ok THEN
+    w := pg_temp.g5_move(k1, ca, l_en, (now_local - interval '1 day')::date, (now_local - interval '1 day')::time);
+    IF w IS DISTINCT FROM 'PAST' THEN RAISE EXCEPTION 'klasslärare 428: yesterday at this hour is %, not PAST', w; END IF;
+    w := pg_temp.g5_move(k1, ca, l_en, (now_local - interval '1 minute')::date, (now_local - interval '1 minute')::time);
+    IF w IS DISTINCT FROM 'PAST' THEN RAISE EXCEPTION 'klasslärare 428: a minute ago is %, not PAST', w; END IF;
+    w := pg_temp.g5_move(k1, ca, l_en, now_local::date, now_local::time);
+    IF w IS DISTINCT FROM 'PAST' THEN RAISE EXCEPTION 'klasslärare 428: this very instant is %, not PAST', w; END IF;
+    w := pg_temp.g5_move(k1, ca, l_en, (now_local + interval '1 minute')::date, (now_local + interval '1 minute')::time);
+    IF w = 'PAST' THEN RAISE EXCEPTION 'klasslärare 428: a minute from now is PAST'; END IF;
+    w := pg_temp.g5_move(k1, ca, l_en, (now_local + interval '1 day')::date, (now_local + interval '1 day')::time);
+    IF w = 'PAST' THEN RAISE EXCEPTION 'klasslärare 428: this hour tomorrow is PAST'; END IF;
+    -- The clock on a UTC wall half an hour ahead of now is, in a school east of UTC, an hour or two gone.
+    w := pg_temp.g5_move(k1, ca, l_en, ((now() AT TIME ZONE 'UTC') + interval '30 minutes')::date, ((now() AT TIME ZONE 'UTC') + interval '30 minutes')::time);
+    IF w IS DISTINCT FROM 'PAST' THEN RAISE EXCEPTION 'klasslärare 428: the UTC wall half an hour ahead is %, not PAST in %', w, tzs; END IF;
+  ELSE
+    RAISE NOTICE 'klasslärare 428: the clock tests are left out, the school (%) changes between summer and winter time within two hours of now', tzs;
+  END IF;
+  -- The answers that come next after the clock: a Saturday, a template day past Friday, a move with no day.
+  w := concat_ws(' ', pg_temp.g5_move(k1, ca, l_en, d_sat, '09:00'),
+                      coalesce(app.class_teacher_frame(k1, ca, 'TEMPLATE_MOVE', m_en, NULL, NULL, 6, '10:00', '10:30', NULL, NULL, true), 'OK'),
+                      pg_temp.g5_move(k1, ca, l_en, NULL, '10:00'));
+  IF w IS DISTINCT FROM 'WEEKEND WEEKEND TARGET_MISSING' THEN RAISE EXCEPTION 'klasslärare 428: a Saturday, a template Saturday and a move with no day read as %', w; END IF;
+
+  -- THE LÅSÅR'S OWN DAYS. A move goes to a day of the class's läsår: its first and its last day are in, the days either
+  -- side are not (they are open days of the week, so only the year can refuse them: TARGET_CLOSED).
+  SELECT ay."startDate", ay."endDate" INTO y_start, y_end FROM "AcademicYears" ay WHERE ay.id = y;
+  today_s := (now() AT TIME ZONE tzs)::date;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "startDate" = d_tue, "endDate" = d_tue + 1 WHERE id = y;
+  -- Another läsår of the school begins the day after: a day of that one is no day of the class's.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (school, 'Klasslärare nästa', d_thu, d_thu + 100, false, now());
+  PERFORM pg_temp.g5_as('0006');
+  w := concat_ws(' ', pg_temp.g5_move(k1, ca, l_en, d_mon, '10:00'), pg_temp.g5_move(k1, ca, l_en, d_tue, '10:00'),
+                      pg_temp.g5_move(k1, ca, l_en, d_tue + 1, '10:00'), pg_temp.g5_move(k1, ca, l_en, d_thu, '10:00'));
+  IF w IS DISTINCT FROM 'TARGET_CLOSED OK OK TARGET_CLOSED' THEN
+    RAISE EXCEPTION 'klasslärare 428: the day before the läsår, its first, its last and the day after read as %', w;
+  END IF;
+  PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "targetDate", "targetStart", "targetEnd", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_MOVE', %L, %L, '10:00', '10:30', %L, '{}')$q$, school, y, ca, l_en, d_thu, app.class_teacher_calendar_version(l_en)),
+                             '42501', 'moving a lesson to the day after the läsår');
+
+  -- A LÅSÅR THAT HAS ENDED. The frame says YEAR_ENDED of any change of the class, dated or of the template, and a draft
+  -- written before cannot be edited; a year under way (its last day is today) and one that has not begun are open.
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "startDate" = y_start, "endDate" = today_s - 1 WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  w := concat_ws(' ', pg_temp.g5_cancel(k1, ca, l_en), pg_temp.g5_tmove(k1, ca, m_en), pg_temp.g5_move(k1, ca, l_en, d_tue, '10:00'));
+  IF w IS DISTINCT FROM 'YEAR_ENDED YEAR_ENDED YEAR_ENDED' THEN RAISE EXCEPTION 'klasslärare 428: in a läsår that ended yesterday a cancellation, a template move and a move read as %', w; END IF;
+  PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_CANCEL', %L, %L, '{}')$q$, school, y, ca, l_en, app.class_teacher_calendar_version(l_en)),
+                             '42501', 'cancelling a lesson of a läsår that has ended');
+  PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "masterLessonId", "targetDayOfWeek", "targetStart", "targetEnd", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'TEMPLATE_MOVE', %L, 2, '10:00', '10:30', %L, '{}')$q$, school, y, ca, m_en, app.class_teacher_master_version(m_en)),
+                             '42501', 'moving a template lesson of a läsår that has ended');
+  PERFORM pg_temp.g5_refuses(format($q$UPDATE "ClassTeacherChanges" SET "targetEnd" = '11:15' WHERE id = %L$q$, c), '42501', 'editing a draft of a läsår that has ended');
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "startDate" = y_start, "endDate" = today_s WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  w := concat_ws(' ', pg_temp.g5_cancel(k1, ca, l_en), pg_temp.g5_tmove(k1, ca, m_en), pg_temp.g5_move(k1, ca, l_en, d_tue, '10:00'));
+  IF w IS DISTINCT FROM 'OK OK TARGET_CLOSED' THEN RAISE EXCEPTION 'klasslärare 428: in a läsår whose last day is today a cancellation, a template move and a move to next week (past its last day) read as %', w; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "startDate" = today_s + 1, "endDate" = y_end WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  w := concat_ws(' ', pg_temp.g5_cancel(k1, ca, l_en), pg_temp.g5_tmove(k1, ca, m_en));
+  IF w IS DISTINCT FROM 'OK OK' THEN RAISE EXCEPTION 'klasslärare 428: in a läsår that begins tomorrow a cancellation and a template move read as %', w; END IF;
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "AcademicYears" SET "startDate" = y_start, "endDate" = y_end WHERE id = y;
+  PERFORM pg_temp.g5_as('0006');
+  w := concat_ws(' ', pg_temp.g5_cancel(k1, ca, l_en), pg_temp.g5_tmove(k1, ca, m_en), pg_temp.g5_move(k1, ca, l_en, d_tue, '10:00'));
+  IF w IS DISTINCT FROM 'OK OK OK' THEN RAISE EXCEPTION 'klasslärare 428: the läsår does not mend: %', w; END IF;
   -- What a draft is about, and who wrote it, is fixed.
   PERFORM pg_temp.g5_refuses(format($q$UPDATE "ClassTeacherChanges" SET kind = 'TEMPLATE_SPLIT', "keepEnd" = '09:00' WHERE id = %L$q$, c), 'CT400', 'changing the kind of a draft');
   PERFORM pg_temp.g5_refuses(format($q$UPDATE "ClassTeacherChanges" SET "masterLessonId" = %L WHERE id = %L$q$, m_en, c), 'CT400', 'pointing a draft at another lesson');
@@ -48291,6 +48666,14 @@ BEGIN
   DELETE FROM "ClassTeacherChanges" WHERE id = c;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 428: K2 discarded a draft of a class they are not klasslärare of'; END IF;
+  -- With a WHERE that reads a column, the reading arm already hides the draft; without one only the writing arm's own
+  -- test of the class stands between K2 and every draft of the school.
+  UPDATE "ClassTeacherChanges" SET "updatedAt" = now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 428: K2 touched % drafts of a class they are not klasslärare of', n; END IF;
+  DELETE FROM "ClassTeacherChanges";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'klasslärare 428: K2 discarded % drafts of a class they are not klasslärare of', n; END IF;
   PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_CANCEL', %L, %L, '{}')$q$, school, y, ca, l_en, app.class_teacher_calendar_version(l_en)),
                              '42501', 'K2 cancelling a lesson of KL4A');
   FOREACH v IN ARRAY ARRAY['0008', '0011', '0012', '0031', '0032'] LOOP
@@ -48405,6 +48788,7 @@ DECLARE
   school uuid;
   ca uuid; cb uuid; cc uuid; cd uuid;
   sched uuid;
+  y uuid; lk2 uuid;
   r record;
   who text;
   n bigint;
@@ -48419,6 +48803,9 @@ BEGIN
   SELECT id INTO cc FROM "StudentGroups" WHERE "schoolId" = school AND name = 'KL4C';
   SELECT id INTO cd FROM "StudentGroups" WHERE "schoolId" = school AND name = 'KL4D';
   SELECT id INTO sched FROM "Users" WHERE "schoolId" = school AND email = 'kl-schema@example.invalid';
+  SELECT g."academicYearId" INTO y FROM "StudentGroups" g WHERE g.id = cb;
+  SELECT cl.id INTO lk2 FROM "CalendarLessons" cl JOIN "Subjects" s ON s.id = cl."subjectId"
+   WHERE cl."studentGroupId" = cb AND s."code" = 'KLMA' AND cl.date > current_date AND extract(isodow FROM cl.date) = 1;
 
   -- WHO ACTS. K1 for KL4A: the schemaläggare who appointed them, with the profile and HR-läs the claims carry.
   PERFORM pg_temp.g5_as('0006');
@@ -48440,6 +48827,19 @@ BEGIN
   PERFORM pg_temp.g5_as('0007');
   SELECT * INTO r FROM app.class_teacher_actor(cb);
   IF r."userId" IS DISTINCT FROM sched THEN RAISE EXCEPTION 'klasslärare 429: K2 is acted for by %', r."userId"; END IF;
+  -- Only a teacher is acted for: one who has since become an administrator keeps the appointment and is no klasslärare.
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "Users" SET role = 'SCHOOL_ADMIN', "adminProfile" = 'LASARE' WHERE "schoolId" = school AND email = 'kl-k2@example.invalid';
+  PERFORM pg_temp.g5_as('0007');
+  PERFORM pg_temp.g5_refuses(format($q$SELECT * FROM app.class_teacher_actor(%L)$q$, cb), 'CT403', 'K2 once an administrator');
+  -- Nor does the appointment write a draft for an administrator: only a teacher's own draft passes the arm.
+  PERFORM pg_temp.g5_refuses(format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", kind, "calendarLessonId", "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, 'OCCASION_CANCEL', %L, %L, '{}')$q$, school, y, cb, lk2, app.class_teacher_calendar_version(lk2)),
+                             '42501', 'K2 once an administrator writing a draft');
+  PERFORM pg_temp.g5_as('0001');
+  UPDATE "Users" SET role = 'TEACHER', "adminProfile" = NULL WHERE "schoolId" = school AND email = 'kl-k2@example.invalid';
+  PERFORM pg_temp.g5_as('0007');
+  SELECT * INTO r FROM app.class_teacher_actor(cb);
+  IF r."userId" IS DISTINCT FROM sched THEN RAISE EXCEPTION 'klasslärare 429: K2 is not acted for again as a teacher: %', r."userId"; END IF;
 
   -- The appointer is deactivated, demoted, or loses a part of what the work needs: the appointment lapses, and mends when they are back.
   PERFORM pg_temp.g5_as('0001');

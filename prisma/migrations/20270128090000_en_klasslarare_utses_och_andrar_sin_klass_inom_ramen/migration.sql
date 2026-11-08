@@ -47,6 +47,11 @@
 --     group takes pupils of the class out of (REPLACING_GROUP), a teacher shared
 --     with another school (SHARED_TEACHER) and a room lent to or from another
 --     school (SHARED_ROOM).
+--   * A läsår that has ended. The appointment is for one läsår; when the school's
+--     calendar has passed its last day the class's grundschema and dated lessons
+--     are history that statistics and reports read, and nothing of them is the
+--     klasslärare's to change (YEAR_ENDED). A date to move a lesson to must lie
+--     inside the läsår (TARGET_CLOSED).
 --   * Published times behind a gate. Nothing a klasslärare writes reaches the
 --     timetable except through publication: the draft is its own table, a
 --     lesson already past or begun is closed (PAST), and so is one that has a
@@ -451,6 +456,24 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   )
 $$;
 
+-- Has the class's läsår ended, on the school's clock? Then the appointment is
+-- history: the grundschema and the dated lessons of a finished year are what
+-- statistics and reports read, and the activation of the next year leaves the
+-- appointments where they were. Internal (the school is an argument): the
+-- pieces and the frame call it.
+CREATE FUNCTION app.class_teacher_year_ended_in(p_school uuid, p_class uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT EXISTS (
+    SELECT 1
+      FROM "StudentGroups" g
+      JOIN "AcademicYears" y ON y."id" = g."academicYearId" AND y."schoolId" = g."schoolId"
+      JOIN "Schools" s ON s."id" = g."schoolId"
+     WHERE g."id" = p_class
+       AND g."schoolId" = p_school
+       AND y."endDate" < (now() AT TIME ZONE s."timezone")::date
+  )
+$$;
+
 -- A target room: the school's own, not lent, and not one that needs approval.
 CREATE FUNCTION app.class_teacher_room_refusal_in(p_school uuid, p_room uuid) RETURNS text
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
@@ -544,6 +567,9 @@ DECLARE
   m "MasterLessons";
   refusal text;
 BEGIN
+  IF app.class_teacher_year_ended_in(p_school, p_class) THEN
+    RETURN 'YEAR_ENDED';
+  END IF;
   refusal := app.class_teacher_master_refusal_in(p_school, p_teacher, p_class, p_master);
   IF refusal IS NOT NULL THEN
     RETURN refusal;
@@ -570,6 +596,9 @@ DECLARE
   tz text;
   refusal text;
 BEGIN
+  IF app.class_teacher_year_ended_in(p_school, p_class) THEN
+    RETURN 'YEAR_ENDED';
+  END IF;
   SELECT * INTO c FROM "CalendarLessons" x WHERE x."id" = p_calendar AND x."schoolId" = p_school;
   IF NOT FOUND THEN
     RETURN 'LESSON_GONE';
@@ -642,7 +671,6 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" A
 DECLARE
   school uuid := app.current_school_id();
   tz text;
-  today date;
   refusal text;
   m "MasterLessons";
   first_minutes numeric;
@@ -655,7 +683,6 @@ BEGIN
     RETURN 'NOT_APPOINTED';
   END IF;
   SELECT s."timezone" INTO tz FROM "Schools" s WHERE s."id" = school;
-  today := (now() AT TIME ZONE tz)::date;
 
   IF p_kind IN ('OCCASION_MOVE', 'OCCASION_CANCEL', 'OCCASION_ROOM') THEN
     IF p_calendar IS NULL THEN
@@ -669,11 +696,19 @@ BEGIN
       IF p_target_date IS NULL OR p_target_start IS NULL OR p_target_end IS NULL THEN
         RETURN 'TARGET_MISSING';
       END IF;
-      IF p_target_date < today THEN
+      -- By the instant, not the day: today at a clock that has passed is the past.
+      IF ((p_target_date + p_target_start) AT TIME ZONE tz) <= now() THEN
         RETURN 'PAST';
       END IF;
       IF extract(isodow FROM p_target_date) > 5 THEN
         RETURN 'WEEKEND';
+      END IF;
+      -- A date outside the class's läsår is no school day of it.
+      IF NOT EXISTS (SELECT 1 FROM "StudentGroups" g
+                       JOIN "AcademicYears" y ON y."id" = g."academicYearId" AND y."schoolId" = g."schoolId"
+                      WHERE g."id" = p_class AND g."schoolId" = school
+                        AND p_target_date BETWEEN y."startDate" AND y."endDate") THEN
+        RETURN 'TARGET_CLOSED';
       END IF;
       IF NOT app.class_teacher_slot_open_in(school, p_class, extract(isodow FROM p_target_date)::integer, p_target_start, p_target_end) THEN
         RETURN 'TARGET_CLOSED';
@@ -1155,7 +1190,7 @@ BEGIN
      WHERE n.nspname = 'app' AND p.proname IN ('class_teacher_appointment_guard', 'class_teacher_change_guard',
                          'class_teacher_master_snapshot_in', 'class_teacher_calendar_snapshot_in', 'class_teacher_slot_open_in',
                          'class_teacher_room_is_lent_in', 'class_teacher_room_refusal_in', 'class_teacher_master_refusal_in',
-                         'class_teacher_master_state_in', 'class_teacher_calendar_refusal_in')
+                         'class_teacher_master_state_in', 'class_teacher_calendar_refusal_in', 'class_teacher_year_ended_in')
   LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', t);
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
