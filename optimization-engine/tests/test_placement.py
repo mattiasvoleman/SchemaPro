@@ -722,6 +722,22 @@ class TestSharedRooms:
 
         assert _solve(payload, day_end=540).status in {"OPTIMAL", "FEASIBLE"}
 
+    def test_two_classes_locked_to_a_shared_hall_fit_the_hour_the_room_slot_count_would_refuse(self) -> None:
+        """Idrott locked to the hall (a room lock) for two classes of 20 in a hall of 50, one hour.
+
+        The pre-flight's "lesson slots against room slots" verdict counts one
+        lesson at a time per room and refuses the week (ROOM_LOCK_WEEK_TOO_SMALL)
+        unless it skips a room that can be shared; this hall holds both at once.
+        The common case: a school locks idrott to the hall and turns shared
+        rooms on.
+        """
+        hall = _gym()
+        requirements = [_requirement(IDROTT, group, requiredRoomType="GYM", size=20) for group in (CLASS_7A, CLASS_7B)]
+        lock = {"id": str(uuid4()), "subjectId": IDROTT, "kind": "LOCK", "roomType": None, "roomIds": [hall["id"]], "weight": 5}
+        payload = _payload(requirements, rooms=[hall], roomPreferences=[lock], placementRules=_shared("HARD"))
+
+        assert _solve(payload, day_end=540).status in {"OPTIMAL", "FEASIBLE"}
+
 
 def _refusal(payload: dict[str, object], **settings: object) -> InvalidScheduleInputError | None:
     """The named refusal the pre-flight gives the week, or None when it lets it through."""
