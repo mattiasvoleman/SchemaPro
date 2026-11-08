@@ -132,8 +132,10 @@ describe('the inventory of what hangs on a deleted row', () => {
     }
   });
 
-  it('counts every key to a group: an administrator reads them all', () => {
-    expect(GROUP_KEYS.filter((entry) => !('counted' in entry.tell))).toEqual([]);
+  it('counts every key to a group: an administrator reads them all, but the class’s monthly sums, which no policy lets anyone count', () => {
+    // The sums (Frånvarostatistik, 20270121090000) are read through the statistics’ doors alone and hold no pupil: a count
+    // under the caller’s RLS would say nought, so they are told as uncounted, with the reason, rather than counted wrongly.
+    expect(GROUP_KEYS.filter((entry) => !('counted' in entry.tell)).map((entry) => entry.table)).toEqual(['AbsenceStatsMonths']);
   });
 
   it.each([

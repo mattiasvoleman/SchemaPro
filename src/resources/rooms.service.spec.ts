@@ -560,4 +560,42 @@ describe('RoomsService', () => {
     });
   });
 
+  describe('canBeShared (Placeringsregler, regel 3)', () => {
+    it('creates a room exclusive unless the school said otherwise: the key is not written, the column’s default applies', async () => {
+      tx.room.create.mockResolvedValue({ id: ROOM_ID, canBeShared: false });
+
+      await service.create(dto(), testUser());
+
+      const data = (tx.room.create.mock.calls[0]?.[0] as { data: Record<string, unknown> }).data;
+      expect(data).not.toHaveProperty('canBeShared');
+    });
+
+    it('writes the mark a room is created with, and answers with the stored row', async () => {
+      const row = { id: ROOM_ID, capacity: 120, canBeShared: true };
+      tx.room.create.mockResolvedValue(row);
+
+      await expect(service.create(dto({ capacity: 120, canBeShared: true }), testUser())).resolves.toBe(row);
+
+      expect(tx.room.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ capacity: 120, canBeShared: true }),
+      });
+    });
+
+    it.each([true, false])('writes %s on an update, falsy included, and nothing else', async (mark) => {
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { canBeShared: mark }, testUser());
+
+      expect(tx.room.update).toHaveBeenCalledWith({ where: { id: ROOM_ID }, data: { canBeShared: mark } });
+    });
+
+    it('leaves the mark alone on an update that does not name it', async () => {
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { capacity: 30 }, testUser());
+
+      expect((tx.room.update.mock.calls[0]?.[0] as { data: Record<string, unknown> }).data).not.toHaveProperty('canBeShared');
+    });
+  });
 });
+

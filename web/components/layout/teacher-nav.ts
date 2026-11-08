@@ -8,6 +8,10 @@ export const TEACHER_NAV: NavGroup[] = [
     labelKey: null,
     items: [
       { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
+      // Klasslärarens schema (G5): the class's week and template, changed inside what the
+      // schemaläggare has opened. Always in the menu, as Frånvarobevakning is: a teacher who is
+      // nobody's klasslärare gets the page's own explanation. The week's icon.
+      { labelKey: "classSchedule", href: "/teacher/klass-schema", icon: CalendarDays },
       // Larm (Krisläge): the pupils of the teacher's groups to tick off when
       // the school starts an alarm. Second, so that it is in reach on a phone
       // without scrolling the menu. The attendance icon.
@@ -41,6 +45,10 @@ export const TEACHER_NAV: NavGroup[] = [
       // Kvittens: ask the guardians of the teacher's mentees to confirm a message. Always in
       // the menu: the page says so when the school has not turned it on. The attendance icon.
       { labelKey: "acknowledgements", href: "/teacher/acknowledgements", icon: ClipboardCheck },
+      // Checklistor: tick off the pupils of one's groups who have had an instruction, and keep a mentor
+      // class's consent list. Always in the menu: a teacher who teaches nobody gets an empty list, said
+      // kindly. The attendance icon.
+      { labelKey: "checklists", href: "/teacher/checklists", icon: ClipboardCheck },
       { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
     ],
   },

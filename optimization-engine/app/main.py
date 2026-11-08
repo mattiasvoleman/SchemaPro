@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.v1.exams import router as exams_router
 from app.api.v1.optimize import router as optimize_router
 from app.api.v1.optimize import run_solver
 from app.api.v1.rooms import router as rooms_router
@@ -292,6 +293,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(optimize_router)
     application.include_router(rooms_router)
     application.include_router(staffing_router)
+    application.include_router(exams_router)
     application.include_router(create_legacy_schedule_router())
 
     @application.get("/health", tags=["health"])

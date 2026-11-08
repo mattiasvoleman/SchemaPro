@@ -264,3 +264,36 @@ test("the SCB file saves the gateway's text as it came, names what the school fi
   expect(sheet.startsWith("\uFEFFSystem;Datum;Version;SkolenhetsKod;PersonNr;PersonNamn;")).toBe(true);
   expect(sheet.split("\r\n").slice(1).join("\r\n")).toBe(text);
 });
+
+test("Frånvarostatistik: the school's months, a class and a pupil's card each have the table beside the chart, and pass axe", async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const misses = await open(page, { url: "/sv/admin/reports?tab=absence-stats", persona: "admin" }, baseURL!);
+
+  // The school: the chart is an image that sends the reader to the table, which has every number.
+  await expect(page.getByRole("region", { name: "Skolan månad för månad" })).toBeVisible();
+  await expect(page.getByRole("img", { name: /Diagram över giltig och ogiltig frånvaro per månad/ }).first()).toBeVisible();
+  await expect(page.getByRole("table", { name: "Skolans frånvaro per månad" })).toBeVisible();
+  await expect(page.getByText("Ingen siffra: färre än 5 elever har markeringar").first()).toBeVisible();
+  await settle(page);
+  expect((await scanBothSchemes(page, "absence statistics, the school", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+
+  // A class: its months, its patterns and its pupils; focus moves to the class.
+  await page.getByRole("button", { name: "Visa klass 7A" }).click();
+  await expect(page.getByRole("heading", { level: 2, name: "Klass 7A" })).toBeFocused();
+  await expect(page.getByRole("table", { name: "Frånvaro per månad i klass 7A" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Frånvaro per veckodag" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Elevernas frånvaro i klassen" })).toBeVisible();
+  await settle(page);
+  expect((await scanBothSchemes(page, "absence statistics, a class", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+
+  // A pupil's card, with the months the marks do not reach said as 'ingen registrering'.
+  await page.getByRole("button", { name: /^Visa elevkort för / }).first().click();
+  await expect(page.getByRole("button", { name: "Skriv ut" })).toBeVisible();
+  await expect(page.getByText("Ingen registrering").first()).toBeVisible();
+  await settle(page);
+  expect((await scanBothSchemes(page, "absence statistics, a pupil's card", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+  expect(misses, MISSES).toEqual([]);
+});

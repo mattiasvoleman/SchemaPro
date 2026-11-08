@@ -236,6 +236,8 @@ describe("AppShell navigation", () => {
     expect(link("nav.schoolDay")).toHaveAttribute("href", "/teacher/school-day");
     // Kvittens: ask the guardians of the mentees to confirm a message, in the menu always.
     expect(link("nav.acknowledgements")).toHaveAttribute("href", "/teacher/acknowledgements");
+    // Checklistor: instruction proofs and consent lists, in the menu always.
+    expect(link("nav.checklists")).toHaveAttribute("href", "/teacher/checklists");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
@@ -300,6 +302,8 @@ describe("AppShell navigation", () => {
     expect(group("nav.scheduling")).toEqual([
       "nav.generate",
       "nav.timetable",
+      // Klasslärarens schema: beside the grid whose lessons they change.
+      "nav.classTeachers",
       "nav.gaps",
       "nav.publishing",
       "nav.schemavisaren",
@@ -320,6 +324,8 @@ describe("AppShell navigation", () => {
       "nav.absenceWatch",
       "nav.reportingRate",
       "nav.acknowledgements",
+      "nav.meals",
+      "nav.checklists",
       "nav.classBook",
     ]);
 
@@ -615,7 +621,10 @@ describe("AppShell navigation by administrator profile", () => {
     // A group with nothing left in it goes with its pages (both hidden by
     // the layout's style rule, so out of the accessibility tree too).
     for (const group of screen.getAllByText("nav.planning")) expect(group).not.toBeVisible();
-    for (const group of screen.getAllByText("nav.scheduling")) expect(group).not.toBeVisible();
+    // Scheduling keeps one page, Klasslärare, which every administrator opens (PAGE_GATES: null) and which offers each
+    // control to the profile that writes its area; the expedition reads who is klasslärare of which class there.
+    expect(hrefs()).toContain("/admin/class-teachers");
+    expect(screen.getAllByText("nav.scheduling")[0]).toBeVisible();
     expect(screen.getAllByText("nav.operations")[0]).toBeVisible();
   });
 

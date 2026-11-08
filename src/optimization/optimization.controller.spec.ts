@@ -340,7 +340,11 @@ describe('OptimizationController', () => {
         lessonsCreated: 3,
         versionId: RUN_ID,
       });
-      expect(candidates.apply).toHaveBeenCalledWith(JOB_ID, 'DIRECT', user);
+      expect(candidates.apply).toHaveBeenCalledWith(JOB_ID, 'DIRECT', user, undefined);
+
+      // Bästa möjliga schema: the digest the administrator accepted goes on to the service as it came.
+      await controller.applyCandidate(JOB_ID, { expectedMode: 'DRAFT', acceptedDeviations: 'd'.repeat(64) }, user);
+      expect(candidates.apply).toHaveBeenLastCalledWith(JOB_ID, 'DRAFT', user, 'd'.repeat(64));
 
       await controller.discardCandidates(YEAR_ID, user);
       expect(candidates.discard).toHaveBeenCalledWith(YEAR_ID, user);

@@ -478,4 +478,24 @@ export class NotificationDeliveryService {
     }
     return taken;
   }
+
+  /**
+   * A letter to one address that is no user (Måltidskollen's kitchen): no inbox row, no push and no opt-out to
+   * honour, because the address is the school's and there is no person behind it to choose. It takes its turn at
+   * the mail pace like every other mail (mailTurn), so the providers' rate holds for it too, and a mail that
+   * Resend refuses is logged and not sent again. It does not wait in the lanes: it is one mail, once a day.
+   *
+   * Answers false when the mail was not taken: Resend is not set up here, or Resend refused it, did not answer
+   * or the mail never got its turn (sendEmails says so), so the caller can leave its claim open and try again
+   * inside its window. True otherwise. Never throws, and never sends a letter twice by itself.
+   */
+  async sendLetter(address: string, subject: string, body: string): Promise<boolean> {
+    if (!this.emailConfigured()) return false;
+    try {
+      return await this.sendEmails([address], subject, body);
+    } catch (error) {
+      this.logger.warn(`Letter dispatch failed [${error instanceof Error ? error.name : 'unknown'}]`);
+      return false;
+    }
+  }
 }

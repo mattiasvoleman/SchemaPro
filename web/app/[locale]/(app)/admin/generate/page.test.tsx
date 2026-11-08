@@ -715,6 +715,185 @@ describe("the school's rules the generator keeps", () => {
     render(<GeneratePage />);
     expect(screen.queryByText("generate.ruleConsecutive")).toBeNull();
   });
+
+  describe("Placeringsregler", () => {
+    // The echo translator prints a key with its values in the order the page
+    // passes them: the weight, then the limits Salar och byggnader per dag holds to.
+    const line = (rule: "edge" | "places" | "shared", mode: "SOFT" | "HARD", values: string) =>
+      `placementRules.summary.${rule}.${mode}(${values})`;
+    const limit = (name: string, count: number) => `placementRules.summary.limit.${name}(${count})`;
+    const none = /placementRules\.summary\.(edge|places|shared)\./;
+
+    it("says nothing while every rule is off, or for an API that predates them", () => {
+      state.lunch = school({ placementEdgeMode: "OFF", placementPlacesMode: "OFF", placementSharedMode: "OFF" });
+      const { unmount } = render(<GeneratePage />);
+      expect(screen.queryByText(none)).toBeNull();
+      unmount();
+
+      state.lunch = school({});
+      render(<GeneratePage />);
+      expect(screen.queryByText(none)).toBeNull();
+    });
+
+    it("names each rule that is on, a Mjuk one with its weight, read-only", () => {
+      state.lunch = school({
+        placementEdgeMode: "SOFT",
+        placementEdgeWeight: 300,
+        placementSharedMode: "HARD",
+        placementSharedWeight: 400,
+      });
+      render(<GeneratePage />);
+
+      expect(screen.getByText(line("edge", "SOFT", "300|–"))).toBeInTheDocument();
+      expect(screen.getByText(line("shared", "HARD", "400|–"))).toBeInTheDocument();
+      expect(screen.queryByText(new RegExp(`summary\\.places`))).toBeNull();
+      // Lines of text, not controls: the rules are edited under Skolregler.
+      expect(screen.queryByRole("radio", { name: /mode\./ })).toBeNull();
+    });
+
+    it("lists the limits Salar och byggnader per dag holds to, a 1 among them and an empty one left out", () => {
+      state.lunch = school({
+        placementPlacesMode: "SOFT",
+        maxClassRoomsPerDay: 2,
+        maxTeacherRoomsPerDay: null,
+        maxClassBuildingsPerDay: null,
+        maxTeacherBuildingsPerDay: 1,
+      });
+      render(<GeneratePage />);
+
+      expect(
+        screen.getByText(line("places", "SOFT", `250|${limit("classRoom", 2)}, ${limit("teacherBuilding", 1)}`)),
+      ).toBeInTheDocument();
+    });
+  });
+});
+
+/*
+ * Bästa möjliga schema: the switch is the school's (Skolregler). On, this page
+ * says so among the rules, offers the mode in the Schemaförslag section, and
+ * under a run that was refused points at it — except where the refusal is one
+ * the mode keeps too.
+ */
+describe("Bästa möjliga schema", () => {
+  const school = (extra: Record<string, unknown>) => ({
+    id: "ls-1",
+    lunchEnabled: false,
+    lunchStartTime: "11:00",
+    lunchEndTime: "13:00",
+    lunchMinutes: 30,
+    diningSeats: null,
+    maxLessonsPerDayPerGroup: null,
+    ...extra,
+  });
+  const refused = (overrides: Record<string, unknown> = {}) => ({
+    id: "job-8",
+    status: "SUCCEEDED",
+    solverStatus: "INFEASIBLE",
+    conflictSummary: "x",
+    conflictSummaryCode: "LUNCH_HALL_CANNOT_SEAT_CLASSES",
+    conflictSummaryParams: { seats: 1, classes: 2 },
+    conflicts: [],
+    createdAt: "2026-10-07T10:00:00.000Z",
+    ...overrides,
+  });
+  const offer = () => screen.queryByRole("link", { name: "generate.bestEffortOfferLink" });
+  const sectionButton = () => screen.queryByRole("button", { name: "scheduleCandidates.section.startBestEffort" });
+
+  it("says the school has the mode on among the rules, and nothing while it is off or the API predates it", () => {
+    state.lunch = school({ generatorBestEffort: true });
+    const on = render(<GeneratePage />);
+    expect(screen.getByText("generate.ruleBestEffort")).toBeInTheDocument();
+    on.unmount();
+
+    state.lunch = school({ generatorBestEffort: false });
+    const off = render(<GeneratePage />);
+    expect(screen.queryByText("generate.ruleBestEffort")).toBeNull();
+    off.unmount();
+
+    state.lunch = school({});
+    render(<GeneratePage />);
+    expect(screen.queryByText("generate.ruleBestEffort")).toBeNull();
+  });
+
+  it("offers Ta fram bästa möjliga in the Schemaförslag section only while the school has it on", () => {
+    state.lunch = school({ generatorBestEffort: true });
+    const on = render(<GeneratePage />);
+    expect(sectionButton()).toBeInTheDocument();
+    on.unmount();
+
+    for (const lunch of [school({ generatorBestEffort: false }), school({}), null]) {
+      state.lunch = lunch;
+      const rendered = render(<GeneratePage />);
+      expect(sectionButton()).toBeNull();
+      rendered.unmount();
+    }
+  });
+
+  it.each([
+    ["INFEASIBLE", {}, false],
+    ["TIMEOUT", { solverStatus: "TIMEOUT", conflictSummaryCode: null }, true],
+  ])("points a refused run (%s) at the section that holds the mode, on this page", (_, overrides, timedOut) => {
+    state.lunch = school({ generatorBestEffort: true });
+    state.job = refused(overrides);
+    render(<GeneratePage />);
+
+    expect(screen.getByText(/generate\.bestEffortOffer(?!Link|Timeout)/)).toBeInTheDocument();
+    // Only after a TIMEOUT, where nothing was proved: the offer says the mode
+    // can give way where a longer Generera would not have had to (review of #285, LÅG-1).
+    expect(screen.queryByText(/generate\.bestEffortOfferTimeout/) !== null).toBe(timedOut);
+    // A plain anchor to the section: a locale link would leave the page.
+    expect(offer()).toHaveAttribute("href", "#candidates");
+    expect(document.getElementById("candidates")).not.toBeNull();
+  });
+
+  it("says nothing of it for a refused run while the switch is off, or the API predates it", () => {
+    state.job = refused();
+    state.lunch = school({ generatorBestEffort: false });
+    const off = render(<GeneratePage />);
+    expect(offer()).toBeNull();
+    off.unmount();
+
+    state.lunch = school({});
+    const old = render(<GeneratePage />);
+    expect(offer()).toBeNull();
+    old.unmount();
+
+    // The settings not read at all: nothing is offered on a guess.
+    state.lunch = null;
+    render(<GeneratePage />);
+    expect(offer()).toBeNull();
+  });
+
+  it("says nothing of it for a run that laid a timetable, or one that failed before the engine answered", () => {
+    state.lunch = school({ generatorBestEffort: true });
+    state.job = {
+      id: "job-9",
+      status: "SUCCEEDED",
+      solverStatus: "OPTIMAL",
+      lessonsGenerated: 3,
+      conflicts: [],
+      createdAt: "2026-10-07T10:00:00.000Z",
+    };
+    const laid = render(<GeneratePage />);
+    expect(offer()).toBeNull();
+    laid.unmount();
+
+    state.job = { id: "job-10", status: "FAILED", error: "boom", errorCode: null, conflicts: [], createdAt: "2026-10-07T10:00:00.000Z" };
+    render(<GeneratePage />);
+    expect(offer()).toBeNull();
+  });
+
+  it.each([
+    ["an unstaffed post", "STAFF_UNSTAFFED_REQUIREMENTS"],
+    ["a half-locked parallel block", "BLOCK_PARTLY_LOCKED_SUMMARY"],
+  ])("does not offer it for the gateway's own refusal over %s, which the mode keeps too", (_, code) => {
+    state.lunch = school({ generatorBestEffort: true });
+    state.job = refused({ conflictSummaryCode: code, conflictSummaryParams: { count: 1 } });
+    render(<GeneratePage />);
+
+    expect(offer()).toBeNull();
+    expect(screen.queryByText(/generate\.bestEffortOffer/)).toBeNull();
+  });
 });
 
 /*

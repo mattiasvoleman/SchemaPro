@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import type { LunchSetting } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { offeredMode } from '../common/placement-modes';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { toWallClock } from '../common/utils/time';
@@ -34,10 +35,25 @@ function toResponse(row: LunchSetting): LunchSettingsResponse {
     ...row,
     lunchStartTime: toWallClock(row.lunchStartTime),
     lunchEndTime: toWallClock(row.lunchEndTime),
+    // A HARD that rule 1 or 2 is not offered at (the CHECK keeps one out of the
+    // table) is read as the SOFT the generator holds it at, so the card draws
+    // the mode that is applied and a save does not send the refused one back.
+    placementEdgeMode: offeredMode('edge', row.placementEdgeMode),
+    placementPlacesMode: offeredMode('places', row.placementPlacesMode),
   };
 }
 import { parseTimeString } from '../common/utils/time';
 import type { UpsertLunchSettingsDto } from './dto/lunch-settings.dto';
+import {
+  assertPlacesHaveALimit,
+  edgeCannotBeHard,
+  placesCannotBeHard,
+  placesNeedALimit,
+  isPlacesNeedALimitCheck,
+  placementDataOf,
+  touchesPlacesRule,
+  type StoredPlacesRule,
+} from './placement-rules';
 
 /**
  * The solver's time grid, restated.
@@ -79,6 +95,12 @@ export class LunchSettingsService {
   ): Promise<LunchSettingsResponse> {
     const schoolId = requireSchoolId(user);
     this.assertFitsTheSolverGrid(dto);
+    // Rules 1 and 2 are offered as OFF or SOFT until a hard one is measured
+    // (BESLUT 3 and 4 in the PR of Placeringsregler); the database refuses
+    // them for every other way in (…_off_or_soft_check), the engine still
+    // knows HARD. Only rule 3 is offered hard (src/common/placement-modes.ts).
+    if (dto.placementEdgeMode === 'HARD') throw edgeCannotBeHard();
+    if (dto.placementPlacesMode === 'HARD') throw placesCannotBeHard();
 
     const data = {
       lunchEnabled: dto.lunchEnabled,
@@ -97,19 +119,52 @@ export class LunchSettingsService {
       ...(dto.generatorKeepsConsecutiveTeaching !== undefined
         ? { generatorKeepsConsecutiveTeaching: dto.generatorKeepsConsecutiveTeaching }
         : {}),
+      // Bästa möjliga schema: the school's switch, and an older tab's PUT
+      // that names none must not take back what a colleague turned on.
+      ...(dto.generatorBestEffort !== undefined ? { generatorBestEffort: dto.generatorBestEffort } : {}),
+      // Placeringsregler: the columns the request names, and only those.
+      ...placementDataOf(dto),
     };
 
     try {
       return toResponse(
-        await this.prisma.withRls(user, (tx) =>
-          tx.lunchSetting.upsert({
+        await this.prisma.withRls(user, async (tx) => {
+          // Rule 2 that is on needs a limit, judged on the row as it would
+          // be, so the stored row is read, in this same transaction, only when
+          // the request says something about that rule.
+          let stored: StoredPlacesRule | null = null;
+          if (touchesPlacesRule(dto)) {
+            stored = await tx.lunchSetting.findUnique({
+              where: { schoolId },
+              select: {
+                placementPlacesMode: true,
+                maxClassRoomsPerDay: true,
+                maxTeacherRoomsPerDay: true,
+                maxClassBuildingsPerDay: true,
+                maxTeacherBuildingsPerDay: true,
+              },
+            });
+            assertPlacesHaveALimit(dto, stored);
+          }
+          return tx.lunchSetting.upsert({
             where: { schoolId },
-            create: { schoolId, ...data },
+            // INSERT ... ON CONFLICT DO UPDATE: Postgres judges the CHECKs on
+            // the row the create half proposes BEFORE it finds the conflict.
+            // A request that names rule 2's mode and not its limits (absent
+            // keeps, says the contract) proposes a row with no limit, and
+            // LunchSettings_placementPlaces_needs_a_limit_check refuses it
+            // although the stored row is fine. So the create half carries the
+            // stored rule 2 under what the request names. A school's first
+            // row has no stored rule (null) and starts from the defaults.
+            create: { schoolId, ...stored, ...data },
             update: data,
-          }),
-        ),
+          });
+        }),
       );
     } catch (error) {
+      // The database's CHECK says the same as the read above, for the request
+      // that raced another between the read and the write.
+      if (isPlacesNeedALimitCheck(error)) throw placesNeedALimit();
       rethrowPrismaError(error);
     }
   }

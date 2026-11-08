@@ -98,6 +98,8 @@ describe('the family schedule (e2e)', () => {
           // Lektionslogg: none written for this lesson.
           topic: null,
           homework: null,
+          // Elevens lektion för dagen: the child is on this lesson as the class has it.
+          movedHere: false,
         },
       ],
       lunches: [],

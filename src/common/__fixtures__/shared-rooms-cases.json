@@ -1,0 +1,556 @@
+{
+  "seats": [
+    {
+      "name": "rule off",
+      "mode": "OFF",
+      "room": {
+        "canBeShared": true,
+        "capacity": 40
+      },
+      "seats": null
+    },
+    {
+      "name": "rule never written",
+      "mode": null,
+      "room": {
+        "canBeShared": true,
+        "capacity": 40
+      },
+      "seats": null
+    },
+    {
+      "name": "soft",
+      "mode": "SOFT",
+      "room": {
+        "canBeShared": true,
+        "capacity": 40
+      },
+      "seats": 40
+    },
+    {
+      "name": "hard",
+      "mode": "HARD",
+      "room": {
+        "canBeShared": true,
+        "capacity": 40
+      },
+      "seats": 40
+    },
+    {
+      "name": "room not marked",
+      "mode": "HARD",
+      "room": {
+        "canBeShared": false,
+        "capacity": 40
+      },
+      "seats": null
+    },
+    {
+      "name": "room mark missing",
+      "mode": "HARD",
+      "room": {
+        "capacity": 40
+      },
+      "seats": null
+    },
+    {
+      "name": "room without a capacity",
+      "mode": "HARD",
+      "room": {
+        "canBeShared": true,
+        "capacity": null
+      },
+      "seats": null
+    },
+    {
+      "name": "room with capacity zero",
+      "mode": "HARD",
+      "room": {
+        "canBeShared": true,
+        "capacity": 0
+      },
+      "seats": null
+    },
+    {
+      "name": "no room",
+      "mode": "HARD",
+      "room": null,
+      "seats": null
+    }
+  ],
+  "crowded": [
+    {
+      "name": "two lessons whose pupils fit the seats share the room",
+      "seats": 6,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2"
+          ]
+        }
+      ],
+      "crowded": []
+    },
+    {
+      "name": "two lessons whose pupils do not fit the seats clash",
+      "seats": 3,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2"
+          ]
+        }
+      ],
+      "crowded": [
+        0
+      ]
+    },
+    {
+      "name": "exactly the seats is a fit",
+      "seats": 4,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2"
+          ]
+        }
+      ],
+      "crowded": []
+    },
+    {
+      "name": "a pupil on both lessons counts once",
+      "seats": 3,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "a2",
+            "b1"
+          ]
+        }
+      ],
+      "crowded": []
+    },
+    {
+      "name": "a pupil on both lessons counted once can still be too many",
+      "seats": 2,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "a2",
+            "b1"
+          ]
+        }
+      ],
+      "crowded": [
+        0
+      ]
+    },
+    {
+      "name": "every pair fits and all three do not: the room clashes with both",
+      "seats": 4,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2"
+          ]
+        },
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "c1",
+            "c2"
+          ]
+        }
+      ],
+      "crowded": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "every pair fits and the lessons are never three at once: no clash",
+      "seats": 4,
+      "candidate": {
+        "start": 480,
+        "end": 600,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2"
+          ]
+        },
+        {
+          "start": 540,
+          "end": 600,
+          "pupils": [
+            "c1",
+            "c2"
+          ]
+        }
+      ],
+      "crowded": []
+    },
+    {
+      "name": "a stretch of the lesson that holds all three clashes with both",
+      "seats": 4,
+      "candidate": {
+        "start": 480,
+        "end": 600,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 570,
+          "pupils": [
+            "b1",
+            "b2"
+          ]
+        },
+        {
+          "start": 540,
+          "end": 600,
+          "pupils": [
+            "c1",
+            "c2"
+          ]
+        }
+      ],
+      "crowded": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "only the lessons in the overfull stretch are named",
+      "seats": 3,
+      "candidate": {
+        "start": 480,
+        "end": 600,
+        "pupils": [
+          "a1"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2",
+            "b3"
+          ]
+        },
+        {
+          "start": 540,
+          "end": 600,
+          "pupils": [
+            "c1"
+          ]
+        }
+      ],
+      "crowded": [
+        0
+      ]
+    },
+    {
+      "name": "odd and even weeks never meet, so three lessons of two fit four seats",
+      "seats": 4,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ],
+        "recurrence": "ALL_WEEKS"
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2"
+          ],
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "c1",
+            "c2"
+          ],
+          "recurrence": "EVEN_WEEKS"
+        }
+      ],
+      "crowded": []
+    },
+    {
+      "name": "an odd-week lesson beside an even-week one shares nothing, however many pupils",
+      "seats": 2,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2",
+          "a3",
+          "a4",
+          "a5"
+        ],
+        "recurrence": "ODD_WEEKS"
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2",
+            "b3",
+            "b4",
+            "b5"
+          ],
+          "recurrence": "EVEN_WEEKS"
+        }
+      ],
+      "crowded": []
+    },
+    {
+      "name": "an every-week lesson beside two odd-week ones is three in the odd weeks",
+      "seats": 4,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ],
+        "recurrence": "ALL_WEEKS"
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2"
+          ],
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "c1",
+            "c2"
+          ],
+          "recurrence": "ODD_WEEKS"
+        }
+      ],
+      "crowded": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "a lesson whose pupils are unknown clashes whatever the seats",
+      "seats": 100,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": []
+        }
+      ],
+      "crowded": [
+        0
+      ]
+    },
+    {
+      "name": "a candidate whose pupils are unknown clashes with every lesson beside it",
+      "seats": 100,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": []
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1"
+          ]
+        },
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "c1"
+          ]
+        }
+      ],
+      "crowded": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "back to back lessons are not in the room together",
+      "seats": 1,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 540,
+          "end": 600,
+          "pupils": [
+            "b1",
+            "b2"
+          ]
+        }
+      ],
+      "crowded": []
+    },
+    {
+      "name": "a lesson at another hour is not counted",
+      "seats": 4,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [
+        {
+          "start": 480,
+          "end": 540,
+          "pupils": [
+            "b1",
+            "b2"
+          ]
+        },
+        {
+          "start": 780,
+          "end": 840,
+          "pupils": [
+            "c1",
+            "c2",
+            "c3",
+            "c4",
+            "c5"
+          ]
+        }
+      ],
+      "crowded": []
+    },
+    {
+      "name": "no other lesson, nothing to clash with",
+      "seats": 1,
+      "candidate": {
+        "start": 480,
+        "end": 540,
+        "pupils": [
+          "a1",
+          "a2"
+        ]
+      },
+      "others": [],
+      "crowded": []
+    }
+  ]
+}

@@ -23,12 +23,14 @@ import { halfPairs, type GroupHalf } from './class-halves';
 import {
   keysShare,
   leavesLesson,
+  lessonPupils,
   pupilKeysOf,
   replacedSubjectOf,
   replacementsOf,
   replacingBySubject,
   replacingGroupsOfNamed,
 } from './replacing-groups';
+import { crowdedWith } from './shared-rooms';
 
 export type YearClashKind = 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
 
@@ -92,6 +94,15 @@ export interface YearClashInput {
    * their members keep their own lessons whatever they replace (keptByOf).
    */
   kept?: string[];
+  /**
+   * The rooms that may hold several lessons at once, with their seats (Delade
+   * salar, shared-rooms.ts sharedSeatsByRoom): the rooms the school marked
+   * shareable, with a capacity, while the rule is on. Two lessons in such a
+   * room at one time are no ROOM clash while the pupils running together fit
+   * its seats; every other room stays exclusive. Absent or empty: every room
+   * is, as it was before the rule.
+   */
+  sharedRooms?: Array<{ roomId: string; seats: number }>;
 }
 
 export interface YearClashHit {
@@ -279,9 +290,57 @@ export function yearClashes(input: YearClashInput): Map<string, YearClashHit[]> 
     else byDay.set(placement.dayOfWeek, [placement]);
   }
 
+  // Delade salar (shared-rooms.ts): who sits in a lesson, asked only of the
+  // lessons standing in a shared room, so a school without one pays nothing.
+  const seatsOf = new Map((input.sharedRooms ?? []).map((room) => [room.roomId, room.seats]));
+  let membersOf: Map<string, Set<string>> | null = null;
+  const pupilCache = new Map<string, Set<string>>();
+  const pupilsOf = (placement: Placement): Set<string> => {
+    let pupils = pupilCache.get(placement.id);
+    if (!pupils) {
+      if (!membersOf) {
+        membersOf = new Map();
+        for (const [studentId, groups] of groupsByStudent) {
+          for (const group of groups) {
+            const set = membersOf.get(group);
+            if (set) set.add(studentId);
+            else membersOf.set(group, new Set([studentId]));
+          }
+        }
+      }
+      pupils = new Set(lessonPupils({ ...scopeOf(placement), named: placement.students }, membersOf, bySubject).on);
+      pupilCache.set(placement.id, pupils);
+    }
+    return pupils;
+  };
+  const occupantOf = (placement: Placement) => ({
+    start: placement.start,
+    end: placement.end,
+    recurrence: placement.recurrence,
+    pupils: pupilsOf(placement),
+  });
+
   const result = new Map<string, YearClashHit[]>();
   for (const candidate of placements) {
     const hits: YearClashHit[] = [];
+    // The lessons in this one's shared room that it cannot stay with, asked of
+    // the room's whole company at once (two classes can fit a hall three do
+    // not). Null: the room is exclusive and every lesson beside it clashes.
+    const seats = candidate.roomId ? seatsOf.get(candidate.roomId) : undefined;
+    let crowded: ReadonlySet<string> | null = null;
+    if (seats !== undefined) {
+      const mates = (byDay.get(candidate.dayOfWeek) ?? []).filter(
+        (other) =>
+          other.id !== candidate.id &&
+          other.roomId === candidate.roomId &&
+          overlaps(candidate.start, candidate.end, other.start, other.end) &&
+          weeksCanOverlap(candidate, other),
+      );
+      crowded =
+        mates.length === 0
+          ? new Set<string>()
+          : new Set([...crowdedWith(seats, occupantOf(candidate), mates.map(occupantOf))].map((index) => mates[index]!.id));
+    }
     for (const other of byDay.get(candidate.dayOfWeek) ?? []) {
       if (other.id === candidate.id) continue;
       const shareTheClock = overlaps(candidate.start, candidate.end, other.start, other.end);
@@ -296,7 +355,7 @@ export function yearClashes(input: YearClashInput): Map<string, YearClashHit[]> 
       if (shareTheClock && candidate.teachers.some((id) => other.teachers.includes(id))) {
         hits.push({ kind: 'TEACHER', otherLessonId: other.id });
       }
-      if (shareTheClock && candidate.roomId && other.roomId === candidate.roomId) {
+      if (shareTheClock && candidate.roomId && other.roomId === candidate.roomId && (crowded === null || crowded.has(other.id))) {
         hits.push({ kind: 'ROOM', otherLessonId: other.id });
       }
       const groupClash =

@@ -4781,18 +4781,37 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         PupilGaps,
         FixedLessonMargin,
         Rast,
+        Relaxation,
         ScheduledLesson,
         ScheduleRules,
         SearchOptions,
         SiteTravelTime,
+        PlaceLimits,
+        PlacementRules,
+        SharedRooms,
+        SubjectEdge,
+        SubjectEdges,
     )
 
     # A room's site rides with it only when the walk is on (Restid i
     # generatorn); the gateway sends the five others always.
+    # Placeringsregler adds two, both sent only by a school that turned the
+    # rule on: the room's building (a limit on building changes) and whether
+    # it is shared (a limit on the pupils in it together).
     assert _field_names(AnonymousRoom) == {
         "id", "capacity", "type", "minGradeLevel", "maxGradeLevel", "siteId",
+        "building", "shareable",
     }
     assert _field_names(SiteTravelTime) == {"siteAId", "siteBId", "minutes"}
+    # Placeringsregler: the gateway's PLACEMENT_RULE_FIELDS and its sub-blocks.
+    assert _field_names(PlacementRules) == {"subjectEdges", "places", "sharedRooms"}
+    assert _field_names(SubjectEdges) == {"mode", "weight", "subjects"}
+    assert _field_names(SubjectEdge) == {"subjectId", "notFirst", "notLast"}
+    assert _field_names(PlaceLimits) == {
+        "mode", "weight", "maxClassRooms", "maxTeacherRooms",
+        "maxClassBuildings", "maxTeacherBuildings",
+    }
+    assert _field_names(SharedRooms) == {"mode", "weight"}
     # Elevernas håltimmar: counts and anonymous keys, never a pupil. The
     # gateway's PUPIL_GAP_FIELDS, COHORT_FIELDS and MARGIN_FIELDS.
     assert _field_names(PupilGaps) == {"cohorts", "fixedMargins"}
@@ -4824,13 +4843,24 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # Elevernas håltimmar: sent only when a school's Skolregler turn it on
         # and the week has pupils; every other payload omits it.
         "pupilGaps",
+        # Placeringsregler: sent only when a school's Skolregler turn a rule
+        # on; every other payload omits it, and so builds main's model.
+        "placementRules",
         # Optional, and sent only for a schemaförslag candidate: a Generera's
         # request has never carried it and still does not. An engine older
         # than this field answers it with a 422 whose one error is
         # extra_forbidden at ['body', 'search'], which is the shape the
         # gateway reads as ENGINE_LACKS_CANDIDATES.
         "search",
+        # Optional, and sent only for a Bästa möjliga schema candidate (the
+        # school's switch is on and the run asked for the mode): every other
+        # payload omits it and is solved as before. An engine older than this
+        # field answers it with a 422 whose one error is extra_forbidden at
+        # ['body', 'relaxation'], which the gateway reads as
+        # ENGINE_LACKS_BEST_EFFORT. See Relaxation and relaxation.py.
+        "relaxation",
     }
+    assert _field_names(Relaxation) == {"mode"}
     # How a candidate's search is run, never what it searches for: the seed
     # and the workers reach CP-SAT's parameters on the generation solves, the
     # budget is min'd with the configured one, and probes false skips the
@@ -4998,6 +5028,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "pupilGroupIds",
         # A/B-veckor: sent only on a lock of odd or even weeks only.
         "recurrence",
+        # Placeringsregler: sent only on a lock in a shared room, with the
+        # pupils who sit it.
+        "studentCount",
     }
     # The response's one row. teacherId is a split post's lead of THIS lesson,
     # and omitted wherever it is None — on every lesson of every other post —

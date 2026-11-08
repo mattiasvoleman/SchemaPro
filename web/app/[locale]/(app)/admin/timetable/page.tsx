@@ -98,6 +98,16 @@ const VersionsDialog = lazy(() =>
   })),
 );
 /*
+ * Byten och flyttar, fetched the first time "Föreslå byten" is pressed in
+ * Justera: the swap search is asked a few times a day and the grid needs none
+ * of its code (see swap-dialog.tsx).
+ */
+const SwapDialog = lazy(() =>
+  import("@/components/schedule/swap-dialog").then((module) => ({
+    default: module.SwapDialog,
+  })),
+);
+/*
  * The lesson dialogs — Lägg till, Justera, Publicera and the shared-move and
  * placement questions after a drag — fetched as one chunk right after the page
  * mounts (see components/schedule/lesson-dialogs.ts for why one). Justera,
@@ -451,6 +461,10 @@ export default function TimetablePage() {
   // Whether the room dialog has been asked for at all this visit, which is what
   // decides that its code is fetched — see where it is rendered.
   const [roomsUsed, setRoomsUsed] = useState(false);
+  // Byten och flyttar: the lesson it was asked about, and the latch that keeps
+  // the dialog out of the tree until the first press (as roomsUsed above).
+  const [swapLessonId, setSwapLessonId] = useState<string | null>(null);
+  const [swapsUsed, setSwapsUsed] = useState(false);
   /*
    * Whether each of the four lifted dialogs has been opened this visit, which
    * is what mounts it and so fetches its code — set during render, as
@@ -629,7 +643,7 @@ export default function TimetablePage() {
   );
 
   /** Groups sharing students — the manual-edit twin of the engine's pairs, halves included. */
-  const groupConflictMap = useMemo(
+  const pupilRelation = useMemo(
     () => buildGroupConflictMap(studentGroupOf, memberships ?? [], groups),
     [studentGroupOf, memberships, groups],
   );
@@ -643,7 +657,7 @@ export default function TimetablePage() {
   /**
    * The same pupils, counted rather than merely paired.
    *
-   * Deliberately not built on groupConflictMap above: that is a BOOLEAN "these
+   * Deliberately not built on pupilRelation above: that is a BOOLEAN "these
    * two groups share at least one pupil", which cannot tell a two-pupil choir
    * from a fourteen-pupil maths half and never reads a lesson's individually
    * named studentIds at all. Both indexes are wanted — one answers "may these
@@ -652,6 +666,28 @@ export default function TimetablePage() {
   const rosterIndex = useMemo(
     () => buildRosterIndex(studentGroupOf, memberships, groups),
     [studentGroupOf, memberships, groups],
+  );
+
+  /*
+   * Delade salar: two classes in a hall the school lets be shared are no ROOM
+   * clash while their pupils fit its seats. The check is fetched on demand,
+   * only once Skolregler hold the rule on, so a school that never does pays no
+   * byte for it (lib/shared-rooms-board.ts); until it has arrived every room is
+   * exclusive, the safe reading. The relation it lays on is the one above.
+   */
+  const sharedMode = lunchSettings?.placementSharedMode;
+  const sharing = sharedMode === "SOFT" || sharedMode === "HARD";
+  const [withSharing, setWithSharing] = useState<
+    typeof import("@/lib/shared-rooms-board").withSharedRooms | null
+  >(null);
+  useEffect(() => {
+    if (sharing) {
+      import("@/lib/shared-rooms-board").then((board) => setWithSharing(() => board.withSharedRooms), () => {});
+    }
+  }, [sharing]);
+  const groupConflictMap = useMemo(
+    () => (withSharing ? withSharing(pupilRelation, rooms ?? [], sharedMode, rosterIndex) : pupilRelation),
+    [withSharing, pupilRelation, rooms, sharedMode, rosterIndex],
   );
 
   const subjectById = useMemo(
@@ -1551,6 +1587,13 @@ export default function TimetablePage() {
    * under new ids, while here the ids are the same lessons in other rooms.
    */
   const afterRoomOptimization = useCallback(() => history.clear(), [history]);
+
+  /*
+   * A swap rewrote the days and clocks of lessons under the page, and its
+   * undo is the dialog's own toast. The undo stack of earlier steps would
+   * replay over it, so it goes, as after the room optimisation.
+   */
+  const afterSwap = useCallback(() => history.clear(), [history]);
 
   const lunchError = (error: unknown) =>
     toast.error(error instanceof ApiError ? error.message : tCommon("error"));
@@ -2463,6 +2506,13 @@ export default function TimetablePage() {
                 setEditing(null);
                 setRemoteEditing(null);
               }}
+              onSuggestSwaps={() => {
+                if (!editing) return;
+                setSwapLessonId(editing.id);
+                setSwapsUsed(true);
+                setEditing(null);
+                setRemoteEditing(null);
+              }}
               onCancel={() => setEditing(null)}
               onSave={doSaveEdit}
               savePending={updateLesson.isPending}
@@ -2552,6 +2602,28 @@ export default function TimetablePage() {
             teachers={teachers}
             groups={groups ?? []}
             onApplied={afterRoomOptimization}
+          />
+        </Suspense>
+      )}
+
+      {/* ---------------- Byten och flyttar ---------------- */}
+      {swapsUsed && (
+        <Suspense fallback={null}>
+          <SwapDialog
+            open={swapLessonId !== null}
+            onOpenChange={(open) => {
+              if (!open) setSwapLessonId(null);
+            }}
+            lessonId={swapLessonId}
+            lessonName={
+              swapLessonId && lessonById.has(swapLessonId) ? lessonName(lessonById.get(swapLessonId)!) : null
+            }
+            teacherName={(id) => {
+              const teacher = teacherById.get(id);
+              return teacher ? `${teacher.firstName} ${teacher.lastName}` : null;
+            }}
+            roomName={(id) => roomById.get(id)?.name ?? null}
+            onApplied={afterSwap}
           />
         </Suspense>
       )}

@@ -66,6 +66,9 @@ describe('SubjectsService', () => {
           // No ämnesfördelning: school rules are off until a school sets them.
           maxLessonsPerDay: null,
           minDaysBetween: null,
+          // No placement rule: a subject is unmarked until a school marks it.
+          notFirstInDay: false,
+          notLastInDay: false,
         },
       });
       // No code given, so the reference table is not consulted at all.
@@ -104,7 +107,31 @@ describe('SubjectsService', () => {
           loadFactor: 1,
           maxLessonsPerDay: null,
           minDaysBetween: null,
+          notFirstInDay: false,
+          notLastInDay: false,
         },
+      });
+    });
+
+    it('writes the two placement marks it was given (Placeringsregler, regel 1)', async () => {
+      tx.subject.create.mockResolvedValue({ id: SUBJECT_ID, name: 'Idrott', loadFactor: new Prisma.Decimal('1.000'), notFirstInDay: true, notLastInDay: true });
+
+      const answer = await service.create({ name: 'Idrott', notFirstInDay: true, notLastInDay: true }, testUser());
+
+      expect(tx.subject.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ notFirstInDay: true, notLastInDay: true }),
+      });
+      // The answer carries them under exactly these names, from the stored row.
+      expect(answer).toMatchObject({ notFirstInDay: true, notLastInDay: true });
+    });
+
+    it('writes one mark and leaves the other unmarked', async () => {
+      tx.subject.create.mockResolvedValue({ id: SUBJECT_ID, loadFactor: new Prisma.Decimal('1.000') });
+
+      await service.create({ name: 'Idrott', notLastInDay: true }, testUser());
+
+      expect(tx.subject.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ notFirstInDay: false, notLastInDay: true }),
       });
     });
 
@@ -272,6 +299,11 @@ describe('SubjectsService', () => {
       // Null is how the dialog clears a rule, and it must reach the column.
       ['maxLessonsPerDay as null', { maxLessonsPerDay: null }],
       ['minDaysBetween as null', { minDaysBetween: null }],
+      // Placeringsregler, regel 1: each mark on its own, and cleared with false.
+      ['notFirstInDay', { notFirstInDay: true }],
+      ['notLastInDay', { notLastInDay: true }],
+      ['notFirstInDay as false', { notFirstInDay: false }],
+      ['notLastInDay as false', { notLastInDay: false }],
     ])('a PATCH naming only %s writes it', async (field, patch) => {
       tx.subject.update.mockResolvedValue({ id: SUBJECT_ID });
       tx.roomType.findFirst.mockResolvedValue({ id: ROOM_TYPE_ID });

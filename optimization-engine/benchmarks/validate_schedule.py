@@ -712,6 +712,18 @@ def validate(grid, request, lessons) -> list[str]:
     return problems
 
 
+def _shared_rooms_of(request) -> dict:
+    """The shareable rooms of a school that turned regel 3 on, by id, with their capacity."""
+    rules = request.placement_rules
+    if rules is None or rules.shared_rooms is None:
+        return {}
+    return {
+        room.id: room.capacity
+        for room in request.rooms
+        if room.shareable and room.capacity is not None
+    }
+
+
 def _validate_week(grid, request, lessons) -> list[str]:
     """validate() on one week: every lesson of `request` runs in it."""
     problems: list[str] = []
@@ -725,6 +737,11 @@ def _validate_week(grid, request, lessons) -> list[str]:
         "student group": defaultdict(dict),
         "room": defaultdict(dict),
     }
+    # Placeringsregler, regel 3: a room the school marked shareable holds
+    # several lessons at once, and what it may not do is seat more pupils than
+    # it has (checked below, for the HARD rule). Every other room is exclusive.
+    shared_rooms = _shared_rooms_of(request)
+    seated: dict[tuple, int] = defaultdict(int)
     per_group_day: dict[tuple, list[tuple[int, int]]] = defaultdict(list)
     placed_by_requirement: dict = defaultdict(int)
     placed_lengths: dict = defaultdict(list)
@@ -764,6 +781,10 @@ def _validate_week(grid, request, lessons) -> list[str]:
         ):
             if resource is None:
                 continue
+            if kind == "room" and resource in shared_rooms:
+                for slot in slots:
+                    seated[(resource, slot)] += requirement.student_group_size
+                continue
             table = busy[kind][resource]
             for slot in slots:
                 if slot in table:
@@ -791,6 +812,25 @@ def _validate_week(grid, request, lessons) -> list[str]:
 
         per_group_day[(requirement.student_group_id, day_idx)].append(
             (start_slot, start_slot + duration))
+
+    if request.placement_rules and request.placement_rules.shared_rooms:
+        hard = request.placement_rules.shared_rooms.mode == "HARD"
+        for fixed in request.fixed_lessons:
+            if fixed.room_id in shared_rooms and fixed.student_count is not None:
+                try:
+                    first = grid.absolute_start(fixed.day_of_week, grid.parse_hhmmss(fixed.start_time))
+                    last = grid.absolute_start(fixed.day_of_week, grid.parse_hhmmss(fixed.end_time))
+                except ValueError:
+                    continue
+                for slot in range(first, last):
+                    seated[(fixed.room_id, slot)] += fixed.student_count
+        if hard:
+            for (room_id, slot), pupils in seated.items():
+                if pupils > shared_rooms[room_id]:
+                    problems.append(
+                        f"shared room {room_id} seats {pupils} pupils at absolute slot {slot}, "
+                        f"capacity {shared_rooms[room_id]}")
+                    break
 
     # Every requested lesson must be placed exactly as many times as requested.
     for requirement in request.requirements:

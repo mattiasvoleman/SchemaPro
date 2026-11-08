@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { readSharedMode, readSharedSeats } from '../common/shared-rooms.reader';
 import { clashPairs, yearClashes, type YearClashKind } from '../common/year-clashes';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
 import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
@@ -209,6 +210,14 @@ export async function clashFinding(
     if (!(error instanceof ConflictException)) throw error;
   }
 
+  // Delade salar: the rooms the school lets hold several lessons at once, with
+  // their seats, while Skolregler hold the rule on. Read only when the year has
+  // a lesson in a room at all, and then one setting and, with the rule on, one
+  // room read; a school that never turned it on is asked nothing more.
+  const roomIds = [...new Set(placed.flatMap((lesson) => (lesson.roomId ? [lesson.roomId] : [])))];
+  const sharedMode = roomIds.length === 0 ? 'OFF' : await readSharedMode(tx, { academicYearId });
+  const sharedRooms = [...(await readSharedSeats(tx, sharedMode, roomIds))].map(([roomId, seats]) => ({ roomId, seats }));
+
   const clashes = yearClashes({
     lessons: placed,
     constraints: constraints.map((row) => ({
@@ -222,6 +231,7 @@ export async function clashFinding(
     pupilBuffers: buffers,
     halves: allHalves,
     ...(replacing.length > 0 ? { replacing, academicYearId, kept } : {}),
+    ...(sharedRooms.length > 0 ? { sharedRooms } : {}),
   });
   const byId = new Map(placed.map((lesson) => [lesson.id, lesson]));
   const pairs = clashPairs(clashes);

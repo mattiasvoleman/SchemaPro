@@ -652,6 +652,27 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason: 'A candidate belongs to its run, which is not carried.',
   },
   /**
+   * Klasslärarens schema (20270128090000). An appointment names a teacher for
+   * ONE class of ONE läsår, in the name of the administrator who made it, and
+   * next year's classes are other rows: the new year's appointments are made
+   * again, by someone who then answers for them. The open hours are the
+   * schemaläggare's decision about the old year's raster, and the drafts are
+   * changes to the old year's lessons that were never published.
+   */
+  ClassTeacherAppointment: {
+    kind: 'SKIPPED',
+    reason:
+      'A klasslärare is appointed for one class of one läsår, by the administrator the work then runs as; next year has other classes and is appointed again.',
+  },
+  ClassTeacherOpenTime: {
+    kind: 'SKIPPED',
+    reason: 'The hours open to klasslärare are the schemaläggare’s decision about the old year’s schedule and are opened again for the new one.',
+  },
+  ClassTeacherChange: {
+    kind: 'SKIPPED',
+    reason: 'Drafts of changes to the old year’s lessons; a draft that was never published stays with the year it was written for.',
+  },
+  /**
    * Not carried, and not counted in the preview. A credit is the school's
    * decision about ONE date of the old year ("the friluftsdag 25 September
    * counts as 300 min idrott"); next year's friluftsdagar fall on other dates
@@ -765,6 +786,31 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason: 'The replacement lessons an activity of the old year wrote.',
   },
   /**
+   * Provplanering (20270127090000): an exam is of its year, and what it laid
+   * (an activity, bookings, invigilators) dated that year's days. The school's
+   * decisions (ExamPlanSettings) and the rooms it lets exams be written in
+   * (ExamRooms) are the school's, not a year's, and stay where they are.
+   */
+  Exam: {
+    kind: 'SKIPPED',
+    reason: 'An exam asked for and laid dates of the old year; the new year has its own exams.',
+  },
+  ExamGroup: {
+    kind: 'FOLLOWS',
+    parent: 'Exam',
+    reason: 'The classes and groups an exam of the old year was for.',
+  },
+  ExamSitting: {
+    kind: 'FOLLOWS',
+    parent: 'Exam',
+    reason: 'The rooms an exam of the old year was written in.',
+  },
+  ExamInvigilator: {
+    kind: 'FOLLOWS',
+    parent: 'ExamSitting',
+    reason: 'The teachers who kept watch at an exam of the old year.',
+  },
+  /**
    * The public viewer (20261011120000): a share link names a class or a
    * year's index of classes, so it is the old year's; the new year's classes
    * are shared again, by links of their own.
@@ -796,6 +842,19 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     kind: 'SKIPPED',
     reason:
       'The rastvaktsschema is the old year’s: the new year’s passes are planned against its own staff and rasts; the areas stay.',
+  },
+  /**
+   * Frånvarostatistik över tid (20270121090000): the sums of a class's month,
+   * counted by a nightly job from that month's lessons and marks, with no
+   * pupil in a row. A class of the old year stays (the activation closes it,
+   * it does not delete it) and keeps its months: they are the history the
+   * statistics read three läsår back, and the cohort is followed from class to
+   * class by predecessorId, not by copying a row.
+   */
+  AbsenceStatsMonth: {
+    kind: 'SKIPPED',
+    reason:
+      'The sums of the old year’s months stay with the old year’s classes, which the activation closes and keeps; the new year’s classes get their own months from the nightly count of their own lessons.',
   },
 };
 

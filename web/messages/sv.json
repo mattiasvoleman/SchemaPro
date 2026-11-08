@@ -225,12 +225,16 @@
     "scheduleExchange": "Schema som fil",
     "absenceWatch": "Frånvarobevakning",
     "acknowledgements": "Kvittens",
+    "checklists": "Checklistor",
     "reportingRate": "Rapporteringsgrad",
     "myReporting": "Min rapportering",
     "crisis": "Krisläge",
     "myCrisis": "Larm",
     "schemavisaren": "Schemavisaren",
-    "schoolDay": "Skolans dag"
+    "schoolDay": "Skolans dag",
+    "classSchedule": "Klassens schema",
+    "classTeachers": "Klasslärare",
+    "meals": "Måltidskollen"
   },
   "dashboard": {
     "title": "Översikt",
@@ -1546,6 +1550,9 @@
     "lessonsGenerated": "{count} grundschemapass genererade",
     "infeasibleHint": "Begränsningarna går inte att uppfylla samtidigt. Sammanfattningen och konflikterna nedan säger vad som behöver ändras.",
     "timeoutHint": "Lösaren hittade inget schema inom sin tidsbudget. Det betyder inte att dina krav är omöjliga — försök köra igen, eller be din administratör höja lösarens tidsgräns. Att lätta på snäva tillgänglighetsfönster gör också schemat lättare att hitta.",
+    "bestEffortOffer": "Skolan har Bästa möjliga schema på. Under Schemaförslag kan du lägga ett schema som bryter så få av skolans egna regler som möjligt och se vilka som gav vika.",
+    "bestEffortOfferLink": "Ta fram bästa möjliga",
+    "bestEffortOfferTimeout": "Generera hann inte bevisa något utan fick slut på tid: ett schema med avsteg kan komma tillbaka där en längre körning av Generera hade sluppit dem.",
     "conflicts": "Upptäckta konflikter",
     "noConflicts": "Inga konflikter rapporterade.",
     "notesTitle": "Önskemål som inte gick att hålla",
@@ -1572,6 +1579,7 @@
     "ruleTravel": "Generatorn håller restiden mellan skolområdena",
     "rulePupilGaps": "Generatorn håller nere elevernas håltimmar",
     "ruleConsecutive": "Generatorn försöker hålla lärarnas sammanhängande undervisning",
+    "ruleBestEffort": "Bästa möjliga schema är på: Schemaförslag kan lägga ett schema med avsteg från skolans regler",
     "rulesEdit": "Ändra",
     "noYearTitle": "{count, plural, one {En grupp} other {# grupper}} i timplansposterna saknar årskurs",
     "noYearBody": "Motorn läser ”ingen årskurs” som ”obegränsad”: ramtider och raster gäller inte för dessa gruppers lektioner, så de kan hamna rakt över en rast. Årskursen härleds ur medlemmarnas hemklasser, eller ur gruppens egen årskurs om den saknar medlemmar.",
@@ -1841,6 +1849,75 @@
     "stale": "Schemat har ändrats sedan förslaget räknades fram. Beräkna ett nytt förslag.",
     "undoStale": "Schemat har ändrats sedan optimeringen, så den går inte att ångra härifrån. Återställ versionen ”Före salsoptimering” under Versioner."
   },
+  "swaps": {
+    "title": "Byten och flyttar",
+    "body": "Lektioner som kan byta tid med den här utan att något dubbelbokas, och kedjor om tre där varje lektion tar nästa lektions tid. Varje förslag har prövats mot samma regler som en handflytt, och du ser vad det kostar innan något ändras. Lektionerna som byter tid står kvar som genererade, så nästa Generera kan flytta dem igen: lås dem om de ska ligga kvar.",
+    "computing": "Söker byten…",
+    "failed": "Förslagen kunde inte hämtas.",
+    "retry": "Försök igen",
+    "closeAction": "Stäng",
+    "parked": "Lektionen ligger på Parkering och har ingen tid att byta. Lägg tillbaka den i schemat först.",
+    "notPlaced": "Lektionen ligger inte i grundschemat och kan inte bytas.",
+    "lockedPicked": "Lektionen är låst. Du får flytta den, men generatorn lämnar den som den är tills du låst upp den.",
+    "withParallel": "Den här lektionen ligger parallellt med {count, plural, =1 {1 annan lektion} other {# andra lektioner}}. De flyttas alltid tillsammans.",
+    "none": "Inga byten eller kedjor går att göra utan att något dubbelbokas eller bryter en regel. Lås upp en lektion eller frigör en tid och sök igen.",
+    "found": "{count, plural, =1 {1 förslag} other {# förslag}}, de bästa först",
+    "truncated": "Sökningen avbröts när tiden var ute, så fler förslag kan finnas. Förslagen ovan är prövade.",
+    "swap": "Byte",
+    "chain": "Kedja om tre",
+    "picked": "Vald",
+    "locked": "Låst",
+    "moveLine": "{from} → {to}",
+    "unnamedTeacher": "okänd lärare",
+    "follows": "Följer med",
+    "followsBecause": "{lesson} ({reason})",
+    "parallel": {
+      "BLOCK": "i samma block",
+      "SAME_TIMES": "block på samma tider",
+      "HALF": "andra halvan av klassen",
+      "REPLACING": "ersättande grupp"
+    },
+    "otherSchools": "Andra skolor",
+    "external": {
+      "SHARED_TEACHER": "{teacher} är på {schools} {when}. Lektionen ligger kvar utanför den tiden.",
+      "ROOM_LENT": "{room} är utlånad till {schools} {when}. Lektionen ligger kvar utanför den tiden.",
+      "ROOM_BORROWED": "{room} lånas från {schools} och är bara tillgänglig inom lånetiderna, inte {when}."
+    },
+    "hardTitle": "Hårda regler som hålls",
+    "notChecked": "Förslagen prövar inte korridortiden i ramtiderna och inte restiden mellan skolområden.",
+    "hard": {
+      "CLASH": "ingen dubbelbokning av lärare, sal eller elever, och inga stängda tider",
+      "FRAME": "ramtiderna",
+      "LUNCH": "klassernas lunch",
+      "GRADE_RULE": "veckoregler för årskurser",
+      "OTHER_SCHOOL": "de andra skolornas lektioner och utlånade salar"
+    },
+    "softTitle": "Vad det kostar i de mjuka reglerna",
+    "soft": {
+      "PUPIL_GAPS": "Elevernas håltimmar",
+      "TEACHER_GAPS": "Lärarnas håltimmar",
+      "DISTRIBUTION": "Ämnesfördelning",
+      "TEACHER_DAY": "Lärarens dag",
+      "MOVED_LESSONS": "Lektioner som flyttas"
+    },
+    "minutes": "{count} min",
+    "breaches": "{count, plural, =0 {inga brott} =1 {1 brott} other {# brott}}",
+    "lessons": "{count, plural, =1 {1 lektion} other {# lektioner}}",
+    "apply": "Tillämpa",
+    "applied": "{count, plural, =1 {1 lektion bytte tid.} other {# lektioner bytte tid.}} Schemat som det var före sparades som en version.",
+    "calendarUpdated": "{count, plural, =1 {1 publicerad lektion i kalendern följde med.} other {# publicerade lektioner i kalendern följde med.}}",
+    "calendarRemoved": "{count, plural, =1 {1 publicerad lektion i kalendern togs bort, med sin vikarie, lektionslogg och läxa.} other {# publicerade lektioner i kalendern togs bort, med sina vikarier, lektionsloggar och läxor.}}",
+    "removesCalendar": "{count, plural, =1 {Tar bort 1 publicerad lektion ur kalendern} other {Tar bort # publicerade lektioner ur kalendern}}: de skulle hamna före nu eller utanför lektionens veckor. Vikarie, lektionslogg och läxa på dem försvinner med dem, och Ångra lägger inte tillbaka dem.",
+    "undo": "Ångra",
+    "undone": "Bytet är ångrat. Lektionerna står på sina gamla tider i grundschemat.",
+    "undoneCalendar": "{count, plural, =1 {1 publicerad lektion i kalendern flyttades tillbaka.} other {# publicerade lektioner i kalendern flyttades tillbaka.}}",
+    "undoneNotRestored": "{count, plural, =1 {1 kalenderlektion som togs bort kommer inte tillbaka av sig själv. Publicera igen så skapas en ny, men utan vikarie, lektionslogg och läxa.} other {# kalenderlektioner som togs bort kommer inte tillbaka av sig själva. Publicera igen så skapas nya, men utan vikarier, lektionsloggar och läxor.}}",
+    "stale": "Schemat har ändrats sedan förslagen räknades fram. Förslagen hämtas på nytt.",
+    "splitsParallel": "Bytet skulle dela upp lektioner som ligger parallellt, så inget ändrades. Förslagen hämtas på nytt.",
+    "lockedPartner": "Bytet skulle flytta en låst lektion, så inget ändrades. Förslagen hämtas på nytt.",
+    "undoStale": "Schemat har ändrats sedan bytet, så det går inte att ångra härifrån. Återställ versionen ”Före byte” under Versioner.",
+    "openButton": "Föreslå byten"
+  },
   "dayPlanner": {
     "title": "Dagsplanering",
     "subtitle": "Ställ in lektioner och tilldela vikarier för en specifik dag",
@@ -2017,6 +2094,7 @@
       "attendance": "Närvaro",
       "staffing": "Tjänstefördelning",
       "cover": "Vikarietimmar",
+      "absenceStats": "Frånvarostatistik",
       "title": "Rapporter",
       "subtitle": "Närvaro, tjänstefördelning och vikarietimmar för en period"
     },
@@ -2343,6 +2421,7 @@
       "ACK_REQUESTED": "Skolan ber dig bekräfta: {title}",
       "ACK_REMINDER": "Påminnelse: skolan väntar på din bekräftelse av {title}"
     },
+    "lessonPupilMoved": "En elevs lektion {when} är nu {subject}.",
     "lessonReportReminder": "{count, plural, one {# ny lektion hölls} other {# nya lektioner hölls}} för minst {limitDays, plural, one {# dag} other {# dagar}} sedan och saknar sparat register. Äldre öppna lektioner kan finnas kvar. Se Min rapportering.",
     "reportingRateDigest": "Rapporteringsgrad {from} – {to}: {reported, number} av {held, plural, one {# hållen lektion} other {# hållna lektioner}} hade ett sparat register. Se Rapporteringsgrad.",
     "cover": {
@@ -2952,6 +3031,86 @@
   "grades": {
     "grade": "{grade, plural, =0 {Förskoleklass} other {Åk #}}"
   },
+  "placementRules": {
+    "title": "Placeringsregler",
+    "intro": "Tre regler för var lektionerna hamnar på dagen och i vilka salar. De gäller när Generera lägger schemat, och alla tre är avstängda tills skolan slår på dem. Varje regel kan vara:",
+    "mode": {
+      "OFF": "Av",
+      "SOFT": "Mjuk",
+      "HARD": "Hård"
+    },
+    "modeHint": {
+      "OFF": "Regeln används inte.",
+      "SOFT": "Ett önskemål med en vikt, som Generera väger mot de andra önskemålen. Generera försöker hålla regeln men vägrar aldrig för att den inte gick.",
+      "HARD": "Ett krav, som än så länge bara Delade salar kan vara. Går det inte att hålla tillsammans med resten av reglerna går schemat inte att lägga: Generera vägrar då och skriver ut orsaken."
+    },
+    "weight": "Vikt",
+    "weightHint": "1–1000. Som jämförelse väger ett önskat fridagsval 40 och sammanhängande undervisning 250.",
+    "weightInvalid": "Ange ett heltal mellan 1 och 1000.",
+    "edge": {
+      "title": "Inte först eller sist på dagen",
+      "hint": "Vissa ämnen ska inte vara klassens första eller sista lektion på dagen. Vilka det gäller markeras på själva ämnet, under Ämnen. Klassens dag är alla lektioner som klassens elever sitter, även i undervisningsgrupper och halvor.",
+      "hardHint": "Hård finns inte för den här regeln ännu: en hård regel kan göra att Generera tar mycket längre tid, och den är inte mätt på en stor skola. Välj Av eller Mjuk.",
+      "count": "{count, plural, =0 {Inget ämne är markerat än.} one {# ämne är markerat.} other {# ämnen är markerade.}}",
+      "link": "Markera ämnen"
+    },
+    "places": {
+      "title": "Salar och byggnader per dag",
+      "hint": "Högst så många olika byggnader och salar per dag, för en klass och för en lärare var för sig. 1 betyder en enda hela dagen. Byggnad är salens uppgift Byggnad under Salar; salar utan byggnad räknas som samma byggnad. Lika salar av samma typ, storlek och årskurser räknas som en sal. Regeln räknar hur många olika som besöks och inte i vilken ordning: en dag som går A–B–A räknas som två byggnader. Klassen räknas på den grupps egna lektioner.",
+      "hardHint": "Hård finns inte för den här regeln ännu: en hård regel kan göra att Generera tar mycket längre tid, och den är inte mätt på en stor skola. Mjuk höll gränserna i mätningen. Välj Av eller Mjuk."
+    },
+    "limit": {
+      "classRoom": "Klassens olika salar per dag",
+      "teacherRoom": "Lärarens olika salar per dag",
+      "classBuilding": "Klassens olika byggnader per dag",
+      "teacherBuilding": "Lärarens olika byggnader per dag"
+    },
+    "limitPlaceholder": "Ingen gräns",
+    "limitsHint": "Lämna tomt för ingen gräns. 1 betyder en enda. Högst 20.",
+    "limitInvalid": "Ange ett heltal mellan 1 och 20, eller lämna tomt.",
+    "limitsMissing": "Ange minst en gräns, annars har regeln inget att hålla. Välj Av om du inte vill ha den.",
+    "errors": {
+      "PLACEMENT_EDGE_HARD_NOT_OFFERED": "Regeln Inte först eller sist på dagen kan inte vara hård ännu. Välj Av eller Mjuk.",
+      "PLACEMENT_PLACES_NEEDS_A_LIMIT": "Regeln Salar och byggnader per dag behöver minst en gräns när den är Mjuk. Ange en gräns eller välj Av.",
+      "PLACEMENT_PLACES_HARD_NOT_OFFERED": "Regeln Salar och byggnader per dag kan inte vara hård ännu. Välj Av eller Mjuk."
+    },
+    "shared": {
+      "title": "Delade salar",
+      "hint": "Gäller bara salar som markerats Kan delas under Salar. Hård: elevantalet i salen samtidigt ryms alltid i salens kapacitet. Mjuk: kapaciteten får överskridas, till en vikt per elev över kapaciteten.",
+      "weightHint": "1–1000 per elev över kapaciteten, räknat vid salens värsta ögonblick. Som jämförelse väger ett önskat fridagsval 40 och sammanhängande undervisning 250."
+    },
+    "subject": {
+      "legend": "Placering på dagen",
+      "hint": "Gäller klassens dag, alltså alla lektioner som klassens elever sitter, även i undervisningsgrupper och halvor. Reglerna slås på under Skolregler, Placeringsregler; tills dess ändrar rutorna ingenting.",
+      "notFirst": "Inte första lektionen på dagen",
+      "notLast": "Inte sista lektionen på dagen"
+    },
+    "room": {
+      "canBeShared": "Kan delas av flera grupper samtidigt",
+      "hint": "Salen kan ha flera grupper samtidigt, så länge deras elever tillsammans ryms i salens kapacitet. Kräver att salen har en kapacitet. Gäller bara när regeln Delade salar är på under Skolregler, Placeringsregler; annars har salen en grupp i taget som förut.",
+      "needsCapacity": "Salen har ingen kapacitet angiven och delas därför inte: den har en grupp i taget tills du anger en kapacitet ovan."
+    },
+    "summary": {
+      "edge": {
+        "SOFT": "Inte först eller sist på dagen: mjuk, vikt {weight}",
+        "HARD": "Inte först eller sist på dagen: hård"
+      },
+      "places": {
+        "SOFT": "Salar och byggnader per dag: mjuk, vikt {weight} ({limits})",
+        "HARD": "Salar och byggnader per dag: hård ({limits})"
+      },
+      "shared": {
+        "SOFT": "Delade salar: mjuk, vikt {weight}",
+        "HARD": "Delade salar: hård"
+      },
+      "limit": {
+        "classRoom": "klassens salar {count}",
+        "teacherRoom": "lärarens salar {count}",
+        "classBuilding": "klassens byggnader {count}",
+        "teacherBuilding": "lärarens byggnader {count}"
+      }
+    }
+  },
   "lunch": {
     "title": "Lunch och matsal",
     "hint": "Solvern håller en lunchlucka fri för varje klass och sprider ut sittningarna så att matsalen räcker till.",
@@ -2983,7 +3142,25 @@
     "consecutive": "Generatorn försöker hålla lärarnas sammanhängande undervisning",
     "consecutiveHint": "Av som standard. När den är på väger Generera in varje lärares gräns för undervisning i följd, som rektor eller en fullständig administratör har satt på lärarens anställning. Det är ett önskemål, inte ett löfte: Generera säger efter körningen om det inte lyckades, och namnger lärarna för rektor, en fullständig administratör och den som har HR-läs. Önskemålet går före att behålla förra schemats platser och före elevernas håltimmar, så slå på det före den första genereringen om du kan. Körs Generera om på ett befintligt schema flyttas många lektioner, inte bara de flaggade lärarnas: på vår testskola mellan en femtedel och nästan hälften.",
     "consecutiveWithPupilGapsTitle": "Elevernas håltimmar och lärarnas gränser står på samtidigt",
-    "consecutiveWithPupilGaps": "När båda väger in har genereringen mycket att pröva mot varandra, och på den sökningstid som är standard blev lärarnas gränser ofta inte hållna i våra mätningar. Generera säger efter körningen om det inte lyckades. Slå bara på båda om du vill det trots det."
+    "consecutiveWithPupilGaps": "När båda väger in har genereringen mycket att pröva mot varandra, och på den sökningstid som är standard blev lärarnas gränser ofta inte hållna i våra mätningar. Generera säger efter körningen om det inte lyckades. Slå bara på båda om du vill det trots det.",
+    "bestEffort": "Bästa möjliga schema",
+    "bestEffortHint": "Av som standard. När den är på får du under Schemaförslag knappen Ta fram bästa möjliga, som lägger ett schema även när Generera vägrar för att skolans egna regler inte går ihop. Schemat läggs så att så få regler som möjligt bryts, och varje regel som gav vika listas som ett avsteg med hur mycket. Ett schema med avsteg tillämpas först när du uttryckligen godtar avstegen, och publiceringen varnar för dem. Generera och de vanliga förslagen körs som förut.",
+    "bestEffortNeverTitle": "Ger aldrig vika, i något läge:",
+    "bestEffortNeverOverlap": "Dubbelbokning av en lärare, en klass, en elev eller en sal.",
+    "bestEffortNeverFrames": "Lektioner utanför skolans ramtider.",
+    "bestEffortNeverTravel": "Restiden mellan skolor och platser.",
+    "bestEffortNeverTeacher": "Lärarens lunch och nattvila, och en lärare som är markerad som inte tillgänglig.",
+    "bestEffortNeverMeals": "Lunch, matsal och raster.",
+    "bestEffortNeverRooms": "Rummets typ, antal platser och årskurser som en timplanspost kräver.",
+    "bestEffortNeverLessons": "Lektionernas längd och antalet lektioner per vecka.",
+    "bestEffortNeverShared": "Elevantalet i en delad sal mot salens kapacitet, när Delade salar är satt till Hård.",
+    "bestEffortNeverGroups": "Parallella blocks gemensamma start, och gruppens eget tak per dag (Max lektioner per dag ovan).",
+    "bestEffortMayTitle": "Kan ge vika, och listas då som avsteg:",
+    "bestEffortMayCap": "Lärarens tak för undervisning per dag (arbetstidsregeln).",
+    "bestEffortMayDays": "Hur många dagar i veckan en lärare undervisar enligt tjänsten.",
+    "bestEffortMayDistribution": "Ämnets fördelning över veckan: högst så många lektioner per dag, och så många dagar emellan.",
+    "bestEffortMayRoomLock": "Rumslås: att ett ämne bara får ligga i vissa rum.",
+    "bestEffortOrder": "De ger vika i den ordning de är lindrigast: ämnets dagar emellan först och tjänstens dagar sist, och bara när inget schema finns utan avsteget. Då bryts så lite som möjligt."
   },
   "conflictCategories": {
     "AVAILABILITY": "Tillgänglighet",
@@ -2997,7 +3174,10 @@
     "TEACHER_OVERLAP": "Krock för lärare",
     "TIMEOUT_PROBE": "Regel som inte får plats (mätt, inte bevisat)",
     "SUBJECT_DISTRIBUTION": "Ämnesfördelning",
-    "TEACHING_BLOCK": "Parallella block"
+    "TEACHING_BLOCK": "Parallella block",
+    "PLACEMENT_EDGE": "Första och sista lektionen",
+    "PLACEMENT_PLACES": "Salar och byggnader per dag",
+    "SHARED_ROOM": "Delade salar"
   },
   "gaps": {
     "title": "Luckor och håltimmar",
@@ -4288,6 +4468,11 @@
     "noSourceAction": "Välj läsår"
   },
   "engineMessages": {
+    "DEVIATION_ROOM_LOCK": "{requirement} har {lessons, plural, one {# lektion} other {# lektioner}} av {of} i ett rum utanför de rum ämnet är låst till. Det håller om låset öppnas för ämnet, eller om ett låst rum är ledigt de tiderna.",
+    "DEVIATION_SUBJECT_DAYS_APART": "{requirement} har lektioner {closest, plural, one {# dag} other {# dagar}} från varandra där regeln kräver minst {minDaysBetween} ({pairs, plural, one {# par dagar} other {# par dagar}} för nära). Det håller med regeln satt till {needed}, eller om lektionerna flyttas isär.",
+    "DEVIATION_SUBJECT_PER_DAY": "{requirement} har {count, plural, one {# lektion} other {# lektioner}} {day, select, 1 {på måndagen} 2 {på tisdagen} 3 {på onsdagen} 4 {på torsdagen} 5 {på fredagen} 6 {på lördagen} 7 {på söndagen} other {dag {day}}}, mot en gräns på {maxPerDay} per dag: {over, plural, one {# lektion} other {# lektioner}} för mycket. Det håller med gränsen satt till {needed}, eller om en av lektionerna ligger en annan dag.",
+    "DEVIATION_TEACHER_DAILY_CAP": "Taket på {minutes} minuters undervisning per dag som arbetstidsregeln {rule} sätter gav vika {day, select, 1 {på måndagen} 2 {på tisdagen} 3 {på onsdagen} 4 {på torsdagen} 5 {på fredagen} 6 {på lördagen} 7 {på söndagen} other {dag {day}}}: läraren undervisar {taught} minuter, {over} över. Det håller med taket satt till {needed} minuter, eller om dagens lektioner flyttas till en annan dag.",
+    "DEVIATION_TEACHER_WORK_DAYS": "Tjänsten {limit} tillåter undervisning högst {days, plural, one {# dag} other {# dagar}} i veckan, och i det här schemat undervisar läraren {taught}: {over, plural, one {# dag} other {# dagar}} för mycket. Det håller med {needed, plural, one {# dag} other {# dagar}} i tjänsten, eller om lektionerna på de lättaste dagarna flyttas.",
     "LUNCH_HALL_CANNOT_FEED_THE_SCHOOL": "Matsalen räcker inte till hela skolan på {day, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {day}}}: {students, plural, one {# elev} other {# elever}} som äter {minutes} minuter var behöver {needed} elevminuter, och {seats} platser under {windowStart}–{windowEnd} ger {offered}. Lägg till platser, vidga lunchfönstret, eller korta lunchen.",
     "LUNCH_SEATS_CANNOT_STAGGER": "Luncherna går inte att sprida inom matsalens {seats} platser.",
     "LUNCH_GROUP_LARGER_THAN_HALL": "Klassen {group} har {students, plural, one {# elev} other {# elever}} som äter lunch, fler än matsalens {seats} platser.",
@@ -4401,6 +4586,14 @@
     "BLOCK_SAME_TIMES_TEACHERS": "{block} ligger på samma tider som {other}, och har fler lärare som {other} saknar än vad posterna i {other} har plats för bredvid sina egna. Ge posterna i {block} samma lärare som {other}, eller ta bort en medlärare i {other}.",
     "BLOCK_SPLIT": "{block} är delat: lektionen har lämnat resten av blocket och räknas nu som lagd för hand. Om inte alla blockets lektioner är låsta vägrar nästa generering blocket som delvis låst. Flytta tillbaka den med blocket, eller lås alla blockets lektioner.",
     "TRAVEL_TIME_SHORT": "{party, select, TEACHER {{name}} other {Eleverna i {name}}} hinner inte från {from} till {to}: {gap} min mellan lektionerna, och restiden är {minutes} min ({other} {time}).",
+    "SUBJECT_EDGE_CANNOT_BE_KEPT": "{requirement}: skolreglerna hindrar ämnet från att vara klassens {edge, select, FIRST {första} other {sista}} lektion på dagen, och veckan kan inte hålla det för varje lektion i ämnet. Ge klassen lektioner i andra ämnen att {edge, select, FIRST {börja} other {sluta}} dagen med, tillåt ämnet {edge, select, FIRST {först} other {sist}} på dagen, eller sätt regeln till Mjuk under Skolregler.",
+    "PLACES_CANNOT_BE_KEPT": "Skolreglerna tillåter {party, select, class {en klass} other {en lärare}} högst {limit, plural, one {# {kind, select, room {sorts sal} other {byggnad}}} other {# {kind, select, room {sorters salar} other {byggnader}}}} per dag, och veckan kan inte hålla det för alla. Höj gränsen, sätt regeln till Mjuk under Skolregler, eller låt lektionerna använda {kind, select, room {färre sorters salar} other {färre byggnader}}.",
+    "SHARED_ROOM_CANNOT_BE_KEPT": "{room} delas av flera grupper samtidigt, och veckan kan inte lägga lektionerna där så att deras elever tillsammans ryms på platserna i varje ögonblick. Flytta en lektion ur salen, höj salens kapacitet, ta bort markeringen Kan delas från salen, eller sätt regeln till Mjuk under Skolregler.",
+    "PLACEMENT_EDGE_DAY_TOO_SHORT": "{requirement} går inte att placera: skolreglerna håller ämnet {edges, select, both {varken först eller sist} first {inte först} other {inte sist}} på klassens dag, vilket kräver minst {needed} lektioner den dagen, och klassen har högst {maxPerDay} per dag. Tillåt fler lektioner per dag, eller lätta på regeln för ämnet.",
+    "PLACEMENT_EDGE_NO_OTHER_LESSON": "{requirement}: skolreglerna hindrar ämnet från att vara klassens {edge, select, FIRST {första} other {sista}} lektion på dagen, men alla lektioner klassen har är i ämnen som regeln gäller för, så en av dem skulle behöva {edge, select, FIRST {öppna} other {avsluta}} dagen. Ge klassen en lektion i ett annat ämne, eller lätta på regeln.",
+    "PLACEMENT_PLACES_FORCED": "{party, select, class {En klass} other {En lärare}} har lektioner som bara kan ligga i {places, plural, one {# {kind, select, room {sorts sal} other {byggnad}}} other {# {kind, select, room {sorters salar} other {byggnader}}}}, men skolreglerna tillåter högst {limit, plural, one {# {kind, select, room {sorts sal} other {byggnad}}} other {# {kind, select, room {sorters salar} other {byggnader}}}} per dag, vilket kräver {days, plural, one {# dag} other {# dagar}} och veckan har {open, plural, one {# dag} other {# dagar}}. Höj gränsen eller låt lektionerna använda andra salar.",
+    "SHARED_ROOM_LOCK_OVER_CAPACITY": "En låst lektion i {room} har {pupils, plural, one {# elev} other {# elever}}, och salen har plats för {capacity}. Flytta lektionen, höj salens kapacitet, eller stäng av regeln eller sätt den till Mjuk under Skolregler.",
+    "SHARED_ROOM_LOCKS_OVER_CAPACITY": "Låsta lektioner i {room} ger {pupils, plural, one {# elev} other {# elever}} i salen samtidigt, och salen har plats för {capacity}. Flytta en av lektionerna, höj salens kapacitet, eller stäng av regeln eller sätt den till Mjuk under Skolregler.",
     "TEACHER_LUNCH_WINDOW_TOO_NARROW": "Arbetstidsregeln {rule} lovar läraren en lunch på {minutes} minuter inom {windowStart}–{windowEnd}, och det fönstret rymmer {remaining, plural, one {# minut} other {# minuter}} av skoldagen. Vidga fönstret, korta lunchen, eller flytta det innanför de timmar skolan undervisar.",
     "TEACHER_LUNCH_LEAVES_NO_START": "{causes, select, locked {Låsta lektioner} closed {Begränsningar på läraren} locked_closed {Låsta lektioner och begränsningar på läraren} other {De här reglerna}} lämnar arbetstidsregeln {rule} ingen lunch på {minutes} minuter inom {windowStart}–{windowEnd} på {day, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {day}}}. Flytta en låst lektion, korta begränsningen, eller vidga fönstret.",
     "TEACHER_REST_LONGER_THAN_THE_NIGHT": "Arbetstidsregeln {rule} begär {restMinutes} minuters dygnsvila mellan dagens sista lektion och nästa dags första, och den längsta natt veckan kan ge är {nightMinutes} minuter: lärarens {lessons, plural, one {# lektion} other {# lektioner}} går inte att lägga bara på dagar som inte ligger intill varandra. Korta vilan, förläng skoldagen, eller ge den här läraren färre lektioner.",
@@ -4421,13 +4614,26 @@
     "TEACHER_WEEK_TOO_MANY_DAYS": "{requirement}: {role, select, CO_TEACHER {medläraren} other {läraren}} undervisar nu {days} dagar i veckan, fler än de {max} som tjänsten tillåter.",
     "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN": "{requirement}: {role, select, CO_TEACHER {medläraren} other {läraren}} undervisar nu fler dagar i veckan än tjänsten tillåter. Dagarna visas för rektor, en fullständig administratör och den som har HR-läs.",
     "PROBE_SOLVED_WITHOUT_TRAVEL": "Utan restiden mellan skolområdena hittades ett schema på {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_PLACE_LIMITS": "Utan gränserna för olika salar och byggnader per dag hittades ett schema på {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_SHARED_ROOMS": "Utan regeln att eleverna i en delad sal ryms på salens platser hittades ett schema på {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_SUBJECT_EDGES": "Utan regeln som håller ämnen från att öppna eller avsluta klassens dag hittades ett schema på {seconds} s.",
     "PROBE_TRAVEL_UNMEASURED": "Restiden mellan skolans skolområden är påslagen. Utan restiden hittades inget schema heller på {seconds} s, så om restiden är skillnaden är inte mätt. En körning med restiden avstängd under Skolregler visar det.",
     "TRAVEL_PROBE_SUMMARY": "Inget schema uppfyller alla regler, och lösaren kunde inte peka ut vilka av dem som krockar. Utan restiden mellan skolans skolområden hittades ett schema på {seconds} s, så det är restiden nedan som gör veckan omöjlig.",
     "PUPILS_TRAVEL_CANNOT_BE_KEPT": "Skolreglerna ber generatorn hålla restiden mellan skolans skolområden för elever med lektioner på två skolområden samma dag, räknat efter deras tid för ombyte och avrundad uppåt till hela startsteg om {stepMinutes} min. {measured, select, 1 {Den restiden är det som gör veckan omöjlig: utan den finns ett schema som håller alla andra regler, och i det har eleverna i grupperna som nämns här kortare tid än restiden mellan två lektioner på olika skolområden.} 2 {Den restiden gör ensam veckan omöjlig: även med de andra reglerna åsidosatta går lektionerna för grupperna som nämns här inte att lägga så att den ryms. Veckan har också andra orsaker: den är omöjlig även utan restiden.} other {Den restiden är en av reglerna som inte kan gälla samtidigt för grupperna som nämns här. Om den ensam är det som gör skillnaden gick inte att mäta.}} Låt gruppernas lektioner använda salar på ett skolområde, korta restiden under Salar, Skolområden eller stäng av den under Skolregler.",
     "TEACHER_TRAVEL_CANNOT_BE_KEPT": "Skolreglerna ber generatorn hålla restiden mellan skolans skolområden för varje lärare med lektioner på två skolområden samma dag, avrundad uppåt till hela startsteg om {stepMinutes} min. {measured, select, 1 {Den restiden är det som gör veckan omöjlig: utan den finns ett schema som håller alla andra regler, och i det har lärarna som nämns här kortare tid än restiden mellan två lektioner på olika skolområden.} 2 {Den restiden gör ensam veckan omöjlig: även med de andra reglerna åsidosatta går lektionerna för lärarna som nämns här inte att lägga så att den ryms. Veckan har också andra orsaker: den är omöjlig även utan restiden.} other {Den restiden är en av reglerna som inte kan gälla samtidigt för lärarna som nämns här. Om den ensam är det som gör skillnaden gick inte att mäta.}} Låt lärarnas lektioner använda salar på ett skolområde, korta restiden under Salar, Skolområden eller stäng av den under Skolregler.",
     "OTHER_SCHOOL_TEACHER_BUSY": "En lärare som nämns här undervisar också på {schools}: {day, select, 1 {på måndagar} 2 {på tisdagar} 3 {på onsdagar} 4 {på torsdagar} 5 {på fredagar} other {dag {day}}} {start}–{end}{travel, select, yes { (med restiden mellan skolorna)} other {}} är läraren där, och det kan vara en av orsakerna till att lektionerna som måste läggas här inte ryms. Ge lektionerna här en annan lärare eller andra tider, ändra restiden under Salar, Huvudmannens andra skolor, eller fråga {schools} om lektionen där kan flyttas.",
     "OTHER_SCHOOL_ROOM_LENT": "Salen {room} är utlånad till {schools} {day, select, 1 {på måndagar} 2 {på tisdagar} 3 {på onsdagar} 4 {på torsdagar} 5 {på fredagar} other {dag {day}}} {start}–{end}, och det kan vara en av orsakerna till att lektionerna som måste läggas här inte ryms. Låt lektionerna använda en annan sal, eller avsluta lånet under Salar, Huvudmannens andra skolor.",
-    "OTHER_SCHOOL_ROOM_BORROWED": "Salen {room} är lånad av {schools} och tar lektioner bara på de tider som de godkända lånen täcker varje vecka under läsåret. {day, select, 1 {Måndagar} 2 {Tisdagar} 3 {Onsdagar} 4 {Torsdagar} 5 {Fredagar} other {Dag {day}}} {start}–{end} ligger utanför dem, och det kan vara en av orsakerna till att lektionerna som måste läggas inte ryms. Låt lektionerna använda en annan sal, eller be {schools} om fler tider under Salar, Huvudmannens andra skolor."
+    "OTHER_SCHOOL_ROOM_BORROWED": "Salen {room} är lånad av {schools} och tar lektioner bara på de tider som de godkända lånen täcker varje vecka under läsåret. {day, select, 1 {Måndagar} 2 {Tisdagar} 3 {Onsdagar} 4 {Torsdagar} 5 {Fredagar} other {Dag {day}}} {start}–{end} ligger utanför dem, och det kan vara en av orsakerna till att lektionerna som måste läggas inte ryms. Låt lektionerna använda en annan sal, eller be {schools} om fler tider under Salar, Huvudmannens andra skolor.",
+    "EXAM_NO_SLOT": "Provet har ingen tid där det kan hållas. Vidga fönstret eller ge det ett datum.",
+    "EXAM_NO_ROOM_SEATS": "{writers, plural, one {# elev} other {# elever}} skriver provet, men skrivsalarna som är lediga för det rymmer högst {seats}, även utan något annat prov i dem. Markera fler salar som skrivsalar, eller dela provet.",
+    "EXAM_NO_INVIGILATORS": "Det behövs {needed, plural, one {# vakt} other {# vakter}}, men högst {free} {free, plural, one {lärare} other {lärare}} är lediga vid provets bästa tid, även utan något annat prov att vaka över. Lägg till lärare bland vakterna eller frigör några av deras tider.",
+    "EXAM_CLASS_DAY_CAP": "Klassen har redan nått sin gräns på {limit} prov per dag, på varje dag provet skulle kunna hållas.",
+    "EXAM_CLASS_WEEK_CAP": "Klassen har redan nått sin gräns på {limit} prov per vecka, i varje vecka provet skulle kunna hållas.",
+    "EXAM_CLASS_CLASH": "Ett annat prov för samma klass tar varje tid då provet skulle kunna hållas.",
+    "EXAM_ROOMS_TAKEN": "Andra prov i planen tar skrivsalarna vid varje tid då provet skulle kunna hållas: {writers, plural, one {# elev} other {# elever}} skriver det, och som mest är {seats} platser lediga.",
+    "EXAM_INVIGILATORS_TAKEN": "Andra prov i planen tar lärarna vid varje tid då provet skulle kunna hållas: det behövs {needed, plural, one {# vakt} other {# vakter}}, och som mest är {free} {free, plural, one {lärare} other {lärare}} lediga.",
+    "EXAM_NOT_REACHED": "Sökningen tog slut innan en plats hittades för provet, trots att det finns en tid som inget annat i planen stoppar. Planera igen.",
+    "EXAM_MODEL_TOO_LARGE": "Det blir för många möjliga kombinationer av prov, sal och vakt att väga på en gång: omkring {variables} mot en gräns på {limit}. Planera färre prov åt gången, ge proven smalare fönster eller färre lärare att välja bland."
   },
   "timplanCoverage": {
     "title": "Täckning",
@@ -4941,7 +5147,8 @@
       "PUB_RANGE_GAP": "Skoldagar utan publicerat schema",
       "PUB_DAY_OPS_LOST": "Dagsändringar som försvinner",
       "PUB_EMPTY_HALF": "Halvklasser utan elever",
-      "PUB_OTHER_SCHOOL": "Krockar med huvudmannens andra skolor (delade lärare, lånade och utlånade salar)"
+      "PUB_OTHER_SCHOOL": "Krockar med huvudmannens andra skolor (delade lärare, lånade och utlånade salar)",
+      "PUB_DEVIATIONS": "Avsteg från skolans regler i det senast tillämpade schemat"
     },
     "severity": {
       "REFUSE": "Stoppar",
@@ -4970,6 +5177,7 @@
       "PUB_DAY_OPS_LOST": "{count, plural, one {# dagsändring} other {# dagsändringar}} (vikarie, salsbyte, anteckning) försvinner med lektioner som tas bort.",
       "PUB_FROM_IN_PAST": "Giltigheten börjar före i dag, så dagar som redan varit kan få lektioner i efterhand.",
       "PUB_LUNCH_NOT_SET": "Lunch är inte inställd, så inga måltider publiceras.",
+      "PUB_DEVIATIONS": "{count, plural, one {# regel gav vika} other {# regler gav vika}} i det senast tillämpade schemaförslaget (Bästa möjliga schema). Listan visar vilka. Ändra regeln eller flytta lektionerna för att få bort avsteget, eller publicera ändå.",
       "PUB_NOTHING_TO_PUBLISH": "Det finns inget nytt att publicera."
     },
     "reviewTitle": "Publicera schemat",
@@ -5498,7 +5706,8 @@
       "ACTIVITY_TEACHER": "En ansvarig lärare är inte en aktiv lärare i skolan, eller hör till en klass som inte ingår. Ta bort läraren och förhandsgranska igen.",
       "ACTIVITY_SCOPE_TOO_WIDE": "Urvalet blir fler än 200 grupper med halvklasser och undervisningsgrupper. Välj årskurser eller hela skolan i stället.",
       "ACTIVITY_REMOVED": "Aktiviteten är redan borttagen."
-    }
+    },
+    "examsLink": "Prov och skrivsalar"
   },
   "publicViewer": {
     "title": "Schema",
@@ -6105,6 +6314,7 @@
       "COVER_REQUEST_ACCEPTED": "Kollegor som tackat ja till min förfrågan",
       "ABSENCE_WATCH_DIGEST": "Frånvarosammanställning",
       "ACK_REQUESTED": "Meddelanden från skolan som du ska bekräfta",
+      "LESSON_PUPIL_MOVED": "Elever som byter lektion för en dag",
       "ACK_REMINDER": "Påminnelse om ett meddelande som väntar på din bekräftelse",
       "LESSON_REPORT_REMINDER": "Påminnelser om öppna lektioner",
       "REPORTING_RATE_DIGEST": "Veckobesked om rapporteringsgrad",
@@ -6126,7 +6336,7 @@
     "kind": {
       "ATTENDANCE": {
         "name": "Närvaro",
-        "body": "Närvaroregistreringar för lektioner före gränsdagen."
+        "body": "Närvaroregistreringar för lektioner före gränsdagen. Månadssummor av frånvaro per klass och för skolan, utan enskilda elever och med minst fem elever bakom varje siffra, sparas i tre läsår oavsett detta beslut."
       },
       "ABSENCE_REPORTS": {
         "name": "Frånvaroanmälningar",
@@ -6167,6 +6377,10 @@
       "CRISIS_ALARMS": {
         "name": "Skarpa larm",
         "body": "Skarpa larm med utrymning eller inrymning, med protokollet över vem som rapporterade vad och när. De behålls enligt skolans beslut, och utan beslut gallras inget. Ett larm som pågår gallras aldrig."
+      },
+      "CHECKLISTS": {
+        "name": "Instruktionsbevis och samtycken",
+        "body": "Instruktionsbevis och samtycken sparas så länge eleven går på skolan, och därefter så länge ni väljer. Ett instruktionsbevis kan behövas för arbetsmiljöansvaret efter att eleven slutat. Välj minst lika lång tid för ’Slutade personer’, annars har beviset kvar sin tid men inte längre ett namn."
       }
     },
     "peopleEffectsTitle": "När en person pseudonymiseras:",
@@ -6379,7 +6593,8 @@
     "ACCESS_LOG": "Läsningar före {date} är gallrade enligt skolans beslut.",
     "COVER_REQUESTS": "Vikarieförfrågningar som avslutades före {date} är gallrade enligt skolans beslut.",
     "CRISIS_DRILLS": "Övningar i krisläge som avslutades före {date} är gallrade enligt skolans beslut.",
-    "CRISIS_ALARMS": "Skarpa larm som avslutades före {date} är gallrade enligt skolans beslut."
+    "CRISIS_ALARMS": "Skarpa larm som avslutades före {date} är gallrade enligt skolans beslut.",
+    "CHECKLISTS": "Instruktionsbevis och samtycken för elever som slutade före {date} är gallrade enligt skolans beslut."
   },
   "leaveInbox": {
     "alreadyDecided": "Ansökan är redan beslutad. Listan är uppdaterad.",
@@ -6698,6 +6913,12 @@
       "start": "Ta fram förslag",
       "starting": "Startar…",
       "started": "Förslagen tas fram. Du kan lämna sidan under tiden.",
+      "startBestEffort": "Ta fram bästa möjliga",
+      "startedBestEffort": "Bästa möjliga schema tas fram. Du kan lämna sidan under tiden.",
+      "bestEffortHint": "Ta fram bästa möjliga lägger ett schema även när Generera vägrar för att skolans egna regler inte går ihop, och listar de regler som gav vika. Dubbelbokningar, ramtider och restid ger aldrig vika. Du godtar avstegen innan schemat tillämpas.",
+      "replaceBestEffortTitle": "Ersätta de sparade förslagen?",
+      "replaceBestEffortBody": "Du har en sparad omgång med {count, plural, one {# förslag} other {# förslag}}. När bästa möjliga är framtaget ersätter det hela omgången, och förslagen du har nu går inte att få tillbaka. Misslyckas körningen finns omgången kvar.",
+      "replaceBestEffortConfirm": "Ersätt och ta fram",
       "compare": "Jämför förslagen",
       "blockedGenerating": "Generera kör för läsåret just nu. Förslag går att ta fram när körningen är klar.",
       "blockedPrerequisites": "Förslag kan tas fram när förutsättningarna ovan är uppfyllda.",
@@ -6738,6 +6959,7 @@
       "TEACHER_GAPS": "Färre håltimmar för lärarna",
       "SPREAD": "Jämnare veckor",
       "FREE": "Friare placering",
+      "BEST_EFFORT": "Bästa möjliga",
       "unknown": "Förslag {ordinal}"
     },
     "solver": {
@@ -6759,9 +6981,13 @@
       "CANDIDATE_ENGINE_TIMEOUT": "Schemamotorn svarade inte i tid. Försök igen om en stund.",
       "CANDIDATE_ENGINE_FAILED": "Schemamotorn svarade med ett fel. Försök igen om en stund.",
       "ENGINE_LACKS_CANDIDATES": "Schemamotorn är äldre än resten av tjänsten och kan inte ta fram förslag ännu. Försök igen om några minuter.",
+      "ENGINE_LACKS_BEST_EFFORT": "Schemamotorn är äldre än resten av tjänsten och kan inte ta fram bästa möjliga schema ännu. Försök igen om några minuter.",
       "CANDIDATES_FIRST_FAILED": "Det första förslaget fick inget schema, och de andra hade mött samma hinder. Det som stoppade det står nedan.",
       "CANDIDATES_FIRST_FAILED_UNNAMED": "Det första förslaget fick inget schema, och de andra hade mött samma hinder.",
       "CANDIDATES_FIRST_TIMEOUT": "Det första förslaget hann inte bli klart inom tiden, så de andra togs inte fram.",
+      "BEST_EFFORT_FAILED": "Inget schema gick att lägga, inte heller med skolans egna regler som fick ge vika. Det som stoppade det är en regel som aldrig ger vika, och den står nedan.",
+      "BEST_EFFORT_FAILED_UNNAMED": "Inget schema gick att lägga, inte heller med skolans egna regler som fick ge vika.",
+      "BEST_EFFORT_TIMEOUT": "Bästa möjliga schema hann inte bli klart inom tiden.",
       "CANDIDATES_NONE_APPLICABLE": "Inget av förslagen gav ett schema som går att tillämpa.",
       "CANDIDATE_RUN_INTERRUPTED": "Tjänsten startades om medan förslagen togs fram. Ta fram dem igen.",
       "CANDIDATE_RUN_ABANDONED": "Förslagen slutade svara och har avbrutits. Ta fram dem igen.",
@@ -6786,6 +7012,8 @@
       "SCHEDULE_CANDIDATE_NOT_APPLICABLE": "Förslaget går inte att tillämpa: körningen är inte klar, eller förslaget fick inget schema.",
       "SCHEDULE_CANDIDATE_STALE": "Grundschemat har ändrats sedan förslagen togs fram. Uppdatera förslagen och jämför igen.",
       "SCHEDULE_CANDIDATE_STALE_PARTS": "Grundschemat har ändrats sedan förslagen togs fram: {parts}. Uppdatera förslagen och jämför igen.",
+      "BEST_EFFORT_NOT_ENABLED": "Bästa möjliga schema är avstängt för skolan. Slå på det under Skolregler på Tillgänglighet.",
+      "SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED": "Förslagets avsteg godtogs inte som de står nu. Öppna Tillämpa igen, läs avstegen och godta dem.",
       "CANDIDATE_GONE": "Förslaget finns inte längre. Det kan ha tagits bort eller ersatts av nyare förslag.",
       "TOO_MANY": "För många försök på kort tid. Vänta en minut och försök igen.",
       "generic": "Något gick fel. Försök igen."
@@ -6803,6 +7031,7 @@
       "title": "Förslagen kunde inte tas fram {date}",
       "cancelledTitle": "Förslagen avbröts",
       "conflicts": "Det som stoppade det första förslaget",
+      "conflictsBestEffort": "Det som stoppade schemat",
       "daysWhere": "Här visas dagarna inte för någon, inte heller för rektor. Rektor, en fullständig administratör och den som har HR-läs ser vilken lärare och hur många dagar i lärarens tjänst och i svaret när de genererar schemat.",
       "olderBatch": "Jämförelsen nedan gäller förslagen från {date}.",
       "again": "Ta fram förslag igen från Generera schema"
@@ -6842,6 +7071,7 @@
       "currentSchedule": "Nuvarande schema",
       "candidate": "Förslag {ordinal}",
       "sameAs": "Samma som förslag {ordinal}",
+      "withDeviations": "Med avsteg ({count})",
       "applied": "Tillämpat"
     },
     "row": {
@@ -6857,6 +7087,8 @@
       "wishesHint": "Lärare som får lektioner den veckodag de önskat ha ledig, eller undervisar längre i följd än sin gräns",
       "pupils": "Elevernas håltimmar",
       "pupilsHint": "Minuter per elev i en vanlig vecka",
+      "deviations": "Avsteg från reglerna",
+      "deviationsHint": "Skolans egna regler som gav vika. Meningarna står under Granska ett förslag.",
       "apply": "Tillämpa"
     },
     "cell": {
@@ -6872,6 +7104,7 @@
       "wishNobody": "En lärare",
       "delta": "{delta} mot nuvarande",
       "unplaced": "{lines, plural, =0 {Allt placerat} one {# rad · {minutes} min i veckan} other {# rader · {minutes} min i veckan}}",
+      "deviations": "{count, plural, =0 {Inga avsteg} one {# avsteg} other {# avsteg}}",
       "lines": "{count, plural, one {# rad} other {# rader}}",
       "movedOf": "{moved} av {of}",
       "notApplicable": "Ej tillämpligt",
@@ -6896,12 +7129,21 @@
       "applying": "Tillämpar…",
       "checking": "Kontrollerar att förslaget fortfarande passar utkastet…",
       "noLonger": "Förslaget passar inte längre utkastet",
-      "noLongerHint": "Grundschemat har ändrats sedan förslagen togs fram, eller möter nu ett hinder. Stäng dialogen och se vad som ändrats."
+      "noLongerHint": "Grundschemat har ändrats sedan förslagen togs fram, eller möter nu ett hinder. Stäng dialogen och se vad som ändrats.",
+      "deviationsTitle": "{count, plural, one {# avsteg från skolans regler} other {# avsteg från skolans regler}}",
+      "deviationsIntro": "Inget schema fanns som höll alla regler, så det här lades med några som fick ge vika. Läs avstegen innan du tillämpar. Att du godtagit dem sparas tillsammans med tillämpningen, och publiceringen varnar för dem tills schemat har publicerats.",
+      "acceptDeviations": "Jag godtar de här avstegen"
     },
     "review": {
       "title": "Granska ett förslag",
       "hint": "Vem som får det sämre, och vilka lektioner som flyttas.",
-      "pick": "Förslag"
+      "pick": "Förslag",
+      "deviationsTitle": "Avsteg från skolans regler",
+      "deviationsHint": "Reglerna som fick ge vika för att ett schema skulle gå att lägga, med vad regeln skulle behöva vara för att just det här schemat ska hålla den.",
+      "deviationsNone": "Inget gav vika: schemat håller alla skolans regler."
+    },
+    "deviations": {
+      "daysHidden": "En lärares gräns för hur många dagar i veckan hen undervisar gav vika i det här schemat. Dagarna visas för rektor, en fullständig administratör och den som har HR-läs."
     },
     "worse": {
       "title": "Blir sämre för",
@@ -7214,8 +7456,11 @@
       "homePupils": "{count, plural, one {# elev blir} other {# elever blir}} utan klass",
       "enrolments": "{count, plural, one {# avsnitt} other {# avsnitt}} i elevernas klasshistorik tappar klassen",
       "mentorDuties": "{count, plural, one {# mentorsuppdrag} other {# mentorsuppdrag}} tappar klassen",
+      "classTeacher": "{count, plural, one {# rad} other {# rader}} i klasslärarens schema (utnämning, öppna tider, utkast)",
+      "consentLists": "{count, plural, one {# samtyckeslista} other {# samtyckeslistor}} tappar klassen, och svaren sparas",
       "sharedLessons": "{count, plural, one {# lektion} other {# lektioner}} i grundschemat och kalendern som delas med andra grupper tappar gruppen",
       "lessonLogs": "{count, plural, one {# lektionslogg} other {# lektionsloggar}} på de lektionerna",
+      "lessonMoves": "{count, plural, one {# flytt av en elev till en parallell lektion} other {# flyttar av elever till parallella lektioner}} för en dag på de lektionerna",
       "lunchSittings": "{count, plural, one {# lunch} other {# luncher}} i grundschemat",
       "calendarBreaks": "{count, plural, one {# rast eller lunch} other {# raster och luncher}} i kalendern",
       "availabilityConstraints": "{count, plural, one {# tillgänglighetsregel} other {# tillgänglighetsregler}}",
@@ -8395,6 +8640,1299 @@
       "saved": "Valet är sparat",
       "loadFailed": "Valet kunde inte hämtas",
       "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
+    }
+  },
+  "lessonMoves": {
+    "action": "Flytta elev",
+    "title": "Flytta en elev till en parallell lektion",
+    "description": "Eleven flyttas för den här lektionens dag. Schemat i övrigt är som det var, och flytten går att ångra.",
+    "pupil": "Elev",
+    "pupilPlaceholder": "Välj en elev",
+    "noPupils": "Det finns ingen elev på lektionen som du får flytta.",
+    "pupilsFailed": "Eleverna kunde inte läsas in.",
+    "pupilsFailedHint": "Försök igen om en stund.",
+    "arrived": "flyttad hit",
+    "candidates": "Lektioner som överlappar {subject} {start}–{end}",
+    "noCandidates": "Ingen annan lektion överlappar den här i tid.",
+    "candidatesFailed": "Lektionerna kunde inte läsas in.",
+    "candidatesFailedHint": "Försök igen om en stund.",
+    "headcount": "{count, plural, one {# elev} other {# elever}}",
+    "capacity": "salen rymmer {count}",
+    "confirm": "Flytta",
+    "moved": "Eleven är flyttad.",
+    "undone": "Flytten är ångrad.",
+    "undo": "Ångra",
+    "sectionTitle": "Flyttade elever",
+    "sectionDescription": "Elever som är flyttade till eller från den här lektionen för dagen. De räknas på lektionen de går på, inte som frånvarande på den här.",
+    "departure": "Flyttad till {subject} ({className}, {start}–{end})",
+    "arrival": "Kommer från {subject} ({className}, {start}–{end})",
+    "movedBy": "flyttad av {name}",
+    "warning": {
+      "TARGET_ROOM_OVER_CAPACITY": "Salen rymmer {capacity} men får {headcount}"
+    },
+    "refusal": {
+      "LESSON_MOVE_NOT_PARALLEL": "Överlappar inte i tid",
+      "LESSON_MOVE_LESSON_OVER": "Lektionen eleven går från är slut",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {Lektionen eleven går från hålls inte} other {Är inställd}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "Är ersatt av en schemabrytande aktivitet",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "Eleven går redan på den här lektionen",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "Eleven har en annan lektion samtidigt"
+    },
+    "errors": {
+      "LESSON_MOVE_NOT_ALLOWED": "Du får inte flytta den här eleven. Det får en administratör med Drift, en lärare på någon av lektionerna och elevens mentor.",
+      "LESSON_MOVE_NOT_FOUND": "Flytten finns inte längre.",
+      "LESSON_MOVE_LESSON_NOT_FOUND": "Lektionen finns inte.",
+      "LESSON_MOVE_NOT_PARALLEL": "Lektionerna överlappar inte i tid, så eleven kan inte flyttas dit.",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {Lektionen eleven går från hålls inte.} other {Lektionen eleven ska flyttas till är inställd.}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "{side, select, FROM {Lektionen eleven går från är ersatt av en schemabrytande aktivitet.} other {Lektionen eleven ska flyttas till är ersatt av en schemabrytande aktivitet.}}",
+      "LESSON_MOVE_IN_THE_PAST": "En flytt görs för i dag eller senare.",
+      "LESSON_MOVE_LESSON_OVER": "Lektionen är slut. Ingen ny flytt görs ur en avslutad lektion. En flytt som redan gjorts kan samma dag ångras av en administratör med Drift eller en lärare på lektionen eleven flyttades från, och flyttas vidare av en administratör med Drift eller en lärare på lektionen eleven står på. Be någon av dem.",
+      "LESSON_MOVE_PUPIL_NOT_ON_LESSON": "Eleven går inte på lektionen.",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "Eleven går redan på den lektionen.",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "Eleven skulle få två lektioner samtidigt.",
+      "LESSON_MOVE_HAS_ATTENDANCE": "Eleven har redan en närvaromarkering på lektionen de flyttats till. Ta bort markeringen först.",
+      "LESSON_MOVE_EXISTS": "Eleven är redan flyttad från lektionen.",
+      "LESSON_MOVE_CHANGED": "Flytten ändrades just nu. Försök igen.",
+      "LESSON_MOVE_NOT_A_PUPIL": "Eleven finns inte."
+    },
+    "settings": {
+      "title": "Notis när en elev byter lektion",
+      "description": "Lärarna på de två lektionerna får alltid en notis. Här väljer skolan om vårdnadshavaren också får en när barnet flyttas till en parallell lektion för en dag.",
+      "guardianNotice": "Berätta för vårdnadshavaren när ett barn byter lektion för en dag",
+      "hint": "Notisen säger att ett barns lektion har ändrats och när, aldrig vem som flyttade barnet. Av som förval.",
+      "saved": "Valet är sparat.",
+      "loadFailed": "Valet kunde inte läsas in.",
+      "loadFailedHint": "Försök igen om en stund."
+    }
+  },
+  "absenceStats": {
+    "title": "Frånvarostatistik över tid",
+    "teacherSubtitle": "Frånvaron i klasserna där du är mentor, månad för månad över tre läsår",
+    "backToWatch": "Till Frånvarobevakning",
+    "link": "Frånvarostatistik över tid",
+    "intro": "Giltig och ogiltig frånvaro i procent av de registrerade minuterna, månad för månad över tre läsår: för skolan, för varje klass och för varje elev. Rapporteringsgraden står bredvid, eftersom en månad där få lektioner har ett sparat register säger mindre än siffran ger sken av. Räkningen görs varje natt för dagarna fram till och med i går, och ingen siffra visas för en grupp med färre än {min} elever.",
+    "percent": "{percent} %",
+    "minutes": "{count} min",
+    "retry": "Försök igen",
+    "loadFailedHint": "Inga siffror visas och inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "period": {
+      "label": "Period",
+      "YEAR": "Läsåret hittills",
+      "PREVIOUS": "Föregående läsår",
+      "LAST_90": "Senaste 90 dagarna",
+      "ALL": "Alla tre läsåren",
+      "range": "Perioden är {from} – {to}"
+    },
+    "school": {
+      "title": "Skolan månad för månad",
+      "description": "Alla klasser tillsammans. Under en siffra står samma månad året före, när den finns.",
+      "caption": "Skolans frånvaro per månad",
+      "loadFailed": "Skolans frånvaro kunde inte hämtas",
+      "emptyTitle": "Ingen frånvaro att visa än",
+      "emptyBody": "Siffrorna räknas varje natt för dagarna fram till och med i går. De första kommer när en lektion har fått sina markeringar sparade."
+    },
+    "series": {
+      "column": {
+        "month": "Månad",
+        "pupils": "Elever med markering",
+        "valid": "Giltig frånvaro",
+        "invalid": "Ogiltig frånvaro",
+        "late": "Sena ankomster",
+        "reporting": "Rapporteringsgrad"
+      },
+      "year": "Läsår {name}",
+      "going": "Hittills, till och med {date}",
+      "classNames": "Klass: {names}",
+      "pupilsOf": "{registered} av {pupils}",
+      "figure": "{minutes} · {percent}",
+      "previous": "Förra året: {value}",
+      "previousNone": "Förra året: ingen siffra",
+      "noFigure": "Ingen siffra: färre än {min} elever har markeringar",
+      "noLessons": "Inga hållna lektioner",
+      "reportedOf": "{reported} av {held} lektioner",
+      "empty": "Ingen månad har räknats än. Siffrorna räknas varje natt för dagarna fram till och med i går."
+    },
+    "chart": {
+      "label": "Diagram över giltig och ogiltig frånvaro per månad. Samma siffror står i tabellen under.",
+      "axis": "Andel av de registrerade minuterna",
+      "invalid": "Ogiltig frånvaro",
+      "valid": "Giltig frånvaro",
+      "previous": "Samma månad året före",
+      "going": "Månad som pågår",
+      "none": "Ingen siffra"
+    },
+    "classes": {
+      "title": "Klasser",
+      "description": "Summan av klassens månader under perioden. Välj en klass för dess månader, mönster och elever.",
+      "mentorDescription": "Klasserna där du är mentor, summerade över perioden. Välj en klass för dess månader, mönster och elever.",
+      "caption": "Frånvaro per klass",
+      "column": {
+        "class": "Klass",
+        "open": "Visa klassen"
+      },
+      "monthsCounted": "{count, plural, =0 {ingen månad med siffra} one {# månad med siffra} other {# månader med siffra}}",
+      "open": "Visa",
+      "openNamed": "Visa klass {name}",
+      "empty": {
+        "admin": {
+          "title": "Inga klasser att visa",
+          "body": "Klasser med elever och sparade markeringar visas här."
+        },
+        "mentor": {
+          "title": "Du är inte mentor för någon klass",
+          "body": "Här visas klasserna där du har uppdraget mentorskap."
+        }
+      },
+      "loadFailed": "Klasserna kunde inte hämtas"
+    },
+    "class": {
+      "title": "Klass {name}",
+      "loadFailed": "Klassens månader och mönster kunde inte hämtas",
+      "series": {
+        "title": "Klassen månad för månad",
+        "description": "Klassen och dess föregångare, om klassen har bytt namn eller årskurs. Under en siffra står samma månad året före, när den finns.",
+        "caption": "Frånvaro per månad i klass {name}"
+      },
+      "patterns": {
+        "title": "Mönster",
+        "description": "På vilka veckodagar, vilka pass och i vilka ämnen frånvaron faller under perioden, som andel av de registrerade minuterna."
+      }
+    },
+    "patterns": {
+      "suppressedTitle": "Mönster visas inte",
+      "suppressedBody": "Färre än {min} elever har markeringar under perioden. Ett mönster skulle då peka ut enskilda elever.",
+      "empty": "Inga markeringar under perioden.",
+      "groupSize": "Mönstret bygger på {count, plural, one {# elev} other {# elever}} med markeringar.",
+      "recorded": "{minutes} registrerade",
+      "caption": {
+        "weekdays": "Frånvaro per veckodag",
+        "slots": "Frånvaro per pass",
+        "subjects": "Frånvaro per ämne"
+      },
+      "column": {
+        "weekdays": "Veckodag",
+        "slots": "Pass (starttid)",
+        "subjects": "Ämne",
+        "valid": "Giltig",
+        "invalid": "Ogiltig",
+        "total": "Sammanlagt"
+      }
+    },
+    "pupils": {
+      "title": "Elever",
+      "description": "Varje elevs frånvaro under perioden, som underlag för utvecklingssamtal. Att öppna listan och elevkorten registreras i läsloggen.",
+      "caption": "Elevernas frånvaro i klassen",
+      "column": {
+        "pupil": "Elev",
+        "card": "Elevkort"
+      },
+      "noRegistration": "Ingen registrering i perioden",
+      "open": "Elevkort",
+      "openNamed": "Visa elevkort för {name}",
+      "heldOut": "{count, plural, one {# elev med skyddad identitet visas inte i listan.} other {# elever med skyddad identitet visas inte i listan.}}",
+      "empty": {
+        "title": "Inga elever att visa",
+        "body": "Klassen har inga elever på listan under perioden."
+      },
+      "loadFailed": "Eleverna kunde inte hämtas"
+    },
+    "reader": {
+      "title": "Elever visas inte för huvudmannens läsare",
+      "body": "Huvudmannens läsare ser skolans och klassernas summor, aldrig en enskild elev. Elevlistan och elevkorten är därför dolda."
+    },
+    "card": {
+      "back": "Till klass {name}",
+      "backList": "Till elevlistan",
+      "class": "Klass {name}",
+      "noClass": "Ingen klass",
+      "period": "Mönstren gäller {from} – {to}",
+      "print": "Skriv ut",
+      "protectedTitle": "Eleven har skyddad identitet",
+      "protectedBody": "Kortet visas för dig här, men det skrivs aldrig ut. Utskrift görs inte för en elev med skyddad identitet.",
+      "printProtected": "Utskrift görs inte för en elev med skyddad identitet",
+      "printProtectedBody": "Ingenting har skrivits ut.",
+      "printFailed": "Det gick inte att kontrollera skyddad identitet",
+      "printFailedHint": "Ingenting har skrivits ut. Försök igen om en stund.",
+      "printUseButton": "Elevkortet skrivs ut med knappen Skriv ut på kortet, inte med webbläsarens utskrift.",
+      "basisTitle": "Vad siffrorna bygger på",
+      "marksFrom": "Markeringar finns kvar från {from} till {to}. Närvaron före {from} har gallrats eller rapporterades aldrig; de månaderna visas som ”Ingen registrering”, inte som ingen frånvaro.",
+      "noMarks": "Det finns inga markeringar kvar för eleven. Närvaron har gallrats eller rapporterades aldrig, och ingen månad har en siffra.",
+      "readNote": "Att öppna elevkortet registreras i läsloggen.",
+      "noRegistration": "Ingen registrering",
+      "recorded": "Registrerade minuter",
+      "months": {
+        "title": "Månad för månad",
+        "description": "Eleven mot klassen: klassens giltiga och ogiltiga frånvaro och klassens rapporteringsgrad står bredvid. Under en siffra står samma månad året före, när den finns.",
+        "caption": "Frånvaro per månad för {name}"
+      },
+      "column": {
+        "class": "Klassen",
+        "classReporting": "Klassens rapporteringsgrad"
+      },
+      "lessons": "{count, plural, one {# lektion} other {# lektioner}} med markering",
+      "previousNone": "Förra året: ingen registrering",
+      "classFigures": "Giltig {valid} · ogiltig {invalid}",
+      "classNoFigure": "Ingen siffra för klassen",
+      "noClassSeries": "Eleven går inte i någon klass, så det finns ingen klass att jämföra med.",
+      "patterns": {
+        "title": "Mönster för eleven",
+        "description": "På vilka veckodagar, vilka pass och i vilka ämnen elevens frånvaro faller under perioden."
+      },
+      "loadFailed": "Elevkortet kunde inte hämtas"
+    },
+    "sheet": {
+      "title": "Frånvaro över tid",
+      "printed": "Utskrivet {date}",
+      "monthsLabel": "Månader",
+      "patternsLabel": "Mönster",
+      "patterns": "Mönster, {from} – {to}",
+      "column": {
+        "valid": "Giltig %",
+        "invalid": "Ogiltig %",
+        "class": "Klass %",
+        "reporting": "Rapp. %"
+      },
+      "legend": "Giltig och ogiltig är elevens andel av de registrerade minuterna. Klass är klassens giltiga och ogiltiga frånvaro tillsammans, Rapp. klassens rapporteringsgrad. ”–” betyder att siffra saknas: ingen registrering för eleven, eller för få elever i klassen.",
+      "footer": "Uppgifter om en enskild elev, som underlag för utvecklingssamtal. Förvara och kassera utskriften enligt skolans rutiner."
+    }
+  },
+  "meals": {
+    "title": "Måltidskollen",
+    "subtitle": "Portioner per lunchsittning, för köket.",
+    "intro": "Antalen räknas från det publicerade schemat: eleverna i klasserna som äter i sittningen, minus anmäld frånvaro som kommit före brytpunkten, plus personal som äter med. De gäller från i dag, eftersom klasslistorna är dagens.",
+    "view": {
+      "label": "Vy",
+      "day": "Dagen",
+      "week": "Veckan framåt"
+    },
+    "day": {
+      "pick": "Dag",
+      "previous": "Föregående dag",
+      "next": "Nästa dag",
+      "today": "I dag"
+    },
+    "actions": {
+      "print": "Skriv ut",
+      "csv": "Hämta fil för Excel",
+      "csvFailed": "Filen kunde inte hämtas. Försök igen om en stund."
+    },
+    "print": {
+      "dayTitle": "Portioner {date}",
+      "weekTitle": "Portioner {from} – {to}",
+      "school": "Rastra Måltidskollen"
+    },
+    "kpi": {
+      "portions": "Portioner",
+      "pupils": "Elever",
+      "absent": "Frånvaro, avdragen",
+      "staff": "Personal",
+      "after": "Anmäld efter brytpunkten",
+      "notIncluded": "Ingår inte",
+      "afterDetail": "Visas, dras inte av"
+    },
+    "table": {
+      "captionDay": "Portioner per sittning {date}",
+      "captionWeek": "Portioner per dag, veckan framåt",
+      "column": {
+        "sitting": "Sittning",
+        "sittings": "Sittningar",
+        "classes": "Klasser",
+        "date": "Dag",
+        "pupils": "Elever",
+        "absent": "Frånvaro före brytpunkten",
+        "staff": "Personal",
+        "portions": "Portioner",
+        "after": "Efter brytpunkten"
+      },
+      "activity": "aktivitet",
+      "activityTitle": "Klassen har en schemabrytande aktivitet över sittningen och räknas med.",
+      "total": "Totalt",
+      "none": "Ingen sittning",
+      "open": "Visa dagen",
+      "openFor": "Visa {date}",
+      "notIncluded": "–"
+    },
+    "empty": {
+      "title": "Ingen lunch i det publicerade schemat den här dagen",
+      "body": "Det gäller helger, lov och dagar som schemat inte är publicerat för. Lunchen publiceras med schemat."
+    },
+    "emptyWeek": {
+      "title": "Ingen lunch i det publicerade schemat den närmaste veckan",
+      "body": "Publicera schemat, eller välj en annan dag under Dagen."
+    },
+    "notes": {
+      "title": "Så här räknas det",
+      "cutoff": "Frånvaro som anmälts före klockan {time} den dagen är avdragen. Frånvaro som anmäls senare dras inte av utan visas för sig, så att du ser vad som ändrats sedan beställningen.",
+      "noCutoff": "Ingen brytpunkt är satt, så ingen frånvaro dras av. Ange en brytpunkt under Brytpunkt och brev.",
+      "partial": "Bara frånvaro som täcker hela sittningen dras av: en elev som är borta en del av den äter.",
+      "staff": "Personal räknas enligt den pedagogiska lunch med fast tid som är lagd under Tjänstefördelning.",
+      "noStaff": "Personal ingår inte: ingen pedagogisk lunch med fast tid är lagd under Tjänstefördelning.",
+      "activity": "Klasser med en schemabrytande aktivitet över sittningen räknas med, eftersom aktiviteten inte säger om klassen äter i skolan.",
+      "diet": "Allergier och kostval ingår inte. De lagras inte i Rastra."
+    },
+    "settings": {
+      "title": "Brytpunkt och brev till köket",
+      "description": "Brytpunkten är den tid på dagen då köket lägger sin beställning. Brevet går varje skoldag vid brytpunkten till köksadressen, genom Rastras vanliga utskick.",
+      "cutoffLabel": "Brytpunkt",
+      "cutoffHint": "Skolans tid, TT:MM. Utan brytpunkt dras ingen frånvaro av.",
+      "emailLabel": "Köksadress",
+      "emailHint": "En adress. Den är skolans, inte en användare, och används bara för brevet.",
+      "letterLabel": "Skicka ett brev till köket varje skoldag",
+      "letterOn": "Brevet går klockan {time} varje dag som har en sittning.",
+      "letterOff": "Brevet är av. Det går inget brev förrän du slår på det.",
+      "letterNeeds": "Ange en brytpunkt och en köksadress för att slå på brevet.",
+      "privacy": "Brevet och filen innehåller bara antal och klassernas namn, aldrig en elevs namn.",
+      "lastLetter": "Senaste brev: {date}",
+      "noLetterYet": "Inget brev har gått ännu.",
+      "save": "Spara",
+      "saved": "Inställningarna är sparade.",
+      "problem": {
+        "cutoff": "Brytpunkten ska vara en tid TT:MM.",
+        "email": "Köksadressen ska vara en e-postadress, bara en.",
+        "letter": "Brevet kan bara vara på när brytpunkt och köksadress är angivna."
+      },
+      "loadFailed": "Inställningarna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund."
+    },
+    "loadFailed": "Portionerna kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "retry": "Försök igen"
+  },
+  "exams": {
+    "title": "Prov och skrivsalar",
+    "subtitle": "Lägg in prov, märk skrivsalar och låt planeraren föreslå tid, salar och vakter",
+    "intro": "Ett prov som läggs blir en aktivitet: lektionerna ställs in och varje klass får en ersättningslektion med sal och vakter, som bär närvaron. Provets minuter räknas som undervisningstid i provets ämne. Planeraren är avstängd tills skolan slår på den, men prov och skrivsalar kan läggas in ändå.",
+    "yearLabel": "Läsår",
+    "backToActivities": "Till Aktiviteter",
+    "loadFailed": "Läsåren kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Ladda om sidan för att försöka igen.",
+    "noYearTitle": "Det finns inget läsår ännu",
+    "noYearBody": "Prov hör till ett läsår. Lägg upp läsåret först.",
+    "goToYears": "Till läsåren",
+    "lookupsFailed": "Klasser eller ämnen kunde inte hämtas",
+    "lookupsFailedHint": "Formulären saknar dem tills sidan laddas om. Inget prov är ändrat.",
+    "subjectPlaceholder": "Välj ämne",
+    "goToSubjects": "Till Ämnen",
+    "andMore": "och {count} till",
+    "settingsTitle": "Inställningar",
+    "settingsIntro": "Gäller hela skolan. Taken och vaktfördelningen sköts av planeraren.",
+    "settingsLoadFailed": "Inställningarna kunde inte hämtas",
+    "settingsSaved": "Inställningarna är sparade",
+    "enabled": "Provplanering på",
+    "enabledHint": "Av som förval. När den är av kan skolan ändå lägga in prov och märka skrivsalar, men Planera går inte att köra.",
+    "offTitle": "Planeraren är avstängd",
+    "maxDay": "Högst så många prov per klass och dag",
+    "maxWeek": "Högst så många prov per klass och vecka",
+    "ratio": "Skrivande per vakt",
+    "ratioHint": "En sal får en vakt per så många skrivande, avrundat uppåt, och minst en.",
+    "turnover": "Omställning i minuter",
+    "turnoverHint": "Tid som en sal och en vakt behöver efter ett prov innan nästa kan börja.",
+    "replacementSubject": "Ämne för ersättningslektionerna",
+    "replacementSubjectHint": "Bara ämnen som inte räknas som undervisningstid kan väljas. Provets egna minuter räknas på provets ämne.",
+    "noReplacementSubjectTitle": "Inget ämne kan vara ersättningslektionens",
+    "noReplacementSubjectBody": "Ersättningslektionen behöver ett ämne som inte räknas som undervisningstid, till exempel Prov. Lägg upp det under Ämnen och stäng av Räknas som undervisningstid.",
+    "settingsProblems": {
+      "day": "Ange ett heltal mellan 1 och 10.",
+      "week": "Ange ett heltal mellan 1 och 30.",
+      "order": "En vecka rymmer minst lika många prov som en dag.",
+      "ratio": "Ange ett heltal mellan 1 och 200.",
+      "turnover": "Ange minuter mellan 0 och 120."
+    },
+    "roomsTitle": "Skrivsalar",
+    "roomsIntro": "Märk de salar som får användas till prov och ange hur många som kan skriva i dem. Salens kapacitet är ett förslag.",
+    "roomsCaption": "Skolans salar och hur många platser för prov varje skrivsal har",
+    "roomsLoadFailed": "Salarna kunde inte hämtas",
+    "roomsNone": "Skolan har inga salar ännu.",
+    "goToRooms": "Till Salar",
+    "roomName": "Sal",
+    "roomSeats": "Platser för prov",
+    "roomSeatsFor": "Platser för prov i {name}",
+    "roomSeatsBadge": "Skrivsal, {seats} platser",
+    "roomMark": "Markera",
+    "roomUnmark": "Ta bort",
+    "roomMarked": "{name} är nu skrivsal.",
+    "roomSeatsSaved": "Platserna i {name} är sparade.",
+    "roomUnmarked": "{name} är inte längre skrivsal.",
+    "formTitle": "Nytt prov",
+    "formIntro": "Ange provet och när det får hållas. Inget läggs förrän du har läst planerarens förslag.",
+    "changeTitle": "Ändra {name}",
+    "changeBody": "Beskriv hela provet på nytt. Ett prov som är lagt kan inte ändras; ta bort planeringen först.",
+    "name": "Namn",
+    "namePlaceholder": "Till exempel Matematik, algebra",
+    "nameHint": "Visas på ersättningslektionen som Prov: och namnet. Högst {max} tecken.",
+    "subject": "Ämne",
+    "subjectHint": "Provets minuter räknas som undervisningstid i det här ämnet.",
+    "length": "Längd i minuter",
+    "writers": "Antal skrivande",
+    "writersHint": "Alla klasser som skriver provet tillsammans.",
+    "groups": "Klasser och grupper",
+    "groupsHint": "Eleverna i de valda klasserna och grupperna skriver provet.",
+    "windowKind": "Tid",
+    "kinds": {
+      "WEEK": "Önskat fönster: planeraren väljer tid",
+      "FIXED": "Fast datum och starttid"
+    },
+    "from": "Första dag",
+    "to": "Sista dag",
+    "date": "Datum",
+    "fixedStart": "Starttid",
+    "earliestStart": "Tidigaste start",
+    "latestEnd": "Senaste slut",
+    "windowHint": "Fönstret rymmer högst 31 dagar. Tiderna gäller varje dag i fönstret; lämna dem tomma för skoldagens egna tider.",
+    "fixedHint": "Ett prov med fast tid flyttas inte, till exempel ett nationellt prov.",
+    "noExamSubjectTitle": "Inget ämne kan vara provets",
+    "noExamSubjectBody": "Ett prov behöver ett ämne som räknas som undervisningstid. Lägg upp ämnen under Ämnen.",
+    "create": "Lägg in provet",
+    "created": "Provet är inlagt.",
+    "changed": "Provet är ändrat.",
+    "problems": {
+      "name": "Ge provet ett namn, högst {max} tecken.",
+      "subject": "Välj provets ämne.",
+      "groups": "Välj minst en klass eller grupp.",
+      "length": "Ange minuter mellan {min} och {max}.",
+      "writers": "Ange antal skrivande, mellan 1 och 2000.",
+      "dates": "Välj första och sista dag.",
+      "order": "Sista dagen ligger före den första.",
+      "outsideYear": "Dagarna ska ligga inom läsåret.",
+      "tooLong": "Fönstret rymmer högst 31 dagar.",
+      "fixedStart": "Ange starttid.",
+      "limits": "Tidigaste start ligger före senaste slut."
+    },
+    "listTitle": "Prov i {year}",
+    "listIntro": "Ett prov som är lagt kan inte ändras eller tas bort. Ta bort planeringen först.",
+    "listCaption": "Proven i {year} med klasser, önskad tid och om de är lagda",
+    "listNone": "Inga prov för läsåret ännu.",
+    "listLoadFailed": "Proven kunde inte hämtas",
+    "pickColumn": "Planera",
+    "pick": "Planera {name}",
+    "examColumn": "Prov",
+    "windowColumn": "Önskad tid",
+    "sizeColumn": "Längd",
+    "stateColumn": "Läge",
+    "fixedAt": "kl. {start}",
+    "earliestAt": "tidigast {time}",
+    "latestAt": "slut senast {time}",
+    "lengthMinutes": "{minutes} min",
+    "writersCount": "{count} skrivande",
+    "statePlaced": "Lagt",
+    "stateNotPlaced": "Ej lagt",
+    "placedAt": "{date} kl. {start}–{end}",
+    "sitting": "{room}: {writers} skrivande.",
+    "invigilators": "Vakter: {names}.",
+    "noInvigilators": "Inga vakter att visa.",
+    "notPlannedYet": "Inte planerat ännu.",
+    "change": "Ändra",
+    "unplan": "Ta bort planeringen",
+    "unplanTitle": "Ta bort planeringen av {name}?",
+    "unplanBody": "Lektionerna sätts tillbaka, och ersättningslektionerna och salsbokningarna tas bort. Provet blir olagt och kan planeras om. Fick familjerna besked om provet får de besked om detta också.",
+    "unplanned": "Planeringen av {name} är borttagen.",
+    "unplannedHeld": "Planeringen av {name} är borttagen, men {count, plural, one {# lektion} other {# lektioner}} står kvar som inställd eftersom en annan lektion eller bokning håller salen. Kontrollera lektionerna i schemat.",
+    "removeTitle": "Ta bort {name}?",
+    "removeBody": "Provet tas bort. Åtgärden kan inte ångras.",
+    "removed": "{name} är borttaget.",
+    "plannerTitle": "Planera",
+    "plannerIntro": "Planeraren föreslår tid, salar och vakter för de prov som inte är lagda. Inget läggs förrän du använder förslaget.",
+    "plannerOffBody": "Provplaneringen är avstängd, så inget förslag kan tas fram. Slå på den under Inställningar. Prov och skrivsalar kan läggas in ändå.",
+    "plannerNoSubjectTitle": "Välj ersättningsämne först",
+    "plannerNoSubjectBody": "Planeraren behöver ett ämne för ersättningslektionerna. Välj ett under Inställningar och spara.",
+    "plannerNoRoomsTitle": "Markera en skrivsal först",
+    "plannerNoRoomsBody": "Planeraren behöver minst en skrivsal. Markera de salar som får användas under Skrivsalar.",
+    "allPlaced": "Alla prov för läsåret är lagda.",
+    "planAll": "Planera de olagda proven",
+    "planPicked": "Planera de {count} markerade proven",
+    "planHint": "Markera prov i listan för att planera bara dem.",
+    "planning": "Planerar…",
+    "planningHint": "Det kan ta upp till en minut. Lämna inte sidan.",
+    "nothingToPlan": "Det fanns inga prov att planera.",
+    "proposalSummary": "{placed} av {total} prov kan läggas.",
+    "proposalReady": "Förslaget är klart. {placed} av {total} prov kan läggas.",
+    "feasibleHint": "Sökningen hann inte avgöra om förslaget är det bästa. Planera igen om du vill se om det går att få ett bättre.",
+    "dayCaption": "Prov som kan läggas {date}",
+    "useColumn": "Använd",
+    "use": "Använd förslaget för {name}",
+    "timeColumn": "Tid",
+    "roomsColumn": "Salar och vakter",
+    "lossColumn": "Påverkan",
+    "proposedRoom": "{room} ({classes}): {writers} skrivande",
+    "loss": "Stör {minutes} min undervisning",
+    "lossNone": "Stör ingen undervisning",
+    "unplacedTitle": "Kunde inte läggas",
+    "reasonUnknown": "Provet kunde inte läggas.",
+    "reasonClass": "Gäller {class}.",
+    "counterProposalTitle": "Vakträknare",
+    "counterTitle": "Vaktpass i {year}",
+    "counterNone": "Ingen har haft vakt vid något prov i år ännu.",
+    "teacherColumn": "Lärare",
+    "watchColumn": "Vaktpass",
+    "beforeColumn": "Före",
+    "addedColumn": "Nytt",
+    "afterColumn": "Efter",
+    "figures": "{passes} pass, {minutes} min",
+    "figuresAdded": "+{passes} pass, +{minutes} min",
+    "chooseAll": "Välj alla",
+    "chooseNone": "Välj inga",
+    "notify": "Meddela elever, vårdnadshavare och lärare",
+    "notifyHint": "De berörda får en notis om provet, som vid en aktivitet. Varje inställd lektion visar redan provets namn i schemat.",
+    "applyChosen": "Använd valda ({count})",
+    "applied": "Lagda prov: {applied}. Kunde inte läggas: {failed}.",
+    "resultTitle": "Resultat",
+    "resultOk": "Lagt.",
+    "resultFailed": "Provet kunde inte läggas.",
+    "staleHint": "Planera om.",
+    "errors": {
+      "throttled": "För många förfrågningar på kort tid. Vänta en stund och försök igen."
+    },
+    "reasons": {
+      "EXAM_WINDOW_CLOSED": "Alla dagar i fönstret är lediga eller har redan passerat.",
+      "EXAM_NO_LESSON_TO_REPLACE": "Klassen har ingen lektion att ersätta inom fönstret.",
+      "EXAM_OUTSIDE_HOURS": "Provet ryms inte inom dagens tider eller gränser.",
+      "EXAM_GROUPS_GONE": "Provets klasser finns inte längre i läsåret."
+    }
+  },
+  "classTeacher": {
+    "title": "Klassens schema",
+    "subtitle": "Ändra din klass lektioner inom det schemaläggaren har lämnat öppet",
+    "intro": "Du är klasslärare för klassen och ändrar dess lektioner som utkast. En schemaläggare går igenom utkasten och publicerar dem, om inte skolan har låtit klasslärare publicera själva. Du kan bara ändra dina egna lektioner, bara under tider som är öppna, och aldrig lektioner som delas med andra lärare, ligger i ett block eller använder delade salar.",
+    "noAppointment": {
+      "title": "Du är inte utsedd till klasslärare",
+      "body": "En schemaläggare utser klasslärare per klass och läsår. Be en schemaläggare utse dig om du ska ändra en klass schema."
+    },
+    "loadFailed": "Klassens schema kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "refetchFailed": "Veckan kunde inte läsas om",
+    "classLabel": "Klass",
+    "classHeading": "Klass {name}",
+    "view": {
+      "label": "Vy",
+      "occasions": "Veckan",
+      "template": "Mallen",
+      "occasionsHint": "Lektionerna datum för datum. Det du ändrar här gäller bara den dagen.",
+      "templateHint": "Klassens veckomall. Det du ändrar här gäller varje vecka framöver, när utkastet har publicerats."
+    },
+    "week": {
+      "nav": "Välj vecka",
+      "prev": "Föregående vecka",
+      "next": "Nästa vecka",
+      "current": "Denna vecka",
+      "label": "Vecka {week}, {range}"
+    },
+    "grid": {
+      "labelWeek": "Lektioner för {name}, vecka {week}",
+      "labelTemplate": "Veckomallen för {name}",
+      "open": "Öppet {spans}",
+      "closed": "Inget öppet",
+      "noLessons": "Klassen har inga lektioner den här veckan.",
+      "noTemplate": "Klassen har inga lektioner i mallen.",
+      "noOpenTimes": {
+        "title": "Inga tider är öppna för klasslärare",
+        "body": "Schemaläggaren har inte öppnat några tider för klassen ännu. Du ser lektionerna men kan inte ändra dem förrän tider har öppnats."
+      },
+      "legend": "Den ljusa ytan bakom lektionerna är tider som är öppna för klasslärare. Lektioner med streckad ram är låsta; välj en för att se varför."
+    },
+    "state": {
+      "editable": "Kan ändras",
+      "locked": "Låst",
+      "draft": "Utkast",
+      "cancelled": "Inställd"
+    },
+    "lesson": {
+      "mine": "Din lektion",
+      "notMine": "En annan lärares lektion",
+      "room": "Sal {room}",
+      "noRoom": "Ingen sal",
+      "recurrence": {
+        "ODD_WEEKS": "Udda veckor",
+        "EVEN_WEEKS": "Jämna veckor"
+      }
+    },
+    "panel": {
+      "empty": "Välj en lektion i schemat för att se vad du kan göra med den.",
+      "gone": "Lektionen finns inte längre i den här veckan. Veckan har lästs om.",
+      "loading": "Läser veckan…",
+      "lockedTitle": "Lektionen är låst",
+      "draftTitle": "Utkast för lektionen",
+      "editDraft": "Redigera utkastet",
+      "discardDraft": "Släng utkastet",
+      "actionsTitle": "Vad vill du göra?",
+      "action": {
+        "OCCASION_MOVE": "Flytta",
+        "OCCASION_CANCEL": "Ställ in",
+        "OCCASION_ROOM": "Byt sal",
+        "TEMPLATE_MOVE": "Flytta i mallen",
+        "TEMPLATE_SPLIT": "Dela passet"
+      },
+      "cannotSplit": "Passet är för kort för att delas: varje del ska vara minst 15 minuter."
+    },
+    "form": {
+      "title": {
+        "OCCASION_MOVE": "Flytta lektionen",
+        "OCCASION_CANCEL": "Ställ in lektionen",
+        "OCCASION_ROOM": "Byt sal",
+        "TEMPLATE_MOVE": "Flytta lektionen i mallen",
+        "TEMPLATE_SPLIT": "Dela passet"
+      },
+      "editTitle": "Redigera utkast: {action}",
+      "intro": {
+        "OCCASION_MOVE": "Lektionen flyttas bara den här dagen. Veckomallen ändras inte.",
+        "OCCASION_CANCEL": "Lektionen ställs in den här dagen. Veckomallen ändras inte.",
+        "OCCASION_ROOM": "Lektionen får en annan sal bara den här dagen.",
+        "TEMPLATE_MOVE": "Lektionen flyttas i klassens veckomall och gäller varje vecka.",
+        "TEMPLATE_SPLIT": "Passet blir två lektioner. Den första behåller dag och starttid och slutar där du anger, den andra läggs där du anger. Tillsammans ska de vara lika långa som passet var."
+      },
+      "date": "Nytt datum",
+      "dayOfWeek": "Veckodag",
+      "pickDay": "Välj dag",
+      "start": "Från",
+      "end": "Till",
+      "room": "Sal",
+      "roomHint": "Lämna som den är för att behålla lektionens sal.",
+      "keepRoom": "Behåll salen",
+      "pickRoom": "Välj sal",
+      "roomRefused": "{room} (kan inte väljas: {reason})",
+      "note": "Anteckning",
+      "noteHint": "Syns för schemaläggaren. Högst 200 tecken.",
+      "noteCancelHint": "Skälet till att lektionen ställs in. Högst 200 tecken.",
+      "firstPart": "Första delen",
+      "firstPartKeeps": "Behåller {day} {start}.",
+      "keepEnd": "Första delen slutar",
+      "secondPart": "Andra delen",
+      "minutes": "Första delen {first} min, andra delen {second} min: tillsammans {sum} av {total} min.",
+      "save": "Spara utkast",
+      "saveEdit": "Spara ändringarna",
+      "saving": "Sparar…",
+      "cancel": "Avbryt",
+      "saved": "Utkastet är sparat",
+      "savedEdit": "Utkastet är ändrat",
+      "reload": "Läs om",
+      "takeTheirs": "Läs in det nya utkastet",
+      "keepMine": "Spara mina ändringar ändå",
+      "openExisting": "Öppna utkastet",
+      "problem": {
+        "DATE_MISSING": "Ange ett datum.",
+        "DATE_WEEKEND": "Lektioner läggs måndag till fredag.",
+        "DAY_MISSING": "Välj en veckodag.",
+        "TIME_MISSING": "Ange en tid.",
+        "END_NOT_AFTER_START": "Sluttiden ska vara efter starttiden.",
+        "ROOM_MISSING": "Välj en sal.",
+        "KEEP_END_MISSING": "Ange var första delen slutar.",
+        "KEEP_END_OUTSIDE": "Första delen ska sluta efter passets start och före dess slut.",
+        "PART_TOO_SHORT": "Varje del ska vara minst 15 minuter.",
+        "SPLIT_MINUTES": "Delarna ska tillsammans vara lika långa som passet.",
+        "NOTE_TOO_LONG": "Anteckningen får vara högst 200 tecken.",
+        "NO_CHANGE": "Ändra dag, tid eller sal för att kunna spara."
+      }
+    },
+    "preview": {
+      "title": "Konflikter",
+      "checking": "Kontrollerar mot schemat…",
+      "fixForm": "Rätta formuläret för att kontrollera mot schemat.",
+      "ok": "Inga konflikter. Utkastet kan sparas.",
+      "failed": "Kontrollen kunde inte göras just nu. Du kan ändå spara utkastet; det kontrolleras igen före publicering.",
+      "conflictAdvice": "Du kan spara utkastet ändå, men det kan inte publiceras förrän det inte längre krockar."
+    },
+    "verdict": {
+      "OK": "Kan publiceras",
+      "OKRemoves": "Kan publiceras, men tar bort lektioner ur kalendern",
+      "removes": "{lessons, plural, one {# kommande lektion tas bort} other {# kommande lektioner tas bort}}: de skulle hamna på en tid som redan har börjat eller efter mallens slutdatum.",
+      "removesLog": "{withLog, plural, one {# av dem har lektionslogg, läxa eller vikarieanteckning, som försvinner med lektionen.} other {# av dem har lektionslogg, läxa eller vikarieanteckning, som försvinner med lektionerna.}}",
+      "REFUSED": "Kan inte publiceras",
+      "STALE": "Lektionen har ändrats sedan utkastet skrevs",
+      "staleChanged": "Det som ändrats: {fields}.",
+      "staleAdvice": "Utkastet kan inte publiceras. Det behöver slängas och skrivas igen mot lektionen som den är nu.",
+      "GONE": "Lektionen finns inte längre. Släng utkastet.",
+      "CONFLICT": "Utkastet krockar i schemat",
+      "unknown": "Utkastet kunde inte bedömas just nu"
+    },
+    "conflict": {
+      "kind": {
+        "TEACHER": "Läraren har en annan lektion då",
+        "ROOM": "Salen är upptagen då",
+        "GROUP": "Klassen har en annan lektion då",
+        "AVAILABILITY": "Läraren, salen eller klassen är inte tillgänglig då",
+        "BREAK": "Tiden ligger i en rast eller ett lov",
+        "BOOKING": "Salen är bokad då",
+        "FRAME": "Tiden ligger utanför stadiets ramtid",
+        "LUNCH": "Tiden ligger på klassens lunch",
+        "GRADE_RULE": "Tiden är stängd för klassens årskurs",
+        "EXCEPTION": "Lektionen är redan ändrad för ett datum (dag, tid eller sal), och ändringen skulle skriva över det"
+      },
+      "with": "{kind}: {lesson}, {when}"
+    },
+    "field": {
+      "dayOfWeek": "Veckodag",
+      "startTime": "Starttid",
+      "endTime": "Sluttid",
+      "roomId": "Sal",
+      "teacherId": "Lärare",
+      "coTeacherId": "Medlärare",
+      "recurrence": "Återkomst",
+      "startDate": "Startdatum",
+      "endDate": "Slutdatum",
+      "isParked": "Parkering",
+      "extraGroups": "Grupper",
+      "students": "Elever",
+      "status": "Status",
+      "startsAt": "Starttid",
+      "endsAt": "Sluttid",
+      "note": "Anteckning",
+      "teachers": "Lärare",
+      "other": "Något annat om lektionen",
+      "change": "{name} ({was} → {now})",
+      "noRoom": "ingen sal",
+      "otherRoom": "en annan sal"
+    },
+    "reason": {
+      "NOT_APPOINTED": "Du är inte utsedd till klasslärare för den här klassen.",
+      "LESSON_GONE": "Lektionen finns inte längre.",
+      "OTHER_CLASS": "Lektionen tillhör en annan klass.",
+      "HALF_CLASS": "Lektionen gäller en halvklass, eller klassen har halvklasser i ämnet. Den ändras av schemaläggaren.",
+      "PARKED": "Lektionen är parkerad och har ingen tid att ändra.",
+      "JOINT_LESSON": "Lektionen delas med andra klasser eller med elever från andra klasser.",
+      "OTHER_TEACHER": "Lektionen har en annan lärare än du.",
+      "BLOCK": "Lektionen ligger i ett block som läggs parallellt med andra lektioner.",
+      "SHARED_POST": "Lektionens timplanspost delas mellan flera lärare.",
+      "REPLACING_GROUP": "Elever i klassen går till en ersättande grupp i ämnet.",
+      "SHARED_TEACHER": "Du delas med en annan skola, så dina tider bestäms av schemaläggaren.",
+      "SHARED_ROOM": "Salen är utlånad till eller från en annan skola.",
+      "TIME_CLOSED": "Tiden är inte öppen för klasslärarens ändringar.",
+      "TARGET_CLOSED": "Den nya tiden ligger utanför de tider som är öppna för klasslärare.",
+      "NOT_A_REGULAR_LESSON": "Lektionen är inte en vanlig lektion ur klassens schema.",
+      "NOT_SCHEDULED": "Lektionen är redan inställd eller genomförd.",
+      "PAST": "Tiden har redan börjat eller passerat.",
+      "YEAR_ENDED": "Läsåret är slut. Klassens schema från det läsåret ändras inte längre.",
+      "COVERED": "Lektionen har en vikarie och hanteras av vikarietavlan.",
+      "HAS_ATTENDANCE": "Närvaro är redan registrerad på lektionen.",
+      "PENDING_TEMPLATE_CHANGE": "En ändring av klassens mall väntar för den här lektionen. Publicera eller släng den först.",
+      "PENDING_OCCASION_CHANGE": "Ett undantag för ett datum väntar för den här lektionen. Publicera eller släng det först.",
+      "TARGET_MISSING": "Den nya tiden eller salen saknas.",
+      "WEEKEND": "Lektioner läggs måndag till fredag.",
+      "ROOM_NOT_FOUND": "Salen finns inte.",
+      "ROOM_NEEDS_APPROVAL": "Salen kräver godkännande och bokas i stället av expeditionen.",
+      "SPLIT_MINUTES": "Delarna ska vara minst 15 minuter var och tillsammans lika långa som lektionen.",
+      "UNKNOWN": "Lektionen kan inte ändras av klassläraren."
+    },
+    "problem": {
+      "frame": "Ändringen ligger utanför det du får ändra",
+      "frameSeePreview": "Orsaken står under Konflikter ovan.",
+      "notAppointed": "Du är inte klasslärare för den här klassen",
+      "stale": "Lektionen har ändrats sedan du öppnade den",
+      "staleDetail": "Veckan har lästs om. Kontrollera att ändringen fortfarande stämmer och spara igen. Det du skrev finns kvar.",
+      "rev": "Någon annan har ändrat utkastet",
+      "revDetail": "Du kan läsa in det nya utkastet eller spara dina ändringar över det. Det du skrev finns kvar.",
+      "revDiscardDetail": "Utkastet finns kvar. Läs om för att se hur det ser ut nu.",
+      "exists": "Det finns redan ett utkast för lektionen",
+      "conflict": "Ändringen krockar i schemat",
+      "appointerGone": "Du behöver utses på nytt",
+      "appointerGoneDetail": "Den som utsåg dig kan inte längre ändra schemat. Be en schemaläggare utse dig på nytt.",
+      "publishOff": "Skolan har inte låtit klasslärare publicera",
+      "areaNotYours": "Din profil får inte göra den här ändringen",
+      "gone": "Lektionen eller utkastet finns inte längre",
+      "invalid": "Ändringen är inte giltig",
+      "other": "Något gick fel. Försök igen."
+    },
+    "drafts": {
+      "title": "Mina utkast",
+      "description": "Ändringar som väntar på att publiceras. Utkasten ändrar inget i det publicerade schemat förrän en schemaläggare har publicerat dem.",
+      "descriptionSelf": "Ändringar som väntar på att publiceras. Skolan har låtit klasslärare publicera klassens utkast själva; de går genom samma kontroller som schemaläggarens egna ändringar.",
+      "empty": "Inga utkast väntar. Välj en lektion och ändra den, så sparas ändringen här som ett utkast.",
+      "checking": "Kontrollerar mot schemat…",
+      "checkFailed": "Utkastet kunde inte kontrolleras just nu.",
+      "byAnother": "Skrivet av en annan klasslärare",
+      "note": "Anteckning: {note}",
+      "edit": "Redigera",
+      "editNamed": "Redigera utkastet: {label}",
+      "discard": "Släng",
+      "discardNamed": "Släng utkastet: {label}",
+      "discarded": "Utkastet är slängt",
+      "publish": "Publicera",
+      "publishNamed": "Publicera utkastet: {label}",
+      "publishAll": "Publicera utkasten",
+      "publishing": "Publicerar…",
+      "publishFailed": "Publiceringen gick inte igenom"
+    },
+    "outcome": {
+      "title": "Så gick publiceringen",
+      "PUBLISHED": "Publicerad",
+      "REFUSED": "Publicerades inte",
+      "STALE": "Publicerades inte: lektionen har ändrats",
+      "CONFLICT": "Publicerades inte: krockar i schemat",
+      "GONE": "Publicerades inte: lektionen finns inte längre",
+      "FAILED": "Publicerades inte: något gick fel, försök igen"
+    },
+    "summary": {
+      "lesson": "lektionen",
+      "lessonOn": "{subject} {date}",
+      "aRoom": "en sal",
+      "withRoom": "{target} i {room}",
+      "OCCASION_MOVE": "Flytta {lesson} till {target}",
+      "OCCASION_CANCEL": "Ställ in {lesson}",
+      "OCCASION_ROOM": "Byt sal för {lesson} till {room}",
+      "TEMPLATE_MOVE": "Flytta {lesson} i mallen till {target}",
+      "TEMPLATE_SPLIT": "Dela {lesson} i mallen: första delen slutar {keepEnd}, andra delen {target}"
+    }
+  },
+  "classTeacherAdmin": {
+    "title": "Klasslärare",
+    "subtitle": "Utse klasslärare, öppna tider för dem och granska deras utkast",
+    "intro": "En klasslärare är en lärare som en administratör utser till en klass för ett läsår, i förskoleklass till årskurs 6. Klassläraren ändrar klassens lektioner som utkast, bara under de tider du öppnar och aldrig lektioner med andra lärare, block eller delade resurser. Du publicerar utkasten, eller klassläraren gör det om skolan har valt det.",
+    "loadFailed": "Sidan kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats. Försök igen, eller ladda om sidan om en stund.",
+    "noYear": {
+      "title": "Inga läsår ännu",
+      "body": "Skapa skolans första läsår under Kom igång."
+    },
+    "gate": "Din profil ändrar inte {area}. {area} ändras av {writers}.",
+    "appointments": {
+      "title": "Utnämningar",
+      "description": "Vem som är klasslärare för vilken klass i läsåret. En utnämning gäller så länge den som utsåg läraren är aktiv administratör med rätt att schemalägga.",
+      "caption": "Utsedda klasslärare",
+      "class": "Klass",
+      "teacher": "Klasslärare",
+      "status": "Status",
+      "runs": "Gäller",
+      "lapsed": "Gäller inte längre",
+      "lapsedHint": "Utnämningen gäller inte längre – utse på nytt.",
+      "reappoint": "Utse på nytt",
+      "reappointNamed": "Utse {teacher} på nytt för {class}",
+      "remove": "Ta bort",
+      "removeNamed": "Ta bort utnämningen av {teacher} för {class}",
+      "removeTitle": "Ta bort utnämningen?",
+      "removeBody": "{teacher} slutar vara klasslärare för {class}.",
+      "removed": "Utnämningen är borttagen",
+      "appointed": "Utnämningen är sparad",
+      "empty": "Inga klasslärare är utsedda för läsåret ännu.",
+      "loadFailed": "Utnämningarna kunde inte hämtas",
+      "addTitle": "Utse en klasslärare",
+      "pickClass": "Välj klass",
+      "pickTeacher": "Välj lärare",
+      "appoint": "Utse",
+      "addHint": "En klass kan ha flera klasslärare, och en lärare kan vara klasslärare för flera klasser. Utser du någon som redan är utsedd tar du över utnämningen: den gäller då så länge du har rätt att schemalägga."
+    },
+    "openTimes": {
+      "title": "Öppna tider",
+      "description": "De tider på veckan då en klasslärare får lägga lektioner. Klassläraren kan bara ändra lektioner som ligger i dessa tider och bara flytta lektioner till dessa tider. Tider för en enskild klass läggs till de tider som gäller alla klasser.",
+      "scope": "Gäller för",
+      "scopeAll": "Alla klasser",
+      "alsoAll": "Det gäller redan för alla klasser: {spans}.",
+      "alsoAllNone": "Inga tider gäller för alla klasser.",
+      "loadFailed": "De öppna tiderna kunde inte hämtas",
+      "editorLabel": "Redigera öppna tider",
+      "empty": "Inga tider är öppna för det här valet.",
+      "spanLabel": "Tid {n}",
+      "day": "Veckodag",
+      "from": "Från",
+      "to": "Till",
+      "remove": "Ta bort",
+      "removeSpan": "Ta bort tid {n}",
+      "add": "Lägg till en tid",
+      "save": "Spara tiderna",
+      "saved": "Tiderna är sparade",
+      "unsaved": "Ändringarna är inte sparade.",
+      "merged": "Tider som rör vid eller överlappar varandra slås ihop när du sparar.",
+      "timeMissing": "Ange från- och tilltid.",
+      "endAfterStart": "Sluttiden ska vara efter starttiden.",
+      "spanFault": "Tid {n}: {fault}",
+      "tooMany": "Högst {max} tider åt gången."
+    },
+    "settings": {
+      "title": "Publicering",
+      "description": "Vem som publicerar klasslärarens utkast.",
+      "switchLabel": "Klasslärare publicerar sin klass utkast själva",
+      "offHint": "Av. En klasslärare sparar utkast, och en schemaläggare går igenom och publicerar dem.",
+      "onHint": "På. En klasslärare kan publicera sin egen klass utkast utan att en schemaläggare tittat först, men bara det som ryms i ramen: de öppna tiderna och klassens egna lektioner. Publiceringen går genom samma kontroller som schemaläggarens egna ändringar, så krockar stoppas.",
+      "turnedOn": "Klasslärare publicerar nu själva",
+      "turnedOff": "Klasslärare publicerar inte längre själva",
+      "loadFailed": "Inställningen kunde inte hämtas"
+    },
+    "drafts": {
+      "title": "Utkast att granska",
+      "description": "Utkast som klasslärare har sparat och som väntar på att publiceras. Varje utkast kontrolleras mot schemat just nu, med samma kontroll som vid publicering.",
+      "empty": "Inga utkast väntar.",
+      "loadFailed": "Utkasten kunde inte hämtas",
+      "classHeading": "Klass {name}: {count} utkast",
+      "by": "Skrivet av {name}",
+      "byUnknown": "Skrivet av en okänd person",
+      "publishClass": "Publicera klassens utkast",
+      "publishClassNamed": "Publicera utkasten för {name}",
+      "publishing": "Publicerar…",
+      "discard": "Släng",
+      "discardNamed": "Släng utkastet: {label}",
+      "discardTitle": "Släng utkastet?",
+      "discardBody": "{label}. Utkastet raderas och kan inte återställas. Klassläraren kan skriva det igen.",
+      "discarded": "Utkastet är slängt"
+    }
+  },
+  "checklists": {
+    "title": "Checklistor",
+    "subtitle": "Instruktionsbevis och samtycken på ett ställe",
+    "teacherSubtitle": "Bocka av vilka elever som har fått instruktion, och håll samtyckeslistor för dina mentorsklasser",
+    "counter": "{count, number} av {max, number} tecken",
+    "dialogLoadFailed": "Dialogrutan kunde inte öppnas. Inget är ändrat – försök igen.",
+    "panelLoadFailed": "Den här delen av sidan kunde inte hämtas",
+    "panelLoadFailedHint": "Inget har ändrats. Kontrollera anslutningen och försök igen.",
+    "tabs": {
+      "label": "Checklistor",
+      "instructions": "Instruktionsbevis",
+      "consents": "Samtycken"
+    },
+    "state": {
+      "GRANTED": "Samtycke",
+      "DECLINED": "Har tackat nej",
+      "WITHDRAWN": "Återkallat",
+      "ASKED": "Frågad i appen",
+      "MISSING": "Saknas"
+    },
+    "templates": {
+      "title": "Mallar",
+      "description": "En mall är ett moment som eleverna ska ha fått instruktion i, till exempel maskinerna i slöjden. En mall tas aldrig bort, eftersom bockarna ska finnas kvar. Den som inte behövs mer avvecklas: då går det inte längre att bocka av i den, men alla bockar finns kvar och mallen kan tas fram igen.",
+      "new": "Ny mall",
+      "newTitle": "Ny mall",
+      "editTitle": "Ändra mallen",
+      "titleLabel": "Moment",
+      "titleHint": "Till exempel Maskinerna eller Laborationssäkerhet.",
+      "subjectLabel": "Ämne",
+      "subjectHint": "Välj ämne om momentet hör till ett. Ett moment finns bara en gång i varje ämne.",
+      "noSubject": "Inget ämne",
+      "descriptionLabel": "Beskrivning",
+      "descriptionHint": "Vad instruktionen innehåller, så att alla bockar av samma sak.",
+      "create": "Skapa mallen",
+      "save": "Spara",
+      "saving": "Sparar…",
+      "created": "Mallen är skapad.",
+      "saved": "Mallen är sparad.",
+      "retired": "{title} är avvecklad. Bockarna finns kvar.",
+      "restored": "{title} är framtagen igen.",
+      "retire": "Avveckla",
+      "restore": "Ta fram igen",
+      "retiredBadge": "Avvecklad",
+      "emptyTitle": "Inga mallar än",
+      "empty": "Gör en mall för varje moment som eleverna ska ha fått instruktion i. Sedan kan alla som undervisar bocka av i den.",
+      "loadFailed": "Mallarna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "failed": "Mallen kunde inte sparas",
+      "subjectsFailed": "Ämnena kunde inte hämtas. Du kan spara mallen utan ämne och välja ett senare.",
+      "problem": {
+        "title": "Skriv namnet på momentet.",
+        "titleLong": "Namnet får vara högst {max, number} tecken.",
+        "descriptionLong": "Beskrivningen får vara högst {max, number} tecken."
+      }
+    },
+    "tick": {
+      "title": "Bocka av",
+      "description": {
+        "admin": "Välj en mall och en grupp, och bocka av de elever som har fått instruktionen.",
+        "teacher": "Välj en mall och en av dina grupper, och bocka av de elever som har fått instruktionen. Klasser du är mentor för kan du läsa men inte bocka av i."
+      },
+      "templateLabel": "Mall",
+      "chooseTemplate": "Välj mall…",
+      "groupLabel": "Grupp",
+      "chooseGroup": "Välj grupp…",
+      "groupHint": "Under Bara läsning står klasser du är mentor för men inte undervisar.",
+      "yourGroups": "Dina grupper",
+      "lookOnly": "Bara läsning",
+      "choose": "Välj mall och grupp för att se eleverna.",
+      "loadFailed": "Mallarna och grupperna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "noTemplatesTitle": "Det finns inga mallar att bocka av i",
+      "noTemplates": {
+        "admin": "Gör en mall under Mallar ovan.",
+        "teacher": "En administratör gör mallarna. När det finns en kan du bocka av i den här."
+      },
+      "noGroupsTitle": "Det finns inga grupper att visa",
+      "noGroups": {
+        "admin": "Skolan har inga grupper i det aktiva läsåret ännu.",
+        "teacher": "Du undervisar ingen grupp i det aktiva läsåret och är inte mentor för någon klass."
+      },
+      "formTitle": "Bocka av valda",
+      "dateLabel": "Datum för instruktionen",
+      "dateHint": "Dagen då eleverna fick instruktionen. Det kan inte vara en dag som inte har kommit.",
+      "instructorLabel": "Den som gav instruktionen",
+      "instructorMe": "Jag",
+      "instructorHint": "Lämna som det är om du gav instruktionen själv.",
+      "instructorsFailed": "Personallistan kunde inte hämtas. Bocken skrivs på dig.",
+      "noteLabel": "Anteckning",
+      "chosen": "{count, plural, =0 {Ingen elev vald} one {# elev vald} other {# elever valda}}",
+      "submit": "Bocka av valda",
+      "ticking": "Bockar av…",
+      "resultTitle": "Klart",
+      "result": "{written, plural, =0 {Ingen elev bockades av} one {# elev bockades av} other {# elever bockades av}}{already, plural, =0 {} one {. # elev hade redan en bock för dagen} other {. # elever hade redan en bock för dagen}}.",
+      "failed": "Det gick inte att bocka av",
+      "problem": {
+        "pupils": "Välj minst en elev.",
+        "pupilsMany": "Du kan bocka av högst {max, number} elever åt gången.",
+        "date": "Skriv en dag.",
+        "dateFuture": "Dagen har inte kommit.",
+        "noteLong": "Anteckningen får vara högst {max, number} tecken."
+      }
+    },
+    "roster": {
+      "caption": "Eleverna i {group} och vad de har fått i {template}",
+      "done": "{done, number} av {pupils, number} har fått instruktion",
+      "chooseMissing": "Välj alla som saknas",
+      "clear": "Rensa val",
+      "colChoose": "Välj",
+      "colPupil": "Elev",
+      "colClass": "Klass",
+      "colStatus": "Instruktion",
+      "choose": "Välj {name}",
+      "openCard": "Öppna elevkort för {name}",
+      "lookOnlyRow": "Bara läsning",
+      "had": "Instruktion {date} av {by}",
+      "hadNoName": "Instruktion {date}",
+      "earlier": "{count, plural, one {+# tidigare} other {+# tidigare}}",
+      "missing": "Saknas",
+      "void": "Upphäv",
+      "voidNamed": "Upphäv bocken för {name}, {date}",
+      "emptyTitle": "Inga elever att visa",
+      "empty": "Gruppen har inga elever som du får se.",
+      "loadFailed": "Eleverna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "notFound": "Mallen eller gruppen finns inte",
+      "notFoundHint": "Någon kan ha avvecklat mallen eller tagit bort gruppen. Välj igen."
+    },
+    "void": {
+      "title": "Upphäv bocken",
+      "description": "Använd det när en bock har blivit fel. Bocken tas inte bort.",
+      "stays": "Bocken finns kvar på elevens kort, markerad som upphävd, med vem som upphävde den, när och varför. Den räknas inte längre som instruktion.",
+      "reasonLabel": "Varför upphävs bocken?",
+      "reasonHint": "Till exempel Fel elev eller Fel dag. Orsaken syns på elevens kort.",
+      "submit": "Upphäv bocken",
+      "voiding": "Upphäver…",
+      "done": "Bocken är upphävd. Den syns kvar på elevens kort.",
+      "failed": "Bocken kunde inte upphävas",
+      "notYours": "Bocken finns inte, eller så är den någon annans. Du kan bara upphäva bockar du själv har gjort. En administratör kan upphäva alla.",
+      "problem": {
+        "reason": "Skriv varför bocken upphävs.",
+        "reasonLong": "Orsaken får vara högst {max, number} tecken."
+      }
+    },
+    "card": {
+      "description": "Allt som är bockat för eleven, också det som är upphävt, och var eleven står på samtyckeslistorna.",
+      "proofsTitle": "Instruktionsbevis",
+      "noProofs": "Eleven har inga bockar än.",
+      "voidedBadge": "Upphävd",
+      "voided": "Upphävd {moment} av {name}: {reason}",
+      "someone": "okänd",
+      "note": "Anteckning: {note}",
+      "consentsTitle": "Samtycken",
+      "noConsents": "Eleven finns inte på någon samtyckeslista.",
+      "loadFailed": "Elevkortet kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen.",
+      "notFound": "Eleven finns inte, eller är inte din att se",
+      "notFoundHint": "Elever som du varken undervisar eller är mentor för kan du inte öppna."
+    },
+    "lists": {
+      "title": "Samtyckeslistor",
+      "description": {
+        "admin": "En lista per klass över vilka vårdnadshavare som har samtyckt till något, till exempel fotografering eller en utflykt.",
+        "teacher": "Listor för klasser du är mentor för: vilka vårdnadshavare som har samtyckt till något, till exempel fotografering eller en utflykt."
+      },
+      "new": "Ny samtyckeslista",
+      "classFilter": "Klass",
+      "allClasses": "Alla klasser",
+      "includeClosed": "Visa avslutade",
+      "open": "Öppna {title}, {class}",
+      "closedOn": "Avslutad {date}",
+      "closedBadge": "Avslutad",
+      "emptyTitle": "Inga samtyckeslistor än",
+      "empty": {
+        "admin": "När personal gör en samtyckeslista för en klass syns den här.",
+        "teacher": "Gör en lista för en klass du är mentor för, så syns den här."
+      },
+      "noMatch": "Ingen lista matchar.",
+      "loadFailed": "Listorna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund."
+    },
+    "newList": {
+      "title": "Ny samtyckeslista",
+      "description": "Texten är det vårdnadshavarna ombeds samtycka till. När listan är gjord kan du fråga dem i appen, eller skriva in svar från papper och samtal.",
+      "classLabel": "Klass",
+      "chooseClass": "Välj klass…",
+      "classHint": {
+        "admin": "Listan gäller eleverna i klassen som den ser ut nu.",
+        "teacher": "Du kan bara göra en lista för en klass där du är mentor."
+      },
+      "titleLabel": "Rubrik",
+      "titleHint": "Till exempel Fotografering HT 2026.",
+      "bodyLabel": "Det vårdnadshavarna ombeds samtycka till",
+      "bodyHint": "Skriv det i de ord vårdnadshavarna ska läsa. Nämn inga enskilda elever.",
+      "footer": "När du frågar vårdnadshavarna i appen läggs den här meningen till under texten: ”Genom att bekräfta ger du ditt samtycke. Du kan ta tillbaka det när som helst genom att kontakta skolan.”",
+      "submit": "Gör listan",
+      "creating": "Gör listan…",
+      "created": "Listan {title} är gjord.",
+      "failed": "Listan kunde inte göras",
+      "loadFailed": "Klasserna kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "noClassesTitle": "Det finns inga klasser att göra en lista för",
+      "noClasses": {
+        "admin": "Skolan har inga klasser i det aktiva läsåret ännu.",
+        "teacher": "Du kan bara göra en samtyckeslista för en klass där du är mentor, och du är inte mentor för någon klass just nu."
+      },
+      "problem": {
+        "class": "Välj en klass.",
+        "title": "Skriv en rubrik.",
+        "titleLong": "Rubriken får vara högst {max, number} tecken.",
+        "body": "Skriv det vårdnadshavarna ska samtycka till.",
+        "bodyLong": "Texten får vara högst {max, number} tecken."
+      }
+    },
+    "detail": {
+      "back": "Till listorna",
+      "class": "Klass",
+      "made": "Gjord",
+      "madeBy": "{date} av {name}",
+      "madeOn": "{date}",
+      "closed": "Avslutad",
+      "closedTitle": "Listan är avslutad",
+      "closedBody": "En avslutad lista tar inga fler svar. Det som är skrivet står kvar och går att läsa.",
+      "closedDone": "Listan är avslutad.",
+      "close": "Avsluta listan",
+      "ask": "Fråga vårdnadshavarna i appen",
+      "askAll": "Fråga alla som saknar svar",
+      "askHelp": "Vårdnadshavaren får en notis och bekräftar under Meddelanden, i appen eller på webben. När alla vårdnadshavare till en elev har bekräftat skrivs samtycket in här av sig självt.",
+      "asked": "Frågade {guardians, plural, one {# vårdnadshavare} other {# vårdnadshavare}} om {pupils, plural, one {# elev} other {# elever}}.",
+      "askedWithout": "{count, plural, one {# elev har} other {# elever har}} ingen vårdnadshavare att fråga: {names}.",
+      "moreNames": "{count, number} till",
+      "kvittensOffTitle": "Skolan har inte slagit på Kvittens",
+      "kvittensOff": {
+        "admin": "Då går det inte att fråga vårdnadshavarna i appen. Slå på Kvittens på sidan Kvittens, så kan du fråga härifrån. Du kan fortfarande skriva in svar från papper och samtal.",
+        "teacher": "Då går det inte att fråga vårdnadshavarna i appen. En administratör kan slå på Kvittens. Du kan fortfarande skriva in svar från papper och samtal."
+      },
+      "chooseHint": "Välj elever i listan för att skriva in ett svar eller fråga dem.",
+      "chosen": "{count, plural, one {# elev vald} other {# elever valda}}",
+      "written": {
+        "GRANTED": "{count, plural, one {Samtycke registrerat för # elev.} other {Samtycke registrerat för # elever.}}",
+        "DECLINED": "{count, plural, one {Nej registrerat för # elev.} other {Nej registrerat för # elever.}}",
+        "WITHDRAWN": "{count, plural, one {Samtycket är återkallat för # elev.} other {Samtycket är återkallat för # elever.}}"
+      },
+      "doneTitle": "Klart",
+      "chooseAll": "Välj alla",
+      "clearAll": "Rensa val",
+      "chooseUnanswered": "Välj alla som saknar svar",
+      "pupils": "{count, plural, one {# elev} other {# elever}}",
+      "caption": "Eleverna och deras svar på {title}",
+      "colChoose": "Välj",
+      "colPupil": "Elev",
+      "colState": "Svar",
+      "colHistory": "Historik",
+      "choose": "Välj {name}",
+      "leftClass": "Har lämnat klassen",
+      "history": "Historik ({count})",
+      "historyNamed": "Visa historiken för {name}, {count, plural, one {# svar} other {# svar}}",
+      "waitingOn": "Väntar på {waiting, number} av {asked, plural, one {# vårdnadshavare} other {# vårdnadshavare}}",
+      "previously": "Tidigare: {answer}",
+      "note": "Anteckning: {note}",
+      "emptyTitle": "Inga elever i listan",
+      "empty": "Klassen har inga elever just nu, och ingen har ett svar på listan.",
+      "loadFailed": "Listan kunde inte hämtas",
+      "loadFailedHint": "Inget har ändrats. Försök igen om en stund.",
+      "notFoundTitle": "Listan finns inte",
+      "notFound": "Den kan ha tagits bort, eller så är den inte din att se."
+    },
+    "entry": {
+      "title": {
+        "GRANTED": "Registrera samtycke",
+        "DECLINED": "Registrera nej",
+        "WITHDRAWN": "Återkalla samtycke"
+      },
+      "description": {
+        "GRANTED": "Skriv in att vårdnadshavaren har samtyckt, till exempel på en blankett eller i ett samtal.",
+        "DECLINED": "Skriv in att vårdnadshavaren har tackat nej.",
+        "WITHDRAWN": "Skriv in att vårdnadshavaren har tagit tillbaka sitt samtycke. Det syns direkt i listan."
+      },
+      "pupils": "Gäller {count, plural, one {# elev} other {# elever}}.",
+      "dateLabel": {
+        "GRANTED": "Datum på blanketten eller i samtalet",
+        "DECLINED": "Datum på blanketten eller i samtalet",
+        "WITHDRAWN": "Datum då samtycket togs tillbaka"
+      },
+      "dateHint": {
+        "GRANTED": "Dagen vårdnadshavaren gav sitt samtycke. Det kan inte vara en dag som inte har kommit.",
+        "DECLINED": "Dagen vårdnadshavaren tackade nej. Det kan inte vara en dag som inte har kommit.",
+        "WITHDRAWN": "Dagen vårdnadshavaren tog tillbaka sitt samtycke. Det kan inte vara en dag som inte har kommit."
+      },
+      "givenByLabel": "Lämnat av",
+      "givenByHint": "Vem som svarade, med dina egna ord. Till exempel Annas mamma.",
+      "noteLabel": "Anteckning",
+      "withdrawnStays": "Återkallelsen skrivs som ett nytt svar. Det tidigare samtycket finns kvar i historiken.",
+      "submit": {
+        "GRANTED": "Registrera samtycke",
+        "DECLINED": "Registrera nej",
+        "WITHDRAWN": "Återkalla samtycke"
+      },
+      "writing": "Skriver in…",
+      "failed": "Svaret kunde inte skrivas in",
+      "problem": {
+        "pupils": "Välj minst en elev.",
+        "pupilsMany": "Du kan skriva in svar för högst {max, number} elever åt gången.",
+        "date": "Skriv en dag.",
+        "dateFuture": "Dagen har inte kommit.",
+        "givenByLong": "Högst {max, number} tecken.",
+        "noteLong": "Anteckningen får vara högst {max, number} tecken."
+      }
+    },
+    "ask": {
+      "title": "Fråga vårdnadshavarna i appen?",
+      "chosen": "{count, plural, one {# vald elev.} other {# valda elever.}}",
+      "unanswered": "Alla elever som saknar svar: {count, number}.",
+      "how": "Vårdnadshavarna får en notis och bekräftar med ett tryck under Meddelanden, i appen eller på webben. När alla vårdnadshavare till en elev har bekräftat skrivs samtycket in i listan av sig självt.",
+      "final": "Frågan går inte att ta tillbaka. En elev som inte har någon vårdnadshavare får ingen fråga.",
+      "submit": "Fråga vårdnadshavarna",
+      "sending": "Skickar…",
+      "failed": "Frågan kunde inte skickas"
+    },
+    "close": {
+      "title": "Avsluta {title}?",
+      "description": "En avslutad lista tar inga fler svar. Det som redan är skrivet står kvar och går att läsa, men det går inte att öppna listan igen.",
+      "guardians": "En vårdnadshavare som bekräftar en fråga efter att listan har avslutats ger inget svar i listan.",
+      "submit": "Avsluta listan",
+      "closing": "Avslutar…",
+      "failed": "Listan kunde inte avslutas"
+    },
+    "how": {
+      "registeredBy": "Skrivet in av {name} den {date}",
+      "registered": "Skrivet in den {date}",
+      "givenBy": "lämnat {given} av {by}",
+      "given": "lämnat {given}",
+      "kvittens": "Bekräftat i appen {date}"
+    },
+    "print": {
+      "button": "Skriv ut",
+      "preparing": "Förbereder…",
+      "failed": "Utskriften gjordes inte. Vi kunde inte kontrollera vilka elever som har skyddad identitet, och utan det skriver vi inte ut några namn.",
+      "held": "{count, plural, one {# elev med skyddad identitet är inte med i utskriften. Se skärmen.} other {# elever med skyddad identitet är inte med i utskriften. Se skärmen.}}",
+      "group": "Grupp: {group}",
+      "class": "Klass: {class}",
+      "printed": "Utskrivet {moment}",
+      "closed": "avslutad {date}",
+      "colHow": "Hur"
+    },
+    "refusal": {
+      "CHECKLIST_NOT_FOUND": "Det finns inte längre, eller är inte ditt att se. Ladda om sidan.",
+      "CHECKLIST_NOT_STAFF": "Bara personal kan göra det.",
+      "CHECKLIST_NOT_YOUR_PUPIL": "Du kan bara bocka av elever i dina egna grupper och lektioner, och skriva in samtycken för dina mentorselever.",
+      "CHECKLIST_UNKNOWN_PUPIL": "En av eleverna finns inte i skolan eller har slutat. Ladda om listan och försök igen.",
+      "CHECKLIST_TEMPLATE_RETIRED": "Mallen är avvecklad, så det går inte att bocka av i den. En administratör kan ta fram den igen.",
+      "CHECKLIST_TEMPLATE_EXISTS": "Det momentet finns redan i det ämnet.",
+      "CHECKLIST_UNKNOWN_SUBJECT": "Ämnet finns inte i skolan. Välj ett annat.",
+      "CHECKLIST_DATE_IN_THE_FUTURE": "Dagen har inte kommit.",
+      "CHECKLIST_DATE_INVALID": "Dagen finns inte.",
+      "CONSENT_ASK_NEEDS_ALL": "Frågan till vårdnadshavarna måste kräva att alla bekräftar. Försök igen.",
+      "CONSENT_ASK_ALREADY_ANSWERED": "Frågan har redan bekräftats av en vårdnadshavare och gäller något annat. Försök igen.",
+      "CHECKLIST_INSTRUCTOR_IS_NOT_STAFF": "Den som gav instruktionen måste vara personal vid skolan.",
+      "CHECKLIST_REASON_NEEDED": "Skriv en kort orsak till varför bocken upphävs.",
+      "CONSENT_LIST_CLOSED": "Listan är avslutad. Det går inte att skriva mer i den.",
+      "CONSENT_LIST_EXISTS": "Klassen har redan en öppen lista med det namnet.",
+      "CONSENT_NOT_A_CLASS": "Klassen finns inte i skolan.",
+      "CONSENT_NOT_YOUR_CLASS": "Du kan bara göra samtyckeslistor för klasser du är mentor för.",
+      "CONSENT_NOBODY_TO_ASK": "Det finns ingen att fråga: ingen av eleverna har en vårdnadshavare, eller så har alla redan svarat.",
+      "ACK_DISABLED": "Skolan har inte slagit på Kvittens, så det går inte att fråga vårdnadshavarna i appen.",
+      "ACK_UNKNOWN_PUPIL": "En av eleverna finns inte i skolan eller har slutat. Ladda om listan och försök igen.",
+      "ACK_NOT_YOUR_PUPIL": "Du kan bara fråga vårdnadshavarna till elever du är mentor för.",
+      "ACK_NO_GUARDIANS": "Ingen av eleverna har en vårdnadshavare att fråga.",
+      "ACK_TOO_MANY_REQUESTS": "Du har redan skickat tio frågor den senaste timmen. Vänta en stund och försök igen.",
+      "ACK_TOO_MANY_RECIPIENTS": "Skolan har bett om kvittens från för många vårdnadshavare det senaste dygnet. Försök igen i morgon.",
+      "THROTTLED": "Du gör det för ofta. Vänta en minut och försök igen."
     }
   }
 }

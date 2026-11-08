@@ -110,6 +110,9 @@ export const ADMIN_NAV: NavGroup[] = [
     items: [
       { labelKey: "generate", href: "/admin/generate", icon: Sparkles },
       { labelKey: "timetable", href: "/admin/timetable", icon: CalendarDays },
+      // Klasslärarens schema (G5): who is klasslärare of which class, the hours open to them and the
+      // drafts that wait. Beside the grid whose lessons they change. The groups' icon (Personer).
+      { labelKey: "classTeachers", href: "/admin/class-teachers", icon: Users },
       // Next to the grid it is used against: finslipning starts once a base
       // schedule exists, and every answer there is read off this one.
       { labelKey: "gaps", href: "/admin/gaps", icon: CalendarSearch },
@@ -168,6 +171,13 @@ export const ADMIN_NAV: NavGroup[] = [
       // The attendance icon (Ledighetsansökningar): a
       // confirmation is a tick against a name, like the register's.
       { labelKey: "acknowledgements", href: "/admin/acknowledgements", icon: ClipboardCheck },
+      // Måltidskollen: the portions of each lunch sitting, for the kitchen. The lunch services' icon
+      // (Lunchsittningar): the same meal, counted instead of placed, and an icon the menu already
+      // names, so the row costs the document its label and path and no drawing of its own.
+      { labelKey: "meals", href: "/admin/meals", icon: UtensilsCrossed },
+      // Checklistor: the instruction proofs and the classes' consent lists. Beside Kvittens, which
+      // asks the guardians the consent lists ask. The attendance icon again: a tick against a name.
+      { labelKey: "checklists", href: "/admin/checklists", icon: ClipboardCheck },
       // Lektionslogg's klassbok: a class's lessons over a period, printed. The subjects' book.
       { labelKey: "classBook", href: "/admin/klassbok", icon: BookOpen },
     ],
