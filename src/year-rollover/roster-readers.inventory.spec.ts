@@ -482,6 +482,14 @@ describe('the roster-reader inventory', () => {
       // economy, and a year two steps ahead, or a rolled one in a school with
       // no active year, has no pupils to divide a teacher's time by, so they
       // answer the 409 StaffingLoadController.load answers for the same year.
+      //
+      // Förlagda poster holds each förläggning to the clash rule of a hand
+      // edit (judgePlacements, MasterLessonsService.findConflicts), which
+      // reads pupils through the year's basis: the dialog's view of a post's
+      // rows (listOfPost) judges them, and the save (replace) judges the list
+      // before it writes, so a year two steps ahead answers R6's 409 there as
+      // the hand edit does. The year's list for the timplan's märke reads rows
+      // only and asks for no basis.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'AnalysisController.costBasis',
         'AnalysisController.keyFigures',
@@ -517,6 +525,8 @@ describe('the roster-reader inventory', () => {
         'OptimizationController.trigger',
         'PublicationsController.preview',
         'PublicationsController.publish',
+        'RequirementPlacementsController.listOfPost',
+        'RequirementPlacementsController.replace',
         'ScbFileController.file',
         'ScheduleExchangeController.apply',
         'ScheduleExchangeController.preview',

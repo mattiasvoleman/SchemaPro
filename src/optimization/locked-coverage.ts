@@ -1,3 +1,5 @@
+import type { RecurrenceWindow } from '../calendar/lesson-recurrence';
+
 /*
  * Which of a requirement's lessons the hand-placed ones already answer.
  *
@@ -111,4 +113,62 @@ export function coverLockedSharedLessons(
     );
   }
   return remaining;
+}
+
+/**
+ * How much of the weekly demand is already placed by hand.
+ *
+ * Only a lesson that is there for every week the requirement is can cancel
+ * one of its lessons a week. The engine has no concept of weeks at all, so
+ * whatever is subtracted here is subtracted from all of them alike — there
+ * is no way to say "one lesson, but only on odd ones". That leaves only the
+ * choice of which way to be wrong, and the two directions are not
+ * symmetric.
+ *
+ * Counting a lesson that is absent for part of the requirement
+ * under-delivers, invisibly: lessonsPerWeek 2 with one locked odd-week
+ * lesson sends 1 to the solver, and the class quietly gets one lesson on
+ * even weeks for the rest of the year while the timplan says two. Nothing
+ * on any screen says so. Not counting it over-delivers: an extra lesson on
+ * odd weeks, sitting on the timetable in front of the administrator, who
+ * can unlock or remove it. That costs packing room and not correctness —
+ * the preserved lesson is forwarded as a fixed placement either way, so its
+ * slot stays blocked in every week, and what the engine adds carries the
+ * requirement's own window.
+ *
+ * So this test is a covering test, and everything it cannot be sure of
+ * falls on the visible side: equal recurrence, and a date window enclosing
+ * the requirement's. Equal rather than covering recurrences on purpose —
+ * an ALL_WEEKS lesson does cover an ODD_WEEKS requirement, and counting it
+ * would buy one lesson of packing room in exchange for a second comparison
+ * that has to stay right forever. Equality also keeps a recurrence added to
+ * the enum later on the safe side without this line being touched: two
+ * lessons with the same recurrence run the same weeks whatever it is, and
+ * anything unequal is simply not counted. calendar/lesson-recurrence.ts
+ * reads a missing recurrence as ALL_WEEKS because there the wrong guess
+ * would drop half a school's lessons; here the wrong guess would hide them,
+ * so an absent column on either side counts for nothing.
+ */
+export function lockCoversDemand(lesson: RecurrenceWindow, requirement: RecurrenceWindow): boolean {
+  if (!lesson.recurrence || !requirement.recurrence) return false;
+  if (lesson.recurrence !== requirement.recurrence) return false;
+
+  // Both columns are `@db.Date`, so both sides arrive at midnight UTC and
+  // compare as plain instants. A null bound is the open one — "from the
+  // start of the year", "until it ends" — so it encloses whatever the
+  // requirement asks for, while a bound on the lesson and none on the
+  // requirement encloses nothing: the requirement outlives the lesson.
+  if (
+    lesson.startDate &&
+    (!requirement.startDate || lesson.startDate > requirement.startDate)
+  ) {
+    return false;
+  }
+  if (
+    lesson.endDate &&
+    (!requirement.endDate || lesson.endDate < requirement.endDate)
+  ) {
+    return false;
+  }
+  return true;
 }

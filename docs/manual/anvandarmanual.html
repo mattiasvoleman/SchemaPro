@@ -2495,6 +2495,9 @@
       då vilka två poster det gäller. En post i ett block som ligger på ett
       annat blocks tider (halvklass, nedan) kan inte delas alls.
       Genereringen säger även då vilken post det gäller.</li>
+    <li>En post med förlagda lektioner (nedan) kan inte delas mellan lärare,
+      eftersom det inte är bestämt vilken lärares lektion en förläggning vore.
+      Ta bort förläggningarna först.</li>
     <li>En delad post kan inte delas i halvklass (nedan), eftersom
       halvornas poster bemannas per ämne. Ta bort delningen först och välj
       sedan lärare för varje ämne i halvklassdialogen.</li>
@@ -2532,7 +2535,9 @@
     genom att ta posterna ur blocket, ändra dem och lägga tillbaka dem. En posts
     dialog säger när posten ligger i ett block. En timplansfil som ändrar alla
     ett blocks rader likadant sparas; ändrar den bara några av dem får de raderna
-    ett fel som namnger blocket.
+    ett fel som namnger blocket. En post med förlagda lektioner (se
+    <em>Förlagda poster</em> nedan) kan inte läggas i ett block, eftersom blocket
+    läggs som en helhet.
   </p>
   <div class="note">
     <span class="label">Vad ett block inte kan</span>
@@ -2940,6 +2945,194 @@
       plats.
     </p>
   </div>
+
+  <h4 id="forlagda-poster">Förlagda poster: en lektion som redan har en plats</h4>
+  <p>
+    Ibland vet du på förhand var en lektion ska ligga och att den inte går att
+    lägga någon annanstans: simhallen är bokad tisdag kl. 10 och bara då, eller
+    slöjdsalen delas med åk 8 ett bestämt pass. Då <strong>förlägger</strong>
+    du lektionen: du anger dag, tid och sal på posten innan du genererar.
+    Generera lägger lektionen där du sagt, och resten av veckan runt den.
+  </p>
+  <p>
+    Använd det för lektioner som verkligen är bundna. En förlagd lektion ger
+    aldrig vika (se nedan), så varje förläggning tar bort valfrihet från
+    motorn, och för många av dem kan göra veckan omöjlig. En lektion som bara
+    brukar ligga på en viss tid behöver du inte förlägga: lägg den med
+    Generera och lås den i grundschemat (5.3) om den hamnar rätt.
+  </p>
+  <p>
+    Öppna posten och tryck <span class="ui">Förlägg …</span>. Dialogen heter
+    efter posten och har en rad för varje förlagd lektion; <span class="ui">Lägg
+    till lektion</span> ger en ny, och krysset på raden tar bort den. Varje rad
+    har fem fält:
+  </p>
+  <ul>
+    <li><span class="ui">Dag</span>: måndag till fredag.</li>
+    <li><span class="ui">Starttid</span>, i femminutersteg. Lektionen ska ligga
+      mellan 08:00 och 18:00, och under fältet står när den slutar.</li>
+    <li><span class="ui">Längd</span>, bara när posten har lektioner av olika
+      längd, till exempel 80 + 40 minuter. Har posten en enda längd är det
+      postens.</li>
+    <li><span class="ui">Sal</span>: en av skolans salar, i bokstavsordning.</li>
+    <li><span class="ui">Veckor</span>: se nedan.</li>
+  </ul>
+  <p>
+    Du kan förlägga högst så många lektioner som posten har, och ett par
+    (nedan) räknas som en. <span class="ui">Spara</span> ersätter postens alla
+    förläggningar med raderna i dialogen. Sparar du utan några rader tas
+    förläggningarna bort. Läraren, klassen och ämnet är postens, och läses
+    vid varje Generera: du anger dem inte på raden.
+  </p>
+  <p>
+    <strong>Veckor och par.</strong> En post som går varje vecka kan förläggas
+    varje vecka, udda veckor eller jämna veckor. En post med udda eller jämna
+    veckor förläggs bara de veckorna: dialogen ställer in dem och låser fältet.
+    På en post som går varje vecka går udda och jämna veckor av samma längd i
+    <strong>par</strong>. Ett par är en lektion på två ställen: tisdag i
+    simhallen udda veckor och torsdag i aulan jämna veckor är tillsammans en
+    lektion i veckan. En ensam rad med udda veckor sparas inte, eftersom
+    motorn inte kan lägga en halv lektion; <span class="ui">Lägg till
+    lektion</span> lägger då till den andra halvan av paret åt dig, med samma
+    längd, dag och sal, så att du bara ändrar det som ska skilja sig.
+  </p>
+  <p>
+    Posten får märket <span class="ui">Förlagd</span> i matrisen, med dag, tid
+    och sal i en ledtext. Postens dialog listar raderna. Med
+    Läsbehörighet syns märket och raderna men inte <span class="ui">Förlägg
+    …</span>.
+  </p>
+  <h4>Det bedöms när du sparar och vid varje Generera</h4>
+  <p>
+    Varje förläggning prövas med samma regler som när du flyttar en lektion för
+    hand: läraren och medläraren, klassen och eleverna i delade grupper
+    (halvklasser, ersättande grupper och språkval), salen och en delad sal,
+    elevernas ombyte och dusch, tider då läraren, salen eller gruppen är
+    markerad som inte tillgänglig (4.4), skolans ramtider, klassens lunch och
+    årskursens regler, en lärare som delas med en annan skola och en utlånad
+    sal (2.5), skoldagen (måndag till fredag 08:00–18:00) och att postens
+    låsta lektioner inte redan tar lektionen. Förläggningen prövas mot de
+    lektioner som Generera behåller, alltså låsta och för hand lagda, och mot
+    de andra förläggningarna. Den prövas inte mot lektioner som Generera lagt
+    själv, eftersom de skrivs om. Klassens lunch är på samma sätt bara de
+    sittningar skolan lagt för hand: en lunch som Generera lagt läggs om runt
+    förläggningen, och lämnar förläggningarna ingen lunch kvar säger Generera
+    det, med förläggningarna namngivna.
+  </p>
+  <p>
+    Håller en rad inte sparas ingenting, och dialogen säger vid vilken rad och
+    varför, till exempel <em>Läraren har redan en lektion som Generera behåller:
+    Matematik med 7B, tisdag 10:00–11:00.</em> Den andra lektionen anges med klass och ämne.
+    Läraren namnges aldrig, inte heller när hen är skälet.
+  </p>
+  <table>
+    <thead><tr><th style="width:34%">Skäl</th><th>Vad det betyder</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Läraren har redan …</td><td>Läraren eller medläraren har en annan lektion då: en låst eller för hand lagd lektion, eller en annan förläggning.</td></tr>
+      <tr><td class="k">Salen är upptagen av …</td><td>Samma sak för salen. En delad sal räknas också när den redan är full.</td></tr>
+      <tr><td class="k">Klassen eller gruppen har redan …<br>Elever i gruppen är också med i …</td><td>Klassen, eller elever som också går i en annan grupp, har en annan lektion då.</td></tr>
+      <tr><td class="k">… är markerad som inte tillgänglig</td><td>Läraren, salen eller gruppen har en tid markerad som stängd (4.4).</td></tr>
+      <tr><td class="k">Tiden ligger utanför ramtiden, på klassens lunch eller är stängd för årskursen</td><td>Skolans ramtider, klassens lunch eller en regel för årskursen tillåter inte lektionen då.</td></tr>
+      <tr><td class="k">Tiden är upptagen av en annan skola</td><td>En lärare som delas med en annan skola är där, eller salen är utlånad dit (2.5). Skolan namnges.</td></tr>
+      <tr><td class="k">Lektionen ligger utanför skoldagen</td><td>Måndag till fredag 08:00–18:00, på femminutersrutnätet.</td></tr>
+      <tr><td class="k">Posten har ingen lektion av den längden kvar</td><td>Postens låsta lektioner täcker redan lektionen, så förläggningen skulle lägga den två gånger.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Raderna ska också passa posten. En rad med en längd som posten inte har,
+    fler lektioner av en längd än posten har, andra veckor än postens, och
+    udda veckor utan jämna (eller tvärtom) på en post som går varje vecka
+    nekas med regeln som bröts. En post som ligger i ett parallellt block eller delar
+    sina lektioner mellan lärare kan inte förläggas alls: blocket läggs som en
+    helhet, och det är inte bestämt vilken lärares lektion en förläggning vore.
+    Ta bort blocktillhörigheten eller delningen först.
+  </p>
+  <h4>Grundschemat</h4>
+  <p>
+    Att spara en förläggning ändrar inte grundschemat. Ändringen gäller vid
+    nästa Generera, och dialogen säger det. Generera skriver varje förläggning
+    som en <strong>låst lektion</strong> i grundschemat och märker den som sin
+    egen. Därför gäller:
+  </p>
+  <ul>
+    <li>Låst: byten och bytkedjor, Salsoptimering, klasslärarens schema och dra
+      och släpp lämnar den.</li>
+    <li>Ändrar du en förläggning flyttar nästa Generera lektionen dit raden
+      säger.</li>
+    <li>Tar du bort en förläggning lägger nästa Generera lektionen fritt, som
+      en vanlig lektion av posten. Fram till dess står den kvar låst där den
+      är.</li>
+    <li>En förlagd lektion går inte att ändra i grundschemat: att flytta den,
+      ge den en annan sal, lärare eller andra veckor, eller lägga till en klass
+      eller elever nekas med <em>Lektionen är förlagd på timplanen</em>, i
+      lektionens dialog, i byten och bytkedjor och i klasslärarens schema.
+      Ändra förläggningen på posten i stället. Att låsa upp, låsa eller
+      parkera den går, och nästa Generera skriver den igen där förläggningen
+      säger.</li>
+    <li>En version som återställs, och ett utkast som kasseras, lägger
+      tillbaka den förlagda lektionen som förlagd, så nästa Generera skriver
+      om den som vanligt.</li>
+    <li>Tas posten bort tas dess förläggningar bort med den. Lektionen i
+      grundschemat står kvar låst där den är till nästa Generera, som ersätter
+      den på samma sätt som postens andra genererade lektioner.</li>
+    <li>Schemaförslag (5.9) lägger också runt förläggningarna, och varje
+      förslag behåller dem. En ändrad förläggning gör sparade förslag
+      föråldrade.</li>
+  </ul>
+  <h4>Det som ändras efteråt</h4>
+  <ul>
+    <li>Byts läraren på posten följer förläggningen med: tid och sal står kvar,
+      och läraren är den nya. Bytet vägras inte, eftersom bemanningen byter
+      lärare i mängd. Är den nya läraren upptagen då vägrar nästa Generera
+      med förläggningen namngiven, och dialogen visar redan när du öppnar den
+      en röd rad vid varje förläggning som inte längre håller, med skälet.</li>
+    <li>Ändras postens längder, antal lektioner eller veckor, läggs den i ett
+      block eller delas den mellan lärare, och förläggningarna inte längre
+      passar, sparas ändringen inte. Meddelandet säger vilken regel. Ändra
+      eller ta bort förläggningen först.</li>
+    <li>En sal som har en förläggning kan inte tas bort. Meddelandet nämner
+      posten.</li>
+    <li>Förläggningarna följer <strong>inte</strong> med vid läsårsrullningen
+      (8.1), eftersom nästa läsår har andra ramtider, sittningar och klasser.
+      Förlägg om i nästa läsårs poster.</li>
+  </ul>
+  <div class="warn">
+    <span class="label">En förlagd lektion ger aldrig vika</span>
+    <p>
+      Inte i Generera schema och inte heller i Bästa möjliga schema (5.1, 5.9):
+      där finns förläggningen inte bland de regler som får brytas. Går veckan
+      inte att lägga med förläggningarna vägrar Generera och säger vilka. Det
+      är en hård gräns, med flit: har du förlagt en lektion har du sagt att den
+      inte kan ligga någon annanstans.
+    </p>
+  </div>
+  <h4>Hur en vägran läses</h4>
+  <p>
+    Förläggningar kan stoppa en körning på två sätt. Båda står på
+    genereringssidan under <span class="ui">Upptäckta konflikter</span>, i
+    kategorin <span class="ui">Förlagda poster</span>.
+  </p>
+  <ul>
+    <li><strong>Före motorn.</strong> Generera bedömer varje förläggning på nytt
+      innan motorn väcks. Håller någon inte längre skickas ingen vecka, och
+      sidan säger <em>N förlagda lektioner på timplanen kan inte längre ligga
+      där de är förlagda, så veckan skickades inte</em>, följt av en rad för
+      varje, till exempel <em>Slöjd för 7A, förlagd tisdag 10:00–11:00 i
+      Slöjdsalen: läraren har redan 7B Matematik då.</em> Skälen är samma som i
+      tabellen ovan. Rätta eller ta bort förläggningen på posten och generera
+      igen.</li>
+    <li><strong>I motorn.</strong> Går veckan inte att lägga prövar motorn den
+      en gång till, med förläggningarna släppta. Går den då att lägga säger
+      vägran det, med tiden det tog, och listar varje förläggning med posten,
+      dagen, tiden och salen. Det betyder att veckan går utan förläggningarna,
+      inte att en viss förläggning ensam är felet: motorn rapporterar en
+      tillräcklig mängd, inte den minsta. Flytta eller ta bort en eller flera,
+      och generera igen. Samma prov körs när en körning får slut på tid, och
+      resultatet står bland proverna som <em>Med de förlagda lektionerna
+      släppta … hittades ett schema på N s</em>.</li>
+    <li>Går veckan inte att lägga ens utan förläggningarna är orsaken en annan,
+      och förläggningarna nämns inte. Läs då listan som vanligt (kapitel 9).</li>
+  </ul>
 
   <h3 id="s43"><span class="num">4.3</span>Tjänstefördelning</h3>
   <p>
@@ -4308,7 +4501,8 @@
     <li>lektionernas längd och antalet lektioner per vecka,</li>
     <li>elevantalet i en delad sal mot salens kapacitet, när regeln
       <span class="ui">Delade salar</span> är satt till Hård (5.1),</li>
-    <li>parallella blocks gemensamma start, och gruppens eget tak per dag.</li>
+    <li>parallella blocks gemensamma start, och gruppens eget tak per dag,</li>
+    <li>en förlagd posts dag, tid och sal (Förlagda poster, 4.2).</li>
   </ul>
   <p>
     De andra två placeringsreglerna (5.1) kan bara vara Av eller Mjuka, och en
@@ -4557,6 +4751,19 @@
       stämmer, och den är värd att rapportera.
     </p>
   </div>
+  <div class="note">
+    <span class="label">Förlagda lektioner i en vägran</span>
+    <p>
+      Har du förlagt lektioner på posterna (4.2) bedömer Generera varje
+      förläggning på nytt innan motorn startar, och vägrar med den förläggning
+      som inte längre håller, dess skäl och kategorin <span class="ui">Förlagda
+      poster</span>. Går veckan inte att lägga prövar motorn den också med
+      förläggningarna släppta, och nämner dem när det är de som gör veckan
+      omöjlig. En förlagd lektion ger aldrig vika, så knappen
+      <span class="ui">Ta fram bästa möjliga</span> (5.9) lägger den också där
+      den står. Hur raderna läses står i 4.2, under <em>Hur en vägran läses</em>.
+    </p>
+  </div>
   <table>
     <thead><tr><th style="width:30%">Resultat</th><th>Innebörd och nästa steg</th></tr></thead>
     <tbody>
@@ -4782,6 +4989,13 @@
     blocket</span> och <span class="ui">Lås upp blocket</span> de två
     periodernas block tillsammans, också med ett ämne i tur, där varje
     halvas lektion är ett eget kort.
+  </p>
+
+  <p>
+    En lektion som Generera lagt åt dig för att posten har en förläggning (4.2)
+    är redan låst, och den är Genereras egen: nästa generering skriver den
+    igen från förläggningen som den står då. Flyttar du den för hand håller det
+    därför bara till nästa Generera. Ändra förläggningen på posten i stället.
   </p>
 
   <h4>Byten och bytkedjor</h4>
@@ -9268,7 +9482,10 @@
   <p>
     Följer <strong>inte</strong> med: grundschemat (nästa läsårs schema
     genereras för de nya klasserna, redan före aktiveringen, se 8.2),
-    lunchsittningarna, samt det gamla läsårets historik.
+    lunchsittningarna, förläggningarna av lektioner på timplansposterna (4.2),
+    samt det gamla läsårets historik. Förläggningarna följer inte med eftersom
+    nästa läsår har andra ramtider, sittningar och klasser; förlägg om på
+    nästa läsårs poster.
     Ramtider, raster, lunchflöden, lunchinställningen, regler per årskurs,
     lärarnas arbetstidsregler och salspreferenser hör inte till något läsår;
     de gäller båda läsåren, och en ändring slår igenom i båda direkt.
@@ -9435,6 +9652,11 @@
   <table>
     <thead><tr><th style="width:27%">Symtom</th><th style="width:33%">Trolig orsak</th><th>Åtgärd</th></tr></thead>
     <tbody>
+      <tr>
+        <td class="k">Generera säger att förlagda lektioner inte kan ligga där de är förlagda</td>
+        <td>En förläggning (4.2) håller inte längre: läraren har bytts och är upptagen då, en lektion har låsts bredvid, salen har lånats ut eller en tid har stängts.</td>
+        <td>Öppna postens <span class="ui">Förlägg …</span>: raden som inte håller är röd och säger varför. Ändra dag, tid eller sal, eller ta bort raden, och generera igen. Står det att veckan går utan förläggningarna, flytta eller ta bort en eller flera av dem.</td>
+      </tr>
       <tr>
         <td class="k">Publiceringen nämner <em>Halvklasser utan elever</em></td>
         <td>En halva har lektioner i grundschemat men ingen elev är placerad i den, så lektionerna når ingen.</td>

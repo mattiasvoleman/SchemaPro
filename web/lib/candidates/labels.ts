@@ -179,6 +179,8 @@ export function firstFailedKey(
 export const REFUSAL_KEYS: Readonly<Record<string, string>> = {
   STAFF_UNSTAFFED_REQUIREMENTS: "refusal.STAFF_UNSTAFFED_REQUIREMENTS",
   BLOCK_PARTLY_LOCKED_SUMMARY: "refusal.BLOCK_PARTLY_LOCKED_SUMMARY",
+  // Förlagda poster: the pre-check found a placed lesson that cannot stand where it is placed.
+  PLACEMENTS_REFUSED_SUMMARY: "refusal.PLACEMENTS_REFUSED_SUMMARY",
 };
 
 export function refusalKey(code: string): string {

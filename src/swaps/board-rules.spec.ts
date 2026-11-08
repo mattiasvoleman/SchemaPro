@@ -166,6 +166,19 @@ describe('readBoardFacts', () => {
   const read = (tx: TxMock, over: Record<string, unknown> = {}) =>
     readBoardFacts(tx as never, { academicYearId: 'year-1', schoolId: 'school-1', gradeNumbering: 'NIOARIG', basis, groupIds: ['4A'], weekday: 2, ...over });
 
+  it('reads only the sittings the school placed when asked (Förlagda poster), and every sitting otherwise', async () => {
+    const tx = world();
+    await read(tx, { handPlacedSittingsOnly: true });
+    expect(tx['lunchSitting']!['findMany']!.mock.calls[0]![0].where).toEqual({
+      academicYearId: 'year-1',
+      studentGroupId: { in: ['4A'] },
+      dayOfWeek: 2,
+      isGenerated: false,
+    });
+    await read(tx);
+    expect(tx['lunchSitting']!['findMany']!.mock.calls[1]![0].where).not.toHaveProperty('isGenerated');
+  });
+
   it('reads the school’s frames, the groups’ sittings of the weekday, the weekly rows on årskurser and the groups’ years in NIOARIG', async () => {
     const tx = world();
     const read1 = await read(tx);

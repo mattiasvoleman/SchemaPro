@@ -1808,6 +1808,55 @@ and differ between runs of main against itself (14, 10 and 34 solves of one
 INFEASIBLE explanation on main, depending on the load of the host), so
 they say nothing about this branch.
 
+### Förlagda poster: a lesson the school places before Generera, and a refusal that names it
+
+Measured on 2026-11-08 on branch claude/forlagd-post (main 7a8ccf41 below it) with
+`tests/test_placements.py` and `benchmarks/model_identity.py`. **No wall-clock figure
+is given**: the Mac was shared with other sessions, and nothing here was meant to be
+measured for speed. The feature adds no row to any model.
+
+**What is new in the engine: nothing a model builder reads.** A förläggning reaches
+the engine as a `FixedLesson`, and its timplanspost as a requirement with that lesson
+taken off its demand — exactly what a lesson locked in the grundschema has always
+been. The request gains one optional key, `placements` (which fixed lessons are
+förläggningar, and their posts with every lesson to place), read only by the
+explanation: a refused week (a precheck's verdict, a proof, Bästa möjliga schema's
+refusal on its hard rules) is solved once more with the förläggningar released
+(`app/solver/placements.py`), on the satisfaction model and what is left of the
+budget and the probe's seconds; a timetable found names each förläggning
+(`PLACEMENTS_PROBE_SUMMARY`, `PLACED_LESSON_IN_THE_WAY`, category `PLACEMENT`) above
+the refusal's own lines. A TIMEOUT's probes release them as one of their rules
+(`PROBE_SOLVED_WITH_PLACEMENTS_RELEASED`). Releasing is a relaxation of the week, so
+a week it refuses keeps the refusal it had (pinned in `TestTheName`). A förläggning
+never gives way: no released timetable is ever returned, and `HARD_RULES` names it.
+
+**The same request with and without `placements` builds one model**, the full and
+the objective-free build byte for byte (`TestTheModel`, `ExportToFile` as
+`model_identity.py` hashes it), and a week that holds is answered with the same bytes
+on one worker, seed 0.
+
+**Main's model is unchanged for a school that has none.** `model_identity.py`
+compared main (`7a8ccf41`, `git archive`) and this branch's tree on 2,041
+payloads (the 14 benchmark payloads and the 2,027 every request main's own test suite
+builds or validates, harvested from main's tree): 18,369 builds, and every one is
+byte for byte equal — `validate`, `estimate`, `full`, `feasible`, `explain`,
+`diagnosis`, `placeable`, `response` and the whole of `solve` (1,279 optimal, 59
+feasible, 387 infeasible, 2 timeouts and 289 refusals answered alike). The
+`solve` build covers the new wrapper too: on a request without `placements` it hands
+back the strict or the best-effort answer as it was made.
+
+**`/openapi.json`** against main's: one value added to `ConflictDetail.category`
+(`PLACEMENT`), one optional property on `OptimizeScheduleRequest` (`placements`) and
+two schemas (`Placements`, `PlacementLock`); nothing removed or changed. (A first
+draft named the second `PlacedLesson`, which `app/schemas/rooms.py` already uses;
+FastAPI then renamed the existing schema to `app__schemas__rooms__PlacedLesson`, a
+change to an existing field, which is why it is not.)
+
+**An engine older than the key** answers 422 at `['body', 'placements']`; the
+gateway then sends the same request without it (`callAiEngine`), so the
+förläggningar are laid and only a refusal cannot name them. An older gateway never
+sends the key.
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the

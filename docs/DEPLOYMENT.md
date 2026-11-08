@@ -2793,6 +2793,30 @@ Walk the full product loop once, in order:
     leaves a colleague with a protected identity out for a teacher, as Skolans dag does for the staff on one screen. There is no export file. The tables are in
     the registerutdrag, in the removal's inventory and so in the whole-school export's person tables.
   Reads that name pupils (a roster, a list, a pupil's card) are recorded in the läslogg as PEOPLE.
+- **Förlagda poster** (a day, a time and a room given to a timplanspost before Generera): 20270207090000 adds
+  the table `TeachingRequirementPlacements` (keys to its school, its post `(requirementId, schoolId)` ON DELETE
+  CASCADE and its room `(roomId, schoolId)` ON DELETE NO ACTION, both ON UPDATE NO ACTION; four named CHECKs:
+  Monday to Friday, 15..240 minutes on the five-minute grid, the start on the grid, the lesson inside 08:00-18:00),
+  the columns `MasterLessons."fromPlacement"` and `PublishedLessons."fromPlacement"` (boolean, NOT NULL DEFAULT
+  false: constant defaults, so neither table is rewritten; the second is what a discarded draft writes back), the function `app.teaching_requirement_placements_fit` (SECURITY DEFINER, pinned `search_path`,
+  EXECUTE to nobody) behind three row triggers (SQLSTATE FP409, `REQUIREMENT_PLACEMENTS_DO_NOT_FIT`: the rows of a
+  post fit its lengths, lessons, weeks, and it is in no block and shares no lessons), and four policies for the API
+  role (read for administrators, write under Planering). No existing row is touched. It takes `Schools`,
+  `TeachingRequirements`, `TeachingRequirementShares` and `Rooms` in SHARE ROW EXCLUSIVE and `MasterLessons` and
+  `PublishedLessons` in ACCESS EXCLUSIVE (the columns; 29 ms of statements on 300 000 lessons), NOWAIT, together in a
+  loop: if all six are not free at once in 30 s it stops with nothing changed, and says so: `prisma migrate resolve
+  --rolled-back 20270207090000_forlagda_poster`, then deploy again. The API before the release names neither the table nor the
+  column, so it keeps working between the migration and the deploy. **The order is the migration, then the merge
+  (API and engine from one merge), then the web.** The engine's new key, `placements`, is sent only for a week
+  with a förläggning and is read by its explanation alone; an engine older than the key answers 422 to it, and the
+  API sends the same request again without it, so the week is laid and only a refusal cannot name the
+  förläggningar. **Nothing changes for a school until someone places a lesson** on the Timplan page. A placed lesson
+  is written into the grundschema at Generera as a locked lesson marked `fromPlacement`, which the next Generera
+  writes again from the post's rows. **Rolling back:** the table and the column can stay. An API rolled back keeps
+  a lesson marked `fromPlacement` as the lock it is (its preserved rule asks no flag) and sends no förläggning, so
+  those lessons stay where they stand, locked, until someone unlocks them. The checks before and after are
+  `forlagd-post-data/prod-fore.sql` and `prod-efter.sql` in the round's notes (one SELECT per check, `public`
+  only); E20 ("the migration wrote no rows") holds only right after the migration, before anyone places a lesson.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

@@ -17,7 +17,7 @@ import type { RealtimeService } from '../realtime/realtime.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
 import type { UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
-import { MasterLessonsService, teacherDayWarning } from './master-lessons.service';
+import { MasterLessonsService, teacherDayWarning, LESSON_IS_PLACED } from './master-lessons.service';
 
 /** Monday. `remove`/`propagate` floor "today" to 2026-08-03T00:00:00Z. */
 const NOW = new Date('2026-08-03T08:00:00.000Z');
@@ -2974,6 +2974,45 @@ describe('MasterLessonsService', () => {
         where: { id: LESSON_ID },
         data: { dayOfWeek: 1, roomId: null },
         select: expect.any(Object),
+      });
+    });
+
+    describe('a lesson Generera wrote from a förläggning (Förlagda poster, MEDEL-2 of #293)', () => {
+      const placed = { fromPlacement: true, isLocked: true, isGenerated: true };
+
+      it.each([
+        ['moved to another day', { dayOfWeek: 2 }],
+        ['given another room', { roomId: '88888888-8888-4888-8888-888888888888' }],
+        ['given another teacher', { teacherId: '77777777-7777-4777-8777-777777777777' }],
+        ['narrowed to odd weeks', { recurrence: 'ODD_WEEKS' as const }],
+        ['opened to another class', { extraGroupIds: ['66666666-6666-4666-8666-666666666666'] }],
+      ])('is refused when %s, saying where it is changed, and nothing is written', async (_label, patch) => {
+        arrangeUpdate(placed);
+
+        const attempt = service.update(LESSON_ID, patch as never, testUser());
+
+        await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+        await expect(attempt).rejects.toMatchObject({ response: expect.objectContaining({ code: LESSON_IS_PLACED }) });
+        expect(tx.masterLesson.update).not.toHaveBeenCalled();
+      });
+
+      it('is unlocked, and a save that restates its window, without being handed to the school', async () => {
+        arrangeUpdate(placed, { isLocked: false });
+
+        // The dialog sends every field; nothing of it differs from the lesson.
+        await service.update(LESSON_ID, { isLocked: false, recurrence: 'ALL_WEEKS', startDate: null, endDate: null } as never, testUser());
+
+        const data = tx.masterLesson.update.mock.calls[0]![0].data as Record<string, unknown>;
+        expect(data).toMatchObject({ isLocked: false });
+        expect(data).not.toHaveProperty('isGenerated');
+      });
+
+      it('is a lesson like any other when it is not placed: the same window write hands it over', async () => {
+        arrangeUpdate({ isGenerated: true }, {});
+
+        await service.update(LESSON_ID, { recurrence: 'ODD_WEEKS' } as never, testUser());
+
+        expect(tx.masterLesson.update.mock.calls[0]![0].data).toMatchObject({ isGenerated: false });
       });
     });
 

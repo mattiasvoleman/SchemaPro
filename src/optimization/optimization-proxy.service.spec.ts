@@ -91,7 +91,7 @@ const bodyOf = (error: unknown): Record<string, unknown> =>
 const PRESERVED = {
   OR: [
     { isGenerated: false },
-    { isLocked: true },
+    { isLocked: true, fromPlacement: false },
     { extraGroups: { some: {} } },
     { participants: { some: {} } },
   ],
@@ -155,6 +155,9 @@ const matchesWhere = (row: Row, where: Row = {}): boolean =>
       case 'isGenerated':
       case 'kind':
         return row[key] === filter;
+      // Förlagda poster: the judge reads the groups and subjects its rows name.
+      case 'id':
+        return typeof filter === 'string' ? row['id'] === filter : within(row['id'], filter);
       case 'maxTeachingDaysPerWeek':
       case 'maxConsecutiveTeachingMinutes': {
         // `{ not: null }`, the one shape the posts are read by: a post that
@@ -992,7 +995,7 @@ describe('OptimizationProxyService', () => {
         OR: [
           // Everything the optimizer did not write, whatever it looks like.
           { isGenerated: false },
-          { isLocked: true },
+          { isLocked: true, fromPlacement: false },
           { extraGroups: { some: {} } },
           { participants: { some: {} } },
         ],
@@ -1049,7 +1052,7 @@ describe('OptimizationProxyService', () => {
               NOT: {
                 OR: [
                   { isGenerated: false },
-                  { isLocked: true },
+                  { isLocked: true, fromPlacement: false },
                   { extraGroups: { some: {} } },
                   { participants: { some: {} } },
                 ],
@@ -2004,6 +2007,31 @@ describe('OptimizationProxyService', () => {
       expect((error as HttpException).getStatus()).toBe(503);
       expect(bodyOf(error)).toEqual({ message: expect.any(String), code: 'ENGINE_LACKS_BEST_EFFORT' });
       expect(engineMayStillBeSolving(error)).toBe(false);
+    });
+
+    it('sends a request again without `placements` to an engine older than Förlagda poster', async () => {
+      // The förläggningar are fixed lessons every engine knows; the field only
+      // names them in a refusal, so the week is laid without it.
+      http.post
+        .mockReturnValueOnce(throwError(() => extraForbidden(['body', 'placements'])))
+        .mockReturnValueOnce(of({ data: { status: 'OPTIMAL', lessons: [] } }));
+
+      await expect(
+        callWith({ fixedLessons: [{ id: 'f' }], placements: { lessons: [], requirements: [] } }),
+      ).resolves.toEqual({ status: 'OPTIMAL', lessons: [] });
+
+      expect(http.post).toHaveBeenCalledTimes(2);
+      expect(http.post.mock.calls[0][1]).toHaveProperty('placements');
+      expect(http.post.mock.calls[1][1]).toEqual({ fixedLessons: [{ id: 'f' }] });
+    });
+
+    it('leaves a refusal of `placements` on a request without it the validation error it is', async () => {
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'placements'])));
+
+      const error = await callWith({}).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(422);
+      expect(http.post).toHaveBeenCalledTimes(1);
     });
 
     it('tells the two missing fields apart by the field the 422 names', async () => {
@@ -5478,6 +5506,259 @@ describe('OptimizationProxyService', () => {
         expect(sent).not.toHaveProperty('maxLessonsPerDay');
         expect(sent).not.toHaveProperty('minDaysBetween');
         expect(sent).not.toHaveProperty('lockedDays');
+      });
+    });
+
+    describe('förlagda poster', () => {
+      // The engine's _field_names(Placements) and (PlacedLesson).
+      const PLACEMENTS_FIELDS = ['lessons', 'requirements'];
+      const PLACED_LESSON_FIELDS = ['fixedLessonId', 'requirementId'];
+      // A förläggning on the default post (7A, three lessons): Wednesday
+      // 10:00, an hour, in the default room.
+      const PLACED = '77777777-aaaa-4aaa-8aaa-777777777777';
+      const tenAm = new Date('1970-01-01T10:00:00.000Z');
+      const placement = (overrides: Record<string, unknown> = {}) => ({
+        id: PLACED,
+        requirementId: REQ_ID,
+        dayOfWeek: 3,
+        startTime: tenAm,
+        minutes: 60,
+        roomId: ROOM_ID,
+        recurrence: 'ALL_WEEKS',
+        ...overrides,
+      });
+      let masters: { findConflicts: jest.Mock };
+
+      beforeEach(() => {
+        masters = { findConflicts: jest.fn().mockResolvedValue([]) };
+        service = new OptimizationProxyService(
+          prisma as unknown as PrismaService,
+          http as unknown as HttpService,
+          makeConfigService(),
+          masters as never,
+        );
+      });
+
+      const placed = (rows: unknown[]) => tx.teachingRequirementPlacement.findMany.mockResolvedValue(rows);
+      const written = () =>
+        ((tx.masterLesson.createMany.mock.calls[0]?.[0] as { data: Record<string, unknown>[] } | undefined)?.data ?? []);
+
+      it('sends a school without one the payload it always sent: no key, no lock, the demand whole', async () => {
+        arrange();
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        expect(payload).not.toHaveProperty('placements');
+        expect(payload.fixedLessons).toEqual([]);
+        expect(payload.requirements[0]).toMatchObject({ lessonsPerWeek: 3 });
+        expect(masters.findConflicts).not.toHaveBeenCalled();
+      });
+
+      it('sends a förläggning as a lock, takes its lesson off the post, and says which lock it is', async () => {
+        arrange();
+        placed([placement()]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        const post = payload.requirements[0]!;
+        expect(post.lessonsPerWeek).toBe(2);
+        expect(payload.fixedLessons).toHaveLength(1);
+        const lock = payload.fixedLessons[0]!;
+        expect(lock).toMatchObject({
+          dayOfWeek: 3,
+          startTime: '10:00:00',
+          endTime: '11:00:00',
+          roomId: payload.rooms[0]!.id,
+          studentGroupId: post.studentGroupId,
+          teacherId: post.teacherId,
+        });
+        expect(lock).not.toHaveProperty('recurrence');
+        // The engine is told which lock it is, and the post with nothing förlagt.
+        expect(payload.placements).toEqual({
+          lessons: [{ fixedLessonId: lock.id, requirementId: post.id }],
+          requirements: [{ ...post, lessonsPerWeek: 3 }],
+        });
+        expect(Object.keys(payload.placements!).sort()).toEqual(PLACEMENTS_FIELDS);
+        expect(Object.keys(payload.placements!.lessons[0]!).sort()).toEqual(PLACED_LESSON_FIELDS);
+        // Judged with the hand edit's rule before it was sent.
+        expect(masters.findConflicts).toHaveBeenCalledTimes(1);
+      });
+
+      it('takes one lesson off the post for an odd and an even row of one length, each held in its weeks', async () => {
+        arrange();
+        placed([
+          placement({ id: 'odd-row', recurrence: 'ODD_WEEKS' }),
+          placement({ id: 'even-row', dayOfWeek: 4, recurrence: 'EVEN_WEEKS' }),
+        ]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        expect(payload.requirements[0]!.lessonsPerWeek).toBe(2);
+        expect(payload.fixedLessons.map((lock) => [lock.dayOfWeek, lock.recurrence])).toEqual([
+          [3, 'ODD_WEEKS'],
+          [4, 'EVEN_WEEKS'],
+        ]);
+        expect(payload.placements!.requirements[0]!.lessonsPerWeek).toBe(3);
+      });
+
+      it('counts the förläggning among the post’s locked days, and not in its released form', async () => {
+        arrange({ requirements: [requirement({ subject: { requiredRoomTypeId: null, maxLessonsPerDay: 1 } })] });
+        placed([placement()]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        expect(payload.requirements[0]).toMatchObject({ lessonsPerWeek: 2, maxLessonsPerDay: 1, lockedDays: [3] });
+        expect(payload.placements!.requirements[0]).toMatchObject({ lessonsPerWeek: 3, maxLessonsPerDay: 1 });
+        expect(payload.placements!.requirements[0]).not.toHaveProperty('lockedDays');
+      });
+
+      it('writes the förläggning beside the answer as a locked lesson the next run replaces', async () => {
+        arrange();
+        placed([placement()]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const rows = written();
+        expect(rows).toHaveLength(3);
+        expect(rows.filter((row) => row['fromPlacement'] === true)).toEqual([
+          expect.objectContaining({
+            subjectId: SUBJECT_ID,
+            studentGroupId: GROUP_ID,
+            teacherId: TEACHER_ID,
+            roomId: ROOM_ID,
+            dayOfWeek: 3,
+            startTime: tenAm,
+            endTime: new Date('1970-01-01T11:00:00.000Z'),
+            recurrence: 'ALL_WEEKS',
+            isLocked: true,
+            isGenerated: true,
+            fromPlacement: true,
+          }),
+        ]);
+        // The engine's lessons are the ones they always were.
+        expect(rows.filter((row) => row['fromPlacement'] === undefined)).toHaveLength(2);
+      });
+
+      it('a post every lesson of which is förlagd wakes no engine, and its lesson is written all the same', async () => {
+        arrange({ requirements: [requirement({ lessonsPerWeek: 1 })] });
+        placed([placement()]);
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(http.post).not.toHaveBeenCalled();
+        expect(written()).toEqual([expect.objectContaining({ dayOfWeek: 3, isLocked: true, fromPlacement: true })]);
+      });
+
+      it('refuses the run by name, before the engine, when a förläggning can no longer stand', async () => {
+        arrange({
+          requirements: [requirement({ subject: { requiredRoomTypeId: null, name: 'Idrott och hälsa' } })],
+          groups: [{ id: GROUP_ID, gradeLevel: null, kind: 'CLASS', name: '7A' }],
+          rooms: [{ id: ROOM_ID, capacity: 30, type: 'CLASSROOM', name: 'Sporthallen' }],
+          lockedLessons: [
+            {
+              ...lockedLesson({ id: 'other-lock', dayOfWeek: 3, startTime: tenAm, endTime: new Date('1970-01-01T11:00:00.000Z'), studentGroupId: EXTRA_GROUP_ID }),
+              studentGroup: { name: '8B' },
+              subject: { name: 'Matematik' },
+              participants: [],
+            },
+          ],
+        });
+        placed([placement()]);
+        masters.findConflicts.mockResolvedValue([
+          { kind: 'TEACHER', message: 'Teacher already teaches Matematik in this slot.', masterLessonId: 'other-lock' },
+        ]);
+        echoEngine();
+
+        const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(http.post).not.toHaveBeenCalled();
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+        expect(answer.status).toBe('INFEASIBLE');
+        expect(answer.conflicts).toMatchObject({
+          summaryCode: 'PLACEMENTS_REFUSED_SUMMARY',
+          summaryParams: { count: 1 },
+          conflicts: [
+            {
+              category: 'PLACEMENT',
+              code: 'PLACEMENT_CANNOT_STAND',
+              params: expect.objectContaining({ reason: 'TEACHER', day: 3, start: '10:00', end: '11:00', other: '8B Matematik' }),
+            },
+          ],
+        });
+        // The ids are named back, as every engine sentence's are: the post
+        // and the room by the school's own names, never a uuid.
+        const params = answer.conflicts!.conflicts[0]!.params!;
+        expect(params['requirement']).toMatch(/Idrott och hälsa/);
+        expect(params['room']).toBe('Sporthallen');
+      });
+
+      it('refuses the write (GENERATE_STALE) when a förläggning moved while the solver ran', async () => {
+        arrange();
+        tx.teachingRequirementPlacement.findMany
+          .mockResolvedValueOnce([placement()])
+          .mockResolvedValueOnce([placement({ dayOfWeek: 4 })]);
+        echoEngine();
+
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+          response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+        });
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      });
+
+      it('deletes a lesson Generera wrote from a förläggning with the draft, but counts it as no content of it', async () => {
+        const draftRow = (id: string, fromPlacement: boolean) => ({
+          id,
+          subjectId: SUBJECT_ID,
+          studentGroupId: GROUP_ID,
+          teacherId: TEACHER_ID,
+          coTeacherId: null,
+          roomId: ROOM_ID,
+          dayOfWeek: 3,
+          startTime: tenAm,
+          endTime: new Date('1970-01-01T11:00:00.000Z'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          isParked: false,
+          fromPlacement,
+        });
+        arrange({ draftLessons: [draftRow('placed-master', true), draftRow('engine-master', false)] });
+        placed([placement()]);
+
+        const prepared = await prisma.withRls(testUser(), (client: never) =>
+          service.prepareSchedule(client, ACADEMIC_YEAR, testUser()),
+        );
+
+        if (!prepared.ready) throw new Error('expected the fetch to be ready');
+        // The write deletes both (and writes the förläggning again)…
+        expect(prepared.draftIds).toEqual(['engine-master', 'placed-master']);
+        // …but "moved" and the draft's coverage read only the engine's.
+        expect(prepared.draftLessons.map((lesson: { id: string }) => lesson.id)).toEqual(['engine-master']);
+      });
+
+      it('keeps the förläggning out of the basis part an apply compares with the preserved masters', async () => {
+        arrange();
+        type Prepared = Awaited<ReturnType<OptimizationProxyService['prepareSchedule']>>;
+        const prepare = (): Promise<Prepared> =>
+          prisma.withRls(testUser(), (client: never) => service.prepareSchedule(client, ACADEMIC_YEAR, testUser()));
+        const withNone = await prepare();
+        placed([placement()]);
+        const withOne = await prepare();
+
+        if (!withNone.ready || !withOne.ready) throw new Error('expected both fetches to be ready');
+        expect(withOne.basisParts.preserved).toBe(withNone.basisParts.preserved);
+        expect(withOne.basisParts.requirements).not.toBe(withNone.basisParts.requirements);
+        expect(withOne.placedRows.map((row) => row.id)).toEqual([PLACED]);
+        expect(withOne.keptTimetable.map((lesson) => lesson.id)).toEqual([PLACED]);
       });
     });
 

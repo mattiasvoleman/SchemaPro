@@ -4745,6 +4745,41 @@ BEGIN
   INSERT INTO "LeavePolicies" ("schoolId") VALUES (m);
 END $$;
 
+-- The matrix school's row for Förlagda poster (20270207090000), so the role matrix (section 116) has a
+-- row of the table to probe. A post of its own, in a subject of its own: the school's other post carries
+-- a share (the Delade lektioner block above), and a post with shares cannot have a förläggning (SHARES),
+-- and no section changes this one. One lesson of 60 minutes on Tuesday at 10:00 in the school's room.
+-- Written by the owner, once.
+DO $$
+DECLARE
+  m uuid;
+  yr uuid;
+  grp uuid;
+  room uuid;
+  subj uuid;
+  post uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  -- Guarded by the subject this block creates, not by the placement: a probe
+  -- or a hand that removed the placement leaves the subject behind, and a
+  -- second insert of it would stop the fixtures on Subjects_schoolId_code_key
+  -- (review of #293, LÅG-5).
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "Subjects" WHERE "schoolId" = m AND code = 'RLSF') THEN
+    RETURN;
+  END IF;
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = m AND "isActive";
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = m AND name = 'Roller 7A';
+  SELECT id INTO room FROM "Rooms" WHERE "schoolId" = m AND name = 'Roller 1';
+  IF yr IS NULL OR grp IS NULL OR room IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school lacks the year, class or room for a förläggning';
+  END IF;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (m, 'Roller förlagd', 'RLSF', now()) RETURNING id INTO subj;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+  VALUES (m, yr, subj, grp, 1, 60, now()) RETURNING id INTO post;
+  INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", "minutes", "roomId", "updatedAt")
+  VALUES (m, post, 2, '10:00', 60, room, now());
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

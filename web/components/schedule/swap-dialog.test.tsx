@@ -217,6 +217,13 @@ describe("SwapDialog: what it shows of a proposal", () => {
     expect(screen.queryByText(/found/)).not.toBeInTheDocument();
   });
 
+  it("explains a lesson placed on the timplan, which moves there and not here", async () => {
+    swaps.suggest.mutateAsync.mockResolvedValue(suggestion({ proposals: [], immovable: "PLACED" }));
+    render(dialog());
+    expect(await screen.findByText("placed")).toBeInTheDocument();
+    expect(screen.queryByText(/found/)).not.toBeInTheDocument();
+  });
+
   it("offers a retry when the ask fails", async () => {
     swaps.suggest.mutateAsync.mockRejectedValueOnce(new Error("down")).mockResolvedValue(suggestion());
     render(dialog());

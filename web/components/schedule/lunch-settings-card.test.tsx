@@ -477,6 +477,7 @@ describe("LunchSettingsCard", () => {
         "bestEffortNeverLessons",
         "bestEffortNeverShared",
         "bestEffortNeverGroups",
+        "bestEffortNeverPlaced",
       ]);
       expect(within(may!).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
         "bestEffortMayCap",
@@ -487,7 +488,7 @@ describe("LunchSettingsCard", () => {
       // Each list is introduced by its own sentence, in the order they are read.
       const text = hint.textContent ?? "";
       expect(text.indexOf("bestEffortNeverTitle")).toBeLessThan(text.indexOf("bestEffortNeverOverlap"));
-      expect(text.indexOf("bestEffortMayTitle")).toBeGreaterThan(text.indexOf("bestEffortNeverGroups"));
+      expect(text.indexOf("bestEffortMayTitle")).toBeGreaterThan(text.indexOf("bestEffortNeverPlaced"));
       expect(text.indexOf("bestEffortMayTitle")).toBeLessThan(text.indexOf("bestEffortMayCap"));
     });
   });

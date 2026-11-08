@@ -338,6 +338,15 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     },
   },
 
+  // Förlagda poster (20270207090000): a child of a COPIED post that is not carried with it, so SKIPPED and not
+  // FOLLOWS. Not counted in the preview: counting them is the rollover's own read, which a later change can add
+  // (`previewCount: true`) with the count in rollover-source.
+  TeachingRequirementPlacement: {
+    kind: 'SKIPPED',
+    reason:
+      'A förläggning is a day, a time and a room the school gave one of a post’s lessons against this year’s ramtider, sittningar and classes; the new year has others, so the post is carried without them and its lessons are placed again where they still must be.',
+  },
+
   TeachingBlock: {
     kind: 'COPIED',
     step: 'blocks',

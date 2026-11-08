@@ -204,6 +204,21 @@ describe("BlocksHost", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  it("says in the reader's language that a post with lessons placed cannot be put in a block", async () => {
+    state.blocks = [];
+    state.create.mockRejectedValue(
+      new ApiError(409, "Posten har förlagda lektioner.", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "BLOCK" }),
+    );
+    show([row("r-ty", "g-ty", "s-ty")]);
+
+    await userEvent.click(await screen.findByRole("button", { name: "new" }));
+    await userEvent.type(screen.getByLabelText("name"), "Språkval åk 7");
+    await userEvent.click(screen.getByRole("button", { name: "save" }));
+
+    expect(state.error).toHaveBeenCalledWith("placements.blockRefused");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   describe("Ändra lektioner", () => {
     const members = [
       row("r-ty", "g-ty", "s-ty", { blockId: "b-sv", lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] }),

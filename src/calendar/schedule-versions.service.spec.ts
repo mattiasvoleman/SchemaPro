@@ -123,6 +123,7 @@ type MasterLessonRow = {
   endTime: Date;
   isLocked: boolean;
   isGenerated: boolean;
+  fromPlacement?: boolean;
   isParked: boolean;
   recurrence: LessonRecurrence;
   startDate: Date | null;
@@ -333,6 +334,24 @@ describe('ScheduleVersionsService', () => {
         true,
         false,
       ]);
+    });
+
+    it('snapshots a lesson Generera wrote from a förläggning as one, and no key for any other', async () => {
+      arrangeYear();
+      timetable([
+        masterLessonRow({ isLocked: true, isGenerated: true, fromPlacement: true }),
+        masterLessonRow({ isLocked: true, isGenerated: true, fromPlacement: false }),
+      ]);
+
+      await service.create(YEAR_ID, 'Draft v1', testUser());
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ fromPlacement: true }) }),
+      );
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
+      expect(lessons[0]).toMatchObject({ fromPlacement: true });
+      // A school without förläggningar stores the blob it always stored.
+      expect(lessons[1]).not.toHaveProperty('fromPlacement');
     });
 
     it('snapshots the tray along with the grid', async () => {
@@ -595,6 +614,7 @@ describe('ScheduleVersionsService', () => {
           endTime: utcTime(9, 0),
           isLocked: true,
           isGenerated: true,
+          fromPlacement: false,
           isParked: false,
           recurrence: 'ODD_WEEKS',
           startDate: utcDate('2026-08-31'),
@@ -620,6 +640,18 @@ describe('ScheduleVersionsService', () => {
           participants: { create: [] },
         }),
       });
+    });
+
+    it('puts a lesson Generera wrote from a förläggning back as one (Förlagda poster, MEDEL-2 of #293)', async () => {
+      arrangeRestore([{ ...fullLesson(), fromPlacement: true }, minimalLesson()]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      // Placed, it is the next Generera's to write again; as an ordinary lock
+      // it would stand beside its förläggning and refuse every Generera.
+      expect(tx.masterLesson.create).toHaveBeenNthCalledWith(1, { data: expect.objectContaining({ fromPlacement: true, isLocked: true }) });
+      // A snapshot from before the field is false: no förläggning existed.
+      expect(tx.masterLesson.create).toHaveBeenNthCalledWith(2, { data: expect.objectContaining({ fromPlacement: false }) });
     });
 
     it('reads a snapshot stored before recurrence existed as every week', async () => {

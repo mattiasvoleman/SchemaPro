@@ -324,6 +324,10 @@ export class DraftService {
             endTime: row.endTime,
             isLocked: row.isLocked,
             isGenerated: row.isGenerated,
+            // Förlagda poster: a placed lesson comes back as one, so the next
+            // Generera replaces it rather than meeting it beside its
+            // förläggning (review of #293, MEDEL-2).
+            fromPlacement: row.fromPlacement ?? false,
             isParked: row.isParked,
             recurrence: row.recurrence,
             startDate: row.startDate,

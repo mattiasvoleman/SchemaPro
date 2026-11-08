@@ -61,6 +61,16 @@ export interface VersionLesson {
    */
   isGenerated?: boolean;
   /**
+   * Förlagda poster: Generera wrote it from a förläggning on its timplanspost
+   * (MasterLesson.fromPlacement), locked, and the next Generera writes it
+   * again. Carried so a restore puts it back as such: dropped, it came back as
+   * an ordinary lock beside its förläggning, and every Generera of the school
+   * was refused for a clash with itself (review of #293, MEDEL-2). Absent is
+   * false, which for a snapshot from before the field is the truth: no
+   * förläggning existed yet.
+   */
+  fromPlacement?: boolean;
+  /**
    * Set aside on the tray: occupies nothing, and its day and time are only a
    * memory of where it was. Carried because a restore that dropped it put
    * every parked lesson back at that remembered slot — which by then may
@@ -267,6 +277,8 @@ export class ScheduleVersionsService {
           isLocked: lesson.isLocked,
           // See VersionLesson.isGenerated for why an absent key is false.
           isGenerated: lesson.isGenerated ?? false,
+          // See VersionLesson.fromPlacement.
+          fromPlacement: lesson.fromPlacement ?? false,
           // See VersionLesson.isParked for why an absent key is false.
           isParked: lesson.isParked ?? false,
           recurrence: lesson.recurrence ?? 'ALL_WEEKS',
@@ -366,6 +378,7 @@ export class ScheduleVersionsService {
         endTime: true,
         isLocked: true,
         isGenerated: true,
+        fromPlacement: true,
         isParked: true,
         recurrence: true,
         startDate: true,
@@ -386,6 +399,9 @@ export class ScheduleVersionsService {
       endTime: toHHMM(lesson.endTime),
       isLocked: lesson.isLocked,
       isGenerated: lesson.isGenerated,
+      // Only on a placed lesson, so a snapshot of a school with none is the
+      // blob it always was.
+      ...(lesson.fromPlacement ? { fromPlacement: true } : {}),
       isParked: lesson.isParked,
       recurrence: lesson.recurrence,
       startDate: toDateStringOrNull(lesson.startDate),

@@ -35,6 +35,7 @@ import { IS_PUBLIC_KEY } from '../../src/auth/decorators/public.decorator';
 import { NotificationsModule } from '../../src/notifications/notifications.module';
 import { AttendanceModule } from '../../src/attendance/attendance.module';
 import { ResourcesModule } from '../../src/resources/resources.module';
+import { RequirementPlacementsModule } from '../../src/requirement-placements/requirement-placements.module';
 import { CalendarModule } from '../../src/calendar/calendar.module';
 import { SwapsModule } from '../../src/swaps/swaps.module';
 import { UsersModule } from '../../src/users/users.module';
@@ -175,6 +176,7 @@ export const FEATURE_MODULES = [
   OptimizationModule,
   AttendanceModule,
   ResourcesModule,
+  RequirementPlacementsModule,
   UsersModule,
   CalendarModule,
   SwapsModule,

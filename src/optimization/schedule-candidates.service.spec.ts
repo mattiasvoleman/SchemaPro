@@ -2142,7 +2142,7 @@ describe('the pieces', () => {
     expect(draftMastersWhere(YEAR)).toEqual({
       academicYearId: YEAR,
       NOT: {
-        OR: [{ isGenerated: false }, { isLocked: true }, { extraGroups: { some: {} } }, { participants: { some: {} } }],
+        OR: [{ isGenerated: false }, { isLocked: true, fromPlacement: false }, { extraGroups: { some: {} } }, { participants: { some: {} } }],
       },
     });
   });

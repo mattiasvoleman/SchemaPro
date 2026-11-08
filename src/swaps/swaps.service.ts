@@ -3,6 +3,7 @@ import type { LessonRecurrence, Prisma, PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import {
+  LESSON_IS_PLACED,
   MasterLessonsService,
   type MasterLessonConflict,
   type MasterLessonResult,
@@ -82,7 +83,8 @@ export interface SwapSuggestion {
   selectedLocked: boolean;
   proposals: SwapProposalView[];
   /** Why there is nothing to offer when the lesson cannot move at all. */
-  immovable?: 'PARKED' | 'NOT_PLACED';
+  /** PLACED: Generera wrote it from a förläggning on its timplanspost, which is where it moves (Förlagda poster). */
+  immovable?: 'PARKED' | 'NOT_PLACED' | 'PLACED';
   stats: {
     partners: number;
     candidates: number;
@@ -152,7 +154,7 @@ export class SwapsService {
     return this.prisma.withRls(user, async (tx) => {
       const picked = await tx.masterLesson.findUnique({
         where: { id: dto.lessonId },
-        select: { id: true, academicYearId: true, isParked: true, school: { select: { timezone: true } } },
+        select: { id: true, academicYearId: true, isParked: true, fromPlacement: true, school: { select: { timezone: true } } },
       });
       if (!picked) throw new NotFoundException('Master lesson not found.');
       const empty = (immovable: SwapSuggestion['immovable']): SwapSuggestion => ({
@@ -174,6 +176,10 @@ export class SwapsService {
         },
       });
       if (picked.isParked) return empty('PARKED');
+      // Förlagda poster: the next Generera writes it again where its
+      // förläggning stands, so a swap would be undone without a word (review
+      // of #293, LÅG-2). It moves on the timplan, not here.
+      if (picked.fromPlacement) return empty('PLACED');
 
       const read = Date.now();
       const data = await readSwapData(tx, user, picked.academicYearId);
@@ -379,6 +385,7 @@ export class SwapsService {
           endTime: true,
           isLocked: true,
           isParked: true,
+          fromPlacement: true,
           recurrence: true,
           startDate: true,
           endDate: true,
@@ -389,6 +396,16 @@ export class SwapsService {
         orderBy: { id: 'asc' },
       });
       if (rows.length !== ids.length) throw swapStale();
+      // Förlagda poster: never moved by a swap, picked or not (see suggest).
+      const placedRows = rows.filter((row) => row.fromPlacement);
+      if (placedRows.length > 0) {
+        throw new ConflictException({
+          message:
+            'Bytet skulle flytta en lektion som är förlagd på timplanen; Generera skriver om den därifrån. Ändra förläggningen på timplansposten i stället. Inget ändrades.',
+          code: LESSON_IS_PLACED,
+          lessonIds: placedRows.map((row) => row.id),
+        });
+      }
       const leader = rows[0]!;
       if (rows.some((row) => row.academicYearId !== leader.academicYearId)) throw swapStale();
 

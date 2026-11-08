@@ -53,6 +53,15 @@ export const timplanRoutes: GatewayRoute[] = [
     return [];
   }),
 
+  // Förlagda poster: the world places no lesson on a post, so every year answers
+  // none (an admin's read, as the shares above).
+  route("GET", "/api/v1/teaching-requirements/placements", ({ person, query }) => {
+    if (!person) return new Reply(401, { message: "Inte inloggad." });
+    if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
+    if (!KNOWN_YEARS.has(query.get("academicYearId") ?? "")) return new Reply(400, { message: "academicYearId" });
+    return [];
+  }),
+
   route("GET", "/api/v1/timplan-credits", ({ query }) =>
     CREDITS.filter((credit) => credit.academicYearId === query.get("academicYearId")),
   ),

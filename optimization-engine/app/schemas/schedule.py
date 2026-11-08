@@ -70,6 +70,10 @@ ConflictCategory = Literal[
     "PLACEMENT_EDGE",
     "PLACEMENT_PLACES",
     "SHARED_ROOM",
+    # Förlagda poster: a lesson the school placed on a timplanspost before
+    # Generera, named when the week cannot be laid around it. A category of
+    # its own because the fix is that post's förläggning on the timplan page.
+    "PLACEMENT",
 ]
 
 
@@ -1302,6 +1306,67 @@ class PlacementRules(CamelModel):
         return self
 
 
+class PlacementLock(CamelModel):
+    """One locked lesson that is a timplanspost's förlagd lesson, and its post."""
+
+    fixed_lesson_id: UUID4 = Field(alias="fixedLessonId")
+    requirement_id: UUID4 = Field(alias="requirementId")
+
+
+class Placements(CamelModel):
+    """Förlagda poster: which locked lessons the school placed on a timplanspost.
+
+    ABSENT IS EVERY OTHER SCHOOL, BYTE FOR BYTE, AND PRESENT IT BUILDS THE SAME
+    MODEL. A förläggning reaches this engine as what it is to the week, a
+    FixedLesson the generated lessons steer around, and its post as a
+    requirement with that lesson taken off its demand — exactly what a lesson
+    the school locked in the grundschema has always been. Nothing here is read
+    by a model builder. What a FixedLesson cannot do is be NAMED: its windows
+    are posted bare (_add_fixed_lesson_constraints, guard=None), so an
+    INFEASIBLE core never holds one, and a week the school's förläggningar make
+    impossible was refused with a sentence about something else, or about
+    "the locked lessons".
+
+    So this says which locks are förlagda and what their posts would be
+    without them. `requirements` are those posts with EVERY lesson to place —
+    the lessons the förläggningar take off put back, the locks the school made
+    in the grundschema still counted — each replacing the requirement of its id
+    in the request, or added when every lesson of it was förlagd. A refused
+    week is then solved once more with the förläggningar released
+    (release_placements, scheduler_solver._placements_verdict): a timetable
+    found means the förläggningar are what makes the week impossible, and each
+    is named. The release is a RELAXATION — the same week with lessons free to
+    move that were pinned — so a week it refuses is refused with the
+    förläggningar too, and the refusal stands as it was.
+
+    The gateway sends the key only when a post of the week has a förläggning
+    (src/optimization), so an engine that predates it is never sent it by a
+    school without one, and the gateway sends the same request without it to
+    an engine that answers 422 to it: the förläggningar are laid either way,
+    only not named.
+    """
+
+    lessons: list[PlacementLock] = Field(min_length=1, max_length=2000)
+    requirements: list[AnonymousRequirement] = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_posts(self) -> Placements:
+        """Every placed lesson names a post given here, and a post is given once."""
+        ids = [requirement.id for requirement in self.requirements]
+        if len(set(ids)) != len(ids):
+            msg = "placements.requirements ids must be unique."
+            raise ValueError(msg)
+        known = set(ids)
+        if any(lesson.requirement_id not in known for lesson in self.lessons):
+            msg = "placements.lessons names a requirement placements.requirements does not carry."
+            raise ValueError(msg)
+        fixed = [lesson.fixed_lesson_id for lesson in self.lessons]
+        if len(set(fixed)) != len(fixed):
+            msg = "placements.lessons names one fixed lesson twice."
+            raise ValueError(msg)
+        return self
+
+
 class OptimizeScheduleRequest(CamelModel):
     request_id: UUID4 = Field(alias="requestId")
     academic_year_id: UUID4 = Field(alias="academicYearId")
@@ -1412,6 +1477,9 @@ class OptimizeScheduleRequest(CamelModel):
     # Optional, and absent on every request but a best-effort run's; absent is
     # today's solve byte for byte. See Relaxation.
     relaxation: Relaxation | None = None
+    #: Förlagda poster, present only when a post of the week has one. Read by
+    #: the explanation alone, never by a model builder. See Placements.
+    placements: Placements | None = None
 
     @field_validator("group_conflicts")
     @classmethod
@@ -1458,6 +1526,21 @@ class OptimizeScheduleRequest(CamelModel):
         teachers = [limit.teacher_id for limit in self.teacher_day_limits]
         if len(set(teachers)) != len(teachers):
             msg = "teacherDayLimits names one teacher twice."
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_placements(self) -> OptimizeScheduleRequest:
+        """A placed lesson is one of the request's locked lessons.
+
+        A SHAPE, refused as the day limits are: a placement that names no lock
+        is a gateway that lost a row, and released it would release nothing.
+        """
+        if self.placements is None:
+            return self
+        locks = {fixed.id for fixed in self.fixed_lessons}
+        if any(lesson.fixed_lesson_id not in locks for lesson in self.placements.lessons):
+            msg = "placements.lessons names a fixed lesson the request does not carry."
             raise ValueError(msg)
         return self
 

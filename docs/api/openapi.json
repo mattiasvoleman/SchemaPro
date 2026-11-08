@@ -160,6 +160,9 @@
       "name": "ReportingRate"
     },
     {
+      "name": "RequirementPlacements"
+    },
+    {
       "name": "ResourceBookings"
     },
     {
@@ -25236,6 +25239,58 @@
         }
       }
     },
+    "/api/v1/teaching-requirements/placements": {
+      "get": {
+        "tags": [
+          "RequirementPlacements"
+        ],
+        "operationId": "RequirementPlacementsController_listOfYear",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
     "/api/v1/teaching-requirements/shares": {
       "get": {
         "tags": [
@@ -25359,6 +25414,117 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UpdateTeachingRequirementDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PLANERING"
+          ]
+        }
+      }
+    },
+    "/api/v1/teaching-requirements/{id}/placements": {
+      "get": {
+        "tags": [
+          "RequirementPlacements"
+        ],
+        "operationId": "RequirementPlacementsController_listOfPost",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "RequirementPlacements"
+        ],
+        "operationId": "RequirementPlacementsController_replace",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplacePlacementsDto"
               }
             }
           }
@@ -31701,6 +31867,44 @@
           "startTime"
         ]
       },
+      "PlacementInputDto": {
+        "type": "object",
+        "properties": {
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "startTime": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "minutes": {
+            "type": "number",
+            "minimum": 15,
+            "maximum": 240
+          },
+          "roomId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recurrence": {
+            "type": "string",
+            "enum": [
+              "ALL_WEEKS",
+              "EVEN_WEEKS",
+              "ODD_WEEKS"
+            ]
+          }
+        },
+        "required": [
+          "dayOfWeek",
+          "startTime",
+          "minutes",
+          "roomId",
+          "recurrence"
+        ]
+      },
       "PlanExamsDto": {
         "type": "object",
         "properties": {
@@ -32244,6 +32448,20 @@
         },
         "required": [
           "entries"
+        ]
+      },
+      "ReplacePlacementsDto": {
+        "type": "object",
+        "properties": {
+          "placements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlacementInputDto"
+            }
+          }
+        },
+        "required": [
+          "placements"
         ]
       },
       "ReplaceTeacherQualificationsDto": {
