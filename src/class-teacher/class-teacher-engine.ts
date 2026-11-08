@@ -456,6 +456,21 @@ export class ClassTeacherEngine {
    * other finds it moved and carries out nothing (GONE). A draft whose
    * carrying out fails is left a draft at the claimed revision, so the next
    * publication reads it again.
+   *
+   * WHAT THE CLAIM DOES NOT HOLD. It shuts the other publishers out, not the
+   * klasslärare: the draft is a row like any other until it is marked, and the
+   * editor's services run in transactions of their own, so no lock can be held
+   * across them without a connection held while others are asked for (two
+   * publishers on a small pool would wait for each other). A draft the
+   * klasslärare edits or discards in those few hundred milliseconds is carried
+   * out as it was read: an edited one stays a draft (the lesson has changed
+   * under it, so it reads as STALE and can be thrown), a discarded one leaves
+   * the change in the editor's own log and a warning here. And a claim that
+   * fails to carry out leaves the revision counted up (the guard counts every
+   * update and nothing can count it back), so a klasslärare who holds the draft
+   * at the old revision is told how it stands now on the next save, as for any
+   * other writer. Closing either takes a state the table does not have
+   * (a draft being published), which is a migration of its own.
    */
   async publishOne(actor: AuthenticatedUser, change: ChangeRow, options: Pick<EvaluateOptions, 'forTeacher'> = {}): Promise<PublishOutcome> {
     const verdict = await this.prisma.withRls(actor, (tx) => this.evaluate(tx, change, options));
@@ -641,6 +656,7 @@ export class ClassTeacherEngine {
           teachers: { select: { teacherId: true } },
           extraGroups: { select: { studentGroupId: true } },
           participants: { select: { studentId: true } },
+          movesFrom: { select: { studentId: true } },
         },
       });
       if (!lesson || lesson.status !== 'SCHEDULED') throw new ConflictException('The lesson can no longer be moved.');
@@ -672,7 +688,8 @@ export class ClassTeacherEngine {
         data: { date: parseDateString(targetDate), startsAt, endsAt, roomId, ...(change.note ? { note: lesson.note ? `${lesson.note} · ${change.note}` : change.note } : {}) },
       });
       await this.realtime.notifyLessonChanged(tx, lesson.id);
-      const recipients = await this.notifications.recipientsForLessons(tx, [scopeOf(lesson)]);
+      // A pupil moved off the lesson for the day (D7) is not on it, and is not told it has moved, as the day operations do not tell them.
+      const recipients = await this.notifications.recipientsForLessons(tx, [scopeOf({ ...lesson, movedOff: lesson.movesFrom })]);
       await this.notifications.notifyUsers(tx, {
         schoolId,
         userIds: [...recipients, ...lesson.teachers.map((row) => row.teacherId)],

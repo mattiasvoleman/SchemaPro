@@ -531,6 +531,26 @@ describe('ClassTeacherEngine.publishOne', () => {
     expect((await engine.publishOne(actor, split)).outcome).toBe('CONFLICT');
   });
 
+  it('names the clash the editor found after the claim by its kind alone to a klasslärare in a school that publishes through a draft, and in full to an administrator', async () => {
+    (publishModeOf as jest.Mock).mockResolvedValue('DRAFT');
+    const neighbour = { id: 'master-2', dayOfWeek: 2, startTime: time('10:00'), endTime: time('11:00'), subject: { name: 'Svenska' }, studentGroup: { name: '4B' } };
+    for (const [options, expected] of [
+      [{ forTeacher: true }, [{ kind: 'ROOM' }]],
+      [{}, [{ kind: 'ROOM', other: { className: '4B', subjectName: 'Svenska', day: 2, start: '10:00', end: '11:00' } }]],
+    ] as const) {
+      const { engine, masters, tx } = setup();
+      const move = row({ kind: 'TEMPLATE_MOVE', calendarLessonId: null, masterLessonId: 'master-1', date: null, targetDayOfWeek: 2, targetStart: time('10:00'), targetEnd: time('11:00') });
+      claims(tx, move);
+      tx['masterLesson']!['findUnique']!.mockResolvedValue(lesson);
+      tx['masterLesson']!['findMany']!.mockResolvedValue([neighbour]);
+      // The first look finds nothing in the way; a write later the editor's own does, and the second look names it.
+      masters.findConflicts.mockResolvedValueOnce([]).mockResolvedValue([{ kind: 'ROOM', message: 'x', masterLessonId: 'master-2' }]);
+      masters.update.mockRejectedValueOnce(new ConflictException('taken'));
+      expect({ options, outcome: await engine.publishOne(actor, move, options) }).toEqual({ options, outcome: { id: 'change-1', outcome: 'CONFLICT', conflicts: expected } });
+      expect(masters.findConflicts).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it('a split of a lesson that is gone is a conflict, not a half-made change', async () => {
     const { engine, masters, tx } = setup();
     claims(tx, split);
@@ -574,6 +594,7 @@ describe('ClassTeacherEngine.publishOne', () => {
       teachers: [{ teacherId: 'teacher-1' }],
       extraGroups: [],
       participants: [],
+      movesFrom: [] as Array<{ studentId: string }>,
     };
 
     it('locks the lesson, judges it once more, writes its new hours and tells the class, the guardians and the teacher', async () => {
@@ -596,6 +617,17 @@ describe('ClassTeacherEngine.publishOne', () => {
         expect.objectContaining({ schoolId: 'school-1', userIds: ['pupil-1', 'guardian-1', 'teacher-1'], type: 'SCHEDULE_CHANGED' }),
       );
       expect(realtime.notifyCoverBoardChanged).toHaveBeenCalledWith('school-1', '2027-03-22', '2027-03-23');
+    });
+
+    it('does not tell a pupil moved off the lesson for the day that it has moved, as the day operations do not', async () => {
+      const { engine, tx, notifications } = setup();
+      claims(tx, moved);
+      tx['calendarLesson']!['findUnique']!.mockImplementation(async (args: { select: Record<string, unknown> }) =>
+        args.select['status'] ? { ...lessonRow, movesFrom: [{ studentId: 'pupil-9' }] } : { ...lessonRow, roomId: 'room-1', endsAt: new Date('2027-03-22T09:30:00.000Z') },
+      );
+      await engine.publishOne(actor, moved);
+      expect(tx['calendarLesson']!['findUnique']!.mock.calls.some(([args]: [{ select: Record<string, unknown> }]) => args.select['movesFrom'] !== undefined)).toBe(true);
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [expect.objectContaining({ movedOffIds: ['pupil-9'] })]);
     });
 
     it('is refused by the second look when the lesson is no longer scheduled, has changed or the hour is taken', async () => {
