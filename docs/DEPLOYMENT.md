@@ -303,7 +303,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `REPORTING_RATE_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Rapporteringsgrad's nightly job. A school's night starts at 06:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch; only the reminders and the weekly notice are, under `/admin/reporting-rate`). The night stores each teacher's held and reported lessons per day, tells the teachers of lessons that stood open past the school's limit (if the school turned that on) and, on Mondays, tells rektor and the full administrators the week's totals (likewise). **Off, this is the emergency brake:** nothing is counted, reminded or sent, the days already stored stay and the pages show them unchanged (they stop getting newer), and a teacher's list of open lessons, which reads the lessons live, still answers. A value that is neither `on` nor `off` is refused at start |
 | `ABSENCE_STATS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarostatistik's nightly job. A school's night starts at 07:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch). The night stores the sums of absence per class and month, and for the whole school, without a pupil's id, for the months of the last 62 days and up to three older months a night until the three läsår are filled in. **Off, this is the emergency brake:** no month is counted, the sums already stored stay and the pages show them unchanged; the doors that count a pupil's own months from the marks (`/admin/reports?tab=absence-stats`, `/teacher/absence-stats`) still answer. A value that is neither `on` nor `off` is refused at start |
 | `ACK_BACKGROUND` | `on` (default) or `off`: the quarter-hourly pass of Kvittens' reminders (`ack-reminders` in `JobRuns`). It reminds, once, each guardian who has not confirmed themself a request whose time the school chose has come, one request at a time and each in a transaction of its own; a school with kvittens off, or with no reminder time, has nothing for it to do. `off` stops every reminder in every school; the requests, the confirmations and the notices of a new request go on. The test setup turns it off. |
-| `LEAVE_CONSENT_BACKGROUND` | `on` (default) or `off`: the quarter-hourly pass of Ledighetspolicyns påminnelser (`leave-consent` in `JobRuns`). It reminds, once, each guardian who has not answered a request for consent two days after it was filed, while the request waits and the leave is not over, and tells the mentors of a request that became clear because a custody ended; a school that asks for no consent has nothing for it to do. The pass calls `app.leave_consent_pass`, which answers nothing to a logged-in caller. |
+| `LEAVE_CONSENT_BACKGROUND` | `on` (default) or `off`: the quarter-hourly pass of Ledighetspolicyns påminnelser (`leave-consent` in `JobRuns`). It reminds, once, each guardian who has not answered a request for consent two days after it was filed, while the request waits and the leave is not over, and tells the mentors of a request that became clear because a custody ended; a school that asks for no consent has nothing for it to do. The pass calls `app.leave_consent_pass`, which answers nothing to any login (claims set, a person or not; the guard is the one Kvittens' three doors have). |
 | `MEAL_LETTER_BACKGROUND` | `on` (default) or `off`: the two-minute look of Måltidskollen's daily letter to the kitchen (`meal-letter` in `JobRuns`). It asks which schools have the letter on, an address and a cut-off that has passed today by no more than three hours, with a sitting today, takes each school's day once (`JobClaims`, claimed by one instance) and sends the letter through the delivery that is already there (`sendLetter`, one mail at the mail pace, so it needs `RESEND_API_KEY` like every mail). The letter is off for every school until its administrator turns it on under Drift › Måltidskollen, so `on` does nothing for a school that has not. `off` stops every letter in every school; the page, the file and the counts go on. The test setup turns it off. |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
@@ -4571,17 +4571,24 @@ them under `/admin/leave` (Ledighetsansökningar; no row in `LeavePolicies` is a
   count to write wrong. Only a no is stored, as the request's end (`GUARDIAN_DECLINED`), in the transaction of the no.
 - *An answer is final.* The same answer again is no news; the other answer is a 409. A no ends the request: nobody
   decides it, the mentor never hears of it, and whoever applied is told, without a name, that a guardian did not consent.
-  There is no withdrawal by the family in this release (follow-up): a request that waits for a guardian who never answers
-  waits until the school removes that guardian's link, which is the school's decision about custody, not this feature's.
+  **Rektor can reject a request that waits** (a rejection grants nothing, so the gate holds back an approval only): a
+  guardian who never answers cannot keep a request waiting for ever, and switching the policy off would not have helped,
+  since `consentRequired` is stamped on the request. Rejecting ends the wait: the guardians' unanswered requests are marked
+  read, a late answer is a 409, and the pass stops reminding. **There is no withdrawal by the family in this release**
+  (BESLUT, follow-up): it needs a status of its own and a rule for what happens to a request already granted, whose
+  absence is written; until then the family asks the school to reject it.
 - *The administrator sees a request that waits, with the counts (asked, consented, waiting), never who, and cannot
-  decide it* (409 `LEAVE_AWAITING_CONSENT`, and the trigger `LeaveRequests_gate` on every other path). The mentor neither
+  approve it* (409 `LEAVE_AWAITING_CONSENT`, and the trigger `LeaveRequests_gate` on every other path). The mentor neither
   reads it nor hears of it until it has its consent: the last yes tells the mentor in its own transaction, the job's pass
   tells the mentor of a request a custody that ended cleared.
 - *A guardian never sees what another answered.* No role has any privilege on `LeaveConsents`; the functions answer a
   guardian their own part only. The notice to the other guardian and the notice of a no say neither who applied nor who
   refused, since separated guardians may hide from one another; the e-mail and the push name no child, no date and no reason.
 - *One reminder*, two days after the request, to each guardian who has not answered and can still answer, while the
-  request waits and the leave is not over. It is not a school setting (follow-up if a school wants another time).
+  request waits and the leave is not over. It is not a school setting (follow-up if a school wants another time). **At
+  most once:** `remindedAt` is written in the transaction that writes the notice, and the mail and the push follow the
+  commit, so a process that stops between the two leaves the reminder in the inbox only; it is never sent again (Kvittens
+  marks the delivery as well; here the inbox, where a waiting request is shown, is enough).
 - *The minimum is counted in calendar days* from the school's own day to the first day, and holds for guardians and
   pupils; an administrator is let through and the request is flagged, as a request is when the school chose FLAG. Both
   the gateway (`GET /api/v1/leave-policy`, the form's code) and the trigger (every other path, PostgREST included) ask the
@@ -4593,8 +4600,14 @@ them under `/admin/leave` (Ledighetsansökningar; no row in `LeavePolicies` is a
   contact off drops one given by an older form. It goes with the request in gallring, is in `ledigheter.csv` and the
   registerutdrag on the reason's terms (emptied in an extract about somebody else and where the name is a marked person),
   and is counted with the request in the removal's dialog.
-- *The export format stays version 1*: five columns were appended to `ledigheter.csv`, which a reader by column name does
-  not notice.
+- *The guardians' answers are data about the guardians*, so they are in the school's export and in a registerutdrag as
+  `data/samtycken.csv` (the request, the guardian, the pupil on the terms of the other files, the answer, when they answered,
+  when the one reminder was written, when they were asked). No role reads the table, so the file asks
+  `app.leave_consents_export`, which gives an administrator who decides the school's own rows, the persons the scope names, and
+  not the requests about a protected pupil. A guardian's extract holds their own answers and no other guardian's; a teacher's
+  and a pupil's hold none (the guardians are not among the persons asked for).
+- *The export format stays version 1*: five columns were appended to `ledigheter.csv` and a file was added, which a reader by
+  column name does not notice.
 
 ### 17.3 Operations
 
