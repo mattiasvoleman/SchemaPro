@@ -42,6 +42,7 @@ from app.solver.placement import (
     add_place_limits,
     add_subject_edges,
 )
+from app.solver.placements import release_placements
 from app.solver.rasts import blocks_for, blocks_with_demand, forbidden_starts
 from app.solver.relaxation import (
     Relax,
@@ -5118,8 +5119,21 @@ class SchedulerSolver:
         if scoped is not self._settings:
             return SchedulerSolver(scoped).solve(request)
         entered = time.monotonic()
-        if request.relaxation is not None:
-            return self._solve_best_effort(request, entered)
+        response = (
+            self._solve_best_effort(request, entered)
+            if request.relaxation is not None
+            else self._solve_strict(request, entered)
+        )
+        # FÖRLAGDA POSTER: a refusal of a week the school pinned lessons in is
+        # asked once more with the pins released (_placements_verdict). Only a
+        # request carrying `placements` is; every other answer leaves here as
+        # it was made.
+        return self._with_placements_named(request, response, entered)
+
+    def _solve_strict(
+        self, request: OptimizeScheduleRequest, entered: float,
+    ) -> OptimizeScheduleResponse:
+        """solve() for a request without `relaxation`: the two phases above."""
         refusal, step, lunch_hints, nearly_full = self._prechecks(request)
         if refusal is not None:
             return refusal
@@ -9888,6 +9902,107 @@ class SchedulerSolver:
             ],
         )
 
+    def _with_placements_named(
+        self,
+        request: OptimizeScheduleRequest,
+        response: OptimizeScheduleResponse,
+        entered: float,
+    ) -> OptimizeScheduleResponse:
+        """A refused week's answer, with its förläggningar named when they are why.
+
+        Asked of every INFEASIBLE answer to a request that carries `placements`
+        — a precheck's verdict, a proof's explanation, Bästa möjliga schema's
+        refusal on its hard rules alike — because a lock is never in a core
+        and every one of them could be about the förläggningar without saying
+        so. A TIMEOUT has no proof to keep; its probes release the
+        förläggningar as one of their rules (_timeout_relaxations).
+
+        THE REFUSAL IS KEPT UNDER THE NEW LINES. Releasing the förläggningar
+        found a timetable, so the rows the refusal named hold without them:
+        what they collide with is what the school reads next, and nothing the
+        refusal said becomes untrue. The summary is the probe's.
+
+        WITHIN THE PROBE'S TIME AND NO MORE. The gateway waits the solve's
+        budget and a probe's (docs/DEPLOYMENT.md); the explanation of a proof
+        spent part of the budget, and this has what is left of both.
+        """
+        if request.placements is None or response.status != "INFEASIBLE":
+            return response
+        deadline = (
+            entered
+            + self._settings.solver_max_time_seconds
+            + self._settings.solver_probe_seconds
+        )
+        verdict = self._placements_verdict(request, seconds_left=deadline - time.monotonic())
+        if verdict is None:
+            return response
+        kept = response.conflicts.conflicts if response.conflicts is not None else []
+        return response.model_copy(update={
+            "conflicts": verdict.model_copy(update={"conflicts": [*verdict.conflicts, *kept]}),
+        })
+
+    def _placements_verdict(
+        self, request: OptimizeScheduleRequest, *, seconds_left: float | None = None,
+    ) -> ConflictAnalysis | None:
+        """Name the förläggningar of a refused week, when releasing them lays it.
+
+        The week is solved once more with every förläggning released
+        (placements.release_placements: its lock out, its post given back the
+        lesson), on the satisfaction model and the probe's budget, as the
+        blocks are (_blocks_verdict). A timetable found means releasing them
+        is enough, so each is named, PLACED_LESSON_IN_THE_WAY, under a summary
+        that says how it was established. Not one probe per förläggning, for
+        the blocks' reason: the school learns faster by moving one and
+        generating again than by waiting for every subset to be tried.
+
+        IN BÄSTA MÖJLIGA SCHEMA ON ITS HARD RULES, the released week stripped
+        of what may give way (relaxation.strip), because that is the week the
+        mode refuses: a förläggning is never on the list of what gives way,
+        and the timetable this finds is never returned.
+
+        None when the probe has no budget, the released week has no timetable
+        inside it, or the request turned its probes off: the refusal then
+        stands as it was, rather than one invented.
+        """
+        placements = request.placements
+        if placements is None or not _runs_probes(request):
+            return None
+        budget = self._settings.solver_probe_seconds
+        if seconds_left is not None:
+            budget = min(budget, seconds_left)
+        if budget < self.MIN_PHASE_SECONDS:
+            return None
+        released = release_placements(request)
+        if request.relaxation is not None:
+            released = strip_relaxable(released)
+        started = time.perf_counter()
+        try:
+            feas_model, _, decisions, plan, _ = self._build_model(
+                released, use_assumptions=False, include_objective=False,
+            )
+        except InvalidScheduleInputError:
+            return None
+        left = budget - (time.perf_counter() - started)
+        if left < self.MIN_PHASE_SECONDS:
+            return None
+        status, _ = self._probe_search(
+            released, feas_model, decisions, plan, left, what="the placements probe",
+        )
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return None
+        locks = {fixed.id: fixed for fixed in request.fixed_lessons}
+        return ConflictAnalysis(
+            summary_code="PLACEMENTS_PROBE_SUMMARY",
+            summary_params={
+                "count": len(placements.lessons),
+                "seconds": round(time.perf_counter() - started, 1),
+            },
+            conflicts=[
+                _placed_lesson_line(locks[lesson.fixed_lesson_id], lesson.requirement_id)
+                for lesson in placements.lessons
+            ],
+        )
+
     def _probe_timeout(
         self, request: OptimizeScheduleRequest, *, deadline: float | None = None,
     ) -> ConflictAnalysis | None:
@@ -10197,6 +10312,12 @@ class SchedulerSolver:
             # distribution because both are rules of the timplan page, about
             # how a row's lessons may lie.
             out.append(("PROBE_SOLVED_WITHOUT_BLOCKS", _without_blocks(request)))
+        if request.placements is not None:
+            # FÖRLAGDA POSTER, ALL AT ONCE, beside the blocks for the same
+            # reason: a rule of the timplan page about where a row's lessons
+            # may lie. The förlagda lessons go back to their posts and are free
+            # to move; nothing else of the week changes (release_placements).
+            out.append(("PROBE_SOLVED_WITH_PLACEMENTS_RELEASED", release_placements(request)))
         # THE TEACHERS' OWN TIME IS TWO PROBES AND NEVER ONE, for the reason the
         # lunch below is three: "with the teachers' working time switched off, a
         # timetable was found" is true and useless, because a school cannot
@@ -16160,6 +16281,28 @@ def _without_blocks(request: OptimizeScheduleRequest) -> OptimizeScheduleRequest
             for requirement in request.requirements
         ],
     })
+
+
+def _placed_lesson_line(fixed: FixedLesson, requirement_id: UUID) -> ConflictDetail:
+    """One förläggning as the refusal names it: its post, its room, its day and times.
+
+    The ids are the payload's, which the gateway names back as it names every
+    other sentence's (`requirement` to the post, `room` to the room); the day
+    and the clock are the lock's own, to the minute.
+    """
+    return ConflictDetail(
+        category="PLACEMENT",
+        code="PLACED_LESSON_IN_THE_WAY",
+        params={
+            "requirement": str(requirement_id),
+            "room": str(fixed.room_id) if fixed.room_id is not None else "",
+            "day": fixed.day_of_week,
+            "start": fixed.start_time[:5],
+            "end": fixed.end_time[:5],
+        },
+        requirement_ids=[requirement_id],
+        room_ids=[fixed.room_id] if fixed.room_id is not None else [],
+    )
 
 
 def _group_ids_with_lessons(

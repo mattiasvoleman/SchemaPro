@@ -191,6 +191,7 @@ HARD_RULES: tuple[str, ...] = (
     "The pupils of a shared room within its capacity, when the school holds Delade salar HARD (Placeringsregler, rule 3)",
     "A parallel block's shared start",
     "The group's own daily cap (maxLessonsPerDayPerGroup)",
+    "A placed lesson's day, time and room (Förlagda poster): a lock the school wrote on a timplanspost",
 )
 
 WEIGHT: dict[str, int] = {rule.name: rule.weight for rule in RELAXABLE_RULES}

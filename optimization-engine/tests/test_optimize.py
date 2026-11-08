@@ -4780,6 +4780,8 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         PupilGapCohort,
         PupilGaps,
         FixedLessonMargin,
+        PlacementLock,
+        Placements,
         Rast,
         Relaxation,
         ScheduledLesson,
@@ -4859,8 +4861,17 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # ['body', 'relaxation'], which the gateway reads as
         # ENGINE_LACKS_BEST_EFFORT. See Relaxation and relaxation.py.
         "relaxation",
+        # Förlagda poster: sent only when a post of the week has a
+        # förläggning, and read by the explanation alone; every other payload
+        # omits it and builds the same model. An engine older than this field
+        # answers it with a 422 whose one error is extra_forbidden at
+        # ['body', 'placements'], and the gateway then sends the same request
+        # without it. See Placements and app/solver/placements.py.
+        "placements",
     }
     assert _field_names(Relaxation) == {"mode"}
+    assert _field_names(Placements) == {"lessons", "requirements"}
+    assert _field_names(PlacementLock) == {"fixedLessonId", "requirementId"}
     # How a candidate's search is run, never what it searches for: the seed
     # and the workers reach CP-SAT's parameters on the generation solves, the
     # budget is min'd with the configured one, and probes false skips the

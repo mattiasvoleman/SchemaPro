@@ -848,6 +848,53 @@ MESSAGES: dict[str, str] = {
         "With the travel time between the school's sites dropped a timetable was found in "
         "{seconds} s, so it is the travel time below that makes the week impossible."
     ),
+    # Förlagda poster (app/solver/placements.py): a refused week solved once
+    # more with every förläggning released. `requirement` and `room` are the
+    # payload's ids, named back by the gateway; `day` is the ISO weekday.
+    "PLACEMENTS_PROBE_SUMMARY": (
+        "No timetable holds every rule with the lessons placed on the timplan where they are. "
+        "With {count, plural, one {the placed lesson} other {the # placed lessons}} released a "
+        "timetable was found in {seconds} s, so it is {count, plural, one {that placement} other "
+        "{those placements}}, below, that the week cannot be laid around. A placed lesson never "
+        "gives way: move or remove one on its timplanspost and generate again."
+    ),
+    "PLACED_LESSON_IN_THE_WAY": (
+        "{requirement}, placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} "
+        "5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end} in {room}."
+    ),
+    # Sent by the GATEWAY before the engine is called (the generate pre-flight
+    # in optimization-proxy.service.ts), for the reason BLOCK_PARTLY_LOCKED is:
+    # a förläggning is judged with the hand edit's rules there
+    # (src/requirement-placements/placement-judge.ts), at every Generera,
+    # since the week moves under it after it was saved. `reason` is the rule;
+    # `other` the class and subject it meets, `schools` the other schools that
+    # hold the time, `resource` what a reservation is on. Never a person.
+    "PLACEMENTS_REFUSED_SUMMARY": (
+        "{count, plural, one {# placed lesson} other {# placed lessons}} on the timplan can no "
+        "longer stand where {count, plural, one {it is} other {they are}} placed, so the week was "
+        "not sent. A placed lesson never gives way: move or remove the placement on its "
+        "timplanspost."
+    ),
+    "PLACEMENT_CANNOT_STAND": (
+        "{requirement}, placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} "
+        "5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end} in {room}: "
+        "{reason, select, "
+        "TEACHER {the teacher already teaches {other} then} "
+        "ROOM {the room is taken by {other} then} "
+        "GROUP {the class already has {other} then} "
+        "PUPILS {pupils of the class already have {other} then} "
+        "AVAILABILITY {the {resource, select, TEACHER {teacher} ROOM {room} other {class}} is "
+        "reserved then} "
+        "FRAME {it is outside the frame time of the class's stage} "
+        "LUNCH {it is on the class's lunch} "
+        "GRADE_RULE {the time is closed to the class's årskurs} "
+        "OTHER_SCHOOL {the time is held by {schools}} "
+        "SCHOOL_DAY {it is outside the week the timetable is laid in, Monday to Friday "
+        "08:00–18:00} "
+        "OVER_DEMAND {the post has no lesson of that length left once its locked lessons are "
+        "counted} "
+        "other {it cannot stand there}}."
+    ),
     "BLOCK_PROBE_SUMMARY": (
         "No timetable satisfies every rule, and the solver could not name which of them collide. "
         "With the blocks dropped a timetable was found in {seconds} s, so it is the blocks listed "
@@ -1095,6 +1142,12 @@ MESSAGES: dict[str, str] = {
     "PROBE_SOLVED_WITHOUT_BLOCKS": (
         "With the blocks dropped, so that the lessons of a block could take different times, a "
         "timetable was found in {seconds} s."
+    ),
+    # Förlagda poster: the week with every förläggning released, its lesson
+    # back on its post and free to move (app/solver/placements.py).
+    "PROBE_SOLVED_WITH_PLACEMENTS_RELEASED": (
+        "With the placed lessons released, so that each could go anywhere its timplanspost "
+        "allows, a timetable was found in {seconds} s."
     ),
     # TWO PROBES AND NEVER ONE "teachers' working time", for the reason the
     # lunch above is three: a school cannot switch its teachers' working time
