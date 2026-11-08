@@ -47,6 +47,7 @@
       <li><span>3.3 Schemat i din kalender</span><span class="dots"></span><span class="pg" data-pg="s33"></span></li>
       <li><span>3.4 Ämne, läxa och klassbok</span><span class="dots"></span><span class="pg" data-pg="s34"></span></li>
       <li><span>3.5 Skolans dag</span><span class="dots"></span><span class="pg" data-pg="s35"></span></li>
+      <li><span>3.6 Klasslärare: ändra din klass schema</span><span class="dots"></span><span class="pg" data-pg="s36"></span></li>
     </ol>
     <li><span>4 · Närvaro</span><span class="dots"></span><span class="pg" data-pg="ch4"></span></li>
     <ol>
@@ -59,6 +60,8 @@
       <li><span>4.7 När det larmar: uppropet</span><span class="dots"></span><span class="pg" data-pg="s47"></span></li>
       <li><span>4.8 Be en vårdnadshavare bekräfta ett meddelande</span><span class="dots"></span><span class="pg" data-pg="s48"></span></li>
       <li><span>4.9 Dina elevers frånvaro över tid</span><span class="dots"></span><span class="pg" data-pg="s49"></span></li>
+      <li><span>4.10 Bocka av vilka elever som fått instruktion</span><span class="dots"></span><span class="pg" data-pg="s410"></span></li>
+      <li><span>4.11 Samtyckeslistor för din klass</span><span class="dots"></span><span class="pg" data-pg="s411"></span></li>
     </ol>
     <li><span>5 · Boka lokal</span><span class="dots"></span><span class="pg" data-pg="ch5"></span></li>
     <li><span>6 · Notiser</span><span class="dots"></span><span class="pg" data-pg="ch6"></span></li>
@@ -230,6 +233,17 @@
     <span class="path">Närvaro</span> visar klassens elever. Dina egna lektioner
     med klasser som är med i aktiviteten är inställda och gör dig ledig de
     timmarna, om du inte själv är ansvarig. Du får en notis när det händer.
+  </p>
+
+  <p>
+    Är du <strong>vakt</strong> vid ett prov står provets ersättningslektion i din
+    vecka, med provets namn och salen där du vakar. Du står som ansvarig på
+    lektionen för de klasser som skriver i din sal, och <strong>närvaron
+    registrerar du på den lektionen</strong> som på vilken lektion som helst
+    under <span class="path">Närvaro</span>. Skolan tar bara en lärare som är ledig
+    den tiden som vakt, och försöker fördela vakterna jämnt över läsåret. Är du
+    inte vakt syns provet ändå som en ersättningslektion för klassen du undervisar,
+    och dina egna lektioner med klassen är inställda de timmarna.
   </p>
 
   <div class="note">
@@ -408,6 +422,53 @@
     hen saknas på sidan och bland lektionens lärare, och sidan säger hur många
     lärare som inte visas. Det finns ingen utskrift för lärare.
   </p>
+
+  <h3 id="s36"><span class="num">3.6</span>Klasslärare: ändra din klass schema</h3>
+  <p>
+    Har skolan utsett dig till <strong>klasslärare</strong> för en klass finns sidan
+    <span class="path">Klassens schema</span>. Där kan du flytta en lektion för ett visst datum,
+    ställa in den eller byta sal, och ändra klassens veckoschema (<em>mallen</em>): flytta en lektion
+    eller dela ett långt pass i två. Du ser samma krockar som schemaläggaren ser, medan du ändrar.
+    Du ser sidan bara om en administratör har utsett dig; att vara mentor räcker inte.
+  </p>
+  <ol>
+    <li>Välj klass (har du flera) och vecka. Veckan visar klassens lektioner. De tider som är öppna
+      för klasslärare är markerade.</li>
+    <li>En lektion du får ändra har knappar: <span class="ui">Flytta</span>,
+      <span class="ui">Ställ in</span> och <span class="ui">Byt sal</span> för datumet, och
+      <span class="ui">Flytta i mallen</span> och <span class="ui">Dela passet</span> för veckoschemat.
+      En lektion du inte får ändra har inga knappar, utan en rad som säger varför.</li>
+    <li>Fyll i den nya tiden eller salen. Krockar visas direkt: en lärare, en sal eller en klass som
+      redan är upptagen (också elever som går i en annan grupp eller håller på att byta om efter
+      idrotten), en otillgänglig tid, en bokad sal eller lov, och skolans hårda regler: tiden ligger
+      utanför stadiets skoldag, på klassens lunch eller i en timme som är stängd för klassens årskurs.
+      Då går det inte att publicera. Tar en ändring av veckoschemat bort kommande lektioner ur
+      kalendern, eftersom de skulle hamna på en tid som redan har börjat, står det med antal och om
+      någon har skrivit lektionslogg eller läxa på dem.</li>
+    <li><span class="ui">Spara utkast</span>. Ändringen träder <em>inte</em> i kraft än: den är ett utkast
+      för klassen, och syns under <span class="ui">Mina utkast</span>. Schemaläggaren publicerar det.
+      Har skolan låtit klasslärare publicera själva finns också knappen
+      <span class="ui">Publicera</span>, och då ser du för varje utkast om det gick eller varför inte.</li>
+  </ol>
+  <p>
+    <strong>Vad du inte får ändra</strong> är lektioner med en annan lärare, lektioner som delas med
+    andra klasser eller grupper (block, halvklasser, ersättande grupper, delade lärare och salar),
+    tider som schemaläggaren inte har öppnat för klasslärare, och sådant som redan varit, har en
+    vikarie, är inställt eller har närvaro. Sidan säger vilket skäl det är, så att du vet vem du ska
+    be om hjälp. Du får inte flytta en lektion till eller från en helg, till en sal som kräver
+    godkännande eller är utlånad, eller så att en delad lektions minuter inte längre går ihop. Har en
+    lektion redan flyttats, eller fått en annan sal, för ett visst datum väntar en ändring av
+    veckoschemat till efter datumet (eller tills du har flyttat tillbaka lektionen), för annars skulle
+    den hamna på en tredje dag eller i veckoschemats sal igen. När läsåret är slut ändras ingenting i dess schema.
+  </p>
+  <p>
+    <strong>Är ni flera som ändrar samtidigt</strong> skriver ingen över någon annan. Har lektionen
+    ändrats av någon annan sedan du läste den får du veta vad som ändrats och måste läsa om den. Har
+    någon annan ändrat ditt utkast får du se hur det ser ut nu innan du sparar igen. Ett utkast som
+    inte längre går att publicera, för att tiden ändrats eller blivit upptagen, ligger kvar med ett
+    besked om varför.
+  </p>
+
 </section>
 
 <!-- ============================ 4 ============================ -->
@@ -795,6 +856,56 @@
 
 <!-- ============================ 5 ============================ -->
 <section class="chapter" id="ch5">
+  <h3 id="s410"><span class="num">4.10</span>Bocka av vilka elever som fått instruktion</h3>
+  <p>
+    Har du instruerat eleverna i något som kräver det, till exempel maskinerna i slöjden, kemikalierna i NO eller ett
+    moment i idrotten, bockar du av det under <span class="path">Checklistor</span>, fliken
+    <span class="ui">Instruktionsbevis</span>. Skolan har mallar för momenten; en administratör gör dem.
+  </p>
+  <ol>
+    <li>Välj <span class="ui">Mall</span> och <span class="ui">Grupp</span>. Grupperna är de du undervisar i det aktiva läsåret.
+      Klasser du är mentor för men inte undervisar står under <em>Bara läsning</em>: där ser du bevisen men bockar inte av.</li>
+    <li>Välj de elever som har fått instruktionen (<span class="ui">Välj alla som saknas</span> markerar resten). I listan står
+      för varje elev <em>Instruktion 3 okt av Anna Svensson</em> eller <em>Saknas</em>.</li>
+    <li>Kontrollera <span class="ui">Datum för instruktionen</span> (i dag om du inte ändrar) och
+      <span class="ui">Den som gav instruktionen</span>: lämna det som det är om du gav den själv, annars väljer du kollegan.
+      Tryck <span class="ui">Bocka av valda</span>.</li>
+  </ol>
+  <p>
+    <strong>Bocken gäller eleven</strong>, inte klassen: den följer eleven när hen byter klass och genom läsårsskiftet. Du kan
+    bara bocka av elever i dina egna grupper och lektioner. Har du bockat fel väljer du <span class="ui">Upphäv</span> och skriver
+    varför. Bocken tas inte bort: den står kvar på elevens kort, markerad som upphävd, med vem som upphävde den och varför. Du
+    kan bara upphäva bockar du själv har gjort; en administratör kan upphäva alla. Klicka på en elevs namn för att se elevkortet
+    med alla bockar, och <span class="ui">Skriv ut</span> för bocklistan på papper (en elev med skyddad identitet står inte på
+    pappret, och det står hur många som utelämnats).
+  </p>
+
+  <h3 id="s411"><span class="num">4.11</span>Samtyckeslistor för din klass</h3>
+  <p>
+    Är du mentor för en klass kan du hålla en lista över vilka vårdnadshavare som har samtyckt till något, till exempel
+    fotografering, publicering av bilder eller en utflykt. Den finns under <span class="path">Checklistor</span>, fliken
+    <span class="ui">Samtycken</span>. Du skriver bara för dina mentorselever; andra lärare ser svaren för elever de undervisar.
+  </p>
+  <ol>
+    <li><span class="ui">Ny samtyckeslista</span>: välj klass, skriv en rubrik och texten vårdnadshavarna ska samtycka till, med
+      de ord de ska få se.</li>
+    <li><strong>Från papper:</strong> markera eleverna och välj <span class="ui">Registrera samtycke</span>,
+      <span class="ui">Registrera nej</span> eller <span class="ui">Återkalla samtycke</span>. Ange dagen på pappret och vem som lämnade
+      det. Vem som skrev in det och när sparar Rastra.</li>
+    <li><strong>I appen:</strong> är Kvittens påslaget för skolan väljer du <span class="ui">Fråga vårdnadshavarna i appen</span> för de
+      markerade eller <span class="ui">Fråga alla som saknar svar</span>. Vårdnadshavarna får en förfrågan under Meddelanden, och när
+      <em>alla</em> vårdnadshavare till en elev har bekräftat står eleven som <em>Samtycke</em>. Tills dess står det <em>Frågad i appen</em>.</li>
+  </ol>
+  <p>
+    Listan visar för varje elev <em>Samtycke</em>, <em>Har tackat nej</em>, <em>Återkallat</em>, <em>Frågad i appen</em> eller
+    <em>Saknas</em>, med vem som skrev in det, när och vem som lämnade det. <strong>Ett samtycke kan tas tillbaka</strong>: skriv in
+    <span class="ui">Återkalla samtycke</span> när en vårdnadshavare hör av sig, så syns det i listan direkt och i historiken per elev.
+    Svar tas aldrig bort, de läggs bara till. Har du skrivit in <em>Återkallat</em> eller <em>Har tackat nej</em> efter att du
+    frågade i appen räknas inte en vårdnadshavares sena bekräftelse av just den förfrågan: eleven står kvar som återkallad, och
+    vill du ha samtycket igen frågar du om med en ny förfrågan. När listan inte behövs längre väljer du <span class="ui">Avsluta listan</span>.
+    <span class="ui">Skriv ut</span> ger listan på papper; en elev med skyddad identitet står inte på pappret, och det står hur många som utelämnats.
+  </p>
+
   <h2><span class="num">5</span>Boka lokal</h2>
   <p class="lede">För repetition, extra hjälp, möten och annat utanför schemat.</p>
 

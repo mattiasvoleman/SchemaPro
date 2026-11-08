@@ -5,7 +5,9 @@ import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
  * page lists them (RetentionDataType, 20261021110000; ACCESS_LOG, the read
  * log, 20261026090000; COVER_REQUESTS, vikarieförfrågningar, 20270102090000;
  * CRISIS_DRILLS and CRISIS_ALARMS, krisläget's exercises and real alarms,
- * 20270113090000). Ten are rows that go; DEPARTED_PEOPLE are pseudonymised in place.
+ * 20270113090000; CHECKLISTS, Checklistor's instruction proofs and consents,
+ * 20270129090000: kept while the pupil is at the school and then as long as the
+ * school decides). Eleven are rows that go; DEPARTED_PEOPLE are pseudonymised in place.
  */
 export const RETENTION_DATA_TYPES = [
   'ATTENDANCE',
@@ -18,6 +20,7 @@ export const RETENTION_DATA_TYPES = [
   'COVER_REQUESTS',
   'CRISIS_DRILLS',
   'CRISIS_ALARMS',
+  'CHECKLISTS',
   'DEPARTED_PEOPLE',
 ] as const;
 export type RetentionDataTypeValue = (typeof RETENTION_DATA_TYPES)[number];

@@ -88,9 +88,19 @@ function historyStatusKey(run: OptimizationJob): string {
   return run.solverStatus ?? run.status;
 }
 
+/** Placeringsregler: the LunchSettings field names of each rule, and the limits Salar och byggnader per dag holds to. */
+const PLACEMENT_KEY = { edge: "Edge", places: "Places", shared: "Shared" } as const;
+const LIMIT_KEYS = [
+  ["maxClassRoomsPerDay", "classRoom"],
+  ["maxTeacherRoomsPerDay", "teacherRoom"],
+  ["maxClassBuildingsPerDay", "classBuilding"],
+  ["maxTeacherBuildingsPerDay", "teacherBuilding"],
+] as const;
+
 export default function GeneratePage() {
   const t = useTranslations("generate");
   const tLunch = useTranslations("lunch");
+  const tPlacement = useTranslations("placementRules");
   const tConflicts = useTranslations("conflictCategories");
   const tEngine = useTranslations("engineMessages");
   const tStaffing = useTranslations("staffing");
@@ -885,6 +895,27 @@ export default function GeneratePage() {
               {lunchSettings?.generatorBestEffort ? (
                 <li className="text-muted-foreground">{t("ruleBestEffort")}</li>
               ) : null}
+              {/* Placeringsregler: each rule that is on, with its weight when
+                  it is Mjuk; Salar och byggnader per dag with the limits it holds to. */}
+              {lunchSettings
+                ? (["edge", "places", "shared"] as const).map((rule) => {
+                    const mode = lunchSettings[`placement${PLACEMENT_KEY[rule]}Mode`];
+                    if (mode !== "SOFT" && mode !== "HARD") return null;
+                    const limits = LIMIT_KEYS.flatMap(([field, label]) =>
+                      lunchSettings[field] == null
+                        ? []
+                        : [tPlacement(`summary.limit.${label}`, { count: lunchSettings[field] })],
+                    ).join(", ");
+                    return (
+                      <li key={rule} className="text-muted-foreground">
+                        {tPlacement(`summary.${rule}.${mode}`, {
+                          weight: lunchSettings[`placement${PLACEMENT_KEY[rule]}Weight`] ?? 250,
+                          limits: limits || "–",
+                        })}
+                      </li>
+                    );
+                  })
+                : null}
             </ul>
           )}
         </SectionCard>

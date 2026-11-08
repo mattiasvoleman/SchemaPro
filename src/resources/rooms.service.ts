@@ -32,6 +32,8 @@ export class RoomsService {
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
               : {}),
+            // Placeringsregler, regel 3: exclusive unless the school said otherwise.
+            ...(dto.canBeShared !== undefined ? { canBeShared: dto.canBeShared } : {}),
           },
         });
       });
@@ -66,6 +68,7 @@ export class RoomsService {
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
               : {}),
+            ...(dto.canBeShared !== undefined ? { canBeShared: dto.canBeShared } : {}),
           },
         });
       });

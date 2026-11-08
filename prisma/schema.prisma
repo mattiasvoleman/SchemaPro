@@ -289,6 +289,12 @@ model School {
   reportingReminders      ReportingReminder[]
   ackSettings             AckSetting?
   ackRequests             AckRequest[]
+  /// Checklistor (20270129091000).
+  instructionTemplates    InstructionTemplate[]
+  instructionProofs       InstructionProof[]
+  consentLists            ConsentList[]
+  consentEntries          ConsentEntry[]
+  consentAsks             ConsentAsk[]
   ackReceipts             AckReceipt[]
   reportingDigests        ReportingDigest[]
   absenceReports          AbsenceReport[]
@@ -458,6 +464,9 @@ model User {
   /// The requests for a guardian's confirmation that name this person: as the guardian asked, or as the child asked about (Kvittens, 20270117091000).
   ackReceiptsAsGuardian AckReceipt[] @relation("AckGuardian")
   ackReceiptsAsStudent  AckReceipt[] @relation("AckStudent")
+  /// What a pupil has been instructed in and has consented to (Checklistor, 20270129091000): they follow the pupil, not the class.
+  instructionProofs     InstructionProof[] @relation("ProofStudent")
+  consentEntries        ConsentEntry[]     @relation("ConsentStudent")
   absenceReports      AbsenceReport[]   @relation("AbsenceStudent")
   reportedAbsences    AbsenceReport[]   @relation("AbsenceReporter")
   leaveRequests       LeaveRequest[]    @relation("LeaveStudent")
@@ -593,6 +602,14 @@ model Room {
   /// "Special" rooms (labs, gyms, auditoria) whose self-service bookings need
   /// admin approval before they're confirmed. Ordinary rooms auto-approve.
   requiresApproval Boolean  @default(false)
+  /// Placeringsregler (20270126090000), rule 3: the room may hold several
+  /// lessons at the same time as long as their pupils fit its capacity
+  /// together. False is exclusive, which every room has always been and is
+  /// until a school says otherwise: nothing else says a room can take two
+  /// groups at once. Read only while the school's Skolregler hold the rule on
+  /// (LunchSetting.placementSharedMode), and a room without a capacity has no
+  /// limit to share under, so it stays exclusive whatever this says.
+  canBeShared      Boolean  @default(false)
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime @updatedAt @db.Timestamptz(6)
 
@@ -894,6 +911,13 @@ model Subject {
   /// See migration 20261019090000.
   maxLessonsPerDay   Int?
   minDaysBetween     Int?
+  /// Placeringsregler (20270126090000), rule 1: the subject is not placed as
+  /// the first / the last lesson of a class's day. Both false is no rule, which
+  /// is every subject until a school marks one. Read only while the school's
+  /// Skolregler hold the rule on (LunchSetting.placementEdgeMode), so a mark
+  /// made before the rule is switched on changes nothing.
+  notFirstInDay      Boolean  @default(false)
+  notLastInDay       Boolean  @default(false)
   createdAt          DateTime @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
@@ -1706,6 +1730,8 @@ model ScheduleActivity {
   batch    CancellationBatch          @relation(fields: [batchId, schoolId], references: [id, schoolId], onDelete: Cascade)
   teachers ScheduleActivityTeacher[]
   lessons  ScheduleActivityLesson[]
+  /// The exam this activity carries, if it does (Provplanering, 20270127090000).
+  exams    Exam[]
 
   @@unique([id, schoolId])
   @@unique([batchId])
@@ -1751,6 +1777,137 @@ model ScheduleActivityLesson {
   @@index([studentGroupId, schoolId])
   @@index([schoolId])
   @@map("ScheduleActivityLessons")
+}
+
+/// Provplanering (20270127090000): the school's decisions about exams. One row
+/// per school; the engine is off until the school turns it on (enabled).
+model ExamPlanSettings {
+  schoolId              String   @id @db.Uuid
+  enabled               Boolean  @default(false)
+  /// At most this many exams a class writes on one day, and in one week (CHECKs).
+  maxPerClassPerDay     Int      @default(1)
+  maxPerClassPerWeek    Int      @default(3)
+  /// A room with x writers has max(1, ceil(x / this)) invigilators (CHECK 1..200).
+  writersPerInvigilator Int      @default(30)
+  /// Minutes before a room or an invigilator can start the next exam (CHECK 0..120).
+  turnoverMinutes       Int      @default(10)
+  /// The subject the replacement lessons of an exam are held in: one that does not count toward the timplan.
+  replacementSubjectId  String?  @db.Uuid
+  updatedAt             DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([replacementSubjectId, schoolId])
+  @@map("ExamPlanSettings")
+}
+
+/// A room the school lets exams be written in, and how many seats an exam has
+/// there (which may be fewer than the room's capacity). A row is the mark.
+model ExamRoom {
+  roomId    String   @id @db.Uuid
+  schoolId  String   @db.Uuid
+  seats     Int
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([schoolId])
+  @@map("ExamRooms")
+}
+
+/// A prov (20270127090000). The window is what the school asked for (WEEK: any
+/// span of at most 31 days, with optional daily bounds; FIXED: a date and a
+/// start, a nationellt prov). Planned means activityId is set: the plan itself
+/// (day, time) is the activity's avbokning, and the rooms and invigilators are
+/// ExamSittings and ExamInvigilators.
+model Exam {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String    @db.Uuid
+  academicYearId  String    @db.Uuid
+  /// The subject the exam is in: it counts toward the timplan and is credited the exam's minutes.
+  subjectId       String    @db.Uuid
+  name            String
+  lengthMinutes   Int
+  writers         Int
+  /// WEEK or FIXED (CHECK).
+  windowKind      String
+  windowFrom      DateTime  @db.Date
+  windowTo        DateTime  @db.Date
+  /// FIXED only.
+  fixedStart      DateTime? @db.Time(6)
+  /// WEEK only: the earliest start and the latest end of the exam on any day of the window.
+  earliestStart   DateTime? @db.Time(6)
+  latestEnd       DateTime? @db.Time(6)
+  /// Set while the exam is planned: the schemabrytande aktivitet that carries it.
+  activityId      String?   @db.Uuid
+  /// Why the last run could not place it (a code of the engine's or the gateway's), with its figures.
+  lastReason      String?
+  lastReasonParams Json?
+  lastPlannedAt   DateTime? @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  createdByUserId String?   @db.Uuid
+
+  activity  ScheduleActivity?  @relation(fields: [activityId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  groups    ExamGroup[]
+  sittings  ExamSitting[]
+
+  @@unique([id, schoolId])
+  @@index([schoolId])
+  @@index([academicYearId, schoolId, windowFrom])
+  @@index([subjectId, schoolId])
+  @@index([activityId, schoolId])
+  @@index([createdByUserId, schoolId])
+  @@map("Exams")
+}
+
+/// The classes and groups an exam is for. studentGroupId is no foreign key
+/// (the ScheduleActivities precedent): a class deleted from the year is
+/// dropped from the exam when it is read.
+model ExamGroup {
+  examId         String @db.Uuid
+  studentGroupId String @db.Uuid
+  schoolId       String @db.Uuid
+
+  exam Exam @relation(fields: [examId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([examId, studentGroupId])
+  @@index([studentGroupId, schoolId])
+  @@index([schoolId])
+  @@map("ExamGroups")
+}
+
+/// A room an exam is written in, with how many write there, and the booking
+/// that holds the room.
+model ExamSitting {
+  examId    String  @db.Uuid
+  roomId    String  @db.Uuid
+  schoolId  String  @db.Uuid
+  writers   Int
+  bookingId String? @db.Uuid
+
+  exam          Exam               @relation(fields: [examId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  invigilators  ExamInvigilator[]
+
+  @@id([examId, roomId])
+  @@unique([examId, roomId, schoolId])
+  @@index([roomId, schoolId])
+  @@index([bookingId, schoolId])
+  @@index([schoolId])
+  @@map("ExamSittings")
+}
+
+/// A teacher who keeps watch in a room at an exam. Personnel only; never a
+/// teacher with a protected identity (the planner leaves them out of the pool).
+model ExamInvigilator {
+  examId    String @db.Uuid
+  roomId    String @db.Uuid
+  teacherId String @db.Uuid
+  schoolId  String @db.Uuid
+
+  sitting ExamSitting @relation(fields: [examId, roomId, schoolId], references: [examId, roomId, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([examId, roomId, teacherId])
+  @@unique([examId, teacherId])
+  @@index([teacherId, schoolId])
+  @@index([schoolId])
+  @@map("ExamInvigilators")
 }
 
 /// A shared, revocable link to the public viewer (20261011120000). Only the
@@ -3013,6 +3170,8 @@ model RoomBooking {
   // (roomId, tstzrange(startsAt, endsAt)), limited to PENDING and APPROVED
   // rows, is what stops two people holding one room at one hour. Prisma cannot
   // express it — see migration 20260822131500_a_room_is_booked_once.
+  /// The target of ExamSittings.bookingId (20270127090000).
+  @@unique([id, schoolId])
   @@index([schoolId, startsAt])
   @@index([roomId, startsAt])
   @@index([bookedById, startsAt])
@@ -4158,36 +4317,36 @@ model SchoolBreak {
 /// and leaving the other half in one browser would keep that bug alive for the
 /// half that stayed behind.
 model LunchSetting {
-  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId                 String   @db.Uuid
-  lunchEnabled             Boolean  @default(false)
-  lunchStartTime           DateTime @db.Time(0)
-  lunchEndTime             DateTime @db.Time(0)
-  lunchMinutes             Int
+  id                                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId                          String            @db.Uuid
+  lunchEnabled                      Boolean           @default(false)
+  lunchStartTime                    DateTime          @db.Time(0)
+  lunchEndTime                      DateTime          @db.Time(0)
+  lunchMinutes                      Int
   /// Seats in the dining hall. Null means the school has no seat limit worth
   /// modelling — the solver then places lunch exactly as it did before.
-  diningSeats              Int?
-  maxLessonsPerDayPerGroup Int?
+  diningSeats                       Int?
+  maxLessonsPerDayPerGroup          Int?
   /// Restid i generatorn: whether the generator keeps the walk between the
   /// school's skolområden (Sites, SiteTravelTimes) for teachers and pupils.
   /// Off by default, and off sends the engine neither a site nor a walk, so
   /// the week is generated exactly as before the rule existed. Not a lunch
   /// rule either; it is in this row for the reason maxLessonsPerDayPerGroup
   /// is: it sits in the same form, Skolregler.
-  generatorKeepsTravelTime Boolean  @default(false)
+  generatorKeepsTravelTime          Boolean           @default(false)
   /// Elevernas håltimmar: whether the generator keeps the pupils' idle time
   /// between their lessons down, counted per set of pupils booked alike as
   /// the håltimmesrapport counts it. Off by default, and off sends the engine
   /// no cohort, so the week is generated exactly as before. In this row for
   /// the reason the travel switch is: it sits in the same form, Skolregler.
-  generatorKeepsPupilGapsDown Boolean @default(false)
+  generatorKeepsPupilGapsDown       Boolean           @default(false)
   /// Sammanhängande undervisning (20261218090000): the generator tries to keep
   /// each teacher's stretches of teaching within their post's limit
   /// (TeacherEmployments.maxConsecutiveTeachingMinutes). Off: nothing is sent, and
   /// the week is generated exactly as before. A wish and not a guarantee, so the
   /// switch is the school's: it moves lessons of every teacher who has the
   /// rule. In this row for the reason the others are: the same form.
-  generatorKeepsConsecutiveTeaching Boolean @default(false)
+  generatorKeepsConsecutiveTeaching Boolean           @default(false)
   /// Bästa möjliga schema (20270125090000): whether an administrator who plans
   /// may ask for a timetable in which the school's own shaping rules (a
   /// teacher's cap per day, a part-timer's days, a subject's per-day cap and
@@ -4197,9 +4356,39 @@ model LunchSetting {
   /// and a migration must not turn it on. Off, the run is refused
   /// (BEST_EFFORT_NOT_ENABLED) and nothing is sent to the engine that was not
   /// sent before. In this row for the reason the others are: the same form.
-  generatorBestEffort      Boolean  @default(false)
-  createdAt                DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt                DateTime @updatedAt @db.Timestamptz(6)
+  generatorBestEffort               Boolean           @default(false)
+  /// Placeringsregler (20270126090000), three rules about where a lesson is
+  /// placed, each OFF until the school turns it on (OFF sends the engine
+  /// nothing, and the week is generated exactly as before), SOFT (a weight,
+  /// on the scale of the other wishes) or HARD (a week that cannot keep it is
+  /// refused by name). Only rule 3 is offered HARD: rules 1 and 2 are OFF or
+  /// SOFT by CHECK (…_off_or_soft_check) until a hard one is measured. In this
+  /// row for the reason the switches above are: they sit in the same form,
+  /// Skolregler.
+  ///
+  /// Rule 1: a subject marked "not first" or "not last" (Subject.notFirstInDay,
+  /// notLastInDay) is kept off the first or last lesson of a class's day.
+  placementEdgeMode                 PlacementRuleMode @default(OFF)
+  /// SOFT only: 1..1000 (LunchSettings_placementEdgeWeight_check). Kept when
+  /// the mode is OFF, so switching back does not lose the figure.
+  placementEdgeWeight               Int               @default(250)
+  /// Rule 2: a class and a teacher (apart) are in at most this many DIFFERENT
+  /// room groups and different buildings in a day. 1 is a single one, never a
+  /// change; the same room twice is one. The mode is SOFT only while at least
+  /// one of the four limits is set (LunchSettings_placementPlaces_needs_a_limit_check).
+  placementPlacesMode               PlacementRuleMode @default(OFF)
+  placementPlacesWeight             Int               @default(250)
+  /// 1..20, null = no limit (LunchSettings_max…PerDay_check).
+  maxClassRoomsPerDay               Int?
+  maxTeacherRoomsPerDay             Int?
+  maxClassBuildingsPerDay           Int?
+  maxTeacherBuildingsPerDay         Int?
+  /// Rule 3: the pupils of the lessons in a shared room (Room.canBeShared) at
+  /// one time fit its capacity together.
+  placementSharedMode               PlacementRuleMode @default(OFF)
+  placementSharedWeight             Int               @default(250)
+  createdAt                         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt                         DateTime          @updatedAt @db.Timestamptz(6)
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
@@ -4228,6 +4417,18 @@ model KitchenSetting {
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
   @@map("KitchenSettings")
+}
+
+/// Placeringsregler: how a placement rule is held. OFF is the school without
+/// the rule (nothing is sent to the engine); SOFT pays a weight for every
+/// breach and refuses nothing; HARD forbids the breach, and a week that cannot
+/// keep it is refused by name. The type is the three rules', but only rule 3
+/// (placementSharedMode) is offered HARD: a CHECK keeps rules 1 and 2 at OFF or
+/// SOFT until a hard one has been measured.
+enum PlacementRuleMode {
+  OFF
+  SOFT
+  HARD
 }
 
 enum RoomRuleKind {
@@ -5097,6 +5298,9 @@ enum RetentionDataType {
   CRISIS_DRILLS
   /// Krisläge, the real alarms (skarpa larm): kept as the school decides (20270113090000).
   CRISIS_ALARMS
+  /// Checklistor (F5): the instruction proofs and the consents. Kept while the pupil is at the school and
+  /// then as long as the school decides; a pupil still at the school is never due (20270129090000).
+  CHECKLISTS
 }
 
 /// PURGE_AFTER `months`; KEEP (bevaras); UNDECIDED (back to ej beslutat).
@@ -5956,6 +6160,295 @@ model SchoolDaySettings {
   updatedAt   DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@map("SchoolDaySettings")
+}
+
+// -----------------------------------------------------------------------------
+// Klasslärarens schema (20270128090000)
+//
+// A klasslärare is appointed to a class for a läsår, edits that class's lessons
+// inside the frame the schemaläggare keeps, and what they change waits as a
+// draft of its own until it is published. The models carry scalar columns only:
+// every key is composite (x, schoolId) in the migration, which is where the
+// rules are, and the rows are read by the gateway with the people and lessons
+// they name looked up beside them.
+// -----------------------------------------------------------------------------
+
+/// What a klasslärare's change is.
+enum ClassTeacherChangeKind {
+  /// One lesson on one date goes to another time, another day of that week or another room.
+  OCCASION_MOVE
+  /// One lesson on one date is cancelled.
+  OCCASION_CANCEL
+  /// One lesson on one date is held in another room.
+  OCCASION_ROOM
+  /// A lesson of the class's grundschema changes day, time or room.
+  TEMPLATE_MOVE
+  /// A long lesson of the class's grundschema becomes two, one of them elsewhere.
+  TEMPLATE_SPLIT
+}
+
+enum ClassTeacherChangeStatus {
+  /// Waiting: the schemaläggare's to publish, or the klasslärare's when the school allows it.
+  DRAFT
+  /// Carried into the timetable. Kept as the record of what the klasslärare asked for.
+  PUBLISHED
+}
+
+/// The appointment: this teacher is klasslärare for this class in this läsår.
+/// Made by an administrator who writes Schemaläggning, and the only way a
+/// teacher gets the right (a mentor is not one). The administrator who made it
+/// is the one the klasslärare's checks and publication run as (the database
+/// names them: app.class_teacher_actor); an appointment whose administrator is
+/// gone or no longer writes Schemaläggning lapses until another administrator
+/// makes it again.
+model ClassTeacherAppointment {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId          String   @db.Uuid
+  academicYearId    String   @db.Uuid
+  studentGroupId    String   @db.Uuid
+  userId            String   @db.Uuid
+  /// The administrator the appointment runs as. Cleared when that person is removed.
+  appointedByUserId String?  @db.Uuid
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([studentGroupId, userId])
+  @@index([userId, schoolId])
+  @@index([schoolId, academicYearId, studentGroupId])
+  @@index([appointedByUserId, schoolId])
+  @@map("ClassTeacherAppointments")
+}
+
+/// One row per school; no row means every default (a klasslärare publishes nothing).
+model ClassTeacherSettings {
+  schoolId    String   @id @db.Uuid
+  /// A klasslärare publishes their own class's changes, inside the frame.
+  selfPublish Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("ClassTeacherSettings")
+}
+
+/// A weekly span of the school day that is open to a class's klasslärare: a
+/// lesson is theirs to change only inside one, and only to another time inside
+/// one. studentGroupId null is every class of the läsår. No row, no open time.
+model ClassTeacherOpenTime {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  academicYearId String   @db.Uuid
+  studentGroupId String?  @db.Uuid
+  /// ISO weekday 1..5.
+  dayOfWeek      Int      @db.SmallInt
+  startTime      DateTime @db.Time(0)
+  endTime        DateTime @db.Time(0)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([schoolId, academicYearId, dayOfWeek])
+  @@index([studentGroupId, academicYearId, schoolId])
+  @@map("ClassTeacherOpenTimes")
+}
+
+/// A klasslärare's change, waiting. See the migration for what each kind
+/// carries, what keeps a draft inside the frame, and what rev and baseVersion
+/// are for.
+model ClassTeacherChange {
+  id               String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String                   @db.Uuid
+  academicYearId   String                   @db.Uuid
+  studentGroupId   String                   @db.Uuid
+  authorId         String?                  @db.Uuid
+  kind             ClassTeacherChangeKind
+  status           ClassTeacherChangeStatus @default(DRAFT)
+  masterLessonId   String?                  @db.Uuid
+  calendarLessonId String?                  @db.Uuid
+  /// The occasion's own date (the lesson's), kept so the draft reads when the lesson is gone.
+  date             DateTime?                @db.Date
+  targetDate       DateTime?                @db.Date
+  targetDayOfWeek  Int?                     @db.SmallInt
+  targetStart      DateTime?                @db.Time(0)
+  targetEnd        DateTime?                @db.Time(0)
+  targetRoomId     String?                  @db.Uuid
+  /// TEMPLATE_SPLIT: where the first part now ends.
+  keepEnd          DateTime?                @db.Time(0)
+  note             String?
+  /// What the lesson looked like to the klasslärare who drafted this (a hash), and the same as data.
+  baseVersion      String
+  baseSnapshot     Json
+  /// Counted up by every change of the row; a writer states the one it read.
+  rev              Int                      @default(1)
+  publishedAt      DateTime?                @db.Timestamptz(6)
+  publishedByUserId String?                 @db.Uuid
+  createdAt        DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([schoolId, studentGroupId, status])
+  @@index([authorId, schoolId])
+  @@index([publishedByUserId, schoolId])
+  @@index([masterLessonId, schoolId])
+  @@index([calendarLessonId, schoolId])
+  @@index([targetRoomId, schoolId])
+  @@index([academicYearId, schoolId])
+  @@map("ClassTeacherChanges")
+}
+
+// -----------------------------------------------------------------------------
+// Checklistor: instruktionsbevis och samtyckeslistor (Omgång 9, F5)
+// -----------------------------------------------------------------------------
+
+/// A consent entry is a decision a member of staff wrote down, or (GRANTED only) a
+/// guardian's own confirmation in the app, through Kvittens.
+enum ConsentEntryKind {
+  GRANTED
+  /// The guardian said no. It is an answer and not the lack of one.
+  DECLINED
+  /// A consent that was given and has been taken back.
+  WITHDRAWN
+}
+
+/// Where an entry comes from: staff wrote it down (paper, a call, a meeting), or the
+/// guardian confirmed a Kvittens request that asked for the consent (ALL guardians).
+enum ConsentEntrySource {
+  REGISTERED
+  KVITTENS
+}
+
+/// A school's template for an instruction ("Cirkelsågen", "Kemikalier i NO", "Kast och
+/// stöt"): the subject it belongs to and the moment (20270129091000). Not personal data. A
+/// template that has proofs is retired (active = false), never deleted: no role has DELETE.
+/// The (subjectId, schoolId) key to Subjects, ON DELETE SET NULL (subjectId), lives in the migration.
+model InstructionTemplate {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId    String   @db.Uuid
+  subjectId   String?  @db.Uuid
+  title       String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  proofs InstructionProof[]
+
+  @@unique([id, schoolId])
+  @@index([subjectId, schoolId])
+  @@map("InstructionTemplates")
+}
+
+/// That a pupil has been instructed in a template's moment, on a date, by a person
+/// (20270129091000). The proof is the pupil's: it is keyed to the pupil and not to a class or
+/// a group, so it follows the pupil through a change of class and through the year rollover.
+/// Written once (no role has UPDATE): a tick made in error is voided (voidedAt, by
+/// app.checklist_void_proof) and stays, as evidence of what was written. A second instruction on
+/// another date is another proof; the same pupil, template and date is one. recordedById and
+/// recordedAt are the database's (the caller and the clock); instructorId is who gave the
+/// instruction, the recorder unless they name a colleague. The keys to Users from instructorId,
+/// recordedById and voidedById are ON DELETE SET NULL (column alone) and live in the migration.
+/// Personal data of a pupil: gallring follows the school's choice for CHECKLISTS.
+model InstructionProof {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId     String    @db.Uuid
+  templateId   String    @db.Uuid
+  studentId    String    @db.Uuid
+  instructedOn DateTime  @db.Date
+  instructorId String?   @db.Uuid
+  recordedById String?   @db.Uuid
+  recordedAt   DateTime  @default(now()) @db.Timestamptz(6)
+  note         String?
+  voidedAt     DateTime? @db.Timestamptz(6)
+  voidedById   String?   @db.Uuid
+  voidReason   String?
+
+  school   School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  template InstructionTemplate @relation(fields: [templateId, schoolId], references: [id, schoolId], onDelete: NoAction, onUpdate: NoAction)
+  student  User                @relation("ProofStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([templateId, schoolId, studentId])
+  @@index([schoolId, instructedOn])
+  @@index([studentId, schoolId])
+  @@index([instructorId, schoolId])
+  @@index([recordedById, schoolId])
+  @@index([voidedById, schoolId])
+  @@map("InstructionProofs")
+}
+
+/// A consent list for a class: what the school asks the guardians to consent to, in the
+/// words they are shown (20270129091000). One list per purpose and class ("Fotografering
+/// 7A, läsåret 2026/27"); the class name is stamped, so the list stays readable when the class
+/// is gone (the key to StudentGroups is ON DELETE SET NULL (studentGroupId), in the migration).
+/// closedAt is set by app.checklist_close_list and ends the list: nothing more is written to it.
+model ConsentList {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String    @db.Uuid
+  studentGroupId String?   @db.Uuid
+  groupName      String    @default("")
+  title          String
+  body           String
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  closedAt       DateTime? @db.Timestamptz(6)
+
+  school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  entries ConsentEntry[]
+  asks    ConsentAsk[]
+
+  @@unique([id, schoolId])
+  @@index([studentGroupId, schoolId])
+  @@index([createdById, schoolId])
+  @@index([schoolId, createdAt])
+  @@map("ConsentLists")
+}
+
+/// One answer about one pupil on one list, in the order they were given (20270129091000).
+/// Append-only: what a pupil's consent is now is the latest entry; the earlier ones stay as the
+/// history (a consent that was given and withdrawn shows both). REGISTERED entries are written
+/// by staff, with who and when (recordedById, recordedAt) and the date on the paper (givenOn);
+/// KVITTENS entries are written by a trigger when the last guardian a Kvittens request asked has
+/// confirmed it. Personal data of a pupil: gallring follows the school's choice for CHECKLISTS.
+model ConsentEntry {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId     String             @db.Uuid
+  listId       String             @db.Uuid
+  studentId    String             @db.Uuid
+  kind         ConsentEntryKind
+  source       ConsentEntrySource @default(REGISTERED)
+  givenOn      DateTime           @db.Date
+  givenBy      String?
+  note         String?
+  /// The Kvittens request that made a KVITTENS entry; no key, since the request is gallrad before the entry.
+  ackRequestId String?            @db.Uuid
+  recordedById String?            @db.Uuid
+  recordedAt   DateTime           @default(now()) @db.Timestamptz(6)
+
+  school  School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  list    ConsentList @relation(fields: [listId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  student User        @relation("ConsentStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([listId, schoolId, studentId, recordedAt])
+  @@index([schoolId, recordedAt])
+  @@index([studentId, schoolId])
+  @@index([recordedById, schoolId])
+  @@map("ConsentEntries")
+}
+
+/// A Kvittens request that asked for a list's consent, with the rule ALL (20270129091000): the
+/// link that lets the app and the web ask the guardians through Kvittens and not through a
+/// second confirmation flow. The key to AckRequests (ackRequestId, schoolId) is ON DELETE CASCADE
+/// and lives in the migration; the request is gallrad with the school's choice for NOTIFICATIONS,
+/// and the entries it produced stay.
+model ConsentAsk {
+  ackRequestId String   @db.Uuid
+  schoolId     String   @db.Uuid
+  listId       String   @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  school School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  list   ConsentList @relation(fields: [listId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([ackRequestId, schoolId])
+  @@index([listId, schoolId])
+  @@index([schoolId])
+  @@map("ConsentAsks")
 }
 
 // -----------------------------------------------------------------------------

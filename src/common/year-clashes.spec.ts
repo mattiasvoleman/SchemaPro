@@ -1,4 +1,4 @@
-import { yearClashes, type YearClashInput, type YearClashLesson } from './year-clashes';
+import { clashPairs, yearClashes, type YearClashInput, type YearClashLesson } from './year-clashes';
 
 /**
  * Ersättande grupper in the publish check (PUB_CLASHES) and the board: the
@@ -126,5 +126,145 @@ describe('year clashes in A/B-veckor', () => {
     });
     expect(clashes(input, 'slojd')).toEqual(['GROUP', 'GROUP', 'ROOM', 'ROOM', 'TEACHER', 'TEACHER']);
     expect(clashes(input, 'hkk')).toEqual(['GROUP', 'ROOM', 'TEACHER']);
+  });
+});
+
+describe('year clashes in a shared room (Delade salar)', () => {
+  /*
+   * The generator may lay two classes in a hall the school has marked shareable
+   * while the rule is on; the publish check must not paint that as a double
+   * booking, or the timetable it laid could never be published. Two pupils in
+   * each of 7A, 7B and 7C; the hall holds `seats`.
+   */
+  const pupils: Array<[string, string | null]> = [
+    ['a1', '7A'],
+    ['a2', '7A'],
+    ['b1', '7B'],
+    ['b2', '7B'],
+    ['c1', '7C'],
+    ['c2', '7C'],
+  ];
+  const hall = { roomId: 'hall' };
+  const inHall = (id: string, group: string, extra: Partial<YearClashLesson> = {}) =>
+    lesson(id, group, `S-${id}`, { ...hall, ...extra });
+  const school = (lessons: YearClashLesson[], seats: number | null = 4, extra: Partial<YearClashInput> = {}) =>
+    base({
+      lessons,
+      studentGroupOf: pupils,
+      ...(seats === null ? {} : { sharedRooms: [{ roomId: 'hall', seats }] }),
+      ...extra,
+    });
+  const kinds = (input: YearClashInput, id: string) => (yearClashes(input).get(id) ?? []).map((hit) => hit.kind).sort();
+
+  it('shared hall, pupils fit: no clash for either lesson', () => {
+    const input = school([inHall('a', '7A'), inHall('b', '7B')]);
+    expect(kinds(input, 'a')).toEqual([]);
+    expect(kinds(input, 'b')).toEqual([]);
+    expect(clashPairs(yearClashes(input))).toEqual([]);
+  });
+
+  it('shared hall, pupils do not fit: a ROOM clash for both, once as a pair', () => {
+    const input = school([inHall('a', '7A'), inHall('b', '7B')], 3);
+    expect(kinds(input, 'a')).toEqual(['ROOM']);
+    expect(kinds(input, 'b')).toEqual(['ROOM']);
+    expect(clashPairs(yearClashes(input))).toEqual([{ kind: 'ROOM', lessonIds: ['a', 'b'] }]);
+  });
+
+  it('a room not marked shared (no entry) clashes as before', () => {
+    const input = school([inHall('a', '7A'), inHall('b', '7B')], null);
+    expect(kinds(input, 'a')).toEqual(['ROOM']);
+    expect(kinds(input, 'b')).toEqual(['ROOM']);
+  });
+
+  it('another room that is shared leaves this one exclusive', () => {
+    const input = school([inHall('a', '7A'), inHall('b', '7B')], null, { sharedRooms: [{ roomId: 'gym', seats: 100 }] });
+    expect(kinds(input, 'a')).toEqual(['ROOM']);
+  });
+
+  it('three lessons whose pairs fit but not all three: every pair is a clash', () => {
+    const input = school([inHall('a', '7A'), inHall('b', '7B'), inHall('c', '7C')]);
+    expect(kinds(input, 'a')).toEqual(['ROOM', 'ROOM']);
+    expect(kinds(input, 'b')).toEqual(['ROOM', 'ROOM']);
+    expect(kinds(input, 'c')).toEqual(['ROOM', 'ROOM']);
+    expect(clashPairs(yearClashes(input))).toEqual([
+      { kind: 'ROOM', lessonIds: ['a', 'b'] },
+      { kind: 'ROOM', lessonIds: ['a', 'c'] },
+      { kind: 'ROOM', lessonIds: ['b', 'c'] },
+    ]);
+  });
+
+  it('three lessons that are never in the hall all at once fit', () => {
+    const input = school([
+      inHall('long', '7A', { startTime: '08:00', endTime: '10:00' }),
+      inHall('first', '7B', { startTime: '08:00', endTime: '09:00' }),
+      inHall('second', '7C', { startTime: '09:00', endTime: '10:00' }),
+    ]);
+    expect(clashPairs(yearClashes(input))).toEqual([]);
+  });
+
+  it('names only the pairs that stand in the overfull stretch', () => {
+    const input = school(
+      [
+        inHall('long', '7A', { startTime: '08:00', endTime: '10:00' }),
+        inHall('first', '7B', { startTime: '08:00', endTime: '09:30' }),
+        inHall('second', '7C', { startTime: '09:00', endTime: '10:00' }),
+        inHall('late', '7C', { startTime: '10:00', endTime: '11:00', teacherId: 't-late' }),
+      ],
+      4,
+    );
+    // 09:00-09:30 holds long, first and second: six pupils in four seats.
+    expect(clashPairs(yearClashes(input)).filter((pair) => pair.kind === 'ROOM')).toEqual([
+      { kind: 'ROOM', lessonIds: ['first', 'long'] },
+      { kind: 'ROOM', lessonIds: ['first', 'second'] },
+      { kind: 'ROOM', lessonIds: ['long', 'second'] },
+    ]);
+  });
+
+  it('odd and even weeks share the hall as they always did, and add no pupils to each other', () => {
+    const input = school(
+      [
+        inHall('every', '7A', { recurrence: 'ALL_WEEKS' }),
+        inHall('odd', '7B', { recurrence: 'ODD_WEEKS' }),
+        inHall('even', '7C', { recurrence: 'EVEN_WEEKS' }),
+      ],
+      4,
+    );
+    expect(clashPairs(yearClashes(input))).toEqual([]);
+    // With the rule off they share a room just the same: the weeks never meet.
+    const exclusive = school(
+      [inHall('odd', '7B', { recurrence: 'ODD_WEEKS' }), inHall('even', '7C', { recurrence: 'EVEN_WEEKS' })],
+      null,
+    );
+    expect(clashPairs(yearClashes(exclusive))).toEqual([]);
+  });
+
+  it('counts a pupil named on a lesson, and a pupil of both lessons once', () => {
+    // 7B's lesson names a1 as well: a1 is already on 7A's lesson, so the hall
+    // holds a1, a2, b1, b2 and no more.
+    const input = school([inHall('a', '7A'), inHall('b', '7B', { studentIds: ['a1'] })], 4);
+    expect(clashPairs(yearClashes(input)).filter((pair) => pair.kind === 'ROOM')).toEqual([]);
+    // Named but not in either class, the hall holds five in four seats.
+    const over = school([inHall('a', '7A'), inHall('b', '7B', { studentIds: ['c1'] })], 4);
+    expect(clashPairs(yearClashes(over)).filter((pair) => pair.kind === 'ROOM')).toEqual([
+      { kind: 'ROOM', lessonIds: ['a', 'b'] },
+    ]);
+  });
+
+  it('keeps a hall exclusive for a lesson whose class nobody knows', () => {
+    const input = school([inHall('a', '7A'), inHall('b', '7X')], 1000);
+    expect(kinds(input, 'a')).toEqual(['ROOM']);
+    expect(kinds(input, 'b')).toEqual(['ROOM']);
+  });
+
+  it('leaves the teacher and the class alone: they clash in a shared hall as before', () => {
+    const sameTeacher = school([inHall('a', '7A', { teacherId: 't-1' }), inHall('b', '7B', { teacherId: 't-1' })]);
+    expect(kinds(sameTeacher, 'a')).toEqual(['TEACHER']);
+    const sameClass = school([inHall('a', '7A'), inHall('b', '7A')]);
+    expect(kinds(sameClass, 'a')).toEqual(['GROUP']);
+  });
+
+  it('lets a lesson in an exclusive room beside the hall clash with nothing', () => {
+    const input = school([inHall('a', '7A'), lesson('b', '7B', 'S-b', { roomId: 'lab' })]);
+    expect(clashPairs(yearClashes(input))).toEqual([]);
   });
 });

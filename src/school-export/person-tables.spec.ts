@@ -36,7 +36,7 @@ describe('the registerutdrag decides every table the removal inventory names', (
 
   it('names the reason of every table it leaves out, for the README', () => {
     const left = excludedTables();
-    expect(left.map((item) => item.table)).toEqual(['IntegrationKeyWebhookSecrets', 'PublishedLessons', 'ReportingReminders', 'Ss12000SourceSecrets']);
+    expect(left.map((item) => item.table)).toEqual(['ExamSittings', 'IntegrationKeyWebhookSecrets', 'PublishedLessons', 'ReportingReminders', 'Ss12000SourceSecrets']);
     for (const item of left) expect(item.reason.endsWith('.')).toBe(true);
     expect(Object.keys(NOT_A_USER).every((key) => /^[A-Za-z0-9]+\.[A-Za-z]+$/.test(key))).toBe(true);
   });
@@ -140,10 +140,36 @@ describe('the rows of a table that is about a pupil', () => {
   const OTHER = '22222222-2222-4222-8222-222222222222';
   const TEACHER = '33333333-3333-4333-8333-333333333333';
 
-  it('are the crisis tables, where a teacher marks a pupil found, and the moves of a pupil to a parallel lesson, and the pupil is one of the columns the dump reads', () => {
+  it('are the crisis tables, where a teacher marks a pupil found, the two tables of Checklistor, where a teacher ticks a pupil and a mentor writes what a guardian decided, and the moves of a pupil to a parallel lesson, and the pupil is one of the columns the dump reads', () => {
     // A table added here has to be said to be about a pupil on purpose: this list fails when one is, and when one is left out.
-    expect(files.map((file) => file.table).sort()).toEqual(['CrisisPupils', 'CrisisReports', 'LessonPupilMoves']);
+    expect(files.map((file) => file.table).sort()).toEqual(['ConsentEntries', 'CrisisPupils', 'CrisisReports', 'InstructionProofs', 'LessonPupilMoves']);
     for (const file of files) expect(file.dump.columns).toContain(file.dump.pupil!.column);
+  });
+
+  it("hides, in the two tables of Checklistor, the pupil's state: what a guardian decided, who gave it and the note, and a proof's note and reason, and nothing of the act (granskning #288, M1)", () => {
+    const hidden = (table: string) => files.find((file) => file.table === table)!.dump.pupil!;
+    expect(hidden('InstructionProofs')).toEqual({ column: 'studentId', hides: ['note', 'voidReason'] });
+    expect(hidden('ConsentEntries')).toEqual({ column: 'studentId', hides: ['kind', 'givenOn', 'givenBy', 'note'] });
+    // The act is who ticked or wrote, and the template or list: never in a hidden column.
+    for (const file of files.filter((item) => ['InstructionProofs', 'ConsentEntries'].includes(item.table))) {
+      for (const act of ['instructorId', 'recordedById', 'voidedById', 'templateId', 'listId', 'instructedOn', 'recordedAt', 'source']) expect(file.dump.pupil!.hides).not.toContain(act);
+    }
+  });
+
+  it("lose the pupil and the pupil's state in a teacher's proof and in a mentor's answer, and keep both for the pupil", () => {
+    const proofs = files.find((file) => file.table === 'InstructionProofs')!;
+    const answers = files.find((file) => file.table === 'ConsentEntries')!;
+    const proof = () => ({ studentId: OTHER, instructedOn: '2026-11-02', instructorId: TEACHER, note: 'orolig', voidReason: 'fel elev' });
+    const answer = () => ({ studentId: OTHER, kind: 'DECLINED', givenOn: '2026-11-04', givenBy: 'pappa Bertil', note: 'inte på nätet', recordedById: TEACHER });
+    const [teachers, mentors, pupils] = [[proof()], [answer()], [proof(), answer()]];
+    expect(emptyPupilPart(proofs, teachers, new Set([TEACHER]))).toBe(3);
+    expect(teachers[0]).toEqual({ studentId: null, instructedOn: '2026-11-02', instructorId: TEACHER, note: null, voidReason: null });
+    expect(emptyPupilPart(answers, mentors, new Set([TEACHER]))).toBe(5);
+    expect(mentors[0]).toEqual({ studentId: null, kind: null, givenOn: null, givenBy: null, note: null, recordedById: TEACHER });
+    expect(emptyPupilPart(proofs, [pupils[0]!], new Set([OTHER]))).toBe(0);
+    expect(emptyPupilPart(answers, [pupils[1]!], new Set([OTHER]))).toBe(0);
+    expect(pupils[0]).toEqual(proof());
+    expect(pupils[1]).toEqual(answer());
   });
 
   it('hold back, in the extract of the member of staff who moved a pupil, the pupil, the two lessons and the mark the move displaced', () => {
@@ -167,7 +193,7 @@ describe('the rows of a table that is about a pupil', () => {
   });
 
   it("lose the pupil and the pupil's state when the pupil is not asked for, and keep the act and everything for a pupil that is", () => {
-    const [pupils] = files;
+    const pupils = files.find((file) => file.table === 'CrisisPupils');
     const rows = [
       { studentId: OTHER, state: 'FOUND', priorAbsentSource: null, stateAt: '2026-11-05T09:00:00Z', stateByUserId: TEACHER },
       { studentId: PUPIL, state: 'MISSING', priorAbsentSource: 'LEAVE', stateAt: '2026-11-05T09:01:00Z', stateByUserId: TEACHER },

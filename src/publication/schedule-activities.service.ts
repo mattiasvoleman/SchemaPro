@@ -71,6 +71,7 @@ export const ACTIVITY_CREDIT_SUBJECT = 'ACTIVITY_CREDIT_SUBJECT';
 export const ACTIVITY_TEACHER = 'ACTIVITY_TEACHER';
 export const ACTIVITY_SCOPE_TOO_WIDE = 'ACTIVITY_SCOPE_TOO_WIDE';
 export const ACTIVITY_REMOVED = 'ACTIVITY_REMOVED';
+export const ACTIVITY_OWNED_BY_EXAM = 'ACTIVITY_OWNED_BY_EXAM';
 
 /** How long the pass after a DIRECT activity waits for the publications open beside it, and how often it asks. */
 const SETTLE_WAIT_MS = 10_000;
@@ -162,6 +163,18 @@ export interface RemovePreview {
   skippedRoomTaken: Array<{ lessonId: string; date: string; roomId: string; by: 'LESSON' | 'BOOKING' }>;
   removedTemplateMoved: Array<{ lessonId: string; date: string }>;
   notReinstatable: number;
+}
+
+/** What `createWithin` leaves for `settleCreated` and for a caller that writes beside the activity. */
+export interface ActivityCreated {
+  id: string;
+  batchId: string;
+  schoolId: string;
+  mode: Awaited<ReturnType<typeof enterGrundschemaWrite>>;
+  take: SelectionCandidate[];
+  synced: SyncResult;
+  credits: number;
+  range: { from: string; to: string };
 }
 
 const ACTIVITY_SELECT = {
@@ -259,96 +272,124 @@ export class ScheduleActivitiesService {
     user: AuthenticatedUser,
   ): Promise<{ activity: ScheduleActivityView; cancelled: number; replacementLessons: number; credits: number }> {
     const schoolId = requireSchoolId(user);
-    const checked = check(dto, dto.notify !== false);
-    const done = await this.prisma.withRls(
-      user,
-      async (tx) => {
-        const mode = await enterGrundschemaWrite(tx, schoolId);
-        const evaluation = await this.evaluate(tx, checked, null);
-        if (dto.expectedDigest && dto.expectedDigest !== evaluation.preview.digest) throw stale();
-        if (evaluation.take.length === 0) {
-          throw new BadRequestException({
-            message: 'Urvalet träffar inga lektioner att ställa in.',
-            code: CANCELLATION_SCOPE,
-          });
-        }
-        const { effective, take, today } = evaluation;
-        const batch = await tx.cancellationBatch.create({
-          data: {
-            schoolId,
-            academicYearId: effective.academicYearId,
-            name: effective.name,
-            cause: 'EVENT',
-            fromDate: day(effective.fromDate),
-            toDate: day(effective.toDate),
-            startTime: effective.startTime ? time(effective.startTime) : null,
-            endTime: effective.endTime ? time(effective.endTime) : null,
-            scope: effective.scope,
-            minGradeLevel: effective.minGradeLevel,
-            maxGradeLevel: effective.maxGradeLevel,
-            groupIds: effective.groupIds,
-            createdByUserId: user.userId ?? null,
-            notifies: checked.notify,
-          },
-          select: { id: true },
-        });
-        await cancelInto(tx, schoolId, batch.id, effective, take);
-        const activity = await tx.scheduleActivity.create({
-          data: {
-            schoolId,
-            academicYearId: effective.academicYearId,
-            batchId: batch.id,
-            replacementSubjectId: checked.replacementSubjectId,
-            description: checked.description,
-            scopeGroupIds: checked.named.groupIds,
-            createdByUserId: user.userId ?? null,
-            teachers: {
-              // The school comes from the parent through the composite key.
-              create: checked.teachers.map((teacher) => ({ ...teacher })),
-            },
-          },
-          select: { id: true },
-        });
-        const credits = await writeCredits(tx, schoolId, batch.id, effective, checked.named, take, today, checked.credits);
-        const synced = await syncReplacementsInTransaction(tx, schoolId, batch.id);
-        await tx.cancellationBatch.update({ where: { id: batch.id }, data: { cancelled: take.length } });
-        if (checked.notify) {
-          const audience = await this.audienceOf(tx, take.map(digestLessonOf), checked.teachers, evaluation);
-          await sendDigest(
-            this.notifications,
-            tx,
-            schoolId,
-            { id: batch.id, name: effective.name },
-            audience.audience,
-            false,
-            { responsible: audience.responsible, plain: audience.plain },
-          );
-        }
-        return {
-          id: activity.id,
-          batchId: batch.id,
-          mode,
-          take,
-          synced,
-          credits,
-          range: { from: effective.fromDate, to: effective.toDate },
-        };
-      },
-      { timeoutMs: 120_000 },
-    );
-    await this.broadcast(user, [...done.take.map((lesson) => lesson.id), ...done.synced.created]);
-    this.boardChanged(schoolId, done.range.from, done.range.to);
-    if (done.mode === 'DIRECT') await this.settleDirect(user, schoolId, done.batchId);
-    this.logger.log(
-      `Schedule activity created [activity=${done.id}, cancelled=${done.take.length}, replacements=${done.synced.created.length}, credits=${done.credits}]`,
-    );
+    const done = await this.prisma.withRls(user, async (tx) => this.createWithin(tx, user, dto), { timeoutMs: 120_000 });
+    await this.settleCreated(user, done);
     const view = await this.prisma.withRls(user, async (tx) => this.viewById(tx, done.id));
+    this.logger.log(
+      `Schedule activity created [school=${schoolId}, activity=${done.id}, cancelled=${done.take.length}, replacements=${done.synced.created.length}, credits=${done.credits}]`,
+    );
     return {
       activity: view,
       cancelled: done.take.length,
       replacementLessons: done.synced.created.length,
       credits: done.credits,
     };
+  }
+
+  /**
+   * An activity made in the caller's transaction, for the callers that write
+   * more in the same one (Provplanering: an exam's rooms, invigilators and
+   * credit). `create` is this plus what has to follow the commit: hand the
+   * result to `settleCreated` once it has committed.
+   */
+  async createWithin(tx: PrismaClient, user: AuthenticatedUser, dto: CreateScheduleActivityDto): Promise<ActivityCreated> {
+    const schoolId = requireSchoolId(user);
+    const checked = check(dto, dto.notify !== false);
+    const mode = await enterGrundschemaWrite(tx, schoolId);
+    const evaluation = await this.evaluate(tx, checked, null);
+    if (dto.expectedDigest && dto.expectedDigest !== evaluation.preview.digest) throw stale();
+    if (evaluation.take.length === 0) {
+      throw new BadRequestException({
+        message: 'Urvalet träffar inga lektioner att ställa in.',
+        code: CANCELLATION_SCOPE,
+      });
+    }
+    const { effective, take, today } = evaluation;
+    const batch = await tx.cancellationBatch.create({
+      data: {
+        schoolId,
+        academicYearId: effective.academicYearId,
+        name: effective.name,
+        cause: 'EVENT',
+        fromDate: day(effective.fromDate),
+        toDate: day(effective.toDate),
+        startTime: effective.startTime ? time(effective.startTime) : null,
+        endTime: effective.endTime ? time(effective.endTime) : null,
+        scope: effective.scope,
+        minGradeLevel: effective.minGradeLevel,
+        maxGradeLevel: effective.maxGradeLevel,
+        groupIds: effective.groupIds,
+        createdByUserId: user.userId ?? null,
+        notifies: checked.notify,
+      },
+      select: { id: true },
+    });
+    await cancelInto(tx, schoolId, batch.id, effective, take);
+    const activity = await tx.scheduleActivity.create({
+      data: {
+        schoolId,
+        academicYearId: effective.academicYearId,
+        batchId: batch.id,
+        replacementSubjectId: checked.replacementSubjectId,
+        description: checked.description,
+        scopeGroupIds: checked.named.groupIds,
+        createdByUserId: user.userId ?? null,
+        teachers: {
+          // The school comes from the parent through the composite key.
+          create: checked.teachers.map((teacher) => ({ ...teacher })),
+        },
+      },
+      select: { id: true },
+    });
+    const credits = await writeCredits(tx, schoolId, batch.id, effective, checked.named, take, today, checked.credits);
+    const synced = await syncReplacementsInTransaction(tx, schoolId, batch.id);
+    await tx.cancellationBatch.update({ where: { id: batch.id }, data: { cancelled: take.length } });
+    if (checked.notify) {
+      const audience = await this.audienceOf(tx, take.map(digestLessonOf), checked.teachers, evaluation);
+      await sendDigest(
+        this.notifications,
+        tx,
+        schoolId,
+        { id: batch.id, name: effective.name },
+        audience.audience,
+        false,
+        { responsible: audience.responsible, plain: audience.plain },
+      );
+    }
+    return {
+      id: activity.id,
+      batchId: batch.id,
+      schoolId,
+      mode,
+      take,
+      synced,
+      credits,
+      range: { from: effective.fromDate, to: effective.toDate },
+    };
+  }
+
+  /** What follows a committed `createWithin`: the broadcasts, the board, and the pass that settles a DIRECT school. */
+  async settleCreated(user: AuthenticatedUser, done: ActivityCreated): Promise<void> {
+    await this.broadcast(user, [...done.take.map((lesson) => lesson.id), ...done.synced.created]);
+    this.boardChanged(done.schoolId, done.range.from, done.range.to);
+    if (done.mode === 'DIRECT') await this.settleDirect(user, done.schoolId, done.batchId);
+  }
+
+  /**
+   * An activity an exam carries (Provplanering) is changed and removed through
+   * the exam: a change here would drop the exam's credit (a window cannot carry
+   * one) and a removal would leave its room booked. The controller asks before
+   * `update` and `remove`; the exam's own unplan calls `remove` directly.
+   */
+  async refuseWhenAnExam(id: string, user: AuthenticatedUser): Promise<void> {
+    requireSchoolId(user);
+    const exam = await this.prisma.withRls(user, (tx) => tx.exam.findFirst({ where: { activityId: id }, select: { id: true } }));
+    if (exam) {
+      throw new ConflictException({
+        message: 'Aktiviteten hör till ett prov: ändra eller ta bort den under Prov.',
+        code: ACTIVITY_OWNED_BY_EXAM,
+      });
+    }
   }
 
   async list(academicYearId: string, user: AuthenticatedUser): Promise<ScheduleActivityView[]> {
@@ -653,13 +694,19 @@ export class ScheduleActivitiesService {
    * record of a day that was held: it stays, and so do the lessons it
    * replaced, because putting them back beside it would give the class two
    * lessons that day. Once.
+   *
+   * `beforeRemoval` is for the caller that has something to undo in the same
+   * transaction first (Provplanering frees an exam's rooms, which the plan below
+   * would otherwise find held): it runs after the publication lock and before
+   * the plan is read, and a throw from it removes nothing.
    */
-  async remove(id: string, user: AuthenticatedUser): Promise<RemovePreview> {
+  async remove(id: string, user: AuthenticatedUser, beforeRemoval?: (tx: PrismaClient) => Promise<void>): Promise<RemovePreview> {
     const schoolId = requireSchoolId(user);
     const done = await this.prisma.withRls(
       user,
       async (tx) => {
         await enterGrundschemaWrite(tx, schoolId);
+        if (beforeRemoval) await beforeRemoval(tx);
         const activity = await this.requireActivity(tx, id);
         const plan = await this.removalPlan(tx, schoolId, activity);
         await applyReinstatement(tx, 'EVENT', plan.reversal);

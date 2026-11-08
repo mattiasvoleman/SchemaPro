@@ -3,7 +3,8 @@ import { hasDistributionRule } from '../common/subject-distribution';
 import { pupilCohortsOf, lockMarginOf } from '../optimization/pupil-cohorts';
 import { gradeSpanOf } from '../optimization/room-eligibility';
 import type { OtherSchoolHold } from '../optimization/other-school-holds';
-import { frameWindow, type GapConstraint, type GapSpan } from './swap-gaps';
+import { boardCodeOf, indexSittings, type BoardFacts } from './board-rules';
+import type { GapConstraint, GapSpan } from './swap-gaps';
 import { buildSoftMeasure, type SoftMeasure } from './swap-soft';
 import type { SwapData } from './swap-snapshot';
 import { buildUnits, weeksMeet } from './swap-units';
@@ -54,7 +55,9 @@ export class SwapContext {
   private readonly byGroupDay = new Map<string, SwapLesson[]>();
   private readonly buffer = new Map<string, { before: number; after: number }>();
   private readonly spans = new Map<string, GapSpan>();
-  private readonly sittings = new Map<string, SwapData['sittings'][number][]>();
+  private readonly sittings: Map<string, SwapData['sittings'][number][]>;
+  /** What FRAME, LUNCH and GRADE_RULE are judged on (board-rules.ts, the judge G5 asks too). */
+  private readonly board: BoardFacts;
   private readonly holdsByResource = new Map<string, OtherSchoolHold[]>();
   private readonly gapConstraints: GapConstraint[];
   /**
@@ -110,12 +113,13 @@ export class SwapContext {
       const span = toNioarigSpan(gradeSpanOf(data.rosters, [group.id]), data.gradeNumbering);
       if (span) this.spans.set(group.id, [span.min, span.max]);
     }
-    for (const sitting of data.sittings) {
-      const key = `${sitting.studentGroupId}|${sitting.dayOfWeek}`;
-      const list = this.sittings.get(key);
-      if (list) list.push(sitting);
-      else this.sittings.set(key, [sitting]);
-    }
+    this.sittings = indexSittings(data.sittings);
+    this.board = {
+      frames: data.frames,
+      sittings: this.sittings,
+      gradeRules: data.constraints.filter((row) => row.resourceType === 'GRADE_LEVEL'),
+      spans: this.spans,
+    };
     for (const hold of data.holds) {
       const key = `${hold.resourceKind}|${hold.resourceId}`;
       const list = this.holdsByResource.get(key);
@@ -311,32 +315,7 @@ export class SwapContext {
    */
   boardRefusal({ lesson, to }: Landing): Exclude<HardCode, 'CLASH'> | null {
     const groups = [lesson.studentGroupId, ...lesson.extraGroupIds];
-    const day = to.dayOfWeek;
-    // FRAME: any group outside its stage's day is enough (breaksFrame).
-    if (this.data.frames.length > 0) {
-      for (const groupId of groups) {
-        const span = this.spans.get(groupId);
-        if (!span) continue;
-        const window = frameWindow(this.data.frames, span, day);
-        if (window === null || to.startMinutes < window[0] || to.endMinutes > window[1]) return 'FRAME';
-      }
-    }
-    for (const groupId of groups) {
-      for (const sitting of this.sittings.get(`${groupId}|${day}`) ?? []) {
-        if (overlaps(to.startMinutes, to.endMinutes, sitting.startMinutes, sitting.endMinutes)) return 'LUNCH';
-      }
-    }
-    for (const row of this.data.constraints) {
-      if (row.resourceType !== 'GRADE_LEVEL' || row.dayOfWeek !== day) continue;
-      const meets = groups.some((groupId) => {
-        const span = this.spans.get(groupId);
-        if (!span) return false;
-        if (row.minGradeLevel !== null && span[1] < row.minGradeLevel) return false;
-        return !(row.maxGradeLevel !== null && span[0] > row.maxGradeLevel);
-      });
-      if (meets && overlaps(to.startMinutes, to.endMinutes, row.startMinutes, row.endMinutes)) return 'GRADE_RULE';
-    }
-    return this.holdsAt(lesson, to).length > 0 ? 'OTHER_SCHOOL' : null;
+    return boardCodeOf(this.board, groups, to) ?? (this.holdsAt(lesson, to).length > 0 ? 'OTHER_SCHOOL' : null);
   }
 
   /** The other schools' holds that a lesson at `to` would sit inside. */

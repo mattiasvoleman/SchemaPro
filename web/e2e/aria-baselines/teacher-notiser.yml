@@ -8,6 +8,9 @@
         - link "Mitt schema":
           - /url: /sv/teacher
       - listitem:
+        - link "Klassens schema":
+          - /url: /sv/teacher/klass-schema
+      - listitem:
         - link "Larm":
           - /url: /sv/teacher/crisis
       - listitem:
@@ -40,6 +43,9 @@
       - listitem:
         - link "Kvittens":
           - /url: /sv/teacher/acknowledgements
+      - listitem:
+        - link "Checklistor":
+          - /url: /sv/teacher/checklists
       - listitem:
         - link "Min kalenderprenumeration":
           - /url: /sv/calendar-feed

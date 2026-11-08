@@ -210,6 +210,13 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ScheduleCandidates: just('SCHEMALAGGNING', 'insert', 'delete'),
   ScheduleChangeLogs: just('SCHEMALAGGNING', 'insert'),
   ScheduleVersions: only('SCHEMALAGGNING'),
+  // Klasslärarens schema (20270128090000): the appointment and the open times are the schemaläggare's
+  // to make; the school's option to let a klasslärare publish is Publicering's, and a draft is written
+  // by the klasslärare alone, so an administrator only publishes it (the status) or discards it.
+  ClassTeacherAppointments: only('SCHEMALAGGNING'),
+  ClassTeacherOpenTimes: only('SCHEMALAGGNING'),
+  ClassTeacherSettings: just('PUBLICERING', 'insert', 'update'),
+  ClassTeacherChanges: just('PUBLICERING', 'update', 'delete'),
 
   // Publicering: what is published, to whom, and Schemavisaren.
   PublicTimetableLinks: only('PUBLICERING'),
@@ -237,6 +244,15 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   AckReceipts: just('DRIFT', 'insert'),
   AckRequests: just('DRIFT', 'insert'),
   AckSettings: just('DRIFT', 'insert', 'update'),
+  // Checklistor (20270129091000): the templates, the ticks, the lists and their answers are Drift's, as the
+  // notices and the leave they sit beside. A template is made and retired (update) and never removed; a proof, a
+  // list and an answer are written once, and no administrator changes or removes one: a tick made in error is
+  // voided and a list closed by two functions, and gallring removes (the pupil's own, once they have left).
+  ConsentAsks: just('DRIFT', 'insert'),
+  ConsentEntries: just('DRIFT', 'insert'),
+  ConsentLists: just('DRIFT', 'insert'),
+  InstructionProofs: just('DRIFT', 'insert'),
+  InstructionTemplates: just('DRIFT', 'insert', 'update'),
   AbsenceWatchDigests: readOnly,
   AbsenceWatchFindings: readOnly,
   AbsenceWatchLimits: only('DRIFT'),
@@ -268,6 +284,13 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ScheduleActivities: only('DRIFT'),
   ScheduleActivityLessons: only('DRIFT'),
   ScheduleActivityTeachers: only('DRIFT'),
+  // Provplanering (20270127090000): an exam becomes an activity, so Drift's.
+  ExamGroups: only('DRIFT'),
+  ExamInvigilators: only('DRIFT'),
+  ExamPlanSettings: only('DRIFT'),
+  ExamRooms: only('DRIFT'),
+  ExamSittings: only('DRIFT'),
+  Exams: only('DRIFT'),
   CoverSettings: only('DRIFT'),
   LeaveRequests: only('DRIFT'),
   // Lektionslogg (20261203090000): rektor removes a log that should not

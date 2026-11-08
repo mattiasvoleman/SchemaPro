@@ -9,6 +9,7 @@ import { loadRosters, type Rosters } from '../optimization/room-eligibility';
 import { readOtherSchoolHolds, type OtherSchoolHold } from '../optimization/other-school-holds';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
 import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rosters';
+import { constraintOf, frameOf, minutesOfTime, sittingOf } from './board-rules';
 import type { LunchRule } from './swap-gaps';
 import type { SwapLesson } from './swap-types';
 
@@ -92,7 +93,7 @@ export interface SwapData {
   postLimited: Set<string>;
 }
 
-const minutesOf = (time: Date): number => time.getUTCHours() * 60 + time.getUTCMinutes();
+const minutesOf = minutesOfTime;
 const dayOf = (value: Date | null): string | null => (value ? value.toISOString().slice(0, 10) : null);
 
 export async function readSwapData(
@@ -285,24 +286,8 @@ export async function readSwapData(
     blocks: blockRows,
     groups,
     rosters,
-    constraints: constraintRows.map((row) => ({
-      resourceType: row.resourceType,
-      userId: row.userId,
-      roomId: row.roomId,
-      studentGroupId: row.studentGroupId,
-      minGradeLevel: row.minGradeLevel,
-      maxGradeLevel: row.maxGradeLevel,
-      dayOfWeek: row.dayOfWeek,
-      startMinutes: minutesOf(row.startTime),
-      endMinutes: minutesOf(row.endTime),
-    })),
-    frames: frameRows.map((row) => ({
-      min: row.minGradeLevel,
-      max: row.maxGradeLevel,
-      day: row.dayOfWeek,
-      start: minutesOf(row.startTime),
-      end: minutesOf(row.endTime),
-    })),
+    constraints: constraintRows.map(constraintOf),
+    frames: frameRows.map(frameOf),
     lunch:
       lunchRow && lunchRow.lunchEnabled && minutesOf(lunchRow.lunchEndTime) > minutesOf(lunchRow.lunchStartTime)
         ? {
@@ -314,12 +299,7 @@ export async function readSwapData(
             ),
           }
         : null,
-    sittings: sittingRows.map((row) => ({
-      studentGroupId: row.studentGroupId,
-      dayOfWeek: row.dayOfWeek,
-      startMinutes: minutesOf(row.startTime),
-      endMinutes: minutesOf(row.endTime),
-    })),
+    sittings: sittingRows.map(sittingOf),
     holds,
     teacherRules,
     postLimited,

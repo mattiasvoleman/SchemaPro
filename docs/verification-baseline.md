@@ -1668,6 +1668,146 @@ G2 does not touch it). Five routes moved, 2 KB in all: `/admin/constraints` +983
 178.936), `/admin/generate` +315 B, `/admin/schemavisaren` +24 B and `/admin/publishing`
 +20 B. No route and no menu row was added.
 
+### Placeringsregler: what three optional rules cost, and what they hold
+
+Three rules a school sets about where its lessons stand, each off until asked
+for and soft or hard as the school chooses, except rules 1 and 2, which are
+off or soft until a hard one is measured (below) (`app/solver/placement.py`,
+`benchmarks/placement_rules.py`): subjects not first or last in the class's
+day, at most N different room groups and M different buildings a day, and the
+pupils together fitting a shared room. Measured on the högstadium school (450
+pupils, 26 teachers, 423 lessons; `hogstadium.py`) against main's model
+(`d497a93a`), with the rule's own measure counted by code that shares nothing
+with the model.
+
+**The machine could not give a wall-clock answer.** The measurements ran
+while eleven other sessions shared the host (load average 60–190 on 8 cores).
+Main's own satisfaction model, which finds its first timetable in 8 s on a
+quiet machine, took 139–149 s in the same pair as the rule's arm, and the
+rule's arm often found nothing in 150 s. A pair measures the load then, not
+the rule. So the cost is stated in CP-SAT's **deterministic time** to the first
+timetable, which the load does not move: the one-worker search, and the
+eight-worker portfolio run in lockstep (`interleave_search`, `INTERLEAVE=8`,
+the second the nearer to what a school's Generera does). Wall-clock pairs
+with eight workers are to be repeated on a quiet machine before a school
+turns a hard rule on; the numbers below are the ratio to main's model on the
+same school and seed, one instance per arm.
+
+| arm | rule | satisfaction model (vars / rows) | first timetable, 1 worker | first timetable, 8 workers lockstep |
+|---|---|---|---|---|
+| off | main's model | 6,735 / 17,094 | 0.70 | 1.67 |
+| e1h | idrott not first or last, hard | 9,336 / 22,287 (+39 % / +30 %) | 16.0 (23×) | 7.49 (4.5×) |
+| e2h | idrott, slöjd, bild, hemkunskap, hard | 11,280 / 26,175 | 15.2 (22×) | 7.73 (4.6×) |
+| r1h | 4 room groups a day for a class, 5 for a teacher, hard | 10,068 / 35,325 (+50 % / +107 %) | 6.59 (9×) | 4.69 (2.8×) |
+| b1h | 2 buildings a day, class and teacher, hard | 7,677 / 19,908 (+14 % / +16 %) | 0.75 (1.1×) | 4.88 (2.9×) |
+| b2h | the same with each year's classrooms in one house | 7,425 / 22,428 | 0.48 | 6.03 (3.6×) |
+| s1h | the two halls shared, 60 seats, hard | 7,069 / 18,632 (+5 % / +9 %) | 0.48 | 3.16 (1.9×) |
+
+The soft arms build nothing in the satisfaction phase (e1s: 6,735 / 17,094,
+main's exactly), as the free-day wish and sammanhängande undervisning do; their
+cost is in the full model (e1s: 12,351 vars, 31,582 rows against 9,759 and
+26,470), which only the objective phase pays. The building arms are the one
+exception: a limit on buildings splits the rooms into classes by building in
+both phases (`building_key`), so a soft building limit also adds 942
+variables to the satisfaction model.
+
+**What the soft rules reach** (`--mode det-full`, the full model on the
+eight-worker portfolio in lockstep for 12 deterministic seconds from no
+timetable, so a wish is tried with no hint from a first phase; one instance per
+arm, so read the counts and not the objectives, which differ by search luck):
+
+| arm | model (vars / rows) | the rule's own count on the best timetable |
+|---|---|---|
+| off | 9,759 / 26,470 | (main's model: 8 opening and 7 closing lessons of idrott in the first timetable) |
+| e1s idrott not first or last, weight 250 | 12,351 / 31,582 | 3 open and 2 close the class's day |
+| r1s 4 room groups a class, 5 a teacher | 13,229 / 44,663 | 0 class-days and 0 teacher-days over the limit of places |
+| b1s 2 buildings a day | 10,701 / 29,284 | 0 and 0 over the limit of places |
+| s1s halls shared, 60 seats | 10,091 / 28,004 | most pupils at once in a hall: 60 of 60 seats, 0 over |
+
+"Tries" is the promise for the soft edge rule, as it is for sammanhängande
+undervisning: it halved the lessons at an end of the day in the time it had
+and did not take them to zero.
+
+**What each hard rule is defended with.**
+
+* *Not first or last (hard)* costs 4.5× the first timetable with eight
+  workers. It is a real constraint: idrott must stand between two other
+  lessons of 18 classes, in two halls. A min/max encoding of the day's first
+  start and last end (patch kept in the session notes) was measured as the
+  alternative and was worse (38.5 deterministic seconds on one worker against
+  the pair encoding's 16.0), so the pairs stay. **Hard is therefore not
+  offered for this rule.** 4.5× the first timetable is, if the ratio holds for
+  the wall clock, about 36 s against main's 8 s on a quiet machine: the
+  interval (27–85 s against 8 s, and 0 of 423 full models) in which the hard
+  sammanhängande undervisning was dropped (PR #231), and production's limit
+  for Generera is 60 s at the floor. The API refuses `HARD` for rule 1 with a
+  400 and the code `PLACEMENT_EDGE_HARD_NOT_OFFERED`, the Skolregler card
+  offers Av and Mjuk, and the manual says so; the engine still builds it (a
+  request that carries `HARD` is solved as measured here). The database
+  refuses it too (`LunchSettings_placementEdgeMode_off_or_soft_check`), so a
+  school's administrator cannot store it straight against PostgREST, and the
+  gateway reads a stored one as SOFT in any case. Offering it later is the
+  CHECK (a migration of its own), the card and the API, once it is measured
+  on a quiet machine, with eight workers, in parallel with main, through the
+  objective phase as well.
+* *Different rooms and buildings (hard)* costs 2.8–3.6× with eight workers
+  and 9× with one (6.59 deterministic seconds against 0.70), and the
+  rumsgräns arm grows the model by 50 % of its variables and 107 % of its
+  rows. The model holds the limit it states (0 party-days over, in every
+  arm) and no more: counted as changes between neighbouring lessons instead,
+  25 of the school's class-days for room groups and 26–34 for buildings
+  would be over, because A–B–A–B is two places and three changes. That is
+  why the rule says "different" and not "changes". The exact count was
+  priced (a literal per lesson, start step and party) at several times the
+  model and fell. **Hard is not offered for this rule either**, for four
+  reasons. (1) The ratio is at the lower edge of what dropped the hard
+  sammanhängande undervisning with eight workers (3.4–10.6×) and inside it
+  with one. (2) What dropped that rule was the full model, 0 of 423 solved;
+  here the hard arms are measured to the first timetable only, and only the
+  soft arms are measured through the objective phase. (3) At main's 8 s on a
+  quiet machine 2.8–3.6× is about 22–29 s for the first timetable, leaving
+  little of a 60 s limit (the floor in production) for the objective. (4) The
+  soft arms held every limit they were measured on (0 class-days and 0
+  teacher-days over in r1s and b1s), so a hard limit buys a guarantee and a
+  refusal by name and not a better timetable, which for rule 1 it did (the
+  soft arm left 3 opening and 2 closing lessons). The API refuses `HARD` for
+  rule 2 with a 400 and the code `PLACEMENT_PLACES_HARD_NOT_OFFERED`, the
+  database with `LunchSettings_placementPlacesMode_off_or_soft_check`, the
+  card offers Av and Mjuk, the manual says so, and the engine still builds
+  it.
+* *Shared rooms (hard)* is a relaxation of the exclusive room, 1.9× in the
+  portfolio and cheaper on one worker; its cumulative has a variable
+  capacity in both modes so that an infeasible week can name the room. It is
+  the one rule offered hard: the capacity is a physical limit (fire), which a
+  soft rule would let be exceeded.
+
+**Beside Bästa möjliga schema (G2).** The two meet in three places and
+`tests/test_best_effort_placement.py` pins each. (1) A hard placement rule is
+not on G2's list and never gives way: of the three only rule 3 (the pupils of a
+shared room within its capacity) is offered hard, so it is among
+`relaxation.HARD_RULES` and the Skolregler card's and the manual's "never
+gives way" lists, `strip()` leaves `placementRules` in, and a week the hall
+cannot hold is refused by name (`SHARED_ROOM_CANNOT_BE_KEPT`) in the mode with
+the strict words. A hard rule 1 or 2 that the engine can still be sent (the
+gateway never sends one) stays hard in the mode the same way. (2) A soft
+placement rule is a price in the soft objective in both modes: the mode builds
+its terms once (not twice), and neither prices it nor reports it as a deviation.
+(3) A room lock (priced in the mode, so its rooms join the room partition as a
+preference set) and a shared room (a class of its own in the same partition)
+are built in one `_add_room_allocation` call: three classes of 20 locked to a
+hall of 50 give one displaced class and a hall of 40, and a hall of 80 holds all
+three with nothing displaced.
+
+**Main's model is unchanged for a school that sets none.**
+`benchmarks/model_identity.py` compared main (`d497a93a`) and this branch on
+1,738 payloads (the benchmark schools in every variant and every request
+main's test suite builds a model for): 15,642 builds, and every
+`validate`, `estimate`, `full`, `feasible`, `explain`, `diagnosis` and
+`placeable` build is byte for byte equal. Two payloads' `solve` build differ,
+and differ between runs of main against itself (14, 10 and 34 solves of one
+INFEASIBLE explanation on main, depending on the load of the host), so
+they say nothing about this branch.
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the

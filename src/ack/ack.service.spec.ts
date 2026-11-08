@@ -237,6 +237,91 @@ describe('AckService', () => {
     });
   });
 
+  /**
+   * Checklistor's consent list asks the guardians through create (the rule ALL) and links the request to its list in
+   * the same transaction: createThen is create with a callback that runs before the commit.
+   */
+  describe('createThen', () => {
+    const dto = { title: 'Samtycke: Fotografering', body: 'Vi får fotografera.', rule: 'ALL' as const, studentIds: ['p-1', 'p-2', 'p-1'] };
+
+    /** Kvittens on, two pupils, and one guardian for the first of them. */
+    function ready(tx: TxMock) {
+      raw(tx, { 'app.ack_enabled()': [{ enabled: true }] });
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      tx['guardianStudent']!['findMany']!.mockResolvedValue([{ studentId: 'p-1', guardianId: 'g-1' }]);
+    }
+    const firstCall = (mock: jest.Mock) => mock.mock.invocationCallOrder[0]!;
+
+    it('runs the callback in the same transaction, with the request just written, after the receipts and the notices', async () => {
+      const { tx, prisma, notifications, service } = setup();
+      ready(tx);
+      const then = jest.fn().mockResolvedValue('linked');
+      const { created, result } = await service.createThen(dto, admin, then);
+      expect(result).toBe('linked');
+      expect(created).toMatchObject({ pupils: 1, guardians: 1, withoutGuardian: ['p-2'] });
+      // The callback is handed the transaction and the very request that was written.
+      expect(then).toHaveBeenCalledTimes(1);
+      expect(then).toHaveBeenCalledWith(tx, created);
+      expect(tx['ackRequest']!['createMany']!.mock.calls[0]![0].data[0].id).toBe(created.id);
+      // One transaction for all of it.
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(firstCall(tx['ackRequest']!['createMany']!)).toBeLessThan(firstCall(tx['ackReceipt']!['createMany']!));
+      expect(firstCall(tx['ackReceipt']!['createMany']!)).toBeLessThan(firstCall(notifications.notifyUsers));
+      expect(firstCall(notifications.notifyUsers)).toBeLessThan(firstCall(then));
+    });
+
+    it('leaves create as it was: the same four fields, and no callback to wait for', async () => {
+      const { tx, prisma, service } = setup();
+      ready(tx);
+      const created = await service.create(dto, admin);
+      expect(created).toEqual({ id: expect.any(String), pupils: 1, guardians: 1, withoutGuardian: ['p-2'] });
+      expect(Object.keys(created).sort()).toEqual(['guardians', 'id', 'pupils', 'withoutGuardian']);
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(tx['ackRequest']!['createMany']!.mock.calls[0]![0].data[0].id).toBe(created.id);
+    });
+
+    it('does not run the callback when the request is refused before it is written', async () => {
+      const { tx, service } = setup();
+      const then = jest.fn();
+      raw(tx, { 'app.ack_enabled()': [{ enabled: false }] });
+      await expect(service.createThen(dto, admin, then)).rejects.toMatchObject({ response: { code: 'ACK_DISABLED' } });
+      ready(tx);
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }]);
+      await expect(service.createThen(dto, admin, then)).rejects.toMatchObject({ response: { code: 'ACK_UNKNOWN_PUPIL' } });
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      raw(tx, { 'app.ack_enabled()': [{ enabled: true }], 'app.ack_mentee_ids()': [{ ids: ['p-1'] }] });
+      await expect(service.createThen(dto, teacher, then)).rejects.toMatchObject({ response: { code: 'ACK_NOT_YOUR_PUPIL' } });
+      tx['guardianStudent']!['findMany']!.mockResolvedValue([]);
+      await expect(service.createThen(dto, admin, then)).rejects.toMatchObject({ response: { code: 'ACK_NO_GUARDIANS' } });
+      expect(then).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['KV429', 'ACK_TOO_MANY_REQUESTS'],
+      ['KV428', 'ACK_TOO_MANY_RECIPIENTS'],
+    ])('answers the database’s %s with a 429 and its own code, as create does, and does not run the callback', async (state, code) => {
+      const { tx, service } = setup();
+      ready(tx);
+      const then = jest.fn();
+      tx['ackRequest']!['createMany']!.mockRejectedValue(sqlState(state));
+      const error = await service.createThen(dto, admin, then).catch((e: unknown) => e);
+      expect((error as { getStatus(): number }).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect((error as { response: { code: string } }).response.code).toBe(code);
+      // The receipts' own statement can be the one over the day's limit.
+      tx['ackRequest']!['createMany']!.mockResolvedValue({ count: 1 });
+      tx['ackReceipt']!['createMany']!.mockRejectedValue(sqlState(state));
+      await expect(service.createThen(dto, admin, then)).rejects.toMatchObject({ response: { code } });
+      expect(then).not.toHaveBeenCalled();
+    });
+
+    it('lets an error from the callback through as it is, so that the transaction rolls back with the request', async () => {
+      const { tx, service } = setup();
+      ready(tx);
+      const refused = new Error('CONSENT_LIST_CLOSED');
+      await expect(service.createThen(dto, admin, async () => Promise.reject(refused))).rejects.toBe(refused);
+    });
+  });
+
   describe('list', () => {
     it('counts pupils, those who are met and the guardians who wait, says where each reminder stands, and names nobody', async () => {
       const { tx, service } = setup();

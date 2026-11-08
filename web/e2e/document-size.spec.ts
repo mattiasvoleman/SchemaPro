@@ -56,7 +56,9 @@ import type { Persona } from "./stub/sessions";
  * and two builds to within a byte or so (measured: the teacher's figure was
  * 9 452 and 9 453). A menu row whose icon another row has costs a few tens of
  * bytes (Måltidskollen's, with Lunchsittningar's icon: 92 B, measured in CI
- * 2026-11-08, on top of 12 946); ten admin rows with ten icons that no row had
+ * 2026-11-08, on top of 12 946; Checklistor's, with Kvittens' icon: 145 B for the
+ * administrator and 109 B for the teacher, measured in CI 2026-11-08 on top of
+ * main's 13 457 and 9 836); ten admin rows with ten icons that no row had
  * cost 1 995 B, 459 B over this room (measured, 2026-11-07), and the next
  * phase's one or two rows are well inside it.
  */
@@ -81,9 +83,18 @@ interface Measured {
   measured: number;
 }
 
+/*
+ * How the figures were last set (Klasslärarens schema, which added one row to each menu): main's own
+ * (admin 13 038, teacher 9 452, after Måltidskollen) plus what the row costs, 39 B in the administrator's
+ * menu and 31 B in the teacher's (AppShell rendered with the real menu and the real catalog, gzipped with
+ * and without the row), which is 13 077 and 9 483. The build then showed 13 261 and 9 664: 184 and 181 B
+ * over, of which the rows are 39 and 31 and the rest the phase's own messages, which move the gzip of the
+ * document beside the catalog's. The ceiling is not raised for that rest, so the room is 1 352 and 1 355 B
+ * where it was 1 536: a phase pays the room its text uses, and the next one finds what is left.
+ */
 const PAGES: Measured[] = [
-  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_220 },
-  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_593 },
+  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_259 },
+  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_592 },
 ];
 
 const catalog = JSON.stringify(JSON.parse(readFileSync(join(__dirname, "..", "messages", "sv.json"), "utf8")));

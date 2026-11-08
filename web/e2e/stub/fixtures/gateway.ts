@@ -3,7 +3,10 @@ import { absenceStatsRoutes } from "./gateway-absence-stats";
 import { absenceWatchRoutes } from "./gateway-absence-watch";
 import { analysisRoutes } from "./gateway-analysis";
 import { ackRoutes } from "./gateway-ack";
+import { checklistsRoutes } from "./gateway-checklists";
 import { candidateRoutes } from "./gateway-candidates";
+import { classTeacherRoutes } from "./gateway-class-teacher";
+import { classTeachersRoutes } from "./gateway-class-teachers";
 import { coverRoutes } from "./gateway-cover";
 import { crisisRoutes } from "./gateway-crisis";
 import { familyRoutes } from "./gateway-family";
@@ -51,6 +54,9 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-school-day.ts", routes: schoolDayRoutes },
   { file: "gateway-ack.ts", routes: ackRoutes },
   { file: "gateway-meals.ts", routes: mealRoutes },
+  { file: "gateway-class-teacher.ts", routes: classTeacherRoutes },
+  { file: "gateway-class-teachers.ts", routes: classTeachersRoutes },
+  { file: "gateway-checklists.ts", routes: checklistsRoutes },
   { file: "gateway-analysis.ts", routes: analysisRoutes },
 ];
 

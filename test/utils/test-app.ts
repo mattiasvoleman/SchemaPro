@@ -63,7 +63,10 @@ import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.mod
 import { AbsenceStatsModule } from '../../src/absence-stats/absence-stats.module';
 import { AckModule } from '../../src/ack/ack.module';
 import { LessonMovesModule } from '../../src/lesson-moves/lesson-moves.module';
+import { ChecklistsModule } from '../../src/checklists/checklists.module';
 import { SchoolDayModule } from '../../src/school-day/school-day.module';
+import { ExamsModule } from '../../src/exams/exams.module';
+import { ClassTeacherModule } from '../../src/class-teacher/class-teacher.module';
 import { AnalysisModule } from '../../src/analysis/analysis.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { SchoolExportModule } from '../../src/school-export/school-export.module';
@@ -202,7 +205,10 @@ export const FEATURE_MODULES = [
   AckModule,
   // Elevens lektion för dagen: moves a pupil to a parallel lesson for a day; no timer.
   LessonMovesModule,
+  ChecklistsModule,
   SchoolDayModule,
+  ExamsModule,
+  ClassTeacherModule,
   AnalysisModule,
   SignInModule,
   HuvudmanModule,
