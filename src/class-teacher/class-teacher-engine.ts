@@ -171,9 +171,11 @@ export interface EvaluateOptions {
  * moves the future dated lessons with the template and removes the ones that
  * would land in the past or past the template's own end
  * (propagateTemplateChange; wouldRemoveOnUpdate counts them, as the swap dialog
- * does). It also rewrites the day and the time of a lesson that was moved for
- * one date, which would put it on a third day: a change of the template meets
- * such a lesson as a clash (EXCEPTION), and waits until the date has passed.
+ * does). It also rewrites the day, the time and the room of a lesson that was
+ * changed for one date, which would put a moved lesson on a third day and a
+ * lesson with its own room for the date back in the template's: a change of the
+ * template meets such a lesson as a clash (EXCEPTION), and waits until the date
+ * has passed or the lesson is put back.
  *
  * ONE WRITER. A published draft is carried out by the services the editor and
  * the day operations use (MasterLessonsService.update and create,
@@ -352,22 +354,24 @@ export class ClassTeacherEngine {
   }
 
   /**
-   * The future dated lessons of a template that were moved for their date (to
-   * another day or another hour than the template's). A change of the template
-   * in a school that publishes at once rewrites the day (by the template's
-   * shift from where the lesson stands now) and the hour of every such lesson
-   * (propagateTemplateChange, 'update'), which carries a lesson moved from a
-   * Monday to a Tuesday to a third day. Named by the date's lesson, so that the
-   * klasslärare sees which date is in the way; the first five.
+   * The future dated lessons of a template that were changed for their date
+   * (to another day, another hour or another room than the template's). A
+   * change of the template in a school that publishes at once rewrites the day
+   * (by the template's shift from where the lesson stands now), the hour and
+   * the room of every such lesson (propagateTemplateChange, 'update'), which
+   * carries a lesson moved from a Monday to a Tuesday to a third day and puts a
+   * lesson whose room was changed for its date (OCCASION_ROOM) back in the
+   * template's room, unasked and unannounced. Named by the date's lesson, so
+   * that the klasslärare sees which date is in the way; the first five.
    */
   private async exceptionsOf(
     tx: PrismaClient,
-    lesson: { id: string; schoolId: string; dayOfWeek: number; startTime: Date; endTime: Date; subject: { name: string }; studentGroupId: string },
+    lesson: { id: string; schoolId: string; dayOfWeek: number; startTime: Date; endTime: Date; roomId: string | null; subject: { name: string }; studentGroupId: string },
   ): Promise<ConflictView[]> {
     const timezone = await schoolTimezone(tx, lesson.schoolId);
     const rows = await tx.calendarLesson.findMany({
       where: reconcilableLessons(lesson.id),
-      select: { date: true, startsAt: true, endsAt: true, studentGroup: { select: { name: true } } },
+      select: { date: true, startsAt: true, endsAt: true, roomId: true, studentGroup: { select: { name: true } } },
       orderBy: { startsAt: 'asc' },
     });
     const start = minutesOf(lesson.startTime);
@@ -375,7 +379,12 @@ export class ClassTeacherEngine {
     return rows
       .filter((row) => {
         const day = dayString(row.date)!;
-        return isoWeekday(day) !== lesson.dayOfWeek || localMinutes(row.startsAt, timezone) !== start || localMinutes(row.endsAt, timezone) !== end;
+        return (
+          isoWeekday(day) !== lesson.dayOfWeek ||
+          localMinutes(row.startsAt, timezone) !== start ||
+          localMinutes(row.endsAt, timezone) !== end ||
+          row.roomId !== lesson.roomId
+        );
       })
       .slice(0, 5)
       .map((row) => ({

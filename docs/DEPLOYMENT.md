@@ -2498,8 +2498,9 @@ Walk the full product loop once, in order:
   in a school that publishes at once** moves the future dated lessons and removes
   the ones that would land in the past or past the template's end; the klasslärare
   is told how many (and how many carry a lesson log) before it is published, and a
-  lesson that was moved for its date is met as a clash until the date has passed,
-  since the move would put it on a third day. **A DRAFT school** (publishMode
+  lesson that was moved, or given another room, for its date is met as a clash
+  until the date has passed or it is put back, since the change would put it on
+  a third day or in the template's room again. **A DRAFT school** (publishMode
   DRAFT) hides its grundschema from teachers; the klasslärare reads their own
   class's through `app.class_teacher_master_lessons`, and the check and the
   preview name a clash with the rest of the draft by its kind alone ("the room is

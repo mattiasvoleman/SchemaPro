@@ -739,6 +739,7 @@ describe('ClassTeacherEngine.evaluate: the rest of what the editor holds a place
     date: day(date),
     startsAt: new Date(`${date}T${from}:00.000Z`),
     endsAt: new Date(`${date}T${to}:00.000Z`),
+    roomId: 'room-1',
     studentGroup: { name: '4A' },
     _count: { lessonLogs: 0 },
     ...extra,
@@ -819,6 +820,41 @@ describe('ClassTeacherEngine.evaluate: the rest of what the editor holds a place
         verdict: { state: 'CONFLICT', conflicts: [{ kind: 'EXCEPTION', other: { className: '4A', subjectName: 'Matte', ...shown } }] },
       });
     }
+  });
+
+  it('meets a lesson whose room was changed for its date, since a change of the template writes the template’s room on every future lesson', async () => {
+    // Monday 2027-04-05 08:30-09:30 (CEST: 06:30Z) is the template's own day and hour, in room-2 for that date; the template is in room-1.
+    for (const [what, template, row] of [
+      ['another room for the date', grundschema, dated('2027-04-05', '06:30', '07:30', { roomId: 'room-2' })],
+      ['a room for a date the template has none for', { ...grundschema, roomId: null }, dated('2027-04-05', '06:30', '07:30', { roomId: 'room-2' })],
+      ['no room for a date the template has one for', grundschema, dated('2027-04-05', '06:30', '07:30', { roomId: null })],
+    ] as const) {
+      const { engine, tx } = setup();
+      tx['masterLesson']!['findUnique']!.mockResolvedValue(template);
+      tx['calendarLesson']!['findMany']!.mockResolvedValue([dated('2027-03-22', '07:30', '08:30', { roomId: template.roomId }), row]);
+      const verdict = await engine.evaluate(tx as never, move({ targetDayOfWeek: 1, targetStart: time('09:00'), targetEnd: time('10:00') }));
+      expect({ what, verdict }).toEqual({
+        what,
+        verdict: { state: 'CONFLICT', conflicts: [{ kind: 'EXCEPTION', other: { className: '4A', subjectName: 'Matte', date: '2027-04-05', start: '08:30', end: '09:30' } }] },
+      });
+    }
+  });
+
+  it('does not count the template’s own room as an exception, with or without one', async () => {
+    for (const roomId of ['room-1', null] as const) {
+      const { engine, tx } = setup();
+      tx['masterLesson']!['findUnique']!.mockResolvedValue({ ...grundschema, roomId });
+      tx['calendarLesson']!['findMany']!.mockResolvedValue([dated('2027-03-22', '07:30', '08:30', { roomId }), dated('2027-04-05', '06:30', '07:30', { roomId })]);
+      const verdict = await engine.evaluate(tx as never, move({ targetDayOfWeek: 1, targetStart: time('09:00'), targetEnd: time('10:00') }));
+      expect({ roomId, state: verdict.state }).toEqual({ roomId, state: 'OK' });
+    }
+  });
+
+  it('reads the room of the dated lessons it compares with the template’s', async () => {
+    const { engine, tx } = setup();
+    tx['masterLesson']!['findUnique']!.mockResolvedValue(grundschema);
+    await engine.evaluate(tx as never, move());
+    expect(tx['calendarLesson']!['findMany']!.mock.calls[0]![0].select).toEqual(expect.objectContaining({ roomId: true }));
   });
 
   it('counts a lesson moved to another hour of its own day as moved, and the template’s own lessons as not', async () => {

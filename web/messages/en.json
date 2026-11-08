@@ -8995,7 +8995,7 @@
         "FRAME": "The time falls outside the stage's school day",
         "LUNCH": "The time falls on the class's lunch",
         "GRADE_RULE": "The time is closed to the class's year group",
-        "EXCEPTION": "The lesson has already been moved for a date, and the change would move it again"
+        "EXCEPTION": "The lesson has already been changed for a date (day, time or room), and the change would overwrite it"
       },
       "with": "{kind}: {lesson}, {when}"
     },

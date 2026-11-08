@@ -47,7 +47,9 @@
  *         and a date held to the pupils of a teaching group and to the ombyte before and after;
  *   kl-o  a change of the template says what it takes out of the calendar, meets a lesson moved for its date, and
  *         shows a draft school's grundschema to nobody who may not read it;
- *   kl-p  a läsår that has ended, a date outside the läsår, the klasslärare's words added to the lesson's note.
+ *   kl-p  a läsår that has ended, a date outside the läsår, the klasslärare's words added to the lesson's note;
+ *   kl-q  a room changed for one date and published is not written back by a later change of the template: it is a
+ *         clash (EXCEPTION) until the room is put back, and then the change goes through.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -740,6 +742,44 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
     assert.deepEqual((await adminService.publish(g4a, [moved.id], sara)).outcomes, [{ id: moved.id, outcome: 'PUBLISHED' }]);
     const after = await one<{ date: string; note: string }>(`SELECT date::text, note FROM "CalendarLessons" WHERE id = $1`, [lesson]);
     assert.deepEqual([after.date, after.note], [thursday, 'Ta med gympakläder · Flyttad pga besök']);
+  });
+
+  await check('(kl-q) a room changed for a date and published is not written back by a later change of the template: it is met as a clash until the room is put back', async () => {
+    const lessonMaster = await master(svenska, g4a, sal1, karin, 1, '10:00', '11:00');
+    const lesson = await dated(lessonMaster, svenska, g4a, sal1, karin, monday, '10:00', '11:00');
+    const roomOf = async () => (await one<{ roomId: string; start: string }>(`SELECT "roomId", to_char("startsAt" AT TIME ZONE 'Europe/Stockholm', 'HH24:MI') AS start FROM "CalendarLessons" WHERE id = $1`, [lesson]));
+    const later = { kind: 'TEMPLATE_MOVE' as const, masterLessonId: lessonMaster, targetDayOfWeek: 1, targetStart: '10:30', targetEnd: '11:30' };
+
+    // Sal 1 is closed for the date, so Karin takes Sal 2 for it, and the schemaläggare publishes: the date's lesson stands in Sal 2.
+    const room = await teacherService.create(g4a, { kind: 'OCCASION_ROOM', calendarLessonId: lesson, baseVersion: (await occasion(lesson)).version, targetRoomId: sal2 }, karin);
+    assert.deepEqual((await adminService.publish(g4a, [room.id], sara)).outcomes, [{ id: room.id, outcome: 'PUBLISHED' }]);
+    assert.equal((await roomOf()).roomId, sal2);
+
+    // Then the template's hour is moved. The change would write the template's room, Sal 1, on every future lesson of it and take
+    // the date's room back unasked; it is met as a clash that names the date, in the check and at publication, and nothing moves.
+    const meets = await verdictOf(later);
+    assert.deepEqual(kindsOf(meets), ['EXCEPTION'], JSON.stringify(meets));
+    assert.deepEqual((meets as { conflicts: Array<{ other?: unknown }> }).conflicts[0]!.other, { className: '4A', subjectName: 'Svenska', date: monday, start: '10:00', end: '11:00' });
+    const draft = await teacherService.create(g4a, { ...later, baseVersion: (await template(lessonMaster)).version }, karin);
+    const refused = (await adminService.publish(g4a, [draft.id], sara)).outcomes;
+    assert.deepEqual([refused[0]!.outcome, (refused[0] as { conflicts?: Array<{ kind: string }> }).conflicts?.map((one) => one.kind)], ['CONFLICT', ['EXCEPTION']]);
+    assert.deepEqual(await roomOf(), { roomId: sal2, start: '10:00' }, 'the date keeps its room and its hour');
+    assert.equal((await one<{ startTime: string }>(`SELECT "startTime"::text FROM "MasterLessons" WHERE id = $1`, [lessonMaster])).startTime, '10:00:00', 'and the template is unchanged');
+
+    // The way out is three steps: a change of the template waits for the lesson (PENDING_TEMPLATE_CHANGE), so it is thrown first;
+    // the room is put back for the date (a room change to the template's own); and then the change is written again, goes through,
+    // and brings the date along, in the template's room, as it should.
+    const waiting = await one<{ rev: number }>(`SELECT rev FROM "ClassTeacherChanges" WHERE id = $1`, [draft.id]);
+    await teacherService.discard(g4a, draft.id, waiting.rev, karin);
+    const back = await teacherService.create(g4a, { kind: 'OCCASION_ROOM', calendarLessonId: lesson, baseVersion: (await occasion(lesson)).version, targetRoomId: sal1 }, karin);
+    assert.deepEqual((await adminService.publish(g4a, [back.id], sara)).outcomes, [{ id: back.id, outcome: 'PUBLISHED' }]);
+    assert.deepEqual(await verdictOf(later), { state: 'OK' });
+    const again = await teacherService.create(g4a, { ...later, baseVersion: (await template(lessonMaster)).version }, karin);
+    assert.deepEqual((await adminService.publish(g4a, [again.id], sara)).outcomes, [{ id: again.id, outcome: 'PUBLISHED' }]);
+    assert.deepEqual(await roomOf(), { roomId: sal1, start: '10:30' });
+
+    await owner.query(`DELETE FROM "CalendarLessons" WHERE id = $1`, [lesson]);
+    await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [lessonMaster]);
   });
 
 }

@@ -741,7 +741,7 @@ describe("the list of drafts", () => {
     [
       "would move a lesson already moved for a date",
       { state: "CONFLICT", conflicts: [{ kind: "EXCEPTION", other: { className: "3B", subjectName: "Matematik", date: "2026-11-10", start: "13:00", end: "14:00" } }] },
-      [/Lektionen är redan flyttad för ett datum, och ändringen skulle lägga om den: 3B, Matematik, tis 10 nov\. 13:00–14:00/],
+      [/Lektionen är redan ändrad för ett datum \(dag, tid eller sal\), och ändringen skulle skriva över det: 3B, Matematik, tis 10 nov\. 13:00–14:00/],
     ],
     [
       "can be published but takes lessons out of the calendar",

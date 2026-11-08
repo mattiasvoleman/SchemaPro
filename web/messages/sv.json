@@ -8995,7 +8995,7 @@
         "FRAME": "Tiden ligger utanför stadiets ramtid",
         "LUNCH": "Tiden ligger på klassens lunch",
         "GRADE_RULE": "Tiden är stängd för klassens årskurs",
-        "EXCEPTION": "Lektionen är redan flyttad för ett datum, och ändringen skulle lägga om den"
+        "EXCEPTION": "Lektionen är redan ändrad för ett datum (dag, tid eller sal), och ändringen skulle skriva över det"
       },
       "with": "{kind}: {lesson}, {when}"
     },
