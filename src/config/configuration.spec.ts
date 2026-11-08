@@ -87,6 +87,8 @@ describe('loadConfiguration', () => {
       absenceStats: { background: true },
       // Unset: the reminder pass of Kvittens ticks.
       ack: { background: true },
+      // Unset: the pass over the leave requests that wait for consent ticks.
+      leaveConsent: { background: true },
       // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
       candidates: { maxSeconds: 30, runsMax: 2, solverWorkers: 4, background: true },
     });
@@ -134,6 +136,12 @@ describe('loadConfiguration', () => {
     expect(loadConfiguration(env({ MEAL_LETTER_BACKGROUND: 'off' })).mealLetter.background).toBe(false);
     expect(loadConfiguration(env({ MEAL_LETTER_BACKGROUND: 'on' })).mealLetter.background).toBe(true);
     expect(loadConfiguration(env({})).mealLetter.background).toBe(true);
+  });
+
+  it('turns the leave consent pass off only for LEAVE_CONSENT_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ LEAVE_CONSENT_BACKGROUND: 'off' })).leaveConsent.background).toBe(false);
+    expect(loadConfiguration(env({ LEAVE_CONSENT_BACKGROUND: 'on' })).leaveConsent.background).toBe(true);
+    expect(loadConfiguration(env({})).leaveConsent.background).toBe(true);
   });
 
   it('turns the kvittens reminder pass off only for ACK_BACKGROUND=off', () => {

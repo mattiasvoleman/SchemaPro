@@ -290,6 +290,16 @@ export class EnvironmentVariables {
   ACK_BACKGROUND: string = 'on';
 
   /**
+   * Ledighetspolicyns pass (src/family/leave-consent.job.ts): once to each guardian
+   * who has not answered a request for consent two days after it was filed, and the
+   * mentors' notices for a request a custody that ended made clear. `on` unless set to
+   * `off`; the test setup turns it off. A school that asks for no consent has nothing for
+   * it to do.
+   */
+  @IsIn(['on', 'off'])
+  LEAVE_CONSENT_BACKGROUND: string = 'on';
+
+  /**
    * Schemaförslag (src/optimization/schedule-candidates.service.ts): the solve
    * budget, in seconds, of every candidate, KEEP's included, so the emphases
    * are compared at one budget (the engine takes the smaller of this and its

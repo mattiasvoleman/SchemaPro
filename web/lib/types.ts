@@ -4,7 +4,8 @@ import type { GradeNumbering } from "@/lib/grade-numbering";
 
 export type UserRole = "STUDENT" | "TEACHER" | "SCHOOL_ADMIN" | "GUARDIAN";
 export type AbsenceReportType = "SICK" | "APPOINTMENT" | "OTHER";
-export type LeaveRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+/** GUARDIAN_DECLINED: a guardian did not consent (Ledighetspolicy), so nobody decides it. */
+export type LeaveRequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "GUARDIAN_DECLINED";
 /** A room type the school owns and names itself. */
 export interface RoomType {
   id: string;
@@ -725,6 +726,42 @@ export interface LeaveRequest {
   /** MENTOR or ADMIN once decided (20261023091000); null before, and for older decisions. */
   decidedAs: "MENTOR" | "ADMIN" | null;
   createdAt: string;
+  /** Filed closer to its first day than the school's minimum, and let in (Ledighetspolicy). */
+  shortNotice: boolean;
+  /** The temporary contact during the leave, for the family that wrote it, rektor and the deciding mentor. */
+  contact: LeaveContact | null;
+  consent: LeaveConsent;
+}
+
+/** What the school asks of a leave request (GET /api/v1/leave-policy, Ledighetspolicy). Off as delivered. */
+export interface LeavePolicy {
+  requireAllGuardians: boolean;
+  /** 1..90 calendar days before the first day; null is no minimum. */
+  minDaysAhead: number | null;
+  /** What a later request meets: refused by the form, or flagged for whoever decides. */
+  shortNotice: "REFUSE" | "FLAG";
+  contact: "OFF" | "OPTIONAL" | "REQUIRED";
+}
+
+/** A third party's details, written by the family: name, phone and relation to the child. */
+export interface LeaveContact {
+  name: string;
+  phone: string;
+  relation: string;
+}
+
+/** Where a request stands with the guardians' consent, as the reader may know it. */
+export interface LeaveConsent {
+  /** The school asked every guardian when the request was filed. */
+  required: boolean;
+  /** WAITING: somebody who can still answer has not. */
+  state: "NOT_REQUIRED" | "WAITING" | "GIVEN" | "REFUSED";
+  /** The signed-in guardian's own part; NOT_ASKED for anybody else and for the guardian who applied. */
+  mine: "NOT_ASKED" | "WAITING" | "GIVEN" | "REFUSED" | "ENDED";
+  /** How many were asked, have consented and still wait: staff only, never who. Null for a family. */
+  asked: number | null;
+  given: number | null;
+  waiting: number | null;
 }
 
 // ---------------------------------------------------------------------------

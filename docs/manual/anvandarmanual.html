@@ -96,6 +96,7 @@
       <li><span>6.20 Checklistor: instruktionsbevis och samtyckeslistor</span><span class="dots"></span><span class="pg" data-pg="s620"></span></li>
       <li><span>6.21 Analys och planering</span><span class="dots"></span><span class="pg" data-pg="s621"></span></li>
       <li><span>6.22 Lokal: resurser, externa och utnyttjande</span><span class="dots"></span><span class="pg" data-pg="s622"></span></li>
+      <li><span>6.23 Ledighetspolicy: samtycke, tid i förväg och kontakt</span><span class="dots"></span><span class="pg" data-pg="s623"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -7714,6 +7715,53 @@
     </p>
   </div>
 
+  <h3 id="s623"><span class="num">6.23</span>Ledighetspolicy: samtycke, tid i förväg och kontakt</h3>
+  <p>
+    Under <span class="path">Ledighetsansökningar</span> väljer skolan hur den tar emot en ledighetsansökan från
+    en familj. Det finns tre val, och <strong>alla tre är avstängda tills en administratör som beslutar slår på dem</strong>:
+    en skola som inte väljer något ser exakt det flöde den haft. Alla administratörer läser valen; bara den som
+    beslutar sparar dem. Ett val gäller ansökningar som lämnas in från och med att det sparats, och flyttar ingen
+    ansökan som redan ligger hos skolan.
+  </p>
+  <ul>
+    <li><strong>Varje vårdnadshavares samtycke.</strong> Ansökan går till beslut först när alla vårdnadshavare med aktiv
+      vårdnad har samtyckt. Den som ansöker räknas som att ha samtyckt; övriga vårdnadshavare får en notis och svarar
+      <em>Samtycker</em> eller <em>Samtycker inte</em> i appen eller på webben. En vårdnadshavare vars vårdnad har
+      upphört (kopplingen är borttagen, eller hen eller eleven är inaktiv) håller inte upp ansökan, på samma sätt som
+      i Kvittens (6.16). Ett <em>nej</em> avslutar ansökan: den får statusen
+      <em>Avslutad av vårdnadshavare</em>, ingen beslutar den, och den som ansökte får en notis som inte säger vem.
+      Svaret kan inte ändras.</li>
+    <li><strong>Minsta antal dagar i förväg</strong> (1–90 kalenderdagar, räknade från skolans dag till första dagen).
+      Skolan väljer vad en senare ansökan möter: formuläret <em>nekar</em> den med ett tydligt besked, eller släpper in
+      den och <em>flaggar</em> den (<em>Kom sent</em>) för den som beslutar. Du som administratör kan fortfarande
+      registrera en ansökan åt en familj som ringt; den flaggas om den är sen.</li>
+    <li><strong>En tillfällig kontakt under ledigheten</strong>: namn, telefon och relation, <em>Av</em>,
+      <em>Frivillig</em> eller <em>Obligatorisk</em>. Det är en tredje parts uppgifter. De syns för familjen som skrev
+      dem, för dig som administratör och för mentorn som beslutar ansökan, men aldrig för andra lärare, och aldrig i
+      en notis, ett e-brev eller en push. De gallras med ansökan, står i ledigheter.csv och i registerutdraget på
+      anledningens villkor, och räknas med ansökan när en person tas bort. Vårdnadshavarnas svar på samtyckesfrågan
+      (om de samtyckte och när, aldrig vad en annan svarade) står i samtycken.csv i skolans export och i
+      vårdnadshavarens eget registerutdrag. Slår skolan av kontakten tas en kontakt
+      som en äldre ansökningsblankett skickar bort.</li>
+  </ul>
+  <p>
+    I listan över ansökningar står vid varje ansökan som väntar på samtycke <em>Väntar på vårdnadshavarnas
+    samtycke</em> med antal (<em>2 av 3 vårdnadshavare har samtyckt</em>), aldrig namn. Du kan inte bevilja den förrän
+    samtycket är klart. Mentorn ser den inte heller, och får sin notis först när den är klar. Du kan däremot
+    <strong>avslå</strong> en ansökan som väntar: det beviljar ingenting, och då kan en vårdnadshavare som aldrig svarar
+    inte hålla kvar ansökan för alltid (skriv gärna en kommentar till familjen). Har vårdnaden verkligen upphört tar du
+    bort kopplingen (3.5, <em>Personer och inbjudningar</em>), och ansökan går då vidare utan den vårdnadshavaren.
+    En vårdnadshavare som inte svarat efter två dygn får en enda påminnelse. Familjen kan inte själv dra tillbaka en
+    ansökan som väntar; be skolan avslå den.
+  </p>
+  <div class="note">
+    <span class="label">Skyddad identitet</span>
+    <p>
+      Notiserna om samtycke nämner barnet och datumen för vårdnadshavaren, som alla andra notiser till en
+      vårdnadshavare, men aldrig vem som ansökte eller vem som sa nej: vårdnadshavare som lever åtskilda kan hålla sig
+      dolda för varandra. Antalen du ser säger inte vem.
+    </p>
+  </div>
 </section>
 
 <!-- ============================ 7 ============================ -->

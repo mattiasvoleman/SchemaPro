@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -27,15 +28,17 @@ import {
   type GuardianLinkView,
 } from './family-reads.service';
 import { FamilyScheduleService, type FamilySchedule } from './family-schedule.service';
-import { LeaveService, type LeaveRequestView } from './leave.service';
+import { LeaveService, type LeaveConsentAnswered, type LeavePolicyView, type LeaveRequestView } from './leave.service';
 import { FamilyScheduleQueryDto } from './dto/family-schedule.dto';
 import { AbsenceReportsQueryDto, GuardianLinksQueryDto, LeaveRequestsQueryDto } from './dto/family-reads.dto';
 import {
+  AnswerLeaveConsentDto,
   CreateAbsenceReportDto,
   CreateGuardianLinkDto,
   CreateLeaveRequestDto,
   DecideLeaveRequestDto,
   RecordLeaveDelegationDto,
+  RecordLeavePolicyDto,
 } from './dto/family.dto';
 
 /**
@@ -192,6 +195,21 @@ export class FamilyController {
     return this.leave.decideLeaveRequest(id, dto, user);
   }
 
+  /**
+   * A guardian's answer to the school's request for their consent to a leave request
+   * (Ledighetspolicy): final, and a no ends the request.
+   */
+  @Post('leave-requests/:id/consent')
+  @Roles(Role.GUARDIAN)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  answerLeaveConsent(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: AnswerLeaveConsentDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<LeaveConsentAnswered> {
+    return this.leave.answerConsent(id, dto, user);
+  }
+
   /** The deciding mentor passes a request on to rektor. */
   @Patch('leave-requests/:id/refer')
   @Roles(Role.TEACHER)
@@ -200,6 +218,25 @@ export class FamilyController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.leave.referLeaveRequest(id, user);
+  }
+
+  /**
+   * The school's leave policy: every guardian's consent, the fewest days ahead, a temporary
+   * contact. The form of every role that files reads it; the settings page of the administrator
+   * writes it.
+   */
+  @Get('leave-policy')
+  @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN, Role.TEACHER)
+  getLeavePolicy(@CurrentUser() user: AuthenticatedUser): Promise<LeavePolicyView> {
+    return this.leave.getPolicy(user);
+  }
+
+  /** Rektor, or whoever decides, records the policy, all of it; in force for the requests filed from now on. */
+  @Put('leave-policy')
+  @Roles(Role.SCHOOL_ADMIN)
+  @Decides()
+  recordLeavePolicy(@Body() dto: RecordLeavePolicyDto, @CurrentUser() user: AuthenticatedUser): Promise<LeavePolicyView> {
+    return this.leave.setPolicy(dto, user);
   }
 
   /** Rektor's delegation in force, and its history. */

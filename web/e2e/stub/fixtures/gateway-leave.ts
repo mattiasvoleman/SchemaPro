@@ -1,9 +1,9 @@
 import type { LeaveDelegation, LeaveInboxRequest } from "../../../lib/leave-queries";
-import type { LeaveRequest } from "../../../lib/types";
+import type { LeaveConsent, LeavePolicy } from "../../../lib/types";
 import { Reply, route, type GatewayContext, type GatewayRoute } from "../gateway-routes";
 import type { SignedInPerson } from "../sessions";
 import { addDays, isoWeekday, stockholmInstant, YEAR_START } from "./calendar";
-import { LEAVE_REQUESTS, SCHOOL_BREAKS } from "./school-days";
+import { LEAVE_REQUESTS, SCHOOL_BREAKS, type StoredLeaveRequest } from "./school-days";
 import { DUTIES } from "./staffing-rows";
 import { ADMIN, ALL_PEOPLE, byId, GROUP_LIST, GUARDIAN_LINKS, STUDENT_LIST, YEAR } from "./world";
 
@@ -17,6 +17,16 @@ import { ADMIN, ALL_PEOPLE, byId, GROUP_LIST, GUARDIAN_LINKS, STUDENT_LIST, YEAR
  * three days sit with her mentor Anna ("Hos elevens mentor" on /admin/leave,
  * the mentor's inbox on /teacher/ledighet); Ines's five wait for rektor.
  */
+
+/**
+ * What the school asks of a leave request (Ledighetspolicy) as delivered: nothing. The pages then show
+ * exactly what they showed before, which is what the aria baselines of /guardian and /teacher/ledighet
+ * hold; /admin/leave adds the card that reads and saves it.
+ */
+export const LEAVE_POLICY: LeavePolicy = { requireAllGuardians: false, minDaysAhead: null, shortNotice: "REFUSE", contact: "OFF" };
+
+/** Where the guardians' consent stands on a request filed under that policy: not asked. */
+const NO_CONSENT: LeaveConsent = { required: false, state: "NOT_REQUIRED", mine: "NOT_ASKED", asked: null, given: null, waiting: null };
 
 export const DELEGATION: LeaveDelegation = {
   mentorMaxSchoolDays: 3,
@@ -56,7 +66,7 @@ function mentorsOf(studentId: string): Array<{ id: string; name: string }> {
  * request, a mentor only on a pending one theirs to decide; a mentor's
  * decided request carries none, and a family's list has no facts at all.
  */
-function inboxRow(request: LeaveRequest, family: boolean, weighs = true): LeaveInboxRequest {
+function inboxRow(request: StoredLeaveRequest, family: boolean, weighs = true): LeaveInboxRequest {
   const student = byId(STUDENT_LIST, request.studentId)!;
   const mentors = mentorsOf(request.studentId);
   const days = schoolDays(request.startDate, request.endDate);
@@ -67,6 +77,9 @@ function inboxRow(request: LeaveRequest, family: boolean, weighs = true): LeaveI
   const approved = own.filter((row) => row.status === "APPROVED");
   return {
     ...request,
+    shortNotice: false,
+    contact: null,
+    consent: NO_CONSENT,
     student: {
       id: student.id,
       name: `${student.firstName} ${student.lastName}`,
@@ -98,7 +111,7 @@ function inboxRow(request: LeaveRequest, family: boolean, weighs = true): LeaveI
  * elevens mentor" — a request over the delegation is rektor's, not theirs);
  * a family its own.
  */
-function visible(person: SignedInPerson): LeaveRequest[] {
+function visible(person: SignedInPerson): StoredLeaveRequest[] {
   if (person.persona === "admin") return LEAVE_REQUESTS;
   if (person.persona === "teacher") {
     return LEAVE_REQUESTS.filter((row) =>
@@ -124,6 +137,18 @@ export const leaveRoutes: GatewayRoute[] = [
       .filter((row) => !status || row.status === status)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
       .map((row) => inboxRow(row, family, admin || row.status === "PENDING"));
+  }),
+  // Every role in the school reads the policy, since it is what the family's form explains; an
+  // administrator who decides saves it. A save is answered and not kept, like the other settings routes, so no
+  // spec leaves a choice behind for the next.
+  route("GET", "/api/v1/leave-policy", (context) => {
+    if (!context.person) return new Reply(401, { message: "Not authenticated." });
+    return LEAVE_POLICY;
+  }),
+  route("PUT", "/api/v1/leave-policy", (context) => {
+    if (!context.person) return new Reply(401, { message: "Not authenticated." });
+    if (context.person.persona !== "admin") return new Reply(403, { message: "Forbidden.", code: "DECISION_NOT_YOURS" });
+    return { ...LEAVE_POLICY, ...(context.body as Partial<LeavePolicy>) };
   }),
   route("GET", "/api/v1/leave-delegation", (context) => {
     if (!context.person) return new Reply(401, { message: "Not authenticated." });

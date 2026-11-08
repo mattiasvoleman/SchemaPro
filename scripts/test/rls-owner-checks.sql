@@ -5212,3 +5212,212 @@ BEGIN
                       (SELECT count(*) FROM "ExternalBookings" WHERE "schoolId" = school), (SELECT count(*) FROM "ResourceBookings" WHERE "schoolId" = school))), '0/0/0/0');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Ledighetspolicy (K4, 20270205091000), the owner's side: sections 445o-449o. The checks a
+-- policy cannot make (a table's own CHECKs and the gate, for a writer with no login), and
+-- the job's pass, whose logic needs requests made in the past. Fixtures: rls-kvittens-school.
+--
+--   445o  what the tables hold whoever writes them
+--   448o  the pass: one reminder, to a guardian who can still answer, two days after the
+--         request; the mentors of a request a custody that ended made clear, once
+--   449o  gone with the request and with the person
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.k4o_user(p_email text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT id FROM "Users" WHERE email = p_email || '@example.invalid'
+$$;
+CREATE FUNCTION pg_temp.k4o_refuses(p_sql text, p_state text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM p_state THEN
+    RAISE EXCEPTION 'ledighetspolicy: % should be refused with %, was %', p_what, p_state, got;
+  END IF;
+END $$;
+-- A request made by `by`, `age` ago, from `from` days ahead for one day; the owner writes it, so nothing is stamped
+-- and nothing is refused, and the trigger that asks the guardians reads the row as written.
+CREATE FUNCTION pg_temp.k4o_request(p_pupil text, p_by text, p_age interval, p_from integer, p_consent boolean) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE
+  req uuid := gen_random_uuid();
+BEGIN
+  INSERT INTO "LeaveRequests" (id, "schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "consentRequired", "createdAt")
+  VALUES (req, (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school'), pg_temp.k4o_user(p_pupil), pg_temp.k4o_user(p_by),
+          current_date + p_from, current_date + p_from, 'Resa', p_consent, now() - p_age);
+  RETURN req;
+END $$;
+-- Who has what, as text: the recipients' short names, sorted, of the notices of a type.
+CREATE FUNCTION pg_temp.k4o_rows(p_rows text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  got text;
+BEGIN
+  EXECUTE p_rows INTO got;
+  RETURN coalesce(got, '');
+END $$;
+
+-- 445o: what the tables hold whoever writes them.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  req uuid;
+  other uuid;
+BEGIN
+  IF school IS NULL THEN RAISE EXCEPTION 'ledighetspolicy 445o: the fixtures did not run'; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  req := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 10, false);
+  -- The contact is all three or none, whoever writes it: the CHECKs, not the trigger, which a writer with no login passes.
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET "contactName" = 'Farmor' WHERE id = %L$q$, req), 'LV409', 'a contact written on a request already filed');
+  PERFORM pg_temp.k4o_refuses(format($q$INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "contactName")
+    VALUES (%L, %L, %L, current_date, current_date, 'Resa', 'Farmor')$q$, school, pg_temp.k4o_user('kv-p1'), pg_temp.k4o_user('kv-g1')), '23514', 'a name alone, written with no trigger in the way');
+  PERFORM pg_temp.k4o_refuses(format($q$INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "contactName", "contactPhone", "contactRelation")
+    VALUES (%L, %L, %L, current_date, current_date, 'Resa', 'Farmor', '123', 'Farmor')$q$, school, pg_temp.k4o_user('kv-p1'), pg_temp.k4o_user('kv-g1')), '23514', 'a telephone number of three characters, written with no trigger in the way');
+  -- A stopped request is a consent request whose no ended it, with no decider.
+  PERFORM pg_temp.k4o_refuses(format($q$INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, status)
+    VALUES (%L, %L, %L, current_date, current_date, 'Resa', 'GUARDIAN_DECLINED')$q$, school, pg_temp.k4o_user('kv-p1'), pg_temp.k4o_user('kv-g1')), '23514', 'a stopped request the school never asked consent for');
+  PERFORM pg_temp.k4o_refuses(format($q$INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, status, "consentRequired", "decidedById")
+    VALUES (%L, %L, %L, current_date, current_date, 'Resa', 'GUARDIAN_DECLINED', true, %L)$q$, school, pg_temp.k4o_user('kv-p1'), pg_temp.k4o_user('kv-g1'), pg_temp.k4o_user('kv-full')), '23514', 'a stopped request with a decider');
+  -- The gate holds for the owner too: a stop needs a guardian's no, and a decision needs the consent.
+  req := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 10, true);
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'GUARDIAN_DECLINED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV416', 'a stop with no no');
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV412', 'an approval before the consent');
+  -- A rejection grants nothing and is not held back (the review of #292, MEDEL-1).
+  other := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 11, true);
+  UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAt" = now() WHERE id = other;
+  IF (SELECT status FROM "LeaveRequests" WHERE id = other) <> 'REJECTED' THEN RAISE EXCEPTION 'ledighetspolicy 445o: a request that waits for consent could not be rejected'; END IF;
+  UPDATE "LeaveConsents" SET consented = false, "answeredAt" = now() WHERE "leaveRequestId" = req;
+  IF NOT FOUND THEN RAISE EXCEPTION 'ledighetspolicy 445o: the trigger asked nobody for a request that needs consent'; END IF;
+  -- A no is not a yes: the consent is not there, and the stop is now allowed.
+  PERFORM pg_temp.k4o_refuses(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAt" = now() WHERE id = %L$q$, req), 'LV412', 'an approval after a no');
+  UPDATE "LeaveRequests" SET status = 'GUARDIAN_DECLINED', "decidedAt" = now() WHERE id = req;
+  IF app.leave_consent_met_raw(req, school) THEN RAISE EXCEPTION 'ledighetspolicy 445o: a request a guardian refused has its consent'; END IF;
+END $$;
+ROLLBACK;
+
+-- 448o: the pass.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  due uuid;
+  early uuid;
+  past uuid;
+  answered uuid;
+  gone uuid;
+  rejected uuid;
+  held uuid;
+  clear uuid;
+  rows_ text;
+BEGIN
+  IF school IS NULL THEN RAISE EXCEPTION 'ledighetspolicy 448o: the fixtures did not run'; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  -- Three days old and G2 has not answered: due. One day old: not yet. The leave over: no point. G2 answered: nothing to ask.
+  due := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '3 days', 10, true);
+  early := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '1 day', 11, true);
+  past := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '3 days', -5, true);
+  answered := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '3 days', 12, true);
+  UPDATE "LeaveConsents" SET consented = true, "answeredAt" = now() WHERE "leaveRequestId" = answered;
+  -- A custody that has ended: the guardian of P3 is no longer linked, so nobody can be reminded.
+  gone := pg_temp.k4o_request('kv-p3', 'kv-full', interval '3 days', 13, true);
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.k4o_user('kv-g3') AND "studentId" = pg_temp.k4o_user('kv-p3');
+  -- A request rektor rejected while it waited is not reminded: the wait is over.
+  rejected := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '3 days', 16, true);
+  UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAt" = now() WHERE id = rejected;
+  -- The pass is the delivery door's, which sets no claims. A login of any kind is not it, also one with no person row (the
+  -- huvudman's reader, a municipal administrator): the guard asks the claims, not the person (the review of #292, LÅG-1).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid())::text, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass answered a login with no person row'; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', gen_random_uuid()::text, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass answered a login set the older way'; END IF;
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+
+  IF (SELECT count(*) FROM "LeaveConsents" WHERE "leaveRequestId" IN (due, early, past, answered, gone)) <> 5 THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the trigger did not ask the guardians of the five requests';
+  END IF;
+  -- (Kept in a table first: a statement does not see the rows its own function wrote.)
+  CREATE TEMP TABLE k4o_pass ON COMMIT DROP AS SELECT * FROM app.leave_consent_pass();
+  SELECT string_agg(n.type::text || ' ' || split_part(u.email, '@', 1) || ' ' || (n.meta ->> 'leaveRequestId' = due::text)::text || ' ' || coalesce(split_part(p.email, '@', 1), '-'), ', ' ORDER BY u.email)
+    INTO rows_
+    FROM k4o_pass p
+    JOIN "Notifications" n ON n.id = p."notificationId"
+    JOIN "Users" u ON u.id = p."userId";
+  IF rows_ IS DISTINCT FROM 'LEAVE_CONSENT_REMINDER kv-g2 true kv-g2' THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the first pass wrote %, not one reminder to G2 for the request that is due', rows_;
+  END IF;
+  IF (SELECT count(*) FROM "LeaveConsents" WHERE "remindedAt" IS NOT NULL) <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass marked a guardian that was not reminded'; END IF;
+  -- Once: a second pass writes nothing. The reminder says what the first notice does, and nothing of who applied.
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the second pass reminded again'; END IF;
+  IF (SELECT meta::text FROM "Notifications" WHERE type = 'LEAVE_CONSENT_REMINDER' AND "userId" = pg_temp.k4o_user('kv-g2')) LIKE '%' || pg_temp.k4o_user('kv-g1')::text || '%' THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the reminder says who applied';
+  END IF;
+  -- Two days is the line: a request 47 hours old waits, one 49 hours old is reminded.
+  early := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '47 hours', 14, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass() p WHERE p.type = 'LEAVE_CONSENT_REMINDER') <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a request of 47 hours was reminded'; END IF;
+  early := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '49 hours', 15, true);
+  IF (SELECT count(*) FROM app.leave_consent_pass() p WHERE p.type = 'LEAVE_CONSENT_REMINDER') <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a request of 49 hours was not reminded'; END IF;
+  -- A limit of none is a pass that does nothing.
+  UPDATE "LeaveConsents" SET "remindedAt" = NULL WHERE "leaveRequestId" = due;
+  IF (SELECT count(*) FROM app.leave_consent_pass(0)) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a pass with a limit of none wrote a reminder'; END IF;
+  -- A decided request is not reminded: the guardian's no ended it.
+  UPDATE "LeaveConsents" SET consented = false, "answeredAt" = now() WHERE "leaveRequestId" = due;
+  UPDATE "LeaveRequests" SET status = 'GUARDIAN_DECLINED', "decidedAt" = now() WHERE id = due;
+  UPDATE "LeaveConsents" SET consented = NULL, "answeredAt" = NULL WHERE "leaveRequestId" = due;
+  IF (SELECT count(*) FROM app.leave_consent_pass()) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a request that has ended was reminded'; END IF;
+
+  -- THE MENTORS. A request a custody that ended made clear is told to the mentor who decides it, once. Rektor delegates five days;
+  -- M1 mentors KV7A, where P1 is, and M2 KV7B, where P3 and P5 are.
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, 5);
+  held := pg_temp.k4o_request('kv-p1', 'kv-full', interval '0', 30, true);
+  clear := pg_temp.k4o_request('kv-p5', 'kv-full', interval '0', 31, true);
+  -- A pupil nobody can answer for has the consent at the filing, so the filing's own trigger tells the mentor.
+  IF (SELECT count(*) FROM "LeaveRequestNotices" WHERE "leaveRequestId" = clear AND "userId" = pg_temp.k4o_user('kv-m2')) <> 1 THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the mentor of a pupil nobody answers for is not told at the filing';
+  END IF;
+  SELECT string_agg(split_part(u.email, '@', 1) || ' ' || (p.meta ->> 'leaveRequestId')::uuid::text, ', ' ORDER BY p.meta ->> 'leaveRequestId')
+    INTO rows_
+    FROM app.leave_consent_pass() p JOIN "Users" u ON u.id = p."userId" WHERE p.type = 'LEAVE_REQUESTED';
+  IF rows_ IS NOT NULL AND rows_ LIKE '%' || held::text || '%' THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass told a mentor of a request that waits: %', rows_; END IF;
+  IF (SELECT count(*) FROM "LeaveRequestNotices" WHERE "leaveRequestId" = held) <> 0 THEN RAISE EXCEPTION 'ledighetspolicy 448o: a mentor is marked told of a request that waits'; END IF;
+  -- The guardian left: the request is clear, and the next pass tells the mentor, once.
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.k4o_user('kv-g1') AND "studentId" = pg_temp.k4o_user('kv-p1');
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = pg_temp.k4o_user('kv-g2') AND "studentId" = pg_temp.k4o_user('kv-p1');
+  SELECT string_agg(split_part(u.email, '@', 1), ', ') INTO rows_
+    FROM app.leave_consent_pass() p JOIN "Users" u ON u.id = p."userId" WHERE p.type = 'LEAVE_REQUESTED' AND p.meta ->> 'leaveRequestId' = held::text;
+  IF rows_ IS DISTINCT FROM 'kv-m1' THEN RAISE EXCEPTION 'ledighetspolicy 448o: the pass told % of the released request, not M1', rows_; END IF;
+  IF (SELECT count(*) FROM app.leave_consent_pass() p WHERE p.type = 'LEAVE_REQUESTED' AND p.meta ->> 'leaveRequestId' = held::text) <> 0 THEN
+    RAISE EXCEPTION 'ledighetspolicy 448o: the pass told the mentor twice';
+  END IF;
+  IF (SELECT count(*) FROM "LeaveRequestNotices" WHERE "leaveRequestId" = held AND "userId" = pg_temp.k4o_user('kv-m1')) <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 448o: the mentor is not marked told'; END IF;
+  -- The answer of the last guardian tells the mentor in its own transaction, so the pass has nothing left for it.
+  IF (SELECT count(*) FROM "Notifications" WHERE type = 'LEAVE_REQUESTED' AND meta ->> 'leaveRequestId' = held::text) <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 448o: not exactly one notice for the mentor'; END IF;
+END $$;
+ROLLBACK;
+
+-- 449o: gone with the request and with the person.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-kvittens-school');
+  a uuid;
+  b uuid;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  a := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 10, true);
+  b := pg_temp.k4o_request('kv-p1', 'kv-g1', interval '0', 11, true);
+  -- The request goes (gallring deletes a request whole): its answers go with it, the other request's do not.
+  DELETE FROM "LeaveRequests" WHERE id = a;
+  IF EXISTS (SELECT 1 FROM "LeaveConsents" WHERE "leaveRequestId" = a) THEN RAISE EXCEPTION 'ledighetspolicy 449o: the answers outlived their request'; END IF;
+  IF (SELECT count(*) FROM "LeaveConsents" WHERE "leaveRequestId" = b) <> 1 THEN RAISE EXCEPTION 'ledighetspolicy 449o: the other request lost its answers'; END IF;
+  -- The guardian goes: the row about them goes, the request stays, and holds nothing up for want of them.
+  DELETE FROM "Users" WHERE id = pg_temp.k4o_user('kv-g2');
+  IF EXISTS (SELECT 1 FROM "LeaveConsents" WHERE "leaveRequestId" = b) THEN RAISE EXCEPTION 'ledighetspolicy 449o: the answers outlived the guardian'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM "LeaveRequests" WHERE id = b) THEN RAISE EXCEPTION 'ledighetspolicy 449o: the request went with the guardian who was asked'; END IF;
+  IF NOT app.leave_consent_met_raw(b, school) THEN RAISE EXCEPTION 'ledighetspolicy 449o: a request nobody is left to answer has no consent'; END IF;
+END $$;
+ROLLBACK;

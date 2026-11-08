@@ -664,6 +664,38 @@ describe("NotificationBell inbox", () => {
     expect(router.push).toHaveBeenLastCalledWith("/guardian/acknowledgements");
   });
 
+  it("asks the guardian to consent to a leave request, reminds once, and tells whoever applied it ended, by the child and the days and never who, and takes them to the page that lists the requests (Ledighetspolicy)", async () => {
+    const user = userEvent.setup();
+    who.role = "GUARDIAN";
+    const meta = { leaveRequestId: "l-1", studentName: "Alva Elev", startDate: "2027-03-01", endDate: "2027-03-05", requestedBy: "Gun Elev" };
+    supabaseState.selectResults.push(
+      ok([
+        notif({ type: "LEAVE_CONSENT_REQUESTED", meta }),
+        notif({ type: "LEAVE_CONSENT_REMINDER", meta }),
+        notif({ type: "LEAVE_CONSENT_REFUSED", meta }),
+        // No meta is a sentence with empty names and dates, not a crash and not "undefined".
+        notif({ type: "LEAVE_CONSENT_REQUESTED", meta: null }),
+      ]),
+    );
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    const values = "student=Alva Elev|from=2027-03-01|to=2027-03-05";
+    const request = screen.getByText(`leaveConsent.LEAVE_CONSENT_REQUESTED(${values})`);
+    const reminder = screen.getByText(`leaveConsent.LEAVE_CONSENT_REMINDER(${values})`);
+    const refused = screen.getByText(`leaveConsent.LEAVE_CONSENT_REFUSED(${values})`);
+    expect(screen.getByText("leaveConsent.LEAVE_CONSENT_REQUESTED(student=|from=|to=)")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/Gun|undefined/);
+
+    for (const entry of [request, reminder, refused]) {
+      await user.click(entry);
+      expect(router.push).toHaveBeenLastCalledWith("/guardian");
+      await user.click(bellButton());
+    }
+  });
+
   it("says a notice of a type this build does not know as a notice, never an empty line", async () => {
     const user = userEvent.setup();
     supabaseState.selectResults.push(ok([notif({ type: "FROM_A_NEWER_GATEWAY" as BellRow["type"], meta: {} })]));

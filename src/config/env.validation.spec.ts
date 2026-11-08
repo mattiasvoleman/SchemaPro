@@ -106,6 +106,7 @@ describe('validateEnv', () => {
       ['the whole-school export job off', { SCHOOL_EXPORT_BACKGROUND: 'off' }],
       ['the reporting rate tick off', { REPORTING_RATE_BACKGROUND: 'off' }],
       ['the kvittens reminder pass off', { ACK_BACKGROUND: 'off' }],
+      ['the leave consent pass off', { LEAVE_CONSENT_BACKGROUND: 'off' }],
       ['the loopback override under NODE_ENV=test', { NODE_ENV: 'test', SS12000_ALLOW_INSECURE_LOCAL: '1' }],
       ['empty values', { INTEGRATION_SECRETS_KEY: '', SS12000_ALLOW_INSECURE_LOCAL: '' }],
     ])('accepts %s', (_label, extra) => {
@@ -122,6 +123,7 @@ describe('validateEnv', () => {
       ['a school export mode it does not know', { SCHOOL_EXPORT_BACKGROUND: 'yes' }, /SCHOOL_EXPORT_BACKGROUND/],
       ['a reporting rate mode it does not know', { REPORTING_RATE_BACKGROUND: 'yes' }, /REPORTING_RATE_BACKGROUND/],
       ['a kvittens mode it does not know', { ACK_BACKGROUND: 'yes' }, /ACK_BACKGROUND/],
+      ['a leave consent mode it does not know', { LEAVE_CONSENT_BACKGROUND: 'yes' }, /LEAVE_CONSENT_BACKGROUND/],
       ['the loopback override outside NODE_ENV=test', { NODE_ENV: 'production', SS12000_ALLOW_INSECURE_LOCAL: '1' }, /SS12000_ALLOW_INSECURE_LOCAL/],
     ])('refuses %s, naming it and never echoing the value', (_label, extra, name) => {
       let message = '';

@@ -58,6 +58,24 @@ describe('apiRequest', () => {
     expect(error).toMatchObject({ status: 400, code: 'WEEK_OUT_OF_RANGE' });
   });
 
+  it('carries the flat params a refusal names beside its code, and drops what is not flat', async () => {
+    fetchMock.mockResolvedValue(
+      answer(400, { code: 'LEAVE_REQUEST_TOO_LATE', message: 'För sent.', params: { days: 7, unit: 'dagar', nested: { x: 1 }, list: [1], bad: Infinity } }),
+    );
+    const error = await apiRequest('/x').catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 400, code: 'LEAVE_REQUEST_TOO_LATE', params: { days: 7, unit: 'dagar' } });
+    expect((error as ApiError).params).toEqual({ days: 7, unit: 'dagar' });
+  });
+
+  it('has no params on a refusal without them, or with params but no code', async () => {
+    fetchMock.mockResolvedValueOnce(answer(400, { code: 'WEEK_OUT_OF_RANGE', message: 'x' }));
+    expect(((await apiRequest('/x').catch((e: unknown) => e)) as ApiError).params).toBeUndefined();
+    fetchMock.mockResolvedValueOnce(answer(400, { message: 'x', params: { days: 7 } }));
+    expect(((await apiRequest('/x').catch((e: unknown) => e)) as ApiError).params).toBeUndefined();
+    fetchMock.mockResolvedValueOnce(answer(400, { code: 'X', message: 'x', params: [1, 2] }));
+    expect(((await apiRequest('/x').catch((e: unknown) => e)) as ApiError).params).toBeUndefined();
+  });
+
   it('refuses without a session, and a cleartext base, before any request', async () => {
     (getAccessToken as jest.Mock).mockResolvedValue(null);
     await expect(apiRequest('/x')).rejects.toMatchObject({ status: 401, code: 'NOT_AUTHENTICATED' });

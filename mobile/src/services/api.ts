@@ -27,11 +27,16 @@ import { assertSecureBaseUrl } from './network/secureUrl';
  */
 export const CLIENT_HEADER = 'X-SchemaPro-Client';
 
+/** The values a refusal's sentence substitutes (the gateway sends them flat, beside a code). */
+export type ApiErrorParams = Readonly<Record<string, string | number>>;
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
     readonly code?: string,
+    /** The refusal's `params` (LEAVE_REQUEST_TOO_LATE names `days`); only ever beside a code. */
+    readonly params?: ApiErrorParams,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -58,6 +63,16 @@ function baseUrl(): string {
   return assertSecureBaseUrl(raw, 'EXPO_PUBLIC_API_BASE_URL').replace(/\/+$/, '');
 }
 
+/** A refusal's flat string and number params; anything else the body carried under that name is dropped. */
+function paramsOf(raw: unknown): Record<string, string | number> | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const kept: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) kept[key] = value;
+  }
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
 /** JSON in, JSON out; 204 resolves to undefined. Throws ApiError on anything else. */
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const url = `${baseUrl()}${path}`;
@@ -78,16 +93,18 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
   if (!response.ok) {
     let code: string | undefined;
+    let params: Record<string, string | number> | undefined;
     let message = `HTTP ${response.status}`;
     try {
-      const problem = (await response.json()) as { code?: unknown; message?: unknown; detail?: unknown };
+      const problem = (await response.json()) as { code?: unknown; params?: unknown; message?: unknown; detail?: unknown };
       if (typeof problem.code === 'string') code = problem.code;
+      if (code !== undefined) params = paramsOf(problem.params);
       const text = typeof problem.detail === 'string' ? problem.detail : problem.message;
       if (typeof text === 'string') message = text;
     } catch {
       // Not JSON: the status is all there is.
     }
-    throw new ApiError(response.status, message, code);
+    throw new ApiError(response.status, message, code, params);
   }
   if (response.status === 204) return undefined as T;
   const text = await response.text();

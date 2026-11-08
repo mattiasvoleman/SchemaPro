@@ -116,7 +116,7 @@ export function useAbsenceReportActions() {
  * route answers rektor's and the mentor's inboxes with more on every row
  * (lib/leave-queries.ts); the dashboard reads the fields it always has.
  */
-export function useLeaveRequests(status?: "PENDING" | "APPROVED" | "REJECTED") {
+export function useLeaveRequests(status?: "PENDING" | "APPROVED" | "REJECTED" | "GUARDIAN_DECLINED") {
   return useQuery({
     queryKey: [...GUARDIAN_KEYS.leaveRequests, status ?? null],
     queryFn: () =>
@@ -139,7 +139,15 @@ export function useLeaveRequestActions() {
       startDate: string;
       endDate: string;
       reason: string;
-    }) => api.post("/api/v1/leave-requests", body),
+      /** The temporary contact (Ledighetspolicy): all three or none, and only when the school asks. */
+      contactName?: string;
+      contactPhone?: string;
+      contactRelation?: string;
+    }) =>
+      api.post<{ id: string; studentId: string; status: string; consentRequired: boolean; shortNotice: boolean }>(
+        "/api/v1/leave-requests",
+        body,
+      ),
     onSuccess: invalidate,
   });
   return { request };

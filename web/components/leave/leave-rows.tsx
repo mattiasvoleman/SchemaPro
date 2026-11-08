@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { TriangleAlert } from "lucide-react";
 import type { DecisionRequest } from "@/components/admin/decision-list";
 import type { LeaveDelegation, LeaveInboxRequest } from "@/lib/leave-queries";
 import { LEAVE_STATUS_VARIANT } from "@/lib/status-variants";
@@ -14,6 +15,13 @@ import { LEAVE_STATUS_VARIANT } from "@/lib/status-variants";
  * is left out), the family's reason and who asked. Rektor also reads which
  * mentor holds a request, and the mentor which co-mentor may decide it
  * first.
+ *
+ * Ledighetspolicy adds what the school's choices put on a request, each only
+ * when the request carries it: the flag for a request that came later than
+ * the school's minimum, the family's temporary contact, how many guardians
+ * have consented (a count, never who) and, while one still can, the reason the
+ * buttons are off. A request a guardian's no ended has no decider at all.
+ * Read defensively: a gateway older than the feature sends none of it.
  */
 
 /** "Ella Elev (7A)" and the period, as the row's first line. */
@@ -80,6 +88,29 @@ export function useLeaveRows(view: "admin" | "mentor", delegation: LeaveDelegati
           })
       : null;
 
+    // Ledighetspolicy. The count is for staff, and only while it explains something: a request that waits or was ended.
+    const consent = request.consent;
+    const open = request.status === "PENDING";
+    const count =
+      consent?.required && (open || request.status === "GUARDIAN_DECLINED") && consent.asked != null && consent.given != null
+        ? { given: consent.given, asked: consent.asked }
+        : null;
+    const policy = [
+      ...(request.shortNotice
+        ? [
+            <span key="late" className="inline-flex items-start gap-1.5 font-medium text-foreground">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning-strong" aria-hidden="true" />
+              {t("shortNotice")}
+            </span>,
+          ]
+        : []),
+      ...(count ? [t("consentCount", count)] : []),
+      ...(request.status === "GUARDIAN_DECLINED" ? [t("guardianDeclined")] : []),
+      ...(request.contact
+        ? [t("contact", { name: request.contact.name, relation: request.contact.relation, phone: request.contact.phone })]
+        : []),
+    ];
+
     const name = `${request.student.name}, ${period}`;
     return {
       id: request.id,
@@ -88,13 +119,16 @@ export function useLeaveRows(view: "admin" | "mentor", delegation: LeaveDelegati
       details: [
         who.join(" · "),
         ...(year ? [year] : []),
+        ...policy,
         request.reason,
         ...(request.decisionNote ? [t("decisionNote", { note: request.decisionNote })] : []),
         <span key="who" className="text-xs">
           {t("requestedBy", { name: request.requestedBy ?? "—" })} · {asked.format(new Date(request.createdAt))}
         </span>,
       ],
-      open: request.status === "PENDING",
+      open,
+      // Nobody decides a request that waits for a guardian's consent; the gateway answers 409 LEAVE_AWAITING_CONSENT.
+      ...(open && consent?.state === "WAITING" ? { blocked: t("consentBlocked") } : {}),
       status: { label: tGuardian(`status${request.status}`), variant: LEAVE_STATUS_VARIANT[request.status] },
     };
   };

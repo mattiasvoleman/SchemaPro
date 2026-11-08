@@ -222,6 +222,11 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('NotificationOptOuts', ['userId', 'schoolId'], 'CASCADE', account('noticeSettings')),
   key('DevicePushTokens', ['userId', 'schoolId'], 'CASCADE', account('pushDevices')),
   key('LeaveRequestNotices', ['userId', 'schoolId'], 'CASCADE', account('notices')),
+  // Ledighetspolicy (20270205091000): the answers of the guardians a school asked to consent to a leave request. No role
+  // reads the table (RLS 449), so a dry run under an administrator's RLS cannot count it; the rows go with the person.
+  key('LeaveConsents', ['guardianId', 'schoolId'], 'CASCADE', {
+    uncounted: 'the answers of the guardians a school asked to consent to a leave request, read by no role (RLS 449): the rows go with the person',
+  }),
   key('CalendarFeeds', ['studentId', 'schoolId'], 'CASCADE', account('calendarFeeds')),
   key('CalendarFeeds', ['userId', 'schoolId'], 'CASCADE', account('calendarFeeds')),
   key('TeachingRequirements', ['coTeacherId', 'schoolId'], 'SET NULL', kept),
@@ -387,6 +392,8 @@ export const GROUP_BELOW_PARENTS = [
  */
 export const STUDENT_BELOW: readonly BelowKey<never>[] = [
   below('LeaveRequests', 'LeaveRequestNotices', ['leaveRequestId', 'schoolId'], 'CASCADE', { with: 'leaveRequests' }),
+  // The guardians asked to consent to a request go with the request (a request deleted takes the answers; the contact is a column of it).
+  below('LeaveRequests', 'LeaveConsents', ['leaveRequestId', 'schoolId'], 'CASCADE', { with: 'leaveRequests' }),
   below('DevicePushTokens', 'PushTickets', ['tokenId', 'schoolId'], 'CASCADE', { with: 'accounts' }),
   below('AvailabilityConstraints', 'TeacherDutySlots', ['availabilityConstraintId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherDuties', 'TeacherDutySlots', ['teacherDutyId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),

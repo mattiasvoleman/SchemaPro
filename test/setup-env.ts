@@ -68,6 +68,9 @@ process.env['REPORTING_RATE_BACKGROUND'] = 'off';
 process.env['ABSENCE_STATS_BACKGROUND'] = 'off';
 // Kvittens' reminder pass: a spec drives AckJob.tick itself.
 process.env['ACK_BACKGROUND'] = 'off';
+// Ledighetspolicyn's pass over the requests that wait for consent: no tick in tests either; a spec
+// drives LeaveConsentJob.tick itself.
+process.env['LEAVE_CONSENT_BACKGROUND'] = 'off';
 // The schemaförslag sweep (src/optimization/schedule-candidates.service.ts):
 // no quarter-hourly tick either; a spec drives sweep() and tick() itself.
 process.env['CANDIDATES_BACKGROUND'] = 'off';

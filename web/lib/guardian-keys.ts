@@ -19,4 +19,6 @@ export const GUARDIAN_KEYS = {
   /** The gateway's leave inboxes, the admin's and the mentor's (lib/leave-queries.ts). */
   leaveInbox: ["leaveInbox"],
   leaveDelegation: ["leaveDelegation"],
+  /** What the school asks of a leave request (lib/leave-policy-queries.ts). */
+  leavePolicy: ["leavePolicy"],
 } as const;
