@@ -69,6 +69,11 @@ export type AnalysisNoticeCode =
   | 'ANALYSIS_PROTECTED_IN_FILE'
   /** Of those, people with no Löne-id: they stand by their code (SKYDDAD-<n>), which the page resolves for the reader alone. */
   | 'ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER'
+  /**
+   * Of those, people with neither a Löne-id nor a code: their rows say nothing of who they are. The mark's trigger gives every
+   * marked person a code (20270206091000), so this is a fault, and the page says how to mend it rather than call it a code.
+   */
+  | 'ANALYSIS_PROTECTED_WITHOUT_ID'
   /** Characters windows-1252 cannot hold were replaced in the CSV (the Excel file keeps them). */
   | 'ANALYSIS_CHARACTERS_REPLACED';
 

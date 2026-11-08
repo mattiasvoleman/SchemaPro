@@ -434,8 +434,14 @@ export class AnalysisService {
 
       const people = built.people.map((person) => person.userId);
       const protectedInAnswer = built.people.filter((person) => person.protectedIdentity).length;
-      // A marked person with no Löne-id (none on the post, or no post: a vikarie of the pool) stands by their code.
-      const protectedWithoutPayrollNumber = built.people.filter((person) => person.protectedIdentity && person.payrollNumber === null).length;
+      // A marked person with no Löne-id (none on the post, or no post: a vikarie of the pool) stands by their code. One with
+      // no code either is a fault the mark's trigger exists to prevent: said on its own, never counted as standing by a code.
+      const protectedWithoutPayrollNumber = built.people.filter(
+        (person) => person.protectedIdentity && person.payrollNumber === null && person.pseudonym !== null,
+      ).length;
+      const protectedWithoutId = built.people.filter(
+        (person) => person.protectedIdentity && person.payrollNumber === null && person.pseudonym === null,
+      ).length;
       // Who is in the answer: their tjänst (EMPLOYMENT) and the person (PEOPLE), recorded in the read's transaction.
       await recordRead(tx, 'EMPLOYMENT', people, user.channel);
       await recordRead(tx, 'PEOPLE', people, user.channel);
@@ -450,6 +456,7 @@ export class AnalysisService {
       if (protectedWithoutPayrollNumber > 0) {
         notices.push({ code: 'ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER', params: { people: protectedWithoutPayrollNumber } });
       }
+      if (protectedWithoutId > 0) notices.push({ code: 'ANALYSIS_PROTECTED_WITHOUT_ID', params: { people: protectedWithoutId } });
 
       const response: PayrollBasisResponse = {
         academicYearId: query.academicYearId,
@@ -469,7 +476,8 @@ export class AnalysisService {
       const users = named.length === 0 ? [] : await tx.user.findMany({ where: { id: { in: named } }, select: { id: true, firstName: true, lastName: true, email: true } });
       const byId = new Map(users.map((person) => [person.id, person]));
       const partById = new Map(parts.map((part) => [part.id, part]));
-      const collator = new Intl.Collator('sv');
+      // The page's own order (web/lib/sorting.ts): numeric, so SKYDDAD-9 comes before SKYDDAD-10 in the file as on the screen.
+      const collator = new Intl.Collator('sv', { numeric: true, sensitivity: 'variant', caseFirst: 'false' });
       const rank = new Map<string | null, number>([...parts].sort(byGrade).map((part, index) => [part.id, index]));
       const personOf = new Map(built.people.map((person) => [person.userId, person]));
       const rows = built.lines

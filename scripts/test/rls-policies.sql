@@ -57070,15 +57070,18 @@ SET LOCAL ROLE app_authenticated;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 464: gallring och Löne-id (20270206090000). A pseudonym's posts lose
--- their anställningsnummer with their signature and note, and a pseudonym's
--- mark and code go with the person. app.gallring_pseudonymise is the
--- migration's body: the post's UPDATE names payrollNumber, the DELETE of the
--- marks is still there, and the body is the one the migration gave (md5, from
--- the migration's own text). Then the night itself, on the gallring school's
--- departed teacher (marked, with a number on the post): the post stays, with
--- no number, signature or note; the mark and the code are gone; the teacher
--- the SCB holds, named beside them and not due, keeps number, mark and code.
+-- Section 464: gallring och Löne-id (20270206090000, 20270206091000). A
+-- pseudonym's posts lose their anställningsnummer with their signature and
+-- note, the versions of those posts lose the number too, and a pseudonym's
+-- mark and code go with the person. app.gallring_pseudonymise is
+-- 20270206091000's body: the post's UPDATE names payrollNumber, the versions'
+-- UPDATE is there, the DELETE of the marks is still there (md5, from the
+-- migration's own text); the log's append-only guard carries the one change
+-- gallring may make. Then the night itself, on the gallring school's departed
+-- teacher (marked, with a number on the post): the post stays, with no number,
+-- signature or note; no version of it carries the number; the mark and the
+-- code are gone; the teacher the SCB holds, named beside them and not due,
+-- keeps number, versions, mark and code.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -57103,8 +57106,20 @@ BEGIN
   IF src NOT LIKE '%DELETE FROM "PersonProtections"%' THEN
     RAISE EXCEPTION 'lid 464: pseudonymisation leaves the mark (and so the code)';
   END IF;
-  IF md5(src) IS DISTINCT FROM '7fec758093038f6fb55a681781a45340' THEN
-    RAISE EXCEPTION 'lid 464: app.gallring_pseudonymise is not 20270206090000''s body (md5 %); a release that restates it must carry the lines marked "skyddad identitet" and "Löne-id"', md5(src);
+  IF src NOT LIKE '%UPDATE "TeacherEmploymentLogs" SET%jsonb_set("before", ''{payrollNumber}'', ''null''::jsonb)%' THEN
+    RAISE EXCEPTION 'lid 464: pseudonymisation leaves the payroll number in the versions of the post';
+  END IF;
+  IF md5(src) IS DISTINCT FROM '1f2b20ccf7e10b66c90664c235162a43' THEN
+    RAISE EXCEPTION 'lid 464: app.gallring_pseudonymise is not 20270206091000''s body (md5 %); a release that restates it must carry the lines marked "skyddad identitet" and "Löne-id"', md5(src);
+  END IF;
+  SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = 'app.teacher_employment_logs_append_only()'::regprocedure;
+  IF src NOT LIKE '%IF TG_OP = ''UPDATE'' AND app.gallring_in_progress(OLD."schoolId")%'
+     OR src NOT LIKE '%(to_jsonb(NEW) - ''before'' - ''after'') = (to_jsonb(OLD) - ''before'' - ''after'')%'
+     OR src NOT LIKE '%TEACHER_EMPLOYMENT_LOG_IS_APPEND_ONLY%' THEN
+    RAISE EXCEPTION 'lid 464: the log''s guard is not 20270206091000''s: gallring''s one change, and nothing else';
+  END IF;
+  IF md5(src) IS DISTINCT FROM '966928393a3e3d3fe411b82166ae7e41' THEN
+    RAISE EXCEPTION 'lid 464: app.teacher_employment_logs_append_only is not 20270206091000''s body (md5 %); a release that restates it must carry the lines marked "Löne-id"', md5(src);
   END IF;
 
   -- The night, on the gallring school's departed teacher (GAL, 2019/20) and the teacher the SCB holds (HÖL).
@@ -57129,6 +57144,10 @@ BEGIN
   INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES (gone, school, 'MANUAL'), (held, school, 'MANUAL');
   SELECT count(*) INTO n FROM "PayrollPseudonyms" WHERE "userId" IN (gone, held);
   IF n <> 2 THEN RAISE EXCEPTION 'lid 464: the two marks gave % codes, not two', n; END IF;
+  -- The number is in the versions the two writes made, so the night has something to clear.
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = gone AND entity = 'EMPLOYMENT' AND "after" ->> 'payrollNumber' = 'GONE-1';
+  IF n < 1 THEN RAISE EXCEPTION 'lid 464: no version of the departed teacher''s post carries the number; the clearing would prove nothing'; END IF;
   PERFORM set_config('app.test_lid464_school', school::text, true);
   PERFORM set_config('app.test_lid464_gone', gone::text, true);
   PERFORM set_config('app.test_lid464_held', held::text, true);
@@ -57160,6 +57179,13 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'lid 464: the pseudonym''s post went; it stays for the history'; END IF;
   IF e."payrollNumber" IS NOT NULL THEN RAISE EXCEPTION 'lid 464: the pseudonym''s post kept its payrollNumber %', e."payrollNumber"; END IF;
   IF e.signature IS NOT NULL OR e.note IS NOT NULL THEN RAISE EXCEPTION 'lid 464: the pseudonym''s post kept its signature or note'; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = gone AND entity = 'EMPLOYMENT'
+     AND (coalesce("before" -> 'payrollNumber', 'null'::jsonb) <> 'null'::jsonb OR coalesce("after" -> 'payrollNumber', 'null'::jsonb) <> 'null'::jsonb);
+  IF n <> 0 THEN RAISE EXCEPTION 'lid 464: % versions of the pseudonym''s post kept the payroll number', n; END IF;
+  -- Only the number moved: the versions are as many as before, with their signature (the manual says they keep it).
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "userId" = gone AND entity = 'EMPLOYMENT' AND "after" ->> 'signature' = 'GAL';
+  IF n < 1 THEN RAISE EXCEPTION 'lid 464: the versions of the pseudonym''s post lost more than the number'; END IF;
   SELECT count(*) INTO n FROM "PersonProtections" WHERE "userId" = gone;
   IF n <> 0 THEN RAISE EXCEPTION 'lid 464: the pseudonym kept % marks', n; END IF;
   SELECT count(*) INTO n FROM "PayrollPseudonyms" WHERE "userId" = gone;
@@ -57167,6 +57193,8 @@ BEGIN
   -- The teacher not due: untouched, number, mark and code.
   SELECT "payrollNumber" INTO v FROM "TeacherEmployments" WHERE "userId" = held;
   IF v IS DISTINCT FROM 'HELD-1' THEN RAISE EXCEPTION 'lid 464: the number of a teacher not due is %, not HELD-1', v; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "userId" = held AND entity = 'EMPLOYMENT' AND "after" ->> 'payrollNumber' = 'HELD-1';
+  IF n < 1 THEN RAISE EXCEPTION 'lid 464: the versions of a teacher not due lost the number'; END IF;
   SELECT count(*) INTO n FROM "PersonProtections" WHERE "userId" = held;
   IF n <> 1 THEN RAISE EXCEPTION 'lid 464: the mark of a teacher not due went'; END IF;
   SELECT count(*) INTO n FROM "PayrollPseudonyms" WHERE "userId" = held;

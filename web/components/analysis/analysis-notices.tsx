@@ -12,6 +12,8 @@ const WARNING: ReadonlySet<AnalysisNoticeCode> = new Set([
   "ANALYSIS_CHARACTERS_REPLACED",
   // A row by its code alone: payroll books it only once the school says whose it is.
   "ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER",
+  // A marked person with neither Löne-id nor code: nobody can tell whose the row is.
+  "ANALYSIS_PROTECTED_WITHOUT_ID",
 ]);
 
 /** The gateway's notices of an answer, each a sentence, the ones that change a figure as warnings. */

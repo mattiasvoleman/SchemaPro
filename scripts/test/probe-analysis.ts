@@ -37,6 +37,13 @@
  *         Löne-id; nothing of his name or address anywhere; Anna is named as before, with the
  *         Löne-id written on her post (20270206090000); protectedInFile is 1. Then his post gets a
  *         Löne-id and the code gives way to it. The mark is removed after, and the code with it.
+ *   (li)  the mark and the code, from two connections at once (20270206091000): the register's
+ *         mark set while an administrator's is removed, in both orders. The second waits for the
+ *         first (the trigger locks the person's Users row), and the person ends marked WITH a
+ *         code. Without the lock the insert keeps the code it finds, the delete cannot see the
+ *         insert's mark and removes the code, and the person is marked with none, for good.
+ *   (lj)  the versions' guard (20270206091000): outside gallring no version changes; in gallring
+ *         a version's payroll number may be set to null, and nothing else of it may change.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
@@ -302,6 +309,97 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
     }
     const left = await one<{ n: number }>(`SELECT count(*)::int AS n FROM "PayrollPseudonyms" WHERE "userId" = $1`, [bo.id]);
     assert.equal(left.n, 0, 'the code outlived the mark');
+  });
+
+  await check('(li) the register\'s mark and an administrator\'s removal at once, in either order, leave the person marked with a code', async () => {
+    const rana = await user('Rana', 'TEACHER');
+    const second = new Client({ connectionString: requiredEnv('PROBE_OWNER_URL') });
+    await second.connect();
+    const state = async () =>
+      one<{ marks: string | null; code: number | null }>(
+        `SELECT (SELECT string_agg(source::text, ',' ORDER BY source::text) FROM "PersonProtections" WHERE "userId" = $1) AS marks,
+                (SELECT number FROM "PayrollPseudonyms" WHERE "userId" = $1) AS code`,
+        [rana.id],
+      );
+    const mark = (client: Client, source: string) =>
+      client.query(`INSERT INTO "PersonProtections" ("userId", "schoolId", source) VALUES ($1, $2, $3)`, [rana.id, s, source]);
+    const unmark = (client: Client, source: string) => client.query(`DELETE FROM "PersonProtections" WHERE "userId" = $1 AND source = $2`, [rana.id, source]);
+    /** Starts `later` while `first` holds its transaction open, and says whether `later` finished before `first` committed. */
+    const race = async (first: () => Promise<unknown>, later: () => Promise<unknown>, a: Client, b: Client) => {
+      await a.query('BEGIN');
+      await first();
+      await b.query('BEGIN');
+      let done = false;
+      const pending = later().then(() => (done = true));
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const finishedEarly = done;
+      await a.query('COMMIT');
+      await pending;
+      await b.query('COMMIT');
+      return finishedEarly;
+    };
+    try {
+      await mark(owner, 'MANUAL');
+      const before = (await state()).code;
+      assert.ok(before, 'the mark gave no code');
+      // The register's mark first (held open), the administrator's removal second.
+      const early1 = await race(() => mark(owner, 'SS12000'), () => unmark(second, 'MANUAL'), owner, second);
+      const after1 = await state();
+      assert.deepEqual([after1.marks, after1.code], ['SS12000', before], 'insert, then delete: the person is marked with no code, or another');
+      assert.equal(early1, false, 'the removal did not wait for the mark');
+
+      // The removal first (held open), the register's mark second: the code goes and a new one comes.
+      await mark(owner, 'MANUAL');
+      const early2 = await race(() => unmark(owner, 'SS12000'), () => mark(second, 'SS12000'), owner, second);
+      const after2 = await state();
+      assert.equal(after2.marks, 'MANUAL,SS12000');
+      assert.equal(after2.code, before, 'delete of one source, then insert: the code moved');
+      assert.equal(early2, false, 'the mark did not wait for the removal');
+
+      await unmark(owner, 'SS12000');
+      const early3 = await race(() => unmark(owner, 'MANUAL'), () => mark(second, 'SS12000'), owner, second);
+      const after3 = await state();
+      assert.equal(after3.marks, 'SS12000');
+      assert.ok(after3.code !== null && after3.code > before!, 'delete of the last mark, then a new one: no new code');
+      assert.equal(early3, false, 'the new mark did not wait for the removal of the last');
+    } finally {
+      await second.query('ROLLBACK').catch(() => undefined);
+      await owner.query('ROLLBACK').catch(() => undefined);
+      await second.end();
+      await owner.query(`DELETE FROM "PersonProtections" WHERE "userId" = $1`, [rana.id]);
+    }
+  });
+
+  await check('(lj) outside gallring no version changes; in gallring a version loses its payroll number and nothing else', async () => {
+    await owner.query(`UPDATE "TeacherEmployments" SET "payrollNumber" = '4711' WHERE "userId" = $1`, [anna.id]);
+    const version = (
+      await one<{ id: string }>(
+        `SELECT id FROM "TeacherEmploymentLogs" WHERE "userId" = $1 AND entity = 'EMPLOYMENT' AND "after" ->> 'payrollNumber' = '4711' ORDER BY version DESC LIMIT 1`,
+        [anna.id],
+      )
+    ).id;
+    const refused = async (sql: string, gallring: boolean): Promise<string | null> => {
+      await owner.query('BEGIN');
+      try {
+        if (gallring) await owner.query(`SELECT set_config('app.gallring', $1, true)`, [s]);
+        await owner.query(sql, [version]);
+        return null;
+      } catch (error) {
+        return (error as { code?: string }).code ?? 'error';
+      } finally {
+        await owner.query('ROLLBACK');
+      }
+    };
+    const clear = `UPDATE "TeacherEmploymentLogs" SET "after" = jsonb_set("after", '{payrollNumber}', 'null'::jsonb) WHERE id = $1`;
+    try {
+      assert.equal(await refused(clear, false), 'TL403', 'a version changed outside gallring');
+      assert.equal(await refused(clear, true), null, 'gallring may not clear the number');
+      assert.equal(await refused(`UPDATE "TeacherEmploymentLogs" SET "after" = jsonb_set("after", '{signature}', '"XX"'::jsonb) WHERE id = $1`, true), 'TL403', 'gallring changed the signature of a version');
+      assert.equal(await refused(`UPDATE "TeacherEmploymentLogs" SET "after" = jsonb_set("after", '{payrollNumber}', '"9999"'::jsonb) WHERE id = $1`, true), 'TL403', 'gallring wrote another number');
+      assert.equal(await refused(`UPDATE "TeacherEmploymentLogs" SET "version" = "version" + 1000, "after" = jsonb_set("after", '{payrollNumber}', 'null'::jsonb) WHERE id = $1`, true), 'TL403', 'gallring changed a column beside the number');
+    } finally {
+      await owner.query(`UPDATE "TeacherEmployments" SET "payrollNumber" = NULL WHERE "userId" = $1`, [anna.id]);
+    }
   });
 }
 

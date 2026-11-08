@@ -460,6 +460,7 @@ describe('AnalysisService', () => {
         select: { userId: true, payrollNumber: true },
       });
       expect(tx.payrollPseudonym.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.payrollPseudonym.findMany).toHaveBeenCalledWith({ where: { schoolId: expect.any(String) }, select: { userId: true, number: true } });
     });
 
     it('asks for no code when nobody is marked', async () => {
@@ -771,12 +772,34 @@ describe('AnalysisService', () => {
             expect(result.protectedWithoutPayrollNumber).toBe(2);
           });
 
-          it("keep each person's rows together where two of them share every key (no code yet), by the person", async () => {
-            tx.payrollPseudonym.findMany.mockResolvedValue([]);
+          it('stand in the order of their codes as numbers, SKYDDAD-9 before SKYDDAD-10, as the page orders them', async () => {
+            tx.payrollPseudonym.findMany.mockResolvedValue([
+              { userId: 'pool-1', number: 10 },
+              { userId: 'pool-2', number: 9 },
+            ]);
             const { lines } = await csvOf(['pool-1', 'pool-2']);
+            expect(marked(lines).map(([, code]) => code)).toEqual(['SKYDDAD-9', 'SKYDDAD-9', 'SKYDDAD-10', 'SKYDDAD-10']);
+          });
+
+          it("keep each person's rows together where two of them share every key (no code), and the file says they have none", async () => {
+            // A marked person with no code is the fault the mark's trigger exists to prevent: said on its own.
+            tx.payrollPseudonym.findMany.mockResolvedValue([]);
+            const { result, lines } = await csvOf(['pool-1', 'pool-2']);
             const rows = lines.filter((line) => line.includes('Vikariepool'));
             expect(rows.map((line) => line.split(';')[6])).toEqual(['Sjuan', 'Åttan', 'Sjuan', 'Åttan']);
             expect(rows.every((line) => line.endsWith(';'))).toBe(true);
+            expect(result.protectedInFile).toBe(2);
+            expect(result.protectedWithoutPayrollNumber).toBe(0);
+            expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_WITHOUT_ID', params: { people: 2 } });
+            expect(result.notices.map((notice) => notice.code)).not.toContain('ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER');
+          });
+
+          it('say one of them stands by a code and the other has none, each in its own notice', async () => {
+            tx.payrollPseudonym.findMany.mockResolvedValue([{ userId: 'pool-1', number: 9 }]);
+            const { result } = await csvOf(['pool-1', 'pool-2']);
+            expect(result.protectedWithoutPayrollNumber).toBe(1);
+            expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER', params: { people: 1 } });
+            expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_WITHOUT_ID', params: { people: 1 } });
           });
         });
 

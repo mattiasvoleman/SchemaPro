@@ -581,6 +581,43 @@ describe("Analys och planering, löneunderlag", () => {
       await waitFor(() => expect(toast.success).toHaveBeenCalledWith("f.csv är hämtad. 1 person med skyddad identitet står i den utan namn och e-post."));
     });
 
+    it("orders the marked with the same signature by their Löne-id, as the file does, not by who they are", async () => {
+      // Two marked vikarier with no signature: pool-1's id sorts before t4's, but t4's code, SKYDDAD-9, comes before SKYDDAD-10.
+      state.pay = payroll({
+        people: [
+          { userId: "pool-1", kind: "POOL", teachingMinutes: 0, dutyMinutes: 0, substituteMinutes: 90, employmentPercent: null, signature: null, payrollNumber: null, protectedIdentity: true, pseudonym: "SKYDDAD-10" },
+          { userId: "t4", kind: "POOL", teachingMinutes: 0, dutyMinutes: 0, substituteMinutes: 60, employmentPercent: null, signature: null, payrollNumber: null, protectedIdentity: true, pseudonym: "SKYDDAD-9" },
+        ],
+        lines: [
+          { userId: "pool-1", kind: "POOL", schoolPartId: null, account: null, teachingMinutes: 0, dutyMinutes: 0, substituteMinutes: 90 },
+          { userId: "t4", kind: "POOL", schoolPartId: null, account: null, teachingMinutes: 0, dutyMinutes: 0, substituteMinutes: 60 },
+        ],
+        protectedInAnswer: 2,
+        protectedWithoutPayrollNumber: 2,
+      });
+      renderPage();
+      await openTab("Löneunderlag");
+      await userEvent.click(screen.getByRole("button", { name: "Visa underlag" }));
+      const table = await screen.findByRole("table", { name: "Löneunderlag per person och skoldel" });
+      expect(rowsOf(table).map((row) => within(row).getAllByRole("cell").at(-1)!.textContent)).toEqual(["SKYDDAD-9", "SKYDDAD-10"]);
+    });
+
+    it("says a marked person with neither Löne-id nor code as a fault of its own, with how to mend it", async () => {
+      state.pay = payroll({
+        protectedInAnswer: 1,
+        notices: [
+          { code: "ANALYSIS_PROTECTED_IN_FILE", params: { people: 1 } },
+          { code: "ANALYSIS_PROTECTED_WITHOUT_ID", params: { people: 1 } },
+        ],
+      });
+      renderPage();
+      await openTab("Löneunderlag");
+      await userEvent.click(screen.getByRole("button", { name: "Visa underlag" }));
+      const fault = await screen.findByText(/^1 av dem har varken löne-id eller kod, så raden säger inte vem det är\./);
+      expect(fault.closest("div[data-tone]")?.getAttribute("data-tone")).toBe("warning");
+      expect(fault.textContent).toMatch(/ta bort markeringen och sätt den igen så att personen får en kod/);
+    });
+
     it("is named by signature and code in English too, and the English warning says the field", async () => {
       const table = await openPayroll("en");
       expect(rowsOf(table).map((row) => within(row).getAllByRole("cell")[0]!.textContent).slice(1)).toEqual([
@@ -594,6 +631,14 @@ describe("Analys och planering, löneunderlag", () => {
       expect(warning.closest("div[data-tone]")?.getAttribute("data-tone")).toBe("warning");
       expect(warning.textContent).toMatch(/The payroll ID is written on the teacher's post under Staffing\. A substitute in the pool has no post/);
       expect(screen.getByText("Who the codes are (2)")).toBeInTheDocument();
+    });
+
+    it("says the fault in English too", async () => {
+      state.pay = payroll({ protectedInAnswer: 1, notices: [{ code: "ANALYSIS_PROTECTED_WITHOUT_ID", params: { people: 1 } }] });
+      renderPage("en");
+      await userEvent.click(screen.getByRole("tab", { name: "Payroll basis" }));
+      await userEvent.click(screen.getByRole("button", { name: "Show basis" }));
+      expect(await screen.findByText(/^1 of them has neither a payroll ID nor a code, so the row does not say who it is\./)).toBeInTheDocument();
     });
   });
 

@@ -8791,6 +8791,7 @@
       "ANALYSIS_DUTIES_UNALLOCATED": "{people} personer har uppdrag men ingen undervisning eller inget vikariepass i perioden. Deras uppdrag ligger på en rad utan skoldel och konto, för skolan att boka för hand.",
       "ANALYSIS_PROTECTED_IN_FILE": "{people, plural, one {# person} other {# personer}} med skyddad identitet finns med i underlaget, eftersom lönen ska betalas till alla. De står utan namn och e-post, här och i filen: med signatur och löne-id, eller med en kod där löne-id saknas.",
       "ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER": "{people, plural, one {# av dem saknar} other {# av dem saknar}} löne-id och står med en kod, SKYDDAD och ett nummer, som är densamma i varje fil. Vem en kod gäller ser du under Vem koderna gäller, här och ingen annanstans; säg det till lönekontoret. Löne-id skrivs på lärarens tjänst under Tjänstefördelning. En vikarie i poolen har ingen tjänst och står alltid med sin kod.",
+      "ANALYSIS_PROTECTED_WITHOUT_ID": "{people, plural, one {# av dem har} other {# av dem har}} varken löne-id eller kod, så raden säger inte vem det är. Fyll i löne-id på lärarens tjänst under Tjänstefördelning, eller ta bort markeringen och sätt den igen så att personen får en kod.",
       "ANALYSIS_CHARACTERS_REPLACED": "{characters} tecken som windows-1252 inte rymmer är ersatta i CSV-filen. Excel-filen behåller dem."
     },
     "keyFigures": {

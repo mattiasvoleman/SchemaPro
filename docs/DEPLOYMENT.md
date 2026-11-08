@@ -4509,7 +4509,8 @@ and no job, notice or setting is added.
   has no post) stands by a code instead, `SKYDDAD-<n>` from `PayrollPseudonyms`
   (20270206091000), the same in every file while the mark lasts;
   `protectedWithoutPayrollNumber` and `ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER`
-  say how many. The JSON answer says each person's `signature`,
+  say how many. A marked person with neither a `Löne-id` nor a code (the
+  trigger exists to prevent it) is said on its own, `ANALYSIS_PROTECTED_WITHOUT_ID`. The JSON answer says each person's `signature`,
   `payrollNumber`, `protectedIdentity` and `pseudonym`; the page names a marked
   person the same way and resolves a code to the name in a key outside the
   table, on the screen alone.
@@ -4539,16 +4540,27 @@ Two migrations, run before the merge in stamp order (section 2):
    `PayrollPseudonyms` (schoolId, userId, an identity `number`), the trigger
    `PersonProtections_payroll_pseudonym` (SECURITY DEFINER) that writes a code
    when a person is marked and removes it with the person's last mark, and a
-   code for every mark that exists. It takes `Schools`, `Users` and
-   `PersonProtections` together in `SHARE ROW EXCLUSIVE`, `NOWAIT`, 30 s. The
-   API's role holds `SELECT` only; nobody but the trigger writes.
+   code for every mark that exists. The trigger locks the person's `Users`
+   row (`FOR NO KEY UPDATE`) in both branches, so one transaction at a time
+   changes a person's marks and code: without it the register's mark set
+   while an administrator removes theirs leaves the person marked with no code.
+   It also restates `app.teacher_employment_logs_append_only` (gallring may set
+   a pseudonym's payroll number to null in a version, and change nothing else
+   of it) and `app.gallring_pseudonymise` (the versions of a pseudonym's posts
+   lose the number too). It takes `Schools`, `Users` and `PersonProtections`
+   together in `SHARE ROW EXCLUSIVE`, `NOWAIT`, 30 s. The API's role holds
+   `SELECT` only; nobody but the trigger writes.
 
 After a failed attempt, `prisma migrate resolve --rolled-back <name>`, then
 deploy again. Verify (as the owner, `public` only): the column and its CHECK
 exist; `PayrollPseudonyms` has one policy (`payroll_pseudonyms_admin_select`)
 and as many rows as there are distinct (schoolId, userId) in
 `PersonProtections`; `md5(prosrc)` of `app.gallring_pseudonymise` is
-`7fec758093038f6fb55a681781a45340`. The checks the reviewer runs are
+`1f2b20ccf7e10b66c90664c235162a43` (after the first migration alone it is
+`7fec758093038f6fb55a681781a45340`), of
+`app.teacher_employment_logs_append_only` `966928393a3e3d3fe411b82166ae7e41`
+and of `app.payroll_pseudonym_follows_the_mark`
+`bf0034c918448976addb2ae879d918cb`. The checks the reviewer runs are
 `prod-fore.sql` and `prod-efter.sql` beside the review.
 
 The whole-school export's `larare.csv` does not carry `Löne-id` (it is
